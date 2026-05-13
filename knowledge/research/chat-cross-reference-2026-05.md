@@ -56,10 +56,10 @@ chain_of_custody: |
 - **Goal-lens fit (per session, dynamic):**
   - (C) advances chosen goal_lens: PARTIAL (cross-references chat to ADR-7 gap)
 - **Cost:** medium (1-2h ADR amendment + 2-3h implementation in Phase M)
-- **Verdict:** UNCERTAIN-ASK
-- **If UNCERTAIN-ASK:** Should this be: (a) ADR-7 amendment now, (b) BACKLOG entry deferred to Phase M, (c) skip as DPC's HookRegistry covers it via middleware?
-- **Alternative-if-rejected:** rely on DPC's HookRegistry adoption (B-NEW-5) covering the case
-- **Concrete first step (if TAKE):** Add BACKLOG entry "tool-call hallucination guard"
+- **Verdict:** SKIP (resolved 2026-05-13 by project lead)
+- **Resolution rationale:** Models in current FA tier-routing (ADR-2 Planner=sonnet/opus, Coder=sonnet, Debug, Eval) do not exhibit Pattern #20 (which manifests in weaker OSS models like MiniMax without tool-call fine-tune). If B-NEW-5 (DPC HookRegistry) is later adopted, this guard becomes a ~5-line `pre_tool` middleware addition — no separate ADR or BACKLOG entry needed.
+- **Alternative-if-rejected:** N/A (skipped). Re-open if FA's tier-routing introduces a model that exhibits pseudo-tool-call hallucination in thought text (e.g. self-hosted Qwen/Kimi/GLM as Planner).
+- **Concrete first step (if TAKE later):** Add `hallucination_guard` middleware to the future HookRegistry from B-NEW-5.
 
 ### Summary
 
@@ -67,7 +67,7 @@ chain_of_custody: |
 |-----|---------|---------------------|--------------|------|--------------------------|------------------------|
 | R-1 | TAKE | YES / YES | YES | cheap | scattered chat refs | No |
 | R-2 | TAKE | YES / YES | YES | cheap | chat-only memory | No |
-| R-3 | UNCERTAIN-ASK | NO / NO | PARTIAL | medium | rely on B-NEW-5 | Yes (a/b/c) |
+| R-3 | SKIP (2026-05-13) | NO / NO | PARTIAL | medium | defer to B-NEW-5 middleware if adopted | No (resolved) |
 
 ---
 
