@@ -95,7 +95,7 @@ output is a Markdown findings report attached to chat.
 2. [`AGENTS.md`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/AGENTS.md) — operational rules (esp. minimalism-first 4-question test, rule #10).
 3. [`knowledge/llms.txt`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/knowledge/llms.txt) — canonical index.
 4. [`knowledge/adr/DIGEST.md`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/knowledge/adr/DIGEST.md) — one-row-per-ADR summary.
-5. [`knowledge/adr/BACKLOG.md`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/knowledge/adr/BACKLOG.md) — pending items (I-1..I-8 referenced below).
+5. [`knowledge/BACKLOG.md`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/knowledge/BACKLOG.md) — pending items (I-1..I-9 referenced below).
 6. [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/knowledge/adr/ADR-7-inner-loop-tool-registry.md) — most recent ADR; many §3 patterns map to it.
 
 **Deliverable for next session:**
@@ -318,11 +318,11 @@ If the new session needs deeper quotes, ask the user to re-attach.
 | Term | Meaning | Source |
 |---|---|---|
 | ADR-2 | LLM Tiering decision (Planner/Coder/Debug/Eval) | `knowledge/adr/ADR-2-llm-tiering.md` |
-| ADR-3 | Mechanical Wiki (filesystem-canonical Markdown + SQLite FTS5) | `knowledge/adr/ADR-3-mechanical-wiki.md` |
-| ADR-4 | Active-recall / search layer choice (SQLite FTS5 over Qdrant for v0.1) | `knowledge/adr/ADR-4-active-recall.md` |
-| ADR-6 | Tool sandbox (deny-by-default path + tool-group allow-list) | `knowledge/adr/ADR-6-sandbox.md` |
+| ADR-3 | Memory architecture variant (Mechanical Wiki: filesystem-canonical Markdown + SQLite FTS5) | `knowledge/adr/ADR-3-memory-architecture-variant.md` |
+| ADR-4 | Storage backend choice (SQLite FTS5 over Qdrant for v0.1) | `knowledge/adr/ADR-4-storage-backend.md` |
+| ADR-6 | Tool sandbox + path allow-list (deny-by-default path + tool-group allow-list) | `knowledge/adr/ADR-6-tool-sandbox-allow-list.md` |
 | ADR-7 | Inner-loop + tool-registry contract | `knowledge/adr/ADR-7-inner-loop-tool-registry.md` |
-| BACKLOG I-1..I-8 | Pending items in `knowledge/adr/BACKLOG.md` | inline IDs |
+| BACKLOG I-1..I-9 | Pending items in `knowledge/BACKLOG.md` | inline IDs |
 | AGENTS.md rule #10 | Minimalism-first 4-question test before adding a feature | `AGENTS.md` |
 | Phase M | Future runner phase (post-v0.1 orchestrator) | HANDOFF.md / BACKLOG |
 | Mechanical Wiki | FA's knowledge store: file-as-truth + deterministic indexing | ADR-3 |
