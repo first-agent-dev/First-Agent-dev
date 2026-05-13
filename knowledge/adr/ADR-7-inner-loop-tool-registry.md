@@ -891,16 +891,16 @@ invoke:
 
 ```toml
 [roles.planner]
-allowed_tools = ["fs.read_file", "fs.list_files", "fs.search_files"]
+allowed_tools = ["fs.read_file", "fs.list_files", "fs.grep"]
 allowed_dirs  = []  # empty = inherit ADR-6 sandbox-root
 
 [roles.coder]
-allowed_tools = ["fs.read_file", "fs.list_files", "fs.search_files",
-                 "fs.write_file", "fs.edit_block"]
+allowed_tools = ["fs.read_file", "fs.list_files", "fs.grep",
+                 "fs.write_file", "fs.edit_file"]
 allowed_dirs  = []
 
 [roles.debug]
-allowed_tools = ["fs.read_file", "fs.list_files", "fs.search_files"]
+allowed_tools = ["fs.read_file", "fs.list_files", "fs.grep"]
 allowed_dirs  = []
 
 [roles.eval]
