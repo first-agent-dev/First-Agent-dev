@@ -652,7 +652,12 @@ shape is pinned so the migration is config-only:
   can disable a whole group (`fs.allow = false`) without
   editing the per-path allow-list. Lands as an ADR-6
   amendment in the same PR as the second tool group (`git.*`
-  or `gh.*`).
+  or `gh.*`). **Status 2026-05-13:** finer-grained variant
+  (`[roles.<name>]` per-role tool whitelist) landed via
+  [§Amendment 2026-05-13](#amendment-2026-05-13--declarative-per-role-tool-whitelist-b-new-1)
+  before the second tool group; the `[tool_groups]` form
+  remains shape-pinned as the coarser-grained convenience
+  alternative.
 - **R-6 code-execution-over-MCP.** Reserved per ADR-2
   §Amendment 2026-05-01 ("no `mcp` package dependency in
   v0.1") and ADR-6 §Re-evaluation triggers. The forward-compat
@@ -865,6 +870,135 @@ bootstrap re-runs on it. If the 6-file irreducible core does
 **not** reproduce on FA's own harness, the empirical-backing
 paragraph in §6 must be qualified (works on external
 harnesses; needs separate evidence for FA's own).
+
+### Amendment 2026-05-13 — Declarative per-role tool whitelist (B-NEW-1)
+
+**Source.** Inspiration note
+[`research/soviet-code-inspiration-2026-05.md`](../research/soviet-code-inspiration-2026-05.md)
+§0 R-1, §6.1, §3 Pattern #1 — deep-dive of
+`Disentinel/soviet-code` (npm-published v1.964.0, systemd-in-prod
+reference impl). The pattern ships 9 agent profiles × declarative
+`allowed_tools` + `extra_dirs` blocks, passed verbatim as
+`--allowedTools` / `--add-dir` to the Claude CLI subprocess.
+FA-equivalent: per-role allow-list in `~/.fa/sandbox.toml`
+enforced at the dispatcher boundary.
+
+**Decision.** Extend `~/.fa/sandbox.toml` (defined by
+[ADR-6](./ADR-6-tool-sandbox-allow-list.md), see
+[ADR-6 §Amendment 2026-05-13](./ADR-6-tool-sandbox-allow-list.md#amendment-2026-05-13--roles-block-in-sandboxtoml))
+with a `[roles.<name>]` block specifying tools each role may
+invoke:
+
+```toml
+[roles.planner]
+allowed_tools = ["fs.read_file", "fs.list_files", "fs.search_files"]
+allowed_dirs  = []  # empty = inherit ADR-6 sandbox-root
+
+[roles.coder]
+allowed_tools = ["fs.read_file", "fs.list_files", "fs.search_files",
+                 "fs.write_file", "fs.edit_block"]
+allowed_dirs  = []
+
+[roles.debug]
+allowed_tools = ["fs.read_file", "fs.list_files", "fs.search_files"]
+allowed_dirs  = []
+
+[roles.eval]
+allowed_tools = ["fs.read_file", "fs.list_files"]
+allowed_dirs  = []
+```
+
+The four role names match
+[ADR-2](./ADR-2-llm-tiering.md) static tier-routing
+(Planner / Coder / Debug / Eval). Role names are tier names; the
+role-to-tier mapping is the ADR-2 contract, not this amendment.
+
+**Backward-compat default.** If `[roles.<active_role>]` is
+absent, the role inherits the full §3 tool catalog
+(`fs.read_file`, `fs.list_files`, `fs.edit_file`, `fs.write_file`,
+`fs.grep`). Existing `sandbox.toml` files without `[roles]`
+blocks continue to work unchanged.
+
+**Enforcement point.** The dispatcher
+(`src/fa/inner_loop/loop.py`, lands with HANDOFF §Next steps
+item 1) MUST check:
+
+```text
+if active_role in roles_config
+   and tool_name not in roles_config[active_role].allowed_tools:
+    return ToolResult(
+        ok=False,
+        error=ToolError(
+            code="E_ROLE_WHITELIST",
+            message=f"tool {tool_name!r} not in role {active_role!r} whitelist",
+        ),
+    )
+```
+
+BEFORE the `pre_tool` hook chain fires. On reject, no `pre_tool`
+budget is consumed; the failure surfaces as one
+`role_whitelist_reject` event in §7 trace.
+
+**Why now (vs. defer to v0.2 multi-role).** Cheap to land:
+~70 LOC across 6 files, 0 new dependencies, 0 production-code
+changes (the impl ships with the inner-loop scaffolding PR per
+HANDOFF §Next steps item 1). Empirically validated by
+Soviet-Code v1.964.0 (npm-published, in-prod for months).
+Closing §11 R-4 forward-compat: per-role is the natural
+finer-grained extension of `[tool_groups]` and lands in a single
+ADR amendment instead of two coordinated ones.
+
+**Why not prompt-only.** Status quo enforces "Planner does not
+write files" through prompt instructions to the Planner role.
+This is not mechanically verifiable: any hallucinated
+`fs.write_file` call from the Planner is currently caught only
+by §8 `SandboxHook` (which guards the **path**, not the
+**role-tool pairing**). Declarative role whitelist adds the
+mechanical pairing check the prompt-only approach cannot.
+
+**Subtraction-check (AGENTS.md §Pre-flight Step 4 / rule #10).**
+
+1. **Does this duplicate an existing rule?** No. §11 R-4
+   `[tool_groups]` was shape-pinned but not landed. §8
+   `SandboxHook` enforces path, not (role, tool) pairing.
+2. **Can the LLM do this without the rule?** Partial. Prompt
+   instructions can ask Planner not to write, but the
+   constraint is not mechanically verifiable.
+3. **Is the rule narrow enough?** Yes. Single TOML block,
+   single dispatcher check, zero runtime cost when `[roles]`
+   absent (inherits full catalog).
+4. **Will this rule have a reader?** Yes. Dispatcher
+   (`src/fa/inner_loop/loop.py`) reads on every tool request;
+   reject events documented in §7 trace; consumers are the
+   inner-loop unit tests and the future eval-harness
+   ([BACKLOG I-7](../BACKLOG.md#i-7--bootstrap-cost-as-auto-collected-kpi-uc5-blocked)).
+
+**Files changed (this PR, knowledge-layer only).**
+
+- `knowledge/adr/ADR-6-tool-sandbox-allow-list.md` —
+  §Amendment 2026-05-13 with schema spec.
+- `knowledge/adr/ADR-7-inner-loop-tool-registry.md` — this
+  block + §11 R-4 status update.
+- `knowledge/adr/DIGEST.md` — ADR-6 + ADR-7 row updates.
+- `knowledge/trace/exploration_log.md` — Q-7 amendment block.
+- `knowledge/BACKLOG.md` — I-7 + I-8 prior-art
+  enforcement note (DPC ADR-015 cross-reference).
+- `HANDOFF.md` — ADR-7 amendment line update.
+
+**Re-evaluation triggers (this amendment).**
+
+- **Single `E_ROLE_WHITELIST` rejection observed in production**
+  on a path the user expected to be allowed. Action: investigate
+  the user's mental model first (prompt error vs config error);
+  only widen the role whitelist after the incident is
+  understood.
+- **v0.2 multi-role expands past ~6 roles** (e.g. Researcher,
+  Reviewer added). Action: revisit `allowed_dirs = []` default
+  (currently inherits ADR-6 sandbox-root); per-role path
+  scoping may become worth the config-surface cost.
+- **Soviet-Code reference impl deprecates the pattern.** Action:
+  re-evaluate whether the FA adoption still holds. Unlikely
+  (npm-published, systemd-in-prod for months) but documented.
 
 ## References
 

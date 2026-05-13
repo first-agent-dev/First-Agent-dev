@@ -218,3 +218,33 @@
     R-6 defers code-execution-over-MCP. Lesson: re-evaluate when
     UC5 lands (eval-driven harness iteration) AND OS-level sandbox
     is built out per ADR-6 §Re-evaluation triggers.
+
+### Q-7 amendment 2026-05-13 — Declarative per-role tool whitelist in sandbox.toml
+
+- **Coupling:** Q-7 + Q-6 (ADR-6 sandbox).
+- **Rationale:** Soviet-Code reference impl (`Disentinel/soviet-code`
+  v1.964.0, npm-published, systemd-in-prod) ships exactly this
+  pattern: 9 agent profiles × declarative `allowed_tools` +
+  `extra_dirs` blocks. ADR-7 §11 R-4 reserved `[tool_groups]`
+  forward-compat for this; per-role is the natural finer-grained
+  extension. Mechanically-verifiable role-capability boundary vs
+  prompt-only instruction (the status quo). Closed R-4 as
+  finer-than-groups variant.
+- **Source:** ADR-7 §Amendment 2026-05-13 +
+  [`research/soviet-code-inspiration-2026-05.md`](../research/soviet-code-inspiration-2026-05.md)
+  §0 R-1.
+- **Rejected alternatives:**
+  - **Prompt-only enforcement (status quo).** Reason: not
+    mechanically verifiable; relies on Planner respecting "do
+    not write files" instruction. Lesson: declarative re-opens
+    when a single tier-violation is observed in production
+    traces.
+  - **Defer to v0.2 multi-role.** Reason: cheap to land now
+    (~70 LOC, 0 deps); deferral compounds cost when role count
+    expands. Lesson: not on the critical path of v0.1, but
+    landed now avoids a 2026-Q3 retrofit.
+  - **Adopt soviet-code 9-dept profile granularity.** Reason:
+    FA v0.1 ADR-2 ships 4 roles (Planner / Coder / Debug /
+    Eval); 9-dept granularity is over-engineered for current
+    scope. Lesson: revisit if v0.2 multi-role grows past ~6
+    roles.

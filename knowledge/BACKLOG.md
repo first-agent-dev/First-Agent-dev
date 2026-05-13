@@ -226,6 +226,16 @@
   §9 (re-measurement triggers, item 6 explicitly points here);
   [`project-overview.md` §1.1](./project-overview.md#11-четыре-столпа-цели-project-goal--four-pillars)
   Pillar 4 (iteration via measurement).
+- **Prior-art enforcement (DPC ADR-015, added 2026-05-13):**
+  Before any FA self-modification capability (auto-amend ADR /
+  auto-edit config / auto-evolve skills) lands as an ADR, this
+  eval-harness (I-7) **MUST be operational** AND show external
+  (non-self-reported) fitness signal. Otherwise =
+  «elaborate emptiness» trap (DPC ADR-015 — background evolution
+  worker deleted after 20+ sessions / ~40 proposals with 0
+  measurable improvement; see
+  [`research/dpc-messenger-inspiration-2026-05.md`](./research/dpc-messenger-inspiration-2026-05.md)
+  §0 R-5, §2 Pattern 13, §6 Anti-pattern AP1).
 
 ## I-8 — Mid-tier × First-Agent's own harness bootstrap re-test
 
@@ -289,6 +299,15 @@
   harness existing, the measurement is non-executable; there is
   no good substitute (Arena = different harness; manual
   cross-fork sessions = still Devin's harness underneath).
+- **Prior-art enforcement (DPC ADR-015, added 2026-05-13):**
+  Same constraint as I-7 above. Until I-8 re-test succeeds on
+  FA's own harness, no autonomous self-improvement loop (skill
+  evolution, config mutation, ADR-amendment bots) should ship.
+  Empirical evidence: DPC removed 400 LOC + 7 tools of
+  self-modification infrastructure after 0 of ~40 proposals
+  passed their (insufficient) fitness bar; see
+  [`research/dpc-messenger-inspiration-2026-05.md`](./research/dpc-messenger-inspiration-2026-05.md)
+  §0 R-5 + ADR-015 citation in §2 Pattern 13.
 
 ## I-9 — Convert `knowledge/prompts/repo-audit-playbook.md` into a loadable SKILL
 
