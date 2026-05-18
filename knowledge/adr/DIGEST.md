@@ -124,7 +124,12 @@ hallucinates; reads are de-facto network egress for ~99% remote-API
 config; path-level guard is loud, fast, stoppable; symmetric to
 `~/.fa/repos.toml` PR-write allow-list.
 
-**Amendments.** None.
+**Amendments.**
+
+- **2026-05-13** — `[roles.<name>]` block added to
+  `sandbox.toml` schema (per-role `allowed_tools` whitelist enforced
+  at ADR-7 dispatcher). Companion to ADR-7 §Amendment 2026-05-13.
+  `allowed_dirs` shape-pinned but not exercised in v0.1.
 
 **Source:** [`ADR-6`](./ADR-6-tool-sandbox-allow-list.md).
 
@@ -164,6 +169,13 @@ concrete carriers; single source of truth for every tool PR.
   ships = BACKLOG I-8), §Consequences follow-up work (BACKLOG I-1 /
   I-2 / I-3 = AGENTS.md rule #11 mitigations a / b / c). EXEMPT
   per AGENTS.md §Pre-flight Step 4 (documentation-only).
+- **2026-05-13** — Declarative per-role tool whitelist (B-NEW-1).
+  `[roles.<name>].allowed_tools` in `~/.fa/sandbox.toml`; enforced
+  at dispatcher before `pre_tool` hooks; `E_ROLE_WHITELIST` error
+  on reject. §11 R-4 status updated. Knowledge-layer only
+  (impl lands with inner-loop scaffolding PR). Source:
+  [`research/soviet-code-inspiration-2026-05.md`](../research/soviet-code-inspiration-2026-05.md)
+  §0 R-1, §6.1.
 
 **Source:** [`ADR-7`](./ADR-7-inner-loop-tool-registry.md).
 

@@ -3,14 +3,19 @@
 > **Read this first if you are an LLM agent (Devin, Claude, ChatGPT,
 > Cursor, etc.) starting a new session on this repository.**
 >
-> **Last updated:** 2026-05-12 by Devin session
+> **Last updated:** 2026-05-13 by Devin session
 > [`22479f39c46f4ab7941d2fd667393aad`](https://app.devin.ai/sessions/22479f39c46f4ab7941d2fd667393aad)
-> (port of upstream
+> (ADR-7 §Amendment 2026-05-13 + ADR-6 §Amendment 2026-05-13:
+> declarative per-role tool whitelist, B-NEW-1 from
+> [`research/soviet-code-inspiration-2026-05.md`](./knowledge/research/soviet-code-inspiration-2026-05.md)).
+>
+> **Prior update:** 2026-05-12 (same Devin session) — port of
+> upstream
 > [GrasshopperBoy/First-Agent-fork PR #22](https://github.com/GrasshopperBoy/First-Agent-fork/pull/22)
 > + ADR-7 §Amendment 2026-05-12 cross-referencing
 > [`bootstrap-cost-baseline-2026-05.md`](./knowledge/research/bootstrap-cost-baseline-2026-05.md),
 > earlier landed in main by session
-> [`89c32745c44f47dea679af42ed2d2dd8`](https://app.devin.ai/sessions/89c32745c44f47dea679af42ed2d2dd8)).
+> [`89c32745c44f47dea679af42ed2d2dd8`](https://app.devin.ai/sessions/89c32745c44f47dea679af42ed2d2dd8).
 
 This file is a portable counterpart to the Devin Knowledge note
 "First-Agent — current state pointer". Both contain the same
@@ -49,7 +54,7 @@ changes the project state, update **both**.
 You should now have everything you need. Do not crawl the repo
 manually beyond this point.
 
-## Current state (as of 2026-05-12)
+## Current state (as of 2026-05-13)
 
 - **Project stage:** **Stage 1** of the three-stage evolution
   (documentation + agent development через Devin). See
@@ -122,6 +127,17 @@ manually beyond this point.
     Devin / 70–95 K Arena context, `harness_id` motivation,
     re-evaluation trigger 5 = BACKLOG I-8, BACKLOG I-1 / I-2 /
     I-3 unblocked); documentation-only, no shape change.
+    **Amendment 2026-05-13** — declarative per-role tool
+    whitelist (B-NEW-1): `[roles.<name>].allowed_tools` block
+    in `~/.fa/sandbox.toml`; enforced at dispatcher BEFORE
+    `pre_tool` hooks; reject = `E_ROLE_WHITELIST`. Companion
+    [ADR-6 §Amendment 2026-05-13](./knowledge/adr/ADR-6-tool-sandbox-allow-list.md#amendment-2026-05-13--roles-block-in-sandboxtoml)
+    adds schema. Closes ADR-7 §11 R-4 forward-compat as
+    finer-than-`[tool_groups]` variant. Knowledge-layer only
+    (impl lands with inner-loop scaffolding PR per Next steps
+    item 1). Source:
+    [`research/soviet-code-inspiration-2026-05.md`](./knowledge/research/soviet-code-inspiration-2026-05.md)
+    §0 R-1.
 - **ADR slot reservation.** Closed by ADR-7 above. History on
   the slot: `cross-reference-…-2026-04.md` §11 supersession
   marks on Q-1 / Q-2.
