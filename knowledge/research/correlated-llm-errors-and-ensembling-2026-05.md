@@ -1022,7 +1022,7 @@ findings отсекается как **confirms-existing-design** или
 
 ### 10.1 Triage rationale
 
-Критерии acceptance для R-7..R-9 блоков ниже — primary-source-citable, design-actionable
+Критерии acceptance в §10.2/10.3 — primary-source-citable, design-actionable
 (не только «информационная заметка»), и cross-axis fit с двумя
 из четырёх pillars project-overview.md §1.1 (research-backed implementation,
 pragmatic single-user, most efficient OSS harness, iteration via measurement).

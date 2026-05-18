@@ -356,6 +356,56 @@ v0.1 (manual rotation is fine).
   - `docs/glossary.md` — entry for "sandbox" / "path
     allow-list" (cross-reference §10 R-8).
 
+## Amendments
+
+### Amendment 2026-05-13 — `[roles]` block in sandbox.toml
+
+**Source.** Inspiration note
+[`research/soviet-code-inspiration-2026-05.md`](../research/soviet-code-inspiration-2026-05.md)
+§0 R-1, §6.1, §3 Pattern #1. Companion amendment:
+[ADR-7 §Amendment 2026-05-13](./ADR-7-inner-loop-tool-registry.md#amendment-2026-05-13--declarative-per-role-tool-whitelist-b-new-1)
+(B-NEW-1). Both amendments land in the same PR.
+
+**Change.** Extends `~/.fa/sandbox.toml` with an optional
+`[roles.<name>]` block. Used by the ADR-7 dispatcher
+(`src/fa/inner_loop/loop.py`); **not** evaluated by the
+`SandboxPolicy.check_read` / `check_write` path checks defined
+in §Policy semantics — those remain per-path, per-tool-call.
+
+Schema (informal):
+
+```toml
+[roles.<name>]
+allowed_tools = list[str]   # tool names from ADR-7 §3 catalog
+allowed_dirs  = list[str]   # empty = inherit ADR-6 sandbox-root
+                            # non-empty = restrict to listed globs
+                            # (intersected with sandbox-root)
+```
+
+If `[roles.<active_role>]` is absent, the role inherits the
+full ADR-7 §3 tool catalog and the §Policy semantics
+sandbox-root path scope. Backward-compatible by construction.
+
+**Two checks, two scopes.** This amendment adds the (role, tool)
+pairing check; the §Policy semantics path check remains unchanged.
+A `fs.write_file` call from a role with `allowed_tools` containing
+it still goes through `check_write(path)` before exec. A
+`fs.write_file` call from a role whose `allowed_tools` does NOT
+contain it returns `E_ROLE_WHITELIST` before the path check fires
+(per ADR-7 §Amendment 2026-05-13 enforcement-point spec).
+
+**`allowed_dirs` deferred.** `allowed_dirs = []` (inherit
+sandbox-root) is the only validated default in v0.1. Per-role
+path scoping (e.g. Planner read-only to `~/project/`, Coder
+read-write to `~/project/src/`) is shape-pinned but not
+exercised; v0.2 ADR amendment if needed.
+
+**Subtraction-check.** EXEMPT per AGENTS.md §Pre-flight Step 4:
+schema-only amendment to the `[roles]` block reserved as
+forward-compat by ADR-7 §11 R-4; no new TOML section beyond
+that R-4 surface; the `[read]` / `[write]` / block-list shape
+defined in §Policy file is unchanged.
+
 ## References
 
 - [ADR-1](./ADR-1-v01-use-case-scope.md) §UC1 — coding + PR
