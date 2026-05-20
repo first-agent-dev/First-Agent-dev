@@ -107,6 +107,35 @@ def test_loop_guard_detects_same_path_thrash_across_distinct_attempts() -> None:
     assert "hot.txt" in decision.reason
 
 
+def test_loop_guard_path_thrash_fires_for_non_dict_mapping_params() -> None:
+    """Devin-Review BUG-0005 regression: ``ToolCall.params`` is typed
+    ``Mapping[str, object]``, not ``dict``. An earlier
+    ``isinstance(params, dict)`` guard in ``LoopGuard._record`` silently
+    set ``path_hint=""`` for any non-dict ``Mapping`` (e.g.
+    ``MappingProxyType``), making Detector 2 entirely ineffective for
+    those payloads. This test fixes that case by submitting five
+    distinct-content writes against the same path via
+    ``MappingProxyType``; before the fix the assertion below failed
+    because the guard saw five empty path-hints and Detector 2 never
+    matched the same path twice."""
+
+    from types import MappingProxyType
+
+    guard = LoopGuard(repeat_warn=3, circuit_breaker=5, window=8)
+    for i in range(5):
+        params = MappingProxyType({"path": "hot.txt", "content": f"v{i}\n"})
+        guard.handle(
+            LifecyclePoint.BEFORE_TOOL_EXEC,
+            HookPayload(
+                tool_call=ToolCall(name="fs.write_file", params=params, call_id=f"tc-{i}"),
+            ),
+        )
+    decision = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())
+    assert decision.action == "deny"
+    assert "thrashed" in decision.reason
+    assert "hot.txt" in decision.reason
+
+
 def test_loop_guard_window_drops_old_observations() -> None:
     """Sliding window: older calls fall off and stop counting."""
 

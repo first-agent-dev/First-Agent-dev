@@ -7,9 +7,11 @@ threshold is crossed. The thresholds come from
 per ADR-7 §Amendment 2026-05-20 rule 1) — never magic constants in
 the guard code.
 
-Detectors (ported from Kronos
-``kronos/security/loop_detector.py`` 3-detector shape; see
-``borrow-roadmap-2026-05.md`` §R-2):
+Detectors (subset of the Kronos ``kronos/security/loop_detector.py``
+3-detector shape; see ``borrow-roadmap-2026-05.md`` §R-2). The third
+Kronos detector (no-op observation thrash) is intentionally deferred
+to a later Wave-2/Wave-3 R-N because it needs observation-content
+fingerprinting, which the inner loop does not yet record:
 
 1. **Identical-call repeat.** Same ``(tool_name, params_hash)`` shows
    up ``>= loop_guard_repeat_warn`` times in the trailing window
@@ -99,6 +101,12 @@ class LoopGuard(GuardMiddleware):
 
         if payload.tool_call is None:
             return
+        # ADR-7 §1 typing: ``ToolCall.params`` is ``Mapping[str, object]``,
+        # not specifically ``dict``. Use ``.get`` directly — every other
+        # caller in the package (builtin.py, tools/base.py) does the same.
+        # An earlier ``isinstance(params, dict)`` guard here silently
+        # disabled Detector 2 for non-dict ``Mapping`` payloads
+        # (Devin-Review BUG-0005).
         params = payload.tool_call.params
         path_hint = str(params.get("path", ""))
         observation = _Observation(
