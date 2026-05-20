@@ -34,6 +34,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
+from fa._yaml_subset import strip_inline_comment
+
 DEFAULT_CONFIG_PATH: Path = Path.home() / ".fa" / "config.yaml"
 
 # Five flag names, in the order they appear in
@@ -164,7 +166,10 @@ def load_capabilities(text: str) -> CapabilityLoadResult:
 
         key, _, value = stripped.partition(":")
         key = key.strip()
-        value = value.strip().lower()
+        # YAML inline comments (`true  # enable`) must not pollute the
+        # value — see fa._yaml_subset.strip_inline_comment + Devin Review
+        # finding 2026-05-20 on PR #19.
+        value = strip_inline_comment(value).strip().lower()
 
         if key not in _FLAG_NAMES:
             warnings.append(

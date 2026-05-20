@@ -125,6 +125,50 @@ capabilities:
     assert result.warnings == ()
 
 
+def test_inline_comment_does_not_pollute_boolean_value() -> None:
+    """YAML inline `# comment` MUST be stripped before boolean check.
+
+    Devin Review finding 2026-05-20 on PR #19 — without the strip, a
+    user writing `ENABLE_DYNAMIC_TOOLS: true  # needed for testing`
+    would silently get `False` plus a non-boolean warning. Since
+    ADR-6 calls this file "the single most security-sensitive
+    configuration in the project", the bug had real impact.
+    """
+
+    text = """
+capabilities:
+  ENABLE_DYNAMIC_TOOLS: true  # needed for testing
+  ENABLE_SERVER_OPS: false  # explicit
+"""
+    result = load_capabilities(text)
+    assert result.capabilities.ENABLE_DYNAMIC_TOOLS is True
+    assert result.capabilities.ENABLE_SERVER_OPS is False
+    assert result.warnings == ()
+
+
+def test_inline_comment_with_tab_separator_is_stripped() -> None:
+    """Tab + `#` is also a YAML inline comment per spec §6.6.1."""
+    text = "capabilities:\n  ENABLE_DYNAMIC_TOOLS:\ttrue\t# tab-separated comment\n"
+    result = load_capabilities(text)
+    assert result.capabilities.ENABLE_DYNAMIC_TOOLS is True
+    assert result.warnings == ()
+
+
+def test_hash_without_preceding_whitespace_is_literal_value() -> None:
+    """`foo#bar` is NOT a comment per YAML 1.2 §6.6.1.
+
+    The literal-`#` reading is preserved so that the parser does not
+    over-strip. The resulting value `true#literal` is not a recognised
+    boolean literal, so the flag stays at its default and a
+    CapabilityWarning is emitted — the correct behaviour.
+    """
+    text = "capabilities:\n  ENABLE_DYNAMIC_TOOLS: true#literal\n"
+    result = load_capabilities(text)
+    assert result.capabilities.ENABLE_DYNAMIC_TOOLS is False
+    assert len(result.warnings) == 1
+    assert "true#literal" in result.warnings[0].detail
+
+
 def test_load_capabilities_from_path_missing_file_returns_defaults(
     tmp_path: Path,
 ) -> None:

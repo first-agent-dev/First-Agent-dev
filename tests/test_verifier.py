@@ -116,3 +116,36 @@ def test_load_contract_rejects_empty_required_and_failure_lists() -> None:
     yaml = "target_action: edit_file\n"
     with pytest.raises(ValueError, match="required_trace_events"):
         load_contract(yaml)
+
+
+def test_load_contract_strips_inline_comments_in_scalars_and_lists() -> None:
+    """YAML inline comments must not pollute scalar values or list items.
+
+    Devin Review finding 2026-05-20 on PR #19 — the original parser
+    embedded ``# the edit tool`` and ``# important`` into the parsed
+    values, which would cause every verifier call to fail with
+    ``missing_required_event`` reasons even when the trace was correct.
+    """
+    yaml = """
+target_action: edit_file  # the edit tool
+required_trace_events:
+  - file_write  # important
+  - sandbox_check  # also important
+failure_conditions:
+  - sandbox_violation  # critical
+override_action: force_failure  # default
+"""
+    contract = load_contract(yaml)
+    assert contract.target_action == "edit_file"
+    assert contract.required_trace_events == ("file_write", "sandbox_check")
+    assert contract.failure_conditions == ("sandbox_violation",)
+    assert contract.override_action == "force_failure"
+
+    # Regression guard — round-trip through verify_action passes when
+    # the trace matches the comment-stripped contract.
+    events = [
+        TraceEvent(event_type="sandbox_check", tool="edit_file"),
+        TraceEvent(event_type="file_write", tool="edit_file"),
+    ]
+    result = verify_action(contract, events)
+    assert result.passed is True
