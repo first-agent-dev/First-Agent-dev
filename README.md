@@ -4,9 +4,9 @@
 [devin.ai](https://devin.ai). Этот README — единый ориентир: что за проект, где
 он сейчас и куда движется.
 
-> **Статус:** `scaffolding complete → first module creation`.
-> Feedback-loop поднят; следующий модуль — deterministic chunker для
-> Mechanical Wiki / brain v0.1.
+> **Статус:** `scaffolding complete + Wave-0/Wave-1 docs slate landed → Phase M inner-loop scaffolding (BACKLOG M-1) next`.
+> Feedback-loop поднят; ADR-7/ADR-8 contracts заморожены; следующий PR — Phase-M inner-loop runtime (`src/fa/inner_loop/`)
+> + первый feature module (chunker для Mechanical Wiki / brain v0.1).
 
 ---
 
@@ -59,17 +59,53 @@ posts), MCP-экосистема, и Devin / Claude Code как reference-аге
 - [x] Проведено исследование по ключевым развилкам — итог в
       [`knowledge/llms.txt`](./knowledge/llms.txt) (флэт-индекс всех
       артефактов) и в [`knowledge/research/`](./knowledge/research/).
-- [x] Приняты **ADR-1..ADR-7** (см.
+- [x] Приняты **ADR-1..ADR-8** (см.
       [`knowledge/adr/README.md`](./knowledge/adr/README.md));
       [ADR-7](./knowledge/adr/ADR-7-inner-loop-tool-registry.md)
-      фиксирует inner-loop / tool-registry contract.
+      фиксирует inner-loop / tool-registry contract,
+      [ADR-8](./knowledge/adr/ADR-8-hook-registry.md) добавляет
+      HookRegistry middleware-chain (doc-first; runtime
+      tracked в [BACKLOG M-1](./knowledge/BACKLOG.md#m-1--inner-loop-scaffolding--hookregistry-runtime)).
 - [x] Поднят тулинг (lint/types/tests/CI/pre-commit, `Makefile`).
 - [x] Зафиксирована convention для stacked / sequenced PR'ов
       ([`AGENTS.md` §Stacked / sequenced PRs](./AGENTS.md#stacked--sequenced-prs)).
-- [ ] Написан первый модуль (chunker для Mechanical Wiki).
+- [x] Wave-0 (borrow-roadmap) landed 2026-05-20 (PR
+      [#18](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/18)):
+      ADR-7 / ADR-2 amendments, AGENTS.md cluster, handoff-summarizer
+      prompt, glossary, и три inert Python модуля
+      ([`fa.verifier`](./src/fa/verifier/),
+      [`fa.tools`](./src/fa/tools/),
+      [`fa.hygiene`](./src/fa/hygiene/)) с unit-test suite.
+      Inert = не вызываются до Phase-M (M-1).
+- [x] Wave-1 docs+code (borrow-roadmap) landed 2026-05-20 (PR
+      [#19](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/19)):
+      [ADR-8](./knowledge/adr/ADR-8-hook-registry.md) HookRegistry
+      doc-first, ADR-2 / ADR-6 amendments, capability-flag parser
+      ([`fa.config`](./src/fa/config.py)), pause-file sentinel
+      ([`fa.orchestration.pause`](./src/fa/orchestration/pause.py)),
+      per-tier tool-shape registry
+      ([`knowledge/prompts/tool-shapes.yaml`](./knowledge/prompts/tool-shapes.yaml)).
+- [x] Wave-1 R-20 bash sandbox gate landed 2026-05-20 (PR
+      [#20](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/20)):
+      3-layer pipeline в [`fa.sandbox`](./src/fa/sandbox/) —
+      classifier + per-command validators + symlink-resolved path
+      containment. Port из Aperant TS + Gortex Go. Wiring в
+      inner-loop `run_shell` отложен до BACKLOG M-1.
+- [ ] Написан первый модуль (chunker для Mechanical Wiki) —
+      разблокируется после Phase-M inner-loop scaffolding
+      (BACKLOG M-1).
 
 Нулевое, но важное: первый feature-модуль пишем только после feedback-loop.
-Этот gate закрыт; дальше идёт chunker для v0.1 brain.
+Этот gate закрыт; следующий шаг — **Phase-M inner-loop scaffolding**
+([BACKLOG M-1](./knowledge/BACKLOG.md#m-1--inner-loop-scaffolding--hookregistry-runtime))
+— материализация ADR-7 / ADR-8 контрактов как `src/fa/inner_loop/`
+(registry + loop + hooks). После M-1 разблокируется первый feature-модуль
+(chunker), Wave-2 R-N's (`LoopGuard`, failure-classifier, pre-tool blocker,
+PII walker), и wiring уже стоящих inert модулей
+([`fa.sandbox.bash_gate`](./src/fa/sandbox/),
+[`fa.config.load_capabilities`](./src/fa/config.py),
+[`fa.orchestration.pause`](./src/fa/orchestration/pause.py),
+[`fa.verifier.verify_action`](./src/fa/verifier/)) в hook chain.
 
 ---
 
@@ -166,4 +202,5 @@ posts), MCP-экосистема, и Devin / Claude Code как reference-аге
 ---
 
 *Статус документа — living. Правится по мере изменения состояния
-репо; последняя ревизия — 2026-05-01 (см. git history).*
+репо; последняя ревизия — 2026-05-20 (Wave-0 + Wave-1 docs slate;
+см. git history).*
