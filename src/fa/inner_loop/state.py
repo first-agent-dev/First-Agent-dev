@@ -8,9 +8,34 @@ prompting.
 
 The event schema matches ADR-7 \u00a77 verbatim: ``ts`` (ISO-8601 UTC),
 ``run_id``, ``harness_id``, ``actor``, ``kind``, ``tool_name``,
-``tool_call_id``, ``parent_event_id``, ``content``. ``kind`` is one of
+``tool_call_id``, ``parent_event_id``, ``content``. The ``kind`` field
+is an open enumeration \u2014 the value is appended verbatim by writers,
+no validation. ADR-7 \u00a77 lists the core kinds; subsequent R-N PRs
+have introduced additional kinds wired into specific hooks.
+
+Core kinds (ADR-7 \u00a77):
 ``user_msg | model_msg | tool_call | tool_result | hook_decision |
-audit | approval | error | stop`` per ADR-7 \u00a77.
+audit | approval | error | stop``.
+
+Extension kinds (added by Wave-2 R-Ns; each line names the originating
+writer + the R-N anchor):
+
+- ``run_stopped`` \u2014 :func:`fa.inner_loop.loop.run_session` when a
+  ``BETWEEN_ROUNDS`` or ``AFTER_TOOL_EXEC`` guard denies via
+  ``PermissionError`` (PR #24 BUG-0001 / BUG-0003).
+- ``loop_guard_warn`` \u2014
+  :class:`fa.inner_loop.hooks.loop_guard.LoopGuard` warn channel
+  (R-2; PR #25 ``loop_guard.py``).
+- ``recovery_action`` \u2014
+  :class:`fa.inner_loop.hooks.recovery_observers.FailureClassifierObserver`
+  (R-3; PR #25 ``recovery_observers.py``).
+- ``verification`` \u2014
+  :class:`fa.inner_loop.hooks.builtin.VerifierObserver` failure-row
+  emitter (PR #26 wiring of R-5 DSV).
+
+New writers MUST add their ``kind`` value to this list in the same
+commit (AGENTS.md PR Checklist; matches ADR-7 \u00a77 «schema
+discoverability» intent).
 """
 
 from __future__ import annotations

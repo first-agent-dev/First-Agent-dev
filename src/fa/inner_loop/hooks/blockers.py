@@ -31,13 +31,20 @@ All three blockers share the same shape:
   the audit row); >0 => gate subsequent calls to the same
   ``tool_name`` until the window elapses.
 
-The blockers are **dormant on baseline M-1 tools** (none of
-``hook_deny`` / ``read_failed`` / ``write_failed`` / ``command_failed``
-/ ``command_timeout`` / ``invalid_params`` / ``internal_error``
-matches the detectors); they activate when the LLM driver T-2 wires
-API / browser / git tools that emit rate-limit / lockfile / auth
-error codes natively. Landing them now keeps the family-disjoint
-ADR-7 §Amendment 2026-05-20 rule 3 contract honoured for future
+The blockers are **dormant on baseline M-1 tools by error code** —
+none of ``hook_deny`` / ``read_failed`` / ``write_failed`` /
+``command_failed`` / ``command_timeout`` / ``invalid_params`` /
+``internal_error`` matches the detectors' code sets, and the
+:class:`LockfileBlocker` matches *only* contention-specific message
+patterns (``could not get lock``, ``unable to create *.lock``,
+``blocking waiting for file lock``, ``resource temporarily
+unavailable``, ``another (instance|process) ... (lock|running)``)
+rather than bare ``.lock`` substrings, so a baseline ``fs.run_bash``
+error like ``No such file or directory: Cargo.lock`` does **not**
+trigger gating. They activate when the LLM driver T-2 wires API /
+browser / git tools that emit rate-limit / lockfile / auth error
+codes natively. Landing them now keeps the family-disjoint ADR-7
+§Amendment 2026-05-20 rule 3 contract honoured for future
 LLM-using hooks without churning the registry shape.
 
 References:
@@ -183,16 +190,25 @@ _RATE_LIMIT_MESSAGE = re.compile(
     re.IGNORECASE,
 )
 _LOCKFILE_MESSAGE = re.compile(
-    # Cover the three dominant lockfile patterns the agent ecosystem
-    # sees: apt (``E: Could not get lock``), cargo/npm (`.lock` /
-    # ``Resource temporarily unavailable``), and generic git
-    # (``index.lock``). The regex is case-insensitive and anchored on
-    # the word boundaries so partial substrings inside larger English
-    # sentences still match.
+    # Match only *contention-specific* lockfile signatures so a baseline
+    # ``fs.run_bash`` failure that merely mentions a ``.lock`` filename
+    # (``No such file or directory: Cargo.lock``, ``Permission denied:
+    # package-lock.json``, ``Cargo.lock not found``) does not falsely
+    # trip the gate. Earlier versions of this regex included a bare
+    # ``\.lock\b`` alternative — that matched any error message naming
+    # a lock file rather than only contention. The five alternatives
+    # below cover apt (``E: Could not get lock``), git
+    # (``Unable to create '*.lock': File exists``), cargo
+    # (``Blocking waiting for file lock on package cache``), generic
+    # POSIX (``Resource temporarily unavailable``), and the npm /
+    # cargo style ``another instance / process is already running``
+    # message. Case-insensitive; word-boundary anchors keep partial
+    # substrings inside larger English sentences matching.
     r"(could[ _-]?not[ _-]?(get|acquire)[ _-]?lock"
+    r"|unable[ _-]?to[ _-]?create[ _\-\'\"\/A-Za-z0-9.]*?\.lock"
+    r"|blocking[ _-]?waiting[ _-]?for[ _-]?file[ _-]?lock"
     r"|resource[ _-]?temporarily[ _-]?unavailable"
-    r"|\.lock\b"
-    r"|lockfile)",
+    r"|another[ _-]?(instance|process)[ \-A-Za-z0-9_\.\'\"]+(lock|running))",
     re.IGNORECASE,
 )
 _AUTH_EXPIRED_CODES: frozenset[str] = frozenset(
@@ -249,10 +265,21 @@ class RateLimitBlocker(BlockerMiddleware):
 class LockfileBlocker(BlockerMiddleware):
     """Suppress repeat tool calls when a lockfile-contention pattern fires.
 
-    Detects the three dominant signatures (apt, cargo/npm, git) via
-    :data:`_LOCKFILE_MESSAGE`. The error ``code`` channel is not
-    used — current handler implementations never set a structured
-    lockfile code, so message matching is the only signal available.
+    Detects five contention-specific signatures via
+    :data:`_LOCKFILE_MESSAGE`: apt (``Could not get lock``), git
+    (``Unable to create *.lock``), cargo (``Blocking waiting for
+    file lock``), generic POSIX (``Resource temporarily unavailable``),
+    and npm / cargo (``another instance|process ... (lock|running)``).
+    The error ``code`` channel is not used — current handler
+    implementations never set a structured lockfile code, so message
+    matching is the only signal available.
+
+    The regex is intentionally *contention-tight*: a bare ``.lock``
+    filename mention (``No such file or directory: Cargo.lock``,
+    ``Permission denied: package-lock.json``) does **not** trip the
+    gate. Future tools that emit a structured ``lockfile_busy``
+    ``error.code`` should add it to a new ``_LOCKFILE_CODES`` set
+    rather than relaxing the message regex.
     """
 
     category = BlockerCategory.LOCKFILE

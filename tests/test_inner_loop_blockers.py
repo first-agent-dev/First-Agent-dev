@@ -228,6 +228,84 @@ def test_lockfile_blocker_ignores_unrelated_failures() -> None:
     assert decision.action == "allow"
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        # Plain "filename ends in .lock" mention \u2014 not a contention error.
+        "No such file or directory: Cargo.lock",
+        # Permission error on a lockfile filename \u2014 not contention.
+        "Permission denied: package-lock.json",
+        # Missing-lockfile error \u2014 not contention.
+        "Cargo.lock not found",
+        # File-not-found mentioning the word "lock" but not contention.
+        "ls: cannot access '/repo/.git/index.lock': No such file or directory",
+    ],
+)
+def test_lockfile_blocker_does_not_false_positive_on_lock_filenames(message: str) -> None:
+    """Bare ``.lock`` filename mentions do NOT trip the blocker.
+
+    Devin-Review finding: the old regex included a bare ``\\.lock\\b``
+    alternative which matched any error message naming a lock file
+    rather than only contention. The tightened regex (PR #26 follow-up)
+    matches only contention-specific signatures (``could not get lock``,
+    ``unable to create *.lock``, ``blocking waiting for file lock``,
+    ``resource temporarily unavailable``, ``another (instance|process)
+    ... (lock|running)``). These four messages would have falsely
+    tripped the gate before the fix \u2014 they must not now.
+    """
+
+    clock = _FakeClock(start=100.0)
+    blocker = LockfileBlocker(suppression_seconds=5.0, time_source=clock)
+
+    observed = _payload("fs.run_bash", error_code="command_failed", error_message=message)
+    blocker.handle(LifecyclePoint.AFTER_TOOL_EXEC, observed)
+    decision = blocker.handle(
+        LifecyclePoint.BEFORE_TOOL_EXEC,
+        HookPayload(tool_call=RegistryToolCall(name="fs.run_bash", params={}, call_id="tc-2")),
+    )
+    assert (
+        decision.action == "allow"
+    ), f"Lockfile blocker false-positive on non-contention message: {message!r}"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # cargo contention signature.
+        "Blocking waiting for file lock on package cache",
+        # npm contention signature using "another process ... lock".
+        "npm WARN another process is currently running and holding the lock",
+        # cargo contention via "another instance ... running".
+        "error: another instance of cargo is already running",
+        # Generic POSIX file-lock contention.
+        "pthread_mutex_lock: Resource temporarily unavailable",
+    ],
+)
+def test_lockfile_blocker_catches_contention_specific_signatures(message: str) -> None:
+    """The new contention-specific signatures still trip the blocker.
+
+    Counterpart to ``does_not_false_positive_on_lock_filenames`` \u2014
+    verifies the tightened regex still matches every real contention
+    pattern the old regex caught (apt + git are already covered by
+    the two pattern-named tests above; this fills in cargo / npm /
+    generic).
+    """
+
+    clock = _FakeClock(start=100.0)
+    blocker = LockfileBlocker(suppression_seconds=5.0, time_source=clock)
+
+    observed = _payload("fs.run_bash", error_code="command_failed", error_message=message)
+    blocker.handle(LifecyclePoint.AFTER_TOOL_EXEC, observed)
+    decision = blocker.handle(
+        LifecyclePoint.BEFORE_TOOL_EXEC,
+        HookPayload(tool_call=RegistryToolCall(name="fs.run_bash", params={}, call_id="tc-2")),
+    )
+    assert (
+        decision.action == "deny"
+    ), f"Lockfile blocker missed contention-specific signature: {message!r}"
+    assert "lockfile" in decision.reason
+
+
 # --- AuthExpiredBlocker -----------------------------------------------------
 
 
