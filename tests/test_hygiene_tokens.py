@@ -25,6 +25,18 @@ def test_shell_verb_hard_skip() -> None:
         assert classify_token(verb) == TokenKind.SHELL_VERB
 
 
+def test_shell_verb_hard_skip_is_case_insensitive() -> None:
+    """Capitalised shell verbs MUST also be skipped.
+
+    Devin Review finding 2026-05-20 on PR #18 — module docstring says
+    "Never treated as identifiers even when uppercased" but the lookup
+    was case-sensitive, so `Git` / `GREP` / `Ls` fell through to the
+    uppercase-letter heuristic and were misclassified as IDENTIFIER.
+    """
+    for verb in ("Git", "GIT", "Grep", "GREP", "Ls", "LS", "Cat"):
+        assert classify_token(verb) == TokenKind.SHELL_VERB, verb
+
+
 def test_prose_lowercase_word_is_not_identifier() -> None:
     assert classify_token("older_than") == TokenKind.PROSE
     assert classify_token("search_symbols") == TokenKind.PROSE
