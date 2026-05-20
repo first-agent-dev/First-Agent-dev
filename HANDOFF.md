@@ -21,7 +21,20 @@
 > orchestrator itself is DEFER per roadmap §2.9). Same commit
 > fixes a latent loader gap that silently discarded QA + R-4
 > suppression keys from `~/.fa/config.yaml`. 411 tests passing
-> (+29 over PR-2). Next session: review PR-3 + plan Wave-2 stack #3.
+> (+29 over PR-2). Post-PR Devin-Review fix in `95c392a` accepts
+> `0` for `*_suppression_seconds` keys (observe-only mode);
+> 414 tests passing.
+>
+> **Two PR-26 review findings deferred to the next session** —
+> see §Open review threads at the end of §Current state. Default
+> first action for the next session: address both, push, then
+> start Wave-3 stack #1.
+>
+> Two attachments produced for the next-session context (not
+> committed to the repo — paste into the next session prompt):
+> `wave-2-session-audit.md` (what landed) and
+> `fa-wave-3-remaining-work.md` (combined borrow-roadmap + T-N
+> minus done, with 7-column status table + Wave-3 grouping).
 >
 > **Prior update:** 2026-05-20 by Devin session
 > [`5f23505ec2a04caeb232bfe8d391010e`](https://app.devin.ai/sessions/5f23505ec2a04caeb232bfe8d391010e)
@@ -384,6 +397,45 @@ manually beyond this point.
     work. Not a research-briefing note — §0 exempt per AGENTS.md
     rule #8. Re-measurement triggers in §9 (items 5-6 cross-link
     BACKLOG I-7 / I-8).
+
+## Open review threads (carry-over for next session)
+
+Two PR-26 Devin-Review findings were deferred from the 2026-05-20
+Wave-2 stack #2 session per user redirect. Both are real but small;
+the next session's first action should be to bundle them into a
+single commit, push, and reply to both threads.
+
+1. **🚩 Lockfile regex `.lock\b` over-broad** — comment
+   [`ANALYSIS_pr-review-job-7fbe842881524291a9fac2aebdd78876_0002`](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/26#discussion_r-tbd)
+   on
+   [`src/fa/inner_loop/hooks/blockers.py:185-197`](./src/fa/inner_loop/hooks/blockers.py).
+   The `_LOCKFILE_MESSAGE` regex includes `\.lock\b` as an
+   alternative, which falsely matches non-contention error messages
+   that merely mention lock-filenames (e.g. `Cargo.lock not found`,
+   `Permission denied: package-lock.json`). Fix: drop bare
+   `\.lock\b` / bare `lockfile`; add contention-specific
+   alternatives (`unable to create.*\.lock`,
+   `blocking waiting for file lock`,
+   `another (instance\|process).*(lock\|running)`). Add 3 negative
+   regression tests (the false-positive cases above) + 2 positive
+   (git `Unable to create '.../index.lock': File exists`, cargo
+   `Blocking waiting for file lock on package cache`).
+
+2. **📝 BlockerMiddleware AFTER_TOOL_EXEC trace-label semantic
+   mismatch** — comment
+   [`ANALYSIS_pr-review-job-7fbe842881524291a9fac2aebdd78876_0001`](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/26#discussion_r-tbd)
+   on
+   [`src/fa/inner_loop/hooks/blockers.py:162-168`](./src/fa/inner_loop/hooks/blockers.py).
+   The base `BlockerMiddleware.handle()` returns `Decision.allow()`
+   at `AFTER_TOOL_EXEC` after recording an observation, so the
+   dispatch trace records `"allow"` where semantically it means
+   «observed». Bot itself frames this as «functional, audit-trail
+   confusion». Recommended disposition: docstring-only clarification
+   in `BlockerMiddleware` explaining the «GuardMiddleware that
+   observes at AFTER_TOOL_EXEC» pattern, until a second observe-
+   while-guarding middleware materializes that would justify the
+   `HookRegistry.dispatch` trace-label change. User decision needed
+   if next session wants to apply the trace-label change instead.
 
 ## Next steps (intended order)
 
