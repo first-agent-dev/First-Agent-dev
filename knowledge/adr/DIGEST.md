@@ -66,6 +66,18 @@ for v0.1.
   link to [ADR-7 §Amendment 2026-05-20](./ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
   rule 4 (same family-disjoint rule generalised to LLM-using
   hooks).
+- **2026-05-20 (Wave-1)** — Per-tier tool-shape registry
+  ([`knowledge/prompts/tool-shapes.yaml`](../prompts/tool-shapes.yaml)) +
+  role-switch handoff one-liner. «Tool shape follows the
+  model's training distribution» — anthropic / openai /
+  qwen / deepseek / glm / kimi families each get one entry
+  with `family:` / `shape.edit:` / `shape.tool_call_format:` /
+  `handoff_one_liner:`. Harness injects the *previous* role's
+  one-liner into the *next* role's prompt on every role-switch
+  to prevent cargo-culting cross-family shapes. Read-only
+  metadata; no provider translation. Source:
+  [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-18.
 
 **Source:** [`ADR-2`](./ADR-2-llm-tiering.md).
 
@@ -140,6 +152,18 @@ config; path-level guard is loud, fast, stoppable; symmetric to
   `sandbox.toml` schema (per-role `allowed_tools` whitelist enforced
   at ADR-7 dispatcher). Companion to ADR-7 §Amendment 2026-05-13.
   `allowed_dirs` shape-pinned but not exercised in v0.1.
+- **2026-05-20** — Five capability flags (deny-by-default opt-in)
+  added to `~/.fa/config.yaml` under top-level `capabilities:`:
+  `ENABLE_DYNAMIC_TOOLS`, `REQUIRE_DYNAMIC_TOOL_SANDBOX`,
+  `ENABLE_MCP_GATEWAY_MANAGEMENT`, `ENABLE_DYNAMIC_MCP_SERVERS`,
+  `ENABLE_SERVER_OPS`. All default `False`; verbatim from Kronos
+  `kronos/config.py:62-69`. Layer-1 capability opt-in is AND-ed
+  with Layer-2 per-role `allowed_tools` (§Amendment 2026-05-13)
+  at the dispatcher. Implementation: `src/fa/config.py` ships
+  with this amendment as a frozen `Capabilities` dataclass +
+  YAML parser. Source:
+  [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-21.
 
 **Source:** [`ADR-6`](./ADR-6-tool-sandbox-allow-list.md).
 
@@ -203,6 +227,35 @@ concrete carriers; single source of truth for every tool PR.
   §R-7 / §R-28 / §R-29 / §R-30 + §R-23.
 
 **Source:** [`ADR-7`](./ADR-7-inner-loop-tool-registry.md).
+
+## ADR-8 — HookRegistry middleware chain (accepted 2026-05-20; doc-first)
+
+**Decision.** Promote the ADR-7 §8 mini hook-pipeline to a
+first-class HookRegistry contract. **Five lifecycle points**
+(`BETWEEN_ROUNDS` / `BEFORE_LLM_CALL` / `AFTER_LLM_CALL` /
+`BEFORE_TOOL_EXEC` / `AFTER_TOOL_EXEC`). **Two middleware kinds:**
+`GuardMiddleware` (may deny / modify; errors propagate) and
+`ObserverMiddleware` (read-only; errors swallowed at DEBUG).
+Dispatcher: ordered chain, first-deny short-circuit, one
+mutation per dispatch (inherits ADR-7 §8), family-disjoint
+rule enforced at `register()` time per
+[ADR-2 §Amendment 2026-05-20](./ADR-2-llm-tiering.md#amendment-2026-05-20--eval-role-family-disjoint--primary-source-citation)
++ [ADR-7 §Amendment 2026-05-20](./ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule).
+**Doc-only in this PR;** runtime tracked in BACKLOG M-1
+(inner-loop scaffolding). v0.1 hooks (`SandboxHook`,
+`ApprovalHook`, `AuditHook`) migrate to `GuardMiddleware` /
+`ObserverMiddleware` subclasses without semantics change once
+the runtime lands. **Rationale.** 8-project convergence (DPC
+`dpc_agent/hooks.py` + Gortex `internal/hooks/dispatch.go` +
+6 cited in DPC ADR-007); Wave-2 work (R-2 `LoopGuard`, R-3
+failure-classifier, R-4 pre-tool blocker, R-22 PII walker)
+shares this exact substrate. Source:
+[`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+§R-1.
+
+**Amendments.** None.
+
+**Source:** [`ADR-8`](./ADR-8-hook-registry.md).
 
 ## See also
 

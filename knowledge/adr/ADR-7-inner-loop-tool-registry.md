@@ -520,6 +520,19 @@ implemented in v0.1** per semi-autonomous-agents §8.5
 future Reflection / UC5 ADR and may be added by amendment
 without breaking the v0.1 contract.
 
+**Registry-form contract.** The shape above (two `pre_tool`
+hooks + one `post_tool` hook, first-deny short-circuit, one
+mutation per dispatch) is the **doc-first** v0.1 form of the
+HookRegistry middleware chain. The five-point lifecycle,
+`GuardMiddleware` vs `ObserverMiddleware` split, and
+`register()` family-disjoint enforcement are frozen as
+documentation in [ADR-8](./ADR-8-hook-registry.md) (2026-05-20).
+The runtime that builds the registry against ADR-8 is BACKLOG
+M-1 (inner-loop scaffolding); after it lands, this §8
+becomes a cross-ref to ADR-8 §5 "Migration plan from v0.1
+inline hooks" and the §8 hook list collapses to that one
+mapping row.
+
 ### 9. Loop invariant — prompt assembly
 
 Per harness-research R-8 (Option (i), TAKE). The static layered

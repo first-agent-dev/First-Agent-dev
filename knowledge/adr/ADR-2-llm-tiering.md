@@ -487,6 +487,114 @@ extractor lands.
   DPC field experience continues to support it, drop it if
   the empirical case collapses.
 
+### Amendment 2026-05-20 (Wave-1) — Per-tier tool-shape registry + role-switch handoff one-liner
+
+**Source.** Implementation roadmap
+[`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+§R-18 (Wave 1 — independent of HookRegistry; «tool shape follows
+the model's training distribution» rule).
+
+**Problem.** §Amendment 2026-04-29 introduces the
+`tool_protocol` field and the «native-by-default» rule, but
+silently assumes one *family* of edit-shape is good enough for
+all tiers. Empirically (per `borrow-roadmap-2026-05.md` §R-18
++ the *errors* axis of Cornell P-1 / Simula P-2 cited in the
+§Amendment 2026-05-20 block above), tool shape follows the
+model's training distribution:
+
+- Anthropic family — string-replace edits + `tool_use` blocks.
+- OpenAI / DeepSeek families — patch-based edits + function-
+  calling.
+- Qwen / GLM families — raw JSON tool calls + string-replace
+  edits (the post-training distribution they were RL'd on).
+- Kimi family — string-replace edits + OpenAI-compatible
+  function-calling.
+
+Maintaining one consolidated edit-shape for *all* tiers
+degrades 5-15% on cross-family models per primary source.
+This amendment makes the per-tier shape an explicit registry
+plus a one-liner that fires on role-switch handoff.
+
+**Decision.** Two rules:
+
+1. **Per-tier tool-shape registry.**
+   [`knowledge/prompts/tool-shapes.yaml`](../prompts/tool-shapes.yaml)
+   ships ONE entry per family currently routed in the ADR-2
+   tier table (anthropic / openai / qwen / deepseek / glm /
+   kimi at the time of writing — see file header for the
+   stability rule). Each entry has `family:`, `shape.edit:`,
+   `shape.tool_call_format:`, and a quoted
+   `handoff_one_liner:`. This is **NOT** a full provider
+   translation layer — it is a lookup table the harness reads
+   once per turn to know which edit-shape to ask for.
+2. **Role-switch handoff one-liner.** When the inner loop
+   switches roles (Planner → Coder, Coder → Eval, …), the
+   harness MUST inject the **previous** role's
+   `handoff_one_liner` into the next role's system prompt
+   (rendered verbatim in English; one short paragraph). The
+   one-liner template is: *"The previous role spoke as a
+   `<family>`-family model using `<shape.edit>` edits and
+   `<shape.tool_call_format>`. Ignore that shape; use the
+   tool shape native to your own family."* Quoting the
+   previous role's shape prevents the next role from cargo-
+   culting it; the explicit «ignore that shape» is the bit
+   that fires.
+
+**Scope.** v0.1 ADR-2 tier picks (Eval / Planner / Coder /
+Debug). When a new tier joins (e.g. UC5 Reflector), add ONE
+row to `tool-shapes.yaml` and reference the family in this
+amendment without rewriting the registry. Per-call
+overrides (e.g. one-off model swap for benchmarking) MUST
+edit `tool-shapes.yaml` rather than skip the registry —
+audit trail tied to one file is the whole point.
+
+**What this amendment does NOT do.**
+
+- It does NOT translate function-call schemas across
+  families. A Planner emitting an Anthropic `tool_use` block
+  is not converted to an OpenAI function call for the next
+  Coder turn — each role asks the LLM for its own native
+  shape. The handoff one-liner is the cheap «do not copy»
+  instruction; that is sufficient.
+- It does NOT bind to a specific tool-call parser library.
+  The harness still uses whichever parsing path it already
+  has (per ADR-2 §Amendment 2026-04-29
+  `protocol == "native"`); `tool-shapes.yaml` is read-only
+  metadata.
+- It does NOT replace ADR-2 §Amendment 2026-04-29 — that
+  amendment still pins `protocol = "native"` as default;
+  this one specifies *which* native shape per family.
+
+**Subtraction-check (AGENTS.md §Pre-flight Step 4).**
+
+- Removing what makes this redundant? — None. ADR-2
+  §Amendment 2026-04-29 implies one native shape per tier
+  but does not enumerate; no other registry covers the
+  per-family shape mapping. The closest precedent is
+  Aperant's per-model tool-call adapter (separate file in
+  `apps/desktop/src/main/ai/providers/`), which is structurally
+  identical but TS-side.
+- Capability lost if omitted? — Sub-100k-token sessions on
+  cross-family routings (current ADR-2 default) lose 5-15%
+  accuracy on `string_replace` vs `patch` mismatches; no
+  audit trail of which tier was asked for which shape.
+- OSS precedent for not having it? — ampcode (single
+  Anthropic family; no per-family registry needed) and DPC
+  (single OpenAI-compatible family; same). Neither has
+  FA's cross-family workload.
+
+**Reversal triggers.**
+
+- A future FA-workload eval (post-UC5) shows ≤2% gain from
+  per-family tool-shape selection vs a single
+  `string_replace + raw_json` baseline → drop the registry,
+  keep the §Amendment 2026-04-29 native-by-default rule
+  unchanged.
+- A new provider's family does NOT fit the shape categories
+  enumerated above (e.g. some future native MCP-only family)
+  → add a row to `tool-shapes.yaml` and amend this section
+  in the same PR.
+
 ## References
 
 - [`project-overview.md`](../project-overview.md) §6 (key constraints — LLM providers).
