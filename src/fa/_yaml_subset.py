@@ -46,15 +46,24 @@ def strip_inline_comment(value: str) -> str:
     - ``"foo#bar"`` → ``"foo#bar"`` (no preceding whitespace; not a
       comment — treated as literal value).
     - ``"foo #bar"`` → ``"foo"`` → ``"foo"`` after caller ``.strip()``.
+    - ``"true\\t# enable # more"`` → ``"true"`` → ``"true"`` after
+      caller ``.strip()`` (tab-then-``#`` comes before space-then-``#``
+      so the helper picks the earlier comment start).
     - ``""`` → ``""``.
     """
 
-    comment_idx = value.find(" #")
-    if comment_idx == -1:
-        # Also handle a tab before ``#`` per YAML 1.2 §6.6.1 (whitespace,
-        # not strictly a literal space). This is the conservative reading.
-        tab_idx = value.find("\t#")
-        if tab_idx == -1:
-            return value
+    # Whitespace before ``#`` is required per YAML 1.2 §6.6.1; the
+    # whitespace can be a literal space or a tab. We have to inspect
+    # BOTH candidate positions and pick the earlier one — otherwise a
+    # tab-then-``#`` value with a later space-then-``#`` (e.g.
+    # ``"true\t# enable # more"``) would silently strip from the wrong
+    # comment start. Devin Review finding 2026-05-20 on PR #19.
+    space_idx = value.find(" #")
+    tab_idx = value.find("\t#")
+    if space_idx == -1 and tab_idx == -1:
+        return value
+    if space_idx == -1:
         return value[:tab_idx]
-    return value[:comment_idx]
+    if tab_idx == -1:
+        return value[:space_idx]
+    return value[: min(space_idx, tab_idx)]
