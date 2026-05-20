@@ -268,15 +268,41 @@ def test_modify_to_escape_is_caught_by_sandbox_replay(tmp_path: Path) -> None:
     assert not escape_target.exists()
 
 
+class _PathRecordingGuard(GuardMiddleware):
+    """Test spy: opts into ``revalidates_after_modify`` and records the
+    ``path`` param it observed on every dispatch (baseline + replay)."""
+
+    attaches_to = (LifecyclePoint.BEFORE_TOOL_EXEC,)
+    revalidates_after_modify = True
+
+    def __init__(self, *, name: str = "path-recorder") -> None:
+        self.name = name
+        self.observed_paths: list[str] = []
+
+    def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
+        del point
+        assert payload.tool_call is not None
+        self.observed_paths.append(str(payload.tool_call.params.get("path", "")))
+        return Decision.allow()
+
+
 def test_dispatch_trace_records_sandbox_replay(tmp_path: Path) -> None:
-    """The dispatch trace marks replayed guards with an ``@replay`` suffix
-    so an operator can tell baseline vs revalidation rows apart."""
+    """The replay is a real second dispatch against the mutated payload —
+    not just a trace-label cosmetic. We register the recording spy BEFORE
+    the mutator so the spy ran-then-must-replay-after-modify; the spy
+    records exactly two observed payloads and the second one carries the
+    mutator's new ``path``. The ``sandbox@replay`` trace label is also
+    kept as a regression check on the operator-facing trace surface."""
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
     registry = build_baseline_registry(workspace)
     hooks = HookRegistry()
+    recorder = _PathRecordingGuard()
+    # SandboxHook + recorder both opt into revalidates_after_modify; both
+    # must observe the mutated payload after the mutator fires.
     hooks.register(SandboxHook(workspace))
+    hooks.register(recorder)
     hooks.register(_PathMutatorGuard("kept-in-ws.txt"))
     state = SessionState(
         workspace_root=workspace, run_id="t-trace", log=EventLog(workspace / "ev.jsonl")
@@ -296,5 +322,17 @@ def test_dispatch_trace_records_sandbox_replay(tmp_path: Path) -> None:
     )
 
     assert results[0].error is None
+
+    # Behavioural check: the recorder ran twice and the second pass saw
+    # the mutator's rewrite. If revalidates_after_modify silently no-ops
+    # (or replays against the pre-mutation payload), this list is
+    # ``['original.txt']`` or ``['original.txt', 'original.txt']`` and
+    # the test fails with a diagnosable message.
+    assert recorder.observed_paths == ["original.txt", "kept-in-ws.txt"]
+
+    # Operator-facing trace surface: replayed guards carry an ``@replay``
+    # suffix so audit consumers can tell baseline vs revalidation rows
+    # apart. Both opt-in guards should appear in the trace.
     decisions = [record.middleware for record in hooks.dispatch_trace]
     assert "sandbox@replay" in decisions
+    assert "path-recorder@replay" in decisions
