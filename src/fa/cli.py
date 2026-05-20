@@ -129,7 +129,8 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
         ),
         ToolCall(
             name="fs.run_bash",
-            params={"command": f"test -f {args.output}"},
+            params={"command": f"test -f {__import__('shlex').quote(args.output)}"},
+
             call_id="tc-bash",
         ),
     )
