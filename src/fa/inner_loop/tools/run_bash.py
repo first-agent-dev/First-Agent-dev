@@ -18,15 +18,19 @@ def build_run_bash_tool(workspace_root: Path) -> ToolSpec:
         except ValueError as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
-        completed = subprocess.run(
-            command,
-            cwd=root,
-            shell=True,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=root,
+                shell=True,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            return ToolResult.fail("command_timeout", "bash command timed out after 30s", retryable=True)
+
         summary = f"bash exited {completed.returncode}"
         result = {
             "returncode": completed.returncode,
