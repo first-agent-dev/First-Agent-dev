@@ -100,7 +100,7 @@ class LoopGuard(GuardMiddleware):
         if payload.tool_call is None:
             return
         params = payload.tool_call.params
-        path_hint = str(params.get("path", "")) if isinstance(params, dict) else ""
+        path_hint = str(params.get("path", ""))
         observation = _Observation(
             tool_name=payload.tool_call.name,
             params_hash=canonical_params_hash(payload.tool_call.name, params),
