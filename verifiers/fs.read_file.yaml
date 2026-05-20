@@ -1,0 +1,25 @@
+# Verifier contract for ``fs.read_file`` (R-5).
+#
+# Schema documented in ``src/fa/verifier/verify_action.py`` top
+# docstring and in ``knowledge/research/borrow-roadmap-2026-05.md`` §R-5.
+# ``required_trace_events`` is empty for this baseline tool because
+# the M-1 inner loop does not yet emit per-step trace events from
+# tool bodies (only ``tool_result`` is currently projected by the
+# ``VerifierObserver``); the contract therefore only checks
+# ``failure_conditions`` against the ``ToolResult.error.code`` set.
+# Tool-side event emission lands when the LLM driver T-2 wires
+# observation-event projection — at that point the
+# ``required_trace_events`` list will be extended in place rather
+# than restructured.
+#
+# Failure conditions match the canonical ``ToolResult.error.code``
+# values emitted by the handler + hook + registry layers (see the
+# table in ``knowledge/llms.txt`` §Inner-loop runtime):
+target_action: fs.read_file
+required_trace_events: []
+failure_conditions:
+  - hook_deny         # any GuardMiddleware denial (SandboxHook, Approval, …)
+  - read_failed       # handler OSError / PermissionError / ValueError
+  - invalid_params    # JSON-Schema validation OR line-window validation
+  - internal_error    # registry handler-exception wrap
+override_action: force_failure

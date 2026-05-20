@@ -16,8 +16,18 @@ from fa.inner_loop import (
     load_runtime_limits_from_path,
     run_session,
 )
-from fa.inner_loop.hooks import AuditHook, HookRegistry, LoopGuard, SandboxHook
+from fa.inner_loop.hooks import (
+    AuditHook,
+    AuthExpiredBlocker,
+    HookRegistry,
+    LockfileBlocker,
+    LoopGuard,
+    RateLimitBlocker,
+    SandboxHook,
+    VerifierObserver,
+)
 from fa.inner_loop.tools import build_baseline_registry
+from fa.verifier import load_contracts_from_dir
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -137,8 +147,26 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
             window=limits.loop_guard_window,
         )
     )
+    # R-4 BlockerMiddleware family: dormant on baseline tools (their
+    # error codes don't match the rate-limit / lockfile / auth-expired
+    # signatures) but the chain is wired so future API / browser / git
+    # tools inherit the contract. The blockers attach to both BEFORE
+    # and AFTER lifecycle points; ordering is `Sandbox -> LoopGuard ->
+    # blockers` so non-progress patterns short-circuit before blocker
+    # observations land.
+    hooks.register(RateLimitBlocker(suppression_seconds=limits.rate_limit_suppression_seconds))
+    hooks.register(LockfileBlocker(suppression_seconds=limits.lockfile_suppression_seconds))
+    hooks.register(AuthExpiredBlocker(suppression_seconds=limits.auth_expired_suppression_seconds))
     audit = AuditHook(event_log=log)
     hooks.register(audit)
+    # R-5 DSV: load every YAML contract under ``verifiers/`` so the
+    # ``VerifierObserver`` can override LLM-claimed success on contract
+    # mismatch (force_failure). Missing directory = empty contract map
+    # = observer runs as a no-op, which keeps the smoke entrypoint
+    # robust when the workspace is a fresh clone without contracts.
+    contracts = load_contracts_from_dir(workspace / "verifiers")
+    if contracts:
+        hooks.register(VerifierObserver(contracts=contracts, event_log=log))
     state = SessionState(workspace_root=workspace, run_id="cli-smoke", log=log)
     calls = (
         ToolCall(name="fs.read_file", params={"path": args.input}, call_id="tc-read"),

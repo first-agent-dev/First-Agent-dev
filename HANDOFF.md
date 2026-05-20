@@ -5,6 +5,26 @@
 >
 > **Last updated:** 2026-05-20 by Devin session
 > [`5f23505ec2a04caeb232bfe8d391010e`](https://app.devin.ai/sessions/5f23505ec2a04caeb232bfe8d391010e)
+> — **PR-3 / Wave-2 stack #2** stacks on PR
+> [#25](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/25)
+> and lands three more R-Ns from
+> [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+> §3: **R-4 pre-tool blockers** (`BlockerMiddleware` base + three
+> subclasses — `RateLimitBlocker`, `LockfileBlocker`,
+> `AuthExpiredBlocker` — observe at `AFTER_TOOL_EXEC` + gate at
+> `BEFORE_TOOL_EXEC` with suppression windows from `RuntimeLimits`),
+> **R-5 DSV YAML contracts** (`load_contracts_from_dir` batch loader
+> + canonical `verifiers/*.yaml` for the three M-1 tools; smoke CLI
+> seeds `VerifierObserver` automatically), **R-34 QA constants**
+> (documented anchors `qa_max_iterations` / `qa_max_consecutive_errors`
+> / `qa_recurring_issue_threshold` surfaced via `RuntimeLimits`; QA
+> orchestrator itself is DEFER per roadmap §2.9). Same commit
+> fixes a latent loader gap that silently discarded QA + R-4
+> suppression keys from `~/.fa/config.yaml`. 411 tests passing
+> (+29 over PR-2). Next session: review PR-3 + plan Wave-2 stack #3.
+>
+> **Prior update:** 2026-05-20 by Devin session
+> [`5f23505ec2a04caeb232bfe8d391010e`](https://app.devin.ai/sessions/5f23505ec2a04caeb232bfe8d391010e)
 > — **PR-2 / Wave-2 stack #1** stacks on PR
 > [#24](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/24)
 > and lands three R-Ns from
@@ -15,9 +35,7 @@
 > (deterministic `ToolError` → `RecoveryAction` mapping + observer
 > emitting `kind="recovery_action"` rows), **R-6 attempt_history.json**
 > (per-run writer + `knowledge/prompts/coder-recovery.md` reader-
-> prompt fragment). 382 tests passing (+44 over M-1). Next session:
-> PR-3 with R-4 pre-tool blocker + R-5 DSV YAML contracts + R-34
-> HookRegistry guard constants.
+> prompt fragment). 382 tests passing (+44 over M-1).
 >
 > **Prior update:** 2026-05-20 by Devin session
 > [`5f23505ec2a04caeb232bfe8d391010e`](https://app.devin.ai/sessions/5f23505ec2a04caeb232bfe8d391010e)

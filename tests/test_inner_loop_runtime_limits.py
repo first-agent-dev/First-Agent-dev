@@ -82,6 +82,48 @@ def test_load_runtime_limits_from_missing_path_returns_anchors(tmp_path: Path) -
     assert result.warnings == ()
 
 
+def test_load_runtime_limits_parses_blocker_suppression_keys() -> None:
+    """R-4 suppression-seconds keys must be both validated AND wired
+    into ``RuntimeLimits`` — otherwise the smoke CLI silently uses
+    defaults regardless of the user's ``~/.fa/config.yaml`` and the
+    blocker config is undocumented-but-unconfigurable.
+    """
+
+    text = """\
+runtime_limits:
+  rate_limit_suppression_seconds: 45
+  lockfile_suppression_seconds: 10
+  auth_expired_suppression_seconds: 7
+"""
+    result = load_runtime_limits(text)
+    assert result.warnings == (), result.warnings
+    assert result.limits.rate_limit_suppression_seconds == 45
+    assert result.limits.lockfile_suppression_seconds == 10
+    assert result.limits.auth_expired_suppression_seconds == 7
+
+
+def test_load_runtime_limits_parses_qa_constants() -> None:
+    """R-34 QA constants are validated AND wired so a future QA
+    orchestrator can read them via the same ``RuntimeLimits`` shape.
+
+    Prior to this fix the loader accepted the keys (no «unknown key»
+    warning) but silently discarded the values — the ``RuntimeLimits``
+    instance always used the field-default.
+    """
+
+    text = """\
+runtime_limits:
+  qa_max_iterations: 100
+  qa_max_consecutive_errors: 5
+  qa_recurring_issue_threshold: 4
+"""
+    result = load_runtime_limits(text)
+    assert result.warnings == (), result.warnings
+    assert result.limits.qa_max_iterations == 100
+    assert result.limits.qa_max_consecutive_errors == 5
+    assert result.limits.qa_recurring_issue_threshold == 4
+
+
 def test_max_iterations_truncates_run_session(tmp_path: Path) -> None:
     (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
     (tmp_path / "b.txt").write_text("b\n", encoding="utf-8")
