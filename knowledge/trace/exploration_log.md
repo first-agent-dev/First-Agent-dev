@@ -483,3 +483,79 @@
   §R-18 / §R-21 / §R-25 +
   [`research/kronos-agent-os-inspiration-2026-05.md`](../research/kronos-agent-os-inspiration-2026-05.md)
   §0 R-3 (capability flags) / §0 R-7 (pause sentinel).
+
+## Q-10 — Should the bash sandbox be a single denylist regex, a 3-layer pipeline, or a LLM-judged hook?
+
+- **Chosen:** Three-layer deterministic pipeline at
+  `src/fa/sandbox/{classifier,validators,path_containment,bash_gate}.py`
+  (~715 LoC code + ~700 LoC tests). Lands ADR-6 §Amendment
+  2026-05-20 (Wave-1). The three layers compose as:
+  - **Classifier** (Gortex `bash_classify.go` port, ~225 LoC):
+    coarse category in 5 buckets (`READ_ONLY`, `GIT_WRITE`,
+    `PACKAGE_INSTALL`, `DANGEROUS`, `GENERAL_WRITE`).
+  - **Validators** (Aperant `bash-validator.ts` port, ~245
+    LoC): per-command rules for `rm` / `chmod` / `git` (5
+    deny rules total — world-write chmod, `git config
+    user.email/name`, `--global/--system` config, force-push
+    to `main`/`master`, `rm` outside workspace).
+  - **Path containment** (Aperant `path-containment.ts`
+    port, ~95 LoC): symlink-resolved «target inside base?»
+    check used by validators.
+  - **Gate** (composer, ~150 LoC): `evaluate_bash(command, *,
+    workspace_root) -> BashGateDecision { allow, category,
+    reason, validator_result }`.
+- **Rejected:**
+  - **Single denylist regex.** Reason: opaque audit trail
+    («matched pattern N» instead of «classifier said
+    DANGEROUS + validator said target /etc is denied») +
+    poor composition with the capability-flags layer (R-21,
+    PR-2). Lesson: revisit only if the 3-layer eval shows
+    ≥5% false-positive rate in real workload and a regex
+    proves measurably better.
+  - **LLM-judge hook.** Reason: AGENTS.md PR Checklist rule
+    #10 question 4 («could this be a deterministic Python
+    function?») answers YES for command shape; Gortex
+    explicitly cites zero-latency / no-LLM as the design
+    goal. Lesson: revisit only if an LLM-judge layer shows
+    proven KPI lift; the deterministic gate remains the
+    backstop.
+  - **Path-only sandbox (status quo before this PR).**
+    Reason: `git config --global user.email evil@x` passes
+    the path check (no path argument) and rewrites the git
+    identity — the canonical «looks innocent, mutates
+    outside scope» trap Aperant documents. Lesson:
+    irreversible — path-only is insufficient by
+    construction.
+  - **Bundle the bash-gate PR with R-18 / R-21 / R-25 (PR-2).**
+    Reason: R-20 is the largest single Wave-1 R-N (~400 LoC
+    spec, ~715 LoC actual) and security-sensitive — review
+    cost benefits from isolation. Lesson: split-off worked
+    as expected; revisit only if security review fatigue
+    becomes the bottleneck.
+- **Re-evaluation triggers:** (1) Workload eval shows ≥5% of
+  legitimate commands misclassified by the deterministic
+  classifier → demote `PACKAGE_INSTALL` and `GENERAL_WRITE`
+  to a single «caller-opt-in-required» bucket and collapse
+  to 3 categories; (2) MCP integration ships per-tool
+  validators that supersede the head-token validator set
+  → bash-gate collapses to 2 layers (classifier +
+  path-containment); (3) ADR-8 HookRegistry runtime lands
+  (BACKLOG M-1) and a LLM-judge `GuardMiddleware` at
+  `BEFORE_TOOL_EXEC` shows KPI lift over the deterministic
+  gate → the LLM hook becomes the primary gate, the
+  deterministic three-layer stays as backstop.
+- **Coupling:** Pairs with Q-8 (ADR-8 HookRegistry, R-1) at
+  the runtime layer: once BACKLOG M-1 lands the
+  `BEFORE_TOOL_EXEC` middleware kind, the bash gate is the
+  prototype `GuardMiddleware` implementation. Pairs with R-4
+  (Wave-2 pre-tool blocker hook) which subsumes the gate
+  through the HookRegistry surface. Pairs with R-21 (PR-2
+  capability flags) at the configuration layer: the
+  `ENABLE_DYNAMIC_TOOLS` flag will eventually gate whether
+  the `PACKAGE_INSTALL` category is even reachable.
+- **Source:** [ADR-6 §Amendment 2026-05-20 (Wave-1)](../adr/ADR-6-tool-sandbox-allow-list.md#amendment-2026-05-20-wave-1--bash-sandbox-gate-three-layer-classifier--validators--path-containment)
+  + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-20 +
+  [`research/gortex-aperant-inspiration-2026-05.md`](../research/gortex-aperant-inspiration-2026-05.md)
+  Aperant items 6 + 13 (validators + path-containment) and
+  Gortex Tier-1 item M (`bash_classify.go`).

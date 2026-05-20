@@ -164,6 +164,20 @@ config; path-level guard is loud, fast, stoppable; symmetric to
   YAML parser. Source:
   [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
   §R-21.
+- **2026-05-20 (Wave-1)** — Bash sandbox gate landed at
+  `src/fa/sandbox/{classifier,validators,path_containment,bash_gate}.py`
+  (~715 LoC code + ~700 LoC tests). Three-layer pipeline:
+  pattern classifier (5 categories — `READ_ONLY` / `GIT_WRITE` /
+  `PACKAGE_INSTALL` / `DANGEROUS` / `GENERAL_WRITE`) + per-command
+  validators (`rm` / `chmod` / `git` — 5 deny rules) +
+  symlink-resolved path containment. Ported from Aperant
+  `bash-validator.ts` + `path-containment.ts` and Gortex
+  `bash_classify.go`. `evaluate_bash(command, *,
+  workspace_root) -> BashGateDecision` is the single entry
+  point; AND-ed with the §Policy file (path scope) at the
+  inner-loop dispatcher when BACKLOG M-1 lands. Source:
+  [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-20.
 
 **Source:** [`ADR-6`](./ADR-6-tool-sandbox-allow-list.md).
 
