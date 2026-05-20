@@ -102,6 +102,81 @@ runtime_limits:
     assert result.limits.auth_expired_suppression_seconds == 7
 
 
+def test_load_runtime_limits_accepts_zero_for_suppression_keys() -> None:
+    """R-4 suppression-seconds keys document ``0`` as «observe-only»;
+    the loader must accept ``0`` for these three keys without
+    warning, while still rejecting negative values and rejecting
+    ``0`` for every other key.
+
+    Regression test for Devin-Review BUG flagged on PR #26: prior to
+    the fix, ``rate_limit_suppression_seconds: 0`` got a spurious
+    «value must be positive» warning and was silently dropped, so
+    the user could not opt the rate-limit / lockfile blockers into
+    observe-only mode via config (the auth-expired default 0 worked
+    only because the field-default is 0, but still emitted a
+    spurious warning).
+    """
+
+    text = """\
+runtime_limits:
+  rate_limit_suppression_seconds: 0
+  lockfile_suppression_seconds: 0
+  auth_expired_suppression_seconds: 0
+"""
+    result = load_runtime_limits(text)
+    assert result.warnings == (), result.warnings
+    assert result.limits.rate_limit_suppression_seconds == 0
+    assert result.limits.lockfile_suppression_seconds == 0
+    assert result.limits.auth_expired_suppression_seconds == 0
+
+
+def test_load_runtime_limits_still_rejects_zero_for_positive_only_keys() -> None:
+    """``0`` is only accepted for the three suppression-seconds keys;
+    every other key still requires a strictly positive value.
+
+    Pinning this prevents accidental relaxation: if a future edit
+    moves the wrong key into ``_ZERO_ALLOWED_KEYS`` (e.g.
+    ``max_iterations``), the loop driver would silently run zero
+    iterations.
+    """
+
+    text = """\
+runtime_limits:
+  max_iterations: 0
+  bash_timeout_seconds: 0
+  loop_guard_window: 0
+  qa_max_iterations: 0
+"""
+    result = load_runtime_limits(text)
+    assert result.limits.max_iterations == DEFAULT_MAX_ITERATIONS
+    assert result.limits.bash_timeout_seconds == DEFAULT_BASH_TIMEOUT_SECONDS
+    # Four warnings, all positive-only complaints (not zero-allowed).
+    assert {w.key for w in result.warnings} == {
+        "max_iterations",
+        "bash_timeout_seconds",
+        "loop_guard_window",
+        "qa_max_iterations",
+    }
+    for w in result.warnings:
+        assert "must be positive" in w.detail
+
+
+def test_load_runtime_limits_rejects_negative_suppression_seconds() -> None:
+    """Negative values are still rejected for the suppression-seconds
+    keys (the loosened bound is ``< 0``, not ``< -1``).
+    """
+
+    text = """\
+runtime_limits:
+  rate_limit_suppression_seconds: -1
+"""
+    result = load_runtime_limits(text)
+    assert result.limits.rate_limit_suppression_seconds == 30  # back to default
+    assert len(result.warnings) == 1
+    assert result.warnings[0].key == "rate_limit_suppression_seconds"
+    assert "non-negative" in result.warnings[0].detail
+
+
 def test_load_runtime_limits_parses_qa_constants() -> None:
     """R-34 QA constants are validated AND wired so a future QA
     orchestrator can read them via the same ``RuntimeLimits`` shape.

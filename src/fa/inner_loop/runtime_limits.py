@@ -154,6 +154,20 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
     }
 )
 
+# Keys where ``0`` is documented as a valid value («observe-only» mode for
+# ``BlockerMiddleware``: gate returns ``allow`` when ``suppression_seconds
+# <= 0``, see ``hooks/blockers.py`` ``_gate``). The default validator
+# rejects ``value <= 0`` because every other knob in the config (loop
+# caps, history limits, QA thresholds) must be strictly positive; these
+# three are the explicit exception.
+_ZERO_ALLOWED_KEYS: frozenset[str] = frozenset(
+    {
+        "rate_limit_suppression_seconds",
+        "lockfile_suppression_seconds",
+        "auth_expired_suppression_seconds",
+    }
+)
+
 
 def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
     """Parse a ``runtime_limits:`` block from a YAML config text.
@@ -169,7 +183,10 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
     Lines outside the block are ignored. Unknown keys inside the block
     surface as :class:`RuntimeLimitsWarning` entries; missing keys
     inherit the documented anchors so the loop driver still starts.
-    Negative or zero values surface as warnings and the anchor is kept.
+    Negative values surface as warnings and the anchor is kept. ``0``
+    is rejected for every key **except** the
+    :data:`_ZERO_ALLOWED_KEYS` set (the three ``*_suppression_seconds``
+    blocker knobs where ``0`` means «observe-only»).
     """
 
     found: dict[str, int] = {}
@@ -206,12 +223,18 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
                 )
             )
             continue
-        if value <= 0:
+        min_allowed = 0 if key in _ZERO_ALLOWED_KEYS else 1
+        if value < min_allowed:
+            detail = (
+                f"value must be non-negative: {value}"
+                if key in _ZERO_ALLOWED_KEYS
+                else f"value must be positive: {value}"
+            )
             warnings.append(
                 RuntimeLimitsWarning(
                     line_no=line_no,
                     key=key,
-                    detail=f"value must be positive: {value}",
+                    detail=detail,
                 )
             )
             continue
