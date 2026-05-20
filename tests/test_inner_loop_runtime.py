@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fa.inner_loop import EventLog, SessionState, ToolCall, run_session
+import pytest
+
+from fa.inner_loop import (
+    EventLog,
+    SessionState,
+    ToolCall,
+    ToolRegistry,
+    ToolResult,
+    ToolSpec,
+    run_session,
+)
 from fa.inner_loop.hooks import (
     AuditHook,
     Decision,
@@ -257,3 +267,165 @@ def test_run_session_handles_after_tool_exec_denial_cleanly(tmp_path: Path) -> N
     reason = stopped[0].content["reason"]
     assert isinstance(reason, str)
     assert "after-exec guard denied" in reason
+
+
+def test_run_session_requires_session_log_with_explicit_valueerror(tmp_path: Path) -> None:
+    """``state.log`` is the durable replay surface (ADR-7 \u00a77). Earlier
+    code used ``assert state.log is not None``, which gets stripped under
+    ``python -O`` and silently None'd the event-sink so every
+    ``hook_decision`` row would be lost. The runtime now raises an
+    explicit ``ValueError`` instead, so the misconfiguration surfaces
+    even under ``-O``.
+    """
+
+    # ``SessionState.__post_init__`` auto-populates ``log`` if ``None``,
+    # so the only way to reach the guard is via post-construction
+    # mutation. The point of the test is the guard, not the dataclass
+    # default \u2014 we want \u00abif state.log is None then explicit ValueError,
+    # not a silent ``-O``-stripped assert\u00bb.
+    state = SessionState(workspace_root=tmp_path, run_id="t-no-log")
+    state.log = None
+    registry = build_baseline_registry(tmp_path)
+    hooks = HookRegistry()
+
+    with pytest.raises(ValueError, match=r"SessionState\.log"):
+        run_session(
+            (ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),),
+            registry=registry,
+            hooks=hooks,
+            state=state,
+        )
+
+
+class _BetweenRoundsCountingGuard(GuardMiddleware):
+    """Records every BETWEEN_ROUNDS payload so the test can confirm the
+    iteration-1 dispatch (ADR-8 \u00a7Amendment 2026-05-20b)."""
+
+    name = "between-counter"
+    attaches_to = (LifecyclePoint.BETWEEN_ROUNDS,)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[str] = []
+
+    def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
+        del point
+        self.calls.append("" if payload.tool_call is None else payload.tool_call.name)
+        return Decision.allow()
+
+
+def test_between_rounds_fires_on_iteration_1(tmp_path: Path) -> None:
+    """ADR-8 \u00a7Amendment 2026-05-20b codifies that ``BETWEEN_ROUNDS``
+    fires at the start of every iteration **including iteration 1**.
+    This is what lets ``PauseGuard`` / ``LoopGuard`` block the very
+    first tool call when a session-level gate is active.
+
+    Without the iteration-1 dispatch, a pause sentinel set BEFORE
+    ``run_session`` starts would be ignored until the second tool
+    call \u2014 a real behavioural regression for any session-level guard.
+    """
+
+    (tmp_path / "input.txt").write_text("hello\n", encoding="utf-8")
+    registry = build_baseline_registry(tmp_path)
+    hooks = HookRegistry()
+    counter = _BetweenRoundsCountingGuard()
+    hooks.register(SandboxHook(tmp_path))
+    hooks.register(counter)
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="t-iter1",
+        log=EventLog(tmp_path / "ev.jsonl"),
+    )
+
+    # Two calls. BETWEEN_ROUNDS must fire BEFORE each call's
+    # BEFORE_TOOL_EXEC \u2014 so we observe exactly 2 BETWEEN_ROUNDS
+    # dispatches, not 1 (which would be the case if iter=1 were skipped).
+    run_session(
+        (
+            ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),
+            ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-2"),
+        ),
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    # Behavioural assertion \u2014 not just \u00abthe count is right\u00bb. The
+    # first BETWEEN_ROUNDS observation must arrive WITHOUT any tool
+    # call having been recorded yet (ADR-8 \u00a7Amendment 2026-05-20b:
+    # \u00abblocks the very first tool call\u00bb). The payload at
+    # BETWEEN_ROUNDS does not carry the upcoming ``tool_call`` \u2014
+    # session-level guards see an empty payload, which is what makes
+    # them session-level.
+    assert len(counter.calls) == 2
+    assert counter.calls == ["", ""]
+
+    # Pair with the audit trail: the first ``hook_decision`` row must
+    # come before any ``tool_call`` row, which is the operator-facing
+    # proof that BETWEEN_ROUNDS ran on iter=1 before record_tool_call.
+    assert state.log is not None
+    events = state.log.read_all()
+    kinds_in_order = [event.kind for event in events]
+    first_hook_decision = kinds_in_order.index("hook_decision")
+    first_tool_call = kinds_in_order.index("tool_call")
+    assert first_hook_decision < first_tool_call
+
+
+def test_run_session_records_tool_result_when_handler_crashes(tmp_path: Path) -> None:
+    """A crashing tool handler must NOT propagate past ``run_session``
+    and leave the audit trail half-written. ``registry.dispatch`` wraps
+    unexpected handler exceptions as ``ToolResult.fail("internal_error",
+    \u2026)`` so the runtime can still record the paired ``tool_result``
+    row (ADR-7 \u00a710 Acceptance criterion 8).
+
+    This is the integration counterpart to
+    ``test_dispatch_wraps_unexpected_handler_exception_as_internal_error``
+    in ``test_inner_loop_validation.py`` \u2014 the unit test covers the
+    registry-level shape; this test covers the audit-trail side-effect.
+    """
+
+    def crashing_handler(_params: object) -> ToolResult:
+        raise RuntimeError("boom")
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="demo.crash",
+            description="crashes",
+            input_schema={
+                "type": "object",
+                "required": ["text"],
+                "properties": {"text": {"type": "string"}},
+            },
+            permission="read",
+            handler=crashing_handler,
+        )
+    )
+    hooks = HookRegistry()
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="t-crash",
+        log=EventLog(tmp_path / "ev.jsonl"),
+    )
+
+    results = run_session(
+        (ToolCall(name="demo.crash", params={"text": "x"}, call_id="tc-1"),),
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    # The crash surfaces as a structured failure, not an exception.
+    assert len(results) == 1
+    assert results[0].error is not None
+    assert results[0].error.code == "internal_error"
+
+    # Audit trail: paired ``tool_call`` + ``tool_result`` rows MUST
+    # still exist for tc-1, even though the handler crashed.
+    assert state.log is not None
+    events = state.log.read_all()
+    kinds_by_call: dict[str, list[str]] = {}
+    for event in events:
+        kinds_by_call.setdefault(event.tool_call_id, []).append(event.kind)
+    assert kinds_by_call["tc-1"].count("tool_call") == 1
+    assert kinds_by_call["tc-1"].count("tool_result") == 1

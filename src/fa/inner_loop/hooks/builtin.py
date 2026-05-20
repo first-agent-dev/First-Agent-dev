@@ -63,13 +63,18 @@ class CapabilityGuard(GuardMiddleware):
             return Decision.deny("ENABLE_DYNAMIC_MCP_SERVERS is false")
         if call.name == "fs.run_bash":
             command = call.params.get("command")
-            if (
-                isinstance(command, str)
-                and command.split(maxsplit=1)
-                and command.split(maxsplit=1)[0] in {"deploy", "restart", "scale"}
-                and not caps.ENABLE_SERVER_OPS
-            ):
-                return Decision.deny("ENABLE_SERVER_OPS is false")
+            if isinstance(command, str):
+                # Cache the split once \u2014 the prior code called
+                # ``command.split(maxsplit=1)`` twice per dispatch
+                # (Devin-Review nit on PR #24). ``maxsplit=1`` keeps
+                # the cost O(prefix-length) regardless of command size.
+                head_tokens = command.split(maxsplit=1)
+                if (
+                    head_tokens
+                    and head_tokens[0] in {"deploy", "restart", "scale"}
+                    and not caps.ENABLE_SERVER_OPS
+                ):
+                    return Decision.deny("ENABLE_SERVER_OPS is false")
         return Decision.allow()
 
 

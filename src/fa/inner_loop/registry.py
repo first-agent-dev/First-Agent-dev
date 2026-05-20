@@ -172,7 +172,23 @@ class ToolRegistry:
         validation_failure = self.validate(call)
         if validation_failure is not None:
             return validation_failure
-        return self._tools[call.name].handler(call.params)
+        # Tool handlers MUST catch their own expected exceptions
+        # (``OSError`` / ``PermissionError`` / ``ValueError`` /
+        # ``subprocess.TimeoutExpired``) and return a structured
+        # ``ToolResult``. Anything that escapes that contract is by
+        # definition an internal-error path: a crashing handler must
+        # not propagate past ``run_session`` and lose the paired
+        # ``tool_result`` audit row (ADR-7 \u00a710 Acceptance criterion 8).
+        # Catch ``Exception`` (not ``BaseException``) so KeyboardInterrupt
+        # / SystemExit still propagate.
+        try:
+            return self._tools[call.name].handler(call.params)
+        except Exception as exc:
+            return ToolResult.fail(
+                "internal_error",
+                f"tool handler raised {type(exc).__name__}: {exc}",
+                retryable=False,
+            )
 
     def names(self) -> tuple[str, ...]:
         return tuple(self._tools)

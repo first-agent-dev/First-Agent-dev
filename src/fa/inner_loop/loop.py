@@ -58,7 +58,11 @@ def run_session(
     effective_limits = limits if limits is not None else RuntimeLimits.anchored_defaults()
     # ADR-7 \u00a77 hook_decision projection: every guard/observer step writes
     # one row to ``events.jsonl`` so the audit trail is replay-complete.
-    assert state.log is not None
+    # An explicit ValueError instead of ``assert`` because ``python -O``
+    # strips assertions and ``state.log`` is the durable replay surface;
+    # silently None-ing the event sink under -O would lose audit rows.
+    if state.log is None:
+        raise ValueError("SessionState.log must be set before run_session")
     hooks.set_event_sink(_make_hook_decision_sink(state.log))
 
     results: list[ToolResult] = []

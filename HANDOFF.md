@@ -217,6 +217,14 @@ manually beyond this point.
     capped at one extra `handle()` per opted-in guard and one
     mutation per dispatch (regression in
     `tests/test_inner_loop_validation.py::test_modify_to_escape_is_caught_by_sandbox_replay`).
+    *Amendment 2026-05-20b* — codifies that `BETWEEN_ROUNDS`
+    fires at the start of every iteration **including iteration 1**.
+    Session-level guards (`PauseGuard`, `LoopGuard`) attach here
+    so an active pause sentinel or non-progress counter blocks the
+    very first tool call. Kept the name `BETWEEN_ROUNDS` rather
+    than renaming to `BEFORE_ROUND` to preserve verbatim alignment
+    with DPC `dpc_agent/hooks.py:LIFECYCLE_POINTS` + Gortex
+    `internal/hooks/dispatch.go` + borrow-roadmap §R-1.
 - **Wave-1 R-N triplet (PR-2 2026-05-20):**
   - **R-18** — Per-tier tool-shape registry at
     [`knowledge/prompts/tool-shapes.yaml`](./knowledge/prompts/tool-shapes.yaml)
