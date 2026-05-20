@@ -365,6 +365,45 @@ covering the modify-then-replay path (see
 **Forward-only.** Applies to M-1 onwards; no Wave-0 code paths
 existed to migrate.
 
+## Amendment 2026-05-20b — `BETWEEN_ROUNDS` fires before iteration 1 too
+
+**Ambiguity to resolve.** §1 above shows `BETWEEN_ROUNDS` at the top
+of each iteration in the ASCII diagram and notes «runs at the top of
+every loop iteration», but neither the §1 enum nor the §3 dispatch
+rules pinned down whether the first iteration counts as a "between
+rounds" tick. The name reads as if it should only fire from
+iteration 2 onward. Devin-Review surfaced the question on PR #24
+(devin-ai-integration `loop.py:66-72`) — the implementation does
+fire on iteration 1 today; this amendment codifies that semantics
+so future agents and middlewares do not have to re-derive it.
+
+**Codified rule.** `BETWEEN_ROUNDS` fires at the START of every
+loop iteration, **including iteration 1**. Treat it as a
+"before-round" gate rather than a strictly "between-rounds" gate.
+Session-level guards (`PauseGuard`, `LoopGuard`, anything else
+needing to block before any LLM/tool work happens) MUST attach
+here so that an active pause sentinel or a tripped non-progress
+counter prevents the very first tool call, not only the second
+onward.
+
+**Why we kept the name `BETWEEN_ROUNDS` rather than rename to
+`BEFORE_ROUND`.** Prior Art entry §1 above maps the five
+lifecycle-point names verbatim to DPC `dpc_agent/hooks.py:LIFECYCLE_POINTS`
+and (with `OnBefore*` / `OnAfter*` casing) to Gortex
+`internal/hooks/dispatch.go:Dispatch`. Renaming would (1) break that
+verbatim alignment with the borrow-roadmap §R-1 nomenclature for a
+purely-cosmetic gain, (2) churn every Wave-2 middleware PR that
+already cites `BETWEEN_ROUNDS` in attaches_to, and (3) violate
+[minimalism-first](../project-overview.md#12-enforceable-principle--minimalism-first)
+— the subtraction-check fails «open-source agent-stack precedent
+for *not* having the alignment with DPC/Gortex naming?». A doc
+amendment is the bounded fix.
+
+**Forward-only.** Applies to M-1 onwards. The §1 ASCII-diagram
+caption ("runs at the top of every loop iteration") already
+matched the implementation; this amendment just promotes the
+caption to a contract clause.
+
 ## Prior Art
 
 Per [AGENTS.md PR Checklist rule #10](../../AGENTS.md#pr-checklist)

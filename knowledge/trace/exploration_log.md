@@ -443,6 +443,45 @@
     replays is deterministic and tests cover the multi-replay
     case; (2) a Wave-2 R-N introduces a new modify-emitting
     middleware → confirm the carve-out still bounds replay cost.
+- **Amendment 2026-05-20b — `BETWEEN_ROUNDS` first-iteration semantics:**
+  - **Chosen:** Codify that `BETWEEN_ROUNDS` fires at the start of
+    every loop iteration **including iteration 1**. Session-level
+    guards (`PauseGuard`, `LoopGuard`) attach here precisely so a
+    pause sentinel or non-progress counter active at session
+    start blocks the very first tool call, not only the second
+    onward. Keep the name `BETWEEN_ROUNDS` rather than renaming
+    to `BEFORE_ROUND` — verbatim alignment with DPC
+    `dpc_agent/hooks.py:LIFECYCLE_POINTS` + Gortex
+    `internal/hooks/dispatch.go:Dispatch` + borrow-roadmap §R-1
+    is worth more than a slightly clearer name.
+  - **Rejected (a) — rename to `BEFORE_ROUND`:**
+    Reason: ~30 LOC mechanical refactor across code + ADR-8
+    diagram + every Wave-2 middleware `attaches_to` tuple for
+    a purely-cosmetic gain; breaks the verbatim cross-project
+    naming map in Prior Art §1. Lesson: revisit if a future
+    Wave-3 R-N introduces a *second* lifecycle point that
+    also fires at iteration 1 and the pair would read more
+    cleanly as `BEFORE_ROUND` + something else.
+  - **Rejected (b) — leave the semantics undocumented and reply
+    "intentional" in the PR-review thread:**
+    Reason: weaker OSS LLMs reading the ADR without the PR
+    thread cannot derive «fires on iter=1» from the name alone;
+    the next agent who registers a session-level guard would
+    have to grep `loop.py` to find out. Lesson: ADR amendments
+    are the cheaper-read overlay for exactly this case (per
+    research note Tsinghua NLAH conversion); inline doc beats
+    repo-archaeology.
+  - **Coupling:** Pairs with the PR-24 `loop.py` BETWEEN_ROUNDS
+    dispatch (line 66-72: dispatched once per iteration starting
+    at iteration=1) and the PR-25 `LoopGuard.attaches_to` tuple
+    (`BEFORE_TOOL_EXEC` + `BETWEEN_ROUNDS`) — both depend on the
+    iteration-1 semantics being part of the contract.
+  - **Re-evaluation triggers:** (1) `session_start` / `session_end`
+    hook points land (BACKLOG calls out the seat in §1 above) →
+    re-examine whether `BETWEEN_ROUNDS` should still fire on
+    iter=1 or whether `session_start` subsumes that case;
+    (2) two consecutive Wave-3 R-Ns confuse the name in their
+    docstrings → escalate to a rename in a follow-up amendment.
 
 ## Q-9 — Wave-1 R-N triplet (R-18 tool-shapes / R-21 capability flags / R-25 pause sentinel) — what shape? (2026-05-20)
 

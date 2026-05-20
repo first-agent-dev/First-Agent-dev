@@ -5,6 +5,22 @@
 >
 > **Last updated:** 2026-05-20 by Devin session
 > [`5f23505ec2a04caeb232bfe8d391010e`](https://app.devin.ai/sessions/5f23505ec2a04caeb232bfe8d391010e)
+> — **PR-2 / Wave-2 stack #1** stacks on PR
+> [#24](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/24)
+> and lands three R-Ns from
+> [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+> §3: **R-2 LoopGuard** (`GuardMiddleware` at `BEFORE_TOOL_EXEC` +
+> `BETWEEN_ROUNDS` — identical-call repeat + same-path thrash
+> detectors, thresholds from `RuntimeLimits`), **R-3 FailureClassifier**
+> (deterministic `ToolError` → `RecoveryAction` mapping + observer
+> emitting `kind="recovery_action"` rows), **R-6 attempt_history.json**
+> (per-run writer + `knowledge/prompts/coder-recovery.md` reader-
+> prompt fragment). 382 tests passing (+44 over M-1). Next session:
+> PR-3 with R-4 pre-tool blocker + R-5 DSV YAML contracts + R-34
+> HookRegistry guard constants.
+>
+> **Prior update:** 2026-05-20 by Devin session
+> [`5f23505ec2a04caeb232bfe8d391010e`](https://app.devin.ai/sessions/5f23505ec2a04caeb232bfe8d391010e)
 > — PR
 > [#24](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/24)
 > **M-1 inner-loop runtime scaffold** is now contract-conformant:
@@ -15,9 +31,7 @@
 > schema, `hook_decision` rows persisted via `HookRegistry` event-sink,
 > `RuntimeLimits` (max_iterations + bash_timeout) read from
 > `~/.fa/config.yaml` (ADR-7 §Amendment 2026-05-20 rule 1 «never code
-> constants»). 338 tests passing. M-1 unblocks Wave-2 R-Ns; next
-> session: stack R-2 LoopGuard + R-3 FailureClassifier + R-6
-> attempt_history.json in one PR, then R-4 / R-5 / R-34 in the next.
+> constants»). 338 tests passing.
 >
 > **Prior update:** 2026-05-20 by Devin session
 > [`b3ea514bc30848e9bf72b57aa8c28f6a`](https://app.devin.ai/sessions/b3ea514bc30848e9bf72b57aa8c28f6a)
@@ -217,6 +231,14 @@ manually beyond this point.
     capped at one extra `handle()` per opted-in guard and one
     mutation per dispatch (regression in
     `tests/test_inner_loop_validation.py::test_modify_to_escape_is_caught_by_sandbox_replay`).
+    *Amendment 2026-05-20b* — codifies that `BETWEEN_ROUNDS`
+    fires at the start of every iteration **including iteration 1**.
+    Session-level guards (`PauseGuard`, `LoopGuard`) attach here
+    so an active pause sentinel or non-progress counter blocks the
+    very first tool call. Kept the name `BETWEEN_ROUNDS` rather
+    than renaming to `BEFORE_ROUND` to preserve verbatim alignment
+    with DPC `dpc_agent/hooks.py:LIFECYCLE_POINTS` + Gortex
+    `internal/hooks/dispatch.go` + borrow-roadmap §R-1.
 - **Wave-1 R-N triplet (PR-2 2026-05-20):**
   - **R-18** — Per-tier tool-shape registry at
     [`knowledge/prompts/tool-shapes.yaml`](./knowledge/prompts/tool-shapes.yaml)

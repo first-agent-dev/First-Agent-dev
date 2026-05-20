@@ -281,6 +281,16 @@ shares this exact substrate. Source:
   Closes the ADR-7 §5+§8 vs ADR-8 §3 "already-run hooks do not
   re-run" tension by codifying the exception explicitly instead
   of leaving it as an undocumented implementation carve-out.
+- *2026-05-20b (`BETWEEN_ROUNDS` first-iteration semantics):*
+  codifies that `BETWEEN_ROUNDS` fires at the start of every loop
+  iteration **including iteration 1** (not only iterations ≥2).
+  Session-level guards (`PauseGuard`, `LoopGuard`) MUST attach
+  here so an active pause sentinel or a tripped non-progress
+  counter blocks the very first tool call. Kept the name
+  `BETWEEN_ROUNDS` (rather than renaming to `BEFORE_ROUND`) to
+  preserve verbatim alignment with DPC `dpc_agent/hooks.py`
+  + Gortex `internal/hooks/dispatch.go` + borrow-roadmap §R-1
+  nomenclature; the rename had no other upside.
 
 **Source:** [`ADR-8`](./ADR-8-hook-registry.md).
 

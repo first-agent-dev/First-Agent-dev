@@ -336,3 +336,48 @@ def test_dispatch_trace_records_sandbox_replay(tmp_path: Path) -> None:
     decisions = [record.middleware for record in hooks.dispatch_trace]
     assert "sandbox@replay" in decisions
     assert "path-recorder@replay" in decisions
+
+
+def _crashing_handler(_params: object) -> ToolResult:
+    raise RuntimeError("simulated handler crash")
+
+
+def test_dispatch_wraps_unexpected_handler_exception_as_internal_error() -> None:
+    """A crashing tool handler MUST surface as a structured
+    ``ToolResult.fail("internal_error", ...)`` so ``run_session`` can
+    still record the paired ``tool_call`` / ``tool_result`` rows
+    (ADR-7 \u00a710 Acceptance criterion 8). Before the fix, an unexpected
+    exception propagated past ``state.record_tool_result`` and the
+    audit row was lost.
+
+    Pairs with the BUG-0003-style symmetry: the runtime now never lets
+    a non-ToolResult exit a tool dispatch path uncaptured.
+    """
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="demo.crash",
+            description="always crashes",
+            input_schema={
+                "type": "object",
+                "required": ["text"],
+                "properties": {"text": {"type": "string"}},
+            },
+            permission="read",
+            handler=_crashing_handler,
+        )
+    )
+
+    result = registry.dispatch(ToolCall(name="demo.crash", params={"text": "x"}))
+
+    # Behavioural \u2014 not just \u00abdid not raise\u00bb. The structured shape
+    # is what the audit trail depends on; assert every field we rely on.
+    assert result.error is not None
+    assert result.error.code == "internal_error"
+    assert "RuntimeError" in result.error.message
+    assert "simulated handler crash" in result.error.message
+    # Internal-error path is non-retryable: a crashing handler is a
+    # contract bug, not a transient failure the model should re-poll.
+    assert result.error.retryable is False
+    assert result.result is None

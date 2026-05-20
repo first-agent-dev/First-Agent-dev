@@ -16,7 +16,7 @@ from fa.inner_loop import (
     load_runtime_limits_from_path,
     run_session,
 )
-from fa.inner_loop.hooks import AuditHook, HookRegistry, SandboxHook
+from fa.inner_loop.hooks import AuditHook, HookRegistry, LoopGuard, SandboxHook
 from fa.inner_loop.tools import build_baseline_registry
 
 
@@ -130,6 +130,13 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     log = EventLog(log_path)
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))
+    hooks.register(
+        LoopGuard(
+            repeat_warn=limits.loop_guard_repeat_warn,
+            circuit_breaker=limits.loop_guard_circuit_breaker,
+            window=limits.loop_guard_window,
+        )
+    )
     audit = AuditHook(event_log=log)
     hooks.register(audit)
     state = SessionState(workspace_root=workspace, run_id="cli-smoke", log=log)

@@ -24,6 +24,10 @@ from pathlib import Path
 
 from fa._yaml_subset import strip_inline_comment
 from fa.config import DEFAULT_CONFIG_PATH
+from fa.inner_loop.recovery.attempt_history import (
+    DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS,
+    DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES,
+)
 
 # Anchors documented in ADR-7 \u00a7Amendment 2026-05-20 rule 2 (max_iterations=6)
 # and the bash timeout that PR #24 introduced (30s). Both live here so any
@@ -31,6 +35,12 @@ from fa.config import DEFAULT_CONFIG_PATH
 # magic constants in ``loop.py`` / ``run_bash.py``.
 DEFAULT_MAX_ITERATIONS = 6
 DEFAULT_BASH_TIMEOUT_SECONDS = 30
+# Wave-2 R-2 LoopGuard caps (Kronos `kronos/security/loop_detector.py`
+# 3-detector shape + Aperant `recovery-manager.ts:120-145` simpleHash
+# threshold). Defaults documented in `borrow-roadmap-2026-05.md` R-2.
+DEFAULT_LOOP_GUARD_REPEAT_WARN = 3
+DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER = 5
+DEFAULT_LOOP_GUARD_WINDOW = 8
 
 
 @dataclass(frozen=True)
@@ -39,6 +49,13 @@ class RuntimeLimits:
 
     max_iterations: int = DEFAULT_MAX_ITERATIONS
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS
+    # Wave-2 R-2 LoopGuard knobs.
+    loop_guard_repeat_warn: int = DEFAULT_LOOP_GUARD_REPEAT_WARN
+    loop_guard_circuit_breaker: int = DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER
+    loop_guard_window: int = DEFAULT_LOOP_GUARD_WINDOW
+    # Wave-2 R-6 attempt-history knobs (Aperant anchors).
+    attempt_history_max_entries: int = DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES
+    attempt_history_max_age_seconds: int = DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS
 
     @classmethod
     def anchored_defaults(cls) -> RuntimeLimits:
@@ -46,6 +63,11 @@ class RuntimeLimits:
         return cls(
             max_iterations=DEFAULT_MAX_ITERATIONS,
             bash_timeout_seconds=DEFAULT_BASH_TIMEOUT_SECONDS,
+            loop_guard_repeat_warn=DEFAULT_LOOP_GUARD_REPEAT_WARN,
+            loop_guard_circuit_breaker=DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER,
+            loop_guard_window=DEFAULT_LOOP_GUARD_WINDOW,
+            attempt_history_max_entries=DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES,
+            attempt_history_max_age_seconds=DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS,
         )
 
 
@@ -64,7 +86,17 @@ class RuntimeLimitsLoadResult:
     warnings: tuple[RuntimeLimitsWarning, ...] = field(default_factory=tuple)
 
 
-_KNOWN_KEYS: frozenset[str] = frozenset({"max_iterations", "bash_timeout_seconds"})
+_KNOWN_KEYS: frozenset[str] = frozenset(
+    {
+        "max_iterations",
+        "bash_timeout_seconds",
+        "loop_guard_repeat_warn",
+        "loop_guard_circuit_breaker",
+        "loop_guard_window",
+        "attempt_history_max_entries",
+        "attempt_history_max_age_seconds",
+    }
+)
 
 
 def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
@@ -132,6 +164,17 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
     limits = RuntimeLimits(
         max_iterations=found.get("max_iterations", DEFAULT_MAX_ITERATIONS),
         bash_timeout_seconds=found.get("bash_timeout_seconds", DEFAULT_BASH_TIMEOUT_SECONDS),
+        loop_guard_repeat_warn=found.get("loop_guard_repeat_warn", DEFAULT_LOOP_GUARD_REPEAT_WARN),
+        loop_guard_circuit_breaker=found.get(
+            "loop_guard_circuit_breaker", DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER
+        ),
+        loop_guard_window=found.get("loop_guard_window", DEFAULT_LOOP_GUARD_WINDOW),
+        attempt_history_max_entries=found.get(
+            "attempt_history_max_entries", DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES
+        ),
+        attempt_history_max_age_seconds=found.get(
+            "attempt_history_max_age_seconds", DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS
+        ),
     )
     return RuntimeLimitsLoadResult(limits=limits, warnings=tuple(warnings))
 
@@ -155,7 +198,12 @@ def load_runtime_limits_from_path(
 
 
 __all__ = [
+    "DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS",
+    "DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES",
     "DEFAULT_BASH_TIMEOUT_SECONDS",
+    "DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER",
+    "DEFAULT_LOOP_GUARD_REPEAT_WARN",
+    "DEFAULT_LOOP_GUARD_WINDOW",
     "DEFAULT_MAX_ITERATIONS",
     "RuntimeLimits",
     "RuntimeLimitsLoadResult",
