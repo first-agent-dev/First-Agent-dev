@@ -82,6 +82,8 @@ def test_classify_git_write_commands(command: str) -> None:
         "brew install ripgrep",
         "cargo install ripgrep",
         "uv add pytest",
+        "go get golang.org/x/tools/cmd/stringer",
+        "go install honnef.co/go/tools/cmd/staticcheck@latest",
     ],
 )
 def test_classify_package_install_commands(command: str) -> None:
@@ -120,6 +122,16 @@ def test_classify_dangerous_commands(command: str) -> None:
         "tar -xzf archive.tar.gz",
         "rm file.txt",  # non-recursive rm
         "chmod 644 file.txt",  # non-recursive chmod
+        # `tee` writes to a file even though it also writes to stdout —
+        # falls through to GENERAL_WRITE so the gate can run path-containment
+        # / validator checks. (Devin Review finding 2026-05-20.)
+        "tee /etc/sudoers",
+        "tee /tmp/log",
+        # `go run`/`go build`/`go test` compile-and-execute, so they MUST
+        # NOT be classified as read-only. (Devin Review fallout 2026-05-20.)
+        "go run main.go",
+        "go build ./...",
+        "go test ./...",
     ],
 )
 def test_classify_general_write_commands(command: str) -> None:

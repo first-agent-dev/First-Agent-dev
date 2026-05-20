@@ -142,23 +142,59 @@ def validate_rm(command: str, *, workspace_root: Path) -> ValidationResult:
 def _grants_world_write(mode: str) -> bool:
     """Return True if a chmod mode string grants world-write.
 
-    Accepts numeric (``777``, ``0666``, ``go+w``) and symbolic
-    (``o+w``, ``ugo+w``, ``a+w``) forms. Conservative — when the mode
+    Accepts numeric (``777``, ``0666``) and symbolic
+    (``o+w``, ``a+w``, ``ugo+w``, ``a+rw``, ``a=rwx``, comma-chained
+    clauses like ``u=rwx,go+rw``) forms. Conservative — when the mode
     string is unrecognised, returns True so that the validator denies.
+
+    Symbolic parsing walks each comma-separated clause
+    ``[scope][op][perms]`` where ``scope`` ⊆ ``ugoa`` (defaulting to
+    ``a`` when omitted, per POSIX chmod), ``op`` is ``+ - =``, and
+    ``perms`` contains the requested permission letters. World-write
+    is granted iff ``op`` ∈ ``{+, =}``, ``w ∈ perms``, and ``scope``
+    includes ``o`` or ``a``.
+
+    The previous implementation only matched the literal substrings
+    ``+w`` / ``=w`` and so missed ``a+rw``, ``o+rw``, ``ugo+rw``,
+    ``a=rwx`` (Devin Review finding 2026-05-20 on PR #20).
     """
     if not mode:
         return True
-    # Symbolic: any token containing `+w` with `o`/`a`/`ugo` scope.
     lowered = mode.lower()
-    if "+w" in lowered or "=w" in lowered:
-        if any(scope in lowered for scope in ("o", "a", "ugo")):
-            return True
-    # Numeric: trailing digit is the "other" bit. World-write iff
-    # last digit's bit-2 (``2``) is set.
-    digits = lowered.lstrip("0")
-    if digits.isdigit() and len(digits) >= 1:
+
+    # Numeric mode (``777``, ``0666``). Trailing digit is the "other"
+    # bit. World-write iff last digit's bit-2 (``2``) is set.
+    digits = lowered.lstrip("0") or "0"
+    if digits.isdigit():
         other_bit = int(digits[-1])
         return bool(other_bit & 0b010)
+
+    # Symbolic mode. Comma-separated clauses; each clause has an
+    # operator and the scope precedes the operator.
+    for clause in lowered.split(","):
+        clause = clause.strip()
+        if not clause:
+            return True  # malformed — deny
+        op_idx = -1
+        for i, ch in enumerate(clause):
+            if ch in "+-=":
+                op_idx = i
+                break
+        if op_idx < 0:
+            return True  # malformed — deny
+        scope = clause[:op_idx] or "a"  # bare ``+w`` means ``a+w``
+        op = clause[op_idx]
+        perms = clause[op_idx + 1 :]
+        if op == "-":
+            continue  # removing perms can never grant world-write
+        if "w" not in perms:
+            continue
+        if any(c in scope for c in ("o", "a")):
+            return True
+        # Scope chars MUST be a subset of {u, g, o, a}; anything else
+        # is malformed — conservative deny.
+        if any(c not in "ugoa" for c in scope):
+            return True
     return False
 
 

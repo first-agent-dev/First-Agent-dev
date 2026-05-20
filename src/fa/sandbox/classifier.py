@@ -98,8 +98,13 @@ _READ_ONLY_TOKENS: frozenset[str] = frozenset(
         "more",
         "diff",
         "cmp",
-        "tee",  # /dev/null is fine; output-redirect to file is general-write,
-        # but bare `tee` is read-effective when followed only by `/dev/null`.
+        # `tee` deliberately omitted: it copies stdin to one or more *files*
+        # in addition to stdout (e.g. ``tee /etc/sudoers``), so it is a write
+        # command. It falls through to GENERAL_WRITE where the gate can route
+        # it through path-containment / validator checks. The earlier
+        # "bare `tee` to /dev/null is read-effective" rationale is true but
+        # not enough to mark every `tee` invocation read-only — Devin Review
+        # finding 2026-05-20 on PR #20.
         "env",
         "type",
     }
@@ -145,6 +150,9 @@ _PACKAGE_INSTALL_PROGRAMS: frozenset[str] = frozenset(
         "brew",
         "cargo",
         "gem",
+        "go",  # `go get`/`go install` — _INSTALL_SUBCOMMANDS already lists
+        # `get` and `install`; the program name was missing.
+        # Devin Review finding 2026-05-20 on PR #20.
         "uv",
     }
 )
@@ -294,6 +302,12 @@ def classify_command(command: str) -> BashCategory:
         sub = _package_install_subcommand(tokens)
         if sub in _INSTALL_SUBCOMMANDS:
             return BashCategory.PACKAGE_INSTALL
+        # `go run`/`go build`/`go test`/`go vet` compile-and-execute and
+        # so cannot be considered read-only; fall back to GENERAL_WRITE.
+        # Other package managers' read subcommands (``pip list``, ``npm ls``)
+        # are genuinely read-only.
+        if head == "go":
+            return BashCategory.GENERAL_WRITE
         return BashCategory.READ_ONLY
 
     if head in _READ_ONLY_TOKENS:

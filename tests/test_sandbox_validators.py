@@ -98,6 +98,43 @@ def test_validate_chmod_denies_666(tmp_path: Path) -> None:
     assert result.allow is False
 
 
+@pytest.mark.parametrize(
+    "mode",
+    [
+        # Compound symbolic modes that the original substring-match
+        # implementation missed — Devin Review finding 2026-05-20.
+        "a+rw",
+        "o+rw",
+        "ugo+rw",
+        "a=rwx",
+        "go=rw",
+        "u=rwx,go+rw",  # comma-chained clause where second clause grants o+w.
+    ],
+)
+def test_validate_chmod_denies_compound_world_write(mode: str, tmp_path: Path) -> None:
+    (tmp_path / "file").touch()
+    result = validate_chmod(f"chmod {mode} file", workspace_root=tmp_path)
+    assert result.allow is False
+    assert "world-write" in result.reason
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "u+w",  # owner-only write.
+        "g+w",  # group-only write.
+        "u=rwx",  # owner-only RWX, no other / all scope.
+        "a-w",  # explicit remove cannot grant world-write.
+        "755",  # group/other = r-x.
+        "644",  # baseline.
+    ],
+)
+def test_validate_chmod_allows_non_world_write(mode: str, tmp_path: Path) -> None:
+    (tmp_path / "file").touch()
+    result = validate_chmod(f"chmod {mode} file", workspace_root=tmp_path)
+    assert result.allow is True
+
+
 def test_validate_chmod_denies_outside_workspace(tmp_path: Path) -> None:
     result = validate_chmod("chmod 644 /etc/passwd", workspace_root=tmp_path)
     assert result.allow is False
