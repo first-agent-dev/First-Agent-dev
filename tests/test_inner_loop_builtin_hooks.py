@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from fa.inner_loop import ToolCall, ToolResult
+from fa.inner_loop import EventLog, ToolCall, ToolResult
 from fa.inner_loop.hooks import (
     CapabilityGuard,
     HookPayload,
@@ -63,6 +63,83 @@ def test_verifier_observer_records_failed_contract() -> None:
     )
 
     assert observer.failures == [("fs.write_file", ("missing_required_event:file_write",))]
+
+
+def test_verifier_observer_emits_verification_audit_row(tmp_path: Path) -> None:
+    """When a contract trips and an ``EventLog`` is wired, the observer
+    appends a ``kind="verification"`` row containing the override-action
+    and the matched reasons. This is the audit-trail surface the
+    downstream ``force_failure`` consumer (T-2 LLM driver) reads.
+    """
+
+    log_path = tmp_path / "events.jsonl"
+    log = EventLog(log_path)
+    contract = VerifierContract(
+        target_action="fs.write_file",
+        required_trace_events=(),
+        failure_conditions=("write_failed",),
+    )
+    observer = VerifierObserver(contracts={"fs.write_file": contract}, event_log=log)
+
+    observer.observe(
+        LifecyclePoint.AFTER_TOOL_EXEC,
+        HookPayload(
+            tool_call=ToolCall(name="fs.write_file", params={"path": "x"}, call_id="tc-1"),
+            tool_result=ToolResult.fail("write_failed", "permission denied"),
+        ),
+    )
+
+    import json
+
+    rows = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    verification_rows = [r for r in rows if r["kind"] == "verification"]
+    assert len(verification_rows) == 1
+    row = verification_rows[0]
+    assert row["tool_name"] == "fs.write_file"
+    assert row["tool_call_id"] == "tc-1"
+    assert row["content"]["override_action"] == "force_failure"
+    assert "failure_condition_observed:write_failed" in row["content"]["reasons"]
+
+
+def test_verifier_observer_no_audit_row_on_success(tmp_path: Path) -> None:
+    """Successful contracts produce no ``verification`` row — only
+    failures need durable audit. The trace stays terse and a
+    downstream consumer can rely on the row being a deny signal.
+    """
+
+    log_path = tmp_path / "events.jsonl"
+    log = EventLog(log_path)
+    contract = VerifierContract(
+        target_action="fs.read_file",
+        required_trace_events=(),
+        failure_conditions=("read_failed",),
+    )
+    observer = VerifierObserver(contracts={"fs.read_file": contract}, event_log=log)
+
+    observer.observe(
+        LifecyclePoint.AFTER_TOOL_EXEC,
+        HookPayload(
+            tool_call=ToolCall(name="fs.read_file", params={"path": "x"}, call_id="tc-1"),
+            tool_result=ToolResult.ok("read x"),
+        ),
+    )
+
+    # File may not exist when the log was opened but never written to;
+    # the test asserts the *absence* of a verification row either way.
+    if not log_path.exists():
+        return
+    import json
+
+    rows = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [r for r in rows if r["kind"] == "verification"] == []
 
 
 def test_learning_observer_writes_discovery_and_gotcha(tmp_path: Path) -> None:

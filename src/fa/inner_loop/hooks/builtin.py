@@ -185,7 +185,29 @@ class AuditHook(ObserverMiddleware):
 
 @dataclass
 class VerifierObserver(ObserverMiddleware):
+    """DSV post-tool gate (R-5).
+
+    For each ``AFTER_TOOL_EXEC`` payload, look up a YAML-loaded
+    :class:`VerifierContract` for ``call.name`` and run
+    :func:`verify_action` against the trace events derived from the
+    ``ToolResult``. In M-1 the only event types emitted are
+    ``tool_result`` (always) and ``tool_result`` with the
+    error code attached as a ``failure_condition`` (on failure); tool
+    bodies will emit richer events when the LLM driver T-2 lands
+    observation-event projection, at which point the contracts'
+    ``required_trace_events`` lists can be populated without
+    restructuring the observer.
+
+    On every contract trip, append one ``kind="verification"`` row to
+    ``event_log`` (when set) so the durable trace records *which*
+    contract failed and *which* reasons fired — the audit-trail
+    surface the future ``override_action: force_failure`` consumer
+    reads. ``failures`` keeps an in-memory list for tests + the
+    smoke CLI summary.
+    """
+
     contracts: Mapping[str, VerifierContract]
+    event_log: EventLog | None = None
     failures: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
     name: str = "verifier"
     attaches_to: tuple[LifecyclePoint, ...] = (LifecyclePoint.AFTER_TOOL_EXEC,)
@@ -211,8 +233,26 @@ class VerifierObserver(ObserverMiddleware):
                 )
             )
         verification = verify_action(contract, events)
-        if not verification.passed:
-            self.failures.append((call.name, verification.reasons))
+        if verification.passed:
+            return
+        self.failures.append((call.name, verification.reasons))
+        if self.event_log is None:
+            return
+        # Cast reasons tuple to list so json.dumps serialises predictably;
+        # ``override_action`` is copied verbatim from the contract for the
+        # downstream force_failure consumer (T-2 LLM driver) to dispatch on.
+        self.event_log.append(
+            actor="hook",
+            kind="verification",
+            content={
+                "tool": call.name,
+                "override_action": verification.override_action,
+                "reasons": list(verification.reasons),
+                "contract_target": contract.target_action,
+            },
+            tool_name=call.name,
+            tool_call_id=call.call_id,
+        )
 
 
 @dataclass

@@ -41,6 +41,39 @@ DEFAULT_BASH_TIMEOUT_SECONDS = 30
 DEFAULT_LOOP_GUARD_REPEAT_WARN = 3
 DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER = 5
 DEFAULT_LOOP_GUARD_WINDOW = 8
+# Wave-2 R-34 QA-loop circuit-breaker constants (Aperant `qa-loop.ts`
+# magic-validated anchors per `borrow-roadmap-2026-05.md` R-34). The
+# constants land here as documented defaults so the future QA
+# orchestrator R-N inherits them rather than reinventing magic numbers;
+# nothing in M-1/M-2/M-3 wires them yet because the QA orchestrator
+# itself is DEFER per roadmap §2.9. Anchors:
+# - ``MAX_QA_ITERATIONS = 50`` — hard cap on the QA refinement loop
+#   before the engine forces a hand-off (Aperant prod-tuned default).
+# - ``MAX_CONSECUTIVE_ERRORS = 3`` — trip the circuit breaker after
+#   three consecutive failed iterations.
+# - ``RECURRING_ISSUE_THRESHOLD = 3`` — escalate-to-human after the
+#   same issue recurs three times (different from consecutive errors:
+#   counts identical issues, not consecutive ones).
+DEFAULT_QA_MAX_ITERATIONS = 50
+DEFAULT_QA_MAX_CONSECUTIVE_ERRORS = 3
+DEFAULT_QA_RECURRING_ISSUE_THRESHOLD = 3
+# Wave-2 R-4 BlockerMiddleware suppression windows. Suppress = window
+# during which subsequent calls to the same tool are denied after a
+# blocker pattern has been observed, with a synthetic-failure reason
+# (synthetic-credential-injection lands with T-2 LLM driver; M-1 only
+# emits the deny + ``kind="hook_decision"`` audit row).
+#
+# - Rate-limit: 30s matches Aperant ``pause-handler.ts:30-80`` interval
+#   (the only proven prod-tuned anchor in the roadmap §R-4 source set).
+# - Lockfile: 5s — most lockfile contention self-resolves within a few
+#   seconds (apt, cargo, npm); longer waits indicate stuck process and
+#   the LLM should see the failure on the next retry.
+# - Auth-expired: 0 = observe-only (no gating). The LLM-driver T-2 will
+#   wire synthetic re-auth via ``Decision.modify``; until then, denying
+#   on auth would block the LLM from being notified of the auth state.
+DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS = 30
+DEFAULT_LOCKFILE_SUPPRESSION_SECONDS = 5
+DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS = 0
 
 
 @dataclass(frozen=True)
@@ -56,6 +89,17 @@ class RuntimeLimits:
     # Wave-2 R-6 attempt-history knobs (Aperant anchors).
     attempt_history_max_entries: int = DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES
     attempt_history_max_age_seconds: int = DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS
+    # Wave-2 R-34 QA-loop circuit-breaker constants (documented
+    # defaults; not yet wired — QA orchestrator is DEFER per
+    # `borrow-roadmap-2026-05.md` §2.9).
+    qa_max_iterations: int = DEFAULT_QA_MAX_ITERATIONS
+    qa_max_consecutive_errors: int = DEFAULT_QA_MAX_CONSECUTIVE_ERRORS
+    qa_recurring_issue_threshold: int = DEFAULT_QA_RECURRING_ISSUE_THRESHOLD
+    # Wave-2 R-4 BlockerMiddleware suppression windows (seconds; 0 =
+    # observe-only). See module-level anchors for rationale.
+    rate_limit_suppression_seconds: int = DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS
+    lockfile_suppression_seconds: int = DEFAULT_LOCKFILE_SUPPRESSION_SECONDS
+    auth_expired_suppression_seconds: int = DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS
 
     @classmethod
     def anchored_defaults(cls) -> RuntimeLimits:
@@ -68,6 +112,12 @@ class RuntimeLimits:
             loop_guard_window=DEFAULT_LOOP_GUARD_WINDOW,
             attempt_history_max_entries=DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES,
             attempt_history_max_age_seconds=DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS,
+            qa_max_iterations=DEFAULT_QA_MAX_ITERATIONS,
+            qa_max_consecutive_errors=DEFAULT_QA_MAX_CONSECUTIVE_ERRORS,
+            qa_recurring_issue_threshold=DEFAULT_QA_RECURRING_ISSUE_THRESHOLD,
+            rate_limit_suppression_seconds=DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS,
+            lockfile_suppression_seconds=DEFAULT_LOCKFILE_SUPPRESSION_SECONDS,
+            auth_expired_suppression_seconds=DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS,
         )
 
 
@@ -95,6 +145,26 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
         "loop_guard_window",
         "attempt_history_max_entries",
         "attempt_history_max_age_seconds",
+        "qa_max_iterations",
+        "qa_max_consecutive_errors",
+        "qa_recurring_issue_threshold",
+        "rate_limit_suppression_seconds",
+        "lockfile_suppression_seconds",
+        "auth_expired_suppression_seconds",
+    }
+)
+
+# Keys where ``0`` is documented as a valid value («observe-only» mode for
+# ``BlockerMiddleware``: gate returns ``allow`` when ``suppression_seconds
+# <= 0``, see ``hooks/blockers.py`` ``_gate``). The default validator
+# rejects ``value <= 0`` because every other knob in the config (loop
+# caps, history limits, QA thresholds) must be strictly positive; these
+# three are the explicit exception.
+_ZERO_ALLOWED_KEYS: frozenset[str] = frozenset(
+    {
+        "rate_limit_suppression_seconds",
+        "lockfile_suppression_seconds",
+        "auth_expired_suppression_seconds",
     }
 )
 
@@ -113,7 +183,10 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
     Lines outside the block are ignored. Unknown keys inside the block
     surface as :class:`RuntimeLimitsWarning` entries; missing keys
     inherit the documented anchors so the loop driver still starts.
-    Negative or zero values surface as warnings and the anchor is kept.
+    Negative values surface as warnings and the anchor is kept. ``0``
+    is rejected for every key **except** the
+    :data:`_ZERO_ALLOWED_KEYS` set (the three ``*_suppression_seconds``
+    blocker knobs where ``0`` means «observe-only»).
     """
 
     found: dict[str, int] = {}
@@ -150,12 +223,18 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
                 )
             )
             continue
-        if value <= 0:
+        min_allowed = 0 if key in _ZERO_ALLOWED_KEYS else 1
+        if value < min_allowed:
+            detail = (
+                f"value must be non-negative: {value}"
+                if key in _ZERO_ALLOWED_KEYS
+                else f"value must be positive: {value}"
+            )
             warnings.append(
                 RuntimeLimitsWarning(
                     line_no=line_no,
                     key=key,
-                    detail=f"value must be positive: {value}",
+                    detail=detail,
                 )
             )
             continue
@@ -174,6 +253,22 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
         ),
         attempt_history_max_age_seconds=found.get(
             "attempt_history_max_age_seconds", DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS
+        ),
+        qa_max_iterations=found.get("qa_max_iterations", DEFAULT_QA_MAX_ITERATIONS),
+        qa_max_consecutive_errors=found.get(
+            "qa_max_consecutive_errors", DEFAULT_QA_MAX_CONSECUTIVE_ERRORS
+        ),
+        qa_recurring_issue_threshold=found.get(
+            "qa_recurring_issue_threshold", DEFAULT_QA_RECURRING_ISSUE_THRESHOLD
+        ),
+        rate_limit_suppression_seconds=found.get(
+            "rate_limit_suppression_seconds", DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS
+        ),
+        lockfile_suppression_seconds=found.get(
+            "lockfile_suppression_seconds", DEFAULT_LOCKFILE_SUPPRESSION_SECONDS
+        ),
+        auth_expired_suppression_seconds=found.get(
+            "auth_expired_suppression_seconds", DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS
         ),
     )
     return RuntimeLimitsLoadResult(limits=limits, warnings=tuple(warnings))
@@ -200,11 +295,17 @@ def load_runtime_limits_from_path(
 __all__ = [
     "DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS",
     "DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES",
+    "DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS",
     "DEFAULT_BASH_TIMEOUT_SECONDS",
+    "DEFAULT_LOCKFILE_SUPPRESSION_SECONDS",
     "DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER",
     "DEFAULT_LOOP_GUARD_REPEAT_WARN",
     "DEFAULT_LOOP_GUARD_WINDOW",
     "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_QA_MAX_CONSECUTIVE_ERRORS",
+    "DEFAULT_QA_MAX_ITERATIONS",
+    "DEFAULT_QA_RECURRING_ISSUE_THRESHOLD",
+    "DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS",
     "RuntimeLimits",
     "RuntimeLimitsLoadResult",
     "RuntimeLimitsWarning",

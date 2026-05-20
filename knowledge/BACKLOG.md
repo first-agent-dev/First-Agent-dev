@@ -516,6 +516,61 @@
   - [`knowledge/adr/ADR-8-hook-registry.md`](./adr/ADR-8-hook-registry.md)
     §3 (Guard short-circuit) — LoopGuard reuses the same deny path.
 
+## M-3 — Wave-2 pre-tool BlockerMiddleware + DSV YAML contracts + QA constants
+
+- **Status:** **closed by PR-3 stacking on PR #25** (2026-05-20).
+  Three more Wave-2 R-Ns from
+  [`research/borrow-roadmap-2026-05.md`](./research/borrow-roadmap-2026-05.md)
+  §3 land on top of the M-2 stack:
+  - **R-4 pre-tool blockers** —
+    [`src/fa/inner_loop/hooks/blockers.py`](../src/fa/inner_loop/hooks/blockers.py)
+    introduces `BlockerMiddleware` + three subclasses (`RateLimitBlocker`,
+    `LockfileBlocker`, `AuthExpiredBlocker`). Each is a `GuardMiddleware`
+    attached to both `BEFORE_TOOL_EXEC` (gate) and `AFTER_TOOL_EXEC`
+    (observe). The base class wires the observe-on-AFTER + gate-on-BEFORE
+    flow so every subclass is a ~10-line specialisation that overrides
+    `_detect(ToolResult) -> bool`. Suppression windows + category live in
+    `RuntimeLimits` per ADR-7 §Amendment 2026-05-20 rule 1: 30s rate-limit
+    (Aperant `pause-handler.ts:30-80` prod-tuned default), 5s lockfile,
+    0s auth-expired (observe-only; synthetic re-auth lands with T-2).
+  - **R-5 DSV YAML contracts** — [`src/fa/verifier/__init__.py`](../src/fa/verifier/__init__.py)
+    adds `load_contracts_from_dir(directory)` batch-loader. The smoke CLI
+    seeds `VerifierObserver` from
+    [`verifiers/*.yaml`](../verifiers/), which now ships canonical
+    contracts for the three M-1 tools (`fs.read_file`, `fs.write_file`,
+    `fs.run_bash`) plus the documentation-anchor `edit_file.yaml`.
+    Contracts are keyed by in-file `target_action`, not filename.
+    `required_trace_events` is empty in M-1 — tool bodies don't yet emit
+    per-step trace events; T-2 lands observation-event projection.
+  - **R-34 HookRegistry guard constants** —
+    [`src/fa/inner_loop/runtime_limits.py`](../src/fa/inner_loop/runtime_limits.py)
+    surfaces `qa_max_iterations` / `qa_max_consecutive_errors` /
+    `qa_recurring_issue_threshold` as documented anchors (Aperant
+    `qa-loop.ts` magic-validated defaults: 50 / 3 / 3). The QA orchestrator
+    itself is DEFER per roadmap §2.9 — landing the constants now keeps
+    the rule-1 contract (config-bounded, never code constants) honoured
+    when a future R-N consumer wires them. Same commit fixes a latent
+    loader gap: prior to PR-3 the YAML loader accepted the QA + R-4
+    suppression keys (no «unknown key» warning) but silently discarded
+    their values; the loader now wires both groups through `RuntimeLimits`
+    so user config actually takes effect.
+- **Why M-3 (not deferred) closes here:** R-4 blockers, R-5 DSV
+  loader, and R-34 constants are all subtractions of LLM reasoning
+  cost (R-4 + R-5) and pre-vendored documented anchors (R-34). They
+  share the same shape — all three plug into the existing
+  `HookRegistry` / `RuntimeLimits` / `VerifierObserver` surfaces
+  without restructuring, so they ship together.
+- **References:**
+  - [`research/borrow-roadmap-2026-05.md`](./research/borrow-roadmap-2026-05.md)
+    §R-4 / §R-5 / §R-34.
+  - [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](./adr/ADR-7-inner-loop-tool-registry.md)
+    §Amendment 2026-05-20 rule 1 (config-bounded retry caps) — all
+    three blocker suppression windows + three QA constants live in
+    `RuntimeLimits`.
+  - [`knowledge/adr/ADR-8-hook-registry.md`](./adr/ADR-8-hook-registry.md)
+    §1 (lifecycle points) — blockers reuse `BEFORE_TOOL_EXEC` +
+    `AFTER_TOOL_EXEC` symmetrically.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

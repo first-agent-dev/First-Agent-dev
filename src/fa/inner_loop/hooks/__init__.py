@@ -10,6 +10,13 @@ from fa.inner_loop.hooks.base import (
     Middleware,
     ObserverMiddleware,
 )
+from fa.inner_loop.hooks.blockers import (
+    AuthExpiredBlocker,
+    BlockerCategory,
+    BlockerMiddleware,
+    LockfileBlocker,
+    RateLimitBlocker,
+)
 from fa.inner_loop.hooks.builtin import (
     ApprovalHook,
     AuditHook,
@@ -30,6 +37,9 @@ __all__ = [
     "ApprovalHook",
     "AttemptHistoryObserver",
     "AuditHook",
+    "AuthExpiredBlocker",
+    "BlockerCategory",
+    "BlockerMiddleware",
     "CapabilityGuard",
     "Decision",
     "DispatchRecord",
@@ -39,10 +49,12 @@ __all__ = [
     "HookRegistry",
     "LearningObserver",
     "LifecyclePoint",
+    "LockfileBlocker",
     "LoopGuard",
     "Middleware",
     "ObserverMiddleware",
     "PauseGuard",
+    "RateLimitBlocker",
     "SandboxHook",
     "VerifierObserver",
     "default_tool_result_for_denial",
