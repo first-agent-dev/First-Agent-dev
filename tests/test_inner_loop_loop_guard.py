@@ -43,12 +43,21 @@ def test_loop_guard_rejects_invalid_construction() -> None:
 
 
 def test_loop_guard_allows_when_below_warn() -> None:
+    """Models the real ``run_session`` per-iteration order:
+    ``BETWEEN_ROUNDS`` fires at the START of every iteration (including
+    iter 1, per ADR-8 Amendment 2026-05-20b), then ``BEFORE_TOOL_EXEC``
+    runs immediately before the tool dispatch. With one observation
+    recorded, iter 2's ``BETWEEN_ROUNDS`` sees count=1 → allow."""
+
     guard = LoopGuard(repeat_warn=3, circuit_breaker=4, window=8)
     call = _make_call("a.txt")
-    # One observed call, BETWEEN_ROUNDS sees count=1 → allow.
+    # Iter 1: BETWEEN_ROUNDS (count=0) → allow, then record.
+    iter1_gate = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())
+    assert iter1_gate.action == "allow"
     guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
-    decision = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())
-    assert decision.action == "allow"
+    # Iter 2: BETWEEN_ROUNDS sees count=1 → still below warn=3.
+    iter2_gate = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())
+    assert iter2_gate.action == "allow"
 
 
 def test_loop_guard_emits_warn_at_threshold_and_continues() -> None:
@@ -60,11 +69,17 @@ def test_loop_guard_emits_warn_at_threshold_and_continues() -> None:
         warn_sink=lambda detector, msg: warns.append((detector, msg)),
     )
     call = _make_call("a.txt", call_id="tc")
-    # 3 identical calls → warn fires once, decision is still allow.
+    # Models real ``run_session`` per-iteration order BETWEEN_ROUNDS
+    # → BEFORE_TOOL_EXEC. After 3 identical observations recorded,
+    # iter 4's ``BETWEEN_ROUNDS`` sees count=3 → warn fires once,
+    # decision is still allow.
     for _ in range(3):
+        gate = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())
+        assert gate.action == "allow"
         guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
-        decision = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())
-        assert decision.action == "allow"
+    # Iter 4's BETWEEN_ROUNDS scans the 3 prior observations → warn.
+    decision = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())
+    assert decision.action == "allow"
     assert len(warns) == 1
     detector, message = warns[0]
     assert detector == "identical_call_repeat"
@@ -72,17 +87,25 @@ def test_loop_guard_emits_warn_at_threshold_and_continues() -> None:
 
 
 def test_loop_guard_denies_at_circuit_breaker_for_identical_call() -> None:
-    """Five identical calls trip the circuit breaker (params_hash collides)."""
+    """Five identical calls trip the circuit breaker (params_hash collides).
+
+    Models the real ``run_session`` order: ``BETWEEN_ROUNDS`` fires at
+    the start of every iteration (including iter 1, ADR-8 Amendment
+    2026-05-20b), then ``BEFORE_TOOL_EXEC`` records. With
+    ``circuit_breaker=5``, the deny fires at the START of iter 6 —
+    after 5 successful records — not at the end of iter 5.
+    """
 
     guard = LoopGuard(repeat_warn=3, circuit_breaker=5, window=8)
     call = _make_call("a.txt")
-    # First 4 calls observed + 4 BETWEEN_ROUNDS dispatches all allow.
-    for _ in range(4):
+    # Iterations 1-5 each pair BETWEEN_ROUNDS (allow) with
+    # BEFORE_TOOL_EXEC (record). BETWEEN_ROUNDS sees count=0,1,2,3,4
+    # — below circuit_breaker=5 on each iteration's gate check.
+    for _ in range(5):
+        gate = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())
+        assert gate.action == "allow"
         guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
-        decision = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())
-        assert decision.action == "allow"
-    # Fifth observation pushes count to 5 → next BETWEEN_ROUNDS denies.
-    guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    # Iter 6's BETWEEN_ROUNDS scans the 5 recorded observations → deny.
     decision = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())
     assert decision.action == "deny"
     assert "repeated 5 times" in decision.reason
