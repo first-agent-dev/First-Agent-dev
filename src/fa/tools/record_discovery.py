@@ -1,9 +1,17 @@
-"""``record_discovery`` — atomic per-key upsert into the codebase map.
+"""``record_discovery`` — per-key upsert into the codebase map.
 
 Stores in ``knowledge/trace/codebase_map.json`` a flat
 ``{key: DiscoveryEntry}`` dictionary. Each call updates exactly
-one key; writes are atomic via ``.tmp`` + ``os.replace`` (mirrors
-Aperant TS ``record-discovery.ts`` idiom).
+one key; writes are atomic per call via ``.tmp`` + ``os.replace``
+(mirrors Aperant TS ``record-discovery.ts`` idiom) so the target
+file never contains a partially-written JSON object.
+
+The per-call atomic-rename does NOT protect the read-modify-write
+cycle (load existing map → add one key → dump full map) from
+concurrent invocation — two parallel callers can each read the
+same initial state and the later writer's ``os.replace`` overwrites
+the earlier key. See :mod:`fa.tools` package docstring for the
+single-writer contract and BACKLOG M-1 deferral.
 
 The map is intentionally JSON (not Markdown) because it is meant
 to be programmatically loaded by future routing layers — see

@@ -1,10 +1,12 @@
 """``record_gotcha`` — append-only learning loop entry point.
 
 The function appends one timestamped section to a Markdown file
-(default ``knowledge/trace/gotchas.md``). Writes are atomic: the
-new content is staged to a ``.tmp`` sibling and ``os.replace``d
-into the target — Aperant's TS original uses the same idiom and
-the test suite asserts the .tmp file does not leak on success.
+(default ``knowledge/trace/gotchas.md``). Writes are atomic per
+call: the new content is staged to a ``.tmp`` sibling and
+``os.replace``d into the target, so the target never contains a
+half-written body. Concurrent invocation from multiple processes
+is **not** safe — see :mod:`fa.tools` package docstring for the
+single-writer contract and BACKLOG M-1 deferral.
 
 Format of each appended section (stable; matches Aperant
 ``record-gotcha.ts:42-61`` shape):
