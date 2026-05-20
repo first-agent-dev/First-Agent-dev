@@ -317,6 +317,54 @@ Per [`AGENTS.md` §PR Checklist rule #10](../../AGENTS.md#pr-checklist)
   - **AGENTS.md update at M-1:** add rule about declaring
     `attaches_to` + `attaches_to_role` in middleware classes.
 
+## Amendment 2026-05-20a — sandbox re-check carve-out (`revalidates_after_modify`)
+
+**Tension to resolve.** ADR-7 §5 + §8 require that after a
+`Decision.modify`, both JSON-Schema validation AND sandbox path-
+containment re-run on the mutated payload (so a hook cannot silently
+rewrite `path` to escape the workspace root). ADR-8 §3 above states
+"already-run hooks 1..N-1 do not re-run after a downstream modify".
+These two rules genuinely conflict for the sandbox-on-modify case.
+
+**Carve-out (now part of this ADR's contract).**
+
+1. The base `Middleware` class carries one extra class-level flag:
+   ```python
+   revalidates_after_modify: bool = False  # default
+   ```
+2. A middleware sets it to `True` to declare "if any later guard in
+   the same dispatch returns `Decision.modify`, the registry MUST
+   replay my `handle()` against the mutated payload before continuing
+   the chain". Only `SandboxHook` opts in today; future guards that
+   need post-modify revalidation (e.g. a path-containment variant)
+   add the flag too.
+3. The "one mutation per dispatch" rule from §3 still holds:
+   a replayed guard MAY NOT itself return `Decision.modify`. If it
+   does, the registry raises `hook_double_mutation` immediately.
+4. A `Decision.deny` from any replayed guard short-circuits the
+   chain the same way an in-line deny would (raises `PermissionError`
+   out of `HookRegistry.dispatch`; loop driver converts it to a
+   `ToolResult.fail("hook_deny", ...)` for `BEFORE_TOOL_EXEC` denials,
+   or to a `kind="run_stopped"` row for `BETWEEN_ROUNDS` denials).
+5. The dispatch trace marks every replayed step with an `@replay`
+   suffix on `DispatchRecord.middleware` so an operator can tell
+   baseline vs revalidation rows apart in `events.jsonl`.
+
+**Why this is a carve-out and not a general "always replay" rule.**
+
+Auto-replaying every prior guard on every modify would silently
+re-run side-effectful Observers and any guard whose handler is
+expensive — and it would invite a footgun where a mutator + a
+non-idempotent guard combine to make `dispatch` quadratic in
+chain length. The explicit opt-in keeps replays bounded to the
+guards that actually need them (today: one; tomorrow: possibly two
+or three) and forces each opt-in to come with an integration test
+covering the modify-then-replay path (see
+`tests/test_inner_loop_validation.py::test_modify_to_escape_is_caught_by_sandbox_replay`).
+
+**Forward-only.** Applies to M-1 onwards; no Wave-0 code paths
+existed to migrate.
+
 ## Prior Art
 
 Per [AGENTS.md PR Checklist rule #10](../../AGENTS.md#pr-checklist)

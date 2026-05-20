@@ -413,6 +413,36 @@
   [`research/dpc-messenger-inspiration-2026-05.md`](../research/dpc-messenger-inspiration-2026-05.md)
   §3 + [`research/gortex-aperant-inspiration-2026-05.md`](../research/gortex-aperant-inspiration-2026-05.md)
   §2.
+- **Amendment 2026-05-20a — sandbox re-check carve-out:**
+  - **Chosen:** Add an opt-in `Middleware.revalidates_after_modify`
+    flag (default `False`). Today only `SandboxHook` opts in;
+    `HookRegistry.dispatch` replays opted-in guards once against the
+    mutated payload after any `Decision.modify`. Codifies the
+    exception to ADR-8 §3 "already-run hooks 1..N-1 do not re-run"
+    so the contract no longer relies on an undocumented
+    implementation carve-out.
+  - **Rejected (a) — auto-replay all prior guards on every modify:**
+    Reason: silently re-runs side-effectful observers and any
+    expensive guard; makes dispatch quadratic in chain length;
+    invites a footgun. Lesson: revisit only if ≥3 guards eventually
+    declare `revalidates_after_modify = True` AND each carries
+    integration tests proving the carve-out is no longer minimal.
+  - **Rejected (b) — force ordering "mutators must be last":**
+    Reason: brittle to PR landing order, hostile to two
+    mutators that share a chain, and doesn't actually let the
+    sandbox re-run on the mutated payload. Lesson: revisit if
+    the registry adopts a topological-sort step (currently it
+    does not).
+  - **Coupling:** Pairs with ADR-7 §5 + §8 (re-validation after
+    `Decision.modify`); pairs with the BUG-0001 fix at
+    `loop.py` (BETWEEN_ROUNDS `PermissionError` converted to
+    a `kind="run_stopped"` row rather than a raw traceback) —
+    the two together close the "PR-#24 review block" cycle.
+  - **Re-evaluation triggers:** (1) a second guard declares
+    `revalidates_after_modify = True` → confirm the order of
+    replays is deterministic and tests cover the multi-replay
+    case; (2) a Wave-2 R-N introduces a new modify-emitting
+    middleware → confirm the carve-out still bounds replay cost.
 
 ## Q-9 — Wave-1 R-N triplet (R-18 tool-shapes / R-21 capability flags / R-25 pause sentinel) — what shape? (2026-05-20)
 

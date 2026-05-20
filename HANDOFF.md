@@ -4,6 +4,22 @@
 > Cursor, etc.) starting a new session on this repository.**
 >
 > **Last updated:** 2026-05-20 by Devin session
+> [`5f23505ec2a04caeb232bfe8d391010e`](https://app.devin.ai/sessions/5f23505ec2a04caeb232bfe8d391010e)
+> — PR
+> [#24](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/24)
+> **M-1 inner-loop runtime scaffold** is now contract-conformant:
+> JSON-Schema validation on `params` (ADR-7 §5), modify→re-validate
+> + sandbox replay on every `Decision.modify` (ADR-7 §8), `SandboxHook`
+> gates `fs.read_file` / `fs.write_file` paths (not only
+> `fs.run_bash`), `events.jsonl` carries `ts` + `run_id` per ADR-7 §7
+> schema, `hook_decision` rows persisted via `HookRegistry` event-sink,
+> `RuntimeLimits` (max_iterations + bash_timeout) read from
+> `~/.fa/config.yaml` (ADR-7 §Amendment 2026-05-20 rule 1 «never code
+> constants»). 338 tests passing. M-1 unblocks Wave-2 R-Ns; next
+> session: stack R-2 LoopGuard + R-3 FailureClassifier + R-6
+> attempt_history.json in one PR, then R-4 / R-5 / R-34 in the next.
+>
+> **Prior update:** 2026-05-20 by Devin session
 > [`b3ea514bc30848e9bf72b57aa8c28f6a`](https://app.devin.ai/sessions/b3ea514bc30848e9bf72b57aa8c28f6a)
 > — Wave-0 + Wave-1 docs slate landed (PRs
 > [#18](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/18) /
@@ -13,12 +29,6 @@
 > three new inert Python modules (`fa.verifier`, `fa.tools`,
 > `fa.hygiene`) + capability flags (`fa.config`) + pause sentinel
 > (`fa.orchestration.pause`) + bash sandbox gate (`fa.sandbox`).
-> [BACKLOG M-1](./knowledge/BACKLOG.md#m-1--inner-loop-scaffolding--hookregistry-runtime)
-> is the single unblock-trigger that wires all four into the
-> inner-loop. Next session: Phase-M scaffolding from M-1, OR
-> implementation of the `fa-0.1-release-gaps-2026-05.md` items
-> (attached by the lead at session start; not committed to the
-> repo since it's a plan, not a research note) — lead's call.
 >
 > **Prior update:** 2026-05-13 by Devin session
 > [`22479f39c46f4ab7941d2fd667393aad`](https://app.devin.ai/sessions/22479f39c46f4ab7941d2fd667393aad)
@@ -178,7 +188,7 @@ manually beyond this point.
     §4.1 / §6 R-7 / R-8 / R-9.
   - [ADR-8](./knowledge/adr/ADR-8-hook-registry.md) —
     HookRegistry middleware-chain contract (doc-first; runtime
-    BACKLOG M-1). Five lifecycle points (`BETWEEN_ROUNDS` /
+    BACKLOG M-1 — **closed by PR #24**). Five lifecycle points (`BETWEEN_ROUNDS` /
     `BEFORE_LLM_CALL` / `AFTER_LLM_CALL` / `BEFORE_TOOL_EXEC` /
     `AFTER_TOOL_EXEC`); two middleware kinds (`GuardMiddleware`
     may deny/modify, `ObserverMiddleware` read-only); dispatcher
@@ -199,7 +209,14 @@ manually beyond this point.
     [`research/dpc-messenger-inspiration-2026-05.md`](./knowledge/research/dpc-messenger-inspiration-2026-05.md)
     §3 +
     [`research/gortex-aperant-inspiration-2026-05.md`](./knowledge/research/gortex-aperant-inspiration-2026-05.md)
-    §2.
+    §2. *Amendment 2026-05-20a* — adds an opt-in
+    `Middleware.revalidates_after_modify` flag (default `False`)
+    so the sandbox can re-check a `Decision.modify`-mutated payload
+    without violating "already-run hooks 1..N-1 do not re-run".
+    `SandboxHook` is the only opt-in today; the replay path is
+    capped at one extra `handle()` per opted-in guard and one
+    mutation per dispatch (regression in
+    `tests/test_inner_loop_validation.py::test_modify_to_escape_is_caught_by_sandbox_replay`).
 - **Wave-1 R-N triplet (PR-2 2026-05-20):**
   - **R-18** — Per-tier tool-shape registry at
     [`knowledge/prompts/tool-shapes.yaml`](./knowledge/prompts/tool-shapes.yaml)
@@ -330,44 +347,28 @@ manually beyond this point.
 
 ## Next steps (intended order)
 
-1. **Implementation PR — inner-loop scaffolding /
-   [BACKLOG M-1](./knowledge/BACKLOG.md#m-1--inner-loop-scaffolding--hookregistry-runtime)**
-   (ADR-7 + ADR-8 contracts now frozen on `main` as of
-   2026-05-20). Create `src/fa/inner_loop/` with `registry.py`
-   (`ToolSpec` / `ToolResult` dataclasses from
-   [ADR-7 §2](./knowledge/adr/ADR-7-inner-loop-tool-registry.md#2-toolspec--toolresult-data-shapes)
-   verbatim + `register` / `lookup`), `loop.py` (runtime loop
-   §1 + JSON-Schema validation §5 + max_iterations=6 +
-   intra-role retry T=1.0 per ADR-7 §Amendment 2026-05-20),
-   `hooks/` (`HookRegistry` from
-   [ADR-8](./knowledge/adr/ADR-8-hook-registry.md) — five
-   lifecycle points, `GuardMiddleware` + `ObserverMiddleware`,
-   first-deny short-circuit, family-disjoint enforcement at
-   `register()`, plus `SandboxHook` / `ApprovalHook` /
-   `AuditHook` subclasses from ADR-7 §8), `tools/` (one file
-   per tool in ADR-7 §3 catalog — starting with `fs.read_file`
-   / `fs.list_files` to unblock the chunker indexer end-to-end),
-   and `trace.py` (`events.jsonl` writer + `hot.md` summariser).
-   **Wires the four already-landed inert modules** as concrete
-   hooks: `fa.sandbox.bash_gate` → `GuardMiddleware` at
-   `BEFORE_TOOL_EXEC`; `fa.config.load_capabilities` →
-   `GuardMiddleware` at `BEFORE_TOOL_EXEC` (capability flags AND
-   path-shape AND command-shape); `fa.orchestration.pause` →
-   `GuardMiddleware` at `BETWEEN_ROUNDS`;
-   `fa.verifier.verify_action` → `ObserverMiddleware` at
-   `AFTER_TOOL_EXEC`. **Folds in single-writer serialisation**
-   for `fa.tools.record_gotcha` / `record_discovery` (currently
-   read-modify-write without locking — see
-   [`src/fa/tools/__init__.py`](./src/fa/tools/__init__.py)
-   docstring; HookRegistry is the natural seat). The first
-   tool PR consumes ADR-7 + ADR-8 verbatim; subsequent PRs cite
-   §2-§4 / §3-§5 instead of re-deriving.
-2. **(Alternative path)** — implementation of release-gap items
-   from `fa-0.1-release-gaps-2026-05.md` (attached by lead at
-   session start, not committed; T-1 = inner-loop dispatcher,
-   T-2 = LLM clients, T-3 = CLI surface, T-6 = SQLite FTS5
-   index). T-1 substantially overlaps M-1 above; T-2/T-3/T-6
-   land after M-1.
+1. **Wave-2 stack #1 — R-2 + R-3 + R-6 (single PR).** Land
+   `LoopGuard` (R-2) at `BETWEEN_ROUNDS` (`max_iterations`,
+   `max_consecutive_failures`, `forbidden_action_repeats`),
+   `FailureClassifier` + `RecoveryAction` (R-3) consumed by an
+   `AFTER_TOOL_EXEC` observer that maps every `ToolResult.error`
+   to a deterministic recovery hint, and `attempt_history.json`
+   writer (R-6) used by the classifier to detect ping-pong
+   patterns. Source contracts:
+   [`borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+   §3 R-2 / R-3 / R-6.
+2. **Wave-2 stack #2 — R-4 + R-5 + R-34 (single PR).** Land the
+   three concrete `BEFORE_TOOL_EXEC` blockers (R-4: workspace-root
+   path check / forbidden-command list / capability-flag check)
+   as `GuardMiddleware` subclasses next to the existing
+   `SandboxHook`; extend `VerifierObserver` (R-5) to consume YAML
+   DSV contracts from `~/.fa/verifier/*.yaml`; surface the
+   HookRegistry guard constants (R-34) for the loop driver.
+3. **(Alternative path)** — implementation of remaining
+   release-gap items from `fa-0.1-release-gaps-2026-05.md`
+   (attached by lead at session start, not committed; T-1 closed
+   by PR #24, T-2 = LLM clients, T-3 = CLI surface, T-6 = SQLite
+   FTS5 index). T-1 closed by PR #24; T-2 / T-3 / T-6 unblocked.
 3. **Implementation PR — chunker.** Implement `src/fa/chunker/`
    with the `Chunk` dataclass and `Chunker` Protocol from
    [ADR-5 §Decision](./knowledge/adr/ADR-5-chunker-tool.md#decision)

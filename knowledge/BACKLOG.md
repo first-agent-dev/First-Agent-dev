@@ -398,9 +398,21 @@
 
 ## M-1 — Inner-loop scaffolding / HookRegistry runtime
 
-- **Status:** deferred from Wave-1 docs-only PRs (added 2026-05-20).
-  Doc contract is frozen across three ADRs — runtime materialisation
-  is gated by this single milestone.
+- **Status:** **closed by PR #24** (2026-05-20). Runtime now lives at
+  `src/fa/inner_loop/` with the full ADR-7 §1–§10 + ADR-8 contract:
+  JSON-Schema validation on every dispatch (§5), modify→re-validate +
+  sandbox replay on every `Decision.modify` (§8), `SandboxHook` gating
+  `fs.read_file` / `fs.write_file` paths in addition to `fs.run_bash`,
+  `events.jsonl` with `ts` + `run_id` per §7 schema, `hook_decision`
+  rows persisted through `HookRegistry` event-sink, `RuntimeLimits`
+  for `max_iterations` (default 6) and `bash_timeout_seconds`
+  (default 30) loaded from `~/.fa/config.yaml` per §Amendment
+  2026-05-20 rule 1 «never code constants». Smoke CLI:
+  `fa inner-loop-smoke --workspace . --input README.md` — 338 tests
+  passing. Unblocks Wave-2 R-Ns.
+- **Prior status (kept for audit trail):** deferred from Wave-1
+  docs-only PRs (added 2026-05-20). Doc contract was frozen across
+  three ADRs — runtime materialisation was gated by this milestone.
 - **Idea:** Stand up the minimal `src/fa/inner_loop/` package that
   materialises the deliberately-minimal slate locked in
   [ADR-7 §2 / §8](./adr/ADR-7-inner-loop-tool-registry.md) and the
