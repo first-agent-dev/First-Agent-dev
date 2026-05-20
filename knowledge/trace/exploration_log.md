@@ -355,3 +355,131 @@
   §R-7 / §R-23 / §R-28 / §R-29 / §R-30 +
   [`research/correlated-llm-errors-and-ensembling-2026-05.md`](../research/correlated-llm-errors-and-ensembling-2026-05.md)
   §4.1 / §6 R-7 / R-8 / R-9.
+
+## Q-8 — What is the v0.1 hook-pipeline contract for the inner-loop dispatcher? (2026-05-20)
+
+- **Chosen:** ADR-8 "Doc-first HookRegistry middleware chain
+  with explicit BACKLOG M-1 runtime deferral." Five lifecycle
+  points (`BETWEEN_ROUNDS` / `BEFORE_LLM_CALL` /
+  `AFTER_LLM_CALL` / `BEFORE_TOOL_EXEC` / `AFTER_TOOL_EXEC`),
+  two middleware kinds (`GuardMiddleware` may deny/modify,
+  `ObserverMiddleware` read-only), dispatcher ordered-chain
+  first-deny short-circuit, family-disjoint rule enforced at
+  `register()` time per ADR-2 / ADR-7 §Amendment 2026-05-20.
+  v0.1 hooks (`SandboxHook`, `ApprovalHook`, `AuditHook`)
+  migrate to subclasses without semantics change when the
+  runtime lands.
+- **Rejected:**
+  - **Option A — Wait until Phase M runtime PR to write the
+    contract.** Reason: every Wave-2 R-N (R-2 `LoopGuard`,
+    R-3 failure-classifier, R-4 pre-tool blocker, R-22 PII
+    walker) shares this substrate; not freezing it means each
+    PR re-derives the same shape. Lesson: revisit only if
+    Wave-2 work is abandoned wholesale; otherwise the
+    duplicated derivation cost dwarfs the doc cost.
+  - **Option B — Ship doc + runtime in one PR.** Reason:
+    PR-2 already carries R-1 (this ADR), R-18 (tool-shapes
+    registry), R-21 (capability flags), R-25 (pause sentinel);
+    adding ~600 LoC runtime + ~800 LoC tests breaches the
+    "atomic-PR" axis from `repo-audit-playbook.md` §P5.
+    Lesson: revisit if BACKLOG M-1 (inner-loop scaffolding)
+    proves to be ≪600 LoC after the §8 mini-pipeline is
+    actually wired — the runtime delta may be the smaller
+    half.
+  - **Option D — Adopt DPC's hooks.py verbatim instead of
+    re-deriving FA-shape contract.** Reason: DPC's chain is
+    Python-async-only (FA is sync), uses string keys for
+    lifecycle points (FA prefers `LifecyclePoint` enum), and
+    does not enforce family-disjoint at `register()`. Verbatim
+    port would silently regress those three FA-specific
+    invariants. Lesson: revisit if Wave-2 R-Ns reveal that any
+    of the three FA-specific invariants is dead weight in
+    practice.
+- **Coupling:** Same family-disjoint rule as ADR-2 §Amendment
+  2026-05-20 + ADR-7 §Amendment 2026-05-20 rule 4. Enforced
+  once at `register()` rather than at each dispatch — single
+  source of truth.
+- **Re-evaluation triggers:** (1) BACKLOG M-1 lands → ADR-8
+  "Implementation Notes" section gets concrete code refs and
+  ADR-7 §8 collapses to a one-row migration mapping; (2) first
+  Wave-2 R-N PR (R-2 `LoopGuard`) — if the registry contract
+  needs schema changes to fit, file a doc-first amendment
+  before the code PR; (3) the v0.1 sync-only assumption is
+  broken by any FA-roadmap item that requires async hooks → re-
+  evaluate the `GuardMiddleware` return-type signature.
+- **Source:** [ADR-8](../adr/ADR-8-hook-registry.md) +
+  [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-1 +
+  [`research/dpc-messenger-inspiration-2026-05.md`](../research/dpc-messenger-inspiration-2026-05.md)
+  §3 + [`research/gortex-aperant-inspiration-2026-05.md`](../research/gortex-aperant-inspiration-2026-05.md)
+  §2.
+
+## Q-9 — Wave-1 R-N triplet (R-18 tool-shapes / R-21 capability flags / R-25 pause sentinel) — what shape? (2026-05-20)
+
+- **Chosen:** Three independent doc + code artefacts landed
+  in one PR (PR-2):
+  - **R-18** — Per-tier tool-shape registry at
+    `knowledge/prompts/tool-shapes.yaml` (read-only metadata,
+    six families: anthropic / openai / qwen / deepseek / glm /
+    kimi) + role-switch handoff one-liner rule in ADR-2
+    §Amendment 2026-05-20 (Wave-1). No Python this round —
+    consumer is the future role-prompt assembler, which lands
+    with BACKLOG M-1.
+  - **R-21** — Five capability flags (`ENABLE_DYNAMIC_TOOLS`,
+    `REQUIRE_DYNAMIC_TOOL_SANDBOX`,
+    `ENABLE_MCP_GATEWAY_MANAGEMENT`,
+    `ENABLE_DYNAMIC_MCP_SERVERS`, `ENABLE_SERVER_OPS`), all
+    default `False`, in ADR-6 §Amendment 2026-05-20 + Python
+    skeleton at `src/fa/config.py` (frozen `Capabilities`
+    dataclass + YAML parse). Layer-1 capability opt-in
+    AND-ed with §Amendment 2026-05-13 Layer-2 role tool
+    whitelist at the dispatcher.
+  - **R-25** — Pause-file sentinel pattern (`RATE_LIMIT_PAUSE`
+    / `AUTH_PAUSE` / `RESUME`) at
+    `src/fa/orchestration/pause.py` (~80 LoC), with four
+    timeout constants matching Kronos defaults
+    (`MAX_RATE_LIMIT_WAIT_MS=7_200_000`,
+    `RATE_LIMIT_CHECK_INTERVAL_MS=30_000`,
+    `AUTH_RESUME_MAX_WAIT_MS=86_400_000`,
+    `AUTH_RESUME_CHECK_INTERVAL_MS=10_000`).
+- **Rejected:**
+  - **Bundle R-18 / R-21 / R-25 into separate PRs.** Reason:
+    each is independent of HookRegistry (so PR-2 is not
+    blocked by Q-8 above), each is small (~50-80 LoC), and
+    review cost amortises across one shared PR description.
+    Lesson: revisit if any single R-N grows past ~150 LoC —
+    split off then.
+  - **Skip R-18 YAML registry; inline the per-family edit
+    shape in role prompts directly.** Reason: cargo-cult risk
+    when role prompts are copied (R-18 rule says: the
+    one-liner FIRES on role-switch precisely because the
+    *next* role tends to inherit the previous role's shape).
+    Lesson: revisit only if a FA-workload eval shows the
+    handoff one-liner has ≤2% effect — then the registry can
+    collapse to a per-role inline.
+  - **Make capability flags CLI flags or env vars instead of
+    `config.yaml` field.** Reason: audit trail. Capability
+    set is the security-sensitive surface; CLI/env leaves no
+    diffable trace. Lesson: revisit only if the YAML parser
+    proves slow enough to matter (impossible at this scale).
+  - **Use a database lock for pause/resume instead of file
+    sentinel.** Reason: sentinel pattern is
+    process-/host-agnostic and survives crashes — DB lock
+    requires a connection alive at pause-time. Lesson:
+    revisit only if FA gains a persistent DB layer for other
+    reasons.
+- **Re-evaluation triggers:** (1) R-18 — UC5 eval shows
+  per-family shape selection adds ≤2% accuracy over a single
+  `string_replace + raw_json` baseline → drop the registry;
+  (2) R-21 — ≥3 of 5 capability flags always flipped to
+  `True` in practice → demote those to defaults; (3) R-25 —
+  filesystem-sentinel pattern proves unable to survive
+  cross-machine session migration (anticipated UC5 sub-agent
+  surface) → re-evaluate against a `state.jsonl`-based
+  equivalent.
+- **Source:** [ADR-2 §Amendment 2026-05-20 (Wave-1)](../adr/ADR-2-llm-tiering.md#amendment-2026-05-20-wave-1--per-tier-tool-shape-registry--role-switch-handoff-one-liner)
+  + [ADR-6 §Amendment 2026-05-20](../adr/ADR-6-tool-sandbox-allow-list.md#amendment-2026-05-20--five-capability-flags-deny-by-default-opt-in)
+  + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-18 / §R-21 / §R-25 +
+  [`research/kronos-agent-os-inspiration-2026-05.md`](../research/kronos-agent-os-inspiration-2026-05.md)
+  §0 R-3 (capability flags) / §0 R-7 (pause sentinel).

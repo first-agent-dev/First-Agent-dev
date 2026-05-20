@@ -406,6 +406,96 @@ forward-compat by ADR-7 §11 R-4; no new TOML section beyond
 that R-4 surface; the `[read]` / `[write]` / block-list shape
 defined in §Policy file is unchanged.
 
+### Amendment 2026-05-20 — Five capability flags (deny-by-default opt-in)
+
+**Source.** Implementation roadmap
+[`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+§R-21 (Wave 1 — independent of HookRegistry).
+Reference impl: Kronos `kronos/config.py:62-69` (five-flag opt-in
+model); convergence: soviet B-NEW-1 declarative tool whitelist
+(`dpc-messenger-inspiration-2026-05.md` §4).
+
+**Problem.** The §Policy file pins the **path** allow-list (read /
+write globs), but says nothing about which *runtime capability
+classes* are even available to the loop. Several capabilities are
+naturally deny-by-default — dynamic tool loading, MCP gateway
+management, server operations — but the original ADR-6 treated
+"capability availability" and "path scope" as the same axis. They
+are not. A user MAY want to grant `~/project/` write scope while
+still keeping dynamic-tool-loading OFF; today there is no
+config surface for that distinction.
+
+Kronos solved this with **five flags**, all default `False`,
+gated through a single `~/.fa/config.yaml` parse. Each flag is
+named for the capability it gates; the names map 1:1 to the
+original Kronos identifiers so future cross-reference is cheap.
+
+**Decision.** First-Agent adopts the five-flag opt-in model
+**verbatim** from Kronos. The flags live in `~/.fa/config.yaml`
+under a top-level `capabilities:` map and the parser exposes them
+as a `Capabilities` frozen dataclass (Python impl tracked in this
+PR as `src/fa/config.py`):
+
+| Flag | Default | Gates |
+|------|---------|-------|
+| `ENABLE_DYNAMIC_TOOLS` | `False` | Loading new tools at runtime (e.g. from a discovered SKILL.md or an MCP server). When `False`, the `ToolRegistry` is frozen at session start (matches ADR-7 §3 v0.1 static catalog). |
+| `REQUIRE_DYNAMIC_TOOL_SANDBOX` | `False` | When `ENABLE_DYNAMIC_TOOLS=True`, this flag forces newly-loaded tools through the §Policy sandbox check on first call. Without this, a dynamically-loaded tool could in principle bypass the path allow-list. |
+| `ENABLE_MCP_GATEWAY_MANAGEMENT` | `False` | The MCP gateway *management* surface (registering / deregistering / configuring upstream MCP servers from inside the loop). Read-only MCP calls do NOT require this flag. |
+| `ENABLE_DYNAMIC_MCP_SERVERS` | `False` | Spawning new MCP server subprocesses at runtime. Pairs with `ENABLE_MCP_GATEWAY_MANAGEMENT` but is the narrower flag — turning gateway management on does NOT implicitly enable spawning new servers. |
+| `ENABLE_SERVER_OPS` | `False` | "Server operations" — any call that mutates a remote service via API (deploy, restart, scale, …). Today no FA tool exposes this; the flag is reserved so the *infrastructure* for the rule lands before the first such tool. |
+
+**Two layers.** The flags above are **Layer 1** (capability opt-in).
+**Layer 2** is the per-role declarative tool whitelist already added
+by §Amendment 2026-05-13 (`allowed_tools` in `~/.fa/sandbox.toml`
+`[roles]` block). The two layers are AND-ed at the dispatcher: a
+tool runs iff (1) its capability class flag is `True` AND (2) the
+current role's `allowed_tools` lists it AND (3) the §Policy path
+check passes.
+
+**Why config-file opt-in, not CLI flag or env var.** Audit
+trail. The capability set is the single most security-sensitive
+configuration in the project (it determines what the agent can
+do *at all*). A diffable file in the user's home — that lives
+under version control alongside `sandbox.toml` — is the only
+shape that survives 12 months of casual reading. CLI flags and
+env vars leave no trace.
+
+**Subtraction-check (AGENTS.md §Pre-flight Step 4).**
+
+- Removing what makes this redundant? — None. §Amendment 2026-05-13
+  introduces the role-tool whitelist (Layer 2) but does not gate
+  *capability classes*. The two layers are orthogonal — Layer 2
+  says "Coder may not run `bash`"; Layer 1 says "no role may load
+  new tools at runtime". You need both.
+- Capability lost if omitted? — `ENABLE_DYNAMIC_TOOLS=True` would
+  in v0.1 silently be the default behaviour the moment the
+  `ToolRegistry` learns to accept additions; without an explicit
+  gate, the deny-by-default stance erodes by accretion.
+- OSS precedent for not having it? — None among the FA reference
+  set: Kronos has the five flags verbatim, DPC has a
+  `[capabilities]` TOML block of similar shape, Aperant has
+  `enable_*` boolean fields in its main YAML config. The pattern
+  is universal across the corpus.
+
+**Reversal triggers.**
+
+- A future FA-workload eval shows ≥3 of the 5 flags are *always*
+  flipped to `True` in practical use → demote those to defaults
+  and keep only the minority as opt-in (audit cost vs gating
+  benefit trade-off).
+- The MCP integration matures past the point where
+  `ENABLE_MCP_GATEWAY_MANAGEMENT` and `ENABLE_DYNAMIC_MCP_SERVERS`
+  are meaningfully separable; collapse the two into one flag if
+  the second is never set independently.
+
+**Implementation pointer.** `src/fa/config.py` ships with this
+amendment as a small frozen dataclass + YAML parse + 5 boolean
+fields, all defaulting `False`. Reading the flags is exactly one
+function (`load_capabilities(path: Path) -> Capabilities`); no
+side effects, no global state. Capability checks at tool-dispatch
+sites are tracked in BACKLOG M-1 (inner-loop scaffolding) — the
+loop has to exist before it can read the flags.
+
 ## References
 
 - [ADR-1](./ADR-1-v01-use-case-scope.md) §UC1 — coding + PR

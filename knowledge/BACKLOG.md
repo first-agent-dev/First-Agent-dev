@@ -396,6 +396,71 @@
   cost. Until the gap closes, the artefact lives where it can be
   found by a `find knowledge/prompts/` grep.
 
+## M-1 — Inner-loop scaffolding / HookRegistry runtime
+
+- **Status:** deferred from Wave-1 docs-only PRs (added 2026-05-20).
+  Doc contract is frozen across three ADRs — runtime materialisation
+  is gated by this single milestone.
+- **Idea:** Stand up the minimal `src/fa/inner_loop/` package that
+  materialises the deliberately-minimal slate locked in
+  [ADR-7 §2 / §8](./adr/ADR-7-inner-loop-tool-registry.md) and the
+  HookRegistry contract in
+  [ADR-8](./adr/ADR-8-hook-registry.md). Expected surface:
+  - `registry.py` — `ToolRegistry` + first three tool subclasses
+    (`read_file`, `write_file`, `run_bash`) with allow-list per
+    [ADR-6](./adr/ADR-6-tool-sandbox-allow-list.md).
+  - `loop.py` — single perceive–select–execute–observe loop with
+    `max_iterations=6` (ADR-7 §Amendment 2026-05-20 retry-budget
+    invariant) and the `T=1.0` intra-role retry rule.
+  - `hooks/` — `HookRegistry` per ADR-8 (five lifecycle points;
+    `GuardMiddleware` + `ObserverMiddleware`; first-deny short-
+    circuit; family-disjoint rule enforced at `register()`).
+  - `hooks/sandbox.py`, `hooks/approval.py`, `hooks/audit.py` —
+    the three concrete hook subclasses from ADR-7 §8 wired to the
+    HookRegistry surface.
+  - Wire `fa.sandbox.bash_gate`, `fa.config.load_capabilities`,
+    `fa.orchestration.pause`, and `fa.verifier.verify_action` as
+    `GuardMiddleware` / post-call `ObserverMiddleware` so the
+    Wave-0+Wave-1 standalone modules stop being inert.
+  - First-call entry point: a CLI command that exercises a single
+    `read_file → write_file → run_bash` trio through the registry +
+    hook chain end-to-end.
+  - Folds in the read-modify-write locking deferred from Wave-0
+    (record-gotcha / record-discovery) — `HookRegistry` is the
+    single-writer serialisation seat per
+    [`src/fa/tools/__init__.py`](../src/fa/tools/__init__.py)
+    docstring.
+- **Blocked-on:**
+  - Wave-0 PR #18 + Wave-1 PR #19 + Wave-1 PR #20 merged to `main`
+    (ADR-6 / ADR-7 / ADR-8 amendments must be in `main` first so
+    M-1 can cite them as canonical contracts).
+  - Confirmation that no further Wave-1 docs-only amendments are
+    pending against ADR-7 / ADR-8 (small risk surface; defaults to
+    «not pending» after this PR).
+- **Unblock-trigger:** all three Wave-0/Wave-1 PRs merged AND the
+  matching session opens a fresh branch for `src/fa/inner_loop/`.
+  No earlier start — landing M-1 before the doc PRs merge guarantees
+  rework on every ADR amendment surfaced by Devin Review.
+- **First concrete step once unblocked:** create
+  `src/fa/inner_loop/__init__.py` + `registry.py` skeleton; port
+  the ADR-7 §2 `ToolSpec` / `ToolResult` dataclasses verbatim from
+  the ADR text; write one happy-path test that calls a single
+  `EchoTool` through the registry without hooks; add a failing
+  test for «register two `LLM_USING` hooks in the same family»
+  to lock in the ADR-8 family-disjoint rule.
+- **References that point here (12 sites across 6 files, added in
+  Wave-0+Wave-1 PRs):**
+  - [`knowledge/adr/ADR-8-hook-registry.md`](./adr/ADR-8-hook-registry.md)
+    lines 35, 107, 240, 307, 358.
+  - [`knowledge/adr/DIGEST.md`](./adr/DIGEST.md) line 244.
+  - [`knowledge/adr/ADR-6-tool-sandbox-allow-list.md`](./adr/ADR-6-tool-sandbox-allow-list.md)
+    line 496.
+  - [`knowledge/trace/exploration_log.md`](./trace/exploration_log.md)
+    lines 362, 385, 402, 427.
+  - [`HANDOFF.md`](../HANDOFF.md) lines 164, 176.
+  - [`src/fa/tools/__init__.py`](../src/fa/tools/__init__.py)
+    docstring (single-writer contract deferral).
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

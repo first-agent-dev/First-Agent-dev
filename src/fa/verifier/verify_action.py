@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from fa._yaml_subset import strip_inline_comment
 from fa.verifier.types import TraceEvent, VerificationResult, VerifierContract
 
 
@@ -110,7 +111,10 @@ def load_contract(text: str) -> VerifierContract:
         if indent == 0 and ":" in stripped:
             key, _, value = stripped.partition(":")
             key = key.strip()
-            value = value.strip()
+            # YAML inline comments must not be embedded in the parsed
+            # value — see fa._yaml_subset.strip_inline_comment + Devin
+            # Review finding 2026-05-20 on PR #19.
+            value = strip_inline_comment(value).strip()
             current_key = key
             current_list = None
             if value:
@@ -126,7 +130,7 @@ def load_contract(text: str) -> VerifierContract:
             continue
 
         if stripped.startswith("- ") and current_list is not None:
-            current_list.append(stripped[2:].strip())
+            current_list.append(strip_inline_comment(stripped[2:]).strip())
             continue
 
         if stripped.startswith("- ") and current_key in {
@@ -138,7 +142,7 @@ def load_contract(text: str) -> VerifierContract:
                 if current_key == "required_trace_events"
                 else failure_conditions
             )
-            target_list.append(stripped[2:].strip())
+            target_list.append(strip_inline_comment(stripped[2:]).strip())
 
     if target_action is None:
         raise ValueError("verifier contract missing required key: target_action")

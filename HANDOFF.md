@@ -159,9 +159,59 @@ manually beyond this point.
     §R-7 / §R-23 / §R-28 / §R-29 / §R-30 +
     [`research/correlated-llm-errors-and-ensembling-2026-05.md`](./knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md)
     §4.1 / §6 R-7 / R-8 / R-9.
-- **ADR slot reservation.** Closed by ADR-7 above. History on
-  the slot: `cross-reference-…-2026-04.md` §11 supersession
-  marks on Q-1 / Q-2.
+  - [ADR-8](./knowledge/adr/ADR-8-hook-registry.md) —
+    HookRegistry middleware-chain contract (doc-first; runtime
+    BACKLOG M-1). Five lifecycle points (`BETWEEN_ROUNDS` /
+    `BEFORE_LLM_CALL` / `AFTER_LLM_CALL` / `BEFORE_TOOL_EXEC` /
+    `AFTER_TOOL_EXEC`); two middleware kinds (`GuardMiddleware`
+    may deny/modify, `ObserverMiddleware` read-only); dispatcher
+    ordered-chain first-deny short-circuit, one mutation per
+    dispatch (inherits ADR-7 §8); family-disjoint rule enforced
+    at `register()` time per ADR-2 / ADR-7 §Amendment 2026-05-20;
+    migration plan for v0.1 hooks (`SandboxHook` →
+    `GuardMiddleware`/`BEFORE_TOOL_EXEC`; `ApprovalHook` →
+    `GuardMiddleware`/`BEFORE_TOOL_EXEC`; `AuditHook` →
+    `ObserverMiddleware`/`AFTER_TOOL_EXEC`). 8-project
+    convergence cited. **Doc-only;** runtime tracked in
+    BACKLOG M-1 (inner-loop scaffolding); each Wave-2 R-N PR
+    (R-2 `LoopGuard`, R-3 failure-classifier, R-4 pre-tool
+    blocker, R-22 PII walker) lands as ~100-LoC subclass of
+    these base classes. Source:
+    [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+    §R-1 +
+    [`research/dpc-messenger-inspiration-2026-05.md`](./knowledge/research/dpc-messenger-inspiration-2026-05.md)
+    §3 +
+    [`research/gortex-aperant-inspiration-2026-05.md`](./knowledge/research/gortex-aperant-inspiration-2026-05.md)
+    §2.
+- **Wave-1 R-N triplet (PR-2 2026-05-20):**
+  - **R-18** — Per-tier tool-shape registry at
+    [`knowledge/prompts/tool-shapes.yaml`](./knowledge/prompts/tool-shapes.yaml)
+    (anthropic / openai / qwen / deepseek / glm / kimi
+    families) + role-switch handoff one-liner rule in
+    [ADR-2 §Amendment 2026-05-20 (Wave-1)](./knowledge/adr/ADR-2-llm-tiering.md#amendment-2026-05-20-wave-1--per-tier-tool-shape-registry--role-switch-handoff-one-liner).
+    Read-only metadata; harness injects the *previous* role's
+    `handoff_one_liner` into the *next* role's prompt on every
+    role-switch.
+  - **R-21** — Five capability flags (deny-by-default opt-in):
+    `ENABLE_DYNAMIC_TOOLS` / `REQUIRE_DYNAMIC_TOOL_SANDBOX` /
+    `ENABLE_MCP_GATEWAY_MANAGEMENT` /
+    `ENABLE_DYNAMIC_MCP_SERVERS` / `ENABLE_SERVER_OPS`, all
+    default `False`, in
+    [ADR-6 §Amendment 2026-05-20](./knowledge/adr/ADR-6-tool-sandbox-allow-list.md#amendment-2026-05-20--five-capability-flags-deny-by-default-opt-in)
+    + Python skeleton at `src/fa/config.py` (frozen
+    `Capabilities` dataclass + YAML parse). Layer-1 capability
+    opt-in AND-ed with Layer-2 (per-role `allowed_tools`) at
+    the dispatcher.
+  - **R-25** — Pause-file sentinel pattern
+    (`RATE_LIMIT_PAUSE` / `AUTH_PAUSE` / `RESUME`) at
+    `src/fa/orchestration/pause.py`; four timeout constants
+    match Kronos defaults (2h rate-limit wait / 30s poll;
+    24h auth wait / 10s poll). Source:
+    [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+    §R-18 / §R-21 / §R-25.
+- **ADR slot reservation.** Closed by ADR-7 + ADR-8 above.
+  History on the slot: `cross-reference-…-2026-04.md` §11
+  supersession marks on Q-1 / Q-2.
 - **Scaffolding:** `pyproject.toml`, Ruff, mypy, pytest,
   pre-commit, GitHub Actions CI, `Makefile`, `markdown-it-py`,
   and system dependency documentation for `universal-ctags`
