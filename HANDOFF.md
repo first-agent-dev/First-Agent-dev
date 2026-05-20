@@ -372,7 +372,7 @@ manually beyond this point.
    the default in
    [ADR-7 §4](./knowledge/adr/ADR-7-inner-loop-tool-registry.md#4-edit-shapes-string-replace-and-apply_patch)
    via amendment (per ADR-7 §Consequences «Re-evaluation
-   triggers» — HANDOFF item 4 fixture lands). Can run in
+   triggers» — HANDOFF item 5 fixture lands). Can run in
    parallel with item 1 (inner-loop scaffolding); not a
    blocker for either tool PR.
 6. **Glossary** (cross-reference §10 R-8 + semi-autonomous
