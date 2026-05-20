@@ -25,12 +25,14 @@ happens to land inside the base.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
     "ContainmentResult",
     "contains_traversal",
+    "contains_unresolved_variable",
     "is_contained",
     "resolve_against",
 ]
@@ -61,6 +63,32 @@ def contains_traversal(path_str: str) -> bool:
     return ".." in parts
 
 
+def contains_unresolved_variable(path_str: str) -> bool:
+    """Return True if ``path_str`` still has a ``$`` after env expansion.
+
+    Sibling guard to :func:`contains_traversal` for shell variable
+    expansion. The classifier tokenises with ``shlex`` (no expansion);
+    bash later runs the command via ``shell=True`` and **does** expand
+    ``$VAR`` / ``${VAR}``. If the variable is undefined at execution
+    time, bash substitutes the empty string, which silently shifts the
+    path's depth. Example: ``rm $UNDEFINED/escape`` tokenises as
+    ``["rm", "$UNDEFINED/escape"]`` → containment sees
+    ``<base>/$UNDEFINED/escape`` (inside base, allowed); bash sees
+    ``rm /escape`` (top-level system path, denied). The fix is to
+    refuse the path entirely when expansion would leave residual
+    ``$`` markers. (Devin Review finding 2026-05-20 on PR #23 —
+    same class as the tilde bypass.)
+
+    :func:`os.path.expandvars` expands any variables present in the
+    **agent process** environment; remaining ``$`` markers therefore
+    mean either (a) an undefined variable or (b) a literal ``$`` in
+    a filename. Both cases are rare enough under FA's UC1+UC3 single-
+    user scope that a blanket reject is the right minimalism-first
+    default.
+    """
+    return "$" in os.path.expandvars(path_str)
+
+
 def resolve_against(target: str | Path, base: Path) -> Path | None:
     """Resolve ``target`` relative to ``base``, following symlinks.
 
@@ -74,6 +102,14 @@ def resolve_against(target: str | Path, base: Path) -> Path | None:
     and write outside the workspace \u2014 Devin Review finding 2026-05-20
     on PR #23.
 
+    Environment variables (``$HOME``, ``${HOME}``, ``$WORKSPACE_ROOT``)
+    are expanded next via :func:`os.path.expandvars` so the canonical
+    comparison uses whatever bash will see at execution time. Any
+    variable that is still **undefined** in the agent process leaves
+    a literal ``$`` in the result — the sibling :func:`is_contained`
+    rejects that case upstream via :func:`contains_unresolved_variable`
+    so this function only ever sees fully-resolved strings.
+
     If the expanded target is absolute, it is used as-is and any
     containment escape is caught by the downstream
     :func:`is_contained` comparison. Otherwise the (relative) expanded
@@ -85,7 +121,8 @@ def resolve_against(target: str | Path, base: Path) -> Path | None:
     is about to create) do not fail the check.
     """
     try:
-        target_path = Path(target).expanduser()
+        expanded = os.path.expandvars(str(target))
+        target_path = Path(expanded).expanduser()
         candidate = target_path if target_path.is_absolute() else (base / target_path)
         return candidate.resolve(strict=False)
     except (OSError, RuntimeError):
@@ -107,6 +144,17 @@ def is_contained(target: str | Path, base: Path) -> ContainmentResult:
             contained=False,
             canonical_target=None,
             reason=f"path contains `..` traversal component: {target_str!r}",
+        )
+
+    if contains_unresolved_variable(target_str):
+        return ContainmentResult(
+            contained=False,
+            canonical_target=None,
+            reason=(
+                f"path contains unresolved shell variable: {target_str!r} "
+                "(bash will expand `$VAR` at execution time, which can "
+                "escape the workspace if the variable is undefined)"
+            ),
         )
 
     canonical = resolve_against(target_str, base)

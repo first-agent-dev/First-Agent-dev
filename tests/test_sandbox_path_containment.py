@@ -19,6 +19,7 @@ import pytest
 from fa.sandbox.path_containment import (
     ContainmentResult,
     contains_traversal,
+    contains_unresolved_variable,
     is_contained,
     resolve_against,
 )
@@ -154,6 +155,95 @@ def test_is_contained_accepts_tilde_when_workspace_is_home(
         # `tmp_path` cleanup handles the directory; HOME is per-test
         # so restoring is best-effort.
         pass
+
+
+def test_contains_unresolved_variable_detects_undefined(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``$UNDEFINED`` must leave a literal ``$`` after expandvars."""
+    monkeypatch.delenv("FA_TEST_UNDEFINED_VAR", raising=False)
+    assert contains_unresolved_variable("$FA_TEST_UNDEFINED_VAR/foo") is True
+    assert contains_unresolved_variable("${FA_TEST_UNDEFINED_VAR}/foo") is True
+
+
+def test_contains_unresolved_variable_accepts_defined(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Variables defined in the agent process must NOT trigger the guard.
+
+    Their expansion is symmetric with what bash sees at execution time
+    (same env passed through subprocess), so the path comparison can
+    proceed via :func:`resolve_against` instead of being rejected
+    upfront.
+    """
+    monkeypatch.setenv("FA_TEST_DEFINED_VAR", "/tmp")
+    assert contains_unresolved_variable("$FA_TEST_DEFINED_VAR/foo") is False
+    assert contains_unresolved_variable("${FA_TEST_DEFINED_VAR}/foo") is False
+
+
+def test_contains_unresolved_variable_accepts_plain_path() -> None:
+    """Paths without ``$`` markers always pass the guard."""
+    assert contains_unresolved_variable("/etc/passwd") is False
+    assert contains_unresolved_variable("foo/bar") is False
+    assert contains_unresolved_variable("") is False
+
+
+def test_is_contained_rejects_undefined_variable_expansion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``rm $UNDEFINED/escape`` must NOT pass containment.
+
+    Before the fix, shlex tokenised this as
+    ``["rm", "$UNDEFINED/escape"]`` and ``is_contained("$UNDEFINED/escape",
+    workspace)`` joined to ``<workspace>/$UNDEFINED/escape`` (inside
+    base, contained=True). But bash with ``shell=True`` expands the
+    undefined variable to the empty string at execution time → the
+    actual command becomes ``rm /escape`` → escapes the workspace.
+    Sibling class to the tilde bypass.
+    (Devin Review finding 2026-05-20 on PR #23.)
+    """
+    monkeypatch.delenv("FA_TEST_UNDEFINED_ESC", raising=False)
+    result = is_contained("$FA_TEST_UNDEFINED_ESC/escape", tmp_path)
+    assert result.contained is False
+    assert "unresolved shell variable" in result.reason
+
+
+def test_is_contained_rejects_defined_variable_expanding_outside(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``$HOME/secret`` must be rejected when workspace is elsewhere.
+
+    Even when ``$HOME`` IS defined (and therefore the unresolved-variable
+    guard passes), the expanded value lands outside the workspace and
+    containment must report it as such. Asserts the canonical path
+    comparison fires correctly after :func:`os.path.expandvars`.
+    """
+    monkeypatch.setenv("HOME", "/home/fake-user")
+    result = is_contained("$HOME/secret", tmp_path)
+    assert result.contained is False
+    assert "outside" in result.reason
+
+
+def test_is_contained_accepts_defined_variable_expanding_inside(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defined var pointing INTO the workspace must pass.
+
+    Regression guard for the expansion path: if an env var legitimately
+    resolves to a workspace-internal location, the gate must not
+    over-reject. Sets a fake env var to a subdirectory under the
+    workspace and verifies containment passes.
+    """
+    inside = tmp_path / "data"
+    inside.mkdir()
+    monkeypatch.setenv("FA_TEST_INSIDE_VAR", str(inside))
+    result = is_contained("$FA_TEST_INSIDE_VAR/file.txt", tmp_path)
+    assert result.contained is True
+    assert result.canonical_target is not None
+    assert result.canonical_target.is_relative_to(tmp_path.resolve())
 
 
 def test_containment_result_is_frozen() -> None:
