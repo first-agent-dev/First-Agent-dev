@@ -272,7 +272,15 @@ shares this exact substrate. Source:
 [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
 §R-1.
 
-**Amendments.** None.
+**Amendments.**
+- *2026-05-20a (sandbox re-check carve-out):* introduces
+  `Middleware.revalidates_after_modify` (default `False`). A guard
+  that opts in is replayed against the mutated payload after any
+  later `Decision.modify`; the one-mutation-per-dispatch and
+  first-deny rules still hold. Only `SandboxHook` opts in today.
+  Closes the ADR-7 §5+§8 vs ADR-8 §3 "already-run hooks do not
+  re-run" tension by codifying the exception explicitly instead
+  of leaving it as an undocumented implementation carve-out.
 
 **Source:** [`ADR-8`](./ADR-8-hook-registry.md).
 

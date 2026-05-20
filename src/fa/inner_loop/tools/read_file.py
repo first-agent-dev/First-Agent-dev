@@ -8,10 +8,15 @@ from fa.inner_loop.tools.base import optional_int, require_string, resolve_works
 
 
 def build_read_file_tool(workspace_root: Path) -> ToolSpec:
+    # ``resolve_workspace_path`` returns a fully resolved path; resolve the
+    # closure root once here so ``relative_to`` below also sees a resolved
+    # base. Matches ``build_run_bash_tool`` (which does the same on line 26).
+    root = workspace_root.resolve()
+
     def handler(params: Mapping[str, object]) -> ToolResult:
         data = dict(params)
         try:
-            path = resolve_workspace_path(workspace_root, require_string(data, "path"))
+            path = resolve_workspace_path(root, require_string(data, "path"))
             start_line = optional_int(data, "start_line")
             end_line = optional_int(data, "end_line")
             text = path.read_text(encoding="utf-8")
@@ -30,7 +35,7 @@ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
             content = text
 
         return ToolResult.ok(
-            f"read {path.relative_to(workspace_root)}",
+            f"read {path.relative_to(root)}",
             result={
                 "path": str(path),
                 "content": content,

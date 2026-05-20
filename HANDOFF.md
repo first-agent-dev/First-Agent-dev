@@ -209,7 +209,14 @@ manually beyond this point.
     [`research/dpc-messenger-inspiration-2026-05.md`](./knowledge/research/dpc-messenger-inspiration-2026-05.md)
     §3 +
     [`research/gortex-aperant-inspiration-2026-05.md`](./knowledge/research/gortex-aperant-inspiration-2026-05.md)
-    §2.
+    §2. *Amendment 2026-05-20a* — adds an opt-in
+    `Middleware.revalidates_after_modify` flag (default `False`)
+    so the sandbox can re-check a `Decision.modify`-mutated payload
+    without violating "already-run hooks 1..N-1 do not re-run".
+    `SandboxHook` is the only opt-in today; the replay path is
+    capped at one extra `handle()` per opted-in guard and one
+    mutation per dispatch (regression in
+    `tests/test_inner_loop_validation.py::test_modify_to_escape_is_caught_by_sandbox_replay`).
 - **Wave-1 R-N triplet (PR-2 2026-05-20):**
   - **R-18** — Per-tier tool-shape registry at
     [`knowledge/prompts/tool-shapes.yaml`](./knowledge/prompts/tool-shapes.yaml)

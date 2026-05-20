@@ -66,10 +66,25 @@ def run_session(
         for iteration, call in enumerate(calls, start=1):
             if iteration > effective_limits.max_iterations:
                 break
-            hooks.dispatch(
-                LifecyclePoint.BETWEEN_ROUNDS,
-                HookPayload(role=role, acting_family=acting_family),
-            )
+            try:
+                hooks.dispatch(
+                    LifecyclePoint.BETWEEN_ROUNDS,
+                    HookPayload(role=role, acting_family=acting_family),
+                )
+            except PermissionError as exc:
+                # ADR-7 §8 BETWEEN_ROUNDS is a session-level gate (e.g.
+                # ``PauseGuard``): a deny must stop the loop cleanly, not
+                # propagate the raw ``PermissionError`` out of the runtime.
+                # The audit trail still gets a ``hook_decision`` row from
+                # the registry, plus a ``run_stopped`` row here so an
+                # operator can tell «loop ended early» from «loop ran to
+                # completion» without replaying the chain.
+                state.log.append(
+                    actor="runtime",
+                    kind="run_stopped",
+                    content={"point": LifecyclePoint.BETWEEN_ROUNDS.value, "reason": str(exc)},
+                )
+                break
             state.record_tool_call(call)
             try:
                 payload = hooks.dispatch(

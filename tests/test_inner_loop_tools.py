@@ -71,6 +71,51 @@ def test_run_bash_tool_returns_timeout_error(tmp_path: Path, monkeypatch: Monkey
     assert result.error.retryable is True
 
 
+def test_read_file_tolerates_unresolved_workspace_root(tmp_path: Path) -> None:
+    """Devin-Review BUG-0002: a workspace_root containing ``..`` MUST NOT
+    cause ``relative_to`` to raise ``ValueError`` out of the handler.
+
+    Before the fix, ``build_read_file_tool`` captured the *unresolved*
+    ``workspace_root`` in its closure and then called
+    ``path.relative_to(workspace_root)`` against it, while
+    ``resolve_workspace_path`` had already returned a fully resolved
+    path -- so when the root had a ``..`` segment the two paths were
+    not comparable and ``ValueError`` propagated uncaught.
+    """
+
+    (tmp_path / "real").mkdir()
+    (tmp_path / "real" / "sample.txt").write_text("alpha\nbeta\n", encoding="utf-8")
+    unresolved_root = tmp_path / "real" / ".." / "real"
+    registry = build_baseline_registry(unresolved_root)
+
+    result = registry.dispatch(ToolCall(name="fs.read_file", params={"path": "sample.txt"}))
+
+    assert result.error is None
+    assert result.result["content"] == "alpha\nbeta\n"  # type: ignore[index]
+    assert result.summary.startswith("read sample.txt")
+
+
+def test_write_file_tolerates_unresolved_workspace_root(tmp_path: Path) -> None:
+    """Devin-Review BUG-0002, write-side mirror of the read-side test
+    above. ``build_write_file_tool`` now resolves ``workspace_root``
+    once at build time so the summary's ``relative_to`` is safe."""
+
+    (tmp_path / "real").mkdir()
+    unresolved_root = tmp_path / "real" / ".." / "real"
+    registry = build_baseline_registry(unresolved_root)
+
+    result = registry.dispatch(
+        ToolCall(
+            name="fs.write_file",
+            params={"path": "out.txt", "content": "ok\n"},
+        )
+    )
+
+    assert result.error is None
+    assert (tmp_path / "real" / "out.txt").read_text(encoding="utf-8") == "ok\n"
+    assert result.summary == "wrote out.txt"
+
+
 def test_run_bash_tool_preserves_failure_diagnostics(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path)
 
