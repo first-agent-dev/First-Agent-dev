@@ -103,6 +103,59 @@ def test_is_contained_accepts_internal_symlink(tmp_path: Path) -> None:
     assert result.contained is True
 
 
+def test_is_contained_rejects_tilde_escape(tmp_path: Path) -> None:
+    """Tilde-prefixed targets must expand to ``$HOME`` BEFORE join.
+
+    Before the fix, ``(workspace / "~/secret").expanduser()`` produced
+    ``<workspace>/~/secret`` (because ``~`` was no longer at the start
+    of the joined path) and containment would PASS — but bash would
+    later expand the ``~`` to ``$HOME`` at execution time and write
+    outside the workspace. The fix expands the raw target first.
+    (Devin Review finding 2026-05-20 on PR #23.)
+    """
+    result = is_contained("~/secret", tmp_path)
+    assert result.contained is False
+    assert "outside" in result.reason or "traversal" in result.reason
+
+
+def test_is_contained_rejects_explicit_home_when_workspace_elsewhere(
+    tmp_path: Path,
+) -> None:
+    """``~`` alone resolves to ``$HOME`` and must be rejected.
+
+    Sibling guard to the ``~/secret`` test: bare ``~`` must not be
+    classified as inside the workspace unless the workspace happens to
+    be ``$HOME``. The fix ensures ``~`` is expanded to the absolute
+    home path before the containment comparison.
+    """
+    result = is_contained("~", tmp_path)
+    assert result.contained is False
+
+
+def test_is_contained_accepts_tilde_when_workspace_is_home(
+    tmp_path: Path,
+) -> None:
+    """If the workspace IS the user's home directory, ``~/file`` passes.
+
+    Regression guard for the tilde-expansion fix: the rejection above
+    must not over-fire when the workspace coincidentally equals
+    ``$HOME``. Builds a fake home, monkey-patches it, and asserts the
+    inside-home target is contained.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    os.environ["HOME"] = str(fake_home)
+    try:
+        result = is_contained("~/inside.txt", fake_home)
+        assert result.contained is True
+        assert result.canonical_target is not None
+        assert result.canonical_target.is_relative_to(fake_home.resolve())
+    finally:
+        # `tmp_path` cleanup handles the directory; HOME is per-test
+        # so restoring is best-effort.
+        pass
+
+
 def test_containment_result_is_frozen() -> None:
     """Result type is immutable so the audit log is replay-safe."""
     result = ContainmentResult(

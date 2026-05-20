@@ -64,13 +64,29 @@ def contains_traversal(path_str: str) -> bool:
 def resolve_against(target: str | Path, base: Path) -> Path | None:
     """Resolve ``target`` relative to ``base``, following symlinks.
 
+    Tilde (``~``) is expanded on the **raw target before joining** so
+    that bash-style home references like ``~/secret`` resolve to
+    ``$HOME/secret`` instead of being silently neutralised into
+    ``<base>/~/secret`` (where the ``~`` is no longer at the start and
+    :meth:`Path.expanduser` becomes a no-op). Without this, a tilde
+    target would pass containment because ``<base>/~/secret`` IS inside
+    ``<base>``, but bash would later expand the ``~`` at execution time
+    and write outside the workspace \u2014 Devin Review finding 2026-05-20
+    on PR #23.
+
+    If the expanded target is absolute, it is used as-is and any
+    containment escape is caught by the downstream
+    :func:`is_contained` comparison. Otherwise the (relative) expanded
+    target is joined to ``base`` and the join is resolved.
+
     Returns the canonical absolute Path, or None on resolution failure
     (e.g. symlink loop, permission error). ``strict=False`` so that
     not-yet-existing files inside the workspace (e.g. files the agent
     is about to create) do not fail the check.
     """
     try:
-        candidate = (base / target).expanduser()
+        target_path = Path(target).expanduser()
+        candidate = target_path if target_path.is_absolute() else (base / target_path)
         return candidate.resolve(strict=False)
     except (OSError, RuntimeError):
         return None

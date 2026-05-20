@@ -247,13 +247,78 @@ def _git_subcommand(tokens: list[str]) -> str:
 
 
 def _package_install_subcommand(tokens: list[str]) -> str:
-    """Return the first non-flag token after the package program, or ''."""
+    """Return the install verb after the package program, or ''.
+
+    Scans **all** non-flag tokens after the head and returns the first one
+    that matches :data:`_INSTALL_SUBCOMMANDS`. Falls back to the first
+    non-flag token if no install verb is found.
+
+    Why scan instead of taking ``tokens[1]``: package managers like ``uv``
+    nest the install verb behind a sub-program name — ``uv pip install
+    requests`` has ``pip`` as the first non-flag token, but the real
+    install verb is two levels deep at ``install``. Taking only the first
+    non-flag token misclassifies ``uv pip install ...`` as
+    :attr:`BashCategory.READ_ONLY` and bypasses the package-install gate
+    — Devin Review finding 2026-05-20 on PR #23.
+
+    Non-install reads (``pip list``, ``npm ls``) still return their first
+    non-flag token (``list`` / ``ls``), which is not in
+    ``_INSTALL_SUBCOMMANDS``, so the downstream classifier falls through
+    to :attr:`BashCategory.READ_ONLY` unchanged.
+    """
     if len(tokens) < 2:
         return ""
-    for token in tokens[1:]:
-        if not token.startswith("-"):
+    non_flag = [token for token in tokens[1:] if not token.startswith("-")]
+    if not non_flag:
+        return ""
+    # Prefer any token in the install set — catches nested verbs like
+    # `uv pip install`.
+    for token in non_flag:
+        if token in _INSTALL_SUBCOMMANDS:
             return token
-    return ""
+    # Fallback: first non-flag token preserves prior behaviour for
+    # non-install invocations.
+    return non_flag[0]
+
+
+# Shell control operators that ``shlex.split`` happens to tokenize as
+# regular strings but bash interprets as compound-command / redirection
+# / pipe markers. Their presence anywhere in the token stream means the
+# command head alone cannot describe the command's effect — e.g.
+# ``echo evil > /etc/passwd`` has head ``echo`` (READ_ONLY) but writes
+# to ``/etc/passwd``. The classifier demotes such commands to
+# :attr:`BashCategory.GENERAL_WRITE` (or higher if a danger marker is
+# present anywhere). Devin Review finding 2026-05-20 on PR #23.
+_SHELL_OPERATOR_TOKENS: frozenset[str] = frozenset(
+    {";", "&&", "||", "|", ">", ">>", "<", "<<", "&"}
+)
+
+
+def _has_shell_operator(tokens: list[str]) -> bool:
+    """True if any token is a shell compound/redirection/pipe operator."""
+    return any(token in _SHELL_OPERATOR_TOKENS for token in tokens)
+
+
+def _scan_tokens_for_danger(tokens: list[str]) -> BashCategory | None:
+    """Scan **all** tokens for DANGEROUS markers, regardless of position.
+
+    Used when a compound command is detected so the chained tail
+    (``ls && rm -rf /``) cannot smuggle a danger past the head-only
+    dispatch. Returns :attr:`BashCategory.DANGEROUS` on match, ``None``
+    otherwise.
+    """
+    for token in tokens:
+        if token in _DANGEROUS_TOKENS:
+            return BashCategory.DANGEROUS
+        if token.startswith("mkfs."):
+            return BashCategory.DANGEROUS
+    if "rm" in tokens and any(flag in tokens for flag in ("-rf", "-fr", "-r", "-R", "--recursive")):
+        return BashCategory.DANGEROUS
+    if "chmod" in tokens and any(flag in tokens for flag in ("-R", "--recursive")):
+        return BashCategory.DANGEROUS
+    if "kill" in tokens and "-9" in tokens:
+        return BashCategory.DANGEROUS
+    return None
 
 
 def classify_command(command: str) -> BashCategory:
@@ -268,6 +333,15 @@ def classify_command(command: str) -> BashCategory:
 
     tokens = tokenize(command)
     if not tokens:
+        return BashCategory.GENERAL_WRITE
+
+    # Compound / redirection / pipe — head token is no longer sufficient.
+    # Scan the full token stream for danger markers first; otherwise
+    # demote to GENERAL_WRITE so the head is never trusted blindly.
+    if _has_shell_operator(tokens):
+        danger = _scan_tokens_for_danger(tokens)
+        if danger is not None:
+            return danger
         return BashCategory.GENERAL_WRITE
 
     head = tokens[0]
