@@ -41,7 +41,17 @@ def test_run_session_executes_tool_through_hooks(tmp_path: Path) -> None:
         "fs.run_bash",
     ]
     assert state.log is not None
-    assert len(state.log.read_all()) == 6
+    events = state.log.read_all()
+    # ADR-7 §7 projection: per call we record tool_call + (sandbox hook_decision)
+    # + tool_result + (audit hook_decision) = 4 events per call across 3 calls = 12.
+    kinds_by_call = [event.kind for event in events]
+    assert kinds_by_call.count("tool_call") == 3
+    assert kinds_by_call.count("tool_result") == 3
+    assert kinds_by_call.count("hook_decision") == 6  # 3 sandbox + 3 audit observer rows.
+    # Every event carries the session run_id per ADR-7 §7 trace schema.
+    assert {event.run_id for event in events} == {"test"}
+    # ADR-7 §7 schema field is ``ts`` (not ``timestamp``).
+    assert all(event.ts.endswith("Z") for event in events)
 
 
 def test_run_session_records_hook_denial(tmp_path: Path) -> None:
@@ -62,3 +72,10 @@ def test_run_session_records_hook_denial(tmp_path: Path) -> None:
     assert results[0].error is not None
     assert results[0].error.code == "hook_deny"
     assert "dangerous" in results[0].summary
+    # ADR-7 §10 Acceptance criterion 8: failed tool calls still emit
+    # both ``tool_call`` and ``tool_result`` rows.
+    assert state.log is not None
+    kinds = [event.kind for event in state.log.read_all()]
+    assert kinds.count("tool_call") == 1
+    assert kinds.count("tool_result") == 1
+    assert "hook_decision" in kinds

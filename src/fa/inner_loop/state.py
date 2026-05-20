@@ -1,3 +1,18 @@
+"""Inner-loop session state + ``events.jsonl`` writer (ADR-7 \u00a77).
+
+Each ``run_session`` invocation owns a :class:`SessionState`. The state
+holds the workspace root, the ``run_id`` used in the events file path
+and in every event payload, the per-session :class:`EventLog`, and the
+``observations`` tail used by the deterministic loop for follow-up
+prompting.
+
+The event schema matches ADR-7 \u00a77 verbatim: ``ts`` (ISO-8601 UTC),
+``run_id``, ``harness_id``, ``actor``, ``kind``, ``tool_name``,
+``tool_call_id``, ``parent_event_id``, ``content``. ``kind`` is one of
+``user_msg | model_msg | tool_call | tool_result | hook_decision |
+audit | approval | error | stop`` per ADR-7 \u00a77.
+"""
+
 from __future__ import annotations
 
 import json
@@ -19,8 +34,16 @@ def _now_iso_z() -> str:
 
 @dataclass(frozen=True)
 class TraceEvent:
+    """One row written to ``~/.fa/state/runs/<run_id>/events.jsonl``.
+
+    Field names track ADR-7 \u00a77 exactly: ``ts`` (not ``timestamp``),
+    ``run_id`` stamped on every row, ``harness_id`` for cross-version
+    replay refusal.
+    """
+
     event_id: str
-    timestamp: str
+    ts: str
+    run_id: str
     actor: str
     kind: str
     content: Mapping[str, object] = field(default_factory=dict)
@@ -31,8 +54,17 @@ class TraceEvent:
 
 
 class EventLog:
-    def __init__(self, path: Path) -> None:
+    """Append-only JSONL writer for one ``run_id``.
+
+    The writer is intentionally simple: it tracks the next event id
+    monotonically and serialises each :class:`TraceEvent` via
+    ``json.dumps(sort_keys=True)`` so the line order is the byte order
+    of the file and replay diffs stay deterministic.
+    """
+
+    def __init__(self, path: Path, *, run_id: str = "") -> None:
         self.path = path
+        self.run_id = run_id
         self._next_id = 1
 
     def append(
@@ -47,7 +79,8 @@ class EventLog:
     ) -> TraceEvent:
         event = TraceEvent(
             event_id=f"ev-{self._next_id:06d}",
-            timestamp=_now_iso_z(),
+            ts=_now_iso_z(),
+            run_id=self.run_id,
             actor=actor,
             kind=kind,
             content={} if content is None else dict(content),
@@ -73,7 +106,8 @@ class EventLog:
             events.append(
                 TraceEvent(
                     event_id=str(parsed["event_id"]),
-                    timestamp=str(parsed["timestamp"]),
+                    ts=str(parsed["ts"]),
+                    run_id=str(parsed.get("run_id", "")),
                     actor=str(parsed["actor"]),
                     kind=str(parsed["kind"]),
                     content=dict(parsed.get("content", {})),
@@ -90,14 +124,21 @@ class EventLog:
 class SessionState:
     workspace_root: Path
     run_id: str = field(default_factory=lambda: f"run-{os.getpid()}")
-    max_iterations: int = 6
     log: EventLog | None = None
     observations: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.workspace_root = self.workspace_root.resolve()
         if self.log is None:
-            self.log = EventLog(DEFAULT_STATE_ROOT / self.run_id / "events.jsonl")
+            self.log = EventLog(
+                DEFAULT_STATE_ROOT / self.run_id / "events.jsonl",
+                run_id=self.run_id,
+            )
+        elif not self.log.run_id:
+            # Caller-supplied logs (tests, custom drivers) inherit the
+            # session ``run_id`` so events.jsonl rows are still tagged
+            # per ADR-7 \u00a77.
+            self.log.run_id = self.run_id
 
     def record_tool_call(self, call: ToolCall) -> TraceEvent:
         assert self.log is not None

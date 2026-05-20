@@ -5,10 +5,24 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
+from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
 from fa.inner_loop.tools.base import require_string
 
 
-def build_run_bash_tool(workspace_root: Path) -> ToolSpec:
+def build_run_bash_tool(
+    workspace_root: Path,
+    *,
+    timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
+) -> ToolSpec:
+    """Build the ``fs.run_bash`` ToolSpec.
+
+    ``timeout_seconds`` defaults to the documented anchor (30 s) so the
+    smoke entrypoint runs cleanly. The deterministic loop driver passes
+    the user-configured value from ``RuntimeLimits.bash_timeout_seconds``
+    (ADR-7 \u00a7Amendment 2026-05-20 rule 1: caps live in
+    ``~/.fa/config.yaml``, never in code constants).
+    """
+
     root = workspace_root.resolve()
 
     def handler(params: Mapping[str, object]) -> ToolResult:
@@ -26,12 +40,12 @@ def build_run_bash_tool(workspace_root: Path) -> ToolSpec:
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired:
             return ToolResult.fail(
                 "command_timeout",
-                "bash command timed out after 30s",
+                f"bash command timed out after {timeout_seconds}s",
                 retryable=True,
             )
 

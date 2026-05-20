@@ -255,11 +255,16 @@ mutation per dispatch (inherits ADR-7 §8), family-disjoint
 rule enforced at `register()` time per
 [ADR-2 §Amendment 2026-05-20](./ADR-2-llm-tiering.md#amendment-2026-05-20--eval-role-family-disjoint--primary-source-citation)
 + [ADR-7 §Amendment 2026-05-20](./ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule).
-**Doc-only in this PR;** runtime tracked in BACKLOG M-1
-(inner-loop scaffolding). v0.1 hooks (`SandboxHook`,
-`ApprovalHook`, `AuditHook`) migrate to `GuardMiddleware` /
-`ObserverMiddleware` subclasses without semantics change once
-the runtime lands. **Rationale.** 8-project convergence (DPC
+**Doc-only at acceptance; runtime materialised by PR #24
+([M-1 closed 2026-05-20](../BACKLOG.md#m-1--inner-loop-scaffolding--hookregistry-runtime)).**
+v0.1 hooks (`SandboxHook`, `ApprovalHook`, `AuditHook`) are now
+`GuardMiddleware` / `ObserverMiddleware` subclasses at
+`src/fa/inner_loop/hooks/`. The runtime adds `revalidates_after_modify`
+on guards so a `Decision.modify` that mutates `path` / `command`
+triggers a sandbox replay on the new params (closes ADR-7 §8
+«modify → re-validate» edge case).
+
+**Rationale.** 8-project convergence (DPC
 `dpc_agent/hooks.py` + Gortex `internal/hooks/dispatch.go` +
 6 cited in DPC ADR-007); Wave-2 work (R-2 `LoopGuard`, R-3
 failure-classifier, R-4 pre-tool blocker, R-22 PII walker)

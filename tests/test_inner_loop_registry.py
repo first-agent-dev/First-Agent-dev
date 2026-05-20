@@ -35,7 +35,7 @@ def test_registry_rejects_full_permission() -> None:
             name="test.full",
             description="Future privileged tool.",
             input_schema={"type": "object"},
-            permission="full",
+            permission="full",  # type: ignore[arg-type]
             handler=_echo,
         )
 

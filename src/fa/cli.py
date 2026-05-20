@@ -9,7 +9,13 @@ from pathlib import Path
 
 from fa import __version__
 from fa.chunker import CHUNKER_VERSION, Chunk, default_chunker
-from fa.inner_loop import SessionState, ToolCall, run_session
+from fa.inner_loop import (
+    EventLog,
+    SessionState,
+    ToolCall,
+    load_runtime_limits_from_path,
+    run_session,
+)
 from fa.inner_loop.hooks import AuditHook, HookRegistry, SandboxHook
 from fa.inner_loop.tools import build_baseline_registry
 
@@ -115,12 +121,18 @@ def _chunk_to_dict(chunk: Chunk) -> dict[str, object]:
 
 def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     workspace = args.workspace.resolve()
-    registry = build_baseline_registry(workspace)
+    limits = load_runtime_limits_from_path().limits
+    registry = build_baseline_registry(
+        workspace,
+        bash_timeout_seconds=limits.bash_timeout_seconds,
+    )
+    log_path = workspace / ".fa" / "smoke-events.jsonl"
+    log = EventLog(log_path)
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))
-    audit = AuditHook()
+    audit = AuditHook(event_log=log)
     hooks.register(audit)
-    state = SessionState(workspace_root=workspace, run_id="cli-smoke")
+    state = SessionState(workspace_root=workspace, run_id="cli-smoke", log=log)
     calls = (
         ToolCall(name="fs.read_file", params={"path": args.input}, call_id="tc-read"),
         ToolCall(
@@ -134,7 +146,7 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
             call_id="tc-bash",
         ),
     )
-    results = run_session(calls, registry=registry, hooks=hooks, state=state)
+    results = run_session(calls, registry=registry, hooks=hooks, state=state, limits=limits)
     for result in results:
         status = "ERROR" if result.error is not None else "OK"
         print(f"{status}: {result.summary}")

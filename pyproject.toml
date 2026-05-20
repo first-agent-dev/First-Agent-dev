@@ -14,6 +14,11 @@ authors = [
 ]
 dependencies = [
   "markdown-it-py>=3.0",
+  # JSON-Schema Draft 2020-12 validator. Pinned by
+  # ADR-7 §5 «Input validation» as «single new dependency at this layer».
+  # Used by `ToolRegistry.dispatch` for per-call params validation and by
+  # `ToolRegistry.register` for schema-shape validation at registry init.
+  "jsonschema>=4.21",
 ]
 
 [tool.first-agent.system-dependencies]
