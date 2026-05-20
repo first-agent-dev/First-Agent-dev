@@ -29,7 +29,11 @@ def build_run_bash_tool(workspace_root: Path) -> ToolSpec:
                 timeout=30,
             )
         except subprocess.TimeoutExpired:
-            return ToolResult.fail("command_timeout", "bash command timed out after 30s", retryable=True)
+            return ToolResult.fail(
+                "command_timeout",
+                "bash command timed out after 30s",
+                retryable=True,
+            )
 
         summary = f"bash exited {completed.returncode}"
         result = {

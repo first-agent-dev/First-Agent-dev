@@ -22,10 +22,18 @@ def test_cli_has_inner_loop_smoke_command() -> None:
 def test_inner_loop_smoke_command_runs(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
     (tmp_path / "README.md").write_text("# sample\n", encoding="utf-8")
     parser = build_parser()
-    args = parser.parse_args(["inner-loop-smoke", "--workspace", str(tmp_path)])
+    args = parser.parse_args(
+        [
+            "inner-loop-smoke",
+            "--workspace",
+            str(tmp_path),
+            "--output",
+            "nested dir/smoke; no-inject.txt",
+        ]
+    )
 
     exit_code = args.func(args)
 
     assert exit_code == 0
-    assert (tmp_path / ".fa" / "inner-loop-smoke.txt").exists()
+    assert (tmp_path / "nested dir" / "smoke; no-inject.txt").exists()
     assert "OK: bash exited 0" in capsys.readouterr().out

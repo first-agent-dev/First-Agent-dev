@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -129,8 +130,7 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
         ),
         ToolCall(
             name="fs.run_bash",
-            params={"command": f"test -f {__import__('shlex').quote(args.output)}"},
-
+            params={"command": f"test -f {shlex.quote(args.output)}"},
             call_id="tc-bash",
         ),
     )
