@@ -152,6 +152,62 @@ override_action: force_failure  # default
     assert result.passed is True
 
 
+def test_load_contract_parses_inline_empty_list() -> None:
+    """``required_trace_events: []`` parses to an empty tuple explicitly.
+
+    The vendored M-1 ``verifiers/*.yaml`` contracts all use inline-empty
+    list syntax for ``required_trace_events``. Earlier versions of the
+    subset parser silently dropped any inline list value (the
+    ``if value:`` branch only handled scalar keys), so this happened
+    to produce the right empty tuple by omission. The fix makes inline
+    list parsing explicit.
+    """
+    yaml = """
+target_action: fs.read_file
+required_trace_events: []
+failure_conditions:
+  - read_failed
+"""
+    contract = load_contract(yaml)
+    assert contract.required_trace_events == ()
+    assert contract.failure_conditions == ("read_failed",)
+
+
+def test_load_contract_parses_inline_populated_list() -> None:
+    """``required_trace_events: [file_write, sandbox_check]`` parses items.
+
+    Regression guard for the silent-data-loss bug: previously, inline
+    populated lists were silently dropped, producing an empty tuple
+    instead of the declared events.
+    """
+    yaml = """
+target_action: edit_file
+required_trace_events: [file_write, sandbox_check]
+failure_conditions: [file_unchanged_after_edit]
+"""
+    contract = load_contract(yaml)
+    assert contract.required_trace_events == ("file_write", "sandbox_check")
+    assert contract.failure_conditions == ("file_unchanged_after_edit",)
+
+
+def test_load_contract_rejects_scalar_for_list_key() -> None:
+    """A bare scalar for a list-typed key fails loudly, not silently.
+
+    Before the fix, ``required_trace_events: file_write`` (missing the
+    list brackets) was silently dropped — the contract ended up with
+    an empty tuple and every verifier call passed trivially. Now the
+    parser raises so the author sees the typo.
+    """
+    yaml = """
+target_action: edit_file
+required_trace_events: file_write
+failure_conditions:
+  - sandbox_violation
+"""
+    with pytest.raises(ValueError, match="required_trace_events.*list"):
+        load_contract(yaml)
+
+
 # --- load_contracts_from_dir (R-5 batch loader) ----------------------------
 
 

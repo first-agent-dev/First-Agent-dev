@@ -122,6 +122,35 @@ def load_contract(text: str) -> VerifierContract:
                     target_action = value
                 elif key == "override_action":
                     override_action = value
+                elif key in {"required_trace_events", "failure_conditions"}:
+                    # YAML inline list syntax: ``[]`` (empty) or
+                    # ``[item, item, ...]``. The vendored M-1 contracts
+                    # use ``required_trace_events: []`` and earlier
+                    # versions of this parser silently dropped any
+                    # inline list value (the ``if value:`` branch only
+                    # handled scalar keys), producing an empty tuple
+                    # for any inline list — a silent data loss for
+                    # ``required_trace_events: [file_write]``. Now we
+                    # parse the inline list explicitly and reject any
+                    # other scalar value (e.g. ``required_trace_events:
+                    # file_write`` without a list).
+                    if not (value.startswith("[") and value.endswith("]")):
+                        raise ValueError(
+                            f"verifier contract key {key!r} must be a "
+                            f"block list or inline list (e.g. ``[]`` or "
+                            f"``[a, b]``); got scalar value: {value!r}"
+                        )
+                    inner = value[1:-1].strip()
+                    target_list = (
+                        required_trace_events
+                        if key == "required_trace_events"
+                        else failure_conditions
+                    )
+                    if inner:
+                        for item in inner.split(","):
+                            stripped_item = strip_inline_comment(item).strip()
+                            if stripped_item:
+                                target_list.append(stripped_item)
             else:
                 if key == "required_trace_events":
                     current_list = required_trace_events
