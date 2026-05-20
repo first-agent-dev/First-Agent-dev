@@ -34,9 +34,14 @@ def build_run_bash_tool(workspace_root: Path) -> ToolSpec:
             "stderr": completed.stderr,
         }
         if completed.returncode != 0:
+            detail = f"bash exited {completed.returncode}"
+            if completed.stderr:
+                detail += f"\nstderr: {completed.stderr[:2000]}"
+            if completed.stdout:
+                detail += f"\nstdout: {completed.stdout[:2000]}"
             return ToolResult.fail(
                 "command_failed",
-                summary,
+                detail,
                 retryable=True,
             )
         return ToolResult.ok(summary, result=result)
