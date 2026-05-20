@@ -148,6 +148,24 @@ Stage 1 satisfies this step automatically.
   and direct quotes in their source language.
 - readability > size
 - Architectural decisions → ADR from [`knowledge/adr/ADR-template.md`](./knowledge/adr/ADR-template.md).
+- **Workspace resolution (no walk-up).** Tools / scripts that need
+  to locate the FA repository root MUST anchor on an explicit marker
+  at the current working directory — never walk **up** the
+  filesystem looking for a parent that happens to contain
+  `AGENTS.md` or `knowledge/`. The marker is
+  [`knowledge/llms.txt`](./knowledge/llms.txt) (already canonical
+  per the §Session bootstrap rule above). Resolution algorithm:
+  if `./knowledge/llms.txt` exists → FA root is `.`; otherwise
+  abort with «`fa: not a First-Agent workspace (no
+  knowledge/llms.txt at cwd)`». No walk-up is permitted even
+  for «convenience» discovery. Rationale: walk-up resolution
+  silently bridges nested checkouts, monorepo submodules, or a
+  cloned repo inside `~/repos/First-Agent-debloat/external/` and
+  drags wrong-project AGENTS.md / ADR slate into the agent's
+  context — the exact «cross-workspace contamination» bug Gortex
+  documented in `internal/workspace/workspace.go` (331 LOC). The
+  marker rule is the single fence; the marker file is what FA
+  already uses for LLM routing, so no new artefact is introduced.
 
 ## PR Checklist
 
@@ -225,6 +243,29 @@ Verify before opening a PR. Each item has triggered wasted review cycles.
     1. Research-evidence supporting the component's necessity under
        UC1+UC3 single-user scope (paper / primary-source post /
        eval-report citation).
+
+       *Recognised anti-patterns the citation must clear* (forward-
+       only from 2026-05-20):
+       - **«Prompt-diversity layer» / re-asking with paraphrased
+         prompts is NOT a valid harness component** — Nitarach P-3
+         §4.4 finding ([correlated-LLM-errors note
+         §4.4](./knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md))
+         shows prompt-diversity ensembles do not yield consistent
+         gains; gains are sample-by-sample noise, not signal. A PR
+         that proposes «retry with a re-worded prompt» MUST instead
+         cite the underlying mechanism (different temperature, model
+         family, retrieval scope) it would actually exploit. The
+         layer-name «prompt diversity» on its own is rejected as
+         under-specified.
+       - **«Spawn-recursion» sub-agent — sub-agent that can spawn
+         further sub-agents — is NOT allowed.** Cap
+         `SUBAGENT_MAX_STEPS ≤ 100`, sub-agent tool set MUST exclude
+         any `SpawnSubAgent` tool, sub-agent invocation MUST use
+         `generateText` (not streaming). Captured in
+         [ADR-7 §Amendment 2026-05-20](./knowledge/adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+         rule 5 and
+         [BACKLOG.md I-2](./knowledge/BACKLOG.md#i-2--agent--sub-agents-for-context-load-reduction)
+         pending the BACKLOG I-2 implementation.
     2. Open-source agent-stack precedent that **already** removed or
        did not add a similar component, and the observed result.
     3. Concrete capability lost if the component is omitted, and
@@ -283,6 +324,71 @@ Verify before opening a PR. Each item has triggered wasted review cycles.
     Documentation-only PRs and non-harness PRs are exempt. Forward-
     only from the merge of this rule; older harness PRs not
     retro-fitted.
+
+## Cross-project anti-patterns
+
+Forward-only from 2026-05-20. Four citations from neighbouring
+open-source agent stacks (DPC, Aperant, Gortex, soviet-code) that
+already paid the lesson — included here so FA does not re-derive
+each one through a wasted PR cycle. The citations are *empirical
+anchors* for the minimalism-first / subtraction-first principle
+([`knowledge/project-overview.md` §1.2](./knowledge/project-overview.md#12-enforceable-principle--minimalism-first));
+they do not replace the §Pre-flight Step 4 subtraction-check, they
+strengthen it.
+
+1. **No «evolution worker» / no self-improving subsystem (DPC
+   ADR-015).** DPC built a background «evolution worker» that ran
+   for 20+ sessions trying to mine its own traces for self-
+   improvement proposals — `0 / 40` accepted proposals; the system
+   was removed at the cost of `~400 LOC + 7 tools`. Lesson: a
+   subsystem whose value depends on the host system being mature
+   should NOT be built before the host system is mature; FA must
+   not «let the agent improve itself» until the human-curated
+   knowledge layer (Stage 2-3 per
+   [`knowledge/project-overview.md` §1.3](./knowledge/project-overview.md#13-three-stage-project-evolution))
+   is stable. Source: DPC ADR-015, cited in
+   [`research/dpc-messenger-inspiration-2026-05.md`](./knowledge/research/dpc-messenger-inspiration-2026-05.md)
+   §0 R-4.
+2. **Estimate lines/files, not time (DPC ADR-005 P18).** DPC
+   Session 14: Claude Code estimated `5-7h` for what took
+   `11 min` — a `27-38×` over-estimate. Programmatic time
+   estimation by LLMs is systematically wrong because LLMs do not
+   have a clock-on-task signal. The discipline is to estimate
+   what *can* be measured: LOC delta, files touched, ADR-amendments
+   count, eval-pass count. Time estimate is permitted as «calendar-
+   weeks for the human side», never as «task-hours predicted by
+   the agent». Source: DPC ADR-005 P18 («scope-only estimation»),
+   cited in
+   [`research/dpc-messenger-inspiration-2026-05.md`](./knowledge/research/dpc-messenger-inspiration-2026-05.md)
+   §0 R-5.
+3. **Write-only subsystems are dead weight (DPC ADR-021
+   Lesson 4).** DPC found multiple write-only ML subsystems —
+   they emitted events, metrics, embeddings, but no production
+   path consumed the output. Maintenance budget was non-zero;
+   value was zero. Rule: every new write target (file, table,
+   metric, event-channel) MUST have a named consumer (human or
+   automated) at the same time it lands, or the write target
+   does not land. This generalises §PR Checklist rule #7
+   («llms.txt reflects reality») to all write artefacts.
+   Source: DPC ADR-021 Lesson 4, cited in
+   [`research/dpc-messenger-inspiration-2026-05.md`](./knowledge/research/dpc-messenger-inspiration-2026-05.md)
+   §0 R-6.
+4. **Prior-Art mapping in every new ADR (DPC AP8 →
+   soviet-code B-NEW-8).** Every new FA ADR MUST include a
+   §Prior Art section that maps each design choice to an
+   existing tool, paper, or project. The §Prior Art section
+   answers: «What did we look at? Which projects already
+   solved this? Why are we not reusing them verbatim?». Without
+   this section the ADR drifts toward not-invented-here re-
+   implementation, and the §Pre-flight Step 4 subtraction-check
+   loses the «OSS precedent» evidence it depends on. The
+   existing ADR-template inherits this rule from 2026-05-20
+   forward — older ADRs (1..7) are not retro-fitted but
+   amendments to them MAY include Prior-Art if relevant.
+   Source: DPC «We are NOT reinventing the wheel» rule (AP8 →
+   soviet-code B-NEW-8), cited in
+   [`research/dpc-messenger-inspiration-2026-05.md`](./knowledge/research/dpc-messenger-inspiration-2026-05.md)
+   §6 AP8.
 
 ## PR Description Style
 

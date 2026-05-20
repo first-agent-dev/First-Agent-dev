@@ -73,6 +73,40 @@
 - **Why it satisfies rule #11 mitigation (a) «Sub-agent split».**
   This is the canonical instance of the sub-agent split rule #11
   references; until I-2 lands, mitigation (a) is hypothetical.
+- **Sub-agent invocation rules (R-23, captured 2026-05-20 docs-
+  only — apply when this item unblocks).** Three non-obvious
+  correctness fixes lifted ahead of time from Aperant
+  `apps/desktop/src/main/ai/runners/subagent.ts` (item 7 in
+  [`research/gortex-aperant-inspiration-2026-05.md`](./research/gortex-aperant-inspiration-2026-05.md)
+  Part 2) — written here so the I-2 PR cannot regress:
+  1. **`generateText`, not streaming.** Sub-agent output flows
+     back to the orchestrator's context, not to a human-facing
+     UI. Streaming adds per-token overhead with no consumer;
+     `generateText` (or the FA equivalent: single non-streaming
+     completion) is the correct invocation. Streaming MAY be
+     used inside the sub-agent for its own tool-LLM calls if
+     those tools need it; it MUST NOT be the sub-agent → parent
+     interface.
+  2. **Remove `SpawnSubAgent` from the sub-agent tool set.**
+     Recursion is forbidden; the sub-agent MUST NOT spawn
+     further sub-agents. The orchestrator removes the spawn-
+     tool from the child's tool registry at dispatch time —
+     not by trusting the child to «not call it». Cross-link:
+     [AGENTS.md §PR Checklist rule #10 question 1 «Spawn-
+     recursion anti-pattern»](../AGENTS.md#pr-checklist).
+  3. **`SUBAGENT_MAX_STEPS ≤ 100`.** Hard cap on a single sub-
+     agent's iteration count. Aperant uses exactly `100`; FA
+     inherits the number until measured otherwise. The cap
+     lives in `~/.fa/config.yaml`, NOT in code (per
+     [ADR-7 §Amendment 2026-05-20](./adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+     rule 1: «retry budget is config-bounded»).
+
+  These three rules ALSO survive in
+  [ADR-7 §Amendment 2026-05-20](./adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+  rule 5; that ADR amendment is the canonical version, this
+  bullet is the read-side mirror so anyone landing the I-2
+  unblock PR sees the rules without round-tripping through
+  ADR-7.
 
 ## I-3 — Dispatcher LLM (lazy-load skills + collect repo parts on-the-fly)
 

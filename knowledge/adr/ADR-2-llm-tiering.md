@@ -341,6 +341,152 @@ the right shape natively), buys zero v0.1 user-visible
 features, and keeps v0.2 MCP-server distribution as a
 config-only / wrapper-only change.
 
+### Amendment 2026-05-20 — Eval-role family-disjoint + primary-source citation
+
+**Source.** Implementation roadmap
+[`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+§R-19 / §R-27 part 1 (Wave 0, docs + cheap impl). Primary-source
+evidence: correlated-LLM-errors note
+[`research/correlated-llm-errors-and-ensembling-2026-05.md`](../research/correlated-llm-errors-and-ensembling-2026-05.md)
+§0 R-1 / §3 / §6 R-1 / R-2 (Cornell P-1: Kim, Garg, Peng, Garg,
+ICML 2025; Simula P-2: Vallecillos-Ruiz, Hort, Moonen, 2026 —
+same-family ensembles show `ρ̂ ≈ +0.6` correlated errors; cross-
+family ensembles show `ρ̂ ≈ −0.05`).
+
+**Problem.** The original Decision (table line «Eval — local
+hosted») and the §Amendment 2026-04-29 «no cross-tier auto-
+escalation» rule both rely on the **assumption** that the Eval-
+role check is independent of the Planner / Coder roles it
+evaluates. This independence is silent in v0.1 because Eval is
+still a one-line «output looks plausible?» check — but the
+moment a real Eval role lands (ADR-7 Phase M), a same-family
+choice (e.g. Planner=`glm-4.5-air`, Coder=`glm-4.5`,
+Eval=`glm-4.5-air-thinking`) would replicate the **same** error
+the acting-role made. The §«No cross-tier auto-escalation»
+rule has only Ampcode/sliders as cited rationale, no primary-
+source academic citation; weaker OSS LLMs (DeepSeek 4 / Kimi
+2.6) discount the rule without one.
+
+**Decision (additive to §Decision routing table; no shape change
+to §Consequences / §Amendment 2026-04-29 / §Amendment 2026-05-01
+/ §Amendment 2026-05-12).**
+
+1. **Eval-role MUST be from a provider+family disjoint from
+   Planner and Coder.** «Family» is interpreted at the
+   training-distribution level: `glm-*`, `qwen*`, `deepseek-*`,
+   `kimi-*`, `mimo-*`, `claude-*`, `gpt-*`, `gemini-*` are
+   each separate families. The current FA workload (95% on
+   Chinese-OSS LLMs from independent labs — see
+   [`project-overview.md` §6](../project-overview.md))
+   already satisfies this naturally; the rule is captured
+   here so a future tier-bump (e.g. swapping Eval to a Qwen
+   variant when Coder is also Qwen) cannot regress silently.
+2. **Family extraction = regex slug pattern.** First-pass
+   inference uses model-slug regex (`^glm-` → `glm`,
+   `^qwen` → `qwen`, `^claude-` → `claude`, etc.); ambiguous
+   slugs (e.g. `local-llama-finetune`) MUST be tagged in
+   `~/.fa/models.yaml` with an explicit `family:` field. The
+   regex extractor lives in the inner-loop scaffolding PR
+   (HANDOFF §Next steps item 1) at ~30 LOC; «default-deny
+   when family unknown» is the behaviour, matching ADR-6's
+   sandbox stance.
+3. **Primary-source citation strengthens «no cross-tier auto-
+   escalation».** Per R-27 part 1: the §Decision /
+   §Amendment 2026-04-29 «no auto-escalation» rule now
+   cites Cornell P-1 (Kim et al. ICML 2025) + Simula P-2
+   (Vallecillos-Ruiz et al. 2026) as primary sources. The
+   original rationale was Ampcode/sliders (§Cross-reference)
+   — sufficient for the elite-tier targeting it but not for
+   FA's multi-tier scope. The new citations document the
+   **mechanism**: same-family models share training-
+   distribution biases; an auto-escalation across same-family
+   tiers replicates the bias instead of decorrelating it.
+   `ρ̂ ≈ +0.6` for same-family ensembles vs `ρ̂ ≈ −0.05`
+   for cross-family — this is the quantitative anchor the
+   Ampcode citation lacked.
+4. **Cross-link to ADR-7 §Amendment 2026-05-20 rule 4.** The
+   §8 Hook pipeline gains a parallel rule: «LLM-using hooks
+   MUST use family ≠ acting-role». The two rules together
+   make ADR-2's family-disjointness invariant across both
+   the **role layer** (this ADR) and the **hook layer**
+   (ADR-7) — a future LoopGuard middleware that asks a
+   second model to grade loop-evidence cannot be from the
+   acting-role family.
+
+**Why one amendment for two R-Ns.** R-19 (family-disjointness)
+and R-27 part 1 (Cornell/Simula citation) share the same
+mechanism (correlated errors at training-distribution level)
+and the same source-note batch
+(`correlated-llm-errors-and-ensembling-2026-05.md` §6 R-1 /
+R-2). Splitting them into two amendments would force readers
+of either to re-derive the connection. The §Decision routing
+table receives no edit — both rules are invariants on the
+existing structure.
+
+**Why not pin a `provider:` field in `~/.fa/models.yaml`
+schema here.** The schema is still in flux (e.g.
+§Amendment 2026-05-12 added `tool_protocol.error_code_dual_mode`).
+Pinning a new field now would couple this amendment to the
+schema PR. The behavioural rule is sufficient; the schema
+field lands with the inner-loop scaffolding when the regex
+extractor lands.
+
+**Subtraction-check (AGENTS.md §Pre-flight Step 4 / rule #10).**
+
+1. **Removing what makes this redundant?** None — the original
+   §Decision table left family unspecified; §Amendment
+   2026-04-29 forbade auto-escalation but did not name the
+   mechanism (correlated errors).
+2. **Capability lost if omitted?** A future Eval role from
+   the same family as Coder replicates the Coder's error
+   instead of catching it — `ρ̂ ≈ +0.6` of error-pairs match
+   per the cited papers, so > 50 % of Eval «catches» are
+   actually rubber-stamps of the Coder mistake.
+3. **OSS precedent for not having it?** Ampcode «three bare
+   functions» harness does not name family-disjointness — it
+   targets a single tier (Claude). DPC mainline does not
+   either — it routes everything through Sonnet. Both are
+   single-family stacks; FA's multi-tier scope (per
+   `project-overview.md` §6) makes the rule load-bearing
+   here while it is vacuous there.
+4. **Step-as-function?** YES for rule 2 (regex slug
+   extraction is parsing — no LLM needed). Rules 1, 3, 4
+   are invariants on existing surfaces, not new steps.
+
+**Files changed (this PR, knowledge-layer only).**
+
+- `knowledge/adr/ADR-2-llm-tiering.md` — this amendment block.
+- `knowledge/adr/ADR-7-inner-loop-tool-registry.md` — §Amendment
+  2026-05-20 rule 4 (LLM-using-hook family-disjoint;
+  generalises this amendment to the hook layer).
+- `knowledge/adr/DIGEST.md` — ADR-2 row amendments bullet.
+- `knowledge/trace/exploration_log.md` — Q-2 amendment block.
+- `AGENTS.md` — §PR Checklist rule #10 sub-citation:
+  «prompt-diversity layer» as recognised anti-pattern (R-27
+  part 2, lives in AGENTS.md rule #10, sibling of this
+  amendment).
+- `HANDOFF.md` — ADR-2 amendment line update.
+
+**Re-evaluation triggers (this amendment).**
+
+- **Tier line-up changes to put two roles in the same family
+  by user choice.** Action: re-open the rule, document why
+  the chosen tier-pair is exempt (e.g. measured `ρ̂`
+  empirically on FA-workload eval shows family-disjoint
+  prediction failed for this pair), and pin the exemption
+  to a specific model-slug pair — not a category bypass.
+- **A FA-workload eval (post-UC5) measures the Cornell P-1
+  prediction `ρ̂ > 0.4` for the actively-routed family-pair
+  and the gain from cross-family does not appear.** Action:
+  weaken rule 1 to «MUST be family-disjoint when measured
+  `ρ̂ > 0.3` on UC5 eval», with the measurement script
+  landing as a separate ADR (post-UC5 scope).
+- **Cornell P-1 / Simula P-2 are retracted or contradicted by
+  a higher-N replication.** Action: re-evaluate the
+  amendment's empirical anchor; keep rule 1 if Ampcode /
+  DPC field experience continues to support it, drop it if
+  the empirical case collapses.
+
 ## References
 
 - [`project-overview.md`](../project-overview.md) §6 (key constraints — LLM providers).

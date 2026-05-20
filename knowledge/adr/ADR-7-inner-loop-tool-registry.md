@@ -1000,6 +1000,157 @@ mechanical pairing check the prompt-only approach cannot.
   re-evaluate whether the FA adoption still holds. Unlikely
   (npm-published, systemd-in-prod for months) but documented.
 
+### Amendment 2026-05-20 — Retry-budget invariant, intra-role T=1.0, LLM-using-hook family-disjoint rule
+
+**Source.** Implementation roadmap
+[`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+§R-7 / §R-28 / §R-29 / §R-30 (Wave 0, docs-only). Empirical
+evidence: correlated-LLM-errors research note
+[`research/correlated-llm-errors-and-ensembling-2026-05.md`](../research/correlated-llm-errors-and-ensembling-2026-05.md)
+§4.1 (Nitarach P-3 finding: `T=1.0` decorrelates retry-sample
+errors — `ρ̂≈−0.12` vs `T=0.0` `ρ̂≈+0.6`) + §6 R-7/R-8/R-9.
+
+**Problem.** The original Decision pinned §1 step 8 «hard cap on
+iterations to prevent runaway loops» but left the cap value and
+the retry-sampling temperature as future-implementation decisions.
+The accompanying ADR-2 §Amendment 2026-04-29 closed the «no
+auto-escalation» question and left **intra-role** retries
+allowed, but did not pin the retry parameters. Without explicit
+invariants, the inner-loop scaffolding PR
+([HANDOFF §Next steps item 1](../../HANDOFF.md#next-steps-intended-order))
+would land magic-numbers in hook code, with no audit trail tying
+the choice back to research evidence. The §8 Hook pipeline is
+silent on whether a hook may itself call an LLM (e.g. a future
+LoopGuard middleware asking a second model to grade loop-
+evidence); §11 R-9 already flagged cross-model harness
+transferability but did not pin the hook-internal LLM choice.
+
+**Decision (additive to §1, §5, §8; no shape change to §2 /
+§3 / §6 / §7).**
+
+1. **Retry budget is config-bounded.** Every retry loop in the
+   inner-loop (intra-role retry, tool-error retry, blocker
+   retry-after-resume) reads its hard cap from
+   `~/.fa/config.yaml` — never from a constant in hook code.
+   The dispatcher (`src/fa/inner_loop/loop.py`, lands with
+   inner-loop scaffolding) refuses to start a session when a
+   required retry-cap key is missing rather than fall back to a
+   silent default. This matches §1 step 8 «hard cap …
+   prevent runaway loops» and gives the §7 trace an
+   `events.jsonl` row tying every cap to a config version.
+2. **`max_iterations` cap default = 6.** Per R-30 / YT-4
+   empirical anchor: GPT-3.5 Turbo completed a multi-step Hacker
+   News upvote task within 6 iterations when the harness was
+   correct (DSV gate + login middleware). Without the harness,
+   the same model hallucinated success on step 2. The cap is a
+   default in `config.yaml`, not a hard-coded constant; user
+   may raise it explicitly with a written justification in the
+   session's `hot.md` opening block. Treat 6 as the «minimum
+   non-trivial harness» anchor — raise it when measured, never
+   when guessed.
+3. **Intra-role retry temperature default `T=1.0`.** Per R-28 /
+   Correlated §4.1 finding: retrying with the **same**
+   temperature simply re-samples the same hypothesis-distribution
+   peak. `T=1.0` forces sample diversity so the retry can
+   propose a different candidate. Default applies only to the
+   **retry sample** — first-attempt temperature stays at the
+   role's configured value (`~/.fa/models.yaml`). Cross-tier
+   escalation remains forbidden per ADR-2 §Decision and
+   §Amendment 2026-04-29; this rule sits **inside** the
+   ADR-2-permitted «intra-role retry-loop» envelope.
+4. **LLM-using hooks MUST use family ≠ acting-role.** Generalises
+   ADR-2 §Amendment-to-land (R-19 below: «Eval-role
+   provider/family disjoint from Planner and Coder») to any
+   §8 hook that calls an LLM. The rule is vacuous in v0.1
+   because both `pre_tool` hooks (`SandboxHook` from ADR-6,
+   optional `ApprovalHook`) and the lone `post_tool`
+   `AuditHook` are deterministic Python functions — no LLM
+   call inside a hook today. The rule **lands ahead of the
+   first LLM-using hook** so future amendments (e.g. a v0.2
+   `LoopGuard` middleware grading retry-evidence with a second
+   model) inherit the family-disjoint constraint by default.
+   Without it, a same-family judge replicates the same error
+   the acting-role is being judged for (the Cornell P-1 +
+   Simula P-2 finding: same-family ensembles have ρ̂ ≈ +0.6,
+   defeating ensemble error-decorrelation).
+5. **Sub-agent invocation rules (BACKLOG I-2 prep).** Cross-link
+   to R-23 / Aperant item 7: when BACKLOG I-2 lands the
+   sub-agent dispatch primitive, sub-agents MUST use
+   `generateText` (not streaming) because output feeds the
+   orchestrator's context not the UI; the sub-agent tool set
+   MUST exclude any `SpawnSubAgent` tool (recursion); and
+   `SUBAGENT_MAX_STEPS` MUST be ≤ 100. Captured here so the
+   inner-loop scaffolding PR cannot accidentally diverge from
+   the eventual sub-agent ADR; cross-referenced from
+   [BACKLOG I-2](../BACKLOG.md#i-2--agent--sub-agents-for-context-load-reduction)
+   so the constraint is visible at the read-side.
+
+**Why these belong in one amendment.** All four rules govern
+the **retry / hook-LLM** axis — they share the §8 hook
+pipeline as enforcement surface, share the §1 step 8 «hard
+cap» framing, and share the same source-note batch
+(correlated-LLM-errors §6 R-7/R-8/R-9 + borrow-roadmap §R-7
+/ §R-28 / §R-29 / §R-30). Splitting into four amendments
+would force readers of any one to re-derive the others.
+
+**Why not pin the v0.2 LLM-using-hook contract here.** §8
+already says `pre_run` / `post_run` / `on_event` are deferred
+to v0.2 — the LLM-using-hook contract is a v0.2 amendment
+gated by the first concrete use-case (e.g. ADR-8
+HookRegistry's `LoopGuard` or a `CriticHook` after the v0.2
+Critic role lands). This amendment fixes the **family-
+disjoint invariant** so the v0.2 amendment cannot regress.
+
+**Subtraction-check (AGENTS.md §Pre-flight Step 4 / rule #10).**
+
+1. **Removing what makes this redundant?** None — §1 step 8
+   names the cap but not the value; §8 names hooks but not
+   LLM-using hooks; ADR-2 §Amendment 2026-04-29 allows
+   intra-role retry but not the retry temperature.
+2. **Capability lost if omitted?** Magic-number retry budgets
+   in hook code (no audit trail), `T=0.0` retries (no
+   diversity), same-family LLM-judge of same-family acting-
+   role (correlated errors), and a sub-agent dispatcher that
+   re-derives invocation rules per first-use.
+3. **OSS precedent for not having it?** Ampcode «three bare
+   functions» harness does not pin retry temperature — it
+   targets one tier (Claude) and accepts the elite-tier
+   default. FA spans four tiers per ADR-2 and cannot inherit
+   that elision.
+4. **Step-as-function?** YES for rules 1 / 2 / 3 / 5 — all are
+   config reads + arithmetic + dispatcher checks, no LLM
+   needed. Rule 4 is the **negation** of step-as-function — it
+   constrains the LLM-using-hook future case, not creating a
+   new LLM call.
+
+**Files changed (this PR, knowledge-layer only).**
+
+- `knowledge/adr/ADR-7-inner-loop-tool-registry.md` — this
+  amendment block.
+- `knowledge/adr/ADR-2-llm-tiering.md` — §Amendment 2026-05-20
+  (R-19 / R-27 part 1; family-disjointness for Eval-role and
+  Cornell/Simula primary-source citation).
+- `knowledge/adr/DIGEST.md` — ADR-7 row amendments bullet.
+- `knowledge/trace/exploration_log.md` — Q-7 amendment block.
+- `knowledge/BACKLOG.md` — I-2 sub-agent invocation rules
+  paragraph (R-23 captured here for read-side discoverability).
+- `HANDOFF.md` — ADR-7 amendment line update.
+
+**Re-evaluation triggers (this amendment).**
+
+- **First LLM-using hook PR lands.** Action: split rule 4 into
+  a v0.2 amendment with explicit family-pair examples
+  observed in eval traces.
+- **A FA-on-FA bootstrap run hits `max_iterations = 6` cap on
+  a task we expect to finish within budget.** Action:
+  re-measure cap against the failing task; raise default
+  only if new measurement shows ≥ 2× the previous anchor.
+- **Intra-role retry with `T=1.0` shows worse pass-rate than
+  `T=0.7` on UC1 eval (when UC5 lands).** Action: re-open the
+  retry-temperature choice with the eval delta as evidence;
+  the Correlated §4.1 finding holds in code-gen domain but
+  remains pending replication in FA-specific workload.
+
 ## References
 
 - [HANDOFF.md §Next steps item 1](../../HANDOFF.md#next-steps-intended-order) — the explicit six-surface scope this ADR pins.
