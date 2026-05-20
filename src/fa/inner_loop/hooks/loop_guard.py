@@ -1,6 +1,6 @@
 """LoopGuard (Wave-2 R-2): non-progress circuit breaker.
 
-A :class:`GuardMiddleware` that detects three non-progress patterns
+A :class:`GuardMiddleware` that detects two non-progress patterns
 in the recent tool-call history and denies the run when a hard
 threshold is crossed. The thresholds come from
 :class:`fa.inner_loop.runtime_limits.RuntimeLimits` (config-bounded
