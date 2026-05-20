@@ -20,18 +20,26 @@ from fa.inner_loop.hooks.builtin import (
     VerifierObserver,
     default_tool_result_for_denial,
 )
+from fa.inner_loop.hooks.loop_guard import LoopGuard
+from fa.inner_loop.hooks.recovery_observers import (
+    AttemptHistoryObserver,
+    FailureClassifierObserver,
+)
 
 __all__ = [
     "ApprovalHook",
+    "AttemptHistoryObserver",
     "AuditHook",
     "CapabilityGuard",
     "Decision",
     "DispatchRecord",
+    "FailureClassifierObserver",
     "GuardMiddleware",
     "HookPayload",
     "HookRegistry",
     "LearningObserver",
     "LifecyclePoint",
+    "LoopGuard",
     "Middleware",
     "ObserverMiddleware",
     "PauseGuard",

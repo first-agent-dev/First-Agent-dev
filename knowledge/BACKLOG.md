@@ -473,6 +473,49 @@
   - [`src/fa/tools/__init__.py`](../src/fa/tools/__init__.py)
     docstring (single-writer contract deferral).
 
+## M-2 — Wave-2 LoopGuard + FailureClassifier + attempt_history
+
+- **Status:** **closed by PR-2 stacking on PR #24** (2026-05-20).
+  Three of the Wave-2 R-Ns from
+  [`research/borrow-roadmap-2026-05.md`](./research/borrow-roadmap-2026-05.md)
+  §3 landed as one stack on top of the M-1 substrate:
+  - **R-2 LoopGuard** —
+    [`src/fa/inner_loop/hooks/loop_guard.py`](../src/fa/inner_loop/hooks/loop_guard.py),
+    a `GuardMiddleware` attached to `BEFORE_TOOL_EXEC` +
+    `BETWEEN_ROUNDS`. Two detectors: identical-call repeat (same
+    `(tool, params_hash)` ≥ N) and same-path thrash (same path,
+    distinct params, ≥ N). Thresholds + window come from
+    `RuntimeLimits.loop_guard_*` per ADR-7 §Amendment 2026-05-20 rule 1.
+    Deny propagates through the same `BETWEEN_ROUNDS` catch that
+    PauseGuard already uses (BUG-0001 fix in PR #24).
+  - **R-3 FailureClassifier** —
+    [`src/fa/inner_loop/recovery/classify.py`](../src/fa/inner_loop/recovery/classify.py)
+    (pure-Python deterministic function per AGENTS.md PR Checklist
+    rule #10 q4) +
+    [`src/fa/inner_loop/hooks/recovery_observers.py`](../src/fa/inner_loop/hooks/recovery_observers.py)
+    `FailureClassifierObserver` emitting `kind="recovery_action"`
+    rows to `events.jsonl`.
+  - **R-6 attempt_history.json** —
+    [`src/fa/inner_loop/recovery/attempt_history.py`](../src/fa/inner_loop/recovery/attempt_history.py)
+    writer (per-run, `~/.fa/state/runs/<run_id>/attempt_history.json`,
+    sliding window + cap from `RuntimeLimits`) +
+    [`knowledge/prompts/coder-recovery.md`](./prompts/coder-recovery.md)
+    reader-prompt fragment. Cross-session aggregation deferred to
+    Wave-3 (R-10 / R-12).
+- **Why M-2 (not Wave-3) closes here:** R-22 PII walker, R-29 family-
+  disjoint LLM-using rule, and R-5 DSV YAML contracts are tracked
+  under their own roadmap items; R-29 was already satisfied by PR #24
+  (registry-time rejection of co-family LLM hooks). R-2 + R-3 + R-6
+  pair tightly (FailureClassifier feeds AttemptHistory which feeds
+  LoopGuard's future thrash-on-error detector), so they ship together.
+- **References:**
+  - [`research/borrow-roadmap-2026-05.md`](./research/borrow-roadmap-2026-05.md)
+    §R-2 / §R-3 / §R-6.
+  - [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](./adr/ADR-7-inner-loop-tool-registry.md)
+    §Amendment 2026-05-20 rule 1 (config-bounded retry caps).
+  - [`knowledge/adr/ADR-8-hook-registry.md`](./adr/ADR-8-hook-registry.md)
+    §3 (Guard short-circuit) — LoopGuard reuses the same deny path.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring
