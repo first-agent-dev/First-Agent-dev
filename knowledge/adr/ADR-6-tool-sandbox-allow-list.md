@@ -496,6 +496,162 @@ side effects, no global state. Capability checks at tool-dispatch
 sites are tracked in BACKLOG M-1 (inner-loop scaffolding) — the
 loop has to exist before it can read the flags.
 
+### Amendment 2026-05-20 (Wave-1) — Bash sandbox gate (three-layer: classifier + validators + path-containment)
+
+**Source.** Implementation roadmap
+[`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+§R-20 (Wave 1 — independent of HookRegistry).
+Primary-source reference impls:
+
+- Aperant `apps/desktop/src/main/ai/security/bash-validator.ts`
+  (300 LOC) — per-command validators (`rm`, `chmod`, `git`, `pkill`,
+  `psql`) on allow-by-default base, plus secret-scanner.
+- Aperant `apps/desktop/src/main/ai/security/path-containment.ts`
+  (147 LOC) — symlink-resolved containment with `..` guard.
+- Gortex `internal/hooks/bash_classify.go` (266 LOC) — pattern-based
+  command classifier (`read-only` / `git-write` / `package-manager-install`
+  / `dangerous`), used as the no-LLM pre-pass that drives the
+  PreToolUse hook's `permissionDecision`.
+
+**Problem.** The §Policy file pins the **path** allow-list (read /
+write globs) and §Amendment 2026-05-20 above adds **capability
+flags** (deny-by-default opt-in surface). Neither says anything
+about **command-shape** — the actual bash string a Coder-role
+sends through `subprocess.run`. Two consequences:
+
+1. `rm -rf /etc` is denied today only because `/etc` falls outside
+   the path allow-list. But `git config --global user.email evil@x`
+   (no path argument at all) **passes** the path check, runs, and
+   rewrites the git identity. Aperant explicitly documents this as
+   the canonical «looks innocent, mutates outside scope» trap.
+2. A future LLM-using hook (the family-disjoint rule in
+   ADR-7 §Amendment 2026-05-20) would have to LLM-classify every
+   bash command to decide pass/deny/escalate. The Gortex
+   classifier shows the alternative: pattern-match the head token +
+   a few flag combinations and the «zero-latency, no-LLM, no-call»
+   path holds for the overwhelming majority of commands. AGENTS.md
+   PR Checklist rule #10 question 4 («could this be a deterministic
+   Python function?») answers YES for command shape.
+
+**Decision.** First-Agent adds a runtime **bash gate** under
+`src/fa/sandbox/` with three composable layers, called from the
+inner-loop's `run_shell` tool wiring once BACKLOG M-1 lands. The
+gate is a pure function — no I/O beyond ``Path.resolve()`` — and
+returns a structured `BashGateDecision { allow, category, reason,
+validator_result }` for the audit log.
+
+| Layer | File | Borrowed from | Role |
+|-------|------|---------------|------|
+| Classifier | `src/fa/sandbox/classifier.py` | Gortex `bash_classify.go` | Coarse pattern match → `BashCategory` ∈ {`READ_ONLY`, `GIT_WRITE`, `PACKAGE_INSTALL`, `DANGEROUS`, `GENERAL_WRITE`} |
+| Validators | `src/fa/sandbox/validators.py` | Aperant `bash-validator.ts` | Per-command rules for `rm`, `chmod`, `git` (5 deny rules: world-write `chmod`, `git config user.email/name`, `git config --global/--system`, force-push to `main`/`master`, `rm` outside workspace) |
+| Path containment | `src/fa/sandbox/path_containment.py` | Aperant `path-containment.ts` | Symlink-resolved «target inside base?» check, used by validators |
+| Gate | `src/fa/sandbox/bash_gate.py` | composes the above | `evaluate_bash(command, *, workspace_root) -> BashGateDecision` |
+
+**Pipeline (`evaluate_bash`).** In order:
+
+1. Classify command. If `READ_ONLY` → allow (no validator, no
+   containment — pure observation cannot mutate state).
+2. If `DANGEROUS`: dispatch to validator (only `rm` / `chmod` have
+   one — `rm -rf <safe-path>` MAY be allowed when the target is
+   contained); if no validator exists for the head token, deny.
+3. If `PACKAGE_INSTALL`: deny unless caller passes
+   `allow_package_install=True`. Package installs mutate the
+   runtime environment and need explicit caller-side opt-in
+   (mirrors Aperant's per-tool decision).
+4. If `GIT_WRITE`: dispatch to git validator. Rejects identity
+   rewrites + global config + force-push to protected refs;
+   passes commit/checkout/merge/etc.
+5. If `GENERAL_WRITE`: dispatch to validator if one exists for the
+   head token (catches non-recursive `rm` / `chmod` outside the
+   workspace); otherwise allow if `allow_general_write=True`
+   (default — workspace-internal writes are FA's bread-and-butter).
+
+**Why not a single denylist regex.** Two reasons:
+
+1. **Audit clarity.** A 3-layer pipeline produces a decision whose
+   reason field names the specific layer that fired. A regex
+   denylist is a black box: an audit reviewer sees only «matched
+   pattern N» with no breakdown.
+2. **Composition with capability flags.** The classifier's
+   `PACKAGE_INSTALL` category is the natural seat for
+   `ENABLE_DYNAMIC_TOOLS=True` opt-in (when a future ADR-7
+   amendment extends the gate to forward package installs through
+   the dynamic-tool path). A regex denylist would need rewriting;
+   the classifier is one extension.
+
+**Why deny-by-default at `DANGEROUS` with no validator.** Aperant's
+denylist is built on the same stance — a command class that has
+*no per-command validator* MUST be denied because the gate has no
+way to express «scoped acceptable». `sudo`, `pkill`, `dd`, `mkfs`,
+`shutdown`, `psql`, `mongo` all fall here; the validator slate
+covers `rm`/`chmod`/`git` only, the rest stay denied until a real
+caller produces a use-case and writes a validator.
+
+**Layer interaction with ADR-6 §Policy file.** The bash gate is
+the **command-shape** check; the §Policy file is the
+**path-shape** check. They are AND-ed at the dispatcher: a `rm
+file.py` invocation runs only if (1) the gate's `validate_rm`
+returns allow AND (2) `file.py` matches a write-allowed glob in
+`sandbox.toml`. Either layer can deny; neither layer can override
+the other.
+
+**Subtraction-check (AGENTS.md §Pre-flight Step 4 / rule #10).**
+
+1. **Removing what makes this redundant?** — The §Policy file
+   alone is insufficient (the `git config user.email` example
+   above). The capability-flag layer alone is insufficient (it
+   gates *capability classes*, not *individual command shapes*).
+   The gate is the missing third layer; removing it would force a
+   future LLM-using hook to take command-shape decisions, which
+   AGENTS.md rule #10 question 4 explicitly rejects.
+2. **Capability lost if omitted?** — The inner-loop scaffolding PR
+   (BACKLOG M-1) would have to land bash dispatch with no shape
+   check at all (only path check), and a Coder-role bug like
+   `rm $UNSET_VAR/important_dir` would partially execute before
+   the path check catches `/important_dir`. The pre-pass classifier
+   stops shape-bugs before they reach the filesystem.
+3. **OSS precedent for not having it?** — None among the FA
+   reference set. Aperant has the validators + path-containment;
+   Gortex has the classifier; Kronos has the capability flags
+   (already shipped here) + relies on Aperant-style validation
+   in its `bash_check` Python equivalent (see Kronos note §0
+   R-2). All three converge on «gate is a shape check, not just
+   a path check».
+4. **Could this be a deterministic function (PR Checklist rule #10
+   question 4)?** — YES. The entire gate is pure pattern-matching
+   + path resolution; no LLM call, no model judgement. The Gortex
+   author explicitly cited zero-latency as a design goal; FA
+   inherits the rationale verbatim.
+
+**Reversal triggers.**
+
+- A future ADR introduces dynamic-tool loading with its own
+  per-tool sandbox model that supersedes the head-token validator
+  set (e.g. MCP-server-shipped validators). The bash gate
+  collapses to a 2-layer (classifier + path-containment) form;
+  validators are removed.
+- The classifier produces too many false positives in real
+  workload eval (≥5% of legitimate commands misclassified).
+  Demote `PACKAGE_INSTALL` and `GENERAL_WRITE` to a single
+  «caller-opt-in-required» bucket and reduce the category count
+  to 3 (`READ_ONLY` / `DANGEROUS` / `OPT_IN`).
+- An LLM-judge layer with proven KPI-lift over the deterministic
+  classifier lands as a replacement (would require an ADR-8 hook
+  middleware running BEFORE the deterministic gate, not after).
+  The deterministic gate remains as backstop.
+
+**Implementation pointer.** Five files under `src/fa/sandbox/`:
+`__init__.py` (40 LOC, re-exports), `path_containment.py` (~95
+LOC), `classifier.py` (~225 LOC), `validators.py` (~245 LOC),
+`bash_gate.py` (~150 LOC). 4 test files under `tests/`:
+`test_sandbox_path_containment.py` (10 tests),
+`test_sandbox_classifier.py` (19 tests, parametrised — ~70 cases),
+`test_sandbox_validators.py` (29 tests), `test_sandbox_bash_gate.py`
+(15 tests). Wiring into the inner-loop's `run_shell` tool is
+tracked in BACKLOG M-1; in Phase-M, the inner-loop's
+`run_shell.execute` calls `evaluate_bash` before forwarding to
+`subprocess.run`.
+
 ## References
 
 - [ADR-1](./ADR-1-v01-use-case-scope.md) §UC1 — coding + PR

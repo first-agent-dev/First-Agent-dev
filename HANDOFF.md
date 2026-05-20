@@ -226,6 +226,24 @@ manually beyond this point.
     24h auth wait / 10s poll). Source:
     [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
     §R-18 / §R-21 / §R-25.
+  - **R-20 (Wave-1 follow-up PR-3)** — Bash sandbox gate at
+    `src/fa/sandbox/{classifier,validators,path_containment,bash_gate}.py`
+    (~715 LoC code + ~700 LoC tests). Three-layer pipeline:
+    pattern classifier (`bash_classify.go` port — 5
+    categories `READ_ONLY` / `GIT_WRITE` / `PACKAGE_INSTALL`
+    / `DANGEROUS` / `GENERAL_WRITE`) + per-command validators
+    (`bash-validator.ts` port — `rm` / `chmod` / `git` with
+    5 deny rules) + symlink-resolved path containment
+    (`path-containment.ts` port). Composer:
+    `evaluate_bash(command, *, workspace_root) ->
+    BashGateDecision`. Lands
+    [ADR-6 §Amendment 2026-05-20 (Wave-1)](./knowledge/adr/ADR-6-tool-sandbox-allow-list.md#amendment-2026-05-20-wave-1--bash-sandbox-gate-three-layer-classifier--validators--path-containment).
+    Wiring into inner-loop `run_shell` tracked in BACKLOG
+    M-1. Source:
+    [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+    §R-20 +
+    [`research/gortex-aperant-inspiration-2026-05.md`](./knowledge/research/gortex-aperant-inspiration-2026-05.md)
+    Aperant items 6 + 13 / Gortex Tier-1 item M.
 - **ADR slot reservation.** Closed by ADR-7 + ADR-8 above.
   History on the slot: `cross-reference-…-2026-04.md` §11
   supersession marks on Q-1 / Q-2.
