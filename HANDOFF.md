@@ -54,7 +54,7 @@ changes the project state, update **both**.
 You should now have everything you need. Do not crawl the repo
 manually beyond this point.
 
-## Current state (as of 2026-05-13)
+## Current state (as of 2026-05-20)
 
 - **Project stage:** **Stage 1** of the three-stage evolution
   (documentation + agent development через Devin). See
@@ -97,7 +97,15 @@ manually beyond this point.
     `error.code` is dual-mode `str | int` — ergonomic domain
     string internally, JSON-RPC numeric on the wire;
     implementations MUST map between the two at the transport
-    boundary.
+    boundary. **Amendment 2026-05-20:** Eval-role MUST be
+    provider+family disjoint from Planner and Coder (regex slug
+    extraction; ambiguous slugs MUST tag `family:` explicitly
+    in `~/.fa/models.yaml`); «no cross-tier auto-escalation»
+    rationale now cites Cornell P-1 (ICML 2025) + Simula P-2
+    (2026) as primary sources — `ρ̂ ≈ +0.6` same-family vs
+    `ρ̂ ≈ −0.05` cross-family. Cross-link to [ADR-7 §Amendment
+    2026-05-20 rule 4](./knowledge/adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+    (same family-disjoint rule applied to LLM-using hooks).
   - [ADR-3](./knowledge/adr/ADR-3-memory-architecture-variant.md) —
     Variant A (mechanical wiki, no embeddings, no graph,
     no Mem0).
@@ -137,7 +145,20 @@ manually beyond this point.
     (impl lands with inner-loop scaffolding PR per Next steps
     item 1). Source:
     [`research/soviet-code-inspiration-2026-05.md`](./knowledge/research/soviet-code-inspiration-2026-05.md)
-    §0 R-1.
+    §0 R-1. **Amendment 2026-05-20:** retry-budget invariant
+    (caps in `~/.fa/config.yaml`, never code constants);
+    `max_iterations` default = 6 per YT-4 empirical anchor;
+    intra-role retry temperature default `T=1.0` per Nitarach
+    P-3 §4.1 (`ρ̂≈−0.12` vs `T=0.0` `ρ̂≈+0.6`); LLM-using
+    hooks MUST use family ≠ acting-role (vacuous in v0.1,
+    pinned for first LLM-using hook); BACKLOG I-2 sub-agent
+    invocation rules (`generateText` not streaming, exclude
+    `SpawnSubAgent`, `SUBAGENT_MAX_STEPS ≤ 100`). Knowledge-
+    layer only. Source:
+    [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+    §R-7 / §R-23 / §R-28 / §R-29 / §R-30 +
+    [`research/correlated-llm-errors-and-ensembling-2026-05.md`](./knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md)
+    §4.1 / §6 R-7 / R-8 / R-9.
 - **ADR slot reservation.** Closed by ADR-7 above. History on
   the slot: `cross-reference-…-2026-04.md` §11 supersession
   marks on Q-1 / Q-2.

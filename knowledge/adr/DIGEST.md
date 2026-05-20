@@ -56,6 +56,16 @@ for v0.1.
   transport boundary. No shape change — relaxation of the §1
   pseudo-schema; `name` / `params` / `result` / `error` field
   set unchanged.
+- **2026-05-20** — Eval-role MUST be provider+family disjoint
+  from Planner and Coder (regex slug extraction; vacuous on
+  current Chinese-OSS workload but pinned for future tier
+  bumps). «No cross-tier auto-escalation» rationale now cites
+  Cornell P-1 (Kim et al., ICML 2025) + Simula P-2 (Vallecillos-
+  Ruiz et al., 2026) as primary sources — `ρ̂ ≈ +0.6` for
+  same-family ensembles vs `ρ̂ ≈ −0.05` cross-family. Cross-
+  link to [ADR-7 §Amendment 2026-05-20](./ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+  rule 4 (same family-disjoint rule generalised to LLM-using
+  hooks).
 
 **Source:** [`ADR-2`](./ADR-2-llm-tiering.md).
 
@@ -176,6 +186,21 @@ concrete carriers; single source of truth for every tool PR.
   (impl lands with inner-loop scaffolding PR). Source:
   [`research/soviet-code-inspiration-2026-05.md`](../research/soviet-code-inspiration-2026-05.md)
   §0 R-1, §6.1.
+- **2026-05-20** — Retry-budget invariant + intra-role `T=1.0` +
+  LLM-using-hook family-disjoint rule. Five additive rules:
+  (1) retry budgets read from `~/.fa/config.yaml`, not hook-code
+  constants; (2) `max_iterations` default = 6 per YT-4 empirical
+  anchor; (3) intra-role retry temperature default `T=1.0` per
+  Nitarach P-3 §4.1 (`ρ̂≈−0.12` vs `T=0.0` `ρ̂≈+0.6`);
+  (4) LLM-using hooks MUST use family ≠ acting-role
+  (vacuous in v0.1, pinned ahead of first LLM-using hook to
+  generalise [ADR-2 §Amendment 2026-05-20](./ADR-2-llm-tiering.md#amendment-2026-05-20--eval-role-family-disjoint--primary-source-citation));
+  (5) BACKLOG I-2 sub-agent invocation rules — `generateText`
+  not streaming, exclude `SpawnSubAgent`, cap
+  `SUBAGENT_MAX_STEPS ≤ 100`. Knowledge-layer only.
+  Source:
+  [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-7 / §R-28 / §R-29 / §R-30 + §R-23.
 
 **Source:** [`ADR-7`](./ADR-7-inner-loop-tool-registry.md).
 

@@ -81,6 +81,48 @@
   field-set change → no breach of ADR-2 §4 inheritance rule.
 - **Source:** [ADR-2 §Amendment 2026-05-01 §4 dual-mode](../adr/ADR-2-llm-tiering.md#amendment-2026-05-01--mcp-forward-compat-tool-shape-convention) (clarification appended in this PR alongside ADR-7 import).
 
+### Q-2 amendment 2026-05-20 — Eval-role family-disjoint + primary-source citation
+
+- **Coupling:** Q-2 + Q-7 (this rule generalises into [ADR-7
+  §Amendment 2026-05-20](../adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+  rule 4 — same family-disjoint rule applied to LLM-using hooks
+  in the §8 hook pipeline).
+- **Chosen (additive, no §Decision routing-table edit):** Eval-
+  role MUST be provider+family disjoint from Planner and Coder;
+  family extracted via regex slug pattern (`^glm-` → `glm`,
+  `^qwen` → `qwen`, …); ambiguous slugs MUST be tagged with an
+  explicit `family:` field in `~/.fa/models.yaml`. «No cross-
+  tier auto-escalation» rule (§Amendment 2026-04-29) now cites
+  Cornell P-1 (Kim, Garg, Peng, Garg — ICML 2025) + Simula P-2
+  (Vallecillos-Ruiz, Hort, Moonen — 2026) as primary sources;
+  `ρ̂ ≈ +0.6` same-family vs `ρ̂ ≈ −0.05` cross-family.
+- **Rejected:**
+  - **Pin `provider:` field in `models.yaml` schema now.**
+    Reason: schema is still in flux (§Amendment 2026-05-12
+    just added `tool_protocol.error_code_dual_mode`); coupling
+    a schema-change PR to this amendment delays both. Lesson:
+    revisit when one new tier-line-up actually exercises an
+    ambiguous slug — then the schema field lands together with
+    the routing rule.
+  - **Trust user judgement, no automated family check.**
+    Reason: weakens audit-trail for future tier swaps; weaker
+    OSS LLMs (DeepSeek 4 / Kimi 2.6) will accept «yes my
+    Planner=Coder=Eval=glm-* is fine» if no automation rejects
+    it. Lesson: re-evaluate if FA workload narrows to a single
+    family (vacuous case) or if regex slug coverage exceeds
+    practical maintenance burden.
+- **Re-evaluation triggers:** (1) measured `ρ̂ > 0.4` for the
+  actively-routed family-pair on UC5 eval (when UC5 lands) →
+  weaken rule to «MUST be family-disjoint when measured
+  `ρ̂ > 0.3`»; (2) Cornell P-1 / Simula P-2 retracted by a
+  higher-N replication → re-evaluate empirical anchor;
+  (3) a future tier-bump puts two roles in the same family
+  intentionally → document the pair as a measured exemption.
+- **Source:** [ADR-2 §Amendment 2026-05-20](../adr/ADR-2-llm-tiering.md#amendment-2026-05-20--eval-role-family-disjoint--primary-source-citation)
+  + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-19 / §R-27 part 1 + [`research/correlated-llm-errors-and-ensembling-2026-05.md`](../research/correlated-llm-errors-and-ensembling-2026-05.md)
+  §0 R-1 / §3 / §6.
+
 ## Q-3 — Which memory architecture variant for v0.1? (2026-04-27)
 
 - **Closed by:** [ADR-3](../adr/ADR-3-memory-architecture-variant.md)
@@ -248,3 +290,68 @@
     Eval); 9-dept granularity is over-engineered for current
     scope. Lesson: revisit if v0.2 multi-role grows past ~6
     roles.
+
+### Q-7 amendment 2026-05-20 — Retry-budget invariant + intra-role `T=1.0` + LLM-using-hook family-disjoint + sub-agent invocation rules
+
+- **Coupling:** Q-7 + Q-2 (this amendment generalises [Q-2
+  amendment 2026-05-20](#q-2-amendment-2026-05-20--eval-role-family-disjoint--primary-source-citation)
+  rule «family-disjoint Eval-role» from the role layer to the
+  §8 hook layer; both share the same correlated-LLM-errors
+  mechanism).
+- **Chosen (additive to §1 step 8 / §5 / §8; no shape change to
+  §2 / §3 / §6 / §7):** five rules.
+  1. Retry budgets read from `~/.fa/config.yaml`, never from
+     code constants — dispatcher refuses to start if a required
+     cap key is missing.
+  2. `max_iterations` default = 6 (YT-4 empirical anchor:
+     GPT-3.5 Turbo + correct DSV harness completed an HN
+     upvote task in 6 iterations; without the harness, same
+     model hallucinated success on step 2).
+  3. Intra-role retry temperature default `T=1.0` per Nitarach
+     P-3 §4.1 finding (`ρ̂≈−0.12` retry-error correlation at
+     `T=1.0` vs `ρ̂≈+0.6` at `T=0.0`); applies only to the
+     **retry sample**, not the first-attempt sample.
+  4. LLM-using hooks MUST use family ≠ acting-role. Rule is
+     vacuous in v0.1 (both `pre_tool` and `post_tool` hooks
+     are deterministic Python functions) — pinned ahead of the
+     first LLM-using hook so future amendments inherit the
+     family-disjoint constraint by default.
+  5. Sub-agent invocation (BACKLOG I-2 prep): `generateText`
+     not streaming; sub-agent tool set MUST exclude any
+     `SpawnSubAgent` tool (recursion); cap
+     `SUBAGENT_MAX_STEPS ≤ 100`. Documented in
+     [`BACKLOG.md` I-2](../BACKLOG.md#i-2--agent--sub-agents-for-context-load-reduction)
+     for the read-side; this amendment is the authoritative
+     copy.
+- **Rejected:**
+  - **Pin `max_iterations` to a hard-coded constant in hook
+    code.** Reason: no audit trail; weakens §7 trace
+    (`events.jsonl` cannot link the cap to a config version);
+    forces every change to ship as a code PR instead of a
+    config PR. Lesson: revisit only if the config-loading
+    machinery proves too brittle for the first inner-loop
+    scaffolding PR.
+  - **Default intra-role retry `T = first-attempt T`.** Reason:
+    repeats the same hypothesis-distribution peak — Nitarach
+    P-3 §4.1 explicit anti-finding. Lesson: revisit if a
+    FA-workload eval (post-UC5) shows `T=1.0` retry degrades
+    pass-rate vs `T=0.7` for a measured task class.
+  - **Defer rule 4 «LLM-using hooks family ≠ acting-role» until
+    the first LLM-using hook is proposed.** Reason: deferral
+    means the first proposing PR must re-derive both ADR-7 and
+    ADR-2 evidence; rule 4 lands now so the v0.2
+    amendment-author can cite the existing invariant. Lesson:
+    revisit if no LLM-using hook materialises through v1.0 —
+    the rule remains dormant but harmless.
+- **Re-evaluation triggers:** (1) first LLM-using-hook PR
+  lands → split rule 4 into a v0.2 amendment with concrete
+  examples; (2) FA-on-FA bootstrap run hits `max_iterations =
+  6` cap on an expected-completable task → re-measure (raise
+  only on new measurement, not on guesswork); (3) Nitarach P-3
+  retracted or contradicted by replication → re-evaluate
+  rule 3's empirical anchor.
+- **Source:** [ADR-7 §Amendment 2026-05-20](../adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+  + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-7 / §R-23 / §R-28 / §R-29 / §R-30 +
+  [`research/correlated-llm-errors-and-ensembling-2026-05.md`](../research/correlated-llm-errors-and-ensembling-2026-05.md)
+  §4.1 / §6 R-7 / R-8 / R-9.

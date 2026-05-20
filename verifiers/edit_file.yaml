@@ -1,0 +1,14 @@
+# Verifier contract for the `edit_file` tool (R-5).
+#
+# Schema documented in `src/fa/verifier/verify_action.py` (top
+# docstring) and in `knowledge/research/borrow-roadmap-2026-05.md`
+# §R-5. The DSV gate reads this file via `fa.verifier.load_contract`
+# and overrides the LLM-claimed success flag on mismatch.
+target_action: edit_file
+required_trace_events:
+  - file_write
+  - sandbox_check
+failure_conditions:
+  - file_unchanged_after_edit
+  - sandbox_violation
+override_action: force_failure
