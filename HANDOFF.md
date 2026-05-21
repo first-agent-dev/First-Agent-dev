@@ -3,7 +3,63 @@
 > **Read this first if you are an LLM agent (Devin, Claude, ChatGPT,
 > Cursor, etc.) starting a new session on this repository.**
 >
-> **Last updated:** 2026-05-20 by Devin session
+> **Last updated:** 2026-05-21 by Devin session
+> [`7d46c801db0f4ac3ab4b80ef97a664c3`](https://app.devin.ai/sessions/7d46c801db0f4ac3ab4b80ef97a664c3)
+> — **PR-4 / Wave-3 stack #1** stacks on `main` (PR #26 merged)
+> and lands two R-Ns from
+> [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+> §3: **R-45 cost guardian**
+> (`src/fa/observability/cost_guardian.py` — single
+> `GuardMiddleware` that observes per-call cost at
+> `AFTER_TOOL_EXEC` and gates at `BEFORE_TOOL_EXEC` when the
+> accumulated USD rollup exceeds `RuntimeLimits.cost_budget_usd`;
+> tri-mode `None` unbounded / `0.0` observe-only / `> 0` hard cap;
+> dormant on baseline tools, wakes when T-2 emits `cost=…`
+> artifacts) and **R-19 eval-role family-disjoint** (role-layer
+> check complement to the existing R-29 hook-layer check;
+> `src/fa/roles.py` exposes a regex slug-to-family extractor +
+> `check_eval_disjoint` pure function; ADR-2 §Amendment 2026-05-20
+> rule 1 now has runtime enforcement). Same PR amends ADR-2 with
+> a role-layer sub-amendment, mirrors it in DIGEST.md, appends an
+> exploration_log block, refreshes `knowledge/llms.txt` for the
+> two new files, and adds the `cost guardian` / `family extractor`
+> glossary rows. 481 tests passing (+67 over PR-3; +29 from R-45 +
+> R-19 + cleanup, +8 fixed pre-existing mypy strict errors in
+> test files, +10 from four Devin-Review iteration commits — see
+> §Current state «PR-4 review-fix iteration» bullet below).
+>
+> **PR-4 review-fix iteration (2026-05-21).** Four follow-up
+> commits on the same branch addressed Devin Review runs 1/2/3
+> + a CodeQL nit, all gated and pushed:
+> [`48138c2`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/48138c2)
+> covered the missing YAML `_FLOAT_KEYS` parse tests;
+> [`bf0ba14`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/bf0ba14)
+> rewrote `CostExtractor` to return `list[CostObservation]` per
+> ADR-7 §Sub-amendment 2026-05-21 «one row per artifact» mandate
+> (was returning only the first artifact — silently undercounted
+> USD when a tool emits multiple `cost=…` rows; will matter once
+> T-2 LLM driver lands) and added the
+> `_FAMILY_PATTERNS ⊆ KNOWN_FAMILIES` sync-invariant test promised
+> by the `tests/test_roles.py` module docstring;
+> [`48dabe3`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/48dabe3)
+> rejected NaN/Inf at three layers (`CostObservation.__post_init__`,
+> `CostGuardian.__init__`, `runtime_limits._FLOAT_KEYS` parser) —
+> `float("nan")` and `float("inf")` parse without raising and NaN
+> permanently poisons the rollup (`x + NaN == NaN`; `NaN > budget`
+> always False so the gate silently stops denying);
+> [`dd97972`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/dd97972)
+> split three `assert x == DEFAULT is None` chained comparisons
+> into explicit `is None` checks (CodeQL py/test-equals-none nit).
+> Session-completion audit (out-of-tree): `/home/ubuntu/wave-3-session-audit.md`.
+>
+> **PR-26 deferred review threads landed in
+> [`6fce6b3`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/6fce6b3)
+> on `main` before this session started —** lockfile regex
+> tightening (false-positive cases gone) + `BlockerMiddleware`
+> AFTER trace-label docstring clarification both in. No follow-up
+> needed; see §Open review threads (cleared) below.
+>
+> **Prior update:** 2026-05-20 by Devin session
 > [`5f23505ec2a04caeb232bfe8d391010e`](https://app.devin.ai/sessions/5f23505ec2a04caeb232bfe8d391010e)
 > — **PR-3 / Wave-2 stack #2** stacks on PR
 > [#25](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/25)
@@ -36,7 +92,7 @@
 > `fa-wave-3-remaining-work.md` (combined borrow-roadmap + T-N
 > minus done, with 7-column status table + Wave-3 grouping).
 >
-> **Prior update:** 2026-05-20 by Devin session
+> **Prior-prior update:** 2026-05-20 by Devin session
 > [`5f23505ec2a04caeb232bfe8d391010e`](https://app.devin.ai/sessions/5f23505ec2a04caeb232bfe8d391010e)
 > — **PR-2 / Wave-2 stack #1** stacks on PR
 > [#24](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/24)
@@ -126,7 +182,7 @@ changes the project state, update **both**.
 You should now have everything you need. Do not crawl the repo
 manually beyond this point.
 
-## Current state (as of 2026-05-20)
+## Current state (as of 2026-05-21)
 
 - **Project stage:** **Stage 1** of the three-stage evolution
   (documentation + agent development через Devin). See
@@ -178,6 +234,14 @@ manually beyond this point.
     `ρ̂ ≈ −0.05` cross-family. Cross-link to [ADR-7 §Amendment
     2026-05-20 rule 4](./knowledge/adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
     (same family-disjoint rule applied to LLM-using hooks).
+    **Sub-amendment 2026-05-21 (role layer):** the family
+    extractor + `check_eval_disjoint` pure function ship as
+    `src/fa/roles.py` (R-19 implementation; consumed by the
+    `~/.fa/models.yaml` loader landing with the T-2 LLM driver).
+    The rule now has runtime enforcement at two layers — the
+    role layer (this sub-amendment, role-config load time) and
+    the hook layer (the existing 2026-05-20 cross-link,
+    `HookRegistry.register` time).
   - [ADR-3](./knowledge/adr/ADR-3-memory-architecture-variant.md) —
     Variant A (mechanical wiki, no embeddings, no graph,
     no Mem0).
@@ -398,46 +462,50 @@ manually beyond this point.
     rule #8. Re-measurement triggers in §9 (items 5-6 cross-link
     BACKLOG I-7 / I-8).
 
-## Open review threads (carry-over for next session)
+## Open review threads (cleared)
 
-Two PR-26 Devin-Review findings were deferred from the 2026-05-20
-Wave-2 stack #2 session per user redirect. Both are real but small;
-the next session's first action should be to bundle them into a
-single commit, push, and reply to both threads.
+Both PR-26 Devin-Review findings carried over from the
+2026-05-20 Wave-2 stack #2 session landed on `main` in
+[commit `6fce6b3`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/6fce6b3)
+before the 2026-05-21 Wave-3 stack #1 session started. No
+follow-up needed; the section is kept as an audit trail of
+what was deferred and how each was resolved.
 
-1. **🚩 Lockfile regex `.lock\b` over-broad** — comment
-   [`ANALYSIS_pr-review-job-7fbe842881524291a9fac2aebdd78876_0002`](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/26#discussion_r-tbd)
-   on
+1. **🚩 Lockfile regex `.lock\b` over-broad — LANDED in
+   [`6fce6b3`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/6fce6b3).**
+   Original report: comment 0002 on
    [`src/fa/inner_loop/hooks/blockers.py:185-197`](./src/fa/inner_loop/hooks/blockers.py).
-   The `_LOCKFILE_MESSAGE` regex includes `\.lock\b` as an
-   alternative, which falsely matches non-contention error messages
-   that merely mention lock-filenames (e.g. `Cargo.lock not found`,
-   `Permission denied: package-lock.json`). Fix: drop bare
-   `\.lock\b` / bare `lockfile`; add contention-specific
-   alternatives (`unable to create.*\.lock`,
-   `blocking waiting for file lock`,
-   `another (instance\|process).*(lock\|running)`). Add 3 negative
-   regression tests (the false-positive cases above) + 2 positive
-   (git `Unable to create '.../index.lock': File exists`, cargo
-   `Blocking waiting for file lock on package cache`).
+   The `_LOCKFILE_MESSAGE` regex's bare `\.lock\b` / bare
+   `lockfile` alternatives were dropped and replaced with
+   contention-specific alternatives; matching negative-case +
+   positive-case regression tests added in the same commit.
 
 2. **📝 BlockerMiddleware AFTER_TOOL_EXEC trace-label semantic
-   mismatch** — comment
-   [`ANALYSIS_pr-review-job-7fbe842881524291a9fac2aebdd78876_0001`](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/26#discussion_r-tbd)
-   on
+   mismatch — LANDED in
+   [`6fce6b3`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/6fce6b3).**
+   Original report: comment 0001 on
    [`src/fa/inner_loop/hooks/blockers.py:162-168`](./src/fa/inner_loop/hooks/blockers.py).
-   The base `BlockerMiddleware.handle()` returns `Decision.allow()`
-   at `AFTER_TOOL_EXEC` after recording an observation, so the
-   dispatch trace records `"allow"` where semantically it means
-   «observed». Bot itself frames this as «functional, audit-trail
-   confusion». Recommended disposition: docstring-only clarification
-   in `BlockerMiddleware` explaining the «GuardMiddleware that
-   observes at AFTER_TOOL_EXEC» pattern, until a second observe-
-   while-guarding middleware materializes that would justify the
-   `HookRegistry.dispatch` trace-label change. User decision needed
-   if next session wants to apply the trace-label change instead.
+   Docstring-only clarification applied per the bot's recommended
+   disposition («GuardMiddleware that observes at AFTER_TOOL_EXEC»
+   pattern documented); no `HookRegistry.dispatch` trace-label
+   change — deferred until a second observe-while-guarding
+   middleware materialises that would justify the broader change.
 
 ## Next steps (intended order)
+
+0. **Wave-3 stack #2 candidates** (pick one, see
+   `fa-wave-3-remaining-work.md` attachment from the 2026-05-21
+   session for the 7-column status table). Strongest cheap-impl
+   candidates:
+   - **R-8 filesystem-canon writer** — gotchas/discoveries
+     journal companion to the reader side; deferred from
+     Wave-3 stack #1 per «M2 only if M1 lands without
+     iteration» rule.
+   - **R-17 / R-16 / R-24** — need scope decisions from the
+     project lead before queuing.
+   - **R-31 / R-32 / R-33** — need ADR-9 timing decision.
+   - **T-2 LLM driver** — unblocks the R-45 cost guardian
+     (artifact emitter currently dormant on baseline tools).
 
 1. **Wave-2 stack #1 — R-2 + R-3 + R-6 (single PR).** Land
    `LoopGuard` (R-2) at `BETWEEN_ROUNDS` (`max_iterations`,

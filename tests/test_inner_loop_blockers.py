@@ -13,6 +13,9 @@ whether to deny based on ``suppression_seconds``.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from pathlib import Path
+
 import pytest
 
 from fa.inner_loop import EventLog, SessionState, ToolCall, run_session
@@ -385,7 +388,7 @@ def test_blocker_categories_are_distinct() -> None:
 # --- Integration: blockers inside run_session -------------------------------
 
 
-def test_blockers_are_dormant_on_baseline_smoke(tmp_path) -> None:
+def test_blockers_are_dormant_on_baseline_smoke(tmp_path: Path) -> None:
     """End-to-end: a clean smoke run with all three blockers wired emits
     only ``decision: observed`` rows for them — no denials, no
     spurious ``hook_decision: deny``. This is the contract that lets
@@ -425,14 +428,14 @@ def test_blockers_are_dormant_on_baseline_smoke(tmp_path) -> None:
     ]
 
 
-def _build_baseline_registry_for_lockfile(workspace):
+def _build_baseline_registry_for_lockfile(workspace: Path) -> object:
     """Use the real registry; the lockfile test injects a synthetic
     failing tool via the registry's dispatch handler."""
 
     return build_baseline_registry(workspace)
 
 
-def test_lockfile_blocker_denies_second_run_after_lockfile_failure(tmp_path) -> None:
+def test_lockfile_blocker_denies_second_run_after_lockfile_failure(tmp_path: Path) -> None:
     """End-to-end: tool-call 1 fails with a lockfile message, the
     blocker observes it at AFTER_TOOL_EXEC, and tool-call 2 (same
     tool) is denied at BEFORE_TOOL_EXEC. Asserts the
@@ -455,7 +458,7 @@ def test_lockfile_blocker_denies_second_run_after_lockfile_failure(tmp_path) -> 
     from fa.inner_loop.registry import ToolError as _ToolError
     from fa.inner_loop.registry import ToolResult as _ToolResult
 
-    def _failing_handler(params):
+    def _failing_handler(params: Mapping[str, object]) -> _ToolResult:
         del params
         return _ToolResult(
             summary="lockfile contention",

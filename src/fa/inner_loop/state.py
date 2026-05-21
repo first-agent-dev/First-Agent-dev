@@ -1,4 +1,4 @@
-"""Inner-loop session state + ``events.jsonl`` writer (ADR-7 \u00a77).
+"""Inner-loop session state + ``events.jsonl`` writer (ADR-7 §7).
 
 Each ``run_session`` invocation owns a :class:`SessionState`. The state
 holds the workspace root, the ``run_id`` used in the events file path
@@ -6,35 +6,41 @@ and in every event payload, the per-session :class:`EventLog`, and the
 ``observations`` tail used by the deterministic loop for follow-up
 prompting.
 
-The event schema matches ADR-7 \u00a77 verbatim: ``ts`` (ISO-8601 UTC),
+The event schema matches ADR-7 §7 verbatim: ``ts`` (ISO-8601 UTC),
 ``run_id``, ``harness_id``, ``actor``, ``kind``, ``tool_name``,
 ``tool_call_id``, ``parent_event_id``, ``content``. The ``kind`` field
-is an open enumeration \u2014 the value is appended verbatim by writers,
-no validation. ADR-7 \u00a77 lists the core kinds; subsequent R-N PRs
+is an open enumeration — the value is appended verbatim by writers,
+no validation. ADR-7 §7 lists the core kinds; subsequent R-N PRs
 have introduced additional kinds wired into specific hooks.
 
-Core kinds (ADR-7 \u00a77):
+Core kinds (ADR-7 §7):
 ``user_msg | model_msg | tool_call | tool_result | hook_decision |
 audit | approval | error | stop``.
 
 Extension kinds (added by Wave-2 R-Ns; each line names the originating
 writer + the R-N anchor):
 
-- ``run_stopped`` \u2014 :func:`fa.inner_loop.loop.run_session` when a
+- ``run_stopped`` — :func:`fa.inner_loop.loop.run_session` when a
   ``BETWEEN_ROUNDS`` or ``AFTER_TOOL_EXEC`` guard denies via
   ``PermissionError`` (PR #24 BUG-0001 / BUG-0003).
-- ``loop_guard_warn`` \u2014
+- ``loop_guard_warn`` —
   :class:`fa.inner_loop.hooks.loop_guard.LoopGuard` warn channel
   (R-2; PR #25 ``loop_guard.py``).
-- ``recovery_action`` \u2014
+- ``recovery_action`` —
   :class:`fa.inner_loop.hooks.recovery_observers.FailureClassifierObserver`
   (R-3; PR #25 ``recovery_observers.py``).
-- ``verification`` \u2014
+- ``verification`` —
   :class:`fa.inner_loop.hooks.builtin.VerifierObserver` failure-row
   emitter (PR #26 wiring of R-5 DSV).
+- ``cost_observation`` —
+  :class:`fa.observability.cost_guardian.CostGuardian` per-call cost
+  sample + rolling rollup (R-45). One row per recognised
+  ``cost=…`` artifact in :attr:`ToolResult.artifacts`; baseline
+  M-1 tools never emit the artifact, so the kind is dormant until
+  the T-2 LLM driver lands.
 
 New writers MUST add their ``kind`` value to this list in the same
-commit (AGENTS.md PR Checklist; matches ADR-7 \u00a77 «schema
+commit (AGENTS.md PR Checklist; matches ADR-7 §7 «schema
 discoverability» intent).
 """
 
@@ -61,7 +67,7 @@ def _now_iso_z() -> str:
 class TraceEvent:
     """One row written to ``~/.fa/state/runs/<run_id>/events.jsonl``.
 
-    Field names track ADR-7 \u00a77 exactly: ``ts`` (not ``timestamp``),
+    Field names track ADR-7 §7 exactly: ``ts`` (not ``timestamp``),
     ``run_id`` stamped on every row, ``harness_id`` for cross-version
     replay refusal.
     """
@@ -162,7 +168,7 @@ class SessionState:
         elif not self.log.run_id:
             # Caller-supplied logs (tests, custom drivers) inherit the
             # session ``run_id`` so events.jsonl rows are still tagged
-            # per ADR-7 \u00a77.
+            # per ADR-7 §7.
             self.log.run_id = self.run_id
 
     def record_tool_call(self, call: ToolCall) -> TraceEvent:

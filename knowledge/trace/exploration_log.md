@@ -123,6 +123,59 @@
   §R-19 / §R-27 part 1 + [`research/correlated-llm-errors-and-ensembling-2026-05.md`](../research/correlated-llm-errors-and-ensembling-2026-05.md)
   §0 R-1 / §3 / §6.
 
+### Q-2 sub-amendment 2026-05-21 — R-19 role-layer enforcement landed
+
+- **Coupling:** Q-2 + Q-8 (the 2026-05-20 amendment landed the
+  rule; the 2026-05-20 cross-link from this Q to Q-7 amendment
+  rule 4 landed the hook-layer enforcement; this sub-amendment
+  lands the role-layer enforcement — closing the «documentation-
+  only» gap explicitly called out in the 2026-05-20 amendment).
+- **Chosen (pure-function module, no `RoleConfig` dataclass
+  yet):** `src/fa/roles.py` ships `extract_family(slug, *,
+  override=None) -> str` (regex slug-to-family inference with
+  default-deny on ambiguous slugs via `FamilyExtractionError`)
+  and `check_eval_disjoint(*, planner_family, coder_family,
+  eval_family) -> None` (raises `EvalFamilyConflictError` when
+  eval shares family with planner or coder). Planner and coder
+  are permitted to share a family — the §Decision routing table
+  allows the same coder-tier model in both roles; only the eval-
+  vs-actor disjointness is enforced. The `~/.fa/models.yaml`
+  loader lands with the T-2 LLM driver and consumes these
+  helpers — the pure functions ship now so the loader has a
+  tested dependency.
+- **Rejected:**
+  - **Land the `~/.fa/models.yaml` loader + `RoleConfig`
+    dataclass in this PR.** Reason: the loader is part of T-2
+    (LLM driver) scope per
+    [`research/fa-0.1-release-gaps-2026-05.md`](../research/fa-0.1-release-gaps-2026-05.md);
+    bundling it here couples the role-layer enforcement to a
+    much larger scope-shift and inflates the PR past the
+    «one stack» budget. Lesson: revisit when T-2 lands — at
+    that point the loader call site becomes the single place
+    to consume these helpers.
+  - **Inline the family-extraction logic in the loader (no
+    `src/fa/roles.py` module).** Reason: the hook-layer call
+    site in ADR-7 §Amendment 2026-05-20 rule 4 will need the
+    same `extract_family` helper at `HookRegistry.register`
+    time; inlining produces two divergent implementations of
+    the regex table. Lesson: the function-as-module shape is
+    the natural carrier for «the family extractor is the
+    single source of truth» invariant.
+- **Re-evaluation triggers:** (1) T-2 loader lands and the
+  «Loader call site lands with T-2» rule becomes historical
+  → drop the rule from ADR-2 sub-amendment, add a `RoleConfig`
+  reference; (2) a new family is added to `KNOWN_FAMILIES`
+  → add the matching regex row to `_FAMILY_PATTERNS` AND a
+  parametrised happy-path case to `tests/test_roles.py` (the
+  sync-invariant test will fail otherwise); (3) ambiguous slugs
+  become common enough that pre-loading the `family:` override
+  becomes painful → consider promoting `family:` from optional
+  override to required field (re-evaluation of the 2026-05-20
+  amendment, not this sub-amendment).
+- **Source:** [ADR-2 §Sub-amendment 2026-05-21](../adr/ADR-2-llm-tiering.md#sub-amendment-2026-05-21--r-19-role-layer-enforcement-regex-extractor--disjoint-check)
+  + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-19.
+
 ## Q-3 — Which memory architecture variant for v0.1? (2026-04-27)
 
 - **Closed by:** [ADR-3](../adr/ADR-3-memory-architecture-variant.md)
@@ -355,6 +408,70 @@
   §R-7 / §R-23 / §R-28 / §R-29 / §R-30 +
   [`research/correlated-llm-errors-and-ensembling-2026-05.md`](../research/correlated-llm-errors-and-ensembling-2026-05.md)
   §4.1 / §6 R-7 / R-8 / R-9.
+
+### Q-7 sub-amendment 2026-05-21 — R-45 cost guardian + `cost_observation` event-kind
+
+- **Coupling:** Q-7 + Q-8 (extends Q-7 §7 event-kind
+  enumeration; reuses Q-8 `GuardMiddleware` shape — no Q-8
+  contract change). Future cross-link to T-2 LLM driver once
+  it lands the `cost=…` artifact emitter.
+- **Chosen:** `src/fa/observability/cost_guardian.py` ships
+  a single `CostGuardian(GuardMiddleware)` class that attaches
+  to both `BEFORE_TOOL_EXEC` (gates when
+  `RuntimeLimits.cost_budget_usd` exceeded) and
+  `AFTER_TOOL_EXEC` (parses `cost=…` artifacts via
+  `default_cost_extractor`, accumulates `CostRollup`, writes
+  `cost_observation` rows). `cost_budget_usd` is tri-mode —
+  `None` unbounded (default), `0.0` observe-only, `> 0`
+  hard cap — mirroring the `*_suppression_seconds` pattern
+  from PR-3 `95c392a`. Dormant on M-1 baseline tools; wakes
+  when T-2 emits cost artifacts. Hook wired into the smoke
+  entrypoint (`fa inner-loop-smoke`) so chain shape is stable
+  across the T-2 cut-over.
+- **Rejected:**
+  - **Two middlewares — `CostObserver` + `CostGuard` —
+    instead of one dual-attaching class.** Reason: the two
+    sides share the same `CostRollup` state, so factoring
+    them apart forces an external state container (extra
+    module + extra wiring point in `_cmd_inner_loop_smoke`)
+    and produces two registry entries for one logical
+    concern. Q-8 `attaches_to: tuple[LifecyclePoint, ...]`
+    is designed for exactly this case. Lesson: revisit if
+    a use-case emerges where observation and gating need to
+    be independently togglable.
+  - **Pin `RuntimeLimits.cost_budget_usd` default to a
+    concrete USD value (e.g. `5.00`).** Reason: M-1 baseline
+    tools have no cost signal, so any concrete default would
+    bind silently against the first T-2 sessions before
+    baseline USD is even measured (worst case: first T-2
+    smoke run trips the default cap before any meaningful
+    work happens). Lesson: re-pin once T-2 lands and N
+    baseline sessions provide a measured USD distribution.
+  - **Land R-45 artifact emitter (T-2 scope) in the same
+    PR to wake the cost-budget axis immediately.** Reason:
+    T-2 is full LLM-driver scope per
+    [`research/fa-0.1-release-gaps-2026-05.md`](../research/fa-0.1-release-gaps-2026-05.md);
+    bundling it busts the «one stack» budget by an order of
+    magnitude and ties cost-guardian iteration to driver
+    iteration. Lesson: ship the observer first (dormant on
+    M-1), wake it when T-2 lands — the chain shape change
+    is then zero, only the artifact-emitter side flips on.
+- **Re-evaluation triggers:** (1) T-2 LLM driver lands and
+  emits `cost=…` artifacts on every LLM call → re-measure
+  baseline USD per smoke run, consider pinning
+  `DEFAULT_COST_BUDGET_USD` to a non-`None` value once N
+  sessions establish a distribution; (2) a second
+  observability middleware emerges (token meter, latency
+  tracker, …) → factor `default_cost_extractor` artifact-
+  parsing into a shared `fa.observability.artifacts` module
+  so both middlewares share the same artifact-parsing
+  contract; (3) `cost_observation` rows accumulate fast
+  enough that the JSONL trace becomes the bottleneck →
+  introduce a periodic rollup-only row + per-call detail-
+  log opt-in.
+- **Source:** [ADR-7 §Sub-amendment 2026-05-21](../adr/ADR-7-inner-loop-tool-registry.md#sub-amendment-2026-05-21--r-45-cost-guardian--cost_observation-event-kind)
+  + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-45.
 
 ## Q-8 — What is the v0.1 hook-pipeline contract for the inner-loop dispatcher? (2026-05-20)
 

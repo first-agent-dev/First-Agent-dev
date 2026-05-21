@@ -487,6 +487,120 @@ extractor lands.
   DPC field experience continues to support it, drop it if
   the empirical case collapses.
 
+### Sub-amendment 2026-05-21 — R-19 role-layer enforcement (regex extractor + disjoint check)
+
+**Source.** Implementation roadmap
+[`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+§R-19 (Wave 3 — role-layer runtime enforcement of the
+2026-05-20 amendment above). The 2026-05-20 amendment landed
+the *rule* but explicitly deferred the *enforcement code* to
+the inner-loop scaffolding PR (§Amendment 2026-05-20 rule 2
+«the regex extractor lives in the inner-loop scaffolding PR
+… at ~30 LOC»); this sub-amendment records that landing.
+
+**Problem.** The 2026-05-20 amendment text is enforceable only
+if a runtime call site refuses configs that violate it. The
+hook-layer call site landed in ADR-7 §Amendment 2026-05-20
+rule 4 (cross-link target of the 2026-05-20 amendment) —
+`HookRegistry._validate_middleware` raises `ValueError` when
+an LLM-using middleware shares family with the acting role.
+The role-layer call site (the `~/.fa/models.yaml` loader)
+was still missing; without it, a user can pin Eval=`glm-4.5`
++ Coder=`glm-4.5` in the config and the rule is documentation
+only.
+
+**Decision (no shape change to §Decision routing table, no
+shape change to the 2026-05-20 amendment).**
+
+1. **`src/fa/roles.py`** ships the two pure functions the loader
+   needs:
+   - `extract_family(slug: str, *, override: str | None = None) -> str`
+     — regex slug-to-family inference. Slugs lowercased once
+     at the boundary; ordered regex table (most specific first)
+     covers the families enumerated in the 2026-05-20 amendment
+     rule 1. Returns the family string (member of
+     `KNOWN_FAMILIES`); raises `FamilyExtractionError` when
+     no row matches and no `override` is supplied — the
+     «default-deny when family unknown» branch the 2026-05-20
+     amendment specifies.
+   - `check_eval_disjoint(*, planner_family, coder_family, eval_family)`
+     — verifies eval_family ≠ planner_family and
+     eval_family ≠ coder_family. Raises
+     `EvalFamilyConflictError` (`ValueError` subclass) with
+     both colliding roles named in the message so the user
+     knows which override would fix the config. Planner and
+     coder are permitted to share a family — the §Decision
+     routing table allows a single coder-tier model to back
+     both roles; only the eval-vs-actor disjointness is
+     enforced.
+2. **Loader call site lands with T-2.** The
+   `~/.fa/models.yaml` loader itself is part of the T-2 LLM
+   driver (`fa-0.1-release-gaps-2026-05.md` T-2); the loader
+   PR will call `extract_family` per role and
+   `check_eval_disjoint` once before returning the parsed
+   config. The pure functions ship here so the loader has a
+   tested dependency to consume.
+3. **No `RoleConfig` dataclass yet.** YAGNI — every consumer
+   in M-1 reads roles via the existing prompt-layer
+   convention; the dataclass lands with the loader. The
+   sub-amendment intentionally ships only the two functions.
+
+**Subtraction-check (AGENTS.md §Pre-flight Step 4 / rule #10).**
+
+1. **Removing what makes this redundant?** None — the
+   2026-05-20 amendment landed the rule but explicitly
+   deferred the enforcement code; this is the deferred code.
+   The hook-layer call site (R-29) catches LLM-using hooks
+   only, not role configs.
+2. **Capability lost if omitted?** A user can configure
+   Eval=`glm-4.5` + Coder=`glm-4.5` and the rule is
+   documentation-only — `ρ̂ ≈ +0.6` correlated errors slip
+   through silently per the 2026-05-20 amendment's primary
+   sources.
+3. **OSS precedent for not having it?** Ampcode «three bare
+   functions» does not enforce because it targets a single
+   tier; DPC mainline routes everything through Sonnet. Both
+   are single-family stacks; FA's multi-tier scope makes the
+   rule load-bearing — same as the 2026-05-20 amendment.
+4. **Step-as-function?** YES — both `extract_family` and
+   `check_eval_disjoint` are pure functions, no LLM call.
+   The regex extractor is parsing; the disjoint check is
+   three string comparisons.
+
+**Files changed (this sub-amendment).**
+
+- `src/fa/roles.py` — new module (`KNOWN_FAMILIES`,
+  `_FAMILY_PATTERNS`, `FamilyExtractionError`,
+  `EvalFamilyConflictError`, `extract_family`,
+  `check_eval_disjoint`).
+- `tests/test_roles.py` — five-test scope per the approved
+  Wave-3 plan §M1.2 (extractor happy paths, ambiguous-slug
+  default-deny, override honouring, disjoint allow, disjoint
+  conflict on eval matching planner/coder; plus sync invariant
+  that every regex row maps to a family in `KNOWN_FAMILIES`).
+- `knowledge/adr/ADR-2-llm-tiering.md` — this sub-amendment
+  block.
+- `knowledge/adr/DIGEST.md` — ADR-2 row Amendments bullet
+  extended with the 2026-05-21 sub-amendment.
+- `knowledge/trace/exploration_log.md` — Q-2 amendment block
+  appended.
+- `knowledge/llms.txt` — new file routing entry for
+  `src/fa/roles.py`.
+- `docs/glossary.md` — «family extractor» row added.
+- `HANDOFF.md` — ADR-2 amendment line extended with the
+  2026-05-21 sub-amendment.
+
+**Re-evaluation triggers (this sub-amendment).**
+
+- **T-2 LLM driver lands the loader call site.** Action:
+  delete this sub-amendment's «Loader call site lands with
+  T-2» rule (now historical), and add a `RoleConfig`
+  dataclass reference here pointing to the loader's location.
+- **A new family is added to `KNOWN_FAMILIES`.** Action:
+  add the matching regex row to `_FAMILY_PATTERNS` AND a
+  parametrised happy-path case to `tests/test_roles.py`.
+  The sync-invariant test will fail otherwise.
+
 ### Amendment 2026-05-20 (Wave-1) — Per-tier tool-shape registry + role-switch handoff one-liner
 
 **Source.** Implementation roadmap

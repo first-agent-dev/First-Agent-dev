@@ -24,6 +24,7 @@ from fa.inner_loop import (
     run_session,
 )
 from fa.inner_loop.hooks import HookRegistry, SandboxHook
+from fa.inner_loop.runtime_limits import DEFAULT_COST_BUDGET_USD
 from fa.inner_loop.tools import build_baseline_registry
 
 
@@ -175,6 +176,112 @@ runtime_limits:
     assert len(result.warnings) == 1
     assert result.warnings[0].key == "rate_limit_suppression_seconds"
     assert "non-negative" in result.warnings[0].detail
+
+
+def test_load_runtime_limits_parses_cost_budget_usd_float() -> None:
+    """R-45 ``cost_budget_usd`` is the only ``_FLOAT_KEYS`` member so
+    the float-parse branch in :func:`load_runtime_limits` is exercised
+    only by this key. Pin both the integer-valued YAML shape
+    (``cost_budget_usd: 5``) and the fractional shape
+    (``cost_budget_usd: 0.5``) so a future float-key addition cannot
+    silently regress one of the two parse paths.
+    """
+
+    int_text = """\
+runtime_limits:
+  cost_budget_usd: 5
+"""
+    int_result = load_runtime_limits(int_text)
+    assert int_result.warnings == (), int_result.warnings
+    assert int_result.limits.cost_budget_usd == 5.0
+    assert isinstance(int_result.limits.cost_budget_usd, float)
+
+    fractional_text = """\
+runtime_limits:
+  cost_budget_usd: 0.50
+"""
+    fractional_result = load_runtime_limits(fractional_text)
+    assert fractional_result.warnings == (), fractional_result.warnings
+    assert fractional_result.limits.cost_budget_usd == 0.50
+
+
+def test_load_runtime_limits_accepts_zero_for_cost_budget_usd() -> None:
+    """R-45 documents ``cost_budget_usd: 0`` as «observe-only» — the
+    guardian still accumulates :class:`CostRollup` and emits
+    ``cost_observation`` rows but never denies a call. This is the
+    same shape as the three ``*_suppression_seconds`` knobs landed
+    in PR-3; if a future edit drops ``cost_budget_usd`` from
+    :data:`_ZERO_ALLOWED_KEYS` the observe-only mode silently breaks
+    (config-set ``0`` would fall back to the ``None`` default and
+    observe-only would be unreachable from config).
+    """
+
+    text = """\
+runtime_limits:
+  cost_budget_usd: 0
+"""
+    result = load_runtime_limits(text)
+    assert result.warnings == (), result.warnings
+    assert result.limits.cost_budget_usd == 0.0
+
+
+def test_load_runtime_limits_rejects_invalid_cost_budget_usd() -> None:
+    """Non-numeric and negative ``cost_budget_usd`` values must both
+    surface as warnings and fall back to the anchored default
+    (``None`` = unbounded). Pinning both branches so an unbounded-by-
+    accident regression (e.g. swapping ``float()`` for a permissive
+    parser) is caught at the parse layer rather than at runtime when
+    the guardian silently never denies a call.
+    """
+
+    text = """\
+runtime_limits:
+  cost_budget_usd: free
+"""
+    bad_value = load_runtime_limits(text)
+    # Two separate asserts — ``x == DEFAULT is None`` chains into
+    # ``(x == DEFAULT) and (DEFAULT is None)`` which works today but
+    # is a CodeQL-flagged ambiguous comparison (py/test-equals-none).
+    # Pinning both DEFAULT identity and the fallback value explicitly.
+    assert DEFAULT_COST_BUDGET_USD is None
+    assert bad_value.limits.cost_budget_usd is None
+    assert len(bad_value.warnings) == 1
+    assert bad_value.warnings[0].key == "cost_budget_usd"
+    assert "non-numeric" in bad_value.warnings[0].detail
+
+    text = """\
+runtime_limits:
+  cost_budget_usd: -1.0
+"""
+    negative = load_runtime_limits(text)
+    assert negative.limits.cost_budget_usd is None
+    assert len(negative.warnings) == 1
+    assert negative.warnings[0].key == "cost_budget_usd"
+    assert "non-negative" in negative.warnings[0].detail
+
+
+def test_load_runtime_limits_rejects_nan_and_inf_cost_budget_usd() -> None:
+    """``float("nan")`` and ``float("inf")`` parse without raising —
+    without an explicit guard the loader would accept ``cost_budget_usd:
+    nan`` and silently disable the guardian (``NaN`` comparisons are
+    always ``False`` so the gate stops denying) or accept ``inf`` and
+    always allow. Reject both at the parse layer rather than relying
+    on :class:`CostGuardian.__init__` to catch it later.
+
+    Regression guard for Devin-Review BUG #27 run 3 sibling-NaN
+    finding on the float parser.
+    """
+
+    for raw in ("nan", "NaN", "inf", "-inf", "Infinity"):
+        text = f"""\
+runtime_limits:
+  cost_budget_usd: {raw}
+"""
+        result = load_runtime_limits(text)
+        assert result.limits.cost_budget_usd is None
+        assert len(result.warnings) == 1
+        assert result.warnings[0].key == "cost_budget_usd"
+        assert "finite" in result.warnings[0].detail
 
 
 def test_load_runtime_limits_parses_qa_constants() -> None:

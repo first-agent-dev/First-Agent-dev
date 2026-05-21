@@ -17,6 +17,8 @@ Coverage targets per the standalone-module contract in
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from fa.verifier import (
@@ -204,14 +206,14 @@ required_trace_events: file_write
 failure_conditions:
   - sandbox_violation
 """
-    with pytest.raises(ValueError, match="required_trace_events.*list"):
+    with pytest.raises(ValueError, match=r"required_trace_events.*list"):
         load_contract(yaml)
 
 
 # --- load_contracts_from_dir (R-5 batch loader) ----------------------------
 
 
-def test_load_contracts_from_dir_indexes_by_target_action(tmp_path) -> None:
+def test_load_contracts_from_dir_indexes_by_target_action(tmp_path: Path) -> None:
     """The map key is the in-file ``target_action`` field, not the filename.
 
     A tool renamed in the YAML still routes correctly even if the
@@ -240,7 +242,7 @@ def test_load_contracts_from_dir_indexes_by_target_action(tmp_path) -> None:
 
 
 def test_load_contracts_from_dir_returns_empty_for_missing_directory(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """A missing or empty directory returns ``{}`` rather than raising.
 
@@ -254,7 +256,7 @@ def test_load_contracts_from_dir_returns_empty_for_missing_directory(
 
 
 def test_load_contracts_from_dir_appends_filename_to_parse_errors(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """A bad file is named in the error so the caller can pin-point it."""
 
@@ -265,7 +267,7 @@ def test_load_contracts_from_dir_appends_filename_to_parse_errors(
         load_contracts_from_dir(tmp_path)
 
 
-def test_load_contracts_from_dir_skips_non_yaml_files(tmp_path) -> None:
+def test_load_contracts_from_dir_skips_non_yaml_files(tmp_path: Path) -> None:
     """Only ``*.yaml`` files are loaded; sibling files are ignored."""
 
     (tmp_path / "noise.md").write_text("# README\n", encoding="utf-8")
