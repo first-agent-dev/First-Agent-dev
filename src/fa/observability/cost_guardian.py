@@ -109,22 +109,31 @@ class CostRollup:
         )
 
 
-CostExtractor = Callable[[ToolResult], CostObservation | None]
+CostExtractor = Callable[[ToolResult], list[CostObservation]]
 
 
-def default_cost_extractor(result: ToolResult) -> CostObservation | None:
-    """Read a ``cost=...`` artifact from ``result.artifacts``.
+def default_cost_extractor(result: ToolResult) -> list[CostObservation]:
+    """Read every ``cost=...`` artifact from ``result.artifacts``.
 
-    Looks for the first artifact starting with :data:`COST_ARTIFACT_PREFIX`
-    and parses the comma-separated ``key=value`` pairs after the prefix.
-    Returns ``None`` when no such artifact is present (the baseline-tool
-    case) or when the artifact is malformed (treat as observe-only-fail
-    — a parse error must never block tool execution).
+    Returns one :class:`CostObservation` per artifact starting with
+    :data:`COST_ARTIFACT_PREFIX`, in source order. Returns an empty
+    list when no such artifact is present (the baseline-tool case);
+    malformed artifacts are skipped rather than aborting the parse
+    (observe-only-fail — a parse error must never block tool
+    execution, and one bad row must not drop the good rows from the
+    same call).
+
+    ADR-7 §Sub-amendment 2026-05-21 mandates «one row per recognised
+    `cost=…` artifact» so the contract is plural by construction:
+    a single tool call may emit several artifacts (retry chain,
+    router fan-out, batch call) and each one is a separate sample
+    in the rollup.
 
     Recognised keys: ``tokens_in``, ``tokens_out``, ``usd``. Missing
     keys default to ``0``. The order of the pairs is not significant.
     """
 
+    observations: list[CostObservation] = []
     for raw in result.artifacts:
         if not raw.startswith(COST_ARTIFACT_PREFIX):
             continue
@@ -136,15 +145,18 @@ def default_cost_extractor(result: ToolResult) -> CostObservation | None:
             key, _, value = pair.partition("=")
             fields[key.strip()] = value.strip()
         try:
-            return CostObservation(
-                tokens_in=int(fields.get("tokens_in", "0")),
-                tokens_out=int(fields.get("tokens_out", "0")),
-                usd=float(fields.get("usd", "0")),
+            observations.append(
+                CostObservation(
+                    tokens_in=int(fields.get("tokens_in", "0")),
+                    tokens_out=int(fields.get("tokens_out", "0")),
+                    usd=float(fields.get("usd", "0")),
+                )
             )
         except (ValueError, TypeError):
-            # Malformed artifact — observe-only-fail, do not deny.
-            return None
-    return None
+            # Malformed artifact — observe-only-fail, skip but keep
+            # parsing the rest of ``result.artifacts``.
+            continue
+    return observations
 
 
 class CostGuardian(GuardMiddleware):
@@ -209,28 +221,33 @@ class CostGuardian(GuardMiddleware):
         result = payload.tool_result
         if result is None:
             return
-        observation = self._extractor(result)
-        if observation is None:
-            return
-        self.rollup = self.rollup.add(observation)
-        if self._event_log is None:
+        # ADR-7 §Sub-amendment 2026-05-21: «one row per recognised
+        # `cost=…` artifact». The extractor returns a list (possibly
+        # empty); iterate in source order so the rollup snapshot in
+        # each event-log row reflects the post-add total at that point.
+        observations = self._extractor(result)
+        if not observations:
             return
         call = payload.tool_call
-        self._event_log.append(
-            actor="hook",
-            kind="cost_observation",
-            content={
-                "tokens_in": observation.tokens_in,
-                "tokens_out": observation.tokens_out,
-                "usd": observation.usd,
-                "rollup_tokens_in": self.rollup.tokens_in,
-                "rollup_tokens_out": self.rollup.tokens_out,
-                "rollup_usd": self.rollup.usd,
-                "rollup_samples": self.rollup.samples,
-            },
-            tool_name="" if call is None else call.name,
-            tool_call_id="" if call is None else call.call_id,
-        )
+        for observation in observations:
+            self.rollup = self.rollup.add(observation)
+            if self._event_log is None:
+                continue
+            self._event_log.append(
+                actor="hook",
+                kind="cost_observation",
+                content={
+                    "tokens_in": observation.tokens_in,
+                    "tokens_out": observation.tokens_out,
+                    "usd": observation.usd,
+                    "rollup_tokens_in": self.rollup.tokens_in,
+                    "rollup_tokens_out": self.rollup.tokens_out,
+                    "rollup_usd": self.rollup.usd,
+                    "rollup_samples": self.rollup.samples,
+                },
+                tool_name="" if call is None else call.name,
+                tool_call_id="" if call is None else call.call_id,
+            )
 
 
 __all__ = [

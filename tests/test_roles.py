@@ -23,6 +23,7 @@ from __future__ import annotations
 import pytest
 
 from fa.roles import (
+    _FAMILY_PATTERNS,
     KNOWN_FAMILIES,
     EvalFamilyConflictError,
     FamilyExtractionError,
@@ -73,6 +74,26 @@ def test_extract_family_recognises_known_slugs(slug: str, expected_family: str) 
     assert extract_family(slug) == expected_family
     # Case-insensitive normalisation: uppercase variant resolves identically.
     assert extract_family(slug.upper()) == expected_family
+
+
+def test_family_patterns_are_all_known_families() -> None:
+    """Sync invariant promised by the module docstring (lines 17-18)
+    and cited by ADR-2 §Re-evaluation triggers as the enforcement
+    mechanism for adding a new family.
+
+    Without this test a typo in :data:`_FAMILY_PATTERNS` (e.g.
+    ``"anthropi"`` instead of ``"anthropic"``) would ship unflagged —
+    the happy-path table in
+    :func:`test_extract_family_recognises_known_slugs` checks the
+    opposite direction (every :data:`KNOWN_FAMILIES` entry has a
+    happy-path case) but does NOT verify the reverse mapping.
+    Regression guard for Devin-Review BUG on PR #27.
+    """
+
+    for pattern, family in _FAMILY_PATTERNS:
+        assert (
+            family in KNOWN_FAMILIES
+        ), f"pattern {pattern.pattern!r} maps to unknown family {family!r}"
 
 
 def test_extract_family_covers_every_known_family() -> None:

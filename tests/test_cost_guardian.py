@@ -93,29 +93,58 @@ def test_cost_rollup_add_accumulates_each_field() -> None:
 # --- default_cost_extractor parse paths -------------------------------------
 
 
-def test_default_extractor_returns_none_when_no_cost_artifact() -> None:
-    """Baseline M-1 tools never emit ``cost=…`` => extractor no-op."""
+def test_default_extractor_returns_empty_when_no_cost_artifact() -> None:
+    """Baseline M-1 tools never emit ``cost=…`` => extractor no-op
+    (empty list, not ``None`` — the contract is plural by ADR-7
+    §Sub-amendment 2026-05-21)."""
 
-    assert default_cost_extractor(ToolResult.ok(summary="ok")) is None
-    assert default_cost_extractor(ToolResult.ok(summary="ok", artifacts=("note=foo",))) is None
+    assert default_cost_extractor(ToolResult.ok(summary="ok")) == []
+    assert default_cost_extractor(ToolResult.ok(summary="ok", artifacts=("note=foo",))) == []
 
 
 def test_default_extractor_parses_valid_artifact() -> None:
-    """Valid ``cost=tokens_in=…,tokens_out=…,usd=…`` round-trips."""
+    """Valid ``cost=tokens_in=…,tokens_out=…,usd=…`` round-trips
+    as a single-element list."""
 
     result = _result_with_cost(tokens_in=42, tokens_out=7, usd=0.0123)
-    observation = default_cost_extractor(result)
-    assert observation == CostObservation(tokens_in=42, tokens_out=7, usd=0.0123)
+    observations = default_cost_extractor(result)
+    assert observations == [CostObservation(tokens_in=42, tokens_out=7, usd=0.0123)]
 
 
-def test_default_extractor_returns_none_on_malformed_artifact() -> None:
-    """Malformed artifact never blocks the loop — observe-only-fail."""
+def test_default_extractor_returns_empty_on_malformed_artifact() -> None:
+    """Malformed artifact never blocks the loop — observe-only-fail,
+    skipped from the returned list rather than aborting the parse."""
 
     bad = ToolResult.ok(
         summary="ok",
         artifacts=(f"{COST_ARTIFACT_PREFIX}tokens_in=NaN,usd=oops",),
     )
-    assert default_cost_extractor(bad) is None
+    assert default_cost_extractor(bad) == []
+
+
+def test_default_extractor_returns_one_observation_per_artifact() -> None:
+    """ADR-7 §Sub-amendment 2026-05-21 — «one row per recognised
+    ``cost=…`` artifact»: a single :class:`ToolResult` carrying
+    multiple ``cost=…`` artifacts (retry chain, router fan-out,
+    batch call) returns one :class:`CostObservation` per artifact,
+    in source order. A malformed artifact in the middle is skipped
+    without dropping the good rows that follow.
+    """
+
+    multi = ToolResult.ok(
+        summary="ok",
+        artifacts=(
+            f"{COST_ARTIFACT_PREFIX}tokens_in=10,tokens_out=20,usd=0.01",
+            "note=ignored",  # non-cost artifact — skipped silently
+            f"{COST_ARTIFACT_PREFIX}tokens_in=NaN,usd=oops",  # malformed
+            f"{COST_ARTIFACT_PREFIX}tokens_in=3,tokens_out=4,usd=0.002",
+        ),
+    )
+    observations = default_cost_extractor(multi)
+    assert observations == [
+        CostObservation(tokens_in=10, tokens_out=20, usd=0.01),
+        CostObservation(tokens_in=3, tokens_out=4, usd=0.002),
+    ]
 
 
 # --- CostGuardian observe-in-handle ----------------------------------------
@@ -136,6 +165,38 @@ def test_guardian_observe_accumulates_rollup_without_event_log() -> None:
 
     assert guardian.rollup.samples == 2
     assert guardian.rollup.usd == pytest.approx(0.011)
+
+
+def test_guardian_observe_emits_one_row_per_artifact(tmp_path: Path) -> None:
+    """ADR-7 §Sub-amendment 2026-05-21 — a :class:`ToolResult` carrying
+    several ``cost=…`` artifacts (retry / fan-out / batch) produces
+    one ``cost_observation`` row per artifact AND one rollup-add per
+    artifact, with each row's ``rollup_*`` snapshot reflecting the
+    post-add total at that step.
+    """
+
+    log = EventLog(tmp_path / ".fa" / "events.jsonl", run_id="run-multi")
+    guardian = CostGuardian(event_log=log)
+    multi = ToolResult.ok(
+        summary="ok",
+        artifacts=(
+            f"{COST_ARTIFACT_PREFIX}tokens_in=10,tokens_out=5,usd=0.01",
+            f"{COST_ARTIFACT_PREFIX}tokens_in=20,tokens_out=10,usd=0.02",
+        ),
+    )
+    guardian.handle(LifecyclePoint.AFTER_TOOL_EXEC, _after_payload("llm.call", multi))
+
+    assert guardian.rollup.samples == 2
+    assert guardian.rollup.usd == pytest.approx(0.03)
+    cost_rows = [e for e in log.read_all() if e.kind == "cost_observation"]
+    assert len(cost_rows) == 2
+    # Post-add rollup snapshots are monotonically increasing.
+    assert cost_rows[0].content["usd"] == pytest.approx(0.01)
+    assert cost_rows[0].content["rollup_usd"] == pytest.approx(0.01)
+    assert cost_rows[0].content["rollup_samples"] == 1
+    assert cost_rows[1].content["usd"] == pytest.approx(0.02)
+    assert cost_rows[1].content["rollup_usd"] == pytest.approx(0.03)
+    assert cost_rows[1].content["rollup_samples"] == 2
 
 
 def test_guardian_observe_emits_cost_observation_event(tmp_path: Path) -> None:
