@@ -91,9 +91,9 @@ def test_family_patterns_are_all_known_families() -> None:
     """
 
     for pattern, family in _FAMILY_PATTERNS:
-        assert (
-            family in KNOWN_FAMILIES
-        ), f"pattern {pattern.pattern!r} maps to unknown family {family!r}"
+        assert family in KNOWN_FAMILIES, (
+            f"pattern {pattern.pattern!r} maps to unknown family {family!r}"
+        )
 
 
 def test_extract_family_covers_every_known_family() -> None:

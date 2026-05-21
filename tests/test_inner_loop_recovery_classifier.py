@@ -71,9 +71,9 @@ def test_classify_falls_back_to_keyword_match(
     # matching.
     error = ToolError(code="custom_error_code", message=keyword_message, retryable=True)
     action = classify(error, target="t")
-    assert (
-        action.category == expected_category
-    ), f"{keyword_message!r} should map to {expected_category}, got {action.category}"
+    assert action.category == expected_category, (
+        f"{keyword_message!r} should map to {expected_category}, got {action.category}"
+    )
 
 
 def test_classify_unknown_code_with_no_keywords_escalates() -> None:
