@@ -77,6 +77,27 @@ def test_cost_observation_rejects_negative_fields() -> None:
         CostObservation(tokens_in=0, tokens_out=0, usd=-0.01)
 
 
+def test_cost_observation_rejects_nan_and_inf_usd() -> None:
+    """``float("nan")`` and ``float("inf")`` parse without raising,
+    so without an explicit guard a malformed artifact could construct
+    a poisoned :class:`CostObservation`. NaN poisons the rollup
+    permanently (``x + NaN == NaN``) and silently disables the gate
+    (``NaN > budget`` is always ``False``). ``+Inf`` flips the gate
+    the other way (always denies). Reject both at the dataclass
+    boundary so the extractor's ``except ValueError`` branch catches
+    them as observe-only-fail.
+
+    Regression guard for Devin-Review BUG #27 run 3.
+    """
+
+    with pytest.raises(ValueError, match="finite"):
+        CostObservation(tokens_in=0, tokens_out=0, usd=float("nan"))
+    with pytest.raises(ValueError, match="finite"):
+        CostObservation(tokens_in=0, tokens_out=0, usd=float("inf"))
+    with pytest.raises(ValueError, match="finite"):
+        CostObservation(tokens_in=0, tokens_out=0, usd=float("-inf"))
+
+
 def test_cost_rollup_add_accumulates_each_field() -> None:
     """Adding two samples sums tokens_in/tokens_out/usd and bumps samples."""
 
@@ -120,6 +141,31 @@ def test_default_extractor_returns_empty_on_malformed_artifact() -> None:
         artifacts=(f"{COST_ARTIFACT_PREFIX}tokens_in=NaN,usd=oops",),
     )
     assert default_cost_extractor(bad) == []
+
+
+def test_default_extractor_skips_nan_and_inf_usd() -> None:
+    """``usd=NaN`` / ``usd=inf`` parse via :class:`float` without
+    raising, but :class:`CostObservation.__post_init__` rejects them.
+    The extractor's ``except ValueError`` branch must therefore skip
+    these artifacts rather than constructing a poisoned observation
+    that silently disables the gate.
+
+    Regression guard for Devin-Review BUG #27 run 3 (NaN bypass).
+    """
+
+    poisoned = ToolResult.ok(
+        summary="ok",
+        artifacts=(
+            f"{COST_ARTIFACT_PREFIX}tokens_in=10,tokens_out=5,usd=NaN",
+            f"{COST_ARTIFACT_PREFIX}tokens_in=20,tokens_out=10,usd=inf",
+            f"{COST_ARTIFACT_PREFIX}tokens_in=30,tokens_out=15,usd=-inf",
+            # The one valid row must still survive.
+            f"{COST_ARTIFACT_PREFIX}tokens_in=1,tokens_out=1,usd=0.001",
+        ),
+    )
+    assert default_cost_extractor(poisoned) == [
+        CostObservation(tokens_in=1, tokens_out=1, usd=0.001),
+    ]
 
 
 def test_default_extractor_returns_one_observation_per_artifact() -> None:
@@ -286,6 +332,21 @@ def test_guardian_rejects_negative_budget() -> None:
 
     with pytest.raises(ValueError, match="budget_usd"):
         CostGuardian(budget_usd=-0.01)
+
+
+def test_guardian_rejects_nan_and_inf_budget() -> None:
+    """A NaN budget silently disables the gate (every comparison is
+    ``False``); ``+Inf`` silently allows everything. Refuse both at
+    construction time. Regression guard for Devin-Review BUG #27 run 3
+    sibling finding on the runtime-limits float parser.
+    """
+
+    with pytest.raises(ValueError, match="finite"):
+        CostGuardian(budget_usd=float("nan"))
+    with pytest.raises(ValueError, match="finite"):
+        CostGuardian(budget_usd=float("inf"))
+    with pytest.raises(ValueError, match="finite"):
+        CostGuardian(budget_usd=float("-inf"))
 
 
 # --- End-to-end via run_session --------------------------------------------

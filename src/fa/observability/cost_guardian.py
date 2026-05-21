@@ -53,6 +53,7 @@ References:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -76,7 +77,16 @@ COST_ARTIFACT_PREFIX = "cost="
 
 @dataclass(frozen=True)
 class CostObservation:
-    """One per-call cost sample: tokens-in / tokens-out / usd."""
+    """One per-call cost sample: tokens-in / tokens-out / usd.
+
+    ``usd`` must be a finite, non-negative number. NaN / +Inf / -Inf
+    are rejected early because they silently poison the rollup
+    (``x + NaN == NaN`` is permanent; ``NaN > budget`` is always
+    ``False`` so the guardian gate stops denying any call for the
+    rest of the session, +Inf flips that to permanent-deny). The
+    extractor must catch the parse error and observe-only-fail
+    rather than constructing a bad observation.
+    """
 
     tokens_in: int
     tokens_out: int
@@ -87,6 +97,8 @@ class CostObservation:
             raise ValueError("tokens_in must be >= 0")
         if self.tokens_out < 0:
             raise ValueError("tokens_out must be >= 0")
+        if math.isnan(self.usd) or math.isinf(self.usd):
+            raise ValueError("usd must be a finite number (not NaN/Inf)")
         if self.usd < 0:
             raise ValueError("usd must be >= 0")
 
@@ -183,6 +195,8 @@ class CostGuardian(GuardMiddleware):
         extractor: CostExtractor | None = None,
         event_log: EventLog | None = None,
     ) -> None:
+        if budget_usd is not None and (math.isnan(budget_usd) or math.isinf(budget_usd)):
+            raise ValueError("budget_usd must be a finite number (not NaN/Inf)")
         if budget_usd is not None and budget_usd < 0:
             raise ValueError("budget_usd must be None or >= 0 (0 = observe-only)")
         self.budget_usd = budget_usd

@@ -255,6 +255,30 @@ runtime_limits:
     assert "non-negative" in negative.warnings[0].detail
 
 
+def test_load_runtime_limits_rejects_nan_and_inf_cost_budget_usd() -> None:
+    """``float("nan")`` and ``float("inf")`` parse without raising —
+    without an explicit guard the loader would accept ``cost_budget_usd:
+    nan`` and silently disable the guardian (``NaN`` comparisons are
+    always ``False`` so the gate stops denying) or accept ``inf`` and
+    always allow. Reject both at the parse layer rather than relying
+    on :class:`CostGuardian.__init__` to catch it later.
+
+    Regression guard for Devin-Review BUG #27 run 3 sibling-NaN
+    finding on the float parser.
+    """
+
+    for raw in ("nan", "NaN", "inf", "-inf", "Infinity"):
+        text = f"""\
+runtime_limits:
+  cost_budget_usd: {raw}
+"""
+        result = load_runtime_limits(text)
+        assert result.limits.cost_budget_usd == DEFAULT_COST_BUDGET_USD is None
+        assert len(result.warnings) == 1
+        assert result.warnings[0].key == "cost_budget_usd"
+        assert "finite" in result.warnings[0].detail
+
+
 def test_load_runtime_limits_parses_qa_constants() -> None:
     """R-34 QA constants are validated AND wired so a future QA
     orchestrator can read them via the same ``RuntimeLimits`` shape.

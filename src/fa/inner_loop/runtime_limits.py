@@ -19,6 +19,7 @@ This is the **T-4 mini** loader — it parses exactly the
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -257,6 +258,21 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
                         line_no=line_no,
                         key=key,
                         detail=f"non-numeric value: {value_str!r}",
+                    )
+                )
+                continue
+            # ``float("nan")`` and ``float("inf")`` parse without
+            # raising, but NaN poisons the rollup (``x + NaN == NaN``
+            # permanently; ``NaN > budget`` is always ``False`` so
+            # the gate stops denying) and ±Inf flips the gate the
+            # opposite way. Reject early with a warning rather than
+            # silently disabling the guardian.
+            if math.isnan(float_value) or math.isinf(float_value):
+                warnings.append(
+                    RuntimeLimitsWarning(
+                        line_no=line_no,
+                        key=key,
+                        detail=f"value must be a finite number: {value_str!r}",
                     )
                 )
                 continue
