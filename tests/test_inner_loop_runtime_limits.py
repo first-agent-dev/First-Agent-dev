@@ -239,7 +239,12 @@ runtime_limits:
   cost_budget_usd: free
 """
     bad_value = load_runtime_limits(text)
-    assert bad_value.limits.cost_budget_usd == DEFAULT_COST_BUDGET_USD is None
+    # Two separate asserts — ``x == DEFAULT is None`` chains into
+    # ``(x == DEFAULT) and (DEFAULT is None)`` which works today but
+    # is a CodeQL-flagged ambiguous comparison (py/test-equals-none).
+    # Pinning both DEFAULT identity and the fallback value explicitly.
+    assert DEFAULT_COST_BUDGET_USD is None
+    assert bad_value.limits.cost_budget_usd is None
     assert len(bad_value.warnings) == 1
     assert bad_value.warnings[0].key == "cost_budget_usd"
     assert "non-numeric" in bad_value.warnings[0].detail
@@ -249,7 +254,7 @@ runtime_limits:
   cost_budget_usd: -1.0
 """
     negative = load_runtime_limits(text)
-    assert negative.limits.cost_budget_usd == DEFAULT_COST_BUDGET_USD is None
+    assert negative.limits.cost_budget_usd is None
     assert len(negative.warnings) == 1
     assert negative.warnings[0].key == "cost_budget_usd"
     assert "non-negative" in negative.warnings[0].detail
@@ -273,7 +278,7 @@ runtime_limits:
   cost_budget_usd: {raw}
 """
         result = load_runtime_limits(text)
-        assert result.limits.cost_budget_usd == DEFAULT_COST_BUDGET_USD is None
+        assert result.limits.cost_budget_usd is None
         assert len(result.warnings) == 1
         assert result.warnings[0].key == "cost_budget_usd"
         assert "finite" in result.warnings[0].detail
