@@ -183,8 +183,7 @@ def test_check_eval_disjoint_allows_planner_and_coder_to_share_family() -> None:
     """
 
     # planner == coder == 'qwen' is fine; eval differs.
-    check_eval_disjoke = check_eval_disjoint  # alias to keep line length
-    check_eval_disjoke(
+    check_eval_disjoint(
         planner_family="qwen",
         coder_family="qwen",
         eval_family="kimi",
