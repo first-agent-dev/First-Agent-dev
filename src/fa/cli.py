@@ -20,6 +20,7 @@ from fa.inner_loop.hooks import (
     AuditHook,
     AuthExpiredBlocker,
     HookRegistry,
+    LearningObserver,
     LockfileBlocker,
     LoopGuard,
     RateLimitBlocker,
@@ -165,6 +166,15 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     # is stable when the T-2 LLM driver lands the artifact emitter
     # — mirrors the BlockerMiddleware-family rationale above.
     hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
+    # R-8 LearningObserver: writes discoveries/gotchas to filesystem
+    # artifacts (not events.jsonl). Baseline tools record summaries;
+    # richer T-2 results can add artifact pointers to the same map.
+    hooks.register(
+        LearningObserver(
+            codebase_map_path=workspace / "knowledge" / "trace" / "codebase_map.json",
+            gotchas_path=workspace / "knowledge" / "trace" / "gotchas.md",
+        )
+    )
     # R-5 DSV: load every YAML contract under ``verifiers/`` so the
     # ``VerifierObserver`` can override LLM-claimed success on contract
     # mismatch (force_failure). Missing directory = empty contract map

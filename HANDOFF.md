@@ -28,6 +28,15 @@
 > test files, +10 from four Devin-Review iteration commits — see
 > §Current state «PR-4 review-fix iteration» bullet below).
 >
+> **Current update (2026-05-21):** R-8 filesystem-canon writer
+> is operationally wired in the smoke CLI: `LearningObserver`
+> registers after `CostGuardian` in `fa inner-loop-smoke` and writes
+> successful tool summaries to `knowledge/trace/codebase_map.json`
+> plus tool errors to `knowledge/trace/gotchas.md`. ADR-7
+> §Sub-amendment 2026-05-21b documents that no new
+> `EventLog.kind` is added because R-8 writes filesystem
+> artifacts, not `events.jsonl` rows.
+>
 > **PR-4 review-fix iteration (2026-05-21).** Four follow-up
 > commits on the same branch addressed Devin Review runs 1/2/3
 > + a CodeQL nit, all gated and pushed:
@@ -294,7 +303,13 @@ manually beyond this point.
     [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
     §R-7 / §R-23 / §R-28 / §R-29 / §R-30 +
     [`research/correlated-llm-errors-and-ensembling-2026-05.md`](./knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md)
-    §4.1 / §6 R-7 / R-8 / R-9.
+    §4.1 / §6 R-7 / R-8 / R-9. **Sub-amendment
+    2026-05-21b:** R-8 `LearningObserver` is wired into
+    `fa inner-loop-smoke`; successful tool results upsert
+    `knowledge/trace/codebase_map.json`, failures append
+    `knowledge/trace/gotchas.md`, and no new `EventLog.kind`
+    is added because the filesystem artifacts are the audit
+    surface.
   - [ADR-8](./knowledge/adr/ADR-8-hook-registry.md) —
     HookRegistry middleware-chain contract (doc-first; runtime
     BACKLOG M-1 — **closed by PR #24**). Five lifecycle points (`BETWEEN_ROUNDS` /
@@ -493,14 +508,12 @@ what was deferred and how each was resolved.
 
 ## Next steps (intended order)
 
-0. **Wave-3 stack #2 candidates** (pick one, see
-   `fa-wave-3-remaining-work.md` attachment from the 2026-05-21
-   session for the 7-column status table). Strongest cheap-impl
-   candidates:
-   - **R-8 filesystem-canon writer** — gotchas/discoveries
-     journal companion to the reader side; deferred from
-     Wave-3 stack #1 per «M2 only if M1 lands without
-     iteration» rule.
+0. **Wave-3 stack #2 status.** R-8 is landed: the
+   existing `LearningObserver` now registers in `fa inner-loop-smoke`
+   and writes the filesystem-canon trace artifacts
+   `knowledge/trace/codebase_map.json` +
+   `knowledge/trace/gotchas.md`. Remaining cheap-impl candidates
+   from the 2026-05-21 7-column table:
    - **R-17 / R-16 / R-24** — need scope decisions from the
      project lead before queuing.
    - **R-31 / R-32 / R-33** — need ADR-9 timing decision.

@@ -473,6 +473,54 @@
   + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
   §R-45.
 
+### Q-7 sub-amendment 2026-05-21b — R-8 `LearningObserver` filesystem-canon artifacts
+
+- **Coupling:** Q-7 + Q-8 (clarifies Q-7 §7 event-kind boundary;
+  reuses Q-8 `ObserverMiddleware`/`AFTER_TOOL_EXEC` chain with no
+  HookRegistry contract change). Pairs operationally with R-45 in
+  the smoke CLI: both observe after tool execution, but R-45 writes
+  optional `events.jsonl` cost rows while R-8 writes canonical
+  filesystem artifacts.
+- **Chosen:** Wire
+  `fa.inner_loop.hooks.builtin.LearningObserver` into
+  `_cmd_inner_loop_smoke` after `CostGuardian` and before
+  `VerifierObserver`. On success it upserts
+  `knowledge/trace/codebase_map.json` via `record_discovery`; on
+  tool error it appends `knowledge/trace/gotchas.md` via
+  `record_gotcha`. Do **not** introduce `kind="learning"` in
+  `events.jsonl`; the two files are the durable audit trail for
+  R-8.
+- **Rejected:**
+  - **Leave R-8 as standalone writer functions only.** Reason:
+    the R-8 Python ports and `LearningObserver` class already
+    existed, but no runtime/smoke entrypoint invoked them; actual
+    tool observations still produced no filesystem-canon learning.
+    Lesson: revisit only if the smoke CLI is retired before the
+    T-2 LLM driver lands.
+  - **Duplicate every learning write as `kind="learning"` in
+    `events.jsonl`.** Reason: `codebase_map.json` and
+    `gotchas.md` are already the replay/audit artifacts for this
+    concern; JSONL duplication increases trace size and adds a
+    second source of truth without a new invariant. Lesson: add an
+    event kind only if a downstream consumer needs to correlate
+    learning writes with raw event order and cannot read the
+    filesystem artifacts directly.
+  - **Move `LearningObserver` into `src/fa/observability/` before
+    wiring.** Reason: extra move/rename churn for no capability
+    gain; `builtin.py` already exports the class and tests cover it.
+    Lesson: factor observability modules only when a second
+    filesystem-canon observer forces shared code.
+- **Re-evaluation triggers:** (1) T-2 LLM driver starts emitting
+  richer `ToolResult.artifacts` and the `codebase_map.json`
+  pointer shape proves insufficient → add a deterministic artifact
+  normaliser; (2) multi-process FA invocation lands → add file
+  locking around the R-8 writers; (3) a downstream UI requires
+  strict event-order correlation for learning writes → reconsider
+  a `kind="learning"` projection.
+- **Source:** [ADR-7 §Sub-amendment 2026-05-21b](../adr/ADR-7-inner-loop-tool-registry.md#sub-amendment-2026-05-21b--r-8-learningobserver-filesystem-canon-artifacts)
+  + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-8.
+
 ## Q-8 — What is the v0.1 hook-pipeline contract for the inner-loop dispatcher? (2026-05-20)
 
 - **Chosen:** ADR-8 "Doc-first HookRegistry middleware chain

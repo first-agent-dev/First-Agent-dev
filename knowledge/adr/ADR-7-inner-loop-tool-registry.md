@@ -1262,6 +1262,82 @@ enumeration).**
 - `HANDOFF.md` — Wave-3 stack #1 entry + §Current state
   ADR-7 amendments bullet.
 
+### Sub-amendment 2026-05-21b — R-8 LearningObserver filesystem-canon artifacts
+
+**Source.** Implementation roadmap
+[`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+§R-8 (filesystem-canon learning loop). This is an operational
+hook-wiring amendment to §8 «Hook pipeline» and a clarification
+to §7 «`events.jsonl`»: R-8 writes durable filesystem artifacts
+under `knowledge/trace/`, not new event rows.
+
+**Decision.**
+
+1. **Wire `LearningObserver` into `fa inner-loop-smoke`.**
+   The smoke CLI registers
+   `fa.inner_loop.hooks.builtin.LearningObserver` after
+   `CostGuardian` and before `VerifierObserver`, attached to
+   `AFTER_TOOL_EXEC`. This closes the gap where the R-8 writer
+   functions and observer class existed but had no operational
+   entrypoint in the M-1 runtime.
+2. **No new `EventLog.kind`.** Successful tool results call
+   `record_discovery()` and write
+   `knowledge/trace/codebase_map.json`; failed tool results call
+   `record_gotcha()` and append
+   `knowledge/trace/gotchas.md`. These files are the audit trail
+   for R-8. Duplicating them into `events.jsonl` as
+   `kind="learning"` would add trace noise without adding a
+   replay invariant.
+3. **Single-writer boundary stays unchanged.** The underlying
+   `record_discovery()` / `record_gotcha()` functions keep their
+   existing atomic-rename, single-process writer contract. The
+   HookRegistry invokes observers serially in one process, so the
+   smoke entrypoint satisfies that contract; cross-process locking
+   remains deferred until FA has a multi-process invocation path.
+
+**Subtraction-check (AGENTS.md §Pre-flight Step 4 / rule #10).**
+
+1. **Removing what makes this redundant?** None. R-8 writer
+   functions existed, but no smoke/runtime registration called
+   them.
+2. **Capability lost if omitted?** Inner-loop tool execution has
+   no durable filesystem-canon learning side effect, so
+   `codebase_map.json` / `gotchas.md` remain manual-only and drift
+   from actual tool observations.
+3. **OSS precedent for not having it?** Ampcode's minimal «three
+   bare functions» harness omits a filesystem learning loop, but
+   that also omits cross-session gotcha/discovery memory. FA takes
+   the R-8 path because Aperant's `record-gotcha.ts` /
+   `record-discovery.ts` and the YT-3 / Kronos convergence in
+   `borrow-roadmap` §R-8 make the tiny deterministic writer
+   evidence-backed under UC1+UC3.
+4. **Step-as-function?** YES — no LLM call is introduced. The
+   observer deterministically maps `ToolResult` success/failure to
+   the two existing writer functions.
+
+**Files changed (this sub-amendment).**
+
+- `src/fa/cli.py` — `LearningObserver` registration in
+  `_cmd_inner_loop_smoke` with workspace-relative
+  `knowledge/trace/codebase_map.json` and
+  `knowledge/trace/gotchas.md` paths.
+- `tests/test_cli.py` — smoke CLI integration regression for the
+  `codebase_map.json` write path.
+- `src/fa/inner_loop/state.py` — §«Extension kinds» clarification
+  that R-8 does not introduce an `EventLog.kind`.
+- `knowledge/adr/ADR-7-inner-loop-tool-registry.md` — this
+  sub-amendment.
+- `knowledge/adr/DIGEST.md` — ADR-7 row Amendments bullet
+  extended.
+- `knowledge/trace/exploration_log.md` — Q-7 amendment block
+  appended.
+- `knowledge/llms.txt` — routing text updated for the wired
+  observer.
+- `docs/glossary.md` — `Filesystem-canon` term added because R-8
+  now uses the term in active implementation/docs.
+- `HANDOFF.md` — R-8 moved from Wave-3 stack #2 candidate to
+  landed status.
+
 **Re-evaluation triggers (this sub-amendment).**
 
 - **T-2 LLM driver lands and emits `cost=…` artifacts on
