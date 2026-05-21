@@ -56,6 +56,40 @@ for v0.1.
   transport boundary. No shape change — relaxation of the §1
   pseudo-schema; `name` / `params` / `result` / `error` field
   set unchanged.
+- **2026-05-20** — Eval-role MUST be provider+family disjoint
+  from Planner and Coder (regex slug extraction; vacuous on
+  current Chinese-OSS workload but pinned for future tier
+  bumps). «No cross-tier auto-escalation» rationale now cites
+  Cornell P-1 (Kim et al., ICML 2025) + Simula P-2 (Vallecillos-
+  Ruiz et al., 2026) as primary sources — `ρ̂ ≈ +0.6` for
+  same-family ensembles vs `ρ̂ ≈ −0.05` cross-family. Cross-
+  link to [ADR-7 §Amendment 2026-05-20](./ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+  rule 4 (same family-disjoint rule generalised to LLM-using
+  hooks).
+- **2026-05-20 (Wave-1)** — Per-tier tool-shape registry
+  ([`knowledge/prompts/tool-shapes.yaml`](../prompts/tool-shapes.yaml)) +
+  role-switch handoff one-liner. «Tool shape follows the
+  model's training distribution» — anthropic / openai /
+  qwen / deepseek / glm / kimi families each get one entry
+  with `family:` / `shape.edit:` / `shape.tool_call_format:` /
+  `handoff_one_liner:`. Harness injects the *previous* role's
+  one-liner into the *next* role's prompt on every role-switch
+  to prevent cargo-culting cross-family shapes. Read-only
+  metadata; no provider translation. Source:
+  [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-18.
+- **2026-05-21 (Wave-3 sub-amendment)** — R-19 role-layer
+  enforcement of the 2026-05-20 amendment landed: `src/fa/roles.py`
+  ships `extract_family` (regex slug-to-family inference with
+  default-deny on ambiguous slugs) and `check_eval_disjoint`
+  (pure-function role-config check; raises
+  `EvalFamilyConflictError` when eval shares family with planner
+  or coder). Loader call site lands with the T-2 LLM driver; the
+  hook-layer call site already lives in
+  [ADR-7 §Amendment 2026-05-20](./ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+  rule 4. The rule now has runtime enforcement at both layers.
+  Source: [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-19.
 
 **Source:** [`ADR-2`](./ADR-2-llm-tiering.md).
 
@@ -124,7 +158,38 @@ hallucinates; reads are de-facto network egress for ~99% remote-API
 config; path-level guard is loud, fast, stoppable; symmetric to
 `~/.fa/repos.toml` PR-write allow-list.
 
-**Amendments.** None.
+**Amendments.**
+
+- **2026-05-13** — `[roles.<name>]` block added to
+  `sandbox.toml` schema (per-role `allowed_tools` whitelist enforced
+  at ADR-7 dispatcher). Companion to ADR-7 §Amendment 2026-05-13.
+  `allowed_dirs` shape-pinned but not exercised in v0.1.
+- **2026-05-20** — Five capability flags (deny-by-default opt-in)
+  added to `~/.fa/config.yaml` under top-level `capabilities:`:
+  `ENABLE_DYNAMIC_TOOLS`, `REQUIRE_DYNAMIC_TOOL_SANDBOX`,
+  `ENABLE_MCP_GATEWAY_MANAGEMENT`, `ENABLE_DYNAMIC_MCP_SERVERS`,
+  `ENABLE_SERVER_OPS`. All default `False`; verbatim from Kronos
+  `kronos/config.py:62-69`. Layer-1 capability opt-in is AND-ed
+  with Layer-2 per-role `allowed_tools` (§Amendment 2026-05-13)
+  at the dispatcher. Implementation: `src/fa/config.py` ships
+  with this amendment as a frozen `Capabilities` dataclass +
+  YAML parser. Source:
+  [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-21.
+- **2026-05-20 (Wave-1)** — Bash sandbox gate landed at
+  `src/fa/sandbox/{classifier,validators,path_containment,bash_gate}.py`
+  (~715 LoC code + ~700 LoC tests). Three-layer pipeline:
+  pattern classifier (5 categories — `READ_ONLY` / `GIT_WRITE` /
+  `PACKAGE_INSTALL` / `DANGEROUS` / `GENERAL_WRITE`) + per-command
+  validators (`rm` / `chmod` / `git` — 5 deny rules) +
+  symlink-resolved path containment. Ported from Aperant
+  `bash-validator.ts` + `path-containment.ts` and Gortex
+  `bash_classify.go`. `evaluate_bash(command, *,
+  workspace_root) -> BashGateDecision` is the single entry
+  point; AND-ed with the §Policy file (path scope) at the
+  inner-loop dispatcher when BACKLOG M-1 lands. Source:
+  [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-20.
 
 **Source:** [`ADR-6`](./ADR-6-tool-sandbox-allow-list.md).
 
@@ -164,8 +229,98 @@ concrete carriers; single source of truth for every tool PR.
   ships = BACKLOG I-8), §Consequences follow-up work (BACKLOG I-1 /
   I-2 / I-3 = AGENTS.md rule #11 mitigations a / b / c). EXEMPT
   per AGENTS.md §Pre-flight Step 4 (documentation-only).
+- **2026-05-13** — Declarative per-role tool whitelist (B-NEW-1).
+  `[roles.<name>].allowed_tools` in `~/.fa/sandbox.toml`; enforced
+  at dispatcher before `pre_tool` hooks; `E_ROLE_WHITELIST` error
+  on reject. §11 R-4 status updated. Knowledge-layer only
+  (impl lands with inner-loop scaffolding PR). Source:
+  [`research/soviet-code-inspiration-2026-05.md`](../research/soviet-code-inspiration-2026-05.md)
+  §0 R-1, §6.1.
+- **2026-05-20** — Retry-budget invariant + intra-role `T=1.0` +
+  LLM-using-hook family-disjoint rule. Five additive rules:
+  (1) retry budgets read from `~/.fa/config.yaml`, not hook-code
+  constants; (2) `max_iterations` default = 6 per YT-4 empirical
+  anchor; (3) intra-role retry temperature default `T=1.0` per
+  Nitarach P-3 §4.1 (`ρ̂≈−0.12` vs `T=0.0` `ρ̂≈+0.6`);
+  (4) LLM-using hooks MUST use family ≠ acting-role
+  (vacuous in v0.1, pinned ahead of first LLM-using hook to
+  generalise [ADR-2 §Amendment 2026-05-20](./ADR-2-llm-tiering.md#amendment-2026-05-20--eval-role-family-disjoint--primary-source-citation));
+  (5) BACKLOG I-2 sub-agent invocation rules — `generateText`
+  not streaming, exclude `SpawnSubAgent`, cap
+  `SUBAGENT_MAX_STEPS ≤ 100`. Knowledge-layer only.
+  Source:
+  [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-7 / §R-28 / §R-29 / §R-30 + §R-23.
+- **2026-05-21 (Wave-3 sub-amendment)** — R-45 cost guardian +
+  `cost_observation` event-kind. Adds one extension row to §7
+  «`events.jsonl`» enumeration; no shape change to §1 driver,
+  §5 input validation, §8 hook pipeline.
+  `src/fa/observability/cost_guardian.py` ships a single
+  `GuardMiddleware` that attaches to both `BEFORE_TOOL_EXEC`
+  (gates when `RuntimeLimits.cost_budget_usd` exceeded) and
+  `AFTER_TOOL_EXEC` (parses `cost=…` artifacts via
+  `default_cost_extractor`, accumulates per-session
+  `CostRollup`, writes `cost_observation` rows when an
+  `EventLog` is wired). `cost_budget_usd` is tri-mode —
+  `None` unbounded (default), `0.0` observe-only, `> 0`
+  hard cap. Dormant on baseline M-1 tools; wakes when the
+  T-2 LLM driver lands the artifact emitter. Source:
+  [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-45.
 
 **Source:** [`ADR-7`](./ADR-7-inner-loop-tool-registry.md).
+
+## ADR-8 — HookRegistry middleware chain (accepted 2026-05-20; doc-first)
+
+**Decision.** Promote the ADR-7 §8 mini hook-pipeline to a
+first-class HookRegistry contract. **Five lifecycle points**
+(`BETWEEN_ROUNDS` / `BEFORE_LLM_CALL` / `AFTER_LLM_CALL` /
+`BEFORE_TOOL_EXEC` / `AFTER_TOOL_EXEC`). **Two middleware kinds:**
+`GuardMiddleware` (may deny / modify; errors propagate) and
+`ObserverMiddleware` (read-only; errors swallowed at DEBUG).
+Dispatcher: ordered chain, first-deny short-circuit, one
+mutation per dispatch (inherits ADR-7 §8), family-disjoint
+rule enforced at `register()` time per
+[ADR-2 §Amendment 2026-05-20](./ADR-2-llm-tiering.md#amendment-2026-05-20--eval-role-family-disjoint--primary-source-citation)
++ [ADR-7 §Amendment 2026-05-20](./ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule).
+**Doc-only at acceptance; runtime materialised by PR #24
+([M-1 closed 2026-05-20](../BACKLOG.md#m-1--inner-loop-scaffolding--hookregistry-runtime)).**
+v0.1 hooks (`SandboxHook`, `ApprovalHook`, `AuditHook`) are now
+`GuardMiddleware` / `ObserverMiddleware` subclasses at
+`src/fa/inner_loop/hooks/`. The runtime adds `revalidates_after_modify`
+on guards so a `Decision.modify` that mutates `path` / `command`
+triggers a sandbox replay on the new params (closes ADR-7 §8
+«modify → re-validate» edge case).
+
+**Rationale.** 8-project convergence (DPC
+`dpc_agent/hooks.py` + Gortex `internal/hooks/dispatch.go` +
+6 cited in DPC ADR-007); Wave-2 work (R-2 `LoopGuard`, R-3
+failure-classifier, R-4 pre-tool blocker, R-22 PII walker)
+shares this exact substrate. Source:
+[`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+§R-1.
+
+**Amendments.**
+- *2026-05-20a (sandbox re-check carve-out):* introduces
+  `Middleware.revalidates_after_modify` (default `False`). A guard
+  that opts in is replayed against the mutated payload after any
+  later `Decision.modify`; the one-mutation-per-dispatch and
+  first-deny rules still hold. Only `SandboxHook` opts in today.
+  Closes the ADR-7 §5+§8 vs ADR-8 §3 "already-run hooks do not
+  re-run" tension by codifying the exception explicitly instead
+  of leaving it as an undocumented implementation carve-out.
+- *2026-05-20b (`BETWEEN_ROUNDS` first-iteration semantics):*
+  codifies that `BETWEEN_ROUNDS` fires at the start of every loop
+  iteration **including iteration 1** (not only iterations ≥2).
+  Session-level guards (`PauseGuard`, `LoopGuard`) MUST attach
+  here so an active pause sentinel or a tripped non-progress
+  counter blocks the very first tool call. Kept the name
+  `BETWEEN_ROUNDS` (rather than renaming to `BEFORE_ROUND`) to
+  preserve verbatim alignment with DPC `dpc_agent/hooks.py`
+  + Gortex `internal/hooks/dispatch.go` + borrow-roadmap §R-1
+  nomenclature; the rename had no other upside.
+
+**Source:** [`ADR-8`](./ADR-8-hook-registry.md).
 
 ## See also
 

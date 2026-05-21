@@ -1,0 +1,14 @@
+# Verifier contract for ``fs.write_file`` (R-5).
+#
+# See ``verifiers/fs.read_file.yaml`` for the rationale on why
+# ``required_trace_events`` is empty in M-1. Failure conditions match
+# the canonical ``ToolResult.error.code`` values from the handler +
+# hook + registry layers.
+target_action: fs.write_file
+required_trace_events: []
+failure_conditions:
+  - hook_deny         # SandboxHook / ApprovalHook denial
+  - write_failed      # handler OSError / PermissionError / ValueError
+  - invalid_params    # JSON-Schema validation failure
+  - internal_error    # registry handler-exception wrap
+override_action: force_failure

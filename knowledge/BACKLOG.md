@@ -73,6 +73,40 @@
 - **Why it satisfies rule #11 mitigation (a) «Sub-agent split».**
   This is the canonical instance of the sub-agent split rule #11
   references; until I-2 lands, mitigation (a) is hypothetical.
+- **Sub-agent invocation rules (R-23, captured 2026-05-20 docs-
+  only — apply when this item unblocks).** Three non-obvious
+  correctness fixes lifted ahead of time from Aperant
+  `apps/desktop/src/main/ai/runners/subagent.ts` (item 7 in
+  [`research/gortex-aperant-inspiration-2026-05.md`](./research/gortex-aperant-inspiration-2026-05.md)
+  Part 2) — written here so the I-2 PR cannot regress:
+  1. **`generateText`, not streaming.** Sub-agent output flows
+     back to the orchestrator's context, not to a human-facing
+     UI. Streaming adds per-token overhead with no consumer;
+     `generateText` (or the FA equivalent: single non-streaming
+     completion) is the correct invocation. Streaming MAY be
+     used inside the sub-agent for its own tool-LLM calls if
+     those tools need it; it MUST NOT be the sub-agent → parent
+     interface.
+  2. **Remove `SpawnSubAgent` from the sub-agent tool set.**
+     Recursion is forbidden; the sub-agent MUST NOT spawn
+     further sub-agents. The orchestrator removes the spawn-
+     tool from the child's tool registry at dispatch time —
+     not by trusting the child to «not call it». Cross-link:
+     [AGENTS.md §PR Checklist rule #10 question 1 «Spawn-
+     recursion anti-pattern»](../AGENTS.md#pr-checklist).
+  3. **`SUBAGENT_MAX_STEPS ≤ 100`.** Hard cap on a single sub-
+     agent's iteration count. Aperant uses exactly `100`; FA
+     inherits the number until measured otherwise. The cap
+     lives in `~/.fa/config.yaml`, NOT in code (per
+     [ADR-7 §Amendment 2026-05-20](./adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+     rule 1: «retry budget is config-bounded»).
+
+  These three rules ALSO survive in
+  [ADR-7 §Amendment 2026-05-20](./adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+  rule 5; that ADR amendment is the canonical version, this
+  bullet is the read-side mirror so anyone landing the I-2
+  unblock PR sees the rules without round-tripping through
+  ADR-7.
 
 ## I-3 — Dispatcher LLM (lazy-load skills + collect repo parts on-the-fly)
 
@@ -226,6 +260,16 @@
   §9 (re-measurement triggers, item 6 explicitly points here);
   [`project-overview.md` §1.1](./project-overview.md#11-четыре-столпа-цели-project-goal--four-pillars)
   Pillar 4 (iteration via measurement).
+- **Prior-art enforcement (DPC ADR-015, added 2026-05-13):**
+  Before any FA self-modification capability (auto-amend ADR /
+  auto-edit config / auto-evolve skills) lands as an ADR, this
+  eval-harness (I-7) **MUST be operational** AND show external
+  (non-self-reported) fitness signal. Otherwise =
+  «elaborate emptiness» trap (DPC ADR-015 — background evolution
+  worker deleted after 20+ sessions / ~40 proposals with 0
+  measurable improvement; see
+  [`research/dpc-messenger-inspiration-2026-05.md`](./research/dpc-messenger-inspiration-2026-05.md)
+  §0 R-5, §2 Pattern 13, §6 Anti-pattern AP1).
 
 ## I-8 — Mid-tier × First-Agent's own harness bootstrap re-test
 
@@ -289,6 +333,15 @@
   harness existing, the measurement is non-executable; there is
   no good substitute (Arena = different harness; manual
   cross-fork sessions = still Devin's harness underneath).
+- **Prior-art enforcement (DPC ADR-015, added 2026-05-13):**
+  Same constraint as I-7 above. Until I-8 re-test succeeds on
+  FA's own harness, no autonomous self-improvement loop (skill
+  evolution, config mutation, ADR-amendment bots) should ship.
+  Empirical evidence: DPC removed 400 LOC + 7 tools of
+  self-modification infrastructure after 0 of ~40 proposals
+  passed their (insufficient) fitness bar; see
+  [`research/dpc-messenger-inspiration-2026-05.md`](./research/dpc-messenger-inspiration-2026-05.md)
+  §0 R-5 + ADR-015 citation in §2 Pattern 13.
 
 ## I-9 — Convert `knowledge/prompts/repo-audit-playbook.md` into a loadable SKILL
 
@@ -342,6 +395,181 @@
   gap means the next OSS-agent audit session pays a discovery
   cost. Until the gap closes, the artefact lives where it can be
   found by a `find knowledge/prompts/` grep.
+
+## M-1 — Inner-loop scaffolding / HookRegistry runtime
+
+- **Status:** **closed by PR #24** (2026-05-20). Runtime now lives at
+  `src/fa/inner_loop/` with the full ADR-7 §1–§10 + ADR-8 contract:
+  JSON-Schema validation on every dispatch (§5), modify→re-validate +
+  sandbox replay on every `Decision.modify` (§8), `SandboxHook` gating
+  `fs.read_file` / `fs.write_file` paths in addition to `fs.run_bash`,
+  `events.jsonl` with `ts` + `run_id` per §7 schema, `hook_decision`
+  rows persisted through `HookRegistry` event-sink, `RuntimeLimits`
+  for `max_iterations` (default 6) and `bash_timeout_seconds`
+  (default 30) loaded from `~/.fa/config.yaml` per §Amendment
+  2026-05-20 rule 1 «never code constants». Smoke CLI:
+  `fa inner-loop-smoke --workspace . --input README.md` — 338 tests
+  passing. Unblocks Wave-2 R-Ns.
+- **Prior status (kept for audit trail):** deferred from Wave-1
+  docs-only PRs (added 2026-05-20). Doc contract was frozen across
+  three ADRs — runtime materialisation was gated by this milestone.
+- **Idea:** Stand up the minimal `src/fa/inner_loop/` package that
+  materialises the deliberately-minimal slate locked in
+  [ADR-7 §2 / §8](./adr/ADR-7-inner-loop-tool-registry.md) and the
+  HookRegistry contract in
+  [ADR-8](./adr/ADR-8-hook-registry.md). Expected surface:
+  - `registry.py` — `ToolRegistry` + first three tool subclasses
+    (`read_file`, `write_file`, `run_bash`) with allow-list per
+    [ADR-6](./adr/ADR-6-tool-sandbox-allow-list.md).
+  - `loop.py` — single perceive–select–execute–observe loop with
+    `max_iterations=6` (ADR-7 §Amendment 2026-05-20 retry-budget
+    invariant) and the `T=1.0` intra-role retry rule.
+  - `hooks/` — `HookRegistry` per ADR-8 (five lifecycle points;
+    `GuardMiddleware` + `ObserverMiddleware`; first-deny short-
+    circuit; family-disjoint rule enforced at `register()`).
+  - `hooks/sandbox.py`, `hooks/approval.py`, `hooks/audit.py` —
+    the three concrete hook subclasses from ADR-7 §8 wired to the
+    HookRegistry surface.
+  - Wire `fa.sandbox.bash_gate`, `fa.config.load_capabilities`,
+    `fa.orchestration.pause`, and `fa.verifier.verify_action` as
+    `GuardMiddleware` / post-call `ObserverMiddleware` so the
+    Wave-0+Wave-1 standalone modules stop being inert.
+  - First-call entry point: a CLI command that exercises a single
+    `read_file → write_file → run_bash` trio through the registry +
+    hook chain end-to-end.
+  - Folds in the read-modify-write locking deferred from Wave-0
+    (record-gotcha / record-discovery) — `HookRegistry` is the
+    single-writer serialisation seat per
+    [`src/fa/tools/__init__.py`](../src/fa/tools/__init__.py)
+    docstring.
+- **Blocked-on:**
+  - Wave-0 PR #18 + Wave-1 PR #19 + Wave-1 PR #20 merged to `main`
+    (ADR-6 / ADR-7 / ADR-8 amendments must be in `main` first so
+    M-1 can cite them as canonical contracts).
+  - Confirmation that no further Wave-1 docs-only amendments are
+    pending against ADR-7 / ADR-8 (small risk surface; defaults to
+    «not pending» after this PR).
+- **Unblock-trigger:** all three Wave-0/Wave-1 PRs merged AND the
+  matching session opens a fresh branch for `src/fa/inner_loop/`.
+  No earlier start — landing M-1 before the doc PRs merge guarantees
+  rework on every ADR amendment surfaced by Devin Review.
+- **First concrete step once unblocked:** create
+  `src/fa/inner_loop/__init__.py` + `registry.py` skeleton; port
+  the ADR-7 §2 `ToolSpec` / `ToolResult` dataclasses verbatim from
+  the ADR text; write one happy-path test that calls a single
+  `EchoTool` through the registry without hooks; add a failing
+  test for «register two `LLM_USING` hooks in the same family»
+  to lock in the ADR-8 family-disjoint rule.
+- **References that point here (12 sites across 6 files, added in
+  Wave-0+Wave-1 PRs):**
+  - [`knowledge/adr/ADR-8-hook-registry.md`](./adr/ADR-8-hook-registry.md)
+    lines 35, 107, 240, 307, 358.
+  - [`knowledge/adr/DIGEST.md`](./adr/DIGEST.md) line 244.
+  - [`knowledge/adr/ADR-6-tool-sandbox-allow-list.md`](./adr/ADR-6-tool-sandbox-allow-list.md)
+    line 496.
+  - [`knowledge/trace/exploration_log.md`](./trace/exploration_log.md)
+    lines 362, 385, 402, 427.
+  - [`HANDOFF.md`](../HANDOFF.md) lines 164, 176.
+  - [`src/fa/tools/__init__.py`](../src/fa/tools/__init__.py)
+    docstring (single-writer contract deferral).
+
+## M-2 — Wave-2 LoopGuard + FailureClassifier + attempt_history
+
+- **Status:** **closed by PR-2 stacking on PR #24** (2026-05-20).
+  Three of the Wave-2 R-Ns from
+  [`research/borrow-roadmap-2026-05.md`](./research/borrow-roadmap-2026-05.md)
+  §3 landed as one stack on top of the M-1 substrate:
+  - **R-2 LoopGuard** —
+    [`src/fa/inner_loop/hooks/loop_guard.py`](../src/fa/inner_loop/hooks/loop_guard.py),
+    a `GuardMiddleware` attached to `BEFORE_TOOL_EXEC` +
+    `BETWEEN_ROUNDS`. Two detectors: identical-call repeat (same
+    `(tool, params_hash)` ≥ N) and same-path thrash (same path,
+    distinct params, ≥ N). Thresholds + window come from
+    `RuntimeLimits.loop_guard_*` per ADR-7 §Amendment 2026-05-20 rule 1.
+    Deny propagates through the same `BETWEEN_ROUNDS` catch that
+    PauseGuard already uses (BUG-0001 fix in PR #24).
+  - **R-3 FailureClassifier** —
+    [`src/fa/inner_loop/recovery/classify.py`](../src/fa/inner_loop/recovery/classify.py)
+    (pure-Python deterministic function per AGENTS.md PR Checklist
+    rule #10 q4) +
+    [`src/fa/inner_loop/hooks/recovery_observers.py`](../src/fa/inner_loop/hooks/recovery_observers.py)
+    `FailureClassifierObserver` emitting `kind="recovery_action"`
+    rows to `events.jsonl`.
+  - **R-6 attempt_history.json** —
+    [`src/fa/inner_loop/recovery/attempt_history.py`](../src/fa/inner_loop/recovery/attempt_history.py)
+    writer (per-run, `~/.fa/state/runs/<run_id>/attempt_history.json`,
+    sliding window + cap from `RuntimeLimits`) +
+    [`knowledge/prompts/coder-recovery.md`](./prompts/coder-recovery.md)
+    reader-prompt fragment. Cross-session aggregation deferred to
+    Wave-3 (R-10 / R-12).
+- **Why M-2 (not Wave-3) closes here:** R-22 PII walker, R-29 family-
+  disjoint LLM-using rule, and R-5 DSV YAML contracts are tracked
+  under their own roadmap items; R-29 was already satisfied by PR #24
+  (registry-time rejection of co-family LLM hooks). R-2 + R-3 + R-6
+  pair tightly (FailureClassifier feeds AttemptHistory which feeds
+  LoopGuard's future thrash-on-error detector), so they ship together.
+- **References:**
+  - [`research/borrow-roadmap-2026-05.md`](./research/borrow-roadmap-2026-05.md)
+    §R-2 / §R-3 / §R-6.
+  - [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](./adr/ADR-7-inner-loop-tool-registry.md)
+    §Amendment 2026-05-20 rule 1 (config-bounded retry caps).
+  - [`knowledge/adr/ADR-8-hook-registry.md`](./adr/ADR-8-hook-registry.md)
+    §3 (Guard short-circuit) — LoopGuard reuses the same deny path.
+
+## M-3 — Wave-2 pre-tool BlockerMiddleware + DSV YAML contracts + QA constants
+
+- **Status:** **closed by PR-3 stacking on PR #25** (2026-05-20).
+  Three more Wave-2 R-Ns from
+  [`research/borrow-roadmap-2026-05.md`](./research/borrow-roadmap-2026-05.md)
+  §3 land on top of the M-2 stack:
+  - **R-4 pre-tool blockers** —
+    [`src/fa/inner_loop/hooks/blockers.py`](../src/fa/inner_loop/hooks/blockers.py)
+    introduces `BlockerMiddleware` + three subclasses (`RateLimitBlocker`,
+    `LockfileBlocker`, `AuthExpiredBlocker`). Each is a `GuardMiddleware`
+    attached to both `BEFORE_TOOL_EXEC` (gate) and `AFTER_TOOL_EXEC`
+    (observe). The base class wires the observe-on-AFTER + gate-on-BEFORE
+    flow so every subclass is a ~10-line specialisation that overrides
+    `_detect(ToolResult) -> bool`. Suppression windows + category live in
+    `RuntimeLimits` per ADR-7 §Amendment 2026-05-20 rule 1: 30s rate-limit
+    (Aperant `pause-handler.ts:30-80` prod-tuned default), 5s lockfile,
+    0s auth-expired (observe-only; synthetic re-auth lands with T-2).
+  - **R-5 DSV YAML contracts** — [`src/fa/verifier/__init__.py`](../src/fa/verifier/__init__.py)
+    adds `load_contracts_from_dir(directory)` batch-loader. The smoke CLI
+    seeds `VerifierObserver` from
+    [`verifiers/*.yaml`](../verifiers/), which now ships canonical
+    contracts for the three M-1 tools (`fs.read_file`, `fs.write_file`,
+    `fs.run_bash`) plus the documentation-anchor `edit_file.yaml`.
+    Contracts are keyed by in-file `target_action`, not filename.
+    `required_trace_events` is empty in M-1 — tool bodies don't yet emit
+    per-step trace events; T-2 lands observation-event projection.
+  - **R-34 HookRegistry guard constants** —
+    [`src/fa/inner_loop/runtime_limits.py`](../src/fa/inner_loop/runtime_limits.py)
+    surfaces `qa_max_iterations` / `qa_max_consecutive_errors` /
+    `qa_recurring_issue_threshold` as documented anchors (Aperant
+    `qa-loop.ts` magic-validated defaults: 50 / 3 / 3). The QA orchestrator
+    itself is DEFER per roadmap §2.9 — landing the constants now keeps
+    the rule-1 contract (config-bounded, never code constants) honoured
+    when a future R-N consumer wires them. Same commit fixes a latent
+    loader gap: prior to PR-3 the YAML loader accepted the QA + R-4
+    suppression keys (no «unknown key» warning) but silently discarded
+    their values; the loader now wires both groups through `RuntimeLimits`
+    so user config actually takes effect.
+- **Why M-3 (not deferred) closes here:** R-4 blockers, R-5 DSV
+  loader, and R-34 constants are all subtractions of LLM reasoning
+  cost (R-4 + R-5) and pre-vendored documented anchors (R-34). They
+  share the same shape — all three plug into the existing
+  `HookRegistry` / `RuntimeLimits` / `VerifierObserver` surfaces
+  without restructuring, so they ship together.
+- **References:**
+  - [`research/borrow-roadmap-2026-05.md`](./research/borrow-roadmap-2026-05.md)
+    §R-4 / §R-5 / §R-34.
+  - [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](./adr/ADR-7-inner-loop-tool-registry.md)
+    §Amendment 2026-05-20 rule 1 (config-bounded retry caps) — all
+    three blocker suppression windows + three QA constants live in
+    `RuntimeLimits`.
+  - [`knowledge/adr/ADR-8-hook-registry.md`](./adr/ADR-8-hook-registry.md)
+    §1 (lifecycle points) — blockers reuse `BEFORE_TOOL_EXEC` +
+    `AFTER_TOOL_EXEC` symmetrically.
 
 ## See also
 

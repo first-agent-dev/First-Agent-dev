@@ -1,0 +1,15 @@
+# Verifier contract for ``fs.run_bash`` (R-5).
+#
+# See ``verifiers/fs.read_file.yaml`` for the rationale on why
+# ``required_trace_events`` is empty in M-1. Failure conditions match
+# the canonical ``ToolResult.error.code`` values from the handler +
+# hook + registry layers.
+target_action: fs.run_bash
+required_trace_events: []
+failure_conditions:
+  - hook_deny         # SandboxHook / CapabilityGuard denial
+  - command_failed    # non-zero exit captured by handler (stdout/stderr tailed)
+  - command_timeout   # bash hit ``DEFAULT_BASH_TIMEOUT_SECONDS`` cap
+  - invalid_params    # JSON-Schema OR command-must-be-string validation
+  - internal_error    # registry handler-exception wrap
+override_action: force_failure

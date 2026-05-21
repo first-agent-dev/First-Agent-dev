@@ -3,14 +3,147 @@
 > **Read this first if you are an LLM agent (Devin, Claude, ChatGPT,
 > Cursor, etc.) starting a new session on this repository.**
 >
-> **Last updated:** 2026-05-12 by Devin session
+> **Last updated:** 2026-05-21 by Devin session
+> [`7d46c801db0f4ac3ab4b80ef97a664c3`](https://app.devin.ai/sessions/7d46c801db0f4ac3ab4b80ef97a664c3)
+> — **PR-4 / Wave-3 stack #1** stacks on `main` (PR #26 merged)
+> and lands two R-Ns from
+> [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+> §3: **R-45 cost guardian**
+> (`src/fa/observability/cost_guardian.py` — single
+> `GuardMiddleware` that observes per-call cost at
+> `AFTER_TOOL_EXEC` and gates at `BEFORE_TOOL_EXEC` when the
+> accumulated USD rollup exceeds `RuntimeLimits.cost_budget_usd`;
+> tri-mode `None` unbounded / `0.0` observe-only / `> 0` hard cap;
+> dormant on baseline tools, wakes when T-2 emits `cost=…`
+> artifacts) and **R-19 eval-role family-disjoint** (role-layer
+> check complement to the existing R-29 hook-layer check;
+> `src/fa/roles.py` exposes a regex slug-to-family extractor +
+> `check_eval_disjoint` pure function; ADR-2 §Amendment 2026-05-20
+> rule 1 now has runtime enforcement). Same PR amends ADR-2 with
+> a role-layer sub-amendment, mirrors it in DIGEST.md, appends an
+> exploration_log block, refreshes `knowledge/llms.txt` for the
+> two new files, and adds the `cost guardian` / `family extractor`
+> glossary rows. 481 tests passing (+67 over PR-3; +29 from R-45 +
+> R-19 + cleanup, +8 fixed pre-existing mypy strict errors in
+> test files, +10 from four Devin-Review iteration commits — see
+> §Current state «PR-4 review-fix iteration» bullet below).
+>
+> **PR-4 review-fix iteration (2026-05-21).** Four follow-up
+> commits on the same branch addressed Devin Review runs 1/2/3
+> + a CodeQL nit, all gated and pushed:
+> [`48138c2`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/48138c2)
+> covered the missing YAML `_FLOAT_KEYS` parse tests;
+> [`bf0ba14`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/bf0ba14)
+> rewrote `CostExtractor` to return `list[CostObservation]` per
+> ADR-7 §Sub-amendment 2026-05-21 «one row per artifact» mandate
+> (was returning only the first artifact — silently undercounted
+> USD when a tool emits multiple `cost=…` rows; will matter once
+> T-2 LLM driver lands) and added the
+> `_FAMILY_PATTERNS ⊆ KNOWN_FAMILIES` sync-invariant test promised
+> by the `tests/test_roles.py` module docstring;
+> [`48dabe3`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/48dabe3)
+> rejected NaN/Inf at three layers (`CostObservation.__post_init__`,
+> `CostGuardian.__init__`, `runtime_limits._FLOAT_KEYS` parser) —
+> `float("nan")` and `float("inf")` parse without raising and NaN
+> permanently poisons the rollup (`x + NaN == NaN`; `NaN > budget`
+> always False so the gate silently stops denying);
+> [`dd97972`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/dd97972)
+> split three `assert x == DEFAULT is None` chained comparisons
+> into explicit `is None` checks (CodeQL py/test-equals-none nit).
+> Session-completion audit (out-of-tree): `/home/ubuntu/wave-3-session-audit.md`.
+>
+> **PR-26 deferred review threads landed in
+> [`6fce6b3`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/6fce6b3)
+> on `main` before this session started —** lockfile regex
+> tightening (false-positive cases gone) + `BlockerMiddleware`
+> AFTER trace-label docstring clarification both in. No follow-up
+> needed; see §Open review threads (cleared) below.
+>
+> **Prior update:** 2026-05-20 by Devin session
+> [`5f23505ec2a04caeb232bfe8d391010e`](https://app.devin.ai/sessions/5f23505ec2a04caeb232bfe8d391010e)
+> — **PR-3 / Wave-2 stack #2** stacks on PR
+> [#25](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/25)
+> and lands three more R-Ns from
+> [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+> §3: **R-4 pre-tool blockers** (`BlockerMiddleware` base + three
+> subclasses — `RateLimitBlocker`, `LockfileBlocker`,
+> `AuthExpiredBlocker` — observe at `AFTER_TOOL_EXEC` + gate at
+> `BEFORE_TOOL_EXEC` with suppression windows from `RuntimeLimits`),
+> **R-5 DSV YAML contracts** (`load_contracts_from_dir` batch loader
+> + canonical `verifiers/*.yaml` for the three M-1 tools; smoke CLI
+> seeds `VerifierObserver` automatically), **R-34 QA constants**
+> (documented anchors `qa_max_iterations` / `qa_max_consecutive_errors`
+> / `qa_recurring_issue_threshold` surfaced via `RuntimeLimits`; QA
+> orchestrator itself is DEFER per roadmap §2.9). Same commit
+> fixes a latent loader gap that silently discarded QA + R-4
+> suppression keys from `~/.fa/config.yaml`. 411 tests passing
+> (+29 over PR-2). Post-PR Devin-Review fix in `95c392a` accepts
+> `0` for `*_suppression_seconds` keys (observe-only mode);
+> 414 tests passing.
+>
+> **Two PR-26 review findings deferred to the next session** —
+> see §Open review threads at the end of §Current state. Default
+> first action for the next session: address both, push, then
+> start Wave-3 stack #1.
+>
+> Two attachments produced for the next-session context (not
+> committed to the repo — paste into the next session prompt):
+> `wave-2-session-audit.md` (what landed) and
+> `fa-wave-3-remaining-work.md` (combined borrow-roadmap + T-N
+> minus done, with 7-column status table + Wave-3 grouping).
+>
+> **Prior-prior update:** 2026-05-20 by Devin session
+> [`5f23505ec2a04caeb232bfe8d391010e`](https://app.devin.ai/sessions/5f23505ec2a04caeb232bfe8d391010e)
+> — **PR-2 / Wave-2 stack #1** stacks on PR
+> [#24](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/24)
+> and lands three R-Ns from
+> [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+> §3: **R-2 LoopGuard** (`GuardMiddleware` at `BEFORE_TOOL_EXEC` +
+> `BETWEEN_ROUNDS` — identical-call repeat + same-path thrash
+> detectors, thresholds from `RuntimeLimits`), **R-3 FailureClassifier**
+> (deterministic `ToolError` → `RecoveryAction` mapping + observer
+> emitting `kind="recovery_action"` rows), **R-6 attempt_history.json**
+> (per-run writer + `knowledge/prompts/coder-recovery.md` reader-
+> prompt fragment). 382 tests passing (+44 over M-1).
+>
+> **Prior update:** 2026-05-20 by Devin session
+> [`5f23505ec2a04caeb232bfe8d391010e`](https://app.devin.ai/sessions/5f23505ec2a04caeb232bfe8d391010e)
+> — PR
+> [#24](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/24)
+> **M-1 inner-loop runtime scaffold** is now contract-conformant:
+> JSON-Schema validation on `params` (ADR-7 §5), modify→re-validate
+> + sandbox replay on every `Decision.modify` (ADR-7 §8), `SandboxHook`
+> gates `fs.read_file` / `fs.write_file` paths (not only
+> `fs.run_bash`), `events.jsonl` carries `ts` + `run_id` per ADR-7 §7
+> schema, `hook_decision` rows persisted via `HookRegistry` event-sink,
+> `RuntimeLimits` (max_iterations + bash_timeout) read from
+> `~/.fa/config.yaml` (ADR-7 §Amendment 2026-05-20 rule 1 «never code
+> constants»). 338 tests passing.
+>
+> **Prior update:** 2026-05-20 by Devin session
+> [`b3ea514bc30848e9bf72b57aa8c28f6a`](https://app.devin.ai/sessions/b3ea514bc30848e9bf72b57aa8c28f6a)
+> — Wave-0 + Wave-1 docs slate landed (PRs
+> [#18](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/18) /
+> [#19](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/19) /
+> [#20](https://github.com/Bupitsa-ai/First-Agent-debloat/pull/20)):
+> ADR-2 / ADR-6 / ADR-7 / ADR-8 amendments (2026-05-20 dated);
+> three new inert Python modules (`fa.verifier`, `fa.tools`,
+> `fa.hygiene`) + capability flags (`fa.config`) + pause sentinel
+> (`fa.orchestration.pause`) + bash sandbox gate (`fa.sandbox`).
+>
+> **Prior update:** 2026-05-13 by Devin session
 > [`22479f39c46f4ab7941d2fd667393aad`](https://app.devin.ai/sessions/22479f39c46f4ab7941d2fd667393aad)
-> (port of upstream
+> (ADR-7 §Amendment 2026-05-13 + ADR-6 §Amendment 2026-05-13:
+> declarative per-role tool whitelist, B-NEW-1 from
+> [`research/soviet-code-inspiration-2026-05.md`](./knowledge/research/soviet-code-inspiration-2026-05.md)).
+>
+> **Prior update:** 2026-05-12 (same Devin session) — port of
+> upstream
 > [GrasshopperBoy/First-Agent-fork PR #22](https://github.com/GrasshopperBoy/First-Agent-fork/pull/22)
 > + ADR-7 §Amendment 2026-05-12 cross-referencing
 > [`bootstrap-cost-baseline-2026-05.md`](./knowledge/research/bootstrap-cost-baseline-2026-05.md),
 > earlier landed in main by session
-> [`89c32745c44f47dea679af42ed2d2dd8`](https://app.devin.ai/sessions/89c32745c44f47dea679af42ed2d2dd8)).
+> [`89c32745c44f47dea679af42ed2d2dd8`](https://app.devin.ai/sessions/89c32745c44f47dea679af42ed2d2dd8).
 
 This file is a portable counterpart to the Devin Knowledge note
 "First-Agent — current state pointer". Both contain the same
@@ -49,7 +182,7 @@ changes the project state, update **both**.
 You should now have everything you need. Do not crawl the repo
 manually beyond this point.
 
-## Current state (as of 2026-05-12)
+## Current state (as of 2026-05-21)
 
 - **Project stage:** **Stage 1** of the three-stage evolution
   (documentation + agent development через Devin). See
@@ -92,7 +225,23 @@ manually beyond this point.
     `error.code` is dual-mode `str | int` — ergonomic domain
     string internally, JSON-RPC numeric on the wire;
     implementations MUST map between the two at the transport
-    boundary.
+    boundary. **Amendment 2026-05-20:** Eval-role MUST be
+    provider+family disjoint from Planner and Coder (regex slug
+    extraction; ambiguous slugs MUST tag `family:` explicitly
+    in `~/.fa/models.yaml`); «no cross-tier auto-escalation»
+    rationale now cites Cornell P-1 (ICML 2025) + Simula P-2
+    (2026) as primary sources — `ρ̂ ≈ +0.6` same-family vs
+    `ρ̂ ≈ −0.05` cross-family. Cross-link to [ADR-7 §Amendment
+    2026-05-20 rule 4](./knowledge/adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+    (same family-disjoint rule applied to LLM-using hooks).
+    **Sub-amendment 2026-05-21 (role layer):** the family
+    extractor + `check_eval_disjoint` pure function ship as
+    `src/fa/roles.py` (R-19 implementation; consumed by the
+    `~/.fa/models.yaml` loader landing with the T-2 LLM driver).
+    The rule now has runtime enforcement at two layers — the
+    role layer (this sub-amendment, role-config load time) and
+    the hook layer (the existing 2026-05-20 cross-link,
+    `HookRegistry.register` time).
   - [ADR-3](./knowledge/adr/ADR-3-memory-architecture-variant.md) —
     Variant A (mechanical wiki, no embeddings, no graph,
     no Mem0).
@@ -122,9 +271,116 @@ manually beyond this point.
     Devin / 70–95 K Arena context, `harness_id` motivation,
     re-evaluation trigger 5 = BACKLOG I-8, BACKLOG I-1 / I-2 /
     I-3 unblocked); documentation-only, no shape change.
-- **ADR slot reservation.** Closed by ADR-7 above. History on
-  the slot: `cross-reference-…-2026-04.md` §11 supersession
-  marks on Q-1 / Q-2.
+    **Amendment 2026-05-13** — declarative per-role tool
+    whitelist (B-NEW-1): `[roles.<name>].allowed_tools` block
+    in `~/.fa/sandbox.toml`; enforced at dispatcher BEFORE
+    `pre_tool` hooks; reject = `E_ROLE_WHITELIST`. Companion
+    [ADR-6 §Amendment 2026-05-13](./knowledge/adr/ADR-6-tool-sandbox-allow-list.md#amendment-2026-05-13--roles-block-in-sandboxtoml)
+    adds schema. Closes ADR-7 §11 R-4 forward-compat as
+    finer-than-`[tool_groups]` variant. Knowledge-layer only
+    (impl lands with inner-loop scaffolding PR per Next steps
+    item 1). Source:
+    [`research/soviet-code-inspiration-2026-05.md`](./knowledge/research/soviet-code-inspiration-2026-05.md)
+    §0 R-1. **Amendment 2026-05-20:** retry-budget invariant
+    (caps in `~/.fa/config.yaml`, never code constants);
+    `max_iterations` default = 6 per YT-4 empirical anchor;
+    intra-role retry temperature default `T=1.0` per Nitarach
+    P-3 §4.1 (`ρ̂≈−0.12` vs `T=0.0` `ρ̂≈+0.6`); LLM-using
+    hooks MUST use family ≠ acting-role (vacuous in v0.1,
+    pinned for first LLM-using hook); BACKLOG I-2 sub-agent
+    invocation rules (`generateText` not streaming, exclude
+    `SpawnSubAgent`, `SUBAGENT_MAX_STEPS ≤ 100`). Knowledge-
+    layer only. Source:
+    [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+    §R-7 / §R-23 / §R-28 / §R-29 / §R-30 +
+    [`research/correlated-llm-errors-and-ensembling-2026-05.md`](./knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md)
+    §4.1 / §6 R-7 / R-8 / R-9.
+  - [ADR-8](./knowledge/adr/ADR-8-hook-registry.md) —
+    HookRegistry middleware-chain contract (doc-first; runtime
+    BACKLOG M-1 — **closed by PR #24**). Five lifecycle points (`BETWEEN_ROUNDS` /
+    `BEFORE_LLM_CALL` / `AFTER_LLM_CALL` / `BEFORE_TOOL_EXEC` /
+    `AFTER_TOOL_EXEC`); two middleware kinds (`GuardMiddleware`
+    may deny/modify, `ObserverMiddleware` read-only); dispatcher
+    ordered-chain first-deny short-circuit, one mutation per
+    dispatch (inherits ADR-7 §8); family-disjoint rule enforced
+    at `register()` time per ADR-2 / ADR-7 §Amendment 2026-05-20;
+    migration plan for v0.1 hooks (`SandboxHook` →
+    `GuardMiddleware`/`BEFORE_TOOL_EXEC`; `ApprovalHook` →
+    `GuardMiddleware`/`BEFORE_TOOL_EXEC`; `AuditHook` →
+    `ObserverMiddleware`/`AFTER_TOOL_EXEC`). 8-project
+    convergence cited. **Doc-only;** runtime tracked in
+    BACKLOG M-1 (inner-loop scaffolding); each Wave-2 R-N PR
+    (R-2 `LoopGuard`, R-3 failure-classifier, R-4 pre-tool
+    blocker, R-22 PII walker) lands as ~100-LoC subclass of
+    these base classes. Source:
+    [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+    §R-1 +
+    [`research/dpc-messenger-inspiration-2026-05.md`](./knowledge/research/dpc-messenger-inspiration-2026-05.md)
+    §3 +
+    [`research/gortex-aperant-inspiration-2026-05.md`](./knowledge/research/gortex-aperant-inspiration-2026-05.md)
+    §2. *Amendment 2026-05-20a* — adds an opt-in
+    `Middleware.revalidates_after_modify` flag (default `False`)
+    so the sandbox can re-check a `Decision.modify`-mutated payload
+    without violating "already-run hooks 1..N-1 do not re-run".
+    `SandboxHook` is the only opt-in today; the replay path is
+    capped at one extra `handle()` per opted-in guard and one
+    mutation per dispatch (regression in
+    `tests/test_inner_loop_validation.py::test_modify_to_escape_is_caught_by_sandbox_replay`).
+    *Amendment 2026-05-20b* — codifies that `BETWEEN_ROUNDS`
+    fires at the start of every iteration **including iteration 1**.
+    Session-level guards (`PauseGuard`, `LoopGuard`) attach here
+    so an active pause sentinel or non-progress counter blocks the
+    very first tool call. Kept the name `BETWEEN_ROUNDS` rather
+    than renaming to `BEFORE_ROUND` to preserve verbatim alignment
+    with DPC `dpc_agent/hooks.py:LIFECYCLE_POINTS` + Gortex
+    `internal/hooks/dispatch.go` + borrow-roadmap §R-1.
+- **Wave-1 R-N triplet (PR-2 2026-05-20):**
+  - **R-18** — Per-tier tool-shape registry at
+    [`knowledge/prompts/tool-shapes.yaml`](./knowledge/prompts/tool-shapes.yaml)
+    (anthropic / openai / qwen / deepseek / glm / kimi
+    families) + role-switch handoff one-liner rule in
+    [ADR-2 §Amendment 2026-05-20 (Wave-1)](./knowledge/adr/ADR-2-llm-tiering.md#amendment-2026-05-20-wave-1--per-tier-tool-shape-registry--role-switch-handoff-one-liner).
+    Read-only metadata; harness injects the *previous* role's
+    `handoff_one_liner` into the *next* role's prompt on every
+    role-switch.
+  - **R-21** — Five capability flags (deny-by-default opt-in):
+    `ENABLE_DYNAMIC_TOOLS` / `REQUIRE_DYNAMIC_TOOL_SANDBOX` /
+    `ENABLE_MCP_GATEWAY_MANAGEMENT` /
+    `ENABLE_DYNAMIC_MCP_SERVERS` / `ENABLE_SERVER_OPS`, all
+    default `False`, in
+    [ADR-6 §Amendment 2026-05-20](./knowledge/adr/ADR-6-tool-sandbox-allow-list.md#amendment-2026-05-20--five-capability-flags-deny-by-default-opt-in)
+    + Python skeleton at `src/fa/config.py` (frozen
+    `Capabilities` dataclass + YAML parse). Layer-1 capability
+    opt-in AND-ed with Layer-2 (per-role `allowed_tools`) at
+    the dispatcher.
+  - **R-25** — Pause-file sentinel pattern
+    (`RATE_LIMIT_PAUSE` / `AUTH_PAUSE` / `RESUME`) at
+    `src/fa/orchestration/pause.py`; four timeout constants
+    match Kronos defaults (2h rate-limit wait / 30s poll;
+    24h auth wait / 10s poll). Source:
+    [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+    §R-18 / §R-21 / §R-25.
+  - **R-20 (Wave-1 follow-up PR-3)** — Bash sandbox gate at
+    `src/fa/sandbox/{classifier,validators,path_containment,bash_gate}.py`
+    (~715 LoC code + ~700 LoC tests). Three-layer pipeline:
+    pattern classifier (`bash_classify.go` port — 5
+    categories `READ_ONLY` / `GIT_WRITE` / `PACKAGE_INSTALL`
+    / `DANGEROUS` / `GENERAL_WRITE`) + per-command validators
+    (`bash-validator.ts` port — `rm` / `chmod` / `git` with
+    5 deny rules) + symlink-resolved path containment
+    (`path-containment.ts` port). Composer:
+    `evaluate_bash(command, *, workspace_root) ->
+    BashGateDecision`. Lands
+    [ADR-6 §Amendment 2026-05-20 (Wave-1)](./knowledge/adr/ADR-6-tool-sandbox-allow-list.md#amendment-2026-05-20-wave-1--bash-sandbox-gate-three-layer-classifier--validators--path-containment).
+    Wiring into inner-loop `run_shell` tracked in BACKLOG
+    M-1. Source:
+    [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+    §R-20 +
+    [`research/gortex-aperant-inspiration-2026-05.md`](./knowledge/research/gortex-aperant-inspiration-2026-05.md)
+    Aperant items 6 + 13 / Gortex Tier-1 item M.
+- **ADR slot reservation.** Closed by ADR-7 + ADR-8 above.
+  History on the slot: `cross-reference-…-2026-04.md` §11
+  supersession marks on Q-1 / Q-2.
 - **Scaffolding:** `pyproject.toml`, Ruff, mypy, pytest,
   pre-commit, GitHub Actions CI, `Makefile`, `markdown-it-py`,
   and system dependency documentation for `universal-ctags`
@@ -206,19 +462,74 @@ manually beyond this point.
     rule #8. Re-measurement triggers in §9 (items 5-6 cross-link
     BACKLOG I-7 / I-8).
 
+## Open review threads (cleared)
+
+Both PR-26 Devin-Review findings carried over from the
+2026-05-20 Wave-2 stack #2 session landed on `main` in
+[commit `6fce6b3`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/6fce6b3)
+before the 2026-05-21 Wave-3 stack #1 session started. No
+follow-up needed; the section is kept as an audit trail of
+what was deferred and how each was resolved.
+
+1. **🚩 Lockfile regex `.lock\b` over-broad — LANDED in
+   [`6fce6b3`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/6fce6b3).**
+   Original report: comment 0002 on
+   [`src/fa/inner_loop/hooks/blockers.py:185-197`](./src/fa/inner_loop/hooks/blockers.py).
+   The `_LOCKFILE_MESSAGE` regex's bare `\.lock\b` / bare
+   `lockfile` alternatives were dropped and replaced with
+   contention-specific alternatives; matching negative-case +
+   positive-case regression tests added in the same commit.
+
+2. **📝 BlockerMiddleware AFTER_TOOL_EXEC trace-label semantic
+   mismatch — LANDED in
+   [`6fce6b3`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/6fce6b3).**
+   Original report: comment 0001 on
+   [`src/fa/inner_loop/hooks/blockers.py:162-168`](./src/fa/inner_loop/hooks/blockers.py).
+   Docstring-only clarification applied per the bot's recommended
+   disposition («GuardMiddleware that observes at AFTER_TOOL_EXEC»
+   pattern documented); no `HookRegistry.dispatch` trace-label
+   change — deferred until a second observe-while-guarding
+   middleware materialises that would justify the broader change.
+
 ## Next steps (intended order)
 
-1. **Implementation PR — inner-loop scaffolding** (ADR-7 just
-   landed). Create `src/fa/inner_loop/` with `registry.py`
-   (`ToolSpec` dataclass + `register` / `lookup`), `loop.py`
-   (runtime loop §1 + JSON-Schema validation §5 + hook chain
-   §8), `hooks/` (`SandboxHook`, `ApprovalHook`, `AuditHook`),
-   `tools/` (one file per tool in ADR-7 §3 catalog — starting
-   with `fs.read_file` / `fs.list_files` to unblock the chunker
-   indexer end-to-end), and `trace.py` (`events.jsonl` writer +
-   `hot.md` summariser). The first tool PR consumes ADR-7
-   verbatim; subsequent PRs cite §2-§4 instead of re-deriving.
-2. **Implementation PR — chunker.** Implement `src/fa/chunker/`
+0. **Wave-3 stack #2 candidates** (pick one, see
+   `fa-wave-3-remaining-work.md` attachment from the 2026-05-21
+   session for the 7-column status table). Strongest cheap-impl
+   candidates:
+   - **R-8 filesystem-canon writer** — gotchas/discoveries
+     journal companion to the reader side; deferred from
+     Wave-3 stack #1 per «M2 only if M1 lands without
+     iteration» rule.
+   - **R-17 / R-16 / R-24** — need scope decisions from the
+     project lead before queuing.
+   - **R-31 / R-32 / R-33** — need ADR-9 timing decision.
+   - **T-2 LLM driver** — unblocks the R-45 cost guardian
+     (artifact emitter currently dormant on baseline tools).
+
+1. **Wave-2 stack #1 — R-2 + R-3 + R-6 (single PR).** Land
+   `LoopGuard` (R-2) at `BETWEEN_ROUNDS` (`max_iterations`,
+   `max_consecutive_failures`, `forbidden_action_repeats`),
+   `FailureClassifier` + `RecoveryAction` (R-3) consumed by an
+   `AFTER_TOOL_EXEC` observer that maps every `ToolResult.error`
+   to a deterministic recovery hint, and `attempt_history.json`
+   writer (R-6) used by the classifier to detect ping-pong
+   patterns. Source contracts:
+   [`borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
+   §3 R-2 / R-3 / R-6.
+2. **Wave-2 stack #2 — R-4 + R-5 + R-34 (single PR).** Land the
+   three concrete `BEFORE_TOOL_EXEC` blockers (R-4: workspace-root
+   path check / forbidden-command list / capability-flag check)
+   as `GuardMiddleware` subclasses next to the existing
+   `SandboxHook`; extend `VerifierObserver` (R-5) to consume YAML
+   DSV contracts from `~/.fa/verifier/*.yaml`; surface the
+   HookRegistry guard constants (R-34) for the loop driver.
+3. **(Alternative path)** — implementation of remaining
+   release-gap items from `fa-0.1-release-gaps-2026-05.md`
+   (attached by lead at session start, not committed; T-1 closed
+   by PR #24, T-2 = LLM clients, T-3 = CLI surface, T-6 = SQLite
+   FTS5 index). T-1 closed by PR #24; T-2 / T-3 / T-6 unblocked.
+3. **Implementation PR — chunker.** Implement `src/fa/chunker/`
    with the `Chunk` dataclass and `Chunker` Protocol from
    [ADR-5 §Decision](./knowledge/adr/ADR-5-chunker-tool.md#decision)
    (now including provenance fields per 2026-04-29 amendment).
@@ -228,10 +539,11 @@ manually beyond this point.
    project lead's real 1500-line `.ps1` (not synthetic). The
    project lead should provide the real `.ps1` and a
    representative Go sample before this PR is considered
-   mergeable.
-3. **Chunker CLI surface.** Add `fa chunk <path>` for manual
+   mergeable. Blocked-on item 1 (chunker indexer consumes
+   `fs.read_file` from the inner-loop tool catalog).
+4. **Chunker CLI surface.** Add `fa chunk <path>` for manual
    inspection of produced chunks as part of the chunker PR.
-4. **R-3 edit-format fixture.** Run a 5-10 string-replace +
+5. **R-3 edit-format fixture.** Run a 5-10 string-replace +
    5-10 unified-diff `apply_patch` test set on each
    tool-using model from ADR-2 (Qwen 3.6, Kimi 2.6, GLM 5.1,
    Claude latest, Nemotron 3 Super). Empirically verify that
@@ -239,15 +551,16 @@ manually beyond this point.
    the default in
    [ADR-7 §4](./knowledge/adr/ADR-7-inner-loop-tool-registry.md#4-edit-shapes-string-replace-and-apply_patch)
    via amendment (per ADR-7 §Consequences «Re-evaluation
-   triggers» — HANDOFF item 4 fixture lands). Can run in
+   triggers» — HANDOFF item 5 fixture lands). Can run in
    parallel with item 1 (inner-loop scaffolding); not a
    blocker for either tool PR.
-5. **Glossary** (cross-reference §10 R-8 + semi-autonomous
+6. **Glossary** (cross-reference §10 R-8 + semi-autonomous
    note §7.8): add `MCP`, `Hook`, `ACI`,
    `Reflexion / Critic / Reflector`, `Self-evolving` terms
-   to [`docs/glossary.md`](./docs/glossary.md). Optional;
-   not blocking ADR-7.
-6. **v0.2 UI/control-plane pre-ADR** (optional after ADR-7 prep,
+   to [`docs/glossary.md`](./docs/glossary.md). Most landed via
+   the Wave-0 glossary expansion (2026-05-20 PR #18); audit
+   remaining gaps before closing.
+7. **v0.2 UI/control-plane pre-ADR** (optional after ADR-7 prep,
    or before if project lead prioritizes UI): use
    [`research/agent-ui-research-radar-v0-2-2026-05.md`](./knowledge/research/agent-ui-research-radar-v0-2-2026-05.md)
    to decide trace-viewer-first vs live-dashboard-first, local BFF

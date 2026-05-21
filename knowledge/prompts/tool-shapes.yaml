@@ -1,0 +1,89 @@
+# Per-tier tool-shape registry (R-18 — Wave 1 borrow-roadmap)
+#
+# Schema:
+#   <tier-key>:
+#     family: <provider-family-slug>      # matches ADR-2 regex slug
+#                                          extraction (qwen|claude|glm|
+#                                          deepseek|kimi|mimo|openai|other)
+#     shape:                              # required
+#       edit: <patch|string_replace|json_diff>
+#       tool_call_format: <openai_function|anthropic_tool_use|raw_json>
+#     handoff_one_liner: |                # injected into the next role's
+#                                          # system prompt when this tier
+#                                          # was the previous speaker.
+#       <single short paragraph, English; quoted as-is into the prompt>
+#
+# Sources:
+#   - knowledge/adr/ADR-2-llm-tiering.md §Amendment 2026-05-20 (Wave-1)
+#   - knowledge/research/borrow-roadmap-2026-05.md §R-18
+#
+# Principle (ADR-2 §Amendment 2026-05-20 Wave-1): "tool shape follows the
+# model's training distribution". Maintaining one consolidated shape for
+# all tiers degrades 5-15% on cross-family models per primary source.
+#
+# Stability: entries below are pinned to the ADR-2 tier picks at the
+# time of writing. When a new tier joins the rotation, add ONE row and
+# reference the new tier's family in this file's header comment. Do
+# NOT shuffle the existing order without re-justifying — order matches
+# the ADR-2 Decision table top-to-bottom (Eval → Planner → Coder).
+---
+anthropic-claude:
+  family: claude
+  shape:
+    edit: string_replace
+    tool_call_format: anthropic_tool_use
+  handoff_one_liner: |
+    The previous role spoke as a Claude-family model using string-
+    replace edits and Anthropic tool_use blocks. Ignore that shape;
+    use the tool shape native to your own family.
+
+openai-gpt:
+  family: openai
+  shape:
+    edit: patch
+    tool_call_format: openai_function
+  handoff_one_liner: |
+    The previous role spoke as an OpenAI-family model using
+    patch-based edits and OpenAI function-calling. Ignore that
+    shape; use the tool shape native to your own family.
+
+qwen-family:
+  family: qwen
+  shape:
+    edit: string_replace
+    tool_call_format: raw_json
+  handoff_one_liner: |
+    The previous role spoke as a Qwen-family model emitting raw
+    JSON tool calls and string-replace edits. Ignore that shape;
+    use the tool shape native to your own family.
+
+deepseek-family:
+  family: deepseek
+  shape:
+    edit: patch
+    tool_call_format: openai_function
+  handoff_one_liner: |
+    The previous role spoke as a DeepSeek-family model using
+    patch-based edits and OpenAI-compatible function-calling.
+    Ignore that shape; use the tool shape native to your own
+    family.
+
+glm-family:
+  family: glm
+  shape:
+    edit: string_replace
+    tool_call_format: raw_json
+  handoff_one_liner: |
+    The previous role spoke as a GLM-family model emitting raw
+    JSON tool calls and string-replace edits. Ignore that shape;
+    use the tool shape native to your own family.
+
+kimi-family:
+  family: kimi
+  shape:
+    edit: string_replace
+    tool_call_format: openai_function
+  handoff_one_liner: |
+    The previous role spoke as a Kimi-family model using string-
+    replace edits and OpenAI-compatible function-calling. Ignore
+    that shape; use the tool shape native to your own family.

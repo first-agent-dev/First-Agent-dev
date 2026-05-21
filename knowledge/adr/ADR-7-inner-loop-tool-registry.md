@@ -520,6 +520,19 @@ implemented in v0.1** per semi-autonomous-agents §8.5
 future Reflection / UC5 ADR and may be added by amendment
 without breaking the v0.1 contract.
 
+**Registry-form contract.** The shape above (two `pre_tool`
+hooks + one `post_tool` hook, first-deny short-circuit, one
+mutation per dispatch) is the **doc-first** v0.1 form of the
+HookRegistry middleware chain. The five-point lifecycle,
+`GuardMiddleware` vs `ObserverMiddleware` split, and
+`register()` family-disjoint enforcement are frozen as
+documentation in [ADR-8](./ADR-8-hook-registry.md) (2026-05-20).
+The runtime that builds the registry against ADR-8 is BACKLOG
+M-1 (inner-loop scaffolding); after it lands, this §8
+becomes a cross-ref to ADR-8 §5 "Migration plan from v0.1
+inline hooks" and the §8 hook list collapses to that one
+mapping row.
+
 ### 9. Loop invariant — prompt assembly
 
 Per harness-research R-8 (Option (i), TAKE). The static layered
@@ -652,7 +665,12 @@ shape is pinned so the migration is config-only:
   can disable a whole group (`fs.allow = false`) without
   editing the per-path allow-list. Lands as an ADR-6
   amendment in the same PR as the second tool group (`git.*`
-  or `gh.*`).
+  or `gh.*`). **Status 2026-05-13:** finer-grained variant
+  (`[roles.<name>]` per-role tool whitelist) landed via
+  [§Amendment 2026-05-13](#amendment-2026-05-13--declarative-per-role-tool-whitelist-b-new-1)
+  before the second tool group; the `[tool_groups]` form
+  remains shape-pinned as the coarser-grained convenience
+  alternative.
 - **R-6 code-execution-over-MCP.** Reserved per ADR-2
   §Amendment 2026-05-01 ("no `mcp` package dependency in
   v0.1") and ADR-6 §Re-evaluation triggers. The forward-compat
@@ -865,6 +883,396 @@ bootstrap re-runs on it. If the 6-file irreducible core does
 **not** reproduce on FA's own harness, the empirical-backing
 paragraph in §6 must be qualified (works on external
 harnesses; needs separate evidence for FA's own).
+
+### Amendment 2026-05-13 — Declarative per-role tool whitelist (B-NEW-1)
+
+**Source.** Inspiration note
+[`research/soviet-code-inspiration-2026-05.md`](../research/soviet-code-inspiration-2026-05.md)
+§0 R-1, §6.1, §3 Pattern #1 — deep-dive of
+`Disentinel/soviet-code` (npm-published v1.964.0, systemd-in-prod
+reference impl). The pattern ships 9 agent profiles × declarative
+`allowed_tools` + `extra_dirs` blocks, passed verbatim as
+`--allowedTools` / `--add-dir` to the Claude CLI subprocess.
+FA-equivalent: per-role allow-list in `~/.fa/sandbox.toml`
+enforced at the dispatcher boundary.
+
+**Decision.** Extend `~/.fa/sandbox.toml` (defined by
+[ADR-6](./ADR-6-tool-sandbox-allow-list.md), see
+[ADR-6 §Amendment 2026-05-13](./ADR-6-tool-sandbox-allow-list.md#amendment-2026-05-13--roles-block-in-sandboxtoml))
+with a `[roles.<name>]` block specifying tools each role may
+invoke:
+
+```toml
+[roles.planner]
+allowed_tools = ["fs.read_file", "fs.list_files", "fs.grep"]
+allowed_dirs  = []  # empty = inherit ADR-6 sandbox-root
+
+[roles.coder]
+allowed_tools = ["fs.read_file", "fs.list_files", "fs.grep",
+                 "fs.write_file", "fs.edit_file"]
+allowed_dirs  = []
+
+[roles.debug]
+allowed_tools = ["fs.read_file", "fs.list_files", "fs.grep"]
+allowed_dirs  = []
+
+[roles.eval]
+allowed_tools = ["fs.read_file", "fs.list_files"]
+allowed_dirs  = []
+```
+
+The four role names match
+[ADR-2](./ADR-2-llm-tiering.md) static tier-routing
+(Planner / Coder / Debug / Eval). Role names are tier names; the
+role-to-tier mapping is the ADR-2 contract, not this amendment.
+
+**Backward-compat default.** If `[roles.<active_role>]` is
+absent, the role inherits the full §3 tool catalog
+(`fs.read_file`, `fs.list_files`, `fs.edit_file`, `fs.write_file`,
+`fs.grep`). Existing `sandbox.toml` files without `[roles]`
+blocks continue to work unchanged.
+
+**Enforcement point.** The dispatcher
+(`src/fa/inner_loop/loop.py`, lands with HANDOFF §Next steps
+item 1) MUST check:
+
+```text
+if active_role in roles_config
+   and tool_name not in roles_config[active_role].allowed_tools:
+    return ToolResult(
+        ok=False,
+        error=ToolError(
+            code="E_ROLE_WHITELIST",
+            message=f"tool {tool_name!r} not in role {active_role!r} whitelist",
+        ),
+    )
+```
+
+BEFORE the `pre_tool` hook chain fires. On reject, no `pre_tool`
+budget is consumed; the failure surfaces as one
+`role_whitelist_reject` event in §7 trace.
+
+**Why now (vs. defer to v0.2 multi-role).** Cheap to land:
+~70 LOC across 6 files, 0 new dependencies, 0 production-code
+changes (the impl ships with the inner-loop scaffolding PR per
+HANDOFF §Next steps item 1). Empirically validated by
+Soviet-Code v1.964.0 (npm-published, in-prod for months).
+Closing §11 R-4 forward-compat: per-role is the natural
+finer-grained extension of `[tool_groups]` and lands in a single
+ADR amendment instead of two coordinated ones.
+
+**Why not prompt-only.** Status quo enforces "Planner does not
+write files" through prompt instructions to the Planner role.
+This is not mechanically verifiable: any hallucinated
+`fs.write_file` call from the Planner is currently caught only
+by §8 `SandboxHook` (which guards the **path**, not the
+**role-tool pairing**). Declarative role whitelist adds the
+mechanical pairing check the prompt-only approach cannot.
+
+**Subtraction-check (AGENTS.md §Pre-flight Step 4 / rule #10).**
+
+1. **Does this duplicate an existing rule?** No. §11 R-4
+   `[tool_groups]` was shape-pinned but not landed. §8
+   `SandboxHook` enforces path, not (role, tool) pairing.
+2. **Can the LLM do this without the rule?** Partial. Prompt
+   instructions can ask Planner not to write, but the
+   constraint is not mechanically verifiable.
+3. **Is the rule narrow enough?** Yes. Single TOML block,
+   single dispatcher check, zero runtime cost when `[roles]`
+   absent (inherits full catalog).
+4. **Will this rule have a reader?** Yes. Dispatcher
+   (`src/fa/inner_loop/loop.py`) reads on every tool request;
+   reject events documented in §7 trace; consumers are the
+   inner-loop unit tests and the future eval-harness
+   ([BACKLOG I-7](../BACKLOG.md#i-7--bootstrap-cost-as-auto-collected-kpi-uc5-blocked)).
+
+**Files changed (this PR, knowledge-layer only).**
+
+- `knowledge/adr/ADR-6-tool-sandbox-allow-list.md` —
+  §Amendment 2026-05-13 with schema spec.
+- `knowledge/adr/ADR-7-inner-loop-tool-registry.md` — this
+  block + §11 R-4 status update.
+- `knowledge/adr/DIGEST.md` — ADR-6 + ADR-7 row updates.
+- `knowledge/trace/exploration_log.md` — Q-7 amendment block.
+- `knowledge/BACKLOG.md` — I-7 + I-8 prior-art
+  enforcement note (DPC ADR-015 cross-reference).
+- `HANDOFF.md` — ADR-7 amendment line update.
+
+**Re-evaluation triggers (this amendment).**
+
+- **Single `E_ROLE_WHITELIST` rejection observed in production**
+  on a path the user expected to be allowed. Action: investigate
+  the user's mental model first (prompt error vs config error);
+  only widen the role whitelist after the incident is
+  understood.
+- **v0.2 multi-role expands past ~6 roles** (e.g. Researcher,
+  Reviewer added). Action: revisit `allowed_dirs = []` default
+  (currently inherits ADR-6 sandbox-root); per-role path
+  scoping may become worth the config-surface cost.
+- **Soviet-Code reference impl deprecates the pattern.** Action:
+  re-evaluate whether the FA adoption still holds. Unlikely
+  (npm-published, systemd-in-prod for months) but documented.
+
+### Amendment 2026-05-20 — Retry-budget invariant, intra-role T=1.0, LLM-using-hook family-disjoint rule
+
+**Source.** Implementation roadmap
+[`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+§R-7 / §R-28 / §R-29 / §R-30 (Wave 0, docs-only). Empirical
+evidence: correlated-LLM-errors research note
+[`research/correlated-llm-errors-and-ensembling-2026-05.md`](../research/correlated-llm-errors-and-ensembling-2026-05.md)
+§4.1 (Nitarach P-3 finding: `T=1.0` decorrelates retry-sample
+errors — `ρ̂≈−0.12` vs `T=0.0` `ρ̂≈+0.6`) + §6 R-7/R-8/R-9.
+
+**Problem.** The original Decision pinned §1 step 8 «hard cap on
+iterations to prevent runaway loops» but left the cap value and
+the retry-sampling temperature as future-implementation decisions.
+The accompanying ADR-2 §Amendment 2026-04-29 closed the «no
+auto-escalation» question and left **intra-role** retries
+allowed, but did not pin the retry parameters. Without explicit
+invariants, the inner-loop scaffolding PR
+([HANDOFF §Next steps item 1](../../HANDOFF.md#next-steps-intended-order))
+would land magic-numbers in hook code, with no audit trail tying
+the choice back to research evidence. The §8 Hook pipeline is
+silent on whether a hook may itself call an LLM (e.g. a future
+LoopGuard middleware asking a second model to grade loop-
+evidence); §11 R-9 already flagged cross-model harness
+transferability but did not pin the hook-internal LLM choice.
+
+**Decision (additive to §1, §5, §8; no shape change to §2 /
+§3 / §6 / §7).**
+
+1. **Retry budget is config-bounded.** Every retry loop in the
+   inner-loop (intra-role retry, tool-error retry, blocker
+   retry-after-resume) reads its hard cap from
+   `~/.fa/config.yaml` — never from a constant in hook code.
+   The dispatcher (`src/fa/inner_loop/loop.py`, lands with
+   inner-loop scaffolding) refuses to start a session when a
+   required retry-cap key is missing rather than fall back to a
+   silent default. This matches §1 step 8 «hard cap …
+   prevent runaway loops» and gives the §7 trace an
+   `events.jsonl` row tying every cap to a config version.
+2. **`max_iterations` cap default = 6.** Per R-30 / YT-4
+   empirical anchor: GPT-3.5 Turbo completed a multi-step Hacker
+   News upvote task within 6 iterations when the harness was
+   correct (DSV gate + login middleware). Without the harness,
+   the same model hallucinated success on step 2. The cap is a
+   default in `config.yaml`, not a hard-coded constant; user
+   may raise it explicitly with a written justification in the
+   session's `hot.md` opening block. Treat 6 as the «minimum
+   non-trivial harness» anchor — raise it when measured, never
+   when guessed.
+3. **Intra-role retry temperature default `T=1.0`.** Per R-28 /
+   Correlated §4.1 finding: retrying with the **same**
+   temperature simply re-samples the same hypothesis-distribution
+   peak. `T=1.0` forces sample diversity so the retry can
+   propose a different candidate. Default applies only to the
+   **retry sample** — first-attempt temperature stays at the
+   role's configured value (`~/.fa/models.yaml`). Cross-tier
+   escalation remains forbidden per ADR-2 §Decision and
+   §Amendment 2026-04-29; this rule sits **inside** the
+   ADR-2-permitted «intra-role retry-loop» envelope.
+4. **LLM-using hooks MUST use family ≠ acting-role.** Generalises
+   ADR-2 §Amendment-to-land (R-19 below: «Eval-role
+   provider/family disjoint from Planner and Coder») to any
+   §8 hook that calls an LLM. The rule is vacuous in v0.1
+   because both `pre_tool` hooks (`SandboxHook` from ADR-6,
+   optional `ApprovalHook`) and the lone `post_tool`
+   `AuditHook` are deterministic Python functions — no LLM
+   call inside a hook today. The rule **lands ahead of the
+   first LLM-using hook** so future amendments (e.g. a v0.2
+   `LoopGuard` middleware grading retry-evidence with a second
+   model) inherit the family-disjoint constraint by default.
+   Without it, a same-family judge replicates the same error
+   the acting-role is being judged for (the Cornell P-1 +
+   Simula P-2 finding: same-family ensembles have ρ̂ ≈ +0.6,
+   defeating ensemble error-decorrelation).
+5. **Sub-agent invocation rules (BACKLOG I-2 prep).** Cross-link
+   to R-23 / Aperant item 7: when BACKLOG I-2 lands the
+   sub-agent dispatch primitive, sub-agents MUST use
+   `generateText` (not streaming) because output feeds the
+   orchestrator's context not the UI; the sub-agent tool set
+   MUST exclude any `SpawnSubAgent` tool (recursion); and
+   `SUBAGENT_MAX_STEPS` MUST be ≤ 100. Captured here so the
+   inner-loop scaffolding PR cannot accidentally diverge from
+   the eventual sub-agent ADR; cross-referenced from
+   [BACKLOG I-2](../BACKLOG.md#i-2--agent--sub-agents-for-context-load-reduction)
+   so the constraint is visible at the read-side.
+
+**Why these belong in one amendment.** All four rules govern
+the **retry / hook-LLM** axis — they share the §8 hook
+pipeline as enforcement surface, share the §1 step 8 «hard
+cap» framing, and share the same source-note batch
+(correlated-LLM-errors §6 R-7/R-8/R-9 + borrow-roadmap §R-7
+/ §R-28 / §R-29 / §R-30). Splitting into four amendments
+would force readers of any one to re-derive the others.
+
+**Why not pin the v0.2 LLM-using-hook contract here.** §8
+already says `pre_run` / `post_run` / `on_event` are deferred
+to v0.2 — the LLM-using-hook contract is a v0.2 amendment
+gated by the first concrete use-case (e.g. ADR-8
+HookRegistry's `LoopGuard` or a `CriticHook` after the v0.2
+Critic role lands). This amendment fixes the **family-
+disjoint invariant** so the v0.2 amendment cannot regress.
+
+**Subtraction-check (AGENTS.md §Pre-flight Step 4 / rule #10).**
+
+1. **Removing what makes this redundant?** None — §1 step 8
+   names the cap but not the value; §8 names hooks but not
+   LLM-using hooks; ADR-2 §Amendment 2026-04-29 allows
+   intra-role retry but not the retry temperature.
+2. **Capability lost if omitted?** Magic-number retry budgets
+   in hook code (no audit trail), `T=0.0` retries (no
+   diversity), same-family LLM-judge of same-family acting-
+   role (correlated errors), and a sub-agent dispatcher that
+   re-derives invocation rules per first-use.
+3. **OSS precedent for not having it?** Ampcode «three bare
+   functions» harness does not pin retry temperature — it
+   targets one tier (Claude) and accepts the elite-tier
+   default. FA spans four tiers per ADR-2 and cannot inherit
+   that elision.
+4. **Step-as-function?** YES for rules 1 / 2 / 3 / 5 — all are
+   config reads + arithmetic + dispatcher checks, no LLM
+   needed. Rule 4 is the **negation** of step-as-function — it
+   constrains the LLM-using-hook future case, not creating a
+   new LLM call.
+
+**Files changed (this PR, knowledge-layer only).**
+
+- `knowledge/adr/ADR-7-inner-loop-tool-registry.md` — this
+  amendment block.
+- `knowledge/adr/ADR-2-llm-tiering.md` — §Amendment 2026-05-20
+  (R-19 / R-27 part 1; family-disjointness for Eval-role and
+  Cornell/Simula primary-source citation).
+- `knowledge/adr/DIGEST.md` — ADR-7 row amendments bullet.
+- `knowledge/trace/exploration_log.md` — Q-7 amendment block.
+- `knowledge/BACKLOG.md` — I-2 sub-agent invocation rules
+  paragraph (R-23 captured here for read-side discoverability).
+- `HANDOFF.md` — ADR-7 amendment line update.
+
+**Re-evaluation triggers (this amendment).**
+
+- **First LLM-using hook PR lands.** Action: split rule 4 into
+  a v0.2 amendment with explicit family-pair examples
+  observed in eval traces.
+- **A FA-on-FA bootstrap run hits `max_iterations = 6` cap on
+  a task we expect to finish within budget.** Action:
+  re-measure cap against the failing task; raise default
+  only if new measurement shows ≥ 2× the previous anchor.
+- **Intra-role retry with `T=1.0` shows worse pass-rate than
+  `T=0.7` on UC1 eval (when UC5 lands).** Action: re-open the
+  retry-temperature choice with the eval delta as evidence;
+  the Correlated §4.1 finding holds in code-gen domain but
+  remains pending replication in FA-specific workload.
+
+### Sub-amendment 2026-05-21 — R-45 cost guardian + `cost_observation` event-kind
+
+**Source.** Implementation roadmap
+[`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+§R-45 (Wave 3 — observability + gating). Documentation-only
+shape change to §7 «`events.jsonl`» event-kind enumeration;
+no shape change to §1 inner-loop driver, §5 input
+validation, §8 hook pipeline (R-45 is one
+`GuardMiddleware` subclass following the existing contract
+— ADR-8 is the contract anchor; this ADR's §7 is the
+schema anchor).
+
+**Decision (extension to §7 «`events.jsonl`» extension-kinds
+enumeration).**
+
+1. **New extension kind `cost_observation`** — one row per
+   recognised `cost=…` artifact in `ToolResult.artifacts`.
+   Emitted by `fa.observability.cost_guardian.CostGuardian`
+   when an `EventLog` is wired into the constructor. `actor`
+   = `"hook"`; `tool_name` / `tool_call_id` pin to the
+   `ToolCall` the artifact came from; `content` carries the
+   per-call `{tokens_in, tokens_out, usd}` triple AND the
+   post-add `{rollup_tokens_in, rollup_tokens_out,
+   rollup_usd, rollup_samples}` snapshot so a reader can
+   reconstruct the budget trajectory without replaying.
+2. **Baseline M-1 dormancy.** Baseline `fs.read_file` /
+   `fs.write_file` / `fs.run_bash` never emit the
+   `cost=…` artifact, so the kind is dormant until the T-2
+   LLM driver lands the artifact emitter. The CostGuardian
+   itself is wired into the smoke entrypoint (`fa
+   inner-loop-smoke`) so the chain shape is stable across
+   the T-2 cut-over.
+3. **Cost-budget anchor.** `RuntimeLimits.cost_budget_usd`
+   gains the tri-mode semantics — `None` = unbounded (no
+   gating), `0.0` = observe-only (extractor still runs,
+   gate never denies), `> 0` = hard cap. Default is `None`
+   because the M-1 substrate has no cost signal on baseline
+   tools; pinning a concrete USD default would silently
+   shape the first T-2 runs before baseline USD is
+   measured. The YAML loader parses `cost_budget_usd` as
+   `float` (every other knob is an integer count); the
+   `_FLOAT_KEYS` set in `runtime_limits.py` documents the
+   per-key parse routing.
+
+**Subtraction-check (AGENTS.md §Pre-flight Step 4 / rule #10).**
+
+1. **Removing what makes this redundant?** None — no
+   existing artefact accumulates per-call cost.
+   `RuntimeLimits.max_iterations` caps round count, not
+   USD; `LoopGuard` caps repetition, not spend. The
+   cost-budget axis is unaddressed before this PR.
+2. **Capability lost if omitted?** With the T-2 LLM
+   driver landing next, a runaway loop or pricing change
+   can burn arbitrary USD; the M-1 retry/blocker stack
+   has no visibility into spend and cannot gate on it.
+3. **OSS precedent for not having it?** Ampcode «three
+   bare functions» harness has no spend gate (single-user,
+   local, single-model). DPC mainline integrates spend
+   via Anthropic's own usage headers — direct provider
+   path. FA's multi-provider + multi-tier scope makes a
+   harness-side gate load-bearing where a provider-side
+   gate is sufficient for both OSS precedents.
+4. **Step-as-function?** YES — extractor + accumulator
+   are pure Python; the gate is one comparison. No LLM
+   call introduced.
+
+**Files changed (this sub-amendment).**
+
+- `src/fa/observability/cost_guardian.py` — new module
+  (`CostObservation`, `CostRollup`, `CostExtractor`,
+  `default_cost_extractor`, `CostGuardian` subclass of
+  `GuardMiddleware` attaching to both `BEFORE_TOOL_EXEC`
+  and `AFTER_TOOL_EXEC`).
+- `src/fa/observability/__init__.py` — public exports.
+- `src/fa/inner_loop/runtime_limits.py` —
+  `DEFAULT_COST_BUDGET_USD`, `cost_budget_usd` field on
+  `RuntimeLimits`, `_FLOAT_KEYS` parse routing, YAML
+  loader extension.
+- `src/fa/inner_loop/state.py` — `cost_observation` row
+  in §«Extension kinds» docstring.
+- `src/fa/cli.py` — `CostGuardian` registration in
+  `_cmd_inner_loop_smoke` (between the blocker chain and
+  the VerifierObserver).
+- `tests/test_cost_guardian.py` — 12-test scope
+  (observation/rollup invariants, extractor parse paths,
+  all three gate modes, end-to-end via `run_session`).
+- `knowledge/adr/ADR-7-inner-loop-tool-registry.md` —
+  this sub-amendment.
+- `knowledge/adr/DIGEST.md` — ADR-7 row Amendments
+  bullet extended.
+- `knowledge/trace/exploration_log.md` — Q-7 amendment
+  block appended.
+- `knowledge/llms.txt` — routing entries for the two
+  new files.
+- `docs/glossary.md` — «cost guardian» row added.
+- `HANDOFF.md` — Wave-3 stack #1 entry + §Current state
+  ADR-7 amendments bullet.
+
+**Re-evaluation triggers (this sub-amendment).**
+
+- **T-2 LLM driver lands and emits `cost=…` artifacts on
+  every LLM call.** Action: re-measure baseline USD per
+  smoke run; consider pinning `DEFAULT_COST_BUDGET_USD` to
+  a non-`None` value once enough sessions have a baseline.
+- **A second observability middleware emerges (token
+  meter, latency tracker, …).** Action: factor the
+  `default_cost_extractor` artifact-parsing helper into a
+  shared `fa.observability.artifacts` module so both
+  middlewares share the same artifact-parsing contract.
 
 ## References
 
