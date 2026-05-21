@@ -27,6 +27,7 @@ from fa.inner_loop.hooks import (
     VerifierObserver,
 )
 from fa.inner_loop.tools import build_baseline_registry
+from fa.observability import CostGuardian
 from fa.verifier import load_contracts_from_dir
 
 
@@ -159,6 +160,11 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     hooks.register(AuthExpiredBlocker(suppression_seconds=limits.auth_expired_suppression_seconds))
     audit = AuditHook(event_log=log)
     hooks.register(audit)
+    # R-45 CostGuardian: dormant on baseline tools (no ``cost=…``
+    # artifact in ``ToolResult.artifacts``). Wired here so the chain
+    # is stable when the T-2 LLM driver lands the artifact emitter
+    # — mirrors the BlockerMiddleware-family rationale above.
+    hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
     # R-5 DSV: load every YAML contract under ``verifiers/`` so the
     # ``VerifierObserver`` can override LLM-claimed success on contract
     # mismatch (force_failure). Missing directory = empty contract map

@@ -1,19 +1,19 @@
-"""Runtime caps loaded from ``~/.fa/config.yaml`` (ADR-7 \u00a7Amendment 2026-05-20).
+"""Runtime caps loaded from ``~/.fa/config.yaml`` (ADR-7 §Amendment 2026-05-20).
 
 Two caps live on the loop driver, not in hook code:
 
-- ``max_iterations`` \u2014 hard cap on the deterministic loop (ADR-7 \u00a71
+- ``max_iterations`` — hard cap on the deterministic loop (ADR-7 §1
   step 8 + Amendment 2026-05-20 rule 2: default = 6 per R-30/YT-4
   empirical anchor).
-- ``bash_timeout_seconds`` \u2014 wall-clock timeout for ``fs.run_bash``
+- ``bash_timeout_seconds`` — wall-clock timeout for ``fs.run_bash``
   (anchored at 30s in v0.1; raise via config, never via a code constant).
 
-Amendment 2026-05-20 rule 1 says \u00abevery retry loop reads its hard cap
-from ``~/.fa/config.yaml`` \u2014 never from a constant in hook code\u00bb. The
+Amendment 2026-05-20 rule 1 says «every retry loop reads its hard cap
+from ``~/.fa/config.yaml`` — never from a constant in hook code». The
 M-1 substrate ships the canonical anchors as the documented fallback so
 the smoke entrypoint runs cleanly out-of-the-box; the future ``fa run``
-LLM driver (T-2) tightens this to \u00abrefuse to start on missing key\u00bb.
-This is the **T-4 mini** loader \u2014 it parses exactly the
+LLM driver (T-2) tightens this to «refuse to start on missing key».
+This is the **T-4 mini** loader — it parses exactly the
 ``runtime_limits:`` block; the full YAML loader lands with T-4 proper.
 """
 
@@ -29,9 +29,9 @@ from fa.inner_loop.recovery.attempt_history import (
     DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES,
 )
 
-# Anchors documented in ADR-7 \u00a7Amendment 2026-05-20 rule 2 (max_iterations=6)
+# Anchors documented in ADR-7 §Amendment 2026-05-20 rule 2 (max_iterations=6)
 # and the bash timeout that PR #24 introduced (30s). Both live here so any
-# code that needs the documented default imports from one place \u2014 no
+# code that needs the documented default imports from one place — no
 # magic constants in ``loop.py`` / ``run_bash.py``.
 DEFAULT_MAX_ITERATIONS = 6
 DEFAULT_BASH_TIMEOUT_SECONDS = 30
@@ -74,6 +74,16 @@ DEFAULT_QA_RECURRING_ISSUE_THRESHOLD = 3
 DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS = 30
 DEFAULT_LOCKFILE_SUPPRESSION_SECONDS = 5
 DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS = 0
+# Wave-3 R-45 cost guardian default. ``None`` = unbounded (no gating,
+# no upper limit); ``0.0`` = observe-only (extractor still runs and
+# the rollup still accumulates, but the gate never denies); ``> 0`` =
+# hard cap. The default sits at ``None`` because the M-1 substrate has
+# no cost signal on baseline tools (the LLM-driver T-2 emits the
+# ``cost=...`` artifact the extractor reads); pinning a concrete USD
+# default here would silently shape the first T-2 runs before the
+# baseline-USD is measured. See ``fa.observability.cost_guardian``
+# module docstring for the per-mode semantics.
+DEFAULT_COST_BUDGET_USD: float | None = None
 
 
 @dataclass(frozen=True)
@@ -100,10 +110,13 @@ class RuntimeLimits:
     rate_limit_suppression_seconds: int = DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS
     lockfile_suppression_seconds: int = DEFAULT_LOCKFILE_SUPPRESSION_SECONDS
     auth_expired_suppression_seconds: int = DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS
+    # Wave-3 R-45 cost guardian budget; see module-level
+    # ``DEFAULT_COST_BUDGET_USD`` anchor for the tri-mode semantics.
+    cost_budget_usd: float | None = DEFAULT_COST_BUDGET_USD
 
     @classmethod
     def anchored_defaults(cls) -> RuntimeLimits:
-        """Return the canonical defaults from ADR-7 \u00a7Amendment 2026-05-20."""
+        """Return the canonical defaults from ADR-7 §Amendment 2026-05-20."""
         return cls(
             max_iterations=DEFAULT_MAX_ITERATIONS,
             bash_timeout_seconds=DEFAULT_BASH_TIMEOUT_SECONDS,
@@ -118,6 +131,7 @@ class RuntimeLimits:
             rate_limit_suppression_seconds=DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS,
             lockfile_suppression_seconds=DEFAULT_LOCKFILE_SUPPRESSION_SECONDS,
             auth_expired_suppression_seconds=DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS,
+            cost_budget_usd=DEFAULT_COST_BUDGET_USD,
         )
 
 
@@ -151,6 +165,7 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
         "rate_limit_suppression_seconds",
         "lockfile_suppression_seconds",
         "auth_expired_suppression_seconds",
+        "cost_budget_usd",
     }
 )
 
@@ -159,14 +174,23 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
 # <= 0``, see ``hooks/blockers.py`` ``_gate``). The default validator
 # rejects ``value <= 0`` because every other knob in the config (loop
 # caps, history limits, QA thresholds) must be strictly positive; these
-# three are the explicit exception.
+# four are the explicit exception (three R-4 suppression windows +
+# R-45 ``cost_budget_usd`` where ``0`` is observe-only — see
+# ``fa.observability.cost_guardian`` module docstring).
 _ZERO_ALLOWED_KEYS: frozenset[str] = frozenset(
     {
         "rate_limit_suppression_seconds",
         "lockfile_suppression_seconds",
         "auth_expired_suppression_seconds",
+        "cost_budget_usd",
     }
 )
+
+# Keys parsed as ``float`` rather than ``int``. ``cost_budget_usd`` is
+# a USD value (R-45) so the YAML config can carry sub-dollar budgets
+# like ``0.50`` without losing precision; every other knob is an
+# integer count (iterations, seconds, entries, ...).
+_FLOAT_KEYS: frozenset[str] = frozenset({"cost_budget_usd"})
 
 
 def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
@@ -185,11 +209,19 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
     inherit the documented anchors so the loop driver still starts.
     Negative values surface as warnings and the anchor is kept. ``0``
     is rejected for every key **except** the
-    :data:`_ZERO_ALLOWED_KEYS` set (the three ``*_suppression_seconds``
-    blocker knobs where ``0`` means «observe-only»).
+    :data:`_ZERO_ALLOWED_KEYS` set (the three R-4 ``*_suppression_seconds``
+    blocker knobs where ``0`` means «observe-only», plus the R-45
+    ``cost_budget_usd`` knob with the same observe-only semantics).
+    Values for keys in :data:`_FLOAT_KEYS` are parsed as ``float``
+    rather than ``int`` (currently just R-45 ``cost_budget_usd``).
     """
 
+    # Two dicts keyed by ``_FLOAT_KEYS`` membership so the dataclass
+    # constructor below can type-narrow each ``found.get`` call to its
+    # exact field type (avoids ``int | float`` unions leaking into the
+    # constructor under mypy --strict).
     found: dict[str, int] = {}
+    found_float: dict[str, float] = {}
     warnings: list[RuntimeLimitsWarning] = []
     in_block = False
 
@@ -212,8 +244,41 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
         if key not in _KNOWN_KEYS:
             warnings.append(RuntimeLimitsWarning(line_no=line_no, key=key, detail="unknown key"))
             continue
+        # R-45: ``cost_budget_usd`` is a float-valued USD knob; every
+        # other key is an integer count (iterations, seconds, entries,
+        # …). Keep the per-key parse type explicit so a typo in one
+        # key never silently falls through the wrong type-check.
+        if key in _FLOAT_KEYS:
+            try:
+                float_value = float(value_str)
+            except ValueError:
+                warnings.append(
+                    RuntimeLimitsWarning(
+                        line_no=line_no,
+                        key=key,
+                        detail=f"non-numeric value: {value_str!r}",
+                    )
+                )
+                continue
+            min_allowed_float = 0.0 if key in _ZERO_ALLOWED_KEYS else 1.0
+            if float_value < min_allowed_float:
+                detail = (
+                    f"value must be non-negative: {float_value}"
+                    if key in _ZERO_ALLOWED_KEYS
+                    else f"value must be positive: {float_value}"
+                )
+                warnings.append(
+                    RuntimeLimitsWarning(
+                        line_no=line_no,
+                        key=key,
+                        detail=detail,
+                    )
+                )
+                continue
+            found_float[key] = float_value
+            continue
         try:
-            value = int(value_str)
+            int_value = int(value_str)
         except ValueError:
             warnings.append(
                 RuntimeLimitsWarning(
@@ -224,11 +289,11 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
             )
             continue
         min_allowed = 0 if key in _ZERO_ALLOWED_KEYS else 1
-        if value < min_allowed:
+        if int_value < min_allowed:
             detail = (
-                f"value must be non-negative: {value}"
+                f"value must be non-negative: {int_value}"
                 if key in _ZERO_ALLOWED_KEYS
-                else f"value must be positive: {value}"
+                else f"value must be positive: {int_value}"
             )
             warnings.append(
                 RuntimeLimitsWarning(
@@ -238,7 +303,7 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
                 )
             )
             continue
-        found[key] = value
+        found[key] = int_value
 
     limits = RuntimeLimits(
         max_iterations=found.get("max_iterations", DEFAULT_MAX_ITERATIONS),
@@ -270,6 +335,7 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
         auth_expired_suppression_seconds=found.get(
             "auth_expired_suppression_seconds", DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS
         ),
+        cost_budget_usd=found_float.get("cost_budget_usd", DEFAULT_COST_BUDGET_USD),
     )
     return RuntimeLimitsLoadResult(limits=limits, warnings=tuple(warnings))
 
@@ -281,7 +347,7 @@ def load_runtime_limits_from_path(
 
     Missing file = anchored defaults + empty warnings (the smoke
     entrypoint must run before the user creates ``~/.fa/config.yaml``).
-    The stricter \u00abrefuse-to-start-on-missing-key\u00bb mode lands with the
+    The stricter «refuse-to-start-on-missing-key» mode lands with the
     ``fa run`` driver in T-2.
     """
 
@@ -297,6 +363,7 @@ __all__ = [
     "DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES",
     "DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS",
     "DEFAULT_BASH_TIMEOUT_SECONDS",
+    "DEFAULT_COST_BUDGET_USD",
     "DEFAULT_LOCKFILE_SUPPRESSION_SECONDS",
     "DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER",
     "DEFAULT_LOOP_GUARD_REPEAT_WARN",

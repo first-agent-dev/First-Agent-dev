@@ -1164,6 +1164,116 @@ disjoint invariant** so the v0.2 amendment cannot regress.
   the Correlated §4.1 finding holds in code-gen domain but
   remains pending replication in FA-specific workload.
 
+### Sub-amendment 2026-05-21 — R-45 cost guardian + `cost_observation` event-kind
+
+**Source.** Implementation roadmap
+[`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+§R-45 (Wave 3 — observability + gating). Documentation-only
+shape change to §7 «`events.jsonl`» event-kind enumeration;
+no shape change to §1 inner-loop driver, §5 input
+validation, §8 hook pipeline (R-45 is one
+`GuardMiddleware` subclass following the existing contract
+— ADR-8 is the contract anchor; this ADR's §7 is the
+schema anchor).
+
+**Decision (extension to §7 «`events.jsonl`» extension-kinds
+enumeration).**
+
+1. **New extension kind `cost_observation`** — one row per
+   recognised `cost=…` artifact in `ToolResult.artifacts`.
+   Emitted by `fa.observability.cost_guardian.CostGuardian`
+   when an `EventLog` is wired into the constructor. `actor`
+   = `"hook"`; `tool_name` / `tool_call_id` pin to the
+   `ToolCall` the artifact came from; `content` carries the
+   per-call `{tokens_in, tokens_out, usd}` triple AND the
+   post-add `{rollup_tokens_in, rollup_tokens_out,
+   rollup_usd, rollup_samples}` snapshot so a reader can
+   reconstruct the budget trajectory without replaying.
+2. **Baseline M-1 dormancy.** Baseline `fs.read_file` /
+   `fs.write_file` / `fs.run_bash` never emit the
+   `cost=…` artifact, so the kind is dormant until the T-2
+   LLM driver lands the artifact emitter. The CostGuardian
+   itself is wired into the smoke entrypoint (`fa
+   inner-loop-smoke`) so the chain shape is stable across
+   the T-2 cut-over.
+3. **Cost-budget anchor.** `RuntimeLimits.cost_budget_usd`
+   gains the tri-mode semantics — `None` = unbounded (no
+   gating), `0.0` = observe-only (extractor still runs,
+   gate never denies), `> 0` = hard cap. Default is `None`
+   because the M-1 substrate has no cost signal on baseline
+   tools; pinning a concrete USD default would silently
+   shape the first T-2 runs before baseline USD is
+   measured. The YAML loader parses `cost_budget_usd` as
+   `float` (every other knob is an integer count); the
+   `_FLOAT_KEYS` set in `runtime_limits.py` documents the
+   per-key parse routing.
+
+**Subtraction-check (AGENTS.md §Pre-flight Step 4 / rule #10).**
+
+1. **Removing what makes this redundant?** None — no
+   existing artefact accumulates per-call cost.
+   `RuntimeLimits.max_iterations` caps round count, not
+   USD; `LoopGuard` caps repetition, not spend. The
+   cost-budget axis is unaddressed before this PR.
+2. **Capability lost if omitted?** With the T-2 LLM
+   driver landing next, a runaway loop or pricing change
+   can burn arbitrary USD; the M-1 retry/blocker stack
+   has no visibility into spend and cannot gate on it.
+3. **OSS precedent for not having it?** Ampcode «three
+   bare functions» harness has no spend gate (single-user,
+   local, single-model). DPC mainline integrates spend
+   via Anthropic's own usage headers — direct provider
+   path. FA's multi-provider + multi-tier scope makes a
+   harness-side gate load-bearing where a provider-side
+   gate is sufficient for both OSS precedents.
+4. **Step-as-function?** YES — extractor + accumulator
+   are pure Python; the gate is one comparison. No LLM
+   call introduced.
+
+**Files changed (this sub-amendment).**
+
+- `src/fa/observability/cost_guardian.py` — new module
+  (`CostObservation`, `CostRollup`, `CostExtractor`,
+  `default_cost_extractor`, `CostGuardian` subclass of
+  `GuardMiddleware` attaching to both `BEFORE_TOOL_EXEC`
+  and `AFTER_TOOL_EXEC`).
+- `src/fa/observability/__init__.py` — public exports.
+- `src/fa/inner_loop/runtime_limits.py` —
+  `DEFAULT_COST_BUDGET_USD`, `cost_budget_usd` field on
+  `RuntimeLimits`, `_FLOAT_KEYS` parse routing, YAML
+  loader extension.
+- `src/fa/inner_loop/state.py` — `cost_observation` row
+  in §«Extension kinds» docstring.
+- `src/fa/cli.py` — `CostGuardian` registration in
+  `_cmd_inner_loop_smoke` (between the blocker chain and
+  the VerifierObserver).
+- `tests/test_cost_guardian.py` — 12-test scope
+  (observation/rollup invariants, extractor parse paths,
+  all three gate modes, end-to-end via `run_session`).
+- `knowledge/adr/ADR-7-inner-loop-tool-registry.md` —
+  this sub-amendment.
+- `knowledge/adr/DIGEST.md` — ADR-7 row Amendments
+  bullet extended.
+- `knowledge/trace/exploration_log.md` — Q-7 amendment
+  block appended.
+- `knowledge/llms.txt` — routing entries for the two
+  new files.
+- `docs/glossary.md` — «cost guardian» row added.
+- `HANDOFF.md` — Wave-3 stack #1 entry + §Current state
+  ADR-7 amendments bullet.
+
+**Re-evaluation triggers (this sub-amendment).**
+
+- **T-2 LLM driver lands and emits `cost=…` artifacts on
+  every LLM call.** Action: re-measure baseline USD per
+  smoke run; consider pinning `DEFAULT_COST_BUDGET_USD` to
+  a non-`None` value once enough sessions have a baseline.
+- **A second observability middleware emerges (token
+  meter, latency tracker, …).** Action: factor the
+  `default_cost_extractor` artifact-parsing helper into a
+  shared `fa.observability.artifacts` module so both
+  middlewares share the same artifact-parsing contract.
+
 ## References
 
 - [HANDOFF.md §Next steps item 1](../../HANDOFF.md#next-steps-intended-order) — the explicit six-surface scope this ADR pins.

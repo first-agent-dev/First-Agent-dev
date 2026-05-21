@@ -78,6 +78,18 @@ for v0.1.
   metadata; no provider translation. Source:
   [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
   §R-18.
+- **2026-05-21 (Wave-3 sub-amendment)** — R-19 role-layer
+  enforcement of the 2026-05-20 amendment landed: `src/fa/roles.py`
+  ships `extract_family` (regex slug-to-family inference with
+  default-deny on ambiguous slugs) and `check_eval_disjoint`
+  (pure-function role-config check; raises
+  `EvalFamilyConflictError` when eval shares family with planner
+  or coder). Loader call site lands with the T-2 LLM driver; the
+  hook-layer call site already lives in
+  [ADR-7 §Amendment 2026-05-20](./ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+  rule 4. The rule now has runtime enforcement at both layers.
+  Source: [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-19.
 
 **Source:** [`ADR-2`](./ADR-2-llm-tiering.md).
 
@@ -239,6 +251,22 @@ concrete carriers; single source of truth for every tool PR.
   Source:
   [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
   §R-7 / §R-28 / §R-29 / §R-30 + §R-23.
+- **2026-05-21 (Wave-3 sub-amendment)** — R-45 cost guardian +
+  `cost_observation` event-kind. Adds one extension row to §7
+  «`events.jsonl`» enumeration; no shape change to §1 driver,
+  §5 input validation, §8 hook pipeline.
+  `src/fa/observability/cost_guardian.py` ships a single
+  `GuardMiddleware` that attaches to both `BEFORE_TOOL_EXEC`
+  (gates when `RuntimeLimits.cost_budget_usd` exceeded) and
+  `AFTER_TOOL_EXEC` (parses `cost=…` artifacts via
+  `default_cost_extractor`, accumulates per-session
+  `CostRollup`, writes `cost_observation` rows when an
+  `EventLog` is wired). `cost_budget_usd` is tri-mode —
+  `None` unbounded (default), `0.0` observe-only, `> 0`
+  hard cap. Dormant on baseline M-1 tools; wakes when the
+  T-2 LLM driver lands the artifact emitter. Source:
+  [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-45.
 
 **Source:** [`ADR-7`](./ADR-7-inner-loop-tool-registry.md).
 
