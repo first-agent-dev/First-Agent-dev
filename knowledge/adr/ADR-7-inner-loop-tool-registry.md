@@ -1288,7 +1288,16 @@ under `knowledge/trace/`, not new event rows.
    for R-8. Duplicating them into `events.jsonl` as
    `kind="learning"` would add trace noise without adding a
    replay invariant.
-3. **Single-writer boundary stays unchanged.** The underlying
+3. **Observer write failures use the existing hook audit row.**
+   `HookRegistry.dispatch` catches observer exceptions and emits a
+   `hook_decision` row with
+   `decision="observer_error_swallowed"` plus `reason=str(exc)` when
+   `run_session` has attached an `EventLog` sink. A broken
+   `knowledge/trace/` write path is therefore diagnosable in the
+   existing session event log (for smoke CLI:
+   `.fa/smoke-events.jsonl`) without adding a second reader or a
+   new `EventLog.kind`.
+4. **Single-writer boundary stays unchanged.** The underlying
    `record_discovery()` / `record_gotcha()` functions keep their
    existing atomic-rename, single-process writer contract. The
    HookRegistry invokes observers serially in one process, so the

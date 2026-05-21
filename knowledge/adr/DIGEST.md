@@ -276,6 +276,9 @@ concrete carriers; single source of truth for every tool PR.
   `knowledge/trace/gotchas.md`. No new `EventLog.kind` is added:
   the filesystem artifacts are the durable R-8 audit surface and
   duplicating them into `events.jsonl` would add trace noise.
+  Observer write failures still surface in existing `hook_decision`
+  rows as `decision="observer_error_swallowed"` (for smoke CLI:
+  `.fa/smoke-events.jsonl`), so no dedicated reader is added.
   Source:
   [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
   §R-8.

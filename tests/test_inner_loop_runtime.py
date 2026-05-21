@@ -20,6 +20,7 @@ from fa.inner_loop.hooks import (
     HookPayload,
     HookRegistry,
     LifecyclePoint,
+    ObserverMiddleware,
     PauseGuard,
     SandboxHook,
 )
@@ -312,6 +313,55 @@ class _BetweenRoundsCountingGuard(GuardMiddleware):
         del point
         self.calls.append("" if payload.tool_call is None else payload.tool_call.name)
         return Decision.allow()
+
+
+class _FailingObserver(ObserverMiddleware):
+    name = "failing-observer"
+    attaches_to = (LifecyclePoint.AFTER_TOOL_EXEC,)
+
+    def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
+        del point, payload
+        raise RuntimeError("observer write failed")
+
+
+def test_run_session_records_swallowed_observer_errors(tmp_path: Path) -> None:
+    """Observer side-effect failures are non-fatal but still auditable.
+
+    This is the safety net for filesystem-canon observers such as
+    ``LearningObserver``: a broken write path must not fail the tool
+    result, but the existing ``hook_decision`` row is the durable place
+    to diagnose the swallowed observer exception.
+    """
+
+    (tmp_path / "input.txt").write_text("hello\n", encoding="utf-8")
+    registry = build_baseline_registry(tmp_path)
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    hooks.register(_FailingObserver())
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="t-observer-error",
+        log=EventLog(tmp_path / "ev.jsonl"),
+    )
+
+    results = run_session(
+        (ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),),
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert results[0].error is None
+    events = state.log.read_all()
+    observer_rows = [
+        event
+        for event in events
+        if event.kind == "hook_decision" and event.content.get("middleware") == "failing-observer"
+    ]
+    assert len(observer_rows) == 1
+    row = observer_rows[0]
+    assert row.content["decision"] == "observer_error_swallowed"
+    assert row.content["reason"] == "observer write failed"
 
 
 def test_between_rounds_fires_on_iteration_1(tmp_path: Path) -> None:

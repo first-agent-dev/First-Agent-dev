@@ -489,7 +489,10 @@
   tool error it appends `knowledge/trace/gotchas.md` via
   `record_gotcha`. Do **not** introduce `kind="learning"` in
   `events.jsonl`; the two files are the durable audit trail for
-  R-8.
+  R-8. If a filesystem-canon write fails, reuse the existing
+  `hook_decision` audit row
+  (`decision="observer_error_swallowed"`, `reason=str(exc)`) rather
+  than adding a new reader surface.
 - **Rejected:**
   - **Leave R-8 as standalone writer functions only.** Reason:
     the R-8 Python ports and `LearningObserver` class already
@@ -505,6 +508,12 @@
     event kind only if a downstream consumer needs to correlate
     learning writes with raw event order and cannot read the
     filesystem artifacts directly.
+  - **Add a dedicated reader/CLI for swallowed observer errors.**
+    Reason: the existing `EventLog` already records observer
+    failures as `hook_decision` rows whenever `run_session` attaches
+    the HookRegistry event sink; a separate reader is T-3 diagnostics
+    scope, not required for R-8 wiring. Lesson: revisit when a
+    general `fa events` / trace-inspection command is scoped.
   - **Move `LearningObserver` into `src/fa/observability/` before
     wiring.** Reason: extra move/rename churn for no capability
     gain; `builtin.py` already exports the class and tests cover it.

@@ -35,7 +35,9 @@
 > plus tool errors to `knowledge/trace/gotchas.md`. ADR-7
 > §Sub-amendment 2026-05-21b documents that no new
 > `EventLog.kind` is added because R-8 writes filesystem
-> artifacts, not `events.jsonl` rows.
+> artifacts, not `events.jsonl` rows; observer write failures
+> still surface through existing `hook_decision` rows as
+> `observer_error_swallowed` in `.fa/smoke-events.jsonl`.
 >
 > **PR-4 review-fix iteration (2026-05-21).** Four follow-up
 > commits on the same branch addressed Devin Review runs 1/2/3
@@ -309,7 +311,8 @@ manually beyond this point.
     `knowledge/trace/codebase_map.json`, failures append
     `knowledge/trace/gotchas.md`, and no new `EventLog.kind`
     is added because the filesystem artifacts are the audit
-    surface.
+    surface. Observer write failures reuse the existing
+    `hook_decision` / `observer_error_swallowed` row.
   - [ADR-8](./knowledge/adr/ADR-8-hook-registry.md) —
     HookRegistry middleware-chain contract (doc-first; runtime
     BACKLOG M-1 — **closed by PR #24**). Five lifecycle points (`BETWEEN_ROUNDS` /
