@@ -352,6 +352,7 @@ def test_run_session_records_swallowed_observer_errors(tmp_path: Path) -> None:
     )
 
     assert results[0].error is None
+    assert state.log is not None
     events = state.log.read_all()
     observer_rows = [
         event
