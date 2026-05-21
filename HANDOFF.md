@@ -23,9 +23,34 @@
 > a role-layer sub-amendment, mirrors it in DIGEST.md, appends an
 > exploration_log block, refreshes `knowledge/llms.txt` for the
 > two new files, and adds the `cost guardian` / `family extractor`
-> glossary rows. 471 tests passing (+57 over PR-3; +29 from R-45 +
+> glossary rows. 481 tests passing (+67 over PR-3; +29 from R-45 +
 > R-19 + cleanup, +8 fixed pre-existing mypy strict errors in
-> test files).
+> test files, +10 from four Devin-Review iteration commits — see
+> §Current state «PR-4 review-fix iteration» bullet below).
+>
+> **PR-4 review-fix iteration (2026-05-21).** Four follow-up
+> commits on the same branch addressed Devin Review runs 1/2/3
+> + a CodeQL nit, all gated and pushed:
+> [`48138c2`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/48138c2)
+> covered the missing YAML `_FLOAT_KEYS` parse tests;
+> [`bf0ba14`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/bf0ba14)
+> rewrote `CostExtractor` to return `list[CostObservation]` per
+> ADR-7 §Sub-amendment 2026-05-21 «one row per artifact» mandate
+> (was returning only the first artifact — silently undercounted
+> USD when a tool emits multiple `cost=…` rows; will matter once
+> T-2 LLM driver lands) and added the
+> `_FAMILY_PATTERNS ⊆ KNOWN_FAMILIES` sync-invariant test promised
+> by the `tests/test_roles.py` module docstring;
+> [`48dabe3`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/48dabe3)
+> rejected NaN/Inf at three layers (`CostObservation.__post_init__`,
+> `CostGuardian.__init__`, `runtime_limits._FLOAT_KEYS` parser) —
+> `float("nan")` and `float("inf")` parse without raising and NaN
+> permanently poisons the rollup (`x + NaN == NaN`; `NaN > budget`
+> always False so the gate silently stops denying);
+> [`dd97972`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/dd97972)
+> split three `assert x == DEFAULT is None` chained comparisons
+> into explicit `is None` checks (CodeQL py/test-equals-none nit).
+> Session-completion audit (out-of-tree): `/home/ubuntu/wave-3-session-audit.md`.
 >
 > **PR-26 deferred review threads landed in
 > [`6fce6b3`](https://github.com/Bupitsa-ai/First-Agent-debloat/commit/6fce6b3)
