@@ -867,3 +867,86 @@
   [`research/gortex-aperant-inspiration-2026-05.md`](../research/gortex-aperant-inspiration-2026-05.md)
   Aperant items 6 + 13 (validators + path-containment) and
   Gortex Tier-1 item M (`bash_classify.go`).
+
+## Q-11 — How do we prevent the spec-bypassing-workaround pattern (AP-001) from re-emerging in OSS-LLM operation? (2026-05-22)
+
+- **Closed by:**
+  [`knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md`](../anti-patterns/AP-001-spec-bypassing-workaround.md)
+  + [AGENTS.md §Change Classification](../../AGENTS.md#change-classification)
+  + [`tests/test_cli.py::test_invariant_adr7_r8_canon_root_is_knowledge_trace`](../../tests/test_cli.py)
+  (M1 PR; no new ADR).
+- **Coupling:** Q-7 §Sub-amendment 2026-05-21b — the AP-001
+  worked-history note lives in that ADR section; Q-11 generalises
+  the lesson into a project-wide forcing-function model.
+- **Chosen:** Three structural layers, ranked by leverage-per-token,
+  optimised for **action count** rather than rule count:
+  (1) **Layer 1 — Change-Classification prefix** in
+  [`AGENTS.md` §Change Classification](../../AGENTS.md#change-classification).
+  Module-touching PRs and the first module-touching commit on a
+  branch open with `CLASS: REPAIR | RELAX | WORKAROUND` +
+  `INVARIANT: <one sentence>`. One mandatory action per PR; the
+  act of naming CLASS surfaces the contradiction at write-time and
+  at review-time.
+  (2) **Layer 2 — Named ADR-bound invariant tests.** For each ADR
+  amendment's invariant, one test whose name encodes the
+  assertion. Worked example:
+  `test_invariant_adr7_r8_canon_root_is_knowledge_trace`. Retrofit
+  is **opportunistic** (when an ADR amendment touches an
+  invariant), not a campaign — zero new actions for the LLM, the
+  test either exists or it does not.
+  (3) **Layer 3 — Review-time prompt** in the PR review carrier
+  (Devin Review prompt, PR template, self-review checklist): «Does
+  this PR change *what the module does* or *how reliably it does
+  it*? If the former, link the ADR amendment.» Documentary in M1;
+  catches whatever Layers 1+2 missed.
+  The catalog entry
+  [`AP-001`](../anti-patterns/AP-001-spec-bypassing-workaround.md)
+  is the durable evidence anchor; future entries land alongside it.
+- **Rejected:**
+  - **Add rule #N+1 to AGENTS.md («Do not bypass module
+    invariants»).** Reason: weaker OSS LLMs ignore ~30+ rule-lines
+    under attention load (FA's documented behaviour); adding
+    another rule competes with existing rules for attention and
+    loses under load. The wrong shape is action-count-dominated,
+    not rule-count-dominated; more rules do not fix it. Lesson:
+    revisit only if a measurement shows compliance with a specific
+    new rule exceeds 50% on the target OSS LLM tier without
+    crowding-out existing rules.
+  - **Mechanise CLASS-prefix detection in CI.** Reason: too brittle
+    too soon (regex over commit-message bodies is fragile;
+    contributors will fight the regex more than the discipline).
+    Lesson: revisit once Layer 1 has measurable signal that
+    contributors / agents actually skip the prefix at a rate ≥10%,
+    at which point a lightweight pre-commit hook is the natural
+    next step.
+  - **Mandate a second-LLM code review of every PR.** Reason: real
+    cost (token spend, latency, queue depth) without a measured
+    improvement over Layers 1+2 first. Also imports the «retry
+    with paraphrase» anti-pattern explicitly rejected by
+    [`AGENTS.md` PR Checklist rule #10](../../AGENTS.md#pr-checklist)
+    («prompt-diversity layer is not a valid harness component»).
+    Lesson: revisit only if Layers 1+2 leave a measurable
+    invariant-bypass rate after one full Stage-2 cycle.
+  - **Build a static linter for invariant strings.** Reason:
+    invariants live in prose (ADRs / docstrings / commit
+    messages); a static linter would either miss most of them or
+    require enforcing structured invariant-declarations across the
+    whole codebase, which is a much larger project than M1
+    scopes. Lesson: revisit only if a high-precision invariant-
+    extraction parser becomes available (e.g. from a future
+    Stage-2 LLM-driven docs pipeline).
+- **Re-evaluation triggers:** (1) Three or more `AP-NNN` entries
+  exist → the R-32 «detector personas» layer (specific prompts
+  that scan the codebase for each anti-pattern) becomes worth
+  designing; (2) Layer-1 declarations get systematically omitted
+  by Devin / DeepSeek / Kimi at a rate ≥10% over a measured
+  sample → escalate to the mechanised-detection branch; (3) A new
+  ADR's invariant cannot be encoded as a single named test (e.g.
+  the invariant is over multiple files' joint behaviour) → revise
+  the Layer-2 shape to allow named-invariant *test groups* with a
+  common slug.
+- **Source:**
+  [`knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md`](../anti-patterns/AP-001-spec-bypassing-workaround.md)
+  + [AGENTS.md §Change Classification](../../AGENTS.md#change-classification)
+  + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-32.

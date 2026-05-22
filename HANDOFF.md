@@ -29,7 +29,8 @@
 > §Current state «PR-4 review-fix iteration» bullet below).
 >
 > **Current update (2026-05-21, refined 2026-05-22 same PR, M0a
-> follow-up 2026-05-22):** R-8 filesystem-canon writer is
+> follow-up 2026-05-22, M1 anti-pattern catalog 2026-05-22):** R-8
+> filesystem-canon writer is
 > operationally wired in the smoke CLI: `LearningObserver` registers
 > after `CostGuardian` in `fa inner-loop-smoke`. Smoke and the T-2
 > real runtime share the **single canon root**
@@ -63,6 +64,32 @@
 > decoupling «smoke proves R-8» from «R-8 writes cross-session
 > memory under `knowledge/trace/`» — see exploration_log Q-7
 > Rejected blocks.
+>
+> **M1 anti-pattern catalog (2026-05-22, separate PR from main).**
+> `knowledge/anti-patterns/` directory opened with two files:
+> `README.md` (entry schema + Layer-1/2/3 detection model) and
+> `AP-001-spec-bypassing-workaround.md` (the wave-3 R-8 incident
+> verbatim — wrong shape = `.fa/` path relocation in `5c1db0f`,
+> right shape = M0a's three forcing functions, the cost-asymmetry
+> trap that produced the workaround under any rough heuristic, and
+> the three structural detection layers). Same PR adds
+> [`AGENTS.md` §Change Classification](./AGENTS.md#change-classification)
+> (Layer 1 — mandatory `CLASS: REPAIR | RELAX | WORKAROUND` +
+> `INVARIANT:` lines in module-touching PR descriptions and the
+> first module-touching commit), the named-invariant test
+> `tests/test_cli.py::test_invariant_adr7_r8_canon_root_is_knowledge_trace`
+> (Layer 2 — worked example, mechanical spec→test link for the R-8
+> canon-root invariant), and full doc sync (ADR-7 §Sub-amendment
+> 2026-05-21b worked-history note extended with the M1 cross-link,
+> DIGEST.md row extended, knowledge/README.md §Layout updated,
+> knowledge/llms.txt §Anti-pattern catalog added,
+> `knowledge/trace/exploration_log.md` Q-11 appended capturing the
+> three-layer decision with rejected alternatives «add rule
+> #N+1 to AGENTS.md», «mechanise CLASS-prefix in CI», «second-LLM
+> code review», «static linter for invariant strings»). Detector
+> personas (R-32 §What original spec) deferred until ≥3 catalog
+> entries exist. Layer 3 (review-time prompt in PR review carrier)
+> documentary-only in M1.
 >
 > **PR-4 review-fix iteration (2026-05-21).** Four follow-up
 > commits on the same branch addressed Devin Review runs 1/2/3
@@ -350,6 +377,13 @@ manually beyond this point.
     failures (including the real `LearningObserver` →
     `record_discovery` → `OSError` chain) reuse the existing
     `hook_decision` / `observer_error_swallowed` row.
+    **Worked-history cross-link (M1, 2026-05-22):** the M0a
+    revert + reliability pattern is catalogued at
+    [`knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md`](./knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md);
+    Layer-1 forcing function at
+    [`AGENTS.md` §Change Classification](./AGENTS.md#change-classification);
+    Layer-2 named-invariant test at
+    `tests/test_cli.py::test_invariant_adr7_r8_canon_root_is_knowledge_trace`.
   - [ADR-8](./knowledge/adr/ADR-8-hook-registry.md) —
     HookRegistry middleware-chain contract (doc-first; runtime
     BACKLOG M-1 — **closed by PR #24**). Five lifecycle points (`BETWEEN_ROUNDS` /
@@ -557,11 +591,16 @@ what was deferred and how each was resolved.
    (`now="2026-05-21T00:00:00Z"`), `record_gotcha` byte-suffix
    dedup, and a seed `codebase_map.json` baseline + snapshot test.
    The T-2 real runtime will reuse this exact path with `now=None`
-   for live wall-clock provenance once it lands.
+   for live wall-clock provenance once it lands. **R-32
+   (anti-pattern catalog skeleton) is landed in M1** — see
+   [`knowledge/anti-patterns/`](./knowledge/anti-patterns/README.md)
+   and the §Current update «M1 anti-pattern catalog» block above
+   for the three-layer model (Change-Classification prefix +
+   named-invariant tests + review-time prompt).
    Remaining cheap-impl candidates from the 2026-05-21 7-column table:
    - **R-17 / R-16 / R-24** — need scope decisions from the
      project lead before queuing.
-   - **R-31 / R-32 / R-33** — need ADR-9 timing decision.
+   - **R-31 / R-33** — need ADR-9 timing decision.
    - **T-2 LLM driver** — unblocks the R-45 cost guardian
      (artifact emitter currently dormant on baseline tools).
 

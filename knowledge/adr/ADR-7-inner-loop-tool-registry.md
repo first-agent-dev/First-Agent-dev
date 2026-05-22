@@ -1292,6 +1292,19 @@ under a workspace-canon root, not new event rows.
   regression test — so repeated smoke runs against the live repo
   stay byte-identical and `git status` naturally stays clean
   without bypassing the spec.
+- **M1 (2026-05-22, separate PR).** The first-follow-up pattern is
+  catalogued as
+  [`knowledge/anti-patterns/AP-001`](../anti-patterns/AP-001-spec-bypassing-workaround.md)
+  («Spec-bypassing workaround masquerading as fix») so future
+  sessions recognise the shape without re-paying the lesson. The
+  same PR adds the
+  [`AGENTS.md` §Change Classification](../../AGENTS.md#change-classification)
+  forcing function (Layer 1) and one named-invariant test
+  ([`test_invariant_adr7_r8_canon_root_is_knowledge_trace`](../../tests/test_cli.py))
+  as the worked example of Layer 2 — a test whose name mechanically
+  links this sub-amendment's «canon at `knowledge/trace/`»
+  invariant to the test surface, so a future relocation cannot
+  silently pass CI.
 
 **Decision.**
 

@@ -301,9 +301,17 @@ concrete carriers; single source of truth for every tool PR.
   status` symptom; that was a spec-bypassing workaround that
   decoupled «smoke proves R-8» from «R-8 writes cross-session
   memory under `knowledge/trace/`» and was reverted in M0a.
+  **M1 follow-up (2026-05-22, separate PR):** the pattern is
+  catalogued at
+  [`knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md`](../anti-patterns/AP-001-spec-bypassing-workaround.md),
+  the
+  [`AGENTS.md` §Change Classification](../../AGENTS.md#change-classification)
+  forcing function (Layer 1) is now active, and
+  [`test_invariant_adr7_r8_canon_root_is_knowledge_trace`](../../tests/test_cli.py)
+  is the Layer-2 worked example (named-invariant test).
   Source:
   [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
-  §R-8.
+  §R-8 + §R-32.
 
 **Source:** [`ADR-7`](./ADR-7-inner-loop-tool-registry.md).
 
