@@ -86,7 +86,10 @@ this order:
    catalog (`knowledge/anti-patterns/`)` so future agents discover the
    entry via the routing surface, not by grep alone. The section name
    must match the heading in `knowledge/llms.txt:125` exactly so a
-   `grep`-based agent finds it.
+   `grep`-based agent finds it. Row format follows
+   [`knowledge/MAINTENANCE.md` §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge):
+   `- [path/to/file.md](raw-url) (~N lines): description.` — file
+   length rounded to the nearest ten.
 5. Include in the PR description: «Anti-pattern catalogued: `AP-NNN`
    ([link]). CLASS: <REPAIR|RELAX|WORKAROUND>. INVARIANT: <one
    sentence>.» — see

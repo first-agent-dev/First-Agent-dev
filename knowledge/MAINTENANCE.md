@@ -107,6 +107,32 @@ should not back-fill existing rows).
    intent table **only if the same intent has resolved to the
    same template twice** — do not pre-populate speculative rows
    (per `RESOLVER.md` §«When to add a row»).
+
+## When adding a new anti-pattern entry
+
+Cheap-read overlay; authoritative source remains
+[`knowledge/anti-patterns/README.md` §How a new entry lands](./anti-patterns/README.md#how-a-new-entry-lands).
+The catalog's own README owns the canonical 5-step checklist
+(pick `AP-NNN`, fill schema sections, cross-link from ADR /
+DIGEST / exploration_log, update `llms.txt`, include the line
+in the PR description). This section exists only to keep the
+maintenance surface complete — an agent reading
+`MAINTENANCE.md` for «I am adding a new artefact that joins
+the cross-reference web, which checklist applies?» finds the
+pointer here without having to know the README exists.
+
+1. Open [`knowledge/anti-patterns/README.md` §How a new entry
+   lands](./anti-patterns/README.md#how-a-new-entry-lands) and
+   follow steps 1–5 verbatim.
+2. The llms.txt step (§How a new entry lands #4) is the same
+   shape as the §When adding a new file under `docs/` or
+   `knowledge/` checklist above — `(~N lines)` rounded to the
+   nearest ten, row added under the §Anti-pattern catalog
+   subsection.
+3. Cross-link from the new entry's §Linked-ADR section back to
+   the relevant ADR's worked-history note in the same PR (per
+   [AGENTS.md PR Checklist rule #9](../AGENTS.md#pr-checklist)
+   second sentence).
 2. Add a row to [`knowledge/llms.txt`](./llms.txt) BY-DEMAND-INDEX
    under «Prompts (`knowledge/prompts/`)».
 3. If the prompt has an associated PR Checklist rule (e.g.
