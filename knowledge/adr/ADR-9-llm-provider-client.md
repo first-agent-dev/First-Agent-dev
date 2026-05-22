@@ -611,7 +611,7 @@ budget_tokens: N}`) is a *per-model concern* applied in the
 adapter at request-build time. The v0.1 translation table is
 minimal (chat-completions only; no reasoning models in default
 chains). Reasoning-model support is a future amendment slot
-(§9 Q-7); when added, it lands as a per-model lookup in the
+(§9 Q-6); when added, it lands as a per-model lookup in the
 adapter rather than a new chain shape.
 
 **File layout for T-2 PR:**
