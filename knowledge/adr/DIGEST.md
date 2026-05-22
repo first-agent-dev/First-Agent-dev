@@ -367,6 +367,108 @@ shares this exact substrate. Source:
 
 **Source:** [`ADR-8`](./ADR-8-hook-registry.md).
 
+## ADR-9 — LLM provider client (T-2 driver) (proposed 2026-05-22; revised same day)
+
+**Decision.** **Option D + α** — per-role explicit provider chain
+with cooldown. Each role in `~/.fa/models.yaml` declares `model:`
++ `family:` + `chain: [{provider, slug, base_url, api_key_env,
+cooldown_seconds?, httpx_retries?, timeout_seconds?,
+extra_headers?}, ...]` ordered transport fallback. On transient
+failure (429 / 5xx / network), failed `(provider, slug)` tuple
+cools down 5 min default and the chain falls through to the next
+entry. **Adaptive cooldown** = `max(now + cooldown_seconds,
+parsed_retry_after)` honoring RFC 9110 `Retry-After` (header floor,
+not ceiling). Same logical model identity across all chain entries;
+provider platform varies (OpenRouter → Fireworks → NVIDIA Build
+→ Groq for `deepseek-v3`). **4xx split at runtime:** 401 / 403 =
+continue chain without cooldown (single-provider auth issue);
+**400 / 422 = fail-fast** as `ProviderRequestShapeError` (FA-side
+client bug — next provider will fail same way; do not waste chain
+budget). Chain exhaustion raises typed `ProviderChainExhaustedError`
+(not bare RuntimeError). **Family-disjoint check (ADR-2 + ADR-7)
+is preserved** because family is extracted from the logical model
+identity, NOT the provider platform — cross-platform fallback
+for the same model = no family-disjoint risk by construction.
+**§7 model-identity claim is reframed as user discipline +
+best-effort `extract_family()` warning** — slug strings vary
+legitimately per provider (`deepseek/deepseek-chat-v3` on
+OpenRouter vs `accounts/fireworks/models/deepseek-v3` on
+Fireworks), so an exact-match validator is infeasible; the
+validator emits a warning (not error) on family-mismatch, and
+user discipline carries the rest. **Config-load validation**
+enforces non-empty chain + non-empty `api_key_env` (env-var
+must resolve to non-empty string) + `https://` scheme (`http://`
+accepted only for localhost gateway-delegation case + warning).
+**Three-tier observability all keyed on shared `logical_call_id`
+UUID4** for correlation: tier-1 always-on (1 `llm_call` row per
+logical call with attempted-providers inline) + tier-2
+(`llm_chain_exhausted` row on chain exhaustion OR request-shape
+fast-fail; `terminal: "all_exhausted" | "request_shape"`) +
+tier-3 opt-in (`FA_DEBUG_LLM_BODIES=1` → separate
+`llm_bodies.jsonl` with full request/response bodies, gitignored;
+each body row carries the same `logical_call_id`). **Cost +
+token accounting source** spec'd: provider `usage` block via
+response normalization + `src/fa/observability/cost_table.py`
+model+provider price lookup; pricing-miss → `cost_usd: null` +
+`cost_estimate_missing` warning, CostGuardian (R-45) treats null
+as zero plus flag. **Two-category adapter split:** shared
+`OpenAICompatProvider` (~80 LOC) posts to `<base_url>/chat/completions`
+and covers OpenRouter / Fireworks / NVIDIA Build / Groq / GitHub
+Models / Modal / Together AI / + any future OpenAI-compatible
+platform via 1-row entry in `PROVIDERS` dict; `AnthropicProvider`
+(~70 LOC) posts to `<base_url>/v1/messages` and handles
+Anthropic's native protocol (system as separate field, tool use
+as content blocks). Each adapter **normalizes** provider response
+into canonical `ResponseInfo` (text / in_tokens / out_tokens /
+finish_reason / tool_calls + provider-specific data parked in
+`extras: dict[str, Any]`). Reasoning-model request-parameter
+translation seat documented (Q-6 amendment slot — when first
+o-series / extended-thinking lands in a default chain). **Six
+typed errors** in `errors.py`: ConfigurationError,
+ReservedProviderError, ProviderTransientError, ProviderAuthError,
+ProviderRequestShapeError, ProviderChainExhaustedError. Total T-2
+implementation ~380 LOC across 6 files in `src/fa/providers/` +
+~30 LOC `src/fa/observability/cost_table.py`; tracked under
+BACKLOG `M-4` (note: `M-2` / `M-3` are already taken by Wave-2
+LoopGuard + FailureClassifier + attempt_history and Wave-2 pre-
+tool BlockerMiddleware + DSV YAML respectively; `M-4` is the
+next free milestone slot). **Rationale.** 8 OSS sources (GoModel, LiteLLM,
+Bifrost, kronos, dpc-messenger, 9router, Portkey, OmniRoute)
+independently converge on the same three-piece pattern (per-
+provider-or-finer cooldown + ordered fallback chain + isolated
+per-provider state); FA is adopting the industry-standard shape,
+not novel design. Free-tier resilience (NVIDIA Build / Modal /
+OpenRouter free tier / Groq free tier / GitHub Models — half low-
+reliability with daily quotas) is the v0.1 default, not opt-in
+via external gateway dependency. Option D subsumes Option C
+(«B2 + base_url gateway delegation») as a single chain entry;
+gateway dependency becomes optional, not central. **Cross-MODEL
+auto-fallback (e.g. `deepseek-v3` → `kimi-k2`) is out of scope**
+per ADR-2 §Decision; explicit-fail-loud is the v0.1 path when
+all chain entries exhausted (user explicitly switches model
+identity). **TLS-fingerprint stealth / JA3-JA4 spoofing**
+rejected on ethical grounds. **Streaming chain semantics** is a
+v0.2 **redesign**, not amendment (mid-stream switching requires
+buffering complete responses, which defeats streaming's latency
+benefit; likely v0.2 path is streaming-roles-bypass-chain). **7
+Q-N amendment slots reserved:** Q-1 persistent cooldown, Q-2
+httpx-retry tuning + pre-call `tiktoken` estimation, Q-3 round-
+robin within non-cooled entries, Q-4 provider-wide cooldown when
+≥2 slugs cooling, Q-5 Anthropic prompt-caching preservation, Q-6
+reasoning-model request-parameter translation table, Q-7 per-model
+timeout override. Companion survey
+[`provider-client-survey-2026-05.md`](../research/provider-client-survey-2026-05.md)
+carries the audit evidence + 8-source pattern matrix + 3 anti-
+pattern flags (LiteLLM failure-percent threshold mis-fit для
+UC1 low-volume; Bifrost silent-drop reserved-key writes re-cast
+as fail-fast `ReservedProviderError`; OmniRoute TLS spoofing
+rejected). **Revision 2026-05-22 (pre-PR critical pass).** §1,
+§2, §3, §4, §5, §7, §9, §10, §Consequences refined after self-
+critique against 7 P0 logic-bug findings + 6 P1 design-gap
+findings; §Decision direction unchanged.
+
+**Source:** [`ADR-9`](./ADR-9-llm-provider-client.md).
+
 ## See also
 
 - [`README.md`](./README.md) — ADR process and ordered index.

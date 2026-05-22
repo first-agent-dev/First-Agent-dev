@@ -571,6 +571,83 @@
     §1 (lifecycle points) — blockers reuse `BEFORE_TOOL_EXEC` +
     `AFTER_TOOL_EXEC` symmetrically.
 
+## M-4 — T-2 LLM provider client implementation (driver per ADR-9)
+
+- **Status:** open; tracker stub created in this PR (the ADR-9
+  PR that introduces the contract). Implementation lands in a
+  follow-up PR.
+- **Why milestone, not idea:** ADR-9 has been merged
+  (status = proposed, locked design), so the implementation is
+  a planned PR with explicit shape, not an open research
+  question. `M-2` and `M-3` are already closed (Wave-2 stack);
+  `M-4` is the next free milestone slot.
+- **Contract source:**
+  [`knowledge/adr/ADR-9-llm-provider-client.md`](./adr/ADR-9-llm-provider-client.md)
+  — Option D + α (per-role explicit provider chain with
+  cooldown) + companion survey
+  [`knowledge/research/provider-client-survey-2026-05.md`](./research/provider-client-survey-2026-05.md).
+- **Scope (~380 LOC across 6 files + ~30 LOC pricing seed):**
+  - `src/fa/providers/base.py` (~60 LOC) — `Provider` Protocol,
+    `RequestInfo` / `ResponseInfo` dataclasses with `extras:
+    dict[str, Any]` parking surface.
+  - `src/fa/providers/chain.py` (~100 LOC) — `ChainConfig` +
+    `ChainConfig.validate()` (config-load enforcement per §1)
+    + ordered chain dispatch + cooldown bookkeeping (§3) +
+    adaptive `Retry-After` floor.
+  - `src/fa/providers/openai_compat.py` (~80 LOC) — shared
+    adapter posting to `/chat/completions`; covers OpenRouter,
+    Fireworks, NVIDIA Build, Groq, GitHub Models, Modal,
+    Together AI, etc. via 1-row entry in `PROVIDERS` dict.
+  - `src/fa/providers/anthropic.py` (~70 LOC) — `/v1/messages`
+    adapter (system-as-separate-field + tool-use content
+    blocks); normalizes into canonical `ResponseInfo`.
+  - `src/fa/providers/registry.py` (~30 LOC) — `PROVIDERS`
+    dict + factory; one row per supported provider.
+  - `src/fa/providers/errors.py` (~40 LOC) — six typed errors
+    (`ConfigurationError` / `ReservedProviderError` /
+    `ProviderTransientError` / `ProviderAuthError` /
+    `ProviderRequestShapeError` / `ProviderChainExhaustedError`).
+  - `src/fa/observability/cost_table.py` (~30 LOC) — seed
+    pricing-lookup table; `cost_table.lookup(provider, family,
+    slug) -> CostPerMillion | None`; misses return `None` and
+    emit a `cost_estimate_missing` warning via the Tier-1
+    `llm_call` row.
+- **Tests:** offline-only (no real provider calls); fakes/stubs
+  per ADR-7 §10 retry-test pattern. Covers: cooldown insert/
+  expire/`Retry-After`-adaptive floor; 401/403 continue-chain
+  vs 400/422 fail-fast split; chain-exhaustion → typed
+  `ProviderChainExhaustedError`; response normalization for
+  both adapter categories; `logical_call_id` propagation
+  across the three observability tiers; config-load validator
+  rejecting empty chain / empty `api_key_env` / unknown
+  provider / reserved provider name / bad `base_url` scheme.
+- **Q-N amendment items** (deferred from ADR-9 §9; each
+  becomes its own future BACKLOG row when a re-evaluation
+  trigger fires per ADR-9 §10):
+  - Q-1 persistent cooldown across sessions.
+  - Q-2 per-entry `httpx_retries` + `tiktoken` pre-call estimate.
+  - Q-3 named chains / round-robin support.
+  - Q-4 provider-wide cooldown when N≥2 slugs cool concurrently.
+  - Q-5 Anthropic prompt-cache preservation on fallback.
+  - Q-6 reasoning-model parameter translation table
+    (OpenAI o-series `max_completion_tokens`, Anthropic
+    `thinking: {budget_tokens}`).
+  - Q-7 per-role `timeout_seconds` override beyond the
+    per-chain-entry default.
+- **References:**
+  - [`knowledge/adr/ADR-9-llm-provider-client.md`](./adr/ADR-9-llm-provider-client.md)
+    §1–§10 (Decision, chain shape, runtime semantics, cooldown,
+    observability, adapter split, reserved-key semantics,
+    family-disjoint preservation, out-of-scope, future-
+    amendment slots, re-evaluation triggers).
+  - [`knowledge/adr/DIGEST.md` ADR-9 row](./adr/DIGEST.md) —
+    one-paragraph reading-cheat-sheet view.
+  - [`knowledge/trace/exploration_log.md` Q-13](./trace/exploration_log.md) —
+    Options A/B1/B2/B3/C rejected with Reason + Lesson;
+    Option D + α chosen 2026-05-22.
+  - [`HANDOFF.md` §Current state ADR list](../HANDOFF.md) —
+    ADR-9 bullet with `M-4` cross-reference.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

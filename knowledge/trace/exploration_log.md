@@ -1028,3 +1028,124 @@
   + [`MAINTENANCE.md` §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge)
   + [AGENTS.md §Change Classification](../../AGENTS.md#change-classification)
   + Q-11 (Layers 1 / 2 / 3 model this Q-12 inherits).
+
+## Q-13 — How is the T-2 LLM provider client (driver) shaped? (2026-05-22)
+
+- **Closed by:** [ADR-9](../adr/ADR-9-llm-provider-client.md) +
+  companion survey
+  [`provider-client-survey-2026-05.md`](../research/provider-client-survey-2026-05.md).
+- **Coupling:** Q-2 (ADR-2 «no cross-tier auto-escalation» — provider
+  fallback within same model identity does NOT violate ADR-2 because
+  family is anchored on logical model identity, not provider platform);
+  Q-7 / Q-8 (ADR-7 §Amendment 2026-05-20 retry-budget invariant +
+  T=1.0 intra-role retry + LLM-using-hook family-disjoint rule;
+  ADR-8 `BEFORE_LLM_CALL` / `AFTER_LLM_CALL` lifecycle points — T-2
+  driver wires through both without new lifecycle points).
+- **Chosen:** **Option D + α** — per-role explicit provider chain
+  with cooldown; per-role declaration shape (no shared named chains
+  in v0.1). Each role in `~/.fa/models.yaml` carries `model:` +
+  `family:` + `chain: [{provider, slug, base_url, api_key_env}, ...]`
+  ordered transport fallback. On transient failure (429 / 5xx /
+  network), failed `(provider, slug)` tuple cools down for 5 min
+  default and chain falls through to the next entry. Same logical
+  model identity across all chain entries; provider platform varies
+  (OpenRouter → Fireworks → NVIDIA Build → Groq for `deepseek-v3`).
+  Three-tier observability: tier-1 always-on (1 `llm_call` row per
+  logical call с attempted-providers inline) + tier-2 error-trace
+  (`llm_chain_exhausted` row on full chain exhaustion) + tier-3
+  opt-in (`FA_DEBUG_LLM_BODIES=1` → separate `llm_bodies.jsonl`
+  with full request/response bodies, gitignored). Two-category
+  adapter split: shared `OpenAICompatProvider` (~80 LOC) covers
+  OpenRouter / Fireworks / NVIDIA Build / Groq / GitHub Models / +
+  any future OpenAI-compatible provider; `AnthropicProvider`
+  (~70 LOC) handles native `/v1/messages` shape. Total T-2
+  implementation ~380 LOC across 6 files in `src/fa/providers/`.
+- **Rejected:**
+  - **Option A (delegate entirely to external gateway —
+    GoModel/LiteLLM/Cloudflare AI Gateway container).** Reason:
+    hard Docker dependency conflicts with UC1 single-user single-
+    process scope; cost accounting / family-disjoint enforcement
+    re-implemented at gateway layer or lost; weaker OSS LLMs reason
+    poorly over multi-process failure modes. Lesson: revisit when
+    UC1+UC3 stops being the load profile (multi-user UC4+ would
+    benefit from gateway-side load balancing).
+  - **Option B1 (FA-direct without resilience; user runs gateway
+    externally if they want fallback).** Reason: free-tier rate-
+    limit handling becomes user homework; no FA-side test coverage
+    of resilience path; misses «cross-platform fallback for same
+    model» requirement explicitly named by user. Lesson: revisit
+    only if FA pivots to «assume always-available primary provider»
+    deployment model (corporate dedicated-quota tier).
+  - **Option B2 (FA-direct with minimum resilience: retry +
+    circuit-breaker, no fallback resolver).** Reason: no fallback
+    at all → role dies when its single configured provider is
+    rate-limited; same failure mode as B1. Lesson: revisit if a
+    single-provider deployment model emerges (e.g. user contracts
+    one enterprise provider with SLA).
+  - **Option B3 (full GoModel-style lift: Hooks Protocol +
+    CircuitBreaker + FallbackResolver + CapabilityModel +
+    ProviderAttempt, ~500 LOC).** Reason: (a) `FallbackResolver`
+    auto-picks fallback candidates from `chatbot_arena_coding`
+    rankings — cross-MODEL auto-escalation, conflicts with ADR-2
+    §Decision; (b) `CapabilityModel` + `ProviderAttempt` add
+    indirection unjustified at FA's single-call-at-a-time scope;
+    (c) future-agent reading burden — 500 LOC vs Option D's 380.
+    Lesson: revisit if FA grows to support arbitrary fan-out across
+    candidates with auto-discovery (UC5+ benchmark-driven config),
+    at which point `CapabilityModel` becomes load-bearing.
+  - **Option C (B2 + transparent gateway delegation via `base_url`
+    override).** Reason: default install has NO multi-provider
+    fallback → free-tier resilience target requires running the
+    gateway, the same dependency Option A was rejected for.
+    Lesson: not really rejected — subsumed by Option D, which
+    supports the gateway-delegation path as a single chain entry
+    (`{base_url: "http://localhost:8080/v1", ...}`). Re-emerges
+    if FA needs to ship a «one-config-line» upgrade path to a
+    gateway-only deployment.
+- **Re-evaluation triggers:** (1) Second consumer of named chains
+  appears in `~/.fa/models.yaml` → β shape (top-level `chains:`
+  block) amendment slot; (2) Future hook in `src/fa/inner_loop/hooks/`
+  issues its own LLM calls → §7 family-disjoint constraint
+  preservation needs revisiting for the hook's chain inheritance;
+  (3) Provider list expands past ~10 chain entries per role →
+  round-robin amendment over strict declared-order; (4) OTel
+  becomes a UC5 requirement → tier-1 observability schema may need
+  trace_id / span_id surface; (5) Mid-stream provider switching
+  becomes a v0.2 requirement alongside ADR-7 §1 streaming-mode
+  landing → §9 streaming amendment.
+- **Re-evaluation triggers added in revision 2026-05-22:** (6)
+  awesome-free-llm-apis updates the canonical slugs / base_urls →
+  amend `~/.fa/models.yaml.example`; (7) First reasoning model
+  (o-series / extended-thinking / DeepSeek-R-like) lands in a
+  default chain → triggers Q-6 per-model request-parameter
+  translation table + possibly Q-7 per-model timeout override;
+  (8) Pricing-table-miss telemetry shows >5% of `llm_call` rows
+  carry `cost_usd: null` → triggers Q-2 second half (pre-call
+  `tiktoken` estimation as fallback).
+- **Amendment 2026-05-22 (pre-PR critical pass).** ADR-9 §1, §2,
+  §3, §4, §5, §7, §9, §10, §Consequences refined after self-
+  critique closing 7 P0 logic-bug findings + 6 P1 design-gap
+  findings: typed errors (`ProviderRequestShapeError`,
+  `ProviderChainExhaustedError`); 4xx split at runtime (400/422
+  fail-fast as FA-side client bug, 401/403 continue chain as
+  single-provider auth issue); shared `logical_call_id` UUID4
+  across all three observability tiers for correlation; adaptive
+  cooldown from RFC 9110 `Retry-After` header; per-request
+  `timeout_seconds`; response normalization (canonical
+  `ResponseInfo` + `extras: dict[str, Any]` Postel's-Law surface);
+  cost+token accounting source (provider `usage` block +
+  `src/fa/observability/cost_table.py` pricing lookup;
+  pricing-miss → `cost_usd: null` warning); §7 model-identity
+  claim reframed as user discipline + best-effort
+  `extract_family()` warning (exact-match validator infeasible
+  due to legitimate slug-string variance across providers);
+  config-load validation (non-empty chain, non-empty `api_key_env`,
+  `https://` scheme); reasoning-model request-parameter
+  translation seat (Q-6 slot); streaming flagged as v0.2
+  **redesign** not amendment. §Decision direction unchanged
+  (Option D + α remains chosen).
+- **Source:** [ADR-9](../adr/ADR-9-llm-provider-client.md) +
+  [`provider-client-survey-2026-05.md`](../research/provider-client-survey-2026-05.md)
+  (8 OSS sources independently converge on the «per-provider
+  cooldown + ordered fallback chain + isolated provider workers»
+  pattern; see survey §4.2 convergence matrix).
