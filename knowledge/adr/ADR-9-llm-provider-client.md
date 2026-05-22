@@ -272,6 +272,20 @@ at first request) for each of:
   match the role's `family:` field, because slug strings vary
   legitimately across providers and exact-match would produce
   false positives.
+- **Best-effort adapter-homogeneity check** — emits warning
+  (not error) if not all chain entries resolve to the same
+  adapter category in `PROVIDERS` (e.g. role's chain mixes
+  `OpenAICompatProvider`-backed providers with
+  `AnthropicProvider`-backed providers). Rationale: the §2
+  step 2g fail-fast logic on 400/422 assumes the next chain
+  entry sends the same request body shape; mixed adapters
+  break that assumption (Anthropic's `/v1/messages` has
+  system-as-separate-field + tool-use content blocks while
+  OpenAI-compat `/chat/completions` does not). Warning, not
+  error, because the natural shape (same model identity across
+  chain entries) keeps homogeneity automatically; only unusual
+  configs produce mixed-adapter chains. See §2 step 2g for the
+  runtime implication.
 
 ## §2 Runtime semantics
 
@@ -316,6 +330,20 @@ at first request) for each of:
       - Emit Tier-2 row with terminal="request_shape" so the
         FailureClassifierObserver routes to «code bug» not
         «retry the role» (ADR-7 §Amendment 2026-05-20 rule 3).
+      - **Adapter-homogeneity assumption.** Fail-fast assumes
+        chain entries send the same request body shape («the same
+        body will fail the same way on the next provider»). Holds
+        when every entry uses the same adapter category (all
+        `OpenAICompatProvider` OR all `AnthropicProvider`). FA does
+        NOT enforce homogeneity as a hard error — see §1 warning
+        rule above — because the natural shape (same model identity
+        across chain entries) keeps homogeneity by default: a
+        `deepseek-v3` chain has no Anthropic entries; an Anthropic
+        `claude-3.5` chain has no OpenAI-compat entries. Mixing
+        adapter categories is undocumented territory; if a user
+        does it and a 400 fires, the FAIL FAST is slightly over-
+        eager but still better than silently treating all 400s as
+        transient and wasting budget on every chain entry.
 3. If all entries exhausted: raise ProviderChainExhaustedError
    carrying the full attempts list (typed; not bare RuntimeError —
    see §5 errors.py).

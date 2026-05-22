@@ -677,7 +677,7 @@ src/fa/providers/
 ├── openai_compat.py     # Shared adapter for OpenRouter/Fireworks/NVIDIA Build/Groq/etc (~80 LOC)
 ├── anthropic.py         # Anthropic /v1/messages adapter (~70 LOC)
 ├── registry.py          # PROVIDERS dict + factory (~30 LOC)
-└── errors.py            # ConfigurationError + ReservedProviderError + ProviderTransientError + ProviderAuthError (~40 LOC)
+└── errors.py            # 6 typed errors: ConfigurationError + ReservedProviderError + ProviderTransientError + ProviderAuthError + ProviderRequestShapeError + ProviderChainExhaustedError (~40 LOC)
 ```
 
 Total ~380 LOC. Add-OpenAI-compat-platform = 1 line in `PROVIDERS`
