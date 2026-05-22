@@ -606,6 +606,92 @@ def test_chain_from_mapping_coalesces_yaml_null_family_to_empty_string() -> None
     assert all("'None'" not in w for w in warnings)
 
 
+def test_chain_from_mapping_coalesces_yaml_null_on_chain_entry_numeric_fields() -> None:
+    # YAML ``cooldown_seconds: null`` / ``httpx_retries: null`` /
+    # ``timeout_seconds: null`` parses to Python ``None``, which then
+    # crashes ``int(...)`` with TypeError. ``row.get(k, DEFAULT)``
+    # returns ``None`` when the key exists with a null value (the
+    # default is only used when the key is absent), so the explicit
+    # ``is not None`` ladder is what guarantees the defaults kick in
+    # AND that an explicit zero is preserved.
+    raw = {
+        "model": "deepseek-v3",
+        "family": "deepseek",
+        "chain": [
+            {
+                "provider": "openrouter",
+                "slug": "deepseek/deepseek-chat-v3",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+                "cooldown_seconds": None,
+                "httpx_retries": None,
+                "timeout_seconds": None,
+                "extra_headers": None,
+            }
+        ],
+    }
+    # Must not raise TypeError("int() argument must be ...").
+    config = chain_from_mapping("coder", raw)
+    entry = config.chain[0]
+    assert entry.cooldown_seconds == 300  # DEFAULT_COOLDOWN_SECONDS
+    assert entry.httpx_retries == 1  # DEFAULT_HTTPX_RETRIES
+    assert entry.timeout_seconds == 60  # DEFAULT_TIMEOUT_SECONDS
+    assert entry.extra_headers == {}
+
+
+def test_chain_from_mapping_preserves_explicit_zero_on_numeric_fields() -> None:
+    # ``cooldown_seconds: 0`` disables cooldown on a localhost
+    # gateway entry; ``timeout_seconds: 0`` opts out of the
+    # transport timeout. A naive ``row.get(k) or DEFAULT``
+    # coercion would silently coalesce 0 to the default because 0
+    # is falsy in Python — the loader MUST preserve the explicit
+    # zero.
+    raw = {
+        "model": "local-mock",
+        "family": "local",
+        "chain": [
+            {
+                "provider": "openrouter",
+                "slug": "deepseek/deepseek-chat-v3",
+                "base_url": "http://localhost:8080/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+                "cooldown_seconds": 0,
+                "httpx_retries": 0,
+                "timeout_seconds": 0,
+            }
+        ],
+    }
+    config = chain_from_mapping("coder", raw)
+    entry = config.chain[0]
+    assert entry.cooldown_seconds == 0
+    assert entry.httpx_retries == 0
+    assert entry.timeout_seconds == 0
+
+
+def test_chain_from_mapping_omitted_optional_fields_use_defaults() -> None:
+    # Sanity check that the loader's three-arm conditional still
+    # uses the declared module defaults when the YAML row simply
+    # omits the optional fields.
+    raw = {
+        "model": "deepseek-v3",
+        "family": "deepseek",
+        "chain": [
+            {
+                "provider": "openrouter",
+                "slug": "deepseek/deepseek-chat-v3",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+            }
+        ],
+    }
+    config = chain_from_mapping("coder", raw)
+    entry = config.chain[0]
+    assert entry.cooldown_seconds == 300
+    assert entry.httpx_retries == 1
+    assert entry.timeout_seconds == 60
+    assert entry.extra_headers == {}
+
+
 def test_chain_from_mapping_preserves_string_family() -> None:
     # Positive sanity check that the ``or ""`` coercion does not
     # break the happy path.

@@ -357,16 +357,40 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
     """
 
     chain_rows: Sequence[Mapping[str, Any]] = raw.get("chain", ())
+    # ``row.get(key, DEFAULT)`` returns the actual value when the YAML
+    # row contains ``key: null`` (because the key exists), so passing
+    # ``None`` straight through to ``int(...)`` / ``dict(...)`` would
+    # raise ``TypeError`` and break the entire loader on a single
+    # null-valued optional field. For the numeric fields we use an
+    # explicit ``is not None`` check (NOT ``or DEFAULT``) so that an
+    # explicit zero — ``cooldown_seconds: 0`` to disable cooldown on
+    # a localhost gateway, ``timeout_seconds: 0`` to opt out of the
+    # transport timeout — is preserved instead of being silently
+    # coalesced to the default (0 is falsy in Python). For
+    # ``extra_headers`` ``or {}`` is safe because an empty dict and
+    # a missing dict are observationally equivalent.
     entries = tuple(
         ChainEntry(
             provider=str(row["provider"]),
             slug=str(row["slug"]),
             base_url=str(row["base_url"]),
             api_key_env=str(row["api_key_env"]),
-            cooldown_seconds=int(row.get("cooldown_seconds", DEFAULT_COOLDOWN_SECONDS)),
-            httpx_retries=int(row.get("httpx_retries", DEFAULT_HTTPX_RETRIES)),
-            timeout_seconds=int(row.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)),
-            extra_headers=dict(row.get("extra_headers", {})),
+            cooldown_seconds=int(
+                row["cooldown_seconds"]
+                if row.get("cooldown_seconds") is not None
+                else DEFAULT_COOLDOWN_SECONDS
+            ),
+            httpx_retries=int(
+                row["httpx_retries"]
+                if row.get("httpx_retries") is not None
+                else DEFAULT_HTTPX_RETRIES
+            ),
+            timeout_seconds=int(
+                row["timeout_seconds"]
+                if row.get("timeout_seconds") is not None
+                else DEFAULT_TIMEOUT_SECONDS
+            ),
+            extra_headers=dict(row.get("extra_headers") or {}),
         )
         for row in chain_rows
     )
