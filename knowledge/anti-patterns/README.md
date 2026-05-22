@@ -88,8 +88,9 @@ this order:
    must match the heading in `knowledge/llms.txt:125` exactly so a
    `grep`-based agent finds it. Row format follows
    [`knowledge/MAINTENANCE.md` §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge):
-   `- [path/to/file.md](raw-url) (~N lines): description.` — file
-   length rounded to the nearest ten.
+   `- [path/to/file.md](raw-url) (BUCKET, ~N lines): description.`
+   — size-bucket label (S / M / L / XL per the table in
+   MAINTENANCE.md) + file length rounded to the nearest ten.
 5. Include in the PR description: «Anti-pattern catalogued: `AP-NNN`
    ([link]). CLASS: <REPAIR|RELAX|WORKAROUND>. INVARIANT: <one
    sentence>.» — see
@@ -113,3 +114,4 @@ is the worked example).
 | Entry  | Title                                                   | Linked-ADR                                                                                                                              | Status   |
 | ------ | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | AP-001 | Spec-bypassing workaround masquerading as fix           | [ADR-7 §Sub-amendment 2026-05-21b](../adr/ADR-7-inner-loop-tool-registry.md#sub-amendment-2026-05-21b--r-8-learningobserver-filesystem-canon-artifacts) | accepted |
+| AP-002 | Stale row counts in routing index drift silently        | [MAINTENANCE.md §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge) | accepted |

@@ -77,18 +77,32 @@ should not back-fill existing rows).
    under the matching folder section. Row format:
 
    ```text
-   - [path/to/file.md](raw-url) (~N lines): description.
+   - [path/to/file.md](raw-url) (S, ~N lines): description.
    ```
 
-   `(~N lines)` — file length rounded to the nearest ten. Enables
-   informed pre-batch decisions for agents: an agent considering
-   reading several BY-DEMAND entries in one parallel batch can sum
-   `~N lines` first and decide whether to batch or load
-   sequentially (relevant for mid-tier OSS models with smaller
-   context windows; see
+   **Size bucket** — one of `S`, `M`, `L`, `XL` — prepended before
+   the `~N lines` count. Boundaries (LOC, rounded to nearest ten):
+
+   | Bucket | Range       | Batch guidance (mid-tier OSS LLM) |
+   |--------|-------------|-----------------------------------|
+   | **S**  | ≤ 300       | batch freely                      |
+   | **M**  | 301 – 800   | batch 2–3 at most                 |
+   | **L**  | 801 – 1500  | read alone                        |
+   | **XL** | > 1500      | chunked / sectional read only     |
+
+   `~N lines` — file length rounded to the nearest ten, preserved
+   for additivity (agents can still sum raw counts for token
+   budgeting). The bucket label enables a fast visual scan: an
+   agent seeing `(S, …)` knows it can batch without arithmetic;
+   `(XL, …)` is a stop-and-chunk signal. Drift tolerance: a file
+   going from ~480 to ~510 lines stays `M` and the row needs no
+   edit; only crossing a boundary triggers a row update.
+
+   Relevant for mid-tier OSS models with smaller context windows;
+   see
    [`research/bootstrap-cost-baseline-2026-05.md`](./research/bootstrap-cost-baseline-2026-05.md)
    §3 for the 6-file irreducible bootstrap core that this metadata
-   enables agents to size in advance).
+   enables agents to size in advance.
 2. If the new file is a cheat-sheet or index that supersedes
    prose in another file (e.g. `adr/DIGEST.md` vs the per-ADR
    files, or `MAINTENANCE.md` vs the prose in
@@ -126,9 +140,9 @@ pointer here without having to know the README exists.
    follow steps 1–5 verbatim.
 2. The llms.txt step (§How a new entry lands #4) is the same
    shape as the §When adding a new file under `docs/` or
-   `knowledge/` checklist above — `(~N lines)` rounded to the
-   nearest ten, row added under the §Anti-pattern catalog
-   subsection.
+   `knowledge/` checklist above — `(BUCKET, ~N lines)` with the
+   size-bucket label (S / M / L / XL per the table above), row
+   added under the §Anti-pattern catalog subsection.
 3. Cross-link from the new entry's §Linked-ADR section back to
    the relevant ADR's worked-history note in the same PR (per
    [AGENTS.md PR Checklist rule #9](../AGENTS.md#pr-checklist)
