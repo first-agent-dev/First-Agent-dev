@@ -421,7 +421,9 @@ def test_learning_observer_write_failure_audited(tmp_path: Path) -> None:
     assert len(observer_rows) == 1, "LearningObserver write failure did not emit audit row"
     row = observer_rows[0]
     assert row.content["decision"] == "observer_error_swallowed"
-    assert "codebase_map.json" in row.content["reason"]
+    # ``TraceEvent.content`` is loosely typed (``object`` values);
+    # coerce to str so mypy --strict accepts the substring check.
+    assert "codebase_map.json" in str(row.content["reason"])
 
 
 def test_between_rounds_fires_on_iteration_1(tmp_path: Path) -> None:
