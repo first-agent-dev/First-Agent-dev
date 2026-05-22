@@ -429,7 +429,10 @@ ReservedProviderError, ProviderTransientError, ProviderAuthError,
 ProviderRequestShapeError, ProviderChainExhaustedError. Total T-2
 implementation ~380 LOC across 6 files in `src/fa/providers/` +
 ~30 LOC `src/fa/observability/cost_table.py`; tracked under
-BACKLOG `M-2`. **Rationale.** 8 OSS sources (GoModel, LiteLLM,
+BACKLOG `M-4` (note: `M-2` / `M-3` are already taken by Wave-2
+LoopGuard + FailureClassifier + attempt_history and Wave-2 pre-
+tool BlockerMiddleware + DSV YAML respectively; `M-4` is the
+next free milestone slot). **Rationale.** 8 OSS sources (GoModel, LiteLLM,
 Bifrost, kronos, dpc-messenger, 9router, Portkey, OmniRoute)
 independently converge on the same three-piece pattern (per-
 provider-or-finer cooldown + ordered fallback chain + isolated

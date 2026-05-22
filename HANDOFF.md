@@ -460,7 +460,11 @@ manually beyond this point.
     LLM provider client contract (T-2 driver; **proposed
     2026-05-22; revised same day** after pre-PR critical pass
     closing 7 P0 logic-bug findings + 6 P1 design-gap findings;
-    T-2 implementation tracked under BACKLOG `M-2`).
+    T-2 implementation tracked under BACKLOG `M-4`; `M-2` /
+    `M-3` are already occupied by Wave-2 LoopGuard /
+    FailureClassifier / attempt_history and Wave-2 pre-tool
+    BlockerMiddleware + DSV YAML respectively, so the T-2 driver
+    takes the next free milestone slot).
     **Option D + α** — per-role explicit provider chain with
     cooldown в `~/.fa/models.yaml` (`{model, family,
     chain: [{provider, slug, base_url, api_key_env,

@@ -846,11 +846,109 @@ This ADR is re-opened (amended or replaced) when any of:
     `logical call ID` / `OpenAI-compatible provider` / `Anthropic-
     native provider` / `response normalization` / `request-shape
     failure` / `transient failure`.
-  - `BACKLOG.md` item `M-2` tracking the T-2 implementation PR
+  - `BACKLOG.md` item `M-4` tracking the T-2 implementation PR
     with explicit back-reference to this ADR + the §1 chain shape;
-    plus separate items for §9 Q-1..Q-7 amendments.
+    plus separate items for §9 Q-1..Q-7 amendments. (`M-2` /
+    `M-3` are already taken by Wave-2 LoopGuard /
+    FailureClassifier / attempt_history and Wave-2 pre-tool
+    BlockerMiddleware + DSV YAML respectively; `M-4` is the next
+    free milestone slot.)
   - HANDOFF.md §Current state ADR list updated with ADR-9 row.
   - DIGEST.md row added for ADR-9.
+
+## Prior Art
+
+Per [AGENTS.md §Cross-project anti-patterns rule
+#4](../../AGENTS.md#cross-project-anti-patterns) (forward-only
+from 2026-05-20). Each prior-art entry maps a design choice in
+this ADR to an existing project / paper / FA prior decision, so
+reviewers can verify FA is not re-inventing. Full audit evidence
+lives in the companion
+[provider-client-survey-2026-05.md](../research/provider-client-survey-2026-05.md);
+this section condenses the eight per-design-choice mappings into
+one readable block.
+
+- **§1 per-role explicit chain config shape (`{model, family,
+  chain: [...]}`):** dpc-messenger ADR-002 `AbstractLLMProvider`
+  ABC + 5 provider files
+  ([`dpc-messenger-inspiration-2026-05.md`](../research/dpc-messenger-inspiration-2026-05.md)) —
+  closest Python parallel to FA's per-role chain shape; LiteLLM
+  `model_list:` per-`model_name` deployment list
+  ([`provider-client-survey-2026-05.md`](../research/provider-client-survey-2026-05.md) §4.1).
+  α-shape (no shared named chains) inherits from the survey §0
+  R-1 verdict; not lifted verbatim from any single source.
+- **§2 ordered-fallback runtime semantics + 4xx split + typed
+  errors:** GoModel `internal/llmclient/client.go::call()`
+  (Hooks Protocol + per-attempt status handling) + LiteLLM
+  `router_utils/fallback_event_handlers.py` (fallback dispatch
+  pattern). The 401/403-continue-chain vs 400/422-fail-fast
+  split is FA-specific (added during pre-PR critical pass; no
+  audited OSS source documents the split explicitly — most
+  treat all 4xx as auth-class errors). Typed errors
+  (`ProviderRequestShapeError` / `ProviderChainExhaustedError`)
+  follow ADR-8 §3 `ConfigurationError` pattern + AGENTS.md PR
+  Checklist rule #10 «could-this-be-a-deterministic-Python-
+  function» — explicit error types are the deterministic
+  classification.
+- **§3 per-`(provider, slug)` cooldown + adaptive Retry-After:**
+  LiteLLM `router_utils/cooldown_cache.py::CooldownCacheValue`
+  TypedDict (`{exception_received, status_code, timestamp,
+  cooldown_time}`) is the direct Python lift target —
+  per-deployment-keyed indexing matches FA's per-tuple key.
+  kronos `llm.py::PEER_REACTION_COOLDOWN = 300` is the
+  «5-min fixed default» anchor
+  ([`kronos-agent-os-inspiration-2026-05.md`](../research/kronos-agent-os-inspiration-2026-05.md)).
+  RFC 9110 `Retry-After` header parsing is web-standards prior
+  art (no per-source citation needed; the `max(now +
+  cooldown_seconds, parsed_retry_after)` floor-from-config
+  composition rule is FA-specific).
+- **§4 three-tier observability + shared `logical_call_id`:**
+  GoModel `Hooks{OnRequestStart, OnRequestEnd}` Protocol maps
+  1:1 to FA's existing `BEFORE_LLM_CALL` / `AFTER_LLM_CALL`
+  (see survey §4.5). The `logical_call_id` UUID4 correlation
+  surface is FA-specific (added during pre-PR critical pass
+  closing P0 #3 finding); no audited OSS source uses a single
+  ID across tier-1/2/3 trace surfaces explicitly. Tier-3
+  `FA_DEBUG_LLM_BODIES=1` gating mirrors ADR-7 §1 «traces
+  separate from agent state» discipline.
+- **§5 two-category adapter split (`OpenAICompatProvider` +
+  `AnthropicProvider`) + response normalization:** Bifrost
+  `core/providers/{openai,anthropic,...}/` Category-1 /
+  Category-2 split is the independent-convergence anchor
+  (survey §4.6). 6 of 7 audited sources implement a shared
+  OpenAI-compat handler (survey §4.3); FA matches the majority
+  pattern. Canonical `ResponseInfo` with provider-specific
+  `extras: dict[str, Any]` follows Postel's-Law (cited
+  generically as web-protocol design rather than a single
+  source).
+- **§6 reserved-key collisions fail-fast as
+  `ReservedProviderError`:** Bifrost
+  `BlockRestrictedWrites()` reserved-context-keys pattern
+  ([survey §0 R-5](../research/provider-client-survey-2026-05.md))
+  — FA adapts the «reserved namespace exists» concept but
+  inverts the «silent drop» mechanism to «fail at registration»,
+  matching ADR-8 §3 `ConfigurationError` for duplicate hook
+  names + FA AGENTS.md «default-deny + explicit failure»
+  principle.
+- **§7 family-disjoint preservation + best-effort
+  `extract_family()` warning:** ADR-2 §Amendment 2026-05-20 +
+  ADR-7 §Amendment 2026-05-20 rule 4 (family-disjoint rule is
+  FA-internal prior art, not OSS-borrowed; correlated-llm-
+  errors note §10 R-9 supplies the underlying paper-backed
+  rationale). The §7 reframe of «exact-match validator → best-
+  effort warning» is FA-specific (added during pre-PR critical
+  pass closing P0 #4 finding — slug strings vary legitimately
+  across providers, so exact-match infeasible). No OSS source
+  audited documents the slug-variance failure mode because
+  none enforces cross-platform family identity to begin with.
+- **§8 out-of-scope rejections:** Cross-MODEL auto-escalation
+  rejected per ADR-2 §Decision; GoModel
+  `fallback/resolver.go::ArenaRanked` is the rejected anti-
+  pattern. TLS-fingerprint stealth / JA3-JA4 spoofing rejected
+  on ethical grounds (OmniRoute pattern; survey §0 R-6).
+  Streaming chain semantics deferred until ADR-7 §1 «non-
+  streaming only» relaxes in v0.2 (FA-internal prior art, not
+  OSS-borrowed).
 
 ## References
 

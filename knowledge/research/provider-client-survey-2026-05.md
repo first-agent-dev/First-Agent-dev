@@ -599,6 +599,7 @@ Per §0 R-3 verdict (TAKE). Schema for tier-1 `llm_call` row:
 {
   "kind": "llm_call",
   "ts": "2026-05-22T...",
+  "logical_call_id": "<uuid4>",
   "role": "coder",
   "model": "deepseek-v3",
   "family": "deepseek",
@@ -613,14 +614,23 @@ Per §0 R-3 verdict (TAKE). Schema for tier-1 `llm_call` row:
 }
 ```
 
+All three tiers carry the same `logical_call_id` UUID4 (generated
+once per role-level call) so post-hoc analysis can correlate the
+tier-1 row ↔ tier-2 row ↔ tier-3 body entries for the same
+logical call across `events.jsonl` and `llm_bodies.jsonl`. ADR-9
+§4 is the contract; per-attempt rows on a chain inherit the
+parent's `logical_call_id` (no per-attempt UUID).
+
 Schema for tier-2 `llm_chain_exhausted` row (fires only on failure):
 
 ```json
 {
   "kind": "llm_chain_exhausted",
   "ts": "2026-05-22T...",
+  "logical_call_id": "<uuid4>",
   "role": "coder",
   "model": "deepseek-v3",
+  "terminal": "all_exhausted",
   "attempts": [
     {"provider": "openrouter", "status": 429, "ms": 142, "error": "rate_limited"},
     {"provider": "fireworks", "status": 503, "ms": 411, "error": "service_unavailable"},
@@ -630,6 +640,13 @@ Schema for tier-2 `llm_chain_exhausted` row (fires only on failure):
   "wallclock_ms": 874
 }
 ```
+
+`terminal` is `"all_exhausted"` for chain-exhaustion failure (all
+entries tried, all transient-failed) or `"request_shape"` for the
+fail-fast path on 400/422 (FA-side client bug — next provider
+would produce the same 4xx). The `FailureClassifierObserver`
+branches on `terminal` to route the failure to «retry the role»
+vs «code bug» per ADR-7 §Amendment 2026-05-20 rule 3.
 
 Schema for tier-3 `llm_bodies.jsonl` row (gated by `FA_DEBUG_LLM_BODIES=1`):
 
