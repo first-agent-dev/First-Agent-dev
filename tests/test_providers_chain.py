@@ -606,6 +606,25 @@ def test_chain_from_mapping_coalesces_yaml_null_family_to_empty_string() -> None
     assert all("'None'" not in w for w in warnings)
 
 
+def test_chain_from_mapping_coalesces_yaml_null_chain_field_to_empty_tuple() -> None:
+    # YAML ``chain: null`` (or bare ``chain:``) parses to Python
+    # ``None``; ``raw.get("chain", ())`` returns the actual ``None``
+    # because the key exists, and the subsequent ``for row in
+    # chain_rows`` would raise ``TypeError: 'NoneType' object is not
+    # iterable``. The loader must coalesce to an empty tuple so the
+    # ``ChainConfig.validate`` surfaces the intended
+    # ``ConfigurationError("empty chain — role not callable")``
+    # rather than a confusing TypeError.
+    raw_explicit_null = {"model": "x", "family": "x", "chain": None}
+    # Must not raise TypeError.
+    config_null = chain_from_mapping("coder", raw_explicit_null)
+    assert config_null.chain == ()
+
+    raw_missing_key = {"model": "x", "family": "x"}
+    config_missing = chain_from_mapping("coder", raw_missing_key)
+    assert config_missing.chain == ()
+
+
 def test_chain_from_mapping_coalesces_yaml_null_on_chain_entry_numeric_fields() -> None:
     # YAML ``cooldown_seconds: null`` / ``httpx_retries: null`` /
     # ``timeout_seconds: null`` parses to Python ``None``, which then

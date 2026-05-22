@@ -356,7 +356,14 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
     co-located with its validator.
     """
 
-    chain_rows: Sequence[Mapping[str, Any]] = raw.get("chain", ())
+    # ``raw.get("chain", ())`` returns the actual value when the YAML
+    # contains ``chain: null`` (or bare ``chain:``) because the key
+    # exists, so the subsequent ``for row in chain_rows`` would raise
+    # ``TypeError: 'NoneType' object is not iterable``. ``or ()``
+    # coalesces both missing-key and None-value to the empty tuple so
+    # the validator surfaces the intended ``ConfigurationError("empty
+    # chain — role not callable")`` instead of a confusing crash.
+    chain_rows: Sequence[Mapping[str, Any]] = raw.get("chain") or ()
     # ``row.get(key, DEFAULT)`` returns the actual value when the YAML
     # row contains ``key: null`` (because the key exists), so passing
     # ``None`` straight through to ``int(...)`` / ``dict(...)`` would
