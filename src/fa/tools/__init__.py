@@ -27,8 +27,8 @@ multi-process FA invocation becomes a possibility worth proving.
 (Devin Review finding 2026-05-20 on PR #18 — original docstring
 claimed parallel-process safety; corrected here.)
 
-Public surface (stable for Wave 0; HookRegistry integration in R-1
-adds the `post_tool` adapter that calls these tools):
+Public surface (stable for Wave 0; `LearningObserver` wires these
+writers into the inner-loop `AFTER_TOOL_EXEC` hook):
 
 - :func:`record_gotcha` — append a timestamped section to
   ``knowledge/trace/gotchas.md``.

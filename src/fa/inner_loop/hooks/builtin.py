@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -255,12 +256,69 @@ class VerifierObserver(ObserverMiddleware):
         )
 
 
+# ``record_discovery`` rejects any key character outside
+# ``[A-Za-z0-9_.\-/]`` (``fa.tools.record_discovery._KEY_PATTERN``).
+# Tool params (``path``, ``call_id``) can legally contain spaces,
+# semicolons, etc. — the smoke CLI itself uses
+# ``"nested dir/smoke; no-inject.txt"``. Sanitise the freeform
+# segment so the discovery key always matches the pattern; the
+# substitution is lossless for the path-rerouting use case (the
+# original path is still stored in ``DiscoveryEntry.pointers``).
+_DISCOVERY_KEY_SAFE = re.compile(r"[^A-Za-z0-9_.\-/]")
+
+
+def _learning_observer_key(call_name: str, params: Mapping[str, object], call_id: str) -> str:
+    """Build a path-keyed discovery slug.
+
+    Two-rule scheme designed so two calls to the same tool with
+    different ``path`` parameters yield distinct entries — a flat
+    ``tool_name`` key collapsed every call onto a single slot and
+    defeated R-8's cross-session memory capability. See
+    ADR-7 §Sub-amendment 2026-05-21b «path-keyed discovery key».
+
+    1. If ``params["path"]`` is a string: ``"{tool/slug}/{path}"``
+       — the natural shape for ``fs.read_file`` / ``fs.write_file``
+       and any future tool that touches a workspace path.
+    2. Else: ``"{tool/slug}/{call_id}"`` — coarse but cumulative,
+       used by ``fs.run_bash`` and any tool without a workspace
+       anchor.
+    """
+
+    slug = call_name.replace(".", "/")
+    path_value = params.get("path")
+    suffix = path_value if isinstance(path_value, str) and path_value else call_id
+    return f"{slug}/{_DISCOVERY_KEY_SAFE.sub('_', suffix)}"
+
+
 @dataclass
 class LearningObserver(ObserverMiddleware):
+    """Filesystem-canon observer (R-8).
+
+    ``codebase_map_path`` / ``gotchas_path`` are the canonical
+    ``<workspace>/knowledge/trace/`` artifacts: durable cross-session
+    memory checked into the repo alongside ADRs and
+    ``exploration_log.md``. The smoke CLI and the T-2 real runtime
+    share this path (ADR-7 §Sub-amendment 2026-05-21b «single canon
+    root»). The earlier ``.fa/knowledge/trace/`` relocation was
+    rejected 2026-05-22 as a spec-bypassing workaround that broke
+    the cross-session memory invariant — see exploration_log Q-7
+    Rejected blocks.
+
+    ``now`` injects a fixed ISO timestamp into both writers; the
+    smoke CLI pins it to ``"2026-05-21T00:00:00Z"`` so repeated
+    smoke runs produce byte-identical artifacts (paired with the
+    seed baseline at ``knowledge/trace/codebase_map.json`` and the
+    ``gotchas.md`` dedup, this keeps ``git status`` clean across
+    smoke invocations). ``None`` falls through to the writer-side
+    ``_now_iso_z()`` default — that is the T-2 real-runtime mode,
+    where live timestamps are required for genuine provenance.
+    """
+
     codebase_map_path: Path
     gotchas_path: Path
     name: str = "learning"
     attaches_to: tuple[LifecyclePoint, ...] = (LifecyclePoint.AFTER_TOOL_EXEC,)
+    now: str | None = None
 
     def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
         del point
@@ -272,18 +330,20 @@ class LearningObserver(ObserverMiddleware):
             record_gotcha(
                 f"{call.name} failed",
                 result.error.message,
-                tags=("inner-loop", "tool-error"),
+                tags=("inner-loop", "tool-error", call.name),
                 path=self.gotchas_path,
+                now=self.now,
             )
             return
         record_discovery(
-            call.name.replace(".", "/"),
+            _learning_observer_key(call.name, call.params, call.call_id),
             DiscoveryEntry(
                 summary=result.summary,
                 pointers=tuple(result.artifacts),
-                tags=("inner-loop",),
+                tags=("inner-loop", call.name),
             ),
             path=self.codebase_map_path,
+            now=self.now,
         )
 
 

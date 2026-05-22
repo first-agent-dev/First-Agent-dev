@@ -20,6 +20,7 @@ from fa.inner_loop.hooks import (
     AuditHook,
     AuthExpiredBlocker,
     HookRegistry,
+    LearningObserver,
     LockfileBlocker,
     LoopGuard,
     RateLimitBlocker,
@@ -165,6 +166,33 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     # is stable when the T-2 LLM driver lands the artifact emitter
     # — mirrors the BlockerMiddleware-family rationale above.
     hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
+    # R-8 LearningObserver: writes discoveries/gotchas to the canonical
+    # ``<workspace>/knowledge/trace/`` artifacts — the same path the
+    # T-2 real runtime will use, so smoke literally exercises R-8's
+    # intended cross-session memory surface. Repeated runs against
+    # the live repo stay byte-identical (and therefore leave
+    # ``git status`` clean) because three pieces fit together:
+    #
+    # 1. ``now="2026-05-21T00:00:00Z"`` pins ``record_discovery`` /
+    #    ``record_gotcha`` timestamps for the smoke fixture (T-2
+    #    omits ``now`` → live timestamps for real provenance).
+    # 2. A seed baseline ``knowledge/trace/codebase_map.json`` is
+    #    checked into the repo; the post-smoke contents match it
+    #    byte-for-byte.
+    # 3. ``record_gotcha`` skips the append when the file already
+    #    ends with this exact section (fixed timestamp ⇒ identical
+    #    bytes ⇒ dedup; live timestamp ⇒ section bytes differ ⇒
+    #    append-only contract preserved).
+    #
+    # See ADR-7 §Sub-amendment 2026-05-21b «single canon root» +
+    # «deterministic-clock injection» + «gotchas dedup» rules.
+    hooks.register(
+        LearningObserver(
+            codebase_map_path=workspace / "knowledge" / "trace" / "codebase_map.json",
+            gotchas_path=workspace / "knowledge" / "trace" / "gotchas.md",
+            now="2026-05-21T00:00:00Z",
+        )
+    )
     # R-5 DSV: load every YAML contract under ``verifiers/`` so the
     # ``VerifierObserver`` can override LLM-claimed success on contract
     # mismatch (force_failure). Missing directory = empty contract map

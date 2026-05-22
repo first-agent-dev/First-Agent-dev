@@ -473,6 +473,128 @@
   + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
   §R-45.
 
+### Q-7 sub-amendment 2026-05-21b — R-8 `LearningObserver` filesystem-canon artifacts
+
+- **Coupling:** Q-7 + Q-8 (clarifies Q-7 §7 event-kind boundary;
+  reuses Q-8 `ObserverMiddleware`/`AFTER_TOOL_EXEC` chain with no
+  HookRegistry contract change). Pairs operationally with R-45 in
+  the smoke CLI: both observe after tool execution, but R-45 writes
+  optional `events.jsonl` cost rows while R-8 writes canonical
+  filesystem artifacts.
+- **Chosen:** Wire
+  `fa.inner_loop.hooks.builtin.LearningObserver` into
+  `_cmd_inner_loop_smoke` after `CostGuardian` and before
+  `VerifierObserver`. Smoke and the T-2 real runtime share the
+  **single canon root** `<workspace>/knowledge/trace/{codebase_map.json,gotchas.md}`
+  — smoke exercises the same artifact path R-8 uses for cross-
+  session memory in production. Repeated smoke runs leave the live
+  repo untouched via three forcing functions, not a path bypass:
+  (a) `LearningObserver.now="2026-05-21T00:00:00Z"` pins the
+  `recorded_at` field, so the smoke artifact is reproducible; T-2
+  omits `now` and live wall-clock timestamps are preserved for real
+  provenance. (b) `record_gotcha` skips appends when the file
+  already ends with this exact section (fixed clock ⇒ identical
+  bytes ⇒ dedup; live clock ⇒ sections differ ⇒ append-only
+  contract preserved). (c) The repo checks in a seed
+  `knowledge/trace/codebase_map.json` baseline byte-equal to the
+  smoke output, and
+  `test_inner_loop_smoke_canon_snapshot_matches_seed_baseline`
+  fails CI on any drift. On success the observer upserts a
+  path-keyed discovery entry via `record_discovery`; on tool error
+  it appends `gotchas.md` via `record_gotcha`. Do **not** introduce
+  `kind="learning"` in `events.jsonl`; the two files are the
+  durable audit trail for R-8. If a filesystem-canon write fails,
+  reuse the existing `hook_decision` audit row
+  (`decision="observer_error_swallowed"`, `reason=str(exc)`) rather
+  than adding a new reader surface.
+- **Rejected:**
+  - **Leave R-8 as standalone writer functions only.** Reason:
+    the R-8 Python ports and `LearningObserver` class already
+    existed, but no runtime/smoke entrypoint invoked them; actual
+    tool observations still produced no filesystem-canon learning.
+    Lesson: revisit only if the smoke CLI is retired before the
+    T-2 LLM driver lands.
+  - **Duplicate every learning write as `kind="learning"` in
+    `events.jsonl`.** Reason: `codebase_map.json` and
+    `gotchas.md` are already the replay/audit artifacts for this
+    concern; JSONL duplication increases trace size and adds a
+    second source of truth without a new invariant. Lesson: add an
+    event kind only if a downstream consumer needs to correlate
+    learning writes with raw event order and cannot read the
+    filesystem artifacts directly.
+  - **Add a dedicated reader/CLI for swallowed observer errors.**
+    Reason: the existing `EventLog` already records observer
+    failures as `hook_decision` rows whenever `run_session` attaches
+    the HookRegistry event sink; a separate reader is T-3 diagnostics
+    scope, not required for R-8 wiring. Lesson: revisit when a
+    general `fa events` / trace-inspection command is scoped.
+  - **Move `LearningObserver` into `src/fa/observability/` before
+    wiring.** Reason: extra move/rename churn for no capability
+    gain; `builtin.py` already exports the class and tests cover it.
+    Lesson: factor observability modules only when a second
+    filesystem-canon observer forces shared code.
+  - **Tool-name-only discovery key (`call.name.replace(".", "/")`)** —
+    rejected 2026-05-22 in the same PR (follow-up commit). Reason:
+    `record_discovery` is upsert-by-key, so every call to a given
+    tool overwrote the prior entry; the smoke run's three tool calls
+    produced exactly three permanent slots regardless of session
+    length, defeating R-8's stated cross-session memory capability.
+    Replaced by the path-keyed scheme: `"{tool/slug}/{path}"` when
+    `call.params["path"]` is a non-empty string, else
+    `"{tool/slug}/{call_id}"`, with sanitisation against
+    `record_discovery._KEY_PATTERN`. Lesson: revisit only if R-8
+    is ever intentionally reduced to a per-tool «last seen» index
+    (no current use case).
+  - **Smoke canon root under `<workspace>/.fa/knowledge/trace/`
+    (the path-relocation workaround)** — considered and adopted in
+    `5c1db0f` (2026-05-22), then rejected and reverted in the same
+    PR (M0a follow-up). Reason: relocating writes to `.fa/` made
+    `git status --short` clean but **broke the R-8 invariant** —
+    smoke no longer exercised the canonical `knowledge/trace/`
+    artifact path that the T-2 real runtime is supposed to use, so
+    «smoke proves R-8» and «R-8 actually writes durable cross-
+    session memory under `knowledge/trace/`» were silently
+    decoupled. The fix was a spec-bypassing workaround masquerading
+    as a reliability fix; the surface metric passed while the
+    intended functionality regressed. Replaced by the canonical
+    path plus three forcing functions (deterministic-clock
+    injection, gotchas dedup, seed baseline + snapshot regression
+    — see the Chosen block above) so the live repo stays clean
+    *because* the canon artifact is reproducible, not because the
+    canon was moved out of the tracked tree. Lesson: when a fix
+    silences a symptom by changing **what** a module does instead
+    of repairing **how reliably** it does it, surface the contract
+    being violated explicitly — every spec-bypassing workaround
+    walks past at least one invariant. This worked example is the
+    seed for the R-32 anti-pattern catalog (planned M1).
+  - **Wall-clock `LearningObserver.now` for the smoke CLI** —
+    considered briefly 2026-05-22 (M0a). Reason: »just use the
+    current machine timestamp« is *exactly* the current
+    `_now_iso_z()` default and is the root cause the canonical path
+    revert sets out to fix; live timestamps make the JSON diff after
+    every smoke run non-empty (timestamp-only), which silently
+    re-introduces `?? knowledge/trace/codebase_map.json` in `git
+    status`. Replaced by a fixed ISO string anchored at the ADR-7
+    §Sub-amendment 2026-05-21b date (`"2026-05-21T00:00:00Z"`).
+    Lesson: smoke artifacts that ship into the tracked tree need a
+    deterministic clock; only the T-2 real runtime should use live
+    wall-clock timestamps, and the difference is one constructor
+    keyword.
+- **Re-evaluation triggers:** (1) T-2 LLM driver starts emitting
+  richer `ToolResult.artifacts` and the `codebase_map.json`
+  pointer shape proves insufficient → add a deterministic artifact
+  normaliser; (2) multi-process FA invocation lands → add file
+  locking around the R-8 writers; (3) a downstream UI requires
+  strict event-order correlation for learning writes → reconsider
+  a `kind="learning"` projection; (4) a new smoke tool is wired,
+  the discovery-key scheme changes, or the summary string of any
+  existing tool changes → update the seed baseline at
+  `knowledge/trace/codebase_map.json` in the same PR (the snapshot
+  regression test will otherwise fail loudly).
+- **Source:** [ADR-7 §Sub-amendment 2026-05-21b](../adr/ADR-7-inner-loop-tool-registry.md#sub-amendment-2026-05-21b--r-8-learningobserver-filesystem-canon-artifacts)
+  + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-8.
+
 ## Q-8 — What is the v0.1 hook-pipeline contract for the inner-loop dispatcher? (2026-05-20)
 
 - **Chosen:** ADR-8 "Doc-first HookRegistry middleware chain

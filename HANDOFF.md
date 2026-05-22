@@ -28,6 +28,42 @@
 > test files, +10 from four Devin-Review iteration commits — see
 > §Current state «PR-4 review-fix iteration» bullet below).
 >
+> **Current update (2026-05-21, refined 2026-05-22 same PR, M0a
+> follow-up 2026-05-22):** R-8 filesystem-canon writer is
+> operationally wired in the smoke CLI: `LearningObserver` registers
+> after `CostGuardian` in `fa inner-loop-smoke`. Smoke and the T-2
+> real runtime share the **single canon root**
+> `<workspace>/knowledge/trace/{codebase_map.json,gotchas.md}` —
+> smoke literally exercises the artifact path R-8 uses for cross-
+> session memory in production. `fa inner-loop-smoke --workspace .`
+> leaves the live repo's `git status` clean across repeated runs
+> because three forcing functions make the canon artifact
+> reproducible: (a) `LearningObserver.now="2026-05-21T00:00:00Z"`
+> pins the smoke `recorded_at` field (T-2 omits `now` → live wall-
+> clock for real provenance); (b) `record_gotcha` skips appends
+> when the file already ends with this exact section (fixed clock
+> ⇒ identical bytes ⇒ dedup; live clock ⇒ sections differ ⇒
+> append-only contract preserved); (c) `knowledge/trace/codebase_map.json`
+> is checked into the repo as a seed baseline byte-equal to the
+> smoke output, and `tests/test_cli.py::test_inner_loop_smoke_canon_snapshot_matches_seed_baseline`
+> fails CI on any drift. Discovery key is path-keyed
+> (`"{tool/slug}/{path}"` for `fs.*` calls, `"{tool/slug}/{call_id}"`
+> fallback) so repeated calls against different paths no longer
+> overwrite each other. ADR-7 §Sub-amendment 2026-05-21b documents
+> that no new `EventLog.kind` is added because R-8 writes
+> filesystem artifacts, not `events.jsonl` rows; observer write
+> failures — including the real `LearningObserver` →
+> `record_discovery` → `OSError` chain — still surface through
+> existing `hook_decision` rows as `observer_error_swallowed` in
+> `.fa/smoke-events.jsonl` (test coverage: generic
+> `_FailingObserver` regression + `LearningObserver`-specific
+> chmod-0o500 regression). The earlier `.fa/knowledge/trace/`
+> relocation in `5c1db0f` is reverted; it was a spec-bypassing
+> workaround that silenced the `git status` symptom while
+> decoupling «smoke proves R-8» from «R-8 writes cross-session
+> memory under `knowledge/trace/`» — see exploration_log Q-7
+> Rejected blocks.
+>
 > **PR-4 review-fix iteration (2026-05-21).** Four follow-up
 > commits on the same branch addressed Devin Review runs 1/2/3
 > + a CodeQL nit, all gated and pushed:
@@ -294,7 +330,26 @@ manually beyond this point.
     [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
     §R-7 / §R-23 / §R-28 / §R-29 / §R-30 +
     [`research/correlated-llm-errors-and-ensembling-2026-05.md`](./knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md)
-    §4.1 / §6 R-7 / R-8 / R-9.
+    §4.1 / §6 R-7 / R-8 / R-9. **Sub-amendment
+    2026-05-21b (refined 2026-05-22 same PR, M0a follow-up
+    2026-05-22):** R-8 `LearningObserver` is wired into
+    `fa inner-loop-smoke`; smoke and the T-2 real runtime share
+    the single canon root `<workspace>/knowledge/trace/`.
+    Successful tool results upsert
+    `knowledge/trace/codebase_map.json` with a path-keyed slug
+    (`"{tool/slug}/{path}"` for `fs.*`, `"{tool/slug}/{call_id}"`
+    fallback); failures append `knowledge/trace/gotchas.md`.
+    Live-repo cleanliness comes from three forcing functions
+    rather than a path bypass: deterministic-clock injection
+    (`LearningObserver.now="2026-05-21T00:00:00Z"` for smoke;
+    `None` for T-2 → live wall-clock), `record_gotcha`
+    byte-suffix dedup, and a seed `knowledge/trace/codebase_map.json`
+    baseline checked into the repo with a snapshot regression
+    test. No new `EventLog.kind` is added because the
+    filesystem artifacts are the audit surface; observer write
+    failures (including the real `LearningObserver` →
+    `record_discovery` → `OSError` chain) reuse the existing
+    `hook_decision` / `observer_error_swallowed` row.
   - [ADR-8](./knowledge/adr/ADR-8-hook-registry.md) —
     HookRegistry middleware-chain contract (doc-first; runtime
     BACKLOG M-1 — **closed by PR #24**). Five lifecycle points (`BETWEEN_ROUNDS` /
@@ -493,14 +548,17 @@ what was deferred and how each was resolved.
 
 ## Next steps (intended order)
 
-0. **Wave-3 stack #2 candidates** (pick one, see
-   `fa-wave-3-remaining-work.md` attachment from the 2026-05-21
-   session for the 7-column status table). Strongest cheap-impl
-   candidates:
-   - **R-8 filesystem-canon writer** — gotchas/discoveries
-     journal companion to the reader side; deferred from
-     Wave-3 stack #1 per «M2 only if M1 lands without
-     iteration» rule.
+0. **Wave-3 stack #2 status.** R-8 is landed: the
+   existing `LearningObserver` now registers in `fa inner-loop-smoke`
+   and writes the filesystem-canon trace artifacts at the canonical
+   `<workspace>/knowledge/trace/codebase_map.json` +
+   `<workspace>/knowledge/trace/gotchas.md` paths with a path-keyed
+   discovery slug, a fixed-clock injection for smoke
+   (`now="2026-05-21T00:00:00Z"`), `record_gotcha` byte-suffix
+   dedup, and a seed `codebase_map.json` baseline + snapshot test.
+   The T-2 real runtime will reuse this exact path with `now=None`
+   for live wall-clock provenance once it lands.
+   Remaining cheap-impl candidates from the 2026-05-21 7-column table:
    - **R-17 / R-16 / R-24** — need scope decisions from the
      project lead before queuing.
    - **R-31 / R-32 / R-33** — need ADR-9 timing decision.

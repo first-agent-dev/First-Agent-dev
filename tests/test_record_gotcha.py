@@ -99,3 +99,39 @@ def test_record_gotcha_creates_missing_parent(tmp_path: Path) -> None:
         now="2026-05-20T00:00:00Z",
     )
     assert target.exists()
+
+
+def test_record_gotcha_dedups_only_consecutive_identical_sections(
+    tmp_path: Path,
+) -> None:
+    """Trailing-byte dedup: a second call producing a byte-identical
+    section is skipped; a different subject/body/tags re-appends; a
+    different ``now`` also re-appends (live-timestamp T-2 runtime keeps
+    the append-only contract).
+
+    Captures ADR-7 §Sub-amendment 2026-05-21b «gotchas dedup» rule.
+    The smoke CLI relies on this property paired with fixed-clock
+    injection to keep ``knowledge/trace/gotchas.md`` byte-stable
+    across repeated runs against the same failing tool call.
+    """
+
+    target = tmp_path / "gotchas.md"
+    record_gotcha("subj", "body", path=target, now="2026-05-21T00:00:00Z")
+    first = target.read_text(encoding="utf-8")
+
+    # Same args → dedup (file bytes unchanged).
+    record_gotcha("subj", "body", path=target, now="2026-05-21T00:00:00Z")
+    assert target.read_text(encoding="utf-8") == first
+
+    # Different body → appends.
+    record_gotcha("subj", "body 2", path=target, now="2026-05-21T00:00:00Z")
+    after_distinct_body = target.read_text(encoding="utf-8")
+    assert after_distinct_body != first
+    assert "body 2" in after_distinct_body
+
+    # Different timestamp (T-2 live-clock mode emulated) → appends
+    # even when subject/body match the last section.
+    record_gotcha("subj", "body 2", path=target, now="2026-05-21T01:00:00Z")
+    after_live_clock = target.read_text(encoding="utf-8")
+    assert after_live_clock != after_distinct_body
+    assert "2026-05-21T01:00:00Z" in after_live_clock

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,9 @@ from fa.inner_loop.hooks import (
     GuardMiddleware,
     HookPayload,
     HookRegistry,
+    LearningObserver,
     LifecyclePoint,
+    ObserverMiddleware,
     PauseGuard,
     SandboxHook,
 )
@@ -312,6 +315,115 @@ class _BetweenRoundsCountingGuard(GuardMiddleware):
         del point
         self.calls.append("" if payload.tool_call is None else payload.tool_call.name)
         return Decision.allow()
+
+
+class _FailingObserver(ObserverMiddleware):
+    name = "failing-observer"
+    attaches_to = (LifecyclePoint.AFTER_TOOL_EXEC,)
+
+    def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
+        del point, payload
+        raise RuntimeError("observer write failed")
+
+
+def test_run_session_records_swallowed_observer_errors(tmp_path: Path) -> None:
+    """Observer side-effect failures are non-fatal but still auditable.
+
+    This is the safety net for filesystem-canon observers such as
+    ``LearningObserver``: a broken write path must not fail the tool
+    result, but the existing ``hook_decision`` row is the durable place
+    to diagnose the swallowed observer exception.
+    """
+
+    (tmp_path / "input.txt").write_text("hello\n", encoding="utf-8")
+    registry = build_baseline_registry(tmp_path)
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    hooks.register(_FailingObserver())
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="t-observer-error",
+        log=EventLog(tmp_path / "ev.jsonl"),
+    )
+
+    results = run_session(
+        (ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),),
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert results[0].error is None
+    assert state.log is not None
+    events = state.log.read_all()
+    observer_rows = [
+        event
+        for event in events
+        if event.kind == "hook_decision" and event.content.get("middleware") == "failing-observer"
+    ]
+    assert len(observer_rows) == 1
+    row = observer_rows[0]
+    assert row.content["decision"] == "observer_error_swallowed"
+    assert row.content["reason"] == "observer write failed"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="chmod permission bits are POSIX-only")
+def test_learning_observer_write_failure_audited(tmp_path: Path) -> None:
+    """The real ``LearningObserver`` write-failure path lands in the
+    existing ``hook_decision`` / ``observer_error_swallowed`` audit row.
+
+    ADR-7 §Sub-amendment 2026-05-21b rule 3 promises that a broken
+    ``knowledge/trace/`` write path is diagnosable through the existing
+    hook audit row. The generic ``_FailingObserver`` regression above
+    proves the registry-level mechanism; this test proves the specific
+    ``LearningObserver`` → ``record_discovery`` → ``OSError`` → audit-row
+    chain end-to-end with the real observer + writer wired together
+    (TEST-GAP-2 fix).
+    """
+
+    (tmp_path / "input.txt").write_text("hello\n", encoding="utf-8")
+    canon = tmp_path / "canon"
+    canon.mkdir()
+    canon.chmod(0o500)  # read+exec but not write
+    try:
+        registry = build_baseline_registry(tmp_path)
+        hooks = HookRegistry()
+        hooks.register(SandboxHook(tmp_path))
+        hooks.register(
+            LearningObserver(
+                codebase_map_path=canon / "codebase_map.json",
+                gotchas_path=canon / "gotchas.md",
+            )
+        )
+        state = SessionState(
+            workspace_root=tmp_path,
+            run_id="t-learning-write-failure",
+            log=EventLog(tmp_path / "ev.jsonl"),
+        )
+
+        results = run_session(
+            (ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),),
+            registry=registry,
+            hooks=hooks,
+            state=state,
+        )
+    finally:
+        canon.chmod(0o700)
+
+    assert results[0].error is None
+    assert state.log is not None
+    events = state.log.read_all()
+    observer_rows = [
+        event
+        for event in events
+        if event.kind == "hook_decision" and event.content.get("middleware") == "learning"
+    ]
+    assert len(observer_rows) == 1, "LearningObserver write failure did not emit audit row"
+    row = observer_rows[0]
+    assert row.content["decision"] == "observer_error_swallowed"
+    # ``TraceEvent.content`` is loosely typed (``object`` values);
+    # coerce to str so mypy --strict accepts the substring check.
+    assert "codebase_map.json" in str(row.content["reason"])
 
 
 def test_between_rounds_fires_on_iteration_1(tmp_path: Path) -> None:

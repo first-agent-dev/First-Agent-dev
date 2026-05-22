@@ -84,6 +84,23 @@ def record_gotcha(
         section_lines.extend(["", f"**Tags:** {', '.join(tag_list)}"])
     new_section = "\n".join(section_lines) + "\n"
 
+    # Dedup: skip the append when the file already ends with exactly
+    # this section. Two callers expect this behaviour:
+    #
+    # 1. The smoke-fixture caller in ``fa inner-loop-smoke`` pins
+    #    ``now`` to a fixed ISO timestamp (ADR-7 §Sub-amendment
+    #    2026-05-21b rule «deterministic-clock injection»); repeated
+    #    smoke runs against the same failing tool call would otherwise
+    #    accumulate byte-identical sections forever and degrade
+    #    ``knowledge/trace/gotchas.md`` from knowledge into noise.
+    # 2. The T-2 real runtime keeps live timestamps (``now=None``
+    #    falls through to ``_now_iso_z()``), so the section bytes
+    #    differ across invocations and dedup never triggers — the
+    #    append-only contract for genuine cross-session gotchas is
+    #    preserved unchanged.
+    if existing.endswith(new_section):
+        return target
+
     tmp = target.with_suffix(target.suffix + ".tmp")
     tmp.write_text(existing + separator + new_section, encoding="utf-8")
     os.replace(tmp, target)

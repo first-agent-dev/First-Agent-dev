@@ -39,6 +39,11 @@ writer + the R-N anchor):
   M-1 tools never emit the artifact, so the kind is dormant until
   the T-2 LLM driver lands.
 
+Filesystem-canon observers such as
+:class:`fa.inner_loop.hooks.builtin.LearningObserver` (R-8) do not add
+event kinds here: they write side-effect artifacts under
+``knowledge/trace/`` rather than rows in this ``EventLog``.
+
 New writers MUST add their ``kind`` value to this list in the same
 commit (AGENTS.md PR Checklist; matches ADR-7 §7 «schema
 discoverability» intent).

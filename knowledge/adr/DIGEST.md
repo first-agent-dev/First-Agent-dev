@@ -267,6 +267,43 @@ concrete carriers; single source of truth for every tool PR.
   T-2 LLM driver lands the artifact emitter. Source:
   [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
   §R-45.
+- **2026-05-21b (Wave-3 sub-amendment, updated 2026-05-22 in same PR)** —
+  R-8 `LearningObserver` filesystem-canon artifacts. Wires
+  `fa.inner_loop.hooks.builtin.LearningObserver` into
+  `fa inner-loop-smoke` after `CostGuardian`, attached at
+  `AFTER_TOOL_EXEC`. Smoke and the T-2 real runtime share the
+  **single canon root** `<workspace>/knowledge/trace/{codebase_map.json,gotchas.md}`
+  — smoke literally exercises the artifact path R-8's cross-session
+  memory writes to in production. Live-repo cleanliness across
+  repeated smoke runs comes from three forcing functions, not a
+  path bypass: (a) **deterministic-clock injection** — smoke pins
+  `LearningObserver.now="2026-05-21T00:00:00Z"`, T-2 omits `now`
+  and falls through to a live wall-clock; (b) **gotchas dedup** —
+  `record_gotcha` skips appends when the file already ends with
+  this exact section (fixed clock ⇒ identical bytes ⇒ dedup;
+  live clock ⇒ append-only contract preserved); (c) **seed
+  baseline + snapshot regression** — `knowledge/trace/codebase_map.json`
+  is checked into the repo with the exact smoke output, and
+  `test_inner_loop_smoke_canon_snapshot_matches_seed_baseline`
+  fails CI on any drift. Discovery key is path-keyed
+  (`"{tool/slug}/{path}"` for `fs.*`; `"{tool/slug}/{call_id}"`
+  fallback) so two calls to the same tool against different paths
+  no longer overwrite each other. No new `EventLog.kind` is added:
+  the filesystem artifacts are the durable R-8 audit surface.
+  Observer write failures — including the real
+  `LearningObserver` → `record_discovery` → `OSError` chain —
+  surface in the existing `hook_decision` rows as
+  `decision="observer_error_swallowed"` (for smoke CLI:
+  `.fa/smoke-events.jsonl`), so no dedicated reader is added.
+  **Worked-history note (2026-05-22):** an earlier follow-up
+  (`5c1db0f`) relocated the smoke canon to
+  `<workspace>/.fa/knowledge/trace/` to silence the same `git
+  status` symptom; that was a spec-bypassing workaround that
+  decoupled «smoke proves R-8» from «R-8 writes cross-session
+  memory under `knowledge/trace/`» and was reverted in M0a.
+  Source:
+  [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
+  §R-8.
 
 **Source:** [`ADR-7`](./ADR-7-inner-loop-tool-registry.md).
 

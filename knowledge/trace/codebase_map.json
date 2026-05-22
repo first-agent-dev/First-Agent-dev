@@ -1,0 +1,29 @@
+{
+  "fs/read_file/README.md": {
+    "pointers": [],
+    "recorded_at": "2026-05-21T00:00:00Z",
+    "summary": "read README.md",
+    "tags": [
+      "inner-loop",
+      "fs.read_file"
+    ]
+  },
+  "fs/run_bash/tc-bash": {
+    "pointers": [],
+    "recorded_at": "2026-05-21T00:00:00Z",
+    "summary": "bash exited 0",
+    "tags": [
+      "inner-loop",
+      "fs.run_bash"
+    ]
+  },
+  "fs/write_file/.fa/inner-loop-smoke.txt": {
+    "pointers": [],
+    "recorded_at": "2026-05-21T00:00:00Z",
+    "summary": "wrote .fa/inner-loop-smoke.txt",
+    "tags": [
+      "inner-loop",
+      "fs.write_file"
+    ]
+  }
+}
