@@ -121,6 +121,12 @@ should not back-fill existing rows).
    intent table **only if the same intent has resolved to the
    same template twice** — do not pre-populate speculative rows
    (per `RESOLVER.md` §«When to add a row»).
+2. Add a row to [`knowledge/llms.txt`](./llms.txt) BY-DEMAND-INDEX
+   under «Prompts (`knowledge/prompts/`)».
+3. If the prompt has an associated PR Checklist rule (e.g.
+   `research-briefing.md` ↔ rule #8), cross-link from both sides
+   so the rule survives without the prompt and the prompt's
+   header points at its enforcement clause.
 
 ## When adding a new anti-pattern entry
 
@@ -147,12 +153,6 @@ pointer here without having to know the README exists.
    the relevant ADR's worked-history note in the same PR (per
    [AGENTS.md PR Checklist rule #9](../AGENTS.md#pr-checklist)
    second sentence).
-2. Add a row to [`knowledge/llms.txt`](./llms.txt) BY-DEMAND-INDEX
-   under «Prompts (`knowledge/prompts/`)».
-3. If the prompt has an associated PR Checklist rule (e.g.
-   `research-briefing.md` ↔ rule #8), cross-link from both sides
-   so the rule survives without the prompt and the prompt's
-   header points at its enforcement clause.
 
 ## Cadence — recurring sweep
 
