@@ -469,6 +469,18 @@ manually beyond this point.
     FailureClassifier / attempt_history and Wave-2 pre-tool
     BlockerMiddleware + DSV YAML respectively, so the T-2 driver
     took the next free milestone slot).
+    **Post-review fix-up 2026-05-22:** `logical_call_id` now
+    propagates on `ProviderChainExhaustedError` and
+    `ProviderRequestShapeError` (closes the §4 Tier-2 correlation
+    gap on both terminals); `ProviderChain` accepts a shared
+    `cooldowns` ledger so the §3 process-global cooldown invariant
+    holds across per-role chains; `ProviderChain.request()`
+    accepts an optional pre-generated `logical_call_id` for the
+    inner-loop runtime that fires `BEFORE_LLM_CALL`; YAML `null`
+    values in the `model:` / `family:` fields now coalesce to the
+    empty string (previously the loader stored the literal string
+    `"None"` and the family-mismatch validator emitted a
+    confusing warning).
     **Option D + α** — per-role explicit provider chain with
     cooldown в `~/.fa/models.yaml` (`{model, family,
     chain: [{provider, slug, base_url, api_key_env,

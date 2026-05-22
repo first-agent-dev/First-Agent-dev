@@ -23,7 +23,9 @@ from fa.providers.chain import (
     ChainAttemptRecord,
     ChainConfig,
     ChainEntry,
+    CooldownRow,
     ProviderChain,
+    chain_from_mapping,
 )
 from fa.providers.errors import (
     ConfigurationError,
@@ -419,3 +421,206 @@ def test_logical_call_id_is_unique_per_call() -> None:
     _, id_b, _ = chain.request(RequestInfo(model_slug="deepseek-v3", messages=()))
     assert id_a == "call-0"
     assert id_b == "call-1"
+
+
+# ----- ADR-9 §4 correlation: terminal errors carry logical_call_id -----
+
+
+def test_chain_exhausted_error_carries_logical_call_id() -> None:
+    # ADR-9 §4 Tier-2 schema: ``llm_chain_exhausted`` row with
+    # ``terminal: "all_exhausted"`` MUST carry ``logical_call_id``.
+    config = _config(_entry("openrouter"))
+    stub = StubProvider(
+        outcomes=[
+            ProviderTransientError("rate_limited: status=429", status=429, kind="rate_limited"),
+        ]
+    )
+    chain = ProviderChain(
+        config,
+        provider_factory=lambda _e: stub,
+        env={"OPENROUTER_API_KEY": "k"},
+        clock=_StubClock(),
+        id_factory=ItertoolsId("call"),
+    )
+    with pytest.raises(ProviderChainExhaustedError) as info:
+        chain.request(RequestInfo(model_slug="deepseek-v3", messages=()))
+    assert info.value.logical_call_id == "call-0"
+
+
+def test_request_shape_error_carries_logical_call_id() -> None:
+    # ADR-9 §4 Tier-2 schema: ``llm_chain_exhausted`` row with
+    # ``terminal: "request_shape"`` MUST carry ``logical_call_id``
+    # so the inner-loop runtime can correlate Tier-1 + Tier-2 rows
+    # on a fail-fast 400/422 path.
+    config = _config(_entry("openrouter"))
+    stub = StubProvider(
+        outcomes=[ProviderRequestShapeError("request_shape_error: status=400", status=400)]
+    )
+    chain = ProviderChain(
+        config,
+        provider_factory=lambda _e: stub,
+        env={"OPENROUTER_API_KEY": "k"},
+        clock=_StubClock(),
+        id_factory=ItertoolsId("call"),
+    )
+    with pytest.raises(ProviderRequestShapeError) as info:
+        chain.request(RequestInfo(model_slug="deepseek-v3", messages=()))
+    assert info.value.logical_call_id == "call-0"
+
+
+def test_request_accepts_externally_injected_logical_call_id() -> None:
+    # ADR-9 §2 step 2b: ``BEFORE_LLM_CALL`` hook fires with the
+    # ``logical_call_id`` in context, so the inner-loop runtime needs
+    # the id before chain.request() returns; caller pre-generates and
+    # passes it in.
+    config = _config(_entry())
+    stub = StubProvider(outcomes=[_ok()])
+    chain = ProviderChain(
+        config,
+        provider_factory=lambda _e: stub,
+        env={"OPENROUTER_API_KEY": "k"},
+        clock=_StubClock(),
+        id_factory=ItertoolsId("internal"),
+    )
+    _, returned_id, _ = chain.request(
+        RequestInfo(model_slug="deepseek-v3", messages=()),
+        logical_call_id="caller-supplied-uuid",
+    )
+    assert returned_id == "caller-supplied-uuid"
+
+
+def test_request_externally_injected_id_is_preserved_on_exhaustion() -> None:
+    config = _config(_entry("openrouter"))
+    stub = StubProvider(
+        outcomes=[
+            ProviderTransientError("rate_limited: status=429", status=429, kind="rate_limited"),
+        ]
+    )
+    chain = ProviderChain(
+        config,
+        provider_factory=lambda _e: stub,
+        env={"OPENROUTER_API_KEY": "k"},
+        clock=_StubClock(),
+        id_factory=ItertoolsId("internal"),
+    )
+    with pytest.raises(ProviderChainExhaustedError) as info:
+        chain.request(
+            RequestInfo(model_slug="deepseek-v3", messages=()),
+            logical_call_id="caller-supplied-uuid",
+        )
+    assert info.value.logical_call_id == "caller-supplied-uuid"
+
+
+# ----- ADR-9 §3 cross-role shared cooldown ledger ----------------------
+
+
+def test_cooldown_ledger_is_shared_across_provider_chain_instances() -> None:
+    # ADR-9 §3: «The cooldown dict is process-global, keyed on
+    # (provider, slug) — NOT on (role, provider, slug). Two roles
+    # whose chains share the same (provider, slug) tuple share the
+    # cooldown state.»
+    shared: dict[tuple[str, str], CooldownRow] = {}
+    coder = ChainConfig(role="coder", model="deepseek-v3", family="deepseek", chain=(_entry(),))
+    planner = ChainConfig(role="planner", model="deepseek-v3", family="deepseek", chain=(_entry(),))
+    coder_stub = StubProvider(
+        outcomes=[
+            ProviderTransientError("rate_limited: status=429", status=429, kind="rate_limited"),
+        ]
+    )
+    planner_stub = StubProvider(outcomes=[_ok("planner result")])
+    clock = _StubClock()
+    coder_chain = ProviderChain(
+        coder,
+        provider_factory=lambda _e: coder_stub,
+        env={"OPENROUTER_API_KEY": "k"},
+        clock=clock,
+        id_factory=ItertoolsId("call"),
+        cooldowns=shared,
+    )
+    planner_chain = ProviderChain(
+        planner,
+        provider_factory=lambda _e: planner_stub,
+        env={"OPENROUTER_API_KEY": "k"},
+        clock=clock,
+        id_factory=ItertoolsId("call"),
+        cooldowns=shared,
+    )
+    # Coder hits 429 on openrouter/deepseek and cools the tuple.
+    with pytest.raises(ProviderChainExhaustedError):
+        coder_chain.request(RequestInfo(model_slug="deepseek-v3", messages=()))
+    # Planner's chain shares the ledger and so MUST also see the
+    # tuple as cooled — planner's stub is never asked.
+    with pytest.raises(ProviderChainExhaustedError):
+        planner_chain.request(RequestInfo(model_slug="deepseek-v3", messages=()))
+    assert planner_stub.outcomes == [_ok("planner result")]
+
+
+def test_default_cooldown_ledger_is_per_instance() -> None:
+    # Without a shared ledger kwarg, ProviderChain instances stay
+    # isolated — the v0.1 test-default behaviour.
+    config = _config(_entry())
+    chain_a = ProviderChain(
+        config,
+        provider_factory=lambda _e: StubProvider(outcomes=[]),
+        env={"OPENROUTER_API_KEY": "k"},
+        clock=_StubClock(),
+        id_factory=ItertoolsId("call"),
+    )
+    chain_b = ProviderChain(
+        config,
+        provider_factory=lambda _e: StubProvider(outcomes=[]),
+        env={"OPENROUTER_API_KEY": "k"},
+        clock=_StubClock(),
+        id_factory=ItertoolsId("call"),
+    )
+    assert chain_a.cooldowns is not chain_b.cooldowns
+
+
+# ----- chain_from_mapping: YAML null coercion --------------------------
+
+
+def test_chain_from_mapping_coalesces_yaml_null_family_to_empty_string() -> None:
+    # YAML ``family: null`` (or bare ``family:``) parses to Python
+    # ``None``. ``raw.get("family", "")`` returns ``None`` because
+    # the key exists, so ``str(None)`` would smuggle the literal
+    # string ``"None"`` into the config and the family-mismatch
+    # validator would emit a confusing warning. The loader must
+    # coalesce to the empty string.
+    raw = {
+        "model": None,
+        "family": None,
+        "chain": [
+            {
+                "provider": "openrouter",
+                "slug": "deepseek/deepseek-chat-v3",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+            }
+        ],
+    }
+    config = chain_from_mapping("coder", raw)
+    assert config.model == ""
+    assert config.family == ""
+    # Validator must not produce a misleading «family 'None' !=» warning.
+    warnings = config.validate(env={"OPENROUTER_API_KEY": "k"})
+    assert all("'None'" not in w for w in warnings)
+
+
+def test_chain_from_mapping_preserves_string_family() -> None:
+    # Positive sanity check that the ``or ""`` coercion does not
+    # break the happy path.
+    raw = {
+        "model": "deepseek-v3",
+        "family": "deepseek",
+        "chain": [
+            {
+                "provider": "openrouter",
+                "slug": "deepseek/deepseek-chat-v3",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+            }
+        ],
+    }
+    config = chain_from_mapping("coder", raw)
+    assert config.model == "deepseek-v3"
+    assert config.family == "deepseek"

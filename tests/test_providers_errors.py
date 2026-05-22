@@ -54,7 +54,36 @@ def test_provider_request_shape_error_default_status() -> None:
     assert ProviderRequestShapeError("bad", status=422).status == 422
 
 
+def test_provider_request_shape_error_carries_logical_call_id() -> None:
+    # ADR-9 §4 Tier-2 schema requires logical_call_id on the
+    # ``terminal: "request_shape"`` observability row; the adapter
+    # leaves it empty at construction time (adapter scope) and the
+    # dispatcher overwrites at re-raise time.
+    exc = ProviderRequestShapeError("bad")
+    assert exc.logical_call_id == ""
+    exc.logical_call_id = "uuid-xyz"
+    assert exc.logical_call_id == "uuid-xyz"
+
+
 def test_provider_chain_exhausted_carries_attempts() -> None:
     attempts: list[object] = ["row-a", "row-b"]
     exc = ProviderChainExhaustedError("chain exhausted", attempts=attempts)
     assert exc.attempts == ["row-a", "row-b"]
+
+
+def test_provider_chain_exhausted_carries_logical_call_id() -> None:
+    # ADR-9 §4 Tier-2 schema requires logical_call_id on the
+    # ``terminal: "all_exhausted"`` observability row.
+    exc = ProviderChainExhaustedError(
+        "chain exhausted",
+        attempts=[],
+        logical_call_id="uuid-abc",
+    )
+    assert exc.logical_call_id == "uuid-abc"
+
+
+def test_provider_chain_exhausted_logical_call_id_defaults_empty() -> None:
+    # Default empty string keeps the kwarg optional for direct
+    # construction (e.g. tests that don't care about the id).
+    exc = ProviderChainExhaustedError("chain exhausted", attempts=[])
+    assert exc.logical_call_id == ""

@@ -59,7 +59,15 @@ RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset(
 
 @dataclass(frozen=True)
 class ChainEntry:
-    """One row of a role's ``chain:`` config (ADR-9 §1)."""
+    """One row of a role's ``chain:`` config (ADR-9 §1).
+
+    ``httpx_retries`` is consumed at :class:`fa.providers.base.Transport`
+    construction time by the production transport, NOT by the dispatcher:
+    per ADR-9 §2 step 2c «httpx_retries (default 1) are exhausted
+    in-place BEFORE the chain progresses», so retries are a transport-
+    layer concern. The dispatcher only sees the final outcome after
+    transport-level retries have been exhausted.
+    """
 
     provider: str
     slug: str
@@ -184,6 +192,14 @@ class ProviderChain:
     no real HTTP fires. Production callers pass a transport-backed
     factory (default ``build_provider`` from
     :mod:`fa.providers.registry`).
+
+    ``cooldowns`` is the cross-role shared cooldown ledger per ADR-9
+    §3 («The cooldown dict is process-global, keyed on
+    ``(provider, slug)`` — NOT on ``(role, provider, slug)``. Two
+    roles whose chains share the same ``(provider, slug)`` tuple
+    share the cooldown state.»). Production callers pass one dict
+    shared across all per-role :class:`ProviderChain` instances; tests
+    omit it and get a fresh per-instance dict.
     """
 
     def __init__(
@@ -194,13 +210,16 @@ class ProviderChain:
         env: Mapping[str, str] | None = None,
         clock: Callable[[], float] = time.time,
         id_factory: Callable[[], str] = lambda: str(uuid.uuid4()),
+        cooldowns: dict[tuple[str, str], CooldownRow] | None = None,
     ) -> None:
         self._config = config
         self._provider_factory = provider_factory
         self._env: Mapping[str, str] = env if env is not None else os.environ
         self._clock = clock
         self._id_factory = id_factory
-        self._cooldowns: dict[tuple[str, str], CooldownRow] = {}
+        self._cooldowns: dict[tuple[str, str], CooldownRow] = (
+            cooldowns if cooldowns is not None else {}
+        )
 
     @property
     def config(self) -> ChainConfig:
@@ -210,17 +229,31 @@ class ProviderChain:
     def cooldowns(self) -> Mapping[tuple[str, str], CooldownRow]:
         return self._cooldowns
 
-    def request(self, request: RequestInfo) -> tuple[ResponseInfo, str, list[ChainAttemptRecord]]:
+    def request(
+        self,
+        request: RequestInfo,
+        *,
+        logical_call_id: str | None = None,
+    ) -> tuple[ResponseInfo, str, list[ChainAttemptRecord]]:
         """Dispatch ``request`` through the chain.
 
         Returns ``(response, logical_call_id, attempts)`` on success.
         Raises :class:`ProviderChainExhaustedError` (carrying the
-        attempts list) on chain exhaustion; raises
-        :class:`ProviderRequestShapeError` immediately on 400 / 422
-        per ADR-9 §2g fail-fast rule.
+        attempts list AND the ``logical_call_id``) on chain exhaustion;
+        raises :class:`ProviderRequestShapeError` (carrying the
+        ``logical_call_id``) immediately on 400 / 422 per ADR-9 §2g
+        fail-fast rule. Per ADR-9 §4 Tier-2 schema both terminal
+        rows MUST carry ``logical_call_id`` for correlation.
+
+        ``logical_call_id`` may be passed by the caller (the inner-loop
+        runtime that fires ``BEFORE_LLM_CALL`` per ADR-9 §2 step 2b
+        already needs the id at hook-fire time, before this method
+        returns); if omitted, the dispatcher generates one via
+        ``id_factory``.
         """
 
-        logical_call_id = self._id_factory()
+        if logical_call_id is None:
+            logical_call_id = self._id_factory()
         attempts: list[ChainAttemptRecord] = []
         for entry in self._config.chain:
             now = self._clock()
@@ -250,6 +283,9 @@ class ProviderChain:
                         error="request_shape",
                     )
                 )
+                # Stamp the call-scoped UUID so the Tier-2 row carries
+                # the correlation id per ADR-9 §4.
+                exc.logical_call_id = logical_call_id
                 raise
             except ProviderAuthError as exc:
                 elapsed_ms = int((self._clock() - start) * 1000)
@@ -308,6 +344,7 @@ class ProviderChain:
         raise ProviderChainExhaustedError(
             f"role {self._config.role!r}: all {len(self._config.chain)} chain entries failed",
             attempts=list(attempts),
+            logical_call_id=logical_call_id,
         )
 
 
@@ -333,9 +370,15 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
         )
         for row in chain_rows
     )
+    # ``raw.get(key, "")`` returns the actual value when the YAML row
+    # contains ``key: null`` (because the key exists), so ``str(None)``
+    # would smuggle the literal string ``"None"`` into the config and
+    # the validator would emit a confusing «slug family X != role
+    # family 'None'» warning. ``raw.get(key) or ""`` coalesces both
+    # missing-key and None-value to the empty string.
     return ChainConfig(
         role=role,
-        model=str(raw.get("model", "")),
-        family=str(raw.get("family", "")),
+        model=str(raw.get("model") or ""),
+        family=str(raw.get("family") or ""),
         chain=entries,
     )

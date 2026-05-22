@@ -24,9 +24,19 @@ Runtime errors carry structured attributes (``status`` /
 :mod:`fa.providers.chain` does not have to parse error strings to
 build attempt records or compute adaptive cooldowns.
 
+The two terminal errors that surface OUT of the chain dispatcher
+(:class:`ProviderRequestShapeError` on the 400/422 fail-fast path,
+:class:`ProviderChainExhaustedError` on full chain exhaustion) also
+carry the ``logical_call_id`` so the inner-loop runtime can emit the
+Tier-2 ``llm_chain_exhausted`` observability row with the correct
+correlation UUID per ADR-9 §4 (Tier-2 schema requires
+``logical_call_id`` for both ``terminal: "all_exhausted"`` and
+``terminal: "request_shape"`` rows).
+
 References:
 - ``knowledge/adr/ADR-9-llm-provider-client.md`` §1 (validation),
-  §2 (runtime semantics), §5 (errors.py file layout).
+  §2 (runtime semantics), §4 (observability correlation),
+  §5 (errors.py file layout).
 """
 
 from __future__ import annotations
@@ -74,11 +84,26 @@ class ProviderAuthError(Exception):
 
 
 class ProviderRequestShapeError(Exception):
-    """400 / 422 fail-fast (ADR-9 §2g) — FA-side request construction bug."""
+    """400 / 422 fail-fast (ADR-9 §2g) — FA-side request construction bug.
 
-    def __init__(self, message: str, *, status: int = 400) -> None:
+    ``logical_call_id`` is set to the empty string at construction time
+    by the adapter (which does not know the chain-level id) and is
+    overwritten by :class:`fa.providers.chain.ProviderChain` to the
+    chain's call-scoped UUID just before re-raising so the Tier-2
+    ``llm_chain_exhausted`` row with ``terminal: "request_shape"``
+    carries the correlation id per ADR-9 §4.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int = 400,
+        logical_call_id: str = "",
+    ) -> None:
         super().__init__(message)
         self.status = status
+        self.logical_call_id = logical_call_id
 
 
 class ProviderChainExhaustedError(Exception):
@@ -88,8 +113,21 @@ class ProviderChainExhaustedError(Exception):
     ``llm_chain_exhausted`` observability row can be emitted by the
     inner-loop runtime; :class:`fa.inner_loop.recovery.FailureClassifierObserver`
     routes the role retry decision off the ``terminal`` field.
+
+    ``logical_call_id`` is the chain-scoped UUID generated at
+    :meth:`fa.providers.chain.ProviderChain.request` entry; it
+    correlates Tier-1 (§4 ``llm_call``) + Tier-2 (§4
+    ``llm_chain_exhausted``) + Tier-3 (§4 ``llm_body``) rows for the
+    same logical call per ADR-9 §4.
     """
 
-    def __init__(self, message: str, *, attempts: list[object]) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        attempts: list[object],
+        logical_call_id: str = "",
+    ) -> None:
         super().__init__(message)
         self.attempts = attempts
+        self.logical_call_id = logical_call_id
