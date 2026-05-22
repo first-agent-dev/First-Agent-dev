@@ -456,6 +456,103 @@ manually beyond this point.
     than renaming to `BEFORE_ROUND` to preserve verbatim alignment
     with DPC `dpc_agent/hooks.py:LIFECYCLE_POINTS` + Gortex
     `internal/hooks/dispatch.go` + borrow-roadmap §R-1.
+  - [ADR-9](./knowledge/adr/ADR-9-llm-provider-client.md) —
+    LLM provider client contract (T-2 driver; **proposed
+    2026-05-22; revised same day** after pre-PR critical pass
+    closing 7 P0 logic-bug findings + 6 P1 design-gap findings;
+    T-2 implementation tracked under BACKLOG `M-2`).
+    **Option D + α** — per-role explicit provider chain with
+    cooldown в `~/.fa/models.yaml` (`{model, family,
+    chain: [{provider, slug, base_url, api_key_env,
+    cooldown_seconds?, httpx_retries?, timeout_seconds?,
+    extra_headers?}, ...]}`). Cross-PLATFORM transport-level
+    fallback for the SAME logical model identity (e.g.
+    OpenRouter → Fireworks → NVIDIA Build → Groq for
+    `deepseek-v3`) — distinct from cross-MODEL auto-escalation
+    (which ADR-2 §Decision forbids; family is extracted from the
+    logical model identity, not the provider platform, so the
+    family-disjoint check from ADR-2 + ADR-7 §Amendment 2026-05-20
+    rule 4 is preserved by construction; §7 reframed as user-
+    discipline + best-effort `extract_family()` warning because
+    slug strings vary legitimately across providers and exact-
+    match validator is infeasible). Per-`(provider, slug)` tuple
+    cooldown rows (5-min fixed default; **adaptive from RFC 9110
+    `Retry-After` header**: `expires_at = max(now +
+    cooldown_seconds, parsed_retry_after)`; in-memory only в
+    v0.1, process-global so two roles sharing the same `(provider,
+    slug)` share cooldown state). **Runtime 4xx split:** 401 / 403
+    = continue chain without cooldown (single-provider auth
+    issue, next entry might have correct credentials);
+    **400 / 422 = fail-fast** raising typed
+    `ProviderRequestShapeError` (FA-side client bug — sending
+    same body to next provider produces same 4xx, no point
+    wasting chain budget). Chain exhaustion raises typed
+    `ProviderChainExhaustedError` carrying the attempts list
+    (not bare `RuntimeError`). **Config-load validation** enforces
+    non-empty chain + non-empty `api_key_env` env-var (must
+    resolve to non-empty string at config-load, NOT surface as
+    confusing 401 at first call) + `https://` scheme (`http://`
+    accepted only for localhost gateway-delegation case + warning).
+    **Three-tier observability all keyed on shared `logical_call_id`
+    UUID4** wired through ADR-8 `AFTER_LLM_CALL`: tier-1 always-
+    on `llm_call` row (chain inline) + tier-2 `llm_chain_exhausted`
+    row (`terminal: "all_exhausted" | "request_shape"`) + tier-3
+    opt-in `FA_DEBUG_LLM_BODIES=1` → separate gitignored
+    `llm_bodies.jsonl` (each body carries the same
+    `logical_call_id` for correlation). **Cost + token accounting
+    source** spec'd: provider `usage` block via response
+    normalization + `src/fa/observability/cost_table.py` model+
+    provider price lookup; pricing-miss → `cost_usd: null` +
+    `cost_estimate_missing` warning (CostGuardian R-45 treats null
+    as zero plus flag). **Two-category adapter split:** shared
+    `OpenAICompatProvider` (~80 LOC) posts to
+    `<base_url>/chat/completions` and covers OpenRouter /
+    Fireworks / NVIDIA Build / Groq / GitHub Models[^github-pat] /
+    Modal / Together AI / + any future OpenAI-compatible platform
+    (add = 1 row в `PROVIDERS` dict + 1 YAML chain entry);
+    `AnthropicProvider` (~70 LOC) posts to `<base_url>/v1/messages`
+    (system-as-separate-field; tool use as content blocks). Each
+    adapter normalizes provider response into canonical
+    `ResponseInfo` (text / in_tokens / out_tokens / finish_reason
+    / tool_calls + provider-specific data parked in
+    `extras: dict[str, Any]`; observability reads only canonical
+    fields). Reasoning-model request-parameter translation seat
+    documented for future Q-6 amendment (per-model
+    `max_completion_tokens` / `reasoning_effort` / `thinking`
+    translation table inside each adapter). T-2 implementation
+    budget ~380 LOC across 6 files under `src/fa/providers/` +
+    ~30 LOC `src/fa/observability/cost_table.py`. **6 typed errors
+    in `errors.py`** (ConfigurationError, ReservedProviderError,
+    ProviderTransientError, ProviderAuthError,
+    ProviderRequestShapeError, ProviderChainExhaustedError).
+    Companion 9-source audit:
+    [`research/provider-client-survey-2026-05.md`](./knowledge/research/provider-client-survey-2026-05.md)
+    — 8 OSS sources (GoModel + LiteLLM + Bifrost + kronos +
+    dpc-messenger + 9router + Portkey + OmniRoute) independently
+    converge on the «per-provider-or-finer cooldown + ordered
+    fallback chain + isolated state» pattern; 3 anti-patterns
+    rejected (LiteLLM failure-percent threshold mis-fit for
+    UC1 low-volume traffic; Bifrost silent-drop reserved-key
+    re-cast as fail-fast `ReservedProviderError` at config-load;
+    OmniRoute TLS-fingerprint stealth rejected on ethical
+    grounds). **7 Q-N amendment slots reserved** (Q-1 persistent
+    cooldown across sessions, Q-2 per-entry httpx retry tuning +
+    pre-call `tiktoken` estimation, Q-3 round-robin within
+    non-cooled entries, Q-4 provider-wide cooldown when ≥2 slugs
+    cooling, Q-5 Anthropic prompt-caching preservation, Q-6
+    reasoning-model translation table, Q-7 per-model timeout
+    override). **Streaming chain semantics** flagged as v0.2
+    **redesign**, not amendment (mid-stream switching requires
+    buffering; defeats streaming's latency benefit; likely
+    v0.2 path = streaming-roles-bypass-chain). Decided via chat
+    2026-05-22 (Option A delegate-to-gateway / B1 no-resilience /
+    B2 minimum-no-fallback / B3 full-GoModel-lift /
+    C base_url-override-only rejected in `exploration_log.md`
+    Q-13).
+
+[^github-pat]: GitHub Models uses Azure-hosted endpoints with
+    GitHub PAT-based auth instead of OpenAI-style API keys;
+    `OpenAICompatProvider` handles it without a dedicated adapter.
 - **Wave-1 R-N triplet (PR-2 2026-05-20):**
   - **R-18** — Per-tier tool-shape registry at
     [`knowledge/prompts/tool-shapes.yaml`](./knowledge/prompts/tool-shapes.yaml)
