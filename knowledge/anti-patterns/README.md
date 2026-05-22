@@ -82,9 +82,11 @@ this order:
    relevant [`DIGEST.md`](../adr/DIGEST.md) row, and (if the entry
    captures a chosen-vs-rejected branch)
    [`exploration_log.md`](../trace/exploration_log.md).
-4. Add a line to [`knowledge/llms.txt`](../llms.txt) §`Anti-patterns
-   (`knowledge/anti-patterns/`)` so future agents discover the entry
-   via the routing surface, not by grep alone.
+4. Add a line to [`knowledge/llms.txt`](../llms.txt) §`Anti-pattern
+   catalog (`knowledge/anti-patterns/`)` so future agents discover the
+   entry via the routing surface, not by grep alone. The section name
+   must match the heading in `knowledge/llms.txt:125` exactly so a
+   `grep`-based agent finds it.
 5. Include in the PR description: «Anti-pattern catalogued: `AP-NNN`
    ([link]). CLASS: <REPAIR|RELAX|WORKAROUND>. INVARIANT: <one
    sentence>.» — see
