@@ -1,0 +1,60 @@
+"""Typed-error attribute contracts (ADR-9 §1, §2, §5).
+
+The chain dispatcher consumes structured attributes off each error
+(``status`` / ``kind`` / ``retry_after_seconds`` / ``attempts``)
+rather than parsing the message; these tests pin the contract so a
+future docstring tweak does not silently break the dispatcher.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from fa.providers.errors import (
+    ConfigurationError,
+    ProviderAuthError,
+    ProviderChainExhaustedError,
+    ProviderRequestShapeError,
+    ProviderTransientError,
+    ReservedProviderError,
+)
+
+
+def test_reserved_provider_error_is_configuration_error() -> None:
+    with pytest.raises(ConfigurationError):
+        raise ReservedProviderError("reserved")
+
+
+def test_provider_transient_error_carries_structured_attrs() -> None:
+    exc = ProviderTransientError(
+        "rate_limited: status=429",
+        status=429,
+        kind="rate_limited",
+        retry_after_seconds=12.0,
+    )
+    assert exc.status == 429
+    assert exc.kind == "rate_limited"
+    assert exc.retry_after_seconds == 12.0
+
+
+def test_provider_transient_error_defaults() -> None:
+    exc = ProviderTransientError("network_error: timeout")
+    assert exc.status == 0
+    assert exc.kind == "service_unavailable"
+    assert exc.retry_after_seconds == 0.0
+
+
+def test_provider_auth_error_status_attr() -> None:
+    exc = ProviderAuthError("auth_error: status=403", status=403)
+    assert exc.status == 403
+
+
+def test_provider_request_shape_error_default_status() -> None:
+    assert ProviderRequestShapeError("bad").status == 400
+    assert ProviderRequestShapeError("bad", status=422).status == 422
+
+
+def test_provider_chain_exhausted_carries_attempts() -> None:
+    attempts: list[object] = ["row-a", "row-b"]
+    exc = ProviderChainExhaustedError("chain exhausted", attempts=attempts)
+    assert exc.attempts == ["row-a", "row-b"]

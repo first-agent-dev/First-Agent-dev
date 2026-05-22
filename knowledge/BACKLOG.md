@@ -573,9 +573,13 @@
 
 ## M-4 — T-2 LLM provider client implementation (driver per ADR-9)
 
-- **Status:** open; tracker stub created in this PR (the ADR-9
-  PR that introduces the contract). Implementation lands in a
-  follow-up PR.
+- **Status:** closed 2026-05-22 — landed in T-2 implementation PR
+  (`devin/1779480362-t2-llm-provider-client`). Seven modules under
+  `src/fa/providers/` + `src/fa/observability/cost_table.py`,
+  ~1080 LOC including docstrings, plus six offline-only test
+  modules (55 tests) covering the contract surface listed below.
+  All gates pass: ruff check, ruff format --check, mypy --strict,
+  pytest -q (544 total), pre-commit run --all-files.
 - **Why milestone, not idea:** ADR-9 has been merged
   (status = proposed, locked design), so the implementation is
   a planned PR with explicit shape, not an open research

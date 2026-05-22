@@ -465,7 +465,19 @@ as fail-fast `ReservedProviderError`; OmniRoute TLS spoofing
 rejected). **Revision 2026-05-22 (pre-PR critical pass).** §1,
 §2, §3, §4, §5, §7, §9, §10, §Consequences refined after self-
 critique against 7 P0 logic-bug findings + 6 P1 design-gap
-findings; §Decision direction unchanged.
+findings; §Decision direction unchanged. **Amendment 2026-05-22
+(T-2 driver landed).** Implementation merged in
+`devin/1779480362-t2-llm-provider-client` — `src/fa/providers/`
+(7 modules: `base.py`, `chain.py`, `openai_compat.py`,
+`anthropic.py`, `registry.py`, `errors.py`, `__init__.py`) +
+`src/fa/observability/cost_table.py`, plus six offline-only
+test modules (55 tests, ADR-7 §10 fake-transport pattern). One
+contract clarification surfaced during implementation: `ProviderSpec`
+dataclass added to the registry to carry both adapter factory and
+adapter-category name, so the chain validator's adapter-homogeneity
+warning can reference an explicit category string instead of a class
+identity (no Q-N amendment triggered — extends the ADR-9 §5 file
+layout description, does not change a decision).
 
 **Source:** [`ADR-9`](./ADR-9-llm-provider-client.md).
 
