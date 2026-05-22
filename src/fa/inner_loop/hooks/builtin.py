@@ -292,10 +292,33 @@ def _learning_observer_key(call_name: str, params: Mapping[str, object], call_id
 
 @dataclass
 class LearningObserver(ObserverMiddleware):
+    """Filesystem-canon observer (R-8).
+
+    ``codebase_map_path`` / ``gotchas_path`` are the canonical
+    ``<workspace>/knowledge/trace/`` artifacts: durable cross-session
+    memory checked into the repo alongside ADRs and
+    ``exploration_log.md``. The smoke CLI and the T-2 real runtime
+    share this path (ADR-7 §Sub-amendment 2026-05-21b «single canon
+    root»). The earlier ``.fa/knowledge/trace/`` relocation was
+    rejected 2026-05-22 as a spec-bypassing workaround that broke
+    the cross-session memory invariant — see exploration_log Q-7
+    Rejected blocks.
+
+    ``now`` injects a fixed ISO timestamp into both writers; the
+    smoke CLI pins it to ``"2026-05-21T00:00:00Z"`` so repeated
+    smoke runs produce byte-identical artifacts (paired with the
+    seed baseline at ``knowledge/trace/codebase_map.json`` and the
+    ``gotchas.md`` dedup, this keeps ``git status`` clean across
+    smoke invocations). ``None`` falls through to the writer-side
+    ``_now_iso_z()`` default — that is the T-2 real-runtime mode,
+    where live timestamps are required for genuine provenance.
+    """
+
     codebase_map_path: Path
     gotchas_path: Path
     name: str = "learning"
     attaches_to: tuple[LifecyclePoint, ...] = (LifecyclePoint.AFTER_TOOL_EXEC,)
+    now: str | None = None
 
     def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
         del point
@@ -309,6 +332,7 @@ class LearningObserver(ObserverMiddleware):
                 result.error.message,
                 tags=("inner-loop", "tool-error", call.name),
                 path=self.gotchas_path,
+                now=self.now,
             )
             return
         record_discovery(
@@ -319,6 +343,7 @@ class LearningObserver(ObserverMiddleware):
                 tags=("inner-loop", call.name),
             ),
             path=self.codebase_map_path,
+            now=self.now,
         )
 
 
