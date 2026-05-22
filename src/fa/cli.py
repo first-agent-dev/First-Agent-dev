@@ -167,12 +167,18 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     # — mirrors the BlockerMiddleware-family rationale above.
     hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
     # R-8 LearningObserver: writes discoveries/gotchas to filesystem
-    # artifacts (not events.jsonl). Baseline tools record summaries;
-    # richer T-2 results can add artifact pointers to the same map.
+    # artifacts (not events.jsonl). The smoke CLI is a CI shape that
+    # MUST leave the live workspace untouched, so the canon root is
+    # ``<workspace>/.fa/knowledge/trace/`` (covered by the global
+    # ``.fa/`` gitignore entry). The T-2 real runtime — when it
+    # lands — keeps the canonical ``knowledge/trace/`` root so that
+    # cross-session discoveries are checked in alongside ADRs and
+    # exploration_log. See ADR-7 §Sub-amendment 2026-05-21b
+    # «smoke-vs-real canon root» clarification.
     hooks.register(
         LearningObserver(
-            codebase_map_path=workspace / "knowledge" / "trace" / "codebase_map.json",
-            gotchas_path=workspace / "knowledge" / "trace" / "gotchas.md",
+            codebase_map_path=workspace / ".fa" / "knowledge" / "trace" / "codebase_map.json",
+            gotchas_path=workspace / ".fa" / "knowledge" / "trace" / "gotchas.md",
         )
     )
     # R-5 DSV: load every YAML contract under ``verifiers/`` so the

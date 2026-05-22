@@ -484,15 +484,18 @@
 - **Chosen:** Wire
   `fa.inner_loop.hooks.builtin.LearningObserver` into
   `_cmd_inner_loop_smoke` after `CostGuardian` and before
-  `VerifierObserver`. On success it upserts
-  `knowledge/trace/codebase_map.json` via `record_discovery`; on
-  tool error it appends `knowledge/trace/gotchas.md` via
-  `record_gotcha`. Do **not** introduce `kind="learning"` in
-  `events.jsonl`; the two files are the durable audit trail for
-  R-8. If a filesystem-canon write fails, reuse the existing
-  `hook_decision` audit row
-  (`decision="observer_error_swallowed"`, `reason=str(exc)`) rather
-  than adding a new reader surface.
+  `VerifierObserver`. On success it upserts a path-keyed
+  discovery entry into `<workspace>/.fa/knowledge/trace/codebase_map.json`
+  via `record_discovery`; on tool error it appends
+  `<workspace>/.fa/knowledge/trace/gotchas.md` via `record_gotcha`.
+  The smoke canon root sits under `.fa/` so the live repo stays
+  untouched on every `fa inner-loop-smoke --workspace .` run; the
+  T-2 real runtime keeps the canonical `knowledge/trace/` root.
+  Do **not** introduce `kind="learning"` in `events.jsonl`; the
+  two files are the durable audit trail for R-8. If a
+  filesystem-canon write fails, reuse the existing `hook_decision`
+  audit row (`decision="observer_error_swallowed"`, `reason=str(exc)`)
+  rather than adding a new reader surface.
 - **Rejected:**
   - **Leave R-8 as standalone writer functions only.** Reason:
     the R-8 Python ports and `LearningObserver` class already
@@ -519,6 +522,30 @@
     gain; `builtin.py` already exports the class and tests cover it.
     Lesson: factor observability modules only when a second
     filesystem-canon observer forces shared code.
+  - **Tool-name-only discovery key (`call.name.replace(".", "/")`)** —
+    rejected 2026-05-22 in the same PR (follow-up commit). Reason:
+    `record_discovery` is upsert-by-key, so every call to a given
+    tool overwrote the prior entry; the smoke run's three tool calls
+    produced exactly three permanent slots regardless of session
+    length, defeating R-8's stated cross-session memory capability.
+    Replaced by the path-keyed scheme: `"{tool/slug}/{path}"` when
+    `call.params["path"]` is a non-empty string, else
+    `"{tool/slug}/{call_id}"`, with sanitisation against
+    `record_discovery._KEY_PATTERN`. Lesson: revisit only if R-8
+    is ever intentionally reduced to a per-tool «last seen» index
+    (no current use case).
+  - **Smoke canon root under `<workspace>/knowledge/trace/`** —
+    rejected 2026-05-22 in the same PR (follow-up commit). Reason:
+    `knowledge/trace/` is a tracked directory in the live repo, and
+    `.gitignore` only covered `.fa/`, so the documented invocation
+    `fa inner-loop-smoke --workspace . --input README.md` left
+    `?? knowledge/trace/codebase_map.json` in `git status` after
+    every smoke run. The smoke CLI is a CI shape that MUST leave
+    the live workspace untouched. Lesson: any future filesystem-canon
+    observer registered at smoke time MUST share the `.fa/`
+    discipline; the canonical `knowledge/trace/` root is reserved
+    for the T-2 real runtime so cross-session discoveries can be
+    checked in alongside ADRs and `exploration_log.md`.
 - **Re-evaluation triggers:** (1) T-2 LLM driver starts emitting
   richer `ToolResult.artifacts` and the `codebase_map.json`
   pointer shape proves insufficient → add a deterministic artifact

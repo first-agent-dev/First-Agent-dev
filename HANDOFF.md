@@ -28,16 +28,27 @@
 > test files, +10 from four Devin-Review iteration commits — see
 > §Current state «PR-4 review-fix iteration» bullet below).
 >
-> **Current update (2026-05-21):** R-8 filesystem-canon writer
-> is operationally wired in the smoke CLI: `LearningObserver`
-> registers after `CostGuardian` in `fa inner-loop-smoke` and writes
-> successful tool summaries to `knowledge/trace/codebase_map.json`
-> plus tool errors to `knowledge/trace/gotchas.md`. ADR-7
-> §Sub-amendment 2026-05-21b documents that no new
-> `EventLog.kind` is added because R-8 writes filesystem
-> artifacts, not `events.jsonl` rows; observer write failures
-> still surface through existing `hook_decision` rows as
-> `observer_error_swallowed` in `.fa/smoke-events.jsonl`.
+> **Current update (2026-05-21, refined 2026-05-22 same PR):** R-8
+> filesystem-canon writer is operationally wired in the smoke CLI:
+> `LearningObserver` registers after `CostGuardian` in
+> `fa inner-loop-smoke` and writes successful tool summaries to
+> `<workspace>/.fa/knowledge/trace/codebase_map.json` plus tool
+> errors to `<workspace>/.fa/knowledge/trace/gotchas.md`. The smoke
+> canon root sits under `.fa/` so `fa inner-loop-smoke --workspace .`
+> leaves the live repo's `git status` clean; the T-2 real runtime
+> keeps the canonical `knowledge/trace/` root for checked-in
+> cross-session discoveries. Discovery key is path-keyed
+> (`"{tool/slug}/{path}"` for `fs.*` calls, `"{tool/slug}/{call_id}"`
+> fallback) so repeated calls against different paths no longer
+> overwrite each other. ADR-7 §Sub-amendment 2026-05-21b documents
+> that no new `EventLog.kind` is added because R-8 writes
+> filesystem artifacts, not `events.jsonl` rows; observer write
+> failures — including the real `LearningObserver` →
+> `record_discovery` → `OSError` chain — still surface through
+> existing `hook_decision` rows as `observer_error_swallowed` in
+> `.fa/smoke-events.jsonl` (test coverage: generic
+> `_FailingObserver` regression + `LearningObserver`-specific
+> chmod-0o500 regression).
 >
 > **PR-4 review-fix iteration (2026-05-21).** Four follow-up
 > commits on the same branch addressed Devin Review runs 1/2/3
@@ -306,13 +317,21 @@ manually beyond this point.
     §R-7 / §R-23 / §R-28 / §R-29 / §R-30 +
     [`research/correlated-llm-errors-and-ensembling-2026-05.md`](./knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md)
     §4.1 / §6 R-7 / R-8 / R-9. **Sub-amendment
-    2026-05-21b:** R-8 `LearningObserver` is wired into
-    `fa inner-loop-smoke`; successful tool results upsert
-    `knowledge/trace/codebase_map.json`, failures append
-    `knowledge/trace/gotchas.md`, and no new `EventLog.kind`
-    is added because the filesystem artifacts are the audit
-    surface. Observer write failures reuse the existing
-    `hook_decision` / `observer_error_swallowed` row.
+    2026-05-21b (refined 2026-05-22 same PR):** R-8
+    `LearningObserver` is wired into `fa inner-loop-smoke`;
+    successful tool results upsert
+    `<workspace>/.fa/knowledge/trace/codebase_map.json` with a
+    path-keyed slug (`"{tool/slug}/{path}"` for `fs.*`,
+    `"{tool/slug}/{call_id}"` fallback), failures append
+    `<workspace>/.fa/knowledge/trace/gotchas.md`. The smoke
+    canon root lives under `.fa/` so the live repo stays
+    untouched; the T-2 real runtime keeps the canonical
+    `knowledge/trace/` root. No new `EventLog.kind` is added
+    because the filesystem artifacts are the audit surface;
+    observer write failures (including the real
+    `LearningObserver` \u2192 `record_discovery` \u2192 `OSError`
+    chain) reuse the existing `hook_decision` /
+    `observer_error_swallowed` row.
   - [ADR-8](./knowledge/adr/ADR-8-hook-registry.md) —
     HookRegistry middleware-chain contract (doc-first; runtime
     BACKLOG M-1 — **closed by PR #24**). Five lifecycle points (`BETWEEN_ROUNDS` /
@@ -514,9 +533,11 @@ what was deferred and how each was resolved.
 0. **Wave-3 stack #2 status.** R-8 is landed: the
    existing `LearningObserver` now registers in `fa inner-loop-smoke`
    and writes the filesystem-canon trace artifacts
-   `knowledge/trace/codebase_map.json` +
-   `knowledge/trace/gotchas.md`. Remaining cheap-impl candidates
-   from the 2026-05-21 7-column table:
+   `<workspace>/.fa/knowledge/trace/codebase_map.json` +
+   `<workspace>/.fa/knowledge/trace/gotchas.md` with a path-keyed
+   discovery slug. The T-2 real runtime will switch the canon root
+   back to the checked-in `knowledge/trace/` once it lands.
+   Remaining cheap-impl candidates from the 2026-05-21 7-column table:
    - **R-17 / R-16 / R-24** — need scope decisions from the
      project lead before queuing.
    - **R-31 / R-32 / R-33** — need ADR-9 timing decision.

@@ -267,17 +267,23 @@ concrete carriers; single source of truth for every tool PR.
   T-2 LLM driver lands the artifact emitter. Source:
   [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
   §R-45.
-- **2026-05-21b (Wave-3 sub-amendment)** — R-8
-  `LearningObserver` filesystem-canon artifacts. Wires
+- **2026-05-21b (Wave-3 sub-amendment, updated 2026-05-22 in same PR)** —
+  R-8 `LearningObserver` filesystem-canon artifacts. Wires
   `fa.inner_loop.hooks.builtin.LearningObserver` into
   `fa inner-loop-smoke` after `CostGuardian`, attached at
-  `AFTER_TOOL_EXEC`. Successful tool results upsert
-  `knowledge/trace/codebase_map.json`; failed tool results append
-  `knowledge/trace/gotchas.md`. No new `EventLog.kind` is added:
-  the filesystem artifacts are the durable R-8 audit surface and
-  duplicating them into `events.jsonl` would add trace noise.
-  Observer write failures still surface in existing `hook_decision`
-  rows as `decision="observer_error_swallowed"` (for smoke CLI:
+  `AFTER_TOOL_EXEC`. The smoke canon root is
+  `<workspace>/.fa/knowledge/trace/{codebase_map.json,gotchas.md}`
+  so the live repo stays untouched (`.fa/` already in
+  `.gitignore`); the T-2 real runtime keeps the canonical
+  `knowledge/trace/` root. Discovery key is path-keyed
+  (`"{tool/slug}/{path}"` for `fs.*`; `"{tool/slug}/{call_id}"`
+  fallback) so two calls to the same tool against different paths
+  no longer overwrite each other. No new `EventLog.kind` is added:
+  the filesystem artifacts are the durable R-8 audit surface.
+  Observer write failures \u2014 including the real
+  `LearningObserver` \u2192 `record_discovery` \u2192 `OSError` chain \u2014
+  surface in the existing `hook_decision` rows as
+  `decision="observer_error_swallowed"` (for smoke CLI:
   `.fa/smoke-events.jsonl`), so no dedicated reader is added.
   Source:
   [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)

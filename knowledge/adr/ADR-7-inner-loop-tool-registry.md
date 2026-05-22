@@ -1269,7 +1269,15 @@ enumeration).**
 §R-8 (filesystem-canon learning loop). This is an operational
 hook-wiring amendment to §8 «Hook pipeline» and a clarification
 to §7 «`events.jsonl`»: R-8 writes durable filesystem artifacts
-under `knowledge/trace/`, not new event rows.
+under a workspace-canon root, not new event rows.
+
+**Updated 2026-05-22** in the same PR (follow-up commit on
+`devin/1779363347-wave3-r8-learning-observer`): the smoke canon
+root is `<workspace>/.fa/knowledge/trace/`, and the discovery key
+is path-keyed (rules 2 + 5). The original draft pointed at
+`<workspace>/knowledge/trace/` and keyed by tool name, which
+polluted the live repo on every `fa inner-loop-smoke --workspace .`
+run and collapsed every tool call onto a single map slot.
 
 **Decision.**
 
@@ -1280,24 +1288,49 @@ under `knowledge/trace/`, not new event rows.
    `AFTER_TOOL_EXEC`. This closes the gap where the R-8 writer
    functions and observer class existed but had no operational
    entrypoint in the M-1 runtime.
-2. **No new `EventLog.kind`.** Successful tool results call
-   `record_discovery()` and write
-   `knowledge/trace/codebase_map.json`; failed tool results call
-   `record_gotcha()` and append
-   `knowledge/trace/gotchas.md`. These files are the audit trail
-   for R-8. Duplicating them into `events.jsonl` as
-   `kind="learning"` would add trace noise without adding a
-   replay invariant.
-3. **Observer write failures use the existing hook audit row.**
+2. **Smoke-vs-real canon root.** The smoke CLI is a CI shape that
+   MUST leave the live workspace untouched, so its canon root is
+   `<workspace>/.fa/knowledge/trace/{codebase_map.json,gotchas.md}`
+   (covered by the global `.fa/` `.gitignore` entry). The T-2 real
+   runtime — when it lands — keeps the canonical
+   `knowledge/trace/` root so that cross-session discoveries are
+   checked in alongside ADRs and `exploration_log.md`. Any future
+   filesystem-canon observer registered at smoke time MUST share
+   the same `.fa/` discipline.
+3. **No new `EventLog.kind`.** Successful tool results call
+   `record_discovery()` and write the canon `codebase_map.json`;
+   failed tool results call `record_gotcha()` and append the canon
+   `gotchas.md`. These files are the audit trail for R-8.
+   Duplicating them into `events.jsonl` as `kind="learning"` would
+   add trace noise without adding a replay invariant.
+4. **Observer write failures use the existing hook audit row.**
    `HookRegistry.dispatch` catches observer exceptions and emits a
    `hook_decision` row with
    `decision="observer_error_swallowed"` plus `reason=str(exc)` when
-   `run_session` has attached an `EventLog` sink. A broken
-   `knowledge/trace/` write path is therefore diagnosable in the
-   existing session event log (for smoke CLI:
-   `.fa/smoke-events.jsonl`) without adding a second reader or a
-   new `EventLog.kind`.
-4. **Single-writer boundary stays unchanged.** The underlying
+   `run_session` has attached an `EventLog` sink. A broken canon
+   write path is therefore diagnosable in the existing session
+   event log (for smoke CLI: `.fa/smoke-events.jsonl`) without
+   adding a second reader or a new `EventLog.kind`.
+5. **Path-keyed discovery key.** `LearningObserver` builds the
+   discovery slug from the tool name *and* a per-call freeform
+   suffix sanitised against
+   `fa.tools.record_discovery._KEY_PATTERN`
+   (`[A-Za-z0-9_.\-/]+`):
+
+   - If `call.params["path"]` is a non-empty string —
+     `"{tool/slug}/{path}"` (e.g. `fs/read_file/README.md`). This is
+     the natural shape for `fs.read_file` / `fs.write_file` and any
+     future tool that touches a workspace path.
+   - Else — `"{tool/slug}/{call_id}"` (e.g. `fs/run_bash/tc-bash`).
+     Coarse but cumulative; used by `fs.run_bash` and any tool
+     without a workspace anchor.
+
+   The previous tool-name-only slug (`fs/read_file`) made
+   `record_discovery` upsert onto a single slot per tool, so the
+   last call won and every prior discovery was lost. The
+   path-keyed scheme preserves R-8's stated cross-session memory
+   capability.
+6. **Single-writer boundary stays unchanged.** The underlying
    `record_discovery()` / `record_gotcha()` functions keep their
    existing atomic-rename, single-process writer contract. The
    HookRegistry invokes observers serially in one process, so the
@@ -1324,14 +1357,21 @@ under `knowledge/trace/`, not new event rows.
    observer deterministically maps `ToolResult` success/failure to
    the two existing writer functions.
 
-**Files changed (this sub-amendment).**
+**Files changed (this sub-amendment, including 2026-05-22 follow-up).**
 
 - `src/fa/cli.py` — `LearningObserver` registration in
   `_cmd_inner_loop_smoke` with workspace-relative
-  `knowledge/trace/codebase_map.json` and
-  `knowledge/trace/gotchas.md` paths.
+  `.fa/knowledge/trace/codebase_map.json` and
+  `.fa/knowledge/trace/gotchas.md` paths.
+- `src/fa/inner_loop/hooks/builtin.py` — path-keyed discovery
+  slug via `_learning_observer_key`; `_DISCOVERY_KEY_SAFE`
+  sanitiser; tool-name tag added to discovery + gotcha entries.
 - `tests/test_cli.py` — smoke CLI integration regression for the
-  `codebase_map.json` write path.
+  `codebase_map.json` write path + path-keyed assertions +
+  `gotchas.md`-on-failure regression (TEST-GAP-1).
+- `tests/test_inner_loop_runtime.py` — `LearningObserver`-specific
+  write-failure regression that proves the `record_discovery` →
+  `OSError` → audit-row chain end-to-end (TEST-GAP-2).
 - `src/fa/inner_loop/state.py` — §«Extension kinds» clarification
   that R-8 does not introduce an `EventLog.kind`.
 - `knowledge/adr/ADR-7-inner-loop-tool-registry.md` — this
