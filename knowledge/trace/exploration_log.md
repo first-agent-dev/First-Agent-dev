@@ -950,3 +950,81 @@
   + [AGENTS.md §Change Classification](../../AGENTS.md#change-classification)
   + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
   §R-32.
+
+## Q-12 — Should llms.txt rows carry size buckets, raw counts, both, or neither? (2026-05-22)
+
+- **Closed by:**
+  [`knowledge/anti-patterns/AP-002-stale-routing-index-counts.md`](../anti-patterns/AP-002-stale-routing-index-counts.md)
+  + [`MAINTENANCE.md` §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge)
+  + sweep of all 58 rows in `knowledge/llms.txt` (M2 PR; no new ADR).
+- **Coupling:** Q-11 — first **RELAX** dogfood of the
+  [`AGENTS.md` §Change Classification](../../AGENTS.md#change-classification)
+  discipline introduced in M1; second entry in the
+  [`knowledge/anti-patterns/`](../anti-patterns/README.md) catalog.
+- **Chosen:** **Hybrid 4-bucket label + raw count at boundaries
+  300 / 800 / 1500 LOC.** Row format becomes
+  `- [path](raw-url) (S|M|L|XL, ~N lines): description.` Bucket
+  label is the semantic primary key (one of S / M / L / XL); raw
+  count is preserved for token-budget additivity (an agent can
+  still sum `~120 + ~170 + ~220 ≈ ~510` to compare against a
+  context-window limit). Boundaries: S ≤ 300 (batch freely),
+  M 301–800 (batch 2–3 on mid-tier OSS), L 801–1500 (read
+  alone), XL > 1500 (chunked / sectional only). M2 measured the
+  drift on 2026-05-22: 16 of 58 rows had `|actual − claimed| > 10`
+  before the sweep; 3 rows shifted bucket (HANDOFF.md S→M,
+  DIGEST.md S→M, exploration_log.md S→L). The bucket scheme
+  widens the per-row drift tolerance ~20× (from ±10 LOC at the
+  rounding edge to ±300/500/700 LOC at the boundary edge),
+  making routine PRs touch fewer rows.
+- **Rejected:**
+  - **Pure buckets, no raw count (`(S)` / `(M)` / `(L)` / `(XL)`).**
+    Reason: kills additivity. The project's existing token-budget
+    math (e.g.
+    [`research/bootstrap-cost-baseline-2026-05.md`](../research/bootstrap-cost-baseline-2026-05.md)
+    §3 «6-file irreducible bootstrap core») depends on summing
+    `~N lines` to size a batch read in advance; with only buckets,
+    an agent batching three M files would know only that the sum
+    is somewhere in 903–2400 LOC. Lesson: revisit only if
+    a project-wide token-counter tool lands and the additivity
+    math is no longer done by the reading agent.
+  - **Raw counts only, status quo (`(~N lines)`).** Reason: the
+    silent-drift pattern catalogued in AP-002 is the exact
+    failure mode of this shape — 27 % of rows accumulated > 10
+    LOC drift in ~5 months because every-edit-rebakes-the-row is
+    a maintenance debt no one pays. Lesson: revisit only if a
+    pre-commit script reliably updates `~N lines` on every
+    underlying file edit; until then, the bucket scheme absorbs
+    routine drift.
+  - **Boundaries 400 / 800 / 1200 (user-proposed alternative).**
+    Reason: (a) leaves an 800–1200 LOC gap — under that scheme
+    files at 870 / 950 / 970 / 1000 / 1010 / 1090 / 1170 LOC have
+    no label, and (b) collapses XL into L: the only XL file
+    (`borrow-roadmap-2026-05.md` at ~1840 LOC) ends up in the
+    same bucket as ~900-line ADRs, losing the «alarm: read
+    chunked» signal. Lesson: revisit if the project's median file
+    size shifts upward enough that 800–1500 becomes routine and
+    > 1500 becomes common; then drop XL and use 400 / 1000 / 1500.
+  - **Mechanise via CI script (compute bucket from `wc -l`, fail
+    CI if row's declared bucket is wrong).** Reason: layer 2 of
+    the AP-002 detection story is mechanically possible (small
+    Python script) but premature — the bucket scheme widens
+    tolerance enough that boundary-crossings are rare (3 of 58
+    rows in 5 months). Pre-mature mechanisation is exactly the
+    same anti-pattern as Q-11's «mechanise CLASS-prefix in CI»
+    rejected branch. Lesson: revisit if the next sweep finds
+    ≥ 5 % cross-bucket drift, or if any single PR introduces
+    > 1 cross-bucket change without updating the row.
+- **Re-evaluation triggers:** (1) Next periodic sweep (no fixed
+  cadence yet; opportunistic — bundled with the next PR that
+  touches `MAINTENANCE.md` or three+ llms.txt rows in a single
+  edit) finds ≥ 5 % cross-bucket drift → escalate to the
+  CI-mechanisation branch; (2) Project file distribution shifts
+  toward larger files (median > 600 LOC) → re-cut boundaries to
+  400 / 1000 / 1500; (3) A token-counter tool lands that makes
+  the bucket label redundant with a per-call budget check →
+  revisit the «raw count only» branch with the new evidence.
+- **Source:**
+  [`knowledge/anti-patterns/AP-002-stale-routing-index-counts.md`](../anti-patterns/AP-002-stale-routing-index-counts.md)
+  + [`MAINTENANCE.md` §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge)
+  + [AGENTS.md §Change Classification](../../AGENTS.md#change-classification)
+  + Q-11 (Layers 1 / 2 / 3 model this Q-12 inherits).

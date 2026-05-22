@@ -3,7 +3,27 @@
 > **Read this first if you are an LLM agent (Devin, Claude, ChatGPT,
 > Cursor, etc.) starting a new session on this repository.**
 >
-> **Last updated:** 2026-05-21 by Devin session
+> **Last updated:** 2026-05-22 by Devin session
+> [`cf06efa54f3f49fb834438dac5532a0d`](https://app.devin.ai/sessions/cf06efa54f3f49fb834438dac5532a0d)
+> — **M2 llms.txt size buckets (RELAX) + AP-002** stacks on `main`
+> (PR #48 merged) and is the first **RELAX** dogfood of
+> [`AGENTS.md` §Change Classification](./AGENTS.md#change-classification)
+> introduced in M1. Replaces `(~N lines)` row format in
+> `knowledge/llms.txt` with hybrid `(BUCKET, ~N lines)` where
+> `BUCKET ∈ {S, M, L, XL}` at boundaries 300 / 800 / 1500 LOC. M2
+> measured baseline drift: 16 of 58 rows had `|actual − claimed|
+> > 10` LOC and 3 rows shifted bucket entirely (HANDOFF.md S→M,
+> DIGEST.md S→M, exploration_log.md S→L) — that drift is the
+> observed cost asymmetry catalogued as
+> [AP-002](./knowledge/anti-patterns/AP-002-stale-routing-index-counts.md).
+> M2 sweeps all 58 rows + amends
+> [`MAINTENANCE.md` §When adding a new file](./knowledge/MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge)
+> with the new row format + the boundary table + opens the second
+> catalog entry AP-002 + appends Q-12 to exploration_log with the
+> 4-bucket-hybrid `Chosen` block and three `Rejected` branches
+> («pure buckets, no number», «raw count only, status quo»,
+> «boundaries 400 / 800 / 1200 with 800-1200 gap»). No code
+> changes; docs-only RELAX. (Earlier 2026-05-21 session
 > [`7d46c801db0f4ac3ab4b80ef97a664c3`](https://app.devin.ai/sessions/7d46c801db0f4ac3ab4b80ef97a664c3)
 > — **PR-4 / Wave-3 stack #1** stacks on `main` (PR #26 merged)
 > and lands two R-Ns from
@@ -90,6 +110,19 @@
 > personas (R-32 §What original spec) deferred until ≥3 catalog
 > entries exist. Layer 3 (review-time prompt in PR review carrier)
 > documentary-only in M1.
+>
+> **M2 dogfood narrative (2026-05-22, this session).** The §Change
+> Classification discipline introduced by M1 is being exercised
+> for the first time: M2's PR opens with `CLASS: RELAX` +
+> `INVARIANT: knowledge/llms.txt rows carry size-bucket metadata
+> sufficient for batch-decision routing (bucket label + raw count)`,
+> and the catalog grows by one entry (AP-002) that documents the
+> drift the RELAX repairs. AP-002 § «Why the wrong shape
+> dominates» explicitly cross-links to AP-001's cost-asymmetry-
+> trap mechanism — the two entries are now the project's first
+> evidence that the catalog has compounding value (the second
+> entry references the first as a generic mechanism rather than
+> re-deriving it).
 >
 > **PR-4 review-fix iteration (2026-05-21).** Four follow-up
 > commits on the same branch addressed Devin Review runs 1/2/3
