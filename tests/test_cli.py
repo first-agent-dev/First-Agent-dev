@@ -189,3 +189,53 @@ def test_inner_loop_smoke_gotcha_dedups_across_repeated_runs(tmp_path: Path) -> 
         "Second smoke run accumulated a duplicate gotcha section — "
         "the deterministic-clock + dedup pair is broken."
     )
+
+
+def test_invariant_adr7_r8_canon_root_is_knowledge_trace(tmp_path: Path) -> None:
+    """INVARIANT (ADR-7 §Sub-amendment 2026-05-21b): R-8 LearningObserver
+    writes its filesystem-canon artifacts under ``<workspace>/knowledge/trace/``
+    — both in the smoke CLI and in the T-2 real runtime, because that is
+    the cross-session memory path the rest of the system reads from.
+
+    Layer-2 worked example (named-invariant test, see
+    ``knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md``).
+    The test name encodes the assertion so that any future agent
+    grepping for «R-8 canon» / «ADR-7 sub-amendment 2026-05-21b» /
+    «knowledge/trace» finds this test as the mechanical answer to
+    «where is R-8 supposed to write?».
+
+    If the canon needs to move, the relocation MUST land together
+    with an ADR amendment in the same PR — at which point the
+    expected paths in this test are updated as part of the visible
+    architectural decision (RELAX), not as a silent WORKAROUND.
+
+    Complementary to ``test_inner_loop_smoke_wires_learning_observer``
+    (integration test bundling several assertions): this test holds
+    one invariant per ADR amendment, named-after the amendment.
+    """
+
+    (tmp_path / "README.md").write_text("# hello\n", encoding="utf-8")
+    parser = build_parser()
+    args = parser.parse_args(["inner-loop-smoke", "--workspace", str(tmp_path)])
+
+    args.func(args)
+
+    canon_map = tmp_path / "knowledge" / "trace" / "codebase_map.json"
+    canon_gotchas_dir = tmp_path / "knowledge" / "trace"
+    assert canon_map.exists(), (
+        f"R-8 canon-root invariant violated: expected {canon_map} after "
+        "`fa inner-loop-smoke`. Spec: ADR-7 §Sub-amendment 2026-05-21b "
+        "«single canon root». See "
+        "knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md."
+    )
+    assert canon_gotchas_dir.is_dir(), (
+        "R-8 canon-root invariant violated: parent directory for "
+        f"gotchas.md does not exist at {canon_gotchas_dir}."
+    )
+    relocated = tmp_path / ".fa" / "knowledge" / "trace" / "codebase_map.json"
+    assert not relocated.exists(), (
+        "R-8 canon-root invariant violated: canon was relocated under "
+        ".fa/ (a previously-rejected WORKAROUND). See "
+        "knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md "
+        "and the worked-history note in ADR-7 §Sub-amendment 2026-05-21b."
+    )

@@ -390,6 +390,45 @@ strengthen it.
    [`research/dpc-messenger-inspiration-2026-05.md`](./knowledge/research/dpc-messenger-inspiration-2026-05.md)
    §6 AP8.
 
+## Change Classification
+
+Forward-only from 2026-05-22 (PR opening this section).
+Module-touching PRs and the first module-touching commit on a branch
+MUST open the PR description (and the commit message body) with two
+explicit lines:
+
+```text
+CLASS: REPAIR | RELAX | WORKAROUND
+INVARIANT: <one sentence — what the module promises>
+```
+
+- **REPAIR** — restore the module's existing invariant. No ADR
+  amendment needed.
+- **RELAX** — change the module's invariant. MUST land an ADR
+  amendment in the same PR per §PR Checklist rule #9.
+- **WORKAROUND** — bypass the module to avoid the symptom. MUST
+  catalogue the pattern under
+  [`knowledge/anti-patterns/`](./knowledge/anti-patterns/README.md)
+  in the same PR and link the entry from the PR description; if the
+  invariant is genuinely the wrong shape, escalate to RELAX instead.
+
+**Rationale (≤ 3 sentences).** Weaker OSS LLMs default to
+WORKAROUND because the wrong shape passes surface metrics with a
+small diff while the broken invariant is invisible until someone
+re-reads the ADR. Forcing the LLM to name CLASS + INVARIANT before
+the diff lands makes the contradiction visible to the author
+mid-write and to the reviewer in two seconds — an *action-count*
+mitigation, not a *rule-count* one. Worked-history of the pattern
+this section is forcing-against:
+[`knowledge/anti-patterns/AP-001`](./knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md).
+
+**Scope.** Module-touching PRs are PRs that change behaviour in
+`src/fa/` or add / amend an ADR. Pure documentation PRs (research
+notes, glossary, README) are exempt. PRs touching tests-only are
+exempt unless the test enforces an invariant that did not exist
+before — in which case the PR is module-touching by extension and
+declares accordingly.
+
 ## PR Description Style
 
 PR descriptions are the *first reading-pass* for both human review

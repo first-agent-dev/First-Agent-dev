@@ -19,6 +19,9 @@ knowledge/
 │   ├── README.md
 │   ├── DIGEST.md             # one-paragraph cheat-sheet per accepted ADR (rule #9)
 │   └── ADR-template.md
+├── anti-patterns/            # named anti-pattern catalog (AP-NNN-<slug>.md)
+│   ├── README.md             # entry schema + Layer-1/2/3 detection model
+│   └── AP-001-…              # worked example: spec-bypassing workaround
 ├── prompts/                  # reusable prompts
 │   ├── README.md
 │   ├── RESOLVER.md           # intent-to-template dispatcher
