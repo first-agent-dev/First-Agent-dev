@@ -14,7 +14,7 @@ from __future__ import annotations
 import itertools
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -604,6 +604,50 @@ def test_chain_from_mapping_coalesces_yaml_null_family_to_empty_string() -> None
     # Validator must not produce a misleading «family 'None' !=» warning.
     warnings = config.validate(env={"OPENROUTER_API_KEY": "k"})
     assert all("'None'" not in w for w in warnings)
+
+
+def test_chain_from_mapping_raises_on_yaml_null_required_field() -> None:
+    # Each of the four required chain-entry fields (provider, slug,
+    # base_url, api_key_env) must raise a clean ConfigurationError
+    # naming the offending field when the YAML row contains the field
+    # as ``null``. Without this guard the loader would smuggle
+    # str(None) == "None" into the ChainEntry and the downstream
+    # ChainConfig.validate would raise a confusing «unknown provider
+    # 'None'» / «api_key_env=None not set» error instead.
+    for null_field in ("provider", "slug", "base_url", "api_key_env"):
+        row: dict[str, Any] = {
+            "provider": "openrouter",
+            "slug": "deepseek/deepseek-chat-v3",
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key_env": "OPENROUTER_API_KEY",
+        }
+        row[null_field] = None
+        raw = {"model": "deepseek-v3", "family": "deepseek", "chain": [row]}
+        with pytest.raises(ConfigurationError) as info:
+            chain_from_mapping("coder", raw)
+        msg = str(info.value)
+        assert null_field in msg, f"error must name field {null_field!r}, got: {msg}"
+        assert "null or missing" in msg
+
+
+def test_chain_from_mapping_raises_on_missing_required_field() -> None:
+    # Same path also covers the missing-key case (KeyError would be
+    # less helpful than ConfigurationError). Drop one required field
+    # from a otherwise-valid row; the loader must surface a clean
+    # ConfigurationError naming the missing field rather than letting
+    # ``row["provider"]`` raise KeyError.
+    for missing_field in ("provider", "slug", "base_url", "api_key_env"):
+        row: dict[str, Any] = {
+            "provider": "openrouter",
+            "slug": "deepseek/deepseek-chat-v3",
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key_env": "OPENROUTER_API_KEY",
+        }
+        del row[missing_field]
+        raw = {"model": "deepseek-v3", "family": "deepseek", "chain": [row]}
+        with pytest.raises(ConfigurationError) as info:
+            chain_from_mapping("coder", raw)
+        assert missing_field in str(info.value)
 
 
 def test_chain_from_mapping_coalesces_yaml_null_chain_field_to_empty_tuple() -> None:

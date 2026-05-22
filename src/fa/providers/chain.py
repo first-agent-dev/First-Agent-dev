@@ -364,6 +364,22 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
     # the validator surfaces the intended ``ConfigurationError("empty
     # chain — role not callable")`` instead of a confusing crash.
     chain_rows: Sequence[Mapping[str, Any]] = raw.get("chain") or ()
+    # Required chain-entry fields must be non-null AND present per ADR-9 §1
+    # chain-entry schema. ``str(row["provider"])`` would smuggle the literal
+    # string ``"None"`` into the ``ChainEntry`` on YAML ``provider: null``,
+    # and ``row["provider"]`` would raise ``KeyError`` (less helpful than a
+    # named ``ConfigurationError``) on a missing key. The downstream
+    # validator catches the smuggled ``"None"`` indirectly («unknown
+    # provider 'None'»), but the user-facing message is clearer when the
+    # loader surfaces the offending field by name. Same pattern as the
+    # optional-field null coercion below.
+    for index, row in enumerate(chain_rows):
+        for field_name in ("provider", "slug", "base_url", "api_key_env"):
+            if row.get(field_name) is None:
+                raise ConfigurationError(
+                    f"role {role!r} chain[{index}]: required field "
+                    f"{field_name!r} is null or missing"
+                )
     # ``row.get(key, DEFAULT)`` returns the actual value when the YAML
     # row contains ``key: null`` (because the key exists), so passing
     # ``None`` straight through to ``int(...)`` / ``dict(...)`` would
