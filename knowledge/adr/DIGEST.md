@@ -513,7 +513,24 @@ chain, missing `api_key_env`, unknown provider, warnings accumulation,
 all three family-disjoint paths (eval=planner / eval=coder / planner=coder
 allowed / eval-missing skip / planner-missing skip), four-role
 (planner+coder+eval+debug) shape, path-based variant including the
-missing-file branch.
+missing-file branch. **Amendment 2026-05-22 (T-4 review fix-up).**
+Devin Review surfaced a case-sensitive-bypass bug on the safety-critical
+eval-vs-actor family-disjoint check — a YAML `family: "DeepSeek"`
+(mixed case) on planner vs `family: "deepseek"` (lowercase) on eval
+would silently pass `check_eval_disjoint`'s case-sensitive `==`
+comparison because `chain_from_mapping` stored the raw YAML string
+verbatim. **Root fix at the producer site:** `chain_from_mapping`
+in `src/fa/providers/chain.py` now normalises `family` via
+`.strip().lower()` so every downstream consumer (the disjoint check,
+the validator's slug-family mismatch warning, cooldown logging,
+Tier-2 telemetry) sees a canonical form. `.strip().lower()` is used
+rather than routing via `fa.roles.extract_family` because the latter
+raises on any override not in `KNOWN_FAMILIES`, which would reject
+custom / not-yet-known family names that are legal in v0.1. The
+loader's `check_eval_disjoint` call site keeps explicit
+`.strip().lower()` as defence-in-depth. 4 additional regression
+tests (588 total pass) covering case + whitespace at both the
+producer and loader sites.
 
 **Source:** [`ADR-9`](./ADR-9-llm-provider-client.md).
 

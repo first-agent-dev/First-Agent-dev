@@ -500,6 +500,26 @@ manually beyond this point.
     BACKLOG `M-5` closed by same PR; M-1/M-2/M-3/M-4 already
     occupied so the T-4 loader took the next free slot.
     23 new offline tests added (584 total pass).
+    **T-4 review fix-up 2026-05-22:** Devin Review surfaced a
+    case-sensitive-bypass bug на the eval-vs-actor family-disjoint
+    check — a YAML `family: "DeepSeek"` (mixed case) for planner
+    and `family: "deepseek"` (lowercase) for eval would silently
+    pass `check_eval_disjoint`'s case-sensitive `==` comparison
+    because `chain_from_mapping` stored the raw YAML string
+    verbatim. **Root fix at the producer site:**
+    `src/fa/providers/chain.py` `chain_from_mapping` now normalises
+    `family` via `.strip().lower()` so every downstream consumer
+    (the disjoint check, the validator's slug-family mismatch
+    warning, cooldown logging, Tier-2 telemetry) sees a canonical
+    form. `.strip().lower()` is used rather than routing через
+    `fa.roles.extract_family` because the latter raises on any
+    family override not в `KNOWN_FAMILIES`, which would reject
+    custom / not-yet-known family names that are legal в v0.1.
+    The loader's `check_eval_disjoint` call site keeps explicit
+    `.strip().lower()` as defence-in-depth. 4 new regression
+    tests (588 total pass) covering both case + whitespace axes,
+    at both the `chain_from_mapping` producer and the loader's
+    call site.
     **Option D + α** — per-role explicit provider chain with
     cooldown в `~/.fa/models.yaml` (`{model, family,
     chain: [{provider, slug, base_url, api_key_env,

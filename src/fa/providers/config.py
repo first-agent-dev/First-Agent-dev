@@ -196,23 +196,20 @@ def load_models_config(
     # the check; the caller decides whether that's acceptable for
     # its workflow.
     #
-    # ``check_eval_disjoint`` does a case-sensitive ``==`` comparison,
+    # ``check_eval_disjoint`` does a case-sensitive ``==`` comparison
     # and its docstring says it expects «already extracted» families
     # (the lowercased form returned by ``fa.roles.extract_family``).
-    # However, ``chain_from_mapping`` currently stores the YAML
-    # ``family:`` field verbatim (``str(raw.get("family") or "")``
-    # in ``chain.py``), NOT via ``extract_family``, so
-    # ``ChainConfig.family`` is whatever case the user typed. Without
-    # the ``.strip().lower()`` normalisation below, a config with
-    # ``family: "DeepSeek"`` for planner and ``family: "deepseek"``
-    # for eval would silently pass the disjoint check — i.e. the
-    # safety-critical rule from ADR-2 §Amendment 2026-05-20 would be
-    # bypassed by a casing typo. Normalising at the call site here
-    # (rather than in ``chain_from_mapping``) keeps the T-2 surface
-    # untouched and avoids the breaking-change of routing every YAML
-    # ``family:`` value through ``extract_family``, which would
-    # reject custom / not-yet-known family names that are otherwise
-    # legal in a v0.1 config.
+    # ``ChainConfig.family`` is already normalised to lowercase via
+    # ``.strip().lower()`` by ``chain_from_mapping`` at the producer
+    # site — see :func:`fa.providers.chain.chain_from_mapping` for
+    # the rationale (without producer-side normalisation, a YAML
+    # ``family: "DeepSeek"`` vs ``family: "deepseek"`` casing typo
+    # would silently bypass the safety-critical eval-vs-actor
+    # disjoint check from ADR-2 §Amendment 2026-05-20 rule 1).
+    # The explicit ``.strip().lower()`` here is defence-in-depth:
+    # if a future refactor of ``chain_from_mapping`` drops the
+    # producer-side normalisation, the safety-critical check at
+    # this call site still holds.
     if _FAMILY_DISJOINT_ROLES.issubset(roles.keys()):
         check_eval_disjoint(
             planner_family=roles["planner"].family.strip().lower(),
