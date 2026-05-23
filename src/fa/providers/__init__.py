@@ -1,4 +1,4 @@
-"""T-2 LLM provider client (ADR-9).
+"""T-2 LLM provider client (ADR-9) + T-4 ``~/.fa/models.yaml`` loader.
 
 Public surface:
 
@@ -10,6 +10,9 @@ Public surface:
   :class:`fa.providers.chain.CooldownRow`
 * :mod:`fa.providers.errors` typed-error hierarchy
 * :func:`fa.providers.registry.build_provider`
+* :class:`fa.providers.config.ModelsConfig` /
+  :func:`fa.providers.config.load_models_config` /
+  :func:`fa.providers.config.load_models_config_from_path` (T-4 loader)
 """
 
 from __future__ import annotations
@@ -29,6 +32,12 @@ from fa.providers.chain import (
     ProviderChain,
     chain_from_mapping,
 )
+from fa.providers.config import (
+    DEFAULT_MODELS_YAML_PATH,
+    ModelsConfig,
+    load_models_config,
+    load_models_config_from_path,
+)
 from fa.providers.errors import (
     ConfigurationError,
     ProviderAuthError,
@@ -40,12 +49,14 @@ from fa.providers.errors import (
 from fa.providers.registry import PROVIDERS, ProviderSpec, build_provider
 
 __all__ = [
+    "DEFAULT_MODELS_YAML_PATH",
     "PROVIDERS",
     "ChainAttemptRecord",
     "ChainConfig",
     "ChainEntry",
     "ConfigurationError",
     "CooldownRow",
+    "ModelsConfig",
     "Provider",
     "ProviderAuthError",
     "ProviderChain",
@@ -60,4 +71,6 @@ __all__ = [
     "TransportResponse",
     "build_provider",
     "chain_from_mapping",
+    "load_models_config",
+    "load_models_config_from_path",
 ]

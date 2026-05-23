@@ -492,7 +492,28 @@ already used for `BEFORE_LLM_CALL` per §2 step 2b; (d)
 `chain_from_mapping` now coalesces YAML `null` values for `model`
 and `family` to the empty string (the prior `str(raw.get(key, ""))`
 returned the literal string `"None"` when the YAML key existed with
-a null value).
+a null value). **Amendment 2026-05-22 (T-4 loader landed).**
+`~/.fa/models.yaml` loader merged in
+`devin/1779515293-t4-models-yaml-loader` — `src/fa/providers/config.py`
+(~150 LOC) exports `ModelsConfig` + `load_models_config(text, *,
+env=None)` + `load_models_config_from_path(path=DEFAULT_MODELS_YAML_PATH,
+*, env=None)`. The loader walks the §1 schema via `yaml.safe_load`,
+calls `chain_from_mapping` per role, runs `ChainConfig.validate(env)`
+to accumulate best-effort warnings, and enforces ADR-2 §Amendment
+2026-05-20 rule 1 via `check_eval_disjoint(...)` when planner / coder
+/ eval are all declared. Missing-file returns an empty `ModelsConfig`
+(deny-by-default policy mirrored from `fa.config`); the caller decides
+whether absence is fatal for its workflow. New runtime dep `pyyaml>=6.0`
+(first YAML lib add in the repo; the hand-rolled `_yaml_subset.py`
+covers only inline-comment stripping and cannot safely round-trip the
+§1 nested lists-of-mappings + `extra_headers` schema; the verifier's
+`verify_action.py` parser comment already anticipated the transition).
+23 new offline tests cover happy-path, empty/null/scalar root, empty
+chain, missing `api_key_env`, unknown provider, warnings accumulation,
+all three family-disjoint paths (eval=planner / eval=coder / planner=coder
+allowed / eval-missing skip / planner-missing skip), four-role
+(planner+coder+eval+debug) shape, path-based variant including the
+missing-file branch.
 
 **Source:** [`ADR-9`](./ADR-9-llm-provider-client.md).
 
