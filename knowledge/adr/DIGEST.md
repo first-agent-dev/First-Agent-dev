@@ -465,7 +465,34 @@ as fail-fast `ReservedProviderError`; OmniRoute TLS spoofing
 rejected). **Revision 2026-05-22 (pre-PR critical pass).** §1,
 §2, §3, §4, §5, §7, §9, §10, §Consequences refined after self-
 critique against 7 P0 logic-bug findings + 6 P1 design-gap
-findings; §Decision direction unchanged.
+findings; §Decision direction unchanged. **Amendment 2026-05-22
+(T-2 driver landed).** Implementation merged in
+`devin/1779480362-t2-llm-provider-client` — `src/fa/providers/`
+(7 modules: `base.py`, `chain.py`, `openai_compat.py`,
+`anthropic.py`, `registry.py`, `errors.py`, `__init__.py`) +
+`src/fa/observability/cost_table.py`, plus six offline-only
+test modules (55 tests, ADR-7 §10 fake-transport pattern). One
+contract clarification surfaced during implementation: `ProviderSpec`
+dataclass added to the registry to carry both adapter factory and
+adapter-category name, so the chain validator's adapter-homogeneity
+warning can reference an explicit category string instead of a class
+identity (no Q-N amendment triggered — extends the ADR-9 §5 file
+layout description, does not change a decision). Post-review fix-up
+2026-05-22: (a) `ProviderChainExhaustedError` + `ProviderRequestShapeError`
+now carry `logical_call_id` so both Tier-2 `llm_chain_exhausted`
+terminals (`all_exhausted` + `request_shape`) preserve the §4
+correlation UUID; (b) `ProviderChain` accepts an optional
+`cooldowns: dict[(provider, slug), CooldownRow]` kwarg so the
+process-global cooldown ledger required by §3 («two roles sharing
+the same `(provider, slug)` tuple share the cooldown state») can be
+injected once and shared across all per-role chains; (c)
+`ProviderChain.request()` accepts an optional pre-generated
+`logical_call_id` so the inner-loop runtime can supply the UUID
+already used for `BEFORE_LLM_CALL` per §2 step 2b; (d)
+`chain_from_mapping` now coalesces YAML `null` values for `model`
+and `family` to the empty string (the prior `str(raw.get(key, ""))`
+returned the literal string `"None"` when the YAML key existed with
+a null value).
 
 **Source:** [`ADR-9`](./ADR-9-llm-provider-client.md).
 

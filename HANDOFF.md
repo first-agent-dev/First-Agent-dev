@@ -460,11 +460,27 @@ manually beyond this point.
     LLM provider client contract (T-2 driver; **proposed
     2026-05-22; revised same day** after pre-PR critical pass
     closing 7 P0 logic-bug findings + 6 P1 design-gap findings;
-    T-2 implementation tracked under BACKLOG `M-4`; `M-2` /
-    `M-3` are already occupied by Wave-2 LoopGuard /
+    **T-2 driver landed 2026-05-22** in branch
+    `devin/1779480362-t2-llm-provider-client` — 7 modules under
+    `src/fa/providers/` + `src/fa/observability/cost_table.py`
+    + 6 offline-only test modules (55 tests, ADR-7 §10 fake-
+    transport pattern); BACKLOG `M-4` closed by same PR;
+    `M-2` / `M-3` are already occupied by Wave-2 LoopGuard /
     FailureClassifier / attempt_history and Wave-2 pre-tool
     BlockerMiddleware + DSV YAML respectively, so the T-2 driver
-    takes the next free milestone slot).
+    took the next free milestone slot).
+    **Post-review fix-up 2026-05-22:** `logical_call_id` now
+    propagates on `ProviderChainExhaustedError` and
+    `ProviderRequestShapeError` (closes the §4 Tier-2 correlation
+    gap on both terminals); `ProviderChain` accepts a shared
+    `cooldowns` ledger so the §3 process-global cooldown invariant
+    holds across per-role chains; `ProviderChain.request()`
+    accepts an optional pre-generated `logical_call_id` for the
+    inner-loop runtime that fires `BEFORE_LLM_CALL`; YAML `null`
+    values in the `model:` / `family:` fields now coalesce to the
+    empty string (previously the loader stored the literal string
+    `"None"` and the family-mismatch validator emitted a
+    confusing warning).
     **Option D + α** — per-role explicit provider chain with
     cooldown в `~/.fa/models.yaml` (`{model, family,
     chain: [{provider, slug, base_url, api_key_env,
