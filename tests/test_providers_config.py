@@ -339,6 +339,93 @@ def test_load_models_config_rejects_eval_family_matching_coder() -> None:
     assert "deepseek" in msg
 
 
+def test_load_models_config_normalises_family_case_for_disjoint_check() -> None:
+    # Regression test for the Devin Review finding on PR #52: a YAML
+    # ``family: "DeepSeek"`` (mixed case) on planner and
+    # ``family: "deepseek"`` (lowercase) on eval would silently bypass
+    # ``check_eval_disjoint`` because ``ChainConfig.family`` stores the
+    # raw YAML string verbatim and the disjoint check does a
+    # case-sensitive ``==`` comparison. The loader must
+    # ``.strip().lower()`` before calling ``check_eval_disjoint`` so
+    # the safety-critical rule from ADR-2 §Amendment 2026-05-20
+    # cannot be bypassed by a casing typo.
+    text = textwrap.dedent(
+        """\
+        planner:
+          model:  "deepseek-v3"
+          family: "DeepSeek"
+          chain:
+            - provider: openrouter
+              slug:     "deepseek-planner"
+              base_url: "https://openrouter.ai/api/v1"
+              api_key_env: OPENROUTER_API_KEY
+        coder:
+          model:  "kimi-k2"
+          family: "kimi"
+          chain:
+            - provider: openrouter
+              slug:     "kimi-coder"
+              base_url: "https://openrouter.ai/api/v1"
+              api_key_env: OPENROUTER_API_KEY
+        eval:
+          model:  "deepseek-v3-eval"
+          family: "deepseek"
+          chain:
+            - provider: openrouter
+              slug:     "deepseek-eval"
+              base_url: "https://openrouter.ai/api/v1"
+              api_key_env: OPENROUTER_API_KEY
+        """
+    )
+    with pytest.raises(EvalFamilyConflictError) as info:
+        load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    msg = str(info.value)
+    assert "planner" in msg
+    # The error must surface the conflict even though the raw YAML
+    # families differ in case. The normalised value (lowercase)
+    # appears in the error message because the loader passes the
+    # lowercased forms to ``check_eval_disjoint``.
+    assert "deepseek" in msg
+
+
+def test_load_models_config_normalises_whitespace_for_disjoint_check() -> None:
+    # Same regression contract as the case test, but for whitespace
+    # padding (``family: "  deepseek  "``). The loader's
+    # ``.strip().lower()`` covers both axes; this test pins the strip
+    # behaviour so a future refactor cannot regress only the case
+    # half.
+    text = textwrap.dedent(
+        """\
+        planner:
+          model:  "deepseek-v3"
+          family: "  deepseek  "
+          chain:
+            - provider: openrouter
+              slug:     "deepseek-planner"
+              base_url: "https://openrouter.ai/api/v1"
+              api_key_env: OPENROUTER_API_KEY
+        coder:
+          model:  "kimi-k2"
+          family: "kimi"
+          chain:
+            - provider: openrouter
+              slug:     "kimi-coder"
+              base_url: "https://openrouter.ai/api/v1"
+              api_key_env: OPENROUTER_API_KEY
+        eval:
+          model:  "deepseek-v3-eval"
+          family: "deepseek"
+          chain:
+            - provider: openrouter
+              slug:     "deepseek-eval"
+              base_url: "https://openrouter.ai/api/v1"
+              api_key_env: OPENROUTER_API_KEY
+        """
+    )
+    with pytest.raises(EvalFamilyConflictError):
+        load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+
+
 def test_load_models_config_allows_planner_and_coder_same_family() -> None:
     # ADR-2 §Decision routing table allows a single «coder-tier»
     # model to back both planner and coder; only eval-vs-actor
