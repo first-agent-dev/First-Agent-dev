@@ -2,21 +2,13 @@
 
 > Locally orchestrated, mixed-tier LLM coding agent for a single
 > power-user. Filesystem-canonical knowledge (Markdown + YAML
-> frontmatter); read-side scales lazily from grep to BM25 to
-> vectors only when the corpus justifies it. Implementation language
-> is Python; target codebases the agent reads can be anything.
+> frontmatter); read-side scales lazily from grep to BM25.
+> Written is Python; target codebases the agent reads can be anything.
 >
 > This file is an index for LLM agents that want to ingest the
 > project documentation in one fetch. Paths below are GitHub raw URLs against
 > the `main` branch of the **canonical repo**
-> `GITcrassuskey-shop/First-Agent`. Forks
-> `GrasshopperBoy/First-Agent-fork` and
-> `Bupitsa-ai/First-Agent-debloat` are parallel work-trees — different
-> agents run in different forks; cross-fork PRs land back upstream
-> via the lead. Any of these is a valid working repo from an agent's
-> perspective; `main` is kept in sync across all of them. If a URL
-> below 404s mid-cycle, replace the canonical owner/repo segment with
-> one of the fork pairs and retry.
+> `GITcrassuskey-shop/First-Agent`.
 >
 > **Project stage.** Currently in **Stage 1** (documentation + agent
 > development через Devin) of the three-stage evolution defined in
@@ -32,12 +24,11 @@
 
 Six files cover ~90% of session-start context. Read in order:
 
-1. [README.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/README.md) — project overview (Russian).
-2. [AGENTS.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/AGENTS.md) — rules, PR checklist, query routing, **§Pre-flight checklist** (run BEFORE any non-trivial task).
-3. [knowledge/project-overview.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/knowledge/project-overview.md) — §1.1 four-pillar goal; §1.2 minimalism-first principle.
-4. [HANDOFF.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/HANDOFF.md) — current state, next steps, recently-landed research notes.
-5. [knowledge/adr/DIGEST.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/knowledge/adr/DIGEST.md) — one-paragraph cheat-sheet for all ADR + amendments. Authoritative source remains the per-ADR files.
-6. [docs/glossary.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/docs/glossary.md) — canonical definitions for project-specific terms (axis, lens, pillar, NLAH, ACI, harness, hook, UC1..UC5, MCP, subtraction-first, minimalism-first, R-S-M).
+1. [AGENTS.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/AGENTS.md) — rules, PR checklist, query routing, **§Pre-flight checklist** (run BEFORE any non-trivial task).
+2. [knowledge/project-overview.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/knowledge/project-overview.md) — §1.1 four-pillar goal; §1.2 minimalism-first principle.
+3. [HANDOFF.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/HANDOFF.md) — current state, next steps, recently-landed research notes.
+4. [knowledge/adr/DIGEST.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/knowledge/adr/DIGEST.md) — one-paragraph cheat-sheet for all ADR + amendments. Authoritative source remains the per-ADR files.
+5. [docs/glossary.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/docs/glossary.md) — canonical definitions for project-specific terms (axis, lens, pillar, NLAH, ACI, harness, hook, UC1..UC5, MCP, subtraction-first, minimalism-first, R-S-M).
 
 ## TASK ROUTING
 
