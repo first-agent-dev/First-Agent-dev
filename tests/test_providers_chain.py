@@ -35,6 +35,7 @@ from fa.providers.errors import (
     ProviderTransientError,
     ReservedProviderError,
 )
+from fa.roles import EvalFamilyConflictError, check_eval_disjoint
 
 
 @dataclass
@@ -773,3 +774,83 @@ def test_chain_from_mapping_preserves_string_family() -> None:
     config = chain_from_mapping("coder", raw)
     assert config.model == "deepseek-v3"
     assert config.family == "deepseek"
+
+
+def test_chain_from_mapping_normalises_family_to_lowercase() -> None:
+    # Regression test for the Devin Review finding on PR #52: a YAML
+    # ``family: "DeepSeek"`` (mixed case) stored verbatim into
+    # ``ChainConfig.family`` would bypass ``check_eval_disjoint``'s
+    # case-sensitive ``==`` comparison when matched against a
+    # lowercase eval-role ``family: "deepseek"``, silently violating
+    # the safety-critical eval-vs-actor disjoint rule from ADR-2
+    # §Amendment 2026-05-20. ``chain_from_mapping`` must normalise
+    # via ``.strip().lower()`` so every downstream consumer (the
+    # disjoint check, the validator's slug-family mismatch warning,
+    # cooldown logging, Tier-2 telemetry) sees a canonical form.
+    raw = {
+        "model": "DeepSeek-V3",
+        "family": "DeepSeek",
+        "chain": [
+            {
+                "provider": "openrouter",
+                "slug": "deepseek/deepseek-chat-v3",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+            }
+        ],
+    }
+    config = chain_from_mapping("coder", raw)
+    # ``model`` is NOT normalised — a provider's ``slug`` and the
+    # user-facing ``model`` label may legally be mixed-case. Only
+    # ``family`` participates in the safety-critical equality check.
+    assert config.model == "DeepSeek-V3"
+    assert config.family == "deepseek"
+
+
+def test_chain_from_mapping_strips_whitespace_around_family() -> None:
+    # Same regression contract as the case test, but for whitespace
+    # padding (``family: "  deepseek  "``). The producer-site
+    # ``.strip().lower()`` covers both axes; this test pins the
+    # strip behaviour so a future refactor cannot regress only the
+    # case half.
+    raw = {
+        "model": "deepseek-v3",
+        "family": "  deepseek  ",
+        "chain": [
+            {
+                "provider": "openrouter",
+                "slug": "deepseek/deepseek-chat-v3",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+            }
+        ],
+    }
+    config = chain_from_mapping("coder", raw)
+    assert config.family == "deepseek"
+
+
+def test_invariant_adr2_eval_disjoint_uncircumventable_by_family_case() -> None:
+    """ADR-2 §Amendment 2026-05-20 rule 1: eval-vs-actor family disjoint is bypass-proof.
+
+    Mixed-case family strings (planner ``family: "DeepSeek"``, eval
+    ``family: "deepseek"``) MUST collide in :func:`check_eval_disjoint`
+    after :func:`chain_from_mapping`. Producer-site ``.strip().lower()``
+    at ``src/fa/providers/chain.py:429`` is the mechanical enforcement.
+
+    Layer-2 named-invariant retrofit per AP-001 §Layer 2 / drift-
+    analysis v2: failing this test means a refactor re-opened the
+    case-sensitive bypass of the safety-critical ADR-2 contract.
+    Change the ADR (and this test in the same PR) when the contract
+    actually changes — do NOT patch the assertion to make a regression
+    pass. The four neighbouring regression tests pin the producer-side
+    normalisation as an *implementation* detail; THIS test pins the
+    end-to-end *contract* (mixed-case must not bypass disjointness).
+    """
+    planner = chain_from_mapping("planner", {"family": "DeepSeek"})
+    eval_role = chain_from_mapping("eval", {"family": "deepseek"})
+    with pytest.raises(EvalFamilyConflictError):
+        check_eval_disjoint(
+            planner_family=planner.family,
+            coder_family=planner.family,
+            eval_family=eval_role.family,
+        )

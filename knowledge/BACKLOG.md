@@ -652,6 +652,98 @@
   - [`HANDOFF.md` §Current state ADR list](../HANDOFF.md) —
     ADR-9 bullet with `M-4` cross-reference.
 
+## M-5 — T-4 `~/.fa/models.yaml` loader (closes M3 of release roadmap)
+
+- **Status:** closed 2026-05-22 — landed in T-4 implementation PR
+  (`devin/1779515293-t4-models-yaml-loader`). One module
+  `src/fa/providers/config.py` (~150 LOC) + 23 new offline tests
+  in `tests/test_providers_config.py`; 584 total pytest pass.
+  All gates pass: ruff check, ruff format --check,
+  mypy --strict, pre-commit run --all-files.
+- **Why milestone, not idea:** ADR-9 §1 schema is locked
+  (proposed 2026-05-22 + T-2 driver landed in M-4); the loader
+  is a planned PR with explicit shape, not an open research
+  question. `M-4` is closed (T-2 driver landed), so `M-5` is
+  the next free milestone slot. T-4 corresponds to the «M3 —
+  T-2 + T-4: LLM provider client + config loader» entry in
+  the release roadmap synthesis (the roadmap's milestone
+  numbers diverge from this BACKLOG's M-N numbering; the
+  roadmap groups T-2 and T-4 as one milestone, while this
+  BACKLOG closes them as two adjacent milestones since the
+  T-2 PR landed independently).
+- **Contract source:**
+  [`knowledge/adr/ADR-9-llm-provider-client.md`](./adr/ADR-9-llm-provider-client.md)
+  §1 (chain configuration schema) + §7 (family-disjoint
+  preservation across the chain). Cross-role family-disjoint
+  rule from
+  [`knowledge/adr/ADR-2-llm-tiering.md`](./adr/ADR-2-llm-tiering.md)
+  §Amendment 2026-05-20 rule 1.
+- **Scope (~150 LOC across 1 file):**
+  - `src/fa/providers/config.py` — `ModelsConfig` frozen
+    dataclass + `load_models_config(text, *, env=None)` +
+    `load_models_config_from_path(path=DEFAULT_MODELS_YAML_PATH,
+    *, env=None)` + `DEFAULT_MODELS_YAML_PATH` constant.
+  - Loader composes existing primitives: `yaml.safe_load`
+    (new runtime dep `pyyaml>=6.0`) →
+    `chain_from_mapping(role, raw)` (in `src/fa/providers/chain.py`,
+    landed M-4) → `chain_config.validate(env)` (warning
+    accumulator) → `check_eval_disjoint(...)` (in
+    `src/fa/roles.py`, landed PR-4) when planner / coder /
+    eval are all declared.
+  - Error model: `ConfigurationError` for malformed structure,
+    null role value, non-mapping role config, and all chain-
+    validator failures; `EvalFamilyConflictError` for family-
+    disjoint violations. Both fail-fast at load time.
+- **New runtime dependency: `pyyaml>=6.0`.** Justification: the
+  hand-rolled `src/fa/_yaml_subset.py` parser (consumed by
+  `fa.config` capability flags + `fa.verifier.verify_action`)
+  covers inline-comment stripping only and cannot safely round-
+  trip the §1 nested lists-of-mappings + `extra_headers` map
+  schema. The `verifier/verify_action.py` parser comment
+  already anticipated this transition: «adding `pyyaml` to
+  `pyproject.toml` for a Wave-0 standalone module is overkill;
+  the v0.2 HookRegistry PR (R-1) lands the broader YAML loader
+  and this function will switch to it then». T-4 is the
+  natural seat for the broader loader. The dep is added with
+  a strict `yaml.safe_load` contract (no `yaml.load` tag
+  execution); the pyproject.toml comment pins this discipline.
+  `types-PyYAML>=6.0` is also added to the `dev` extras for
+  mypy --strict type coverage.
+- **Tests (23 offline-only, no real provider calls):**
+  - Happy-path parse — ADR-9 §1 three-role example verbatim
+    (coder + planner + eval; verifies model / family / chain
+    surfaces); preservation of all four optional chain-entry
+    fields (cooldown_seconds, httpx_retries, timeout_seconds,
+    extra_headers).
+  - Empty / null / scalar root — empty text, whitespace-only,
+    `~` (YAML null), list root rejected, scalar root rejected.
+  - Malformed role entries — null role value, scalar role value,
+    list role value all rejected with named role in error.
+  - Chain-level validator propagation — empty chain → error,
+    missing `api_key_env` env var → error, unknown provider →
+    error, slug-family heuristic mismatch → warning accumulated
+    via `ModelsConfig.warnings` (not raised).
+  - Family-disjoint enforcement — eval=planner rejected,
+    eval=coder rejected, planner=coder OK (ADR-2 §Decision
+    allows shared coder-tier model), missing eval → check
+    skipped, missing planner → check skipped, four-role
+    (planner+coder+eval+debug) shape accepted with check
+    constrained to the planner/coder/eval triad.
+  - Path-based variant — reads from `tmp_path`, missing file
+    returns empty `ModelsConfig` (matches `fa.config` deny-by-
+    default policy), default path resolves under `Path.home()`.
+- **Q-N amendment items** (none triggered): no contract drift
+  surfaced during implementation; T-4 implements §1 verbatim.
+- **References:**
+  - [`knowledge/adr/ADR-9-llm-provider-client.md`](./adr/ADR-9-llm-provider-client.md)
+    §1, §7.
+  - [`knowledge/adr/ADR-2-llm-tiering.md`](./adr/ADR-2-llm-tiering.md)
+    §Amendment 2026-05-20 rule 1 (eval-role family-disjoint).
+  - [`knowledge/adr/DIGEST.md` ADR-9 row](./adr/DIGEST.md) —
+    Amendments bullet extended with T-4 landing date.
+  - [`HANDOFF.md` §Current state ADR list](../HANDOFF.md) —
+    ADR-9 bullet with `M-5` T-4 loader sub-clause.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

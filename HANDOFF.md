@@ -481,6 +481,45 @@ manually beyond this point.
     empty string (previously the loader stored the literal string
     `"None"` and the family-mismatch validator emitted a
     confusing warning).
+    **T-4 loader landed 2026-05-22** in branch
+    `devin/1779515293-t4-models-yaml-loader` —
+    `src/fa/providers/config.py` (~150 LOC) exports
+    `ModelsConfig` + `load_models_config(text, *, env=None)` +
+    `load_models_config_from_path(path=DEFAULT_MODELS_YAML_PATH,
+    *, env=None)`. The loader walks the §1 schema via
+    `yaml.safe_load`, calls `chain_from_mapping` per role, runs
+    `ChainConfig.validate(env)` to accumulate best-effort
+    warnings, and enforces ADR-2 §Amendment 2026-05-20 rule 1
+    via `check_eval_disjoint(...)` when planner / coder / eval
+    are all declared. Missing-file returns an empty
+    `ModelsConfig` (deny-by-default policy mirrored from
+    `fa.config`); the caller decides whether absence is fatal
+    for its workflow. New runtime dep `pyyaml>=6.0` (first YAML
+    lib add in the repo; the hand-rolled `_yaml_subset.py`
+    cannot safely round-trip the §1 nested lists-of-mappings).
+    BACKLOG `M-5` closed by same PR; M-1/M-2/M-3/M-4 already
+    occupied so the T-4 loader took the next free slot.
+    23 new offline tests added (584 total pass).
+    **T-4 review fix-up 2026-05-22:** Devin Review surfaced a
+    case-sensitive-bypass bug на the eval-vs-actor family-disjoint
+    check — a YAML `family: "DeepSeek"` (mixed case) for planner
+    and `family: "deepseek"` (lowercase) for eval would silently
+    pass `check_eval_disjoint`'s case-sensitive `==` comparison
+    because `chain_from_mapping` stored the raw YAML string
+    verbatim. **Root fix at the producer site:**
+    `src/fa/providers/chain.py` `chain_from_mapping` now normalises
+    `family` via `.strip().lower()` so every downstream consumer
+    (the disjoint check, the validator's slug-family mismatch
+    warning, cooldown logging, Tier-2 telemetry) sees a canonical
+    form. `.strip().lower()` is used rather than routing через
+    `fa.roles.extract_family` because the latter raises on any
+    family override not в `KNOWN_FAMILIES`, which would reject
+    custom / not-yet-known family names that are legal в v0.1.
+    The loader's `check_eval_disjoint` call site keeps explicit
+    `.strip().lower()` as defence-in-depth. 4 new regression
+    tests (588 total pass) covering both case + whitespace axes,
+    at both the `chain_from_mapping` producer and the loader's
+    call site.
     **Option D + α** — per-role explicit provider chain with
     cooldown в `~/.fa/models.yaml` (`{model, family,
     chain: [{provider, slug, base_url, api_key_env,

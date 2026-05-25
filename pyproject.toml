@@ -19,6 +19,17 @@ dependencies = [
   # Used by `ToolRegistry.dispatch` for per-call params validation and by
   # `ToolRegistry.register` for schema-shape validation at registry init.
   "jsonschema>=4.21",
+  # YAML parser for the ADR-9 §1 `~/.fa/models.yaml` config surface
+  # (T-4 loader: `fa.providers.config.load_models_config_from_path`).
+  # The hand-rolled `_yaml_subset.py` covers inline-comment stripping
+  # only and cannot safely round-trip nested lists-of-mappings; the
+  # `verifier/verify_action.py` parser comment already anticipates this
+  # transition («v0.2 HookRegistry PR (R-1) lands the broader YAML
+  # loader and this function will switch to it then»). Used by
+  # `fa.providers.config.load_models_config`; consumers MUST call
+  # `yaml.safe_load` only (never `yaml.load` — the loader contract
+  # is data-only, no tag execution).
+  "pyyaml>=6.0",
 ]
 
 [tool.first-agent.system-dependencies]
@@ -31,6 +42,10 @@ dev = [
   "pytest>=8.2",
   "pytest-asyncio>=0.23",
   "ruff>=0.5",
+  # PyYAML type stubs for the T-4 models.yaml loader; pulled in dev
+  # only because the runtime `yaml.safe_load` surface returns
+  # `Any`-typed data the loader narrows immediately.
+  "types-PyYAML>=6.0",
 ]
 
 [project.scripts]

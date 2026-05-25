@@ -492,7 +492,72 @@ already used for `BEFORE_LLM_CALL` per §2 step 2b; (d)
 `chain_from_mapping` now coalesces YAML `null` values for `model`
 and `family` to the empty string (the prior `str(raw.get(key, ""))`
 returned the literal string `"None"` when the YAML key existed with
-a null value).
+a null value). **Implementation landing 2026-05-22 — T-4 loader.**
+`~/.fa/models.yaml` loader merged in
+`devin/1779515293-t4-models-yaml-loader` — `src/fa/providers/config.py`
+(~150 LOC) exports `ModelsConfig` + `load_models_config(text, *,
+env=None)` + `load_models_config_from_path(path=DEFAULT_MODELS_YAML_PATH,
+*, env=None)`. The loader walks the §1 schema via `yaml.safe_load`,
+calls `chain_from_mapping` per role, runs `ChainConfig.validate(env)`
+to accumulate best-effort warnings, and enforces ADR-2 §Amendment
+2026-05-20 rule 1 via `check_eval_disjoint(...)` when planner / coder
+/ eval are all declared. Missing-file returns an empty `ModelsConfig`
+(deny-by-default policy mirrored from `fa.config`); the caller decides
+whether absence is fatal for its workflow. New runtime dep `pyyaml>=6.0`
+(first YAML lib add in the repo; the hand-rolled `_yaml_subset.py`
+covers only inline-comment stripping and cannot safely round-trip the
+§1 nested lists-of-mappings + `extra_headers` schema; the verifier's
+`verify_action.py` parser comment already anticipated the transition).
+23 new offline tests cover happy-path, empty/null/scalar root, empty
+chain, missing `api_key_env`, unknown provider, warnings accumulation,
+all three family-disjoint paths (eval=planner / eval=coder / planner=coder
+allowed / eval-missing skip / planner-missing skip), four-role
+(planner+coder+eval+debug) shape, path-based variant including the
+missing-file branch. **Implementation fix-up 2026-05-22 — T-4 review.**
+Devin Review surfaced a case-sensitive-bypass bug on the safety-critical
+eval-vs-actor family-disjoint check — a YAML `family: "DeepSeek"`
+(mixed case) on planner vs `family: "deepseek"` (lowercase) on eval
+would silently pass `check_eval_disjoint`'s case-sensitive `==`
+comparison because `chain_from_mapping` stored the raw YAML string
+verbatim. **Root fix at the producer site:** `chain_from_mapping`
+in `src/fa/providers/chain.py` now normalises `family` via
+`.strip().lower()` so every downstream consumer (the disjoint check,
+the validator's slug-family mismatch warning, cooldown logging,
+Tier-2 telemetry) sees a canonical form. `.strip().lower()` is used
+rather than routing via `fa.roles.extract_family` because the latter
+raises on any override not in `KNOWN_FAMILIES`, which would reject
+custom / not-yet-known family names that are legal in v0.1. The
+loader's `check_eval_disjoint` call site keeps explicit
+`.strip().lower()` as defence-in-depth. 4 additional regression
+tests (588 total pass) covering case + whitespace at both the
+producer and loader sites. **Implementation follow-up 2026-05-23 —
+PR-#13 review fix-up (fork2 only).** Three small landing-only changes
+on top of the T-4 + 2-b commits above: (1) a named Layer-2 invariant
+test `test_invariant_adr2_eval_disjoint_uncircumventable_by_family_case`
+in `tests/test_providers_chain.py` pins the end-to-end *contract*
+(mixed-case families must collide via `check_eval_disjoint`),
+distinct from the 4 producer-site regression tests that pin the
+*implementation* detail of `.strip().lower()`; (2) a partial-config
+WARNING via `_partial_disjoint_warning` in `src/fa/providers/config.py`
+surfaces the gap when `eval` is declared alongside *exactly one*
+actor (planner XOR coder) — the loader's hard `check_eval_disjoint`
+gate requires all three roles to fire, so the pairwise rule from
+ADR-2 §Amendment 2026-05-20 rule 1 is otherwise silent on this shape;
+caller (inner-loop runtime) reads `ModelsConfig.warnings` and decides
+whether to fail or accept (ADR-2 §Sub-amendment 2026-05-21 §Decision
+rule 2 «call `check_eval_disjoint` **once**» kept verbatim — no spec
+change); (3) terminology reword in this DIGEST entry — earlier
+«Amendment 2026-05-22» framing replaced with «Implementation landing»
+/ «Implementation fix-up» wording because neither the T-4 loader (an
+ADR-2 §Sub-amendment 2026-05-21 §Decision rule 2 implementation
+landing) nor the 2-b case-sensitivity REPAIR (restoring the existing
+ADR-2 §Amendment 2026-05-20 rule 1 invariant) constituted a new
+architectural decision; AGENTS.md PR Checklist rule #9 explicitly
+scopes `exploration_log.md` updates to PRs that «introduce or amend»
+an ADR — neither applies here, so the «Amendment» word was a
+misnomer carried over from upstream PR #52. 5 new offline tests
+covering the WARNING surface; 1 new named-invariant test; 594 total
+pass.
 
 **Source:** [`ADR-9`](./ADR-9-llm-provider-client.md).
 

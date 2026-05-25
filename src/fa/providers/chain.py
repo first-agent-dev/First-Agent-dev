@@ -423,9 +423,29 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
     # the validator would emit a confusing «slug family X != role
     # family 'None'» warning. ``raw.get(key) or ""`` coalesces both
     # missing-key and None-value to the empty string.
+    #
+    # ``family`` is additionally normalised via ``.strip().lower()``
+    # so every downstream consumer of ``ChainConfig.family`` —
+    # ``check_eval_disjoint`` (ADR-2 §Amendment 2026-05-20 rule 1,
+    # case-sensitive ``==``), the validator's slug-family mismatch
+    # warning (compares against ``extract_family(slug)`` which is
+    # already lowercased), cooldown logging, Tier-2 telemetry — sees
+    # a canonical form. Without this normalisation a YAML
+    # ``family: "DeepSeek"`` (mixed case) would bypass the
+    # eval-vs-actor disjoint check via a casing typo (e.g. planner
+    # ``"DeepSeek"`` vs eval ``"deepseek"``), silently violating the
+    # safety-critical rule from ADR-2. The fix lives here (NOT only
+    # at the loader's call site) because ``ChainConfig.family``
+    # surfaces to many consumers; a loader-only guard would leak
+    # mixed-case strings into the validator + telemetry surfaces.
+    # ``.strip().lower()`` is used rather than routing through
+    # ``fa.roles.extract_family`` because the latter raises
+    # ``FamilyExtractionError`` for any override not in
+    # :data:`KNOWN_FAMILIES`, which would reject custom /
+    # not-yet-known family names that are legal in a v0.1 config.
     return ChainConfig(
         role=role,
         model=str(raw.get("model") or ""),
-        family=str(raw.get("family") or ""),
+        family=str(raw.get("family") or "").strip().lower(),
         chain=entries,
     )
