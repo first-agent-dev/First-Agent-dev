@@ -3,9 +3,36 @@
 > **Read this first if you are an LLM agent (Devin, Claude, ChatGPT,
 > Cursor, etc.) starting a new session on this repository.**
 >
-> **Last updated:** 2026-05-22 by Devin session
+> **Last updated:** 2026-05-25 by Devin session
+> [`47973b356db843919d2ae536514051c8`](https://app.devin.ai/sessions/47973b356db843919d2ae536514051c8)
+> — **PR #13** (T-4 `~/.fa/models.yaml` loader from ADR-9 §1 +
+> ADR-2 §Amendment 2026-05-20 + 2-b family-case-sensitive bypass
+> root fix at `chain.py:429` ported from `GITcrassuskey-shop/First-Agent`
+> PR #52 commit `e9c865d` + Layer-2 invariant test
+> `test_invariant_adr2_eval_family_disjoint_at_chainconfig_producer` +
+> F1 partial-config disjoint WARNING via `ModelsConfig.warnings` +
+> F2 DIGEST.md reword from «Amendment 2026-05-22» to «Implementation
+> landing» / «Implementation fix-up» framing per AP-001
+> REPAIR-vs-IMPLEMENTATION-LANDING; 5 commits + 1 review-fix-up
+> commit `bd88051`; **594 tests pass**) merged to `main`. **PR #14**
+> (this) lands
+> [`research/fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md)
+> as next-session ADR-10 input: 9-repo determinism-pattern deep-dive
+> (pi / gbrain / hermes-agent / gortex / kronos-agent-os /
+> dpc-messenger across §0-§7; rtk / grit / icm across §0a-§7a),
+> 5 ADR-10 invariant candidates (I-1..I-5), 18 A/B-bucket entry
+> proposals (A12..A29 + B14..B23), 9 open questions (1..5
+> unresolved per §6; 6..9 resolved per §6a), and the
+> **§1.2.5 placement decision** for «compliance-by-construction,
+> failure-observable» (§6b — chosen §1.2.5 over Pillar-5, see the
+> decision rationale in the doc). Doc ≈ 19 k words; §0c
+> navigation aid added at top for jump-table use (action surface
+> §0+§3+§4+§6 reads in ≤ 5 k tokens). Companion analysis docs
+> (`fa-drift-analysis-v2.md`,
+> `fa-abc-synthesis-deep-dive-rtk-ai-amendment.md`) are kept
+> user-side, not checked in. **Prior update:**
 > [`cf06efa54f3f49fb834438dac5532a0d`](https://app.devin.ai/sessions/cf06efa54f3f49fb834438dac5532a0d)
-> — **M2 llms.txt size buckets (RELAX) + AP-002** stacks on `main`
+> 2026-05-22 — **M2 llms.txt size buckets (RELAX) + AP-002** stacks on `main`
 > (PR #48 merged) and is the first **RELAX** dogfood of
 > [`AGENTS.md` §Change Classification](./AGENTS.md#change-classification)
 > introduced in M1. Replaces `(~N lines)` row format in
@@ -739,6 +766,27 @@ manually beyond this point.
     work. Not a research-briefing note — §0 exempt per AGENTS.md
     rule #8. Re-measurement triggers in §9 (items 5-6 cross-link
     BACKLOG I-7 / I-8).
+- **Research note added 2026-05-25 (PR #14):**
+  - [`research/fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md)
+    — ADR-10 input note: per-repo determinism-pattern deep-dive
+    across nine OSS LLM-agent projects under the goal lens
+    «verifiable hook results + deterministic harness to control
+    LLM». §0-§7 cover six projects (pi, gbrain, hermes-agent,
+    gortex, kronos-agent-os, dpc-messenger); §0a-§7a (Amendment R)
+    extends with rtk-ai/{rtk, grit, icm}. Ships ADR-10 invariant
+    candidates **I-1..I-5** (§3+§3a), 18 A/B-bucket entry
+    proposals **A12..A29 + B14..B23** (§4+§4a), nine open
+    questions (1..5 unresolved per §6; 6..9 resolved per §6a),
+    and the **§1.2.5 placement decision** for
+    «compliance-by-construction, failure-observable» (§6b —
+    chosen §1.2.5 over Pillar 5; the principle governs *how* FA
+    is built, not what FA *is*). §0c jump-table at top constrains
+    targeted-read cost to ≤ 5 k tokens out of the doc's ≈ 19 k
+    total. Every finding cites `repo/file.ext:line` and quotes
+    3–10 line snippets verbatim. Next-session use: ADR-10 author
+    reads §0+§3+§4+§6 (action surface), drafts ADR-10 invariant
+    list keyed on I-1..I-5, then opens §1.x sections only when
+    a specific pattern ID is cited.
 
 ## Open review threads (cleared)
 
