@@ -28,29 +28,18 @@ claims_requiring_verification: []
 ---
 
 > **Status:** active. Reference material for next-session ADR-10
-> invariant list (§3 + §3a) and the §1.2.5 placement decision
-> (§6b). Authored across two Devin sessions; landed in fork2 via
-> PR «§Session 2026-05-25». Linear read is ~25 k tokens; targeted
+> invariant list (§3 + §3a). Linear read is ~25 k tokens; targeted
 > read after §0c jump-table is ≤ 5 k tokens.
 
 # FA ABC-synthesis deep-dive
 
-Per-repo determinism deep-dive across six open-source LLM-agent projects
-(pi, gbrain, hermes-agent, gortex, kronos-agent-os, dpc-messenger). Goal
-lens: how each project mechanises rules around the LLM call — what runs
+Per-repo determinism deep-dive across multiple open-source LLM-agent projects
+(pi, gbrain, hermes-agent, gortex, kronos-agent-os, dpc-messenger, rtk-ai/{rtk, grit, icm}).
+Goal lens: how each project mechanises rules around the LLM call — what runs
 *before* the call (A-tier: harness produces fact-blocks the LLM reads
 instead of prose rules) and what runs *after* the call (B-tier: harness
 verifies/coerces/redacts LLM output, with two sub-shapes — pass/fail and
 laddered).
-
-Companion to [`fa-abc-synthesis.md`](./fa-abc-synthesis.md). Where this
-note says «extends A12» or «modifies B14», that's the bucket entry in
-the companion's §3–§4 the borrowed pattern lands against.
-
-Every finding cites `repo/file.ext:line` and quotes a 3–10 line snippet
-verbatim. No paraphrases. No re-cites of patterns already covered in the
-companion's §2 unless the determinism lens turns up something the
-ADR-8-filtered notes missed.
 
 ---
 
