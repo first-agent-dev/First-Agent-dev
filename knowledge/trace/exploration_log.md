@@ -1149,3 +1149,126 @@
   (8 OSS sources independently converge on the «per-provider
   cooldown + ordered fallback chain + isolated provider workers»
   pattern; see survey §4.2 convergence matrix).
+
+## Q-14 — What deterministic-harness invariants does the ADR-10 slate carry, and where do they live? (2026-05-25)
+
+- **Closed by:** [ADR-10](../adr/ADR-10-deterministic-harness-invariants.md)
+  + companion §1.2.5 landing in
+  [`project-overview.md` §1.2.5](../project-overview.md#125--compliance-by-construction-failure-observable).
+- **Coupling:** Q-7 (ADR-7 inner-loop & tool-registry — I-2 binds
+  AGENTS.md §Pre-flight residue + I-3 binds §8 hook pipeline's
+  agent-facing messages); Q-8 (ADR-8 HookRegistry — I-1 binds
+  classifier delegation + I-4 binds `LoopState` mutation contract);
+  Q-6 (ADR-6 sandbox — I-5 binds outermost-layer validation, with
+  the MCP-layer mirror as the re-evaluation trigger); Q-13 (ADR-9
+  LLM provider client — I-3 binds CostGuardian future gating
+  message format; F1 partial-disjoint WARNING surfaced via
+  `ModelsConfig.warnings` is the failure-observable prior-art for
+  §1.2.5 KPI candidate 4).
+- **Chosen:** **Option C** — single ADR-10 with named invariants
+  **I-1..I-5**, each grounded in `repo/file.ext:line` citations
+  from the deep-dive note
+  [`fa-abc-synthesis-deep-dive-2026-05.md`](../research/fa-abc-synthesis-deep-dive-2026-05.md)
+  §3 + §3a. **I-1** single-source-of-truth classifier (hermes H3 at
+  `tool_guardrails.py:189-221`); **I-2** numbered MANDATORY
+  workflows are A-bucket residue (gortex GX3 — `CLAUDE.md` 11-step
+  workflow co-existing with PreToolUse hook denial); **I-3** stable
+  `[CODE]` prefix on every B-message (dpc D1 — five `stop_message()`
+  implementations in `guards.py`); **I-4** typed loop-state
+  ownership / loop OWNS, middleware READS (dpc D2 — `LoopState`
+  dataclass in `hooks.py:44-66`); **I-5** layer-boundary fail-fast
+  (rtk R8 `git_cmd_c_locale` at `rtk/src/cmds/git/git.rs:41-48` +
+  icm IC1 `MAX_TOPIC_LEN` doc-comment at
+  `icm/crates/icm-mcp/src/tools.rs:15-32`). Companion §1.2.5
+  «compliance-by-construction, failure-observable» landed in the
+  same PR per the deep-dive's §6b placement decision (chosen over
+  Pillar-5 alternative); §1.2.5 ships five KPI candidates (exit-
+  code contracts / schema-line-cited failure / harness-derived
+  weights from enum labels / observable failures via WARNING
+  surfaces / named-invariant tests citing ADR clauses).
+- **Rejected:**
+  - **Option A — Defer the invariants into ADR-7 / ADR-8
+    amendments (no new ADR file).** Reason: the invariants
+    cut across ADR-6 / ADR-7 / ADR-8 / future ADRs; splitting them
+    five ways destroys the cross-cutting reading the deep-dive §3
+    + §3a was authored to provide. Future amendments cannot point
+    at a single citable URL for «the invariant slate»; DIGEST.md
+    cannot summarise a five-way-split rule set in one paragraph.
+    I-5 spans rtk R8 (parsing call site) + icm IC1 (MCP layer
+    boundary) — no single existing ADR is the right home. Lesson:
+    re-opens only if v0.2 collapses the cross-cutting reading
+    (e.g. all 5 invariants ended up applying to a single layer);
+    not anticipated under UC1 + UC3 single-user scope.
+  - **Option B — One micro-ADR per invariant (5 new ADR files).**
+    Reason: five files for five rules of identical shape is
+    artefact bloat; the minimalism-first subtraction-check
+    (AGENTS.md §Pre-flight Step 4) fails because one ADR already
+    covers the cross-cutting scope. Lesson: re-opens if a single
+    invariant grows enough internal structure (sub-rules, decision
+    sub-options, per-component re-evaluation triggers) to justify
+    its own §Decision / §Consequences block — at which point the
+    invariant is graduated out of ADR-10 §1 into its own ADR.
+  - **Option D — Inline I-1..I-5 directly into AGENTS.md as new PR
+    Checklist rules.** Reason: AGENTS.md is procedural (how to
+    author PRs); ADRs are architectural (what the harness MUST
+    satisfy). Conflating the two erodes the existing «AGENTS.md =
+    rules, knowledge/adr/ = decisions» separation. Rule #10
+    already enforces the *evidence cells* for harness components;
+    the invariants themselves belong in an ADR so future
+    amendments follow the ADR amendment pattern, not the AGENTS.md
+    amendment pattern. Lesson: re-opens if a rule needs PR-blocking
+    enforcement at PR-creation time (today AGENTS.md rules are
+    review-time gates, not pre-commit / pre-PR mechanical gates) —
+    at which point inlining the rule into AGENTS.md is the right
+    shape because the enforcement seat is the PR-author checklist.
+  - **§1.2.5 placement as Pillar 5 in `project-overview.md` §1.1.**
+    Reason: Pillars 1-4 declare what FA *is* (the product surface);
+    compliance-by-construction is a how-axis principle that
+    governs how harness components are built, not what the product
+    *is*. Adding it as Pillar 5 would inflate the «what FA IS»
+    surface with a «how FA is built» rule, eroding the categorical
+    separation §1.2 already establishes. Lesson: re-opens if a
+    product-surface deliverable emerges that is *itself* a
+    compliance-by-construction artefact (e.g. UC5 ships a
+    benchmark scoreboard whose existence is the principle made
+    measurable); at that point the pillar count grows because a
+    new product surface lands, not because the existing principle
+    migrates. Source for the decision:
+    [`research/fa-abc-synthesis-deep-dive-2026-05.md` §6b](../research/fa-abc-synthesis-deep-dive-2026-05.md#6b-125-placement-decision--compliance-by-construction).
+- **Re-evaluation triggers:** (1) UC5 lands → KPI-delta on a
+  reproducible benchmark replaces the rule #10 4-question evidence
+  for measurably evaluated harness components; each I-N's
+  «capability lost» clause grows a measured KPI reference;
+  (2) MCP / external orchestrator surface lands → I-5's
+  «outermost layer» definition expands; existing constants need
+  the IC1-style cross-layer doc-comments; (3) second LLM-emitted
+  numeric dimension surfaces → I-1 + I-3 + the deep-dive's A28
+  («enum-label + harness-derived weight») compose into a new
+  binding rule; (4) first hook in `src/fa/inner_loop/hooks/`
+  needs to write back to `LoopState` → I-4 forbids; re-evaluation
+  trigger is a hook that NEEDS cross-`HookRegistry.fire()` state
+  (answer: instance state on the hook, not `LoopState`); (5) a
+  new B-bucket entry overlaps an existing classifier without a
+  genuine orthogonal scope → I-1 forces delegation; the trigger
+  is a B-entry whose classification logic is genuinely orthogonal,
+  at which point the invariant accepts the new entry as a separate
+  canonical site.
+- **Open questions parked, NOT re-litigated here.** Deep-dive §6
+  ships five unresolved Q1-Q5 (research-note local numbering, NOT
+  exploration_log Q-N): A16 (`fa doctor`) scoring weights, A17
+  (`fa verify-state`) auto-heal scope, A18 (`fa sanitize-tool-
+  schemas`) urgency, B19 (tool-call coerce-then-check) coercion
+  aggressiveness, B21 (input-side shield) scope. Each carries a
+  «default proposal» clause; ADR-10 accepts the defaults and does
+  not re-open. Deep-dive §6a Q6-Q9 resolved in the rtk-ai
+  amendment session (A24 deferred, A28 audit yes, A29 explicit
+  frontmatter category, I-5 audit deferred until ADR-10 lands —
+  unlocked by this PR as follow-up work); §6b Q10 resolved as
+  §1.2.5 placement (this PR's companion landing). ADR-10 does
+  not re-open Q6-Q10.
+- **Source:** [ADR-10](../adr/ADR-10-deterministic-harness-invariants.md)
+  + input note
+  [`research/fa-abc-synthesis-deep-dive-2026-05.md`](../research/fa-abc-synthesis-deep-dive-2026-05.md)
+  §3 + §3a (invariant authoring), §4 + §4a (bucket-entry
+  cross-refs), §6 + §6a + §6b (open-question state +
+  placement decision).
