@@ -524,6 +524,154 @@ until ADR-10 lands). §6b resolves Q10 (§1.2.5 vs Pillar 5 → §1.2.5).
   - **A23 lint** (deep-dive §4 lines 1835–1844). Tiny PR — adds
     the namespace + pytest hook that enforces I-3.
 
+## Prior Art
+
+Per [AGENTS.md §Cross-project anti-patterns rule
+#4](../../AGENTS.md#cross-project-anti-patterns) (forward-only
+from 2026-05-20). Each prior-art entry maps a design choice in
+this ADR to an existing project / paper / FA prior decision, so
+reviewers can verify FA is not re-inventing. Full audit evidence
+lives in the input research note
+[`fa-abc-synthesis-deep-dive-2026-05.md`](../research/fa-abc-synthesis-deep-dive-2026-05.md)
+§1.x (9 OSS-stack survey, verbatim `file.ext:line` per pattern)
+and §3 + §3a (synthesis lens). This section condenses the six
+per-design-choice mappings into one readable block — answering
+«What did we look at? Which projects already solved this? Why
+are we not reusing them verbatim?».
+
+- **§Decision Option C — single cross-cutting ADR carrying named
+  invariants I-1..I-5 (chosen).** Looked at: dpc-messenger
+  ADR-002 «AbstractLLMProvider» ABC + 5 provider files (single
+  ADR carrying a multi-rule contract) cited via
+  [`dpc-messenger-inspiration-2026-05.md`](../research/dpc-messenger-inspiration-2026-05.md)
+  §2 + §6 AP8 prior-art clause; ADR-8 §1 «one ADR, multiple
+  middleware kinds» (the in-repo precedent at
+  [`ADR-8-hook-registry.md`](./ADR-8-hook-registry.md)
+  §Decision). Why not reusing verbatim: dpc ships an
+  *interface* contract (one ABC + per-provider files); FA
+  ADR-10 ships a *cross-cutting invariant slate* — five named
+  rules every harness layer must satisfy, no per-layer ADR
+  proliferation. The «one ADR per cross-cutting concern»
+  shape matches ADR-8's multi-middleware-kind pattern, not
+  dpc's per-provider pattern. Options A (defer into
+  ADR-6/7/8 amendments), B (5 micro-ADRs), D (inline into
+  AGENTS.md PR Checklist) rejected per §Options considered
+  with reasons therein; the deep-dive §3 + §3a authored the
+  invariants as a single slate keyed on one goal lens, and
+  splitting them inverts the author's framing.
+
+- **§1 I-1 single-source-of-truth classifier (hermes H3).**
+  Looked at: hermes-agent
+  `hermes-agent/agent/tool_guardrails.py:189-221`
+  `classify_tool_failure` (NousResearch, Python) — the
+  docstring-as-contract pattern binding the guardrail
+  classifier to `agent.display._detect_tool_failure`,
+  verbatim in deep-dive
+  [§1.3 H3 lines 855–915](../research/fa-abc-synthesis-deep-dive-2026-05.md#h3--single-source-of-truth-tool-failure-classifier).
+  The reject path for «two B-bucket entries independently
+  computing the same classification» is documented in deep-
+  dive §5 C-3 (lines 1898–1907). Why not reusing verbatim:
+  hermes' pattern is the production shape FA borrows; the
+  ADR-10 lift abstracts the «docstring-as-contract»
+  discipline into the invariant statement so it covers
+  FA-specific sites (`BashGate._classify_category` vs
+  `BashGate._validators_for_category` per §1 I-1 FA-fit
+  clause + deep-dive §1.3 H3 lines 911–914) rather than
+  re-implementing hermes' guardrail file 1:1. Hermes itself
+  is closed-source for the surrounding harness; FA borrows
+  the discipline, not the file.
+
+- **§1 I-2 numbered MANDATORY workflows are A-bucket residue
+  (gortex GX3).** Looked at: gortex `gortex/CLAUDE.md`
+  11-step MANDATORY workflow co-existing with the
+  `PreToolUse hooks deny `Read` / `Grep` / `Glob` against
+  indexed source` clause — quoted verbatim in deep-dive
+  [§1.4 GX3 lines 1157–1204](../research/fa-abc-synthesis-deep-dive-2026-05.md#gx3--mandatory-n-step-workflow-as-prose-a-tier-prompt-block)
+  (snippet 1166–1181, reverse-A reading 1189–1191). Why not
+  reusing verbatim: gortex *demonstrates* the prose-residue /
+  hook-mechanisation dichotomy by historical accident
+  (multiple workflow steps migrated to PreToolUse-hook
+  denial over time, leaving the rest as prose). FA ADR-10
+  lifts the dichotomy into a *forward* discipline — every
+  numbered MANDATORY step is named as either «mechanisable
+  → A-bucket candidate» or «judgement-bound → permanent
+  prose» — so future PRs cannot accumulate orphan numbered
+  prose. AGENTS.md §Pre-flight Steps 1-3 (mechanisable via
+  `fa bootstrap` A2, deep-dive v3 §3 A2) vs Steps 4-5
+  (judgement-bound: subtraction-check + goal-lens
+  declaration) instantiates the dichotomy per §1 I-2 FA-fit
+  clause + deep-dive §1.4 GX3 lines 1193–1198.
+
+- **§1 I-3 stable `[CODE]` prefix on every B-message (dpc
+  D1).** Looked at: dpc-messenger five-guard
+  `stop_message()` convergence across
+  `dpc-messenger/.../guards.py:40-44 / 69-75 / 109-115 /
+  167-174 / 208-213` — five independent guard classes
+  sharing the `[STABLE_PREFIX] data. action.` shape, quoted
+  verbatim in deep-dive
+  [§1.6 D1 lines 1541–1626](../research/fa-abc-synthesis-deep-dive-2026-05.md#d1--stable-code-prefix-on-every-guard-stop_message).
+  The A-tier prompt-injection reading at lines 1608–1612
+  (LLM never composes the guard text; the harness emits a
+  deterministic format-string). The cross-provider noise
+  motivation links back to ADR-2 §Amendment 2026-05-20
+  family-disjoint rule + Cornell Kim et al., ICML 2025
+  sample-noise across same-family models cited in
+  [`correlated-llm-errors-and-ensembling-2026-05.md`](../research/correlated-llm-errors-and-ensembling-2026-05.md)
+  §4.4. Why not reusing verbatim: dpc's `stop_message()`
+  function bodies are domain-specific (round / tool /
+  research / loop / budget limits); FA ADR-10 lifts the
+  *format-string discipline* and the *registered-prefix
+  namespace* requirement, not the function bodies. The A23
+  lint (deep-dive §4 lines 1835–1844) is the FA-specific
+  enforcement mechanism dpc does not have.
+
+- **§1 I-4 typed loop-state ownership / loop OWNS, middleware
+  READS (dpc D2).** Looked at: dpc-messenger `LoopState`
+  dataclass at
+  `dpc-messenger/.../hooks.py:44-66` with the verbatim
+  mutation-contract docstring quoted in deep-dive
+  [§1.6 D2 lines 1630–1672](../research/fa-abc-synthesis-deep-dive-2026-05.md#d2--typed-loop-state-ownership-re-cited-from-v3-28-sharpened)
+  (snippet 1635–1658, contract clause 1639–1644). Already
+  absorbed by deep-dive v3 §2.8 as a borrow target. ADR-8
+  HookRegistry middleware-chain `GuardMiddleware` /
+  `ObserverMiddleware` is the FA-side binding consumer
+  ([`ADR-8-hook-registry.md`](./ADR-8-hook-registry.md)
+  §Decision). Why not reusing verbatim: dpc's contract
+  lives in a Python docstring (no code-enforcement); FA
+  lifts the *named-invariant* shape so the rule is citable
+  from future hook PRs (`see ADR-10#i-4`) instead of relying
+  on every middleware author re-reading the dataclass
+  docstring. Code-enforcement (pytest hook on middleware
+  signatures) is FA-specific future work documented under
+  §Consequences «Follow-up work this unlocks or requires».
+
+- **§1 I-5 layer-boundary fail-fast (rtk R8 + icm IC1).**
+  Looked at: rtk `git_cmd_c_locale` helper at
+  `rtk/src/cmds/git/git.rs:14-50, 85-110` (locale-stable
+  parsing pinned at the call site, NOT relied upon globally)
+  + icm `MAX_TOPIC_LEN` constant doc-comment at
+  `icm/crates/icm-mcp/src/tools.rs:15-32, 52-64` (the
+  doc-comment names the deeper-layer store constant
+  `MAX_TOPIC_BYTES` the outer constant must stay ≤). Both
+  quoted verbatim in deep-dive
+  [§1.7 R8 lines 2268–2291](../research/fa-abc-synthesis-deep-dive-2026-05.md#r8--per-cmd-enum-gitcommand--locale-stabilising-helper)
+  and
+  [§1.9 IC1 lines 2547–2588](../research/fa-abc-synthesis-deep-dive-2026-05.md#ic1--mcp-layer-boundary-validation-with-comment-as-spec).
+  Synthesised at §3a lines 2936–2950 as the I-5 detection
+  rule set (hard-limit constant must doc-link the
+  deeper-layer constant; parsing helper must pin locale at
+  call site; failure path MUST NOT bubble verbatim SQLite /
+  system errors to the LLM). Why not reusing verbatim: rtk
+  and icm ship the Rust patterns; FA lifts the *two
+  detection-rule axes* (locale-pin call site + comment-as-
+  spec on layer-boundary constants) plus the SQLite-leak
+  forbidding clause that ties I-5 to I-3 (the verbatim
+  error text would break the registered `[CODE]` namespace).
+  The FA at-risk surfaces — `BashGate` path-containment,
+  DSV YAML loader, chunker — are FA-specific per deep-dive
+  §3a lines 2947–2950 and not covered by either rtk or icm
+  directly.
+
 ## References
 
 - [`knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md`](../research/fa-abc-synthesis-deep-dive-2026-05.md)
