@@ -440,9 +440,12 @@ def test_load_models_config_allows_planner_and_coder_same_family() -> None:
 
 
 def test_load_models_config_skips_family_check_when_eval_missing() -> None:
-    # Two-role config: family check is a no-op. The collision
-    # ``planner=coder=kimi`` is legal in isolation; we just verify
-    # the loader does not synthesise an eval role to compare against.
+    # Two-role config: hard family check is a no-op when ``eval`` is
+    # absent — the rule is eval-anchored, nothing to be disjoint from.
+    # ``planner=coder=kimi`` is legal in isolation; we just verify the
+    # loader does not synthesise an eval role to compare against AND
+    # does not emit a partial-config WARNING (no ``eval`` declared →
+    # ``_partial_disjoint_warning`` returns ``None``).
     text = textwrap.dedent(
         """\
         planner:
@@ -465,10 +468,20 @@ def test_load_models_config_skips_family_check_when_eval_missing() -> None:
     )
     config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
     assert set(config.roles) == {"planner", "coder"}
+    # Eval is absent → no partial-disjoint warning.
+    for warning in config.warnings:
+        assert "family-disjoint" not in warning.lower()
 
 
 def test_load_models_config_skips_family_check_when_planner_missing() -> None:
-    # eval+coder is also a legal two-role shape; no check fires.
+    # eval+coder is a legal two-role shape; the loader's HARD gate
+    # does not fire (planner missing) — but ADR-2 §Amendment 2026-05-20
+    # rule 1 («eval disjoint from planner AND coder») still applies
+    # pairwise to the declared actor. The loader surfaces this gap by
+    # appending a partial-config WARNING to ``ModelsConfig.warnings``
+    # (PR-#13 follow-up «F1»). Hard enforcement is intentionally
+    # deferred to the caller — see :func:`_partial_disjoint_warning`
+    # docstring for the rationale.
     text = textwrap.dedent(
         """\
         coder:
@@ -491,6 +504,131 @@ def test_load_models_config_skips_family_check_when_planner_missing() -> None:
     )
     config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
     assert set(config.roles) == {"coder", "eval"}
+    # Partial-config warning is present and names both the declared
+    # actor and the missing one (see dedicated content-shape test
+    # below for the full assertion shape).
+    partial_warnings = [w for w in config.warnings if "'eval'" in w and "'coder'" in w]
+    assert len(partial_warnings) == 1, (
+        f"expected exactly one partial-disjoint warning naming "
+        f"eval+coder; got warnings={config.warnings!r}"
+    )
+
+
+# ----- Partial-config disjoint warning (PR-#13 follow-up «F1») -----
+#
+# The hard ``check_eval_disjoint`` gate at the loader's call site
+# fires only when all three of planner / coder / eval are declared.
+# When ``eval`` is declared alongside *exactly one* actor (planner
+# XOR coder), the rule «eval-vs-<that-actor> disjoint» from ADR-2
+# §Amendment 2026-05-20 rule 1 still applies pairwise — but the
+# loader's hard gate is silent. The loader surfaces this gap via
+# ``ModelsConfig.warnings`` so the caller (inner-loop runtime) can
+# log it. The five tests below pin every shape the helper recognises.
+
+
+def _make_two_role_text(*, role_a: str, family_a: str, role_b: str, family_b: str) -> str:
+    """Build a minimal two-role YAML for partial-config WARNING tests."""
+
+    return textwrap.dedent(
+        f"""\
+        {role_a}:
+          model:  "synthetic-{role_a}"
+          family: "{family_a}"
+          chain:
+            - provider: openrouter
+              slug:     "{family_a}-{role_a}"
+              base_url: "https://openrouter.ai/api/v1"
+              api_key_env: OPENROUTER_API_KEY
+        {role_b}:
+          model:  "synthetic-{role_b}"
+          family: "{family_b}"
+          chain:
+            - provider: openrouter
+              slug:     "{family_b}-{role_b}"
+              base_url: "https://openrouter.ai/api/v1"
+              api_key_env: OPENROUTER_API_KEY
+        """
+    )
+
+
+def test_load_models_config_warns_on_partial_disjoint_coder_plus_eval() -> None:
+    # Bot's exact case: 2-role config (coder + eval) where same family
+    # would silently pass the hard gate today. Loader emits a WARNING
+    # that names eval, names the declared actor (coder), and names the
+    # missing actor (planner) so the caller knows which pairwise
+    # check is un-enforced.
+    text = _make_two_role_text(role_a="coder", family_a="kimi", role_b="eval", family_b="kimi")
+    config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    partial = [w for w in config.warnings if "'eval'" in w and "'coder'" in w]
+    assert len(partial) == 1
+    warning = partial[0]
+    assert "'planner'" in warning
+    assert "ADR-2" in warning
+    assert "eval-vs-coder" in warning
+
+
+def test_load_models_config_warns_on_partial_disjoint_planner_plus_eval() -> None:
+    # Mirror case: 2-role config (planner + eval). Loader emits a
+    # WARNING naming eval, planner (declared actor), and coder
+    # (missing actor).
+    text = _make_two_role_text(role_a="planner", family_a="kimi", role_b="eval", family_b="kimi")
+    config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    partial = [w for w in config.warnings if "'eval'" in w and "'planner'" in w]
+    assert len(partial) == 1
+    warning = partial[0]
+    assert "'coder'" in warning
+    assert "ADR-2" in warning
+    assert "eval-vs-planner" in warning
+
+
+def test_load_models_config_no_partial_warning_when_all_three_declared() -> None:
+    # Full config: the HARD ``check_eval_disjoint`` call site fires
+    # (or returns cleanly when families are disjoint). The partial-
+    # config WARNING is suppressed because the gap it surfaces does
+    # not apply — there is no un-checked pairwise rule.
+    text = _make_three_role_text(planner_family="kimi", coder_family="deepseek", eval_family="qwen")
+    config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    for warning in config.warnings:
+        assert "loader's hard family-disjoint gate" not in warning, (
+            f"unexpected partial-config warning on full 3-role config: {warning!r}"
+        )
+
+
+def test_load_models_config_no_partial_warning_when_eval_alone() -> None:
+    # Eval-only config: no actor declared, so the pairwise rule is
+    # vacuously satisfied (nothing to be disjoint from). The helper
+    # returns ``None`` for this shape; no warning is appended.
+    text = textwrap.dedent(
+        """\
+        eval:
+          model:  "qwen-3-32b"
+          family: "qwen"
+          chain:
+            - provider: openrouter
+              slug:     "qwen/qwen-3-32b"
+              base_url: "https://openrouter.ai/api/v1"
+              api_key_env: OPENROUTER_API_KEY
+        """
+    )
+    config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    for warning in config.warnings:
+        assert "loader's hard family-disjoint gate" not in warning, (
+            f"unexpected partial-config warning on eval-only config: {warning!r}"
+        )
+
+
+def test_load_models_config_no_partial_warning_when_no_eval_declared() -> None:
+    # Planner+coder, no eval: the rule is eval-anchored, so absence
+    # of eval means absence of the rule. The helper returns ``None``;
+    # no warning is appended. Re-asserts the same negative case the
+    # eval-missing skip test above covers, framed from the
+    # warning-helper's point of view.
+    text = _make_two_role_text(role_a="planner", family_a="kimi", role_b="coder", family_b="kimi")
+    config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    for warning in config.warnings:
+        assert "loader's hard family-disjoint gate" not in warning, (
+            f"unexpected partial-config warning on planner+coder (no eval) config: {warning!r}"
+        )
 
 
 def test_load_models_config_accepts_debug_role_alongside_three() -> None:

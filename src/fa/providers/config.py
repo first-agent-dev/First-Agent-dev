@@ -91,6 +91,61 @@ DEFAULT_MODELS_YAML_PATH: Path = Path.home() / ".fa" / "models.yaml"
 # missing role from defaults).
 _FAMILY_DISJOINT_ROLES: frozenset[str] = frozenset({"planner", "coder", "eval"})
 
+# The two «actor» roles that the eval-role family must be disjoint
+# from per ADR-2 §Amendment 2026-05-20 rule 1. Used by
+# :func:`_partial_disjoint_warning` to surface partial-config gaps.
+_ACTOR_ROLES: frozenset[str] = frozenset({"planner", "coder"})
+
+
+def _partial_disjoint_warning(role_names: frozenset[str]) -> str | None:
+    """Surface the partial-config gap in the family-disjoint check.
+
+    The hard ``check_eval_disjoint`` call site only fires when all
+    three of planner / coder / eval are declared (see
+    :data:`_FAMILY_DISJOINT_ROLES` and the call site below). When
+    ``eval`` is declared alongside *exactly one* actor (planner XOR
+    coder), the loader's hard gate is silent — but ADR-2 §Amendment
+    2026-05-20 rule 1 («Eval-role MUST be from a family disjoint from
+    Planner AND Coder») still applies pairwise to the declared actor.
+
+    This helper returns a warning string for that exact partial shape
+    so the caller (the inner-loop runtime) can log the gap and decide
+    whether to fail or accept. Returns ``None`` when:
+
+    - ``eval`` is not declared (no gap — the rule is eval-anchored);
+    - ``eval`` is declared with *both* actors (the hard
+      ``check_eval_disjoint`` call site fires);
+    - ``eval`` is declared *alone* (no declared actor to be disjoint
+      from — vacuously satisfied).
+
+    Rationale: this is a Devin Review PR-#13 follow-up («F1» —
+    partial-config bypass). The fix shape is option B (WARNING,
+    keep current «caller decides» behaviour) rather than option A
+    (hard pairwise enforcement) because option A would change a
+    deliberate design choice (ADR-2 §Sub-amendment 2026-05-21
+    §Decision rule 2 says «call `check_eval_disjoint` **once**»,
+    singular — the loader's hard gate matches that wording). Option
+    B surfaces the gap visibly without re-opening the ADR.
+    """
+
+    if "eval" not in role_names:
+        return None
+    declared_actors = _ACTOR_ROLES & role_names
+    if len(declared_actors) != 1:
+        return None
+    only_actor = next(iter(declared_actors))
+    missing_actor = next(iter(_ACTOR_ROLES - declared_actors))
+    return (
+        f"models.yaml declares 'eval' + {only_actor!r} but not "
+        f"{missing_actor!r}; the loader's hard family-disjoint gate "
+        "fires only when all three of planner / coder / eval are "
+        f"declared, so ADR-2 §Amendment 2026-05-20 rule 1 "
+        f"(eval-vs-{only_actor} disjointness) is NOT enforced by the "
+        "loader for this config shape — the caller must verify the "
+        "rule holds before using the config, or declare the missing "
+        f"{missing_actor!r} role so the hard gate fires."
+    )
+
 
 @dataclass(frozen=True)
 class ModelsConfig:
@@ -148,6 +203,19 @@ def load_models_config(
             ``eval`` are all declared and the eval-role family
             matches planner or coder family (ADR-2 §Amendment
             2026-05-20 rule 1).
+
+    Partial-config gap (PR-#13 follow-up «F1»):
+        When ``eval`` is declared alongside *exactly one* actor
+        role (planner XOR coder), the hard family-disjoint gate
+        below is silent — but ADR-2 §Amendment 2026-05-20 rule 1
+        still applies pairwise. The loader appends a warning to
+        ``ModelsConfig.warnings`` for that exact shape via
+        :func:`_partial_disjoint_warning` so the caller can log
+        the gap. Caller-side enforcement is intentional: ADR-2
+        §Sub-amendment 2026-05-21 §Decision rule 2 says «call
+        ``check_eval_disjoint`` **once** before returning the
+        parsed config» (singular) — the loader's hard gate
+        matches that wording.
     """
 
     # ``yaml.safe_load`` returns ``None`` for empty / whitespace-only
@@ -216,6 +284,17 @@ def load_models_config(
             coder_family=roles["coder"].family.strip().lower(),
             eval_family=roles["eval"].family.strip().lower(),
         )
+
+    # Partial-config gap surface (PR-#13 follow-up «F1»). The hard
+    # gate above fires only when all three roles are declared; the
+    # caller still needs visibility into the partial-config case
+    # (eval + exactly one actor) where ADR-2 §Amendment 2026-05-20
+    # rule 1 would apply pairwise but the loader does not enforce.
+    # See :func:`_partial_disjoint_warning` for the rationale on
+    # why this is a warning and not a hard pairwise enforcement.
+    partial_warning = _partial_disjoint_warning(frozenset(roles.keys()))
+    if partial_warning is not None:
+        warnings.append(partial_warning)
 
     return ModelsConfig(roles=roles, warnings=tuple(warnings))
 
