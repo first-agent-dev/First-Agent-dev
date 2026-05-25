@@ -14,9 +14,7 @@ chain_of_custody: |
   rtk-ai/{rtk, grit, icm} under reframed goal lens (Q5 in §6):
   «verifiable hook results + deterministic harness to control LLM».
   Every finding cites `repo/file.ext:line` and quotes 3-10 line
-  snippets verbatim. Source clones lived at
-  /home/ubuntu/rtk-ai-dive/ during the Amendment R session
-  (2026-05-23); recipes for re-cloning are in §1.7-§1.9 intros.
+  snippets verbatim. Recipes for re-cloning are in §1.7-§1.9 intros.
   This doc is reference material for next-session ADR-10 work; per
   AGENTS.md §1.2 minimalism-first, the action surface lives in
   ~3 k of the doc's ~19 k words — see §0c for the read order.
