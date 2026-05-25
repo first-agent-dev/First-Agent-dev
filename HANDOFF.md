@@ -5,8 +5,8 @@
 ## 60-second bootstrap
 
 > The five steps below are a condensed bootstrap for agents that
-> land on `HANDOFF.md` first (e.g. via plain `git clone`, no Devin
-> MCP). The canonical routing surface for LLM agents is
+> land on `HANDOFF.md` first e.g. via plain `git clone`.
+> The canonical routing surface for LLM agents is
 > [`knowledge/llms.txt`](./knowledge/llms.txt) §MUST READ FIRST
 > (six files, in order). If the two disagree, llms.txt is canonical
 > — step 2 below reads it, which closes the gap.
@@ -16,10 +16,10 @@
 2. Read [`knowledge/llms.txt`](./knowledge/llms.txt) — one-fetch
    index of every documentation file in this repo
    ([llmstxt.org](https://llmstxt.org/) convention).
-3. Skim [`knowledge/project-overview.md`](./knowledge/project-overview.md)
+3. Read [`knowledge/project-overview.md`](./knowledge/project-overview.md)
    — what the project is, what v0.1 ships, what is non-goal.
 4. Read [`knowledge/adr/DIGEST.md`](./knowledge/adr/DIGEST.md) —
-   one-paragraph cheat-sheet for ADR-1..7 + amendments. Open the
+   one-paragraph cheat-sheet all ADR's + amendments. Open the
    per-ADR file only when DIGEST is insufficient (exact schema,
    Consequences wording, full Amendment text).
 5. Check the **Current state** section.
@@ -191,12 +191,8 @@
     gortex, kronos-agent-os, dpc-messenger); §0a-§7a (Amendment R)
     extends with rtk-ai/{rtk, grit, icm}. Ships ADR-10 invariant
     candidates **I-1..I-5** (§3+§3a), 18 A/B-bucket entry
-    proposals **A12..A29 + B14..B23** (§4+§4a), nine open
-    questions (1..5 unresolved per §6; 6..9 resolved per §6a),
-    and the **§1.2.5 placement decision** for
-    «compliance-by-construction, failure-observable» (§6b —
-    chosen §1.2.5 over Pillar 5; the principle governs *how* FA
-    is built, not what FA *is*). §0c jump-table at top constrains
+    proposals **A12..A29 + B14..B23** (§4+§4a).
+    §0c jump-table at top constrains
     targeted-read cost to ≤ 5 k tokens out of the doc's ≈ 19 k
     total. Every finding cites `repo/file.ext:line` and quotes
     3–10 line snippets verbatim. Next-session use: ADR-10 author
@@ -240,7 +236,7 @@
 > `knowledge/llms.txt` with hybrid `(BUCKET, ~N lines)` where
 > `BUCKET ∈ {S, M, L, XL}` at boundaries 300 / 800 / 1500 LOC. M2
 > measured baseline drift: 16 of 58 rows had `|actual − claimed|
-> > 10` LOC and 3 rows shifted bucket entirely (HANDOFF.md S→M,
+> > 10 LOC and 3 rows shifted bucket entirely (HANDOFF.md S→M,
 > DIGEST.md S→M, exploration_log.md S→L) — that drift is the
 > observed cost asymmetry catalogued as
 > [AP-002](./knowledge/anti-patterns/AP-002-stale-routing-index-counts.md).
@@ -352,3 +348,4 @@
 > evidence that the catalog has compounding value (the second
 > entry references the first as a generic mechanism rather than
 > re-deriving it).
+
