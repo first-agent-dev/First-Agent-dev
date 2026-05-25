@@ -3,7 +3,7 @@ title: "FA ABC-synthesis deep-dive: determinism patterns across 9 OSS LLM-agent 
 source:
   - "external user-curated synthesis composed across two Devin sessions (2026-05-23 prior session for §0-§7; 2026-05-23 rtk-ai amendment session for §0a-§7a)"
   - "per-repo clones at /home/ubuntu/rtk-ai-dive/{rtk,grit,icm} (Amendment R)"
-  - "fa-drift-analysis-v2.md (companion forcing-function analysis; not checked in)"
+
 compiled: "2026-05-25"
 goal_lens: "Identify deterministic-harness patterns (A-tier pre-prompt, B-tier post-LLM verification) from 9 OSS LLM-agent projects to inform ADR-10 invariant list (I-1..I-5) and FA's §1.2.5 compliance-by-construction principle."
 chain_of_custody: |
@@ -3034,5 +3034,5 @@ This is the **focused proposal** the user signed off in Q3.
 
 ---
 
-## §7a his amendment **is**:
+## §7a This amendment **is**:
  - a code-anchored, per-pattern, file:line-cited extension of the determinism-lens deep-dive, ready to feed ADR-10's invariant list and §3-§4 of the synthesis doc.
