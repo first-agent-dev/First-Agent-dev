@@ -35,6 +35,7 @@ from fa.providers.errors import (
     ProviderTransientError,
     ReservedProviderError,
 )
+from fa.roles import EvalFamilyConflictError, check_eval_disjoint
 
 
 @dataclass
@@ -826,3 +827,30 @@ def test_chain_from_mapping_strips_whitespace_around_family() -> None:
     }
     config = chain_from_mapping("coder", raw)
     assert config.family == "deepseek"
+
+
+def test_invariant_adr2_eval_disjoint_uncircumventable_by_family_case() -> None:
+    """ADR-2 §Amendment 2026-05-20 rule 1: eval-vs-actor family disjoint is bypass-proof.
+
+    Mixed-case family strings (planner ``family: "DeepSeek"``, eval
+    ``family: "deepseek"``) MUST collide in :func:`check_eval_disjoint`
+    after :func:`chain_from_mapping`. Producer-site ``.strip().lower()``
+    at ``src/fa/providers/chain.py:429`` is the mechanical enforcement.
+
+    Layer-2 named-invariant retrofit per AP-001 §Layer 2 / drift-
+    analysis v2: failing this test means a refactor re-opened the
+    case-sensitive bypass of the safety-critical ADR-2 contract.
+    Change the ADR (and this test in the same PR) when the contract
+    actually changes — do NOT patch the assertion to make a regression
+    pass. The four neighbouring regression tests pin the producer-side
+    normalisation as an *implementation* detail; THIS test pins the
+    end-to-end *contract* (mixed-case must not bypass disjointness).
+    """
+    planner = chain_from_mapping("planner", {"family": "DeepSeek"})
+    eval_role = chain_from_mapping("eval", {"family": "deepseek"})
+    with pytest.raises(EvalFamilyConflictError):
+        check_eval_disjoint(
+            planner_family=planner.family,
+            coder_family=planner.family,
+            eval_family=eval_role.family,
+        )
