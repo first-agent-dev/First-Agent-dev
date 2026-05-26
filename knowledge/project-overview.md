@@ -109,7 +109,7 @@ skill-write-based modification → re-benchmark → leaderboard.
 > После UC5 landing — re-check: новый компонент должен снизить хотя
 > бы один KPI Pillar 3 на reproducible benchmark; иначе rejected.
 
-**minimalism-first, subtraction-second.** 
+**minimalism-first, subtraction-second.**
 **Minimalism** - не добавлять без evidence.
 читаем research papers, изучаем опыт чужих ошибок: failure modes других harness,
 overengineering Critic-loops, dynamic prompt-assembly без cache-
@@ -119,6 +119,110 @@ References supporting principle: см.
 [`research/efficient-llm-agent-harness-deep-dive-2026-05.md`](./research/efficient-llm-agent-harness-deep-dive-2026-05.md)
 §3.5 + §0 R-7 (Anthropic «code execution» subtraction
 principle, Tsinghua module-ablation `arXiv:2603.25723`).
+
+### 1.2.5. — compliance-by-construction, failure-observable
+
+> **Принцип, не goal.** Sibling rule to §1.2 minimalism-first.
+> Where §1.2 asks «should this harness component exist?», §1.2.5
+> asks «when it exists, is its compliance with the harness
+> contract enforced by construction rather than by LLM judgement
+> — and when it fails, is the failure observable to the agent
+> and the operator?»
+>
+> Compliance-by-construction means the harness layer that wraps
+> the LLM call (sandbox, tool registry, hook pipeline, validator,
+> retry budget, cost guardian) closes failure modes
+> **deterministically**: the LLM picks a label, the harness
+> mechanically derives the consequence; the LLM emits a tool
+> call, the harness validates against a closed schema; the LLM
+> writes text, the harness verifies against a regex or exit-code
+> contract. The LLM never has a degree of freedom on a
+> spec-bearing decision.
+>
+> Failure-observable means the harness MUST surface every
+> compliance gap as a structured WARNING (or higher severity)
+> the operator and the next agent session can read. Silent skips,
+> partial-validation paths, and «we'll catch it next time» fallbacks
+> are forbidden. When a deterministic check cannot fire (e.g.
+> partial config, missing role declaration), the harness emits a
+> WARNING surface, never a silent pass.
+
+**Decision provenance.** Placement chosen in
+[`research/fa-abc-synthesis-deep-dive-2026-05.md` §6b](./research/fa-abc-synthesis-deep-dive-2026-05.md#6b-125-placement-decision--compliance-by-construction)
+over Pillar-5 alternative: Pillars 1-4 declare what FA *is* (the
+product surface); §1.2 declares *how* FA is built (the
+construction discipline). Compliance-by-construction is a
+how-axis principle — it governs how harness components are
+built, not what the product *is* — so §1.2.5 keeps the
+categorical separation clean and sits next to the §1.2
+minimalism-first 4-question test that already governs related
+decisions.
+
+**Invariants.** The five named invariants instantiating this
+principle are
+[`ADR-10` §1 I-1..I-5](./adr/ADR-10-deterministic-harness-invariants.md#1-the-invariants-i-1i-5):
+I-1 single-source-of-truth classifier; I-2 numbered MANDATORY
+workflows are A-bucket residue; I-3 stable `[CODE]` prefix on
+every B-message; I-4 typed loop-state ownership (loop OWNS,
+middleware READS); I-5 layer-boundary fail-fast.
+
+**Five KPI candidates** (companion analysis
+`fa-drift-analysis-v2.md` §4, surfaced in the deep-dive's §6b at
+[`research/fa-abc-synthesis-deep-dive-2026-05.md:1968-1978`](./research/fa-abc-synthesis-deep-dive-2026-05.md#6b-125-placement-decision--compliance-by-construction);
+each carries a concrete OSS pattern instance):
+
+1. **Exit-code contracts** (rtk R1 pattern — verbatim:
+   `rtk/hooks/claude/rtk-rewrite.sh:50-78` + logic source
+   `rtk/src/discover/registry.rs::classify_command`). Every
+   external integration adapter MUST encode its allow / deny /
+   ask / passthrough decision as a four-state exit code; the
+   LLM never picks the rewrite, the registry does. Cited in
+   deep-dive
+   [§1.7 R1 lines 2024–2055](./research/fa-abc-synthesis-deep-dive-2026-05.md#r1--exit-code-encoded-hook-contract-llm-has-no-degree-of-freedom-on-rewrite).
+2. **Schema validators with line-cited failure** (gbrain G1 +
+   hermes H1 patterns). Tool-arg validation, prompt-loader
+   diagnostics, and config-load checks MUST return a diagnostics
+   array naming the schema path and the rejected value, not a
+   binary accept / reject. Cited in deep-dive
+   [§1.2 G1 lines 367–425](./research/fa-abc-synthesis-deep-dive-2026-05.md#g1--structured-check--doctorreport-scoring)
+   and
+   [§1.3 H1 lines 654–740](./research/fa-abc-synthesis-deep-dive-2026-05.md#h1--tool-schema-sanitizer-backend-compatibility-shim).
+3. **Harness-derived weights from LLM-emitted labels** (icm IC2
+   pattern — verbatim:
+   `icm/crates/icm-core/src/memory.rs:96-104` + `wake_up.rs:198-217`).
+   Every LLM-emitted dimension that is currently a number or
+   open string (severity, confidence, urgency, risk-level) MUST
+   be re-shaped as a 3-5-label closed enum with a hardcoded
+   multiplier map and a derivation function. **Highest-leverage
+   pattern.** Cited in deep-dive
+   [§1.9 IC2 lines 2590–2637](./research/fa-abc-synthesis-deep-dive-2026-05.md#ic2--importance-enum-with-constant-decay-multipliers-llm-picks-label-not-weight).
+4. **Observable failures via WARNING surfaces, never silent skips**
+   (kronos K2 cost-guardian severity ladder + the **F1
+   partial-disjoint WARNING** from fork2 PR #13 at
+   `src/fa/providers/config.py::_partial_disjoint_warning`).
+   When a hard check cannot fire because preconditions are not
+   met (e.g. `eval` declared alongside *exactly one* actor),
+   the harness MUST emit a WARNING via `ModelsConfig.warnings`
+   and let the caller decide whether to fail or accept. Cited
+   in deep-dive
+   [§1.5 K2 lines 1321–1383](./research/fa-abc-synthesis-deep-dive-2026-05.md#k2--cost-guardian-severity-ladder-extends-v3-25);
+   fork2 PR #13 prior-art at
+   [`HANDOFF.md` PR #13 «F1 partial-config disjoint WARNING»](../HANDOFF.md).
+5. **Named-invariant tests citing ADR clauses** (Layer-2 retrofit
+   pattern from fork2 PR #13 commit `93a5ee7`). Every binding
+   ADR clause SHOULD have a corresponding pytest with the name
+   `test_invariant_adr<N>_<clause>_<assertion>` that pins the
+   end-to-end contract independent of any single implementation
+   detail. Prior-art landed as
+   `test_invariant_adr2_eval_disjoint_uncircumventable_by_family_case`
+   in [`tests/test_providers_chain.py`](../tests/test_providers_chain.py)
+   per PR #13 review fix-up; documented in
+   [DIGEST.md ADR-9 §Implementation follow-up 2026-05-23](./adr/DIGEST.md).
+
+After UC5 landing, each KPI candidate becomes a measurable
+benchmark slot — until then, the invariants in
+[`ADR-10`](./adr/ADR-10-deterministic-harness-invariants.md) are
+the construction-discipline carriers.
 
 ## 1.3. Three-stage project evolution
 

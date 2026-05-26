@@ -181,6 +181,55 @@
     C base_url-override-only rejected in `exploration_log.md`
     Q-13).
 
+  - [ADR-10](./knowledge/adr/ADR-10-deterministic-harness-invariants.md)
+    — Deterministic-harness invariants **I-1..I-5** (**proposed
+    2026-05-25**) keyed on the «verifiable hook results +
+    deterministic harness to control LLM» goal lens. Cross-cutting
+    slate every A-tier prompt-block, B-bucket validator, hook,
+    sandbox layer, and future `src/fa/` component that runs
+    before or after an LLM call MUST satisfy: **I-1**
+    single-source-of-truth classifier (hermes H3 at
+    `hermes-agent/agent/tool_guardrails.py:189-221`); **I-2**
+    numbered MANDATORY workflows are A-bucket residue (gortex GX3
+    — `CLAUDE.md` 11-step workflow co-existing with PreToolUse
+    hook denial); **I-3** stable `[CODE]` prefix on every
+    B-message (dpc D1 — five `stop_message()` implementations at
+    `dpc-messenger/.../guards.py:40-44 / 69-75 / 109-115 /
+    167-174 / 208-213`); **I-4** typed loop-state ownership /
+    loop OWNS, middleware READS (dpc D2 — `LoopState` dataclass
+    at `dpc-messenger/.../hooks.py:44-66`); **I-5** layer-boundary
+    fail-fast (rtk R8 `git_cmd_c_locale` at
+    `rtk/src/cmds/git/git.rs:41-48` + icm IC1 `MAX_TOPIC_LEN`
+    doc-comment at `icm/crates/icm-mcp/src/tools.rs:15-32`). Each
+    invariant carries the AGENTS.md §PR Checklist rule #10
+    4-question evidence cell inline, citing the input research
+    note
+    [`fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md)
+    §1.x / §3 / §3a line ranges verbatim (forcing function per
+    deep-dive §0c — line citations are the evidence chain).
+    **Companion landing in same PR:**
+    [`project-overview.md` §1.2.5](./knowledge/project-overview.md#125--compliance-by-construction-failure-observable)
+    «compliance-by-construction, failure-observable» per
+    deep-dive §6b placement decision (chosen over Pillar-5
+    alternative); §1.2.5 carries five KPI candidates — exit-code
+    contracts (rtk R1), schema validators with line-cited failure
+    (gbrain G1 + hermes H1), harness-derived weights from
+    LLM-emitted labels (icm IC2), observable failures via WARNING
+    surfaces (kronos K2 + the F1 partial-disjoint WARNING from
+    fork2 PR #13), named-invariant tests citing ADR clauses
+    (Layer-2 retrofit from fork2 PR #13 commit `93a5ee7`). Decided
+    via chat 2026-05-25 (Option A defer-into-ADR-7/8-amendments /
+    Option B one-micro-ADR-per-invariant / Option D
+    inline-into-AGENTS.md-PR-checklist rejected in
+    `exploration_log.md` Q-14; §1.2.5-vs-Pillar-5 placement
+    rejected as Pillar-5 in same block per deep-dive §6b).
+    **Follow-up work unlocked:** (1) I-5 FA-surface audit
+    (`fa` CLI parser / DSV YAML loader / chunker / BashGate) as
+    one focused PR per deep-dive §6a Q4 resolved «defer until
+    ADR-10 lands»; (2) A28 «LLM emits a number» single-pass audit
+    per §6a Q2; (3) `[CODE]` namespace formalisation + A23 lint
+    (tiny PR, pytest hook).
+
 
 - **Research note added 2026-05-25 (PR #14):**
   - [`research/fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md)
@@ -201,6 +250,29 @@
     a specific pattern ID is cited.
 >
 > **Last updated:** 2026-05-25 by Devin session
+> [`a1514827169246168bfb7918c82179a7`](https://app.devin.ai/sessions/a1514827169246168bfb7918c82179a7)
+> — **ADR-10 lands** (proposed 2026-05-25) at
+> [`knowledge/adr/ADR-10-deterministic-harness-invariants.md`](./knowledge/adr/ADR-10-deterministic-harness-invariants.md)
+> instantiating I-1..I-5 from the deep-dive's §3 + §3a as a single
+> cross-cutting slate, each invariant carrying inline rule #10
+> 4-question evidence with `§1.x` line ranges cited verbatim from
+> [`research/fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md).
+> Companion §1.2.5 «compliance-by-construction, failure-observable»
+> landed in same PR at
+> [`knowledge/project-overview.md` §1.2.5](./knowledge/project-overview.md#125--compliance-by-construction-failure-observable)
+> per deep-dive §6b placement decision (chosen over Pillar-5
+> alternative); §1.2.5 ships five KPI candidates (rtk R1 exit-code
+> contracts / gbrain G1 + hermes H1 schema validators with
+> line-cited failure / icm IC2 harness-derived weights from
+> LLM-emitted labels / kronos K2 + fork2 PR #13 F1 partial-disjoint
+> WARNING / fork2 PR #13 commit `93a5ee7` Layer-2 named-invariant
+> test). Rule-#9 trio shipped in same PR: `exploration_log.md`
+> Q-14 with full Chosen / Rejected / Lesson / Coupling / Re-eval-
+> trigger schema (Options A / B / D rejected); `DIGEST.md` ADR-10
+> row (one paragraph); HANDOFF.md §Current state ADR-10 bullet
+> (this entry's sibling above). `knowledge/llms.txt` updated with
+> ADR-10 row + line counts for files changed in this PR. **Prior
+> update:** 2026-05-25 by Devin session
 > [`47973b356db843919d2ae536514051c8`](https://app.devin.ai/sessions/47973b356db843919d2ae536514051c8)
 > — **PR #13** (T-4 `~/.fa/models.yaml` loader from ADR-9 §1 +
 > ADR-2 §Amendment 2026-05-20 + 2-b family-case-sensitive bypass
@@ -348,4 +420,3 @@
 > evidence that the catalog has compounding value (the second
 > entry references the first as a generic mechanism rather than
 > re-deriving it).
-

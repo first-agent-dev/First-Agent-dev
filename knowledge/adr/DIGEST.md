@@ -561,6 +561,61 @@ pass.
 
 **Source:** [`ADR-9`](./ADR-9-llm-provider-client.md).
 
+## ADR-10 — Deterministic-harness invariants I-1..I-5 (proposed 2026-05-25)
+
+**Decision.** Land five named invariants every A-tier prompt-block,
+B-bucket validator, hook, sandbox layer, and future `src/fa/`
+component that runs before or after an LLM call MUST satisfy:
+**I-1** single-source-of-truth classifier (hermes H3 at
+`hermes-agent/agent/tool_guardrails.py:189-221`); **I-2** numbered
+MANDATORY workflows are A-bucket residue (gortex GX3 — the prose
+workflow is the residue of what the harness has not yet
+mechanised); **I-3** stable `[CODE]` prefix on every B-message
+(dpc D1 — five `stop_message()` implementations at
+`dpc-messenger/.../guards.py:40-44 / 69-75 / 109-115 / 167-174 /
+208-213`); **I-4** typed loop-state ownership / loop OWNS,
+middleware READS (dpc D2 — `LoopState` dataclass at
+`dpc-messenger/.../hooks.py:44-66` with mutation-contract
+docstring); **I-5** layer-boundary fail-fast (rtk R8
+`git_cmd_c_locale` at `rtk/src/cmds/git/git.rs:41-48` + icm IC1
+`MAX_TOPIC_LEN` doc-comment at
+`icm/crates/icm-mcp/src/tools.rs:15-32`). Each invariant carries
+the AGENTS.md §PR Checklist rule #10 4-question evidence cell
+inline, citing `§1.x` line ranges from the input research note
+[`fa-abc-synthesis-deep-dive-2026-05.md`](../research/fa-abc-synthesis-deep-dive-2026-05.md)
+verbatim. **Rationale.** §3 + §3a of the deep-dive authored the
+invariants as a single slate keyed on the «verifiable hook results
++ deterministic harness to control LLM» goal lens — Option C
+(single ADR-10 with named I-1..I-5) is the only shape that gives
+future PRs a single citable URL per invariant (`ADR-10#i-N`) while
+keeping DIGEST.md / HANDOFF.md / exploration_log.md cheap-read
+overlays linear in ADR count. **Companion landing.**
+[`project-overview.md` §1.2.5](../project-overview.md#125--compliance-by-construction-failure-observable)
+«compliance-by-construction, failure-observable» landed in the same
+PR per deep-dive §6b placement decision (chosen over Pillar-5
+alternative); §1.2.5 carries five KPI candidates each grounded in a
+concrete OSS pattern (rtk R1 exit-code contracts / gbrain G1 +
+hermes H1 schema-line-cited failure / icm IC2 harness-derived
+weights from enum labels / kronos K2 + fork2 PR #13 F1 partial-
+disjoint observable WARNING / fork2 PR #13 commit `93a5ee7`
+Layer-2 named-invariant test).
+
+**Rejected:** Option A (defer into ADR-7 / ADR-8 amendments — kills
+cross-cutting reading); Option B (one micro-ADR per invariant —
+artefact bloat); Option D (inline into AGENTS.md PR Checklist rules
+— conflates procedural rules with architectural decisions). See
+[`exploration_log.md` Q-14](../trace/exploration_log.md#q-14) for
+the full reject rationale + lessons + re-evaluation triggers.
+
+**Follow-up work unlocked.** (1) I-5 FA-surface audit — `fa` CLI
+parser / DSV YAML loader / chunker / BashGate — single focused PR
+(deep-dive §6a Q4 resolved «defer until ADR-10 lands»); (2) A28
+audit for «LLM emits a number» candidates (deep-dive §6a Q2
+single-pass); (3) `[CODE]` namespace formalisation + A23 lint
+(tiny PR, pytest hook).
+
+**Source:** [`ADR-10`](./ADR-10-deterministic-harness-invariants.md).
+
 ## See also
 
 - [`README.md`](./README.md) — ADR process and ordered index.
