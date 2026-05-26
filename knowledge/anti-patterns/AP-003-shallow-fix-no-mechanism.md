@@ -116,7 +116,7 @@ the diff added, and the PR is downgraded to `CLASS: WORKAROUND`
 **The right-shape fix** moves the discipline to the producer site
 (the schema) and makes the bug structurally impossible:
 
-```yaml
+```python
 # src/fa/inner_loop/tools/move_file.py
 input_schema={
     "type": "object",

@@ -440,7 +440,8 @@ ADR-RULE  >  IMPLEMENT  >  FIX  >  RESEARCH  >  CHORE
 ```
 
 The hook emits a WARNING «multi-intent diff detected; consider
-splitting per §No mixed PRs» — see PR Checklist rule #3.
+splitting per §No mixed PRs» — see [§No mixed PRs](#no-mixed-prs)
+below, which is the canonical home of the single-concern discipline.
 
 **Mirror files** (`HANDOFF.md`, `knowledge/trace/exploration_log.md`,
 `knowledge/adr/DIGEST.md`, `knowledge/llms.txt` when ride-along) do NOT
@@ -525,10 +526,12 @@ shape mismatch.
 ### No mixed PRs
 
 A PR that genuinely covers two intents MUST split. Cross-category
-resolution above picks the dominant intent for a slipped PR, but the
-single-concern discipline lives in PR Checklist rule #3 and is the
-canonical home of the rule. The classifier's WARNING surfaces the
-violation; the reviewer enforces the split.
+resolution above picks the dominant intent for a slipped PR; this
+subsection is the canonical home of the single-concern discipline
+(there is no separate numbered PR Checklist rule for it — the
+rule lives here, attached to the classifier that detects violations).
+The classifier's WARNING surfaces the violation; the reviewer
+enforces the split.
 
 ### Rationale (≤ 3 sentences)
 
