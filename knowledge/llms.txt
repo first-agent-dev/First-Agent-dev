@@ -23,11 +23,11 @@
 
 Five files cover ~90% of session-start context. Read in order:
 
-1. [AGENTS.md](./AGENTS.md) (S, ~230 lines) — universal session loadout: repo navigation, style, §Pre-flight checklist, §Context-budget discipline, cross-project anti-patterns, §Loadable skills, query routing.
-2. [knowledge/project-overview.md](./knowledge/project-overview.md) (M, ~480 lines) — §1.1 four-pillar goal; §1.2 minimalism-first principle; §1.2.5 compliance-by-construction.
-3. [HANDOFF.md](./HANDOFF.md) (S, ~80 lines) — current state tables (Landmarks / Gotchas / Backlog), §Next priority list, §Session Protocol.
-4. [knowledge/adr/DIGEST.md](./knowledge/adr/DIGEST.md) (M, ~620 lines) — one-paragraph cheat-sheet per ADR + amendments. Authoritative source remains the per-ADR files.
-5. [docs/glossary.md](./docs/glossary.md) (S, ~70 lines) — canonical definitions for project-specific terms (axis, lens, pillar, NLAH, ACI, harness, hook, UC1..UC5, MCP, subtraction-first, minimalism-first, R-S-M).
+1. [AGENTS.md](./AGENTS.md) — universal session loadout: repo navigation, style, §Pre-flight checklist, §Context-budget discipline, cross-project anti-patterns, §Loadable skills, query routing.
+2. [knowledge/project-overview.md](./knowledge/project-overview.md) — §1.1 four-pillar goal; §1.2 minimalism-first principle; §1.2.5 compliance-by-construction.
+3. [HANDOFF.md](./HANDOFF.md) — current state tables (Landmarks / Gotchas / Backlog), §Next priority list, §Session Protocol.
+4. [knowledge/adr/DIGEST.md](./knowledge/adr/DIGEST.md) — one-paragraph cheat-sheet per ADR + amendments. Authoritative source remains the per-ADR files.
+5. [docs/glossary.md](./docs/glossary.md) — canonical definitions for project-specific terms (axis, lens, pillar, NLAH, ACI, harness, hook, UC1..UC5, MCP, subtraction-first, minimalism-first, R-S-M).
 
 ## § TASK ROUTING
 
@@ -71,8 +71,8 @@ ADR-9 implementation. Per-role explicit provider chain with cooldown in `~/.fa/m
 
 - `src/fa/providers/base.py` — `ProviderAdapter` ABC + `ResponseInfo` canonical response.
 - `src/fa/providers/chain.py` — `ProviderChain` ordered fallback; `chain_from_mapping()` YAML→chain constructor with family normalization.
-- `src/fa/providers/openai_compat.py` — `OpenAICompatProvider` (~140 LOC); covers OpenRouter / Fireworks / NVIDIA / Groq / etc.
-- `src/fa/providers/anthropic.py` — `AnthropicProvider` (~220 LOC); system-as-separate-field + tool-use content blocks.
+- `src/fa/providers/openai_compat.py` — `OpenAICompatProvider`; covers OpenRouter / Fireworks / NVIDIA / Groq / etc.
+- `src/fa/providers/anthropic.py` — `AnthropicProvider`; system-as-separate-field + tool-use content blocks.
 - `src/fa/providers/config.py` — `ModelsConfig` + `load_models_config()` from `~/.fa/models.yaml`; enforces ADR-2 eval-disjoint rule.
 - `src/fa/providers/errors.py` — 6 typed errors (`ConfigurationError` through `ProviderChainExhaustedError`).
 - `src/fa/providers/registry.py` — `ProviderSpec` + adapter factory registry.
@@ -101,85 +101,83 @@ ADR-6 bash sandbox gate (Wave-1). Three-layer pipeline: pattern classifier → p
 
 ### Docs (`docs/`)
 
-- [docs/README.md](./docs/README.md) (S, ~30 lines): Docs folder index.
-- [docs/architecture.md](./docs/architecture.md) (S, ~240 lines): High-level architecture overview with Mermaid diagrams.
-- [docs/glossary.md](./docs/glossary.md) (S, ~70 lines): Term definitions. Listed in §MUST READ FIRST.
-- [docs/prompting.md](./docs/prompting.md) (S, ~160 lines): Prompting strategy and role-prompt design notes.
-- [docs/workflow.md](./docs/workflow.md) (S, ~170 lines): Development workflow, branching, and CI.
-- [docs/agent-creation-github.md](./docs/agent-creation-github.md) (S, ~40 lines): GitHub agent setup guide.
-- [docs/devin-reference.md](./docs/devin-reference.md) (S, ~20 lines): Devin session reference pointers.
+- [docs/README.md](./docs/README.md): Docs folder index.
+- [docs/architecture.md](./docs/architecture.md): High-level architecture overview with Mermaid diagrams.
+- [docs/glossary.md](./docs/glossary.md): Term definitions. Listed in §MUST READ FIRST.
+- [docs/prompting.md](./docs/prompting.md): Prompting strategy and role-prompt design notes.
+- [docs/workflow.md](./docs/workflow.md): Development workflow, branching, and CI.
+- [docs/agent-creation-github.md](./docs/agent-creation-github.md): GitHub agent setup guide.
+- [docs/devin-reference.md](./docs/devin-reference.md): Devin session reference pointers.
 
 ### Project knowledge (`knowledge/`)
 
-- [knowledge/README.md](./knowledge/README.md) (S, ~230 lines): Knowledge folder layout, schemas for `trace/` files, file placement rules.
-- [knowledge/project-overview.md](./knowledge/project-overview.md) (M, ~480 lines): Four-pillar goal, minimalism-first principle, v0.1 scope, three-stage evolution. Listed in §MUST READ FIRST.
-- [knowledge/BACKLOG.md](./knowledge/BACKLOG.md) (L, ~940 lines): Deferred ideas with unblock triggers. Active milestones: M-6 (PR B), M-7 (PR C). Closed: M-1..M-5, I-9.
-- [knowledge/MAINTENANCE.md](./knowledge/MAINTENANCE.md) (S, ~190 lines): Cross-reference cascade rules — touch-lists for archiving, amending, superseding, adding files. Companion to `BACKLOG.md`.
+- [knowledge/README.md](./knowledge/README.md): Knowledge folder layout, schemas for `trace/` files, file placement rules.
+- [knowledge/project-overview.md](./knowledge/project-overview.md): Four-pillar goal, minimalism-first principle, v0.1 scope, three-stage evolution. Listed in §MUST READ FIRST.
+- [knowledge/BACKLOG.md](./knowledge/BACKLOG.md) (Large): Deferred ideas with unblock triggers. Active milestones: M-6 (PR B), M-7 (PR C). Closed: M-1..M-5, I-9.
+- [knowledge/MAINTENANCE.md](./knowledge/MAINTENANCE.md): Cross-reference cascade rules — touch-lists for archiving, amending, superseding, adding files. Companion to `BACKLOG.md`.
 
 ### ADRs (`knowledge/adr/`)
 
-- [knowledge/adr/README.md](./knowledge/adr/README.md) (S, ~30 lines): ADR process and ordered index.
-- [knowledge/adr/ADR-template.md](./knowledge/adr/ADR-template.md) (S, ~40 lines): Template for new ADRs.
-- [knowledge/adr/DIGEST.md](./knowledge/adr/DIGEST.md) (M, ~620 lines): One-paragraph cheat-sheet per ADR + amendments. Listed in §MUST READ FIRST.
-- [knowledge/adr/ADR-1-v01-use-case-scope.md](./knowledge/adr/ADR-1-v01-use-case-scope.md) (S, ~230 lines): v0.1 ships UC1 + UC3; UC4 deferred; UC5 eval-harness expanded.
-- [knowledge/adr/ADR-2-llm-tiering.md](./knowledge/adr/ADR-2-llm-tiering.md) (M, ~720 lines): Static role routing (Planner/Coder/Debug/Eval); no auto-escalation; eval-family disjoint rule.
-- [knowledge/adr/ADR-3-memory-architecture-variant.md](./knowledge/adr/ADR-3-memory-architecture-variant.md) (S, ~150 lines): Variant A "Mechanical Wiki" — filesystem-canonical Markdown + SQLite FTS5 BM25.
-- [knowledge/adr/ADR-4-storage-backend.md](./knowledge/adr/ADR-4-storage-backend.md) (S, ~220 lines): SQLite FTS5 at `~/.fa/state/index.sqlite`; no vector store in v0.1.
-- [knowledge/adr/ADR-5-chunker-tool.md](./knowledge/adr/ADR-5-chunker-tool.md) (S, ~280 lines): universal-ctags (code) + markdown-it-py (prose); tree-sitter explicit non-goal.
-- [knowledge/adr/ADR-6-tool-sandbox-allow-list.md](./knowledge/adr/ADR-6-tool-sandbox-allow-list.md) (M, ~670 lines): Path allow-list + capability flags + bash sandbox gate. No `run_command` in v0.1.
-- [knowledge/adr/ADR-7-inner-loop-tool-registry.md](./knowledge/adr/ADR-7-inner-loop-tool-registry.md) (L, ~1490 lines): Inner-loop boundary contract: ToolSpec registry, 5-tool catalog, edit shapes, hook pipeline, event schema.
-- [knowledge/adr/ADR-8-hook-registry.md](./knowledge/adr/ADR-8-hook-registry.md) (M, ~450 lines): HookRegistry lifecycle contract: Guard/Observer middleware, lifecycle points, first-deny short-circuit.
-- [knowledge/adr/ADR-9-llm-provider-client.md](./knowledge/adr/ADR-9-llm-provider-client.md) (L, ~1000 lines): Per-role explicit provider chain with per-(provider,slug) cooldown. T-2 driver + T-4 loader landed.
-- [knowledge/adr/ADR-10-deterministic-harness-invariants.md](./knowledge/adr/ADR-10-deterministic-harness-invariants.md) (M, ~700 lines): Five named invariants (I-1..I-5) every harness component must satisfy. Proposed 2026-05-25. Companion §1.2.5 in project-overview.md.
+- [knowledge/adr/README.md](./knowledge/adr/README.md): ADR process and ordered index.
+- [knowledge/adr/ADR-template.md](./knowledge/adr/ADR-template.md): Template for new ADRs.
+- [knowledge/adr/DIGEST.md](./knowledge/adr/DIGEST.md): One-paragraph cheat-sheet per ADR + amendments. Listed in §MUST READ FIRST.
+- [knowledge/adr/ADR-1-v01-use-case-scope.md](./knowledge/adr/ADR-1-v01-use-case-scope.md): v0.1 ships UC1 + UC3; UC4 deferred; UC5 eval-harness expanded.
+- [knowledge/adr/ADR-2-llm-tiering.md](./knowledge/adr/ADR-2-llm-tiering.md): Static role routing (Planner/Coder/Debug/Eval); no auto-escalation; eval-family disjoint rule.
+- [knowledge/adr/ADR-3-memory-architecture-variant.md](./knowledge/adr/ADR-3-memory-architecture-variant.md): Variant A "Mechanical Wiki" — filesystem-canonical Markdown + SQLite FTS5 BM25.
+- [knowledge/adr/ADR-4-storage-backend.md](./knowledge/adr/ADR-4-storage-backend.md): SQLite FTS5 at `~/.fa/state/index.sqlite`; no vector store in v0.1.
+- [knowledge/adr/ADR-5-chunker-tool.md](./knowledge/adr/ADR-5-chunker-tool.md): universal-ctags (code) + markdown-it-py (prose); tree-sitter explicit non-goal.
+- [knowledge/adr/ADR-6-tool-sandbox-allow-list.md](./knowledge/adr/ADR-6-tool-sandbox-allow-list.md): Path allow-list + capability flags + bash sandbox gate. No `run_command` in v0.1.
+- [knowledge/adr/ADR-7-inner-loop-tool-registry.md](./knowledge/adr/ADR-7-inner-loop-tool-registry.md) (Large): Inner-loop boundary contract: ToolSpec registry, 5-tool catalog, edit shapes, hook pipeline, event schema.
+- [knowledge/adr/ADR-8-hook-registry.md](./knowledge/adr/ADR-8-hook-registry.md): HookRegistry lifecycle contract: Guard/Observer middleware, lifecycle points, first-deny short-circuit.
+- [knowledge/adr/ADR-9-llm-provider-client.md](./knowledge/adr/ADR-9-llm-provider-client.md): Per-role explicit provider chain with per-(provider,slug) cooldown. T-2 driver + T-4 loader landed.
+- [knowledge/adr/ADR-10-deterministic-harness-invariants.md](./knowledge/adr/ADR-10-deterministic-harness-invariants.md): Five named invariants (I-1..I-5) every harness component must satisfy. Proposed 2026-05-25. Companion §1.2.5 in project-overview.md.
 
 ### Anti-pattern catalog (`knowledge/anti-patterns/`)
 
-- [knowledge/anti-patterns/README.md](./knowledge/anti-patterns/README.md) (S, ~120 lines): Entry schema + Layer-1/2/3 detection model. 3 entries so far.
-- [knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md](./knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md) (S, ~200 lines): Path-relocation workaround to silence `git status` — wrong shape + cost-asymmetry trap.
-- [knowledge/anti-patterns/AP-002-stale-routing-index-counts.md](./knowledge/anti-patterns/AP-002-stale-routing-index-counts.md) (S, ~190 lines): llms.txt line-count drift. First RELAX dogfood of the Level-2 CLASS sub-classifier (now in pr-creation skill).
-- [knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md](./knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md) (M, ~310 lines): FIX PR without `DETERMINISTIC MECHANISM:` citation — synthetic worked-history placeholder.
+- [knowledge/anti-patterns/README.md](./knowledge/anti-patterns/README.md): Entry schema + Layer-1/2/3 detection model. 3 entries so far.
+- [knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md](./knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md): Path-relocation workaround to silence `git status` — wrong shape + cost-asymmetry trap.
+- [knowledge/anti-patterns/AP-002-stale-routing-index-counts.md](./knowledge/anti-patterns/AP-002-stale-routing-index-counts.md): llms.txt line-count drift. First RELAX dogfood of the Level-2 CLASS sub-classifier (now in pr-creation skill).
+- [knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md](./knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md): FIX PR without `DETERMINISTIC MECHANISM:` citation — synthetic worked-history placeholder.
 
 ### Exploration log (`knowledge/trace/`)
 
-- [knowledge/trace/exploration_log.md](./knowledge/trace/exploration_log.md) (XL, ~1710 lines): Alternatives rejected at decision time — Q-1..Q-15 with Chosen/Rejected/Lesson/Coupling. Cheap-read overlay for ADR rationale.
+- [knowledge/trace/exploration_log.md](./knowledge/trace/exploration_log.md) (Large): Alternatives rejected at decision time — Q-1..Q-15 with Chosen/Rejected/Lesson/Coupling. Cheap-read overlay for ADR rationale.
 
 ### Prompts (`knowledge/prompts/`)
 
-- [knowledge/prompts/README.md](./knowledge/prompts/README.md) (S, ~60 lines): Prompts folder index.
-- [knowledge/prompts/RESOLVER.md](./knowledge/prompts/RESOLVER.md) (S, ~50 lines): Intent → prompt-template dispatch table.
-- [knowledge/prompts/architect-fa.md](./knowledge/prompts/architect-fa.md) (M, ~500 lines): Planner system prompt — bounded recon, subtraction-check, scope declaration.
-- [knowledge/prompts/architect-fa-compact.md](./knowledge/prompts/architect-fa-compact.md) (S, ~210 lines): Compact variant of architect-fa for mid-tier models.
-- [knowledge/prompts/coder-recovery.md](./knowledge/prompts/coder-recovery.md) (S, ~100 lines): Coder error-recovery prompt fragment, reads `attempt_history.json`.
-- [knowledge/prompts/handoff-summarizer.md](./knowledge/prompts/handoff-summarizer.md) (S, ~100 lines): Session-handoff / compaction prompt. Verbatim identifier preservation + 5-block structure. For inner-loop compaction and session-end notes, not for `HANDOFF.md`.
-- [knowledge/prompts/research-briefing.md](./knowledge/prompts/research-briefing.md) (S, ~230 lines): Research-briefing workflow prompt. Stage 1 goal_lens elicitation.
+- [knowledge/prompts/README.md](./knowledge/prompts/README.md): Prompts folder index.
+- [knowledge/prompts/RESOLVER.md](./knowledge/prompts/RESOLVER.md): Intent → prompt-template dispatch table.
+- [knowledge/prompts/architect-fa.md](./knowledge/prompts/architect-fa.md): Planner system prompt — bounded recon, subtraction-check, scope declaration.
+- [knowledge/prompts/architect-fa-compact.md](./knowledge/prompts/architect-fa-compact.md): Compact variant of architect-fa for mid-tier models.
+- [knowledge/prompts/coder-recovery.md](./knowledge/prompts/coder-recovery.md): Coder error-recovery prompt fragment, reads `attempt_history.json`.
+- [knowledge/prompts/handoff-summarizer.md](./knowledge/prompts/handoff-summarizer.md): Session-handoff / compaction prompt. Verbatim identifier preservation + 5-block structure. For inner-loop compaction and session-end notes, not for `HANDOFF.md`.
+- [knowledge/prompts/research-briefing.md](./knowledge/prompts/research-briefing.md): Research-briefing workflow prompt. Stage 1 goal_lens elicitation.
 
 ### Skills (`knowledge/skills/`)
 
-- [knowledge/skills/README.md](./knowledge/skills/README.md) (S, ~120 lines): Skill directory layout, template, skill-vs-prompt-vs-rule distinction.
-- [knowledge/skills/pr-creation/SKILL.md](./knowledge/skills/pr-creation/SKILL.md) (M, ~560 lines): Canonical PR-creation rulebook: 5-intent classifier, anti-shallow-fix gate, PR Checklist rules 1-10. Load trigger: before any PR.
-- [knowledge/skills/repo-audit/SKILL.md](./knowledge/skills/repo-audit/SKILL.md) (L, ~970 lines): 7-phase audit workflow (orientation → inventory → cross-reference → invariants → contradiction sweep → demotion → report). Load trigger: critical structure/doc review.
+- [knowledge/skills/README.md](./knowledge/skills/README.md): Skill directory layout, template, skill-vs-prompt-vs-rule distinction.
+- [knowledge/skills/pr-creation/SKILL.md](./knowledge/skills/pr-creation/SKILL.md): Canonical PR-creation rulebook: 5-intent classifier, anti-shallow-fix gate, PR Checklist rules 1-10. Load trigger: before any PR.
+- [knowledge/skills/repo-audit/SKILL.md](./knowledge/skills/repo-audit/SKILL.md): 7-phase audit workflow (orientation → inventory → cross-reference → invariants → contradiction sweep → demotion → report). Load trigger: critical structure/doc review.
 
 ### Research (`knowledge/research/`)
 
-> **Convention.** Each active note has a `§0 Decision Briefing`
-> in its first ~30 lines — read that before deciding to load the
-> full note. Rows below carry only the goal-sentence and bucket.
+> **Convention.** Each active note has a `§0 Decision Briefing` — read that before deciding to load the full note. Rows below carry only the goal-sentence and bucket.
 
-- [knowledge/research/_template.md](./knowledge/research/_template.md) (S, ~110 lines): Research note template with §0 Decision Briefing pre-filled.
-- [knowledge/research/efficient-llm-agent-harness-2026-05.md](./knowledge/research/efficient-llm-agent-harness-2026-05.md) (L, ~1010 lines): [goal: Harness architecture survey — §10 is the ADR-7 contract sketch input.]
-- [knowledge/research/cutting-edge-agent-research-radar-2026-05.md](./knowledge/research/cutting-edge-agent-research-radar-2026-05.md) (M, ~650 lines): [goal: Survey cutting-edge agent papers for FA-applicable patterns.]
-- [knowledge/research/semi-autonomous-agents-cross-reference-2026-05.md](./knowledge/research/semi-autonomous-agents-cross-reference-2026-05.md) (L, ~1370 lines): [goal: Cross-reference semi-autonomous agent designs against FA scope.]
-- [knowledge/research/memory-architecture-design-2026-04-26.md](./knowledge/research/memory-architecture-design-2026-04-26.md) (L, ~950 lines): [goal: Memory architecture options → ADR-3 + ADR-4 input. §9 roadmap.]
-- [knowledge/research/how-to-build-an-agent-ampcode-2026-04.md](./knowledge/research/how-to-build-an-agent-ampcode-2026-04.md) (M, ~520 lines): [goal: Extract patterns from Amp/Ampcode for FA inner-loop design.]
-- [knowledge/research/latent-verifier-evolve-research-2026-05.md](./knowledge/research/latent-verifier-evolve-research-2026-05.md) (M, ~550 lines): [goal: Verifier evolution and latent-space validation patterns for FA eval.]
-- [knowledge/research/ara-protocol-cross-reference-2026-05.md](./knowledge/research/ara-protocol-cross-reference-2026-05.md) (L, ~1170 lines): [goal: Cross-reference Ara protocol (arXiv:2604.24658v2) against ADR-1..6. 10 R-Ns.]
-- [knowledge/research/chat-cross-reference-2026-05.md](./knowledge/research/chat-cross-reference-2026-05.md) (M, ~330 lines): [goal: Cross-reference chat transcripts for overlooked FA-applicable patterns.]
-- [knowledge/research/dpc-messenger-inspiration-2026-05.md](./knowledge/research/dpc-messenger-inspiration-2026-05.md) (L, ~1130 lines): [goal: Extract from dpc-messenger (TypeScript agent, LoopState + guards) patterns for FA inner-loop.]
-- [knowledge/research/soviet-code-inspiration-2026-05.md](./knowledge/research/soviet-code-inspiration-2026-05.md) (L, ~990 lines): [goal: Extract from soviet-code (Python agent, prompt-first) anti-patterns and FA-applicable patterns.]
-- [knowledge/research/gortex-aperant-inspiration-2026-05.md](./knowledge/research/gortex-aperant-inspiration-2026-05.md) (M, ~560 lines): [goal: Extract from gortex (Go code-intel daemon) and Aperant (Electron planner/coder/qa) patterns for FA.]
-- [knowledge/research/kronos-agent-os-inspiration-2026-05.md](./knowledge/research/kronos-agent-os-inspiration-2026-05.md) (M, ~690 lines): [goal: Extract from kronos-agent-os (Python agent OS, SQLite-canonical) patterns for FA. 6 R-Ns.]
-- [knowledge/research/borrow-roadmap-2026-05.md](./knowledge/research/borrow-roadmap-2026-05.md) (XL, ~1840 lines): [goal: Consolidate 7 research notes into actionable 30 R-N borrow list across 5 implementation waves.] **Canonical source for all R-N citations added 2026-05-20.**
-- [knowledge/research/bootstrap-cost-baseline-2026-05.md](./knowledge/research/bootstrap-cost-baseline-2026-05.md) (M, ~310 lines): [goal: First quantitative bootstrap-cost baseline — 7 sessions, 6-file irreducible core.] Measurement note, not research-briefing.
-- [knowledge/research/provider-client-survey-2026-05.md](./knowledge/research/provider-client-survey-2026-05.md) (L, ~850 lines): [goal: Audit 8 OSS LLM provider clients to validate ADR-9 Option D + α.] Companion to ADR-9.
-- [knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md](./knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md) (L, ~1250 lines): [goal: Cross-reference 4 arxiv papers on correlated LLM errors against ADR-1/2/7. 9 R-Ns across §0 + §10.]
-- [knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md) (XL, ~3040 lines): [goal: 9-repo determinism-pattern deep-dive → ADR-10 invariants I-1..I-5.] Jump-table use: read §0+§3+§4+§6 (~5k tokens), open §1.x only for cited pattern IDs.
+- [knowledge/research/_template.md](./knowledge/research/_template.md): Research note template with §0 Decision Briefing pre-filled.
+- [knowledge/research/efficient-llm-agent-harness-2026-05.md](./knowledge/research/efficient-llm-agent-harness-2026-05.md): [goal: Harness architecture survey — §10 is the ADR-7 contract sketch input.]
+- [knowledge/research/cutting-edge-agent-research-radar-2026-05.md](./knowledge/research/cutting-edge-agent-research-radar-2026-05.md): [goal: Survey cutting-edge agent papers for FA-applicable patterns.]
+- [knowledge/research/semi-autonomous-agents-cross-reference-2026-05.md](./knowledge/research/semi-autonomous-agents-cross-reference-2026-05.md) (Large): [goal: Cross-reference semi-autonomous agent designs against FA scope.]
+- [knowledge/research/memory-architecture-design-2026-04-26.md](./knowledge/research/memory-architecture-design-2026-04-26.md): [goal: Memory architecture options → ADR-3 + ADR-4 input. §9 roadmap.]
+- [knowledge/research/how-to-build-an-agent-ampcode-2026-04.md](./knowledge/research/how-to-build-an-agent-ampcode-2026-04.md): [goal: Extract patterns from Amp/Ampcode for FA inner-loop design.]
+- [knowledge/research/latent-verifier-evolve-research-2026-05.md](./knowledge/research/latent-verifier-evolve-research-2026-05.md): [goal: Verifier evolution and latent-space validation patterns for FA eval.]
+- [knowledge/research/ara-protocol-cross-reference-2026-05.md](./knowledge/research/ara-protocol-cross-reference-2026-05.md): [goal: Cross-reference Ara protocol (arXiv:2604.24658v2) against ADR-1..6. 10 R-Ns.]
+- [knowledge/research/chat-cross-reference-2026-05.md](./knowledge/research/chat-cross-reference-2026-05.md): [goal: Cross-reference chat transcripts for overlooked FA-applicable patterns.]
+- [knowledge/research/dpc-messenger-inspiration-2026-05.md](./knowledge/research/dpc-messenger-inspiration-2026-05.md): [goal: Extract from dpc-messenger (TypeScript agent, LoopState + guards) patterns for FA inner-loop.]
+- [knowledge/research/soviet-code-inspiration-2026-05.md](./knowledge/research/soviet-code-inspiration-2026-05.md): [goal: Extract from soviet-code (Python agent, prompt-first) anti-patterns and FA-applicable patterns.]
+- [knowledge/research/gortex-aperant-inspiration-2026-05.md](./knowledge/research/gortex-aperant-inspiration-2026-05.md): [goal: Extract from gortex (Go code-intel daemon) and Aperant (Electron planner/coder/qa) patterns for FA.]
+- [knowledge/research/kronos-agent-os-inspiration-2026-05.md](./knowledge/research/kronos-agent-os-inspiration-2026-05.md): [goal: Extract from kronos-agent-os (Python agent OS, SQLite-canonical) patterns for FA. 6 R-Ns.]
+- [knowledge/research/borrow-roadmap-2026-05.md](./knowledge/research/borrow-roadmap-2026-05.md) (Large): [goal: Consolidate 7 research notes into actionable 30 R-N borrow list across 5 implementation waves.] **Canonical source for all R-N citations added 2026-05-20.**
+- [knowledge/research/bootstrap-cost-baseline-2026-05.md](./knowledge/research/bootstrap-cost-baseline-2026-05.md): [goal: First quantitative bootstrap-cost baseline — 7 sessions, 6-file irreducible core.] Measurement note, not research-briefing.
+- [knowledge/research/provider-client-survey-2026-05.md](./knowledge/research/provider-client-survey-2026-05.md): [goal: Audit 8 OSS LLM provider clients to validate ADR-9 Option D + α.] Companion to ADR-9.
+- [knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md](./knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md) (Large): [goal: Cross-reference 4 arxiv papers on correlated LLM errors against ADR-1/2/7. 9 R-Ns across §0 + §10.]
+- [knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md) (Large): [goal: 9-repo determinism-pattern deep-dive → ADR-10 invariants I-1..I-5.] Jump-table use: read §0+§3+§4+§6 (~5k tokens), open §1.x only for cited pattern IDs.
