@@ -15,7 +15,7 @@ triggers:
   - "audit the repo for agent-readability"
   - "what should we prune from llms.txt / AGENTS.md / glossary"
   - "is the structure good enough for OSS LLMs"
-  - "give honest critical review" of a doc / structure
+  - 'give honest critical review of a doc / structure'
   - any variant of "look at the repo with fresh eyes"
 relocated_from: knowledge/prompts/repo-audit-playbook.md (2026-05-26)
 inputs:
