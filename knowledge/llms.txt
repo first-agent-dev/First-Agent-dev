@@ -43,13 +43,10 @@ Task type → primary entrypoint, then secondary:
 - **About to relocate / rename / restructure a module's filesystem artifact?** → grep [`knowledge/anti-patterns/`](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/knowledge/anti-patterns/README.md) for the symptom first; AP-001 is the canonical «path bypass to silence `git status`» trap.
 - **Specific number / date / quote** → primary source from `source:` frontmatter, NOT a summary. Per [AGENTS.md §Query Routing](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/AGENTS.md#query-routing).
 
-## BY-DEMAND INDEX
+# STOP HERE UNLESS SPECIFICALLY ROUTED.
+---
 
-### Repo entrypoints
-
-- [README.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/README.md) (S, ~210 lines): Project overview, current status, roadmap (Russian).
-- [AGENTS.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/AGENTS.md) (M, ~330 lines): Universal session loadout for AI agents (English). §Pre-flight checklist (5-step session-start ritual), §Working in This Repo (style + bootstrap + workspace resolution), §Context-budget discipline (goal-oriented prompt-sizing + design invariant ≤ 100 k tokens + mitigations a..d), §Cross-project anti-patterns (4 citations from neighbouring stacks: DPC, Aperant, Gortex, soviet-code), §Loadable skills (trigger table mapping `pr-creation` + `repo-audit`), §Development Workflow (branch + commit + no-direct-push), §Query Routing. All situational PR-creation rules externalised to [`pr-creation` skill](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/knowledge/skills/pr-creation/SKILL.md) 2026-05-26 in PR A' expansion.
-- [HANDOFF.md](https://raw.githubusercontent.com/GITcrassuskey-shop/First-Agent/main/HANDOFF.md) (M, ~540 lines): Cross-LLM session handoff — current state, next steps, bootstrap pointer (mirrors the Devin Knowledge note).
+## BY-DEMAND INDEX. 
 
 ### Inner-loop runtime (`src/fa/inner_loop/`)
 

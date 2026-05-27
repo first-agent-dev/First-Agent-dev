@@ -164,8 +164,7 @@ PII walker), и wiring уже стоящих inert модулей
 
 Для нового человека / агента:
 
-1. Прочитать [`AGENTS.md`](./AGENTS.md) — repo conventions, PR
-   checklist, query routing.
+1. Прочитать [`AGENTS.md`](./AGENTS.md) — repo conventions, query routing.
 2. Прочитать [`knowledge/llms.txt`](./knowledge/llms.txt) — карта
    репо в одном fetch'е.
 3. Просмотреть [`knowledge/project-overview.md`](./knowledge/project-overview.md)
