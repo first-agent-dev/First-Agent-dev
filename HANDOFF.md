@@ -26,7 +26,7 @@
 
 - Now you have everything you need.
 
-## Current state (as of 2026-05-25)
+## Current state (as of 2026-05-26)
 
   - [ADR-9](./knowledge/adr/ADR-9-llm-provider-client.md) —
     LLM provider client contract (T-2 driver; **proposed
@@ -279,6 +279,47 @@
     follows PR B; feasibility verified by the session-start audit
     of `src/fa/inner_loop/hooks/base.py` (HookRegistry fully landed).
 
+- **Process / rule changes 2026-05-26 (PR A' — externalise to loadable skill):**
+  - `§PR Intent Classification` (PR A's inline section in
+    [`AGENTS.md`](./AGENTS.md)) **externalised** to
+    [`knowledge/skills/pr-creation/SKILL.md`](./knowledge/skills/pr-creation/SKILL.md);
+    AGENTS.md retains only a moved-stub marker on the old section
+    heading plus PR Checklist **rule #12** (the load-directive).
+    Net: AGENTS.md shrinks ~123 lines; the rule is now loadable
+    on-demand per ADR-10 §1 context-budget invariant. Content is
+    unchanged (5-intent enum + Level-2 CLASS + anti-shallow-fix
+    gate); only the loadpoint moved.
+  - **`knowledge/skills/` directory established** with self-
+    declaring
+    [`README.md`](./knowledge/skills/README.md) (scope, template,
+    skill-vs-prompt-vs-rule distinction) per
+    [`borrow-roadmap-2026-05.md` §R-24](./knowledge/research/borrow-roadmap-2026-05.md#r-24--filesystem-canonical-skill-store--safe-community-import).
+    The full filesystem-canon skill store (status-workflow,
+    draft→active gate, shared-overlay layering, safe community
+    import) lands later in Wave 3 — this PR ships the storage
+    substrate that R-24's runtime will load from.
+  - **`repo-audit-playbook.md` migrated** from
+    `knowledge/prompts/` to
+    [`knowledge/skills/repo-audit/SKILL.md`](./knowledge/skills/repo-audit/SKILL.md)
+    via `git mv` (history preserved); frontmatter normalised to
+    the skill schema (`status: active`, `triggers:`, `last-reviewed:`).
+    **Closes BACKLOG I-9 path (b).**
+  - **`project-overview.md §1.2.5` compressed** — anti-shallow-fix
+    gate subsection (45 lines) → 8-line summary + forward-pointer
+    to the skill. §1.2.5 retains the declarative principle
+    («the LLM never has a degree of freedom on a spec-bearing
+    decision») + ADR-10 I-1..I-5 invariants list + Five KPI
+    candidates; operational rules moved to the skill body.
+  - **AP-003 cross-references re-pointed** — `applies_to:`
+    frontmatter and Linked-rule section now cite
+    `knowledge/skills/pr-creation/SKILL.md` (plus AGENTS.md PR
+    Checklist rule #12 as load-directive); the catalogue's
+    forward-acting role is unchanged.
+  - **PR B / PR C unchanged.** PR B (`src/fa/hygiene/pr_intent.py`)
+    now reads the skill's §Reference tables as single source of
+    truth; the hook's regex matches the skill's §Output format
+    section, pinned by a snapshot test in PR B.
+
 - **Research note added 2026-05-25 (PR #14):**
   - [`research/fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md)
     — ADR-10 input note: per-repo determinism-pattern deep-dive
@@ -297,7 +338,37 @@
     list keyed on I-1..I-5, then opens §1.x sections only when
     a specific pattern ID is cited.
 >
-> **Last updated:** 2026-05-25 by Devin session
+> **Last updated:** 2026-05-26 by Devin session
+> [`a1514827169246168bfb7918c82179a7`](https://app.devin.ai/sessions/a1514827169246168bfb7918c82179a7)
+> — **PR A' lands** (externalisation follow-up to PR A) the
+> [`pr-creation` skill](./knowledge/skills/pr-creation/SKILL.md)
+> as the new home of the 5-intent classifier + Level-2 CLASS
+> sub-classifier + anti-shallow-fix gate (content unchanged from
+> PR A; loadpoint moved off AGENTS.md). AGENTS.md retains only a
+> moved-stub marker at the former `§PR Intent Classification`
+> heading + PR Checklist **rule #12** as the load-directive,
+> shrinking ~123 lines net. Same PR establishes
+> [`knowledge/skills/`](./knowledge/skills/) directory with self-
+> declaring [`README.md`](./knowledge/skills/README.md) per
+> [`borrow-roadmap-2026-05.md` §R-24](./knowledge/research/borrow-roadmap-2026-05.md#r-24--filesystem-canonical-skill-store--safe-community-import),
+> migrates `repo-audit-playbook.md` via `git mv` from
+> `knowledge/prompts/` to
+> [`knowledge/skills/repo-audit/SKILL.md`](./knowledge/skills/repo-audit/SKILL.md)
+> (closes BACKLOG I-9 path (b)), compresses
+> [`project-overview.md` §1.2.5 anti-shallow-fix gate](./knowledge/project-overview.md#125--compliance-by-construction-failure-observable)
+> from 45 lines to 8-line summary + forward-pointer, re-points
+> AP-003 cross-references to the skill, appends `Amendment
+> 2026-05-26` to exploration_log Q-15, and refreshes
+> `knowledge/llms.txt` (TASK ROUTING re-route + new §Skills
+> subsection under BY-DEMAND-INDEX + repo-audit removed from
+> §Prompts + line-count refresh). DIGEST.md is NOT updated (PR A'
+> touches no ADR file). PR B (`src/fa/hygiene/pr_intent.py` + git
+> hooks) and PR C (harness-side `IntentGuard`) unchanged; PR B
+> now reads the skill's §Reference tables as single source of
+> truth and the hook regex matches the skill's §Output format
+> section (snapshot test in PR B pins the two views).
+>
+> **Prior update:** 2026-05-25 by Devin session
 > [`a1514827169246168bfb7918c82179a7`](https://app.devin.ai/sessions/a1514827169246168bfb7918c82179a7)
 > — **PR A lands** (rule supersession) the `§PR Intent
 > Classification` section in

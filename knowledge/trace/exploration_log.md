@@ -1448,3 +1448,95 @@
   [`AP-003-shallow-fix-no-mechanism.md`](../anti-patterns/AP-003-shallow-fix-no-mechanism.md),
   [`AP-001` §Why-wrong-shape-dominates](../anti-patterns/AP-001-spec-bypassing-workaround.md#why-the-wrong-shape-dominates)
   (cost-asymmetry framing AP-003 inherits).
+
+### Amendment 2026-05-26 — Externalise to loadable skill (PR A')
+
+- **Question (refined):** Once Q-15 locked the 5-intent
+  classifier + anti-shallow-fix gate, **where** does the rule
+  *live* — inline in AGENTS.md, or as a loadable skill the
+  agent picks up on demand?
+- **Chosen:** Externalise the full classifier + INVARIANT-content
+  table + anti-shallow-fix gate to
+  [`knowledge/skills/pr-creation/SKILL.md`](../skills/pr-creation/SKILL.md);
+  AGENTS.md retains only a moved-stub marker on the old section
+  heading plus PR Checklist rule #12 (the load-directive). The
+  decision uses the `knowledge/skills/` directory canonicalised
+  by [`borrow-roadmap-2026-05.md` §R-24](../research/borrow-roadmap-2026-05.md#r-24--filesystem-canonical-skill-store--safe-community-import)
+  + the four-place commit already on disk
+  ([`project-overview.md`:70](../project-overview.md),
+  [`BACKLOG.md`:117](../BACKLOG.md),
+  [`docs/glossary.md`:62-64](../../docs/glossary.md)).
+  Closes BACKLOG I-9 path (b) by moving
+  `knowledge/prompts/repo-audit-playbook.md` to
+  `knowledge/skills/repo-audit/SKILL.md` in the same PR.
+- **Rejected:**
+  - **(i) Keep the rule inline in AGENTS.md (no skill).**
+    Reason: AGENTS.md grows ~158 lines per externalised rule;
+    every session pays the context-budget cost even when no PR
+    is being opened. Lesson: re-opens if the skill-load
+    mechanism never lands (R-24 deferred indefinitely) AND the
+    rule shrinks below a context-budget threshold (~50 lines)
+    where the externalisation overhead exceeds the savings.
+  - **(ii) Use `knowledge/playbooks/` naming (per BACKLOG I-9
+    path (b) wording).** Reason: R-24 (compiled 2026-05-13,
+    one day after BACKLOG I-9 was added) explicitly chose
+    `knowledge/skills/` and the four-place commit on disk
+    ([`project-overview.md`:70](../project-overview.md), `BACKLOG.md`
+    R-22, `docs/glossary.md` «Self-evolving» / «Skill» entries)
+    pre-dates this PR. Renaming to `playbooks/` would force a
+    later rename when the full R-24 store lands. Lesson:
+    re-opens only if industry convention shifts away from
+    `skills/` filesystem-canon (KAOS / Anthropic / Devin
+    `.agents/skills/`) toward `playbooks/` — none of the three
+    currently signal this.
+  - **(iii) Co-locate the skill at `.agents/skills/pr-creation/SKILL.md`
+    (Devin-native auto-load).** Reason: `.agents/skills/` is
+    a Devin-specific convention; weaker OSS LLMs (DeepSeek 4 /
+    Kimi 2.6) lack the auto-load harness, so they need a
+    `knowledge/` path the AGENTS.md rule explicitly points at.
+    Lesson: re-opens once a second skill lands and the dual
+    surface (`.agents/skills/` symlink + `knowledge/skills/`
+    canonical) is worth the conventions overhead.
+  - **(iv) Bundle the skill creation with the repo-audit move
+    in two separate PRs.** Reason: both moves share the same
+    forcing function (introduce `knowledge/skills/` directory
+    with a self-declaring README + first two skills) and the
+    same llms.txt sweep. Bundling closes BACKLOG I-9 path (b)
+    in one PR with no additional review surface. Lesson: re-opens
+    if the repo-audit move develops conflicts with the
+    pr-creation skill content review (none expected: repo-audit
+    body is unchanged, only frontmatter normalised).
+  - **(v) Keep the operational rules in `project-overview.md`
+    §1.2.5 verbatim.** Reason: §1.2.5 is declarative (states
+    the *principle*), the operational rules are the *forcing
+    function* — different layers. §1.2.5 retains the principle
+    and a 1-paragraph forward-pointer; the operational rules
+    live in the skill so they are loadable on-demand. Lesson:
+    re-opens if a non-PR-creation operational rule needs to
+    fire from the same §1.2.5 principle and would benefit from
+    inline placement (none currently identified).
+- **Coupling:**
+  - Q-15 (rule shape) — this amendment supersedes Q-15's
+    «AGENTS.md hosts the rule» finding to «skill hosts the rule;
+    AGENTS.md hosts the load-directive». The 5-intent enum,
+    Level-2 CLASS sub-classifier, and anti-shallow-fix gate
+    are unchanged in content — only the loadpoint moved.
+  - Q-11 (anti-pattern catalogue → AP-001 / AP-003) — AP-003's
+    `applies_to:` and Linked-rule cross-references re-point from
+    AGENTS.md §PR Intent Classification to the skill; the
+    forward-acting role is unchanged.
+  - Q-14 (ADR-10 invariants) — I-2 («numbered MANDATORY
+    workflows are A-bucket residue») constrains the skill body
+    structure: tables are framed as **§Reference** (closed-enum
+    lookup the hook reads), not as numbered «§Step 1 do X»
+    orchestration. Decision points are explicitly judgement-bound
+    only.
+  - BACKLOG I-9 path (b) — closed by this PR with
+    `knowledge/skills/` naming (per R-24, not the I-9 wording's
+    `playbooks/`).
+- **Source:** [`knowledge/skills/pr-creation/SKILL.md`](../skills/pr-creation/SKILL.md),
+  [`AGENTS.md` §PR Intent Classification (moved-stub)](../../AGENTS.md#pr-intent-classification),
+  [`AGENTS.md` PR Checklist rule #12](../../AGENTS.md#pr-checklist),
+  [`knowledge/skills/README.md`](../skills/README.md),
+  [`borrow-roadmap-2026-05.md` §R-24](../research/borrow-roadmap-2026-05.md#r-24--filesystem-canonical-skill-store--safe-community-import),
+  [`BACKLOG.md` I-9 (closed)](../BACKLOG.md).

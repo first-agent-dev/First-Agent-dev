@@ -345,56 +345,38 @@
 
 ## I-9 — Convert `knowledge/prompts/repo-audit-playbook.md` into a loadable SKILL
 
-- **Status:** deferred — added 2026-05-12, blocked on
-  skill-loading mechanism. Not urgent — user noted no audits in
-  the immediate pipeline; this item parks the artefact in plain
-  sight until the unblock-trigger lands.
-- **Idea:** The repo-audit workflow currently lives as a ~970-line
-  playbook at
-  [`knowledge/prompts/repo-audit-playbook.md`](./prompts/repo-audit-playbook.md)
-  (filed alongside the prompt templates for convenience). Devin
-  loads SKILL.md files automatically via the
-  `.agents/skills/<name>/SKILL.md` convention (YAML frontmatter
-  with `name:` + `description:`); OSS agents (DeepSeek 4,
-  Kimi 2.6) have no equivalent auto-load mechanism. The playbook
-  is therefore reachable today only via grep / explicit chat
-  reference, not via session bootstrap.
-- **Blocked-on:** one of —
-  - (a) `.agents/skills/` convention adopted for this repo for
-    Devin-side workflows, OR
-  - (b) `knowledge/llms.txt §BY-DEMAND-INDEX` gains a dedicated
-    «Playbooks» sub-section + AGENTS.md rule referencing it, so
-    OSS agents pick it up on-demand (single-line bootstrap entry,
-    no new directory).
-- **Unblock-trigger:** first PR that creates `.agents/skills/`
-  in this repo, OR first session where a non-Devin agent
-  successfully invokes the playbook via a §BY-DEMAND-INDEX
-  reference (whichever lands first).
-- **First concrete step once unblocked (path a):** create
-  `.agents/skills/repo-audit/SKILL.md` with YAML frontmatter
-  (`name: repo-audit`, `description: 7-phase workflow for
-  agent-oriented repo audits — see playbook for full procedure`)
-  pointing at the playbook as canonical body. Move (or symlink)
-  the playbook out of `knowledge/prompts/` once the SKILL
-  directory is the authoritative home.
-- **First concrete step once unblocked (path b):** split
-  `§BY-DEMAND-INDEX` to add `### Playbooks (knowledge/playbooks/)`
-  with one row per playbook (line-count + 1-sentence summary,
-  same shape as the existing `### Prompts` rows); add a one-line
-  rule in `AGENTS.md` Pre-flight Step 4 («if the user requests
-  a repo-audit-style refactor, load
-  `knowledge/playbooks/repo-audit.md` first»).
-- **Prior art:** this session's `workflow-repo-audit.md` artefact
-  (attached to session log 2026-05-11) is the literal source.
-  Same author, same wording — the file at
-  `knowledge/prompts/repo-audit-playbook.md` is a verbatim copy.
-- **Why this is LOW ROI until either path lands.** Without an
-  auto-load surface, every audit session re-discovers the
-  playbook via grep or user pointer; the playbook still pays off
-  because it's structured and self-contained, but the convention
-  gap means the next OSS-agent audit session pays a discovery
-  cost. Until the gap closes, the artefact lives where it can be
-  found by a `find knowledge/prompts/` grep.
+- **Status:** **closed by PR A' (2026-05-26)** — path (b) realised.
+  `knowledge/skills/` directory established with self-declaring
+  [`README.md`](./skills/README.md) (scope, template,
+  skill-vs-prompt-vs-rule distinction) per
+  [`borrow-roadmap-2026-05.md` §R-24](./research/borrow-roadmap-2026-05.md#r-24--filesystem-canonical-skill-store--safe-community-import);
+  `repo-audit-playbook.md` migrated via `git mv` to
+  [`knowledge/skills/repo-audit/SKILL.md`](./skills/repo-audit/SKILL.md)
+  (history preserved); frontmatter normalised to the skill
+  schema (`status: active`, `triggers:`, `last-reviewed:`,
+  `relocated_from:`); `knowledge/llms.txt` §BY-DEMAND-INDEX
+  gained the new `### Skills (knowledge/skills/)` subsection
+  with row per skill (same shape as the existing `### Prompts`
+  rows). Naming uses `knowledge/skills/` (not `playbooks/` as
+  the path (b) wording originally said) per R-24's
+  filesystem-canon naming + four-place commit on disk
+  ([`project-overview.md`:70](./project-overview.md), the
+  `R-22` entry in this file, `docs/glossary.md` §Self-evolving /
+  §Skill); the inconsistency between R-24 + I-9 wording is
+  resolved by R-24 winning. PR A' also externalised
+  AGENTS.md §PR Intent Classification to
+  [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md)
+  as the **second** skill in the directory, so the convention
+  has two consumers from day one (subtraction-check passes for
+  the directory: two non-trivial loaders, not one).
+- **Path (a) `.agents/skills/<name>/SKILL.md`** (Devin auto-load
+  convention) **deferred** per minimalism-first: a second
+  filesystem surface for the same content is not justified
+  while only two skills exist. Re-evaluate once ≥ 3 skills
+  exist or once a session demonstrates the Devin auto-load
+  surface produces materially better behaviour than the
+  AGENTS.md PR Checklist rule #12 load-directive (the OSS-LLM
+  audience already loads via the explicit rule).
 
 ## M-1 — Inner-loop scaffolding / HookRegistry runtime
 
