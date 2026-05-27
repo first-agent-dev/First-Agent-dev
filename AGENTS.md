@@ -108,15 +108,11 @@ Stage 1 satisfies this step automatically.
 
 ## Working in This Repo
 
-- **Session bootstrap.** Read [`HANDOFF.md`](./HANDOFF.md) §60-second
-  bootstrap first — it is a quick-start sequence for agents that
-  land on this repo without Devin MCP context. (This file is the
-  rule book it references at step 1; `knowledge/llms.txt` is the
-  canonical routing surface it references at step 2 — if HANDOFF
-  and llms.txt disagree, llms.txt wins.) `HANDOFF.md` mirrors the
-  Devin Knowledge note «First-Agent — current state pointer»;
-  both are kept identical. Do not crawl the repo before completing
-  the bootstrap.
+- **Session bootstrap.** Read [`HANDOFF.md`](./HANDOFF.md) § 60-second
+  bootstrap — it points to `knowledge/llms.txt` §MUST READ FIRST
+  (five files, in order). If HANDOFF and llms.txt disagree, llms.txt
+  wins. Do not crawl the repo before completing the bootstrap.
+  
 - All documentation is Markdown. ATX headings (`#`, `##`), short lines ~150 chars.
 - Fenced code blocks
   - ALWAYS open with a language tag:
@@ -228,3 +224,9 @@ Route questions to the right folder. Do not load everything into context.
 **Chain-of-custody rule.** If citing a specific decision / quote / number / date,
 go to the primary source and quote from there.
 Summaries in `knowledge/research/` are pointers, not authoritative sources.
+
+- **Session close.** Update [`HANDOFF.md`](./HANDOFF.md) per its
+  §Session Protocol (overwrite §Current state, rewrite §Next,
+  enforce ≤100-line cap); update [`knowledge/llms.txt`](./knowledge/llms.txt) rows per
+  [`MAINTENANCE.md`](./knowledge/MAINTENANCE.md) §When adding a
+  new file (bucket, line count, ≤200 prose chars).
