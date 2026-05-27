@@ -1518,9 +1518,31 @@
 - **Coupling:**
   - Q-15 (rule shape) — this amendment supersedes Q-15's
     «AGENTS.md hosts the rule» finding to «skill hosts the rule;
-    AGENTS.md hosts the load-directive». The 5-intent enum,
-    Level-2 CLASS sub-classifier, and anti-shallow-fix gate
-    are unchanged in content — only the loadpoint moved.
+    AGENTS.md hosts the load-directive». The Level-2 CLASS
+    sub-classifier and the anti-shallow-fix gate clauses
+    (`DEGREE-OF-FREEDOM CLOSED:` + `DETERMINISTIC MECHANISM:`)
+    carried verbatim from PR A. The Level-1 INTENT classifier's
+    `ADR-RULE` row gained one path-shape entry (`knowledge/skills/**`)
+    on top of PR A's `{knowledge/adr/ADR-*, AGENTS.md,
+    knowledge/project-overview.md, knowledge/anti-patterns/AP-*,
+    knowledge/MAINTENANCE.md}` set — not «unchanged». Reason:
+    skills are themselves rule-bearing artefacts (the skill is
+    where the PR-creation rule now lives), so amending an
+    existing skill or adding a new one is functionally
+    equivalent to an ADR amendment and the classifier must
+    fire on that path-shape. Without the addition, future
+    skill-only PRs (e.g. amending `pr-creation/SKILL.md`
+    itself, or adding a third skill) would have no match
+    and fall through to the no-label residual. Mechanism:
+    `path-startswith` rule on `knowledge/skills/`, identical
+    in shape to the existing `knowledge/anti-patterns/AP-*`
+    rule. Side-effect deliberately disclosed because PR A'
+    dogfood-classifies itself ADR-RULE via the union of
+    `{AGENTS.md, knowledge/project-overview.md,
+    knowledge/anti-patterns/AP-003, knowledge/skills/**}`,
+    and the documentation must not claim «unchanged» when
+    a path-shape was added — see Devin-Review comment on
+    `HANDOFF.md:289-291` at PR #17.
   - Q-11 (anti-pattern catalogue → AP-001 / AP-003) — AP-003's
     `applies_to:` and Linked-rule cross-references re-point from
     AGENTS.md §PR Intent Classification to the skill; the

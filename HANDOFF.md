@@ -287,8 +287,17 @@
     heading plus PR Checklist **rule #12** (the load-directive).
     Net: AGENTS.md shrinks ~123 lines; the rule is now loadable
     on-demand per ADR-10 §1 context-budget invariant. Content is
-    unchanged (5-intent enum + Level-2 CLASS + anti-shallow-fix
-    gate); only the loadpoint moved.
+    **mostly carried verbatim** (Level-2 CLASS sub-classifier +
+    anti-shallow-fix gate clauses unchanged); the Level-1 INTENT
+    classifier's `ADR-RULE` row gained one path-shape entry
+    (`knowledge/skills/**`) so that future skill-only PRs
+    (amending `pr-creation/SKILL.md` itself, adding a third
+    skill, etc.) classify deterministically rather than falling
+    through to the no-label residual — skills are themselves
+    rule-bearing artefacts and the classifier must fire on that
+    path-shape. Rationale captured in
+    [`knowledge/trace/exploration_log.md`](./knowledge/trace/exploration_log.md)
+    Q-15 Amendment 2026-05-26 §Coupling under Q-15.
   - **`knowledge/skills/` directory established** with self-
     declaring
     [`README.md`](./knowledge/skills/README.md) (scope, template,
@@ -343,8 +352,11 @@
 > — **PR A' lands** (externalisation follow-up to PR A) the
 > [`pr-creation` skill](./knowledge/skills/pr-creation/SKILL.md)
 > as the new home of the 5-intent classifier + Level-2 CLASS
-> sub-classifier + anti-shallow-fix gate (content unchanged from
-> PR A; loadpoint moved off AGENTS.md). AGENTS.md retains only a
+> sub-classifier + anti-shallow-fix gate (Level-2 CLASS +
+> anti-shallow-fix gate clauses carried verbatim from PR A;
+> Level-1 `ADR-RULE` row gained `knowledge/skills/**` path-shape
+> so skill-amending PRs classify deterministically — see
+> exploration_log Q-15 Amendment §Coupling). AGENTS.md retains only a
 > moved-stub marker at the former `§PR Intent Classification`
 > heading + PR Checklist **rule #12** as the load-directive,
 > shrinking ~123 lines net. Same PR establishes
