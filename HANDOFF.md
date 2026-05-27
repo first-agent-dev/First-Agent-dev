@@ -19,7 +19,7 @@ Overwritten each session! Details live at the pointer, not here.
 
 | What | Date | Pointer |
 | :--- | :--- | :--- |
-| PR A' landed: full PR-creation rulebook → loadable skill; AGENTS.md −199 lines | 2026-05-26 | [`pr-creation/SKILL.md`](./knowledge/skills/pr-creation/SKILL.md) |
+| PR A' landed: full PR-creation rulebook → loadable skill; AGENTS.md | 2026-05-26 | [`pr-creation/SKILL.md`](./knowledge/skills/pr-creation/SKILL.md) |
 | `knowledge/skills/` directory established; `repo-audit` migrated (closes I-9b) | 2026-05-26 | [`skills/README.md`](./knowledge/skills/README.md) |
 | PR B / PR C promoted to formal BACKLOG rows M-6, M-7 | 2026-05-26 | [`BACKLOG.md` §M-6, §M-7](./knowledge/BACKLOG.md) |
 | PR A: §PR Intent Classification (5 Level-1 intents) + anti-shallow-fix gate | 2026-05-25 | [`AGENTS.md` §Loadable skills](./AGENTS.md#loadable-skills) |
