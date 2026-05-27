@@ -726,16 +726,214 @@
   - [`HANDOFF.md` §Current state ADR list](../HANDOFF.md) —
     ADR-9 bullet with `M-5` T-4 loader sub-clause.
 
+## M-6 — PR B — `pr_intent` classifier module + `prepare-commit-msg` / `commit-msg` git hooks
+
+- **Status:** **not started; scoped 2026-05-25 (PR A) and reaffirmed
+  2026-05-26 (PR A' / PR A' expansion).** Tracked in HANDOFF.md
+  §Process / rule changes 2026-05-25 (PR A) bullet and in
+  [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md)
+  §What the hook validates. Promoted to a formal BACKLOG row
+  2026-05-26 (PR A' expansion follow-up) so the next-session
+  hand-off has a single discoverable tracking entry instead of
+  prose scattered across HANDOFF / skill / exploration_log.
+- **Why milestone, not idea:** the contract is locked — the
+  [`pr-creation` skill](./skills/pr-creation/SKILL.md) §Reference
+  (Level-1 INTENT table + Level-2 CLASS table + per-intent
+  INVARIANT-content table), §Output format (header-line shape),
+  and §What the hook validates (six explicit checks) collectively
+  pin the hook's external behaviour. Implementation is a planned
+  PR with explicit shape, not an open research question.
+- **Contract source:** [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md)
+  §Reference + §Output format + §What the hook validates. The
+  skill is the **single source of truth**; a snapshot test in PR
+  B pins the hook's regex to §Output format so the two views
+  cannot drift (the snapshot is the only legitimate consumer of
+  the skill's section anchors and fails CI on any anchor or
+  shape change). Companion declarative principle:
+  [`project-overview.md` §1.2.5 anti-shallow-fix gate](./project-overview.md#125--compliance-by-construction-failure-observable).
+  Anti-pattern back-stop: [`AP-003-shallow-fix-no-mechanism.md`](./anti-patterns/AP-003-shallow-fix-no-mechanism.md)
+  (synthetic worked-history is a placeholder until the hook
+  captures the first real escalation — that replacement is part
+  of M-6's success criterion).
+- **Scope (estimated ~250 LOC across 4 files + 1 snapshot file):**
+  - `src/fa/hygiene/__init__.py` (~10 LOC) — package marker +
+    public surface re-exports.
+  - `src/fa/hygiene/pr_intent.py` (~150 LOC) — pure-Python
+    deterministic functions:
+    `classify_intent(staged_paths: list[StagedPath]) -> Intent`
+    over `git diff --cached --name-status` (closed enum
+    `RESEARCH / ADR-RULE / IMPLEMENT / FIX / CHORE`;
+    cross-category resolution `ADR-RULE > IMPLEMENT > FIX >
+    RESEARCH > CHORE` per skill §Reference);
+    `derive_required_fields(intent: Intent) -> list[FieldSpec]`
+    (per-intent placeholders for `prepare-commit-msg`);
+    `validate_commit_msg(text: str, intent: Intent) -> list[Violation]`
+    (all six checks from skill §What the hook validates, single
+    pass, no short-circuit); `resolve_citation(
+    citation: str, repo_root: Path, staged: list[StagedPath]) -> bool`
+    (file-exists + line-in-bounds against staged tree or HEAD).
+  - `src/fa/hygiene/hooks/prepare-commit-msg` (~30 LOC bash
+    wrapper) — invokes `python -m fa.hygiene.pr_intent prepare
+    <commit-msg-file>`; pre-populates the buffer with the
+    mechanically-derived `INTENT:` line plus `<fill me>`
+    placeholders for every required field per the intent's row.
+  - `src/fa/hygiene/hooks/commit-msg` (~30 LOC bash wrapper) —
+    invokes `python -m fa.hygiene.pr_intent validate
+    <commit-msg-file>`; validates and prints all violations in
+    one pass; non-zero exit blocks the commit.
+  - `tests/test_pr_intent_snapshot.py` — snapshot test pinning
+    the hook's regex to the skill's §Output format section
+    (reads `knowledge/skills/pr-creation/SKILL.md` at test time,
+    extracts the fenced code-block under §Output format, asserts
+    structural identity with the regex's expected shape).
+    Auxiliary tests cover the closed-enum classifier branches,
+    cross-category resolution, citation-resolution edge cases
+    (file-not-staged, line-out-of-bounds, `n/a (reason)`
+    acceptance), and the tautology check
+    (`DEGREE-OF-FREEDOM CLOSED:` and `DETERMINISTIC MECHANISM:`
+    not string-identical modulo whitespace).
+  - Installation: hooks landed under `src/fa/hygiene/hooks/`
+    with a `make install-hooks` / `fa hygiene install-hooks`
+    one-liner that symlinks them into `.git/hooks/`. Deferred
+    decision: `pre-commit` framework integration vs. bare
+    Git-hook symlink — pick whichever matches the rest of the
+    repo's existing hook discipline at PR-B time.
+- **Tests:** offline / pure-Python; no real git invocations
+  (fixtures construct staged-path lists directly). The snapshot
+  test is the most important — it fails CI the moment the
+  skill's §Output format drifts from the hook's regex, which is
+  the dual-located-rule guard recommended throughout the PR-A /
+  PR-A' exploration_log (Q-15 + Amendments).
+- **Q-N amendment items** (deferred from skill §What the hook
+  validates; each becomes its own future BACKLOG row when a re-
+  evaluation trigger fires):
+  - Citation-resolution against `HEAD~` (not just staged tree)
+    for FIX PRs that cite a removed line.
+  - Multi-commit PRs — apply validation only to the first
+    commit on the branch (header lines are PR-level), or to all
+    commits with the trailer? Skill §AI-Session trailer
+    currently says "per-commit".
+  - LLM-judge fallback for `n/a (reason)` text quality (e.g.
+    reject "n/a (just because)"). Deferred per skill
+    §Escalation philosophy: «cheap-scope guard is cheap to
+    write but expensive to dress up convincingly» — the human
+    reviewer catches gaming faster than an LLM judge can.
+- **References:**
+  - [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md)
+    — single source of truth.
+  - [`knowledge/trace/exploration_log.md` Q-15](./trace/exploration_log.md)
+    (initial PR A decision rationale; Rejected option (c)
+    «PR-description-only enforcement» explains why
+    `prepare-commit-msg` is mandatory rather than optional) +
+    Q-15 Amendment 2026-05-26 (PR A' externalisation: hook now
+    reads the skill, not AGENTS.md) + Q-15 Amendment 2026-05-26
+    (PR A' expansion: contract sources widened to skill
+    §Reference + §Output format + §What the hook validates).
+  - [`knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md`](./anti-patterns/AP-003-shallow-fix-no-mechanism.md)
+    — synthetic worked-history; placeholder until PR B's hook
+    captures the first real escalation.
+  - [`HANDOFF.md`](../HANDOFF.md) §Process / rule changes
+    2026-05-25 (PR A) and 2026-05-26 (PR A') — historical scoping
+    context.
+- **Blocked-on:** nothing — PR A landed (rule supersession);
+  PR A' merging is not a strict gate (the skill is the contract
+  source whether PR A' is merged to `main` or still on its
+  branch), but practically PR A' should land first so the
+  snapshot test's section-anchor reads remain stable.
+
+## M-7 — PR C — `IntentGuard` `GuardMiddleware` on `BEFORE_TOOL_EXEC`
+
+- **Status:** **not started; blocked on M-6 (PR B).** Tracked in
+  HANDOFF.md §Process / rule changes 2026-05-25 (PR A) bullet
+  and in [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md)
+  §Reference (the hook contract that PR B materialises). Promoted
+  to a formal BACKLOG row 2026-05-26 (PR A' expansion follow-up)
+  for the same reason as M-6.
+- **Why milestone, not idea:** the `HookRegistry` substrate is
+  landed (M-1 closed by PR #24; verified by the session-start
+  audit at [`src/fa/inner_loop/hooks/base.py`](../src/fa/inner_loop/hooks/base.py)
+  per HANDOFF.md §Process / rule changes 2026-05-25 last
+  paragraph); PR C is a `~10-line specialisation` of
+  `GuardMiddleware` that reuses M-6's classifier module. Shape
+  is locked, not exploratory.
+- **Contract source:** [`knowledge/adr/ADR-8-hook-registry.md`](./adr/ADR-8-hook-registry.md)
+  §3 (`GuardMiddleware` may deny / modify; first-deny short-
+  circuit; `BEFORE_TOOL_EXEC` lifecycle point) +
+  [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md)
+  §Reference (classifier contract; the harness-side guard
+  reuses the SAME classifier function as the git hook so the
+  two enforcement seats cannot drift).
+- **Scope (estimated ~80 LOC across 2 files):**
+  - `src/fa/inner_loop/hooks/intent_guard.py` (~50 LOC) —
+    `IntentGuard(GuardMiddleware)` attached to
+    `BEFORE_TOOL_EXEC`. On tool calls that mutate the staged
+    tree (`fs.write_file`, `edit_file` shapes,
+    `git add` / `git commit` via `fs.run_bash`), re-runs
+    `fa.hygiene.pr_intent.classify_intent` over the staged-diff
+    snapshot the call is about to produce; if the resulting
+    intent or required-field shape would violate the skill's
+    §Reference table (e.g. `INTENT: FIX` without
+    `DETERMINISTIC MECHANISM:` populated upstream in the
+    session's working PR description), emits a `Decision.deny`
+    with the violation message echoing the git hook's wording
+    (so agent error-recovery is identical whether the rule
+    fires at hook time or harness time).
+  - `tests/test_intent_guard.py` (~30 LOC) — fixtures construct
+    a `ToolPayload` with a synthetic staged-diff and assert
+    deny on contract violation, allow on conformant payloads.
+    Reuses the same fixture catalogue as PR B's snapshot test.
+- **Why dual enforcement (hook + middleware):** the git hook
+  catches the rule at commit time (post-edit, pre-commit); the
+  middleware catches it at tool-call time (pre-edit) — the
+  earlier seat is the cheaper one per [`AP-001` §Why-wrong-shape-dominates](./anti-patterns/AP-001-spec-bypassing-workaround.md#why-the-wrong-shape-dominates)
+  «action-count drift dominates rule-count drift». Both seats
+  share the same classifier function, satisfying ADR-10 I-1
+  single-source-of-truth (one validator, two consumers).
+- **Tests:** offline / pure-Python; uses fake `ToolPayload`
+  builders. No real git or LLM invocations.
+- **Q-N amendment items:**
+  - Should the middleware also fire on `BEFORE_LLM_CALL` to
+    pre-inject the required-fields placeholder into the next
+    LLM message? Defer until session-trace data shows the
+    middleware catches violations the hook would have missed.
+  - Synthetic-PR-description state tracking — the middleware
+    needs visibility into the current session's draft PR
+    description to validate field-presence. Decision: read from
+    a known location under `~/.fa/state/runs/<run_id>/pr_draft.md`
+    populated by the agent itself; agent populates it on
+    session start via a new `prepare-pr` tool or sub-agent.
+- **References:**
+  - [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](./adr/ADR-7-inner-loop-tool-registry.md)
+    §8 (hook chain).
+  - [`knowledge/adr/ADR-8-hook-registry.md`](./adr/ADR-8-hook-registry.md)
+    §3 (`GuardMiddleware` contract).
+  - [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md)
+    §Reference + §What the hook validates.
+  - [`knowledge/trace/exploration_log.md` Q-15 §Coupling](./trace/exploration_log.md)
+    — explicit cross-link to Q-7 / Q-8 (HookRegistry seat) +
+    AP-001 (action-count rationale).
+  - [`HANDOFF.md`](../HANDOFF.md) §Process / rule changes
+    2026-05-25 last paragraph — feasibility verified by the
+    session-start audit of `src/fa/inner_loop/hooks/base.py`.
+- **Blocked-on:** M-6 (PR B) — `IntentGuard` imports
+  `fa.hygiene.pr_intent.classify_intent`. PR B can land
+  without PR C (the classifier is independently useful as a
+  git hook), but PR C cannot land without PR B.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring
   sweeps + cross-reference cascade rules; companion to this file.
 - [`HANDOFF.md`](../HANDOFF.md) §Current state — for items
   actively in flight (not deferred).
-- [`AGENTS.md` PR Checklist rule #11](../AGENTS.md#pr-checklist)
+- [`AGENTS.md` §Context-budget discipline](../AGENTS.md#context-budget-discipline)
   — mitigations (a) and (b) reference I-2 and I-1/I-3
   respectively; the rule's «tracked in BACKLOG.md until ADR-7/8
-  lands» wording points here.
+  lands» wording points here. (Rule was numbered «PR Checklist
+  rule #11» pre-2026-05-26; PR A' moved the goal-oriented core
+  into AGENTS.md §Context-budget discipline and the PR-time
+  declaration into the [`pr-creation` skill](./skills/pr-creation/SKILL.md)
+  §PR Checklist.)
 - [`research/bootstrap-cost-baseline-2026-05.md`](./research/bootstrap-cost-baseline-2026-05.md)
   §9 re-measurement triggers items 5 and 6 reference I-7 and
   I-8 here.
