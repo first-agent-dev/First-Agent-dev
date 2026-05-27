@@ -728,14 +728,18 @@
 
 ## M-6 — PR B — `pr_intent` classifier module + `prepare-commit-msg` / `commit-msg` git hooks
 
-- **Status:** **not started; scoped 2026-05-25 (PR A) and reaffirmed
-  2026-05-26 (PR A' / PR A' expansion).** Tracked in HANDOFF.md
-  §Process / rule changes 2026-05-25 (PR A) bullet and in
-  [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md)
-  §What the hook validates. Promoted to a formal BACKLOG row
-  2026-05-26 (PR A' expansion follow-up) so the next-session
-  hand-off has a single discoverable tracking entry instead of
-  prose scattered across HANDOFF / skill / exploration_log.
+- **Status:** **closed by PR B (2026-05-27).** Landed
+  [`src/fa/hygiene/pr_intent.py`](../src/fa/hygiene/pr_intent.py)
+  (classifier + validator + citation resolver + CLI),
+  [`src/fa/hygiene/hooks/`](../src/fa/hygiene/hooks/)
+  (bash wrappers + symlink installer), and
+  [`tests/test_pr_intent_snapshot.py`](../tests/test_pr_intent_snapshot.py)
+  (49 cases including the dual-located-rule guard pinning the
+  hook constants to the skill's §Output format fenced blocks).
+  Sanity-checked: intentionally adding a `SPURIOUS` enum value
+  to the skill's §Output format fails the snapshot test; the
+  hook's bash wrappers invoke `python -m fa.hygiene
+  {prepare|validate}` against the staged-diff snapshot.
 - **Why milestone, not idea:** the contract is locked — the
   [`pr-creation` skill](./skills/pr-creation/SKILL.md) §Reference
   (Level-1 INTENT table + Level-2 CLASS table + per-intent

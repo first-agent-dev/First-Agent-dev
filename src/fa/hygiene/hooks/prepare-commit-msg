@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# prepare-commit-msg — pre-populate the commit-message buffer with the
+# mechanically-derived INTENT line + <fill me> placeholders per
+# knowledge/skills/pr-creation/SKILL.md §Output format.
+#
+# The classifier picks the intent off `git diff --cached --name-status`
+# and renders the placeholder block via fa.hygiene.pr_intent. See
+# `python -m fa.hygiene.pr_intent prepare` for the implementation;
+# the rule contract is the skill, single source of truth.
+
+set -euo pipefail
+
+COMMIT_MSG_FILE="${1:-}"
+COMMIT_SOURCE="${2:-}"
+
+# Skip the auto-fill when git already supplies a message body
+# (merge / squash / amend / template / message-via-`-m`). The
+# commit-msg validator still runs on every commit.
+case "${COMMIT_SOURCE}" in
+  message|template|squash|merge|commit)
+    exit 0
+    ;;
+esac
+
+if [[ -z "${COMMIT_MSG_FILE}" ]]; then
+  echo "prepare-commit-msg: missing commit-msg file argument" >&2
+  exit 1
+fi
+
+exec python -m fa.hygiene prepare "${COMMIT_MSG_FILE}"

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# commit-msg — validate the composed commit-message body against
+# knowledge/skills/pr-creation/SKILL.md §What the hook validates.
+#
+# Returns all violations in one pass (no short-circuit). A non-zero
+# exit blocks the commit; the agent / contributor fixes every
+# reported violation and retries.
+
+set -euo pipefail
+
+COMMIT_MSG_FILE="${1:-}"
+if [[ -z "${COMMIT_MSG_FILE}" ]]; then
+  echo "commit-msg: missing commit-msg file argument" >&2
+  exit 1
+fi
+
+exec python -m fa.hygiene validate "${COMMIT_MSG_FILE}"
