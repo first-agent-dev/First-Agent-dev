@@ -1,5 +1,5 @@
 ---
-name: agent-oriented-repo-audit
+name: repo-audit
 description: |
   Reusable workflow for auditing and refactoring a research-heavy
   repository so that mid-tier OSS LLM agents (DeepSeek 4, Kimi 2.6,
@@ -9,13 +9,15 @@ description: |
   2026-05-11. Optimised for the user's working style: middleground
   prose (not ultra-terse), evidence-backed findings (not speculation),
   PR-per-finding cadence with explicit deferral via BACKLOG.md.
-when_to_use: |
-  Invoke this when the user asks for any of:
+status: active
+last-reviewed: 2026-05-26
+triggers:
   - "audit the repo for agent-readability"
   - "what should we prune from llms.txt / AGENTS.md / glossary"
   - "is the structure good enough for OSS LLMs"
-  - "give honest critical review" of a doc / structure
+  - 'give honest critical review of a doc / structure'
   - any variant of "look at the repo with fresh eyes"
+relocated_from: knowledge/prompts/repo-audit-playbook.md (2026-05-26)
 inputs:
   - repo at a defined commit (snapshot of "current state")
   - target LLMs (audience: tier + effective context window)

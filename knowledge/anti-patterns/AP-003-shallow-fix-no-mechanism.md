@@ -1,8 +1,9 @@
 ---
 compiled: 2026-05-25
 applies_to:
-  - "AGENTS.md §PR Intent Classification (FIX intent + anti-shallow-fix gate)"
-  - "knowledge/project-overview.md §1.2.5 (compliance-by-construction, anti-shallow-fix gate)"
+  - "knowledge/skills/pr-creation/SKILL.md (FIX intent + anti-shallow-fix gate — operational rule)"
+  - "AGENTS.md PR Checklist rule #12 (load-directive for the skill)"
+  - "knowledge/project-overview.md §1.2.5 (compliance-by-construction — declarative principle)"
   - "Any future FIX-class PR touching `src/fa/**` where the LLM had a degree of freedom on a spec-bearing decision"
 status: accepted
 ---
@@ -10,7 +11,9 @@ status: accepted
 # AP-003 — Shallow fix without named mechanism
 
 > Catalog entry for the *prospective* anti-pattern that
-> [`AGENTS.md` §PR Intent Classification](../../AGENTS.md#pr-intent-classification)
+> [`knowledge/skills/pr-creation/SKILL.md`](../skills/pr-creation/SKILL.md)
+> (loadable skill carrying the operational rule, loaded via
+> [`AGENTS.md` PR Checklist rule #12](../../AGENTS.md#pr-checklist))
 > + [`project-overview.md` §1.2.5 anti-shallow-fix gate](../project-overview.md#125--compliance-by-construction-failure-observable)
 > are forcing-against. AP-001 captures a backward-looking worked
 > incident; AP-003 is the **forward-acting** companion — fires on
@@ -256,8 +259,11 @@ documentary and review-time.
 
 ## Linked-ADR / Linked-rule
 
-- [`AGENTS.md` §PR Intent Classification](../../AGENTS.md#pr-intent-classification)
-  — `INTENT: FIX` clause + anti-shallow-fix gate clause. AP-003 is
+- [`knowledge/skills/pr-creation/SKILL.md`](../skills/pr-creation/SKILL.md)
+  — `INTENT: FIX` clause + anti-shallow-fix gate clause (relocated
+  from AGENTS.md §PR Intent Classification 2026-05-26 — PR A';
+  load-directive lives at [`AGENTS.md` PR Checklist rule #12](../../AGENTS.md#pr-checklist)).
+  AP-003 is
   the catalogued anti-pattern the gate is forcing-against.
 - [`project-overview.md` §1.2.5 anti-shallow-fix gate](../project-overview.md#125--compliance-by-construction-failure-observable)
   — declarative principle. AP-003 is the operational worked-history

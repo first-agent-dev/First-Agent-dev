@@ -29,6 +29,10 @@ knowledge/
 │   └── research-briefing.md  # goal-driven cross-reference workflow
 ├── research/                 # research notes
 │   └── _template.md          # skeleton (frontmatter v1+v2 + §0 Decision Briefing)
+├── skills/                   # per-task agent-loadable disciplines (SKILL.md per skill)
+│   ├── README.md             # scope, template, skill-vs-prompt-vs-rule distinction
+│   ├── pr-creation/SKILL.md  # PR intent classification + anti-shallow-fix gate
+│   └── repo-audit/SKILL.md   # 7-phase agent-oriented repo audit workflow
 └── trace/                    # exploration log — alternatives rejected at
     └── exploration_log.md    # decision time + lesson for re-opening branches
 ```
@@ -206,7 +210,8 @@ see [`AGENTS.md` PR Checklist rule #9](../AGENTS.md#pr-checklist).
 |---|---|
 | A decision we made (and why) | `knowledge/adr/` |
 | Background research / literature summary | `knowledge/research/` |
-| A reusable prompt | `knowledge/prompts/` |
+| A reusable prompt (LLM API system slot) | `knowledge/prompts/` |
+| A per-task agent-loadable discipline (loaded on-demand, e.g. before opening a PR) | `knowledge/skills/<name>/SKILL.md` (see [`skills/README.md`](./skills/README.md) for the skill-vs-prompt-vs-rule distinction) |
 | Exploration trail (which alternatives were rejected & why) | `knowledge/trace/exploration_log.md` |
 | Project-wide context (mission, scope, users) | `knowledge/project-overview.md` |
 | How-to / guide / reference | `docs/` (not here) |
@@ -219,6 +224,7 @@ see [`AGENTS.md` PR Checklist rule #9](../AGENTS.md#pr-checklist).
 | "What decision did we make regarding Y and why?" | `knowledge/adr/` | — |
 | "What did we find during the research of Z?" | `knowledge/research/<Z>.md` | Primary sources from `source:` frontmatter |
 | Specific number / date / quote | **Always** the primary source (`source:` of the note), not the summary | — |
-| Procedure / how-to | `docs/` | Future `SKILL.md` |
+| Procedure / how-to | `docs/` | `knowledge/skills/<name>/SKILL.md` for per-task disciplines |
+| Before opening a PR (intent classification, anti-shallow-fix gate) | [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md) | [`AGENTS.md` PR Checklist rule #12](../AGENTS.md#pr-checklist) (load-directive) |
 
 This same rule is documented in [`AGENTS.md`](../AGENTS.md#query-routing).

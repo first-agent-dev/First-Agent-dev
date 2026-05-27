@@ -169,49 +169,35 @@ middleware READS); I-5 layer-boundary fail-fast.
 #### Anti-shallow-fix gate
 
 The construction discipline above is **declarative**: it states what
-the harness must do. The **anti-shallow-fix gate** is the
-**operational** companion clause — the forward-acting forcing
-function that catches shallow «defensive guard at the call-site»
-fixes that do not name the producer-site degree of freedom they were
-ostensibly closing. It fires on every PR with `INTENT: FIX` per
-[`AGENTS.md` §PR Intent Classification](../AGENTS.md#pr-intent-classification),
-and reads:
+the harness must do. The **operational companion** — the
+forward-acting forcing function that catches shallow «defensive
+guard at the call-site» fixes that do not name the producer-site
+degree of freedom they were ostensibly closing — lives as a
+loadable skill at
+[`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md)
+and applies to every PR with `INTENT: FIX` (see
+[`AGENTS.md` PR Checklist rule #12](../AGENTS.md#pr-checklist) for
+the load-directive).
 
-```text
-DEGREE-OF-FREEDOM CLOSED: <one sentence — which spec-bearing decision
-  the LLM previously had a degree of freedom on, that this fix removes>
-DETERMINISTIC MECHANISM: <one sentence ending with `repo/file.ext:line`
-  reference — the function / type / constant / schema / exit-code
-  contract that closes the degree of freedom>
-```
-
-Two operational rules give the gate its bite:
-
-1. **`DETERMINISTIC MECHANISM:` MUST end with `repo/file.ext:line`**
-   — the citation resolves against the staged tree (or HEAD) and
-   the `prepare-commit-msg` / `commit-msg` hook in
-   `src/fa/hygiene/pr_intent.py` mechanically verifies the file
-   exists and the line number is within bounds. A two-token
-   meaningless mechanism string (`mechanism: fix`) is structurally
-   impossible to pass.
-2. **`n/a (reason)` is acceptable** for FIX PRs with no agent-facing
-   degree of freedom — pure type-bugs, refactors, dependency
-   bumps. The agent MUST write an explicit reason; blank or
-   `<fill me>` is rejected.
-
-Inability to name either field, or naming a **tautological mechanism**
-(string identity with `DEGREE-OF-FREEDOM CLOSED:` modulo whitespace —
-e.g. the same call-site guard the diff just added), escalates the PR
-from `CLASS: REPAIR` to `CLASS: WORKAROUND` and catalogues under
+Operationally, FIX PRs carry `DEGREE-OF-FREEDOM CLOSED:` +
+`DETERMINISTIC MECHANISM:` clauses; the mechanism citation MUST
+end with `repo/file.ext:line` resolving against the staged tree
+(or `n/a (reason)` for FIX PRs with no agent surface). Tautological
+mechanisms (string-identical to the degree-of-freedom clause) or
+missing fields escalate the PR from `CLASS: REPAIR` to
+`CLASS: WORKAROUND` and catalogue under
 [`AP-003-shallow-fix-no-mechanism.md`](./anti-patterns/AP-003-shallow-fix-no-mechanism.md).
-The asymmetry is the wedge: a cheap-scope guard is cheap to write but
-**expensive to dress up convincingly with a real `path/file.ext:line`
-citation that closes a *named* degree of freedom** — and a reviewer
-spots the tautology in two seconds. The gate is *action-count*
-mitigation per
+The asymmetry is the wedge: a cheap-scope guard is cheap to write
+but **expensive to dress up convincingly with a real
+`path/file.ext:line` citation that closes a *named* degree of
+freedom** — a reviewer spots the tautology in two seconds. The
+gate is *action-count* mitigation per
 [`AP-001` §Why-the-wrong-shape-dominates](./anti-patterns/AP-001-spec-bypassing-workaround.md),
 not *rule-count* mitigation; the discipline lives in the
-mechanically-verifiable citation, not in remembered prose.
+mechanically-verifiable citation, not in remembered prose. Full
+field semantics, hook behaviour, and worked examples live in the
+skill body — this §1.2.5 retains only the principle and the
+declarative form.
 
 **Five KPI candidates** (companion analysis
 `fa-drift-analysis-v2.md` §4, surfaced in the deep-dive's §6b at

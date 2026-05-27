@@ -26,7 +26,7 @@
 
 - Now you have everything you need.
 
-## Current state (as of 2026-05-25)
+## Current state (as of 2026-05-26)
 
   - [ADR-9](./knowledge/adr/ADR-9-llm-provider-client.md) —
     LLM provider client contract (T-2 driver; **proposed
@@ -279,6 +279,103 @@
     follows PR B; feasibility verified by the session-start audit
     of `src/fa/inner_loop/hooks/base.py` (HookRegistry fully landed).
 
+- **Process / rule changes 2026-05-26 (PR A' — externalise PR-creation rulebook to loadable skill):**
+  - **PR A' scope expanded same day** (this session) from the
+    original «move §PR Intent Classification only» to «move the
+    entire PR-creation rulebook». AGENTS.md was retaining ~158
+    lines of PR-Checklist-rule prose + 57 lines of PR Description
+    Style + a 16-line AI-Session-trailer paragraph inside
+    §Development Workflow, all of which fire only at PR-creation
+    time. Moving them into the skill keeps AGENTS.md scoped to
+    the **universal session loadout** (repo navigation, style,
+    pre-flight discipline, cross-project anti-patterns,
+    context-budget discipline, query routing) — every rule that
+    remains in AGENTS.md fires on every session, not only at
+    PR-creation. Net shape:
+    - AGENTS.md: 529 → ~330 lines (−199, ~38 % smaller). No
+      stubs at the former heading sites — orphan citations to
+      «AGENTS.md PR Checklist rule #N» / «AGENTS.md §PR
+      Description Style» / «AGENTS.md §PR Intent Classification»
+      will be cleaned up by a separate cross-ref-sweep pass per
+      user direction.
+    - [`pr-creation/SKILL.md`](./knowledge/skills/pr-creation/SKILL.md):
+      297 → ~558 lines, now organised as §Trigger / §Reference /
+      §Decision points / §Output format / **§PR Checklist (NEW —
+      absorbs rules 1-10)** / **§PR Description Style (NEW)** /
+      **§AI-Session trailer (NEW)** / §What the hook validates /
+      §Escalation / §No mixed PRs / §Worked example / §Rationale.
+    - Rule #11 (context-budget ≤ 100 k) refactored into a new
+      AGENTS.md section **§Context-budget discipline** with a
+      goal-oriented opening paragraph (collect what is necessary,
+      navigate the repo, read only what moves the task forward)
+      and the design invariant + a..d mitigation list retained
+      verbatim. The PR-time declaration that a harness PR
+      adopted one of a..d lives in the skill's §PR Checklist as
+      an absorbed item; the universal discipline applies every
+      session.
+    - Rule #12 (load-directive) replaced by a new AGENTS.md
+      section **§Loadable skills** — a two-row table mapping
+      trigger → skill (`pr-creation`, `repo-audit`). Future
+      skills land as `knowledge/skills/<name>/SKILL.md` with a
+      row added here; AGENTS.md never re-absorbs skill bodies.
+  - **`§PR Intent Classification` (PR A's inline section)** was
+    the original externalisation target. Content is **mostly
+    carried verbatim** (Level-2 CLASS sub-classifier +
+    anti-shallow-fix gate clauses unchanged); the Level-1 INTENT
+    classifier's `ADR-RULE` row gained one path-shape entry
+    (`knowledge/skills/**`) so that future skill-only PRs
+    (amending `pr-creation/SKILL.md` itself, adding a third
+    skill, etc.) classify deterministically rather than falling
+    through to the no-label residual — skills are themselves
+    rule-bearing artefacts and the classifier must fire on that
+    path-shape. Rationale captured in
+    [`knowledge/trace/exploration_log.md`](./knowledge/trace/exploration_log.md)
+    Q-15 Amendment 2026-05-26 §Coupling under Q-15.
+  - **`knowledge/skills/` directory established** with self-
+    declaring
+    [`README.md`](./knowledge/skills/README.md) (scope, template,
+    skill-vs-prompt-vs-rule distinction) per
+    [`borrow-roadmap-2026-05.md` §R-24](./knowledge/research/borrow-roadmap-2026-05.md#r-24--filesystem-canonical-skill-store--safe-community-import).
+    The full filesystem-canon skill store (status-workflow,
+    draft→active gate, shared-overlay layering, safe community
+    import) lands later in Wave 3 — this PR ships the storage
+    substrate that R-24's runtime will load from.
+  - **`repo-audit-playbook.md` migrated** from
+    `knowledge/prompts/` to
+    [`knowledge/skills/repo-audit/SKILL.md`](./knowledge/skills/repo-audit/SKILL.md)
+    via `git mv` (history preserved); frontmatter normalised to
+    the skill schema (`status: active`, `triggers:`, `last-reviewed:`).
+    **Closes BACKLOG I-9 path (b).**
+  - **`project-overview.md §1.2.5` compressed** — anti-shallow-fix
+    gate subsection (45 lines) → 8-line summary + forward-pointer
+    to the skill. §1.2.5 retains the declarative principle
+    («the LLM never has a degree of freedom on a spec-bearing
+    decision») + ADR-10 I-1..I-5 invariants list + Five KPI
+    candidates; operational rules moved to the skill body.
+  - **AP-003 cross-references re-pointed** — `applies_to:`
+    frontmatter and Linked-rule section now cite
+    `knowledge/skills/pr-creation/SKILL.md` (plus AGENTS.md
+    §Loadable skills row as load-directive); the catalogue's
+    forward-acting role is unchanged.
+  - **Orphan cross-refs (≈ 38 files mentioning «AGENTS.md PR
+    Checklist rule #N», ≈ 13 files mentioning rule #5).** PR A'
+    does **not** sweep these — per user direction the cleanup
+    happens in a follow-up pass on the top-10 highest-impact
+    files: `knowledge/llms.txt` (9 hits),
+    `knowledge/MAINTENANCE.md` (7), `ADR-10` (6), `DIGEST.md`
+    (4), `ADR-7` (4), `HANDOFF.md` (3), `knowledge/README.md`
+    (3), `AP-003` (3), `research-briefing.md` (2),
+    `project-overview.md` (2). Residual ≈ 28 lower-priority
+    files (research notes, source-code rationale-comments,
+    `BACKLOG.md`, `exploration_log.md` historical entries,
+    `exploration_tree.yaml`, AP-002, `glossary.md`, `adr/README.md`,
+    ADR-2/6/8, `repo-audit/SKILL.md`, `architect-fa.md`) and the
+    duplicate folder `For cross-reference with ADR's/`.
+  - **PR B / PR C unchanged.** PR B (`src/fa/hygiene/pr_intent.py`)
+    now reads the skill's §Reference tables as single source of
+    truth; the hook's regex matches the skill's §Output format
+    section, pinned by a snapshot test in PR B.
+
 - **Research note added 2026-05-25 (PR #14):**
   - [`research/fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md)
     — ADR-10 input note: per-repo determinism-pattern deep-dive
@@ -297,7 +394,30 @@
     list keyed on I-1..I-5, then opens §1.x sections only when
     a specific pattern ID is cited.
 >
-> **Last updated:** 2026-05-25 by Devin session
+> **Last updated:** 2026-05-26 by Devin session
+> [`a1514827169246168bfb7918c82179a7`](https://app.devin.ai/sessions/a1514827169246168bfb7918c82179a7)
+> — **PR A' expanded** (externalises the **full PR-creation
+> rulebook** to the
+> [`pr-creation` skill](./knowledge/skills/pr-creation/SKILL.md),
+> not only the §PR Intent Classification section). Net shape:
+> AGENTS.md shrinks from 529 → ~330 lines (−199, ~38 % smaller)
+> retaining only the **universal session loadout** (repo
+> navigation, style, pre-flight discipline, new §Context-budget
+> discipline, cross-project anti-patterns, new §Loadable skills
+> trigger table, query routing); the skill grows from 297 → ~558
+> lines absorbing §PR Checklist rules 1-10, §PR Description
+> Style, AI-Session trailer rule (three new sections), on top of
+> the already-externalised classifier + anti-shallow-fix gate.
+> No stubs at former heading sites — orphan cross-refs cleaned
+> by user in a separate pass. Same PR retains: `knowledge/skills/`
+> directory + `README.md`, `repo-audit-playbook.md` migration via
+> `git mv` (closes BACKLOG I-9 path (b)), `project-overview.md`
+> §1.2.5 compression, AP-003 cross-references re-pointed,
+> exploration_log Q-15 Amendment (initial) + Q-15 Amendment (PR A'
+> expansion), `knowledge/llms.txt` refresh. DIGEST.md is NOT
+> updated (PR A' touches no ADR file). PR B / PR C unchanged.
+>
+> **Prior update:** 2026-05-25 by Devin session
 > [`a1514827169246168bfb7918c82179a7`](https://app.devin.ai/sessions/a1514827169246168bfb7918c82179a7)
 > — **PR A lands** (rule supersession) the `§PR Intent
 > Classification` section in

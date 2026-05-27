@@ -1448,3 +1448,265 @@
   [`AP-003-shallow-fix-no-mechanism.md`](../anti-patterns/AP-003-shallow-fix-no-mechanism.md),
   [`AP-001` §Why-wrong-shape-dominates](../anti-patterns/AP-001-spec-bypassing-workaround.md#why-the-wrong-shape-dominates)
   (cost-asymmetry framing AP-003 inherits).
+
+### Amendment 2026-05-26 — Externalise to loadable skill (PR A')
+
+- **Question (refined):** Once Q-15 locked the 5-intent
+  classifier + anti-shallow-fix gate, **where** does the rule
+  *live* — inline in AGENTS.md, or as a loadable skill the
+  agent picks up on demand?
+- **Chosen:** Externalise the full classifier + INVARIANT-content
+  table + anti-shallow-fix gate to
+  [`knowledge/skills/pr-creation/SKILL.md`](../skills/pr-creation/SKILL.md);
+  AGENTS.md retains only a moved-stub marker on the old section
+  heading plus PR Checklist rule #12 (the load-directive). The
+  decision uses the `knowledge/skills/` directory canonicalised
+  by [`borrow-roadmap-2026-05.md` §R-24](../research/borrow-roadmap-2026-05.md#r-24--filesystem-canonical-skill-store--safe-community-import)
+  + the four-place commit already on disk
+  ([`project-overview.md`:70](../project-overview.md),
+  [`BACKLOG.md`:117](../BACKLOG.md),
+  [`docs/glossary.md`:62-64](../../docs/glossary.md)).
+  Closes BACKLOG I-9 path (b) by moving
+  `knowledge/prompts/repo-audit-playbook.md` to
+  `knowledge/skills/repo-audit/SKILL.md` in the same PR.
+- **Rejected:**
+  - **(i) Keep the rule inline in AGENTS.md (no skill).**
+    Reason: AGENTS.md grows ~158 lines per externalised rule;
+    every session pays the context-budget cost even when no PR
+    is being opened. Lesson: re-opens if the skill-load
+    mechanism never lands (R-24 deferred indefinitely) AND the
+    rule shrinks below a context-budget threshold (~50 lines)
+    where the externalisation overhead exceeds the savings.
+  - **(ii) Use `knowledge/playbooks/` naming (per BACKLOG I-9
+    path (b) wording).** Reason: R-24 (compiled 2026-05-13,
+    one day after BACKLOG I-9 was added) explicitly chose
+    `knowledge/skills/` and the four-place commit on disk
+    ([`project-overview.md`:70](../project-overview.md), `BACKLOG.md`
+    R-22, `docs/glossary.md` «Self-evolving» / «Skill» entries)
+    pre-dates this PR. Renaming to `playbooks/` would force a
+    later rename when the full R-24 store lands. Lesson:
+    re-opens only if industry convention shifts away from
+    `skills/` filesystem-canon (KAOS / Anthropic / Devin
+    `.agents/skills/`) toward `playbooks/` — none of the three
+    currently signal this.
+  - **(iii) Co-locate the skill at `.agents/skills/pr-creation/SKILL.md`
+    (Devin-native auto-load).** Reason: `.agents/skills/` is
+    a Devin-specific convention; weaker OSS LLMs (DeepSeek 4 /
+    Kimi 2.6) lack the auto-load harness, so they need a
+    `knowledge/` path the AGENTS.md rule explicitly points at.
+    Lesson: re-opens once a second skill lands and the dual
+    surface (`.agents/skills/` symlink + `knowledge/skills/`
+    canonical) is worth the conventions overhead.
+  - **(iv) Bundle the skill creation with the repo-audit move
+    in two separate PRs.** Reason: both moves share the same
+    forcing function (introduce `knowledge/skills/` directory
+    with a self-declaring README + first two skills) and the
+    same llms.txt sweep. Bundling closes BACKLOG I-9 path (b)
+    in one PR with no additional review surface. Lesson: re-opens
+    if the repo-audit move develops conflicts with the
+    pr-creation skill content review (none expected: repo-audit
+    body is unchanged, only frontmatter normalised).
+  - **(v) Keep the operational rules in `project-overview.md`
+    §1.2.5 verbatim.** Reason: §1.2.5 is declarative (states
+    the *principle*), the operational rules are the *forcing
+    function* — different layers. §1.2.5 retains the principle
+    and a 1-paragraph forward-pointer; the operational rules
+    live in the skill so they are loadable on-demand. Lesson:
+    re-opens if a non-PR-creation operational rule needs to
+    fire from the same §1.2.5 principle and would benefit from
+    inline placement (none currently identified).
+- **Coupling:**
+  - Q-15 (rule shape) — this amendment supersedes Q-15's
+    «AGENTS.md hosts the rule» finding to «skill hosts the rule;
+    AGENTS.md hosts the load-directive». The Level-2 CLASS
+    sub-classifier and the anti-shallow-fix gate clauses
+    (`DEGREE-OF-FREEDOM CLOSED:` + `DETERMINISTIC MECHANISM:`)
+    carried verbatim from PR A. The Level-1 INTENT classifier's
+    `ADR-RULE` row gained one path-shape entry (`knowledge/skills/**`)
+    on top of PR A's `{knowledge/adr/ADR-*, AGENTS.md,
+    knowledge/project-overview.md, knowledge/anti-patterns/AP-*,
+    knowledge/MAINTENANCE.md}` set — not «unchanged». Reason:
+    skills are themselves rule-bearing artefacts (the skill is
+    where the PR-creation rule now lives), so amending an
+    existing skill or adding a new one is functionally
+    equivalent to an ADR amendment and the classifier must
+    fire on that path-shape. Without the addition, future
+    skill-only PRs (e.g. amending `pr-creation/SKILL.md`
+    itself, or adding a third skill) would have no match
+    and fall through to the no-label residual. Mechanism:
+    `path-startswith` rule on `knowledge/skills/`, identical
+    in shape to the existing `knowledge/anti-patterns/AP-*`
+    rule. Side-effect deliberately disclosed because PR A'
+    dogfood-classifies itself ADR-RULE via the union of
+    `{AGENTS.md, knowledge/project-overview.md,
+    knowledge/anti-patterns/AP-003, knowledge/skills/**}`,
+    and the documentation must not claim «unchanged» when
+    a path-shape was added — see Devin-Review comment on
+    `HANDOFF.md:289-291` at PR #17.
+  - Q-11 (anti-pattern catalogue → AP-001 / AP-003) — AP-003's
+    `applies_to:` and Linked-rule cross-references re-point from
+    AGENTS.md §PR Intent Classification to the skill; the
+    forward-acting role is unchanged.
+  - Q-14 (ADR-10 invariants) — I-2 («numbered MANDATORY
+    workflows are A-bucket residue») constrains the skill body
+    structure: tables are framed as **§Reference** (closed-enum
+    lookup the hook reads), not as numbered «§Step 1 do X»
+    orchestration. Decision points are explicitly judgement-bound
+    only.
+  - BACKLOG I-9 path (b) — closed by this PR with
+    `knowledge/skills/` naming (per R-24, not the I-9 wording's
+    `playbooks/`).
+- **Source:** [`knowledge/skills/pr-creation/SKILL.md`](../skills/pr-creation/SKILL.md),
+  [`AGENTS.md` §PR Intent Classification (moved-stub)](../../AGENTS.md#pr-intent-classification),
+  [`AGENTS.md` PR Checklist rule #12](../../AGENTS.md#pr-checklist),
+  [`knowledge/skills/README.md`](../skills/README.md),
+  [`borrow-roadmap-2026-05.md` §R-24](../research/borrow-roadmap-2026-05.md#r-24--filesystem-canonical-skill-store--safe-community-import),
+  [`BACKLOG.md` I-9 (closed)](../BACKLOG.md).
+  > **Note 2026-05-26 (PR A' expansion):** the AGENTS.md
+  > §PR Intent Classification moved-stub and PR Checklist rule
+  > #12 cited in this Source list were deleted later the same
+  > day when PR A' was expanded to absorb the full PR-creation
+  > rulebook — see the «PR A' expansion» amendment block
+  > below. The references above describe the **initial** PR A'
+  > shape (one stub + one load-directive rule); they no longer
+  > resolve against the head of AGENTS.md.
+
+### Amendment 2026-05-26 — PR A' expansion (absorb full PR-creation rulebook)
+
+- **Question (refined further):** Once PR A' externalised
+  §PR Intent Classification to the skill, the user observed
+  that AGENTS.md still hosted **all of the situational
+  PR-creation rules** — PR Checklist rules #1–#10, §PR
+  Description Style, the AI-Session trailer paragraph inside
+  §Development Workflow, plus the context-budget rule #11 whose
+  mechanical framing («≤ 100 k tokens, p90») under-stated the
+  goal-oriented working discipline it should encode. AGENTS.md
+  should retain **only** rules that fire on every session
+  (repo navigation, style, pre-flight, cross-project
+  anti-patterns, design invariants the session keeps loaded);
+  rules that fire only at PR creation belong in the skill.
+  **Where do the remaining PR-creation rules live, and how is
+  rule #11 reframed so the universal portion stays in AGENTS.md
+  while the PR-time declaration moves to the skill?**
+- **Chosen:** Move §PR Checklist rules 1-10 + §PR Description
+  Style + the AI-Session trailer paragraph into the skill;
+  refactor rule #11 into a new AGENTS.md section
+  **§Context-budget discipline** with a goal-oriented opening
+  paragraph (collect what is necessary, navigate the repo, read
+  only what moves the task forward) and the design invariant +
+  a..d mitigation list retained verbatim; replace rule #12
+  (load-directive) with a new AGENTS.md section
+  **§Loadable skills** — a two-row table mapping trigger →
+  skill (`pr-creation`, `repo-audit`). No stubs at the former
+  heading sites per user direction («i dont like stubs,
+  considering removing all of them (noise)»). Orphan citations
+  to «AGENTS.md PR Checklist rule #N», «AGENTS.md §PR
+  Description Style», «AGENTS.md §PR Intent Classification»
+  cleaned up in a separate cross-ref-sweep pass on a top-10
+  highest-impact list provided to the user.
+- **Rejected:**
+  - **(i) Numbering-stability stubs at each former §PR
+    Checklist rule (N1/N2 from the planning table).** Reason:
+    user explicitly rejected stubs as «noise»; preferred
+    paying the cross-ref-sweep cost once over carrying 10
+    one-liner stubs forever. Lesson: re-opens only if a tool
+    chain emerges that depends on stable AGENTS.md anchor
+    fragments (none currently exists; cross-refs are read by
+    humans / LLMs that resolve forward-pointers fine).
+  - **(ii) Sweep all 38 cross-refs in this same PR (N3).**
+    Reason: doubles the PR's review surface and couples the
+    structural pivot with a bulk find-replace. User chose to
+    do the sweep manually as a separate pass on the top-10
+    files. Lesson: re-opens if a future skill-externalisation
+    PR carries enough cross-refs (~100+) that manual cleanup
+    becomes more expensive than scripted bulk-replace.
+  - **(iii) Keep rule #11 in §PR Checklist inline alongside
+    #12 (C2 from the planning table).** Reason: rule #11's
+    universal core (collect-what-is-necessary; design invariant
+    ≤ 100 k; mitigations a..d) fires on every session's
+    design decisions, not only when a PR is being opened —
+    keeping it inside §PR Checklist hides the always-on
+    discipline behind a PR-time gate. Splitting it (universal
+    → new AGENTS.md section, PR-time → skill checklist item)
+    matches the universal-vs-situational classification that
+    drives the whole expansion. Lesson: re-opens if the
+    universal portion shrinks below a context-budget threshold
+    (~20 lines) where a dedicated AGENTS.md section is
+    over-shape for the content.
+  - **(iv) Move §Cross-project anti-pattern #4 (Prior-Art
+    mapping in every new ADR) to the skill (P2 from the
+    planning table).** Reason: anti-pattern #4 is a
+    forward-only architectural lesson from neighbouring
+    OSS-LLM stacks, not a PR-time gate. The §Cross-project
+    anti-patterns block is the canonical home of that genre;
+    splitting it weakens the lesson-coupling. User confirmed
+    P1 (anti-pattern #4 stays in AGENTS.md) «пока что»
+    (for now). Lesson: re-opens if anti-pattern #4 acquires
+    a checklist-like enforcement surface that wants to live
+    next to other PR-time gates.
+  - **(v) Keep §PR Description Style in AGENTS.md as universal
+    style guidance (S2 from the planning table).** Reason:
+    §PR Description Style is 100 % PR-body content (language
+    split, recommended structure, execution rules around bullet
+    discipline, canonical examples); the underlying universal
+    style rule (Russian prose for analytical content, English
+    for identifiers) already lives in §Working in This Repo
+    language-convention and in `knowledge/README.md`
+    §Conventions. §PR Description Style is the PR-time
+    application of that universal rule; it belongs in the
+    skill. Lesson: re-opens if the language-convention rule
+    fragments across additional artefacts (research notes,
+    inline review-replies, commit-message bodies) and needs a
+    single PR-applicable digest in AGENTS.md.
+  - **(vi) Keep AI-Session trailer rule in §Development
+    Workflow (W1 from the planning table).** Reason: the
+    trailer is per-commit, not per-PR — but in this project
+    every commit lands inside a PR-bearing branch (no direct
+    push to `main`), so «per-commit» reduces to «per-PR-commit»
+    operationally. The trailer is read by the post-merge audit
+    path, which is a PR-level concern. Moving the rule into
+    the skill keeps §Development Workflow scoped to branch /
+    commit-message style universals that fire even outside
+    PR sessions. Lesson: re-opens if a workflow emerges where
+    commits land outside a PR (e.g. direct push to a long-
+    running integration branch) and the trailer rule needs to
+    fire on those commits without loading the skill.
+- **Coupling:**
+  - Q-15 Amendment 2026-05-26 (initial) — this amendment
+    extends, not supersedes, the initial PR A'. The Level-1
+    INTENT classifier's `ADR-RULE` row keeps the
+    `knowledge/skills/**` path-shape addition from the initial
+    Amendment; the broader move (rules 1-10 + PR Description
+    Style + AI-Session trailer) does not change the classifier
+    shape, only the skill body. PR A' (expanded)
+    dogfood-classifies itself ADR-RULE via
+    `{AGENTS.md, knowledge/skills/pr-creation/SKILL.md,
+    HANDOFF.md, knowledge/llms.txt, knowledge/trace/exploration_log.md}`
+    — the AGENTS.md and skill paths fire the rule; mirror
+    files (HANDOFF.md, llms.txt ride-along, exploration_log)
+    do not independently change the intent.
+  - Q-14 (ADR-10 invariants) — I-2 («numbered MANDATORY
+    workflows are A-bucket residue») applies to the absorbed
+    §PR Checklist inside the skill: the section is framed as
+    a **closed-list verification gate**, not as numbered
+    «§Step 1 do X» orchestration. Each rule is independently
+    verifiable; the order is documentation convenience, not
+    workflow sequencing. The 4-question minimalism-first test
+    embedded in rule #10 retains its sub-structure because the
+    questions are decision-points, not steps.
+  - §Cross-project anti-patterns (anti-pattern #4 «Prior-Art
+    mapping in every new ADR») — stays in AGENTS.md per
+    rejected option (iv); the skill's §PR Checklist rule #9
+    (ADR PR triple) references the anti-pattern via the
+    underlying mechanism (PR description must surface the
+    prior-art axes), not by re-stating it.
+- **Source:** [`knowledge/skills/pr-creation/SKILL.md`](../skills/pr-creation/SKILL.md)
+  (expanded body: §PR Checklist / §PR Description Style /
+  §AI-Session trailer absorbed),
+  [`AGENTS.md` §Context-budget discipline](../../AGENTS.md#context-budget-discipline),
+  [`AGENTS.md` §Loadable skills](../../AGENTS.md#loadable-skills),
+  [`AGENTS.md` §Development Workflow](../../AGENTS.md#development-workflow)
+  (AI-Session trailer paragraph deleted; cross-link to skill
+  retained),
+  [`HANDOFF.md` §Process / rule changes 2026-05-26 PR A'](../../HANDOFF.md#current-state-as-of-2026-05-26)
+  (expanded scope disclosure).
