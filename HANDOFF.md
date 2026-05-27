@@ -375,6 +375,19 @@
     now reads the skill's §Reference tables as single source of
     truth; the hook's regex matches the skill's §Output format
     section, pinned by a snapshot test in PR B.
+  - **PR B / PR C promoted to formal BACKLOG rows** (same
+    PR A' commit, gap-fill pass before session close):
+    [`BACKLOG.md` §M-6](./knowledge/BACKLOG.md) tracks PR B (the
+    `pr_intent` classifier module + `prepare-commit-msg` /
+    `commit-msg` git hooks) and
+    [`BACKLOG.md` §M-7](./knowledge/BACKLOG.md) tracks PR C (the
+    `IntentGuard` `GuardMiddleware` on `BEFORE_TOOL_EXEC`). The
+    rows consolidate scope/contract-source/tests/blocked-on
+    prose that was previously scattered across this HANDOFF
+    bullet + the skill's §What the hook validates + the Q-15
+    exploration_log entries, giving the next-session agent a
+    single discoverable tracking surface. Contract source for
+    both rows is the skill, not AGENTS.md.
 
 - **Research note added 2026-05-25 (PR #14):**
   - [`research/fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md)
