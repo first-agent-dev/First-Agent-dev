@@ -1,643 +1,76 @@
 # HANDOFF.md — for the next agent / session
 
-> **Read this first starting a new session on this repository.**
+> **Read this first when starting a new session on this repository.**
+> Canonical routing surface: [`knowledge/llms.txt`](./knowledge/llms.txt)
+> §MUST READ FIRST. If the two disagree, llms.txt wins.
 
 ## 60-second bootstrap
 
-> The five steps below are a condensed bootstrap for agents that
-> land on `HANDOFF.md` first e.g. via plain `git clone`.
-> The canonical routing surface for LLM agents is
-> [`knowledge/llms.txt`](./knowledge/llms.txt) §MUST READ FIRST
-> (six files, in order). If the two disagree, llms.txt is canonical
-> — step 2 below reads it, which closes the gap.
+1. Follow [`knowledge/llms.txt`](./knowledge/llms.txt) §MUST READ FIRST (5 files, in order).
+2. Return here — read **§Current state**, then **§Next**.
 
-1. Read [`AGENTS.md`](./AGENTS.md) — repo conventions, PR
-   checklist, query routing.
-2. Read [`knowledge/llms.txt`](./knowledge/llms.txt) — one-fetch
-   index of every documentation file in this repo
-   ([llmstxt.org](https://llmstxt.org/) convention).
-3. Read [`knowledge/project-overview.md`](./knowledge/project-overview.md)
-   — what the project is, what v0.1 ships, what is non-goal.
-4. Read [`knowledge/adr/DIGEST.md`](./knowledge/adr/DIGEST.md) —
-   one-paragraph cheat-sheet all ADR's + amendments. Open the
-   per-ADR file only when DIGEST is insufficient (exact schema,
-   Consequences wording, full Amendment text).
-5. Check the **Current state** section.
+## § Current state
 
-- Now you have everything you need.
+Overwritten each session! Details live at the pointer, not here.
 
-## Current state (as of 2026-05-26)
+**As of:** 2026-05-27 — commit `6b965bc`
 
-  - [ADR-9](./knowledge/adr/ADR-9-llm-provider-client.md) —
-    LLM provider client contract (T-2 driver; **proposed
-    2026-05-22; revised same day** after pre-PR critical pass
-    closing 7 P0 logic-bug findings + 6 P1 design-gap findings;
-    **T-2 driver landed 2026-05-22** in branch
-    `devin/1779480362-t2-llm-provider-client` — 7 modules under
-    `src/fa/providers/` + `src/fa/observability/cost_table.py`
-    + 6 offline-only test modules (55 tests, ADR-7 §10 fake-
-    transport pattern); BACKLOG `M-4` closed by same PR;
-    `M-2` / `M-3` are already occupied by Wave-2 LoopGuard /
-    FailureClassifier / attempt_history and Wave-2 pre-tool
-    BlockerMiddleware + DSV YAML respectively, so the T-2 driver
-    took the next free milestone slot).
-    **Post-review fix-up 2026-05-22:** `logical_call_id` now
-    propagates on `ProviderChainExhaustedError` and
-    `ProviderRequestShapeError` (closes the §4 Tier-2 correlation
-    gap on both terminals); `ProviderChain` accepts a shared
-    `cooldowns` ledger so the §3 process-global cooldown invariant
-    holds across per-role chains; `ProviderChain.request()`
-    accepts an optional pre-generated `logical_call_id` for the
-    inner-loop runtime that fires `BEFORE_LLM_CALL`; YAML `null`
-    values in the `model:` / `family:` fields now coalesce to the
-    empty string (previously the loader stored the literal string
-    `"None"` and the family-mismatch validator emitted a
-    confusing warning).
-    **T-4 loader landed 2026-05-22** in branch
-    `devin/1779515293-t4-models-yaml-loader` —
-    `src/fa/providers/config.py` (~150 LOC) exports
-    `ModelsConfig` + `load_models_config(text, *, env=None)` +
-    `load_models_config_from_path(path=DEFAULT_MODELS_YAML_PATH,
-    *, env=None)`. The loader walks the §1 schema via
-    `yaml.safe_load`, calls `chain_from_mapping` per role, runs
-    `ChainConfig.validate(env)` to accumulate best-effort
-    warnings, and enforces ADR-2 §Amendment 2026-05-20 rule 1
-    via `check_eval_disjoint(...)` when planner / coder / eval
-    are all declared. Missing-file returns an empty
-    `ModelsConfig` (deny-by-default policy mirrored from
-    `fa.config`); the caller decides whether absence is fatal
-    for its workflow. New runtime dep `pyyaml>=6.0` (first YAML
-    lib add in the repo; the hand-rolled `_yaml_subset.py`
-    cannot safely round-trip the §1 nested lists-of-mappings).
-    BACKLOG `M-5` closed by same PR; M-1/M-2/M-3/M-4 already
-    occupied so the T-4 loader took the next free slot.
-    23 new offline tests added (584 total pass).
-    **T-4 review fix-up 2026-05-22:** Devin Review surfaced a
-    case-sensitive-bypass bug на the eval-vs-actor family-disjoint
-    check — a YAML `family: "DeepSeek"` (mixed case) for planner
-    and `family: "deepseek"` (lowercase) for eval would silently
-    pass `check_eval_disjoint`'s case-sensitive `==` comparison
-    because `chain_from_mapping` stored the raw YAML string
-    verbatim. **Root fix at the producer site:**
-    `src/fa/providers/chain.py` `chain_from_mapping` now normalises
-    `family` via `.strip().lower()` so every downstream consumer
-    (the disjoint check, the validator's slug-family mismatch
-    warning, cooldown logging, Tier-2 telemetry) sees a canonical
-    form. `.strip().lower()` is used rather than routing через
-    `fa.roles.extract_family` because the latter raises on any
-    family override not в `KNOWN_FAMILIES`, which would reject
-    custom / not-yet-known family names that are legal в v0.1.
-    The loader's `check_eval_disjoint` call site keeps explicit
-    `.strip().lower()` as defence-in-depth. 4 new regression
-    tests (588 total pass) covering both case + whitespace axes,
-    at both the `chain_from_mapping` producer and the loader's
-    call site.
-    **Option D + α** — per-role explicit provider chain with
-    cooldown в `~/.fa/models.yaml` (`{model, family,
-    chain: [{provider, slug, base_url, api_key_env,
-    cooldown_seconds?, httpx_retries?, timeout_seconds?,
-    extra_headers?}, ...]}`). Cross-PLATFORM transport-level
-    fallback for the SAME logical model identity (e.g.
-    OpenRouter → Fireworks → NVIDIA Build → Groq for
-    `deepseek-v3`) — distinct from cross-MODEL auto-escalation
-    (which ADR-2 §Decision forbids; family is extracted from the
-    logical model identity, not the provider platform, so the
-    family-disjoint check from ADR-2 + ADR-7 §Amendment 2026-05-20
-    rule 4 is preserved by construction; §7 reframed as user-
-    discipline + best-effort `extract_family()` warning because
-    slug strings vary legitimately across providers and exact-
-    match validator is infeasible). Per-`(provider, slug)` tuple
-    cooldown rows (5-min fixed default; **adaptive from RFC 9110
-    `Retry-After` header**: `expires_at = max(now +
-    cooldown_seconds, parsed_retry_after)`; in-memory only в
-    v0.1, process-global so two roles sharing the same `(provider,
-    slug)` share cooldown state). **Runtime 4xx split:** 401 / 403
-    = continue chain without cooldown (single-provider auth
-    issue, next entry might have correct credentials);
-    **400 / 422 = fail-fast** raising typed
-    `ProviderRequestShapeError` (FA-side client bug — sending
-    same body to next provider produces same 4xx, no point
-    wasting chain budget). Chain exhaustion raises typed
-    `ProviderChainExhaustedError` carrying the attempts list
-    (not bare `RuntimeError`). **Config-load validation** enforces
-    non-empty chain + non-empty `api_key_env` env-var (must
-    resolve to non-empty string at config-load, NOT surface as
-    confusing 401 at first call) + `https://` scheme (`http://`
-    accepted only for localhost gateway-delegation case + warning).
-    **Three-tier observability all keyed on shared `logical_call_id`
-    UUID4** wired through ADR-8 `AFTER_LLM_CALL`: tier-1 always-
-    on `llm_call` row (chain inline) + tier-2 `llm_chain_exhausted`
-    row (`terminal: "all_exhausted" | "request_shape"`) + tier-3
-    opt-in `FA_DEBUG_LLM_BODIES=1` → separate gitignored
-    `llm_bodies.jsonl` (each body carries the same
-    `logical_call_id` for correlation). **Cost + token accounting
-    source** spec'd: provider `usage` block via response
-    normalization + `src/fa/observability/cost_table.py` model+
-    provider price lookup; pricing-miss → `cost_usd: null` +
-    `cost_estimate_missing` warning (CostGuardian R-45 treats null
-    as zero plus flag). **Two-category adapter split:** shared
-    `OpenAICompatProvider` (~80 LOC) posts to
-    `<base_url>/chat/completions` and covers OpenRouter /
-    Fireworks / NVIDIA Build / Groq / GitHub Models[^github-pat] /
-    Modal / Together AI / + any future OpenAI-compatible platform
-    (add = 1 row в `PROVIDERS` dict + 1 YAML chain entry);
-    `AnthropicProvider` (~70 LOC) posts to `<base_url>/v1/messages`
-    (system-as-separate-field; tool use as content blocks). Each
-    adapter normalizes provider response into canonical
-    `ResponseInfo` (text / in_tokens / out_tokens / finish_reason
-    / tool_calls + provider-specific data parked in
-    `extras: dict[str, Any]`; observability reads only canonical
-    fields). Reasoning-model request-parameter translation seat
-    documented for future Q-6 amendment (per-model
-    `max_completion_tokens` / `reasoning_effort` / `thinking`
-    translation table inside each adapter). T-2 implementation
-    budget ~380 LOC across 6 files under `src/fa/providers/` +
-    ~30 LOC `src/fa/observability/cost_table.py`. **6 typed errors
-    in `errors.py`** (ConfigurationError, ReservedProviderError,
-    ProviderTransientError, ProviderAuthError,
-    ProviderRequestShapeError, ProviderChainExhaustedError).
-    Companion 9-source audit:
-    [`research/provider-client-survey-2026-05.md`](./knowledge/research/provider-client-survey-2026-05.md)
-    — 8 OSS sources (GoModel + LiteLLM + Bifrost + kronos +
-    dpc-messenger + 9router + Portkey + OmniRoute) independently
-    converge on the «per-provider-or-finer cooldown + ordered
-    fallback chain + isolated state» pattern; 3 anti-patterns
-    rejected (LiteLLM failure-percent threshold mis-fit for
-    UC1 low-volume traffic; Bifrost silent-drop reserved-key
-    re-cast as fail-fast `ReservedProviderError` at config-load;
-    OmniRoute TLS-fingerprint stealth rejected on ethical
-    grounds). **7 Q-N amendment slots reserved** (Q-1 persistent
-    cooldown across sessions, Q-2 per-entry httpx retry tuning +
-    pre-call `tiktoken` estimation, Q-3 round-robin within
-    non-cooled entries, Q-4 provider-wide cooldown when ≥2 slugs
-    cooling, Q-5 Anthropic prompt-caching preservation, Q-6
-    reasoning-model translation table, Q-7 per-model timeout
-    override). **Streaming chain semantics** flagged as v0.2
-    **redesign**, not amendment (mid-stream switching requires
-    buffering; defeats streaming's latency benefit; likely
-    v0.2 path = streaming-roles-bypass-chain). Decided via chat
-    2026-05-22 (Option A delegate-to-gateway / B1 no-resilience /
-    B2 minimum-no-fallback / B3 full-GoModel-lift /
-    C base_url-override-only rejected in `exploration_log.md`
-    Q-13).
+### Landmarks (what landed)
 
-  - [ADR-10](./knowledge/adr/ADR-10-deterministic-harness-invariants.md)
-    — Deterministic-harness invariants **I-1..I-5** (**proposed
-    2026-05-25**) keyed on the «verifiable hook results +
-    deterministic harness to control LLM» goal lens. Cross-cutting
-    slate every A-tier prompt-block, B-bucket validator, hook,
-    sandbox layer, and future `src/fa/` component that runs
-    before or after an LLM call MUST satisfy: **I-1**
-    single-source-of-truth classifier (hermes H3 at
-    `hermes-agent/agent/tool_guardrails.py:189-221`); **I-2**
-    numbered MANDATORY workflows are A-bucket residue (gortex GX3
-    — `CLAUDE.md` 11-step workflow co-existing with PreToolUse
-    hook denial); **I-3** stable `[CODE]` prefix on every
-    B-message (dpc D1 — five `stop_message()` implementations at
-    `dpc-messenger/.../guards.py:40-44 / 69-75 / 109-115 /
-    167-174 / 208-213`); **I-4** typed loop-state ownership /
-    loop OWNS, middleware READS (dpc D2 — `LoopState` dataclass
-    at `dpc-messenger/.../hooks.py:44-66`); **I-5** layer-boundary
-    fail-fast (rtk R8 `git_cmd_c_locale` at
-    `rtk/src/cmds/git/git.rs:41-48` + icm IC1 `MAX_TOPIC_LEN`
-    doc-comment at `icm/crates/icm-mcp/src/tools.rs:15-32`). Each
-    invariant carries the AGENTS.md §PR Checklist rule #10
-    4-question evidence cell inline, citing the input research
-    note
-    [`fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md)
-    §1.x / §3 / §3a line ranges verbatim (forcing function per
-    deep-dive §0c — line citations are the evidence chain).
-    **Companion landing in same PR:**
-    [`project-overview.md` §1.2.5](./knowledge/project-overview.md#125--compliance-by-construction-failure-observable)
-    «compliance-by-construction, failure-observable» per
-    deep-dive §6b placement decision (chosen over Pillar-5
-    alternative); §1.2.5 carries five KPI candidates — exit-code
-    contracts (rtk R1), schema validators with line-cited failure
-    (gbrain G1 + hermes H1), harness-derived weights from
-    LLM-emitted labels (icm IC2), observable failures via WARNING
-    surfaces (kronos K2 + the F1 partial-disjoint WARNING from
-    fork2 PR #13), named-invariant tests citing ADR clauses
-    (Layer-2 retrofit from fork2 PR #13 commit `93a5ee7`). Decided
-    via chat 2026-05-25 (Option A defer-into-ADR-7/8-amendments /
-    Option B one-micro-ADR-per-invariant / Option D
-    inline-into-AGENTS.md-PR-checklist rejected in
-    `exploration_log.md` Q-14; §1.2.5-vs-Pillar-5 placement
-    rejected as Pillar-5 in same block per deep-dive §6b).
-    **Follow-up work unlocked:** (1) I-5 FA-surface audit
-    (`fa` CLI parser / DSV YAML loader / chunker / BashGate) as
-    one focused PR per deep-dive §6a Q4 resolved «defer until
-    ADR-10 lands»; (2) A28 «LLM emits a number» single-pass audit
-    per §6a Q2; (3) `[CODE]` namespace formalisation + A23 lint
-    (tiny PR, pytest hook).
+| What | Date | Pointer |
+| :--- | :--- | :--- |
+| PR A' landed: full PR-creation rulebook → loadable skill; AGENTS.md −199 lines | 2026-05-26 | [`pr-creation/SKILL.md`](./knowledge/skills/pr-creation/SKILL.md) |
+| `knowledge/skills/` directory established; `repo-audit` migrated (closes I-9b) | 2026-05-26 | [`skills/README.md`](./knowledge/skills/README.md) |
+| PR B / PR C promoted to formal BACKLOG rows M-6, M-7 | 2026-05-26 | [`BACKLOG.md` §M-6, §M-7](./knowledge/BACKLOG.md) |
+| PR A: §PR Intent Classification (5 Level-1 intents) + anti-shallow-fix gate | 2026-05-25 | [`AGENTS.md` §Loadable skills](./AGENTS.md#loadable-skills) |
+| ADR-10 proposed — deterministic-harness invariants I-1..I-5 | 2026-05-25 | [`ADR-10`](./knowledge/adr/ADR-10-deterministic-harness-invariants.md) |
+| ABC synthesis deep-dive — 9-repo determinism patterns (ADR-10 input) | 2026-05-25 | [`fa-abc-synthesis-deep-dive`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md) |
+| ADR-9 T-2 driver + T-4 loader landed; 594 tests | 2026-05-22 | [`ADR-9`](./knowledge/adr/ADR-9-llm-provider-client.md), [`DIGEST.md`](./knowledge/adr/DIGEST.md) |
 
+### Gotchas (delete when resolved)
 
-- **Process / rule changes 2026-05-25 (PR A — `§PR Intent Classification`):**
-  - `§Change Classification` (REPAIR / RELAX / WORKAROUND as
-    top-level taxonomy on every module-touching PR) **superseded** by
-    [`AGENTS.md` §PR Intent Classification](./AGENTS.md#pr-intent-classification)
-    — five Level-1 intents (`RESEARCH / ADR-RULE / IMPLEMENT / FIX /
-    CHORE`) over a path-shape-deterministic classifier, Level-2 CLASS
-    sub-classifier (`REPAIR / RELAX / WORKAROUND`) retained only when
-    `INTENT: FIX`. The Level-1 classifier reads `git diff --cached
-    --name-status` and emits one of the five labels mechanically (no
-    LLM judgement on the bucket); cross-category resolution
-    `ADR-RULE > IMPLEMENT > FIX > RESEARCH > CHORE` handles slipped
-    multi-intent PRs with a WARNING. Forward-only from 2026-05-25.
-  - **AUDIT collapsed into RESEARCH** — audit-style sweeps producing
-    findings reports are a flavor of RESEARCH whose findings feed
-    downstream ADR-RULE / CHORE / FIX follow-up PRs; no separate
-    AUDIT intent label. Rationale in
-    [`exploration_log.md` Q-15](./knowledge/trace/exploration_log.md)
-    §Rejected (d).
-  - **Anti-shallow-fix gate** operationalised in
-    [`project-overview.md` §1.2.5](./knowledge/project-overview.md#125--compliance-by-construction-failure-observable)
-    as two MANDATORY clauses on every `INTENT: FIX` PR:
-    `DEGREE-OF-FREEDOM CLOSED:` + `DETERMINISTIC MECHANISM:`. The
-    latter MUST end with a `repo/file.ext:line` citation that
-    resolves against the staged tree OR explicitly be
-    `n/a (reason)` for FIX PRs with no agent-facing degree of
-    freedom (pure type-bug, refactor, dependency bump). Companion
-    anti-pattern entry [`AP-003-shallow-fix-no-mechanism.md`](./knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md)
-    catalogues the shallow-fix wrong-shape with a synthetic worked-
-    history example (forward-acting placeholder; replaced on first
-    real escalation captured by the PR B hook).
-  - **PR Checklist rule #5 (supersession-not-overwrite) deleted in
-    place** — slot preserved at line 181 with a `(DELETED 2026-05-25
-    …)` stub so rules 6..11 keep their numbers and existing
-    citations to «rule #5» are visible as orphans rather than
-    silently re-pointing. Orphan citations cleaned up incrementally
-    per user direction; archival mechanics for individual artefacts
-    still live in [`knowledge/MAINTENANCE.md`](./knowledge/MAINTENANCE.md).
-  - **Mechanisation lands in PR B** (`src/fa/hygiene/pr_intent.py` +
-    `prepare-commit-msg` + `commit-msg` git hooks) — pre-populates
-    the commit-msg buffer with the mechanically-derived INTENT line
-    plus per-intent required-field placeholders before the agent
-    composes (action-count cut from `AP-001` §Why-wrong-shape-
-    dominates lines 116–119), then validates all field-presence and
-    citation-resolution rules in one pass on `commit-msg`. PR C
-    (harness-side `IntentGuard` GuardMiddleware on `BEFORE_TOOL_EXEC`)
-    follows PR B; feasibility verified by the session-start audit
-    of `src/fa/inner_loop/hooks/base.py` (HookRegistry fully landed).
+| Gotcha | Pointer |
+| :--- | :--- |
+| ≈26 files cite «AGENTS.md PR Checklist rule #N» — orphan refs from PR A' skill extraction; top-10 priority list in pointer | [`exploration_log.md` Q-15](./knowledge/trace/exploration_log.md) |
+| Streaming chain semantics = v0.2 redesign, not v0.1 amendment | [`exploration_log.md` Q-13](./knowledge/trace/exploration_log.md) |
 
-- **Process / rule changes 2026-05-26 (PR A' — externalise PR-creation rulebook to loadable skill):**
-  - **PR A' scope expanded same day** (this session) from the
-    original «move §PR Intent Classification only» to «move the
-    entire PR-creation rulebook». AGENTS.md was retaining ~158
-    lines of PR-Checklist-rule prose + 57 lines of PR Description
-    Style + a 16-line AI-Session-trailer paragraph inside
-    §Development Workflow, all of which fire only at PR-creation
-    time. Moving them into the skill keeps AGENTS.md scoped to
-    the **universal session loadout** (repo navigation, style,
-    pre-flight discipline, cross-project anti-patterns,
-    context-budget discipline, query routing) — every rule that
-    remains in AGENTS.md fires on every session, not only at
-    PR-creation. Net shape:
-    - AGENTS.md: 529 → ~330 lines (−199, ~38 % smaller). No
-      stubs at the former heading sites — orphan citations to
-      «AGENTS.md PR Checklist rule #N» / «AGENTS.md §PR
-      Description Style» / «AGENTS.md §PR Intent Classification»
-      will be cleaned up by a separate cross-ref-sweep pass per
-      user direction.
-    - [`pr-creation/SKILL.md`](./knowledge/skills/pr-creation/SKILL.md):
-      297 → ~558 lines, now organised as §Trigger / §Reference /
-      §Decision points / §Output format / **§PR Checklist (NEW —
-      absorbs rules 1-10)** / **§PR Description Style (NEW)** /
-      **§AI-Session trailer (NEW)** / §What the hook validates /
-      §Escalation / §No mixed PRs / §Worked example / §Rationale.
-    - Rule #11 (context-budget ≤ 100 k) refactored into a new
-      AGENTS.md section **§Context-budget discipline** with a
-      goal-oriented opening paragraph (collect what is necessary,
-      navigate the repo, read only what moves the task forward)
-      and the design invariant + a..d mitigation list retained
-      verbatim. The PR-time declaration that a harness PR
-      adopted one of a..d lives in the skill's §PR Checklist as
-      an absorbed item; the universal discipline applies every
-      session.
-    - Rule #12 (load-directive) replaced by a new AGENTS.md
-      section **§Loadable skills** — a two-row table mapping
-      trigger → skill (`pr-creation`, `repo-audit`). Future
-      skills land as `knowledge/skills/<name>/SKILL.md` with a
-      row added here; AGENTS.md never re-absorbs skill bodies.
-  - **`§PR Intent Classification` (PR A's inline section)** was
-    the original externalisation target. Content is **mostly
-    carried verbatim** (Level-2 CLASS sub-classifier +
-    anti-shallow-fix gate clauses unchanged); the Level-1 INTENT
-    classifier's `ADR-RULE` row gained one path-shape entry
-    (`knowledge/skills/**`) so that future skill-only PRs
-    (amending `pr-creation/SKILL.md` itself, adding a third
-    skill, etc.) classify deterministically rather than falling
-    through to the no-label residual — skills are themselves
-    rule-bearing artefacts and the classifier must fire on that
-    path-shape. Rationale captured in
-    [`knowledge/trace/exploration_log.md`](./knowledge/trace/exploration_log.md)
-    Q-15 Amendment 2026-05-26 §Coupling under Q-15.
-  - **`knowledge/skills/` directory established** with self-
-    declaring
-    [`README.md`](./knowledge/skills/README.md) (scope, template,
-    skill-vs-prompt-vs-rule distinction) per
-    [`borrow-roadmap-2026-05.md` §R-24](./knowledge/research/borrow-roadmap-2026-05.md#r-24--filesystem-canonical-skill-store--safe-community-import).
-    The full filesystem-canon skill store (status-workflow,
-    draft→active gate, shared-overlay layering, safe community
-    import) lands later in Wave 3 — this PR ships the storage
-    substrate that R-24's runtime will load from.
-  - **`repo-audit-playbook.md` migrated** from
-    `knowledge/prompts/` to
-    [`knowledge/skills/repo-audit/SKILL.md`](./knowledge/skills/repo-audit/SKILL.md)
-    via `git mv` (history preserved); frontmatter normalised to
-    the skill schema (`status: active`, `triggers:`, `last-reviewed:`).
-    **Closes BACKLOG I-9 path (b).**
-  - **`project-overview.md §1.2.5` compressed** — anti-shallow-fix
-    gate subsection (45 lines) → 8-line summary + forward-pointer
-    to the skill. §1.2.5 retains the declarative principle
-    («the LLM never has a degree of freedom on a spec-bearing
-    decision») + ADR-10 I-1..I-5 invariants list + Five KPI
-    candidates; operational rules moved to the skill body.
-  - **AP-003 cross-references re-pointed** — `applies_to:`
-    frontmatter and Linked-rule section now cite
-    `knowledge/skills/pr-creation/SKILL.md` (plus AGENTS.md
-    §Loadable skills row as load-directive); the catalogue's
-    forward-acting role is unchanged.
-  - **Orphan cross-refs (≈ 38 files mentioning «AGENTS.md PR
-    Checklist rule #N», ≈ 13 files mentioning rule #5).** PR A'
-    does **not** sweep these — per user direction the cleanup
-    happens in a follow-up pass on the top-10 highest-impact
-    files: `knowledge/llms.txt` (9 hits),
-    `knowledge/MAINTENANCE.md` (7), `ADR-10` (6), `DIGEST.md`
-    (4), `ADR-7` (4), `HANDOFF.md` (3), `knowledge/README.md`
-    (3), `AP-003` (3), `research-briefing.md` (2),
-    `project-overview.md` (2). Residual ≈ 28 lower-priority
-    files (research notes, source-code rationale-comments,
-    `BACKLOG.md`, `exploration_log.md` historical entries,
-    `exploration_tree.yaml`, AP-002, `glossary.md`, `adr/README.md`,
-    ADR-2/6/8, `repo-audit/SKILL.md`, `architect-fa.md`) and the
-    duplicate folder `For cross-reference with ADR's/`.
-  - **PR B / PR C unchanged.** PR B (`src/fa/hygiene/pr_intent.py`)
-    now reads the skill's §Reference tables as single source of
-    truth; the hook's regex matches the skill's §Output format
-    section, pinned by a snapshot test in PR B.
-  - **PR B / PR C promoted to formal BACKLOG rows** (same
-    PR A' commit, gap-fill pass before session close):
-    [`BACKLOG.md` §M-6](./knowledge/BACKLOG.md) tracks PR B (the
-    `pr_intent` classifier module + `prepare-commit-msg` /
-    `commit-msg` git hooks) and
-    [`BACKLOG.md` §M-7](./knowledge/BACKLOG.md) tracks PR C (the
-    `IntentGuard` `GuardMiddleware` on `BEFORE_TOOL_EXEC`). The
-    rows consolidate scope/contract-source/tests/blocked-on
-    prose that was previously scattered across this HANDOFF
-    bullet + the skill's §What the hook validates + the Q-15
-    exploration_log entries, giving the next-session agent a
-    single discoverable tracking surface. Contract source for
-    both rows is the skill, not AGENTS.md.
+### Backlog (active milestones only)
 
-- **Research note added 2026-05-25 (PR #14):**
-  - [`research/fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md)
-    — ADR-10 input note: per-repo determinism-pattern deep-dive
-    across nine OSS LLM-agent projects under the goal lens
-    «verifiable hook results + deterministic harness to control
-    LLM». §0-§7 cover six projects (pi, gbrain, hermes-agent,
-    gortex, kronos-agent-os, dpc-messenger); §0a-§7a (Amendment R)
-    extends with rtk-ai/{rtk, grit, icm}. Ships ADR-10 invariant
-    candidates **I-1..I-5** (§3+§3a), 18 A/B-bucket entry
-    proposals **A12..A29 + B14..B23** (§4+§4a).
-    §0c jump-table at top constrains
-    targeted-read cost to ≤ 5 k tokens out of the doc's ≈ 19 k
-    total. Every finding cites `repo/file.ext:line` and quotes
-    3–10 line snippets verbatim. Next-session use: ADR-10 author
-    reads §0+§3+§4+§6 (action surface), drafts ADR-10 invariant
-    list keyed on I-1..I-5, then opens §1.x sections only when
-    a specific pattern ID is cited.
->
-> **Last updated:** 2026-05-26 by Devin session
-> [`a1514827169246168bfb7918c82179a7`](https://app.devin.ai/sessions/a1514827169246168bfb7918c82179a7)
-> — **PR A' expanded** (externalises the **full PR-creation
-> rulebook** to the
-> [`pr-creation` skill](./knowledge/skills/pr-creation/SKILL.md),
-> not only the §PR Intent Classification section). Net shape:
-> AGENTS.md shrinks from 529 → ~330 lines (−199, ~38 % smaller)
-> retaining only the **universal session loadout** (repo
-> navigation, style, pre-flight discipline, new §Context-budget
-> discipline, cross-project anti-patterns, new §Loadable skills
-> trigger table, query routing); the skill grows from 297 → ~558
-> lines absorbing §PR Checklist rules 1-10, §PR Description
-> Style, AI-Session trailer rule (three new sections), on top of
-> the already-externalised classifier + anti-shallow-fix gate.
-> No stubs at former heading sites — orphan cross-refs cleaned
-> by user in a separate pass. Same PR retains: `knowledge/skills/`
-> directory + `README.md`, `repo-audit-playbook.md` migration via
-> `git mv` (closes BACKLOG I-9 path (b)), `project-overview.md`
-> §1.2.5 compression, AP-003 cross-references re-pointed,
-> exploration_log Q-15 Amendment (initial) + Q-15 Amendment (PR A'
-> expansion), `knowledge/llms.txt` refresh. DIGEST.md is NOT
-> updated (PR A' touches no ADR file). PR B / PR C unchanged.
->
-> **Prior update:** 2026-05-25 by Devin session
-> [`a1514827169246168bfb7918c82179a7`](https://app.devin.ai/sessions/a1514827169246168bfb7918c82179a7)
-> — **PR A lands** (rule supersession) the `§PR Intent
-> Classification` section in
-> [`AGENTS.md`](./AGENTS.md#pr-intent-classification) (five Level-1
-> intents `RESEARCH / ADR-RULE / IMPLEMENT / FIX / CHORE` over a
-> path-shape-deterministic classifier; Level-2 CLASS `REPAIR / RELAX
-> / WORKAROUND` retained only when `INTENT: FIX`), the
-> anti-shallow-fix gate clauses in
-> [`project-overview.md` §1.2.5](./knowledge/project-overview.md#125--compliance-by-construction-failure-observable)
-> (mandatory `DEGREE-OF-FREEDOM CLOSED:` + `DETERMINISTIC MECHANISM:`
-> on every `INTENT: FIX` PR, with `repo/file.ext:line` citation
-> required for the mechanism field OR `n/a (reason)` for FIX PRs
-> with no agent-facing degree of freedom), and the forward-acting
-> anti-pattern catalogue entry
-> [`AP-003-shallow-fix-no-mechanism.md`](./knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md)
-> (synthetic worked-history; replaced on first real escalation
-> captured by PR B's hook). `§Change Classification` (old
-> top-level taxonomy) is superseded; PR Checklist rule #5
-> (supersession-not-overwrite) is deleted in place with slot
-> preserved so rules 6..11 keep their numbers — orphan citations
-> cleaned up incrementally. Rule-#9 trio shipped in same PR:
-> `exploration_log.md` Q-15 (full Chosen / Rejected with Reason +
-> Lesson schema; Options (a)..(h) covering the previously-locked
-> 6-intent draft, AUDIT-as-distinct-intent, free-text mechanism
-> field, PR-description-only enforcement, standalone §1.2.6,
-> seven-intent ADR-CREATE/AMEND split, single-intent no-CLASS,
-> bundled-mechanisation); HANDOFF.md §Current state bullet (this
-> entry); `knowledge/llms.txt` refreshed with AP-003 row +
-> `§Change Classification` routing line replaced with
-> `§PR Intent Classification` routing + line-count refresh for
-> AGENTS.md / project-overview.md / HANDOFF.md /
-> exploration_log.md. **DIGEST.md is NOT updated** because PR A
-> touches no ADR file (the rule lives in AGENTS.md, not
-> `knowledge/adr/`); rule #9 mandates DIGEST refresh only for ADR
-> add / amend PRs. Mechanisation tracked as **PR B** (next session
-> — `src/fa/hygiene/pr_intent.py` + `prepare-commit-msg` +
-> `commit-msg` git hooks) and **PR C** (harness-side `IntentGuard`
-> GuardMiddleware on `BEFORE_TOOL_EXEC` after PR B's classifier
-> module is reusable from the runtime). **Prior update:**
-> 2026-05-25 by Devin session
-> [`a1514827169246168bfb7918c82179a7`](https://app.devin.ai/sessions/a1514827169246168bfb7918c82179a7)
-> — **ADR-10 lands** (proposed 2026-05-25) at
-> [`knowledge/adr/ADR-10-deterministic-harness-invariants.md`](./knowledge/adr/ADR-10-deterministic-harness-invariants.md)
-> instantiating I-1..I-5 from the deep-dive's §3 + §3a as a single
-> cross-cutting slate, each invariant carrying inline rule #10
-> 4-question evidence with `§1.x` line ranges cited verbatim from
-> [`research/fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md).
-> Companion §1.2.5 «compliance-by-construction, failure-observable»
-> landed in same PR at
-> [`knowledge/project-overview.md` §1.2.5](./knowledge/project-overview.md#125--compliance-by-construction-failure-observable)
-> per deep-dive §6b placement decision (chosen over Pillar-5
-> alternative); §1.2.5 ships five KPI candidates (rtk R1 exit-code
-> contracts / gbrain G1 + hermes H1 schema validators with
-> line-cited failure / icm IC2 harness-derived weights from
-> LLM-emitted labels / kronos K2 + fork2 PR #13 F1 partial-disjoint
-> WARNING / fork2 PR #13 commit `93a5ee7` Layer-2 named-invariant
-> test). Rule-#9 trio shipped in same PR: `exploration_log.md`
-> Q-14 with full Chosen / Rejected / Lesson / Coupling / Re-eval-
-> trigger schema (Options A / B / D rejected); `DIGEST.md` ADR-10
-> row (one paragraph); HANDOFF.md §Current state ADR-10 bullet
-> (this entry's sibling above). `knowledge/llms.txt` updated with
-> ADR-10 row + line counts for files changed in this PR. **Prior
-> update:** 2026-05-25 by Devin session
-> [`47973b356db843919d2ae536514051c8`](https://app.devin.ai/sessions/47973b356db843919d2ae536514051c8)
-> — **PR #13** (T-4 `~/.fa/models.yaml` loader from ADR-9 §1 +
-> ADR-2 §Amendment 2026-05-20 + 2-b family-case-sensitive bypass
-> root fix at `chain.py:429` ported from `GITcrassuskey-shop/First-Agent`
-> PR #52 commit `e9c865d` + Layer-2 invariant test
-> `test_invariant_adr2_eval_family_disjoint_at_chainconfig_producer` +
-> F1 partial-config disjoint WARNING via `ModelsConfig.warnings` +
-> F2 DIGEST.md reword from «Amendment 2026-05-22» to «Implementation
-> landing» / «Implementation fix-up» framing per AP-001
-> REPAIR-vs-IMPLEMENTATION-LANDING; 5 commits + 1 review-fix-up
-> commit `bd88051`; **594 tests pass**) merged to `main`. **PR #14**
-> (this) lands
-> [`research/fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md)
-> as next-session ADR-10 input: 9-repo determinism-pattern deep-dive
-> (pi / gbrain / hermes-agent / gortex / kronos-agent-os /
-> dpc-messenger across §0-§7; rtk / grit / icm across §0a-§7a),
-> 5 ADR-10 invariant candidates (I-1..I-5), 18 A/B-bucket entry
-> proposals (A12..A29 + B14..B23), 9 open questions (1..5
-> unresolved per §6; 6..9 resolved per §6a), and the
-> **§1.2.5 placement decision** for «compliance-by-construction,
-> failure-observable» (§6b — chosen §1.2.5 over Pillar-5, see the
-> decision rationale in the doc). Doc ≈ 19 k words; §0c
-> navigation aid added at top for jump-table use (action surface
-> §0+§3+§4+§6 reads in ≤ 5 k tokens). Companion analysis docs
-> (`fa-drift-analysis-v2.md`,
-> `fa-abc-synthesis-deep-dive-rtk-ai-amendment.md`) are kept
-> user-side, not checked in. **Prior update:**
-> [`cf06efa54f3f49fb834438dac5532a0d`](https://app.devin.ai/sessions/cf06efa54f3f49fb834438dac5532a0d)
-> 2026-05-22 — **M2 llms.txt size buckets (RELAX) + AP-002** stacks on `main`
-> (PR #48 merged) and is the first **RELAX** dogfood of
-> [`AGENTS.md` §Change Classification](./AGENTS.md#change-classification)
-> introduced in M1. Replaces `(~N lines)` row format in
-> `knowledge/llms.txt` with hybrid `(BUCKET, ~N lines)` where
-> `BUCKET ∈ {S, M, L, XL}` at boundaries 300 / 800 / 1500 LOC. M2
-> measured baseline drift: 16 of 58 rows had `|actual − claimed|
-> > 10 LOC and 3 rows shifted bucket entirely (HANDOFF.md S→M,
-> DIGEST.md S→M, exploration_log.md S→L) — that drift is the
-> observed cost asymmetry catalogued as
-> [AP-002](./knowledge/anti-patterns/AP-002-stale-routing-index-counts.md).
-> M2 sweeps all 58 rows + amends
-> [`MAINTENANCE.md` §When adding a new file](./knowledge/MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge)
-> with the new row format + the boundary table + opens the second
-> catalog entry AP-002 + appends Q-12 to exploration_log with the
-> 4-bucket-hybrid `Chosen` block and three `Rejected` branches
-> («pure buckets, no number», «raw count only, status quo»,
-> «boundaries 400 / 800 / 1200 with 800-1200 gap»). No code
-> changes; docs-only RELAX. (Earlier 2026-05-21 session
-> [`7d46c801db0f4ac3ab4b80ef97a664c3`](https://app.devin.ai/sessions/7d46c801db0f4ac3ab4b80ef97a664c3)
-> — **PR-4 / Wave-3 stack #1** stacks on `main` (PR #26 merged)
-> and lands two R-Ns from
-> [`research/borrow-roadmap-2026-05.md`](./knowledge/research/borrow-roadmap-2026-05.md)
-> §3: **R-45 cost guardian**
-> (`src/fa/observability/cost_guardian.py` — single
-> `GuardMiddleware` that observes per-call cost at
-> `AFTER_TOOL_EXEC` and gates at `BEFORE_TOOL_EXEC` when the
-> accumulated USD rollup exceeds `RuntimeLimits.cost_budget_usd`;
-> tri-mode `None` unbounded / `0.0` observe-only / `> 0` hard cap;
-> dormant on baseline tools, wakes when T-2 emits `cost=…`
-> artifacts) and **R-19 eval-role family-disjoint** (role-layer
-> check complement to the existing R-29 hook-layer check;
-> `src/fa/roles.py` exposes a regex slug-to-family extractor +
-> `check_eval_disjoint` pure function; ADR-2 §Amendment 2026-05-20
-> rule 1 now has runtime enforcement). Same PR amends ADR-2 with
-> a role-layer sub-amendment, mirrors it in DIGEST.md, appends an
-> exploration_log block, refreshes `knowledge/llms.txt` for the
-> two new files, and adds the `cost guardian` / `family extractor`
-> glossary rows. 481 tests passing (+67 over PR-3; +29 from R-45 +
-> R-19 + cleanup, +8 fixed pre-existing mypy strict errors in
-> test files, +10 from four Devin-Review iteration commits — see
-> §Current state «PR-4 review-fix iteration» bullet below).
->
-> Previous notes:
-> 2026-05-21, refined 2026-05-22 same PR, M0a
-> follow-up 2026-05-22, M1 anti-pattern catalog 2026-05-22):** R-8
-> filesystem-canon writer is
-> operationally wired in the smoke CLI: `LearningObserver` registers
-> after `CostGuardian` in `fa inner-loop-smoke`. Smoke and the T-2
-> real runtime share the **single canon root**
-> `<workspace>/knowledge/trace/{codebase_map.json,gotchas.md}` —
-> smoke literally exercises the artifact path R-8 uses for cross-
-> session memory in production. `fa inner-loop-smoke --workspace .`
-> leaves the live repo's `git status` clean across repeated runs
-> because three forcing functions make the canon artifact
-> reproducible: (a) `LearningObserver.now="2026-05-21T00:00:00Z"`
-> pins the smoke `recorded_at` field (T-2 omits `now` → live wall-
-> clock for real provenance); (b) `record_gotcha` skips appends
-> when the file already ends with this exact section (fixed clock
-> ⇒ identical bytes ⇒ dedup; live clock ⇒ sections differ ⇒
-> append-only contract preserved); (c) `knowledge/trace/codebase_map.json`
-> is checked into the repo as a seed baseline byte-equal to the
-> smoke output, and `tests/test_cli.py::test_inner_loop_smoke_canon_snapshot_matches_seed_baseline`
-> fails CI on any drift. Discovery key is path-keyed
-> (`"{tool/slug}/{path}"` for `fs.*` calls, `"{tool/slug}/{call_id}"`
-> fallback) so repeated calls against different paths no longer
-> overwrite each other. ADR-7 §Sub-amendment 2026-05-21b documents
-> that no new `EventLog.kind` is added because R-8 writes
-> filesystem artifacts, not `events.jsonl` rows; observer write
-> failures — including the real `LearningObserver` →
-> `record_discovery` → `OSError` chain — still surface through
-> existing `hook_decision` rows as `observer_error_swallowed` in
-> `.fa/smoke-events.jsonl` (test coverage: generic
-> `_FailingObserver` regression + `LearningObserver`-specific
-> chmod-0o500 regression). The earlier `.fa/knowledge/trace/`
-> relocation in `5c1db0f` is reverted; it was a spec-bypassing
-> workaround that silenced the `git status` symptom while
-> decoupling «smoke proves R-8» from «R-8 writes cross-session
-> memory under `knowledge/trace/`» — see exploration_log Q-7
-> Rejected blocks.
->
-> **M1 anti-pattern catalog (2026-05-22, separate PR from main).**
-> `knowledge/anti-patterns/` directory opened with two files:
-> `README.md` (entry schema + Layer-1/2/3 detection model) and
-> `AP-001-spec-bypassing-workaround.md` (the wave-3 R-8 incident
-> verbatim — wrong shape = `.fa/` path relocation in `5c1db0f`,
-> right shape = M0a's three forcing functions, the cost-asymmetry
-> trap that produced the workaround under any rough heuristic, and
-> the three structural detection layers). Same PR adds
-> [`AGENTS.md` §Change Classification](./AGENTS.md#change-classification)
-> (Layer 1 — mandatory `CLASS: REPAIR | RELAX | WORKAROUND` +
-> `INVARIANT:` lines in module-touching PR descriptions and the
-> first module-touching commit), the named-invariant test
-> `tests/test_cli.py::test_invariant_adr7_r8_canon_root_is_knowledge_trace`
-> (Layer 2 — worked example, mechanical spec→test link for the R-8
-> canon-root invariant), and full doc sync (ADR-7 §Sub-amendment
-> 2026-05-21b worked-history note extended with the M1 cross-link,
-> DIGEST.md row extended, knowledge/README.md §Layout updated,
-> knowledge/llms.txt §Anti-pattern catalog added,
-> `knowledge/trace/exploration_log.md` Q-11 appended capturing the
-> three-layer decision with rejected alternatives «add rule
-> #N+1 to AGENTS.md», «mechanise CLASS-prefix in CI», «second-LLM
-> code review», «static linter for invariant strings»). Detector
-> personas (R-32 §What original spec) deferred until ≥3 catalog
-> entries exist. Layer 3 (review-time prompt in PR review carrier)
-> documentary-only in M1.
->
-> **M2 dogfood narrative (2026-05-22, this session).** The §Change
-> Classification discipline introduced by M1 is being exercised
-> for the first time: M2's PR opens with `CLASS: RELAX` +
-> `INVARIANT: knowledge/llms.txt rows carry size-bucket metadata
-> sufficient for batch-decision routing (bucket label + raw count)`,
-> and the catalog grows by one entry (AP-002) that documents the
-> drift the RELAX repairs. AP-002 § «Why the wrong shape
-> dominates» explicitly cross-links to AP-001's cost-asymmetry-
-> trap mechanism — the two entries are now the project's first
-> evidence that the catalog has compounding value (the second
-> entry references the first as a generic mechanism rather than
-> re-deriving it).
+| Slot | Scope | Status |
+| :--- | :--- | :--- |
+| M-6 | PR B: `pr_intent` classifier + git hooks | not started; contract locked in skill |
+| M-7 | PR C: `IntentGuard` middleware | blocked on M-6 |
+
+## § Next
+
+Priority-ordered. Completed items deleted, not struck through.
+
+1. **Orphan cross-ref sweep** — ≈26 files from PR A' extraction.
+   Top-10: `llms.txt` (9), `MAINTENANCE.md` (7), `ADR-10` (6),
+   `DIGEST.md` (4), `ADR-7` (4). Retarget «AGENTS.md PR Checklist
+   rule #N» → [`pr-creation/SKILL.md` §PR Checklist](./knowledge/skills/pr-creation/SKILL.md).
+2. **PR B** — `src/fa/hygiene/pr_intent.py` + `prepare-commit-msg` /
+   `commit-msg` hooks. Contract:
+   [`pr-creation/SKILL.md`](./knowledge/skills/pr-creation/SKILL.md).
+   Tracked: [`BACKLOG.md` §M-6](./knowledge/BACKLOG.md).
+3. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
+   number» audit; `[CODE]` namespace + A23 lint.
+4. **PR C** — `IntentGuard` GuardMiddleware on `BEFORE_TOOL_EXEC`.
+   After PR B. Tracked: [`BACKLOG.md` §M-7](./knowledge/BACKLOG.md).
+
+## Session Protocol
+
+**Rules for updating this file.** Apply at session close.
+
+1. **§Current state is overwritten.** Replace tables with current
+   truth. Delete resolved gotchas. Delete landed backlog rows.
+   Sync remaining backlog rows with `BACKLOG.md`.
+2. **§Next is rewritten.** Completed items deleted. New priorities
+   inserted at correct rank. Sources: `BACKLOG.md` + session work.
+3. **Landmarks capped at 10 rows.** When adding a row would exceed
+   10 drop the oldest. Dropped content is already canonical in
+   `DIGEST.md` + `exploration_log.md` + `git log`.
+4. **Update the `As of:` line** with current date and commit hash
+   or session ID.
+5. **Hard cap: ≤150 lines.** Over cap → drop Landmarks rows first,
+   then compress Gotcha descriptions. KEEP §Next items.
