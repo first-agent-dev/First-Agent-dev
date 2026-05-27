@@ -1,18 +1,27 @@
 ---
 name: pr-creation
 description: |
-  Externalised PR intent classification and anti-shallow-fix gate.
-  Load before opening any PR (including pure-doc PRs) to derive the
-  header lines the agent must emit on the PR description and the
-  first commit message body. Replaces the former §PR Intent
-  Classification section that lived in AGENTS.md until 2026-05-26.
+  Canonical PR-creation rulebook. Load before opening any PR (including
+  pure-doc PRs) to derive the header lines the agent must emit on the
+  PR description and the first commit message body, AND to verify the
+  full PR Checklist + PR Description Style + AI-Session trailer
+  discipline. Replaces the former §PR Intent Classification (2026-05-26,
+  PR A'), then absorbs §PR Checklist rules 1-10 + §PR Description Style
+  + AI-Session trailer rule (2026-05-26, PR A' expansion).
 status: active
 last-reviewed: 2026-05-26
 triggers:
   - "about to open a PR"
   - "writing a commit message for a PR-bearing commit"
   - "filling in INTENT / CLASS / INVARIANT header lines"
-relocated_from: AGENTS.md §PR Intent Classification (2026-05-26 — PR A')
+  - "verifying PR Checklist items 1-10 before opening"
+  - "composing PR description body or review reply"
+  - "adding AI-Session trailer to a Devin-driven commit"
+relocated_from: |
+  AGENTS.md §PR Intent Classification (2026-05-26 — PR A'); AGENTS.md
+  §PR Checklist rules 1-10 + §PR Description Style + AI-Session
+  trailer paragraph from §Development Workflow (2026-05-26 — PR A'
+  expansion).
 ---
 
 # Skill — PR creation
@@ -70,7 +79,7 @@ below.
 `knowledge/adr/DIGEST.md`, `knowledge/llms.txt` when ride-along)
 do NOT independently trigger any intent — they are updated in the
 same PR per
-[AGENTS.md PR Checklist rule #9](../../../AGENTS.md#pr-checklist)
+[§PR Checklist rule #9](#pr-checklist)
 (ADR PRs) or per maintenance rules, but the intent is set by the
 upstream change they mirror. If the diff is mirror-only with
 nothing upstream, the hook emits «mirror-only diff is unusual;
@@ -82,7 +91,7 @@ cleanup».
 | Label        | Meaning                                                                                                                                       |
 |--------------|------------------------------------------------------------------------------------------------------------------------------------------------|
 | `REPAIR`     | Restore a broken invariant verbatim. No ADR amendment needed.                                                                                  |
-| `RELAX`      | Weaken or change a strict invariant. MUST land an ADR amendment in the same PR per [AGENTS.md PR Checklist rule #9](../../../AGENTS.md#pr-checklist). |
+| `RELAX`      | Weaken or change a strict invariant. MUST land an ADR amendment in the same PR per [§PR Checklist rule #9](#pr-checklist). |
 | `WORKAROUND` | Temporary bypass of an invariant. MUST catalogue the pattern under [`knowledge/anti-patterns/`](../../anti-patterns/README.md) in the same PR and link the entry from the PR description; if the invariant is genuinely the wrong shape, escalate to `RELAX` instead. |
 
 ### INVARIANT line content (per intent)
@@ -207,6 +216,250 @@ PR B hook. The hook's regex matches against the shape above; a
 snapshot test in PR B pins the hook regex to this section so the
 two views cannot drift.
 
+## PR Checklist
+
+Verify before opening any PR. Each item has triggered wasted
+review cycles in the project's recent history. Until the
+`prepare-commit-msg` / `commit-msg` hook lands (PR B), the agent
+is responsible for self-checking against each rule.
+
+1. **Code fences have language tags.** No bare ` ``` ` at opening!
+   Underlying style rule lives in
+   [`AGENTS.md` §Working in This Repo](../../../AGENTS.md#working-in-this-repo);
+   this is the PR-time gate.
+2. **Frontmatter uses `compiled:`, not `date:`.** Schema:
+   [`knowledge/README.md` §Conventions](../../README.md#conventions).
+3. **File length within tier limits.**
+   - Summaries / overviews: **<1000 lines**.
+   - Deep-dive research: **<2000 lines**.
+   - Readability > size.
+4. **`compiled:` date ≥ all dates cited in text.** No temporal
+   impossibilities.
+5. *(DELETED 2026-05-25 — supersession-not-overwrite no longer
+   mandated as a PR Checklist rule. Slot retained so rules
+   6..10 keep their numbers; archival mechanics remain
+   per-artefact in
+   [`knowledge/MAINTENANCE.md`](../../MAINTENANCE.md).)*
+6. **PR description lists changed / new files as clickable
+   blob-URLs** (`https://github.com/<owner>/<repo>/blob/<branch>/<path>`),
+   at least for non-trivial files. Plain bullet text is
+   insufficient — reviewers should be able to open each file in
+   one click without copy-pasting paths. Use the head branch of
+   the PR, not `main`.
+7. **`knowledge/llms.txt` reflects reality.** If this PR adds,
+   removes, or renames a file under `docs/` or `knowledge/`,
+   follow the matching checklist in
+   [`knowledge/MAINTENANCE.md`](../../MAINTENANCE.md) (§When
+   adding a new file / §When archiving a research note / §When
+   superseding a non-research file). Pre-commit regenerator is
+   planned post-Phase S
+   ([`docs/workflow.md`](../../../docs/workflow.md) item 7).
+8. **Research notes from the research-briefing workflow start
+   with §0 Decision Briefing.** Notes under `knowledge/research/`
+   produced via
+   [`knowledge/prompts/research-briefing.md`](../../prompts/research-briefing.md)
+   MUST place a `## 0. Decision Briefing` section as the first
+   section after the frontmatter (before TL;DR / Scope). Each
+   recommendation in §0 follows the eight-field format (What /
+   Project-axis fit (A, B) / Goal-lens fit (C) / Cost / Verdict /
+   If UNCERTAIN-ASK / Alternative-if-rejected / Concrete first
+   step). Axes (A) "reduces session-start noise" and (B) "helps
+   LLM find context" are stable project-axis criteria evaluated
+   identically for every note; axis (C) "advances chosen
+   goal_lens" is the only per-session axis and references the
+   goal_lens elicited in Stage 1. §0 closes with a 7-column
+   summary table (R-N / Verdict / Project-fit / Goal-fit / Cost /
+   Alternative-if-rejected / User decision needed?). Frontmatter
+   MUST include a `goal_lens:` field capturing the one-sentence
+   research goal elicited at session start. The agent also posts
+   §0 verbatim in chat after handover. This rule applies to
+   **new** notes with `compiled: ≥ 2026-05-04`; older notes are
+   exempted and not retro-fitted.
+9. **New ADR PRs append to the exploration log and update a
+   DIGEST.md row.** Any PR that introduces or amends an accepted
+   ADR MUST append a block (or amendment block) to
+   [`knowledge/trace/exploration_log.md`](../../trace/exploration_log.md):
+   the question, the chosen option (`Chosen:`), each rejected
+   option with `Reason:` (why rejected at decision time) +
+   `Lesson:` (what new evidence would re-open the branch), and
+   `Coupling:` cross-question coupling when applicable. Schema
+   reference:
+   [`knowledge/README.md` §`trace/`](../../README.md#trace--exploration-log).
+   Rationale: the log is the cheap-read overlay agents use to
+   understand *why* alternatives were rejected without re-reading
+   every ADR end-to-end (origin: research note
+   [`ara-protocol-cross-reference-2026-05.md`](../../research/ara-protocol-cross-reference-2026-05.md)
+   §9 R-1). Log converted from YAML DAG to telegraphic markdown
+   2026-05-10 per Tsinghua NLAH finding (code → NL migration:
+   +16.8 pp accuracy, 9× faster, 97% fewer LLM calls on
+   `arXiv:2603.25723`). **In the same PR**, also update
+   [`knowledge/adr/DIGEST.md`](../../adr/DIGEST.md) — add a
+   one-paragraph row for a new ADR or extend the **Amendments**
+   bullet of the matching ADR's row. DIGEST.md is the
+   agent-reading cheat-sheet (one paragraph per ADR ≈ 80 lines
+   for all seven); stale rows defeat the purpose. **In the same
+   PR**, also cross-check
+   [`HANDOFF.md`](../../../HANDOFF.md) §Current state ADR list —
+   it is the human-readable mirror of the ADR slate (per
+   `HANDOFF.md` §Why this file exists) and drifts silently if
+   not enforced. If the PR adds an ADR, append a bullet under
+   §Current state *Architecture decisions*; if it amends one,
+   extend the existing bullet with an *Amendment YYYY-MM-DD*
+   clause. Same drift risk that motivates the DIGEST rule above
+   applies here.
+10. **Harness-component PRs cite minimalism-first evidence.** PRs
+    that introduce or amend a harness component (tool,
+    prompt-layer, retrieval-stage, executor, sandbox-rule) MUST
+    include in the description **explicit answers** to the
+    4-question minimalism-first test from
+    [`knowledge/project-overview.md` §1.2](../../project-overview.md#12-enforceable-principle--minimalism-first):
+
+    1. Research-evidence supporting the component's necessity
+       under UC1+UC3 single-user scope (paper / primary-source
+       post / eval-report citation).
+
+       *Recognised anti-patterns the citation must clear*
+       (forward-only from 2026-05-20):
+       - **«Prompt-diversity layer» / re-asking with paraphrased
+         prompts is NOT a valid harness component** — Nitarach
+         P-3 §4.4 finding
+         ([correlated-LLM-errors note §4.4](../../research/correlated-llm-errors-and-ensembling-2026-05.md))
+         shows prompt-diversity ensembles do not yield consistent
+         gains; gains are sample-by-sample noise, not signal. A
+         PR that proposes «retry with a re-worded prompt» MUST
+         instead cite the underlying mechanism (different
+         temperature, model family, retrieval scope) it would
+         actually exploit. The layer-name «prompt diversity» on
+         its own is rejected as under-specified.
+       - **«Spawn-recursion» sub-agent — sub-agent that can spawn
+         further sub-agents — is NOT allowed.** Cap
+         `SUBAGENT_MAX_STEPS ≤ 100`, sub-agent tool set MUST
+         exclude any `SpawnSubAgent` tool, sub-agent invocation
+         MUST use `generateText` (not streaming). Captured in
+         [ADR-7 §Amendment 2026-05-20](../../adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
+         rule 5 and
+         [BACKLOG.md I-2](../../BACKLOG.md#i-2--agent--sub-agents-for-context-load-reduction)
+         pending the BACKLOG I-2 implementation.
+    2. Open-source agent-stack precedent that **already** removed
+       or did not add a similar component, and the observed
+       result.
+    3. Concrete capability lost if the component is omitted, and
+       whether it can be replaced by an existing tool or config
+       setting.
+    4. **Could this step be a deterministic Python function
+       instead of an LLM call?** If the step is parsing,
+       formatting, aggregation, fan-out over a list, file lookup,
+       or any other operation that does not require model
+       judgement, a function is the correct default; an LLM call
+       is justified only when the step needs reasoning that
+       cannot be expressed deterministically. Subtraction
+       question per user idea 4 + ADR-7 prep input — the
+       inner-loop is the natural seat of step-as-function vs
+       step-as-LLM-call decisions; the rule captures the
+       discipline now so ADR-7 inherits it.
+
+    After UC5 landing, KPI-delta on a reproducible benchmark
+    replaces the 4-question test for harness components
+    measurably evaluated. Documentation-only or non-harness PRs
+    (research notes, README updates, lint fixes) are exempted.
+    This rule applies to **new** PRs from the merge of this PR
+    forward; older PRs are not retro-fitted.
+
+The PR-time context-budget declaration (the «design invariant»
+sub-rule of the former PR Checklist rule #11) lives in
+[`AGENTS.md` §Context-budget discipline](../../../AGENTS.md#context-budget-discipline)
+because it applies to every harness session, not only to
+PR-creation time. This skill cross-checks that any harness-PR
+description states which mitigation (a / b / c / d) the PR
+adopts; the rule itself is loaded once per session via AGENTS.md,
+not by this skill.
+
+## PR Description Style
+
+PR descriptions are the *first reading-pass* for both human
+review and LLM agents loading repo context. They should be
+readable end-to-end (no bullet-soup), and they should be cheap to
+parse for the same agents that wrote them.
+
+**Language split:**
+
+- **Default to Russian** for analytical prose, rationale, scope
+  discussion, retro-fit notes — this matches the convention
+  already in force for research notes
+  ([`knowledge/README.md` §Conventions](../../README.md#conventions))
+  and keeps the human-review path natural.
+- **Keep in English** any *identifier* whose precision matters
+  for later grep / cross-reference: file paths, frontmatter keys
+  (`compiled:`, `goal_lens:`), rule references («§PR Checklist
+  rule #N» — now skill-internal), full PR titles when
+  referencing other PRs (e.g. «PR #16 *docs: add
+  research-briefing workflow…*»), code blocks, schema examples,
+  verdict tokens (`TAKE` / `SKIP` / `DEFER` / `UNCERTAIN-ASK`).
+
+**Recommended structure:**
+
+One-paragraph what+why opening — Russian prose, what ships +
+motivating problem. No bullets here.
+Files (clickable blob-URLs) per [§PR Checklist rule
+#6](#pr-checklist) above.
+Design-rationale prose for any non-obvious choice — flowing
+paragraphs, not bullets, when explanation > 3 lines.
+Scope / ordering / retro-fit — short list (≤5 items) flagging
+merge-order, deferrals, forward-only clauses.
+Review & Testing Checklist for Human — GitHub PR template
+block; Russian for action items, English for technical
+referents.
+Notes — Russian; mention follow-up PRs and any session-
+continuity context. AI-Session trailer is appended automatically.
+
+**Execution Rules:**
+
+Develop complex lists into prose: If a sequence exceeds 5 items,
+requires 2-3 lines per item, write cohesive Russian paragraphs.
+Reserve bullet points strictly for short, scannable lists.
+Synthesize the commit history: Write a fresh, high-level summary
+and explicitly reference the commit SHA. Treat the PR body as an
+independent overview rather than a verbatim copy of the commit
+log.
+Only reference identifiers (like PRs or issues) that already
+exist and resolve perfectly at read-time.
+Inline review comments / replies follow the same language split:
+Russian prose for the response; keep the cited identifier (file
+path / line / suggestion code-block) in English.
+
+**Canonical examples:**
+
+- [PR #17 *docs: add knowledge/trace/exploration_tree.yaml backfilling ADR-1..6 (R-1)*](https://github.com/GrasshopperBoy/First-Agent-fork/pull/17)
+  — DAG backfill PR; description retro-rewritten in this style
+  as a demonstration before this convention merged.
+- [PR #18 *docs(AGENTS): add §PR Description Style — Russian
+  prose + English identifiers*](https://github.com/GrasshopperBoy/First-Agent-fork/pull/18)
+  — original landing PR; self-demonstrating description.
+
+## AI-Session trailer
+
+When a commit is driven by a Devin (or other LLM-agent) session,
+add an `AI-Session: <session-id>` trailer to the commit message.
+This preserves the link from a squash-merged commit back to the
+originating session for audit and re-entry. Pattern lifted from
+`codedna` (see
+[`research/agentic-memory-supplement.md` §3](../../research/agentic-memory-supplement.md)).
+
+Every commit within a PR-bearing branch carries the trailer
+(`AI-Session:` is per-commit, not per-PR); the trailer is read by
+the post-merge audit path. In this project all commits land
+inside a PR (no direct push to `main`), so in practice every
+LLM-driven commit gets the trailer. Example:
+
+```text
+docs: add ADR-N on <topic>
+
+Body...
+
+AI-Session: 2f45f66ef9ff45eab03161ecef165c0e
+Co-Authored-By: <human> <email>
+```
+
 ## What the hook validates
 
 Once the `prepare-commit-msg` / `commit-msg` hook lands (PR B),
@@ -286,12 +539,20 @@ the difference reviewable in two seconds.
 
 The previous §Change Classification rule fired at PR-description
 time — post-code, post-diff, post-commit-message — which is the
-*last* gating point and the weakest. Moving the gate to
+*last* gating point and the weakest; moving the gate to
 `prepare-commit-msg` (pre-description, pre-commit) cuts
 action-count: the agent never has the freedom to choose the
 wrong-shape header, because the right-shape skeleton is already
-in the buffer when they start typing. Externalising the rule
-from AGENTS.md to this skill keeps AGENTS.md small (~150 lines
-smaller), makes the rule loadable on-demand per ADR-10 §1
-context-budget invariant, and gives the PR B hook a single
-parsing target that matches what the agent sees.
+in the buffer when they start typing. Externalising the rule —
+along with §PR Checklist rules 1-10, §PR Description Style, and
+the AI-Session trailer paragraph — from AGENTS.md to this skill
+keeps AGENTS.md scoped to the universal session loadout (repo
+navigation, style, pre-flight discipline, design invariants the
+session must keep loaded at all times) and makes the PR-creation
+rulebook loadable on-demand per ADR-10 §1 context-budget
+invariant. The skill gives the PR B hook a single parsing target
+that matches what the agent sees; the PR-time portion of the
+context-budget invariant (mitigation declaration in the PR
+description) is the only cross-cutting check kept dual-located
+because the underlying design rule is always-loaded in
+[`AGENTS.md` §Context-budget discipline](../../../AGENTS.md#context-budget-discipline).
