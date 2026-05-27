@@ -1272,3 +1272,179 @@
   §3 + §3a (invariant authoring), §4 + §4a (bucket-entry
   cross-refs), §6 + §6a + §6b (open-question state +
   placement decision).
+
+## Q-15 — How does FA classify the intent of a PR, and how does it enforce the anti-shallow-fix gate? (2026-05-25)
+
+- **Closed by:** [`AGENTS.md` §PR Intent Classification](../../AGENTS.md#pr-intent-classification)
+  (5-intent closed enum + Level-2 CLASS sub-classifier scoped to
+  `INTENT: FIX`) + [`project-overview.md` §1.2.5 anti-shallow-fix
+  gate](../project-overview.md#125--compliance-by-construction-failure-observable)
+  (declarative principle) + [`AP-003-shallow-fix-no-mechanism.md`](../anti-patterns/AP-003-shallow-fix-no-mechanism.md)
+  (anti-pattern catalogue with synthetic worked-history; forward-
+  acting placeholder until first real escalation). Mechanisation
+  lands as PR B (`src/fa/hygiene/pr_intent.py` + `prepare-commit-msg`
+  + `commit-msg` git hooks; tracked in `HANDOFF.md`).
+- **Coupling:** Q-14 (ADR-10 deterministic-harness invariants — I-1
+  single-source-of-truth classifier is the structural principle the
+  PR-intent classifier instantiates; §1.2.5 the anti-shallow-fix
+  gate lives in is the same §1.2.5 ADR-10 §1.2.5-companion landed);
+  Q-7 (ADR-7 inner-loop & tool-registry — PR C will land a
+  harness-side `IntentGuard` GuardMiddleware on `BEFORE_TOOL_EXEC`
+  after PR B's classifier module is reusable from the runtime);
+  Q-8 (ADR-8 HookRegistry — same; the IntentGuard plugs into the
+  GuardMiddleware seat verified landed in the audit pass at session
+  start); AP-001 (cost-asymmetry-trap rationale shared verbatim
+  — AP-003 is the forward-acting sibling); AP-002 (routing-index
+  drift — `knowledge/llms.txt` refresh required per PR Checklist
+  rule #7 because this PR adds AP-003 and rewrites two §-anchors).
+- **Chosen:** **Option E** — two-level taxonomy with five Level-1
+  intents (`RESEARCH / ADR-RULE / IMPLEMENT / FIX / CHORE`) and a
+  Level-2 CLASS sub-classifier (`REPAIR / RELAX / WORKAROUND`)
+  scoped to `INTENT: FIX` only. The anti-shallow-fix gate ships as
+  a §1.2.5 operational clause (not a standalone §1.2.6) with two
+  mandatory clauses for FIX PRs (`DEGREE-OF-FREEDOM CLOSED:` +
+  `DETERMINISTIC MECHANISM:`), the latter requiring a
+  `repo/file.ext:line` citation OR explicit `n/a (reason)`.
+  Mechanisation lands in a separate PR B (`src/fa/hygiene/
+  pr_intent.py` + `prepare-commit-msg` + `commit-msg` hooks) so
+  PR A is doc-only (six files, no `src/` touches) and lints
+  immediately. AUDIT collapses into RESEARCH (no separate
+  intent label; audit-style sweeps are read-only research that
+  feed downstream ADR-RULE or CHORE follow-up PRs); rationale
+  recorded in Rejected (d) below.
+- **Rejected:**
+  - **(a) Keep `§Change Classification` (REPAIR / RELAX /
+    WORKAROUND as top-level taxonomy) and add an
+    `ADR-CREATE` exception clause.** Reason: the existing
+    `§Change Classification` rule is a *fix-relation* taxonomy
+    (how a change relates to a pre-existing invariant), not an
+    *intent* taxonomy (what kind of work the PR is doing). Adding
+    an `ADR-CREATE` exception compounds the category error —
+    «ADR-CREATE» does not relate to any pre-existing invariant
+    because the invariant is what the ADR introduces. The PRs that
+    already shipped under the existing rule shipped either with
+    strained reasoning (PR #15 forced `RELAX` for what was
+    structurally `ADR-RULE` work) or without the header at all
+    (PRs #13 / #51). Lesson: re-opens if a future taxonomy-
+    clarifier proves cleaner than the two-level split (e.g. a
+    single label encoding both intent and fix-relation
+    deterministically) — not anticipated under UC1 + UC3
+    single-user scope.
+  - **(b) Land the anti-shallow-fix gate as a standalone
+    `§1.2.6 anti-shallow principle`** (sibling to §1.2.5
+    compliance-by-construction). Reason: the gate IS the
+    operational reading of «the LLM never has a degree of
+    freedom on a spec-bearing decision» — duplicating it in §1.2.6
+    would create two principles saying the same thing, which is an
+    I-1 single-source-of-truth violation. The gate is the
+    operational *clause* of §1.2.5, not a new principle. Lesson:
+    re-opens if §1.2.5 grows enough orthogonal sub-clauses (≥3
+    independent operational rules with distinct decision
+    procedures) that splitting them improves readability — not
+    expected until UC5 measurability lands and the five KPI
+    candidates each get an operational clause of their own.
+  - **(c) PR-description-only enforcement (no `prepare-commit-msg`
+    hook).** Reason: PR descriptions are post-hoc prose, written
+    after code is complete. The action-count cost of «remember to
+    write the four-line header AFTER writing the code» is the
+    exact failure mode
+    [`AP-001` §Why-wrong-shape-dominates](../anti-patterns/AP-001-spec-bypassing-workaround.md#why-the-wrong-shape-dominates)
+    lines 116–119 catalogue: «action-count drift dominates rule-
+    count drift in weaker LLMs; the structural fix must reduce
+    the number of actions the LLM has to take to surface the
+    contradiction, not add to it.» A pre-commit hook that pre-
+    populates the buffer before the agent composes is an
+    action-count cut, not a rule addition. Lesson: re-opens if
+    pre-commit infrastructure becomes a maintenance burden (e.g.
+    the hook itself drifts from the rule it mechanises) — at
+    which point the right fix is to make the hook generate from
+    the rule file's frontmatter, not to drop the hook.
+  - **(d) Keep `AUDIT` as a distinct sixth intent in the enum
+    (alongside RESEARCH).** Reason: the path-shape that fires
+    AUDIT (additions to `knowledge/research/*.md`) is identical
+    to the path-shape that fires RESEARCH — `git diff --cached
+    --name-status` cannot mechanically tell them apart. Three
+    sub-options were considered: (A1) introduce
+    `knowledge/audit/` as a separate directory making the
+    classifier path-decisive but adding a new directory
+    convention; (A2) hook offers RESEARCH as default and the
+    agent overrides to AUDIT when applicable — relies on agent
+    override per AP-001 §Why-wrong-shape-dominates;
+    (A3) drop AUDIT entirely and let audit-style sweeps live
+    under RESEARCH with the semantic distinction maintained in
+    the PR description prose. **User chose A3** with the framing
+    «audit IS research done on current repo state for finding
+    gaps, logic errors, and other bugs for fix or cleanup via
+    adr-rule change intent or chore» — audit is therefore a
+    *flavor* of research whose findings feed downstream
+    ADR-RULE / CHORE / FIX follow-up PRs, not a distinct
+    PR-intent category. Five-intent enum is the result. Lesson:
+    re-opens if AUDIT-style PRs grow a distinct downstream
+    workflow that the classifier should route differently from
+    RESEARCH PRs (e.g. mandatory follow-up issue creation) — at
+    which point AUDIT graduates back into its own intent with the
+    A1 directory convention as the path-shape discriminator.
+  - **(e) `DETERMINISTIC MECHANISM:` as a free-text one-sentence
+    field without `repo/file.ext:line` citation requirement.**
+    Reason: presence-only check accepts meaningless values like
+    `mechanism: fix` or `mechanism: handle the bug`. The
+    `prepare-commit-msg` hook can verify field presence but not
+    field semantic meaning. The minimal-cost tightening that
+    closes the loophole is the `repo/file.ext:line` citation
+    requirement — the hook reads the staged blob and verifies
+    the file exists and the line number is in bounds. Cheap,
+    mechanical, deterministic. `n/a (reason)` remains acceptable
+    for FIX PRs with no agent-facing degree of freedom (pure
+    type-bugs, refactors, dependency bumps). **User chose
+    Option B1** (require `path:line` OR `n/a (reason)`).
+    Lesson: re-opens if real FIX PRs systematically struggle to
+    cite a producer-site `path:line` (e.g. the fix is genuinely
+    multi-file and no single line carries the contract) — at
+    which point the rule grows a `path:line1, path:line2`
+    multi-citation form, not a free-text relaxation.
+  - **(f) Seven-intent taxonomy with separate `ADR-CREATE` and
+    `ADR-AMEND` labels** (drafted earlier in this session before
+    the user's six-intent counter-proposal). Reason: the
+    distinction between «introduce a new ADR» and «amend an
+    existing ADR» is captured by the AGENTS.md PR Checklist rule
+    #9 (which fires identically for both shapes — append to
+    exploration_log, update DIGEST row, update HANDOFF bullet).
+    Two labels for one mechanical workflow is rule-count drift
+    without action-count payoff. Unified `ADR-RULE` cleanly
+    covers both shapes plus AGENTS.md rule changes plus
+    project-overview rule changes plus AP-* catalogue
+    additions. Lesson: re-opens if amendment PRs grow a
+    materially different mechanical workflow from create PRs
+    (e.g. amendments require linking the original ADR's
+    `proposed` PR, creates do not) — at which point splitting
+    the label is correct because the workflows have diverged.
+  - **(g) Single-intent classifier (no Level-2 CLASS sub-
+    classifier; delete REPAIR / RELAX / WORKAROUND entirely).**
+    Reason: REPAIR / RELAX / WORKAROUND captures a real
+    fix-relation distinction that the anti-shallow-fix gate
+    needs — the gate downgrades a FIX PR from REPAIR to
+    WORKAROUND when the agent cannot name a non-tautological
+    mechanism. Deleting the sub-classifier destroys the
+    downgrade target and forces AP-003 to grow its own escalation
+    taxonomy. Lesson: re-opens only if the anti-shallow-fix gate
+    is itself dropped (e.g. UC5 measurability makes the
+    REPAIR-vs-WORKAROUND distinction observable from KPI data,
+    obsoleting the prose taxonomy).
+  - **(h) Mechanisation in the same PR as the rule (no
+    separate PR B).** Reason: PR A is doc-only (six files, no
+    `src/` touches) and lands immediately with no CI risk. PR B
+    is code (`src/fa/hygiene/pr_intent.py` + tests + git hooks
+    registration) and has its own CI surface (unit tests +
+    hook integration tests). Bundling forces a single PR that
+    blocks on the slowest signal; splitting lets the rule land
+    first and the mechanisation follow without coupling the
+    review surfaces. Lesson: re-opens if the rule and the
+    mechanisation drift between PR A merge and PR B merge (e.g.
+    a third PR amends the rule before B lands) — at which point
+    the right fix is to compress the timeline, not bundle the
+    PRs.
+- **Source:** [`AGENTS.md` §PR Intent Classification](../../AGENTS.md#pr-intent-classification),
+  [`project-overview.md` §1.2.5 anti-shallow-fix gate](../project-overview.md#125--compliance-by-construction-failure-observable),
+  [`AP-003-shallow-fix-no-mechanism.md`](../anti-patterns/AP-003-shallow-fix-no-mechanism.md),
+  [`AP-001` §Why-wrong-shape-dominates](../anti-patterns/AP-001-spec-bypassing-workaround.md#why-the-wrong-shape-dominates)
+  (cost-asymmetry framing AP-003 inherits).

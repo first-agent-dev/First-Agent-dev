@@ -178,7 +178,7 @@ Verify before opening a PR. Each item has triggered wasted review cycles.
    - Deep-dive research: **<2000 lines**.
    - Readability > size
 4. **`compiled:` date ≥ all dates cited in text.** No temporal impossibilities.
-5. **Supersession, not overwrite.** Mark old file `> **Status:** superseded by <link>`. Keep for audit. Full archival checklist (which files to update in the same PR) lives in [`knowledge/MAINTENANCE.md`](./knowledge/MAINTENANCE.md).
+5. **(DELETED 2026-05-25 — supersession-not-overwrite no longer mandated as a PR Checklist rule.** Slot preserved to keep numbers 6..11 stable; orphan citations to «rule #5» cleaned up incrementally per user direction. Archival mechanics still apply on a per-artefact basis — see [`knowledge/MAINTENANCE.md`](./knowledge/MAINTENANCE.md) when archiving research notes or non-research files.)
 6. **PR description lists changed/new files as clickable blob-URLs**
    (`https://github.com/<owner>/<repo>/blob/<branch>/<path>`), at
    least for non-trivial files. Plain bullet text is insufficient —
@@ -390,44 +390,162 @@ strengthen it.
    [`research/dpc-messenger-inspiration-2026-05.md`](./knowledge/research/dpc-messenger-inspiration-2026-05.md)
    §6 AP8.
 
-## Change Classification
+## PR Intent Classification
 
-Forward-only from 2026-05-22 (PR opening this section).
-Module-touching PRs and the first module-touching commit on a branch
-MUST open the PR description (and the commit message body) with two
-explicit lines:
+Forward-only from 2026-05-25 (PR opening this section). Supersedes
+the former §Change Classification (REPAIR / RELAX / WORKAROUND as a
+top-level taxonomy applied to every module-touching PR).
+REPAIR / RELAX / WORKAROUND is retained as a **Level-2 sub-classifier**
+scoped to `INTENT: FIX` only.
+
+Every PR — including pure-doc PRs — MUST open the PR description AND
+the first commit message body with two or three header lines,
+mechanically derived from the staged-paths shape:
 
 ```text
-CLASS: REPAIR | RELAX | WORKAROUND
-INVARIANT: <one sentence — what the module promises>
+INTENT: <RESEARCH | ADR-RULE | IMPLEMENT | FIX | CHORE>
+[CLASS: <REPAIR | RELAX | WORKAROUND>]   ← only when INTENT: FIX
+INVARIANT: <one sentence | n/a>
 ```
 
-- **REPAIR** — restore the module's existing invariant. No ADR
-  amendment needed.
-- **RELAX** — change the module's invariant. MUST land an ADR
-  amendment in the same PR per §PR Checklist rule #9.
-- **WORKAROUND** — bypass the module to avoid the symptom. MUST
-  catalogue the pattern under
-  [`knowledge/anti-patterns/`](./knowledge/anti-patterns/README.md)
-  in the same PR and link the entry from the PR description; if the
-  invariant is genuinely the wrong shape, escalate to RELAX instead.
+For `INTENT: FIX` PRs, the description ALSO carries the
+**anti-shallow-fix gate** clauses from
+[`project-overview.md` §1.2.5](./knowledge/project-overview.md#125--compliance-by-construction-failure-observable):
 
-**Rationale (≤ 3 sentences).** Weaker OSS LLMs default to
-WORKAROUND because the wrong shape passes surface metrics with a
-small diff while the broken invariant is invisible until someone
-re-reads the ADR. Forcing the LLM to name CLASS + INVARIANT before
-the diff lands makes the contradiction visible to the author
-mid-write and to the reviewer in two seconds — an *action-count*
-mitigation, not a *rule-count* one. Worked-history of the pattern
-this section is forcing-against:
-[`knowledge/anti-patterns/AP-001`](./knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md).
+```text
+DEGREE-OF-FREEDOM CLOSED: <one sentence | n/a (reason)>
+DETERMINISTIC MECHANISM: <one sentence ending with `repo/file.ext:line` | n/a (reason)>
+```
 
-**Scope.** Module-touching PRs are PRs that change behaviour in
-`src/fa/` or add / amend an ADR. Pure documentation PRs (research
-notes, glossary, README) are exempt. PRs touching tests-only are
-exempt unless the test enforces an invariant that did not exist
-before — in which case the PR is module-touching by extension and
-declares accordingly.
+### Level 1 — INTENT (closed enum; classifier is path-shape-deterministic)
+
+The classifier reads `git diff --cached --name-status` and emits one
+of five labels. Every label has a mechanical match rule — no LLM
+judgement on which bucket the PR is in.
+
+| Label       | Path-shape that fires it                                                                                                                                  |
+|-------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `RESEARCH`  | Sole adds under `knowledge/research/*.md`. No `src/`, no `tests/`, no rule files. Includes audit-style sweeps (read-only repo audits producing findings). |
+| `ADR-RULE`  | ANY of the following in the diff: `knowledge/adr/ADR-*`, `AGENTS.md`, `knowledge/project-overview.md`, `knowledge/anti-patterns/AP-*`, `knowledge/MAINTENANCE.md`. |
+| `IMPLEMENT` | `src/fa/**` and/or `tests/**` with status `A` (added) ONLY — first-time work realising an accepted ADR-RULE contract.                                     |
+| `FIX`       | `src/fa/**` and/or `tests/**` with status `M` (modified) or mixed `A`+`M` — behaviour change interacting with a pre-existing invariant. Requires Level-2 CLASS. |
+| `CHORE`     | Sole touches in `{pyproject.toml, .pre-commit-config.yaml, .github/**, knowledge/llms.txt}`. Non-semantic; no logic or rule changes.                       |
+
+**Cross-category resolution.** When a single diff spans multiple
+labels (which §No mixed PRs below forbids but a slipped PR may still
+produce), the classifier picks the highest-impact label per:
+
+```text
+ADR-RULE  >  IMPLEMENT  >  FIX  >  RESEARCH  >  CHORE
+```
+
+The hook emits a WARNING «multi-intent diff detected; consider
+splitting per §No mixed PRs» — see [§No mixed PRs](#no-mixed-prs)
+below, which is the canonical home of the single-concern discipline.
+
+**Mirror files** (`HANDOFF.md`, `knowledge/trace/exploration_log.md`,
+`knowledge/adr/DIGEST.md`, `knowledge/llms.txt` when ride-along) do NOT
+independently trigger any intent — they are updated in the same PR per
+PR Checklist rule #9 (ADR PRs) or per maintenance rules, but the
+intent is set by the upstream change they mirror. If the diff is
+mirror-only with nothing upstream, the hook emits «mirror-only diff is
+unusual; pick the dominant upstream intent or commit as `CHORE` if
+pure cleanup».
+
+### Level 2 — CLASS (only when INTENT: FIX)
+
+| Label        | Meaning                                                                                                                                       |
+|--------------|------------------------------------------------------------------------------------------------------------------------------------------------|
+| `REPAIR`     | Restore a broken invariant verbatim. No ADR amendment needed.                                                                                  |
+| `RELAX`      | Weaken or change a strict invariant. MUST land an ADR amendment in the same PR per §PR Checklist rule #9.                                       |
+| `WORKAROUND` | Temporary bypass of an invariant. MUST catalogue the pattern under [`knowledge/anti-patterns/`](./knowledge/anti-patterns/README.md) in the same PR and link the entry from the PR description; if the invariant is genuinely the wrong shape, escalate to `RELAX` instead. |
+
+### INVARIANT line content (per intent)
+
+| Intent       | Required INVARIANT content                                                                                                                |
+|--------------|--------------------------------------------------------------------------------------------------------------------------------------------|
+| `RESEARCH`   | `n/a` — research artefacts do not bind project behaviour by themselves.                                                                  |
+| `ADR-RULE`   | `Contract: <one sentence stating the introduced or modified clause>`                                                                     |
+| `IMPLEMENT`  | `Implements: <ADR or rule reference, e.g. ADR-10 §2 or AGENTS.md §PR Intent Classification>`                                              |
+| `FIX`        | `Affects: <pre-existing ADR or rule invariant being restored / changed / bypassed, e.g. ADR-7 §5 Input validation>`                       |
+| `CHORE`      | `n/a` — non-semantic updates do not change any invariant.                                                                                |
+
+### Anti-shallow-fix gate (FIX only)
+
+For `INTENT: FIX` PRs, both `DEGREE-OF-FREEDOM CLOSED:` and
+`DETERMINISTIC MECHANISM:` are MANDATORY in the PR description and
+first commit body. The two clauses operationalise §1.2.5 «the LLM
+never has a degree of freedom on a spec-bearing decision» as a
+forward-acting forcing function on every FIX PR.
+
+- `DETERMINISTIC MECHANISM:` MUST end with a `repo/file.ext:line`
+  citation that resolves against the staged tree (or HEAD) — the
+  hook reads the staged blob and verifies the file exists and the
+  line number is within bounds.
+- Both fields accept `n/a (reason)` when the FIX has no agent-facing
+  degree of freedom — pure type-bugs, refactors, dependency bumps,
+  test reshuffles that pin no new invariant. The agent MUST write an
+  explicit reason; blank or `<fill me>` is rejected.
+
+Inability to name either field, or naming a **tautological mechanism**
+(string identity with `DEGREE-OF-FREEDOM CLOSED:` modulo whitespace
+— e.g. citing the same call-site guard that the diff just added),
+escalates the PR from `CLASS: REPAIR` to `CLASS: WORKAROUND` and
+catalogues under
+[`knowledge/anti-patterns/AP-003`](./knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md).
+The tautology check is visible to a reviewer in two seconds; the
+file-line citation makes content-meaninglessness mechanically
+detectable.
+
+### Mechanisation
+
+The classifier and validator land as `src/fa/hygiene/pr_intent.py`
+(planned PR B; tracked in
+[`HANDOFF.md`](./HANDOFF.md) §Current state). Two git hooks register
+via `.pre-commit-config.yaml`:
+
+- `prepare-commit-msg` — fires BEFORE the agent sees the commit-msg
+  buffer; pre-populates the template with the mechanically-derived
+  `INTENT:` line plus `<fill me>` placeholders for every required
+  field per the intent's row above. The agent sees the placeholders
+  before composing; cognitive load drops from «remember the rule» to
+  «fill the placeholders».
+- `commit-msg` — fires AFTER the agent composes the message, BEFORE
+  the commit lands; validates field-presence per the intent's
+  required-field table; returns ALL violations in one pass (no
+  short-circuit on first failure); hard-fails the commit on any
+  violation.
+
+The hook is `INTENT`-suggestive but not `INTENT`-prescriptive — the
+classifier output is a default the agent may override (e.g. a NEW
+`src/fa/**` file is normally `IMPLEMENT`, but a contributor may
+override to `FIX` if the new file is itself the fix shape for an
+existing invariant). The override is logged so the reviewer sees the
+shape mismatch.
+
+### No mixed PRs
+
+A PR that genuinely covers two intents MUST split. Cross-category
+resolution above picks the dominant intent for a slipped PR; this
+subsection is the canonical home of the single-concern discipline
+(there is no separate numbered PR Checklist rule for it — the
+rule lives here, attached to the classifier that detects violations).
+The classifier's WARNING surfaces the violation; the reviewer
+enforces the split.
+
+### Rationale (≤ 3 sentences)
+
+The previous §Change Classification rule fired at PR-description time
+— post-code, post-diff, post-commit-message — which is the *last*
+gating point and the weakest. Moving the gate to `prepare-commit-msg`
+(pre-description, pre-commit) cuts action-count: the agent never has
+the freedom to choose the wrong-shape header, because the right-shape
+skeleton is already in the buffer when they start typing. Worked
+history of the WORKAROUND-by-default pattern this rule is
+forcing-against:
+[`knowledge/anti-patterns/AP-001`](./knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md);
+forward-acting pattern catalogued in
+[`knowledge/anti-patterns/AP-003`](./knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md).
 
 ## PR Description Style
 

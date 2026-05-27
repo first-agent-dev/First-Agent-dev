@@ -231,6 +231,54 @@
     (tiny PR, pytest hook).
 
 
+- **Process / rule changes 2026-05-25 (PR A — `§PR Intent Classification`):**
+  - `§Change Classification` (REPAIR / RELAX / WORKAROUND as
+    top-level taxonomy on every module-touching PR) **superseded** by
+    [`AGENTS.md` §PR Intent Classification](./AGENTS.md#pr-intent-classification)
+    — five Level-1 intents (`RESEARCH / ADR-RULE / IMPLEMENT / FIX /
+    CHORE`) over a path-shape-deterministic classifier, Level-2 CLASS
+    sub-classifier (`REPAIR / RELAX / WORKAROUND`) retained only when
+    `INTENT: FIX`. The Level-1 classifier reads `git diff --cached
+    --name-status` and emits one of the five labels mechanically (no
+    LLM judgement on the bucket); cross-category resolution
+    `ADR-RULE > IMPLEMENT > FIX > RESEARCH > CHORE` handles slipped
+    multi-intent PRs with a WARNING. Forward-only from 2026-05-25.
+  - **AUDIT collapsed into RESEARCH** — audit-style sweeps producing
+    findings reports are a flavor of RESEARCH whose findings feed
+    downstream ADR-RULE / CHORE / FIX follow-up PRs; no separate
+    AUDIT intent label. Rationale in
+    [`exploration_log.md` Q-15](./knowledge/trace/exploration_log.md)
+    §Rejected (d).
+  - **Anti-shallow-fix gate** operationalised in
+    [`project-overview.md` §1.2.5](./knowledge/project-overview.md#125--compliance-by-construction-failure-observable)
+    as two MANDATORY clauses on every `INTENT: FIX` PR:
+    `DEGREE-OF-FREEDOM CLOSED:` + `DETERMINISTIC MECHANISM:`. The
+    latter MUST end with a `repo/file.ext:line` citation that
+    resolves against the staged tree OR explicitly be
+    `n/a (reason)` for FIX PRs with no agent-facing degree of
+    freedom (pure type-bug, refactor, dependency bump). Companion
+    anti-pattern entry [`AP-003-shallow-fix-no-mechanism.md`](./knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md)
+    catalogues the shallow-fix wrong-shape with a synthetic worked-
+    history example (forward-acting placeholder; replaced on first
+    real escalation captured by the PR B hook).
+  - **PR Checklist rule #5 (supersession-not-overwrite) deleted in
+    place** — slot preserved at line 181 with a `(DELETED 2026-05-25
+    …)` stub so rules 6..11 keep their numbers and existing
+    citations to «rule #5» are visible as orphans rather than
+    silently re-pointing. Orphan citations cleaned up incrementally
+    per user direction; archival mechanics for individual artefacts
+    still live in [`knowledge/MAINTENANCE.md`](./knowledge/MAINTENANCE.md).
+  - **Mechanisation lands in PR B** (`src/fa/hygiene/pr_intent.py` +
+    `prepare-commit-msg` + `commit-msg` git hooks) — pre-populates
+    the commit-msg buffer with the mechanically-derived INTENT line
+    plus per-intent required-field placeholders before the agent
+    composes (action-count cut from `AP-001` §Why-wrong-shape-
+    dominates lines 116–119), then validates all field-presence and
+    citation-resolution rules in one pass on `commit-msg`. PR C
+    (harness-side `IntentGuard` GuardMiddleware on `BEFORE_TOOL_EXEC`)
+    follows PR B; feasibility verified by the session-start audit
+    of `src/fa/inner_loop/hooks/base.py` (HookRegistry fully landed).
+
 - **Research note added 2026-05-25 (PR #14):**
   - [`research/fa-abc-synthesis-deep-dive-2026-05.md`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md)
     — ADR-10 input note: per-repo determinism-pattern deep-dive
@@ -250,6 +298,46 @@
     a specific pattern ID is cited.
 >
 > **Last updated:** 2026-05-25 by Devin session
+> [`a1514827169246168bfb7918c82179a7`](https://app.devin.ai/sessions/a1514827169246168bfb7918c82179a7)
+> — **PR A lands** (rule supersession) the `§PR Intent
+> Classification` section in
+> [`AGENTS.md`](./AGENTS.md#pr-intent-classification) (five Level-1
+> intents `RESEARCH / ADR-RULE / IMPLEMENT / FIX / CHORE` over a
+> path-shape-deterministic classifier; Level-2 CLASS `REPAIR / RELAX
+> / WORKAROUND` retained only when `INTENT: FIX`), the
+> anti-shallow-fix gate clauses in
+> [`project-overview.md` §1.2.5](./knowledge/project-overview.md#125--compliance-by-construction-failure-observable)
+> (mandatory `DEGREE-OF-FREEDOM CLOSED:` + `DETERMINISTIC MECHANISM:`
+> on every `INTENT: FIX` PR, with `repo/file.ext:line` citation
+> required for the mechanism field OR `n/a (reason)` for FIX PRs
+> with no agent-facing degree of freedom), and the forward-acting
+> anti-pattern catalogue entry
+> [`AP-003-shallow-fix-no-mechanism.md`](./knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md)
+> (synthetic worked-history; replaced on first real escalation
+> captured by PR B's hook). `§Change Classification` (old
+> top-level taxonomy) is superseded; PR Checklist rule #5
+> (supersession-not-overwrite) is deleted in place with slot
+> preserved so rules 6..11 keep their numbers — orphan citations
+> cleaned up incrementally. Rule-#9 trio shipped in same PR:
+> `exploration_log.md` Q-15 (full Chosen / Rejected with Reason +
+> Lesson schema; Options (a)..(h) covering the previously-locked
+> 6-intent draft, AUDIT-as-distinct-intent, free-text mechanism
+> field, PR-description-only enforcement, standalone §1.2.6,
+> seven-intent ADR-CREATE/AMEND split, single-intent no-CLASS,
+> bundled-mechanisation); HANDOFF.md §Current state bullet (this
+> entry); `knowledge/llms.txt` refreshed with AP-003 row +
+> `§Change Classification` routing line replaced with
+> `§PR Intent Classification` routing + line-count refresh for
+> AGENTS.md / project-overview.md / HANDOFF.md /
+> exploration_log.md. **DIGEST.md is NOT updated** because PR A
+> touches no ADR file (the rule lives in AGENTS.md, not
+> `knowledge/adr/`); rule #9 mandates DIGEST refresh only for ADR
+> add / amend PRs. Mechanisation tracked as **PR B** (next session
+> — `src/fa/hygiene/pr_intent.py` + `prepare-commit-msg` +
+> `commit-msg` git hooks) and **PR C** (harness-side `IntentGuard`
+> GuardMiddleware on `BEFORE_TOOL_EXEC` after PR B's classifier
+> module is reusable from the runtime). **Prior update:**
+> 2026-05-25 by Devin session
 > [`a1514827169246168bfb7918c82179a7`](https://app.devin.ai/sessions/a1514827169246168bfb7918c82179a7)
 > — **ADR-10 lands** (proposed 2026-05-25) at
 > [`knowledge/adr/ADR-10-deterministic-harness-invariants.md`](./knowledge/adr/ADR-10-deterministic-harness-invariants.md)
