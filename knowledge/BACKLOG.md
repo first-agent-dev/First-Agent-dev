@@ -847,12 +847,24 @@
 
 ## M-7 — PR C — `IntentGuard` `GuardMiddleware` on `BEFORE_TOOL_EXEC`
 
-- **Status:** **not started; blocked on M-6 (PR B).** Tracked in
-  HANDOFF.md §Process / rule changes 2026-05-25 (PR A) bullet
-  and in [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md)
-  §Reference (the hook contract that PR B materialises). Promoted
-  to a formal BACKLOG row 2026-05-26 (PR A' expansion follow-up)
-  for the same reason as M-6.
+- **Status:** **closed by PR C (2026-05-27).** Landed
+  [`src/fa/inner_loop/hooks/intent_guard.py`](../src/fa/inner_loop/hooks/intent_guard.py)
+  (`IntentGuard(GuardMiddleware)` on `BEFORE_TOOL_EXEC`; re-runs
+  `fa.hygiene.pr_intent.classify_intent` over the staged-diff
+  snapshot projected with the about-to-mutate path; reuses
+  `fa.hygiene.pr_intent.validate_commit_msg` against the
+  session's PR-description draft; respects skill §D-5 user-typed
+  INTENT override) and
+  [`tests/test_intent_guard.py`](../tests/test_intent_guard.py)
+  (18 offline test cases — non-mutating allow, no-draft allow,
+  shape-mismatch deny, anti-shallow-fix deny on FIX without DOF
+  / MECHANISM, git-add / git-commit triggers, skill §D-5
+  override, path-projection for IMPLEMENT / RESEARCH buckets,
+  identity-test for ADR-10 I-1 single-source-of-truth, deny
+  reason echoes hook wording). The session bootstrap that wires
+  `IntentGuard` into the loop driver + the deferred `prepare-pr`
+  tool / sub-agent that populates `pr_draft.md` remain
+  follow-ups (HANDOFF §Next #2).
 - **Why milestone, not idea:** the `HookRegistry` substrate is
   landed (M-1 closed by PR #24; verified by the session-start
   audit at [`src/fa/inner_loop/hooks/base.py`](../src/fa/inner_loop/hooks/base.py)
@@ -919,10 +931,9 @@
   - [`HANDOFF.md`](../HANDOFF.md) §Process / rule changes
     2026-05-25 last paragraph — feasibility verified by the
     session-start audit of `src/fa/inner_loop/hooks/base.py`.
-- **Blocked-on:** M-6 (PR B) — `IntentGuard` imports
-  `fa.hygiene.pr_intent.classify_intent`. PR B can land
-  without PR C (the classifier is independently useful as a
-  git hook), but PR C cannot land without PR B.
+- **Blocked-on:** M-6 (PR B) — closed by PR #20; `IntentGuard` imports
+  `fa.hygiene.pr_intent.classify_intent`. Both PR B and PR C are now
+  closed (landed 2026-05-27).
 
 ## M-8 — PR D — LLM-driven coder loop (`drive_session`) + `fa run` CLI + `UrllibTransport`
 
@@ -995,7 +1006,9 @@
     events.jsonl emission, turn-cap exits 1.
 - **Out of scope (parking lot):**
   - `IntentGuard` registration in `fa run` bootstrap — folds
-    into HANDOFF §Next #1 follow-up after PR C (M-7) merges.
+    into HANDOFF §Next #1 follow-up; PR C (M-7) merged
+    2026-05-27, so the dependency is satisfied and the
+    follow-up is unblocked.
   - `prepare-pr` tool that populates `pr_draft.md` (M-7 §Q-N).
   - `fa init` command for `~/.fa/models.yaml` template
     generation (deferred per user lock 2026-05-27 — `--config

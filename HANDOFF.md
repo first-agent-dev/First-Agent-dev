@@ -13,21 +13,21 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
-**As of:** 2026-05-27 — PR D in flight (M-8 LLM-driven coder loop + `fa run`)
+**As of:** 2026-05-28 — PR D in flight (M-8 LLM-driven coder loop + `fa run`); PR B + PR C merged with review-driven bug-fix pass
 
 ### Landmarks (what landed)
 
 | What | Date | Pointer |
 | :--- | :--- | :--- |
 | PR D in flight: `src/fa/inner_loop/coder_loop.py` (`drive_session`) + `prompt.py` + `fa run --task` CLI + `UrllibTransport`; bridges `ProviderChain` and `run_session` so the harness is finally LLM-drivable (M-8) | 2026-05-27 | [`coder_loop.py`](./src/fa/inner_loop/coder_loop.py), [`prompt.py`](./src/fa/inner_loop/prompt.py), [`cli.py`](./src/fa/cli.py), [`transport.py`](./src/fa/providers/transport.py) |
-| PR C open (not merged): `src/fa/inner_loop/hooks/intent_guard.py` shipped on `devin/1779959363-pr-c-intent-guard`; awaits review/merge before `IntentGuard` can wire into `fa run` (M-7) | 2026-05-27 | [`BACKLOG.md` §M-7](./knowledge/BACKLOG.md) |
-| PR B landed: `src/fa/hygiene/pr_intent.py` classifier + `prepare-commit-msg` / `commit-msg` hooks; snapshot test pins hook constants to skill §Output format (closes M-6) | 2026-05-27 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`hooks/`](./src/fa/hygiene/hooks/) |
+| Bug-fix pass on PR B + PR C: `IntentGuard` re-export + `SQUASH_MSG` skip + `edit_file`/`apply_patch` mutating recognition + path normalisation + shared `parse_field` dedup + stale `Blocked-on` text fix. | 2026-05-28 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py), [`tests/test_intent_guard.py`](./tests/test_intent_guard.py), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
+| PR C landed: `IntentGuard(GuardMiddleware)` on `BEFORE_TOOL_EXEC` reuses M-6's classifier + validator; closes M-7 (ADR-10 I-1: one validator, two consumers) | 2026-05-27 | [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py), [`tests/test_intent_guard.py`](./tests/test_intent_guard.py) |
+| PR B landed: `src/fa/hygiene/pr_intent.py` classifier + `prepare-commit-msg` / `commit-msg` hooks; snapshot test pins hook constants to skill §Output format (closes M-6) | 2026-05-27 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`hooks/`](./src/fa/hygiene/hooks/), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
 | PR A' landed: full PR-creation rulebook → loadable skill; AGENTS.md | 2026-05-26 | [`pr-creation/SKILL.md`](./knowledge/skills/pr-creation/SKILL.md) |
 | `knowledge/skills/` directory established; `repo-audit` migrated (closes I-9b) | 2026-05-26 | [`skills/README.md`](./knowledge/skills/README.md) |
 | PR A: §PR Intent Classification (5 Level-1 intents) + anti-shallow-fix gate | 2026-05-25 | [`AGENTS.md` §Loadable skills](./AGENTS.md#loadable-skills) |
 | ADR-10 proposed — deterministic-harness invariants I-1..I-5 | 2026-05-25 | [`ADR-10`](./knowledge/adr/ADR-10-deterministic-harness-invariants.md) |
 | ABC synthesis deep-dive — 9-repo determinism patterns (ADR-10 input) | 2026-05-25 | [`fa-abc-synthesis-deep-dive`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md) |
-| ADR-9 T-2 driver + T-4 loader landed; 594 tests | 2026-05-22 | [`ADR-9`](./knowledge/adr/ADR-9-llm-provider-client.md), [`DIGEST.md`](./knowledge/adr/DIGEST.md) |
 
 ### Gotchas (delete when resolved)
 
@@ -40,20 +40,20 @@ Overwritten each session! Details live at the pointer, not here.
 
 | Slot | Scope | Status |
 | :--- | :--- | :--- |
-| M-7 | PR C: `IntentGuard` middleware | open (PR #22) — awaiting merge |
-| M-8 | PR D: LLM-driven coder loop + `fa run` CLI + `UrllibTransport` | in flight (PR D, 2026-05-27) |
+| M-8 | PR D: LLM-driven coder loop + `fa run` CLI + `UrllibTransport` | in flight (PR #23, 2026-05-27) |
 
 ## § Next
 
 Priority-ordered. Completed items deleted, not struck through.
 
-1. **Wire `IntentGuard` into `fa run` bootstrap.** PR D ships the
-   driver and `fa run` but does not register `IntentGuard` —
-   integration is a small ~20 LOC follow-up once PR D + PR C are
-   both on `main`. Adds a `~/.fa/state/runs/<run_id>/pr_draft.md`
-   read seam so the guard has something to validate against; until
-   then the guard's allow-on-no-draft branch keeps the harness from
-   deadlocking. Tracked: M-7 row §Q-N amendment items.
+1. **Wire `IntentGuard` into `fa run` bootstrap.** PR C landed
+   the middleware shape; PR D ships the driver. Both now on `main`
+   (after PR D merges) → small ~20 LOC follow-up registers
+   `IntentGuard(draft_path=…)` next to the other hooks in
+   `_cmd_run`, resolving `draft_path` to
+   `~/.fa/state/runs/<run_id>/pr_draft.md`. Until the `prepare-pr`
+   producer lands, `IntentGuard.allow-on-no-draft` keeps the
+   harness from deadlocking. Tracked: M-7 row §Q-N amendment items.
 2. **`prepare-pr` tool that populates `pr_draft.md`.** The producer
    side of the M-7 read seam. Likely a `ToolSpec` registered next
    to the baseline filesystem tools; sub-agent or LLM-side rule
