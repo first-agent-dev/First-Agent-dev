@@ -619,9 +619,7 @@ def test_cli_prepare_blank_line_between_header_and_existing(tmp_path: Path) -> N
     lines = result.splitlines()
 
     try:
-        invariant_idx = next(
-            i for i, line in enumerate(lines) if line.startswith("INVARIANT:")
-        )
+        invariant_idx = next(i for i, line in enumerate(lines) if line.startswith("INVARIANT:"))
     except StopIteration as exc:
         raise AssertionError(f"INVARIANT: line not found in buffer:\n{result}") from exc
 

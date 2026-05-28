@@ -88,9 +88,7 @@ _MIRROR_PATHS: frozenset[str] = frozenset(
 # CHORE-bucket exact paths / prefixes per skill §Reference.
 # knowledge/llms.txt is intentionally absent here; it lives in
 # _MIRROR_PATHS only (see note above).
-_CHORE_EXACT_PATHS: frozenset[str] = frozenset(
-    {"pyproject.toml", ".pre-commit-config.yaml"}
-)
+_CHORE_EXACT_PATHS: frozenset[str] = frozenset({"pyproject.toml", ".pre-commit-config.yaml"})
 _CHORE_PREFIXES: tuple[str, ...] = (".github/",)
 
 # ADR-RULE bucket prefixes / exact paths per skill §Reference.
@@ -348,9 +346,7 @@ HEADER_DET_MECHANISM = "DETERMINISTIC MECHANISM:"
 # citations like `cli.py:10` are valid; extensionless files like
 # Makefile cannot be cited — the skill's «.ext» requirement is
 # explicit (review item #4: design choice, not a bug).
-_CITATION_RE: re.Pattern[str] = re.compile(
-    r"`?(?P<path>\S+\.\S+):(?P<line>\d+)`?\s*$"
-)
+_CITATION_RE: re.Pattern[str] = re.compile(r"`?(?P<path>\S+\.\S+):(?P<line>\d+)`?\s*$")
 _NA_RE: re.Pattern[str] = re.compile(r"^n/a\s*\(.+\)\s*$", re.IGNORECASE)
 
 # Per-intent required INVARIANT prefix (skill §Reference INVARIANT-content table).
