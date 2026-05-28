@@ -13,6 +13,7 @@ Public surface:
 * :class:`fa.providers.config.ModelsConfig` /
   :func:`fa.providers.config.load_models_config` /
   :func:`fa.providers.config.load_models_config_from_path` (T-4 loader)
+* :class:`fa.providers.transport.UrllibTransport` (production HTTP)
 """
 
 from __future__ import annotations
@@ -47,9 +48,11 @@ from fa.providers.errors import (
     ReservedProviderError,
 )
 from fa.providers.registry import PROVIDERS, ProviderSpec, build_provider
+from fa.providers.transport import DEFAULT_USER_AGENT, UrllibTransport
 
 __all__ = [
     "DEFAULT_MODELS_YAML_PATH",
+    "DEFAULT_USER_AGENT",
     "PROVIDERS",
     "ChainAttemptRecord",
     "ChainConfig",
@@ -69,6 +72,7 @@ __all__ = [
     "ResponseInfo",
     "Transport",
     "TransportResponse",
+    "UrllibTransport",
     "build_provider",
     "chain_from_mapping",
     "load_models_config",
