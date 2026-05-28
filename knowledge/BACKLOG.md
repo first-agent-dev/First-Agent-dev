@@ -931,10 +931,9 @@
   - [`HANDOFF.md`](../HANDOFF.md) §Process / rule changes
     2026-05-25 last paragraph — feasibility verified by the
     session-start audit of `src/fa/inner_loop/hooks/base.py`.
-- **Blocked-on:** M-6 (PR B) — `IntentGuard` imports
-  `fa.hygiene.pr_intent.classify_intent`. PR B can land
-  without PR C (the classifier is independently useful as a
-  git hook), but PR C cannot land without PR B.
+- **Blocked-on:** M-6 (PR B) — closed by PR #20; `IntentGuard` imports
+  `fa.hygiene.pr_intent.classify_intent`. Both PR B and PR C are now
+  closed (landed 2026-05-27).
 
 ## See also
 

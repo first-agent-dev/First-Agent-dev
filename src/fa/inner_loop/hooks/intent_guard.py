@@ -18,10 +18,10 @@ The middleware:
   pre-injection is deferred to a Q-N amendment.
 - Fires only on tool calls that mutate the staged tree:
 
-  * ``fs.write_file`` — projects the touched path into the staged
-    set (status ``A`` if new, otherwise reuses the existing status)
-    so :func:`classify_intent` sees the about-to-be-produced
-    snapshot, not just the current one;
+  * ``fs.write_file`` / ``fs.edit_file`` / ``fs.apply_patch`` —
+    projects the touched path into the staged set (status ``A``
+    if the file does not yet exist on disk, otherwise ``M``) so
+    :func:`classify_intent` sees the about-to-be-produced snapshot;
   * ``fs.run_bash`` whose command starts with ``git add`` or
     ``git commit`` — the bash call may stage arbitrary paths we
     cannot statically inspect; the middleware uses the currently
@@ -61,16 +61,17 @@ References:
 
 from __future__ import annotations
 
-import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
 from fa.hygiene.pr_intent import (
+    HEADER_INTENT,
     INTENT_VALUES,
     Intent,
     StagedPath,
     classify_intent,
+    parse_field,
     parse_name_status,
     validate_commit_msg,
 )
@@ -93,6 +94,7 @@ __all__ = [
     "IntentGuard",
     "StagedPath",
     "classify_intent",
+    "parse_field",
     "parse_name_status",
     "validate_commit_msg",
 ]
@@ -104,18 +106,15 @@ __all__ = [
 # offline / pure-Python).
 GitRunner = Callable[[], str]
 
-# Header anchor for skill §D-5 override parsing. The match must be the
-# first occurrence anywhere in the draft text — the agent may have
-# inserted a one-sentence rationale line above the header block per
-# the §PR Description Style recommended structure.
-_INTENT_HEADER_RE: re.Pattern[str] = re.compile(
-    r"^INTENT:\s*(?P<value>.*)$",
-    re.MULTILINE,
+# Tool names that directly mutate the workspace / staged tree.
+_MUTATING_TOOL_NAMES: frozenset[str] = frozenset(
+    {"fs.write_file", "fs.edit_file", "fs.apply_patch"}
 )
 
 # Bash command prefixes that stage / commit changes. Matched against
-# the lstrip-ed command; further arguments (paths, flags) do not
-# affect the match.
+# the stripped command; further arguments (paths, flags) do not
+# affect the match. Exact match or space-delimited prefix prevents
+# false positives such as ``git add--interactive`` or ``git commit-tree``.
 _MUTATING_BASH_PREFIXES: tuple[str, ...] = ("git add", "git commit")
 
 
@@ -132,23 +131,25 @@ def _parse_typed_intent(draft_text: str) -> Intent | None:
       enum member).
     """
 
-    match = _INTENT_HEADER_RE.search(draft_text)
-    if match is None:
+    raw = parse_field(draft_text, HEADER_INTENT)
+    if raw is None:
         return None
-    value = match.group("value").strip()
+    value = raw.strip()
     if value in INTENT_VALUES:
         return Intent(value)
     return None
 
 
-def _project_call(call: ToolCall, staged: list[StagedPath]) -> list[StagedPath]:
+def _project_call(call: ToolCall, staged: list[StagedPath], repo_root: Path) -> list[StagedPath]:
     """Project the about-to-happen mutation into the staged-diff set.
 
-    For ``fs.write_file``: append the touched path as a staged entry
-    so :func:`classify_intent` includes it. Status letter is ``A``
-    (new file) when the path is not already present; existing rows
-    are left untouched (the classifier only looks at the path / status
-    enum, not at content).
+    For ``fs.write_file`` / ``fs.edit_file`` / ``fs.apply_patch``:
+    append the touched path as a staged entry so :func:`classify_intent`
+    includes it. Status letter is ``A`` (new file) when the path does
+    not yet exist on disk, otherwise ``M`` (modified) — this keeps the
+    middleware's verdict aligned with the git hook's post-stage snapshot.
+    Existing staged rows are left untouched (the classifier only looks
+    at the path / status enum, not at content).
 
     For ``fs.run_bash``: return the current staged set unchanged. The
     bash command may stage arbitrary paths via ``git add`` that we
@@ -157,34 +158,53 @@ def _project_call(call: ToolCall, staged: list[StagedPath]) -> list[StagedPath]:
     post-stage snapshot.
     """
 
-    if call.name != "fs.write_file":
+    if call.name not in _MUTATING_TOOL_NAMES:
         return list(staged)
     raw_path = call.params.get("path", "")
     path = str(raw_path).strip() if raw_path is not None else ""
     if not path:
         return list(staged)
+
+    # Normalise to a repo-relative forward-slash path so classifier
+    # prefix checks (``src/fa/…``) line up regardless of whether the
+    # raw param is absolute, contains ``./``, or uses backslashes.
+    repo_root_resolved = repo_root.resolve()
+    candidate = repo_root_resolved / Path(path)
+    try:
+        resolved = candidate.resolve()
+        rel = resolved.relative_to(repo_root_resolved)
+        path = str(rel).replace("\\", "/")
+    except ValueError:
+        pass  # path escapes repo — leave as-is (classifier won't match)
+
     existing = {entry.path for entry in staged}
     if path in existing:
         return list(staged)
-    return [*staged, StagedPath(status="A", path=path)]
+
+    status = "M" if (repo_root / path).is_file() else "A"
+    return [*staged, StagedPath(status=status, path=path)]
 
 
 def _is_mutating_call(call: ToolCall) -> bool:
     """Return True iff the tool call would mutate the staged tree.
 
     The trigger set matches the M-7 row in ``knowledge/BACKLOG.md``:
-    direct workspace writes (``fs.write_file``) plus index-mutating
-    bash invocations (``git add`` / ``git commit``). Other bash
-    commands are not statically classifiable as mutating, so the
-    middleware does not gate them; the git hook catches anything
-    that ultimately produces a commit.
+    direct workspace writes (``fs.write_file``, ``fs.edit_file``,
+    ``fs.apply_patch``) plus index-mutating bash invocations
+    (``git add`` / ``git commit``). Other bash commands are not
+    statically classifiable as mutating, so the middleware does not
+    gate them; the git hook catches anything that ultimately
+    produces a commit.
     """
 
-    if call.name == "fs.write_file":
+    if call.name in _MUTATING_TOOL_NAMES:
         return True
     if call.name == "fs.run_bash":
         command = str(call.params.get("command", "")).strip()
-        return any(command.startswith(prefix) for prefix in _MUTATING_BASH_PREFIXES)
+        return any(
+            command == prefix or command.startswith(prefix + " ")
+            for prefix in _MUTATING_BASH_PREFIXES
+        )
     return False
 
 
@@ -250,7 +270,7 @@ class IntentGuard(GuardMiddleware):
             return Decision.allow()
         draft_text = self._draft_path.read_text(encoding="utf-8")
         staged = parse_name_status(stdout)
-        projected = _project_call(payload.tool_call, staged)
+        projected = _project_call(payload.tool_call, staged, self._repo_root)
         classifier_intent = classify_intent(projected)
         typed = _parse_typed_intent(draft_text)
         effective = typed if typed is not None else classifier_intent

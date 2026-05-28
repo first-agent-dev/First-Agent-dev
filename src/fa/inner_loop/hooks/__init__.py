@@ -27,6 +27,7 @@ from fa.inner_loop.hooks.builtin import (
     VerifierObserver,
     default_tool_result_for_denial,
 )
+from fa.inner_loop.hooks.intent_guard import IntentGuard
 from fa.inner_loop.hooks.loop_guard import LoopGuard
 from fa.inner_loop.hooks.recovery_observers import (
     AttemptHistoryObserver,
@@ -47,6 +48,7 @@ __all__ = [
     "GuardMiddleware",
     "HookPayload",
     "HookRegistry",
+    "IntentGuard",
     "LearningObserver",
     "LifecyclePoint",
     "LockfileBlocker",

@@ -410,3 +410,147 @@ def test_intent_guard_decision_factory_used(tmp_path: Path) -> None:
     assert isinstance(decision, Decision)
     assert decision.action == "deny"
     assert decision.reason  # non-empty
+
+
+# ---------------------------------------------------------------------------
+# Review-driven regression tests (post-M-7 bug-fix sweep)
+# ---------------------------------------------------------------------------
+
+
+def test_intent_guard_exported_from_hooks_package() -> None:
+    """IntentGuard must be importable from the hooks package __init__.
+
+    Every other middleware is re-exported there; omitting IntentGuard
+    breaks the established convention and causes ImportError for
+    consumers using ``from fa.inner_loop.hooks import IntentGuard``.
+    """
+    from fa.inner_loop.hooks import IntentGuard as ImportedGuard
+
+    assert ImportedGuard is IntentGuard
+
+
+def test_intent_guard_mutating_call_includes_edit_file(tmp_path: Path) -> None:
+    """``fs.edit_file`` is an edit shape per ADR-7 §4 and must trigger the guard."""
+    guard, _ = _make_guard(
+        tmp_path,
+        draft_text=_BAD_FIX_DRAFT,
+        git_output="M	src/fa/x.py\n",
+    )
+    call = ToolCall(
+        name="fs.edit_file", params={"path": "src/fa/x.py", "old_string": "a", "new_string": "b"}
+    )
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    # Draft is FIX-shaped but lacks DOF/MECHANISM → deny regardless of
+    # whether the classifier or the user typed the intent.
+    assert decision.action == "deny"
+
+
+def test_intent_guard_mutating_call_includes_apply_patch(tmp_path: Path) -> None:
+    """``fs.apply_patch`` is the second edit shape per ADR-7 §4 and must trigger the guard."""
+    guard, _ = _make_guard(
+        tmp_path,
+        draft_text=_BAD_FIX_DRAFT,
+        git_output="M	src/fa/x.py\n",
+    )
+    call = ToolCall(name="fs.apply_patch", params={"path": "src/fa/x.py", "unified_diff": "diff"})
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    assert decision.action == "deny"
+
+
+def test_intent_guard_git_add_prefix_exact_match(tmp_path: Path) -> None:
+    """``git add`` (with space or exact) matches; ``git add--interactive`` does not."""
+    guard, _ = _make_guard(
+        tmp_path,
+        draft_text=_BAD_FIX_DRAFT,
+        git_output="M\tsrc/fa/x.py\n",
+    )
+    # Exact match (no args) → mutating
+    exact_call = ToolCall(name="fs.run_bash", params={"command": "git add"})
+    assert (
+        guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=exact_call)).action
+        == "deny"
+    )
+    # With space + args → mutating
+    space_call = ToolCall(name="fs.run_bash", params={"command": "git add src/fa/x.py"})
+    assert (
+        guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=space_call)).action
+        == "deny"
+    )
+    # False positive: plumbing command without space → NOT mutating
+    false_call = ToolCall(name="fs.run_bash", params={"command": "git add--interactive"})
+    assert (
+        guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=false_call)).action
+        == "allow"
+    )
+
+
+def test_intent_guard_git_commit_prefix_exact_match(tmp_path: Path) -> None:
+    """``git commit`` (with space or exact) matches; ``git commit-tree`` does not."""
+    guard, _ = _make_guard(
+        tmp_path,
+        draft_text=_BAD_FIX_DRAFT,
+        git_output="M\tsrc/fa/x.py\n",
+    )
+    exact_call = ToolCall(name="fs.run_bash", params={"command": "git commit"})
+    assert (
+        guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=exact_call)).action
+        == "deny"
+    )
+    space_call = ToolCall(name="fs.run_bash", params={"command": "git commit -m 'wip'"})
+    assert (
+        guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=space_call)).action
+        == "deny"
+    )
+    false_call = ToolCall(name="fs.run_bash", params={"command": "git commit-tree"})
+    assert (
+        guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=false_call)).action
+        == "allow"
+    )
+
+
+def test_intent_guard_path_projection_for_existing_file_uses_modify_status(tmp_path: Path) -> None:
+    """If ``fs.write_file`` targets a file that already exists on disk,
+    the projection should use status ``M`` (modified), not ``A`` (added).
+    """
+    from fa.inner_loop.hooks.intent_guard import _project_call
+
+    repo_root = _make_repo(tmp_path)
+    existing = repo_root / "src" / "fa" / "existing.py"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("old\n", encoding="utf-8")
+
+    call = ToolCall(
+        name="fs.write_file",
+        params={"path": "src/fa/existing.py", "content": "new\n"},
+    )
+    projected = _project_call(call, [], repo_root)
+    assert len(projected) == 1
+    assert projected[0].status == "M"
+    assert projected[0].path == "src/fa/existing.py"
+
+
+def test_intent_guard_path_projection_normalizes_absolute_path(tmp_path: Path) -> None:
+    """Absolute paths inside the repo must be normalised to repo-relative
+    so classifier prefix checks (``src/fa/…``) still match.
+    """
+    repo_root = _make_repo(tmp_path)
+    draft_path = tmp_path / "pr_draft.md"
+    draft_path.write_text(_VALID_IMPLEMENT_DRAFT)
+    guard = IntentGuard(
+        repo_root=repo_root,
+        draft_path=draft_path,
+        git_runner=lambda: "",
+    )
+    abs_path = str(repo_root / "src" / "fa" / "new.py")
+    call = ToolCall(name="fs.write_file", params={"path": abs_path, "content": "x"})
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    assert decision.action == "allow"
+
+
+def test_intent_guard_parse_field_is_shared_from_skill_module() -> None:
+    """``_parse_typed_intent`` reuses the same :func:`parse_field` parser
+    that the git hook's ``_cli_validate`` uses — proven by import identity.
+    Eliminates the duplicate regex that previously existed in
+    ``intent_guard.py``.
+    """
+    assert intent_guard_mod.parse_field is pr_intent.parse_field
