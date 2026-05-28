@@ -31,10 +31,11 @@ hook validates final paragraph).
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
-from collections.abc import Iterable
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -69,6 +70,12 @@ _INTENT_PRIORITY: tuple[Intent, ...] = (
 
 # Paths that mirror upstream changes (skill §Reference «Mirror files»);
 # do not independently trigger any intent.
+# NOTE: knowledge/llms.txt appears here only (mirror bucket). The
+# former duplicate entry in _CHORE_EXACT_PATHS has been removed because
+# the mirror filter runs first in _fired_intents, making the CHORE-set
+# entry dead code and causing confusing dual membership. Standalone
+# llms.txt diffs still fall through to CHORE via the _fired_intents
+# empty-set fallback — behaviour is unchanged, dead code is gone.
 _MIRROR_PATHS: frozenset[str] = frozenset(
     {
         "HANDOFF.md",
@@ -79,8 +86,10 @@ _MIRROR_PATHS: frozenset[str] = frozenset(
 )
 
 # CHORE-bucket exact paths / prefixes per skill §Reference.
+# knowledge/llms.txt is intentionally absent here; it lives in
+# _MIRROR_PATHS only (see note above).
 _CHORE_EXACT_PATHS: frozenset[str] = frozenset(
-    {"pyproject.toml", ".pre-commit-config.yaml", "knowledge/llms.txt"}
+    {"pyproject.toml", ".pre-commit-config.yaml"}
 )
 _CHORE_PREFIXES: tuple[str, ...] = (".github/",)
 
@@ -153,7 +162,7 @@ def _is_chore(path: str) -> bool:
     return any(path.startswith(prefix) for prefix in _CHORE_PREFIXES)
 
 
-def classify_intent(staged_paths: Iterable[StagedPath]) -> Intent:
+def classify_intent(staged_paths: Sequence[StagedPath]) -> Intent:
     """Closed-enum classifier per skill §Reference Level-1 table.
 
     Reads pre-parsed ``StagedPath`` rows (caller-passed; this function
@@ -163,6 +172,14 @@ def classify_intent(staged_paths: Iterable[StagedPath]) -> Intent:
     diffs (no upstream-trigger path) fall back to ``CHORE``; callers
     that want the warning surface should consult
     :func:`detect_multi_intent` separately.
+
+    The parameter is typed as ``Sequence[StagedPath]`` (not
+    ``Iterable``) to make the non-exhaustion contract explicit:
+    the caller must not pass a one-shot generator, because
+    ``_cli_prepare`` iterates ``staged`` through multiple calls
+    (``classify_intent``, ``detect_multi_intent``, ``is_mirror_only``).
+    ``parse_name_status`` already returns a ``list``, satisfying this
+    contract at every call site.
     """
 
     fired = _fired_intents(staged_paths)
@@ -172,7 +189,7 @@ def classify_intent(staged_paths: Iterable[StagedPath]) -> Intent:
     return Intent.CHORE
 
 
-def detect_multi_intent(staged_paths: Iterable[StagedPath]) -> set[Intent]:
+def detect_multi_intent(staged_paths: Sequence[StagedPath]) -> set[Intent]:
     """Return the set of intents that fire for the given staged diff.
 
     Used by the prepare-commit-msg hook to emit the multi-intent
@@ -182,7 +199,7 @@ def detect_multi_intent(staged_paths: Iterable[StagedPath]) -> set[Intent]:
     return _fired_intents(staged_paths)
 
 
-def is_mirror_only(staged_paths: Iterable[StagedPath]) -> bool:
+def is_mirror_only(staged_paths: Sequence[StagedPath]) -> bool:
     """True iff every staged path is a mirror-bucket path.
 
     Skill §Reference: «If the diff is mirror-only with nothing
@@ -195,7 +212,7 @@ def is_mirror_only(staged_paths: Iterable[StagedPath]) -> bool:
     return all(_is_mirror(sp.path) for sp in materialised)
 
 
-def _fired_intents(staged_paths: Iterable[StagedPath]) -> set[Intent]:
+def _fired_intents(staged_paths: Sequence[StagedPath]) -> set[Intent]:
     paths = [sp for sp in staged_paths if sp.path]
     non_mirror = [sp for sp in paths if not _is_mirror(sp.path)]
     if not non_mirror:
@@ -325,9 +342,15 @@ HEADER_INVARIANT = "INVARIANT:"
 HEADER_DOF_CLOSED = "DEGREE-OF-FREEDOM CLOSED:"
 HEADER_DET_MECHANISM = "DETERMINISTIC MECHANISM:"
 
-# Citation must end with `path/file.ext:line`. The path component is
-# anything but whitespace; the line component is a positive integer.
-_CITATION_RE: re.Pattern[str] = re.compile(r"`?(?P<path>\S+\.\S+):(?P<line>\d+)`?\s*$")
+# Citation must end with `path/file.ext:line`. The path component
+# must contain a dot (skill §D-4: «repo/file.ext:line»). The regex
+# intentionally does NOT require a path separator so that flat-repo
+# citations like `cli.py:10` are valid; extensionless files like
+# Makefile cannot be cited — the skill's «.ext» requirement is
+# explicit (review item #4: design choice, not a bug).
+_CITATION_RE: re.Pattern[str] = re.compile(
+    r"`?(?P<path>\S+\.\S+):(?P<line>\d+)`?\s*$"
+)
 _NA_RE: re.Pattern[str] = re.compile(r"^n/a\s*\(.+\)\s*$", re.IGNORECASE)
 
 # Per-intent required INVARIANT prefix (skill §Reference INVARIANT-content table).
@@ -346,8 +369,13 @@ def _parse_field(text: str, header: str) -> str | None:
     Header lines may appear anywhere in the commit-message body; the
     skill's §Output format mandates they open the message but the
     validator is lenient on placement so a contributor who appended
-    a `Co-Authored-By` trailer above the header still sees a clear
+    a ``Co-Authored-By`` trailer above the header still sees a clear
     violation rather than a parse failure.
+
+    Only the *first* occurrence of the header is captured; only the
+    text on that same line is returned (no multi-line folding). A
+    long single-line value is fully captured; a value that spans
+    multiple lines will be truncated at the first newline.
     """
 
     pattern = re.compile(
@@ -363,7 +391,7 @@ def _parse_field(text: str, header: str) -> str | None:
 def validate_commit_msg(
     text: str,
     intent: Intent,
-    staged: Iterable[StagedPath],
+    staged: Sequence[StagedPath],
     repo_root: Path,
 ) -> list[Violation]:
     """Run all six checks from skill §What the hook validates.
@@ -523,7 +551,7 @@ def _normalise_whitespace(value: str) -> str:
 def resolve_citation(
     citation: str,
     repo_root: Path,
-    staged: Iterable[StagedPath],
+    staged: Sequence[StagedPath],
 ) -> bool:
     """Resolve a ``DETERMINISTIC MECHANISM:`` citation.
 
@@ -538,6 +566,15 @@ def resolve_citation(
     the worktree at ``repo_root``); HEAD-only files are read from
     the worktree too (the worktree is HEAD when no edits are
     staged for that path).
+
+    Note on staged-only files: when a cited file is recorded as
+    staged but does not yet exist on disk (status ``A`` in an
+    in-memory test scenario), the line-bounds check is skipped and
+    the citation is accepted. In real git workflow at commit time
+    the worktree always mirrors the staged tree, so the bounds
+    check runs for all production calls. The docstring's claim that
+    the line is «within bounds» is accurate for the on-disk path;
+    the staged-only fallback is a test-harness accommodation only.
     """
 
     text = citation.strip()
@@ -631,6 +668,83 @@ def _find_repo_root(start: Path) -> Path:
     )
 
 
+def _git_dir(repo_root: Path) -> Path:
+    """Return the effective ``.git`` directory for ``repo_root``.
+
+    In a normal checkout ``.git`` is a directory. In a ``git worktree``
+    checkout ``.git`` is a *file* whose content is
+    ``gitdir: /path/to/.git/worktrees/<name>``; git also sets the
+    ``GIT_DIR`` environment variable when running hooks so worktree
+    hooks always have the correct path available.
+
+    Resolution order (matches what the bash hook does with
+    ``GIT_DIR_PATH="${GIT_DIR:-.git}"``):
+
+    1. ``GIT_DIR`` environment variable (set by git itself when
+       invoking hooks — always correct in hook context).
+    2. ``repo_root / ".git"`` fallback for direct Python invocation
+       outside a hook (e.g. tests, programmatic use).
+    """
+    env_git_dir = os.environ.get("GIT_DIR")
+    if env_git_dir:
+        return Path(env_git_dir)
+    return repo_root / ".git"
+
+
+def _is_non_validating_commit_source(repo_root: Path) -> bool:
+    """Return True when the commit was created by a git operation that does
+    not produce a user-authored header block.
+
+    The ``prepare-commit-msg`` hook skips template injection for
+    ``merge``, ``squash``, ``commit`` (amend), ``template``, and
+    ``message`` (``-m``) sources so those commit types never receive
+    the INTENT/INVARIANT placeholders. The ``commit-msg`` hook must
+    apply a matching skip so it does not reject commit messages that
+    were never given the chance to be pre-populated.
+
+    Git does not pass ``COMMIT_SOURCE`` to ``commit-msg`` (only to
+    ``prepare-commit-msg``), so we detect the commit type from the
+    state files git leaves in the git directory and from environment
+    variables:
+
+    - ``.git/MERGE_HEAD`` — present during ``git merge`` /
+      ``git pull`` (merge strategy).
+    - ``.git/CHERRY_PICK_HEAD`` — present during ``git cherry-pick``.
+    - ``.git/REVERT_HEAD`` — present during ``git revert``.
+    - ``GIT_REFLOG_ACTION`` environment variable — git sets this to
+      ``"merge"`` for merge commits and ``"commit (amend)"`` for
+      ``git commit --amend``. We check for the substrings ``merge``
+      and ``amend`` (case-insensitive) to cover both.
+
+    The git directory is resolved via :func:`_git_dir` which honours
+    the ``GIT_DIR`` environment variable so git worktrees work
+    correctly (in a worktree ``.git`` is a file, not a directory,
+    but git sets ``GIT_DIR`` to the actual git dir when running hooks).
+
+    The ``git commit -m`` case (COMMIT_SOURCE=message) cannot be
+    detected reliably from ``commit-msg`` — there is no state file
+    and ``GIT_REFLOG_ACTION`` is just ``"commit"``. Contributors
+    using ``-m`` must supply the full header inline or use
+    ``--no-verify``. This matches the documented intent: the hook
+    enforces the contract on every author-written commit; only
+    git-generated messages (merge, revert, cherry-pick, amend) are
+    exempted.
+    """
+    git_dir_path = _git_dir(repo_root)
+
+    # State-file detection (merge, cherry-pick, revert).
+    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
+        if (git_dir_path / marker).is_file():
+            return True
+
+    # Env-var detection (amend / merge via GIT_REFLOG_ACTION).
+    reflog_action = os.environ.get("GIT_REFLOG_ACTION", "").lower()
+    if "merge" in reflog_action or "amend" in reflog_action:
+        return True
+
+    return False
+
+
 def _cli_prepare(commit_msg_file: Path, repo_root: Path) -> int:
     name_status = _run_git(["diff", "--cached", "--name-status"], cwd=repo_root)
     staged = parse_name_status(name_status)
@@ -651,17 +765,31 @@ def _cli_prepare(commit_msg_file: Path, repo_root: Path) -> int:
 
     existing = commit_msg_file.read_text(encoding="utf-8") if commit_msg_file.exists() else ""
     header = render_prepare_buffer(intent)
+
+    # Build the buffer: optional warnings, then the header block, then
+    # the existing content. Use a blank line between the header block
+    # and the existing git template text so editors render them as
+    # distinct paragraphs. Strip any trailing newline from `existing`
+    # before joining so the final write produces exactly one trailing
+    # newline.
     pieces: list[str] = []
     if warning_lines:
         pieces.append("\n".join(warning_lines))
     pieces.append(header)
     if existing:
-        pieces.append(existing)
-    commit_msg_file.write_text("\n".join(pieces) + "\n", encoding="utf-8")
+        pieces.append(existing.rstrip("\n"))
+    commit_msg_file.write_text("\n\n".join(pieces) + "\n", encoding="utf-8")
     return 0
 
 
 def _cli_validate(commit_msg_file: Path, repo_root: Path) -> int:
+    # Skip validation for git-generated commit messages (merge, cherry-pick,
+    # revert, amend). The prepare-commit-msg hook already skips injection for
+    # these sources; the validator must match so it does not hard-block
+    # standard git operations that never received the INTENT/INVARIANT template.
+    if _is_non_validating_commit_source(repo_root):
+        return 0
+
     text = commit_msg_file.read_text(encoding="utf-8")
     name_status = _run_git(["diff", "--cached", "--name-status"], cwd=repo_root)
     staged = parse_name_status(name_status)

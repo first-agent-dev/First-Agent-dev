@@ -5,7 +5,7 @@
 #
 # The classifier picks the intent off `git diff --cached --name-status`
 # and renders the placeholder block via fa.hygiene.pr_intent. See
-# `python -m fa.hygiene.pr_intent prepare` for the implementation;
+# `python -m fa.hygiene prepare` for the implementation;
 # the rule contract is the skill, single source of truth.
 
 set -euo pipefail
@@ -15,7 +15,9 @@ COMMIT_SOURCE="${2:-}"
 
 # Skip the auto-fill when git already supplies a message body
 # (merge / squash / amend / template / message-via-`-m`). The
-# commit-msg validator still runs on every commit.
+# commit-msg validator applies a matching skip for these same sources
+# (detected via .git/MERGE_HEAD, CHERRY_PICK_HEAD, REVERT_HEAD, and
+# GIT_REFLOG_ACTION) so that standard git operations are never blocked.
 case "${COMMIT_SOURCE}" in
   message|template|squash|merge|commit)
     exit 0

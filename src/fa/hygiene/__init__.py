@@ -19,12 +19,16 @@ from __future__ import annotations
 from fa.hygiene.discover import default_config_paths
 from fa.hygiene.pr_intent import (
     FieldSpec,
+    FixClass,
     Intent,
     StagedPath,
     Violation,
     classify_intent,
     derive_required_fields,
+    detect_multi_intent,
+    is_mirror_only,
     parse_name_status,
+    render_prepare_buffer,
     resolve_citation,
     validate_commit_msg,
 )
@@ -34,6 +38,7 @@ from fa.hygiene.tokens import TokenKind, classify_token, classify_tokens
 __all__ = [
     "AuditReport",
     "FieldSpec",
+    "FixClass",
     "Intent",
     "StagedPath",
     "TokenKind",
@@ -44,7 +49,10 @@ __all__ = [
     "classify_tokens",
     "default_config_paths",
     "derive_required_fields",
+    "detect_multi_intent",
+    "is_mirror_only",
     "parse_name_status",
+    "render_prepare_buffer",
     "resolve_citation",
     "validate_commit_msg",
 ]

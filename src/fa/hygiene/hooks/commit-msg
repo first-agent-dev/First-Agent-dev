@@ -5,6 +5,20 @@
 # Returns all violations in one pass (no short-circuit). A non-zero
 # exit blocks the commit; the agent / contributor fixes every
 # reported violation and retries.
+#
+# Git-generated messages (merge, cherry-pick, revert, amend) are
+# skipped so that standard git operations are never blocked by the
+# validator. The prepare-commit-msg hook already skips injection for
+# these sources; this hook must match that logic.
+#
+# Detection strategy (commit-msg receives only $1 = msg-file):
+#   - .git/MERGE_HEAD      exists → merge commit (git merge / git pull)
+#   - .git/CHERRY_PICK_HEAD exists → cherry-pick
+#   - .git/REVERT_HEAD     exists → revert
+#   - GIT_REFLOG_ACTION    contains "merge" or "amend" → merge / amend
+# The Python validator (_is_non_validating_commit_source) implements
+# the same logic; the bash pre-check here avoids the Python startup
+# cost when the skip is obvious from a state file.
 
 set -euo pipefail
 
@@ -12,6 +26,24 @@ COMMIT_MSG_FILE="${1:-}"
 if [[ -z "${COMMIT_MSG_FILE}" ]]; then
   echo "commit-msg: missing commit-msg file argument" >&2
   exit 1
+fi
+
+# Locate .git directory (git sets GIT_DIR when running hooks, but
+# fall back to the standard location relative to the work tree).
+GIT_DIR_PATH="${GIT_DIR:-.git}"
+
+# Skip validation for git-generated commit sources detected via
+# state files left by git in .git/.
+for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD; do
+  if [[ -f "${GIT_DIR_PATH}/${marker}" ]]; then
+    exit 0
+  fi
+done
+
+# Skip for amend / merge detected via GIT_REFLOG_ACTION env var.
+reflog_action="${GIT_REFLOG_ACTION:-}"
+if [[ "${reflog_action,,}" == *"merge"* || "${reflog_action,,}" == *"amend"* ]]; then
+  exit 0
 fi
 
 exec python -m fa.hygiene validate "${COMMIT_MSG_FILE}"

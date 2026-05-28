@@ -548,3 +548,209 @@ def test_fieldspec_is_immutable() -> None:
     spec = FieldSpec(name="INTENT", placeholder="RESEARCH")
     with pytest.raises(dataclasses.FrozenInstanceError):
         spec.name = "OTHER"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Bug-fix regression tests (added post-review)
+# ---------------------------------------------------------------------------
+
+
+# --- Bug #1: knowledge/llms.txt dual membership (dead CHORE entry) ----------
+
+
+def test_llms_txt_not_in_chore_exact_paths() -> None:
+    """knowledge/llms.txt must live in _MIRROR_PATHS only, not _CHORE_EXACT_PATHS.
+
+    The former dual membership made the CHORE-set entry dead code: the
+    mirror filter in _fired_intents runs first, so llms.txt was always
+    stripped before the CHORE check could fire. Removing it from
+    _CHORE_EXACT_PATHS eliminates the confusion without changing
+    observable behaviour (standalone llms.txt → CHORE via fallback).
+    """
+    from fa.hygiene.pr_intent import _CHORE_EXACT_PATHS, _MIRROR_PATHS
+
+    assert "knowledge/llms.txt" in _MIRROR_PATHS
+    assert "knowledge/llms.txt" not in _CHORE_EXACT_PATHS
+
+
+def test_llms_txt_standalone_still_gives_chore() -> None:
+    """Standalone knowledge/llms.txt commit still classifies as CHORE."""
+    assert classify_intent(_staged([("M", "knowledge/llms.txt")])) == Intent.CHORE
+
+
+def test_llms_txt_ride_along_is_transparent() -> None:
+    """knowledge/llms.txt alongside a src change does not distort the intent."""
+    result = classify_intent(
+        _staged([("M", "knowledge/llms.txt"), ("M", "src/fa/inner_loop/loop.py")])
+    )
+    assert result == Intent.FIX
+
+
+# --- Bug #2: Sequence[StagedPath] contract (replaces Iterable) --------------
+
+
+def test_classify_intent_accepts_list_not_generator() -> None:
+    """classify_intent must accept a list (Sequence); a plain list works correctly."""
+    from fa.hygiene.pr_intent import classify_intent as _ci
+
+    rows: list[StagedPath] = [StagedPath("A", "src/fa/new.py")]
+    # Calling twice on the same list must give the same result (no exhaustion).
+    assert _ci(rows) == Intent.IMPLEMENT
+    assert _ci(rows) == Intent.IMPLEMENT
+
+
+# --- Bug #6: blank-line separator between header and existing content --------
+
+
+def test_cli_prepare_blank_line_between_header_and_existing(tmp_path: Path) -> None:
+    """_cli_prepare must insert a blank line between the header block and the
+    existing commit-message template text so editors render them as distinct
+    paragraphs and the validator can easily locate the header.
+    """
+    from fa.hygiene.pr_intent import _cli_prepare
+
+    # Build a minimal fake repo root so _run_git is not needed.
+    # We patch _run_git to return an empty staged diff.
+    import unittest.mock as mock
+
+    msg_file = tmp_path / "COMMIT_EDITMSG"
+    existing = "# Please enter the commit message for your changes.\n"
+    msg_file.write_text(existing, encoding="utf-8")
+
+    # Patch _run_git so no real git is invoked.
+    with mock.patch("fa.hygiene.pr_intent._run_git", return_value=""):
+        _cli_prepare(msg_file, tmp_path)
+
+    result = msg_file.read_text(encoding="utf-8")
+    lines = result.splitlines()
+
+    # Find the boundary: there must be an empty line between the last
+    # header line (INVARIANT: ...) and the first comment line.
+    try:
+        invariant_idx = next(i for i, l in enumerate(lines) if l.startswith("INVARIANT:"))
+    except StopIteration:
+        raise AssertionError(f"INVARIANT: line not found in buffer:\n{result}")
+
+    # The line immediately after INVARIANT: must be blank (the separator).
+    assert invariant_idx + 1 < len(lines), "No line after INVARIANT: line"
+    assert lines[invariant_idx + 1] == "", (
+        f"Expected blank separator after INVARIANT:, got {lines[invariant_idx + 1]!r}"
+    )
+
+
+def test_cli_prepare_no_double_trailing_newline(tmp_path: Path) -> None:
+    """_cli_prepare must not produce more than one trailing newline."""
+    import unittest.mock as mock
+    from fa.hygiene.pr_intent import _cli_prepare as _cp2
+
+    msg_file = tmp_path / "COMMIT_EDITMSG"
+    msg_file.write_text("# git comment\n", encoding="utf-8")
+
+    with mock.patch("fa.hygiene.pr_intent._run_git", return_value=""):
+        _cp2(msg_file, tmp_path)
+
+    result = msg_file.read_text(encoding="utf-8")
+    assert result.endswith("\n"), "File must end with newline"
+    assert not result.endswith("\n\n"), f"File must not end with double newline; got {result!r}"
+
+
+# --- Bug #7: commit-msg hook must skip git-generated messages ---------------
+
+
+def test_is_non_validating_commit_source_merge_head(tmp_path: Path) -> None:
+    """MERGE_HEAD marker → _is_non_validating_commit_source returns True."""
+    from fa.hygiene.pr_intent import _is_non_validating_commit_source
+
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "MERGE_HEAD").write_text("abc123\n", encoding="utf-8")
+    assert _is_non_validating_commit_source(tmp_path) is True
+
+
+def test_is_non_validating_commit_source_cherry_pick_head(tmp_path: Path) -> None:
+    """CHERRY_PICK_HEAD marker → _is_non_validating_commit_source returns True."""
+    from fa.hygiene.pr_intent import _is_non_validating_commit_source
+
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "CHERRY_PICK_HEAD").write_text("abc123\n", encoding="utf-8")
+    assert _is_non_validating_commit_source(tmp_path) is True
+
+
+def test_is_non_validating_commit_source_revert_head(tmp_path: Path) -> None:
+    """REVERT_HEAD marker → _is_non_validating_commit_source returns True."""
+    from fa.hygiene.pr_intent import _is_non_validating_commit_source
+
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "REVERT_HEAD").write_text("abc123\n", encoding="utf-8")
+    assert _is_non_validating_commit_source(tmp_path) is True
+
+
+def test_is_non_validating_commit_source_amend_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """GIT_REFLOG_ACTION=commit (amend) → _is_non_validating_commit_source returns True."""
+    import os
+    from fa.hygiene.pr_intent import _is_non_validating_commit_source
+
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    monkeypatch.setenv("GIT_REFLOG_ACTION", "commit (amend)")
+    assert _is_non_validating_commit_source(tmp_path) is True
+
+
+def test_is_non_validating_commit_source_merge_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """GIT_REFLOG_ACTION=merge → _is_non_validating_commit_source returns True."""
+    from fa.hygiene.pr_intent import _is_non_validating_commit_source
+
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    monkeypatch.setenv("GIT_REFLOG_ACTION", "merge")
+    assert _is_non_validating_commit_source(tmp_path) is True
+
+
+def test_is_non_validating_commit_source_normal_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Normal author-written commit → _is_non_validating_commit_source returns False."""
+    from fa.hygiene.pr_intent import _is_non_validating_commit_source
+
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    monkeypatch.delenv("GIT_REFLOG_ACTION", raising=False)
+    assert _is_non_validating_commit_source(tmp_path) is False
+
+
+def test_cli_validate_skips_merge_commit(tmp_path: Path) -> None:
+    """_cli_validate returns 0 (no error) for a merge commit message that
+    lacks INTENT/INVARIANT headers, because MERGE_HEAD is present.
+    """
+    import unittest.mock as mock
+    from fa.hygiene.pr_intent import _cli_validate
+
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "MERGE_HEAD").write_text("abc123\n", encoding="utf-8")
+
+    msg_file = tmp_path / "COMMIT_EDITMSG"
+    msg_file.write_text("Merge branch 'main' into feature-x\n", encoding="utf-8")
+
+    with mock.patch("fa.hygiene.pr_intent._run_git", return_value=""):
+        rc = _cli_validate(msg_file, tmp_path)
+
+    assert rc == 0, "merge commit must not be blocked by commit-msg validator"
+
+
+def test_cli_validate_blocks_headerless_normal_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_cli_validate returns 1 (error) for a normal commit without INTENT header."""
+    import unittest.mock as mock
+    from fa.hygiene.pr_intent import _cli_validate
+
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    monkeypatch.delenv("GIT_REFLOG_ACTION", raising=False)
+
+    msg_file = tmp_path / "COMMIT_EDITMSG"
+    msg_file.write_text("docs: quick fix typo\n", encoding="utf-8")
+
+    with mock.patch("fa.hygiene.pr_intent._run_git", return_value=""):
+        rc = _cli_validate(msg_file, tmp_path)
+
+    assert rc == 1, "headerless commit on normal author-written commit must be blocked"
