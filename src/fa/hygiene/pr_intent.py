@@ -359,7 +359,7 @@ _INVARIANT_REQUIRED_PREFIXES: dict[Intent, tuple[str, ...]] = {
 }
 
 
-def _parse_field(text: str, header: str) -> str | None:
+def parse_field(text: str, header: str) -> str | None:
     """Return the value of ``HEADER:`` if present in ``text`` else None.
 
     Header lines may appear anywhere in the commit-message body; the
@@ -400,11 +400,11 @@ def validate_commit_msg(
     violations: list[Violation] = []
     staged_list = list(staged)
 
-    intent_value = _parse_field(text, HEADER_INTENT)
-    class_value = _parse_field(text, HEADER_CLASS)
-    invariant_value = _parse_field(text, HEADER_INVARIANT)
-    dof_value = _parse_field(text, HEADER_DOF_CLOSED)
-    mech_value = _parse_field(text, HEADER_DET_MECHANISM)
+    intent_value = parse_field(text, HEADER_INTENT)
+    class_value = parse_field(text, HEADER_CLASS)
+    invariant_value = parse_field(text, HEADER_INVARIANT)
+    dof_value = parse_field(text, HEADER_DOF_CLOSED)
+    mech_value = parse_field(text, HEADER_DET_MECHANISM)
 
     # Check 1: INTENT line present; value in closed enum.
     if intent_value is None:
@@ -707,6 +707,7 @@ def _is_non_validating_commit_source(repo_root: Path) -> bool:
       ``git pull`` (merge strategy).
     - ``.git/CHERRY_PICK_HEAD`` — present during ``git cherry-pick``.
     - ``.git/REVERT_HEAD`` — present during ``git revert``.
+    - ``.git/SQUASH_MSG`` — present during ``git commit --squash``.
     - ``GIT_REFLOG_ACTION`` environment variable — git sets this to
       ``"merge"`` for merge commits and ``"commit (amend)"`` for
       ``git commit --amend``. We check for the substrings ``merge``
@@ -723,13 +724,13 @@ def _is_non_validating_commit_source(repo_root: Path) -> bool:
     using ``-m`` must supply the full header inline or use
     ``--no-verify``. This matches the documented intent: the hook
     enforces the contract on every author-written commit; only
-    git-generated messages (merge, revert, cherry-pick, amend) are
+    git-generated messages (merge, revert, cherry-pick, squash, amend) are
     exempted.
     """
     git_dir_path = _git_dir(repo_root)
 
-    # State-file detection (merge, cherry-pick, revert).
-    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
+    # State-file detection (merge, cherry-pick, revert, squash).
+    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "SQUASH_MSG"):
         if (git_dir_path / marker).is_file():
             return True
 
@@ -796,7 +797,7 @@ def _cli_validate(commit_msg_file: Path, repo_root: Path) -> int:
     # description) passes the shape gate; fall back to the classifier
     # intent only when the user did not type one or typed something
     # outside the closed enum (Check 1 fires either way).
-    typed = _parse_field(text, HEADER_INTENT)
+    typed = parse_field(text, HEADER_INTENT)
     if typed in INTENT_VALUES:
         intent = Intent(typed)
     else:

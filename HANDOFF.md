@@ -13,12 +13,14 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
-**As of:** 2026-05-27 — PR B landed
+**As of:** 2026-05-28 — PR B+C bug-fix pass (review-driven fixes)
 
 ### Landmarks (what landed)
 
 | What | Date | Pointer |
 | :--- | :--- | :--- |
+| Bug-fix pass on PR B + PR C: `IntentGuard` re-export + `SQUASH_MSG` skip + `edit_file`/`apply_patch` mutating recognition + path normalisation + shared `parse_field` dedup + stale `Blocked-on` text fix. | 2026-05-28 | [`src/fa/hygiene/pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`src/fa/inner_loop/hooks/intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py), [`tests/test_intent_guard.py`](./tests/test_intent_guard.py), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
+| PR C landed: `IntentGuard(GuardMiddleware)` on `BEFORE_TOOL_EXEC` reuses M-6's classifier + validator; closes M-7 (ADR-10 I-1: one validator, two consumers) | 2026-05-27 | [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py), [`tests/test_intent_guard.py`](./tests/test_intent_guard.py) |
 | PR B landed: `src/fa/hygiene/pr_intent.py` classifier + `prepare-commit-msg` / `commit-msg` hooks; snapshot test pins hook constants to skill §Output format (closes M-6) | 2026-05-27 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`hooks/`](./src/fa/hygiene/hooks/), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
 | PR A' landed: full PR-creation rulebook → loadable skill; AGENTS.md | 2026-05-26 | [`pr-creation/SKILL.md`](./knowledge/skills/pr-creation/SKILL.md) |
 | `knowledge/skills/` directory established; `repo-audit` migrated (closes I-9b) | 2026-05-26 | [`skills/README.md`](./knowledge/skills/README.md) |
@@ -26,7 +28,6 @@ Overwritten each session! Details live at the pointer, not here.
 | PR A: §PR Intent Classification (5 Level-1 intents) + anti-shallow-fix gate | 2026-05-25 | [`AGENTS.md` §Loadable skills](./AGENTS.md#loadable-skills) |
 | ADR-10 proposed — deterministic-harness invariants I-1..I-5 | 2026-05-25 | [`ADR-10`](./knowledge/adr/ADR-10-deterministic-harness-invariants.md) |
 | ABC synthesis deep-dive — 9-repo determinism patterns (ADR-10 input) | 2026-05-25 | [`fa-abc-synthesis-deep-dive`](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md) |
-| ADR-9 T-2 driver + T-4 loader landed; 594 tests | 2026-05-22 | [`ADR-9`](./knowledge/adr/ADR-9-llm-provider-client.md), [`DIGEST.md`](./knowledge/adr/DIGEST.md) |
 
 ### Gotchas (delete when resolved)
 
@@ -39,7 +40,7 @@ Overwritten each session! Details live at the pointer, not here.
 
 | Slot | Scope | Status |
 | :--- | :--- | :--- |
-| M-7 | PR C: `IntentGuard` middleware | unblocked — M-6 classifier module landed |
+| — | (no active milestone; M-6 + M-7 closed) | — |
 
 ## § Next
 
@@ -49,11 +50,12 @@ Priority-ordered. Completed items deleted, not struck through.
    Top-10: `llms.txt` (9), `MAINTENANCE.md` (7), `ADR-10` (6),
    `DIGEST.md` (4), `ADR-7` (4). Retarget «AGENTS.md PR Checklist
    rule #N» → [`pr-creation/SKILL.md` §PR Checklist](./knowledge/skills/pr-creation/SKILL.md).
-2. **PR C** — `src/fa/inner_loop/hooks/intent_guard.py`
-   `IntentGuard(GuardMiddleware)` on `BEFORE_TOOL_EXEC` reusing
-   M-6's classifier module. Single classifier powers both git
-   hook and harness middleware (ADR-10 I-1). Tracked:
-   [`BACKLOG.md` §M-7](./knowledge/BACKLOG.md).
+2. **Wire `IntentGuard` into the loop driver** — PR C landed the
+   middleware shape; session bootstrap still needs to `register()`
+   it with a `draft_path` resolved to
+   `~/.fa/state/runs/<run_id>/pr_draft.md`, plus the deferred
+   `prepare-pr` tool / sub-agent that populates that file
+   (M-7 row Q-N item).
 3. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
    number» audit; `[CODE]` namespace + A23 lint.
 
