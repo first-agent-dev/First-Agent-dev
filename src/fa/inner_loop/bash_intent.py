@@ -1,23 +1,27 @@
-"""IntentGuard-specific bash effect analysis.
+"""IntentGuard bash effect classifier.
 
-This module answers a different question from the sandbox classifier in
-:mod:`fa.sandbox.classifier`.
+Classifies shell commands by their effect on intent-relevant repo state.
 
-- The sandbox classifier asks: "is this command dangerous / package-install /
-  generally write-capable from a host-safety perspective?"
-- This module asks: "does this command require a trusted current-session
-  PR draft before execution, and can we deterministically project any
-  intent-relevant repo paths?"
+Contract by category:
 
-The distinction matters. Commands such as ``pytest`` or ``python -m pytest``
-may create caches but are still verification-oriented for the harness; they
-must not be blocked by the PR-draft gate. Conversely, opaque execution forms
-such as ``python -c ...`` or ``make build`` must require a draft even though
-we cannot safely infer their touched paths.
+  READ_ONLY     — no draft required. Pure inspection (ls, grep, git status, etc.)
+  VERIFY_ONLY   — no draft required. Known test/lint commands (pytest, ruff check, mypy).
+                  Strict whitelist only. Does NOT cover:
+                    - ruff check --fix (mutating)
+                    - ruff format (no --check, mutating)
+                    - make, npm, generic scripts
+  INDEX_WRITE   — draft required. git add / git commit only.
+                  Validated against current staged snapshot.
+  REPO_WRITE    — draft required. Deterministic file/directory writes
+                  (redirection, touch, mkdir, cp, mv, rm, sed -i, tee).
+                  Validated with projected StagedPaths merged into staged diff.
+  OPAQUE_EXEC   — draft required. Any executable the analyzer cannot safely
+                  understand (python -c, scripts, make, parse failures, etc.).
+                  Presence-gated only. No fake touched-path claims.
 
-The analyzer is intentionally conservative about what it claims to understand:
-unsupported shell features or ambiguous argv shapes fall back to
-:class:`BashIntentEffect.OPAQUE_EXEC`, never to a fake path projection.
+Design invariant:
+  The default fallback for unknown or ambiguous commands is OPAQUE_EXEC,
+  never REPO_WRITE. This ensures the analyzer fails closed.
 """
 
 from __future__ import annotations
@@ -86,8 +90,22 @@ _READ_ONLY_COMMANDS: frozenset[str] = frozenset(
         "more",
         "diff",
         "cmp",
+        "true",
+        "false",
+        "test",
+        "[",
+        ":",
     }
 )
+# SAFETY: This list is intentionally conservative.
+# Any git subcommand not in this set defaults to OPAQUE_EXEC, not READ_ONLY.
+# Do NOT widen this list without considering whether the subcommand can
+# mutate the working tree, index, or remote state.
+# Examples of commands that look safe but are NOT:
+#   git fetch    — can update remote refs
+#   git pull     — merges into working tree
+#   git stash    — modifies index
+#   git clean    — deletes untracked files
 _GIT_READ_SUBCOMMANDS: frozenset[str] = frozenset(
     {
         "status",
@@ -214,18 +232,51 @@ def _is_python_interpreter(command_word: str) -> bool:
     return command_word in _VERIFY_ONLY_INTERPRETERS
 
 
-def _is_verify_only(words: list[str]) -> bool:
+# Verifier matching uses exact command-word matching only.
+# Rules:
+#   - Match the full first argument ("pytest", not "py")
+#   - Do NOT match on basename of a path-qualified command
+#     (e.g. "/usr/local/bin/pytest" should still match via word, not path)
+#   - Do NOT trust user-supplied aliases or wrappers
+#   - --check / --fix flags change semantics; the matcher must distinguish
+#     "ruff format" (mutating) from "ruff format --check" (verify-only)
+def _normalise_verifier(words: tuple[str, ...]) -> tuple[str, str] | None:
+    """Classify a command's verifier status from its word tokens.
+
+    Returns:
+        ``(family, mode)`` where:
+          ``family``: ``"pytest" | "ruff-check" | "ruff-format" | "mypy"``
+          ``mode``:   ``"verify" | "mutating"``
+        ``None`` if not a known verifier form.
+
+    This is the single source of truth for verifier classification.
+    Both direct invocation and python -m ... forms route through here.
+    """
+
+    if not words:
+        return None
     command_word = words[0]
     if command_word == "pytest":
-        return True
+        return ("pytest", "verify")
     if command_word == "mypy":
-        return True
-    if command_word == "ruff":
-        if len(words) >= 2 and words[1] == "check":
-            return not any(flag in words[2:] for flag in _RUFF_MUTATING_FLAGS)
-        if len(words) >= 3 and words[1] == "format" and "--check" in words[2:]:
-            return True
-    return False
+        return ("mypy", "verify")
+    if command_word == "ruff" and len(words) >= 2:
+        subcommand = words[1]
+        flags = words[2:]
+        if subcommand == "check":
+            if any(flag in flags for flag in _RUFF_MUTATING_FLAGS):
+                return ("ruff-check", "mutating")
+            return ("ruff-check", "verify")
+        if subcommand == "format":
+            if "--check" in flags:
+                return ("ruff-format", "verify")
+            return ("ruff-format", "mutating")
+    return None
+
+
+def _is_verify_only(words: list[str]) -> bool:
+    verifier = _normalise_verifier(tuple(words))
+    return verifier is not None and verifier[1] == "verify"
 
 
 def _is_read_only(words: list[str]) -> bool:
@@ -454,18 +505,114 @@ def _analyze_git(
     if Path(words[0]).name != "git":
         return None
     if len(words) < 2:
-        return BashIntentAnalysis(BashIntentEffect.READ_ONLY, reasons=("git without subcommand",))
+        return _analysis_with_redirects(
+            BashIntentEffect.READ_ONLY,
+            redirect_projection=redirect_projection,
+            has_write_redirect=has_write_redirect,
+            ambiguous_write_redirect=ambiguous_write_redirect,
+            reason="git without subcommand",
+            redirect_reason="git without subcommand with write redirection",
+        )
     subcommand = words[1]
+    if subcommand in {"add", "commit"}:
+        if ambiguous_write_redirect or has_write_redirect:
+            return BashIntentAnalysis(
+                BashIntentEffect.OPAQUE_EXEC,
+                reasons=(f"git {subcommand} with write redirection",),
+            )
+        return BashIntentAnalysis(BashIntentEffect.INDEX_WRITE, reasons=(f"git {subcommand}",))
+    if _is_git_read_only(words):
+        return _analysis_with_redirects(
+            BashIntentEffect.READ_ONLY,
+            redirect_projection=redirect_projection,
+            has_write_redirect=has_write_redirect,
+            ambiguous_write_redirect=ambiguous_write_redirect,
+            reason=f"git {subcommand}",
+            redirect_reason=f"git {subcommand} with write redirection",
+        )
     if ambiguous_write_redirect or has_write_redirect:
         return BashIntentAnalysis(
             BashIntentEffect.OPAQUE_EXEC,
             reasons=(f"git {subcommand} with write redirection",),
         )
-    if subcommand in {"add", "commit"}:
-        return BashIntentAnalysis(BashIntentEffect.INDEX_WRITE, reasons=(f"git {subcommand}",))
-    if subcommand in _GIT_READ_SUBCOMMANDS:
-        return BashIntentAnalysis(BashIntentEffect.READ_ONLY, reasons=(f"git {subcommand}",))
     return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=(f"git {subcommand}",))
+
+
+def _analysis_with_redirects(
+    base_effect: BashIntentEffect,
+    *,
+    redirect_projection: tuple[StagedPath, ...],
+    has_write_redirect: bool,
+    ambiguous_write_redirect: bool,
+    reason: str,
+    redirect_reason: str,
+) -> BashIntentAnalysis:
+    if ambiguous_write_redirect:
+        return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=(redirect_reason,))
+    if has_write_redirect:
+        return BashIntentAnalysis(
+            BashIntentEffect.REPO_WRITE,
+            projected=redirect_projection,
+            reasons=(redirect_reason,),
+        )
+    return BashIntentAnalysis(base_effect, reasons=(reason,))
+
+
+def _is_git_read_only(words: list[str]) -> bool:
+    subcommand = words[1]
+    if subcommand in _GIT_READ_SUBCOMMANDS:
+        return True
+    if subcommand == "remote":
+        return _is_git_remote_read_only(words[2:])
+    if subcommand == "branch":
+        return _is_git_branch_read_only(words[2:])
+    return False
+
+
+def _is_git_remote_read_only(args: list[str]) -> bool:
+    if not args:
+        return True
+    if all(arg in {"-v", "--verbose"} for arg in args):
+        return True
+    return args[0] in {"get-url", "show"}
+
+
+def _is_git_branch_read_only(args: list[str]) -> bool:
+    if not args:
+        return True
+    mutating_flags = {
+        "-d",
+        "-D",
+        "-m",
+        "-M",
+        "-c",
+        "-C",
+        "--delete",
+        "--move",
+        "--copy",
+        "--set-upstream-to",
+        "--unset-upstream",
+        "--edit-description",
+    }
+    if any(arg in mutating_flags for arg in args):
+        return False
+    if "--list" in args:
+        return True
+    read_only_flags = {
+        "-a",
+        "--all",
+        "-r",
+        "--remotes",
+        "-v",
+        "-vv",
+        "--verbose",
+        "--show-current",
+        "--merged",
+        "--no-merged",
+        "--contains",
+        "--no-contains",
+    }
+    return all(arg in read_only_flags for arg in args)
 
 
 def _analyze_python(
@@ -477,74 +624,44 @@ def _analyze_python(
 ) -> BashIntentAnalysis:
     if len(words) >= 3 and words[1] == "-m":
         module = words[2]
-        if module == "pytest":
-            if ambiguous_write_redirect:
-                return BashIntentAnalysis(
-                    BashIntentEffect.OPAQUE_EXEC,
-                    reasons=("python -m pytest with ambiguous write redirection",),
-                )
-            if has_write_redirect:
-                return BashIntentAnalysis(
-                    BashIntentEffect.REPO_WRITE,
-                    projected=redirect_projection,
-                    reasons=("python -m pytest with write redirection",),
-                )
-            return BashIntentAnalysis(BashIntentEffect.VERIFY_ONLY, reasons=("python -m pytest",))
-        if module == "mypy":
-            if ambiguous_write_redirect:
-                return BashIntentAnalysis(
-                    BashIntentEffect.OPAQUE_EXEC,
-                    reasons=("python -m mypy with ambiguous write redirection",),
-                )
-            if has_write_redirect:
-                return BashIntentAnalysis(
-                    BashIntentEffect.REPO_WRITE,
-                    projected=redirect_projection,
-                    reasons=("python -m mypy with write redirection",),
-                )
-            return BashIntentAnalysis(BashIntentEffect.VERIFY_ONLY, reasons=("python -m mypy",))
-        if module == "ruff" and len(words) >= 4:
-            subcommand = words[3]
-            if subcommand == "check":
-                if any(flag in words[4:] for flag in _RUFF_MUTATING_FLAGS):
+        effective_words = tuple(words[2:])
+        verifier = _normalise_verifier(effective_words)
+        if verifier is not None:
+            family, mode = verifier
+            if mode == "mutating":
+                if family == "ruff-check":
                     return BashIntentAnalysis(
                         BashIntentEffect.OPAQUE_EXEC,
                         reasons=("python -m ruff check with mutating flags",),
                     )
-                if ambiguous_write_redirect:
-                    return BashIntentAnalysis(
-                        BashIntentEffect.OPAQUE_EXEC,
-                        reasons=("python -m ruff check with ambiguous write redirection",),
-                    )
-                if has_write_redirect:
-                    return BashIntentAnalysis(
-                        BashIntentEffect.REPO_WRITE,
-                        projected=redirect_projection,
-                        reasons=("python -m ruff check with write redirection",),
-                    )
                 return BashIntentAnalysis(
-                    BashIntentEffect.VERIFY_ONLY, reasons=("python -m ruff check",)
+                    BashIntentEffect.OPAQUE_EXEC, reasons=(f"python -m {module}",)
                 )
-            if subcommand == "format" and "--check" in words[4:]:
-                if ambiguous_write_redirect:
-                    return BashIntentAnalysis(
-                        BashIntentEffect.OPAQUE_EXEC,
-                        reasons=("python -m ruff format --check with ambiguous write redirection",),
-                    )
-                if has_write_redirect:
-                    return BashIntentAnalysis(
-                        BashIntentEffect.REPO_WRITE,
-                        projected=redirect_projection,
-                        reasons=("python -m ruff format --check with write redirection",),
-                    )
+            reason = _python_verifier_reason(family)
+            if ambiguous_write_redirect:
                 return BashIntentAnalysis(
-                    BashIntentEffect.VERIFY_ONLY,
-                    reasons=("python -m ruff format --check",),
+                    BashIntentEffect.OPAQUE_EXEC,
+                    reasons=(f"{reason} with ambiguous write redirection",),
                 )
+            if has_write_redirect:
+                return BashIntentAnalysis(
+                    BashIntentEffect.REPO_WRITE,
+                    projected=redirect_projection,
+                    reasons=(f"{reason} with write redirection",),
+                )
+            return BashIntentAnalysis(BashIntentEffect.VERIFY_ONLY, reasons=(reason,))
         return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=(f"python -m {module}",))
     if len(words) >= 2 and words[1] == "-c":
         return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("python -c",))
     return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("python executable",))
+
+
+def _python_verifier_reason(family: str) -> str:
+    if family == "ruff-check":
+        return "python -m ruff check"
+    if family == "ruff-format":
+        return "python -m ruff format --check"
+    return f"python -m {family}"
 
 
 def _analyze_repo_write_command(
@@ -790,6 +907,18 @@ def _analyze_redirects(
     return tuple(_dedupe_projected(projected)), has_write_redirect, ambiguous_write_redirect
 
 
+# These projections are best-effort intent-classification hints.
+# They are NOT exact shell semantics.
+#   A — file likely to be created (touch, new redirect target, cp dst)
+#   M — file likely to be modified (sed -i, existing redirect target, cp overwrite)
+#   D — file likely to be deleted (rm, mv source)
+#
+# The analyzer does NOT read file contents. It infers status from:
+#   - the command structure (touch vs sed -i)
+#   - filesystem existence checks at dispatch time
+#
+# Downstream consumers (IntentGuard) should treat these as hints
+# for intent classification, not as authoritative git status.
 def _project_path(
     raw: str,
     repo_root: Path,
