@@ -918,6 +918,14 @@
     a known location under `~/.fa/state/runs/<run_id>/pr_draft.md`
     populated by the agent itself; agent populates it on
     session start via a new `prepare-pr` tool or sub-agent.
+    **Closed by PR E (2026-05-28):** `pr.prepare` tool ships in
+    [`src/fa/inner_loop/tools/prepare_pr.py`](../src/fa/inner_loop/tools/prepare_pr.py)
+    and is registered by `_cmd_run` alongside the baseline
+    filesystem tools; closure-bound to the same `draft_path` the
+    `IntentGuard` reads. Single-source-of-truth (ADR-10 I-1)
+    maintained: the tool re-runs `validate_commit_msg` on the
+    rendered draft so any contract drift surfaces as a tool-level
+    failure rather than a corrupt-draft leak.
 - **References:**
   - [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](./adr/ADR-7-inner-loop-tool-registry.md)
     §8 (hook chain).

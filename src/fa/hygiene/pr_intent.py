@@ -357,6 +357,11 @@ _INVARIANT_REQUIRED_PREFIXES: dict[Intent, tuple[str, ...]] = {
     Intent.FIX: ("Affects:",),
     Intent.CHORE: ("n/a",),
 }
+# Public alias so M-7 §Q-N consumers (e.g., the ``pr.prepare`` tool)
+# can validate against the same table without duplicating it. ADR-10 I-1
+# keeps the single-underscore name as the in-module reference; this is
+# the explicit observable surface.
+INVARIANT_REQUIRED_PREFIXES: dict[Intent, tuple[str, ...]] = _INVARIANT_REQUIRED_PREFIXES
 
 
 def parse_field(text: str, header: str) -> str | None:

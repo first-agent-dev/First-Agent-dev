@@ -13,13 +13,14 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
-**As of:** 2026-05-28 — PR D in flight (M-8 LLM-driven coder loop + `fa run`); PR B + PR C merged with review-driven bug-fix pass
+**As of:** 2026-05-28 — PR E in flight (M-7 §Q-N `pr.prepare` producer); PR D merged (M-8 LLM-driven coder loop + `fa run`)
 
 ### Landmarks (what landed)
 
 | What | Date | Pointer |
 | :--- | :--- | :--- |
-| PR D in flight: `src/fa/inner_loop/coder_loop.py` (`drive_session`) + `prompt.py` + `fa run --task` CLI + `UrllibTransport`; bridges `ProviderChain` and `run_session` so the harness is finally LLM-drivable (M-8) | 2026-05-27 | [`coder_loop.py`](./src/fa/inner_loop/coder_loop.py), [`prompt.py`](./src/fa/inner_loop/prompt.py), [`cli.py`](./src/fa/cli.py), [`transport.py`](./src/fa/providers/transport.py) |
+| PR E in flight: `src/fa/inner_loop/tools/prepare_pr.py` (`pr.prepare`) + registry wiring in `_cmd_run`; closes M-7 §Q-N producer gap so `IntentGuard` finally bites on every mutating tool call. | 2026-05-28 | [`prepare_pr.py`](./src/fa/inner_loop/tools/prepare_pr.py), [`tools/__init__.py`](./src/fa/inner_loop/tools/__init__.py), [`cli.py`](./src/fa/cli.py) |
+| PR D landed: `src/fa/inner_loop/coder_loop.py` (`drive_session`) + `prompt.py` + `fa run --task` CLI + `UrllibTransport`; bridges `ProviderChain` and `run_session` so the harness is finally LLM-drivable (closes M-8). | 2026-05-28 | [`coder_loop.py`](./src/fa/inner_loop/coder_loop.py), [`prompt.py`](./src/fa/inner_loop/prompt.py), [`cli.py`](./src/fa/cli.py), [`transport.py`](./src/fa/providers/transport.py) |
 | Bug-fix pass on PR B + PR C: `IntentGuard` re-export + `SQUASH_MSG` skip + `edit_file`/`apply_patch` mutating recognition + path normalisation + shared `parse_field` dedup + stale `Blocked-on` text fix. | 2026-05-28 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py), [`tests/test_intent_guard.py`](./tests/test_intent_guard.py), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
 | PR C landed: `IntentGuard(GuardMiddleware)` on `BEFORE_TOOL_EXEC` reuses M-6's classifier + validator; closes M-7 (ADR-10 I-1: one validator, two consumers) | 2026-05-27 | [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py), [`tests/test_intent_guard.py`](./tests/test_intent_guard.py) |
 | PR B landed: `src/fa/hygiene/pr_intent.py` classifier + `prepare-commit-msg` / `commit-msg` hooks; snapshot test pins hook constants to skill §Output format (closes M-6) | 2026-05-27 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`hooks/`](./src/fa/hygiene/hooks/), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
@@ -40,26 +41,25 @@ Overwritten each session! Details live at the pointer, not here.
 
 | Slot | Scope | Status |
 | :--- | :--- | :--- |
-| M-8 | PR D: LLM-driven coder loop + `fa run` CLI + `UrllibTransport` | in flight (PR #23, 2026-05-27) |
+| M-7 §Q-N | PR E: `pr.prepare` producer for `IntentGuard` read seam | in flight (PR E, 2026-05-28) |
 
 ## § Next
 
 Priority-ordered. Completed items deleted, not struck through.
 
-1. **Wire `IntentGuard` into `fa run` bootstrap.** PR C landed
-   the middleware shape; PR D ships the driver. Both now on `main`
-   (after PR D merges) → small ~20 LOC follow-up registers
-   `IntentGuard(draft_path=…)` next to the other hooks in
-   `_cmd_run`, resolving `draft_path` to
-   `~/.fa/state/runs/<run_id>/pr_draft.md`. Until the `prepare-pr`
-   producer lands, `IntentGuard.allow-on-no-draft` keeps the
-   harness from deadlocking. Tracked: M-7 row §Q-N amendment items.
-2. **`prepare-pr` tool that populates `pr_draft.md`.** The producer
-   side of the M-7 read seam. Likely a `ToolSpec` registered next
-   to the baseline filesystem tools; sub-agent or LLM-side rule
-   composes the header. Deferred from M-7 follow-ups; deferred
-   again from M-8 (the deep-dive §10 says «not in M4 scope»).
-3. **Orphan cross-ref sweep** — ≈26 files from PR A' extraction.
+1. **First real `fa run --task` smoke against OpenRouter / Fireworks.**
+   The driver shipped in PR D + the `pr.prepare` producer landing
+   in PR E together close the contract loop, but adapter
+   response-shape coverage stays theoretical until this runs
+   end-to-end against a live provider. Yellow→green conversion
+   item; provider-specific adapter fixes likely (e.g., a vendor
+   that returns `tool_calls` under a non-canonical key).
+2. **Cross-session aggregation of `attempt_history.json` (R-10 /
+   R-12).** Per-run history is already written under
+   `<workspace>/.fa/runs/<run_id>/`; the missing piece is the
+   roll-up surface that Pillar-3 measurement depends on (lessons
+   moving across sessions instead of being re-discovered).
+3. **Orphan cross-ref sweep — ≈26 files** from PR A' extraction.
    Top-10: `llms.txt` (9), `MAINTENANCE.md` (7), `ADR-10` (6),
    `DIGEST.md` (4), `ADR-7` (4). Retarget «AGENTS.md PR Checklist
    rule #N» → [`pr-creation/SKILL.md` §PR Checklist](./knowledge/skills/pr-creation/SKILL.md).
