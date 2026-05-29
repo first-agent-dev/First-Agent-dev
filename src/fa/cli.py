@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import sys
 from dataclasses import asdict
@@ -16,10 +17,12 @@ from fa.inner_loop import (
     load_runtime_limits_from_path,
     run_session,
 )
+from fa.inner_loop.coder_loop import DEFAULT_MAX_TURNS, drive_session
 from fa.inner_loop.hooks import (
     AuditHook,
     AuthExpiredBlocker,
     HookRegistry,
+    IntentGuard,
     LearningObserver,
     LockfileBlocker,
     LoopGuard,
@@ -29,6 +32,16 @@ from fa.inner_loop.hooks import (
 )
 from fa.inner_loop.tools import build_baseline_registry
 from fa.observability import CostGuardian
+from fa.providers import (
+    DEFAULT_MODELS_YAML_PATH,
+    ChainConfig,
+    ChainEntry,
+    ProviderChain,
+    UrllibTransport,
+    build_provider,
+    load_models_config_from_path,
+)
+from fa.providers.base import Provider, Transport
 from fa.verifier import load_contracts_from_dir
 
 
@@ -89,6 +102,52 @@ def build_parser() -> argparse.ArgumentParser:
         help="Workspace-relative file written by the smoke run.",
     )
     smoke_parser.set_defaults(func=_cmd_inner_loop_smoke)
+
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Drive an LLM-driven coder session against ~/.fa/models.yaml.",
+        description=(
+            "Resolve the per-role provider chain from --config (defaults "
+            "to ~/.fa/models.yaml), bootstrap a SessionState + HookRegistry, "
+            "and drive the session via fa.inner_loop.coder_loop.drive_session "
+            "until the LLM signals done, the turn cap fires, or the provider "
+            "chain is exhausted."
+        ),
+    )
+    run_parser.add_argument(
+        "--task",
+        required=True,
+        help="Task description injected as the first user message.",
+    )
+    run_parser.add_argument(
+        "--role",
+        default="coder",
+        help="Acting role (matches a top-level key in ~/.fa/models.yaml).",
+    )
+    run_parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_MODELS_YAML_PATH,
+        help="Path to the per-role chain config (default: ~/.fa/models.yaml).",
+    )
+    run_parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=Path.cwd(),
+        help="Workspace root. Paths inside tools are resolved relative to this directory.",
+    )
+    run_parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=DEFAULT_MAX_TURNS,
+        help=f"LLM-turn cap (default: {DEFAULT_MAX_TURNS}).",
+    )
+    run_parser.add_argument(
+        "--run-id",
+        default="",
+        help="Override the run_id (default: derived from PID).",
+    )
+    run_parser.set_defaults(func=_cmd_run)
 
     return parser
 
@@ -220,6 +279,104 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
         status = "ERROR" if result.error is not None else "OK"
         print(f"{status}: {result.summary}")
     return 1 if any(result.error is not None for result in results) else 0
+
+
+def _cmd_run(
+    args: argparse.Namespace,
+    *,
+    transport: Transport | None = None,
+) -> int:
+    """Drive an LLM-driven coder session.
+
+    ``transport`` is the dependency-injection seam used by tests to
+    swap in a deterministic fake transport; production callers pass
+    ``None`` and the function constructs a :class:`UrllibTransport`.
+    """
+    workspace = args.workspace.resolve()
+    config_path = args.config.expanduser().resolve()
+    models = load_models_config_from_path(config_path, env=os.environ)
+    chain_config = models.roles.get(args.role)
+    if chain_config is None:
+        known = sorted(models.roles)
+        print(
+            f"fa run: role {args.role!r} not found in {config_path}; known: {known}",
+            file=sys.stderr,
+        )
+        return 2
+
+    effective_transport: Transport = transport if transport is not None else UrllibTransport()
+    chain = _build_provider_chain(chain_config, transport=effective_transport)
+
+    limits = load_runtime_limits_from_path().limits
+    registry = build_baseline_registry(
+        workspace,
+        bash_timeout_seconds=limits.bash_timeout_seconds,
+    )
+    run_id = args.run_id or f"run-{os.getpid()}"
+    log_path = workspace / ".fa" / "runs" / run_id / "events.jsonl"
+    log = EventLog(log_path, run_id=run_id)
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(workspace))
+    hooks.register(
+        LoopGuard(
+            repeat_warn=limits.loop_guard_repeat_warn,
+            circuit_breaker=limits.loop_guard_circuit_breaker,
+            window=limits.loop_guard_window,
+        )
+    )
+    hooks.register(RateLimitBlocker(suppression_seconds=limits.rate_limit_suppression_seconds))
+    hooks.register(LockfileBlocker(suppression_seconds=limits.lockfile_suppression_seconds))
+    hooks.register(AuthExpiredBlocker(suppression_seconds=limits.auth_expired_suppression_seconds))
+    # M-7 IntentGuard: reads the per-session PR draft at
+    # ~/.fa/state/runs/<run_id>/pr_draft.md and enforces the same
+    # classify_intent + validate_commit_msg rules as the M-6 git hooks.
+    # Placed after SandboxHook so only workspace-contained paths reach
+    # the intent classifier.
+    draft_path = Path.home() / ".fa" / "state" / "runs" / run_id / "pr_draft.md"
+    hooks.register(IntentGuard(repo_root=workspace, draft_path=draft_path))
+    hooks.register(AuditHook(event_log=log))
+    hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
+    contracts = load_contracts_from_dir(workspace / "verifiers")
+    if contracts:
+        hooks.register(VerifierObserver(contracts=contracts, event_log=log))
+    state = SessionState(workspace_root=workspace, run_id=run_id, log=log)
+
+    outcome = drive_session(
+        args.task,
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+        role=args.role,
+        acting_family=chain_config.family,
+        limits=limits,
+        max_turns=args.max_turns,
+    )
+    status = "OK" if outcome.exit_code == 0 else "ERROR"
+    print(f"{status}: {outcome.stop_reason} (turns={outcome.turns})")
+    if outcome.final_text:
+        print(outcome.final_text)
+    return outcome.exit_code
+
+
+def _build_provider_chain(
+    config: ChainConfig,
+    *,
+    transport: Transport,
+) -> ProviderChain:
+    """Wire a :class:`ProviderChain` against ``transport``.
+
+    Production-side composition seam: every entry in ``config.chain``
+    instantiates a fresh adapter via :func:`build_provider`, sharing
+    the single transport. Tests can call this helper directly with a
+    fake transport to exercise the wiring without touching the CLI
+    argument-parsing layer.
+    """
+
+    def factory(entry: ChainEntry) -> Provider:
+        return build_provider(entry.provider, transport=transport)
+
+    return ProviderChain(config, provider_factory=factory)
 
 
 def main() -> None:

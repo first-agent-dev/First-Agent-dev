@@ -935,6 +935,108 @@
   `fa.hygiene.pr_intent.classify_intent`. Both PR B and PR C are now
   closed (landed 2026-05-27).
 
+## M-8 — PR D — LLM-driven coder loop (`drive_session`) + `fa run` CLI + `UrllibTransport`
+
+- **Status:** **in flight (PR D, 2026-05-27).**
+- **Why milestone, not idea:** the M-3 ProviderChain dispatcher
+  (PR #18, 2026-05-22) and the M-1 inner-loop `run_session`
+  (PR #24, 2026-05-18) both landed, but no code bridged
+  `provider_chain.request(...)` → `run_session(calls, ...)`. The
+  release-roadmap-post-m2 §3 «UC1 first usable demo» pillar can
+  only be measured after this bridge exists; until then every
+  «agent solves task X» claim is hypothetical because the harness
+  has no way to receive a tool-call from an LLM.
+- **Contract source:** the FA-ABC synthesis deep-dive
+  [`fa-abc-synthesis-deep-dive-2026-05`](./research/fa-abc-synthesis-deep-dive-2026-05.md)
+  §3 (A-bucket residue, I-2 non-LLM determinism, I-4 typed loop-
+  state ownership, I-5 deterministic post-LLM filter) +
+  [`ADR-9` §2 step-by-step](./adr/ADR-9-llm-provider-client.md)
+  (per-call lifecycle) + [`ADR-7` §1](./adr/ADR-7-inner-loop-tool-registry.md)
+  (`ToolSpec` / `ToolCall` / `ToolResult` contract that the
+  driver projects into / out of canonical OpenAI function-tool
+  wire shape).
+- **Scope (~400 LOC source + ~470 LOC tests):**
+  - [`src/fa/inner_loop/coder_loop.py`](../src/fa/inner_loop/coder_loop.py)
+    (~200 LOC) — `drive_session(task, *, provider_chain,
+    registry, hooks, state, …) -> SessionOutcome`. Per-turn
+    loop: `BEFORE_LLM_CALL` → `RequestInfo` → `provider_chain
+    .request(...)` → `AFTER_LLM_CALL` → parse `tool_calls` →
+    `run_session(...)` → collect results → feed back as
+    tool-role observations. Returns `SessionOutcome` (exit_code
+    0/1/2 + stop_reason + turns + final_text + tool_results)
+    rather than raising on terminal states; the determinism
+    guard `_build_tool_calls()` produces a synthetic
+    `__invalid__` call for malformed JSON args so registry
+    validation surfaces the canonical error row (deep-dive §3
+    I-5).
+  - [`src/fa/inner_loop/prompt.py`](../src/fa/inner_loop/prompt.py)
+    (~80 LOC) — `CODER_SYSTEM_PROMPT` constant +
+    `render_tool_specs(specs)` projects `ToolSpec` tuple to
+    OpenAI function-tool wire shape +
+    `build_system_message(extra="")` deterministic composer
+    (A-bucket residue per deep-dive §3 I-2).
+  - [`src/fa/providers/transport.py`](../src/fa/providers/transport.py)
+    (~110 LOC) — `UrllibTransport` stdlib `Transport` impl
+    using `urllib.request`. No new third-party dep.
+  - [`src/fa/cli.py`](../src/fa/cli.py) (+~120 LOC) —
+    `fa run --task <task> [--role coder] [--config
+    ~/.fa/models.yaml] [--workspace .] [--max-turns 16]
+    [--run-id <id>]` subcommand. Builds registry + hooks
+    (Sandbox, LoopGuard, blockers, AuditHook, CostGuardian,
+    optional VerifierObserver) + provider chain via
+    `build_provider` factory; exit codes mirror
+    `SessionOutcome.exit_code`.
+- **Tests (~470 LOC across 4 files):**
+  - [`tests/test_coder_loop.py`](../tests/test_coder_loop.py)
+    — `FakeProvider` fixture; 11 cases covering happy stop,
+    tool-call dispatch, iteration cap, `ProviderChainExhaustedError`,
+    `ProviderRequestShapeError`, abnormal `finish_reason`,
+    tool-spec rendering into request body, malformed JSON args,
+    audit-row emission, `DEFAULT_MAX_TURNS` snapshot, `state.log`
+    enforcement.
+  - [`tests/test_prompt.py`](../tests/test_prompt.py) — 7
+    cases pinning the A-bucket determinism property.
+  - [`tests/test_transport.py`](../tests/test_transport.py) —
+    11 cases with monkeypatched `urlopen`; pure helpers
+    (`_parse_retry_after`, `_decode_body`) covered against
+    edge cases including the «non-object JSON returns empty
+    body» branch.
+  - [`tests/test_cli.py`](../tests/test_cli.py) — 4 new
+    cases: `fa run` clean stop, role-missing exits 2,
+    events.jsonl emission, turn-cap exits 1.
+- **Out of scope (parking lot):**
+  - `IntentGuard` registration in `fa run` bootstrap — folds
+    into HANDOFF §Next #1 follow-up; PR C (M-7) merged
+    2026-05-27, so the dependency is satisfied and the
+    follow-up is unblocked.
+  - `prepare-pr` tool that populates `pr_draft.md` (M-7 §Q-N).
+  - `fa init` command for `~/.fa/models.yaml` template
+    generation (deferred per user lock 2026-05-27 — `--config
+    <path>` covers the explicit-path case).
+  - Streaming response interfaces (R-23 forbids streaming on
+    parent ↔ loop interface).
+- **Q-N amendment items:**
+  - Default `temperature=0.0` for v0.1 determinism; if a real
+    workload surfaces «coder needs creativity», promote to a
+    `--temperature` CLI flag.
+  - `LearningObserver` is not registered by `fa run` in PR D
+    (the smoke command registers it with a pinned clock for
+    byte-stable artifacts; the LLM path needs live timestamps
+    + workspace-agnostic defaults). Reconsider when
+    cross-session memory is wired (Pillar-3 follow-up).
+- **References:**
+  - [`fa-abc-synthesis-deep-dive`](./research/fa-abc-synthesis-deep-dive-2026-05.md)
+    §3 (I-2 / I-4 / I-5).
+  - [`ADR-9`](./adr/ADR-9-llm-provider-client.md) §2 (runtime
+    semantics) + §3 (cooldown) + §5 (adapter pattern).
+  - [`ADR-8`](./adr/ADR-8-hook-registry.md) §1 (lifecycle
+    points).
+  - [`ADR-7`](./adr/ADR-7-inner-loop-tool-registry.md) §1
+    (`ToolSpec` / `ToolCall` / `ToolResult` contract).
+- **Blocked-on:** none (M-6 was the only hard dep — landed via
+  PR #20). M-7 (PR C) is not a blocker because IntentGuard
+  wiring is explicitly out of M-8 scope (deferred follow-up).
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

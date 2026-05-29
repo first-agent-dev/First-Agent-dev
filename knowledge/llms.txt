@@ -53,6 +53,8 @@ Materialised ADR-7 + ADR-8 runtime. Smoke: `fa inner-loop-smoke --workspace . --
 
 - `src/fa/inner_loop/registry.py` — `ToolRegistry` + `ToolSpec` / `ToolResult` / `ToolCall` dataclasses; JSON-Schema validation per ADR-7 §5.
 - `src/fa/inner_loop/loop.py` — deterministic `run_session()` driver; `max_iterations` from `RuntimeLimits` (default 6, ADR-7 §Amendment 2026-05-20).
+- `src/fa/inner_loop/coder_loop.py` — M-8 LLM-driven `drive_session()`; bridges `ProviderChain` and `run_session`; returns `SessionOutcome`.
+- `src/fa/inner_loop/prompt.py` — M-8 A-bucket residue: `CODER_SYSTEM_PROMPT` + `render_tool_specs()` (OpenAI function-tool shape) + `build_system_message()`.
 - `src/fa/inner_loop/runtime_limits.py` — `RuntimeLimits` config loader from `~/.fa/config.yaml`; all knob defaults anchored.
 - `src/fa/inner_loop/hooks/base.py` — `HookRegistry`, `GuardMiddleware` / `ObserverMiddleware`, `Decision`, lifecycle dispatch. ADR-8 contract.
 - `src/fa/inner_loop/hooks/builtin.py` — `PauseGuard`, `CapabilityGuard`, `SandboxHook`, `ApprovalHook`, `AuditHook`, `VerifierObserver`, `LearningObserver` (R-8 canon writer).
@@ -76,6 +78,7 @@ ADR-9 implementation. Per-role explicit provider chain with cooldown in `~/.fa/m
 - `src/fa/providers/config.py` — `ModelsConfig` + `load_models_config()` from `~/.fa/models.yaml`; enforces ADR-2 eval-disjoint rule.
 - `src/fa/providers/errors.py` — 6 typed errors (`ConfigurationError` through `ProviderChainExhaustedError`).
 - `src/fa/providers/registry.py` — `ProviderSpec` + adapter factory registry.
+- `src/fa/providers/transport.py` — M-8 `UrllibTransport`: stdlib `Transport` impl via `urllib.request`; no third-party dep.
 
 ### Observability (`src/fa/observability/`)
 

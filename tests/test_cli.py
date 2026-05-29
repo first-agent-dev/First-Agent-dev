@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import argparse
 import json
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
+import pytest
 from _pytest.capture import CaptureFixture
 
-from fa.cli import build_parser
+from fa.cli import _cmd_run, build_parser
+from fa.providers.base import TransportResponse
 
 
 def test_cli_help_contains_project_name() -> None:
@@ -239,3 +244,191 @@ def test_invariant_adr7_r8_canon_root_is_knowledge_trace(tmp_path: Path) -> None
         "knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md "
         "and the worked-history note in ADR-7 §Sub-amendment 2026-05-21b."
     )
+
+
+# ---------------------------------------------------------------------------
+# `fa run` tests — exercise the LLM-driven driver behind the CLI seam.
+# ---------------------------------------------------------------------------
+
+
+_FAKE_MODELS_YAML = """\
+coder:
+  model: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      slug: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: TEST_FA_RUN_KEY
+"""
+
+
+class _ScriptedTransport:
+    """Test transport that returns canned ``TransportResponse`` objects in order.
+
+    The driver only cares about the canonical
+    :class:`fa.providers.base.ResponseInfo` shape; the adapter
+    (``OpenAICompatProvider``) does the body → ResponseInfo
+    normalisation. We feed adapter-shaped bodies via ``TransportResponse``
+    so the production code path is exercised end-to-end.
+    """
+
+    def __init__(self, bodies: list[Mapping[str, Any]]) -> None:
+        self._bodies = list(bodies)
+        self.calls: list[Mapping[str, Any]] = []
+
+    def post(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        json_body: Mapping[str, Any],
+        timeout_seconds: float,
+    ) -> TransportResponse:
+        self.calls.append(json_body)
+        if not self._bodies:
+            return TransportResponse(status=503, body={})
+        body = self._bodies.pop(0)
+        return TransportResponse(status=200, body=body)
+
+
+def _stop_body(text: str = "done") -> Mapping[str, Any]:
+    return {
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": text, "tool_calls": []},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    }
+
+
+def _make_run_args(
+    *,
+    workspace: Path,
+    config: Path,
+    task: str = "do nothing",
+    role: str = "coder",
+    max_turns: int = 4,
+    run_id: str = "test-run",
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        task=task,
+        role=role,
+        config=config,
+        workspace=workspace,
+        max_turns=max_turns,
+        run_id=run_id,
+    )
+
+
+def test_fa_run_help_contains_run_command() -> None:
+    help_text = build_parser().format_help()
+    assert "run" in help_text
+
+
+def test_fa_run_returns_zero_on_clean_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    transport = _ScriptedTransport([_stop_body("hello world")])
+    args = _make_run_args(workspace=tmp_path, config=config)
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 0
+    captured = capsys.readouterr().out
+    assert "OK:" in captured
+    assert "stopped_by_llm" in captured
+    assert "hello world" in captured
+    assert len(transport.calls) == 1
+    # The driver injects the system prompt as the first message.
+    messages = transport.calls[0]["messages"]
+    assert messages[0]["role"] == "system"
+
+
+def test_fa_run_returns_two_when_role_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    transport = _ScriptedTransport([])
+    args = _make_run_args(workspace=tmp_path, config=config, role="planner")
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 2
+    assert "planner" in capsys.readouterr().err
+
+
+def test_fa_run_writes_events_jsonl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    transport = _ScriptedTransport([_stop_body("ok")])
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="audit-run")
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 0
+    events = tmp_path / ".fa" / "runs" / "audit-run" / "events.jsonl"
+    assert events.exists()
+    kinds = [
+        json.loads(line)["kind"]
+        for line in events.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert "user_msg" in kinds
+    assert "model_msg" in kinds
+
+
+def test_fa_run_hits_turn_cap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    # Tool call that yields invalid_params (no such tool registered),
+    # making the LLM loop indefinitely without ever signalling stop.
+    looping_body = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "tc-loop",
+                            "type": "function",
+                            "function": {
+                                "name": "fs.read_file",
+                                "arguments": '{"path": "missing.txt"}',
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    }
+    transport = _ScriptedTransport([looping_body, looping_body])
+    args = _make_run_args(workspace=tmp_path, config=config, max_turns=2)
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 1
+    assert "iteration_cap" in capsys.readouterr().out
