@@ -14,6 +14,7 @@ asserting on the exact request body the FakeProvider receives.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -406,6 +407,7 @@ def test_drive_session_writes_user_and_model_msg_rows(tmp_path: Path) -> None:
         kinds.append(json.loads(row)["kind"])
     assert "user_msg" in kinds
     assert "model_msg" in kinds
+    assert "run_started" in kinds
 
 
 def test_drive_session_default_max_turns_constant_is_stable() -> None:
@@ -452,3 +454,128 @@ def test_drive_session_respects_custom_runtime_limits(tmp_path: Path) -> None:
     )
 
     assert outcome.exit_code == 0
+
+
+# -- Batch truncation (run_session max_iterations < tool_calls) --------------
+
+
+def test_drive_session_pads_truncated_tool_calls(tmp_path: Path) -> None:
+    """If the LLM emits more tool calls than run_session's max_iterations
+    allows in a single batch, the driver must pad synthetic failures so
+    the OpenAI function-calling protocol stays valid (every tool_call_id
+    needs a matching role="tool" message).
+    """
+    tool_calls = [
+        {
+            "id": f"tc-{i}",
+            "type": "function",
+            "function": {
+                "name": "echo",
+                "arguments": f'{{"text": "call-{i}"}}',
+            },
+        }
+        for i in range(3)
+    ]
+    provider = FakeProvider(
+        [
+            _make_response(finish_reason="tool_calls", tool_calls=tuple(tool_calls)),
+            _make_response(text="done", finish_reason="stop"),
+        ]
+    )
+    chain = _make_chain(provider)
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    state = _make_state(tmp_path)
+
+    # max_iterations=2 means run_session stops after the 2nd call.
+    limits = RuntimeLimits(max_iterations=2)
+    outcome = drive_session(
+        "batch",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+        limits=limits,
+    )
+
+    # Turn 1: LLM emits 3 calls, run_session only processes 2.
+    # Turn 2: LLM sees the 2 real results + 1 synthetic failure.
+    assert outcome.exit_code == 0
+    assert outcome.turns == 2
+    # The second (follow-up) request must contain exactly 3 tool
+    # messages so the conversation shape is protocol-valid.
+    follow_up = provider.calls[1]
+    tool_messages = [m for m in follow_up.messages if m.get("role") == "tool"]
+    assert len(tool_messages) == 3
+    # The 3rd message must be the synthetic failure, not silently absent.
+    assert "iteration limit" in tool_messages[2]["content"]
+
+    # events.jsonl must have 3 tool_result rows (2 real + 1 synthetic).
+    events_path = tmp_path / "events.jsonl"
+    kinds = [
+        json.loads(line)["kind"] for line in events_path.read_text().splitlines() if line.strip()
+    ]
+    assert kinds.count("tool_result") == 3
+
+
+# -- KeyboardInterrupt terminal path -----------------------------------------
+
+
+def test_drive_session_keyboard_interrupt_returns_outcome(
+    tmp_path: Path,
+) -> None:
+    """Ctrl+C during the LLM request must not crash the process; it must
+    return a typed SessionOutcome with exit_code 130 (standard Unix SIGINT).
+    """
+
+    class InterruptProvider:
+        name = "interrupt"
+
+        def request(
+            self,
+            _request: RequestInfo,
+            *,
+            base_url: str,
+            api_key: str,
+            timeout_seconds: float,
+            extra_headers: Mapping[str, str],
+        ) -> ResponseInfo:
+            raise KeyboardInterrupt()
+
+    entry = ChainEntry(
+        provider="openrouter",
+        slug="test/model",
+        base_url="https://example.invalid/v1",
+        api_key_env="TEST_KEY",
+    )
+    config = ChainConfig(role="coder", model="test-model", family="", chain=(entry,))
+    chain = ProviderChain(
+        config,
+        provider_factory=lambda _e: InterruptProvider(),
+        env={"TEST_KEY": "k"},
+    )
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    state = _make_state(tmp_path)
+
+    outcome = drive_session(
+        "interrupt me",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert outcome.exit_code == 130
+    assert outcome.stop_reason == "abnormal_stop:interrupt"
+    assert outcome.turns == 1
+    assert outcome.final_text == ""
+
+    events_path = tmp_path / "events.jsonl"
+    kinds = [
+        json.loads(line)["kind"] for line in events_path.read_text().splitlines() if line.strip()
+    ]
+    assert "run_stopped" in kinds
+    assert "abnormal_stop:interrupt" in events_path.read_text()

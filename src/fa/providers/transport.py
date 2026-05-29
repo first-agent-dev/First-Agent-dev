@@ -70,9 +70,16 @@ class UrllibTransport(Transport):
     ) -> TransportResponse:
         body_bytes = json.dumps(json_body).encode("utf-8")
         request = urllib.request.Request(url, data=body_bytes, method="POST")
+        # Defensive: urllib.request.Request does not set Content-Type
+        # automatically in all Python versions when data is provided.
+        # Set it here unless the caller already provided one, so a
+        # generic adapter that forgets the header still sends valid JSON.
+        if not any(k.lower() == "content-type" for k in headers):
+            request.add_header("Content-Type", "application/json")
         request.add_header("User-Agent", self._user_agent)
         for key, value in headers.items():
-            request.add_header(key, value)
+            if key.lower() != "user-agent":
+                request.add_header(key, value)
         try:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 status = int(response.status)

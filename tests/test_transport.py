@@ -198,3 +198,64 @@ def test_post_serialises_json_body_consistently(monkeypatch: pytest.MonkeyPatch)
 def test_user_agent_is_overridable() -> None:
     transport = UrllibTransport(user_agent="my-fa/0.1")
     assert transport._user_agent == "my-fa/0.1"
+
+
+def test_post_injects_content_type_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_headers: dict[str, str] = {}
+
+    def fake_urlopen(request: urllib.request.Request, timeout: float) -> _FakeResponse:
+        captured_headers.update(dict(request.headers))
+        return _FakeResponse(200, b"{}", {})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    transport = UrllibTransport()
+    transport.post(
+        "https://example.invalid/v1",
+        headers={"Authorization": "Bearer k"},
+        json_body={"x": 1},
+        timeout_seconds=1.0,
+    )
+
+    assert captured_headers.get("Content-type") == "application/json"
+
+
+def test_post_does_not_duplicate_content_type_from_caller(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_values: list[str] = []
+
+    def fake_urlopen(request: urllib.request.Request, timeout: float) -> _FakeResponse:
+        # ``Request.headers`` returns a combined view; raw items may
+        # appear twice if add_header was called redundantly.
+        captured_values.extend(v for k, v in request.headers.items() if k.lower() == "content-type")
+        return _FakeResponse(200, b"{}", {})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    transport = UrllibTransport()
+    transport.post(
+        "https://example.invalid/v1",
+        headers={"Content-Type": "application/json"},
+        json_body={"x": 1},
+        timeout_seconds=1.0,
+    )
+
+    assert captured_values.count("application/json") == 1
+
+
+def test_post_does_not_duplicate_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_values: list[str] = []
+
+    def fake_urlopen(request: urllib.request.Request, timeout: float) -> _FakeResponse:
+        captured_values.extend(v for k, v in request.headers.items() if k.lower() == "user-agent")
+        return _FakeResponse(200, b"{}", {})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    transport = UrllibTransport()
+    transport.post(
+        "https://example.invalid/v1",
+        headers={"User-Agent": "custom/1.0"},
+        json_body={},
+        timeout_seconds=1.0,
+    )
+
+    # Only the transport-level UA should appear; caller UA is skipped
+    # to avoid duplicate headers.
+    assert captured_values == [DEFAULT_USER_AGENT]

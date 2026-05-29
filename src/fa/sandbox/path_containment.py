@@ -124,7 +124,13 @@ def resolve_against(target: str | Path, base: Path) -> Path | None:
         expanded = os.path.expandvars(str(target))
         target_path = Path(expanded).expanduser()
         candidate = target_path if target_path.is_absolute() else (base / target_path)
-        return candidate.resolve(strict=False)
+        resolved = candidate.resolve(strict=False)
+        # Python 3.13+ resolve(strict=False) no longer raises RuntimeError on
+        # symlink loops — it silently returns the unresolved symlink path.
+        # A fully-resolved canonical path must never itself be a symlink.
+        if resolved.is_symlink():
+            return None
+        return resolved
     except (OSError, RuntimeError):
         return None
 

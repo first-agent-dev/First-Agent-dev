@@ -128,6 +128,8 @@ class SessionOutcome:
     - ``exit_code == 2`` + ``stop_reason == "request_shape"``: a
       provider returned 400/422 (FA's request construction is wrong);
       the chain raised :class:`fa.providers.errors.ProviderRequestShapeError`.
+    - ``exit_code == 130`` + ``stop_reason == "abnormal_stop:interrupt"``:
+      the user sent ``KeyboardInterrupt`` (Ctrl+C) during a turn.
     """
 
     exit_code: int
@@ -210,6 +212,11 @@ def drive_session(
         {"role": "user", "content": task},
     ]
     state.log.append(actor="user", kind="user_msg", content={"text": task})
+    state.log.append(
+        actor="runtime",
+        kind="run_started",
+        content={"role": role, "max_turns": max_turns, "temperature": temperature},
+    )
 
     collected_results: list[ToolResult] = []
     turn = 0
@@ -228,6 +235,19 @@ def drive_session(
         )
         try:
             response, _logical_id, _attempts = provider_chain.request(request)
+        except KeyboardInterrupt:
+            state.log.append(
+                actor="runtime",
+                kind="run_stopped",
+                content={"reason": "abnormal_stop:interrupt"},
+            )
+            return SessionOutcome(
+                exit_code=130,
+                stop_reason="abnormal_stop:interrupt",
+                turns=turn,
+                final_text="",
+                tool_results=tuple(collected_results),
+            )
         except ProviderChainExhaustedError as exc:
             state.log.append(
                 actor="runtime",
@@ -315,8 +335,32 @@ def drive_session(
             acting_family=acting_family,
             limits=effective_limits,
         )
+        # ``run_session`` enforces ``max_iterations`` per invocation.
+        # If the LLM emitted more tool calls than the cap, the loop
+        # breaks early and returns fewer results. We MUST pad the
+        # remainder with synthetic failures so the conversation history
+        # stays protocol-valid: every ``tool_call_id`` in the
+        # assistant message needs a matching ``role="tool"`` message.
+        missing = len(tool_calls) - len(turn_results)
+        if missing > 0:
+            synthetic = ToolResult.fail(
+                "iteration_cap",
+                (
+                    f"tool call skipped: per-turn iteration limit "
+                    f"({effective_limits.max_iterations}) exceeded"
+                ),
+                retryable=True,
+            )
+            turn_results = (*turn_results, *([synthetic] * missing))
+            # Record synthetic tool results in the audit trail so
+            # replay sees a complete paired ``tool_call`` / ``tool_result``
+            # row set per ADR-7 §10 Acceptance criterion 8.
+            start = len(turn_results) - missing
+            for call, result in zip(tool_calls[start:], turn_results[start:], strict=False):
+                state.record_tool_call(call)
+                state.record_tool_result(call, result)
         collected_results.extend(turn_results)
-        for call, result in zip(tool_calls, turn_results, strict=False):
+        for call, result in zip(tool_calls, turn_results, strict=True):
             messages.append(
                 {
                     "role": "tool",
