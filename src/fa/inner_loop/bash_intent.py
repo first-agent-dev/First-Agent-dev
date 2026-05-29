@@ -174,7 +174,7 @@ def _reduce_analyses(analyses: tuple[BashIntentAnalysis, ...]) -> BashIntentAnal
     ):
         return BashIntentAnalysis(
             BashIntentEffect.OPAQUE_EXEC,
-            reasons=tuple([*reasons, "index-write mixed with non-index mutation"]),
+            reasons=(*reasons, "index-write mixed with non-index mutation"),
         )
 
     if BashIntentEffect.REPO_WRITE in effects:
@@ -199,7 +199,6 @@ def _dedupe_projected(projected: Iterable[StagedPath]) -> tuple[StagedPath, ...]
         seen.add(entry.path)
         unique.append(entry)
     return tuple(unique)
-
 
 
 def _unwrap_env(words: list[str]) -> list[str] | None:
@@ -342,7 +341,9 @@ def _analyze_command(node: Any, repo_root: Path) -> BashIntentAnalysis:
     if head == "env":
         wrapped = _unwrap_env(words)
         if wrapped is None:
-            return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("env without subcommand",))
+            return BashIntentAnalysis(
+                BashIntentEffect.OPAQUE_EXEC, reasons=("env without subcommand",)
+            )
         return _analyze_literal_words(
             wrapped,
             redirect_projection=redirect_projection,
@@ -379,9 +380,13 @@ def _analyze_literal_words(
             ambiguous_write_redirect=ambiguous_write_redirect,
         )
     if head in {"bash", "sh", "zsh", "dash"}:
-        return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=(f"opaque shell exec: {head}",))
+        return BashIntentAnalysis(
+            BashIntentEffect.OPAQUE_EXEC, reasons=(f"opaque shell exec: {head}",)
+        )
     if head in _OPAQUE_HEADS:
-        return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=(f"opaque exec family: {head}",))
+        return BashIntentAnalysis(
+            BashIntentEffect.OPAQUE_EXEC, reasons=(f"opaque exec family: {head}",)
+        )
 
     git_analysis = _analyze_git(
         words,
@@ -404,7 +409,9 @@ def _analyze_literal_words(
                 projected=redirect_projection,
                 reasons=(f"verify command with write redirection: {head}",),
             )
-        return BashIntentAnalysis(BashIntentEffect.VERIFY_ONLY, reasons=(f"verify command: {head}",))
+        return BashIntentAnalysis(
+            BashIntentEffect.VERIFY_ONLY, reasons=(f"verify command: {head}",)
+        )
 
     if _is_read_only(words):
         if ambiguous_write_redirect:
@@ -418,7 +425,9 @@ def _analyze_literal_words(
                 projected=redirect_projection,
                 reasons=(f"read command with write redirection: {head}",),
             )
-        return BashIntentAnalysis(BashIntentEffect.READ_ONLY, reasons=(f"read-only command: {head}",))
+        return BashIntentAnalysis(
+            BashIntentEffect.READ_ONLY, reasons=(f"read-only command: {head}",)
+        )
 
     repo_write = _analyze_repo_write_command(words, redirect_projection, repo_root)
     if repo_write is not None:
@@ -430,7 +439,9 @@ def _analyze_literal_words(
             reasons=(f"unsupported command with write redirection: {head}",),
         )
 
-    return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=(f"unsupported literal command: {head}",))
+    return BashIntentAnalysis(
+        BashIntentEffect.OPAQUE_EXEC, reasons=(f"unsupported literal command: {head}",)
+    )
 
 
 def _analyze_git(
@@ -496,7 +507,10 @@ def _analyze_python(
             subcommand = words[3]
             if subcommand == "check":
                 if any(flag in words[4:] for flag in _RUFF_MUTATING_FLAGS):
-                    return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("python -m ruff check with mutating flags",))
+                    return BashIntentAnalysis(
+                        BashIntentEffect.OPAQUE_EXEC,
+                        reasons=("python -m ruff check with mutating flags",),
+                    )
                 if ambiguous_write_redirect:
                     return BashIntentAnalysis(
                         BashIntentEffect.OPAQUE_EXEC,
@@ -508,7 +522,9 @@ def _analyze_python(
                         projected=redirect_projection,
                         reasons=("python -m ruff check with write redirection",),
                     )
-                return BashIntentAnalysis(BashIntentEffect.VERIFY_ONLY, reasons=("python -m ruff check",))
+                return BashIntentAnalysis(
+                    BashIntentEffect.VERIFY_ONLY, reasons=("python -m ruff check",)
+                )
             if subcommand == "format" and "--check" in words[4:]:
                 if ambiguous_write_redirect:
                     return BashIntentAnalysis(
@@ -542,14 +558,18 @@ def _analyze_repo_write_command(
     if head == "touch":
         targets = _non_flag_args(words[1:])
         if not targets:
-            return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("touch without targets",))
+            return BashIntentAnalysis(
+                BashIntentEffect.OPAQUE_EXEC, reasons=("touch without targets",)
+            )
         projected = tuple(
             entry
             for entry in (_project_path(word, repo_root, delete=False) for word in targets)
             if entry is not None
         )
         if not projected:
-            return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("touch targets not literal",))
+            return BashIntentAnalysis(
+                BashIntentEffect.OPAQUE_EXEC, reasons=("touch targets not literal",)
+            )
         return BashIntentAnalysis(
             BashIntentEffect.REPO_WRITE,
             projected=tuple(_dedupe_projected([*projected, *redirect_projection])),
@@ -558,14 +578,21 @@ def _analyze_repo_write_command(
     if head == "mkdir":
         targets = _non_flag_args(words[1:])
         if not targets:
-            return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("mkdir without targets",))
+            return BashIntentAnalysis(
+                BashIntentEffect.OPAQUE_EXEC, reasons=("mkdir without targets",)
+            )
         projected = tuple(
             entry
-            for entry in (_project_path(word, repo_root, delete=False, directory_hint=True) for word in targets)
+            for entry in (
+                _project_path(word, repo_root, delete=False, directory_hint=True)
+                for word in targets
+            )
             if entry is not None
         )
         if not projected:
-            return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("mkdir targets not literal",))
+            return BashIntentAnalysis(
+                BashIntentEffect.OPAQUE_EXEC, reasons=("mkdir targets not literal",)
+            )
         return BashIntentAnalysis(
             BashIntentEffect.REPO_WRITE,
             projected=tuple(_dedupe_projected([*projected, *redirect_projection])),
@@ -576,10 +603,14 @@ def _analyze_repo_write_command(
         if not targets:
             return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("rm without targets",))
         projected = tuple(
-            entry for entry in (_project_path(word, repo_root, delete=True) for word in targets) if entry
+            entry
+            for entry in (_project_path(word, repo_root, delete=True) for word in targets)
+            if entry
         )
         if not projected:
-            return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("rm targets not literal",))
+            return BashIntentAnalysis(
+                BashIntentEffect.OPAQUE_EXEC, reasons=("rm targets not literal",)
+            )
         return BashIntentAnalysis(
             BashIntentEffect.REPO_WRITE,
             projected=tuple(_dedupe_projected([*projected, *redirect_projection])),
@@ -611,10 +642,14 @@ def _analyze_tee(
             )
         return BashIntentAnalysis(BashIntentEffect.READ_ONLY, reasons=("tee to stdout",))
     projected = tuple(
-        entry for entry in (_project_path(word, repo_root, delete=False) for word in targets) if entry
+        entry
+        for entry in (_project_path(word, repo_root, delete=False) for word in targets)
+        if entry
     )
     if not projected:
-        return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("tee targets not literal",))
+        return BashIntentAnalysis(
+            BashIntentEffect.OPAQUE_EXEC, reasons=("tee targets not literal",)
+        )
     return BashIntentAnalysis(
         BashIntentEffect.REPO_WRITE,
         projected=tuple(_dedupe_projected([*projected, *redirect_projection])),
@@ -671,14 +706,20 @@ def _analyze_sed(
         return None
     files = _sed_target_files(args)
     if not files:
-        return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("sed -i without literal files",))
+        return BashIntentAnalysis(
+            BashIntentEffect.OPAQUE_EXEC, reasons=("sed -i without literal files",)
+        )
     projected = tuple(
         entry
-        for entry in (_project_path(word, repo_root, delete=False, force_modify=True) for word in files)
+        for entry in (
+            _project_path(word, repo_root, delete=False, force_modify=True) for word in files
+        )
         if entry
     )
     if not projected:
-        return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("sed -i files not literal",))
+        return BashIntentAnalysis(
+            BashIntentEffect.OPAQUE_EXEC, reasons=("sed -i files not literal",)
+        )
     return BashIntentAnalysis(
         BashIntentEffect.REPO_WRITE,
         projected=tuple(_dedupe_projected([*projected, *redirect_projection])),
@@ -696,14 +737,20 @@ def _analyze_perl(
         return None
     files = _perl_target_files(args)
     if not files:
-        return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("perl -pi without literal files",))
+        return BashIntentAnalysis(
+            BashIntentEffect.OPAQUE_EXEC, reasons=("perl -pi without literal files",)
+        )
     projected = tuple(
         entry
-        for entry in (_project_path(word, repo_root, delete=False, force_modify=True) for word in files)
+        for entry in (
+            _project_path(word, repo_root, delete=False, force_modify=True) for word in files
+        )
         if entry
     )
     if not projected:
-        return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("perl -pi files not literal",))
+        return BashIntentAnalysis(
+            BashIntentEffect.OPAQUE_EXEC, reasons=("perl -pi files not literal",)
+        )
     return BashIntentAnalysis(
         BashIntentEffect.REPO_WRITE,
         projected=tuple(_dedupe_projected([*projected, *redirect_projection])),

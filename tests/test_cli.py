@@ -482,7 +482,6 @@ def test_fa_run_registers_pr_prepare_tool(
     assert prepare["function"]["parameters"]["required"] == ["intent", "invariant"]
 
 
-
 def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -495,7 +494,9 @@ def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
-                _tool_call("tc-write", "fs.write_file", '{"path": "src/fa/x.py", "content": "x\\n"}'),
+                _tool_call(
+                    "tc-write", "fs.write_file", '{"path": "src/fa/x.py", "content": "x\\n"}'
+                ),
                 _tool_call("tc-prepare", "pr.prepare", '{"intent": "CHORE", "invariant": "n/a"}'),
             ),
             _stop_body("done"),
@@ -511,9 +512,9 @@ def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
     assert draft_path.read_text(encoding="utf-8") == "INTENT: CHORE\nINVARIANT: n/a\n"
     events = [
         json.loads(line)
-        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
     write_result = next(
@@ -523,7 +524,6 @@ def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
     )
     assert write_result["content"]["error"]["code"] == "hook_deny"
     assert "call `pr.prepare`" in write_result["content"]["error"]["message"]
-
 
 
 def test_fa_run_clears_stale_pr_draft_on_startup(
@@ -545,7 +545,6 @@ def test_fa_run_clears_stale_pr_draft_on_startup(
 
     assert exit_code == 0
     assert not stale.exists()
-
 
 
 def test_fa_run_verify_only_bash_allowed_before_pr_prepare(
@@ -574,9 +573,9 @@ def test_fa_run_verify_only_bash_allowed_before_pr_prepare(
     assert exit_code == 0
     events = [
         json.loads(line)
-        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
     bash_result = next(
@@ -585,7 +584,6 @@ def test_fa_run_verify_only_bash_allowed_before_pr_prepare(
         if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-bash"
     )
     assert bash_result["content"]["ok"] is True
-
 
 
 def test_fa_run_repo_write_bash_requires_pr_prepare(
@@ -615,9 +613,9 @@ def test_fa_run_repo_write_bash_requires_pr_prepare(
     assert not (tmp_path / "src" / "fa" / "x.py").exists()
     events = [
         json.loads(line)
-        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
     bash_result = next(
@@ -629,7 +627,6 @@ def test_fa_run_repo_write_bash_requires_pr_prepare(
     assert "call `pr.prepare`" in bash_result["content"]["error"]["message"]
 
 
-
 def test_fa_run_opaque_exec_bash_requires_pr_prepare(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -637,9 +634,7 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
     monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
-    command = (
-        'python -c "import pathlib; pathlib.Path(\"src/fa/x.py\").write_text(\"x\")"'
-    )
+    command = 'python -c "import pathlib; pathlib.Path("src/fa/x.py").write_text("x")"'
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
@@ -656,9 +651,9 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
     assert not (tmp_path / "src" / "fa" / "x.py").exists()
     events = [
         json.loads(line)
-        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
     bash_result = next(
@@ -668,7 +663,6 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
     )
     assert bash_result["content"]["error"]["code"] == "hook_deny"
     assert "call `pr.prepare`" in bash_result["content"]["error"]["message"]
-
 
 
 def test_fa_run_opaque_exec_bash_allowed_after_pr_prepare(
@@ -703,9 +697,9 @@ def test_fa_run_opaque_exec_bash_allowed_after_pr_prepare(
     assert draft_path.read_text(encoding="utf-8") == "INTENT: CHORE\nINVARIANT: n/a\n"
     events = [
         json.loads(line)
-        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
     bash_result = next(
@@ -715,7 +709,6 @@ def test_fa_run_opaque_exec_bash_allowed_after_pr_prepare(
     )
     assert bash_result["content"]["ok"] is True
     assert (tmp_path / "opaque.py").read_text(encoding="utf-8") == "x"
-
 
 
 def test_fa_run_repo_write_bash_allowed_after_pr_prepare(
@@ -751,12 +744,15 @@ def test_fa_run_repo_write_bash_allowed_after_pr_prepare(
     assert exit_code == 0
     assert (tmp_path / "src" / "fa" / "x.py").read_text(encoding="utf-8") == "x\n"
     draft_path = home / ".fa" / "state" / "runs" / "test-run" / "pr_draft.md"
-    assert draft_path.read_text(encoding="utf-8") == "INTENT: IMPLEMENT\nINVARIANT: Implements: src/fa/x.py\n"
+    assert (
+        draft_path.read_text(encoding="utf-8")
+        == "INTENT: IMPLEMENT\nINVARIANT: Implements: src/fa/x.py\n"
+    )
     events = [
         json.loads(line)
-        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
     bash_result = next(
@@ -765,7 +761,6 @@ def test_fa_run_repo_write_bash_allowed_after_pr_prepare(
         if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-bash"
     )
     assert bash_result["content"]["ok"] is True
-
 
 
 def test_fa_run_system_prompt_mentions_pr_prepare_before_mutation(

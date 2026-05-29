@@ -18,7 +18,6 @@ from fa.inner_loop import (
     run_session,
 )
 from fa.inner_loop.coder_loop import DEFAULT_MAX_TURNS, drive_session
-from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.hooks import (
     AuditHook,
     AuthExpiredBlocker,
@@ -31,6 +30,7 @@ from fa.inner_loop.hooks import (
     SandboxHook,
     VerifierObserver,
 )
+from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.tools import build_baseline_registry, build_prepare_pr_tool
 from fa.observability import CostGuardian
 from fa.providers import (

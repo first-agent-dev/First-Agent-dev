@@ -75,13 +75,13 @@ from fa.hygiene.pr_intent import (
     parse_name_status,
     validate_commit_msg,
 )
+from fa.inner_loop.bash_intent import BashIntentAnalysis, BashIntentEffect, analyze_bash_for_intent
 from fa.inner_loop.hooks.base import (
     Decision,
     GuardMiddleware,
     HookPayload,
     LifecyclePoint,
 )
-from fa.inner_loop.bash_intent import BashIntentAnalysis, BashIntentEffect, analyze_bash_for_intent
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.registry import ToolCall
 

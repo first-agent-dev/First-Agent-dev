@@ -271,9 +271,7 @@ def test_intent_guard_denies_opaque_exec_bash_without_draft(tmp_path: Path) -> N
     call = ToolCall(
         name="fs.run_bash",
         params={
-            "command": (
-                'python -c "import pathlib; pathlib.Path(\"src/fa/x.py\").write_text(\"x\")"'
-            )
+            "command": ('python -c "import pathlib; pathlib.Path("src/fa/x.py").write_text("x")"')
         },
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -309,7 +307,9 @@ def test_intent_guard_allows_repo_write_bash_after_trusted_draft(tmp_path: Path)
     assert decision.action == "allow"
 
 
-def test_intent_guard_denies_when_on_disk_draft_was_not_prepared_this_session(tmp_path: Path) -> None:
+def test_intent_guard_denies_when_on_disk_draft_was_not_prepared_this_session(
+    tmp_path: Path,
+) -> None:
     """A stale or externally fabricated file must not be trusted."""
 
     guard, store = _make_guard(
@@ -629,7 +629,9 @@ def test_intent_guard_git_add_prefix_exact_match(tmp_path: Path) -> None:
     )
     fallback_call = ToolCall(name="fs.run_bash", params={"command": "git add--interactive"})
     assert (
-        valid_guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)).action
+        valid_guard.handle(
+            LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)
+        ).action
         == "allow"
     )
 
@@ -663,7 +665,9 @@ def test_intent_guard_git_commit_prefix_exact_match(tmp_path: Path) -> None:
     )
     fallback_call = ToolCall(name="fs.run_bash", params={"command": "git commit-tree"})
     assert (
-        valid_guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)).action
+        valid_guard.handle(
+            LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)
+        ).action
         == "allow"
     )
 

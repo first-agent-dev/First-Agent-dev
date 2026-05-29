@@ -58,7 +58,9 @@ def _dispatch(draft_store: PrDraftStore, params: dict[str, object]) -> ToolResul
     return registry.dispatch(ToolCall(name="pr.prepare", params=params, call_id="tc-pr-prepare"))
 
 
-def test_happy_path_implement_writes_canonical_headers(draft_store: PrDraftStore, draft_path: Path) -> None:
+def test_happy_path_implement_writes_canonical_headers(
+    draft_store: PrDraftStore, draft_path: Path
+) -> None:
     result = _invoke(
         draft_store,
         {"intent": "IMPLEMENT", "invariant": "Implements: prepare_pr tool (M-7 Q-N)"},
@@ -72,7 +74,9 @@ def test_happy_path_implement_writes_canonical_headers(draft_store: PrDraftStore
     assert draft_store.read_current_text() == text
 
 
-def test_happy_path_research_accepts_n_a_invariant(draft_store: PrDraftStore, draft_path: Path) -> None:
+def test_happy_path_research_accepts_n_a_invariant(
+    draft_store: PrDraftStore, draft_path: Path
+) -> None:
     result = _invoke(draft_store, {"intent": "RESEARCH", "invariant": "n/a"})
     assert result.error is None
     assert draft_path.read_text(encoding="utf-8").startswith(f"{HEADER_INTENT} RESEARCH\n")
@@ -115,7 +119,9 @@ def test_happy_path_chore_without_body_has_single_trailing_newline(
     assert draft_path.read_text(encoding="utf-8") == "INTENT: CHORE\nINVARIANT: n/a\n"
 
 
-def test_optional_body_appended_after_blank_line(draft_store: PrDraftStore, draft_path: Path) -> None:
+def test_optional_body_appended_after_blank_line(
+    draft_store: PrDraftStore, draft_path: Path
+) -> None:
     body = "Free-form rationale for reviewers."
     result = _invoke(
         draft_store,
@@ -153,7 +159,9 @@ def test_unknown_intent_returns_invalid_params(draft_store: PrDraftStore, draft_
     assert draft_store.read_current_text() is None
 
 
-def test_invariant_shape_mismatch_returns_violation(draft_store: PrDraftStore, draft_path: Path) -> None:
+def test_invariant_shape_mismatch_returns_violation(
+    draft_store: PrDraftStore, draft_path: Path
+) -> None:
     # IMPLEMENT requires ``Implements:`` prefix; ``Affects:`` is the FIX shape.
     result = _invoke(
         draft_store,
@@ -255,7 +263,9 @@ def test_parent_dirs_created_when_missing(tmp_path: Path) -> None:
     assert store.read_current_text() == nested.read_text(encoding="utf-8")
 
 
-def test_rendered_draft_round_trips_through_validator(draft_store: PrDraftStore, draft_path: Path) -> None:
+def test_rendered_draft_round_trips_through_validator(
+    draft_store: PrDraftStore, draft_path: Path
+) -> None:
     """Single-source-of-truth check: validate_commit_msg accepts our output."""
     _invoke(
         draft_store,

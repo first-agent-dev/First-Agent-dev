@@ -16,11 +16,11 @@ from pathlib import Path
 
 import pytest
 
+from fa.hygiene.pr_intent import StagedPath
 from fa.inner_loop.bash_intent import (
     BashIntentEffect,
     analyze_bash_for_intent,
 )
-from fa.hygiene.pr_intent import StagedPath
 
 
 @pytest.fixture()
@@ -44,7 +44,9 @@ def repo_root(tmp_path: Path) -> Path:
         ("echo hello > /dev/null", BashIntentEffect.READ_ONLY),
     ],
 )
-def test_analyze_bash_read_only_commands(command: str, expected: BashIntentEffect, repo_root: Path) -> None:
+def test_analyze_bash_read_only_commands(
+    command: str, expected: BashIntentEffect, repo_root: Path
+) -> None:
     analysis = analyze_bash_for_intent(command, repo_root=repo_root)
     assert analysis.effect is expected
     assert analysis.projected == ()
@@ -82,7 +84,9 @@ def test_analyze_bash_verify_only_commands(command: str, repo_root: Path) -> Non
         "npm run build",
     ],
 )
-def test_analyze_bash_non_verify_commands_fall_back_to_opaque(command: str, repo_root: Path) -> None:
+def test_analyze_bash_non_verify_commands_fall_back_to_opaque(
+    command: str, repo_root: Path
+) -> None:
     analysis = analyze_bash_for_intent(command, repo_root=repo_root)
     assert analysis.effect is BashIntentEffect.OPAQUE_EXEC
 
@@ -147,7 +151,7 @@ def test_analyze_bash_index_write_commands(command: str, repo_root: Path) -> Non
 @pytest.mark.parametrize(
     "command",
     [
-        'python -c "import pathlib; pathlib.Path(\"src/fa/x.py\").write_text(\"x\")"',
+        'python -c "import pathlib; pathlib.Path("src/fa/x.py").write_text("x")"',
         "python tools/generate.py",
         "bash scripts/gen.sh",
         "make build",

@@ -35,11 +35,11 @@ import os
 import re
 import subprocess
 import sys
-from types import MappingProxyType
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 
 
 class Intent(StrEnum):

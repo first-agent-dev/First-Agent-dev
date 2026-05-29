@@ -165,13 +165,11 @@ def _validate_fix_fields(
         return f"`fix_class` is only valid when `intent` is `FIX`; got `{intent.value}`"
     if dof is not None:
         return (
-            "`degree_of_freedom_closed` is only valid when `intent` is `FIX`; "
-            f"got `{intent.value}`"
+            f"`degree_of_freedom_closed` is only valid when `intent` is `FIX`; got `{intent.value}`"
         )
     if mechanism is not None:
         return (
-            "`deterministic_mechanism` is only valid when `intent` is `FIX`; "
-            f"got `{intent.value}`"
+            f"`deterministic_mechanism` is only valid when `intent` is `FIX`; got `{intent.value}`"
         )
     return None
 
