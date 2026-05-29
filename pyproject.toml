@@ -30,6 +30,10 @@ dependencies = [
   # `yaml.safe_load` only (never `yaml.load` — the loader contract
   # is data-only, no tag execution).
   "pyyaml>=6.0",
+  # AST parser for IntentGuard's bash effect analysis: classify
+  # repo writes / index writes / verifier commands without regexing
+  # shell syntax. Used at runtime by `fa.inner_loop.bash_intent`.
+  "bashlex>=0.18",
 ]
 
 [tool.first-agent.system-dependencies]

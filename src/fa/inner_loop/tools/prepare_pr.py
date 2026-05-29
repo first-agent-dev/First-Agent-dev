@@ -4,8 +4,8 @@ Producer side of the
 :class:`fa.inner_loop.hooks.intent_guard.IntentGuard` read seam landed in
 PR #22. The middleware reads the draft from
 ``~/.fa/state/runs/<run_id>/pr_draft.md``; without a producer the
-``allow-on-no-draft`` branch fires on every mutating tool call and the
-guard never actually denies. This tool is the producer: the LLM
+``allow-on-no-draft`` branch fired on every mutating tool call and the
+guard never actually denied. This tool is the producer: the LLM
 composes the header fields per
 :doc:`knowledge/skills/pr-creation/SKILL.md` §Output format and the
 handler renders them into the exact byte shape M-6's
@@ -20,11 +20,13 @@ snapshot test (``tests/test_pr_intent_snapshot.py``).
 
 Design notes:
 
-* The ``draft_path`` is closure-captured at construction time; the LLM
+* The draft target is closure-captured at construction time; the LLM
   does not get a ``path`` parameter. This removes the «LLM writes to
-  the wrong location» failure mode and lets us skip the
-  :class:`fa.inner_loop.hooks.builtin.SandboxHook` containment check
-  (which only gates ``fs.*`` tools per ``_FS_PATH_TOOLS``).
+  the wrong location» failure mode.
+* The shared :class:`fa.inner_loop.pr_draft.PrDraftStore` adds
+  current-session provenance on top of the stable on-disk file so
+  ``IntentGuard`` trusts only drafts produced by this tool in the
+  current run, not stale or externally fabricated files.
 * Permission tier is ``"workspace"`` because the tool writes to disk.
   The ``read`` / ``workspace`` enum is the only choice the registry
   exposes today; the actual write target is under ``~/.fa/state/``,
@@ -42,7 +44,6 @@ Design notes:
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 
 from fa.hygiene.pr_intent import (
     CLASS_VALUES,
@@ -56,6 +57,7 @@ from fa.hygiene.pr_intent import (
     Intent,
     validate_commit_msg,
 )
+from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.registry import ToolResult, ToolSpec
 
 __all__ = ["build_prepare_pr_tool"]
@@ -76,7 +78,7 @@ _INPUT_SCHEMA: dict[str, object] = {
         },
         "degree_of_freedom_closed": {"type": "string", "minLength": 1},
         "deterministic_mechanism": {"type": "string", "minLength": 1},
-        "body": {"type": "string"},
+        "body": {"type": "string", "maxLength": 64000},
     },
     "additionalProperties": False,
 }
@@ -128,7 +130,7 @@ def _render_draft(
             lines.append(f"{HEADER_DOF_CLOSED} {dof}")
         if mechanism is not None:
             lines.append(f"{HEADER_DET_MECHANISM} {mechanism}")
-    if body:
+    if body is not None and body.strip():
         lines.append("")
         lines.append(body.rstrip())
     return "\n".join(lines) + "\n"
@@ -158,8 +160,19 @@ def _validate_fix_fields(
             return "`INTENT: FIX` requires `degree_of_freedom_closed`"
         if mechanism is None:
             return "`INTENT: FIX` requires `deterministic_mechanism`"
-    elif fix_class is not None:
+        return None
+    if fix_class is not None:
         return f"`fix_class` is only valid when `intent` is `FIX`; got `{intent.value}`"
+    if dof is not None:
+        return (
+            "`degree_of_freedom_closed` is only valid when `intent` is `FIX`; "
+            f"got `{intent.value}`"
+        )
+    if mechanism is not None:
+        return (
+            "`deterministic_mechanism` is only valid when `intent` is `FIX`; "
+            f"got `{intent.value}`"
+        )
     return None
 
 
@@ -174,13 +187,11 @@ def _validate_invariant_prefix(intent: Intent, invariant: str) -> str | None:
     )
 
 
-def build_prepare_pr_tool(draft_path: Path) -> ToolSpec:
-    """Return the ``pr.prepare`` :class:`ToolSpec` bound to ``draft_path``.
+def build_prepare_pr_tool(draft_store: PrDraftStore) -> ToolSpec:
+    """Return the ``pr.prepare`` :class:`ToolSpec` bound to ``draft_store``.
 
-    ``draft_path`` is captured by reference; the handler resolves it
-    lazily on every call so per-session overrides (test fixtures that
-    point at ``tmp_path``) take effect without re-building the
-    registry.
+    ``draft_store`` carries both the stable on-disk path and the
+    current-session trust marker shared with :class:`IntentGuard`.
     """
 
     def handler(params: Mapping[str, object]) -> ToolResult:
@@ -227,7 +238,12 @@ def build_prepare_pr_tool(draft_path: Path) -> ToolSpec:
         # corrupt-draft leak. Staged paths are intentionally empty —
         # citation-resolution against the staged tree is the git
         # hook's job at ``commit-msg`` time, not ours.
-        downstream = validate_commit_msg(rendered, intent, staged=[], repo_root=draft_path.parent)
+        downstream = validate_commit_msg(
+            rendered,
+            intent,
+            staged=[],
+            repo_root=draft_store.path.parent,
+        )
         # Filter out citation-only violations: the draft is composed
         # before staging in v0.1; ``DETERMINISTIC MECHANISM`` may carry
         # a future ``path/file.ext:line`` citation that does not yet
@@ -242,15 +258,14 @@ def build_prepare_pr_tool(draft_path: Path) -> ToolSpec:
             return ToolResult.fail(first.code, joined, retryable=True)
 
         try:
-            draft_path.parent.mkdir(parents=True, exist_ok=True)
-            draft_path.write_text(rendered, encoding="utf-8")
+            draft_store.write_text(rendered)
         except (OSError, PermissionError) as exc:
             return ToolResult.fail("write_failed", str(exc), retryable=True)
 
         return ToolResult.ok(
             f"wrote pr draft ({intent.value})",
             result={
-                "path": str(draft_path),
+                "path": str(draft_store.path),
                 "bytes": len(rendered.encode("utf-8")),
                 "intent": intent.value,
             },

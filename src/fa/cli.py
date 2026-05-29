@@ -18,6 +18,7 @@ from fa.inner_loop import (
     run_session,
 )
 from fa.inner_loop.coder_loop import DEFAULT_MAX_TURNS, drive_session
+from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.hooks import (
     AuditHook,
     AuthExpiredBlocker,
@@ -314,10 +315,19 @@ def _cmd_run(
     )
     run_id = args.run_id or f"run-{os.getpid()}"
     # M-7 §Q-N: ``pr.prepare`` is the producer side of the
-    # IntentGuard read seam. Closure-bound to the per-session draft
-    # path so the LLM cannot redirect the write.
-    draft_path = Path.home() / ".fa" / "state" / "runs" / run_id / "pr_draft.md"
-    registry.register(build_prepare_pr_tool(draft_path))
+    # IntentGuard read seam. The shared ``PrDraftStore`` binds the
+    # stable on-disk path to current-session provenance so stale or
+    # externally-fabricated drafts are not trusted by the guard.
+    draft_store = PrDraftStore(Path.home() / ".fa" / "state" / "runs" / run_id / "pr_draft.md")
+    try:
+        draft_store.clear(remove_file=True)
+    except OSError as exc:
+        print(
+            f"fa run: failed to reset PR draft path {draft_store.path}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    registry.register(build_prepare_pr_tool(draft_store))
     log_path = workspace / ".fa" / "runs" / run_id / "events.jsonl"
     log = EventLog(log_path, run_id=run_id)
     hooks = HookRegistry()
@@ -338,7 +348,7 @@ def _cmd_run(
     # classify_intent + validate_commit_msg rules as the M-6 git hooks.
     # Placed after SandboxHook so only workspace-contained paths reach
     # the intent classifier.
-    hooks.register(IntentGuard(repo_root=workspace, draft_path=draft_path))
+    hooks.register(IntentGuard(repo_root=workspace, draft_store=draft_store))
     hooks.register(AuditHook(event_log=log))
     hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
     contracts = load_contracts_from_dir(workspace / "verifiers")
