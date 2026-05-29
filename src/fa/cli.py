@@ -30,7 +30,8 @@ from fa.inner_loop.hooks import (
     SandboxHook,
     VerifierObserver,
 )
-from fa.inner_loop.tools import build_baseline_registry
+from fa.inner_loop.pr_draft import PrDraftStore
+from fa.inner_loop.tools import build_baseline_registry, build_prepare_pr_tool
 from fa.observability import CostGuardian
 from fa.providers import (
     DEFAULT_MODELS_YAML_PATH,
@@ -313,6 +314,20 @@ def _cmd_run(
         bash_timeout_seconds=limits.bash_timeout_seconds,
     )
     run_id = args.run_id or f"run-{os.getpid()}"
+    # M-7 §Q-N: ``pr.prepare`` is the producer side of the
+    # IntentGuard read seam. The shared ``PrDraftStore`` binds the
+    # stable on-disk path to current-session provenance so stale or
+    # externally-fabricated drafts are not trusted by the guard.
+    draft_store = PrDraftStore(Path.home() / ".fa" / "state" / "runs" / run_id / "pr_draft.md")
+    try:
+        draft_store.clear(remove_file=True)
+    except OSError as exc:
+        print(
+            f"fa run: failed to reset PR draft path {draft_store.path}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    registry.register(build_prepare_pr_tool(draft_store))
     log_path = workspace / ".fa" / "runs" / run_id / "events.jsonl"
     log = EventLog(log_path, run_id=run_id)
     hooks = HookRegistry()
@@ -328,12 +343,12 @@ def _cmd_run(
     hooks.register(LockfileBlocker(suppression_seconds=limits.lockfile_suppression_seconds))
     hooks.register(AuthExpiredBlocker(suppression_seconds=limits.auth_expired_suppression_seconds))
     # M-7 IntentGuard: reads the per-session PR draft at
-    # ~/.fa/state/runs/<run_id>/pr_draft.md and enforces the same
+    # ~/.fa/state/runs/<run_id>/pr_draft.md (populated by the M-7 §Q-N
+    # ``pr.prepare`` tool registered above) and enforces the same
     # classify_intent + validate_commit_msg rules as the M-6 git hooks.
     # Placed after SandboxHook so only workspace-contained paths reach
     # the intent classifier.
-    draft_path = Path.home() / ".fa" / "state" / "runs" / run_id / "pr_draft.md"
-    hooks.register(IntentGuard(repo_root=workspace, draft_path=draft_path))
+    hooks.register(IntentGuard(repo_root=workspace, draft_store=draft_store))
     hooks.register(AuditHook(event_log=log))
     hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
     contracts = load_contracts_from_dir(workspace / "verifiers")

@@ -16,25 +16,25 @@ The middleware:
 - Attaches to :attr:`LifecyclePoint.BEFORE_TOOL_EXEC` only (per the
   M-7 row in ``knowledge/BACKLOG.md``); ``BEFORE_LLM_CALL``
   pre-injection is deferred to a Q-N amendment.
-- Fires only on tool calls that mutate the staged tree:
+- Fires only on tool calls that can mutate the workspace or staged tree:
 
   * ``fs.write_file`` / ``fs.edit_file`` / ``fs.apply_patch`` —
     projects the touched path into the staged set (status ``A``
     if the file does not yet exist on disk, otherwise ``M``) so
     :func:`classify_intent` sees the about-to-be-produced snapshot;
-  * ``fs.run_bash`` whose command starts with ``git add`` or
-    ``git commit`` — the bash call may stage arbitrary paths we
-    cannot statically inspect; the middleware uses the currently
-    staged set as-is (the git hook covers the post-stage drift
-    case at ``commit-msg`` time).
+  * ``fs.run_bash`` — analysed by :mod:`fa.inner_loop.bash_intent` into
+    ``READ_ONLY`` / ``VERIFY_ONLY`` / ``INDEX_WRITE`` / ``REPO_WRITE`` /
+    ``OPAQUE_EXEC``. Only the first two stay outside the draft-first
+    gate. ``INDEX_WRITE`` reuses the current staged snapshot;
+    ``REPO_WRITE`` projects high-confidence literal paths;
+    ``OPAQUE_EXEC`` requires a trusted draft but makes no fake
+    touched-path claims.
 
-- Reads the session's working PR-description draft from a path
-  injected at construction time (typically
-  ``~/.fa/state/runs/<run_id>/pr_draft.md`` per M-7 row Q-N item).
-  When the draft file does not exist, the middleware allows: the
-  agent has not yet declared its intent and the
-  ``prepare-commit-msg`` git hook is the earlier seat that pulls
-  the placeholder buffer.
+- Trusts the session's working PR-description draft only when it was
+  produced by ``pr.prepare`` in the current process. The stable file
+  path remains ``~/.fa/state/runs/<run_id>/pr_draft.md``, but the
+  shared :class:`fa.inner_loop.pr_draft.PrDraftStore` rejects stale or
+  externally fabricated files.
 - Respects skill §D-5: a user-typed ``INTENT:`` value in the draft
   overrides the classifier output for shape-validation when the
   typed value parses as a closed-enum :class:`Intent` member.
@@ -75,12 +75,14 @@ from fa.hygiene.pr_intent import (
     parse_name_status,
     validate_commit_msg,
 )
+from fa.inner_loop.bash_intent import BashIntentAnalysis, BashIntentEffect, analyze_bash_for_intent
 from fa.inner_loop.hooks.base import (
     Decision,
     GuardMiddleware,
     HookPayload,
     LifecyclePoint,
 )
+from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.registry import ToolCall
 
 # Public surface — also serves as the explicit re-export for the
@@ -111,11 +113,19 @@ _MUTATING_TOOL_NAMES: frozenset[str] = frozenset(
     {"fs.write_file", "fs.edit_file", "fs.apply_patch"}
 )
 
-# Bash command prefixes that stage / commit changes. Matched against
-# the stripped command; further arguments (paths, flags) do not
-# affect the match. Exact match or space-delimited prefix prevents
-# false positives such as ``git add--interactive`` or ``git commit-tree``.
-_MUTATING_BASH_PREFIXES: tuple[str, ...] = ("git add", "git commit")
+_DRAFT_REQUIRED_BASH_EFFECTS: frozenset[BashIntentEffect] = frozenset(
+    {
+        BashIntentEffect.INDEX_WRITE,
+        BashIntentEffect.REPO_WRITE,
+        BashIntentEffect.OPAQUE_EXEC,
+    }
+)
+
+
+_MISSING_DRAFT_REASON = (
+    "IntentGuard: missing or untrusted current-session PR draft; call "
+    "`pr.prepare` before mutating the workspace or staged tree"
+)
 
 
 def _parse_typed_intent(draft_text: str) -> Intent | None:
@@ -141,21 +151,16 @@ def _parse_typed_intent(draft_text: str) -> Intent | None:
 
 
 def _project_call(call: ToolCall, staged: list[StagedPath], repo_root: Path) -> list[StagedPath]:
-    """Project the about-to-happen mutation into the staged-diff set.
+    """Project a direct filesystem mutation into the staged-diff set.
 
-    For ``fs.write_file`` / ``fs.edit_file`` / ``fs.apply_patch``:
-    append the touched path as a staged entry so :func:`classify_intent`
-    includes it. Status letter is ``A`` (new file) when the path does
-    not yet exist on disk, otherwise ``M`` (modified) — this keeps the
-    middleware's verdict aligned with the git hook's post-stage snapshot.
-    Existing staged rows are left untouched (the classifier only looks
-    at the path / status enum, not at content).
-
-    For ``fs.run_bash``: return the current staged set unchanged. The
-    bash command may stage arbitrary paths via ``git add`` that we
-    cannot statically inspect — the git hook is the cheaper seat for
-    that drift, firing at ``commit-msg`` time over the actual
-    post-stage snapshot.
+    Used for ``fs.write_file`` / ``fs.edit_file`` / ``fs.apply_patch``.
+    Appends the touched path as a staged entry so :func:`classify_intent`
+    sees the about-to-be-produced snapshot. Status letter is ``A``
+    (new file) when the path does not yet exist on disk, otherwise ``M``
+    (modified) — this keeps the middleware's verdict aligned with the
+    git hook's post-stage snapshot. Existing staged rows are left
+    untouched (the classifier only looks at the path / status enum, not
+    at content).
     """
 
     if call.name not in _MUTATING_TOOL_NAMES:
@@ -185,27 +190,35 @@ def _project_call(call: ToolCall, staged: list[StagedPath], repo_root: Path) -> 
     return [*staged, StagedPath(status=status, path=path)]
 
 
-def _is_mutating_call(call: ToolCall) -> bool:
-    """Return True iff the tool call would mutate the staged tree.
+def _merge_projected_paths(
+    staged: list[StagedPath], projected: tuple[StagedPath, ...]
+) -> list[StagedPath]:
+    merged = list(staged)
+    existing = {entry.path for entry in merged}
+    for entry in projected:
+        if entry.path in existing:
+            continue
+        merged.append(entry)
+        existing.add(entry.path)
+    return merged
 
-    The trigger set matches the M-7 row in ``knowledge/BACKLOG.md``:
-    direct workspace writes (``fs.write_file``, ``fs.edit_file``,
-    ``fs.apply_patch``) plus index-mutating bash invocations
-    (``git add`` / ``git commit``). Other bash commands are not
-    statically classifiable as mutating, so the middleware does not
-    gate them; the git hook catches anything that ultimately
-    produces a commit.
-    """
 
+def _bash_analysis_for_call(call: ToolCall, repo_root: Path) -> BashIntentAnalysis | None:
+    if call.name != "fs.run_bash":
+        return None
+    command = call.params.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return None
+    return analyze_bash_for_intent(command, repo_root=repo_root)
+
+
+def _requires_draft(call: ToolCall, repo_root: Path) -> tuple[bool, BashIntentAnalysis | None]:
     if call.name in _MUTATING_TOOL_NAMES:
-        return True
-    if call.name == "fs.run_bash":
-        command = str(call.params.get("command", "")).strip()
-        return any(
-            command == prefix or command.startswith(prefix + " ")
-            for prefix in _MUTATING_BASH_PREFIXES
-        )
-    return False
+        return True, None
+    analysis = _bash_analysis_for_call(call, repo_root)
+    if analysis is None:
+        return False, None
+    return analysis.effect in _DRAFT_REQUIRED_BASH_EFFECTS, analysis
 
 
 class IntentGuard(GuardMiddleware):
@@ -215,11 +228,9 @@ class IntentGuard(GuardMiddleware):
 
     - ``repo_root`` — the First-Agent workspace root (used for
       :func:`resolve_citation` and the subprocess fallback ``cwd``).
-    - ``draft_path`` — absolute path to the session's working PR
-      description draft. The session bootstrap is expected to
-      resolve this to ``~/.fa/state/runs/<run_id>/pr_draft.md``
-      per the M-7 row Q-N amendment; tests pass a ``tmp_path``-
-      rooted file directly.
+    - ``draft_store`` — session-local trust wrapper around the stable
+      ``~/.fa/state/runs/<run_id>/pr_draft.md`` path. Only text written
+      via ``pr.prepare`` in the current process is trusted.
     - ``git_runner`` — optional injection point for the
       ``git diff --cached --name-status`` invocation. Defaults to
       the subprocess fallback. Tests inject a closure over a
@@ -233,11 +244,11 @@ class IntentGuard(GuardMiddleware):
         self,
         *,
         repo_root: Path,
-        draft_path: Path,
+        draft_store: PrDraftStore,
         git_runner: GitRunner | None = None,
     ) -> None:
         self._repo_root = repo_root
-        self._draft_path = draft_path
+        self._draft_store = draft_store
         self._git_runner: GitRunner = git_runner or self._default_git_runner
 
     def _default_git_runner(self) -> str:
@@ -255,22 +266,31 @@ class IntentGuard(GuardMiddleware):
             return Decision.allow()
         if payload.tool_call is None:
             return Decision.allow()
-        if not _is_mutating_call(payload.tool_call):
+
+        requires_draft, bash_analysis = _requires_draft(payload.tool_call, self._repo_root)
+        if not requires_draft:
             return Decision.allow()
-        if not self._draft_path.is_file():
-            # Session has not declared its intent yet; the
-            # prepare-commit-msg hook (M-6) is the earlier seat that
-            # pulls the placeholder buffer.
-            return Decision.allow()
+
+        draft_text = self._draft_store.read_current_text()
+        if draft_text is None:
+            return Decision.deny(_MISSING_DRAFT_REASON)
         try:
             stdout = self._git_runner()
         except (subprocess.CalledProcessError, OSError):
             # Don't gate when git is unreachable — the git hook is
             # the cheaper / surer seat in that environment.
             return Decision.allow()
-        draft_text = self._draft_path.read_text(encoding="utf-8")
         staged = parse_name_status(stdout)
-        projected = _project_call(payload.tool_call, staged, self._repo_root)
+        if payload.tool_call.name in _MUTATING_TOOL_NAMES:
+            projected = _project_call(payload.tool_call, staged, self._repo_root)
+        elif bash_analysis is not None and bash_analysis.effect is BashIntentEffect.REPO_WRITE:
+            projected = _merge_projected_paths(staged, bash_analysis.projected)
+        else:
+            # INDEX_WRITE and OPAQUE_EXEC both validate against the current
+            # staged snapshot only. The former is authoritative for `git add`
+            # / `git commit`; the latter intentionally makes no fake
+            # touched-path claims for opaque execution.
+            projected = list(staged)
         classifier_intent = classify_intent(projected)
         typed = _parse_typed_intent(draft_text)
         effective = typed if typed is not None else classifier_intent

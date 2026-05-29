@@ -37,6 +37,13 @@ task completion with a final natural-language message.
 Rules:
 - Emit tool calls via the function-calling interface; do not write
   tool invocations as code blocks in prose.
+- Before mutating files or staging/committing changes, call
+  `pr.prepare` once for the current session with the correct
+  `intent` and `invariant`.
+- Prefer dedicated filesystem tools (`fs.write_file`, `fs.read_file`,
+  edit/patch tools when available) for direct file changes; use
+  `fs.run_bash` mainly for inspection or narrowly-scoped commands
+  after `pr.prepare`.
 - Each tool's input schema is authoritative. Match field names and
   types exactly; the harness rejects malformed params before the
   tool runs.

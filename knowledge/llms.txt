@@ -63,7 +63,7 @@ Materialised ADR-7 + ADR-8 runtime. Smoke: `fa inner-loop-smoke --workspace . --
 - `src/fa/inner_loop/hooks/recovery_observers.py` — R-3 `RecoveryActionObserver` + `AttemptHistoryObserver`; wired at `AFTER_TOOL_EXEC`.
 - `src/fa/inner_loop/recovery/` — pure data layer for R-3 + R-6: `classify.py` (deterministic error→action table), `attempt_history.py` (sliding-window JSON writer).
 - `src/fa/inner_loop/state.py` — `SessionState` + `EventLog`; ADR-7 §7 JSONL schema.
-- `src/fa/inner_loop/tools/` — `build_baseline_registry()`: three M-1 tools (`fs.read_file`, `fs.write_file`, `fs.run_bash`).
+- `src/fa/inner_loop/tools/` — `build_baseline_registry()` (three M-1 tools: `fs.read_file`, `fs.write_file`, `fs.run_bash`) + `build_prepare_pr_tool()` (`pr.prepare` — M-7 §Q-N producer of `~/.fa/state/runs/<run_id>/pr_draft.md`).
 - `src/fa/verifier/` — R-5 DSV module: `verify_action(contract, events)` against `verifiers/*.yaml` contracts.
 - `verifiers/` — vendored DSV contracts for M-1 tools + `edit_file.yaml`.
 

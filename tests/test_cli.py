@@ -304,6 +304,33 @@ def _stop_body(text: str = "done") -> Mapping[str, Any]:
     }
 
 
+def _tool_call(call_id: str, name: str, arguments: str) -> Mapping[str, Any]:
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": arguments,
+        },
+    }
+
+
+def _tool_calls_body(*tool_calls: Mapping[str, Any], text: str = "") -> Mapping[str, Any]:
+    return {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": text,
+                    "tool_calls": list(tool_calls),
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    }
+
+
 def _make_run_args(
     *,
     workspace: Path,
@@ -432,3 +459,323 @@ def test_fa_run_hits_turn_cap(
 
     assert exit_code == 1
     assert "iteration_cap" in capsys.readouterr().out
+
+
+def test_fa_run_registers_pr_prepare_tool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    transport = _ScriptedTransport([_stop_body("ok")])
+    args = _make_run_args(workspace=tmp_path, config=config)
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 0
+    tools = transport.calls[0]["tools"]
+    names = [tool["function"]["name"] for tool in tools]
+    assert names == ["fs.read_file", "fs.write_file", "fs.run_bash", "pr.prepare"]
+    prepare = next(tool for tool in tools if tool["function"]["name"] == "pr.prepare")
+    assert "pr_draft.md" in prepare["function"]["description"]
+    assert prepare["function"]["parameters"]["required"] == ["intent", "invariant"]
+
+
+def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    transport = _ScriptedTransport(
+        [
+            _tool_calls_body(
+                _tool_call(
+                    "tc-write", "fs.write_file", '{"path": "src/fa/x.py", "content": "x\\n"}'
+                ),
+                _tool_call("tc-prepare", "pr.prepare", '{"intent": "CHORE", "invariant": "n/a"}'),
+            ),
+            _stop_body("done"),
+        ]
+    )
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="test-run")
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 0
+    assert not (tmp_path / "src" / "fa" / "x.py").exists()
+    draft_path = home / ".fa" / "state" / "runs" / "test-run" / "pr_draft.md"
+    assert draft_path.read_text(encoding="utf-8") == "INTENT: CHORE\nINVARIANT: n/a\n"
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    write_result = next(
+        event
+        for event in events
+        if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-write"
+    )
+    assert write_result["content"]["error"]["code"] == "hook_deny"
+    assert "call `pr.prepare`" in write_result["content"]["error"]["message"]
+
+
+def test_fa_run_clears_stale_pr_draft_on_startup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    stale = home / ".fa" / "state" / "runs" / "reuse-run" / "pr_draft.md"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("INTENT: FIX\nCLASS: REPAIR\nINVARIANT: Affects: stale\n", encoding="utf-8")
+    transport = _ScriptedTransport([_stop_body("ok")])
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="reuse-run")
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 0
+    assert not stale.exists()
+
+
+def test_fa_run_verify_only_bash_allowed_before_pr_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    transport = _ScriptedTransport(
+        [
+            _tool_calls_body(
+                _tool_call(
+                    "tc-bash",
+                    "fs.run_bash",
+                    json.dumps({"command": "python -m pytest --version"}),
+                ),
+            ),
+            _stop_body("done"),
+        ]
+    )
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="test-run")
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 0
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    bash_result = next(
+        event
+        for event in events
+        if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-bash"
+    )
+    assert bash_result["content"]["ok"] is True
+
+
+def test_fa_run_repo_write_bash_requires_pr_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    transport = _ScriptedTransport(
+        [
+            _tool_calls_body(
+                _tool_call(
+                    "tc-bash",
+                    "fs.run_bash",
+                    json.dumps({"command": "mkdir -p src/fa && printf 'x\\n' > src/fa/x.py"}),
+                ),
+            ),
+            _stop_body("done"),
+        ]
+    )
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="test-run")
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 0
+    assert not (tmp_path / "src" / "fa" / "x.py").exists()
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    bash_result = next(
+        event
+        for event in events
+        if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-bash"
+    )
+    assert bash_result["content"]["error"]["code"] == "hook_deny"
+    assert "call `pr.prepare`" in bash_result["content"]["error"]["message"]
+
+
+def test_fa_run_opaque_exec_bash_requires_pr_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    command = 'python -c "import pathlib; pathlib.Path("src/fa/x.py").write_text("x")"'
+    transport = _ScriptedTransport(
+        [
+            _tool_calls_body(
+                _tool_call("tc-bash", "fs.run_bash", json.dumps({"command": command})),
+            ),
+            _stop_body("done"),
+        ]
+    )
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="test-run")
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 0
+    assert not (tmp_path / "src" / "fa" / "x.py").exists()
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    bash_result = next(
+        event
+        for event in events
+        if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-bash"
+    )
+    assert bash_result["content"]["error"]["code"] == "hook_deny"
+    assert "call `pr.prepare`" in bash_result["content"]["error"]["message"]
+
+
+def test_fa_run_opaque_exec_bash_allowed_after_pr_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    command = "python -c \"open('opaque.py', 'w').write('x')\""
+    transport = _ScriptedTransport(
+        [
+            _tool_calls_body(
+                _tool_call(
+                    "tc-prepare",
+                    "pr.prepare",
+                    '{"intent": "CHORE", "invariant": "n/a"}',
+                ),
+                _tool_call("tc-bash", "fs.run_bash", json.dumps({"command": command})),
+            ),
+            _stop_body("done"),
+        ]
+    )
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="test-run")
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 0
+    draft_path = home / ".fa" / "state" / "runs" / "test-run" / "pr_draft.md"
+    assert draft_path.read_text(encoding="utf-8") == "INTENT: CHORE\nINVARIANT: n/a\n"
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    bash_result = next(
+        event
+        for event in events
+        if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-bash"
+    )
+    assert bash_result["content"]["ok"] is True
+    assert (tmp_path / "opaque.py").read_text(encoding="utf-8") == "x"
+
+
+def test_fa_run_repo_write_bash_allowed_after_pr_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    transport = _ScriptedTransport(
+        [
+            _tool_calls_body(
+                _tool_call(
+                    "tc-prepare",
+                    "pr.prepare",
+                    '{"intent": "IMPLEMENT", "invariant": "Implements: src/fa/x.py"}',
+                ),
+                _tool_call(
+                    "tc-bash",
+                    "fs.run_bash",
+                    json.dumps({"command": "mkdir -p src/fa && printf 'x\n' > src/fa/x.py"}),
+                ),
+            ),
+            _stop_body("done"),
+        ]
+    )
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="test-run")
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 0
+    assert (tmp_path / "src" / "fa" / "x.py").read_text(encoding="utf-8") == "x\n"
+    draft_path = home / ".fa" / "state" / "runs" / "test-run" / "pr_draft.md"
+    assert (
+        draft_path.read_text(encoding="utf-8")
+        == "INTENT: IMPLEMENT\nINVARIANT: Implements: src/fa/x.py\n"
+    )
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    bash_result = next(
+        event
+        for event in events
+        if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-bash"
+    )
+    assert bash_result["content"]["ok"] is True
+
+
+def test_fa_run_system_prompt_mentions_pr_prepare_before_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    transport = _ScriptedTransport([_stop_body("ok")])
+    args = _make_run_args(workspace=tmp_path, config=config)
+
+    exit_code = _cmd_run(args, transport=transport)
+
+    assert exit_code == 0
+    system_message = transport.calls[0]["messages"][0]["content"]
+    assert "pr.prepare" in system_message
+    assert "Before mutating files or staging/committing changes" in system_message

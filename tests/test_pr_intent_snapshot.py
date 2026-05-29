@@ -31,6 +31,7 @@ from fa.hygiene.pr_intent import (
     HEADER_INTENT,
     HEADER_INVARIANT,
     INTENT_VALUES,
+    INVARIANT_REQUIRED_PREFIXES,
     FieldSpec,
     Intent,
     StagedPath,
@@ -144,6 +145,14 @@ def test_output_format_matches_hook_constants() -> None:
     # `repo/file.ext:line` citation.
     assert "repo/file.ext:line" in fix_block
     assert "n/a (reason)" in fix_block
+
+
+def test_invariant_required_prefixes_export_is_read_only() -> None:
+    """Public invariant-prefix export must not be externally mutable."""
+
+    assert INVARIANT_REQUIRED_PREFIXES[Intent.IMPLEMENT] == ("Implements:",)
+    with pytest.raises(TypeError):
+        INVARIANT_REQUIRED_PREFIXES[Intent.IMPLEMENT] = ("Mutated:",)  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------

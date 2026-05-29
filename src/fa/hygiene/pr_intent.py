@@ -35,10 +35,11 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 
 
 class Intent(StrEnum):
@@ -357,6 +358,14 @@ _INVARIANT_REQUIRED_PREFIXES: dict[Intent, tuple[str, ...]] = {
     Intent.FIX: ("Affects:",),
     Intent.CHORE: ("n/a",),
 }
+# Public read-only view so M-7 §Q-N consumers (e.g., the ``pr.prepare``
+# tool) can validate against the same table without duplicating it.
+# Exporting a live dict alias would let external code mutate global
+# validation behaviour at runtime; the mapping-proxy keeps ADR-10 I-1's
+# single source of truth observable without making it writable.
+INVARIANT_REQUIRED_PREFIXES: Mapping[Intent, tuple[str, ...]] = MappingProxyType(
+    _INVARIANT_REQUIRED_PREFIXES
+)
 
 
 def parse_field(text: str, header: str) -> str | None:

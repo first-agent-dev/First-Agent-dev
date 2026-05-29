@@ -28,6 +28,7 @@ from fa.inner_loop.hooks.base import (
     LifecyclePoint,
 )
 from fa.inner_loop.hooks.intent_guard import IntentGuard
+from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.registry import ToolCall
 
 # A draft that matches the IMPLEMENT shape per skill §Reference
@@ -40,6 +41,9 @@ _VALID_IMPLEMENT_DRAFT = (
 # DETERMINISTIC MECHANISM). Triggers checks 4-5 from skill §What
 # the hook validates.
 _BAD_FIX_DRAFT = "INTENT: FIX\nCLASS: REPAIR\nINVARIANT: Affects: src/fa/x.py\n"
+
+
+_MISSING_DRAFT_SNIPPET = "missing or untrusted current-session PR draft"
 
 
 def _make_repo(tmp_path: Path) -> Path:
@@ -63,19 +67,24 @@ def _make_guard(
     *,
     draft_text: str | None,
     git_output: str,
-) -> tuple[IntentGuard, Path]:
+    trusted_draft: bool = True,
+) -> tuple[IntentGuard, PrDraftStore]:
     """Construct an :class:`IntentGuard` with the injected fixture state."""
 
     repo_root = _make_repo(tmp_path)
-    draft_path = tmp_path / "pr_draft.md"
+    draft_store = PrDraftStore(tmp_path / "pr_draft.md")
     if draft_text is not None:
-        draft_path.write_text(draft_text)
+        if trusted_draft:
+            draft_store.write_text(draft_text)
+        else:
+            draft_store.path.parent.mkdir(parents=True, exist_ok=True)
+            draft_store.path.write_text(draft_text, encoding="utf-8")
     guard = IntentGuard(
         repo_root=repo_root,
-        draft_path=draft_path,
+        draft_store=draft_store,
         git_runner=lambda: git_output,
     )
-    return guard, draft_path
+    return guard, draft_store
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +109,7 @@ def test_intent_guard_uses_skill_classifier_directly() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Allow-path: non-mutating calls / no draft / valid draft
+# Allow-path: non-mutating calls / valid draft
 # ---------------------------------------------------------------------------
 
 
@@ -113,22 +122,6 @@ def test_intent_guard_allows_non_mutating_call(tmp_path: Path) -> None:
         git_output="M\tsrc/fa/x.py\n",
     )
     call = ToolCall(name="fs.read_file", params={"path": "src/fa/x.py"})
-    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
-    assert decision.action == "allow"
-
-
-def test_intent_guard_allows_when_no_pr_draft(tmp_path: Path) -> None:
-    """No draft file → middleware allows (the prepare-commit-msg hook is the earlier seat)."""
-
-    guard, _ = _make_guard(
-        tmp_path,
-        draft_text=None,
-        git_output="A\tsrc/fa/x.py\n",
-    )
-    call = ToolCall(
-        name="fs.write_file",
-        params={"path": "src/fa/x.py", "content": "x"},
-    )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "allow"
 
@@ -162,6 +155,32 @@ def test_intent_guard_allows_on_unrelated_bash(tmp_path: Path) -> None:
     assert decision.action == "allow"
 
 
+def test_intent_guard_allows_verify_only_bash_without_draft(tmp_path: Path) -> None:
+    """Known verifier commands stay outside the draft-first gate."""
+
+    guard, _ = _make_guard(
+        tmp_path,
+        draft_text=None,
+        git_output="",
+    )
+    call = ToolCall(name="fs.run_bash", params={"command": "python -m pytest --version"})
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    assert decision.action == "allow"
+
+
+def test_intent_guard_allows_non_repo_redirection_without_draft(tmp_path: Path) -> None:
+    """Literal sinks outside the repo do not require a draft."""
+
+    guard, _ = _make_guard(
+        tmp_path,
+        draft_text=None,
+        git_output="",
+    )
+    call = ToolCall(name="fs.run_bash", params={"command": "echo hello > /dev/null"})
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    assert decision.action == "allow"
+
+
 def test_intent_guard_other_lifecycle_points_allow(tmp_path: Path) -> None:
     """Middleware only attaches to BEFORE_TOOL_EXEC; other points are no-ops."""
 
@@ -184,15 +203,15 @@ def test_intent_guard_silently_allows_when_git_fails(tmp_path: Path) -> None:
     """Don't gate when git is unreachable — env-fault, not a contract violation."""
 
     repo_root = _make_repo(tmp_path)
-    draft_path = tmp_path / "draft.md"
-    draft_path.write_text(_VALID_IMPLEMENT_DRAFT)
+    draft_store = PrDraftStore(tmp_path / "draft.md")
+    draft_store.write_text(_VALID_IMPLEMENT_DRAFT)
 
     def failing_git() -> str:
         raise OSError("git not found")
 
     guard = IntentGuard(
         repo_root=repo_root,
-        draft_path=draft_path,
+        draft_store=draft_store,
         git_runner=failing_git,
     )
     call = ToolCall(
@@ -201,6 +220,130 @@ def test_intent_guard_silently_allows_when_git_fails(tmp_path: Path) -> None:
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "allow"
+
+
+# ---------------------------------------------------------------------------
+# Current-session trust / deny-path
+# ---------------------------------------------------------------------------
+
+
+def test_intent_guard_denies_when_no_pr_draft_has_been_prepared(tmp_path: Path) -> None:
+    """Missing current-session draft → deny the first mutating call."""
+
+    guard, store = _make_guard(
+        tmp_path,
+        draft_text=None,
+        git_output="A\tsrc/fa/x.py\n",
+    )
+    call = ToolCall(
+        name="fs.write_file",
+        params={"path": "src/fa/x.py", "content": "x"},
+    )
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    assert decision.action == "deny"
+    assert _MISSING_DRAFT_SNIPPET in decision.reason
+    assert store.read_current_text() is None
+
+
+def test_intent_guard_denies_repo_write_bash_without_draft(tmp_path: Path) -> None:
+    """High-confidence repo writes via bash must declare intent first."""
+
+    guard, store = _make_guard(
+        tmp_path,
+        draft_text=None,
+        git_output="",
+    )
+    call = ToolCall(name="fs.run_bash", params={"command": "printf 'x\n' > src/fa/x.py"})
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    assert decision.action == "deny"
+    assert _MISSING_DRAFT_SNIPPET in decision.reason
+    assert store.read_current_text() is None
+
+
+def test_intent_guard_denies_opaque_exec_bash_without_draft(tmp_path: Path) -> None:
+    """Opaque execution forms also require a trusted draft first."""
+
+    guard, store = _make_guard(
+        tmp_path,
+        draft_text=None,
+        git_output="",
+    )
+    call = ToolCall(
+        name="fs.run_bash",
+        params={
+            "command": ('python -c "import pathlib; pathlib.Path("src/fa/x.py").write_text("x")"')
+        },
+    )
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    assert decision.action == "deny"
+    assert _MISSING_DRAFT_SNIPPET in decision.reason
+    assert store.read_current_text() is None
+
+
+def test_intent_guard_denies_mutating_ruff_check_without_draft(tmp_path: Path) -> None:
+    """`ruff check --fix` must not escape via VERIFY_ONLY."""
+
+    guard, _ = _make_guard(
+        tmp_path,
+        draft_text=None,
+        git_output="",
+    )
+    call = ToolCall(name="fs.run_bash", params={"command": "ruff check --fix ."})
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    assert decision.action == "deny"
+    assert _MISSING_DRAFT_SNIPPET in decision.reason
+
+
+def test_intent_guard_allows_repo_write_bash_after_trusted_draft(tmp_path: Path) -> None:
+    """After `pr.prepare`, high-confidence repo writes pass the presence gate."""
+
+    guard, _ = _make_guard(
+        tmp_path,
+        draft_text="INTENT: IMPLEMENT\nINVARIANT: Implements: src/fa/new.py\n",
+        git_output="",
+    )
+    call = ToolCall(name="fs.run_bash", params={"command": "printf 'x\n' > src/fa/new.py"})
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    assert decision.action == "allow"
+
+
+def test_intent_guard_denies_when_on_disk_draft_was_not_prepared_this_session(
+    tmp_path: Path,
+) -> None:
+    """A stale or externally fabricated file must not be trusted."""
+
+    guard, store = _make_guard(
+        tmp_path,
+        draft_text="INTENT: CHORE\nINVARIANT: n/a\n",
+        git_output="A\tsrc/fa/x.py\n",
+        trusted_draft=False,
+    )
+    assert store.path.is_file()
+    call = ToolCall(
+        name="fs.write_file",
+        params={"path": "src/fa/x.py", "content": "x"},
+    )
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    assert decision.action == "deny"
+    assert _MISSING_DRAFT_SNIPPET in decision.reason
+
+
+def test_intent_guard_denies_when_trusted_draft_is_tampered_after_prepare(tmp_path: Path) -> None:
+    """Current-session trust is revoked if the file changes after ``pr.prepare``."""
+
+    guard, store = _make_guard(
+        tmp_path,
+        draft_text="INTENT: CHORE\nINVARIANT: n/a\n",
+        git_output="A\tsrc/fa/x.py\n",
+    )
+    store.path.write_text("INTENT: CHORE\nINVARIANT: n/a\n\nmodified\n", encoding="utf-8")
+    call = ToolCall(
+        name="fs.write_file",
+        params={"path": "src/fa/x.py", "content": "x"},
+    )
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
+    assert decision.action == "deny"
+    assert _MISSING_DRAFT_SNIPPET in decision.reason
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +577,7 @@ def test_intent_guard_mutating_call_includes_edit_file(tmp_path: Path) -> None:
     guard, _ = _make_guard(
         tmp_path,
         draft_text=_BAD_FIX_DRAFT,
-        git_output="M	src/fa/x.py\n",
+        git_output="M\tsrc/fa/x.py\n",
     )
     call = ToolCall(
         name="fs.edit_file", params={"path": "src/fa/x.py", "old_string": "a", "new_string": "b"}
@@ -450,7 +593,7 @@ def test_intent_guard_mutating_call_includes_apply_patch(tmp_path: Path) -> None
     guard, _ = _make_guard(
         tmp_path,
         draft_text=_BAD_FIX_DRAFT,
-        git_output="M	src/fa/x.py\n",
+        git_output="M\tsrc/fa/x.py\n",
     )
     call = ToolCall(name="fs.apply_patch", params={"path": "src/fa/x.py", "unified_diff": "diff"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -458,34 +601,45 @@ def test_intent_guard_mutating_call_includes_apply_patch(tmp_path: Path) -> None
 
 
 def test_intent_guard_git_add_prefix_exact_match(tmp_path: Path) -> None:
-    """``git add`` (with space or exact) matches; ``git add--interactive`` does not."""
+    """``git add`` exact/space forms stay on the INDEX_WRITE path; unknown
+    `git add*` spellings fall back to the generic bash analyser.
+    """
     guard, _ = _make_guard(
         tmp_path,
         draft_text=_BAD_FIX_DRAFT,
         git_output="M\tsrc/fa/x.py\n",
     )
-    # Exact match (no args) → mutating
     exact_call = ToolCall(name="fs.run_bash", params={"command": "git add"})
     assert (
         guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=exact_call)).action
         == "deny"
     )
-    # With space + args → mutating
     space_call = ToolCall(name="fs.run_bash", params={"command": "git add src/fa/x.py"})
     assert (
         guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=space_call)).action
         == "deny"
     )
-    # False positive: plumbing command without space → NOT mutating
-    false_call = ToolCall(name="fs.run_bash", params={"command": "git add--interactive"})
+
+    valid_tmp = tmp_path / "valid"
+    valid_tmp.mkdir()
+    valid_guard, _ = _make_guard(
+        valid_tmp,
+        draft_text=_VALID_IMPLEMENT_DRAFT,
+        git_output="M\tsrc/fa/x.py\n",
+    )
+    fallback_call = ToolCall(name="fs.run_bash", params={"command": "git add--interactive"})
     assert (
-        guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=false_call)).action
+        valid_guard.handle(
+            LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)
+        ).action
         == "allow"
     )
 
 
 def test_intent_guard_git_commit_prefix_exact_match(tmp_path: Path) -> None:
-    """``git commit`` (with space or exact) matches; ``git commit-tree`` does not."""
+    """``git commit`` exact/space forms stay on the INDEX_WRITE path;
+    unknown `git commit*` spellings fall back to generic bash analysis.
+    """
     guard, _ = _make_guard(
         tmp_path,
         draft_text=_BAD_FIX_DRAFT,
@@ -501,9 +655,19 @@ def test_intent_guard_git_commit_prefix_exact_match(tmp_path: Path) -> None:
         guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=space_call)).action
         == "deny"
     )
-    false_call = ToolCall(name="fs.run_bash", params={"command": "git commit-tree"})
+
+    valid_tmp = tmp_path / "valid"
+    valid_tmp.mkdir()
+    valid_guard, _ = _make_guard(
+        valid_tmp,
+        draft_text=_VALID_IMPLEMENT_DRAFT,
+        git_output="M\tsrc/fa/x.py\n",
+    )
+    fallback_call = ToolCall(name="fs.run_bash", params={"command": "git commit-tree"})
     assert (
-        guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=false_call)).action
+        valid_guard.handle(
+            LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)
+        ).action
         == "allow"
     )
 
@@ -534,11 +698,11 @@ def test_intent_guard_path_projection_normalizes_absolute_path(tmp_path: Path) -
     so classifier prefix checks (``src/fa/…``) still match.
     """
     repo_root = _make_repo(tmp_path)
-    draft_path = tmp_path / "pr_draft.md"
-    draft_path.write_text(_VALID_IMPLEMENT_DRAFT)
+    draft_store = PrDraftStore(tmp_path / "pr_draft.md")
+    draft_store.write_text(_VALID_IMPLEMENT_DRAFT)
     guard = IntentGuard(
         repo_root=repo_root,
-        draft_path=draft_path,
+        draft_store=draft_store,
         git_runner=lambda: "",
     )
     abs_path = str(repo_root / "src" / "fa" / "new.py")
