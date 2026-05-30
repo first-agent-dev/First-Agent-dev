@@ -1,8 +1,12 @@
 # First-Agent
 
-Репозиторий, в котором я собираю **собственного LLM-агента** вместе с devin.ai
+Репозиторий, в котором я собираю **собственного LLM-агента** вместе с devin.ai/arena.ai
 
-> **Статус:** Разработка deterministic harness ADR-10, подведение к релизу F-A 0.1
+> **Статус:** 
+Разработка ARD-9-llm-provider-client;
+deterministic harness ADR-10-runtime determinism,
+prep work for ADR-11-autoring determinism cretion;
+first tests cli-ready.
 ---
 
 ## 1. Зачем это
