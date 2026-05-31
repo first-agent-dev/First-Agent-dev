@@ -1,0 +1,46 @@
+name: Mutation testing
+
+# Test+coverage runs live in coverage.yml (the single source of truth, read by
+# GitHub's Code coverage analysis feature). This workflow ONLY runs mutation
+# testing, which is a different question: not "did tests run?" but "would the
+# tests actually FAIL if the code were wrong?" — the key guard against
+# LLM-written tests that look thorough but assert nothing.
+
+on:
+  workflow_dispatch:        # run on demand from the Actions tab
+  schedule:
+    - cron: "0 6 * * 1"     # weekly, Monday 06:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    name: mutation testing (advisory)
+    runs-on: ubuntu-latest
+    # Mutation runs are slow (the suite reruns per mutant), so they are NOT on
+    # the PR critical path. Flip continue-on-error to false once you trust your
+    # survivor budget and want surviving mutants to fail the job.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y universal-ctags
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run mutation testing on high-risk modules
+        # Scoped to the security-critical sandbox/provider logic where a
+        # surviving mutant (a bug your tests would NOT catch) matters most.
+        # Expand the path list as you harden more modules.
+        run: |
+          mutmut run --paths-to-mutate src/fa/sandbox/ || true
+          mutmut results || true

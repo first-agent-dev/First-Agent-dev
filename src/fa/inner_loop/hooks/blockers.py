@@ -238,21 +238,10 @@ class RateLimitBlocker(BlockerMiddleware):
 
     category = BlockerCategory.RATE_LIMIT
     name = "blocker:rate_limit"
-
-    def __init__(
-        self,
-        *,
-        suppression_seconds: float | None = None,
-        time_source: TimeSource | None = None,
-    ) -> None:
-        super().__init__(
-            suppression_seconds=(
-                suppression_seconds
-                if suppression_seconds is not None
-                else DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS
-            ),
-            time_source=time_source,
-        )
+    # The base class uses this class attribute as the default when the
+    # constructor's ``suppression_seconds`` is None, so no __init__ override
+    # is needed (avoids useless-parent-delegation / W0246).
+    suppression_seconds = DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS
 
     def _detect(self, result: ToolResult) -> bool:
         if result.error is None:
@@ -284,21 +273,8 @@ class LockfileBlocker(BlockerMiddleware):
 
     category = BlockerCategory.LOCKFILE
     name = "blocker:lockfile"
-
-    def __init__(
-        self,
-        *,
-        suppression_seconds: float | None = None,
-        time_source: TimeSource | None = None,
-    ) -> None:
-        super().__init__(
-            suppression_seconds=(
-                suppression_seconds
-                if suppression_seconds is not None
-                else DEFAULT_LOCKFILE_SUPPRESSION_SECONDS
-            ),
-            time_source=time_source,
-        )
+    # Default supplied via class attribute; see RateLimitBlocker note (W0246).
+    suppression_seconds = DEFAULT_LOCKFILE_SUPPRESSION_SECONDS
 
     def _detect(self, result: ToolResult) -> bool:
         if result.error is None:
@@ -323,21 +299,9 @@ class AuthExpiredBlocker(BlockerMiddleware):
 
     category = BlockerCategory.AUTH_EXPIRED
     name = "blocker:auth_expired"
-
-    def __init__(
-        self,
-        *,
-        suppression_seconds: float | None = None,
-        time_source: TimeSource | None = None,
-    ) -> None:
-        super().__init__(
-            suppression_seconds=(
-                suppression_seconds
-                if suppression_seconds is not None
-                else DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS
-            ),
-            time_source=time_source,
-        )
+    # Default supplied via class attribute; see RateLimitBlocker note (W0246).
+    # 0 == inert gate (observe-only) per the class docstring.
+    suppression_seconds = DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS
 
     def _detect(self, result: ToolResult) -> bool:
         if result.error is None:

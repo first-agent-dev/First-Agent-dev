@@ -134,7 +134,10 @@ def analyze_bash_for_intent(command: str, *, repo_root: Path) -> BashIntentAnaly
 
     try:
         roots = bashlex.parse(command)
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Intentional broad catch: bashlex can raise arbitrary errors on
+        # malformed/unsupported input; any failure means we fall back to the
+        # safe OPAQUE_EXEC effect rather than asserting touched-path claims.
         return BashIntentAnalysis(
             effect=BashIntentEffect.OPAQUE_EXEC,
             reasons=(f"bash parse failed: {type(exc).__name__}",),

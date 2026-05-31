@@ -218,6 +218,7 @@ class HookRegistry:
                         ),
                         current,
                     )
+                # pylint: disable-next=broad-exception-caught
                 except Exception as exc:  # pragma: no cover - log branch asserted by trace.
                     LOGGER.debug(
                         "observer middleware failed: %s",
@@ -245,6 +246,7 @@ class HookRegistry:
             return
         try:
             self._event_sink(record, payload)
+        # pylint: disable-next=broad-exception-caught
         except Exception as exc:  # pragma: no cover - sink failure must not break runtime.
             LOGGER.debug("hook_decision sink failed: %s", exc, exc_info=exc)
 

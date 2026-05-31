@@ -260,8 +260,7 @@ def _split_by_headings(
             if sp_idx + 1 < len(split_points)
             else total_lines
         )
-        if line_end < line_start:
-            line_end = line_start
+        line_end = max(line_end, line_start)
 
         byte_start = line_byte_offsets[line_start - 1]
         byte_end = line_byte_offsets[line_end]
