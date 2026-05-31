@@ -135,27 +135,32 @@ def test_is_contained_rejects_explicit_home_when_workspace_elsewhere(
 
 def test_is_contained_accepts_tilde_when_workspace_is_home(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """If the workspace IS the user's home directory, ``~/file`` passes.
 
     Regression guard for the tilde-expansion fix: the rejection above
-    must not over-fire when the workspace coincidentally equals
-    ``$HOME``. Builds a fake home, monkey-patches it, and asserts the
-    inside-home target is contained.
+    must not over-fire when the workspace coincidentally equals the
+    user home. Builds a fake home and points the platform's
+    home-resolution env vars at it.
+
+    ``Path.expanduser()`` reads different env vars per platform — POSIX
+    uses ``$HOME`` while Windows uses ``%USERPROFILE%`` (then
+    ``%HOMEDRIVE%%HOMEPATH%``). Set all of them via ``monkeypatch`` so
+    the test is platform-correct and auto-restores env state (raw
+    ``os.environ`` assignment leaked across tests).
     """
     fake_home = tmp_path / "home"
     fake_home.mkdir()
-    os.environ["HOME"] = str(fake_home)
-    try:
-        result = is_contained("~/inside.txt", fake_home)
-        assert result.contained is True
-        assert result.canonical_target is not None
-        assert result.canonical_target.is_relative_to(fake_home.resolve())
-    finally:
-        # `tmp_path` cleanup handles the directory; HOME is per-test
-        # so restoring is best-effort.
-        pass
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+    monkeypatch.setenv("HOMEDRIVE", fake_home.drive)
+    monkeypatch.setenv("HOMEPATH", str(fake_home)[len(fake_home.drive) :])
 
+    result = is_contained("~/inside.txt", fake_home)
+    assert result.contained is True
+    assert result.canonical_target is not None
+    assert result.canonical_target.is_relative_to(fake_home.resolve())
 
 def test_contains_unresolved_variable_detects_undefined(
     monkeypatch: pytest.MonkeyPatch,

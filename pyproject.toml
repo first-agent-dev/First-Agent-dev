@@ -239,3 +239,17 @@ ignore-signatures = true   # similar function signatures are not duplication
 # CI passes when the score is at or above this. Real Errors/Warnings drag the
 # score down fast, so regressions still fail; lingering style nits don't.
 fail-under = 9.0
+
+# ---------------------------------------------------------------------------
+# pytest-gremlins — native-Windows mutation testing (no fork / no WSL).
+# Local spot-check that tests actually CATCH bugs, not just execute lines.
+# Run scoped to the high-risk sandbox folder:
+#   pytest tests/test_sandbox_*.py --gremlins --gremlin-parallel
+# CI keeps using mutmut on Linux (tests.yml); this is the Windows-dev mirror.
+# ---------------------------------------------------------------------------
+[tool.pytest-gremlins]
+paths = ["src/fa/sandbox"]
+operators = ["comparison", "arithmetic", "boolean", "boundary", "return"]
+exclude = ["**/test_*", "**/__init__.py"]
+report = ["console", "html"]
+cache = true
