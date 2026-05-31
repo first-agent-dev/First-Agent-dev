@@ -170,17 +170,24 @@
   critical-re-pass of `repo-audit-2026-05-10.md`).
 - **Idea:** [`knowledge/prompts/RESOLVER.md`](./prompts/RESOLVER.md)
   intent table routes T2-T5 (planner, coder, debug, eval) to
-  template files that do not exist yet — the body is inlined in
-  [`docs/prompting.md`](../docs/prompting.md) as fallback. A
-  non-Devin agent following the intent table verbatim hits
-  «no file yet» for T2-T5 and may misroute or hallucinate the
-  missing template.
+  template **sections** inside
+  [`knowledge/prompts/prompting.md`](./prompts/prompting.md)
+  rather than standalone files. A non-Devin agent following the
+  intent table reaches the §T2-T5 anchors but the templates are
+  inline, not split into per-role files.
+- **Partial progress (2026-05-29):** `prompting.md` moved from
+  `docs/` to `knowledge/prompts/` next to RESOLVER.md, and the
+  RESOLVER T2-T5 rows now cite the co-located `./prompting.md §Tn`
+  anchors (option (b) below, partially realised — the cross-folder
+  «no file yet» fallback is gone). Item stays open: the templates
+  are still inline sections, not the standalone per-role files of
+  option (a).
 - **Blocked-on:** First non-Devin session attempts a planner /
   coder / debug / eval task from a template path.
 - **Unblock-trigger:** Either (a) extract T2-T5 templates to
   standalone files (`knowledge/prompts/planner-fa.md`,
-  `coder-fa.md`, `debug-fa.md`, `eval-fa.md`), or (b) update
-  RESOLVER.md to cite `docs/prompting.md` anchors directly.
+  `coder-fa.md`, `debug-fa.md`, `eval-fa.md`), or (b) ✅ done —
+  RESOLVER.md cites `knowledge/prompts/prompting.md` anchors directly.
 - **First concrete step once unblocked:** Decide between (a)
   and (b). Option (a) parallels the existing
   [`prompts/architect-fa.md`](./prompts/architect-fa.md) /
@@ -222,9 +229,10 @@
   format. Add a hook entry in `.pre-commit-config.yaml`. Add a
   CI workflow `.github/workflows/lint-llms-txt.yml` running the
   same `git diff --exit-code` check.
-- **References:** [`docs/workflow.md`](../docs/workflow.md) item 7
-  (concept origin); AGENTS rule #7 (current manual rule);
-  [`MAINTENANCE.md` §When adding a new file](./MAINTENANCE.md)
+- **References:** the `llms.txt` auto-generator concept originated
+  in the now-retired `docs/workflow.md` Phase-S step 7 (folder
+  deleted 2026-05-29; concept preserved here); AGENTS rule #7
+  (current manual rule); [`MAINTENANCE.md` §When adding a new file](./MAINTENANCE.md)
   (current manual checklist landed in PR #6).
 - **Why this is LOW ROI until base pre-commit stack exists.**
   Adding a single hook before the rest of the stack means the
@@ -861,10 +869,18 @@
   / MECHANISM, git-add / git-commit triggers, skill §D-5
   override, path-projection for IMPLEMENT / RESEARCH buckets,
   identity-test for ADR-10 I-1 single-source-of-truth, deny
-  reason echoes hook wording). The session bootstrap that wires
-  `IntentGuard` into the loop driver + the deferred `prepare-pr`
-  tool / sub-agent that populates `pr_draft.md` remain
-  follow-ups (HANDOFF §Next #2).
+  reason echoes hook wording). **Both former follow-ups are now
+  closed:** the `prepare-pr` producer shipped in PR #24
+  (`pr.prepare`, see §Q-N below) and `IntentGuard` is wired into
+  the `fa run` bootstrap (`cli.py` `_cmd_run`, landed in PR #23
+  final-review). **Scope expanded post-#24 (commit 78ced94):**
+  `IntentGuard` now also gates `fs.run_bash` via a dedicated
+  AST analyzer ([`bash_intent.py`](../src/fa/inner_loop/bash_intent.py),
+  READ_ONLY / VERIFY_ONLY / INDEX_WRITE / REPO_WRITE /
+  OPAQUE_EXEC) and trusts only current-session drafts via the
+  [`PrDraftStore`](../src/fa/inner_loop/pr_draft.py) (stale /
+  externally-fabricated drafts rejected) — closing the remaining
+  `fs.run_bash` bypass of the draft-first contract.
 - **Why milestone, not idea:** the `HookRegistry` substrate is
   landed (M-1 closed by PR #24; verified by the session-start
   audit at [`src/fa/inner_loop/hooks/base.py`](../src/fa/inner_loop/hooks/base.py)
@@ -945,7 +961,18 @@
 
 ## M-8 — PR D — LLM-driven coder loop (`drive_session`) + `fa run` CLI + `UrllibTransport`
 
-- **Status:** **in flight (PR D, 2026-05-27).**
+- **Status:** **closed by PR #23 (PR D, 2026-05-28).** Landed
+  `coder_loop.drive_session`, `prompt.py` (A-bucket residue),
+  `providers/transport.UrllibTransport`, and the `fa run --task`
+  CLI subcommand. The PR #23 final-review pass additionally fixed
+  three terminal-path bugs (run_session batch truncation breaking
+  the OpenAI tool-call pairing protocol, `KeyboardInterrupt` not
+  mapping to a typed `SessionOutcome`, duplicate `User-Agent` /
+  missing defensive `Content-Type` in the transport), resolved a
+  pre-existing Python-3.13 sandbox symlink-loop containment bug,
+  and wired `IntentGuard` into the `fa run` bootstrap. Remaining
+  follow-up is the first live `fa run --task` smoke against a real
+  provider (HANDOFF §Next #1).
 - **Why milestone, not idea:** the M-3 ProviderChain dispatcher
   (PR #18, 2026-05-22) and the M-1 inner-loop `run_session`
   (PR #24, 2026-05-18) both landed, but no code bridged

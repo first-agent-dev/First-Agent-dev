@@ -4,9 +4,9 @@ Durable project knowledge for First-Agent. Everything here is:
 
 1. **Committed** to the repo so it is versioned and reviewable.
 2. **Cross-referenced** from Devin Knowledge notes where useful.
-   (`docs/devin-reference.md` was archived 2026-05-08 — see header banner
-   for the rationale; restored as a per-host gated entry once `llms.txt`
-   learns to gate by agent host.)
+   (The Devin-era `docs/` folder — including the former
+   `devin-reference.md` — was retired 2026-05-29 as stale early
+   scaffolding; live references now live under `knowledge/`.)
 
 ## Layout
 
@@ -214,17 +214,17 @@ see [`AGENTS.md` PR Checklist rule #9](../AGENTS.md#pr-checklist).
 | A per-task agent-loadable discipline (loaded on-demand, e.g. before opening a PR) | `knowledge/skills/<name>/SKILL.md` (see [`skills/README.md`](./skills/README.md) for the skill-vs-prompt-vs-rule distinction) |
 | Exploration trail (which alternatives were rejected & why) | `knowledge/trace/exploration_log.md` |
 | Project-wide context (mission, scope, users) | `knowledge/project-overview.md` |
-| How-to / guide / reference | `docs/` (not here) |
+| How-to / guide / reference | `knowledge/` (the former `docs/` folder was retired 2026-05-29) |
 
 ## Routing — Where the agent looks for an answer
 
 | Question type | Primary source | Secondary / verification |
 |---|---|---|
-| "What is our architecture for X?" | `docs/architecture.md` | ADRs in `knowledge/adr/` |
+| "What is our architecture for X?" | `knowledge/architecture.md` | ADRs in `knowledge/adr/` |
 | "What decision did we make regarding Y and why?" | `knowledge/adr/` | — |
 | "What did we find during the research of Z?" | `knowledge/research/<Z>.md` | Primary sources from `source:` frontmatter |
 | Specific number / date / quote | **Always** the primary source (`source:` of the note), not the summary | — |
-| Procedure / how-to | `docs/` | `knowledge/skills/<name>/SKILL.md` for per-task disciplines |
+| Procedure / how-to | `knowledge/skills/<name>/SKILL.md` for per-task disciplines | `knowledge/prompts/` for prompt templates |
 | Before opening a PR (intent classification, anti-shallow-fix gate) | [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md) | [`AGENTS.md` PR Checklist rule #12](../AGENTS.md#pr-checklist) (load-directive) |
 
 This same rule is documented in [`AGENTS.md`](../AGENTS.md#query-routing).

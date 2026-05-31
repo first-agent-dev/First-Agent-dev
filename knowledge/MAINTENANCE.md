@@ -22,7 +22,7 @@
 5. Cross-check [`knowledge/adr/DIGEST.md`](./adr/DIGEST.md) — if
    any DIGEST row's **Inputs** bullet pointed at this note, retarget
    to the superseder.
-6. Cross-check [`docs/glossary.md`](../docs/glossary.md) — if any
+6. Cross-check [`knowledge/glossary.md`](./glossary.md) — if any
    glossary row's `See:` link pointed at this note, retarget or
    remove.
 

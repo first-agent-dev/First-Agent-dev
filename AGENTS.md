@@ -44,7 +44,7 @@ prompt (axis, lens, pillar, harness, hook, ACI, UC1..UC5, NLAH, MCP,
 subtraction-first, minimalism-first, R-S-M, …), run:
 
 ```bash
-grep -i "^| \*\*<term>\*\*" docs/glossary.md
+grep -i "^| \*\*<term>\*\*" knowledge/glossary.md
 ```
 
 Expect exactly one matching row. If the row is missing, fall back to
@@ -114,7 +114,7 @@ Four named slots. Pattern-match the template exactly; respect four-pillar goal s
     - Non-code (ASCII art, directory trees, prompts, logs): `text`.
   -Close with bare ` ``` `.
 - New docs go in the right folder:
-  - Guides / references → `docs/`. Update [`docs/README.md`](./docs/README.md).
+  - Guides / references → `knowledge/` (the former `docs/` folder was retired 2026-05-29). Update [`knowledge/llms.txt`](./knowledge/llms.txt) §BY-DEMAND INDEX.
   - Project artifacts (decisions, research, prompts) → `knowledge/`.
 - Research notes are read by both humans and agents. Prefer Russian for
   analytical prose, project recommendations. Keep protocol names, API field names, code,
@@ -213,7 +213,7 @@ Route questions to the right folder. Do not load everything into context.
 | Current task | [`HANDOFF.md`](./HANDOFF.md) | Session start |
 | Research findings | [`knowledge/research/`](./knowledge/research/) | Primary sources from `source:` frontmatter |
 | Specific decision / quote / number / date | **Primary source** (URL / code / gist), not a summary note | — |
-| Terms | [`docs/glossary.md`](./docs/glossary.md) | — |
+| Terms | [`knowledge/glossary.md`](./knowledge/glossary.md) | — |
 
 **Chain-of-custody rule.** If citing a specific decision / quote / number / date,
 go to the primary source and quote from there.
