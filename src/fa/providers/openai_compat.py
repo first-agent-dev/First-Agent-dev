@@ -28,11 +28,7 @@ from fa.providers.base import (
     ResponseInfo,
     Transport,
     TransportResponse,
-)
-from fa.providers.errors import (
-    ProviderAuthError,
-    ProviderRequestShapeError,
-    ProviderTransientError,
+    parse_transport_response,
 )
 
 
@@ -81,36 +77,9 @@ class OpenAICompatProvider:
 
 
 def _parse_response(response: TransportResponse) -> ResponseInfo:
-    if response.network_error is not None:
-        raise ProviderTransientError(
-            f"network_error: {response.network_error}",
-            status=0,
-            kind="timeout",
-            retry_after_seconds=0.0,
-        )
-    status = response.status
-    if status == 200:
-        return _normalize_success(response.body)
-    if status in {400, 422}:
-        raise ProviderRequestShapeError(
-            f"request_shape_error: status={status} body={response.body!r}", status=status
-        )
-    if status in {401, 403}:
-        raise ProviderAuthError(f"auth_error: status={status}", status=status)
-    if status == 429 or 500 <= status <= 504:
-        kind = "rate_limited" if status == 429 else "service_unavailable"
-        raise ProviderTransientError(
-            f"{kind}: status={status}",
-            status=status,
-            kind=kind,
-            retry_after_seconds=response.retry_after_seconds or 0.0,
-        )
-    raise ProviderTransientError(
-        f"unexpected_status: status={status}",
-        status=status,
-        kind="service_unavailable",
-        retry_after_seconds=response.retry_after_seconds or 0.0,
-    )
+    # Status -> exception mapping is shared across adapters; only the 200-body
+    # decode differs, supplied here as the OpenAI-specific normalizer.
+    return parse_transport_response(response, _normalize_success)
 
 
 def _normalize_success(body: Mapping[str, Any]) -> ResponseInfo:

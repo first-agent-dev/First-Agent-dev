@@ -9,3 +9,9 @@ build/
 .fa/
 uv.lock
 .devin/
+
+# Coverage / mutation artifacts
+.coverage
+coverage.xml
+htmlcov/
+.mutmut-cache

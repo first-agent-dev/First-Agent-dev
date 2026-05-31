@@ -45,6 +45,10 @@ dev = [
   "pre-commit>=3.7",
   "pytest>=8.2",
   "pytest-asyncio>=0.23",
+  "pytest-cov>=5.0",
+  # Mutation testing: verifies the test suite actually CATCHES bugs, not just
+  # that lines execute. Critical guard against "looks-thorough" LLM tests.
+  "mutmut>=3.0",
   "ruff>=0.5",
   # PyYAML type stubs for the T-4 models.yaml loader; pulled in dev
   # only because the runtime `yaml.safe_load` surface returns
@@ -92,6 +96,146 @@ warn_unused_configs = true
 files = ["src", "tests"]
 
 [tool.pytest.ini_options]
-addopts = ["-ra", "--strict-config", "--strict-markers"]
+# --cov gates: fail the suite if line coverage drops below the threshold set
+# in [tool.coverage.report] (fail_under). This is the primary "is it tested"
+# safety net for LLM-written code, which often ships logic with no test at all.
+addopts = [
+  "-ra",
+  "--strict-config",
+  "--strict-markers",
+  "--cov=fa",
+  "--cov-report=term-missing",
+  "--cov-report=xml",
+]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+branch = true            # branch coverage catches untested if/else paths
+source = ["src/fa"]
+omit = [
+  "*/__main__.py",       # thin CLI entry points: covered via integration, not unit
+]
+
+[tool.coverage.report]
+# Strict gate. You are currently at ~92%; 90% leaves a small buffer while still
+# blocking real regressions. Raise this over time (it can only ratchet up).
+fail_under = 90
+show_missing = true
+skip_covered = false
+exclude_lines = [
+  "pragma: no cover",
+  "raise NotImplementedError",
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+  "@(abc\\.)?abstractmethod",
+]
+
+# ---------------------------------------------------------------------------
+# Mutation testing (mutmut). Coverage proves a line RAN; it does NOT prove a
+# test would FAIL if that line were wrong. LLM-generated tests frequently
+# "exercise" code without asserting the right thing. Mutmut mutates your source
+# (e.g. flips `<` to `<=`, `True` to `False`) and reruns tests: a *surviving*
+# mutant means a real bug could slip past your suite.
+#
+# Run locally:   mutmut run          (slow: runs the suite per mutation)
+#                mutmut results      (list survivors)
+#                mutmut show <id>    (see the exact mutation that survived)
+# ---------------------------------------------------------------------------
+[tool.mutmut]
+paths_to_mutate = ["src/fa/"]
+tests_dir = ["tests/"]
+# Keep CI fast: run mutation on the high-risk logic modules first. Expand this
+# list as you harden more of the codebase.
+# (mutmut 3.x reads this; for a focused run use: mutmut run -- src/fa/sandbox/)
+
+# ---------------------------------------------------------------------------
+# Pylint configuration
+#
+# Policy (see PR adding this block): "balanced". Pylint runs in CI via
+# .github/workflows/pylint.yml. We:
+#   * keep every Error/Warning that points at real risk,
+#   * silence purely-cosmetic Convention/Refactor checks that this codebase
+#     deliberately does not follow (docstrings on every symbol, hard caps on
+#     returns/branches/locals, dataclass "too few public methods", etc.),
+#   * gate CI on a score threshold via `fail-under` rather than on "zero
+#     messages", so style nits never block a merge but real regressions do.
+#
+# IMPORTANT: the matching CI job MUST install the project + dev extras
+# (`pip install -e ".[dev]"`) before invoking pylint. Without that, pylint
+# cannot import markdown_it / jsonschema / yaml / bashlex / pytest and emits
+# spurious E0401 import-error messages.
+# ---------------------------------------------------------------------------
+[tool.pylint.main]
+# Treat the project as a real package so intra-repo imports resolve.
+init-hook = "import sys; sys.path.insert(0, 'src')"
+# Belt-and-suspenders: if a CI env can't install a runtime dep, don't let a
+# missing third-party module masquerade as a code error.
+ignored-modules = []
+
+[tool.pylint."messages control"]
+disable = [
+    # --- cosmetic: documentation. This repo documents modules/ADRs richly
+    #     but does not require a docstring on every function/class. ---
+    "missing-module-docstring",       # C0114
+    "missing-class-docstring",        # C0115
+    "missing-function-docstring",     # C0116
+
+    # --- cosmetic/structural: size & shape heuristics. These are opinions,
+    #     not bugs; the code intentionally has small dataclasses, single-
+    #     method strategy classes, and dispatch functions with many returns. ---
+    "too-few-public-methods",         # R0903
+    "too-many-instance-attributes",   # R0902
+    "too-many-return-statements",     # R0911
+    "too-many-branches",              # R0912
+    "too-many-arguments",             # R0913
+    "too-many-locals",                # R0914
+    "too-many-statements",            # R0915
+    "too-many-nested-blocks",         # R1702
+
+    # NOTE: `duplicate-code` (R0801) is intentionally NOT disabled here. It is
+    # one of the highest-value checks for an LLM-assisted codebase, because
+    # agents tend to copy-paste-and-tweak instead of extracting shared helpers
+    # (which silently causes "fix one copy, the other keeps the bug" drift).
+    # It stays ENABLED for src/. The tests/ pass disables it separately (see
+    # .pylintrc-tests and .github/workflows/pylint.yml) because parallel test
+    # scaffolding/fixtures are legitimately similar.
+
+    # --- test-suite ergonomics: idioms that are normal in pytest/tests. ---
+    "redefined-outer-name",           # W0621 (pytest fixtures shadow by design)
+    "unused-argument",                # W0613 (test doubles must match signatures)
+    "protected-access",               # W0212 (tests legitimately poke internals)
+    "import-outside-toplevel",        # C0415 (lazy/local imports in tests & hot paths)
+]
+
+[tool.pylint.basic]
+# These dataclass attributes are capability/config FLAG names that map 1:1 to
+# external config keys; SCREAMING_SNAKE_CASE is intentional and must not be
+# renamed. Pylint treats dataclass fields as *variables*, so the knob is the
+# variable-name regex (allow snake_case OR SCREAMING_SNAKE_CASE), plus an
+# explicit allow-list for the five capability flags.
+variable-rgx = "^(?:[a-z_][a-z0-9_]*|[A-Z_][A-Z0-9_]*)$"
+good-names = [
+    "ENABLE_DYNAMIC_TOOLS",
+    "REQUIRE_DYNAMIC_TOOL_SANDBOX",
+    "ENABLE_MCP_GATEWAY_MANAGEMENT",
+    "ENABLE_DYNAMIC_MCP_SERVERS",
+    "ENABLE_SERVER_OPS",
+]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.similarities]
+# duplicate-code (R0801) tuning for src/. Keep it sensitive to real logic
+# copy-paste (the #1 LLM-agent code smell) but don't flag boilerplate:
+min-similarity-lines = 6   # default 4; 6 avoids tiny incidental matches
+ignore-comments = true
+ignore-docstrings = true
+ignore-imports = true      # parallel import blocks in __init__.py are fine
+ignore-signatures = true   # similar function signatures are not duplication
+
+[tool.pylint.reports]
+# CI passes when the score is at or above this. Real Errors/Warnings drag the
+# score down fast, so regressions still fail; lingering style nits don't.
+fail-under = 9.0

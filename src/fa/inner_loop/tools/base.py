@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 
@@ -16,14 +17,23 @@ def resolve_workspace_path(workspace_root: Path, raw_path: object) -> Path:
     return resolved
 
 
-def require_string(params: dict[str, object], key: str) -> str:
+def require_string(params: Mapping[str, object], key: str) -> str:
     value = params.get(key)
     if not isinstance(value, str):
         raise ValueError(f"{key} must be a string")
     return value
 
 
-def optional_int(params: dict[str, object], key: str) -> int | None:
+def optional_string(params: Mapping[str, object], key: str) -> str | None:
+    value = params.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string")
+    return value
+
+
+def optional_int(params: Mapping[str, object], key: str) -> int | None:
     value = params.get(key)
     if value is None:
         return None
@@ -32,4 +42,4 @@ def optional_int(params: dict[str, object], key: str) -> int | None:
     return value
 
 
-__all__ = ["optional_int", "require_string", "resolve_workspace_path"]
+__all__ = ["optional_int", "optional_string", "require_string", "resolve_workspace_path"]

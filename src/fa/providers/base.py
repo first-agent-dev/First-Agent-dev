@@ -24,9 +24,15 @@ observability Tier-1 row only reads the canonical fields.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
+
+from fa.providers.errors import (
+    ProviderAuthError,
+    ProviderRequestShapeError,
+    ProviderTransientError,
+)
 
 
 @dataclass(frozen=True)
@@ -87,6 +93,51 @@ class Transport(Protocol):
         json_body: Mapping[str, Any],
         timeout_seconds: float,
     ) -> TransportResponse: ...
+
+
+def parse_transport_response(
+    response: TransportResponse,
+    normalize_success: Callable[[Mapping[str, Any]], ResponseInfo],
+) -> ResponseInfo:
+    """Map a transport response's HTTP status onto the canonical contract.
+
+    Shared by every provider adapter: the status -> exception mapping is
+    identical across providers (ADR-9 §3), so it lives here once. The only
+    per-provider difference is how a 200 body is decoded, supplied via the
+    ``normalize_success`` callback. Extracting this removes the duplicated
+    block previously copy-pasted into each adapter's ``_parse_response``.
+    """
+
+    if response.network_error is not None:
+        raise ProviderTransientError(
+            f"network_error: {response.network_error}",
+            status=0,
+            kind="timeout",
+            retry_after_seconds=0.0,
+        )
+    status = response.status
+    if status == 200:
+        return normalize_success(response.body)
+    if status in {400, 422}:
+        raise ProviderRequestShapeError(
+            f"request_shape_error: status={status} body={response.body!r}", status=status
+        )
+    if status in {401, 403}:
+        raise ProviderAuthError(f"auth_error: status={status}", status=status)
+    if status == 429 or 500 <= status <= 504:
+        kind = "rate_limited" if status == 429 else "service_unavailable"
+        raise ProviderTransientError(
+            f"{kind}: status={status}",
+            status=status,
+            kind=kind,
+            retry_after_seconds=response.retry_after_seconds or 0.0,
+        )
+    raise ProviderTransientError(
+        f"unexpected_status: status={status}",
+        status=status,
+        kind="service_unavailable",
+        retry_after_seconds=response.retry_after_seconds or 0.0,
+    )
 
 
 @runtime_checkable
