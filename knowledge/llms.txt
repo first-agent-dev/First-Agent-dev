@@ -27,7 +27,7 @@ Five files cover ~90% of session-start context. Read in order:
 2. [knowledge/project-overview.md](./knowledge/project-overview.md) — §1.1 four-pillar goal; §1.2 minimalism-first principle; §1.2.5 compliance-by-construction.
 3. [HANDOFF.md](./HANDOFF.md) — current state tables (Landmarks / Gotchas / Backlog), §Next priority list, §Session Protocol.
 4. [knowledge/adr/DIGEST.md](./knowledge/adr/DIGEST.md) — one-paragraph cheat-sheet per ADR + amendments. Authoritative source remains the per-ADR files.
-5. [docs/glossary.md](./docs/glossary.md) — canonical definitions for project-specific terms (axis, lens, pillar, NLAH, ACI, harness, hook, UC1..UC5, MCP, subtraction-first, minimalism-first, R-S-M).
+5. [knowledge/glossary.md](./knowledge/glossary.md) — canonical definitions for project-specific terms (axis, lens, pillar, NLAH, ACI, harness, hook, UC1..UC5, MCP, subtraction-first, minimalism-first, R-S-M).
 
 ## § TASK ROUTING
 
@@ -61,7 +61,10 @@ Materialised ADR-7 + ADR-8 runtime. Smoke: `fa inner-loop-smoke --workspace . --
 - `src/fa/inner_loop/hooks/loop_guard.py` — R-2 `LoopGuard`: identical-call repeat + same-path thrash detectors over sliding window.
 - `src/fa/inner_loop/hooks/blockers.py` — R-4 `RateLimitBlocker` / `LockfileBlocker` / `AuthExpiredBlocker`; gate + observe at `BEFORE/AFTER_TOOL_EXEC`.
 - `src/fa/inner_loop/hooks/recovery_observers.py` — R-3 `RecoveryActionObserver` + `AttemptHistoryObserver`; wired at `AFTER_TOOL_EXEC`.
+- `src/fa/inner_loop/hooks/intent_guard.py` — M-7 `IntentGuard(GuardMiddleware)` on `BEFORE_TOOL_EXEC`; reuses `fa.hygiene.pr_intent.classify_intent` + `validate_commit_msg` (ADR-10 I-1: one validator across git hook / middleware / `pr.prepare`). Requires a trusted current-session draft for mutating `fs.write_file` and for `fs.run_bash` commands the AST analyzer classifies as writing/opaque; allow-on-no-draft / allow-on-git-fail. Wired into `fa run` bootstrap (`cli.py` `_cmd_run`).
 - `src/fa/inner_loop/recovery/` — pure data layer for R-3 + R-6: `classify.py` (deterministic error→action table), `attempt_history.py` (sliding-window JSON writer).
+- `src/fa/inner_loop/bash_intent.py` — AST-backed (`bashlex`) `fs.run_bash` effect analyzer; classifies a command into READ_ONLY / VERIFY_ONLY / INDEX_WRITE / REPO_WRITE / OPAQUE_EXEC so `IntentGuard` can apply the draft-first contract to shell writes. Fails closed to OPAQUE_EXEC.
+- `src/fa/inner_loop/pr_draft.py` — `PrDraftStore`: current-session trusted PR-draft store at `~/.fa/state/runs/<run_id>/pr_draft.md`; atomic write + content-digest provenance so `IntentGuard` trusts only drafts produced this run (rejects stale / externally-fabricated files).
 - `src/fa/inner_loop/state.py` — `SessionState` + `EventLog`; ADR-7 §7 JSONL schema.
 - `src/fa/inner_loop/tools/` — `build_baseline_registry()` (three M-1 tools: `fs.read_file`, `fs.write_file`, `fs.run_bash`) + `build_prepare_pr_tool()` (`pr.prepare` — M-7 §Q-N producer of `~/.fa/state/runs/<run_id>/pr_draft.md`).
 - `src/fa/verifier/` — R-5 DSV module: `verify_action(contract, events)` against `verifiers/*.yaml` contracts.
@@ -119,25 +122,15 @@ Quality gates run in CI. `make check` (ruff + mypy + pytest) mirrors CI locally;
 - `.github/workflows/ci.yml` — ruff + mypy + pytest (coverage-gated at 90%); uploads `coverage.xml` for GitHub Code coverage analysis.
 - `.github/workflows/pylint.yml` — two-pass pylint (src strict w/ duplicate-code; tests relaxed via `.pylintrc-tests`). Installs `.[dev]` so imports resolve (no spurious `E0401`).
 - `.github/workflows/tests.yml` — mutation testing (`mutmut`) only; manual + weekly, advisory (not a PR gate). Guards against tests that pass but assert nothing.
-- [docs/C1803-fix-plan.md](./docs/C1803-fix-plan.md): Second-pass plan + decision matrix for the `== ()` / `== []` test assertions (kept as type-pinning, rule silenced for tests).
-
-### Docs (`docs/`)
-
-- [docs/README.md](./docs/README.md): Docs folder index.
-- [docs/architecture.md](./docs/architecture.md): High-level architecture overview with Mermaid diagrams.
-- [docs/glossary.md](./docs/glossary.md): Term definitions. Listed in §MUST READ FIRST.
-- [docs/prompting.md](./docs/prompting.md): Prompting strategy and role-prompt design notes.
-- [docs/workflow.md](./docs/workflow.md): Development workflow, branching, and CI.
-- [docs/agent-creation-github.md](./docs/agent-creation-github.md): GitHub agent setup guide.
-- [docs/devin-reference.md](./docs/devin-reference.md): Devin session reference pointers.
-- [docs/C1803-fix-plan.md](./docs/C1803-fix-plan.md): Lint second-pass plan for empty-container test assertions (see §Tooling & CI).
 
 ### Project knowledge (`knowledge/`)
 
+- [knowledge/glossary.md](./knowledge/glossary.md): Term definitions. Listed in §MUST READ FIRST.
 - [knowledge/README.md](./knowledge/README.md): Knowledge folder layout, schemas for `trace/` files, file placement rules.
 - [knowledge/project-overview.md](./knowledge/project-overview.md): Four-pillar goal, minimalism-first principle, v0.1 scope, three-stage evolution. Listed in §MUST READ FIRST.
 - [knowledge/BACKLOG.md](./knowledge/BACKLOG.md) (Large): Deferred ideas with unblock triggers. Active milestones: M-6 (PR B), M-7 (PR C). Closed: M-1..M-5, I-9.
 - [knowledge/MAINTENANCE.md](./knowledge/MAINTENANCE.md): Cross-reference cascade rules — touch-lists for archiving, amending, superseding, adding files. Companion to `BACKLOG.md`.
+- [knowledge/architecture.md](./knowledge/architecture.md): High-level architecture overview (inner-loop runtime, provider chain, hook families, sandbox + draft-first enforcement, ADR-10 invariants) with Mermaid diagram.
 
 ### ADRs (`knowledge/adr/`)
 
@@ -170,6 +163,7 @@ Quality gates run in CI. `make check` (ruff + mypy + pytest) mirrors CI locally;
 
 - [knowledge/prompts/README.md](./knowledge/prompts/README.md): Prompts folder index.
 - [knowledge/prompts/RESOLVER.md](./knowledge/prompts/RESOLVER.md): Intent → prompt-template dispatch table.
+- [knowledge/prompts/prompting.md](./knowledge/prompts/prompting.md): Prompting strategy + T1–T5 templates + anti-patterns; the fallback target RESOLVER.md T2–T5 rows cite (backlog I-5).
 - [knowledge/prompts/architect-fa.md](./knowledge/prompts/architect-fa.md): Planner system prompt — bounded recon, subtraction-check, scope declaration.
 - [knowledge/prompts/architect-fa-compact.md](./knowledge/prompts/architect-fa-compact.md): Compact variant of architect-fa for mid-tier models.
 - [knowledge/prompts/coder-recovery.md](./knowledge/prompts/coder-recovery.md): Coder error-recovery prompt fragment, reads `attempt_history.json`.

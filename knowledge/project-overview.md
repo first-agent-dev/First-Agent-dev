@@ -1,6 +1,6 @@
 # Project Overview — First-Agent
 
-> **Status:** updated 2026-05-25. Source for v0.1 scope decisions in
+> **Status:** updated 2026-05-29. Source for v0.1 scope decisions in
 > [ADR-1](./adr/ADR-1-v01-use-case-scope.md), `DIGEST.md`.
 > Add Refresh task after PR creation.
 
@@ -267,11 +267,22 @@ specs и код под `src/fa/`. GitHub-репозиторий — workspace и
 long-term memory; всё, что Devin производит, фиксируется как
 filesystem-canonical Markdown + Python.
 
-**Где мы сейчас:** ADR-9 llm routing created, code partially written;
-ADR-10 invariants,determinism - research garhered as ADR-10 input note:
-/knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md
+**Где мы сейчас (2026-05-29):** inner-loop harness материализован и
+LLM-управляем end-to-end — M-1..M-8 закрыты. `fa run --task` поднимает
+`ProviderChain` + `ToolRegistry` + `HookRegistry` и гоняет coder-цикл
+(M-8, PR #23). PR-intent enforcement loop замкнут на обоих seat'ах:
+git-хук `prepare-commit-msg`/`commit-msg` (M-6, PR #20) и harness-side
+`IntentGuard` (M-7, PR #22), оба переиспользуют один classifier+validator
+из `fa.hygiene.pr_intent` (ADR-10 I-1). Producer драфта — `pr.prepare`
+tool (PR #24); `fs.run_bash` теперь тоже под draft-first контрактом через
+AST-анализатор `bash_intent.py`, а `pr_draft.py` доверяет только
+current-session драфтам. ADR-9 (provider routing) и ADR-10 (determinism
+invariants) — landed.
 
--not implemented list: fa-0.1-release-gap
+**Следующий шаг:** первый живой `fa run --task` smoke против реального
+провайдера (OpenRouter / Fireworks) — превратить yellow adapter-coverage
+в green. Остаток not-implemented списка — см. `HANDOFF.md` §Next +
+`fa-0.1-release-gap`.
 
 **Конец Stage 1:** работающий первый release **First-Agent 0.1**,
 ready для локального запуска под UC1 (coding+PR) + UC3 (docs-to-wiki).

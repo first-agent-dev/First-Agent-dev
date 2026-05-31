@@ -10,6 +10,40 @@
 
 ---
 
+## Current implementation state (2026-05-29)
+
+> The three-layer model below is the **conceptual** reference; this
+> section maps it onto the **shipped** code as of M-1..M-8. For the
+> authoritative per-module index see
+> [`knowledge/llms.txt`](./llms.txt) §BY-DEMAND INDEX; for milestone
+> status see [`knowledge/BACKLOG.md`](./BACKLOG.md) and
+> [`HANDOFF.md`](../HANDOFF.md).
+
+- **Instruction Layer →** `AGENTS.md` + ADRs + `knowledge/` (text
+  half of NLAH); the coder system prompt + tool-spec projection are
+  `src/fa/inner_loop/prompt.py` (A-bucket residue, ADR-10 I-2).
+- **Execution Layer →** the inner loop is materialised:
+  `src/fa/inner_loop/registry.py` (`ToolRegistry` / `ToolSpec`),
+  `loop.py` (`run_session`), `coder_loop.py` (`drive_session`, the
+  LLM-driven M-8 bridge), `state.py` (`events.jsonl`), and the hook
+  pipeline `hooks/` (`HookRegistry`, `GuardMiddleware` /
+  `ObserverMiddleware`, `SandboxHook`, `LoopGuard`, blockers,
+  `IntentGuard`). Baseline tools: `fs.read_file` / `fs.write_file` /
+  `fs.run_bash` + `pr.prepare`.
+- **Integration Layer →** `src/fa/providers/` (ADR-9 provider chain,
+  `UrllibTransport`), `src/fa/sandbox/` (ADR-6 bash gate), and the
+  PR-intent enforcement loop (`src/fa/hygiene/pr_intent.py` git hook
+  + `IntentGuard` middleware + `bash_intent.py` AST analyzer +
+  `pr_draft.py` trusted draft store). Entry point: `fa run --task`.
+- **Determinism discipline →** the five ADR-10 invariants (I-1..I-5)
+  are the construction-discipline carriers; see
+  [`project-overview.md` §1.2.5](./project-overview.md#125--compliance-by-construction-failure-observable).
+
+The conceptual layers + patterns below remain the design rationale;
+they predate the implementation and are kept as the «why».
+
+---
+
 ## Трёхслойная модель агента
 
 Любой автономный LLM-агент удобно раскладывать на три слоя. Они отвечают на разные
@@ -185,7 +219,7 @@ template frontmatter'а в [`llm-wiki-critique.md`](../knowledge/research/llm-wi
 
 | Тип | Где лежит | Политика |
 |---|---|---|
-| Стабильное (архитектура, ADR, глоссарий) | `knowledge/adr/`, `docs/` | Синтезируется один раз при ревью, редко меняется, можно цитировать из summary |
+| Стабильное (архитектура, ADR, глоссарий) | `knowledge/adr/`, `knowledge/` | Синтезируется один раз при ревью, редко меняется, можно цитировать из summary |
 | Semi-stable (research notes) | `knowledge/research/` | Обновляется при significant findings, frontmatter-provenance обязательно |
 | Volatile (логи сессий, session-digest'ы) | (пока не заведено) | Синтезировать только при необходимости, не индексировать как источник |
 
@@ -233,7 +267,7 @@ template frontmatter'а в [`llm-wiki-critique.md`](../knowledge/research/llm-wi
 - Чёткое разделение на три слоя (и принятые решения фиксируем ADR'ами
   в [`knowledge/adr/`](../knowledge/adr/)).
 - Фидбек-луп как первоклассное требование к среде: линтер + typecheck + тесты
-  должны существовать раньше, чем первый модуль (см. [workflow.md](./workflow.md), фаза S).
+  должны существовать раньше, чем первый модуль (см. *Phase R / S / M* в [`glossary.md`](./glossary.md), фаза S).
 - Память делим на три вида: контекст сессии, долговременные заметки,
   процедуры. Что именно используем — решаем в ADR.
 - Инструменты проектируем композируемыми и со структурированным выводом.

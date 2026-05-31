@@ -98,7 +98,6 @@ posts), MCP-экосистема, и Devin / Claude Code / OSS repo's как ref
 
 - [`AGENTS.md`](./AGENTS.md) — конвенции и инструкции для AI-агентов.
 - [`HANDOFF.md`](./HANDOFF.md) — snapshot состояния для cross-LLM сессий.
-- [`docs/README.md`](./docs/README.md) — вики по работе с Devin.
 - [`knowledge/README.md`](./knowledge/README.md) — как устроена память
   проекта (frontmatter schema, конвенции, supersession-rule).
 - [`knowledge/llms.txt`](./knowledge/llms.txt) — one-fetch индекс
