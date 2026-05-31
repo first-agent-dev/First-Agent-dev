@@ -59,6 +59,7 @@ from fa.hygiene.pr_intent import (
 )
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.registry import ToolResult, ToolSpec
+from fa.inner_loop.tools.base import optional_string, require_string
 
 __all__ = ["build_prepare_pr_tool"]
 
@@ -82,22 +83,6 @@ _INPUT_SCHEMA: dict[str, object] = {
     },
     "additionalProperties": False,
 }
-
-
-def _require_string(params: Mapping[str, object], key: str) -> str:
-    value = params.get(key)
-    if not isinstance(value, str):
-        raise ValueError(f"{key} must be a string")
-    return value
-
-
-def _optional_string(params: Mapping[str, object], key: str) -> str | None:
-    value = params.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError(f"{key} must be a string")
-    return value
 
 
 def _render_draft(
@@ -194,12 +179,12 @@ def build_prepare_pr_tool(draft_store: PrDraftStore) -> ToolSpec:
 
     def handler(params: Mapping[str, object]) -> ToolResult:
         try:
-            intent_raw = _require_string(params, "intent")
-            invariant = _require_string(params, "invariant")
-            fix_class = _optional_string(params, "fix_class")
-            dof = _optional_string(params, "degree_of_freedom_closed")
-            mechanism = _optional_string(params, "deterministic_mechanism")
-            body = _optional_string(params, "body")
+            intent_raw = require_string(params, "intent")
+            invariant = require_string(params, "invariant")
+            fix_class = optional_string(params, "fix_class")
+            dof = optional_string(params, "degree_of_freedom_closed")
+            mechanism = optional_string(params, "deterministic_mechanism")
+            body = optional_string(params, "body")
         except ValueError as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
