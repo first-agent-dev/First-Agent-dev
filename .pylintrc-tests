@@ -1,0 +1,54 @@
+# Pylint config for the tests/ pass ONLY.
+#
+# Why a separate file: pylint does not auto-merge per-directory .pylintrc, so
+# CI lints src/ and tests/ in two passes. src/ uses [tool.pylint.*] in
+# pyproject.toml (with duplicate-code ENABLED to catch LLM copy-paste). This
+# file is used for the tests/ pass, where we relax checks that are normal and
+# healthy in a pytest suite.
+#
+# Usage:  pylint --rcfile=.pylintrc-tests $(git ls-files 'tests/*.py')
+
+[MAIN]
+init-hook = "import sys; sys.path.insert(0, 'src')"
+
+[MESSAGES CONTROL]
+disable =
+    # Documentation: tests are self-documenting via their names.
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    # Shape heuristics: irrelevant for test helpers/doubles.
+    too-few-public-methods,
+    too-many-instance-attributes,
+    too-many-return-statements,
+    too-many-branches,
+    too-many-arguments,
+    too-many-locals,
+    too-many-statements,
+    too-many-nested-blocks,
+    # duplicate-code: parallel test setups/fixtures are legitimately similar.
+    # We accept that in tests but NOT in src/ (see pyproject.toml).
+    duplicate-code,
+    # pytest / test-double idioms:
+    redefined-outer-name,   # pytest fixtures shadow their function name by design
+    unused-argument,        # test doubles must match the real signature
+    protected-access,       # tests legitimately assert on internal state
+    import-outside-toplevel, # lazy/local imports keep test modules cheap to collect
+    consider-using-from-import,
+    reimported,
+    # use-implicit-booleaness-not-comparison (C1803): in tests, `x == ()` /
+    # `x == []` / `x == {}` is intentionally STRONGER than `not x` because it
+    # also pins the return TYPE (tuple vs list vs dict vs None). These are
+    # contract tests, so we keep the explicit comparisons and silence the rule
+    # here only. See docs/C1803-fix-plan.md for the full rationale.
+    use-implicit-booleaness-not-comparison
+
+[FORMAT]
+max-line-length = 100
+
+[REPORTS]
+# Gate on score, not on zero-messages (mirrors the src/ pyproject profile).
+# C1803 (`== ()` vs `not x`) is intentionally left ENABLED but does not block:
+# `assert x == ()` asserts emptiness AND exact-tuple type, which is *stronger*
+# than `not x`, so we keep the assertions as-is and let the score gate decide.
+fail-under = 9.0

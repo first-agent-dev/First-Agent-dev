@@ -179,7 +179,7 @@ class LoopGuard(GuardMiddleware):
             return
         try:
             self._warn_sink(detector, message)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             # Observers must never block tool execution; swallow any
             # error from the warn sink and move on.
             pass

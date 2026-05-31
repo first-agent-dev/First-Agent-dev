@@ -102,6 +102,25 @@ ADR-6 bash sandbox gate (Wave-1). Three-layer pipeline: pattern classifier → p
 
 - `src/fa/config.py` — `Capabilities` dataclass (5 deny-by-default flags per ADR-6 §Amendment 2026-05-20) + YAML parser from `~/.fa/config.yaml`.
 
+### Hygiene (`src/fa/hygiene/`)
+
+PR-intent classifier + git-hook installer (M-6 / M-7 producer side). Shared validator powers the git hook, the harness `IntentGuard`, and the `pr.prepare` tool (ADR-10 I-1 single-source-of-truth).
+
+- `src/fa/hygiene/pr_intent.py` — `validate_commit_msg()` + `HEADER_*` constants + 5-intent classifier; the one validator all three PR-intent seats call.
+- `src/fa/hygiene/hooks/install.py` — `install_hooks()` symlinks the `prepare-commit-msg` / `commit-msg` scripts into `.git/hooks/`. Tested by `tests/test_hygiene_hooks_install.py`.
+- `src/fa/hygiene/tokens.py` / `discover.py` / `suggestions.py` — token classification, record discovery, and hygiene suggestions helpers.
+
+### Tooling & CI (`pyproject.toml`, `.pylintrc-tests`, `.github/workflows/`)
+
+Quality gates run in CI. `make check` (ruff + mypy + pytest) mirrors CI locally; thresholds live in `pyproject.toml`, not in workflow YAML.
+
+- `pyproject.toml` — single config surface: ruff, mypy (strict), pytest, `[tool.coverage.*]` (branch coverage + `fail_under = 90`), `[tool.pylint.*]` (cosmetic checks disabled, `duplicate-code` kept ON for src, `fail-under = 9.0`), `[tool.mutmut]`.
+- `.pylintrc-tests` — tests-only pylint profile; relaxes pytest idioms (fixtures, test-double args, protected-access) and disables `duplicate-code` / `C1803` for `tests/` (the src profile keeps them ON). Two-pass lint because pylint does not auto-merge per-directory rc.
+- `.github/workflows/ci.yml` — ruff + mypy + pytest (coverage-gated at 90%); uploads `coverage.xml` for GitHub Code coverage analysis.
+- `.github/workflows/pylint.yml` — two-pass pylint (src strict w/ duplicate-code; tests relaxed via `.pylintrc-tests`). Installs `.[dev]` so imports resolve (no spurious `E0401`).
+- `.github/workflows/tests.yml` — mutation testing (`mutmut`) only; manual + weekly, advisory (not a PR gate). Guards against tests that pass but assert nothing.
+- [docs/C1803-fix-plan.md](./docs/C1803-fix-plan.md): Second-pass plan + decision matrix for the `== ()` / `== []` test assertions (kept as type-pinning, rule silenced for tests).
+
 ### Docs (`docs/`)
 
 - [docs/README.md](./docs/README.md): Docs folder index.
@@ -111,6 +130,7 @@ ADR-6 bash sandbox gate (Wave-1). Three-layer pipeline: pattern classifier → p
 - [docs/workflow.md](./docs/workflow.md): Development workflow, branching, and CI.
 - [docs/agent-creation-github.md](./docs/agent-creation-github.md): GitHub agent setup guide.
 - [docs/devin-reference.md](./docs/devin-reference.md): Devin session reference pointers.
+- [docs/C1803-fix-plan.md](./docs/C1803-fix-plan.md): Lint second-pass plan for empty-container test assertions (see §Tooling & CI).
 
 ### Project knowledge (`knowledge/`)
 
