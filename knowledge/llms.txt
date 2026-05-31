@@ -123,24 +123,14 @@ Quality gates run in CI. `make check` (ruff + mypy + pytest) mirrors CI locally;
 - `.github/workflows/pylint.yml` — two-pass pylint (src strict w/ duplicate-code; tests relaxed via `.pylintrc-tests`). Installs `.[dev]` so imports resolve (no spurious `E0401`).
 - `.github/workflows/tests.yml` — mutation testing (`mutmut`) only; manual + weekly, advisory (not a PR gate). Guards against tests that pass but assert nothing.
 
-### Top-level knowledge references (`knowledge/`)
-
-The former `docs/` folder was retired (2026-05-29): `glossary.md` and
-`architecture.md` moved here; `prompting.md` moved next to its consumer
-under `knowledge/prompts/`; the Devin-era files (`README.md`,
-`workflow.md`, `agent-creation-github.md`, `devin-reference.md`) were
-deleted as stale early scaffolding (Phase R/S/M lifecycle folded into the
-glossary `Phase R / S / M` entry).
-
-- [knowledge/glossary.md](./knowledge/glossary.md): Term definitions. Listed in §MUST READ FIRST.
-- [knowledge/architecture.md](./knowledge/architecture.md): High-level architecture overview (inner-loop runtime, provider chain, hook families, sandbox + draft-first enforcement, ADR-10 invariants) with Mermaid diagram.
-
 ### Project knowledge (`knowledge/`)
 
+- [knowledge/glossary.md](./knowledge/glossary.md): Term definitions. Listed in §MUST READ FIRST.
 - [knowledge/README.md](./knowledge/README.md): Knowledge folder layout, schemas for `trace/` files, file placement rules.
 - [knowledge/project-overview.md](./knowledge/project-overview.md): Four-pillar goal, minimalism-first principle, v0.1 scope, three-stage evolution. Listed in §MUST READ FIRST.
 - [knowledge/BACKLOG.md](./knowledge/BACKLOG.md) (Large): Deferred ideas with unblock triggers. Active milestones: M-6 (PR B), M-7 (PR C). Closed: M-1..M-5, I-9.
 - [knowledge/MAINTENANCE.md](./knowledge/MAINTENANCE.md): Cross-reference cascade rules — touch-lists for archiving, amending, superseding, adding files. Companion to `BACKLOG.md`.
+- [knowledge/architecture.md](./knowledge/architecture.md): High-level architecture overview (inner-loop runtime, provider chain, hook families, sandbox + draft-first enforcement, ADR-10 invariants) with Mermaid diagram.
 
 ### ADRs (`knowledge/adr/`)
 
