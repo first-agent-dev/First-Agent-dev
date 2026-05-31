@@ -26,10 +26,10 @@ T1 first.
 |---|---|---|---|
 | Research a topic and produce a structured note | "investigate X", "summarise the literature on Y", "compare papers on Z" | T1 | [`research-topic.md`](./research-topic.md) |
 | Cross-reference a paper / repo against current architecture and produce a goal-driven Decision Briefing | "cross-reference <paper>", "review <X> against ADR-1..N", "what does <paper> mean for our architecture", "use research-briefing", "research-briefing prompt" | T1.5 | [`research-briefing.md`](./research-briefing.md) |
-| Scaffold a new code module with tests | "scaffold module M", "create the skeleton for `src/<m>/`", "set up the package for X" | T2 | (no file yet — see [`docs/prompting.md` §T2](../../docs/prompting.md)) |
-| Compare two implementation approaches | "A vs B", "two parallel PRs for <feature>", "benchmark approach 1 against approach 2" | T3 | (no file yet — see [`docs/prompting.md` §T3](../../docs/prompting.md)) |
-| Co-develop a PRD (no code) | "draft the PRD for <feature>", "spec X before we build" | T4 | (no file yet — see [`docs/prompting.md` §T4](../../docs/prompting.md)) |
-| Reproduce a bug with a failing test, then fix | "reproduce <bug>", "write a failing test for X then patch", "TDD this regression" | T5 | (no file yet — see [`docs/prompting.md` §T5](../../docs/prompting.md)) |
+| Scaffold a new code module with tests | "scaffold module M", "create the skeleton for `src/<m>/`", "set up the package for X" | T2 | inline template — see [`prompting.md` §T2](./prompting.md) |
+| Compare two implementation approaches | "A vs B", "two parallel PRs for <feature>", "benchmark approach 1 against approach 2" | T3 | inline template — see [`prompting.md` §T3](./prompting.md) |
+| Co-develop a PRD (no code) | "draft the PRD for <feature>", "spec X before we build" | T4 | inline template — see [`prompting.md` §T4](./prompting.md) |
+| Reproduce a bug with a failing test, then fix | "reproduce <bug>", "write a failing test for X then patch", "TDD this regression" | T5 | inline template — see [`prompting.md` §T5](./prompting.md) |
 | Plan an architectural change as Architect / Planner role | "plan the change", "Architect, design the rollout", "draft the migration plan" | role | [`architect-fa.md`](./architect-fa.md) (full) or [`architect-fa-compact.md`](./architect-fa-compact.md) (compact) |
 | Record an architectural decision | "record the decision", "open an ADR for X", "we decided Y, write it up" | ADR | [`../adr/ADR-template.md`](../adr/ADR-template.md) |
 

@@ -252,8 +252,9 @@ is responsible for self-checking against each rule.
    [`knowledge/MAINTENANCE.md`](../../MAINTENANCE.md) (§When
    adding a new file / §When archiving a research note / §When
    superseding a non-research file). Pre-commit regenerator is
-   planned post-Phase S
-   ([`docs/workflow.md`](../../../docs/workflow.md) item 7).
+   planned post-Phase S (backlog
+   [`I-6`](../../BACKLOG.md) — concept originated in the retired
+   `docs/workflow.md` Phase-S step 7, folder removed 2026-05-29).
 8. **Research notes from the research-briefing workflow start
    with §0 Decision Briefing.** Notes under `knowledge/research/`
    produced via
