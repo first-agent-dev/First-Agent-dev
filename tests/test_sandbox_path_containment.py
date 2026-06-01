@@ -162,6 +162,7 @@ def test_is_contained_accepts_tilde_when_workspace_is_home(
     assert result.canonical_target is not None
     assert result.canonical_target.is_relative_to(fake_home.resolve())
 
+
 def test_contains_unresolved_variable_detects_undefined(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
