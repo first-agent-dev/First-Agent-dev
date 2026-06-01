@@ -13,7 +13,7 @@ chain_of_custody: |
   Hermes Agent analysed at HEAD 4ccd141 (2026-05-31).
   Archon@ab1bee7, grafema@004480b, Guardrails@a6fc06f,
   First-Agent-fork2@872d4ee.
-  See §14 for full file inventories with importance ratings.
+  See §13 for full file inventories with importance ratings.
 mentions:
   - ADR-10
   - ADR-11
@@ -31,7 +31,8 @@ goal_lens: |
 > authoring. The pre-research note "ADR-11 creation PLAN (pre-research)"
 > (vectors V1..V14, phases P0..P5) is superseded and historical; where the two
 > conflict, this blueprint wins. The pre-ADR-11 decisions that resolve the
-> PLAN-vs-blueprint contradictions are recorded in §16.
+> PLAN-vs-blueprint contradictions are applied throughout §9, §11-§12 and
+> the R-N specifications.
 
 ## Table of Contents
 
@@ -46,12 +47,10 @@ goal_lens: |
 8. First-Agent Target Fit
 9. Architecture & Two-Tier TCB
 10. Requirement Specifications (R-1..R-18)
-11. Hermes Agent Cross-Validation & Conflict Audit
-12. Blueprint Fit Audit
-13. Risks & Caveats
-14. Files Used
-15. Out of Scope
-16. Pre-ADR-11 Resolved Decisions (SSOT lock)
+11. Blueprint Fit Audit
+12. Risks & Caveats
+13. Files Used
+14. Out of Scope
 Appendix A: R-N Summary Table
 Appendix B: Production Rollout Sequence
 
@@ -91,8 +90,8 @@ Appendix B: Production Rollout Sequence
   Required CI over deterministic offline checks is the enforcement
   surface; CODEOWNERS matters only with branch protection and
   protected-path checks.
-- **8 R-N conflicts identified and resolved** via Hermes cross-validation
-  (see §11).
+- **8 R-N conflicts identified and resolved** via Hermes cross-validation,
+  folded into the R-N specifications and §11.2.
 
 ### 0.2 Decision Briefing: R-1..R-14 (from research note)
 
@@ -185,7 +184,7 @@ Each recommendation below follows the same structured format:
   assertion decay).
 - **Alternative-if-rejected:** Code review catches weakened tests — exactly
   the semantic-decay failure mode ADR-11 should mechanise.
-- **Severity split (CONFLICT 3 resolution):**
+- **Severity split:**
   - HARD-BLOCK: `pytest.skip`, `pytest.mark.skip`, non-strict xfail,
     `.only`-style focus markers, `assert True` / `assert False is False`.
   - ADVISORY (until corpus validation): `==` → `in`, exact exception →
@@ -399,7 +398,7 @@ Existing tools vs ADR-11:
   self-improvement (`agent/curator.py`), always-run CI discipline
   (`contributor-check.yml`), network freshness watchdogs
   (`skills-index-freshness.yml`). Strongest evidence for save-time feedback
-  (R-16, Conflict 6), self-improvement guardrails (R-18, Conflict 8),
+  (R-16), self-improvement guardrails (R-18),
   write-path denylist pattern (R-15), and always-run CI (R-6).
 - **Archon** (`coleam00/Archon`): Generated parity via `--check` mode,
   deterministic DAG validation, structured severity (error vs warning),
@@ -1061,9 +1060,31 @@ Diagnostic sort order:
 - Empty snapshot → exit code 1 + diagnostic
 - Missing required field → exit code 1 + diagnostic
 
+### 9.9 Active consumer for write targets
+
+Per AGENTS.md cross-project anti-pattern #3, every new write target lands
+with a named automated or human consumer:
+
+| Write target | Active consumer |
+| :--- | :--- |
+| `authoring-check` diagnostics (JSON / text) | CI workflow `authoring-guardrails.yml` (exit-code gate) + agent / human reading the output |
+| `.fa/session.toml` | Level 1 `seam.py` (staged paths ⊆ declared seam) + commit-msg trailer injector |
+| `catch-corpus/` | R-14 corpus test — every fixture must be caught |
+| `fp-corpus/` | R-14 false-positive-rate measurement — gate for ADVISORY → HARD-BLOCK promotion |
+| `kernel_hash` / `rule_pack_hash` / `snapshot_id` (kernel output) | reproducibility check + `scripts/check_protected_paths.py` diff-check |
+| metrics (PLAN V9 leading / lagging) | **No named consumer yet → DEFER for v0.1.** Do not create the write target until a `make` target or report consumes it. |
+
 ---
 
 ## §10. Requirement Specifications (R-1..R-18)
+
+### 10.0 Invariant numbering scheme
+
+ADR-11 invariants use a per-ADR prefixed namespace: `ADR-11-I1`, `ADR-11-I2`,
+… with stable anchors (`ADR-11#adr-11-i1`). This avoids the global-vs-local
+ambiguity against ADR-10 (`I-1..I-5`) and removes future renumbering churn.
+Keep the mnemonic in the heading, e.g. `ADR-11-I3 (I-FROZEN): …`. Mixed
+numbered + named invariants in one ADR are not allowed.
 
 ### R-1 — Level 0 authoring-check kernel (TAKE, P0)
 
@@ -1156,7 +1177,7 @@ Diagnostic sort order:
   - Hermes `curator.py`: self-improvement constrained to not mutate bundled skills
     (analogous: test rules should not be weakenable by same agent)
 - **Cost:** cheap (<1h)
-- **Severity split (CONFLICT 3):**
+- **Severity split:**
   - **HARD-BLOCK:** `pytest.skip`, `pytest.mark.skip`, non-strict xfail,
     `.only`-style focus markers, `assert True` / `assert False is False`
   - **ADVISORY (until corpus validation):** `==` → `in` weakening,
@@ -1236,7 +1257,7 @@ Diagnostic sort order:
 
 - **What:** `.fa/session.toml` is source of truth for declared seam, session
   id, trailers. First enforceable rule: staged paths ⊆ declared seam.
-- **Note (CONFLICT 5):** `.fa/session.toml` is authoritative for save-time/
+- **Note:** `.fa/session.toml` is authoritative for save-time/
   commit-time local checks. Merge-time CI enforcement requires trusted committed
   manifest. No silent claim that CI can validate local state it cannot see.
 - **Cost:** medium (1–4h)
@@ -1247,7 +1268,6 @@ Diagnostic sort order:
   replace it (`llms.txt` wins per AGENTS.md). The normative I-BOOT description is
   anchored in `AGENTS.md` (§Working in This Repo / bootstrap), added in the
   ADR-11 PR. Procedural until the harness can emit read receipts (path + hash).
-  See §16.2 (B.4).
 
 ### R-14 — Catch-corpus / FP-corpus measurement loop (TAKE, P2)
 
@@ -1324,141 +1344,9 @@ Diagnostic sort order:
 
 ---
 
-## §11. Hermes Agent Cross-Validation & Conflict Audit
+## §11. Blueprint Fit Audit
 
-### 11.1 Conflict 1 — Level 0 vs Level 1 mixing (R-1/R-11)
-
-**Problem:** R-1 originally read as "authoring-check runner with rules",
-mixing TCB with semantic rules. This conflicted with the two-tier plan.
-
-**Hermes evidence:** Hermes `file_safety.py` is a pure denylist engine
-(analogous to Level 0) while `curator.py` is a domain-specific rule system
-(analogous to Level 1). They never mix — the denylist doesn't contain
-curation logic, and the curator doesn't reimplement file safety.
-
-**Resolution:**
-- **Level 0** = protected `src/fa/authoring_tcb.py` (R-1/R-11)
-- **Level 1** = semantic rules modules (R-3/R-4/R-5/R-13)
-- Clear boundary: Level 0 has zero repo-specific semantic knowledge
-
-### 11.2 Conflict 2 — Generated parity / AST / test rules in Level 0 (R-3/R-4/R-5)
-
-**Problem:** Generated parity, AST visitor rules, and test semantic rules
-could have been placed in Level 0, breaking stdlib-only TCB.
-
-**Hermes evidence:** Hermes `tools/file_operations.py` (2143 LOC) contains
-domain-specific logic (fence stripping, binary detection, search patterns)
-that stays outside the core safety kernel (`file_safety.py` at 453 LOC).
-The 5:1 size ratio shows separation of concerns.
-
-**Resolution:**
-- Generated parity = Level 1
-- AST visitor rules = Level 1
-- Test semantic rules = Level 1
-- Level 0 only: TOML parse, manifest validate, sorted enumerate, hash,
-  dispatch, sort diagnostics, fail closed
-
-### 11.3 Conflict 3 — Test semantic decay: HARD-BLOCK vs ADVISORY (R-5)
-
-**Problem:** R-5 originally hard-blocked too much. Blueprint says V11
-assertion lock starts ADVISORY.
-
-**Hermes evidence:** Hermes curator preserves nuance — it auto-archives stale
-skills but never deletes, and pinned skills are fully exempt. Severity
-granularity is built into the architecture.
-
-**Resolution:**
-- **HARD-BLOCK:** `pytest.skip`, `pytest.mark.skip`, non-strict xfail,
-  focus markers, `assert True` / `assert False is False`
-- **ADVISORY (until corpus validation):** `==` → `in` weakening, exact
-  exception → broad `Exception`, other assertion weakening
-
-### 11.4 Conflict 4 — CODEOWNERS standalone vs bundle (R-9/R-12)
-
-**Problem:** Earlier notes had CODEOWNERS tension.
-
-**Hermes evidence:** Hermes `contributor-check.yml` always runs and reports
-status, but it doesn't claim to be a security boundary — it's a gate that
-branch protection enforces. Hermes doesn't rely on standalone CODEOWNERS.
-
-**Resolution:**
-- Standalone CODEOWNERS = **SKIP** (false security boundary)
-- Protected-path governance bundle = **TAKE**: CODEOWNERS + branch protection
-  + CI diff-check + human owner review
-- CI cannot prove human approval; branch protection is authority
-
-### 11.5 Conflict 5 — `.fa/session.toml` seam authority (R-13)
-
-**Problem:** `.fa/session.toml` is local. Merge-time CI cannot trust it.
-
-**Hermes evidence:** Hermes distinguishes save-time (`file_operations.py`
-write denylist — local, bypassable) from CI-time (contributor-check —
-authoritative). Same pattern applies: session.toml = save-time; committed
-manifest = CI-time.
-
-**Resolution:**
-- `.fa/session.toml` authoritative for save-time/commit-time local checks
-- Merge-time seam enforcement requires trusted committed/session manifest
-- No silent claim that CI can validate uncommitted local state
-
-### 11.6 Conflict 6 — Save-time checks vs authoritative boundary (R-16)
-
-**Problem:** Hermes `tools/file_operations.py` is excellent save-time feedback
-but could be mistaken for anti-tamper authority.
-
-**Hermes evidence:** `file_operations.py` is called on every `write_file`
-but is NOT the security boundary — if the agent edits `file_safety.py` itself,
-the save-time check is bypassed. This is why Hermes relies on CI and branch
-protection, not the save-time hook.
-
-**Resolution:**
-- Save-time lint is not anti-tamper authority
-- Commit/CI/branch protection remains authoritative
-- R-16 is **DEFER**, not immediate P2
-- Document as future feedback loop after TCB is stable
-
-### 11.7 Conflict 7 — Network checks in Level 0 (R-8, R-17)
-
-**Problem:** Hermes has network freshness watchdogs.
-
-**Hermes evidence:** Hermes `skills-index-freshness.yml` is a 4-hour cron
-that files GitHub issues — completely outside the PR admission path. It's
-monitoring, not enforcement. Hermes cron threat scanner has a two-tier split:
-strict mode for user prompts, loose mode for skill-assembled prompts. Neither
-is in the PR merge path.
-
-**Resolution:**
-- Network watchdogs allowed outside Level 0
-- Not in required offline PR admission
-- Level 0 remains offline
-- Hermes two-tier cron scanner pattern is good for future external monitoring
-
-### 11.8 Conflict 8 — Self-improvement mutation of rules (R-18)
-
-**Problem:** Hermes curator is strong prior art for self-improvement, but
-LLM-mutated rules could bypass guardrails.
-
-**Hermes evidence:** Hermes curator has 5 hard constraints:
-1. Restricted to memory+skills toolsets only (from `toolsets.py`)
-2. Only touches `created_by: "agent"` provenance
-3. Pinned skills exempt from every auto-transition
-4. Never deletes (max = archive)
-5. Writes per-run reports
-
-These constraints prevent the curator from editing its own governance.
-
-**Resolution:**
-- Self-improvement must be tool-whitelisted (Hermes pattern)
-- Report-backed (per-run reports)
-- Protected assets respected (never Level 0 / HARD-BLOCK rules)
-- No Level 0 / HARD-BLOCK rule mutation by LLM in v0.1
-- R-18 remains **DEFER**, documented as future architecture constraint
-
----
-
-## §12. Blueprint Fit Audit
-
-### 12.1 Fit matrix against the ADR-11 blueprint
+### 11.1 Fit matrix against the ADR-11 blueprint
 
 | Blueprint element | Fit | Gap / correction |
 |---|---|---|
@@ -1468,20 +1356,20 @@ These constraints prevent the curator from editing its own governance.
 | Two-tier TCB | Present | Level 0 with `tomllib`, sorted enumeration, hashing, static dispatch |
 | Authoring-time determinism | Present | Exact I/O spec: snapshot hash, rule-pack hash, session hash, sorted diagnostics |
 | I-FROZEN | PARTIAL | Marker concept present; authoritative enforcement = R-12 bundle |
-| CODEOWNERS/branch protection | RESOLVED | CONFLICT 4: standalone SKIP, bundle TAKE |
+| CODEOWNERS/branch protection | RESOLVED | standalone SKIP, bundle TAKE |
 | TOML rule manifests | Present | Level 0 uses `tomllib`; no YAML parser in Level 0 |
 | V1/V7 SSOT taxonomy | PARTIAL | Parity recommendation helps; ADR must specify code-owned SSOT |
 | V2 exports completeness | Present | Grafema evidence supports AST completeness; R-4 covers this |
 | V3 Bash parity | PARTIAL | Archon parity evidence present; Jinja2 must not enter Level 0 |
 | V4/V10/V11 noisy heuristics | Present | ADVISORY with catch/FP corpus before promotion (R-14) |
 | V5 doc integrity | PARTIAL | Docs rule module defined; concrete markdown relation rules in PR 3 |
-| V6 seam-bounded authoring | Present | R-13: `.fa/session.toml` + staged-diff subset check (CONFLICT 5) |
+| V6 seam-bounded authoring | Present | R-13: `.fa/session.toml` + staged-diff subset check |
 | V12 message registry | PARTIAL | Registry rule module defined; implementation in PR 5 |
 | V14 trailers | LOW | Trailers documented as audit metadata, not access control |
 | I-BOOT | PARTIAL | R-13; read receipts = future/harness-dependent |
 | Metrics / P4 corpus | Present | R-14: catch-rate and FP targets for severity promotion |
 
-### 12.2 Critical contradictions resolved
+### 11.2 Critical contradictions resolved
 
 1. **CODEOWNERS conflict.** Resolution: TAKE protected-path bundle;
    standalone CODEOWNERS = false security boundary.
@@ -1495,7 +1383,7 @@ These constraints prevent the curator from editing its own governance.
    changes; branch protection enforces review. ADR-11 treats branch protection
    as authoritative GitHub boundary.
 
-### 12.3 Source re-pass findings for blueprint gaps
+### 11.3 Source re-pass findings for blueprint gaps
 
 - **Archon supports deterministic scope gates but not CODEOWNERS.** Marketplace
   workflow verifies PR scope, runs deterministic schema/security checks, then
@@ -1514,46 +1402,46 @@ These constraints prevent the curator from editing its own governance.
 
 ---
 
-## §13. Risks & Caveats
+## §12. Risks & Caveats
 
-### 13.1 Overfitting to current files
+### 12.1 Overfitting to current files
 
 ADR-11 should start with rules that guard existing high-value contracts
 (`SKILL.md` ↔ constants), not a broad speculative lint catalog.
 
-### 13.2 False-positive escalation
+### 12.2 False-positive escalation
 
 If too many rules start as HARD-BLOCK, agents will learn to bypass. Use
 ADVISORY with expiry. Hermes curator archives (never deletes) — similar
 principle: downgrade severity rather than remove rules entirely.
 
-### 13.3 Checker drift
+### 12.3 Checker drift
 
 A parity checker can itself drift. Keep checker code tiny, tested with
 positive/negative fixtures, and cited from ADR-11. Hermes `contributor-check.yml`
 pattern (always-run, path-filtered inside job) prevents checker-skip.
 
-### 13.4 Regex bypass
+### 12.4 Regex bypass
 
 Regex rules catch easy cases but fail on comments, strings, aliases, nested
 constructs. Promote important rules to AST. Grafema's `UnsafeDynamic.hs`
 shows the right pattern: closed sets with exact node metadata.
 
-### 13.5 Path-skip trap
+### 12.5 Path-skip trap
 
 Skipping authoring checks for docs or `.github/**` is risky — docs are often
 source-of-truth; workflows enforce the rules. NeMo `pr-tests-skip.yml` is
 negative prior art. Hermes `contributor-check.yml` has zero path filters —
 the correct pattern.
 
-### 13.6 Dependency creep
+### 12.6 Dependency creep
 
 Grafema/NeMo demonstrate rich engines, but FA Level 0 should remain
 stdlib-only. PyYAML already exists in FA but authoring-check should not
 need it for its first rules. Hermes `file_safety.py` manages with only
 stdlib `os`, `pathlib`, `typing` — the right scope.
 
-### 13.7 Branch-protection audit not performed
+### 12.7 Branch-protection audit not performed
 
 CODEOWNERS may become valuable later if required review enforcement is
 enabled. Current analysis did not audit GitHub branch protection settings
@@ -1566,9 +1454,9 @@ therefore: PR-only agent rights + required human review at merge + a CI check
 paths. Under this model CODEOWNERS and branch protection are *recommended*, not
 load-bearing; the only residual requirement is that the human reviewer acts on
 the protected-path flag. I-FROZEN is a HARD-BLOCK at the CI flag; the merge gate
-is human review. See §16.5.
+is human review.
 
-### 13.8 Hermes-specific caveats
+### 12.8 Hermes-specific caveats
 
 - Hermes is a ~175K LOC agent platform with 27K tests — FA is an order of
   magnitude smaller. Patterns must be scaled down.
@@ -1579,9 +1467,9 @@ is human review. See §16.5.
 
 ---
 
-## §14. Files Used
+## §13. Files Used
 
-### 14.1 Archon
+### 13.1 Archon
 
 - `Archon/package.json:17-33` — validate script chain
 - `Archon/scripts/generate-bundled-defaults.ts:3-23, 56-89, 147-164` — parity checker
@@ -1603,7 +1491,7 @@ is human review. See §16.5.
 - `Archon/.archon/workflows/experimental/archon-release.yaml`
 - `Archon/.archon/workflows/maintainer/marketplace-pr-review-and-merge.yaml`
 
-### 14.2 Grafema
+### 13.2 Grafema
 
 - `grafema/package.json`
 - `grafema/.grafema/guarantees.yaml` — three-tier severity corpus
@@ -1626,7 +1514,7 @@ is human review. See §16.5.
 - `grafema/packages/util/src/manifest/types.ts`
 - `grafema/packages/api/manifest.yaml`
 
-### 14.3 NeMo Guardrails
+### 13.3 NeMo Guardrails
 
 - `Guardrails/pyproject.toml:46-115` — dependency footprint
 - `Guardrails/.pre-commit-config.yaml`
@@ -1644,7 +1532,7 @@ is human review. See §16.5.
 - `Guardrails/nemoguardrails/library/ai_defense/actions.py`
 - `Guardrails/docs/resources/security/guidelines.md`
 
-### 14.4 First-Agent target
+### 13.4 First-Agent target
 
 - `First-Agent-fork2/AGENTS.md`
 - `First-Agent-fork2/HANDOFF.md`
@@ -1664,7 +1552,7 @@ is human review. See §16.5.
 - `First-Agent-fork2/src/fa/cli.py`
 - `First-Agent-fork2/verifiers/`
 
-### 14.5 Hermes Agent
+### 13.5 Hermes Agent
 
 - `hermes-agent/agent/file_safety.py` (453 LOC)
 - `hermes-agent/tools/file_operations.py` (2143 LOC)
@@ -1678,7 +1566,7 @@ is human review. See §16.5.
 
 ---
 
-## §15. Out of Scope
+## §14. Out of Scope
 
 This ADR explicitly does not cover:
 
@@ -1698,97 +1586,6 @@ This ADR explicitly does not cover:
    in v0.1.
 7. **Pre-commit as authoritative enforcement.** R-6 explicitly demotes
    pre-commit to convenience-only.
-
----
-
-## §16. Pre-ADR-11 Resolved Decisions (SSOT lock)
-
-This section records the decisions taken **before** ADR-11 drafting. It resolves
-the PLAN-vs-blueprint contradictions in favour of this blueprint (the SSOT). The
-next session drafts ADR-11 from these decisions; do not re-open them without new
-evidence. Cascade edits to `glossary.md`, `DIGEST.md`, `llms.txt` and
-`MAINTENANCE.md` are intentionally deferred to the ADR-11 creation PR to avoid
-dangling references (a V5 doc-integrity concern).
-
-### 16.1 Document status
-
-- **SSOT:** this file, `knowledge/research/ADR-11-Authoring-Guardrails-Blueprint.md`.
-- **Superseded / historical:** "ADR-11 creation PLAN (pre-research)" (vectors
-  V1..V14, phases P0..P5). Retained for provenance only; not an input of equal
-  weight. Where the PLAN and this blueprint disagree, this blueprint wins.
-
-### 16.2 Contradiction resolutions (B.1–B.5)
-
-- **B.1 — Level 0 model.** Level 0 is a *pure dispatcher with zero repo-specific
-  semantic knowledge* (see §9.6, §11.2): TOML-parse → manifest shape-validate →
-  sorted path enumerate → hash (snapshot / kernel / rule-pack) → static-allowlist
-  dispatch → sort diagnostics → fail-closed. The PLAN's "Level 0 hardcodes exactly
-  three syntactic invariants" is **rejected**. Those three checks move to Level 1:
-  class-present-in-`__all__` → `authoring_rules/exports.py`; cross-module AST body
-  duplication → a dedicated Level 1 rule; "Level 1 rule schema validity" → reframed
-  as Level 0 *manifest shape* validation only (TOML, no semantics).
-- **B.2 — Manifest format.** Level 0 parses **TOML via `tomllib`** only. Level 0
-  never parses YAML. YAML is permitted solely as a Level 1 rule input or a
-  generated artifact. The canonical taxonomy SSOT is a Python `StrEnum` /
-  `Final[frozenset]`; a `CONTRACT.yaml`, if kept, is a *generated* Level 1
-  artifact, not kernel input. `_yaml_subset.py` is **not** used by the kernel.
-- **B.3 — Kernel path.** `src/fa/authoring_tcb.py` (kernel) +
-  `src/fa/authoring_rules/` (rule pack). The PLAN's `fa/bootstrap/authoring_tcb.py`
-  path is **rejected**.
-- **B.4 — I-BOOT vs llms.txt.** I-BOOT **extends** `knowledge/llms.txt`
-  §MUST READ FIRST; it does not replace it (`llms.txt` wins per AGENTS.md). The
-  read-set = the canonical five (`AGENTS.md`, `project-overview.md`, `HANDOFF.md`,
-  `DIGEST.md`, `glossary.md`) + authoring addendum (`.fa/session.toml`,
-  `src/fa/authoring_rules/README.md`). The normative I-BOOT description is anchored
-  in `AGENTS.md` (§Working in This Repo / bootstrap), added in the ADR-11 PR.
-  I-BOOT stays procedural until the harness can emit read receipts (path + hash).
-- **B.5 — LOC budget.** The hard `≤150 LOC` cap is **dropped** as a normative
-  invariant. `I-TCB-MIN` is redefined qualitatively: stdlib-only, offline, no
-  dynamic import, no semantic judgement, no regex for structural analysis. A small
-  kernel remains a goal; the honest LOC figure is written after a prototype.
-
-### 16.3 Active consumer for every new write target
-
-Per AGENTS.md cross-project anti-pattern #3, each write target lands with a named
-consumer:
-
-| Write target | Active consumer |
-| :--- | :--- |
-| `authoring-check` diagnostics (JSON / text) | CI workflow `authoring-guardrails.yml` (exit-code gate) + agent / human reading the output |
-| `.fa/session.toml` | Level 1 `seam.py` (staged paths ⊆ declared seam) + commit-msg trailer injector |
-| `catch-corpus/` | R-14 corpus test — every fixture must be caught |
-| `fp-corpus/` | R-14 false-positive-rate measurement — gate for ADVISORY → HARD-BLOCK promotion |
-| `kernel_hash` / `rule_pack_hash` / `snapshot_id` (kernel output) | reproducibility check + `scripts/check_protected_paths.py` diff-check |
-| metrics (PLAN V9 leading / lagging) | **No named consumer yet → DEFER for v0.1.** Do not create the write target until a `make` target or report consumes it. |
-
-### 16.4 Invariant numbering scheme
-
-Use a per-ADR prefixed namespace: `ADR-11-I1`, `ADR-11-I2`, … with stable anchors
-(`ADR-11#adr-11-i1`). This avoids the global-vs-local ambiguity against ADR-10
-(`I-1..I-5`) and removes future renumbering churn. Keep the mnemonic in the
-heading, e.g. `ADR-11-I3 (I-FROZEN): …`. Mixed numbered + named invariants in one
-ADR are not allowed.
-
-### 16.5 Enforcement-ceiling (FA model)
-
-The authoring agent has PR-open rights only (no merge). The boundary is therefore
-PR-only agent rights + required human review at merge + a
-`scripts/check_protected_paths.py` CI flag on TCB / protected paths. CODEOWNERS
-and branch protection are recommended, not load-bearing; the residual requirement
-is that the human reviewer acts on the protected-path flag. (Also recorded at
-§13.7.)
-
-### 16.6 F-1..F-10 baseline and V→R crosswalk (low priority — detail later)
-
-Low priority and intentionally terse; the instruction surface is already heavy, so
-the full table is deferred. Minimum to carry forward:
-
-- **F-1..F-10 baseline** is sourced from the PR B / PR C audit (commits include
-  `50143ce` M-6 pr_intent classifier, `fa481b7` "PR B,C arena fix",
-  `83038dd` `pr.prepare` producer, `78ced94` producer/consumer contract). Exact
-  per-F commit SHAs are pinned in the catch-corpus PR (R-14), not here.
-- **V→R crosswalk:** PLAN vectors V1..V14 are folded into the R-1..R-18 set. One
-  gap is parked: PLAN V13 (config multi-file parity) has no R-N home yet.
 
 ---
 
