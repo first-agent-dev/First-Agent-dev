@@ -1710,3 +1710,63 @@
   retained),
   [`HANDOFF.md` §Process / rule changes 2026-05-26 PR A'](../../HANDOFF.md#current-state-as-of-2026-05-26)
   (expanded scope disclosure).
+
+## Q-16 — What authoring-time guardrail architecture does FA adopt, and how is it enforced? (2026-06-01)
+
+- **Closed by:** [ADR-11](../adr/ADR-11-authoring-guardrails.md), consuming
+  the SSOT blueprint
+  [`ADR-11-Authoring-Guardrails-Blueprint.md`](../research/ADR-11-Authoring-Guardrails-Blueprint.md)
+  (R-1..R-18). This block is the doc-only decision landing; the code
+  ships across PR 1..PR 5 per the blueprint Appendix B rollout.
+- **Coupling:** Q-14 (ADR-10 deterministic-harness invariants — ADR-11
+  is the authoring-time complement to ADR-10's runtime invariants and
+  uses a disjoint `ADR-11-I<N>` namespace per blueprint §10.0 to avoid
+  collision with ADR-10's global `I-1..I-5`; ADR-11-I3 parity reuses the
+  ADR-10 I-1 one-classifier-two-consumers seed in
+  `src/fa/hygiene/pr_intent.py`); Q-15 (PR-intent classifier — the
+  `pr_intent.py` ↔ `pr-creation/SKILL.md` snapshot test is the live
+  I-FROZEN parity seed ADR-11-I3 generalises); Q-6 (ADR-6 sandbox —
+  runtime/execution boundary that ADR-11's authoring-time boundary
+  complements); AP-002 (routing-index drift — `knowledge/llms.txt`
+  refresh required per PR Checklist rule #7 because this PR adds the
+  ADR-11 file).
+- **Chosen:** **Option D** — a two-tier Trusted Computing Base (TCB): a
+  frozen, stdlib-only Level-0 kernel (`tomllib` manifest, sorted path
+  enumeration, SHA-256 snapshot/kernel/rule-pack hashing, static
+  allowlist dispatch, deterministic sorted diagnostics, fail-closed,
+  exit 0/1) plus allowlisted Level-1 rule packs. Lands the
+  `ADR-11-I1..I8` invariant slate (I1 Level-0 determinism; I2 severity
+  lifecycle; I3 I-FROZEN parity; I4 AST-over-regex; I5 test-decay lock;
+  I6 CI-not-pre-commit authority; I7 protected-path governance +
+  realpath denylist; I8 I-BOOT session seam), binds every write target
+  to a named active consumer (blueprint §9.9), and fixes the
+  enforcement-ceiling at PR-only agent rights + required human review +
+  a protected-path CI flag (blueprint §12.7). Concepts are borrowed from
+  Hermes / Archon / Grafema / NeMo; their runtimes are not (R-7).
+- **Rejected:**
+  - **(a) Keep authoring checks scattered across `pytest` /
+    `pre-commit` / review prose (status quo).** Reason: no authoritative
+    surface; `pre-commit` rules are bypassable with `--no-verify` and
+    review prose is unenforced; the untrusted-compiler threat is not
+    modelled at all (the author can weaken the very check that would
+    catch the patch). Lesson: re-opens only if the repo abandons
+    LLM-authored PRs — not anticipated under UC1 + UC3.
+  - **(b) Import a heavy rule engine (Grafema Datalog + RFDB / NeMo
+    runtime rails).** Reason: dependency footprint is wrong for a
+    Level-0 kernel (NeMo pulls `aiohttp`/`onnxruntime`/`pydantic`/
+    `jinja2`, blueprint §7.7; Grafema ships a Rust Datalog evaluator);
+    bootstrapping + false-positive management dominate the first PR,
+    failing minimalism-first. Lesson: re-opens if cross-file analysis
+    needs outgrow stdlib `ast` AND a vendored subset proves lighter than
+    a bespoke rule — concept borrowed now, runtime deferred (R-7).
+  - **(c) Enforce via standalone CODEOWNERS and/or `pre-commit` only.**
+    Reason: standalone CODEOWNERS without branch protection + a required
+    protected-path check is a false security boundary (R-9); none of the
+    four OSS stacks rely on it alone; `.github/**` path-skips let a patch
+    alter enforcement itself (NeMo `pr-tests-skip.yml` is negative prior
+    art). Lesson: CODEOWNERS becomes load-bearing only if branch
+    protection with required review is enabled — folded into the R-12
+    bundle, not used standalone (blueprint §12.7 enforcement-ceiling).
+- **Source:** [ADR-11](../adr/ADR-11-authoring-guardrails.md);
+  [`ADR-11-Authoring-Guardrails-Blueprint.md`](../research/ADR-11-Authoring-Guardrails-Blueprint.md)
+  §0/§1/§9/§10/§12.7/Appendix B.

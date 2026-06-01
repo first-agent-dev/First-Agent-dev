@@ -13,12 +13,13 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
-**As of:** 2026-05-29 — M-6/M-7/M-8 all landed; PR-intent enforcement loop closed (producer + consumer + `fs.run_bash` draft-gating). Next: first live `fa run` smoke.
+**As of:** 2026-06-01 — ADR-11 (Authoring Guardrails) landed as a doc-only ADR-RULE decision (two-tier TCB, `ADR-11-I1..I8`); code rollout PR 1..PR 5 pending. Prior: M-6/M-7/M-8 landed; PR-intent enforcement loop closed.
 
 ### Landmarks (what landed)
 
 | What | Date | Pointer |
 | :--- | :--- | :--- |
+| ADR-11 (Authoring Guardrails) landed (doc-only ADR-RULE): two-tier TCB (frozen stdlib Level-0 kernel + allowlisted Level-1 rules), `ADR-11-I1..I8` invariant slate, active-consumer table, enforcement-ceiling. SSOT = merged blueprint (R-1..R-18). Code ships across PR 1..PR 5. | 2026-06-01 | [`ADR-11`](./knowledge/adr/ADR-11-authoring-guardrails.md), [blueprint](./knowledge/research/ADR-11-Authoring-Guardrails-Blueprint.md), [`exploration_log.md` Q-16](./knowledge/trace/exploration_log.md) |
 | Draft-first hardening (PR #24 follow-up): AST `fs.run_bash` analyzer + trusted session draft store; `IntentGuard` now gates shell writes (REPO_WRITE / INDEX_WRITE / OPAQUE_EXEC) and rejects stale / externally-fabricated drafts. | 2026-05-29 | [`bash_intent.py`](./src/fa/inner_loop/bash_intent.py), [`pr_draft.py`](./src/fa/inner_loop/pr_draft.py), [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py) |
 | PR E landed (M-7 §Q-N): `src/fa/inner_loop/tools/prepare_pr.py` (`pr.prepare`) + registry wiring in `_cmd_run`; closes the producer gap so `IntentGuard` bites on every mutating tool call. IntentGuard now wired into `fa run` bootstrap. | 2026-05-28 | [`prepare_pr.py`](./src/fa/inner_loop/tools/prepare_pr.py), [`tools/__init__.py`](./src/fa/inner_loop/tools/__init__.py), [`cli.py`](./src/fa/cli.py) |
 | PR D landed: `src/fa/inner_loop/coder_loop.py` (`drive_session`) + `prompt.py` + `fa run --task` CLI + `UrllibTransport`; bridges `ProviderChain` and `run_session` so the harness is finally LLM-drivable (closes M-8). | 2026-05-28 | [`coder_loop.py`](./src/fa/inner_loop/coder_loop.py), [`prompt.py`](./src/fa/inner_loop/prompt.py), [`cli.py`](./src/fa/cli.py), [`transport.py`](./src/fa/providers/transport.py) |
@@ -64,6 +65,13 @@ Priority-ordered. Completed items deleted, not struck through.
    rule #N» → [`pr-creation/SKILL.md` §PR Checklist](./knowledge/skills/pr-creation/SKILL.md).
 4. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
    number» audit; `[CODE]` namespace + A23 lint.
+5. **ADR-11 rollout PR 1 — Level-0 TCB skeleton + protected-path
+   governance** (`src/fa/authoring_tcb.py`, `src/fa/authoring_rules/__init__.py`,
+   `scripts/check_protected_paths.py`, `.github/workflows/authoring-guardrails.yml`,
+   `.github/CODEOWNERS`). Implements R-1/R-11/R-2/R-6/R-7/R-10/R-12/R-15
+   per [ADR-11](./knowledge/adr/ADR-11-authoring-guardrails.md) + blueprint
+   Appendix B. PR 2..PR 5 follow (teeth → parity/docs → seam/corpora →
+   advisory tuning).
 
 ## Session Protocol
 
