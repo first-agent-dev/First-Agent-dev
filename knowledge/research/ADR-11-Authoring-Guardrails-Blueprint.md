@@ -1,7 +1,7 @@
 ---
 title: "ADR-11: Authoring Guardrails — Production Implementation Blueprint"
 status: draft
-date: 2026-05-31
+compiled: 2026-05-31
 supersedes: adr-11-authoring-guardrails-research-2026-05.md
 source:
   - https://github.com/nousresearch/hermes-agent
@@ -26,13 +26,7 @@ goal_lens: |
 ---
 
 # ADR-11: Authoring Guardrails — Full Production Implementation Blueprint
-
-> **SSOT status.** This file is the single source of truth (SSOT) for ADR-11
-> authoring. The pre-research note "ADR-11 creation PLAN (pre-research)"
-> (vectors V1..V14, phases P0..P5) is superseded and historical; where the two
-> conflict, this blueprint wins. The pre-ADR-11 decisions that resolve the
-> PLAN-vs-blueprint contradictions are applied throughout §9, §11-§12 and
-> the R-N specifications.
+- Single source of truth for ADR-11 authoring.
 
 ## Table of Contents
 
