@@ -27,6 +27,12 @@ goal_lens: |
 
 # ADR-11: Authoring Guardrails — Full Production Implementation Blueprint
 
+> **SSOT status.** This file is the single source of truth (SSOT) for ADR-11
+> authoring. The pre-research note "ADR-11 creation PLAN (pre-research)"
+> (vectors V1..V14, phases P0..P5) is superseded and historical; where the two
+> conflict, this blueprint wins. The pre-ADR-11 decisions that resolve the
+> PLAN-vs-blueprint contradictions are recorded in §16.
+
 ## Table of Contents
 
 0. TL;DR & Decision Briefing
@@ -45,6 +51,7 @@ goal_lens: |
 13. Risks & Caveats
 14. Files Used
 15. Out of Scope
+16. Pre-ADR-11 Resolved Decisions (SSOT lock)
 Appendix A: R-N Summary Table
 Appendix B: Production Rollout Sequence
 
@@ -1233,7 +1240,14 @@ Diagnostic sort order:
   commit-time local checks. Merge-time CI enforcement requires trusted committed
   manifest. No silent claim that CI can validate local state it cannot see.
 - **Cost:** medium (1–4h)
-- **I-BOOT:** Procedural until harness can emit read receipts with path and hash.
+- **I-BOOT (bootstrap read-set):** I-BOOT **extends** `knowledge/llms.txt`
+  §MUST READ FIRST (the canonical five: `AGENTS.md`, `project-overview.md`,
+  `HANDOFF.md`, `DIGEST.md`, `glossary.md`) with an authoring addendum
+  (`.fa/session.toml`, `src/fa/authoring_rules/README.md`); it does **not**
+  replace it (`llms.txt` wins per AGENTS.md). The normative I-BOOT description is
+  anchored in `AGENTS.md` (§Working in This Repo / bootstrap), added in the
+  ADR-11 PR. Procedural until the harness can emit read receipts (path + hash).
+  See §16.2 (B.4).
 
 ### R-14 — Catch-corpus / FP-corpus measurement loop (TAKE, P2)
 
@@ -1545,6 +1559,15 @@ CODEOWNERS may become valuable later if required review enforcement is
 enabled. Current analysis did not audit GitHub branch protection settings
 for any of the four OSS repos.
 
+**Enforcement-ceiling decision (FA, resolved).** In FA the authoring agent has
+only the right to *open* PRs — it cannot merge. The enforcement boundary is
+therefore: PR-only agent rights + required human review at merge + a CI check
+(`scripts/check_protected_paths.py`) that surfaces any edit to protected / TCB
+paths. Under this model CODEOWNERS and branch protection are *recommended*, not
+load-bearing; the only residual requirement is that the human reviewer acts on
+the protected-path flag. I-FROZEN is a HARD-BLOCK at the CI flag; the merge gate
+is human review. See §16.5.
+
 ### 13.8 Hermes-specific caveats
 
 - Hermes is a ~175K LOC agent platform with 27K tests — FA is an order of
@@ -1675,6 +1698,97 @@ This ADR explicitly does not cover:
    in v0.1.
 7. **Pre-commit as authoritative enforcement.** R-6 explicitly demotes
    pre-commit to convenience-only.
+
+---
+
+## §16. Pre-ADR-11 Resolved Decisions (SSOT lock)
+
+This section records the decisions taken **before** ADR-11 drafting. It resolves
+the PLAN-vs-blueprint contradictions in favour of this blueprint (the SSOT). The
+next session drafts ADR-11 from these decisions; do not re-open them without new
+evidence. Cascade edits to `glossary.md`, `DIGEST.md`, `llms.txt` and
+`MAINTENANCE.md` are intentionally deferred to the ADR-11 creation PR to avoid
+dangling references (a V5 doc-integrity concern).
+
+### 16.1 Document status
+
+- **SSOT:** this file, `knowledge/research/ADR-11-Authoring-Guardrails-Blueprint.md`.
+- **Superseded / historical:** "ADR-11 creation PLAN (pre-research)" (vectors
+  V1..V14, phases P0..P5). Retained for provenance only; not an input of equal
+  weight. Where the PLAN and this blueprint disagree, this blueprint wins.
+
+### 16.2 Contradiction resolutions (B.1–B.5)
+
+- **B.1 — Level 0 model.** Level 0 is a *pure dispatcher with zero repo-specific
+  semantic knowledge* (see §9.6, §11.2): TOML-parse → manifest shape-validate →
+  sorted path enumerate → hash (snapshot / kernel / rule-pack) → static-allowlist
+  dispatch → sort diagnostics → fail-closed. The PLAN's "Level 0 hardcodes exactly
+  three syntactic invariants" is **rejected**. Those three checks move to Level 1:
+  class-present-in-`__all__` → `authoring_rules/exports.py`; cross-module AST body
+  duplication → a dedicated Level 1 rule; "Level 1 rule schema validity" → reframed
+  as Level 0 *manifest shape* validation only (TOML, no semantics).
+- **B.2 — Manifest format.** Level 0 parses **TOML via `tomllib`** only. Level 0
+  never parses YAML. YAML is permitted solely as a Level 1 rule input or a
+  generated artifact. The canonical taxonomy SSOT is a Python `StrEnum` /
+  `Final[frozenset]`; a `CONTRACT.yaml`, if kept, is a *generated* Level 1
+  artifact, not kernel input. `_yaml_subset.py` is **not** used by the kernel.
+- **B.3 — Kernel path.** `src/fa/authoring_tcb.py` (kernel) +
+  `src/fa/authoring_rules/` (rule pack). The PLAN's `fa/bootstrap/authoring_tcb.py`
+  path is **rejected**.
+- **B.4 — I-BOOT vs llms.txt.** I-BOOT **extends** `knowledge/llms.txt`
+  §MUST READ FIRST; it does not replace it (`llms.txt` wins per AGENTS.md). The
+  read-set = the canonical five (`AGENTS.md`, `project-overview.md`, `HANDOFF.md`,
+  `DIGEST.md`, `glossary.md`) + authoring addendum (`.fa/session.toml`,
+  `src/fa/authoring_rules/README.md`). The normative I-BOOT description is anchored
+  in `AGENTS.md` (§Working in This Repo / bootstrap), added in the ADR-11 PR.
+  I-BOOT stays procedural until the harness can emit read receipts (path + hash).
+- **B.5 — LOC budget.** The hard `≤150 LOC` cap is **dropped** as a normative
+  invariant. `I-TCB-MIN` is redefined qualitatively: stdlib-only, offline, no
+  dynamic import, no semantic judgement, no regex for structural analysis. A small
+  kernel remains a goal; the honest LOC figure is written after a prototype.
+
+### 16.3 Active consumer for every new write target
+
+Per AGENTS.md cross-project anti-pattern #3, each write target lands with a named
+consumer:
+
+| Write target | Active consumer |
+| :--- | :--- |
+| `authoring-check` diagnostics (JSON / text) | CI workflow `authoring-guardrails.yml` (exit-code gate) + agent / human reading the output |
+| `.fa/session.toml` | Level 1 `seam.py` (staged paths ⊆ declared seam) + commit-msg trailer injector |
+| `catch-corpus/` | R-14 corpus test — every fixture must be caught |
+| `fp-corpus/` | R-14 false-positive-rate measurement — gate for ADVISORY → HARD-BLOCK promotion |
+| `kernel_hash` / `rule_pack_hash` / `snapshot_id` (kernel output) | reproducibility check + `scripts/check_protected_paths.py` diff-check |
+| metrics (PLAN V9 leading / lagging) | **No named consumer yet → DEFER for v0.1.** Do not create the write target until a `make` target or report consumes it. |
+
+### 16.4 Invariant numbering scheme
+
+Use a per-ADR prefixed namespace: `ADR-11-I1`, `ADR-11-I2`, … with stable anchors
+(`ADR-11#adr-11-i1`). This avoids the global-vs-local ambiguity against ADR-10
+(`I-1..I-5`) and removes future renumbering churn. Keep the mnemonic in the
+heading, e.g. `ADR-11-I3 (I-FROZEN): …`. Mixed numbered + named invariants in one
+ADR are not allowed.
+
+### 16.5 Enforcement-ceiling (FA model)
+
+The authoring agent has PR-open rights only (no merge). The boundary is therefore
+PR-only agent rights + required human review at merge + a
+`scripts/check_protected_paths.py` CI flag on TCB / protected paths. CODEOWNERS
+and branch protection are recommended, not load-bearing; the residual requirement
+is that the human reviewer acts on the protected-path flag. (Also recorded at
+§13.7.)
+
+### 16.6 F-1..F-10 baseline and V→R crosswalk (low priority — detail later)
+
+Low priority and intentionally terse; the instruction surface is already heavy, so
+the full table is deferred. Minimum to carry forward:
+
+- **F-1..F-10 baseline** is sourced from the PR B / PR C audit (commits include
+  `50143ce` M-6 pr_intent classifier, `fa481b7` "PR B,C arena fix",
+  `83038dd` `pr.prepare` producer, `78ced94` producer/consumer contract). Exact
+  per-F commit SHAs are pinned in the catch-corpus PR (R-14), not here.
+- **V→R crosswalk:** PLAN vectors V1..V14 are folded into the R-1..R-18 set. One
+  gap is parked: PLAN V13 (config multi-file parity) has no R-N home yet.
 
 ---
 
