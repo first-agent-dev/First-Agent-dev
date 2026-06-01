@@ -616,6 +616,55 @@ single-pass); (3) `[CODE]` namespace formalisation + A23 lint
 
 **Source:** [`ADR-10`](./ADR-10-deterministic-harness-invariants.md).
 
+## ADR-11 — Authoring Guardrails (two-tier TCB) (proposed 2026-06-01)
+
+**Decision.** Adopt a two-tier Trusted Computing Base for authoring-time
+admission control, leading with the **LLM as Untrusted Compiler** threat
+model (the author can edit any file, including the guardrails, in the same
+patch that introduces a violation). **Level 0** is a frozen, stdlib-only
+kernel (`tomllib` manifest, sorted path enumeration, SHA-256
+snapshot/kernel/rule-pack hashing, static allowlist dispatch,
+deterministic sorted diagnostics, fail-closed, exit 0/1, never
+network/dynamic-import/regex-for-structure); **Level 1** is allowlisted
+rule packs. Lands the `ADR-11-I1..I8` slate — **I1** Level-0 determinism;
+**I2** severity lifecycle (HARD-BLOCK / ADVISORY-with-expiry / INFO; CI
+fails only on HARD-BLOCK); **I3 (I-FROZEN)** generated/mirrored parity
+(`# I-FROZEN: source=… checker=…`, seed `pr_intent.py` ↔
+`pr-creation/SKILL.md`); **I4** AST over regex; **I5** test-decay lock
+(`pytest.skip`/`assert True`/`.only` → HARD-BLOCK); **I6** CI-enforced,
+not pre-commit-only (always-run, no path-skip); **I7** protected-path
+governance + realpath denylist (Hermes pattern; no `--yolo`); **I8
+(I-BOOT)** `.fa/session.toml` seam (staged ⊆ declared) + bootstrap
+addendum. Every write target lands with a named **active consumer**
+(blueprint §9.9). **Enforcement-ceiling:** the agent may only *open* PRs —
+the merge gate is required human review acting on a protected-path CI
+flag; CODEOWNERS / branch protection are recommended, not load-bearing.
+Disjoint `ADR-11-I<N>` namespace per blueprint §10.0 avoids collision with
+ADR-10's global `I-1..I-5`. SSOT: the merged blueprint
+[`ADR-11-Authoring-Guardrails-Blueprint.md`](../research/ADR-11-Authoring-Guardrails-Blueprint.md)
+(R-1..R-18). **Rationale.** Concepts borrowed from Hermes / Archon /
+Grafema / NeMo; their runtimes are not (R-7) — a frozen stdlib kernel is
+the only shape that is reproducible, offline, and untamperable by the
+author it polices.
+
+**Rejected:** (a) scattered `pytest`/`pre-commit`/review-prose checks
+(bypassable; threat unmodelled); (b) heavy rule engine — Grafema
+Datalog / NeMo runtime rails (dependency footprint wrong for Level 0);
+(c) standalone CODEOWNERS / pre-commit-only (false security boundary,
+R-9). See [`exploration_log.md` Q-16](../trace/exploration_log.md#q-16)
+for full reject rationale + lessons.
+
+**Follow-up work unlocked.** Code ships across the blueprint Appendix B
+rollout: PR 1 Level-0 TCB skeleton + protected-path governance; PR 2
+`exports.py` + `tests.py` teeth; PR 3 `parity.py` + `docs.py` + I-FROZEN
+marker; PR 4 `seam.py` + `.fa/session.toml` + catch/FP corpora; PR 5
+`messages.py` + severity tuning. Deferred (post-v0.1): save-time `--watch`
+(R-16), network freshness watchdog outside Level 0 (R-17),
+tool-whitelisted self-improvement that never mutates Level-0/HARD-BLOCK
+rules (R-18).
+
+**Source:** [`ADR-11`](./ADR-11-authoring-guardrails.md).
+
 ## See also
 
 - [`README.md`](./README.md) — ADR process and ordered index.
