@@ -663,6 +663,17 @@ marker; PR 4 `seam.py` + `.fa/session.toml` + catch/FP corpora; PR 5
 tool-whitelisted self-improvement that never mutates Level-0/HARD-BLOCK
 rules (R-18).
 
+**Amendment 2026-06-01 (contract freeze).** Added **§Verification**
+(catch-corpus `F-1..F-10` baseline + `fp-corpus` with a fixed **< 1 %**
+false-positive promotion gate); pinned the diagnostic-code namespace
+`FA-AUTHORING-V<N>-<SLUG>` (append-only, mirrors the `ADR-11-I<N>` freeze);
+collapsed v0.1 to a **single** `.fa/session.toml` manifest; specified
+`rule_input_hash` over the exact bytes a rule consumed + a nullable
+`session_hash` binding (I1); recorded that Level 0 must clear the repo's
+`fail_under = 90` coverage gate + strict `pylint`; and cited the
+`src/fa/chunker/` + DSV (`verifiers/`) seeds as pattern-reuse, explicitly **not**
+imported into Level 0.
+
 **Source:** [`ADR-11`](./ADR-11-authoring-guardrails.md).
 
 ## See also
