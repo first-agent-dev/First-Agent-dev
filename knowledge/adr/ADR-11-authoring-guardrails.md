@@ -132,6 +132,10 @@ Makefile                           # check: lint typecheck authoring-check test
   message), emits structured JSON/text, and exits `0` if no HARD-BLOCK else `1`.
 - **Level 1** holds the rule packs. Rules return structured diagnostics; they never own dispatch,
   hashing, or output. New rules land here behind the allowlist without modifying Level 0.
+- **One manifest for v0.1.** The kernel reads a **single** TOML, `.fa/session.toml`, passed as
+  `--manifest`; kernel-config and session/seam metadata are **not** split into two files until a
+  measured need arises (subtraction-first). Fewer synced manifests = one less parity surface = one
+  less authoring attack surface.
 
 ### Invariant numbering scheme (blueprint §10.0)
 
@@ -147,7 +151,8 @@ and removes future renumbering churn. A mnemonic may ride in the heading (e.g. `
 
 **Rule.** The Level-0 kernel is **frozen** and **stdlib-only**. It MUST parse TOML via `tomllib`,
 enumerate paths in sorted order, bind every verdict to `snapshot_id` / `kernel_hash` /
-`rule_pack_hash`, dispatch only a static allowlist of Level-1 rules, emit deterministically sorted
+`rule_pack_hash` (plus a nullable `session_hash` when `.fa/session.toml` is present),
+dispatch only a static allowlist of Level-1 rules, emit deterministically sorted
 diagnostics, and use exit code `0`/`1` keyed on HARD-BLOCK presence. It MUST **never** import outside
 stdlib, make network calls, load plugins dynamically, evaluate LLM output, or use regex for
 structural analysis (only for text markers). Behaviour is **fail-closed**: malformed manifest,
@@ -157,11 +162,20 @@ unknown key, missing field, empty snapshot, or a rule raising → exit `1` + dia
 #### ADR-11-I2 — Severity lifecycle as a false-positive budget
 
 **Rule.** Every diagnostic is a `RuleResult` carrying `severity ∈ {HARD-BLOCK, ADVISORY, INFO}`,
-`code`, `path`, `line`, `message`, `remediation`, and `rule_input_hash`. **CI fails only on
-HARD-BLOCK.** An `ADVISORY` without an `expires_on` date is itself an ADVISORY finding (so warnings
-cannot become permanent noise). Promotion `ADVISORY → HARD-BLOCK` requires a measured false-positive
-rate below the ADR threshold (ADR-11-I*  catch/FP corpus, blueprint R-14).
+`code` (see the diagnostic-code namespace below), `path`, `line`, `message`, `remediation`,
+`expires_on` (required when `severity = ADVISORY`), and `rule_input_hash`. The `rule_input_hash`
+is computed over the **exact bytes the rule consumed** (not the whole file), so two conforming
+kernels produce identical hashes for the same input. **CI fails only on HARD-BLOCK.** An `ADVISORY`
+without an `expires_on` date is itself an ADVISORY finding (so warnings cannot become permanent
+noise). Promotion `ADVISORY → HARD-BLOCK` requires the rule to catch its fixture in `catch-corpus/`
+**and** measure a false-positive rate **< 1 %** on `fp-corpus/` (see [§Verification](#verification),
+blueprint R-14).
 **Source.** Blueprint R-2, R-14; §9.2.
+
+**Diagnostic-code namespace.** Every `RuleResult.code` is `FA-AUTHORING-V<N>-<SLUG>` (e.g.
+`FA-AUTHORING-V2-EXPORTS`). `V<N>` is the catch-corpus vector (§Verification); codes are
+**append-only** and a `V<N>` is never re-used for a different rule — mirroring the `ADR-11-I<N>`
+freeze rule above, so an externally-visible code is as stable as an invariant number.
 
 #### ADR-11-I3 (I-FROZEN) — generated/mirrored parity
 
@@ -247,6 +261,47 @@ requirement is that the human reviewer acts on the protected-path flag. I-FROZEN
 the CI flag; the merge gate is human review. CI detects changes — branch protection (where enabled)
 enforces review; CI cannot prove human approval by itself.
 
+## Verification
+
+The decision is verified against a fixed baseline, not subjective review (blueprint R-14, §11.1).
+Two corpora live at the repo root and are consumed as named in the active-consumer table above:
+
+```text
+catch-corpus/   # fixture diffs the rules MUST flag (true positives), sourced from the PR B/C
+                # "10 authoring omissions" archaeology (F-1..F-10 below)
+fp-corpus/      # diffs from recent green commits the rules MUST NOT flag (false positives)
+```
+
+**Catch-corpus baseline (F-1..F-10).** Each historical omission maps to the diagnostic vector
+`V<N>` that must catch it; `V<N>` is the stable middle field of the `FA-AUTHORING-V<N>-<SLUG>`
+code namespace (see [ADR-11-I2](#adr-11-i2--severity-lifecycle-as-a-false-positive-budget)).
+
+| ID | Historical omission (PR B/C) | Root cause | Target vector(s) |
+|---|---|---|---|
+| F-1 | LLM bypasses `_is_mutating_call` with an unknown tool shape | Spec↔code doc drift | V1 + V7 (SSOT enum) |
+| F-2 | New middleware missing from `__all__` | Cross-file omission | V2 (AST completeness) |
+| F-3 | `SQUASH_MSG` updated in Python, missed in Bash | Dual-location update fail | V3 (generation parity) |
+| F-4 | Test for `git add` written, `git add -i` missed | Happy-path bias | V4 (negative adjacency) |
+| F-5 | `BACKLOG.md` milestone closed but blockers remain | Line-level invariant | V5 (doc integrity) |
+| F-6 | `llms.txt` not updated after a new ADR | Index update omission | V5 (doc integrity) |
+| F-7 | Public helper missing from re-export | Encapsulation bypass | V2 (AST completeness) |
+| F-8 | Signature changed; 4 call-sites updated, 1 missed | Partial refactoring | V10 (reference safety) |
+| F-9 | Test weakened (`== "deny"` → `in ("allow","deny")`) | Test semantic decay | V11 (assertion lock) |
+| F-10 | Session trailer (`Co-authored-by`) omitted | Procedural drift | V14 (AI trailers) |
+
+Vectors not yet on the v0.1 rule roadmap (e.g. V4 negative-adjacency, V14 trailers — blueprint §11.1
+rates them LOW) stay catch-corpus targets for later packs; they do not block v0.1.
+
+**Promotion gate.** A rule moves `ADVISORY → HARD-BLOCK` only when it (a) flags its F-N fixture in
+`catch-corpus/`, and (b) measures a false-positive rate **< 1 %** over `fp-corpus/`. Until both
+corpora exist (blueprint Appendix B, PR 4) the measurement is **DEFERRED**; the 1 % target is fixed
+now so promotion is never a subjective call.
+
+**Kernel self-verification.** Level 0 ships with its own positive/negative fixtures meeting the
+repo coverage gate and strict `pylint` (see Consequences); reproducibility is checked by re-running
+the kernel on an unchanged snapshot and asserting identical `snapshot_id` / `kernel_hash` /
+`rule_pack_hash`.
+
 ## Consequences
 
 - **Positive.**
@@ -264,6 +319,11 @@ enforces review; CI cannot prove human approval by itself.
     gap, not a silent one.
   - Some rules (V5 docs, V12 message registry) land as ADVISORY first and need FP-corpus validation
     before they can become HARD-BLOCK.
+  - The Level-0 kernel must satisfy the repo's existing CI gates independently of its own logic:
+    line coverage `fail_under = 90` (`pyproject.toml`, surfaced by `.github/workflows/ci.yml`) and
+    **strict** `pylint` on `src/**` (`.github/workflows/pylint.yml`). This is a feature, not a tax —
+    a tiny frozen kernel is exactly what makes ~100 % coverage and mutation-kill (`tests.yml`) cheap,
+    which in turn reinforces the minimal-Level-0 decision.
 
 - **Follow-up work this unlocks or requires** (blueprint Appendix B rollout):
   - **PR 1** — Level-0 TCB skeleton + protected-path governance (R-1, R-11, R-2, R-6, R-7, R-10, R-12, R-15).
@@ -319,7 +379,15 @@ evidence — file inventories with line ranges — lives in the SSOT blueprint
   `tests/test_pr_intent_snapshot.py` are the live parity-lock seed for ADR-11-I3;
   `src/fa/inner_loop/hooks/intent_guard.py` instantiates the one-classifier-two-consumers discipline
   ([ADR-10 I-1](./ADR-10-deterministic-harness-invariants.md#i-1--single-source-of-truth-classifier)).
-  ADR-11 formalises and extends these rather than re-implementing them.
+  ADR-11 formalises and extends these rather than re-implementing them. Two further in-repo assets the
+  blueprint (§8.5–§8.6) flags as directly reusable: `src/fa/chunker/` (deterministic sorted path
+  enumeration, `fa chunk` CLI, positive/negative snapshot fixtures) and DSV (`verifiers/*.yaml`
+  contracts + their `src/fa/verifier/` parser — the Level-1 "deterministic check against a manifest"
+  shape). **Not reused inside
+  Level 0:** the chunker may import non-stdlib (e.g. `markdown-it-py`) and lives outside the TCB, so
+  the kernel keeps its **own** tiny stdlib `os.walk`+`sorted` enumeration — freezing the TCB boundary
+  beats DRY across it. ADR-11 borrows their *patterns* (enumeration, CLI shape, manifest-driven
+  verification) for Level 1, not their modules for Level 0.
 
 ## References
 
@@ -330,6 +398,9 @@ evidence — file inventories with line ranges — lives in the SSOT blueprint
   ADR-11-I4; R-5 → ADR-11-I5; R-6 → ADR-11-I6; R-12/R-15/R-9 → ADR-11-I7; R-13 → ADR-11-I8; R-10 →
   this §Context threat model; R-7/R-8 → §Options B/C + ADR-11-I1; R-16/R-17/R-18 → §Consequences
   deferred.
+- **Catch-corpus baseline (F-1..F-10).** Imported from the PR B/C authoring-omission archaeology
+  (session retrospective); blueprint §11.1 marked this baseline "must import from PR B/C audit".
+  Enumerated with target vectors in [§Verification](#verification).
 - [`ADR-10`](./ADR-10-deterministic-harness-invariants.md) — deterministic-harness invariants
   (I-1..I-5) around the LLM call; ADR-11 is the **authoring-time** complement and uses a disjoint
   `ADR-11-I<N>` namespace per §10.0.

@@ -1770,3 +1770,35 @@
 - **Source:** [ADR-11](../adr/ADR-11-authoring-guardrails.md);
   [`ADR-11-Authoring-Guardrails-Blueprint.md`](../research/ADR-11-Authoring-Guardrails-Blueprint.md)
   §0/§1/§9/§10/§12.7/Appendix B.
+
+## Q-16 amendment 2026-06-01 — Level-0 public-contract freeze (review pass)
+
+- **Coupling:** Q-16 (parent — this is the contract-freeze refinement of the
+  landed ADR-11 decision, **not** a re-opening of the chosen Option D).
+- **Trigger:** a second-pass review of the landed ADR-11 against the SSOT
+  blueprint surfaced one defect + three gaps to close *before* PR-1 code binds
+  to the Level-0 public contract (the kernel is a protected path — cheap to fix
+  in the doc, expensive to churn once code freezes it).
+- **Closed by:** ADR-11 amendment (doc-only): (1) fixed the dangling
+  `ADR-11-I*` reference and pinned the `ADVISORY → HARD-BLOCK` gate at a measured
+  **< 1 %** false-positive rate on `fp-corpus/`; (2) added **§Verification** with
+  the `catch-corpus/` `F-1..F-10` baseline (imported from the PR B/C
+  authoring-omission archaeology) mapped to `V<N>` vectors; (3) pinned the
+  diagnostic-code namespace `FA-AUTHORING-V<N>-<SLUG>` (append-only, mirrors the
+  `ADR-11-I<N>` freeze); (4) collapsed v0.1 to a single `.fa/session.toml`
+  manifest; (5) specified `rule_input_hash` over exact consumed bytes + a
+  nullable `session_hash` (I1); (6) recorded the repo CI gates Level 0 must clear
+  (`fail_under = 90`, strict `pylint`); (7) cited `src/fa/chunker/` + DSV
+  (`verifiers/`) as pattern-reuse, explicitly **not** imported into Level 0.
+- **Rejected:**
+  - **(i) Leave the gaps as PR-1 implementation notes.** Reason: PR-1 would
+    freeze an under-specified contract into a protected-path module; the public
+    surface (codes, manifest, hash source, severity gate) is the expensive thing
+    to change later. Lesson: re-opens only if the frozen contract proves
+    over-fitted once the catch/FP corpora exist (PR 4).
+  - **(ii) Split kernel-manifest from session-manifest now.** Reason:
+    subtraction-first — two synced manifests add a parity/attack surface with no
+    measured need at v0.1. Lesson: re-opens when a kernel-config field has no
+    natural home in `.fa/session.toml`.
+- **Source:** [ADR-11 §Verification](../adr/ADR-11-authoring-guardrails.md#verification);
+  [ADR-11 §ADR-11-I2](../adr/ADR-11-authoring-guardrails.md#adr-11-i2--severity-lifecycle-as-a-false-positive-budget).
