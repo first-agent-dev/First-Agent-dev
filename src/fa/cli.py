@@ -9,6 +9,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fa import __version__
+from fa.authoring_rules import RULE_ALLOWLIST
+from fa.authoring_tcb import render_json, render_text, run_all
 from fa.chunker import CHUNKER_VERSION, Chunk, default_chunker
 from fa.inner_loop import (
     EventLog,
@@ -150,6 +152,46 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.set_defaults(func=_cmd_run)
 
+
+ 
+    authoring_parser = subparsers.add_parser(
+        "authoring-check",
+        help="Run the Level-0 authoring-guardrail kernel (ADR-11 two-tier TCB).",
+        description=(
+            "Run the frozen, stdlib-only Level-0 kernel over the workspace: "
+            "parse the optional --manifest, enumerate + SHA-256 hash the "
+            "snapshot, dispatch the static Level-1 allowlist, and emit sorted "
+            "diagnostics. Exit 0 unless a HARD-BLOCK is present (fail-closed). "
+            "For v0.1 the allowlist is empty, so a clean tree reports no "
+            "diagnostics."
+        ),
+    )
+    authoring_parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=Path.cwd(),
+        help=(
+            "First-Agent workspace root (must contain knowledge/llms.txt; "
+            "no walk-up). Defaults to the current directory."
+        ),
+    )
+    authoring_parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path to a .fa/session.toml manifest. When omitted, "
+            "session_hash is null and the seam is not bound."
+        ),
+    )
+    authoring_parser.add_argument(
+        "--output",
+        choices=("text", "json"),
+        default="text",
+        help="Output format (default: text).",
+    )
+    authoring_parser.set_defaults(func=_cmd_authoring_check)
+ 
     return parser
 
 
@@ -372,6 +414,24 @@ def _cmd_run(
     if outcome.final_text:
         print(outcome.final_text)
     return outcome.exit_code
+
+
+def _cmd_authoring_check(args: argparse.Namespace) -> int:
+    workspace: Path = args.workspace.resolve()
+    # Workspace resolution per AGENTS.md: anchor on the canonical marker
+    # at cwd; never walk up the filesystem into a parent checkout.
+    if not (workspace / "knowledge" / "llms.txt").exists():
+        print(
+            "fa authoring-check: not a First-Agent workspace "
+            f"(no knowledge/llms.txt at {workspace})",
+            file=sys.stderr,
+        )
+        return 2
+ 
+    report = run_all(workspace, manifest_path=args.manifest, rules=RULE_ALLOWLIST)
+    rendered = render_json(report) if args.output == "json" else render_text(report)
+    print(rendered)
+    return report.exit_code
 
 
 def _build_provider_chain(
