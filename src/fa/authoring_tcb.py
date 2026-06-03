@@ -187,7 +187,8 @@ class Rule(Protocol):
     discovers them dynamically.
     """
 
-    def __call__(self, context: RuleContext) -> Sequence[RuleResult]: ...
+    def __call__(self, context: RuleContext) -> Sequence[RuleResult]:
+        pass
 
 
 @dataclass(frozen=True)

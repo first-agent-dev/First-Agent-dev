@@ -153,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.set_defaults(func=_cmd_run)
 
 
- 
+
     authoring_parser = subparsers.add_parser(
         "authoring-check",
         help="Run the Level-0 authoring-guardrail kernel (ADR-11 two-tier TCB).",
@@ -191,7 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format (default: text).",
     )
     authoring_parser.set_defaults(func=_cmd_authoring_check)
- 
+
     return parser
 
 
@@ -427,7 +427,7 @@ def _cmd_authoring_check(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
- 
+
     report = run_all(workspace, manifest_path=args.manifest, rules=RULE_ALLOWLIST)
     rendered = render_json(report) if args.output == "json" else render_text(report)
     print(rendered)
