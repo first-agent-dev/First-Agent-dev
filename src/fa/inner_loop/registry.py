@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-import fastjsonschema
+import fastjsonschema  # type: ignore[import-untyped]
 
 ToolPermission = Literal["read", "workspace"]
 ToolHandler = Callable[[Mapping[str, object]], "ToolResult"]

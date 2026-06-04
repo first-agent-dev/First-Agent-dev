@@ -10,7 +10,7 @@ from _pytest.capture import CaptureFixture
 
 # Add scripts/ to path for check_protected_paths import
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-from check_protected_paths import is_protected
+from check_protected_paths import is_protected  # type: ignore[import-not-found]
 
 from fa.cli import build_parser
 
