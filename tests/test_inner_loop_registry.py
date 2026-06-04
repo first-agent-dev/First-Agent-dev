@@ -53,3 +53,37 @@ def test_registry_rejects_duplicate_tool_name() -> None:
 
     with pytest.raises(ValueError, match="already registered"):
         registry.register(spec)
+
+
+def test_register_rejects_malformed_schema() -> None:
+    registry = ToolRegistry()
+    with pytest.raises(ValueError, match="invalid input_schema"):
+        registry.register(
+            ToolSpec(
+                name="test.bad",
+                description="Bad schema.",
+                input_schema={"type": "strin"},  # typo
+                permission="read",
+                handler=_echo,
+            )
+        )
+
+
+def test_validate_returns_invalid_params_on_type_mismatch() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="test.typed",
+            description="Typed tool.",
+            input_schema={"type": "object", "properties": {"text": {"type": "integer"}}},
+            permission="read",
+            handler=_echo,
+        )
+    )
+
+    result = registry.dispatch(ToolCall(name="test.typed", params={"text": "not an int"}))
+
+    assert result.error is not None
+    assert result.error.code == "invalid_params"
+    assert "text" in result.error.message
+    assert result.error.retryable is True

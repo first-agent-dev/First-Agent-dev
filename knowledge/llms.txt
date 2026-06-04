@@ -181,6 +181,7 @@ Quality gates run in CI. `make check` (ruff + mypy + authoring-check + pytest) m
 - [knowledge/prompts/coder-recovery.md](./knowledge/prompts/coder-recovery.md): Coder error-recovery prompt fragment, reads `attempt_history.json`.
 - [knowledge/prompts/handoff-summarizer.md](./knowledge/prompts/handoff-summarizer.md): Session-handoff / compaction prompt. Verbatim identifier preservation + 5-block structure. For inner-loop compaction and session-end notes, not for `HANDOFF.md`.
 - [knowledge/prompts/research-briefing.md](./knowledge/prompts/research-briefing.md): Research-briefing workflow prompt. Stage 1 goal_lens elicitation.
+- [knowledge/prompts/ci-qa-implementation-session-start.md](./knowledge/prompts/ci-qa-implementation-session-start.md): Session-start prompt for implementing CI/QA tooling TAKE recommendations (R-1..R-15) from research note. Concrete file edits, not research.
 
 ### Skills (`knowledge/skills/`)
 
@@ -210,3 +211,4 @@ Quality gates run in CI. `make check` (ruff + mypy + authoring-check + pytest) m
 - [knowledge/research/provider-client-survey-2026-05.md](./knowledge/research/provider-client-survey-2026-05.md): [goal: Audit 8 OSS LLM provider clients to validate ADR-9 Option D + α.] Companion to ADR-9.
 - [knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md](./knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md) (Large): [goal: Cross-reference 4 arxiv papers on correlated LLM errors against ADR-1/2/7. 9 R-Ns across §0 + §10.]
 - [knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md) (Large): [goal: 9-repo determinism-pattern deep-dive → ADR-10 invariants I-1..I-5.] Jump-table use: read §0+§3+§4+§6 (~5k tokens), open §1.x only for cited pattern IDs.
+- [knowledge/research/ci-qa-tooling-adversarial-2026-06.md](./knowledge/research/ci-qa-tooling-adversarial-2026-06.md): [goal: Adversarial review of CI/QA tooling for AI-managed Python. Tiered matrix: 6 GO / 4 DEFER / 4 SKIP. Stress-tests baseline claims with primary-source evidence.]

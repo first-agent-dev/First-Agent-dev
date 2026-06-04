@@ -55,6 +55,12 @@ def is_protected(path: str, repo_root: Path) -> bool:
         target = repo_root / protected
         if target.exists() and candidate_real == os.path.realpath(target):
             return True
+    # Symlink-to-prefix bypass fix: check if candidate realpath is under a protected prefix
+    for prefix in _TCB_PREFIXES:
+        prefix_real = os.path.realpath(repo_root / prefix)
+        sep = os.sep
+        if candidate_real == prefix_real or candidate_real.startswith(prefix_real + sep):
+            return True
     return False
 
 

@@ -1072,6 +1072,104 @@
   PR #20). M-7 (PR C) is not a blocker because IntentGuard
   wiring is explicitly out of M-8 scope (deferred follow-up).
 
+## I-10 — Remove `bashlex` dependency from `bash_intent` module
+
+- **Status:** deferred from dependency audit (2026-06-04).
+- **Idea:** `bashlex>=0.18` is the project's only stale runtime dependency
+  (last release 2023, no commits in 18 months, 30+ open issues).
+  It is used by `src/fa/inner_loop/bash_intent.py` to parse bash
+  command syntax into an AST for IntentGuard classification
+  (repo writes / index writes / verifier commands). Replace it
+  with a solution that has zero external dependencies while
+  preserving classification accuracy.
+- **Replacement options (pre-ranked):**
+  1. **Targeted `shlex` + heuristic regex** (preferred). `shlex`
+     (stdlib) tokenizes correctly; add a small state machine
+     (~60–80 lines) that classifies token sequences into the
+     same three buckets `bash_intent` produces today. Risk:
+     edge-case bash syntax (subshells, arrays, brace expansion)
+     may misclassify; mitigated by the fact that LLM-generated
+     bash in tool calls is overwhelmingly simple (single commands
+     or short pipelines).
+  2. **Vendor a minimal bash parser** (~200–300 lines). Fork the
+     subset of `bashlex` actually used (parser + AST visitor for
+     simple commands only). Higher maintenance burden, but
+     preserves exact AST semantics.
+  3. **Keep `bashlex` but pin exact version.** Not a removal, but
+     prevents silent upgrade to a broken future release. Fallback
+     if (1) or (2) proves infeasible.
+- **Blocked-on:** bash_intent API surface audit — a precise map of
+  every `bashlex` class/method used and the classification rules
+  they implement. Without this map the replacement cannot prove
+  parity.
+- **Unblock-trigger:** Either (a) bashlex confirmed abandoned
+  (no release in 24 months) OR (b) the API-surface audit PR lands
+  with a test matrix showing current classification results for
+  ≥20 representative bash snippets (simple command, pipeline,
+  subshell, variable assignment, git add/commit/push, rm, cp,
+  mkdir, pip install, etc.).
+- **First concrete step once unblocked:** Open a research spike PR
+  that replaces `bashlex` with option (1) (`shlex` + heuristics);
+  run the ≥20-snippet test matrix; if classification accuracy
+  ≥95 % → merge; if <95 % → try option (2) or fall back to
+  option (3) with a 12-month re-evaluation trigger.
+- **Why this satisfies minimalism-first.** Removing a stale
+  single-purpose dependency eliminates supply-chain risk and
+  reduces the project's external surface. The `shlex` path is
+  deterministic Python (AGENTS.md PR Checklist rule #10 q4) —
+  no LLM judgement required at runtime.
+- **References:**
+  - `src/fa/inner_loop/bash_intent.py` — current consumer.
+  - `src/fa/inner_loop/hooks/intent_guard.py` — downstream
+    consumer of `bash_intent` classifications.
+  - [`research/ci-qa-tooling-adversarial-2026-06.md`](./research/ci-qa-tooling-adversarial-2026-06.md)
+    §0 R-4 (gitleaks recommendation) — same audit session
+    surfaced this dependency risk.
+
+## I-11 — Cross-platform test suite (Windows without bash / Developer Mode)
+
+- **Status:** deferred from test audit (2026-06-04).
+- **Idea:** Three categories of tests fail on vanilla Windows:
+  1. **Bash-dependent tests** (6 in `test_cli.py`, 1 in
+     `test_inner_loop_runtime.py`, 1 in `test_inner_loop_runtime_limits.py`,
+     2 in `test_inner_loop_tools.py`). They invoke `fs.run_bash` which spawns
+     `bash` — not installed by default on Windows. Currently mitigated with
+     `@pytest.mark.skipif(shutil.which("bash") is None)` but this skips
+     silently; a better solution would use `cmd.exe` as a fallback shell on
+     Windows so the same logic is still exercised.
+  2. **Symlink-dependent tests** (3 in `test_sandbox_path_containment.py`,
+     3 in `test_hygiene_hooks_install.py`). They call `os.symlink()` which
+     requires Windows Developer Mode or admin privileges. With Developer Mode
+     enabled these pass; without it they fail. Mitigation:
+     `try/except (OSError, NotImplementedError)` or capability-based skip.
+  3. **POSIX-only tests** (1 in `test_chunker_plaintext.py`:
+     `test_anchor_falls_back_to_chunk_for_dot_only_name`). Windows forbids
+     creating files named `...` (path traversal pattern), so the test fixture
+     cannot be constructed. The chunker logic itself is fine; this is a test
+     construction limitation.
+- **Worth fixing?** The bash tests reveal the real gap: `fs.run_bash` is a
+  POSIX shell tool. A Windows-native agent would need `fs.run_cmd` or a shell
+  abstraction. The symlink tests are security-critical (sandbox escape
+  detection) — skipping them on Windows means the Windows dev never validates
+  the containment boundary locally.
+- **Blocked-on:** Decision on whether FA targets POSIX-only environments
+  (WSL, Git Bash, etc.) or native Windows. If POSIX-only, skip decorators
+  are sufficient and this item closes as "by design". If native Windows
+  is a target, the bash tool needs a `cmd.exe` / PowerShell backend and the
+  sandbox containment needs `os.path` semantics review.
+- **Unblock-trigger:** First user reports running FA on native Windows
+  without WSL, OR a CI job is added that runs on `windows-latest` and fails.
+- **First concrete step once unblocked:** Add a `windows-latest` CI matrix
+  entry (GitHub Actions) to surface these failures automatically. Then decide
+  per-category: skip (acceptable for bash), fix (for chunker fixture
+  construction), or refactor (for sandbox symlink escape — use junction
+  points on Windows instead of symlinks).
+- **References:**
+  - `tests/test_cli.py` — bash skip decorators added 2026-06-04.
+  - `tests/test_sandbox_path_containment.py` — symlink escape tests.
+  - `tests/test_chunker_plaintext.py::test_anchor_falls_back_to_chunk_for_dot_only_name`.
+  - `tests/test_hygiene_hooks_install.py` — hook symlink installation.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

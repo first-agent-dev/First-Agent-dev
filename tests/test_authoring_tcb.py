@@ -239,7 +239,12 @@ def test_enumerate_paths_skips_symlinks(tmp_path: Path) -> None:
     _make_workspace(tmp_path)
     (tmp_path / "real.py").write_text("x\n", encoding="utf-8")
     link = tmp_path / "link.py"
-    link.symlink_to(tmp_path / "real.py")
+    # Windows requires admin rights for symlinks by default; skip if not available
+    try:
+        link.symlink_to(tmp_path / "real.py")
+    except (OSError, NotImplementedError):
+        # Skip test on systems without symlink support
+        return
     paths = enumerate_paths(tmp_path)
     assert "real.py" in paths
     assert "link.py" not in paths
@@ -367,3 +372,44 @@ def test_render_text_lists_diagnostics(tmp_path: Path) -> None:
     text = render_text(run_all(tmp_path, rules=(rule,)))
     assert "kernel 0.1" in text
     assert "[HARD-BLOCK] FA-AUTHORING-V2-EXPORTS src/fa/foo.py:7" in text
+
+
+def test_authoring_tcb_imports_only_stdlib() -> None:
+    """ADR-11-I1: authoring_tcb.py MUST import only stdlib modules."""
+    import ast
+    import sys
+
+    import fa.authoring_tcb as authoring_tcb
+
+    source = Path(authoring_tcb.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    stdlib = set(sys.stdlib_module_names)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                assert root in stdlib, f"{alias.name} is not stdlib"
+        elif isinstance(node, ast.ImportFrom):
+            if node.module is not None and node.level == 0:
+                root = node.module.split(".")[0]
+                assert root in stdlib, f"{node.module} is not stdlib"
+
+
+def test_enumerate_paths_skips_symlink_to_directory(tmp_path: Path) -> None:
+    """Symlink-to-directory should not be enumerated (ADR-11-I1)."""
+    _make_workspace(tmp_path)
+    real_dir = tmp_path / "real_dir"
+    real_dir.mkdir()
+    (real_dir / "file.py").write_text("x\n", encoding="utf-8")
+
+    link_dir = tmp_path / "link_dir"
+    # Windows requires admin rights for symlinks by default; skip if not available
+    try:
+        link_dir.symlink_to(real_dir)
+    except (OSError, NotImplementedError):
+        # Skip test on systems without symlink support
+        return
+
+    paths = enumerate_paths(tmp_path)
+    assert "real_dir/file.py" in paths
+    assert "link_dir/file.py" not in paths

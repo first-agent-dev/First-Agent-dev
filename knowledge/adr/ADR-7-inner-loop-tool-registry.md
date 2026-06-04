@@ -343,18 +343,22 @@ the hook chain runs. Validation failures produce a
 Python traceback) and may retry the call with corrected
 parameters.
 
-Implementation uses `jsonschema` (single new dependency at
+Implementation uses `fastjsonschema` (single new dependency at
 this layer; ADR-2 §Amendment 2026-05-01 already implicitly
-needs it for MCP-shape compat). The schema is loaded **once**
+needs it for MCP-shape compat). Performance rationale: ~10× faster
+than `jsonschema`, compiles schema to a Python function at registry
+init, zero transitive dependencies. The schema is loaded **once**
 per `ToolSpec` at registry init; per-call validation is
 ~µs-level — the validation step itself has no token cost
 (success emits no model-facing message). On failure §1 step 7
 governs surfacing: the resulting `ToolResult` (with
 `error.code = "invalid_params"`, `retryable = true`) is fed
 back to the model exactly like any other `ToolResult`, so the
-model can correct and retry. There is no silent-drop path:
-every emitted `ToolResult` reaches the model per §1 step 7,
-regardless of `retryable`.
+model can correct and retry. `error.message` carries the
+library-generated description with the failing JSON path
+(e.g. `data.text must be integer at data/text`). There is no
+silent-drop path: every emitted `ToolResult` reaches the model
+per §1 step 7, regardless of `retryable`.
 
 **Re-validation after `pre_tool` mutation (§1 step 5).** If a
 `pre_tool` hook returns `modify_params`, the dispatcher MUST
@@ -722,7 +726,7 @@ shape is pinned so the migration is config-only:
   item 4) which empirically validates the edit-format choice
   on each ADR-2 model and is allowed to flip the default in
   an ADR-7 amendment without rewriting the contract.
-- **Negative — JSON-Schema dependency on `jsonschema`.** One
+- **Negative — JSON-Schema dependency on `fastjsonschema`.** One
   new top-level dependency. Justified because ADR-2 §Amendment
   2026-05-01 already implicitly required it for the MCP-shape
   convention to be enforceable. Pinned in `pyproject.toml`
@@ -767,6 +771,10 @@ shape is pinned so the migration is config-only:
     core reproduces on FA's own harness. Failure to reproduce
     re-opens routing-design proposals A / D / H (deferred per
     BACKLOG I-8 §First concrete step once unblocked).
+  - **`fastjsonschema` drops Draft 2020-12 support or the
+    compiled-validator ABI changes incompatibly.** Action:
+    re-evaluate the dependency choice (may require reverting
+    to `jsonschema` or finding an alternative).
 - **Follow-up work this unlocks.**
   - `src/fa/inner_loop/registry.py` — `ToolSpec` dataclass,
     `register(spec)`, `lookup(name)`, lazy schema cache.

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.30,<2.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,18 +7,19 @@ name = "first-agent"
 version = "0.1.0"
 description = "Locally orchestrated, mixed-tier LLM coding agent."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 license = { text = "Proprietary" }
 authors = [
   { name = "0oi9z7m1z8" },
 ]
 dependencies = [
   "markdown-it-py>=3.0",
-  # JSON-Schema Draft 2020-12 validator. Pinned by
-  # ADR-7 §5 «Input validation» as «single new dependency at this layer».
-  # Used by `ToolRegistry.dispatch` for per-call params validation and by
-  # `ToolRegistry.register` for schema-shape validation at registry init.
-  "jsonschema>=4.21",
+  # JSON-Schema Draft 2020-12 validator. Zero-transitive-deps drop-in
+  # replacing jsonschema. Compiles schema to a Python function (~10×
+  # faster validation). Used by `ToolRegistry.dispatch` for per-call
+  # params validation and by `ToolRegistry.register` for schema-shape
+  # validation at registry init.
+  "fastjsonschema>=2.21",
   # YAML parser for the ADR-9 §1 `~/.fa/models.yaml` config surface
   # (T-4 loader: `fa.providers.config.load_models_config_from_path`).
   # The hand-rolled `_yaml_subset.py` covers inline-comment stripping
@@ -54,6 +55,10 @@ dev = [
   # only because the runtime `yaml.safe_load` surface returns
   # `Any`-typed data the loader narrows immediately.
   "types-PyYAML>=6.0",
+  # Windows-native mutation testing (no fork / no WSL). Mirrors mutmut
+  # on Linux; required for the [tool.pytest-gremlins] config in this
+  # file to actually run on Windows dev machines.
+  "pytest-gremlins>=0.2",
 ]
 
 [project.scripts]
@@ -64,7 +69,7 @@ packages = ["src/fa"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = [
@@ -90,7 +95,7 @@ indent-style = "space"
 line-ending = "lf"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 strict = true
 warn_unused_configs = true
 files = ["src", "tests"]
@@ -163,7 +168,7 @@ tests_dir = ["tests/"]
 #
 # IMPORTANT: the matching CI job MUST install the project + dev extras
 # (`pip install -e ".[dev]"`) before invoking pylint. Without that, pylint
-# cannot import markdown_it / jsonschema / yaml / bashlex / pytest and emits
+# cannot import markdown_it / yaml / bashlex / pytest and emits
 # spurious E0401 import-error messages.
 # ---------------------------------------------------------------------------
 [tool.pylint.main]

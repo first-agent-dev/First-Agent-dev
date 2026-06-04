@@ -296,7 +296,7 @@ def test_schema_rejects_overlong_body(draft_store: PrDraftStore) -> None:
     )
     assert isinstance(result.error, ToolError)
     assert result.error.code == "invalid_params"
-    assert "too long" in result.error.message
+    assert "shorter than" in result.error.message
 
 
 def test_atomic_write_failure_preserves_existing_draft_and_cleans_temp_files(

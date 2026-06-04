@@ -15,8 +15,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-import jsonschema  # type: ignore[import-untyped]
-from jsonschema.validators import Draft202012Validator  # type: ignore[import-untyped]
+import fastjsonschema  # type: ignore[import-untyped]
 
 ToolPermission = Literal["read", "workspace"]
 ToolHandler = Callable[[Mapping[str, object]], "ToolResult"]
@@ -124,20 +123,22 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolSpec] = {}
-        self._validators: dict[str, Draft202012Validator] = {}
+        # fastjsonschema.compile() returns a callable; the signature is
+        # ``(data: Any) -> Any`` (returns the validated & coerced data).
+        self._validators: dict[str, Callable[[Any], Any]] = {}
 
     def register(self, spec: ToolSpec) -> None:
         if spec.name in self._tools:
             raise ValueError(f"tool already registered: {spec.name}")
         # ADR-7 §5: schemas are loaded ``once per ToolSpec at registry
-        # init`` and reused per-call; ``check_schema`` rejects malformed
-        # schemas (e.g. ``"type": "strin"`` typos) at registration.
+        # init`` and reused per-call; ``fastjsonschema.compile`` rejects
+        # malformed schemas (e.g. ``"type": "strin"`` typos) at registration.
         try:
-            Draft202012Validator.check_schema(spec.input_schema)
-        except jsonschema.SchemaError as exc:
-            raise ValueError(f"invalid input_schema for tool {spec.name}: {exc.message}") from exc
+            compiled = fastjsonschema.compile(spec.input_schema)
+        except fastjsonschema.JsonSchemaDefinitionException as exc:
+            raise ValueError(f"invalid input_schema for tool {spec.name}: {exc}") from exc
         self._tools[spec.name] = spec
-        self._validators[spec.name] = Draft202012Validator(spec.input_schema)
+        self._validators[spec.name] = compiled
 
     def lookup(self, name: str) -> ToolSpec:
         try:
@@ -156,11 +157,11 @@ class ToolRegistry:
         ``dispatch()``.
         """
         try:
-            self._validators[call.name].validate(dict(call.params))
+            self._validators[call.name](dict(call.params))
         except KeyError as exc:
             raise KeyError(f"tool is not registered: {call.name}") from exc
-        except jsonschema.ValidationError as exc:
-            path = "/".join(str(part) for part in exc.absolute_path) or "<root>"
+        except fastjsonschema.JsonSchemaValueException as exc:
+            path = "/".join(str(part) for part in exc.path) or "<root>"
             return ToolResult.fail(
                 "invalid_params",
                 f"{exc.message} at {path}",
