@@ -27,18 +27,14 @@ jobs:
           # PR base ref's merge-base.
           fetch-depth: 0
  
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          cache: pip
+      - uses: astral-sh/setup-uv@v3
  
       - name: Install package
         # Runtime deps only: the Level-0 kernel is stdlib-only, but the
         # `fa` CLI entry point imports the wider package.
+        # TODO: switch to `uv sync --frozen` once uv.lock lands.
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .
+          uv sync
  
       - name: Run Level-0 authoring kernel (always reports)
         run: fa authoring-check --output json

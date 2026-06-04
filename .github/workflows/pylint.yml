@@ -10,11 +10,8 @@ jobs:
         python-version: ["3.13"]
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: pip
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v3
     - name: Install system dependencies
       run: |
         sudo apt-get update
@@ -23,10 +20,10 @@ jobs:
       # Install the project + dev extras so pylint can IMPORT every module.
       # Without this, third-party imports (markdown_it, yaml, bashlex, pytest)
       # raise spurious E0401 import-error.
+      # TODO: switch to `uv sync --frozen` once uv.lock lands.
       run: |
-        python -m pip install --upgrade pip
-        pip install -e ".[dev]"
-        pip install pylint
+        uv sync
+        uv pip install pylint
     - name: Lint src/ (strict; duplicate-code ENABLED)
       # Production code is held to the strict profile in [tool.pylint.*]
       # (pyproject.toml). duplicate-code (R0801) stays ON here because
