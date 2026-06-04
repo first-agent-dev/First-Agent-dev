@@ -10,10 +10,10 @@ Covers F-6 + F-7 from the PR #24 must-fix block:
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
-import shutil
 
 from fa.inner_loop import (
     DEFAULT_BASH_TIMEOUT_SECONDS,

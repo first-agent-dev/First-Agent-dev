@@ -1126,6 +1126,50 @@
     §0 R-4 (gitleaks recommendation) — same audit session
     surfaced this dependency risk.
 
+## I-11 — Cross-platform test suite (Windows without bash / Developer Mode)
+
+- **Status:** deferred from test audit (2026-06-04).
+- **Idea:** Three categories of tests fail on vanilla Windows:
+  1. **Bash-dependent tests** (6 in `test_cli.py`, 1 in
+     `test_inner_loop_runtime.py`, 1 in `test_inner_loop_runtime_limits.py`,
+     2 in `test_inner_loop_tools.py`). They invoke `fs.run_bash` which spawns
+     `bash` — not installed by default on Windows. Currently mitigated with
+     `@pytest.mark.skipif(shutil.which("bash") is None)` but this skips
+     silently; a better solution would use `cmd.exe` as a fallback shell on
+     Windows so the same logic is still exercised.
+  2. **Symlink-dependent tests** (3 in `test_sandbox_path_containment.py`,
+     3 in `test_hygiene_hooks_install.py`). They call `os.symlink()` which
+     requires Windows Developer Mode or admin privileges. With Developer Mode
+     enabled these pass; without it they fail. Mitigation:
+     `try/except (OSError, NotImplementedError)` or capability-based skip.
+  3. **POSIX-only tests** (1 in `test_chunker_plaintext.py`:
+     `test_anchor_falls_back_to_chunk_for_dot_only_name`). Windows forbids
+     creating files named `...` (path traversal pattern), so the test fixture
+     cannot be constructed. The chunker logic itself is fine; this is a test
+     construction limitation.
+- **Worth fixing?** The bash tests reveal the real gap: `fs.run_bash` is a
+  POSIX shell tool. A Windows-native agent would need `fs.run_cmd` or a shell
+  abstraction. The symlink tests are security-critical (sandbox escape
+  detection) — skipping them on Windows means the Windows dev never validates
+  the containment boundary locally.
+- **Blocked-on:** Decision on whether FA targets POSIX-only environments
+  (WSL, Git Bash, etc.) or native Windows. If POSIX-only, skip decorators
+  are sufficient and this item closes as "by design". If native Windows
+  is a target, the bash tool needs a `cmd.exe` / PowerShell backend and the
+  sandbox containment needs `os.path` semantics review.
+- **Unblock-trigger:** First user reports running FA on native Windows
+  without WSL, OR a CI job is added that runs on `windows-latest` and fails.
+- **First concrete step once unblocked:** Add a `windows-latest` CI matrix
+  entry (GitHub Actions) to surface these failures automatically. Then decide
+  per-category: skip (acceptable for bash), fix (for chunker fixture
+  construction), or refactor (for sandbox symlink escape — use junction
+  points on Windows instead of symlinks).
+- **References:**
+  - `tests/test_cli.py` — bash skip decorators added 2026-06-04.
+  - `tests/test_sandbox_path_containment.py` — symlink escape tests.
+  - `tests/test_chunker_plaintext.py::test_anchor_falls_back_to_chunk_for_dot_only_name`.
+  - `tests/test_hygiene_hooks_install.py` — hook symlink installation.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring
