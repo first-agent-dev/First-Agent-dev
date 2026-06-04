@@ -45,9 +45,7 @@ def test_authoring_check_text_default(tmp_path: Path, capsys: CaptureFixture[str
     assert "kernel 0.1" in capsys.readouterr().out
 
 
-def test_authoring_check_rejects_non_workspace(
-    tmp_path: Path, capsys: CaptureFixture[str]
-) -> None:
+def test_authoring_check_rejects_non_workspace(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
     # No knowledge/llms.txt marker -> exit 2 (no walk-up; AGENTS.md).
     args = build_parser().parse_args(["authoring-check", "--workspace", str(tmp_path)])
     exit_code = args.func(args)

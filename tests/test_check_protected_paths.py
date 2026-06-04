@@ -120,9 +120,7 @@ def test_main_fail_on_touch(tmp_path: Path) -> None:
     _git(tmp_path, "add", "src/fa/authoring_tcb.py")
     _git(tmp_path, "commit", "-m", "touch tcb")
 
-    exit_code = cpp.main(
-        ["--base", "main", "--repo-root", str(tmp_path), "--fail-on-touch"]
-    )
+    exit_code = cpp.main(["--base", "main", "--repo-root", str(tmp_path), "--fail-on-touch"])
     assert exit_code == 1
 
 

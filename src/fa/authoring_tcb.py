@@ -338,7 +338,7 @@ def _require_table(data: Mapping[str, object], path: Path) -> None:
             _manifest_diagnostic(
                 path,
                 "missing required table [kernel]",
-                "add a [kernel] table with version = \"0.1\"",
+                'add a [kernel] table with version = "0.1"',
             )
         )
 
@@ -410,7 +410,7 @@ def _parse_seam(value: object, path: Path) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ManifestError(
             _manifest_diagnostic(
-                path, "session.seam must be a list of strings", "set seam = [\"path\", ...] or omit"
+                path, "session.seam must be a list of strings", 'set seam = ["path", ...] or omit'
             )
         )
     return tuple(value)
