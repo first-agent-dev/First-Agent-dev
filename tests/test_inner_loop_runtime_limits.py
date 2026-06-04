@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+import shutil
+
 from fa.inner_loop import (
     DEFAULT_BASH_TIMEOUT_SECONDS,
     DEFAULT_MAX_ITERATIONS,
@@ -329,6 +332,7 @@ def test_max_iterations_truncates_run_session(tmp_path: Path) -> None:
     assert all(result.error is None for result in results)
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 def test_bash_timeout_is_plumbed_into_tool(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path, bash_timeout_seconds=1)
     hooks = HookRegistry()

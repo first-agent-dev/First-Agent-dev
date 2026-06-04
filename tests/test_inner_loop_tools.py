@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
 from pytest import MonkeyPatch
 
 from fa.inner_loop import ToolCall
@@ -47,6 +49,7 @@ def test_workspace_path_escape_is_rejected(tmp_path: Path) -> None:
     assert result.error.code == "write_failed"
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 def test_run_bash_tool_runs_in_workspace(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path)
 
@@ -116,6 +119,7 @@ def test_write_file_tolerates_unresolved_workspace_root(tmp_path: Path) -> None:
     assert result.summary == "wrote out.txt"
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 def test_run_bash_tool_preserves_failure_diagnostics(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path)
 

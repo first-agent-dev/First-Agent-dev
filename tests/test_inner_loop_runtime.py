@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -31,6 +32,7 @@ from fa.inner_loop.tools import build_baseline_registry
 from fa.orchestration.pause import PauseKind, write_pause
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 def test_run_session_executes_tool_through_hooks(tmp_path: Path) -> None:
     (tmp_path / "input.txt").write_text("hello\n", encoding="utf-8")
     registry = build_baseline_registry(tmp_path)
