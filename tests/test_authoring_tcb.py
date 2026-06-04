@@ -378,6 +378,7 @@ def test_authoring_tcb_imports_only_stdlib() -> None:
     """ADR-11-I1: authoring_tcb.py MUST import only stdlib modules."""
     import ast
     import sys
+
     import fa.authoring_tcb as authoring_tcb
 
     source = Path(authoring_tcb.__file__).read_text(encoding="utf-8")
