@@ -1,0 +1,34 @@
+[
+  {
+    "timestamp": "2026-06-04T08:07:41.637772+00:00",
+    "score": 100.0,
+    "by_file": {
+      "C:\\Users\\r.kolomeichuk.ao\\Documents\\GitHub\\First-Agent-dev\\src\\fa\\sandbox\\bash_gate.py": 100.0,
+      "C:\\Users\\r.kolomeichuk.ao\\Documents\\GitHub\\First-Agent-dev\\src\\fa\\sandbox\\classifier.py": 100.0,
+      "C:\\Users\\r.kolomeichuk.ao\\Documents\\GitHub\\First-Agent-dev\\src\\fa\\sandbox\\path_containment.py": 100.0,
+      "C:\\Users\\r.kolomeichuk.ao\\Documents\\GitHub\\First-Agent-dev\\src\\fa\\sandbox\\validators.py": 100.0
+    },
+    "by_operator": {
+      "boolean": {
+        "total": 80,
+        "survived": 0
+      },
+      "return": {
+        "total": 79,
+        "survived": 0
+      },
+      "comparison": {
+        "total": 23,
+        "survived": 0
+      },
+      "boundary": {
+        "total": 8,
+        "survived": 0
+      },
+      "arithmetic": {
+        "total": 2,
+        "survived": 0
+      }
+    }
+  }
+]

@@ -46,4 +46,5 @@ jobs:
       - name: Surface protected-path edits (flag for human review)
         if: github.event_name == 'pull_request'
         run: python scripts/check_protected_paths.py --base "origin/${{ github.base_ref }}"
+
  

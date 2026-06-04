@@ -1,91 +1,119 @@
-INTENT: CHORE
-INVARIANT: n/a
+INTENT: FIX
+INVARIANT: ADR-7 §5 input validation contract; ADR-11-I7 protected-path governance
 
-# chore: harden lint + coverage gates; dedupe provider/tool helpers
+# fix: jsonschema→fastjsonschema cleanup + ADR-11 security/test gaps
 
 ## Summary
 
-Makes the Pylint CI job pass and turns the quality toolchain into real,
-enforced gates — without changing any runtime behavior. Root cause of the
-original red Pylint job: the workflow only installed `pylint`, never the
-project, so every third-party import surfaced as a spurious `E0401`
-(`pytest`, `markdown_it`, `jsonschema`, `yaml`, `bashlex`). Fixed by
-installing `.[dev]` before linting, then configuring Pylint to enforce the
-checks that matter for an LLM-assisted codebase and silence the cosmetic
-ones.
-
-All gates green: ruff ✅ · mypy --strict ✅ (116 files) · pytest **881 passed
-@ 90.70% coverage** ✅ · pylint **src 9.99/10**, **tests 10.00/10**.
+One PR covering (1) stale-comment cleanup and contract-preserving
+validation-error reconstruction for the `jsonschema`→`fastjsonschema`
+swap, (2) ADR-7 amendment with performance rationale and re-evaluation
+trigger, (3) registry validation failure tests, (4) ADR-11 symlink-bypass
+fix in `check_protected_paths.py`, (5) stdlib-only AST import test +
+symlink-to-directory test for `authoring_tcb.py`, and (6) trailing-newline
+consistency.
 
 ## What changed
 
-### CI / quality gates
-- `.github/workflows/pylint.yml` — install `.[dev]` (kills all `E0401`);
-  two-pass lint: `src/` strict (with `duplicate-code` **ON** — the #1
-  LLM-agent smell), `tests/` relaxed via `.pylintrc-tests`.
-- `.github/workflows/ci.yml` — single test+coverage source of truth
-  (`make check`); uploads `coverage.xml` for GitHub Code coverage analysis.
-- `.github/workflows/tests.yml` — mutation testing (`mutmut`), manual +
-  weekly, advisory (not a PR gate).
-- `pyproject.toml` — `[tool.pylint.*]` (cosmetic checks off, `fail-under`),
-  `[tool.coverage.*]` (branch coverage + `fail_under = 90`), `[tool.mutmut]`,
-  dev deps `pytest-cov` + `mutmut`.
-- `.pylintrc-tests` — tests-only profile (pytest idioms + `C1803` silenced;
-  `duplicate-code` off for tests only).
-- `.gitignore` — coverage / mutation artifacts.
+### 1. Stale comments — removed `jsonschema` from dependency lists
+- `pyproject.toml:171` — dropped `jsonschema` from the pylint comment list.
+- `.github/workflows/pylint.yml:24` — same.
 
-### Test coverage gap closed
-- `tests/test_hygiene_hooks_install.py` — 9 tests for the previously
-  **0%-covered** `fa/hygiene/hooks/install.py` (happy path, idempotent
-  re-install, `FileExistsError` guard, `--force`, non-workspace + missing-dir
-  + missing-script error paths). Branch coverage flagged this gap.
+### 2. Validation error format — reconstruct old `message at path` contract
+`src/fa/inner_loop/registry.py:163-169`
 
-### Behavior-preserving source cleanups (no functional change)
-- `inner_loop/hooks/blockers.py` — replaced 3 `__init__` overrides with class
-  attributes. NOTE: Pylint's `useless-parent-delegation` was *partly* wrong
-  here — the overrides injected category-specific defaults (30s / 5s / 0s),
-  so they were not actually useless; the class-attribute form preserves those
-  exact defaults (verified) while removing the warning legitimately.
-- `providers/base.py` + `anthropic.py` + `openai_compat.py` — extracted the
-  byte-identical HTTP status→exception mapping into
-  `base.parse_transport_response(response, normalize_success)`; both adapters
-  now delegate. Removes the largest real duplicate-code block.
-- `inner_loop/tools/base.py` + `prepare_pr.py` — `prepare_pr` now imports
-  `require_string` / `optional_string` from `tools.base` (added
-  `optional_string`; widened param types `dict` → `Mapping`) instead of
-  redefining them.
-- `chunker/markdown.py` — `line_end = max(line_end, line_start)` (R1731).
-- 5× `except Exception` annotated `# pylint: disable=broad-exception-caught`
-  with rationale — all are intentional "never crash the resilience boundary"
-  guards (one is the ADR-7 §10 tool-handler audit contract); narrowing them
-  would be incorrect, so they are documented, not changed.
+`fastjsonschema.JsonSchemaValueException` exposes `.message` (human
+description with dotted path), `.path` (list path), and `.name` (dotted
+path string). Reconstruct the old `jsonschema.ValidationError` output shape:
 
-### Docs
-- `knowledge/llms.txt` — new §Hygiene and §Tooling & CI index entries;
-  added the new test + `docs/C1803-fix-plan.md`.
-- `docs/C1803-fix-plan.md` — decision matrix for the `== ()` test assertions
-  (kept as type-pinning; rule silenced for tests only).
+```python
+path = "/".join(str(part) for part in exc.path) or "<root>"
+return ToolResult.fail(
+    "invalid_params",
+    f"{exc.message} at {path}",
+    retryable=True,
+)
+```
 
-## Why these knobs, for LLM-written code
-- `duplicate-code` stays **ON for src/** because agents copy-paste-and-tweak
-  instead of extracting helpers ("fix one copy, the other keeps the bug").
-- Branch coverage + a 90% `fail_under` is the primary "is it actually tested"
-  gate; it already caught the untested `install.py`.
-- Mutation testing is the guard against tests that pass but assert nothing.
+This preserves the downstream contract (tests assert `"text" in
+error.message`) and keeps the `at <path>` suffix that any prompt or audit
+consumer may rely on.
+
+### 3. Registry validation failure tests
+Added to `tests/test_inner_loop_registry.py`:
+- `test_register_rejects_malformed_schema` — `ValueError("invalid
+  input_schema")` on schema `{"type": "strin"}`.
+- `test_validate_returns_invalid_params_on_type_mismatch` — dispatch with
+  wrong type produces `error.code == "invalid_params"` and `"text" in
+  error.message`.
+
+### 4. ADR-7 §5 amendment
+- Replaced `"jsonschema"` with `"fastjsonschema"`.
+- Added performance rationale (~10× faster, compiles schema to Python
+  function, zero transitive deps).
+- Added re-evaluation trigger: "if fastjsonschema drops Draft 2020-12
+  support, or the compiled-validator ABI changes incompatibly, re-evaluate
+  the dependency choice."
+- Updated error-message description: "`error.message` carries the
+  library-generated description with the failing JSON path."
+- Fixed stale dependency name in §Consequences (`jsonschema` →
+  `fastjsonschema`).
+
+### 5. Symlink-to-prefix bypass fix in `check_protected_paths.py`
+**Bug:** `is_protected` compared `candidate_real == os.path.realpath(target)`
+only for exact paths in `_TCB_PATHS`. A symlink to a file under a protected
+prefix (e.g. `authoring_rules/exports.py`) bypassed because `exports.py` is
+not in `_TCB_PATHS`.
+
+**Fix:** After the exact-path loop, added prefix realpath check:
+
+```python
+for prefix in _TCB_PREFIXES:
+    prefix_real = os.path.realpath(repo_root / prefix)
+    sep = os.sep
+    if candidate_real == prefix_real or candidate_real.startswith(prefix_real + sep):
+        return True
+```
+
+### 6. Regression test for symlink-to-prefix bypass
+Added `test_is_protected_catches_symlink_to_prefix` to
+`tests/test_authoring_check_cli.py`. Gracefully skips on Windows without
+admin symlink privileges.
+
+### 7. Stdlib-only import test for `authoring_tcb.py`
+Added `test_authoring_tcb_imports_only_stdlib` to
+`tests/test_authoring_tcb.py` — uses `ast` + `sys.stdlib_module_names` to
+verify every top-level import is stdlib-only (ADR-11-I1).
+
+### 8. Symlink-to-directory test for `_walk_files`
+Added `test_enumerate_paths_skips_symlink_to_directory` to
+`tests/test_authoring_tcb.py` — verifies `enumerate_paths` does not include
+`link_dir/file.py` when `link_dir` is a symlink to `real_dir`.
+
+### 9. Trailing newlines
+- `src/fa/authoring_rules/README.md` — added terminating newline.
+- `.github/workflows/authoring-guardrails.yml` — added terminating newline.
+
+### 10. Review fixes ( Issues A–D )
+- Removed unused `import os` from `test_authoring_check_cli.py`.
+- Stripped trailing whitespace from blank lines in test files.
+- Fixed import ordering (`import sys` grouped with stdlib imports).
 
 ## Verification
-```
-make check                                            # ruff + mypy + pytest (90% gate)
-pylint $(git ls-files 'src/*.py' 'verifiers/*.py')    # 9.99/10, exit 0
-pylint --rcfile=.pylintrc-tests $(git ls-files 'tests/*.py')   # 10.00/10, exit 0
+
+```bash
+python -m pytest tests/test_inner_loop_registry.py tests/test_inner_loop_validation.py -v
+python -m pytest tests/test_authoring_tcb.py tests/test_authoring_check_cli.py -v
+python scripts/check_protected_paths.py --repo-root . --base origin/main
 ```
 
 ## Scope notes
-- **No runtime behavior change.** Pure tooling + behavior-preserving
-  refactors + new tests. Single intent (CHORE) per the "No mixed PRs" rule.
-- 4 `duplicate-code` blocks intentionally left: the two `__all__` re-export
-  lists (benign idiom) and the `bash_intent`↔`classifier` command lists
-  (documented as deliberately-separate security boundaries).
+- **Single intent (FIX).** The PR fixes real bugs (stale-comment drift,
+  validation-error contract break, symlink bypass) and fills security/test
+  gaps identified in review.
+- **No breaking changes.** The validation-error format change is a
+  contract-preserving reconstruction, not a new shape.
+- **Windows compatibility.** Symlink tests gracefully skip when privileges
+  are unavailable.
 
 ## AI-session trailer
-Co-authored-by: Arena.ai Agent Mode

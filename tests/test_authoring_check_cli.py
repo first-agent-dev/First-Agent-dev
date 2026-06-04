@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from _pytest.capture import CaptureFixture
+
+# Add scripts/ to path for check_protected_paths import
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+from check_protected_paths import is_protected
 
 from fa.cli import build_parser
 
@@ -69,3 +74,23 @@ def test_authoring_check_with_manifest(tmp_path: Path, capsys: CaptureFixture[st
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["session_hash"] is not None
+
+
+def test_is_protected_catches_symlink_to_prefix(tmp_path: Path) -> None:
+    """Regression test for symlink-to-prefix bypass (ADR-11-I7)."""
+    # Create a temp repo structure with protected prefix
+    src_dir = tmp_path / "src" / "fa" / "authoring_rules"
+    src_dir.mkdir(parents=True)
+    (src_dir / "exports.py").write_text("# protected file\n", encoding="utf-8")
+
+    # Create a symlink pointing to the protected file
+    alias = tmp_path / "alias.py"
+    # Windows requires admin rights for symlinks by default; skip if not available
+    try:
+        alias.symlink_to(src_dir / "exports.py")
+    except (OSError, NotImplementedError):
+        # Skip test on systems without symlink support
+        return
+
+    # The symlink should be detected as protected
+    assert is_protected("alias.py", tmp_path) is True
