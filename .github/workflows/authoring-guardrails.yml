@@ -1,0 +1,49 @@
+name: Authoring Guardrails
+ 
+# Level-0 authoring kernel (ADR-11 two-tier TCB). This workflow is
+# ALWAYS-RUN: it has no `paths:` filter (ADR-11-I6 — CI is the authority,
+# not pre-commit; a guardrail that only runs when its own files change is
+# trivially bypassed). On a clean tree with an empty Level-1 allowlist
+# (v0.1 / PR 1) the kernel reports zero diagnostics and exits 0, so the
+# check always reports a status.
+ 
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+ 
+permissions:
+  contents: read
+ 
+jobs:
+  authoring-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # Full history so the protected-path diff-check can reach the
+          # PR base ref's merge-base.
+          fetch-depth: 0
+ 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+ 
+      - name: Install package
+        # Runtime deps only: the Level-0 kernel is stdlib-only, but the
+        # `fa` CLI entry point imports the wider package.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+ 
+      - name: Run Level-0 authoring kernel (always reports)
+        run: fa authoring-check --output json
+ 
+      - name: Surface protected-path edits (flag for human review)
+        if: github.event_name == 'pull_request'
+        run: python scripts/check_protected_paths.py --base "origin/${{ github.base_ref }}"
+ 

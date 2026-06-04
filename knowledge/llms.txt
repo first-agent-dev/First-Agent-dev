@@ -113,9 +113,20 @@ PR-intent classifier + git-hook installer (M-6 / M-7 producer side). Shared vali
 - `src/fa/hygiene/hooks/install.py` — `install_hooks()` symlinks the `prepare-commit-msg` / `commit-msg` scripts into `.git/hooks/`. Tested by `tests/test_hygiene_hooks_install.py`.
 - `src/fa/hygiene/tokens.py` / `discover.py` / `suggestions.py` — token classification, record discovery, and hygiene suggestions helpers.
 
+### Authoring guardrails (`src/fa/authoring_tcb.py`, `src/fa/authoring_rules/`, `scripts/check_protected_paths.py`)
+
+ADR-11 two-tier TCB: frozen stdlib-only Level-0 kernel + allowlisted Level-1 rule packs, CI-enforced, protected-path-governed.
+
+- `src/fa/authoring_tcb.py` — Level-0 kernel (`RuleResult`, `Rule` protocol, `run_all`, SHA-256 hashing, deterministic sorted output, fail-closed). Frozen and stdlib-only (ADR-11-I1).
+- `src/fa/authoring_rules/__init__.py` — static `RULE_ALLOWLIST` dispatch; empty for PR 1 (v0.1 skeleton).
+- `src/fa/authoring_rules/README.md` — I-BOOT authoring read-set (ADR-11-I8): contract, diagnostic-code namespace, severity lifecycle, rollout table.
+- `scripts/check_protected_paths.py` — CI diff-checker: `realpath`-resolved denylist for TCB paths, non-blocking by default, GitHub Actions annotations (ADR-11-I7).
+- `.github/workflows/authoring-guardrails.yml` — always-run CI workflow (no `paths:` filter, ADR-11-I6); runs `fa authoring-check` + `check_protected_paths.py` on PRs.
+- CLI: `fa authoring-check --workspace <path> --manifest <toml> --output text|json`.
+
 ### Tooling & CI (`pyproject.toml`, `.pylintrc-tests`, `.github/workflows/`)
 
-Quality gates run in CI. `make check` (ruff + mypy + pytest) mirrors CI locally; thresholds live in `pyproject.toml`, not in workflow YAML.
+Quality gates run in CI. `make check` (ruff + mypy + authoring-check + pytest) mirrors CI locally; thresholds live in `pyproject.toml`, not in workflow YAML.
 
 - `pyproject.toml` — single config surface: ruff, mypy (strict), pytest, `[tool.coverage.*]` (branch coverage + `fail_under = 90`), `[tool.pylint.*]` (cosmetic checks disabled, `duplicate-code` kept ON for src, `fail-under = 9.0`), `[tool.mutmut]`.
 - `.pylintrc-tests` — tests-only pylint profile; relaxes pytest idioms (fixtures, test-double args, protected-access) and disables `duplicate-code` / `C1803` for `tests/` (the src profile keeps them ON). Two-pass lint because pylint does not auto-merge per-directory rc.

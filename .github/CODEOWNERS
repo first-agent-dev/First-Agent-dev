@@ -1,0 +1,16 @@
+# Code owners for ADR-11 protected / Trusted Computing Base (TCB) paths.
+#
+# Governance bundle (ADR-11-I7 + blueprint R-15): this file + branch
+# protection + the CI diff-check (scripts/check_protected_paths.py) make
+# any edit to a Level-0 TCB path require an explicit owner review. Per the
+# ADR enforcement-ceiling, CODEOWNERS is one of three layers and is not
+# load-bearing on its own — the residual requirement is that a human
+# reviewer acts on the protected-path flag.
+#
+# Keep this list in sync with scripts/check_protected_paths.py ::_TCB_PATHS.
+ 
+/src/fa/authoring_tcb.py            @MondayInRussian
+/src/fa/authoring_rules/            @MondayInRussian
+/.github/workflows/authoring-guardrails.yml @MondayInRussian
+/.github/CODEOWNERS                 @MondayInRussian
+/scripts/check_protected_paths.py   @MondayInRussian

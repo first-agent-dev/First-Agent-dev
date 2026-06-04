@@ -29,7 +29,7 @@ Overwritten each session! Details live at the pointer, not here.
 | PR A' landed: full PR-creation rulebook → loadable skill; AGENTS.md | 2026-05-26 | [`pr-creation/SKILL.md`](./knowledge/skills/pr-creation/SKILL.md) |
 | `knowledge/skills/` directory established; `repo-audit` migrated (closes I-9b) | 2026-05-26 | [`skills/README.md`](./knowledge/skills/README.md) |
 | PR A: §PR Intent Classification (5 Level-1 intents) + anti-shallow-fix gate | 2026-05-25 | [`AGENTS.md` §Loadable skills](./AGENTS.md#loadable-skills) |
-
+| PR B: (PR 1 — Level-0 TCB skeleton + protected-path governance) PR 1 (Appendix B, R-1/R-11/R-2/R-6/R-7/R-10/R-12/R-15): src/fa/authoring_tcb.py (ядро), src/fa/authoring_rules/__init__.py (пустой allowlist + README), CLI fa authoring-check, scripts/check_protected_paths.py (realpath-denylist, non-blocking flag), .github/CODEOWNERS, .github/workflows/authoring-guardrails.yml (always-run, без paths:), Makefile (authoring-check в check), тесты ≥90% + strict pylint. |
 ### Gotchas (delete when resolved)
 
 | Gotcha | Pointer |
@@ -65,6 +65,7 @@ Priority-ordered. Completed items deleted, not struck through.
    rule #N» → [`pr-creation/SKILL.md` §PR Checklist](./knowledge/skills/pr-creation/SKILL.md).
 4. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
    number» audit; `[CODE]` namespace + A23 lint.
+<<<<<<< Updated upstream
 5. **ADR-11 rollout PR 1 — Level-0 TCB skeleton + protected-path
    governance** (now building against the **frozen** Level-0 public
    contract: diagnostic-code namespace, single `.fa/session.toml`,
@@ -76,6 +77,16 @@ Priority-ordered. Completed items deleted, not struck through.
    Appendix B. PR 2..PR 5 follow (teeth → parity/docs → seam/corpora →
    advisory tuning).
 
+=======
+5. **ADR-11 rollout PR 2 — first Level-1 rule teeth.** The frozen
+   Level-0 kernel + empty allowlist landed in PR 1; PR 2 adds the first
+   rules into `src/fa/authoring_rules/` behind `RULE_ALLOWLIST` **without
+   touching Level 0**: `exports.py` (V2, AST `__all__` completeness —
+   F-2/F-7) + `tests.py` (V4/V10/V11 — F-4/F-8/F-9 test-decay locks).
+   AST-not-regex (ADR-11-I4); ADVISORY-first then promote on `catch-corpus/`
+   hit + FP `<1%`. Per blueprint Appendix B + [ADR-11](./knowledge/adr/ADR-11-authoring-guardrails.md).
+   PR 3 (parity/docs) → PR 4 (seam + corpora) → PR 5 (advisory tuning).
+>>>>>>> Stashed changes
 ## Session Protocol
 
 **Rules for updating this file.** Apply at session close.

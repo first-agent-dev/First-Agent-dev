@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test check run
+.PHONY: install lint format typecheck authoring-check test check run
 
 install:
 	python -m pip install --upgrade pip
@@ -16,10 +16,13 @@ format:
 typecheck:
 	mypy
 
+authoring-check:
+	fa authoring-check
+ 
 test:
 	pytest
 
-check: lint typecheck test
+check: lint typecheck authoring-check test
 
 run:
 	fa --help
