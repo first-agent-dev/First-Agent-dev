@@ -34,5 +34,5 @@ jobs:
         # surviving mutant (a bug your tests would NOT catch) matters most.
         # Expand the path list as you harden more modules.
         run: |
-          mutmut run --paths-to-mutate src/fa/sandbox/ || true
-          mutmut results || true
+          uv run mutmut run --paths-to-mutate src/fa/sandbox/ || true
+          uv run mutmut results || true

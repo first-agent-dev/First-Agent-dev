@@ -7,7 +7,7 @@ name: Advisory CI
 # generated (network not available in current dev environment).
 #
 # Blocking gates: sanity-check (just check), audit (pip-audit), gitleaks.
-# Advisory jobs: pyrefly (type-checking signal), coverage-upload.
+# Advisory jobs: pyrefly (type-checking signal).
 
 on:
   pull_request:
@@ -40,7 +40,7 @@ jobs:
         run: uv sync
 
       - name: Run checks (ruff + deptry + mypy + authoring-check + pytest, with coverage gate)
-        run: just check
+        run: uv run just check
 
       - name: Upload coverage report (read by GitHub Code coverage analysis)
         if: always()
@@ -58,7 +58,7 @@ jobs:
       # TODO: switch to `uv sync --frozen` once uv.lock lands.
       - run: uv sync
       - name: Run pip-audit (SCA floor)
-        run: pip-audit
+        run: uv run pip-audit
 
   gitleaks:
     runs-on: ubuntu-latest
@@ -80,4 +80,4 @@ jobs:
       # TODO: switch to `uv sync --frozen` once uv.lock lands.
       - run: uv sync
       - name: Run pyrefly (advisory type-checking signal)
-        run: pyrefly check
+        run: uv run pyrefly check

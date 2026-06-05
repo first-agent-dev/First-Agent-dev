@@ -21,17 +21,15 @@ jobs:
       # Without this, third-party imports (markdown_it, yaml, bashlex, pytest)
       # raise spurious E0401 import-error.
       # TODO: switch to `uv sync --frozen` once uv.lock lands.
-      run: |
-        uv sync
-        uv pip install pylint
+      run: uv sync
     - name: Lint src/ (strict; duplicate-code ENABLED)
       # Production code is held to the strict profile in [tool.pylint.*]
       # (pyproject.toml). duplicate-code (R0801) stays ON here because
       # copy-paste-and-tweak is the #1 LLM-agent code smell.
       run: |
-        pylint $(git ls-files 'src/*.py' 'verifiers/*.py')
+        uv run pylint $(git ls-files 'src/*.py' 'verifiers/*.py')
     - name: Lint tests/ (relaxed; duplicate-code DISABLED)
       # Tests use pytest idioms (fixtures shadow names, parallel scaffolding)
       # that are legitimately "duplicated"; relax via .pylintrc-tests.
       run: |
-        pylint --rcfile=.pylintrc-tests $(git ls-files 'tests/*.py')
+        uv run pylint --rcfile=.pylintrc-tests $(git ls-files 'tests/*.py')

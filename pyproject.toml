@@ -68,6 +68,9 @@ dev = [
   # Parallel type checker (Meta, stable 1.0). Advisory-only; does not
   # replace mypy. Run via `just typecheck-advisory`.
   "pyrefly>=1.0",
+  # Pylint (strict profile for src/, relaxed for tests/). Two-pass because
+  # pylint does not support per-directory rc natively.
+  "pylint>=3.2",
 ]
 
 [project.scripts]
@@ -285,6 +288,6 @@ per_rule_ignores = {
   DEP002 = [
     "mypy", "pre-commit", "pytest", "pytest-asyncio", "pytest-cov",
     "mutmut", "ruff", "types-PyYAML", "pytest-gremlins", "pip-audit",
-    "deptry", "pyrefly",
+    "deptry", "pyrefly", "pylint",
   ],
 }

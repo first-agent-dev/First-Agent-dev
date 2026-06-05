@@ -37,7 +37,7 @@ jobs:
           uv sync
  
       - name: Run Level-0 authoring kernel (always reports)
-        run: fa authoring-check --output json
+        run: uv run fa authoring-check --output json
  
       - name: Surface protected-path edits (flag for human review)
         if: github.event_name == 'pull_request'
