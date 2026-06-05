@@ -279,15 +279,13 @@ project-includes = [
 python-version = "3.13.0"
 preset = "strict"
 
-[tool.deptry]
+[tool.deptry.per_rule_ignores]
 # Dev-only packages are intentionally not imported in src/; they are
-# CLI tools (ruff, mypy, pre-commit, mutmut, pip-audit, deptry, pyrefly)
+# CLI tools (ruff, mypy, pre-commit, mutmut, pip-audit, deptry, pyrefly, pylint)
 # or test-scoped (pytest, pytest-asyncio, pytest-cov, pytest-gremlins)
 # or type stubs (types-PyYAML).
-per_rule_ignores = {
-  DEP002 = [
+DEP002 = [
     "mypy", "pre-commit", "pytest", "pytest-asyncio", "pytest-cov",
     "mutmut", "ruff", "types-PyYAML", "pytest-gremlins", "pip-audit",
     "deptry", "pyrefly", "pylint",
-  ],
-}
+]

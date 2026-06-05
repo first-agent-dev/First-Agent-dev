@@ -21,6 +21,5 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
-      - run: uv tool install semgrep
+      - run: pip install semgrep
       - run: semgrep --config=p/python --config=p/owasp-top-ten
