@@ -36,8 +36,8 @@ jobs:
       # access not available in this dev environment.
 
       - name: Install Python dependencies
-        # TODO: switch to `uv sync --frozen` once uv.lock lands.
-        run: uv sync
+        # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
+        run: uv sync --extra dev
 
       - name: Run checks (ruff + deptry + mypy + authoring-check + pytest, with coverage gate)
         run: uv run just check
@@ -55,8 +55,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v8.2.0
-      # TODO: switch to `uv sync --frozen` once uv.lock lands.
-      - run: uv sync
+      # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
+      - run: uv sync --extra dev
       - name: Run pip-audit (SCA floor)
         run: uv run pip-audit
 
@@ -77,7 +77,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v8.2.0
-      # TODO: switch to `uv sync --frozen` once uv.lock lands.
-      - run: uv sync
+      # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
+      - run: uv sync --extra dev
       - name: Run pyrefly (advisory type-checking signal)
         run: uv run pyrefly check
