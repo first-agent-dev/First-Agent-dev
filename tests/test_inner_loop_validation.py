@@ -15,6 +15,7 @@ Covers F-1..F-3 and F-12 from the PR #24 must-fix block:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import override
 
 import pytest
 
@@ -107,6 +108,7 @@ class _PathMutatorGuard(GuardMiddleware):
         self.name = name
         self.new_path = new_path
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point
         assert payload.tool_call is not None
@@ -143,6 +145,7 @@ def test_modify_does_not_bypass_schema_revalidation(tmp_path: Path) -> None:
         name = "invalidator"
         attaches_to = (LifecyclePoint.BEFORE_TOOL_EXEC,)
 
+        @override
         def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
             del point
             assert payload.tool_call is not None
@@ -279,6 +282,7 @@ class _PathRecordingGuard(GuardMiddleware):
         self.name = name
         self.observed_paths: list[str] = []
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point
         assert payload.tool_call is not None

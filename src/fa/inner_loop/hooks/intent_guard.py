@@ -64,6 +64,7 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from typing import override
 
 from fa.hygiene.pr_intent import (
     HEADER_INTENT,
@@ -261,6 +262,7 @@ class IntentGuard(GuardMiddleware):
         )
         return result.stdout
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         if point is not LifecyclePoint.BEFORE_TOOL_EXEC:
             return Decision.allow()

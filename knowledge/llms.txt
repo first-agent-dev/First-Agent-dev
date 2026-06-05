@@ -128,18 +128,20 @@ ADR-11 two-tier TCB: frozen stdlib-only Level-0 kernel + allowlisted Level-1 rul
 
 Quality gates run in CI. `make check` (ruff + mypy + authoring-check + pytest) mirrors CI locally; thresholds live in `pyproject.toml`, not in workflow YAML.
 
-- `pyproject.toml` — single config surface: ruff, mypy (strict), pytest, `[tool.coverage.*]` (branch coverage + `fail_under = 90`), `[tool.pylint.*]` (cosmetic checks disabled, `duplicate-code` kept ON for src, `fail-under = 9.0`), `[tool.mutmut]`.
+- `pyproject.toml` — single config surface: ruff, mypy (strict), pytest, `[tool.coverage.*]` (branch coverage + `fail_under = 90`), `[tool.pylint.*]` (cosmetic checks disabled, `duplicate-code` kept ON for src, `fail-under = 9.0`), `[tool.mutmut]`, `[tool.pyrefly]`, `[tool.deptry]`.
 - `.pylintrc-tests` — tests-only pylint profile; relaxes pytest idioms (fixtures, test-double args, protected-access) and disables `duplicate-code` / `C1803` for `tests/` (the src profile keeps them ON). Two-pass lint because pylint does not auto-merge per-directory rc.
-- `.github/workflows/ci.yml` — ruff + mypy + pytest (coverage-gated at 90%); uploads `coverage.xml` for GitHub Code coverage analysis.
-- `.github/workflows/pylint.yml` — two-pass pylint (src strict w/ duplicate-code; tests relaxed via `.pylintrc-tests`). Installs `.[dev]` so imports resolve (no spurious `E0401`).
-- `.github/workflows/tests.yml` — mutation testing (`mutmut`) only; manual + weekly, advisory (not a PR gate). Guards against tests that pass but assert nothing.
+- `justfile` / `Makefile` — cross-platform task runner (`just` preferred) translating all local recipes: `install`, `lint` (ruff + deptry), `format`, `typecheck` (mypy), `typecheck-advisory` (pyrefly), `authoring-check`, `test`, `audit` (pip-audit), `deadcode` (vulture), `check`.
+- `.github/workflows/advisory.yml` — advisory-only CI (local-first architecture): blocking `sanity-check` (`just check`), blocking `audit` (pip-audit), blocking `gitleaks`, advisory `pyrefly` (`continue-on-error: true`). `uv.lock` check deferred until lockfile can be generated (network not available in dev env).
+- `.github/workflows/pylint.yml` — two-pass pylint (src strict w/ duplicate-code; tests relaxed via `.pylintrc-tests`). Installs via `uv sync` (TODO: `--frozen` once `uv.lock` lands).
+- `.github/workflows/tests.yml` — mutation testing (`mutmut`) only; manual + weekly, advisory (not a PR gate). Installs via `uv sync` (TODO: `--frozen` once `uv.lock` lands).
+- `.github/workflows/semgrep.yml` — Semgrep OSS SAST (`--config=p/python --config=p/owasp-top-ten`); weekly + manual dispatch only (no `pull_request:` trigger per R-5), advisory (`continue-on-error: true`).
 
 ### Project knowledge (`knowledge/`)
 
 - [knowledge/glossary.md](./knowledge/glossary.md): Term definitions. Listed in §MUST READ FIRST.
 - [knowledge/README.md](./knowledge/README.md): Knowledge folder layout, schemas for `trace/` files, file placement rules.
 - [knowledge/project-overview.md](./knowledge/project-overview.md): Four-pillar goal, minimalism-first principle, v0.1 scope, three-stage evolution. Listed in §MUST READ FIRST.
-- [knowledge/BACKLOG.md](./knowledge/BACKLOG.md) (Large): Deferred ideas with unblock triggers. Active milestones: M-6 (PR B), M-7 (PR C). Closed: M-1..M-5, I-9.
+- [knowledge/BACKLOG.md](./knowledge/BACKLOG.md) (Large): Deferred ideas with unblock triggers. Includes R-7..R-14 deferred CI/QA recommendations (ty, custom Semgrep rules, DeepEval/Promptfoo, Tach, garak, CodeQL, Vulture, pytest-recording). Active milestones: M-6 (PR B), M-7 (PR C). Closed: M-1..M-5, I-9.
 - [knowledge/MAINTENANCE.md](./knowledge/MAINTENANCE.md): Cross-reference cascade rules — touch-lists for archiving, amending, superseding, adding files. Companion to `BACKLOG.md`.
 - [knowledge/architecture.md](./knowledge/architecture.md): High-level architecture overview (inner-loop runtime, provider chain, hook families, sandbox + draft-first enforcement, ADR-10 invariants) with Mermaid diagram.
 

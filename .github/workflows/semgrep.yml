@@ -1,0 +1,30 @@
+name: Semgrep
+
+# SAST advisory scan (R-5). Weekly + manual dispatch; NOT on the PR critical
+# path. Intra-procedural only (Semgrep OSS free tier). If signal proves clean
+# after 4 weekly runs, consider promoting to blocking with a .semgrepignore.
+#
+# Windows devs: local Semgrep is optional; primary run is Linux CI.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    name: semgrep-oss
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.2.0
+      - name: Run Semgrep (advisory SAST)
+        # Semgrep is installed via uvx (one-shot, no project deps needed).
+        # Registry: p/python (general Python anti-patterns),
+        # p/owasp-top-ten (OWASP top-ten coverage).
+        # See research note in knowledge/research/ for rationale vs Bandit.
+        run: uvx semgrep --config=p/python --config=p/owasp-top-ten

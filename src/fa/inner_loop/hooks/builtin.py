@@ -4,6 +4,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import override
 
 from fa.config import DEFAULT_CONFIG_PATH, load_capabilities_from_path
 from fa.inner_loop.hooks.base import (
@@ -36,6 +37,7 @@ class PauseGuard(GuardMiddleware):
     name: str = "pause"
     attaches_to: tuple[LifecyclePoint, ...] = (LifecyclePoint.BETWEEN_ROUNDS,)
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point, payload
         for kind in (PauseKind.RATE_LIMIT, PauseKind.AUTH):
@@ -50,6 +52,7 @@ class CapabilityGuard(GuardMiddleware):
     name: str = "capabilities"
     attaches_to: tuple[LifecyclePoint, ...] = (LifecyclePoint.BEFORE_TOOL_EXEC,)
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point
         call = payload.tool_call
@@ -99,6 +102,7 @@ class SandboxHook(GuardMiddleware):
     attaches_to: tuple[LifecyclePoint, ...] = (LifecyclePoint.BEFORE_TOOL_EXEC,)
     revalidates_after_modify: bool = True
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point
         call = payload.tool_call
@@ -138,6 +142,7 @@ class ApprovalHook(GuardMiddleware):
     name: str = "approval"
     attaches_to: tuple[LifecyclePoint, ...] = (LifecyclePoint.BEFORE_TOOL_EXEC,)
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point
         call = payload.tool_call
@@ -163,6 +168,7 @@ class AuditHook(ObserverMiddleware):
     name: str = "audit"
     attaches_to: tuple[LifecyclePoint, ...] = (LifecyclePoint.AFTER_TOOL_EXEC,)
 
+    @override
     def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
         call = payload.tool_call
         result = payload.tool_result
@@ -213,6 +219,7 @@ class VerifierObserver(ObserverMiddleware):
     name: str = "verifier"
     attaches_to: tuple[LifecyclePoint, ...] = (LifecyclePoint.AFTER_TOOL_EXEC,)
 
+    @override
     def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
         del point
         call = payload.tool_call
@@ -320,6 +327,7 @@ class LearningObserver(ObserverMiddleware):
     attaches_to: tuple[LifecyclePoint, ...] = (LifecyclePoint.AFTER_TOOL_EXEC,)
     now: str | None = None
 
+    @override
     def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
         del point
         call = payload.tool_call

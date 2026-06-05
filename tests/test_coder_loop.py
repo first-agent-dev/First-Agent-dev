@@ -534,7 +534,7 @@ def test_drive_session_keyboard_interrupt_returns_outcome(
 
         def request(
             self,
-            _request: RequestInfo,
+            request: RequestInfo,
             *,
             base_url: str,
             api_key: str,

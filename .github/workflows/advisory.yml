@@ -1,0 +1,83 @@
+name: Advisory CI
+
+# Local-first architecture: the authoritative gate is `just check` run by the
+# developer/agent before push. GitHub CI is an advisory double-check.
+# Only the lightweight sanity-check job is blocking (verifies `just check`
+# was not skipped). `uv.lock` check is deferred until the lockfile can be
+# generated (network not available in current dev environment).
+#
+# Blocking gates: sanity-check (just check), audit (pip-audit), gitleaks.
+# Advisory jobs: pyrefly (type-checking signal).
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  sanity-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+      # TODO: restore `uv lock --check` once uv.lock is committed (R-1
+      # reproducible-builds). Blocked: uv.lock generation requires network
+      # access not available in this dev environment.
+
+      - name: Install Python dependencies
+        # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
+        run: uv sync --extra dev
+
+      - name: Run checks (ruff + deptry + mypy + authoring-check + pytest, with coverage gate)
+        run: uv run just check
+
+      - name: Upload coverage report (read by GitHub Code coverage analysis)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 14
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.2.0
+      # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
+      - run: uv sync --extra dev
+      - name: Run pip-audit (SCA floor)
+        run: uv run pip-audit
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks detect
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pyrefly:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8.2.0
+      # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
+      - run: uv sync --extra dev
+      - name: Run pyrefly (advisory type-checking signal)
+        run: uv run pyrefly check

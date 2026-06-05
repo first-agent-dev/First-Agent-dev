@@ -1170,6 +1170,78 @@
   - `tests/test_chunker_plaintext.py::test_anchor_falls_back_to_chunk_for_dot_only_name`.
   - `tests/test_hygiene_hooks_install.py` — hook symlink installation.
 
+## R-7 — DEFER `ty` as primary type checker until stable 1.0
+
+- **Status:** deferred from CI/QA tooling audit (2026-06-04).
+- **Idea:** Astral's `ty` is beta (v0.0.37); no plugin system, different unannotated-body semantics than mypy. Migration is technically viable (FA has no mypy plugins) but premature.
+- **Blocked-on:** `astral-sh/ty` releases 1.0.0.
+- **Unblock-trigger:** `astral-sh/ty` releases 1.0.0.
+- **First concrete step once unblocked:** Re-evaluate mypy vs ty migration on the then-current FA codebase; run both in parallel for one cycle before flipping the gate.
+- **References:** [`research/ci-qa-tooling-adversarial-2026-06.md`](./research/ci-qa-tooling-adversarial-2026-06.md) §0 R-7.
+
+## R-8 — DEFER custom Semgrep rules for `@tool` surface until harness stabilizes
+
+- **Status:** deferred from CI/QA tooling audit (2026-06-04).
+- **Idea:** Custom Semgrep rules for `@tool` decorator boundaries, MCP protocol misuse, and LLM-tainted args are valuable, but FA's tool surface is still evolving.
+- **Blocked-on:** ADR-8 / HookRegistry contract freeze.
+- **Unblock-trigger:** "Custom Semgrep rules blocked on ADR-8 freeze"
+- **First concrete step once unblocked:** Author custom Semgrep YAML rules targeting `src/fa/inner_loop/tools/` and `src/fa/inner_loop/registry.py`; run them advisory for 4 weeks before promoting to blocking.
+- **References:** [`research/ci-qa-tooling-adversarial-2026-06.md`](./research/ci-qa-tooling-adversarial-2026-06.md) §0 R-8.
+
+## R-9 — DEFER DeepEval / Promptfoo agent eval harness until UC5
+
+- **Status:** deferred from CI/QA tooling audit (2026-06-04).
+- **Idea:** Agent behavioral evaluation is critical (Pillar 4), but FA has no stable inner-loop contract or golden prompt dataset yet. Eval without a stable harness measures noise.
+- **Blocked-on:** UC5 eval-harness infrastructure + inner-loop contract freeze.
+- **Unblock-trigger:** "UC5 eval-harness: evaluate DeepEval vs Promptfoo after inner-loop contract freeze"
+- **First concrete step once unblocked:** Build a golden prompt dataset (≥20 hand-annotated sessions), integrate both DeepEval and Promptfoo in parallel advisory jobs, and pick the one with lower FP rate on the golden set.
+- **References:** [`research/ci-qa-tooling-adversarial-2026-06.md`](./research/ci-qa-tooling-adversarial-2026-06.md) §0 R-9.
+
+## R-10 — DEFER `Tach` module boundary enforcement until module count > 5
+
+- **Status:** deferred from CI/QA tooling audit (2026-06-04).
+- **Idea:** Tach enforces import boundaries between modules. FA currently has ~15 top-level packages under `src/fa/`, but most are tightly coupled and not independently deployable.
+- **Blocked-on:** `src/fa/` exceeds 5 independently deployable modules.
+- **Unblock-trigger:** "Adopt Tach when module count > 5"
+- **First concrete step once unblocked:** Add `tach.toml` with import boundaries between the independently deployable modules; gate CI on `tach check`.
+- **References:** [`research/ci-qa-tooling-adversarial-2026-06.md`](./research/ci-qa-tooling-adversarial-2026-06.md) §0 R-10.
+
+## R-11 — SKIP `garak` adversarial scanning for now
+
+- **Status:** skip from CI/QA tooling audit (2026-06-04).
+- **Idea:** NVIDIA's `garak` probes LLMs for jailbreaks, prompt injection, and data extraction. Complementary to SAST.
+- **Blocked-on:** FA exposes a network-facing agent endpoint.
+- **Unblock-trigger:** FA exposes a network-facing agent endpoint.
+- **First concrete step once unblocked:** Evaluate garak v0.14+ against the live endpoint; integrate as an advisory nightly scan.
+- **References:** [`research/ci-qa-tooling-adversarial-2026-06.md`](./research/ci-qa-tooling-adversarial-2026-06.md) §0 R-11.
+
+## R-12 — SKIP `CodeQL` deep taint analysis
+
+- **Status:** skip from CI/QA tooling audit (2026-06-04).
+- **Idea:** CodeQL provides deeper inter-procedural taint than Semgrep OSS, but it is slow and memory-heavy. FA's threat model is authoring-time, not runtime taint.
+- **Blocked-on:** Semgrep advisory proves useful and deeper taint is needed.
+- **Unblock-trigger:** Semgrep advisory surfaces actionable findings that require inter-procedural taint.
+- **First concrete step once unblocked:** Enable CodeQL weekly as a deeper nightly layer alongside Semgrep.
+- **References:** [`research/ci-qa-tooling-adversarial-2026-06.md`](./research/ci-qa-tooling-adversarial-2026-06.md) §0 R-12.
+
+## R-13 — SKIP `Vulture` dead-code detection as a CI gate
+
+- **Status:** skip from CI/QA tooling audit (2026-06-04).
+- **Idea:** Vulture finds dead code (unused functions/classes/variables). AI projects accumulate it, but Vulture has high false positives on dynamically dispatched code.
+- **Blocked-on:** Manual dead-code audit desired (monthly).
+- **Unblock-trigger:** Manual dead-code audit desired (monthly).
+- **First concrete step once unblocked:** Run `make deadcode` (`vulture src/ --min-confidence 90`) manually; do not gate CI on it.
+- **References:** [`research/ci-qa-tooling-adversarial-2026-06.md`](./research/ci-qa-tooling-adversarial-2026-06.md) §0 R-13.
+
+## R-14 — SKIP `pytest-recording` / VCR.py for LLM mocks
+
+- **Status:** skip from CI/QA tooling audit (2026-06-04).
+- **Idea:** VCR.py records HTTP fixtures for deterministic CI. FA's test suite mocks LLM calls at the `ProviderAdapter` level — no real HTTP traffic in tests yet.
+- **Blocked-on:** Tests introduce HTTP-dependent components (provider client integration tests).
+- **Unblock-trigger:** Tests introduce HTTP-dependent components (provider client integration tests).
+- **First concrete step once unblocked:** Add `pytest-recording` and record cassettes for the first HTTP-dependent test.
+- **References:** [`research/ci-qa-tooling-adversarial-2026-06.md`](./research/ci-qa-tooling-adversarial-2026-06.md) §0 R-14.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

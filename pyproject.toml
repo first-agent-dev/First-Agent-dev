@@ -59,6 +59,18 @@ dev = [
   # on Linux; required for the [tool.pytest-gremlins] config in this
   # file to actually run on Windows dev machines.
   "pytest-gremlins>=0.2",
+  # SCA floor: scans dependencies for known CVEs (PyPA-maintained).
+  # Run via `just audit` or `make audit`. Blocking gate.
+  "pip-audit>=2.7",
+  # Dependency hygiene: flags unused/missing/misplaced deps in pyproject.toml.
+  # Run via `just lint` / `make lint`. Blocking gate.
+  "deptry>=0.21",
+  # Parallel type checker (Meta, stable 1.0). Advisory-only; does not
+  # replace mypy. Run via `just typecheck-advisory`.
+  "pyrefly>=1.0",
+  # Pylint (strict profile for src/, relaxed for tests/). Two-pass because
+  # pylint does not support per-directory rc natively.
+  "pylint>=3.2",
 ]
 
 [project.scripts]
@@ -258,3 +270,27 @@ operators = ["comparison", "arithmetic", "boolean", "boundary", "return"]
 exclude = ["**/test_*", "**/__init__.py"]
 report = ["console", "html"]
 cache = true
+
+[tool.pyrefly]
+project-includes = [
+    "src",
+    "tests",
+]
+python-version = "3.13.0"
+preset = "strict"
+# Advisory-only: suppress pyrefly-specific strictness rules that mypy does not
+# enforce, to avoid noise on a codebase written for mypy strict.
+# Revisit when migrating from mypy to pyrefly as primary type checker.
+[tool.pyrefly.errors]
+implicit-any-empty-container = false
+
+[tool.deptry.per_rule_ignores]
+# Dev-only packages are intentionally not imported in src/; they are
+# CLI tools (ruff, mypy, pre-commit, mutmut, pip-audit, deptry, pyrefly, pylint)
+# or test-scoped (pytest, pytest-asyncio, pytest-cov, pytest-gremlins)
+# or type stubs (types-PyYAML).
+DEP002 = [
+    "mypy", "pre-commit", "pytest", "pytest-asyncio", "pytest-cov",
+    "mutmut", "ruff", "types-PyYAML", "pytest-gremlins", "pip-audit",
+    "deptry", "pyrefly", "pylint",
+]

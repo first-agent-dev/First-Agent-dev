@@ -13,7 +13,7 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
-**As of:** 2026-06-01 — ADR-11 (Authoring Guardrails) landed as a doc-only ADR-RULE decision (two-tier TCB, `ADR-11-I1..I8`), then amended same-day to **freeze the Level-0 public contract** (§Verification + catch/fp corpora, `FA-AUTHORING-V<N>` code namespace, single `.fa/session.toml`, `rule_input_hash` source, CI-gate note); code rollout PR 1..PR 5 builds against the frozen contract. Prior: M-6/M-7/M-8 landed; PR-intent enforcement loop closed.
+**As of:** 2026-06-04 — CI/QA tooling TAKE recommendations implemented (R-1..R-6, R-15): uv migration (local + CI; `uv.lock` generation deferred — network unavailable in dev env, CI uses `uv sync` without `--frozen` until lockfile lands), pip-audit (blocking SCA), deptry (blocking lint), gitleaks (pre-commit + CI), Semgrep (advisory weekly + manual only, no PR trigger), pyrefly (advisory type-checking), justfile (cross-platform task runner). Local-first architecture: `just check` is the authoritative gate; GitHub CI is advisory-only except sanity-check + audit + gitleaks. Deferred: R-7..R-14 added to BACKLOG.md with unblock triggers.
 
 ### Landmarks (what landed)
 
@@ -28,8 +28,7 @@ Overwritten each session! Details live at the pointer, not here.
 | PR B landed: `src/fa/hygiene/pr_intent.py` classifier + `prepare-commit-msg` / `commit-msg` hooks; snapshot test pins hook constants to skill §Output format (closes M-6) | 2026-05-27 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`hooks/`](./src/fa/hygiene/hooks/), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
 | PR A' landed: full PR-creation rulebook → loadable skill; AGENTS.md | 2026-05-26 | [`pr-creation/SKILL.md`](./knowledge/skills/pr-creation/SKILL.md) |
 | `knowledge/skills/` directory established; `repo-audit` migrated (closes I-9b) | 2026-05-26 | [`skills/README.md`](./knowledge/skills/README.md) |
-| PR A: §PR Intent Classification (5 Level-1 intents) + anti-shallow-fix gate | 2026-05-25 | [`AGENTS.md` §Loadable skills](./AGENTS.md#loadable-skills) |
-| PR B: (PR 1 — Level-0 TCB skeleton + protected-path governance) PR 1 (Appendix B, R-1/R-11/R-2/R-6/R-7/R-10/R-12/R-15): src/fa/authoring_tcb.py (ядро), src/fa/authoring_rules/__init__.py (пустой allowlist + README), CLI fa authoring-check, scripts/check_protected_paths.py (realpath-denylist, non-blocking flag), .github/CODEOWNERS, .github/workflows/authoring-guardrails.yml (always-run, без paths:), Makefile (authoring-check в check), тесты ≥90% + strict pylint. |
+| CI/QA tooling hardening (R-1..R-6, R-15): uv + pip-audit + deptry + gitleaks + Semgrep + pyrefly + justfile. `advisory.yml` replaces `ci.yml` (local-first: blocking sanity-check/audit/gitleaks, advisory pyrefly). `uv.lock` generation deferred (network unavailable in dev env); CI uses `uv sync` without `--frozen` until lockfile lands. `pyproject.toml` gains `[tool.pyrefly]` (strict) + `[tool.deptry]` (DEP002 ignores for dev-only packages). | 2026-06-04 | [`ci-qa-tooling-adversarial-2026-06.md`](./knowledge/research/ci-qa-tooling-adversarial-2026-06.md) §0 |
 ### Gotchas (delete when resolved)
 
 | Gotcha | Pointer |
@@ -65,19 +64,6 @@ Priority-ordered. Completed items deleted, not struck through.
    rule #N» → [`pr-creation/SKILL.md` §PR Checklist](./knowledge/skills/pr-creation/SKILL.md).
 4. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
    number» audit; `[CODE]` namespace + A23 lint.
-<<<<<<< Updated upstream
-5. **ADR-11 rollout PR 1 — Level-0 TCB skeleton + protected-path
-   governance** (now building against the **frozen** Level-0 public
-   contract: diagnostic-code namespace, single `.fa/session.toml`,
-   `rule_input_hash` source, FP-`<1%` promotion gate, §Verification
-   corpus shape) (`src/fa/authoring_tcb.py`, `src/fa/authoring_rules/__init__.py`,
-   `scripts/check_protected_paths.py`, `.github/workflows/authoring-guardrails.yml`,
-   `.github/CODEOWNERS`). Implements R-1/R-11/R-2/R-6/R-7/R-10/R-12/R-15
-   per [ADR-11](./knowledge/adr/ADR-11-authoring-guardrails.md) + blueprint
-   Appendix B. PR 2..PR 5 follow (teeth → parity/docs → seam/corpora →
-   advisory tuning).
-
-=======
 5. **ADR-11 rollout PR 2 — first Level-1 rule teeth.** The frozen
    Level-0 kernel + empty allowlist landed in PR 1; PR 2 adds the first
    rules into `src/fa/authoring_rules/` behind `RULE_ALLOWLIST` **without
@@ -86,7 +72,6 @@ Priority-ordered. Completed items deleted, not struck through.
    AST-not-regex (ADR-11-I4); ADVISORY-first then promote on `catch-corpus/`
    hit + FP `<1%`. Per blueprint Appendix B + [ADR-11](./knowledge/adr/ADR-11-authoring-guardrails.md).
    PR 3 (parity/docs) → PR 4 (seam + corpora) → PR 5 (advisory tuning).
->>>>>>> Stashed changes
 ## Session Protocol
 
 **Rules for updating this file.** Apply at session close.

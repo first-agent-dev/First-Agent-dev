@@ -60,6 +60,7 @@ import re
 import time
 from collections.abc import Callable
 from enum import StrEnum
+from typing import override
 
 from fa.inner_loop.hooks.base import (
     Decision,
@@ -166,6 +167,7 @@ class BlockerMiddleware(GuardMiddleware):
             f"{remaining:.1f}s remaining in suppression window"
         )
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         if point is LifecyclePoint.BEFORE_TOOL_EXEC:
             return self._gate(payload)
@@ -243,6 +245,7 @@ class RateLimitBlocker(BlockerMiddleware):
     # is needed (avoids useless-parent-delegation / W0246).
     suppression_seconds = DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS
 
+    @override
     def _detect(self, result: ToolResult) -> bool:
         if result.error is None:
             return False
@@ -276,6 +279,7 @@ class LockfileBlocker(BlockerMiddleware):
     # Default supplied via class attribute; see RateLimitBlocker note (W0246).
     suppression_seconds = DEFAULT_LOCKFILE_SUPPRESSION_SECONDS
 
+    @override
     def _detect(self, result: ToolResult) -> bool:
         if result.error is None:
             return False
@@ -303,6 +307,7 @@ class AuthExpiredBlocker(BlockerMiddleware):
     # 0 == inert gate (observe-only) per the class docstring.
     suppression_seconds = DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS
 
+    @override
     def _detect(self, result: ToolResult) -> bool:
         if result.error is None:
             return False

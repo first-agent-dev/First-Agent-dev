@@ -39,7 +39,7 @@ import json
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, override
 
 from fa.providers.base import Transport, TransportResponse
 
@@ -60,6 +60,7 @@ class UrllibTransport(Transport):
     def __init__(self, *, user_agent: str = DEFAULT_USER_AGENT) -> None:
         self._user_agent = user_agent
 
+    @override
     def post(
         self,
         url: str,

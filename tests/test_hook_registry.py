@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import override
+
 import pytest
 
 from fa.inner_loop import ToolCall
@@ -20,6 +22,7 @@ class RecordingGuard(GuardMiddleware):
         self.name = name
         self.calls = calls
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point, payload
         self.calls.append(self.name)
@@ -30,6 +33,7 @@ class DenyGuard(GuardMiddleware):
     name = "deny"
     attaches_to = (LifecyclePoint.BEFORE_TOOL_EXEC,)
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point, payload
         return Decision.deny("blocked")
@@ -39,6 +43,7 @@ class ModifyGuard(GuardMiddleware):
     name = "modify"
     attaches_to = (LifecyclePoint.BEFORE_TOOL_EXEC,)
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point
         assert payload.tool_call is not None
@@ -57,6 +62,7 @@ class ExplodingObserver(ObserverMiddleware):
     name = "boom"
     attaches_to = (LifecyclePoint.AFTER_TOOL_EXEC,)
 
+    @override
     def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
         del point, payload
         raise RuntimeError("observer failed")
@@ -68,6 +74,7 @@ class LlmGuard(GuardMiddleware):
     uses_llm = True
     family = "qwen"
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point, payload
         return Decision.allow()
