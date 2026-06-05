@@ -278,6 +278,13 @@ project-includes = [
 ]
 python-version = "3.13.0"
 preset = "strict"
+# Advisory-only: suppress pyrefly-specific strictness rules that mypy does not
+# enforce, to avoid noise on a codebase written for mypy strict.
+# Revisit when migrating from mypy to pyrefly as primary type checker.
+ignore = [
+    "missing-override-decorator",
+    "implicit-any-empty-container",
+]
 
 [tool.deptry.per_rule_ignores]
 # Dev-only packages are intentionally not imported in src/; they are
