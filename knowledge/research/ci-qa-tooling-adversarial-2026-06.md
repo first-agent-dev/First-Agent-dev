@@ -43,9 +43,9 @@ links: []
 mentions: []
 confidence: extracted
 claims_requiring_verification:
-  - "uv audit will be stable by late 2026" — roadmap exists but no committed date
-  - "ty plugin system will never exist" — Astral has made no public statement either way
-  - "Ruff covers ~90% of pylint checks" — approximate; exact coverage depends on pylint configuration
+- "uv audit will be stable by late 2026" — roadmap exists but no committed date;
+- "ty plugin system will never exist" — Astral has made no public statement either way;
+- "Ruff covers ~90% of pylint checks" — approximate; exact coverage depends on pylint configuration;
 ---
 
 > **Status:** active. Note produced via
