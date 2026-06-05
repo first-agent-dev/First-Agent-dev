@@ -25,7 +25,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v8.2.0
 
       - name: Install just
         run: |
@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v8.2.0
       # TODO: switch to `uv sync --frozen` once uv.lock lands.
       - run: uv sync
       - name: Run pip-audit (SCA floor)
@@ -76,7 +76,7 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v8.2.0
       # TODO: switch to `uv sync --frozen` once uv.lock lands.
       - run: uv sync
       - name: Run pyrefly (advisory type-checking signal)

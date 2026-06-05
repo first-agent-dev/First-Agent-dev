@@ -21,5 +21,10 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - run: pip install semgrep
-      - run: semgrep --config=p/python --config=p/owasp-top-ten
+      - uses: astral-sh/setup-uv@v8.2.0
+      - name: Run Semgrep (advisory SAST)
+        # Semgrep is installed via uvx (one-shot, no project deps needed).
+        # Registry: p/python (general Python anti-patterns),
+        # p/owasp-top-ten (OWASP top-ten coverage).
+        # See research note in knowledge/research/ for rationale vs Bandit.
+        run: uvx semgrep --config=p/python --config=p/owasp-top-ten
