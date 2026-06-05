@@ -1,4 +1,3 @@
----
 title: "CI & Code QA Tooling for AI-Managed Python Projects — Adversarial Review"
 source:
   - "arXiv:2601.22952 (Sifting the Noise — SAST FP filtering)"
