@@ -56,6 +56,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import override
 
 from fa.inner_loop.hooks.base import (
     Decision,
@@ -206,6 +207,7 @@ class CostGuardian(GuardMiddleware):
         self._event_log = event_log
         self.rollup = CostRollup()
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         if point is LifecyclePoint.BEFORE_TOOL_EXEC:
             return self._gate(payload)

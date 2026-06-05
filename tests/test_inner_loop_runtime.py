@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import sys
 from pathlib import Path
+from typing import override
 
 import pytest
 
@@ -202,6 +203,7 @@ class _AfterExecDenyGuard(GuardMiddleware):
     name = "after-deny"
     attaches_to = (LifecyclePoint.AFTER_TOOL_EXEC,)
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point, payload
         return Decision.deny("after-exec guard denied")
@@ -313,6 +315,7 @@ class _BetweenRoundsCountingGuard(GuardMiddleware):
         super().__init__()
         self.calls: list[str] = []
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point
         self.calls.append("" if payload.tool_call is None else payload.tool_call.name)
@@ -323,6 +326,7 @@ class _FailingObserver(ObserverMiddleware):
     name = "failing-observer"
     attaches_to = (LifecyclePoint.AFTER_TOOL_EXEC,)
 
+    @override
     def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
         del point, payload
         raise RuntimeError("observer write failed")

@@ -20,7 +20,7 @@ the work lives in the recovery module.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, override
 
 from fa.inner_loop.hooks.base import (
     HookPayload,
@@ -55,6 +55,7 @@ class FailureClassifierObserver(ObserverMiddleware):
         # without an EventLog read this directly.
         self.recent_actions: list[RecoveryAction] = []
 
+    @override
     def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
         if point is not LifecyclePoint.AFTER_TOOL_EXEC:
             return
@@ -108,6 +109,7 @@ class AttemptHistoryObserver(ObserverMiddleware):
         # :meth:`AttemptHistory.append`.
         self._time_source = time_source
 
+    @override
     def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
         if point is not LifecyclePoint.AFTER_TOOL_EXEC:
             return

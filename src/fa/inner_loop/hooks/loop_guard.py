@@ -36,6 +36,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import override
 
 from fa.inner_loop.hooks.base import (
     Decision,
@@ -184,6 +185,7 @@ class LoopGuard(GuardMiddleware):
             # error from the warn sink and move on.
             pass
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         if point is LifecyclePoint.BEFORE_TOOL_EXEC:
             self._record(payload)
