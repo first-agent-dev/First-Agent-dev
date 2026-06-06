@@ -1170,6 +1170,108 @@
   - `tests/test_chunker_plaintext.py::test_anchor_falls_back_to_chunk_for_dot_only_name`.
   - `tests/test_hygiene_hooks_install.py` — hook symlink installation.
 
+## I-12 — Authoring rules: scope coverage gap (`scripts/`, `verifiers/`)
+
+- **Status:** deferred from ADR-11 PR-2 self-review (2026-06-06).
+- **Idea:** PR-2 Level-1 rules scope strictly: V2 (`exports.py`) scans
+  `src/` only; V4 / V11 (`tests.py`) scan `tests/` only. Two real
+  source trees are therefore **not** authoring-guarded today:
+  - `scripts/` — contains `check_protected_paths.py`, the
+    governance bundle's diff-checker. A regression here weakens the
+    TCB-write defense (ADR-11-I7) but no rule catches it.
+  - `verifiers/` — contains the DSV YAML contracts and helper Python.
+- **Worth fixing?** Yes, but low priority. `scripts/` is one file
+  today; `verifiers/` is YAML-heavy with little Python. The risk
+  surfaces if either grows: new helpers added without `__all__`
+  curation, or test helpers slipping into `verifiers/` with
+  `pytest.skip`.
+- **Blocked-on:** None. Two-line constant change in each rule
+  (`_INCLUDED_PREFIXES` tuple).
+- **Unblock-trigger:** Either tree gains a second `.py` file, OR a
+  V2-class regression is detected manually in `scripts/`.
+- **First concrete step once unblocked:** Extend `_INCLUDED_PREFIXES`
+  in `src/fa/authoring_rules/exports.py` to `("src/", "scripts/",
+  "verifiers/")`. Re-run `fa authoring-check` and triage any new
+  findings the same way `TimeSource` was triaged in PR-2 (add to
+  `__all__` or rename `_`-private).
+- **References:**
+  - `src/fa/authoring_rules/exports.py:41` — `_INCLUDED_PREFIXES`.
+  - `src/fa/authoring_rules/tests.py:54` — `_INCLUDED_PREFIXES`.
+  - ADR-11 §I-7 (protected-path bundle, lists `scripts/check_protected_paths.py`).
+
+## I-13 — V4 import-alias bypass (`from pytest import skip`)
+
+- **Status:** known limitation from ADR-11 PR-2 stress-test (2026-06-06).
+- **Idea:** V4 `TEST_SEMANTIC_DECAY` binds to the literal AST shape
+  `pytest.skip(...)` / `pytest.mark.skip`. An adversarial author (or
+  an LLM that has read the rule) can bypass with:
+  ```python
+  from pytest import skip
+  skip("nope")          # not detected
+  ```
+  The decorator form (`@pytest.mark.skip`) is unaffected because the
+  attribute chain is the same regardless of how `pytest` was imported.
+- **Cost / benefit:** Implementing full import-alias tracking via
+  `ast.NodeVisitor` is ~half a day (one visitor that builds a
+  `name → fully-qualified-name` map). The corresponding risk is real
+  but small: bypass requires the author to deliberately write a less
+  idiomatic import. Net cost-of-bypass is now ≈30 seconds of typing,
+  same order as commenting the rule out — already covered by
+  ADR-11 §12.4 (the bar is "raise the cost of bypass", not "prove
+  impossibility").
+- **Blocked-on:** None. Pure implementation work in
+  `src/fa/authoring_rules/tests.py`.
+- **Unblock-trigger:** Either an `fp-corpus` measurement (PR-4)
+  surfaces a real bypass in production, OR ADR-11 §12.4 is amended
+  to require full alias-tracking for all V4-class rules.
+- **First concrete step once unblocked:** Add an import-walker pass
+  before the AST-walk; build a `{local_name: pytest.<attr>}` map for
+  each file; widen `_is_pytest_call` / `_pytest_mark_attr` to consult
+  the map. Add fixture tests for the four bypass shapes
+  (`from pytest import skip`, `import pytest as pt`, `pt.skip(...)`,
+  `pt.mark.skip`).
+- **References:**
+  - `src/fa/authoring_rules/tests.py:62` — `_is_pytest_call`.
+  - `src/fa/authoring_rules/tests.py:73` — `_pytest_mark_attr`.
+  - ADR-11 §12.4 (regex/AST bypass acknowledged risk).
+
+## I-14 — ADR-11 PR-3+ rule packs (V3, V5, V7, V10, V12, V14)
+
+- **Status:** scheduled per blueprint Appendix B; PR-2 landed
+  2026-06-06 with V2 / V4 / V11.
+- **Idea:** Remaining V-N codes from the F-1..F-10 catch-corpus table:
+  - **V3 — generation parity** (F-3 `SQUASH_MSG` Python↔Bash drift).
+    Lives in `src/fa/authoring_rules/parity.py`. **PR-3.**
+  - **V5 — doc integrity** (F-5 stale BACKLOG, F-6 missing `llms.txt`
+    entry). Lives in `src/fa/authoring_rules/docs.py`. **PR-3.**
+  - **V6 — session seam** (`.fa/session.toml` staged-paths ⊆ seam).
+    Lives in `src/fa/authoring_rules/seam.py`. **PR-4** alongside
+    the `catch-corpus/` + `fp-corpus/` directories.
+  - **V7 — SSOT enum** (F-1 bash-intent classifier shape).
+    Advisory-first. **PR-3 or later.**
+  - **V10 — reference safety** (F-8 signature change with missed
+    call-sites). Requires inter-procedural / call-graph analysis;
+    **deferred indefinitely until a stdlib AST approach is proven
+    cheap enough** (Semgrep-OSS is intra-procedural so wouldn't
+    help; the adversarial note R-8 already documents this).
+  - **V12 — message registry**. **PR-5.**
+  - **V14 — AI session trailers** (F-10 `Co-authored-by` omitted).
+    Procedural until harness emits read-receipts; **deferred per
+    ADR-11-I8** ("I-BOOT is procedural until the harness can emit
+    read receipts").
+- **Blocked-on:** PR-2 has now landed. Roadmap proceeds PR-3 → PR-4 → PR-5.
+- **Unblock-trigger:** PR-2 is merged + no FP regressions surface
+  in the first week of production use.
+- **First concrete step once unblocked:** PR-3 — create
+  `src/fa/authoring_rules/parity.py` with a single rule pinning
+  `SQUASH_MSG` between `src/fa/hygiene/pr_intent.py` and the
+  git hook bash script (the existing
+  `tests/test_pr_intent_snapshot.py` is the seed pattern).
+- **References:**
+  - `knowledge/research/ADR-11-Authoring-Guardrails-Blueprint.md`
+    Appendix B (full rollout schedule).
+  - `src/fa/authoring_rules/README.md` (rollout table, PR-2 marked done).
+
 ## R-7 — DEFER `ty` as primary type checker until stable 1.0
 
 - **Status:** deferred from CI/QA tooling audit (2026-06-04).

@@ -118,8 +118,11 @@ PR-intent classifier + git-hook installer (M-6 / M-7 producer side). Shared vali
 ADR-11 two-tier TCB: frozen stdlib-only Level-0 kernel + allowlisted Level-1 rule packs, CI-enforced, protected-path-governed.
 
 - `src/fa/authoring_tcb.py` — Level-0 kernel (`RuleResult`, `Rule` protocol, `run_all`, SHA-256 hashing, deterministic sorted output, fail-closed). Frozen and stdlib-only (ADR-11-I1).
-- `src/fa/authoring_rules/__init__.py` — static `RULE_ALLOWLIST` dispatch; empty for PR 1 (v0.1 skeleton).
+- `src/fa/authoring_rules/__init__.py` — static `RULE_ALLOWLIST` dispatch. PR-2 ships three rules (HARD-BLOCK): `EXPORTS_COMPLETENESS` (V2, F-2/F-7 `__all__` completeness), `TEST_SEMANTIC_DECAY` (V4 family: `pytest.skip` / non-strict `xfail` / focus markers, ADR-11-I5), `PLACEHOLDER_ASSERTION` (V11, ADR-11-I5 + F-9 tautological asserts).
 - `src/fa/authoring_rules/README.md` — I-BOOT authoring read-set (ADR-11-I8): contract, diagnostic-code namespace, severity lifecycle, rollout table.
+- `src/fa/authoring_rules/exports.py` — V2 rule pack: `__all__` completeness (defs + explicit re-exports only; module-private-by-convention `LOGGER`/`logger`/`log` ignored).
+- `src/fa/authoring_rules/tests.py` — V4 + V11 rule packs (ADR-11-I5 test semantic decay): `pytest.skip` call/decorator, non-strict `xfail`, focus markers, placeholder assertions.
+- `src/fa/authoring_rules/_scan.py` — internal helper (`iter_python_files`, `sha256`, `node_input_hash`) shared by Level-1 rule packs; centralises scope-filtering and skips the `catch-corpus/` / `fp-corpus/` directories so corpus fixtures cannot fail the regular kernel run.
 - `scripts/check_protected_paths.py` — CI diff-checker: `realpath`-resolved denylist for TCB paths, non-blocking by default, GitHub Actions annotations (ADR-11-I7).
 - `.github/workflows/authoring-guardrails.yml` — always-run CI workflow (no `paths:` filter, ADR-11-I6); runs `fa authoring-check` + `check_protected_paths.py` on PRs.
 - CLI: `fa authoring-check --workspace <path> --manifest <toml> --output text|json`.
