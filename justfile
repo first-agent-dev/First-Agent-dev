@@ -38,4 +38,7 @@ audit:
 deadcode:
     -vulture src/ --min-confidence 90
 
-check: lint typecheck authoring-check test
+lock-check:
+    uv lock --locked
+
+check: lock-check lint typecheck authoring-check test
