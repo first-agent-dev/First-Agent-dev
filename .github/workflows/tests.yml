@@ -8,9 +8,9 @@ name: Mutation testing
 # LLM-written tests that look thorough but assert nothing.
 
 on:
-  workflow_dispatch:        # run on demand from the Actions tab
+  workflow_dispatch:  # run on demand from the Actions tab
   schedule:
-    - cron: "0 6 * * 1"     # weekly, Monday 06:00 UTC
+    - cron: "0 6 * * 1"  # weekly, Monday 06:00 UTC
 
 permissions:
   contents: read

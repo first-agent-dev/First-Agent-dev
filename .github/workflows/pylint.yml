@@ -1,6 +1,18 @@
 name: Pylint
 
-on: [push]
+# Scoped to PRs and pushes to main, matching advisory.yml /
+# authoring-guardrails.yml. Feature-branch pushes do NOT pay the pylint cost;
+# the PR opening event picks them up. If you want per-push signal on a
+# specific branch, add it to the `branches:` list below.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   build:
