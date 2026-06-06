@@ -32,9 +32,8 @@ jobs:
       - name: Install package
         # Runtime deps only: the Level-0 kernel is stdlib-only, but the
         # `fa` CLI entry point imports the wider package.
-        # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
         run: |
-          uv sync --extra dev
+          uv sync --frozen --extra dev
  
       - name: Run Level-0 authoring kernel (always reports)
         run: uv run fa authoring-check --output json

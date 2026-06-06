@@ -20,8 +20,7 @@ jobs:
       # Install the project + dev extras so pylint can IMPORT every module.
       # Without this, third-party imports (markdown_it, yaml, bashlex, pytest)
       # raise spurious E0401 import-error.
-      # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
-      run: uv sync --extra dev
+      run: uv sync --frozen --extra dev
     - name: Lint src/ (strict; duplicate-code ENABLED)
       # Production code is held to the strict profile in [tool.pylint.*]
       # (pyproject.toml). duplicate-code (R0801) stays ON here because

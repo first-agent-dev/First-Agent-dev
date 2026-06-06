@@ -3,8 +3,8 @@ name: Advisory CI
 # Local-first architecture: the authoritative gate is `just check` run by the
 # developer/agent before push. GitHub CI is an advisory double-check.
 # Only the lightweight sanity-check job is blocking (verifies `just check`
-# was not skipped). `uv.lock` check is deferred until the lockfile can be
-# generated (network not available in current dev environment).
+# was not skipped). `uv.lock` is committed; `uv lock --check` is a blocking
+# gate. If it fails, run `uv lock` locally and commit the updated lockfile.
 #
 # Blocking gates: sanity-check (just check), audit (pip-audit), gitleaks.
 # Advisory jobs: pyrefly (type-checking signal).
@@ -31,13 +31,13 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
-      # TODO: restore `uv lock --check` once uv.lock is committed (R-1
-      # reproducible-builds). Blocked: uv.lock generation requires network
-      # access not available in this dev environment.
+      - name: Verify uv.lock is up-to-date
+        # Fails if pyproject.toml was edited but uv.lock was not regenerated
+        # (R-1 reproducible-builds). Run `uv lock` locally to fix.
+        run: uv lock --check
 
       - name: Install Python dependencies
-        # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
-        run: uv sync --extra dev
+        run: uv sync --frozen --extra dev
 
       - name: Run checks (ruff + deptry + mypy + authoring-check + pytest, with coverage gate)
         run: uv run just check
@@ -55,8 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v8.2.0
-      # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
-      - run: uv sync --extra dev
+      - run: uv sync --frozen --extra dev
       - name: Run pip-audit (SCA floor)
         run: uv run pip-audit
 
@@ -78,7 +77,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v8.2.0
-      # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
-      - run: uv sync --extra dev
+      - run: uv sync --frozen --extra dev
       - name: Run pyrefly (advisory type-checking signal)
         run: uv run pyrefly check
