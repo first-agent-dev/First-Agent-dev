@@ -25,7 +25,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v8
 
       - name: Install just
         run: |
@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v8
       # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
       - run: uv sync --extra dev
       - name: Run pip-audit (SCA floor)
@@ -71,13 +71,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          # Pin the gitleaks binary version so pre-commit and CI run the
+          # SAME rule set. Must match the `rev:` for gitleaks in
+          # .pre-commit-config.yaml. Bump both together.
+          GITLEAKS_VERSION: "8.30.1"
 
   pyrefly:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v8
       # TODO: switch to `uv sync --frozen --extra dev` once uv.lock lands.
       - run: uv sync --extra dev
       - name: Run pyrefly (advisory type-checking signal)

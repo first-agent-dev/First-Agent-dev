@@ -27,7 +27,7 @@ jobs:
           # PR base ref's merge-base.
           fetch-depth: 0
  
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v8
  
       - name: Install package
         # Runtime deps only: the Level-0 kernel is stdlib-only, but the
