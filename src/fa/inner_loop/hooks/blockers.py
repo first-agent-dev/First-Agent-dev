@@ -322,4 +322,5 @@ __all__ = [
     "BlockerMiddleware",
     "LockfileBlocker",
     "RateLimitBlocker",
+    "TimeSource",
 ]

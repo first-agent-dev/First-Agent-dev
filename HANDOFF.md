@@ -13,12 +13,13 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
-**As of:** 2026-06-04 — CI/QA tooling TAKE recommendations implemented (R-1..R-6, R-15): uv migration (local + CI; `uv.lock` generation deferred — network unavailable in dev env, CI uses `uv sync` without `--frozen` until lockfile lands), pip-audit (blocking SCA), deptry (blocking lint), gitleaks (pre-commit + CI), Semgrep (advisory weekly + manual only, no PR trigger), pyrefly (advisory type-checking), justfile (cross-platform task runner). Local-first architecture: `just check` is the authoritative gate; GitHub CI is advisory-only except sanity-check + audit + gitleaks. Deferred: R-7..R-14 added to BACKLOG.md with unblock triggers.
+**As of:** 2026-06-06 — ADR-11 PR-2 landed (Level-1 rule packs: V2 exports, V4 test-decay, V11 placeholder asserts; +1 F-7-class fix exporting `TimeSource`). Prior: 2026-06-04 — CI/QA tooling TAKE recommendations implemented (R-1..R-6, R-15): uv migration (local + CI; `uv.lock` generation deferred — network unavailable in dev env, CI uses `uv sync` without `--frozen` until lockfile lands), pip-audit (blocking SCA), deptry (blocking lint), gitleaks (pre-commit + CI), Semgrep (advisory weekly + manual only, no PR trigger), pyrefly (advisory type-checking), justfile (cross-platform task runner). Local-first architecture: `just check` is the authoritative gate; GitHub CI is advisory-only except sanity-check + audit + gitleaks. Deferred: R-7..R-14 added to BACKLOG.md with unblock triggers.
 
 ### Landmarks (what landed)
 
 | What | Date | Pointer |
 | :--- | :--- | :--- |
+| **ADR-11 PR-2 landed**: Level-1 rule packs `exports.py` (V2 `__all__` completeness, F-2/F-7) and `tests.py` (V4 `pytest.skip` / non-strict-xfail / focus markers; V11 placeholder-asserts, F-9) with `_scan.py` shared helper. All HARD-BLOCK. `RULE_ALLOWLIST` is now 3 callables (was empty in PR 1). One F-7-class real bug fixed in same PR: `TimeSource` Callable alias added to `src/fa/inner_loop/hooks/blockers.py.__all__`. **974 tests, 91.05 % cov, pylint 10.00/10, mypy strict on 127 files.** | 2026-06-06 | [`exports.py`](./src/fa/authoring_rules/exports.py), [`tests.py`](./src/fa/authoring_rules/tests.py), [`_scan.py`](./src/fa/authoring_rules/_scan.py) |
 | ADR-11 (Authoring Guardrails) landed (doc-only ADR-RULE): two-tier TCB (frozen stdlib Level-0 kernel + allowlisted Level-1 rules), `ADR-11-I1..I8` invariant slate, active-consumer table, enforcement-ceiling. SSOT = merged blueprint (R-1..R-18). Code ships across PR 1..PR 5. **Amended same-day (contract freeze):** §Verification (catch/fp corpora + `F-1..F-10`), pinned `FA-AUTHORING-V<N>` code namespace, single `.fa/session.toml`, `rule_input_hash` source, `fail_under=90`/strict-`pylint` gate note. | 2026-06-01 | [`ADR-11`](./knowledge/adr/ADR-11-authoring-guardrails.md), [blueprint](./knowledge/research/ADR-11-Authoring-Guardrails-Blueprint.md), [`exploration_log.md` Q-16 + amendment](./knowledge/trace/exploration_log.md) |
 | Draft-first hardening (PR #24 follow-up): AST `fs.run_bash` analyzer + trusted session draft store; `IntentGuard` now gates shell writes (REPO_WRITE / INDEX_WRITE / OPAQUE_EXEC) and rejects stale / externally-fabricated drafts. | 2026-05-29 | [`bash_intent.py`](./src/fa/inner_loop/bash_intent.py), [`pr_draft.py`](./src/fa/inner_loop/pr_draft.py), [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py) |
 | PR E landed (M-7 §Q-N): `src/fa/inner_loop/tools/prepare_pr.py` (`pr.prepare`) + registry wiring in `_cmd_run`; closes the producer gap so `IntentGuard` bites on every mutating tool call. IntentGuard now wired into `fa run` bootstrap. | 2026-05-28 | [`prepare_pr.py`](./src/fa/inner_loop/tools/prepare_pr.py), [`tools/__init__.py`](./src/fa/inner_loop/tools/__init__.py), [`cli.py`](./src/fa/cli.py) |
@@ -33,6 +34,8 @@ Overwritten each session! Details live at the pointer, not here.
 
 | Gotcha | Pointer |
 | :--- | :--- |
+| ADR-11 PR-2 V2 rule scopes to `src/` only; V4/V11 to `tests/` only. `scripts/` and `verifiers/` are NOT authoring-guarded yet — small surface today, but a TCB-write regression in `scripts/check_protected_paths.py` would slip past `fa authoring-check`. | [`BACKLOG I-12`](./knowledge/BACKLOG.md#i-12--authoring-rules-scope-coverage-gap-scripts-verifiers) |
+| ADR-11 PR-2 V4 rule is bound to the literal `pytest.skip` / `pytest.mark.skip` attribute chain; `from pytest import skip; skip(...)` slips past it. Decorator form unaffected. | [`BACKLOG I-13`](./knowledge/BACKLOG.md#i-13--v4-import-alias-bypass-from-pytest-import-skip) |
 | ≈26 files cite «AGENTS.md PR Checklist rule #N» — orphan refs from PR A' skill extraction; top-10 priority list in pointer | [`exploration_log.md` Q-15](./knowledge/trace/exploration_log.md) |
 | Streaming chain semantics = v0.2 redesign, not v0.1 amendment | [`exploration_log.md` Q-13](./knowledge/trace/exploration_log.md) |
 
@@ -64,14 +67,24 @@ Priority-ordered. Completed items deleted, not struck through.
    rule #N» → [`pr-creation/SKILL.md` §PR Checklist](./knowledge/skills/pr-creation/SKILL.md).
 4. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
    number» audit; `[CODE]` namespace + A23 lint.
-5. **ADR-11 rollout PR 2 — first Level-1 rule teeth.** The frozen
-   Level-0 kernel + empty allowlist landed in PR 1; PR 2 adds the first
-   rules into `src/fa/authoring_rules/` behind `RULE_ALLOWLIST` **without
-   touching Level 0**: `exports.py` (V2, AST `__all__` completeness —
-   F-2/F-7) + `tests.py` (V4/V10/V11 — F-4/F-8/F-9 test-decay locks).
-   AST-not-regex (ADR-11-I4); ADVISORY-first then promote on `catch-corpus/`
-   hit + FP `<1%`. Per blueprint Appendix B + [ADR-11](./knowledge/adr/ADR-11-authoring-guardrails.md).
-   PR 3 (parity/docs) → PR 4 (seam + corpora) → PR 5 (advisory tuning).
+5. **ADR-11 rollout PR 3 — parity + docs rules.** PR-2 landed
+   2026-06-06 (V2 exports / V4 test-decay / V11 placeholder-asserts).
+   Next: `src/fa/authoring_rules/parity.py` (V3 — `SQUASH_MSG`
+   Python↔Bash drift, F-3) + `src/fa/authoring_rules/docs.py` (V5 —
+   stale BACKLOG / missing `llms.txt` row, F-5/F-6). Then PR 4
+   (`seam.py` V6 + `catch-corpus/` + `fp-corpus/` consumers) →
+   PR 5 (`messages.py` V12 + advisory tuning). V10 stays deferred
+   indefinitely per [`I-14`](./knowledge/BACKLOG.md#i-14--adr-11-pr-3-rule-packs-v3-v5-v7-v10-v12-v14).
+6. **Authoring-rules scope coverage** ([`I-12`](./knowledge/BACKLOG.md#i-12--authoring-rules-scope-coverage-gap-scripts-verifiers)).
+   PR-2 V2 scopes only to `src/`; V4/V11 to `tests/`. Extend to
+   `scripts/` and `verifiers/` once either tree grows beyond its
+   current single-file footprint, OR a V2-class regression is
+   detected manually there.
+7. **V4 import-alias bypass** ([`I-13`](./knowledge/BACKLOG.md#i-13--v4-import-alias-bypass-from-pytest-import-skip)).
+   `from pytest import skip; skip(...)` slips past `TEST_SEMANTIC_DECAY`
+   today. Half-day fix (add an `ast` import-walker); land when an
+   `fp-corpus` measurement (PR-4) shows a real bypass, or sooner if
+   bandwidth allows.
 ## Session Protocol
 
 **Rules for updating this file.** Apply at session close.
