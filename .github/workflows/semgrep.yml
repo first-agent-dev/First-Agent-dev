@@ -21,7 +21,7 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.2.0
       - name: Run Semgrep (advisory SAST)
         # Semgrep is installed via uvx (one-shot, no project deps needed).
         # Registry: p/python (general Python anti-patterns),
