@@ -52,9 +52,8 @@ def test_pytest_mark_skip_decorator_is_hard_block(tmp_path: Path) -> None:
     body = (
         "import pytest\n\n"
         '@pytest.mark.skip(reason="broken")\n'
-        "def test_thing():\n    assert 0 == 0  # noqa: V11 — this is the OTHER finding\n"
+        "def test_thing():\n    assert 0 == 1\n"
     )
-    # ^ that placeholder pattern would only fire under V11; we don't load V11 here.
     _write_test(tmp_path, "tests/test_skip_dec.py", body)
     report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
     assert _codes(report) == ["FA-AUTHORING-V4-PYTEST-SKIP"]
