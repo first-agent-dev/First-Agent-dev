@@ -114,6 +114,56 @@ def _iter_decorated(tree: ast.Module) -> Sequence[ast.expr]:
     return decorators
 
 
+def _module_scope_skip_calls(tree: ast.Module) -> set[int]:
+    """Return ``{id(call_node)}`` for every ``pytest.skip(..., allow_module_level=True)``
+    call appearing at module body or inside an ``If``/``Try``/``With``/``AsyncWith``
+    at module body (i.e., NOT inside any ``FunctionDef`` / ``AsyncFunctionDef`` /
+    ``ClassDef`` chain).
+
+    pytest's ``allow_module_level=True`` kwarg only takes effect at module scope;
+    inside a test function it is silently ignored by pytest. The exemption
+    therefore requires both (a) the literal kwarg ``allow_module_level=True``
+    (``ast.Constant(value=True)`` — not ``1`` or ``1.0``), and (b) the call to
+    actually be at module scope.
+    """
+    exempt: set[int] = set()
+    _walk_module_scope(tree.body, exempt)
+    return exempt
+
+
+def _walk_module_scope(stmts: list[ast.stmt], exempt: set[int]) -> None:
+    for stmt in stmts:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue  # do not recurse — calls inside functions/classes are NOT module-scope
+        if isinstance(stmt, (ast.If, ast.Try, ast.With, ast.AsyncWith)):
+            # Recurse into bodies that are still module-scope.
+            _walk_module_scope(list(stmt.body), exempt)
+            if isinstance(stmt, ast.If):
+                _walk_module_scope(list(stmt.orelse), exempt)
+            elif isinstance(stmt, ast.Try):
+                for handler in stmt.handlers:
+                    _walk_module_scope(list(handler.body), exempt)
+                _walk_module_scope(list(stmt.orelse), exempt)
+                _walk_module_scope(list(stmt.finalbody), exempt)
+            continue
+        # For other statements, scan the expression tree for pytest.skip calls
+        # with the exemption kwarg.
+        for inner in ast.walk(stmt):
+            if _is_pytest_call(inner, "skip") and _has_allow_module_level_true(inner):
+                exempt.add(id(inner))
+
+
+def _has_allow_module_level_true(call: ast.Call) -> bool:
+    for kw in call.keywords:
+        if (
+            kw.arg == "allow_module_level"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is True
+        ):
+            return True
+    return False
+
+
 class _TestSemanticDecayRule:
     """V4 family — see module docstring."""
 
@@ -125,8 +175,11 @@ class _TestSemanticDecayRule:
             context, included_prefixes=_INCLUDED_PREFIXES
         ):
             # pytest.skip(...) call expressions (anywhere in the file)
+            exempt = _module_scope_skip_calls(tree)
             for node in ast.walk(tree):
                 if _is_pytest_call(node, "skip"):
+                    if id(node) in exempt:
+                        continue
                     results.append(
                         RuleResult(
                             severity=Severity.HARD_BLOCK,

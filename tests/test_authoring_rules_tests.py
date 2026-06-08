@@ -75,6 +75,53 @@ def test_pytest_mark_skipif_is_not_flagged(tmp_path: Path) -> None:
     assert report.diagnostics == ()
 
 
+# --- V4 allow_module_level=True exemption (commit 4) ---------------------
+
+
+def test_module_scope_skip_with_allow_module_level_is_clean(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = (
+        "import pytest\nimport sys\n\n"
+        'if sys.platform == "win32":\n'
+        '    pytest.skip("linux only", allow_module_level=True)\n\n'
+        "def test_x():\n    pass\n"
+    )
+    _write_test(tmp_path, "tests/test_modskip.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert report.diagnostics == ()
+
+
+def test_function_scope_skip_with_kwarg_still_flagged(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = (
+        'import pytest\n\ndef test_x():\n    pytest.skip("linux only", allow_module_level=True)\n'
+    )
+    _write_test(tmp_path, "tests/test_fnskip.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert _codes(report) == ["FA-AUTHORING-V4-PYTEST-SKIP"]
+
+
+def test_allow_module_level_with_truthy_int_not_exempt(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = 'import pytest\n\npytest.skip("x", allow_module_level=1)\n'
+    _write_test(tmp_path, "tests/test_intkwarg.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert _codes(report) == ["FA-AUTHORING-V4-PYTEST-SKIP"]
+
+
+def test_try_at_module_scope_with_allow_module_level_exempt(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = (
+        "import pytest\n\n"
+        "try:\n    import optional_dep\n"
+        "except ImportError:\n"
+        '    pytest.skip("missing dep", allow_module_level=True)\n'
+    )
+    _write_test(tmp_path, "tests/test_tryskip.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert report.diagnostics == ()
+
+
 # =========================================================================
 # V4 — xfail strict=True requirement
 # =========================================================================
