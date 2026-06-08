@@ -14,13 +14,8 @@ import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 
+from fa.authoring_tcb import CORPUS_PREFIXES as _CORPUS_PREFIXES
 from fa.authoring_tcb import RuleContext
-
-# Corpora directories holding fixtures that intentionally violate the
-# rules (catch-corpus) or known-clean diffs the rules must NOT flag
-# (fp-corpus, blueprint Appendix B PR 4). Skip them in every Level-1
-# rule so a fixture cannot fail the regular kernel run.
-_CORPUS_PREFIXES: tuple[str, ...] = ("catch-corpus/", "fp-corpus/")
 
 # Top-level path prefixes Level-1 rules consume.  Hoisted here so all
 # rule packs reference one definition; the rule modules import these

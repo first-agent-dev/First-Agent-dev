@@ -65,6 +65,14 @@ _SKIP_DIRS = frozenset(
     }
 )
 
+# Corpora directories holding fixtures that intentionally violate Level-1
+# rules (catch-corpus/) or known-clean diffs the rules must NOT flag
+# (fp-corpus/, blueprint Appendix B PR 4). Hoisted into Level 0 so both
+# the kernel's pre-dispatch parse-fail / IO surface AND every Level-1
+# rule reference one definition. Public (no leading underscore) because
+# `_scan.py` imports it across the Level boundary.
+CORPUS_PREFIXES: tuple[str, ...] = ("catch-corpus/", "fp-corpus/")
+
 # Frozen manifest schema (PR 1). The session seam is carried but not yet
 # *enforced* — the staged-paths-subset-of-seam rule is Level-1 ``seam.py``
 # (PR 4). Unknown tables/keys are rejected (fail-closed) so the schema
