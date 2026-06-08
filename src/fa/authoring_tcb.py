@@ -579,6 +579,31 @@ def _rule_crash_diagnostic(rule: Rule, exc: Exception) -> RuleResult:
     )
 
 
+def _advisory_undated_diagnostic(offending: RuleResult) -> RuleResult:
+    """Synthesise the ADR-11-I2 'undated advisory is itself an advisory' finding.
+
+    The synthesised diagnostic is ADVISORY (matching the ADR text "is
+    itself an ADVISORY finding") with a sentinel ``expires_on`` of
+    ``9999-12-31`` so the synth does not recurse on itself.
+    """
+    return RuleResult(
+        severity=Severity.ADVISORY,
+        code="FA-AUTHORING-V0-ADVISORY-UNDATED",
+        path=offending.path,
+        line=offending.line,
+        message=(
+            f"advisory {offending.code!r} omitted required expires_on date "
+            "(ADR-11-I2: undated advisories cannot become permanent noise)"
+        ),
+        remediation=(
+            "set expires_on on the rule's RuleResult, or promote the rule "
+            "to HARD-BLOCK / demote to INFO if no expiry is appropriate"
+        ),
+        rule_input_hash=offending.rule_input_hash,
+        expires_on="9999-12-31",  # sentinel; breaks the self-recursion
+    )
+
+
 def _dispatch_rules(rules: Iterable[Rule], context: RuleContext) -> list[RuleResult]:
     collected: list[RuleResult] = []
     for rule in rules:
@@ -589,6 +614,13 @@ def _dispatch_rules(rules: Iterable[Rule], context: RuleContext) -> list[RuleRes
             collected.append(_rule_crash_diagnostic(rule, exc))
             continue
         collected.extend(results)
+    # ADR-11-I2 post-dispatch: synthesise V0-ADVISORY-UNDATED for any
+    # ADVISORY that omitted expires_on. Append (don't mutate during iteration).
+    synth: list[RuleResult] = []
+    for r in collected:
+        if r.severity is Severity.ADVISORY and r.expires_on is None:
+            synth.append(_advisory_undated_diagnostic(r))
+    collected.extend(synth)
     return collected
 
 

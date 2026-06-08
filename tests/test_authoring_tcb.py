@@ -479,3 +479,63 @@ def test_allowlist_signature_is_order_insensitive(tmp_path: Path) -> None:
     forward = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS, TEST_SEMANTIC_DECAY))
     reverse = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY, EXPORTS_COMPLETENESS))
     assert forward.allowlist_signature == reverse.allowlist_signature
+
+
+# --- V0-ADVISORY-UNDATED synthesis ------------------------------------------
+
+
+def test_advisory_without_expires_on_synthesises_v0_diagnostic(tmp_path: Path) -> None:
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "llms.txt").write_text("x")
+
+    class _UndatedAdvisoryRule:
+        __name__ = "undated_advisory_rule"
+
+        def __call__(self, context: RuleContext) -> list[RuleResult]:
+            return [
+                RuleResult(
+                    severity=Severity.ADVISORY,
+                    code="FA-AUTHORING-V99-TEST-ADVISORY",
+                    path="x.py",
+                    line=1,
+                    message="m",
+                    remediation="r",
+                    rule_input_hash="sha256:" + "0" * 64,
+                    # expires_on intentionally omitted
+                )
+            ]
+
+    report = run_all(tmp_path, rules=(_UndatedAdvisoryRule(),))
+    codes = [d.code for d in report.diagnostics]
+    assert "FA-AUTHORING-V99-TEST-ADVISORY" in codes
+    assert "FA-AUTHORING-V0-ADVISORY-UNDATED" in codes
+    synth = next(d for d in report.diagnostics if d.code == "FA-AUTHORING-V0-ADVISORY-UNDATED")
+    assert synth.severity is Severity.ADVISORY
+    assert synth.expires_on == "9999-12-31"
+    # Synth itself does NOT recursively trigger another synth (sentinel breaks the loop).
+    assert sum(1 for d in report.diagnostics if d.code == "FA-AUTHORING-V0-ADVISORY-UNDATED") == 1
+
+
+def test_dated_advisory_does_not_synthesise(tmp_path: Path) -> None:
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "llms.txt").write_text("x")
+
+    class _DatedAdvisoryRule:
+        __name__ = "dated_advisory_rule"
+
+        def __call__(self, context: RuleContext) -> list[RuleResult]:
+            return [
+                RuleResult(
+                    severity=Severity.ADVISORY,
+                    code="FA-AUTHORING-V99-DATED",
+                    path="x.py",
+                    line=1,
+                    message="m",
+                    remediation="r",
+                    rule_input_hash="sha256:" + "0" * 64,
+                    expires_on="2027-01-01",
+                )
+            ]
+
+    report = run_all(tmp_path, rules=(_DatedAdvisoryRule(),))
+    assert all(d.code != "FA-AUTHORING-V0-ADVISORY-UNDATED" for d in report.diagnostics)
