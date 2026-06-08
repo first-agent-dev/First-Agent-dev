@@ -20,7 +20,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Sequence
 
-from fa.authoring_rules._scan import iter_python_files, sha256
+from fa.authoring_rules._scan import iter_python_files, node_input_hash
 from fa.authoring_tcb import RuleContext, RuleResult, Severity
 
 __all__ = ["EXPORTS_COMPLETENESS"]
@@ -126,50 +126,52 @@ def _extract_all(tree: ast.Module) -> set[str] | None:
     return working
 
 
-def _public_symbols(tree: ast.Module) -> dict[str, int]:
-    """Return ``{name: lineno}`` for every public top-level symbol.
+def _public_symbols(tree: ast.Module) -> dict[str, ast.stmt]:
+    """Return ``{name: defining_node}`` for every public top-level symbol.
 
     "Public top-level" means: (a) the body of the module (no recursion
     into class bodies or ``if TYPE_CHECKING:`` blocks); (b) the name
     does not start with ``_``; (c) the symbol is either **defined**
-    (``def`` / ``async def`` / ``class`` / ``X = ...`` / ``X: T = ...``)
-    or **explicitly re-exported** with PEP 8 redundant-alias idiom
-    ``from .x import foo as foo``.
+    (``def`` / ``async def`` / ``class`` / ``X = ...`` / ``X: T = ...``
+    / ``A, B = ...`` / ``A = B = ...``) or **explicitly re-exported**
+    with PEP 8 redundant-alias idiom ``from .x import foo as foo``.
 
-    Bare ``import`` / ``from x import y`` statements are NOT counted
-    as re-exports because the AST cannot distinguish an internal
-    "imported to use" from an intentional "imported to re-export";
-    the redundant-alias idiom is the codified opt-in.
+    Nested tuple unpacking (``(a, (b, c)) = ...``) is out of scope;
+    backlog I-20. ``ast.Starred`` elements inside tuple unpacking are
+    ignored. Bare ``import`` / ``from x import y`` statements are NOT
+    counted as re-exports — the redundant-alias idiom is the codified
+    opt-in.
+
+    The returned node is the *statement* that introduces the binding;
+    callers use it both for line reporting (``node.lineno``) and for
+    per-finding hashing (``node_input_hash(source_bytes, node)``).
     """
-    symbols: dict[str, int] = {}
+    symbols: dict[str, ast.stmt] = {}
+
+    def _register(name: str, node: ast.stmt) -> None:
+        if name.startswith("_") or name in _CONVENTIONAL_PRIVATE:
+            return
+        symbols.setdefault(name, node)
+
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if not node.name.startswith("_"):
-                symbols.setdefault(node.name, node.lineno)
+            _register(node.name, node)
         elif isinstance(node, ast.Assign):
             for target in node.targets:
-                if (
-                    isinstance(target, ast.Name)
-                    and not target.id.startswith("_")
-                    and target.id not in _CONVENTIONAL_PRIVATE
-                ):
-                    symbols.setdefault(target.id, node.lineno)
+                if isinstance(target, ast.Name):
+                    _register(target.id, node)
+                elif isinstance(target, (ast.Tuple, ast.List)):
+                    for elt in target.elts:
+                        if isinstance(elt, ast.Name):
+                            _register(elt.id, node)
+                        # ast.Starred and nested ast.Tuple/List intentionally skipped
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            name = node.target.id
-            if (
-                not name.startswith("_")
-                and name not in _CONVENTIONAL_PRIVATE
-                and node.value is not None
-            ):
-                symbols.setdefault(name, node.lineno)
+            if node.value is not None:
+                _register(node.target.id, node)
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
-                if (
-                    alias.asname is not None
-                    and alias.asname == alias.name
-                    and not alias.asname.startswith("_")
-                ):
-                    symbols.setdefault(alias.asname, node.lineno)
+                if alias.asname is not None and alias.asname == alias.name:
+                    _register(alias.asname, node)
     return symbols
 
 
@@ -187,20 +189,20 @@ class _ExportsCompletenessRule:
             if declared is None:
                 continue
             public = _public_symbols(tree)
-            file_hash = sha256(source_bytes)
             for name in sorted(set(public) - declared):
+                defining = public[name]
                 results.append(
                     RuleResult(
                         severity=Severity.HARD_BLOCK,
                         code=_CODE,
                         path=rel,
-                        line=public[name],
+                        line=defining.lineno,
                         message=f"public symbol {name!r} is defined but not in __all__",
                         remediation=(
                             f"add {name!r} to __all__ in {rel}, "
                             f"or rename it _{name} if it is module-private"
                         ),
-                        rule_input_hash=file_hash,
+                        rule_input_hash=node_input_hash(source_bytes, defining),
                     )
                 )
         return results

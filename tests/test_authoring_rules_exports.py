@@ -342,3 +342,52 @@ def test_variable_rhs_opts_out(tmp_path: Path) -> None:
     _write_src(tmp_path, "src/fa_demo/variable_rhs.py", body)
     report = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
     assert report.diagnostics == ()
+
+
+# --- _public_symbols extension + per-node hash (commit 2) -----------------
+
+
+def test_tuple_unpacking_at_top_level_is_flagged(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = 'from __future__ import annotations\n\n__all__ = ["A"]\n\nA, B = 1, 2\n'
+    _write_src(tmp_path, "src/fa_demo/tuple_unpack.py", body)
+    report = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
+    assert len(report.diagnostics) == 1
+    assert "B" in report.diagnostics[0].message
+
+
+def test_multi_target_assign_is_flagged(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = "from __future__ import annotations\n\n__all__ = []\n\nA = B = 1\n"
+    _write_src(tmp_path, "src/fa_demo/multi_target.py", body)
+    report = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
+    assert len(report.diagnostics) == 2
+    assert {d.message.split("'")[1] for d in report.diagnostics} == {"A", "B"}
+    assert report.diagnostics[0].line == report.diagnostics[1].line
+
+
+def test_starred_unpacking_target_ignored(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = 'from __future__ import annotations\n\n__all__ = ["A"]\n\nA, *rest = [1, 2, 3]\n'
+    _write_src(tmp_path, "src/fa_demo/starred_target.py", body)
+    report = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
+    assert report.diagnostics == ()
+
+
+def test_rule_input_hash_stable_across_unrelated_edits(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = (
+        "from __future__ import annotations\n\n"
+        '__all__ = ["kept"]\n\n'
+        "def kept():\n    pass\n\n"
+        "def forgotten():\n    pass\n"
+    )
+    _write_src(tmp_path, "src/fa_demo/hash_stable.py", body)
+    first = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
+    hash_first = first.diagnostics[0].rule_input_hash
+
+    _write_src(tmp_path, "src/fa_demo/hash_stable.py", body + "\n# trailing comment\n")
+    second = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
+    hash_second = second.diagnostics[0].rule_input_hash
+
+    assert hash_first == hash_second
