@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -26,7 +26,14 @@ from fa.inner_loop.coder_loop import (
     SessionOutcome,
     drive_session,
 )
-from fa.inner_loop.hooks import HookRegistry, SandboxHook
+from fa.inner_loop.hooks import (
+    Decision,
+    GuardMiddleware,
+    HookPayload,
+    HookRegistry,
+    LifecyclePoint,
+    SandboxHook,
+)
 from fa.inner_loop.registry import ToolRegistry, ToolSpec
 from fa.inner_loop.runtime_limits import RuntimeLimits
 from fa.inner_loop.state import EventLog, SessionState
@@ -579,3 +586,210 @@ def test_drive_session_keyboard_interrupt_returns_outcome(
     ]
     assert "run_stopped" in kinds
     assert "abnormal_stop:interrupt" in events_path.read_text()
+
+
+# -- BEFORE_LLM_CALL / AFTER_LLM_CALL guard denial --------------------------------
+
+
+class _DenyBeforeLlmCallGuard(GuardMiddleware):
+    name = "deny_before_llm_call"
+    attaches_to = (LifecyclePoint.BEFORE_LLM_CALL,)
+
+    @override
+    def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
+        del point, payload
+        return Decision.deny("mock before_llm_call deny")
+
+
+class _DenyAfterLlmCallGuard(GuardMiddleware):
+    name = "deny_after_llm_call"
+    attaches_to = (LifecyclePoint.AFTER_LLM_CALL,)
+
+    @override
+    def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
+        del point, payload
+        return Decision.deny("mock after_llm_call deny")
+
+
+def test_drive_session_before_llm_call_guard_deny_returns_outcome(
+    tmp_path: Path,
+) -> None:
+    """A GuardMiddleware denying at BEFORE_LLM_CALL must return a typed
+    SessionOutcome with exit_code 1, not propagate the raw PermissionError."""
+    provider = FakeProvider([_make_response(text="never reached", finish_reason="stop")])
+    chain = _make_chain(provider)
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    hooks.register(_DenyBeforeLlmCallGuard())
+    state = _make_state(tmp_path)
+
+    outcome = drive_session(
+        "do nothing",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert outcome.exit_code == 1
+    assert outcome.stop_reason == "hook_deny:BEFORE_LLM_CALL"
+    assert outcome.turns == 1
+
+    events_path = tmp_path / "events.jsonl"
+    kinds = [
+        json.loads(line)["kind"] for line in events_path.read_text().splitlines() if line.strip()
+    ]
+    assert "run_stopped" in kinds
+    assert "hook_deny:BEFORE_LLM_CALL" in events_path.read_text()
+
+
+def test_drive_session_after_llm_call_guard_deny_returns_outcome(
+    tmp_path: Path,
+) -> None:
+    """A GuardMiddleware denying at AFTER_LLM_CALL must return a typed
+    SessionOutcome with exit_code 1. Unlike BEFORE_LLM_CALL, the model
+    message has already been appended to messages and state.log."""
+    provider = FakeProvider([_make_response(text="partial", finish_reason="stop")])
+    chain = _make_chain(provider)
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    hooks.register(_DenyAfterLlmCallGuard())
+    state = _make_state(tmp_path)
+
+    outcome = drive_session(
+        "do nothing",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert outcome.exit_code == 1
+    assert outcome.stop_reason == "hook_deny:AFTER_LLM_CALL"
+    assert outcome.turns == 1
+
+    # AFTER_LLM_CALL fires immediately after provider_chain.request()
+    # returns but BEFORE the assistant message / model_msg are appended.
+    # A deny here therefore skips the model_msg (consistent with the
+    # guard-deny "stop immediately" pattern).
+    assert len(provider.calls) == 1
+    events_path = tmp_path / "events.jsonl"
+    text = events_path.read_text()
+    assert "model_msg" not in text
+    assert "hook_deny:AFTER_LLM_CALL" in text
+
+
+# -- Synthetic padding uses real guard stop reason ---------------------------
+
+
+class _DenyAfterRound2Guard(GuardMiddleware):
+    """Denies at BETWEEN_ROUNDS starting from the second iteration."""
+
+    name = "deny_after_round_2"
+    attaches_to = (LifecyclePoint.BETWEEN_ROUNDS,)
+
+    def __init__(self) -> None:
+        self._count = 0
+
+    @override
+    def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
+        del point, payload
+        self._count += 1
+        if self._count >= 2:
+            return Decision.deny("mock round-2 deny")
+        return Decision.allow()
+
+
+def test_drive_session_synthetic_padding_uses_guard_reason(
+    tmp_path: Path,
+) -> None:
+    """When run_session stops early because of a guard denial (not iteration
+    cap), the synthetic padding message must carry the guard reason, not
+    the generic 'iteration limit exceeded' text."""
+    looping_call = {
+        "id": "tc-loop",
+        "type": "function",
+        "function": {"name": "echo", "arguments": '{"text": "again"}'},
+    }
+    # Turn 1: tool call executes. Turn 2: guard denies at BETWEEN_ROUNDS.
+    provider = FakeProvider(
+        [
+            _make_response(finish_reason="tool_calls", tool_calls=(looping_call,)),
+            _make_response(finish_reason="tool_calls", tool_calls=(looping_call,)),
+        ]
+    )
+    chain = _make_chain(provider)
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    hooks.register(_DenyAfterRound2Guard())
+    state = _make_state(tmp_path)
+
+    _ = drive_session(
+        "loop",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+        max_turns=3,
+    )
+
+    # The guard deny happened inside run_session (BETWEEN_ROUNDS);
+    # drive_session itself did not terminate, so the session continued
+    # until max_turns was reached or the provider script exhausted.
+    # What we care about is the synthetic padding message content.
+
+    # The synthetic padding is appended to ``messages`` AFTER the Turn 2
+    # provider response. It appears in the Turn 3 request captured by
+    # the fake provider (even though the provider script is exhausted).
+    assert len(provider.calls) == 3
+    turn3_request = provider.calls[2]
+    tool_messages = [m for m in turn3_request.messages if m.get("role") == "tool"]
+    # Turn 1 produced a real tool result; Turn 2 produced a synthetic one.
+    assert len(tool_messages) == 2
+    # The synthetic padding (last tool message) must carry the guard reason.
+    assert "mock round-2 deny" in tool_messages[-1]["content"]
+    assert "iteration limit" not in tool_messages[-1]["content"].lower()
+
+    events_path = tmp_path / "events.jsonl"
+    text = events_path.read_text()
+    assert "run_stopped" in text
+    assert "mock round-2 deny" in text
+    assert "tool_result" in text
+
+
+# -- Provider attempt telemetry -----------------------------------------------
+
+
+def test_drive_session_logs_provider_attempts(
+    tmp_path: Path,
+) -> None:
+    """``provider_chain.request`` returns a ``ChainAttemptRecord`` list
+    in ``_attempts``; ``drive_session`` must write each record to
+    ``events.jsonl`` so the audit trail is complete."""
+    provider = FakeProvider([_make_response(text="done", finish_reason="stop")])
+    chain = _make_chain(provider)
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    state = _make_state(tmp_path)
+
+    outcome = drive_session(
+        "task",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert outcome.exit_code == 0
+    assert state.log is not None
+    events = state.log.read_all()
+    provider_attempts = [e for e in events if e.kind == "provider_attempt"]
+    assert len(provider_attempts) == 1
+    assert provider_attempts[0].content["provider"] == "openrouter"
+    assert provider_attempts[0].content["slug"] == "test/model"
+    assert provider_attempts[0].content["status"] == 200
+    assert provider_attempts[0].content.get("error") is None
