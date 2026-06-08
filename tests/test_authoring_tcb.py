@@ -12,6 +12,11 @@ from pathlib import Path
 
 import pytest
 
+from fa.authoring_rules import (
+    EXPORTS_COMPLETENESS,
+    RULE_ALLOWLIST,
+    TEST_SEMANTIC_DECAY,
+)
 from fa.authoring_tcb import (
     KERNEL_VERSION,
     KernelReport,
@@ -457,8 +462,6 @@ def test_allowlist_signature_changes_with_rule_set(tmp_path: Path) -> None:
     (tmp_path / "knowledge" / "llms.txt").write_text("x")
     (tmp_path / "src" / "fa_demo").mkdir(parents=True)
     (tmp_path / "src" / "fa_demo" / "m.py").write_text("def public(): pass\n__all__ = []\n")
-    from fa.authoring_rules import RULE_ALLOWLIST, EXPORTS_COMPLETENESS
-
     full = run_all(tmp_path, rules=RULE_ALLOWLIST)
     empty = run_all(tmp_path, rules=())
     one = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
@@ -474,8 +477,6 @@ def test_allowlist_signature_is_order_insensitive(tmp_path: Path) -> None:
     """The signature sorts the rule keys, so dispatch order doesn't leak."""
     (tmp_path / "knowledge").mkdir()
     (tmp_path / "knowledge" / "llms.txt").write_text("x")
-    from fa.authoring_rules import EXPORTS_COMPLETENESS, TEST_SEMANTIC_DECAY
-
     forward = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS, TEST_SEMANTIC_DECAY))
     reverse = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY, EXPORTS_COMPLETENESS))
     assert forward.allowlist_signature == reverse.allowlist_signature

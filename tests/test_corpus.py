@@ -29,18 +29,48 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # (fixture relative path, destination under tmp_path, target rule, expected code)
 _CATCH_CASES = [
-    ("catch-corpus/F-2/fixture.py",       "src/fa_demo/f2.py",        EXPORTS_COMPLETENESS, "FA-AUTHORING-V2-EXPORTS-COMPLETENESS"),
-    ("catch-corpus/F-7/fixture.py",       "src/fa_demo/f7.py",        EXPORTS_COMPLETENESS, "FA-AUTHORING-V2-EXPORTS-COMPLETENESS"),
-    ("catch-corpus/F-9/fixture.py",       "tests/test_f9.py",         PLACEHOLDER_ASSERTION, "FA-AUTHORING-V11-PLACEHOLDER-ASSERT"),
-    ("catch-corpus/I-5-skip/fixture.py",  "tests/test_i5_skip.py",    TEST_SEMANTIC_DECAY,   "FA-AUTHORING-V4-PYTEST-SKIP"),
-    ("catch-corpus/I-5-xfail/fixture.py", "tests/test_i5_xfail.py",   TEST_SEMANTIC_DECAY,   "FA-AUTHORING-V4-NON-STRICT-XFAIL"),
-    ("catch-corpus/I-5-focus/fixture.py", "tests/test_i5_focus.py",   TEST_SEMANTIC_DECAY,   "FA-AUTHORING-V4-FOCUS-MARKER"),
+    (
+        "catch-corpus/F-2/fixture.py",
+        "src/fa_demo/f2.py",
+        EXPORTS_COMPLETENESS,
+        "FA-AUTHORING-V2-EXPORTS-COMPLETENESS",
+    ),
+    (
+        "catch-corpus/F-7/fixture.py",
+        "src/fa_demo/f7.py",
+        EXPORTS_COMPLETENESS,
+        "FA-AUTHORING-V2-EXPORTS-COMPLETENESS",
+    ),
+    (
+        "catch-corpus/F-9/fixture.py",
+        "tests/test_f9.py",
+        PLACEHOLDER_ASSERTION,
+        "FA-AUTHORING-V11-PLACEHOLDER-ASSERT",
+    ),
+    (
+        "catch-corpus/I-5-skip/fixture.py",
+        "tests/test_i5_skip.py",
+        TEST_SEMANTIC_DECAY,
+        "FA-AUTHORING-V4-PYTEST-SKIP",
+    ),
+    (
+        "catch-corpus/I-5-xfail/fixture.py",
+        "tests/test_i5_xfail.py",
+        TEST_SEMANTIC_DECAY,
+        "FA-AUTHORING-V4-NON-STRICT-XFAIL",
+    ),
+    (
+        "catch-corpus/I-5-focus/fixture.py",
+        "tests/test_i5_focus.py",
+        TEST_SEMANTIC_DECAY,
+        "FA-AUTHORING-V4-FOCUS-MARKER",
+    ),
 ]
 
 _FP_CASES = [
-    ("fp-corpus/skipif/fixture.py",        "tests/test_skipif.py",      TEST_SEMANTIC_DECAY),
-    ("fp-corpus/pure-compare/fixture.py",  "tests/test_pure.py",        PLACEHOLDER_ASSERTION),
-    ("fp-corpus/strict-xfail/fixture.py",  "tests/test_strict_xfail.py", TEST_SEMANTIC_DECAY),
+    ("fp-corpus/skipif/fixture.py", "tests/test_skipif.py", TEST_SEMANTIC_DECAY),
+    ("fp-corpus/pure-compare/fixture.py", "tests/test_pure.py", PLACEHOLDER_ASSERTION),
+    ("fp-corpus/strict-xfail/fixture.py", "tests/test_strict_xfail.py", TEST_SEMANTIC_DECAY),
 ]
 
 
