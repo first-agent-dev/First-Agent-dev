@@ -101,5 +101,5 @@ Priority-ordered. Completed items deleted, not struck through.
    `DIGEST.md` + `exploration_log.md` + `git log`.
 4. **Update the `As of:` line** with current date and commit hash
    or session ID.
-5. **Hard cap: ≤150 lines.** Over cap → drop Landmarks rows first,
+5. **Hard cap: <200 lines.** Over cap → drop Landmarks rows first,
    then compress Gotcha descriptions. KEEP §Next items.
