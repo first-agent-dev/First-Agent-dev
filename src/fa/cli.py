@@ -30,11 +30,13 @@ from fa.inner_loop.hooks import (
     LoopGuard,
     RateLimitBlocker,
     SandboxHook,
+    SecretGuard,
     VerifierObserver,
 )
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.tools import build_baseline_registry, build_prepare_pr_tool
 from fa.observability import CostGuardian
+from fa.observability.redaction import SecretRedactor
 from fa.providers import (
     DEFAULT_MODELS_YAML_PATH,
     ChainConfig,
@@ -46,6 +48,23 @@ from fa.providers import (
 )
 from fa.providers.base import Provider, Transport
 from fa.verifier import load_contracts_from_dir
+
+# Optional: load ~/.fa/.env for local development convenience.
+# Production (AIO) uses .env.fa in repo root loaded by Docker Compose.
+_fa_dotenv = Path.home() / ".fa" / ".env"
+if _fa_dotenv.exists():
+    try:
+        for line in _fa_dotenv.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k, v = k.strip(), v.strip()
+            if k:
+                os.environ.setdefault(k, v)
+    except OSError as exc:
+        import warnings
+        warnings.warn(f"Could not load ~/.fa/.env: {exc}", stacklevel=2)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -261,6 +280,11 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     hooks.register(AuthExpiredBlocker(suppression_seconds=limits.auth_expired_suppression_seconds))
     audit = AuditHook(event_log=log)
     hooks.register(audit)
+    hooks.register(
+        SecretGuard(
+            secrets=frozenset(),
+        )
+    )
     # R-45 CostGuardian: dormant on baseline tools (no ``cost=…``
     # artifact in ``ToolResult.artifacts``). Wired here so the chain
     # is stable when the T-2 LLM driver lands the artifact emitter
@@ -369,7 +393,8 @@ def _cmd_run(
         return 2
     registry.register(build_prepare_pr_tool(draft_store))
     log_path = workspace / ".fa" / "runs" / run_id / "events.jsonl"
-    log = EventLog(log_path, run_id=run_id)
+    redactor = SecretRedactor.from_models_config(os.environ, models)
+    log = EventLog(log_path, run_id=run_id, redactor=redactor)
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))
     hooks.register(
@@ -390,6 +415,11 @@ def _cmd_run(
     # the intent classifier.
     hooks.register(IntentGuard(repo_root=workspace, draft_store=draft_store))
     hooks.register(AuditHook(event_log=log))
+    hooks.register(
+        SecretGuard(
+            secrets=redactor._secrets if redactor is not None else frozenset(),
+        )
+    )
     hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
     contracts = load_contracts_from_dir(workspace / "verifiers")
     if contracts:

@@ -103,4 +103,47 @@ posts), MCP-экосистема, и Devin / Claude Code / OSS repo's как ref
 - [`knowledge/llms.txt`](./knowledge/llms.txt) — one-fetch индекс
   всех документов.
 - [`knowledge/adr/README.md`](./knowledge/adr/README.md) — индекс ADR.
+
+---
+
+## Security / API Keys
+
+### Local Development (WSL)
+
+Export API keys in your shell (e.g. `~/.bashrc`):
+```bash
+export OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+Or use `~/.fa/.env` (auto-loaded by the FA CLI):
+```bash
+mkdir -p ~/.fa
+cat > ~/.fa/.env <<EOF
+OPENROUTER_API_KEY=sk-or-v1-...
+EOF
+```
+
+`~/.fa/models.yaml` references env var names via `api_key_env` — never paste real keys into `models.yaml`. Both `models.yaml` and `config.yaml` are gitignored.
+
+### Production Deployment (AIO)
+
+1. Copy the template and edit with real keys:
+   ```bash
+   cp .env.fa.template .env.fa
+   # Edit .env.fa
+   chmod 600 .env.fa
+   ```
+
+2. Docker Compose loads `.env.fa` via `env_file:` (see `docker-compose.fa.yml`).
+
+3. `models.yaml` lives in `/srv/first-agent/state/` (persistent bind-mount, auto-copied by `setup-fa-desktop.sh`).
+
+4. Backup credentials (`B2_KEY_ID`, `B2_APPLICATION_KEY`) go in `/srv/first-agent/secrets/backup.env`, NOT in `.env.fa`.
+
+### Repository Hygiene
+
+- `gitleaks` runs as a pre-commit hook and in GitHub Actions CI.
+- Dummy test keys are allowlisted in `.gitleaks.toml`.
+- **Never commit real API keys.**
+
 ---

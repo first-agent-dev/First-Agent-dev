@@ -214,6 +214,46 @@ systemctl --user start fa.service
 
 ---
 
+## Phase 7b — Configure LLM API Keys
+
+The deployment stack handles git auth (SSH deploy key) but never mentions LLM API keys. The compose file references `.env.fa` via `env_file:` — this is where your OpenRouter / Fireworks / etc. keys live.
+
+1. Copy the template and edit with real keys:
+   ```bash
+   cd /srv/first-agent/repo/First-Agent-dev
+   cp .env.fa.template .env.fa
+   # Edit .env.fa with your keys
+   chmod 600 .env.fa
+   ```
+
+2. Verify `models.yaml` exists (auto-copied by `setup-fa-desktop.sh`):
+   ```bash
+   ls /srv/first-agent/state/models.yaml
+   ```
+   If missing, copy from the example:
+   ```bash
+   cp knowledge/examples/models.yaml.example /srv/first-agent/state/models.yaml
+   ```
+
+3. **Convention separation:**
+   - **Docker deployment** (AIO): uses `.env.fa` in repo root, loaded by compose.
+   - **Local WSL dev**: uses `~/.fa/.env` (auto-loaded by CLI) or shell exports.
+   - Never mix the two — the container does not read `~/.fa/.env`.
+
+4. **Backup credentials** (`B2_KEY_ID`, `B2_APPLICATION_KEY`) belong in `/srv/first-agent/secrets/backup.env`, NOT in `.env.fa`. The container does not need them.
+
+---
+
+### Security Notes for AIO Deployment
+
+**Docker trust boundary.** The operator user is in the `docker` group. Any user in this group can run `docker inspect` and see container env vars (including API keys loaded from `.env.fa`). This is the trust boundary for the AIO deployment — keep the operator account exclusive.
+
+**Docker log security.** Docker logs are not encrypted at rest. The compose uses `max-size: 10m`, `max-file: 3` to limit the leak window. FA's `SecretRedactor` masks API keys in `events.jsonl` before writing. Do NOT print API keys to stdout from FA code or tools.
+
+**Backup security.** restic encrypts backups before sending to B2. If a key is leaked into `events.jsonl` before redaction, the encrypted backup still contains it. Redaction is the primary defense; encryption is secondary (protects against B2 compromise, not restore leakage). Test restores quarterly.
+
+---
+
 ## Phase 8 — Test Git Push from the Container
 
 ```bash

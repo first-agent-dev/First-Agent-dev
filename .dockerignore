@@ -33,6 +33,10 @@ dist
 build
 *.egg-info
 
+# Secret files — never include in build context
+.env*
+!.env.fa.template
+
 # CI/CD and scripts (not needed in runtime image)
 .github
 scripts

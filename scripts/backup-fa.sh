@@ -17,6 +17,11 @@
 
 set -euo pipefail
 
+# Source credentials from host secrets directory
+if [ -f /srv/first-agent/secrets/backup.env ]; then
+    source /srv/first-agent/secrets/backup.env
+fi
+
 B2_KEY_ID="${B2_KEY_ID:-CHANGEME}"
 B2_APPLICATION_KEY="${B2_APPLICATION_KEY:-CHANGEME}"
 B2_BUCKET="${B2_BUCKET:-CHANGEME}"
