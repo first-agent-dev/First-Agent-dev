@@ -300,7 +300,7 @@ def _allowlist_signature(rules: Sequence[Rule]) -> str:
     (unlike ``__name__``, which the rule classes override at class scope
     and an adversary could trivially spoof). Rules registered in
     ``RULE_ALLOWLIST`` MUST be class instances (not bare functions); the
-    ADR-11 amendment 2026-06-XX documents this constraint.
+    ADR-11 amendment 2026-06-08 documents this constraint.
     """
     keys = sorted(f"{type(r).__module__}.{type(r).__qualname__}" for r in rules)
     return "sha256:" + hashlib.sha256("\0".join(keys).encode("utf-8")).hexdigest()

@@ -384,6 +384,8 @@ def test_render_text_lists_diagnostics(tmp_path: Path) -> None:
 
     text = render_text(run_all(tmp_path, rules=(rule,)))
     assert "kernel 0.1" in text
+    assert "allowlist_signature" in text
+    assert "dispatched_count" in text
     assert "[HARD-BLOCK] FA-AUTHORING-V2-EXPORTS src/fa/foo.py:7" in text
 
 
