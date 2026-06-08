@@ -427,18 +427,28 @@ evidence — file inventories with line ranges — lives in the SSOT blueprint
 ran*, closing the gap between `rule_pack_hash` (which fixates only the
 source bytes) and the production call site. Rule callables registered
 in `RULE_ALLOWLIST` MUST be class instances (not bare functions), so
-the `allowlist_signature` derivation is unambiguous.
+the `allowlist_signature` derivation is unambiguous. A representative
+key for the current allowlist is
+`fa.authoring_rules.exports._ExportsCompletenessRule`; the set is
+sorted and `\0`-joined before hashing, making the signature insensitive
+to dispatch order.
 
 §9.8 (fail-closed) is extended with three new V0-namespace diagnostics:
 `FA-AUTHORING-V0-UNPARSABLE` (HARD-BLOCK; emitted by the kernel's
 pre-dispatch pass when a scoped `.py` fails to `ast.parse`),
 `FA-AUTHORING-V0-IO` (HARD-BLOCK; emitted by the same pre-pass when
-`read_bytes` raises `OSError`), and `FA-AUTHORING-V0-ADVISORY-UNDATED`
-(ADVISORY; synthesised post-dispatch when any rule emits a `RuleResult`
+`read_bytes` raises `OSError`). The kernel pre-pass parses every scoped
+`.py` before rule dispatch; Level-1 rules via `iter_python_files` parse
+the same files again. This temporary duplication is accepted because the
+rule count is small (3); per-file AST caching is deferred to backlog
+item I-22. `FA-AUTHORING-V0-ADVISORY-UNDATED` (ADVISORY; synthesised
+post-dispatch when any rule emits a `RuleResult`
 with `severity=ADVISORY` and `expires_on=None`, materialising the
 "missing date is itself an advisory" rule of ADR-11-I2). The
 ADVISORY-UNDATED synth carries `expires_on="9999-12-31"` as a sentinel
-to break the self-recursion.
+to break the self-recursion. The synthesised diagnostic inherits
+`rule_input_hash` from the offending `RuleResult` so the diagnostic pair
+remains bound to the same input bytes.
 
 `Severity` integer values are **unchanged** (blueprint §9.7-frozen:
 HARD-BLOCK=0, ADVISORY=1, INFO=2); a `__bool__` override is added
