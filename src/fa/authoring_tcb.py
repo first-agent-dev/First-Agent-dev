@@ -91,6 +91,18 @@ class Severity(IntEnum):
         """Return the contract wire label (e.g. ``"HARD-BLOCK"``)."""
         return _SEVERITY_LABELS[self]
 
+    def __bool__(self) -> bool:
+        """All severities are truthy.
+
+        Defuses the ``if severity:`` footgun. The integer rank is the SORT
+        key (blueprint §9.7 freezes ``HARD_BLOCK=0``); the boolean
+        interpretation of the rank is meaningless because ``0`` is the
+        most-severe value, not "no severity". Override returns ``True`` for
+        every member so callers cannot accidentally classify ``HARD_BLOCK``
+        as false.
+        """
+        return True
+
     @classmethod
     def from_label(cls, label: str) -> Severity:
         """Resolve a wire label back to a :class:`Severity` member."""

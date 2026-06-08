@@ -64,6 +64,14 @@ def test_severity_sort_rank_orders_hard_block_first() -> None:
     assert int(Severity.HARD_BLOCK) < int(Severity.ADVISORY) < int(Severity.INFO)
 
 
+def test_severity_members_are_truthy() -> None:
+    # Pin: bool(HARD_BLOCK) must be True, not False (the int rank is 0
+    # which would otherwise be falsy — see __bool__ override comment).
+    assert bool(Severity.HARD_BLOCK) is True
+    assert bool(Severity.ADVISORY) is True
+    assert bool(Severity.INFO) is True
+
+
 # --- RuleResult ------------------------------------------------------------
 
 
