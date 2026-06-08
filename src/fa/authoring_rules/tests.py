@@ -101,11 +101,12 @@ def _xfail_has_strict_true(decorator: ast.expr) -> bool:
     return False
 
 
-def _iter_decorated(tree: ast.Module) -> Sequence[ast.expr]:
-    """Yield every decorator expression attached to any function/class.
-
-    Walks the whole tree (nested classes / closures included) so a
-    ``@pytest.mark.skip`` on an inner helper isn't missed.
+def _all_decorators(tree: ast.Module) -> list[ast.expr]:
+    """Return every decorator expression in ``tree`` — module-level,
+    nested-class, closure, comprehension-internal — by walking the
+    entire AST. The function flattens; callers iterate the returned
+    list. The name reflects this (was ``_iter_decorated`` but the
+    function neither iterates lazily nor restricts to a single level).
     """
     decorators: list[ast.expr] = []
     for node in ast.walk(tree):
@@ -201,7 +202,7 @@ class _TestSemanticDecayRule:
                     )
 
             # Decorator-style markers (skip / xfail / focus / only).
-            for dec in _iter_decorated(tree):
+            for dec in _all_decorators(tree):
                 attr = _pytest_mark_attr(dec)
                 if attr is None:
                     continue
