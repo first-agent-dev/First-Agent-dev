@@ -33,6 +33,7 @@ the allowlist is empty, so a clean tree produces empty diagnostics.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import tomllib
@@ -279,6 +280,75 @@ def _hash_directory_sources(directory: Path) -> str:
         digest.update(source.read_bytes())
         digest.update(b"\0")
     return "sha256:" + digest.hexdigest()
+
+
+def _scoped_python_files(context: RuleContext) -> Iterator[str]:
+    """Yield repo-relative POSIX paths of every ``.py`` in scope.
+
+    "In scope" = ends with ``.py`` and does NOT start with a corpus
+    prefix. The kernel uses this to surface parse/IO failures BEFORE
+    rule dispatch so blind-spot files (a SyntaxError-bypassed addition,
+    a deleted-during-scan race) become first-class diagnostics instead
+    of silent skips.
+    """
+    for rel in context.files:
+        if not rel.endswith(".py"):
+            continue
+        if any(rel.startswith(prefix) for prefix in CORPUS_PREFIXES):
+            continue
+        yield rel
+
+
+def _parse_visibility_diagnostics(context: RuleContext) -> list[RuleResult]:
+    """Emit ``V0-UNPARSABLE`` / ``V0-IO`` for every scoped .py the
+    kernel cannot inspect.
+
+    Runs once per ``run_all`` call, before rule dispatch.  Diagnostics
+    here are HARD-BLOCK because an inspection-blind file is precisely
+    the attack surface ADR-11's threat model warns about (an author
+    who can edit anything can also append a SyntaxError to hide a
+    rule violation in the same file).
+    """
+    diagnostics: list[RuleResult] = []
+    for rel in _scoped_python_files(context):
+        path = context.repo_root / Path(rel)
+        try:
+            source_bytes = path.read_bytes()
+        except OSError as exc:
+            diagnostics.append(
+                RuleResult(
+                    severity=Severity.HARD_BLOCK,
+                    code="FA-AUTHORING-V0-IO",
+                    path=rel,
+                    line=None,
+                    message=f"kernel could not read file: {type(exc).__name__}: {exc}",
+                    remediation=(
+                        "ensure the file exists and is readable; if the file was "
+                        "intentionally removed, also remove any reference to it from "
+                        "the active snapshot before re-running the kernel"
+                    ),
+                    rule_input_hash=_sha256_hex(b"io-error:" + rel.encode("utf-8")),
+                )
+            )
+            continue
+        try:
+            ast.parse(source_bytes, filename=rel)
+        except SyntaxError as exc:
+            diagnostics.append(
+                RuleResult(
+                    severity=Severity.HARD_BLOCK,
+                    code="FA-AUTHORING-V0-UNPARSABLE",
+                    path=rel,
+                    line=exc.lineno,
+                    message=f"unparseable Python file: {exc.msg}",
+                    remediation=(
+                        "fix the SyntaxError so the authoring kernel can inspect "
+                        "this file; blind-spot files are a known evasion path"
+                    ),
+                    rule_input_hash=_sha256_hex(source_bytes),
+                )
+            )
+    return diagnostics
 
 
 # --- path enumeration ------------------------------------------------------
@@ -534,6 +604,7 @@ def run_all(
     else:
         snapshot_id = _compute_snapshot_id(repo_root, files)
         context = RuleContext(repo_root=repo_root, files=files, manifest=manifest)
+        diagnostics.extend(_parse_visibility_diagnostics(context))
         diagnostics.extend(_dispatch_rules(rules, context))
 
     ordered = tuple(sorted(diagnostics, key=RuleResult.sort_key))

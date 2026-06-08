@@ -421,3 +421,29 @@ def test_enumerate_paths_skips_symlink_to_directory(tmp_path: Path) -> None:
     paths = enumerate_paths(tmp_path)
     assert "real_dir/file.py" in paths
     assert "link_dir/file.py" not in paths
+
+
+# --- V0 pre-pass diagnostics -----------------------------------------------
+
+
+def test_run_all_emits_unparsable_diagnostic_for_syntax_error(tmp_path: Path) -> None:
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "llms.txt").write_text("x")
+    (tmp_path / "src" / "fa_demo").mkdir(parents=True)
+    (tmp_path / "src" / "fa_demo" / "broken.py").write_text("def f(:\n  pass\n")
+    report = run_all(tmp_path)
+    codes = [d.code for d in report.diagnostics]
+    assert "FA-AUTHORING-V0-UNPARSABLE" in codes
+    bad = next(d for d in report.diagnostics if d.code == "FA-AUTHORING-V0-UNPARSABLE")
+    assert bad.severity is Severity.HARD_BLOCK
+    assert bad.path == "src/fa_demo/broken.py"
+
+
+def test_run_all_skips_corpus_files_for_unparsable_check(tmp_path: Path) -> None:
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "llms.txt").write_text("x")
+    (tmp_path / "catch-corpus" / "F-X").mkdir(parents=True)
+    (tmp_path / "catch-corpus" / "F-X" / "broken.py").write_text("def f(:\n  pass\n")
+    report = run_all(tmp_path)
+    # Corpus fixtures may be intentionally malformed; the kernel skips them.
+    assert all(d.code != "FA-AUTHORING-V0-UNPARSABLE" for d in report.diagnostics)
