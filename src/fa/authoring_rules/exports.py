@@ -40,40 +40,90 @@ _CONVENTIONAL_PRIVATE: frozenset[str] = frozenset({"LOGGER", "logger", "log"})
 _INCLUDED_PREFIXES: tuple[str, ...] = ("src/",)
 
 
-def _extract_all(tree: ast.Module) -> set[str] | None:
-    """Return the set of names in ``__all__``, or ``None`` if undeclared.
+def _literal_string_names(value: ast.expr) -> set[str] | None:
+    """Return the set of string-literal names in ``value`` if it is a fully
+    literal ``List`` or ``Tuple`` of ``Constant(str)``; otherwise ``None``.
 
-    Recognises ``__all__ = [...]`` / ``__all__ = (...)`` assignments
-    and the augmented form ``__all__ += [...]``. Non-literal members
-    (e.g. ``*VAR``) are silently dropped: the rule cannot reason about
-    them and emitting a phantom diagnostic for a dynamic re-export
-    would be noise.
+    Centralises the literal-detection decision. Sets (``{"A", "B"}``) are
+    rejected as opt-out: they are non-idiomatic for ``__all__`` and the
+    rule cannot guarantee membership order.
     """
-    collected: set[str] | None = None
+    if not isinstance(value, (ast.List, ast.Tuple)):
+        return None
+    names: set[str] = set()
+    for elt in value.elts:
+        if not (isinstance(elt, ast.Constant) and isinstance(elt.value, str)):
+            return None  # any non-literal element makes the whole RHS unprovable
+        names.add(elt.value)
+    return names
+
+
+_UNPROVABLE = object()  # sentinel distinct from set() and None
+
+
+def _extract_all(tree: ast.Module) -> set[str] | None:
+    """Return the set of names in ``__all__``, or ``None`` if the module
+    declares no ``__all__`` or declares one the rule cannot fully reason
+    about.
+
+    Recognises four shapes (top-level only):
+
+    * ``__all__ = [...]`` / ``__all__ = (...)``  (replaces working set)
+    * ``__all__: list[str] = [...]``             (replaces working set;
+      ignored entirely if ``value is None``)
+    * ``__all__ += [...]``                       (unions into working set)
+
+    Re-assignment is **last-wins** (matches Python). Any non-literal RHS
+    on a replace operation, or any non-literal augmented operand once a
+    working set exists, marks the module **unprovable** and the function
+    returns ``None``.
+    """
+    working: set[str] | object | None = None  # None | set[str] | _UNPROVABLE
+    saw_declaration = False
     for node in tree.body:
-        targets: list[ast.expr] = []
-        value: ast.expr | None = None
+        # --- Assign: __all__ = ... ---
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id == "__all__":
-                    targets.append(target)
-                    value = node.value
+                    saw_declaration = True
+                    names = _literal_string_names(node.value)
+                    working = _UNPROVABLE if names is None else names
+                    break  # multiple targets sharing __all__ in one Assign is pathological
+        # --- AnnAssign: __all__: T = ... ---
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "__all__"
+        ):
+            if node.value is None:
+                continue  # declaration without value; ignore (no runtime export set)
+            saw_declaration = True
+            names = _literal_string_names(node.value)
+            working = _UNPROVABLE if names is None else names
+        # --- AugAssign: __all__ += ... ---
         elif (
             isinstance(node, ast.AugAssign)
             and isinstance(node.target, ast.Name)
             and node.target.id == "__all__"
         ):
-            targets.append(node.target)
-            value = node.value
-        if not targets or value is None:
-            continue
-        if collected is None:
-            collected = set()
-        if isinstance(value, (ast.List, ast.Tuple)):
-            for elt in value.elts:
-                if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                    collected.add(elt.value)
-    return collected
+            if working is None or working is _UNPROVABLE:
+                # No prior working set OR already unprovable; the augmented
+                # operation cannot make us provable. Mark unprovable if we
+                # saw any declaration so far.
+                if saw_declaration:
+                    working = _UNPROVABLE
+                continue
+            names = _literal_string_names(node.value)
+            if names is None:
+                working = _UNPROVABLE
+            else:
+                # working is a set (narrowed by the conditions above)
+                assert isinstance(working, set)
+                working = working | names
+    if working is None or working is _UNPROVABLE:
+        return None
+    assert isinstance(working, set)
+    return working
 
 
 def _public_symbols(tree: ast.Module) -> dict[str, int]:
