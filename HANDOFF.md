@@ -13,13 +13,21 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
+<<<<<<< Updated upstream
 **As of:** 2026-06-08 — ADR-11 **PR-10 follow-up PR-11 landed** (merge `c1d046a`, PR #11): V2/V11/V4 rule-correctness pass + PR-12 scope-prep. V2 `_extract_all` rewritten around an `_UNPROVABLE` sentinel (closes pass-1 BLOCKER-1/2/3); `_public_symbols` now returns defining `ast.stmt` nodes with per-node `node_input_hash` (HIGH-1, P2-HIGH-C); V11 self-contradiction split into a distinct `FA-AUTHORING-V11-CONTRADICTORY-ASSERT` code (HIGH-4); V4 exempts module-scope `pytest.skip(..., allow_module_level=True)` (HIGH-5); `_iter_decorated`→`_all_decorators` (MEDIUM-2); `SRC_SCOPE`/`TEST_SCOPE` hoisted into `_scan.py` (PR-12 prep); BACKLOG I-20/I-21/I-12-bis filed. **995 tests, 91.28 % cov, mypy strict (74 src files), ruff + pylint clean, `fa authoring-check` 0 diagnostics.** `RULE_ALLOWLIST` unchanged (3 callables). Next: PR-12 (kernel audit/corpus/advisory) then PR-13 (V4 evasion closure). Prior: 2026-06-06 — ADR-11 PR-2 landed (Level-1 rule packs); 2026-06-04 — CI/QA tooling hardening (R-1..R-6, R-15; local-first `just check`, advisory CI except sanity-check/audit/gitleaks; `uv.lock` deferred).
+=======
+**As of:** 2026-06-08 — Linux deployment suite v2 landed: cross-reference-verified against three independent LLM research passes. Major changes from v1: removed Portainer/TLP/auto-login, conservative pruning (mask tracker, don't purge), Docker from docker.com apt repo with version pin, power-profiles-daemon in power-saver, UFW binds SSH to tailscale0 only, restic → B2 S3-compatible endpoint, weekly docker prune cron, systemd user service, `GIT_SSH_COMMAND` with `IdentitiesOnly=yes`, GitHub Ed25519 host key pinned in known_hosts, branch protection on `main`, pids_limit: 512. Added: `scripts/fa.service`, `scripts/backup-fa.sh`, `knowledge/SETUP_AIO.md` (step-by-step bootstrap).
+>>>>>>> Stashed changes
 
 ### Landmarks (what landed)
 
 | What | Date | Pointer |
 | :--- | :--- | :--- |
+<<<<<<< Updated upstream
 | **ADR-11 PR-10 follow-up PR-11 landed** (PR #11, merge `c1d046a`): V2/V11/V4 correctness — `_extract_all` `_UNPROVABLE` opt-out, `_public_symbols` defining-node + per-node hash, V11 `CONTRADICTORY-ASSERT` split, V4 `allow_module_level=True` exemption, `_iter_decorated`→`_all_decorators`, `SRC_SCOPE`/`TEST_SCOPE` hoist; BACKLOG I-20/I-21/I-12-bis. **995 tests, 91.28 % cov.** | 2026-06-08 | [`exports.py`](./src/fa/authoring_rules/exports.py), [`tests.py`](./src/fa/authoring_rules/tests.py), [`_scan.py`](./src/fa/authoring_rules/_scan.py) |
+=======
+| **Linux deployment suite v2 (cross-reference verified)**: Three-source consensus across 7 decision domains. Removed Portainer/TLP/auto-login. Conservative pruning (mask, don't purge tracker/evolution). Docker from docker.com apt repo. power-profiles-daemon. UFW → tailscale0 only. restic → B2 S3 endpoint. `GIT_SSH_COMMAND` + `IdentitiesOnly=yes` + pinned GitHub Ed25519 host key. Branch protection on `main`. pids_limit: 512. Added `knowledge/SETUP_AIO.md` bootstrap guide, `scripts/fa.service`, `scripts/backup-fa.sh`. | 2026-06-08 | [`First-Agent-ops-cross-reference.md`](./knowledge/research/First-Agent-ops-cross-reference.md), [`homelab-deployment-24-7-2026-06.md`](./knowledge/research/homelab-deployment-24-7-2026-06.md), [`SETUP_AIO.md`](./knowledge/SETUP_AIO.md), [`setup-fa-desktop.sh`](./scripts/setup-fa-desktop.sh), [`fa.service`](./scripts/fa.service), [`backup-fa.sh`](./scripts/backup-fa.sh), [`docker-compose.fa.yml`](./docker-compose.fa.yml), [`Dockerfile.fa`](./Dockerfile.fa) |
+>>>>>>> Stashed changes
 | **ADR-11 PR-2 landed**: Level-1 rule packs `exports.py` (V2 `__all__` completeness, F-2/F-7) and `tests.py` (V4 `pytest.skip` / non-strict-xfail / focus markers; V11 placeholder-asserts, F-9) with `_scan.py` shared helper. All HARD-BLOCK. `RULE_ALLOWLIST` is now 3 callables (was empty in PR 1). One F-7-class real bug fixed in same PR: `TimeSource` Callable alias added to `src/fa/inner_loop/hooks/blockers.py.__all__`. **974 tests, 91.05 % cov, pylint 10.00/10, mypy strict on 127 files.** | 2026-06-06 | [`exports.py`](./src/fa/authoring_rules/exports.py), [`tests.py`](./src/fa/authoring_rules/tests.py), [`_scan.py`](./src/fa/authoring_rules/_scan.py) |
 | ADR-11 (Authoring Guardrails) landed (doc-only ADR-RULE): two-tier TCB (frozen stdlib Level-0 kernel + allowlisted Level-1 rules), `ADR-11-I1..I8` invariant slate, active-consumer table, enforcement-ceiling. SSOT = merged blueprint (R-1..R-18). Code ships across PR 1..PR 5. **Amended same-day (contract freeze):** §Verification (catch/fp corpora + `F-1..F-10`), pinned `FA-AUTHORING-V<N>` code namespace, single `.fa/session.toml`, `rule_input_hash` source, `fail_under=90`/strict-`pylint` gate note. | 2026-06-01 | [`ADR-11`](./knowledge/adr/ADR-11-authoring-guardrails.md), [blueprint](./knowledge/research/ADR-11-Authoring-Guardrails-Blueprint.md), [`exploration_log.md` Q-16 + amendment](./knowledge/trace/exploration_log.md) |
 | Draft-first hardening (PR #24 follow-up): AST `fs.run_bash` analyzer + trusted session draft store; `IntentGuard` now gates shell writes (REPO_WRITE / INDEX_WRITE / OPAQUE_EXEC) and rejects stale / externally-fabricated drafts. | 2026-05-29 | [`bash_intent.py`](./src/fa/inner_loop/bash_intent.py), [`pr_draft.py`](./src/fa/inner_loop/pr_draft.py), [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py) |
@@ -29,8 +37,6 @@ Overwritten each session! Details live at the pointer, not here.
 | PR C landed: `IntentGuard(GuardMiddleware)` on `BEFORE_TOOL_EXEC` reuses M-6's classifier + validator; closes M-7 (ADR-10 I-1: one validator, two consumers) | 2026-05-27 | [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py), [`tests/test_intent_guard.py`](./tests/test_intent_guard.py) |
 | PR B landed: `src/fa/hygiene/pr_intent.py` classifier + `prepare-commit-msg` / `commit-msg` hooks; snapshot test pins hook constants to skill §Output format (closes M-6) | 2026-05-27 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`hooks/`](./src/fa/hygiene/hooks/), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
 | PR A' landed: full PR-creation rulebook → loadable skill; AGENTS.md | 2026-05-26 | [`pr-creation/SKILL.md`](./knowledge/skills/pr-creation/SKILL.md) |
-| `knowledge/skills/` directory established; `repo-audit` migrated (closes I-9b) | 2026-05-26 | [`skills/README.md`](./knowledge/skills/README.md) |
-| CI/QA tooling hardening (R-1..R-6, R-15): uv + pip-audit + deptry + gitleaks + Semgrep + pyrefly + justfile. `advisory.yml` replaces `ci.yml` (local-first: blocking sanity-check/audit/gitleaks, advisory pyrefly). `uv.lock` generation deferred (network unavailable in dev env); CI uses `uv sync` without `--frozen` until lockfile lands. `pyproject.toml` gains `[tool.pyrefly]` (strict) + `[tool.deptry]` (DEP002 ignores for dev-only packages). | 2026-06-04 | [`ci-qa-tooling-adversarial-2026-06.md`](./knowledge/research/ci-qa-tooling-adversarial-2026-06.md) §0 |
 ### Gotchas (delete when resolved)
 
 | Gotcha | Pointer |
@@ -58,18 +64,22 @@ Priority-ordered. Completed items deleted, not struck through.
    end-to-end against a live provider. Yellow→green conversion
    item; provider-specific adapter fixes likely (e.g., a vendor
    that returns `tool_calls` under a non-canonical key).
-2. **Cross-session aggregation of `attempt_history.json` (R-10 /
+2. **Deploy the dedicated AIO** using the artifacts from
+   `knowledge/research/linux-desktop-fa-deployment-2026-06.md`:
+   wipe → Ubuntu Desktop 24.04 minimal → run `scripts/setup-fa-desktop.sh`
+   → authenticate Tailscale → add GitHub deploy key → `docker compose up`.
+3. **Cross-session aggregation of `attempt_history.json` (R-10 /
    R-12).** Per-run history is already written under
    `<workspace>/.fa/runs/<run_id>/`; the missing piece is the
    roll-up surface that Pillar-3 measurement depends on (lessons
    moving across sessions instead of being re-discovered).
-3. **Orphan cross-ref sweep — ≈26 files** from PR A' extraction.
+4. **Orphan cross-ref sweep — ≈26 files** from PR A' extraction.
    Top-10: `llms.txt` (9), `MAINTENANCE.md` (7), `ADR-10` (6),
    `DIGEST.md` (4), `ADR-7` (4). Retarget «AGENTS.md PR Checklist
    rule #N» → [`pr-creation/SKILL.md` §PR Checklist](./knowledge/skills/pr-creation/SKILL.md).
-4. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
+5. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
    number» audit; `[CODE]` namespace + A23 lint.
-5. **ADR-11 rollout PR 3 — parity + docs rules.** PR-2 landed
+6. **ADR-11 rollout PR 3 — parity + docs rules.** PR-2 landed
    2026-06-06 (V2 exports / V4 test-decay / V11 placeholder-asserts).
    Next: `src/fa/authoring_rules/parity.py` (V3 — `SQUASH_MSG`
    Python↔Bash drift, F-3) + `src/fa/authoring_rules/docs.py` (V5 —
@@ -77,12 +87,12 @@ Priority-ordered. Completed items deleted, not struck through.
    (`seam.py` V6 + `catch-corpus/` + `fp-corpus/` consumers) →
    PR 5 (`messages.py` V12 + advisory tuning). V10 stays deferred
    indefinitely per [`I-14`](./knowledge/BACKLOG.md#i-14--adr-11-pr-3-rule-packs-v3-v5-v7-v10-v12-v14).
-6. **Authoring-rules scope coverage** ([`I-12`](./knowledge/BACKLOG.md#i-12--authoring-rules-scope-coverage-gap-scripts-verifiers)).
+7. **Authoring-rules scope coverage** ([`I-12`](./knowledge/BACKLOG.md#i-12--authoring-rules-scope-coverage-gap-scripts-verifiers)).
    PR-2 V2 scopes only to `src/`; V4/V11 to `tests/`. Extend to
    `scripts/` and `verifiers/` once either tree grows beyond its
    current single-file footprint, OR a V2-class regression is
    detected manually there.
-7. **V4 import-alias bypass** ([`I-13`](./knowledge/BACKLOG.md#i-13--v4-import-alias-bypass-from-pytest-import-skip)).
+8. **V4 import-alias bypass** ([`I-13`](./knowledge/BACKLOG.md#i-13--v4-import-alias-bypass-from-pytest-import-skip)).
    `from pytest import skip; skip(...)` slips past `TEST_SEMANTIC_DECAY`
    today. Half-day fix (add an `ast` import-walker); land when an
    `fp-corpus` measurement (PR-4) shows a real bypass, or sooner if

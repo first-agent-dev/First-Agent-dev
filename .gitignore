@@ -9,6 +9,17 @@ build/
 .fa/
 .devin/
 
+# Environment files (may contain secrets like B2 credentials)
+.env*
+!.env.example
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
 # Coverage / mutation artifacts
 .coverage
 coverage.xml

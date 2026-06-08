@@ -1,0 +1,46 @@
+# Build context exclusions for First-Agent container image
+# Reduces image layers and speeds up docker compose build
+
+# Git
+.git
+.gitignore
+
+# Python caches and virtual environments
+__pycache__
+*.pyc
+*.pyo
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.venv
+venv
+
+# Node.js (if any frontend assets exist)
+node_modules
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist
+build
+*.egg-info
+
+# CI/CD and scripts (not needed in runtime image)
+.github
+scripts
+
+# Documentation (not needed in runtime image)
+docs
+*.md
+
+# Test data and temporary files
+tests/test_data
+tmp

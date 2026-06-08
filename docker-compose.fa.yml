@@ -1,0 +1,117 @@
+# Docker Compose for First-Agent 24/7 deployment
+# Place this in ~/fa/workspace/First-Agent-dev/ or ~/fa/
+# Run: docker compose -f docker-compose.fa.yml up -d
+
+services:
+  first-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.fa
+    container_name: first-agent
+    hostname: first-agent
+    init: true
+    restart: unless-stopped
+
+    # Resource limits for i5-1235U / 16GB host
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 8G
+        reservations:
+          cpus: '1.0'
+          memory: 512M
+
+    # Isolation hardening
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    user: "1000:1000"
+
+    # Process limits
+    pids_limit: 512
+
+    # Environment
+    environment:
+      - FA_WORKSPACE=/workspace
+      - FA_CONFIG=/config
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - UV_CACHE_DIR=/tmp/uv-cache
+      # Use deploy key exclusively; ignore any other SSH keys in the container
+      - GIT_SSH_COMMAND=ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts
+    env_file:
+      - path: ./.env.fa
+        required: false
+
+    # Volumes
+    volumes:
+      # Source code (bind-mount from host)
+      - type: bind
+        source: /srv/first-agent/repo/First-Agent-dev
+        target: /workspace
+        read_only: false
+      # FA state/config (persistent)
+      - type: bind
+        source: /srv/first-agent/state
+        target: /config
+        read_only: false
+      # SSH deploy key (read-only) — cross-reference: mount at /run/secrets, not ~/.ssh
+      - type: bind
+        source: /srv/first-agent/secrets/github_deploy_key
+        target: /run/secrets/git_key
+        read_only: true
+      # Pinned GitHub host key (mitigates host-key rotation outages)
+      - type: bind
+        source: /srv/first-agent/secrets/known_hosts
+        target: /run/secrets/known_hosts
+        read_only: true
+      # Temporary writable layers
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 1G
+      - type: tmpfs
+        target: /home/fa/.cache
+        tmpfs:
+          size: 500M
+      # UV cache (can be rebuilt)
+      - type: tmpfs
+        target: /tmp/uv-cache
+        tmpfs:
+          size: 2G
+      # uv tool installs write to ~/.local/share/uv
+      - type: tmpfs
+        target: /home/fa/.local
+        tmpfs:
+          size: 500M
+
+    # Network isolation
+    networks:
+      - fa-network
+
+    # Healthcheck
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  fa-network:
+    driver: bridge
+    internal: false

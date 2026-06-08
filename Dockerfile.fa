@@ -1,0 +1,53 @@
+# Dockerfile for First-Agent runtime container
+# Ubuntu 24.04 base with uv, just, and Python 3.13
+
+FROM ubuntu:24.04
+
+# Prevent interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV UV_CACHE_DIR=/tmp/uv-cache
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    openssh-client \
+    universal-ctags \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -u 1000 -s /bin/bash fa \
+    && mkdir -p /home/fa/.ssh \
+    && chmod 700 /home/fa/.ssh
+
+# Install uv (Astral package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/ \
+    && mv /root/.local/bin/uvx /usr/local/bin/ \
+    && chmod +x /usr/local/bin/uv /usr/local/bin/uvx
+
+# Install just (task runner)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+# Install Python 3.13 via uv
+RUN uv python install 3.13
+
+# Create /run/secrets for deploy key + known_hosts bind-mounts
+RUN mkdir -p /run/secrets && chmod 755 /run/secrets
+
+# Set up working directories
+RUN mkdir -p /workspace /config \
+    && chown -R fa:fa /workspace /config /home/fa /run/secrets
+
+# SSH client is installed above; Git auth is configured via GIT_SSH_COMMAND env var
+# in docker-compose.fa.yml (points to /run/secrets/git_key + known_hosts)
+
+USER fa
+WORKDIR /workspace
+
+# Default: keep container alive, FA process started by external orchestration
+CMD ["sleep", "infinity"]

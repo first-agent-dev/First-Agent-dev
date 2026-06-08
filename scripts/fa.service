@@ -1,0 +1,19 @@
+[Unit]
+Description=First-Agent 24/7 container
+After=docker.service network-online.target tailscaled.service
+Requires=docker.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+OOMScoreAdjust=-500
+Restart=on-failure
+RestartSec=10
+WorkingDirectory=/srv/first-agent/repo/First-Agent-dev
+ExecStart=/usr/bin/docker compose -f docker-compose.fa.yml up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.fa.yml down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=default.target
