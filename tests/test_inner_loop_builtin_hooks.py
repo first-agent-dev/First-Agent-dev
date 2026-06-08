@@ -11,6 +11,7 @@ from fa.inner_loop.hooks import (
     LearningObserver,
     LifecyclePoint,
     PauseGuard,
+    SecretGuard,
     VerifierObserver,
 )
 from fa.orchestration.pause import PauseKind, write_pause
@@ -164,3 +165,47 @@ def test_learning_observer_writes_discovery_and_gotcha(tmp_path: Path) -> None:
 
     assert (tmp_path / "codebase_map.json").exists()
     assert "fs.write_file failed" in (tmp_path / "gotchas.md").read_text(encoding="utf-8")
+
+
+def test_secret_guard_denies_write_file_with_secret() -> None:
+    guard = SecretGuard(secrets=frozenset({"sk-or-v1-real-key-12345"}))
+    payload = HookPayload(
+        tool_call=ToolCall(
+            name="fs.write_file",
+            params={"path": "test.txt", "content": "key is sk-or-v1-real-key-12345"},
+        ),
+    )
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, payload)
+    assert decision.action == "deny"
+    assert "secret leak detected" in decision.reason
+
+
+def test_secret_guard_allows_write_file_without_secret() -> None:
+    guard = SecretGuard(secrets=frozenset({"sk-or-v1-real-key-12345"}))
+    payload = HookPayload(
+        tool_call=ToolCall(
+            name="fs.write_file",
+            params={"path": "test.txt", "content": "plain text"},
+        ),
+    )
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, payload)
+    assert decision.action == "allow"
+
+
+def test_secret_guard_allows_bash_without_secret() -> None:
+    guard = SecretGuard(secrets=frozenset({"sk-or-v1-real-key-12345"}))
+    payload = HookPayload(
+        tool_call=ToolCall(
+            name="fs.run_bash",
+            params={"command": "ls -la"},
+        ),
+    )
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, payload)
+    assert decision.action == "allow"
+
+
+def test_secret_guard_allows_null_tool_call() -> None:
+    guard = SecretGuard(secrets=frozenset({"sk-or-v1-real-key-12345"}))
+    payload = HookPayload()
+    decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, payload)
+    assert decision.action == "allow"

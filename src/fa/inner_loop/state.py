@@ -61,9 +61,12 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fa.inner_loop.registry import ToolCall, ToolResult
-from fa.observability.redaction import SecretRedactor
+
+if TYPE_CHECKING:
+    from fa.observability.redaction import SecretRedactor
 
 DEFAULT_STATE_ROOT = Path.home() / ".fa" / "state" / "runs"
 HARNESS_ID = "fa-inner-loop@0.1.0"
@@ -124,6 +127,8 @@ class EventLog:
             return {k: self._redact_value(v) for k, v in value.items()}
         if isinstance(value, list):
             return [self._redact_value(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(self._redact_value(v) for v in value)
         return value
 
     def append(

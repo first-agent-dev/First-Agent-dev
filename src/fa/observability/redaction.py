@@ -25,6 +25,10 @@ class SecretRedactor:
             if v in env and env[v] and len(env[v]) >= 8
         }
 
+    @property
+    def secrets(self) -> frozenset[str]:
+        return frozenset(self._secrets)
+
     def redact(self, text: str) -> str:
         for secret in sorted(self._secrets, key=len, reverse=True):
             text = text.replace(secret, self._MASK)

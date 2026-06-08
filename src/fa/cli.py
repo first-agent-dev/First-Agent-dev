@@ -417,7 +417,7 @@ def _cmd_run(
     hooks.register(AuditHook(event_log=log))
     hooks.register(
         SecretGuard(
-            secrets=redactor._secrets if redactor is not None else frozenset(),
+            secrets=redactor.secrets if redactor is not None else frozenset(),
         )
     )
     hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
