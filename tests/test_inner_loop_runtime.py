@@ -567,7 +567,6 @@ def test_after_tool_exec_fires_on_invalid_payload(tmp_path: Path) -> None:
     class RecordAfterExecObserver(ObserverMiddleware):
         name = "record_after_exec"
         attaches_to = (LifecyclePoint.AFTER_TOOL_EXEC,)
-        events: list[tuple[LifecyclePoint, HookPayload]] = []
 
         @override
         def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:

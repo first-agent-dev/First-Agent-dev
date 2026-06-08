@@ -12,6 +12,11 @@ from pathlib import Path
 
 import pytest
 
+from fa.authoring_rules import (
+    EXPORTS_COMPLETENESS,
+    RULE_ALLOWLIST,
+    TEST_SEMANTIC_DECAY,
+)
 from fa.authoring_tcb import (
     KERNEL_VERSION,
     KernelReport,
@@ -62,6 +67,14 @@ def test_severity_from_label_rejects_unknown() -> None:
 
 def test_severity_sort_rank_orders_hard_block_first() -> None:
     assert int(Severity.HARD_BLOCK) < int(Severity.ADVISORY) < int(Severity.INFO)
+
+
+def test_severity_members_are_truthy() -> None:
+    # Pin: bool(HARD_BLOCK) must be True, not False (the int rank is 0
+    # which would otherwise be falsy — see __bool__ override comment).
+    assert bool(Severity.HARD_BLOCK) is True
+    assert bool(Severity.ADVISORY) is True
+    assert bool(Severity.INFO) is True
 
 
 # --- RuleResult ------------------------------------------------------------
@@ -371,6 +384,8 @@ def test_render_text_lists_diagnostics(tmp_path: Path) -> None:
 
     text = render_text(run_all(tmp_path, rules=(rule,)))
     assert "kernel 0.1" in text
+    assert "allowlist_signature" in text
+    assert "dispatched_count" in text
     assert "[HARD-BLOCK] FA-AUTHORING-V2-EXPORTS src/fa/foo.py:7" in text
 
 
@@ -413,3 +428,117 @@ def test_enumerate_paths_skips_symlink_to_directory(tmp_path: Path) -> None:
     paths = enumerate_paths(tmp_path)
     assert "real_dir/file.py" in paths
     assert "link_dir/file.py" not in paths
+
+
+# --- V0 pre-pass diagnostics -----------------------------------------------
+
+
+def test_run_all_emits_unparsable_diagnostic_for_syntax_error(tmp_path: Path) -> None:
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "llms.txt").write_text("x")
+    (tmp_path / "src" / "fa_demo").mkdir(parents=True)
+    (tmp_path / "src" / "fa_demo" / "broken.py").write_text("def f(:\n  pass\n")
+    report = run_all(tmp_path)
+    codes = [d.code for d in report.diagnostics]
+    assert "FA-AUTHORING-V0-UNPARSABLE" in codes
+    bad = next(d for d in report.diagnostics if d.code == "FA-AUTHORING-V0-UNPARSABLE")
+    assert bad.severity is Severity.HARD_BLOCK
+    assert bad.path == "src/fa_demo/broken.py"
+
+
+def test_run_all_skips_corpus_files_for_unparsable_check(tmp_path: Path) -> None:
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "llms.txt").write_text("x")
+    (tmp_path / "catch-corpus" / "F-X").mkdir(parents=True)
+    (tmp_path / "catch-corpus" / "F-X" / "broken.py").write_text("def f(:\n  pass\n")
+    report = run_all(tmp_path)
+    # Corpus fixtures may be intentionally malformed; the kernel skips them.
+    assert all(d.code != "FA-AUTHORING-V0-UNPARSABLE" for d in report.diagnostics)
+
+
+# --- KernelReport audit fields ---------------------------------------------
+
+
+def test_allowlist_signature_changes_with_rule_set(tmp_path: Path) -> None:
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "llms.txt").write_text("x")
+    (tmp_path / "src" / "fa_demo").mkdir(parents=True)
+    (tmp_path / "src" / "fa_demo" / "m.py").write_text("def public(): pass\n__all__ = []\n")
+    full = run_all(tmp_path, rules=RULE_ALLOWLIST)
+    empty = run_all(tmp_path, rules=())
+    one = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
+    assert full.dispatched_count == 3
+    assert empty.dispatched_count == 0
+    assert one.dispatched_count == 1
+    assert full.allowlist_signature != empty.allowlist_signature
+    assert full.allowlist_signature != one.allowlist_signature
+    assert empty.allowlist_signature != one.allowlist_signature
+
+
+def test_allowlist_signature_is_order_insensitive(tmp_path: Path) -> None:
+    """The signature sorts the rule keys, so dispatch order doesn't leak."""
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "llms.txt").write_text("x")
+    forward = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS, TEST_SEMANTIC_DECAY))
+    reverse = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY, EXPORTS_COMPLETENESS))
+    assert forward.allowlist_signature == reverse.allowlist_signature
+
+
+# --- V0-ADVISORY-UNDATED synthesis ------------------------------------------
+
+
+def test_advisory_without_expires_on_synthesises_v0_diagnostic(tmp_path: Path) -> None:
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "llms.txt").write_text("x")
+
+    class _UndatedAdvisoryRule:
+        __name__ = "undated_advisory_rule"
+
+        def __call__(self, context: RuleContext) -> list[RuleResult]:
+            return [
+                RuleResult(
+                    severity=Severity.ADVISORY,
+                    code="FA-AUTHORING-V99-TEST-ADVISORY",
+                    path="x.py",
+                    line=1,
+                    message="m",
+                    remediation="r",
+                    rule_input_hash="sha256:" + "0" * 64,
+                    # expires_on intentionally omitted
+                )
+            ]
+
+    report = run_all(tmp_path, rules=(_UndatedAdvisoryRule(),))
+    codes = [d.code for d in report.diagnostics]
+    assert "FA-AUTHORING-V99-TEST-ADVISORY" in codes
+    assert "FA-AUTHORING-V0-ADVISORY-UNDATED" in codes
+    synth = next(d for d in report.diagnostics if d.code == "FA-AUTHORING-V0-ADVISORY-UNDATED")
+    assert synth.severity is Severity.ADVISORY
+    assert synth.expires_on == "9999-12-31"
+    # Synth itself does NOT recursively trigger another synth (sentinel breaks the loop).
+    assert sum(1 for d in report.diagnostics if d.code == "FA-AUTHORING-V0-ADVISORY-UNDATED") == 1
+
+
+def test_dated_advisory_does_not_synthesise(tmp_path: Path) -> None:
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "llms.txt").write_text("x")
+
+    class _DatedAdvisoryRule:
+        __name__ = "dated_advisory_rule"
+
+        def __call__(self, context: RuleContext) -> list[RuleResult]:
+            return [
+                RuleResult(
+                    severity=Severity.ADVISORY,
+                    code="FA-AUTHORING-V99-DATED",
+                    path="x.py",
+                    line=1,
+                    message="m",
+                    remediation="r",
+                    rule_input_hash="sha256:" + "0" * 64,
+                    expires_on="2027-01-01",
+                )
+            ]
+
+    report = run_all(tmp_path, rules=(_DatedAdvisoryRule(),))
+    assert all(d.code != "FA-AUTHORING-V0-ADVISORY-UNDATED" for d in report.diagnostics)

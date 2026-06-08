@@ -82,6 +82,7 @@ packages = ["src/fa"]
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+extend-exclude = ["catch-corpus", "fp-corpus"]
 
 [tool.ruff.lint]
 select = [
@@ -111,6 +112,7 @@ python_version = "3.13"
 strict = true
 warn_unused_configs = true
 files = ["src", "tests"]
+exclude = ["^catch-corpus/", "^fp-corpus/"]
 
 [tool.pytest.ini_options]
 # --cov gates: fail the suite if line coverage drops below the threshold set
@@ -189,6 +191,7 @@ init-hook = "import sys; sys.path.insert(0, 'src')"
 # Belt-and-suspenders: if a CI env can't install a runtime dep, don't let a
 # missing third-party module masquerade as a code error.
 ignored-modules = []
+ignore-paths = ["catch-corpus/.*", "fp-corpus/.*"]
 
 [tool.pylint."messages control"]
 disable = [

@@ -416,3 +416,54 @@ evidence — file inventories with line ranges — lives in the SSOT blueprint
   — minimalism-first 4-question test applied to Option D.
 - [`knowledge/trace/exploration_log.md` Q-16](../trace/exploration_log.md#q-16) — alternatives
   considered and rejected at ADR-11 decision time.
+
+### Amendment 2026-06-08 — KernelReport audit fields + advisory-undated policy
+
+§9.7 (deterministic output) is extended with two non-removing fields:
+`allowlist_signature` (sha256 over the sorted
+`type(r).__module__.__qualname__` of each dispatched rule callable) and
+`dispatched_count` (length of the static allowlist actually passed to
+`run_all`). Both bind every report to *which subset of the rule pack
+ran*, closing the gap between `rule_pack_hash` (which fixates only the
+source bytes) and the production call site. Rule callables registered
+in `RULE_ALLOWLIST` MUST be class instances (not bare functions), so
+the `allowlist_signature` derivation is unambiguous. A representative
+key for the current allowlist is
+`fa.authoring_rules.exports._ExportsCompletenessRule`; the set is
+sorted and `\0`-joined before hashing, making the signature insensitive
+to dispatch order.
+
+§9.8 (fail-closed) is extended with three new V0-namespace diagnostics:
+`FA-AUTHORING-V0-UNPARSABLE` (HARD-BLOCK; emitted by the kernel's
+pre-dispatch pass when a scoped `.py` fails to `ast.parse`),
+`FA-AUTHORING-V0-IO` (HARD-BLOCK; emitted by the same pre-pass when
+`read_bytes` raises `OSError`). The kernel pre-pass parses every scoped
+`.py` before rule dispatch; Level-1 rules via `iter_python_files` parse
+the same files again. This temporary duplication is accepted because the
+rule count is small (3); per-file AST caching is deferred to backlog
+item I-22. `FA-AUTHORING-V0-ADVISORY-UNDATED` (ADVISORY; synthesised
+post-dispatch when any rule emits a `RuleResult`
+with `severity=ADVISORY` and `expires_on=None`, materialising the
+"missing date is itself an advisory" rule of ADR-11-I2). The
+ADVISORY-UNDATED synth carries `expires_on="9999-12-31"` as a sentinel
+to break the self-recursion. The synthesised diagnostic inherits
+`rule_input_hash` from the offending `RuleResult` so the diagnostic pair
+remains bound to the same input bytes.
+
+`Severity` integer values are **unchanged** (blueprint §9.7-frozen:
+HARD-BLOCK=0, ADVISORY=1, INFO=2); a `__bool__` override is added
+returning `True` for all members to remove the
+`bool(HARD_BLOCK) is False` footgun.
+
+The corpora directories `catch-corpus/` and `fp-corpus/` are seeded
+with one fixture per V-code claimed in PR-2; the parametrised harness
+in `tests/test_corpus.py` enforces both directions (catch fixtures
+must fire; fp fixtures must not). The full F-1..F-10 catch-corpus
+expansion remains scheduled for PR-4 (Appendix B). Tool excludes
+(`pyproject.toml`: ruff `extend-exclude`, mypy `exclude`, pylint
+`ignore-paths`) prevent the intentionally non-conforming fixture
+bodies from failing the regular CI lint gates.
+
+None of these changes affect any pre-amendment caller: existing fields
+keep their types, existing diagnostic codes remain unique, and the
+wire form is additive-only.

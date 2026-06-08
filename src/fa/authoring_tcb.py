@@ -33,6 +33,7 @@ the allowlist is empty, so a clean tree produces empty diagnostics.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import tomllib
@@ -65,6 +66,14 @@ _SKIP_DIRS = frozenset(
     }
 )
 
+# Corpora directories holding fixtures that intentionally violate Level-1
+# rules (catch-corpus/) or known-clean diffs the rules must NOT flag
+# (fp-corpus/, blueprint Appendix B PR 4). Hoisted into Level 0 so both
+# the kernel's pre-dispatch parse-fail / IO surface AND every Level-1
+# rule reference one definition. Public (no leading underscore) because
+# `_scan.py` imports it across the Level boundary.
+CORPUS_PREFIXES: tuple[str, ...] = ("catch-corpus/", "fp-corpus/")
+
 # Frozen manifest schema (PR 1). The session seam is carried but not yet
 # *enforced* — the staged-paths-subset-of-seam rule is Level-1 ``seam.py``
 # (PR 4). Unknown tables/keys are rejected (fail-closed) so the schema
@@ -90,6 +99,18 @@ class Severity(IntEnum):
     def label(self) -> str:
         """Return the contract wire label (e.g. ``"HARD-BLOCK"``)."""
         return _SEVERITY_LABELS[self]
+
+    def __bool__(self) -> bool:
+        """All severities are truthy.
+
+        Defuses the ``if severity:`` footgun. The integer rank is the SORT
+        key (blueprint §9.7 freezes ``HARD_BLOCK=0``); the boolean
+        interpretation of the rank is meaningless because ``0`` is the
+        most-severe value, not "no severity". Override returns ``True`` for
+        every member so callers cannot accidentally classify ``HARD_BLOCK``
+        as false.
+        """
+        return True
 
     @classmethod
     def from_label(cls, label: str) -> Severity:
@@ -213,6 +234,8 @@ class KernelReport:
     kernel_hash: str
     snapshot_id: str
     rule_pack_hash: str
+    allowlist_signature: str
+    dispatched_count: int
     session_hash: str | None
     diagnostics: tuple[RuleResult, ...]
 
@@ -228,6 +251,8 @@ class KernelReport:
             "kernel_hash": self.kernel_hash,
             "snapshot_id": self.snapshot_id,
             "rule_pack_hash": self.rule_pack_hash,
+            "allowlist_signature": self.allowlist_signature,
+            "dispatched_count": self.dispatched_count,
             "session_hash": self.session_hash,
             "diagnostics": [d.to_dict() for d in self.diagnostics],
             "exit_code": self.exit_code,
@@ -259,6 +284,95 @@ def _hash_directory_sources(directory: Path) -> str:
         digest.update(source.read_bytes())
         digest.update(b"\0")
     return "sha256:" + digest.hexdigest()
+
+
+def _allowlist_signature(rules: Sequence[Rule]) -> str:
+    """Bind a kernel report to the specific subset of the rule pack
+    that was actually dispatched.
+
+    ``rule_pack_hash`` already covers the BYTES of every Level-1 file;
+    this hash covers WHICH callables from those files were passed to
+    ``run_all``. Combined, they close the gap a tampering author would
+    otherwise have (edit the CLI to pass ``rules=()`` → ``rule_pack_hash``
+    unchanged, but ``allowlist_signature`` zeroes out).
+
+    Uses ``type(r).__module__.__qualname__`` because it is unsettable
+    (unlike ``__name__``, which the rule classes override at class scope
+    and an adversary could trivially spoof). Rules registered in
+    ``RULE_ALLOWLIST`` MUST be class instances (not bare functions); the
+    ADR-11 amendment 2026-06-08 documents this constraint.
+    """
+    keys = sorted(f"{type(r).__module__}.{type(r).__qualname__}" for r in rules)
+    return "sha256:" + hashlib.sha256("\0".join(keys).encode("utf-8")).hexdigest()
+
+
+def _scoped_python_files(context: RuleContext) -> Iterator[str]:
+    """Yield repo-relative POSIX paths of every ``.py`` in scope.
+
+    "In scope" = ends with ``.py`` and does NOT start with a corpus
+    prefix. The kernel uses this to surface parse/IO failures BEFORE
+    rule dispatch so blind-spot files (a SyntaxError-bypassed addition,
+    a deleted-during-scan race) become first-class diagnostics instead
+    of silent skips.
+    """
+    for rel in context.files:
+        if not rel.endswith(".py"):
+            continue
+        if any(rel.startswith(prefix) for prefix in CORPUS_PREFIXES):
+            continue
+        yield rel
+
+
+def _parse_visibility_diagnostics(context: RuleContext) -> list[RuleResult]:
+    """Emit ``V0-UNPARSABLE`` / ``V0-IO`` for every scoped .py the
+    kernel cannot inspect.
+
+    Runs once per ``run_all`` call, before rule dispatch.  Diagnostics
+    here are HARD-BLOCK because an inspection-blind file is precisely
+    the attack surface ADR-11's threat model warns about (an author
+    who can edit anything can also append a SyntaxError to hide a
+    rule violation in the same file).
+    """
+    diagnostics: list[RuleResult] = []
+    for rel in _scoped_python_files(context):
+        path = context.repo_root / Path(rel)
+        try:
+            source_bytes = path.read_bytes()
+        except OSError as exc:
+            diagnostics.append(
+                RuleResult(
+                    severity=Severity.HARD_BLOCK,
+                    code="FA-AUTHORING-V0-IO",
+                    path=rel,
+                    line=None,
+                    message=f"kernel could not read file: {type(exc).__name__}: {exc}",
+                    remediation=(
+                        "ensure the file exists and is readable; if the file was "
+                        "intentionally removed, also remove any reference to it from "
+                        "the active snapshot before re-running the kernel"
+                    ),
+                    rule_input_hash=_sha256_hex(b"io-error:" + rel.encode("utf-8")),
+                )
+            )
+            continue
+        try:
+            ast.parse(source_bytes, filename=rel)
+        except SyntaxError as exc:
+            diagnostics.append(
+                RuleResult(
+                    severity=Severity.HARD_BLOCK,
+                    code="FA-AUTHORING-V0-UNPARSABLE",
+                    path=rel,
+                    line=exc.lineno,
+                    message=f"unparseable Python file: {exc.msg}",
+                    remediation=(
+                        "fix the SyntaxError so the authoring kernel can inspect "
+                        "this file; blind-spot files are a known evasion path"
+                    ),
+                    rule_input_hash=_sha256_hex(source_bytes),
+                )
+            )
+    return diagnostics
 
 
 # --- path enumeration ------------------------------------------------------
@@ -465,6 +579,31 @@ def _rule_crash_diagnostic(rule: Rule, exc: Exception) -> RuleResult:
     )
 
 
+def _advisory_undated_diagnostic(offending: RuleResult) -> RuleResult:
+    """Synthesise the ADR-11-I2 'undated advisory is itself an advisory' finding.
+
+    The synthesised diagnostic is ADVISORY (matching the ADR text "is
+    itself an ADVISORY finding") with a sentinel ``expires_on`` of
+    ``9999-12-31`` so the synth does not recurse on itself.
+    """
+    return RuleResult(
+        severity=Severity.ADVISORY,
+        code="FA-AUTHORING-V0-ADVISORY-UNDATED",
+        path=offending.path,
+        line=offending.line,
+        message=(
+            f"advisory {offending.code!r} omitted required expires_on date "
+            "(ADR-11-I2: undated advisories cannot become permanent noise)"
+        ),
+        remediation=(
+            "set expires_on on the rule's RuleResult, or promote the rule "
+            "to HARD-BLOCK / demote to INFO if no expiry is appropriate"
+        ),
+        rule_input_hash=offending.rule_input_hash,
+        expires_on="9999-12-31",  # sentinel; breaks the self-recursion
+    )
+
+
 def _dispatch_rules(rules: Iterable[Rule], context: RuleContext) -> list[RuleResult]:
     collected: list[RuleResult] = []
     for rule in rules:
@@ -475,6 +614,13 @@ def _dispatch_rules(rules: Iterable[Rule], context: RuleContext) -> list[RuleRes
             collected.append(_rule_crash_diagnostic(rule, exc))
             continue
         collected.extend(results)
+    # ADR-11-I2 post-dispatch: synthesise V0-ADVISORY-UNDATED for any
+    # ADVISORY that omitted expires_on. Append (don't mutate during iteration).
+    synth: list[RuleResult] = []
+    for r in collected:
+        if r.severity is Severity.ADVISORY and r.expires_on is None:
+            synth.append(_advisory_undated_diagnostic(r))
+    collected.extend(synth)
     return collected
 
 
@@ -514,6 +660,7 @@ def run_all(
     else:
         snapshot_id = _compute_snapshot_id(repo_root, files)
         context = RuleContext(repo_root=repo_root, files=files, manifest=manifest)
+        diagnostics.extend(_parse_visibility_diagnostics(context))
         diagnostics.extend(_dispatch_rules(rules, context))
 
     ordered = tuple(sorted(diagnostics, key=RuleResult.sort_key))
@@ -522,6 +669,8 @@ def run_all(
         kernel_hash=kernel_hash,
         snapshot_id=snapshot_id,
         rule_pack_hash=rule_pack_hash,
+        allowlist_signature=_allowlist_signature(rules),
+        dispatched_count=len(rules),
         session_hash=session_hash,
         diagnostics=ordered,
     )
@@ -541,6 +690,8 @@ def render_text(report: KernelReport) -> str:
         f"kernel {report.kernel_version}  snapshot {report.snapshot_id}",
         f"kernel_hash {report.kernel_hash}",
         f"rule_pack_hash {report.rule_pack_hash}",
+        f"allowlist_signature {report.allowlist_signature}",
+        f"dispatched_count {report.dispatched_count}",
         f"session_hash {report.session_hash or 'null'}",
         f"diagnostics: {len(report.diagnostics)}  exit_code: {report.exit_code}",
     ]

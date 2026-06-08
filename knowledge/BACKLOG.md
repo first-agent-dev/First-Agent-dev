@@ -1368,6 +1368,46 @@
 - **Unblock-trigger:** ADR-11 PR-4 lands `.fa/session.toml` schema + `seam.py`.
 - **First concrete step once unblocked:** Extend `parse_manifest` to recognise `[scope]` table; add `Manifest.scope: ScopeConfig` field; rule packs read `context.manifest.scope.<prefix>` with fall-back to `SRC_SCOPE`/`TEST_SCOPE` when no manifest is supplied.
 
+## I-22 — Per-file source decode caching for rule packs
+
+- **Status:** deferred from PR-12 (PR-10 follow-up).
+- **Idea:** `iter_python_files` is called once per rule; each call reads bytes and re-parses. Cache `(path → (bytes, tree))` in `RuleContext` and have rules consume the pre-parsed tree. ~50 LOC; eliminates linear-in-rule-count IO/parse cost.
+- **Blocked-on:** None technically; deferred because the rule count is small (3) and end-to-end runtime is 0.057 s on the test corpus. The improvement becomes visible only at ≥5 rules.
+- **Unblock-trigger:** `len(RULE_ALLOWLIST) >= 5` on `main` (next reached when PR-3 lands `parity.py` + `docs.py`).
+- **First concrete step once unblocked:** Extend `RuleContext` with `parsed: Mapping[str, tuple[bytes, ast.Module]]`; lazy-populate in the kernel pre-pass (PR-12's `_parse_visibility_diagnostics` already does the parse — share the result).
+
+## I-15 — Visitor framework for shared `ast.walk`
+
+- **Status:** deferred from PR-12 (PR-10 follow-up).
+- **Idea:** Multiple Level-1 rules walk the same `ast.Module` independently. A small visitor framework (the Grafema `Analysis.Walker` pattern ADR-11 §Prior Art cites) lets N rules share one traversal per file.
+- **Blocked-on:** I-22 (per-file caching) lands first — without cached trees, the visitor framework gains nothing.
+- **Unblock-trigger:** I-22 merged AND `len(RULE_ALLOWLIST) >= 5`.
+- **First concrete step once unblocked:** Define `Visitor` protocol with `visit_<NodeType>` dispatch; convert existing rules incrementally; benchmark before/after.
+
+## I-16 — Read-receipt artefact (path + sha256) per rule inspection
+
+- **Status:** deferred from PR-12 (PR-10 follow-up).
+- **Idea:** The kernel logs `(rule, path, sha256)` for every file a rule actually inspected, surfaced in the JSON wire form. Enables byte-exact replay diff across PRs (the I-AUDIT operational invariant from `PR-10-review-pass2.md`).
+- **Blocked-on:** Harness emits run-receipts in the inner loop (ADR-11-I8 procedural-until-receipts comment); without a consumer the artefact has no name.
+- **Unblock-trigger:** Inner-loop run-receipt format is defined (cross-link to ADR-8 HookRegistry receipt work).
+- **First concrete step once unblocked:** Extend `RuleContext` with a `record_inspection(rule, path, sha256)` callback; aggregate into `KernelReport.inspections` field; update JSON schema.
+
+## I-17 — `.fa/authoring-suppressions.toml` mechanism
+
+- **Status:** deferred from PR-12 (PR-10 follow-up).
+- **Idea:** Frozen TOML file listing `(code, path, rule_input_hash, expires_on, justification, signed_by)` for kernel-acknowledged suppressions. Suppressions live OUTSIDE source code so agent edits are glaringly visible; the kernel drops matching diagnostics but emits an INFO listing every active suppression.
+- **Blocked-on:** A measured need — ADR-11 currently has no suppression mechanism and minimalism-first says we add one only when forced.
+- **Unblock-trigger:** ≥3 acknowledged false-positive findings on `main` cannot be resolved through the `fp-corpus/` measurement loop within 1 week.
+- **First concrete step once unblocked:** One ADR-11 amendment paragraph choosing between "frozen suppression TOML" and "forbid loudly + corpus-only"; the amendment becomes the spec for the implementation PR.
+
+## I-19 — `# fa-noqa` inline-suppression policy decision
+
+- **Status:** deferred from PR-12 (PR-10 follow-up).
+- **Idea:** Same problem space as I-17 but at line granularity. The kernel currently has no `# noqa`-style mechanism (good — keeps the trust boundary clean); when an LLM agent encounters a HARD-BLOCK, the path of least resistance is to look for an inline suppression syntax.
+- **Blocked-on:** I-17 — the line-level decision should follow the file-level one, not lead it.
+- **Unblock-trigger:** I-17 merged AND ≥1 PR explicitly asks for line-level suppression after file-level mechanism exists.
+- **First concrete step once unblocked:** Decide on the suppression syntax (`# fa-noqa: V<N>` vs. `# fa-suppress(<CODE>): <justification>`); implement parser; integrate with the per-finding hash so a suppression cannot drift to a different finding silently.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

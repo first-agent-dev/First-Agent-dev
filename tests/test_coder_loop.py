@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -32,7 +31,6 @@ from fa.inner_loop.hooks import (
     HookPayload,
     HookRegistry,
     LifecyclePoint,
-    PauseGuard,
     SandboxHook,
 )
 from fa.inner_loop.registry import ToolRegistry, ToolSpec
@@ -725,7 +723,6 @@ def test_drive_session_synthetic_padding_uses_guard_reason(
     hooks.register(_DenyAfterRound2Guard())
     state = _make_state(tmp_path)
 
-    outcome = drive_session(
         "loop",
         provider_chain=chain,
         registry=registry,
