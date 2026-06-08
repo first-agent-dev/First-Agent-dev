@@ -234,6 +234,8 @@ class KernelReport:
     kernel_hash: str
     snapshot_id: str
     rule_pack_hash: str
+    allowlist_signature: str
+    dispatched_count: int
     session_hash: str | None
     diagnostics: tuple[RuleResult, ...]
 
@@ -249,6 +251,8 @@ class KernelReport:
             "kernel_hash": self.kernel_hash,
             "snapshot_id": self.snapshot_id,
             "rule_pack_hash": self.rule_pack_hash,
+            "allowlist_signature": self.allowlist_signature,
+            "dispatched_count": self.dispatched_count,
             "session_hash": self.session_hash,
             "diagnostics": [d.to_dict() for d in self.diagnostics],
             "exit_code": self.exit_code,
@@ -280,6 +284,26 @@ def _hash_directory_sources(directory: Path) -> str:
         digest.update(source.read_bytes())
         digest.update(b"\0")
     return "sha256:" + digest.hexdigest()
+
+
+def _allowlist_signature(rules: Sequence[Rule]) -> str:
+    """Bind a kernel report to the specific subset of the rule pack
+    that was actually dispatched.
+
+    ``rule_pack_hash`` already covers the BYTES of every Level-1 file;
+    this hash covers WHICH callables from those files were passed to
+    ``run_all``. Combined, they close the gap a tampering author would
+    otherwise have (edit the CLI to pass ``rules=()`` → ``rule_pack_hash``
+    unchanged, but ``allowlist_signature`` zeroes out).
+
+    Uses ``type(r).__module__.__qualname__`` because it is unsettable
+    (unlike ``__name__``, which the rule classes override at class scope
+    and an adversary could trivially spoof). Rules registered in
+    ``RULE_ALLOWLIST`` MUST be class instances (not bare functions); the
+    ADR-11 amendment 2026-06-XX documents this constraint.
+    """
+    keys = sorted(f"{type(r).__module__}.{type(r).__qualname__}" for r in rules)
+    return "sha256:" + hashlib.sha256("\0".join(keys).encode("utf-8")).hexdigest()
 
 
 def _scoped_python_files(context: RuleContext) -> Iterator[str]:
@@ -613,6 +637,8 @@ def run_all(
         kernel_hash=kernel_hash,
         snapshot_id=snapshot_id,
         rule_pack_hash=rule_pack_hash,
+        allowlist_signature=_allowlist_signature(rules),
+        dispatched_count=len(rules),
         session_hash=session_hash,
         diagnostics=ordered,
     )
@@ -632,6 +658,8 @@ def render_text(report: KernelReport) -> str:
         f"kernel {report.kernel_version}  snapshot {report.snapshot_id}",
         f"kernel_hash {report.kernel_hash}",
         f"rule_pack_hash {report.rule_pack_hash}",
+        f"allowlist_signature {report.allowlist_signature}",
+        f"dispatched_count {report.dispatched_count}",
         f"session_hash {report.session_hash or 'null'}",
         f"diagnostics: {len(report.diagnostics)}  exit_code: {report.exit_code}",
     ]

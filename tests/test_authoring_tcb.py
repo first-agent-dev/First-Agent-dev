@@ -447,3 +447,35 @@ def test_run_all_skips_corpus_files_for_unparsable_check(tmp_path: Path) -> None
     report = run_all(tmp_path)
     # Corpus fixtures may be intentionally malformed; the kernel skips them.
     assert all(d.code != "FA-AUTHORING-V0-UNPARSABLE" for d in report.diagnostics)
+
+
+# --- KernelReport audit fields ---------------------------------------------
+
+
+def test_allowlist_signature_changes_with_rule_set(tmp_path: Path) -> None:
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "llms.txt").write_text("x")
+    (tmp_path / "src" / "fa_demo").mkdir(parents=True)
+    (tmp_path / "src" / "fa_demo" / "m.py").write_text("def public(): pass\n__all__ = []\n")
+    from fa.authoring_rules import RULE_ALLOWLIST, EXPORTS_COMPLETENESS
+
+    full = run_all(tmp_path, rules=RULE_ALLOWLIST)
+    empty = run_all(tmp_path, rules=())
+    one = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
+    assert full.dispatched_count == 3
+    assert empty.dispatched_count == 0
+    assert one.dispatched_count == 1
+    assert full.allowlist_signature != empty.allowlist_signature
+    assert full.allowlist_signature != one.allowlist_signature
+    assert empty.allowlist_signature != one.allowlist_signature
+
+
+def test_allowlist_signature_is_order_insensitive(tmp_path: Path) -> None:
+    """The signature sorts the rule keys, so dispatch order doesn't leak."""
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "llms.txt").write_text("x")
+    from fa.authoring_rules import EXPORTS_COMPLETENESS, TEST_SEMANTIC_DECAY
+
+    forward = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS, TEST_SEMANTIC_DECAY))
+    reverse = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY, EXPORTS_COMPLETENESS))
+    assert forward.allowlist_signature == reverse.allowlist_signature
