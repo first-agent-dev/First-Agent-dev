@@ -22,6 +22,14 @@ from fa.authoring_tcb import RuleContext
 # rule so a fixture cannot fail the regular kernel run.
 _CORPUS_PREFIXES: tuple[str, ...] = ("catch-corpus/", "fp-corpus/")
 
+# Top-level path prefixes Level-1 rules consume.  Hoisted here so all
+# rule packs reference one definition; the rule modules import these
+# instead of re-declaring private copies.  PR-14-deferred manifest
+# integration (backlog I-12-bis) will let `.fa/session.toml [scope]`
+# override these defaults; until then they are the v0.1 contract.
+SRC_SCOPE: tuple[str, ...] = ("src/",)
+TEST_SCOPE: tuple[str, ...] = ("tests/",)
+
 
 def sha256(data: bytes) -> str:
     """Return the canonical ``sha256:<hex>`` form used in

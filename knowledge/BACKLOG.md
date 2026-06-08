@@ -1344,6 +1344,30 @@
 - **First concrete step once unblocked:** Add `pytest-recording` and record cassettes for the first HTTP-dependent test.
 - **References:** [`research/ci-qa-tooling-adversarial-2026-06.md`](./research/ci-qa-tooling-adversarial-2026-06.md) §0 R-14.
 
+## I-20 — V2 nested tuple-unpacking definitions
+
+- **Status:** deferred from PR-11 (PR-10 follow-up).
+- **Idea:** `_public_symbols` walks the first level of `ast.Tuple` / `ast.List` assignment targets at module scope, but does NOT recurse into nested tuples (`(a, (b, c)) = ...`). The structurally-correct extension is to recurse, registering each leaf `ast.Name` against the outer `Assign` node.
+- **Blocked-on:** None technically; deferred because the live repo has zero instances of nested top-level tuple unpacking with `__all__`.
+- **Unblock-trigger:** ≥1 instance of nested top-level tuple unpacking appears under `src/` in a module with `__all__`.
+- **First concrete step once unblocked:** Extend `_register` in `_public_symbols` to recurse into nested `ast.Tuple`/`ast.List` targets; add fixture under `catch-corpus/F-2-nested/` and a regression test mirroring the existing `test_tuple_unpacking_at_top_level_is_flagged`.
+
+## I-21 — V2 phantom-name inverse check
+
+- **Status:** deferred from PR-11 (PR-10 follow-up). Originally proposed as a pass-1 HIGH item; dropped because the live repo has 16 `__init__.py` modules that re-export symbols via plain `from .x import Foo` listed in `__all__`. Naive enforcement would HARD-BLOCK every one of them.
+- **Idea:** Catch names that appear in `__all__` but have no in-module definition (the F822 ruff check, lifted into the authoring kernel for completeness with ADR-11-I2's "kernel is authoritative" stance).
+- **Blocked-on:** A definition-predicate extension that treats plain `from .x import Foo` as a "definition for the purpose of `__all__` membership only" (the rule's primary direction — defined-but-not-in-`__all__` — must continue to NOT count plain imports, or BLOCKER-1 territory re-opens).
+- **Unblock-trigger:** Any PR with a phantom name in `__all__` slips past ruff F822 on `main`, OR ruff is removed / disabled in CI.
+- **First concrete step once unblocked:** Add `_public_symbols_for_phantom_check(tree, declared_all)` that treats `ImportFrom` targets named in `declared_all` as definitions; emit `FA-AUTHORING-V2-EXPORTS-PHANTOM` for names in `__all__` absent from that extended set.
+
+## I-12-bis — Manifest-driven scope for Level-1 rules
+
+- **Status:** deferred from PR-11 (PR-10 follow-up). Original "PR-14" idea consolidated into the next PR-4 cycle per ADR-11 Appendix B.
+- **Idea:** Replace the hard-coded `SRC_SCOPE`/`TEST_SCOPE` tuples in `src/fa/authoring_rules/_scan.py` with a manifest-driven scope read from `.fa/session.toml [scope]` (fields `src_prefixes`, `test_prefixes`). Lets monorepo layouts (`core/src/`, `plugins/src/`) scope the rules without rule-pack edits, and makes scope auditable from one place.
+- **Blocked-on:** ADR-11 PR-4 (`.fa/session.toml` schema; `seam.py`). The manifest does not exist on `main` today (`ls .fa/` is empty); creating it ahead of PR-4 would invert the published Appendix B rollout.
+- **Unblock-trigger:** ADR-11 PR-4 lands `.fa/session.toml` schema + `seam.py`.
+- **First concrete step once unblocked:** Extend `parse_manifest` to recognise `[scope]` table; add `Manifest.scope: ScopeConfig` field; rule packs read `context.manifest.scope.<prefix>` with fall-back to `SRC_SCOPE`/`TEST_SCOPE` when no manifest is supplied.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

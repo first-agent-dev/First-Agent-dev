@@ -52,9 +52,8 @@ def test_pytest_mark_skip_decorator_is_hard_block(tmp_path: Path) -> None:
     body = (
         "import pytest\n\n"
         '@pytest.mark.skip(reason="broken")\n'
-        "def test_thing():\n    assert 0 == 0  # noqa: V11 — this is the OTHER finding\n"
+        "def test_thing():\n    assert 0 == 1\n"
     )
-    # ^ that placeholder pattern would only fire under V11; we don't load V11 here.
     _write_test(tmp_path, "tests/test_skip_dec.py", body)
     report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
     assert _codes(report) == ["FA-AUTHORING-V4-PYTEST-SKIP"]
@@ -71,6 +70,53 @@ def test_pytest_mark_skipif_is_not_flagged(tmp_path: Path) -> None:
         "def test_bash_only():\n    pass\n"
     )
     _write_test(tmp_path, "tests/test_skipif.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert report.diagnostics == ()
+
+
+# --- V4 allow_module_level=True exemption (commit 4) ---------------------
+
+
+def test_module_scope_skip_with_allow_module_level_is_clean(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = (
+        "import pytest\nimport sys\n\n"
+        'if sys.platform == "win32":\n'
+        '    pytest.skip("linux only", allow_module_level=True)\n\n'
+        "def test_x():\n    pass\n"
+    )
+    _write_test(tmp_path, "tests/test_modskip.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert report.diagnostics == ()
+
+
+def test_function_scope_skip_with_kwarg_still_flagged(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = (
+        'import pytest\n\ndef test_x():\n    pytest.skip("linux only", allow_module_level=True)\n'
+    )
+    _write_test(tmp_path, "tests/test_fnskip.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert _codes(report) == ["FA-AUTHORING-V4-PYTEST-SKIP"]
+
+
+def test_allow_module_level_with_truthy_int_not_exempt(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = 'import pytest\n\npytest.skip("x", allow_module_level=1)\n'
+    _write_test(tmp_path, "tests/test_intkwarg.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert _codes(report) == ["FA-AUTHORING-V4-PYTEST-SKIP"]
+
+
+def test_try_at_module_scope_with_allow_module_level_exempt(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = (
+        "import pytest\n\n"
+        "try:\n    import optional_dep\n"
+        "except ImportError:\n"
+        '    pytest.skip("missing dep", allow_module_level=True)\n'
+    )
+    _write_test(tmp_path, "tests/test_tryskip.py", body)
     report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
     assert report.diagnostics == ()
 
@@ -210,6 +256,41 @@ def test_assert_name_equals_self_is_flagged(tmp_path: Path) -> None:
     _make_workspace(tmp_path)
     body = "def test_x():\n    x = 5\n    assert x == x\n"
     _write_test(tmp_path, "tests/test_assert_name.py", body)
+    report = run_all(tmp_path, rules=(PLACEHOLDER_ASSERTION,))
+    assert _codes(report) == ["FA-AUTHORING-V11-PLACEHOLDER-ASSERT"]
+
+
+# --- V11 contradiction split (commit 3) ----------------------------------
+
+
+def test_assert_x_is_not_x_flagged_as_contradiction(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = "def test_x():\n    x = 5\n    assert x is not x\n"
+    _write_test(tmp_path, "tests/test_contra_name.py", body)
+    report = run_all(tmp_path, rules=(PLACEHOLDER_ASSERTION,))
+    assert _codes(report) == ["FA-AUTHORING-V11-CONTRADICTORY-ASSERT"]
+
+
+def test_assert_1_is_not_1_flagged_as_contradiction(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = "def test_x():\n    assert 1 is not 1\n"
+    _write_test(tmp_path, "tests/test_contra_int.py", body)
+    report = run_all(tmp_path, rules=(PLACEHOLDER_ASSERTION,))
+    assert _codes(report) == ["FA-AUTHORING-V11-CONTRADICTORY-ASSERT"]
+
+
+def test_assert_x_is_x_still_flagged_as_placeholder(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = "def test_x():\n    x = 5\n    assert x is x\n"
+    _write_test(tmp_path, "tests/test_placeholder_is.py", body)
+    report = run_all(tmp_path, rules=(PLACEHOLDER_ASSERTION,))
+    assert _codes(report) == ["FA-AUTHORING-V11-PLACEHOLDER-ASSERT"]
+
+
+def test_assert_x_eq_x_still_flagged_as_placeholder(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = "def test_x():\n    x = 5\n    assert x == x\n"
+    _write_test(tmp_path, "tests/test_placeholder_eq.py", body)
     report = run_all(tmp_path, rules=(PLACEHOLDER_ASSERTION,))
     assert _codes(report) == ["FA-AUTHORING-V11-PLACEHOLDER-ASSERT"]
 
