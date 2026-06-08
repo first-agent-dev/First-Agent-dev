@@ -172,8 +172,8 @@ serve as empirical anchors for our minimalism-first principle.
 1. **Do not build self-improving subsystems early.** 
    *Rule:* Do not write subsystems whose value depends on a mature host system. Keep the system human-curated.
 
-2. **Estimate tasks by scale (LOC/files).**
-   *Rule:* Measure tasks by LOC delta, files touched, or eval-pass count. Agents must use scope-only metrics.
+2. **Estimate tasks by scale (files touched).**
+   *Rule:* Measure tasks by files touched or eval-pass count. Agents must use scope-only metrics.
 
 3. **Every write target must have an active consumer.**
    *Rule:* Every new write target (file, table, metric, event-channel) MUST land with a named automated or human consumer. 
@@ -220,7 +220,6 @@ go to the primary source and quote from there.
 Summaries in `knowledge/research/` are pointers, not authoritative sources.
 
 - **Session close.** Update [`HANDOFF.md`](./HANDOFF.md) per its
-  §Session Protocol (overwrite §Current state, rewrite §Next,
-  enforce ≤100-line cap); update [`knowledge/llms.txt`](./knowledge/llms.txt) rows per
+  §Session Protocol (overwrite §Current state, rewrite §Next); update [`knowledge/llms.txt`](./knowledge/llms.txt) rows per
   [`MAINTENANCE.md`](./knowledge/MAINTENANCE.md) §When adding a
   new file (bucket, line count, ≤200 prose chars).
