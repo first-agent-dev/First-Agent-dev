@@ -113,18 +113,19 @@ def run_session(
                 # sandbox-re-check is handled inside HookRegistry.dispatch
                 # via ``revalidates_after_modify``).
                 result = registry.dispatch(effective_call)
-                payload = payload.with_tool_result(result)
-                try:
-                    hooks.dispatch(LifecyclePoint.AFTER_TOOL_EXEC, payload)
-                except PermissionError as exc:
-                    # ADR-8 \u00a71 lets ``GuardMiddleware`` attach to
-                    # AFTER_TOOL_EXEC. The tool already ran, so we MUST
-                    # still persist its result (ADR-7 \u00a710 Acceptance
-                    # criterion 8 \u2014 paired ``tool_call`` / ``tool_result``
-                    # rows for every call) and then surface the deny via a
-                    # ``run_stopped`` row + clean loop break so the audit
-                    # trail records why the session ended after this call.
-                    post_exec_denied = exc
+
+            payload = payload.with_tool_result(result)
+            try:
+                hooks.dispatch(LifecyclePoint.AFTER_TOOL_EXEC, payload)
+            except PermissionError as exc:
+                # ADR-8 \u00a71 lets ``GuardMiddleware`` attach to
+                # AFTER_TOOL_EXEC. The tool already ran, so we MUST
+                # still persist its result (ADR-7 \u00a710 Acceptance
+                # criterion 8 \u2014 paired ``tool_call`` / ``tool_result``
+                # rows for every call) and then surface the deny via a
+                # ``run_stopped`` row + clean loop break so the audit
+                # trail records why the session ended after this call.
+                post_exec_denied = exc
             state.record_tool_result(effective_call if effective_call is not None else call, result)
             results.append(result)
             state.observations.append(result.summary)

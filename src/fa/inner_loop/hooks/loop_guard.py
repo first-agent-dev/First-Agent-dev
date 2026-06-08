@@ -29,6 +29,11 @@ LoopGuard is **stateful per instance**: the trailing window lives on
 ``self``. Tests build a fresh registry per case; the smoke CLI builds
 a fresh registry per ``fa run`` invocation. There is no cross-run
 leakage.
+
+The ``_warned`` set is never cleared during a single session: once a
+warn fires for a given detector/key combo it will not fire again,
+even if the pattern disappears and re-emerges later. This is
+intentional log-spam reduction, not a bug.
 """
 
 from __future__ import annotations

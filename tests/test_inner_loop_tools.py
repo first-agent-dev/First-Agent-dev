@@ -24,7 +24,8 @@ def test_read_file_tool_reads_line_window(tmp_path: Path) -> None:
     )
 
     assert result.error is None
-    assert result.result["content"] == "two"  # type: ignore[index]
+    assert result.result is not None
+    assert result.result["content"] == "two"
 
 
 def test_write_file_tool_writes_inside_workspace(tmp_path: Path) -> None:
@@ -56,7 +57,8 @@ def test_run_bash_tool_runs_in_workspace(tmp_path: Path) -> None:
     result = registry.dispatch(ToolCall(name="fs.run_bash", params={"command": "pwd"}))
 
     assert result.error is None
-    assert result.result["stdout"].strip() == str(tmp_path)  # type: ignore[index]
+    assert result.result is not None
+    assert result.result["stdout"].strip() == str(tmp_path)
 
 
 def test_run_bash_tool_returns_timeout_error(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -94,7 +96,8 @@ def test_read_file_tolerates_unresolved_workspace_root(tmp_path: Path) -> None:
     result = registry.dispatch(ToolCall(name="fs.read_file", params={"path": "sample.txt"}))
 
     assert result.error is None
-    assert result.result["content"] == "alpha\nbeta\n"  # type: ignore[index]
+    assert result.result is not None
+    assert result.result["content"] == "alpha\nbeta\n"
     assert result.summary.startswith("read sample.txt")
 
 
