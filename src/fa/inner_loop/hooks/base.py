@@ -37,7 +37,7 @@ class HookPayload:
     acting_family: str = ""
     context: Mapping[str, object] = field(default_factory=dict)
 
-    def with_tool_call(self, tool_call: ToolCall) -> HookPayload:
+    def with_tool_call(self, tool_call: ToolCall | None) -> HookPayload:
         return HookPayload(
             tool_call=tool_call,
             tool_result=self.tool_result,

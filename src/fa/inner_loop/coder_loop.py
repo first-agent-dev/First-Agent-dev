@@ -222,10 +222,27 @@ def drive_session(
     turn = 0
     while turn < max_turns:
         turn += 1
-        hooks.dispatch(
-            LifecyclePoint.BEFORE_LLM_CALL,
-            HookPayload(role=role, acting_family=acting_family),
-        )
+        try:
+            hooks.dispatch(
+                LifecyclePoint.BEFORE_LLM_CALL,
+                HookPayload(role=role, acting_family=acting_family),
+            )
+        except PermissionError as exc:
+            state.log.append(
+                actor="runtime",
+                kind="run_stopped",
+                content={
+                    "reason": f"hook_deny:{LifecyclePoint.BEFORE_LLM_CALL.value}",
+                    "detail": str(exc),
+                },
+            )
+            return SessionOutcome(
+                exit_code=1,
+                stop_reason=f"hook_deny:{LifecyclePoint.BEFORE_LLM_CALL.value}",
+                turns=turn,
+                final_text="",
+                tool_results=tuple(collected_results),
+            )
         request = RequestInfo(
             model_slug=provider_chain.config.model,
             messages=tuple(messages),
@@ -235,6 +252,20 @@ def drive_session(
         )
         try:
             response, _logical_id, _attempts = provider_chain.request(request)
+            if state.log is not None:
+                for attempt in _attempts:
+                    state.log.append(
+                        actor="provider",
+                        kind="provider_attempt",
+                        content={
+                            "provider": attempt.provider,
+                            "slug": attempt.slug,
+                            "status": attempt.status,
+                            "ms": attempt.ms,
+                            "error": attempt.error,
+                            "logical_call_id": _logical_id,
+                        },
+                    )
         except KeyboardInterrupt:
             state.log.append(
                 actor="runtime",
@@ -274,10 +305,27 @@ def drive_session(
                 final_text="",
                 tool_results=tuple(collected_results),
             )
-        hooks.dispatch(
-            LifecyclePoint.AFTER_LLM_CALL,
-            HookPayload(role=role, acting_family=acting_family),
-        )
+        try:
+            hooks.dispatch(
+                LifecyclePoint.AFTER_LLM_CALL,
+                HookPayload(role=role, acting_family=acting_family),
+            )
+        except PermissionError as exc:
+            state.log.append(
+                actor="runtime",
+                kind="run_stopped",
+                content={
+                    "reason": f"hook_deny:{LifecyclePoint.AFTER_LLM_CALL.value}",
+                    "detail": str(exc),
+                },
+            )
+            return SessionOutcome(
+                exit_code=1,
+                stop_reason=f"hook_deny:{LifecyclePoint.AFTER_LLM_CALL.value}",
+                turns=turn,
+                final_text="",
+                tool_results=tuple(collected_results),
+            )
 
         assistant_message: dict[str, Any] = {
             "role": "assistant",
@@ -326,6 +374,10 @@ def drive_session(
             )
 
         tool_calls = _build_tool_calls(response.tool_calls)
+        # Capture log length BEFORE run_session so we only inspect
+        # rows appended during this invocation, not stale rows from
+        # earlier turns (cross-turn contamination guard).
+        log_len_before = len(state.log.read_all()) if state.log is not None else 0
         turn_results = run_session(
             tool_calls,
             registry=registry,
@@ -343,12 +395,28 @@ def drive_session(
         # assistant message needs a matching ``role="tool"`` message.
         missing = len(tool_calls) - len(turn_results)
         if missing > 0:
+            # Determine whether run_session stopped for a real iteration
+            # cap or for a guard denial (PauseGuard, LoopGuard, etc.).
+            stop_reason_code = "iteration_cap"
+            stop_reason_detail = (
+                f"tool call skipped: per-turn iteration limit "
+                f"({effective_limits.max_iterations}) exceeded"
+            )
+            if state.log is not None:
+                new_rows = state.log.read_all()[log_len_before:]
+                for row in reversed(new_rows):
+                    if row.kind == "run_stopped":
+                        reason = str(row.content.get("reason", ""))
+                        if not reason.startswith("iteration_cap"):
+                            stop_reason_code = "run_stopped"
+                            stop_reason_detail = (
+                                f"tool call skipped: session stopped — {reason}"
+                            )
+                        break
+
             synthetic = ToolResult.fail(
-                "iteration_cap",
-                (
-                    f"tool call skipped: per-turn iteration limit "
-                    f"({effective_limits.max_iterations}) exceeded"
-                ),
+                stop_reason_code,
+                stop_reason_detail,
                 retryable=True,
             )
             turn_results = (*turn_results, *([synthetic] * missing))

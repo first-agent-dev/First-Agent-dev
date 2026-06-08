@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import shutil
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import override
+from typing import Any, override
 
 import pytest
 
@@ -547,3 +548,84 @@ def test_run_session_records_tool_result_when_handler_crashes(tmp_path: Path) ->
         kinds_by_call.setdefault(event.tool_call_id, []).append(event.kind)
     assert kinds_by_call["tc-1"].count("tool_call") == 1
     assert kinds_by_call["tc-1"].count("tool_result") == 1
+
+
+def test_after_tool_exec_fires_on_invalid_payload(tmp_path: Path) -> None:
+    """When a modifying guard drops tool_call from the payload,
+    AFTER_TOOL_EXEC hooks must still fire so observers see the
+    invalid_payload failure."""
+
+    class DropToolCallGuard(GuardMiddleware):
+        name = "drop_tool_call"
+        attaches_to = (LifecyclePoint.BEFORE_TOOL_EXEC,)
+
+        @override
+        def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
+            del point
+            return Decision.modify(payload.with_tool_call(None))
+
+    class RecordAfterExecObserver(ObserverMiddleware):
+        name = "record_after_exec"
+        attaches_to = (LifecyclePoint.AFTER_TOOL_EXEC,)
+        events: list[tuple[LifecyclePoint, HookPayload]] = []
+
+        @override
+        def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
+            self.events.append((point, payload))
+
+    registry = ToolRegistry()
+
+    def _echo_handler(params: Mapping[str, Any]) -> Any:
+        return ToolResult(summary=f"echo {params.get('text', '')}", result=dict(params))
+
+    spec = ToolSpec(
+        name="echo",
+        description="Echo back.",
+        input_schema={
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        },
+        handler=_echo_handler,
+        permission="read",
+    )
+    registry.register(spec)
+
+    hooks = HookRegistry()
+    observer = RecordAfterExecObserver()
+    hooks.register(observer)
+    hooks.register(DropToolCallGuard())
+
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="t",
+        log=EventLog(tmp_path / "events.jsonl", run_id="t"),
+    )
+
+    results = run_session(
+        (ToolCall(name="echo", params={"text": "hi"}, call_id="tc-1"),),
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert len(results) == 1
+    assert results[0].error is not None
+    assert results[0].error.code == "invalid_payload"
+
+    # The observer MUST have seen the AFTER_TOOL_EXEC event.
+    assert len(observer.events) == 1
+    assert observer.events[0][0] == LifecyclePoint.AFTER_TOOL_EXEC
+    assert observer.events[0][1].tool_result is not None
+    assert observer.events[0][1].tool_result.error is not None
+    assert observer.events[0][1].tool_result.error.code == "invalid_payload"
+
+    # Audit trail must have a hook_decision row for the observer.
+    assert state.log is not None
+    events = state.log.read_all()
+    hook_decisions = [e for e in events if e.kind == "hook_decision"]
+    after_exec_decisions = [
+        e for e in hook_decisions
+        if e.content.get("point") == LifecyclePoint.AFTER_TOOL_EXEC.value
+    ]
+    assert len(after_exec_decisions) == 1

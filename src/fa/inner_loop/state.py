@@ -38,6 +38,10 @@ writer + the R-N anchor):
   ``cost=…`` artifact in :attr:`ToolResult.artifacts`; baseline
   M-1 tools never emit the artifact, so the kind is dormant until
   the T-2 LLM driver lands.
+- ``provider_attempt`` —
+  :func:`fa.inner_loop.coder_loop.drive_session` logs each
+  :class:`fa.providers.chain.ChainAttemptRecord` returned by
+  :meth:`ProviderChain.request` (ADR-9 §4 Tier-1 observability).
 
 Filesystem-canon observers such as
 :class:`fa.inner_loop.hooks.builtin.LearningObserver` (R-8) do not add
