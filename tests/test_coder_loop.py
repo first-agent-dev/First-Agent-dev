@@ -691,6 +691,7 @@ class _DenyAfterRound2Guard(GuardMiddleware):
     attaches_to = (LifecyclePoint.BETWEEN_ROUNDS,)
 
     def __init__(self) -> None:
+        super().__init__()
         self._count = 0
 
     @override
