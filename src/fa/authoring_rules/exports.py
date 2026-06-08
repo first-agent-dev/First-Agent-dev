@@ -20,7 +20,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Sequence
 
-from fa.authoring_rules._scan import iter_python_files, node_input_hash
+from fa.authoring_rules._scan import SRC_SCOPE, iter_python_files, node_input_hash
 from fa.authoring_tcb import RuleContext, RuleResult, Severity
 
 __all__ = ["EXPORTS_COMPLETENESS"]
@@ -33,11 +33,6 @@ _CODE = "FA-AUTHORING-V2-EXPORTS-COMPLETENESS"
 # public-named symbol must be either in ``__all__`` or renamed with a
 # leading underscore.
 _CONVENTIONAL_PRIVATE: frozenset[str] = frozenset({"LOGGER", "logger", "log"})
-
-# Top-level path prefixes the rule scans. Excludes test trees (where
-# ``__all__`` is meaningless) and the corpora directories where
-# fixtures intentionally violate the rule.
-_INCLUDED_PREFIXES: tuple[str, ...] = ("src/",)
 
 
 def _literal_string_names(value: ast.expr) -> set[str] | None:
@@ -182,9 +177,7 @@ class _ExportsCompletenessRule:
 
     def __call__(self, context: RuleContext) -> Sequence[RuleResult]:
         results: list[RuleResult] = []
-        for rel, source_bytes, tree in iter_python_files(
-            context, included_prefixes=_INCLUDED_PREFIXES
-        ):
+        for rel, source_bytes, tree in iter_python_files(context, included_prefixes=SRC_SCOPE):
             declared = _extract_all(tree)
             if declared is None:
                 continue

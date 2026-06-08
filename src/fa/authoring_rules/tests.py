@@ -46,15 +46,10 @@ import ast
 from collections.abc import Sequence
 from typing import TypeGuard
 
-from fa.authoring_rules._scan import iter_python_files, node_input_hash
+from fa.authoring_rules._scan import TEST_SCOPE, iter_python_files, node_input_hash
 from fa.authoring_tcb import RuleContext, RuleResult, Severity
 
 __all__ = ["PLACEHOLDER_ASSERTION", "TEST_SEMANTIC_DECAY"]
-
-# Top-level path prefixes the rules scan. Excludes ``src/`` (decay
-# rules are about test semantics) and the corpora directories where
-# fixtures intentionally violate the rule.
-_INCLUDED_PREFIXES: tuple[str, ...] = ("tests/",)
 
 
 # --- V4 — test semantic decay (skip / xfail / focus) -----------------------
@@ -172,9 +167,7 @@ class _TestSemanticDecayRule:
 
     def __call__(self, context: RuleContext) -> Sequence[RuleResult]:
         results: list[RuleResult] = []
-        for rel, source_bytes, tree in iter_python_files(
-            context, included_prefixes=_INCLUDED_PREFIXES
-        ):
+        for rel, source_bytes, tree in iter_python_files(context, included_prefixes=TEST_SCOPE):
             # pytest.skip(...) call expressions (anywhere in the file)
             exempt = _module_scope_skip_calls(tree)
             for node in ast.walk(tree):
@@ -330,9 +323,7 @@ class _PlaceholderAssertionRule:
 
     def __call__(self, context: RuleContext) -> Sequence[RuleResult]:
         results: list[RuleResult] = []
-        for rel, source_bytes, tree in iter_python_files(
-            context, included_prefixes=_INCLUDED_PREFIXES
-        ):
+        for rel, source_bytes, tree in iter_python_files(context, included_prefixes=TEST_SCOPE):
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Assert):
                     continue
