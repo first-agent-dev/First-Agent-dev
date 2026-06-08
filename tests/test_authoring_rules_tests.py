@@ -214,6 +214,41 @@ def test_assert_name_equals_self_is_flagged(tmp_path: Path) -> None:
     assert _codes(report) == ["FA-AUTHORING-V11-PLACEHOLDER-ASSERT"]
 
 
+# --- V11 contradiction split (commit 3) ----------------------------------
+
+
+def test_assert_x_is_not_x_flagged_as_contradiction(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = "def test_x():\n    x = 5\n    assert x is not x\n"
+    _write_test(tmp_path, "tests/test_contra_name.py", body)
+    report = run_all(tmp_path, rules=(PLACEHOLDER_ASSERTION,))
+    assert _codes(report) == ["FA-AUTHORING-V11-CONTRADICTORY-ASSERT"]
+
+
+def test_assert_1_is_not_1_flagged_as_contradiction(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = "def test_x():\n    assert 1 is not 1\n"
+    _write_test(tmp_path, "tests/test_contra_int.py", body)
+    report = run_all(tmp_path, rules=(PLACEHOLDER_ASSERTION,))
+    assert _codes(report) == ["FA-AUTHORING-V11-CONTRADICTORY-ASSERT"]
+
+
+def test_assert_x_is_x_still_flagged_as_placeholder(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = "def test_x():\n    x = 5\n    assert x is x\n"
+    _write_test(tmp_path, "tests/test_placeholder_is.py", body)
+    report = run_all(tmp_path, rules=(PLACEHOLDER_ASSERTION,))
+    assert _codes(report) == ["FA-AUTHORING-V11-PLACEHOLDER-ASSERT"]
+
+
+def test_assert_x_eq_x_still_flagged_as_placeholder(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = "def test_x():\n    x = 5\n    assert x == x\n"
+    _write_test(tmp_path, "tests/test_placeholder_eq.py", body)
+    report = run_all(tmp_path, rules=(PLACEHOLDER_ASSERTION,))
+    assert _codes(report) == ["FA-AUTHORING-V11-PLACEHOLDER-ASSERT"]
+
+
 # --- V11 must NOT flag legitimate patterns -------------------------------
 
 

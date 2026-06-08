@@ -31,6 +31,11 @@ with the same ``id``). The rule deliberately does **not** flag
 ``assert f() == f()`` — calling the same function twice and comparing
 results is a meaningful purity / determinism check.
 
+V11 additionally emits ``FA-AUTHORING-V11-CONTRADICTORY-ASSERT`` for
+self-contradictory comparisons ``assert X is not X`` (same atom on both
+sides): structurally a placeholder too, but it always *fails* when run,
+so a distinct code lets the remediation name the real error.
+
 Catch-corpus mapping (ADR-11 §Verification): V11 is the consumer of
 historical omission **F-9** ("test weakened from ``==`` to ``in``").
 """
@@ -217,27 +222,43 @@ def _is_bare_true(expr: ast.expr) -> bool:
 
 
 def _is_trivial_self_compare(expr: ast.expr) -> bool:
-    """Match ``X == X`` / ``X is X`` / ``X is not X`` where both sides
-    are the same ``ast.Name`` or the same ``ast.Constant`` literal.
+    """Match ``X == X`` / ``X is X`` where both sides are the same ``ast.Name``
+    or the same ``ast.Constant`` literal.
 
-    Function calls and attribute accesses (``f() == f()``,
-    ``a.b == a.b``) are deliberately NOT considered placeholders —
-    those can legitimately assert determinism / purity.
+    Function calls and attribute accesses (``f() == f()``, ``a.b == a.b``)
+    are deliberately NOT considered tautologies — those can legitimately
+    assert determinism / purity.
     """
     if not isinstance(expr, ast.Compare):
         return False
     if len(expr.ops) != 1 or len(expr.comparators) != 1:
         return False
-    op = expr.ops[0]
-    if not isinstance(op, (ast.Eq, ast.Is, ast.IsNot)):
+    if not isinstance(expr.ops[0], (ast.Eq, ast.Is)):
         return False
-    left, right = expr.left, expr.comparators[0]
+    return _is_same_atom(expr.left, expr.comparators[0])
 
-    # Name == same Name
+
+def _is_contradictory_self_compare(expr: ast.expr) -> bool:
+    """Match ``X is not X`` where both sides are the same atom.
+
+    This is structurally a placeholder pattern too — the test will always
+    fail when executed — but it merits a distinct diagnostic so the
+    remediation text can name the actual error (the test is broken, not
+    just trivial).
+    """
+    if not isinstance(expr, ast.Compare):
+        return False
+    if len(expr.ops) != 1 or len(expr.comparators) != 1:
+        return False
+    if not isinstance(expr.ops[0], ast.IsNot):
+        return False
+    return _is_same_atom(expr.left, expr.comparators[0])
+
+
+def _is_same_atom(left: ast.expr, right: ast.expr) -> bool:
+    """True if ``left`` and ``right`` are the same Name or same Constant literal."""
     if isinstance(left, ast.Name) and isinstance(right, ast.Name) and left.id == right.id:
         return True
-
-    # Literal == same literal (1 == 1, True is True, "x" == "x", None is None)
     if (
         isinstance(left, ast.Constant)
         and isinstance(right, ast.Constant)
@@ -263,26 +284,46 @@ class _PlaceholderAssertionRule:
                     continue
                 test = node.test
                 if _is_bare_true(test) or _is_trivial_self_compare(test):
-                    results.append(
-                        RuleResult(
-                            severity=Severity.HARD_BLOCK,
-                            code="FA-AUTHORING-V11-PLACEHOLDER-ASSERT",
-                            path=rel,
-                            line=node.lineno,
-                            message=(
-                                "placeholder assertion asserts only a tautology; "
-                                "ADR-11-I5 requires every test assertion to validate "
-                                "dynamic behaviour"
-                            ),
-                            remediation=(
-                                "replace the assertion with one that exercises the "
-                                "code under test, or delete the test if it has no "
-                                "real coverage"
-                            ),
-                            rule_input_hash=node_input_hash(source_bytes, node),
-                        )
-                    )
+                    results.append(_placeholder_finding(rel, source_bytes, node))
+                elif _is_contradictory_self_compare(test):
+                    results.append(_contradictory_finding(rel, source_bytes, node))
         return results
+
+
+def _placeholder_finding(rel: str, source_bytes: bytes, node: ast.Assert) -> RuleResult:
+    return RuleResult(
+        severity=Severity.HARD_BLOCK,
+        code="FA-AUTHORING-V11-PLACEHOLDER-ASSERT",
+        path=rel,
+        line=node.lineno,
+        message=(
+            "placeholder assertion asserts only a tautology; "
+            "ADR-11-I5 requires every test assertion to validate dynamic behaviour"
+        ),
+        remediation=(
+            "replace the assertion with one that exercises the code under test, "
+            "or delete the test if it has no real coverage"
+        ),
+        rule_input_hash=node_input_hash(source_bytes, node),
+    )
+
+
+def _contradictory_finding(rel: str, source_bytes: bytes, node: ast.Assert) -> RuleResult:
+    return RuleResult(
+        severity=Severity.HARD_BLOCK,
+        code="FA-AUTHORING-V11-CONTRADICTORY-ASSERT",
+        path=rel,
+        line=node.lineno,
+        message=(
+            "self-contradictory assertion will always fail when executed; "
+            "the test is broken, not merely a placeholder"
+        ),
+        remediation=(
+            "rewrite the assertion to compare distinct values, or delete "
+            "the test if it should never run"
+        ),
+        rule_input_hash=node_input_hash(source_bytes, node),
+    )
 
 
 PLACEHOLDER_ASSERTION = _PlaceholderAssertionRule()
