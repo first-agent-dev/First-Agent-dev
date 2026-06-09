@@ -352,7 +352,16 @@ TimeoutStartSec=0
 WantedBy=default.target
 EOF
 
-sudo -u "$FA_USER" systemctl --user daemon-reload
+# daemon-reload may fail if D-Bus user session is not available (e.g. running via sudo in a bare terminal).
+# We attempt it; if it fails we print a clear instruction instead of aborting.
+if DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u "$FA_USER")/bus" sudo -u "$FA_USER" systemctl --user daemon-reload 2>/dev/null; then
+    log_info "systemd user daemon reloaded."
+else
+    log_warn "systemctl --user daemon-reload failed (D-Bus session not available)."
+    log_warn "After this script finishes, run manually as $FA_USER:"
+    log_warn "  systemctl --user daemon-reload"
+fi
+
 sudo loginctl enable-linger "$FA_USER" 2>/dev/null || true
 log_info "Service installed. Enable with: systemctl --user enable fa.service"
 
