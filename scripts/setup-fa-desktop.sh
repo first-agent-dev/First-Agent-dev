@@ -15,7 +15,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 FA_USER="${FA_USER:-$USER}"
 FA_DIR="/srv/first-agent"
-REPO_URL="${REPO_URL:-https://github.com/anton-sh/First-Agent-dev.git}"
+REPO_URL="${REPO_URL:-https://github.com/first-agent-dev/First-Agent-dev.git}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

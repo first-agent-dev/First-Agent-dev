@@ -98,7 +98,7 @@ docker exec first-agent bash -c 'cd /workspace && git config user.email "agent@f
 # ---------------------------------------------------------------------------
 log_info "Testing git SSH connectivity..."
 
-if docker exec first-agent bash -c 'cd /workspace && git ls-remote git@github.com:anton-sh/First-Agent-dev.git' >/dev/null 2>&1; then
+if docker exec first-agent bash -c 'cd /workspace && git ls-remote git@github.com:first-agent-dev/First-Agent-dev.git' >/dev/null 2>&1; then
     log_info "Git SSH connectivity: OK"
 else
     log_error "Git SSH test FAILED. Check:"
