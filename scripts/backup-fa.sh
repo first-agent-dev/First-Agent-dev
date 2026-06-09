@@ -5,7 +5,7 @@
 # Pre-requisites:
 #   1. Create a Backblaze B2 bucket
 #   2. Generate an Application Key with read/write access to that bucket
-#   3. Fill in B2_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET below
+#   3. Fill in B2_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET in /srv/first-agent/secrets/backup.env
 #   4. Run once manually: restic -r "$RESTIC_REPO" init
 #   5. Add to cron or systemd timer for nightly execution
 #
@@ -17,8 +17,9 @@
 
 set -euo pipefail
 
-# Source credentials from host secrets directory
+# Source credentials from host secrets directory (outside repo, not tracked)
 if [ -f /srv/first-agent/secrets/backup.env ]; then
+    # shellcheck source=/dev/null
     source /srv/first-agent/secrets/backup.env
 fi
 
@@ -28,6 +29,12 @@ B2_BUCKET="${B2_BUCKET:-CHANGEME}"
 # Use S3-compatible B2 endpoint (NOT native b2: backend)
 RESTIC_REPO="s3:https://s3.us-west-004.backblazeb2.com/${B2_BUCKET}"
 BACKUP_TAG="fa-$(hostname)"
+
+if [[ "$B2_KEY_ID" == "CHANGEME" || "$B2_APPLICATION_KEY" == "CHANGEME" || "$B2_BUCKET" == "CHANGEME" ]]; then
+    echo "ERROR: Backblaze B2 credentials not configured." >&2
+    echo "Edit /srv/first-agent/secrets/backup.env and re-run." >&2
+    exit 1
+fi
 
 export AWS_ACCESS_KEY_ID="$B2_KEY_ID"
 export AWS_SECRET_ACCESS_KEY="$B2_APPLICATION_KEY"
@@ -46,7 +53,6 @@ restic -r "$RESTIC_REPO" backup \
     /etc/systemd/logind.conf.d/no-suspend.conf \
     /etc/apt/apt.conf.d/50unattended-upgrades-fa \
     /etc/docker/daemon.json \
-    "$HOME/.config/systemd/user/fa.service" \
     --tag "$BACKUP_TAG" \
     --exclude-if-present .nobackup \
     --exclude "**/__pycache__" \

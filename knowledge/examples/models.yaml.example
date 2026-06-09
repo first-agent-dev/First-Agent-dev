@@ -1,7 +1,10 @@
 # First-Agent models.yaml — example template
-# Copy to ~/.fa/models.yaml (local dev) or /srv/first-agent/state/models.yaml (AIO)
+# Copy to ~/.fa/models.yaml (local dev) or /srv/first-agent/state/models.yaml (AIO).
 # Each chain entry uses api_key_env to reference an environment variable.
 # NEVER paste real API keys into this file.
+#
+# Recognised roles: planner, coder, debug, eval.
+# Only the roles you declare are loaded — a single-role config is legal.
 
 coder:
   model: "deepseek-v3"
@@ -29,3 +32,12 @@ eval:
       slug: "accounts/fireworks/models/qwen-3-32b"
       base_url: "https://api.fireworks.ai/inference/v1"
       api_key_env: FIREWORKS_API_KEY
+
+# debug:
+#   model: "claude-sonnet-4"
+#   family: "anthropic"
+#   chain:
+#     - provider: anthropic
+#       slug: "claude-sonnet-4-20250514"
+#       base_url: "https://api.anthropic.com/v1"
+#       api_key_env: ANTHROPIC_API_KEY
