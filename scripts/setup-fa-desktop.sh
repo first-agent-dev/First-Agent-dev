@@ -153,9 +153,9 @@ EOF
 sudo sed -i "s/FA_USER_PLACEHOLDER/$FA_USER/g" /etc/ssh/sshd_config.d/99-fa-hardening.conf
 
 if [[ -z "${SSH_CONNECTION:-}" ]]; then
-    sudo systemctl restart sshd
+    sudo systemctl restart ssh
 else
-    log_warn "Skipping sshd restart — you are connected via SSH. Run 'sudo systemctl restart sshd' manually when safe."
+    log_warn "Skipping ssh restart — you are connected via SSH. Run 'sudo systemctl restart ssh' manually when safe."
 fi
 
 # ---------------------------------------------------------------------------
