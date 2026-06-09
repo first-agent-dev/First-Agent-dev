@@ -6,7 +6,7 @@
 #   - NEVER commit real secrets to this repository.
 #   - Dummy / test keys used in test fixtures are allowlisted below.
 
-[[allowlist]]
+[allowlist]
 regexTarget = "match"
 regexes = [
     '''^sk-test''',

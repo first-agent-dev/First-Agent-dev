@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any, override
 
 import pytest
 
@@ -594,6 +595,7 @@ class _DenyBeforeLlmCallGuard(GuardMiddleware):
     name = "deny_before_llm_call"
     attaches_to = (LifecyclePoint.BEFORE_LLM_CALL,)
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point, payload
         return Decision.deny("mock before_llm_call deny")
@@ -603,6 +605,7 @@ class _DenyAfterLlmCallGuard(GuardMiddleware):
     name = "deny_after_llm_call"
     attaches_to = (LifecyclePoint.AFTER_LLM_CALL,)
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point, payload
         return Decision.deny("mock after_llm_call deny")
@@ -690,6 +693,7 @@ class _DenyAfterRound2Guard(GuardMiddleware):
     def __init__(self) -> None:
         self._count = 0
 
+    @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
         del point, payload
         self._count += 1
@@ -723,7 +727,7 @@ def test_drive_session_synthetic_padding_uses_guard_reason(
     hooks.register(_DenyAfterRound2Guard())
     state = _make_state(tmp_path)
 
-    outcome = drive_session(
+    drive_session(
         "loop",
         provider_chain=chain,
         registry=registry,

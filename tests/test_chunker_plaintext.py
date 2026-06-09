@@ -92,6 +92,7 @@ def test_anchor_is_dot_safe_filename_slug(tmp_path: Path) -> None:
         assert actual_anchor == expected_anchor, msg
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows does not allow dot-only filenames")
 def test_anchor_falls_back_to_chunk_for_dot_only_name(tmp_path: Path) -> None:
     """A pathological filename consisting solely of dots produces no
     retainable characters once dots are mapped to hyphens and slugified.
@@ -100,12 +101,7 @@ def test_anchor_falls_back_to_chunk_for_dot_only_name(tmp_path: Path) -> None:
     """
 
     path = tmp_path / "..."
-    try:
-        path.write_text("contents\n", encoding="utf-8")
-    except PermissionError:
-        if sys.platform == "win32":
-            pytest.skip("Windows does not allow dot-only filenames")
-        raise
+    path.write_text("contents\n", encoding="utf-8")
 
     chunk = PlainTextChunker().chunk_file(path)[0]
 

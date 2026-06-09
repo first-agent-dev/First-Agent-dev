@@ -41,7 +41,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, override, runtime_checkable
 
 KERNEL_VERSION = "0.1"
 
@@ -100,6 +100,7 @@ class Severity(IntEnum):
         """Return the contract wire label (e.g. ``"HARD-BLOCK"``)."""
         return _SEVERITY_LABELS[self]
 
+    @override
     def __bool__(self) -> bool:
         """All severities are truthy.
 

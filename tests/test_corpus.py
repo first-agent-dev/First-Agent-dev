@@ -23,7 +23,7 @@ from fa.authoring_rules import (
     PLACEHOLDER_ASSERTION,
     TEST_SEMANTIC_DECAY,
 )
-from fa.authoring_tcb import run_all
+from fa.authoring_tcb import Rule, run_all
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -93,7 +93,7 @@ def _install_fixture(tmp_path: Path, fixture_rel: str, dest_rel: str) -> None:
     ids=[c[0] for c in _CATCH_CASES],
 )
 def test_catch_corpus_fixture_fires_expected_code(
-    tmp_path: Path, fixture_rel: str, dest_rel: str, rule, expected_code: str
+    tmp_path: Path, fixture_rel: str, dest_rel: str, rule: Rule, expected_code: str
 ) -> None:
     _make_workspace(tmp_path)
     _install_fixture(tmp_path, fixture_rel, dest_rel)
@@ -110,7 +110,7 @@ def test_catch_corpus_fixture_fires_expected_code(
     ids=[c[0] for c in _FP_CASES],
 )
 def test_fp_corpus_fixture_does_not_fire(
-    tmp_path: Path, fixture_rel: str, dest_rel: str, rule
+    tmp_path: Path, fixture_rel: str, dest_rel: str, rule: Rule
 ) -> None:
     _make_workspace(tmp_path)
     _install_fixture(tmp_path, fixture_rel, dest_rel)
