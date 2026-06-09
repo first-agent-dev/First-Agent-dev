@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import os
 import re
+import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +20,7 @@ from fa.inner_loop.hooks.base import (
 )
 from fa.inner_loop.registry import ToolResult
 from fa.inner_loop.state import EventLog
+from fa.observability.redaction import SecretRedactor
 from fa.orchestration.pause import PauseKind, is_paused
 from fa.sandbox.bash_gate import evaluate_bash
 from fa.sandbox.path_containment import is_contained
@@ -326,6 +331,7 @@ class LearningObserver(ObserverMiddleware):
     name: str = "learning"
     attaches_to: tuple[LifecyclePoint, ...] = (LifecyclePoint.AFTER_TOOL_EXEC,)
     now: str | None = None
+    redactor: SecretRedactor | None = None
 
     @override
     def observe(self, point: LifecyclePoint, payload: HookPayload) -> None:
@@ -335,24 +341,125 @@ class LearningObserver(ObserverMiddleware):
         if call is None or result is None:
             return
         if result.error is not None:
+            error_msg = (
+                self.redactor.redact(result.error.message)
+                if self.redactor is not None
+                else result.error.message
+            )
             record_gotcha(
                 f"{call.name} failed",
-                result.error.message,
+                error_msg,
                 tags=("inner-loop", "tool-error", call.name),
                 path=self.gotchas_path,
                 now=self.now,
             )
             return
+        summary = (
+            self.redactor.redact(result.summary)
+            if self.redactor is not None
+            else result.summary
+        )
         record_discovery(
             _learning_observer_key(call.name, call.params, call.call_id),
             DiscoveryEntry(
-                summary=result.summary,
+                summary=summary,
                 pointers=tuple(result.artifacts),
                 tags=("inner-loop", call.name),
             ),
             path=self.codebase_map_path,
             now=self.now,
         )
+
+
+@dataclass
+class SecretGuard(GuardMiddleware):
+    """Prevent API key leakage via fs.write_file or fs.run_bash.
+
+    Detects raw secrets, base64-encoded secrets, URL-encoded secrets,
+    and common shell/env variable interpolation patterns.
+    """
+
+    secrets: frozenset[str] = field(default_factory=frozenset)
+    name: str = "secret_guard"
+    attaches_to: tuple[LifecyclePoint, ...] = (LifecyclePoint.BEFORE_TOOL_EXEC,)
+
+    # Regex for candidate base64 words (minimum 10 chars to avoid false positives)
+    _B64_RE = re.compile(r"[A-Za-z0-9+/=]{10,}")
+    # Interpolation patterns: $VAR, ${VAR}, {{VAR}}
+    _INTERP_RE = re.compile(
+        r"\$[A-Za-z_][A-Za-z0-9_]*"
+        r"|\$\{[A-Za-z_][A-Za-z0-9_]*\}"
+        r"|\{\{[A-Za-z_][A-Za-z0-9_]*\}\}"
+    )
+
+    def _check_text(self, text: str) -> bool:
+        """Return True if ``text`` contains a secret in any form."""
+        for secret in self.secrets:
+            # 1. Raw exact match
+            if secret in text:
+                return True
+            # 2. Base64-encoded secret literal
+            b64_secret = base64.b64encode(secret.encode()).decode()
+            if b64_secret in text:
+                return True
+            # 3. URL-encoded secret literal
+            url_secret = urllib.parse.quote(secret)
+            if url_secret in text:
+                return True
+            # 4. URL-decoded text
+            if secret in urllib.parse.unquote(text):
+                return True
+
+        # 5. Base64 substrings in text (non-literal encoding)
+        for candidate in self._B64_RE.findall(text):
+            try:
+                decoded = base64.b64decode(candidate, validate=True).decode(
+                    "utf-8", errors="replace"
+                )
+            except (ValueError, binascii.Error):
+                continue
+            for secret in self.secrets:
+                if secret in decoded:
+                    return True
+
+        # 6. Interpolation resolved
+        for match in self._INTERP_RE.finditer(text):
+            raw = match.group()
+            # Strip prefixes/suffixes to get bare variable name
+            var_name = raw.strip("${}")
+            resolved = os.environ.get(var_name, "")
+            if resolved and resolved in self.secrets:
+                return True
+
+        return False
+
+    @override
+    def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
+        del point
+        call = payload.tool_call
+        if call is None:
+            return Decision.allow()
+        if call.name == "fs.write_file":
+            content = call.params.get("content", "")
+            if isinstance(content, str) and self._check_text(content):
+                return Decision.deny("secret leak detected in fs.write_file content")
+        if call.name == "fs.run_bash":
+            command = call.params.get("command", "")
+            if isinstance(command, str):
+                # Encoded / interpolated detection applies to ALL commands
+                if self._check_text(command):
+                    return Decision.deny("secret leak detected in fs.run_bash command")
+                # Raw exact-match kept behind dangerous-keyword gate for
+                # performance: only when the command explicitly references
+                # env inspection.
+                dangerous = {"printenv", "env", "echo $"}
+                if any(d in command for d in dangerous):
+                    for secret in self.secrets:
+                        if secret in command:
+                            return Decision.deny(
+                                "secret leak detected in fs.run_bash command"
+                            )
+        return Decision.allow()
 
 
 def default_tool_result_for_denial(reason: str) -> ToolResult:
@@ -366,6 +473,7 @@ __all__ = [
     "LearningObserver",
     "PauseGuard",
     "SandboxHook",
+    "SecretGuard",
     "VerifierObserver",
     "default_tool_result_for_denial",
 ]

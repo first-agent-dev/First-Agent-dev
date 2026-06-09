@@ -30,11 +30,13 @@ from fa.inner_loop.hooks import (
     LoopGuard,
     RateLimitBlocker,
     SandboxHook,
+    SecretGuard,
     VerifierObserver,
 )
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.tools import build_baseline_registry, build_prepare_pr_tool
 from fa.observability import CostGuardian
+from fa.observability.redaction import SecretRedactor, SecretRedactorError
 from fa.providers import (
     DEFAULT_MODELS_YAML_PATH,
     ChainConfig,
@@ -46,6 +48,49 @@ from fa.providers import (
 )
 from fa.providers.base import Provider, Transport
 from fa.verifier import load_contracts_from_dir
+
+
+def _load_fa_dotenv(path: Path) -> None:
+    """Load key=value pairs from ``path`` into ``os.environ`` (setdefault).
+
+    Fails gracefully with a warning on missing file, permission error,
+    or malformed encoding.  Never logs the parsed key/value content.
+    """
+    import warnings
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return
+    except PermissionError as exc:
+        warnings.warn(
+            f"Permission denied reading {path}: {exc}",
+            stacklevel=2,
+        )
+        return
+    except UnicodeDecodeError as exc:
+        warnings.warn(
+            f"Malformed encoding in {path} ({exc.encoding}): {exc}",
+            stacklevel=2,
+        )
+        return
+    except OSError as exc:
+        warnings.warn(f"Could not load {path}: {exc}", stacklevel=2)
+        return
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k, v = k.strip(), v.strip()
+        if k:
+            os.environ.setdefault(k, v)
+
+
+# Optional: load ~/.fa/.env for local development convenience.
+# Production (AIO) uses .env.fa in repo root loaded by Docker Compose.
+_load_fa_dotenv(Path.home() / ".fa" / ".env")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -261,6 +306,11 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     hooks.register(AuthExpiredBlocker(suppression_seconds=limits.auth_expired_suppression_seconds))
     audit = AuditHook(event_log=log)
     hooks.register(audit)
+    hooks.register(
+        SecretGuard(
+            secrets=frozenset(),
+        )
+    )
     # R-45 CostGuardian: dormant on baseline tools (no ``cost=…``
     # artifact in ``ToolResult.artifacts``). Wired here so the chain
     # is stable when the T-2 LLM driver lands the artifact emitter
@@ -291,6 +341,7 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
             codebase_map_path=workspace / "knowledge" / "trace" / "codebase_map.json",
             gotchas_path=workspace / "knowledge" / "trace" / "gotchas.md",
             now="2026-05-21T00:00:00Z",
+            redactor=None,
         )
     )
     # R-5 DSV: load every YAML contract under ``verifiers/`` so the
@@ -369,7 +420,12 @@ def _cmd_run(
         return 2
     registry.register(build_prepare_pr_tool(draft_store))
     log_path = workspace / ".fa" / "runs" / run_id / "events.jsonl"
-    log = EventLog(log_path, run_id=run_id)
+    try:
+        redactor = SecretRedactor.from_models_config(os.environ, models)
+    except SecretRedactorError as exc:
+        print(f"fa run: secret redactor configuration error: {exc}", file=sys.stderr)
+        return 2
+    log = EventLog(log_path, run_id=run_id, redactor=redactor)
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))
     hooks.register(
@@ -390,7 +446,19 @@ def _cmd_run(
     # the intent classifier.
     hooks.register(IntentGuard(repo_root=workspace, draft_store=draft_store))
     hooks.register(AuditHook(event_log=log))
+    hooks.register(
+        SecretGuard(
+            secrets=redactor.secrets if redactor is not None else frozenset(),
+        )
+    )
     hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
+    hooks.register(
+        LearningObserver(
+            codebase_map_path=workspace / "knowledge" / "trace" / "codebase_map.json",
+            gotchas_path=workspace / "knowledge" / "trace" / "gotchas.md",
+            redactor=redactor,
+        )
+    )
     contracts = load_contracts_from_dir(workspace / "verifiers")
     if contracts:
         hooks.register(VerifierObserver(contracts=contracts, event_log=log))

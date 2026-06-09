@@ -19,6 +19,7 @@ from fa.observability.cost_guardian import (
     CostRollup,
     default_cost_extractor,
 )
+from fa.observability.redaction import SecretRedactor, SecretRedactorError
 
 __all__ = [
     "COST_ARTIFACT_PREFIX",
@@ -26,5 +27,7 @@ __all__ = [
     "CostGuardian",
     "CostObservation",
     "CostRollup",
+    "SecretRedactor",
+    "SecretRedactorError",
     "default_cost_extractor",
 ]

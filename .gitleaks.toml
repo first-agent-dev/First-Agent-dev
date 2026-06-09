@@ -1,0 +1,22 @@
+# First-Agent gitleaks allowlist
+#
+# Production secret policy:
+#   - LLM API keys belong in ~/.fa/.env (local dev) or .env.fa (AIO container).
+#   - Backblaze B2 credentials belong in /srv/first-agent/secrets/backup.env.
+#   - NEVER commit real secrets to this repository.
+#   - Dummy / test keys used in test fixtures are allowlisted below.
+
+[[allowlist]]
+regexTarget = "match"
+regexes = [
+    '''^sk-test''',
+    '''^sk-ant-x$''',
+    '''^fw-fake''',
+    '''^b2-fake''',
+    '''^nvapi-test''',
+    '''^gsk-test''',
+]
+paths = [
+    '''tests/''',
+    '''.env.fa.template''',
+]

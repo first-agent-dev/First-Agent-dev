@@ -24,6 +24,7 @@ from fa.inner_loop.hooks.builtin import (
     LearningObserver,
     PauseGuard,
     SandboxHook,
+    SecretGuard,
     VerifierObserver,
     default_tool_result_for_denial,
 )
@@ -58,6 +59,7 @@ __all__ = [
     "PauseGuard",
     "RateLimitBlocker",
     "SandboxHook",
+    "SecretGuard",
     "VerifierObserver",
     "default_tool_result_for_denial",
 ]

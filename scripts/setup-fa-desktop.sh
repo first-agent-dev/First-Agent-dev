@@ -162,6 +162,8 @@ FA_DIR="/srv/first-agent"
 log_info "Creating FA workspace at $FA_DIR..."
 sudo mkdir -p "$FA_DIR"/{repo,state,secrets,backup,scripts}
 sudo chown -R "$FA_USER:$FA_USER" "$FA_DIR"
+sudo chmod 700 "$FA_DIR/state"
+sudo chmod 700 "$FA_DIR/secrets"
 
 # 9. Clone repo (if not already present)
 if [ ! -d "$FA_DIR/repo/First-Agent-dev" ]; then
@@ -187,6 +189,21 @@ mkdir -p "$FA_DIR/secrets"
 if ! grep -q "$GH_ED25519_KEY" "$FA_DIR/secrets/known_hosts" 2>/dev/null; then
     echo "github.com $GH_ED25519_KEY" >> "$FA_DIR/secrets/known_hosts"
     log_info "Pinned GitHub Ed25519 host key in $FA_DIR/secrets/known_hosts"
+fi
+
+# 10b. Create .env.fa from template
+ENV_FA="$FA_DIR/repo/First-Agent-dev/.env.fa"
+if [ ! -f "$ENV_FA" ]; then
+    cp "$FA_DIR/repo/First-Agent-dev/.env.fa.template" "$ENV_FA"
+    chmod 600 "$ENV_FA"
+    log_warn "Template .env.fa created at $ENV_FA. EDIT IT to add your LLM API keys before first run."
+fi
+
+# 10c. Create models.yaml from example
+MODELS_YAML="$FA_DIR/state/models.yaml"
+if [ ! -f "$MODELS_YAML" ]; then
+    cp "$FA_DIR/repo/First-Agent-dev/knowledge/examples/models.yaml.example" "$MODELS_YAML"
+    log_warn "Template models.yaml created at $MODELS_YAML. EDIT IT to configure provider chains."
 fi
 
 # 11. Enable automatic security updates + auto-reboot (non-interactive)
@@ -308,6 +325,18 @@ restic -r "$RESTIC_REPO" forget \
 # restic -r "$RESTIC_REPO" restore latest --target /tmp/restore-test
 BACKUP_EOF
 chmod +x "$FA_DIR/scripts/backup-fa.sh"
+
+# 14b. Create backup credentials template (outside repo, not tracked)
+BACKUP_ENV="$FA_DIR/secrets/backup.env"
+if [ ! -f "$BACKUP_ENV" ]; then
+    cat > "$BACKUP_ENV" <<'EOF'
+B2_KEY_ID=CHANGEME
+B2_APPLICATION_KEY=CHANGEME
+B2_BUCKET=CHANGEME
+EOF
+    chmod 600 "$BACKUP_ENV"
+    log_warn "Backup credentials template created at $BACKUP_ENV. EDIT IT with real values."
+fi
 
 # 15. Summary
 log_info "====================================="

@@ -39,8 +39,6 @@ services:
 
     # Environment
     environment:
-      - FA_WORKSPACE=/workspace
-      - FA_CONFIG=/config
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
       - UV_CACHE_DIR=/tmp/uv-cache
@@ -57,10 +55,10 @@ services:
         source: /srv/first-agent/repo/First-Agent-dev
         target: /workspace
         read_only: false
-      # FA state/config (persistent)
+      # FA state/config (persistent) — ~/.fa for models.yaml, config.yaml, pr_draft.md
       - type: bind
         source: /srv/first-agent/state
-        target: /config
+        target: /home/fa/.fa
         read_only: false
       # SSH deploy key (read-only) — cross-reference: mount at /run/secrets, not ~/.ssh
       - type: bind

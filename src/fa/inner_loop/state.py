@@ -61,8 +61,12 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fa.inner_loop.registry import ToolCall, ToolResult
+
+if TYPE_CHECKING:
+    from fa.observability.redaction import SecretRedactor
 
 DEFAULT_STATE_ROOT = Path.home() / ".fa" / "state" / "runs"
 HARNESS_ID = "fa-inner-loop@0.1.0"
@@ -102,10 +106,30 @@ class EventLog:
     of the file and replay diffs stay deterministic.
     """
 
-    def __init__(self, path: Path, *, run_id: str = "") -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        run_id: str = "",
+        redactor: SecretRedactor | None = None,
+    ) -> None:
         self.path = path
         self.run_id = run_id
         self._next_id = 1
+        self._redactor = redactor
+
+    def _redact_value(self, value: object) -> object:
+        if self._redactor is None:
+            return value
+        if isinstance(value, str):
+            return self._redactor.redact(value)
+        if isinstance(value, dict):
+            return {k: self._redact_value(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._redact_value(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(self._redact_value(v) for v in value)
+        return value
 
     def append(
         self,
@@ -117,13 +141,18 @@ class EventLog:
         tool_call_id: str = "",
         parent_event_id: str = "",
     ) -> TraceEvent:
+        redacted_content: dict[str, object] = {}
+        if content is not None:
+            redacted_content = {
+                k: self._redact_value(v) for k, v in content.items()
+            }
         event = TraceEvent(
             event_id=f"ev-{self._next_id:06d}",
             ts=_now_iso_z(),
             run_id=self.run_id,
             actor=actor,
             kind=kind,
-            content={} if content is None else dict(content),
+            content=redacted_content,
             tool_name=tool_name,
             tool_call_id=tool_call_id,
             parent_event_id=parent_event_id,

@@ -1,0 +1,31 @@
+# First-Agent models.yaml — example template
+# Copy to ~/.fa/models.yaml (local dev) or /srv/first-agent/state/models.yaml (AIO)
+# Each chain entry uses api_key_env to reference an environment variable.
+# NEVER paste real API keys into this file.
+
+coder:
+  model: "deepseek-v3"
+  family: "deepseek"
+  chain:
+    - provider: openrouter
+      slug: "deepseek/deepseek-chat-v3"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: OPENROUTER_API_KEY
+
+planner:
+  model: "kimi-k2"
+  family: "kimi"
+  chain:
+    - provider: openrouter
+      slug: "moonshotai/kimi-k2"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: OPENROUTER_API_KEY
+
+eval:
+  model: "qwen-3-32b"
+  family: "qwen"
+  chain:
+    - provider: fireworks
+      slug: "accounts/fireworks/models/qwen-3-32b"
+      base_url: "https://api.fireworks.ai/inference/v1"
+      api_key_env: FIREWORKS_API_KEY
