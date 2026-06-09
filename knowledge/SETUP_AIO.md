@@ -244,6 +244,22 @@ The deployment stack handles git auth (SSH deploy key) but never mentions LLM AP
 
 ---
 
+### Secrets Management
+
+| Category | Storage | Scope |
+| --- | --- | --- |
+| **LLM API keys** | `.env.fa` (repo root) | Container runtime |
+| **Backup credentials** | `/srv/first-agent/secrets/backup.env` | Host only (restic) |
+| **Git deploy key** | `/srv/first-agent/secrets/github_deploy_key` | Host + container (read-only) |
+
+**Why separation matters:**
+
+- The operator user is in the `docker` group. Any member can `docker inspect` and see container env vars (including API keys from `.env.fa`). Backup credentials are never injected into the container, so a container compromise does not grant B2 access.
+- `SecretRedactor` (exact-match + base64/URL encoding detection) masks secrets before they reach `events.jsonl` or `knowledge/trace/`. If a key leaks before redaction, the encrypted backup still contains it. Redaction is primary; encryption is secondary.
+- restic encrypts backups *before* uploading to B2. Test restores quarterly to verify integrity.
+
+---
+
 ### Security Notes for AIO Deployment
 
 **Docker trust boundary.** The operator user is in the `docker` group. Any user in this group can run `docker inspect` and see container env vars (including API keys loaded from `.env.fa`). This is the trust boundary for the AIO deployment — keep the operator account exclusive.

@@ -723,6 +723,7 @@ def test_drive_session_synthetic_padding_uses_guard_reason(
     hooks.register(_DenyAfterRound2Guard())
     state = _make_state(tmp_path)
 
+    outcome = drive_session(
         "loop",
         provider_chain=chain,
         registry=registry,

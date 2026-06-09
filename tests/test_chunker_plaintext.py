@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+import pytest
 
 from fa.chunker import PlainTextChunker
 
@@ -97,7 +100,12 @@ def test_anchor_falls_back_to_chunk_for_dot_only_name(tmp_path: Path) -> None:
     """
 
     path = tmp_path / "..."
-    path.write_text("contents\n", encoding="utf-8")
+    try:
+        path.write_text("contents\n", encoding="utf-8")
+    except PermissionError:
+        if sys.platform == "win32":
+            pytest.skip("Windows does not allow dot-only filenames")
+        raise
 
     chunk = PlainTextChunker().chunk_file(path)[0]
 

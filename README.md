@@ -140,6 +140,24 @@ EOF
 
 4. Backup credentials (`B2_KEY_ID`, `B2_APPLICATION_KEY`) go in `/srv/first-agent/secrets/backup.env`, NOT in `.env.fa`.
 
+### Secrets Management
+
+| Category | Storage | Scope |
+| --- | --- | --- |
+| **LLM API keys** | `~/.fa/.env` (WSL) or `.env.fa` (AIO) | Container runtime only |
+| **Backup credentials** | `/srv/first-agent/secrets/backup.env` | Host only (restic) |
+| **Git deploy key** | `/srv/first-agent/secrets/github_deploy_key` | Host + container (read-only mount) |
+
+- **LLM API keys** are needed for every LLM call. Stored in `~/.fa/.env` (WSL) or `.env.fa` (AIO).
+- **Backup credentials** (B2 keys) are needed by the host cron job, not the container. Keeping them separate limits blast radius if the container is compromised.
+- **Git deploy key** is an SSH key for git push; mounted read-only into the container.
+
+**Why the separation matters:**
+
+- The container trust boundary (Docker group membership) means any operator can `docker inspect` and see container env vars. Backup credentials are never injected into the container, so a container compromise does not grant B2 access.
+- restic encrypts backups *before* uploading. If an API key leaks into `events.jsonl` before `SecretRedactor` masks it, the encrypted backup still contains it. Redaction is the primary defense; separation is secondary.
+- `SecretRedactor` (exact-match + base64/URL encoding detection) runs in the observability layer and masks secrets before they reach `events.jsonl` or `knowledge/trace/`.
+
 ### Repository Hygiene
 
 - `gitleaks` runs as a pre-commit hook and in GitHub Actions CI.

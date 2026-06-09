@@ -367,7 +367,7 @@ def test_fa_run_returns_zero_on_clean_stop(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     transport = _ScriptedTransport([_stop_body("hello world")])
     args = _make_run_args(workspace=tmp_path, config=config)
 
@@ -391,7 +391,7 @@ def test_fa_run_returns_two_when_role_missing(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     transport = _ScriptedTransport([])
     args = _make_run_args(workspace=tmp_path, config=config, role="planner")
 
@@ -407,7 +407,7 @@ def test_fa_run_writes_events_jsonl(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     transport = _ScriptedTransport([_stop_body("ok")])
     args = _make_run_args(workspace=tmp_path, config=config, run_id="audit-run")
 
@@ -432,7 +432,7 @@ def test_fa_run_hits_turn_cap(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     # Tool call that yields invalid_params (no such tool registered),
     # making the LLM loop indefinitely without ever signalling stop.
     looping_body = {
@@ -472,7 +472,7 @@ def test_fa_run_registers_pr_prepare_tool(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     transport = _ScriptedTransport([_stop_body("ok")])
     args = _make_run_args(workspace=tmp_path, config=config)
 
@@ -493,9 +493,10 @@ def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
@@ -537,9 +538,10 @@ def test_fa_run_clears_stale_pr_draft_on_startup(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     stale = home / ".fa" / "state" / "runs" / "reuse-run" / "pr_draft.md"
     stale.parent.mkdir(parents=True, exist_ok=True)
     stale.write_text("INTENT: FIX\nCLASS: REPAIR\nINVARIANT: Affects: stale\n", encoding="utf-8")
@@ -559,7 +561,7 @@ def test_fa_run_verify_only_bash_allowed_before_pr_prepare(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
@@ -599,7 +601,7 @@ def test_fa_run_repo_write_bash_requires_pr_prepare(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
@@ -641,7 +643,7 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     command = 'python -c "import pathlib; pathlib.Path("src/fa/x.py").write_text("x")"'
     transport = _ScriptedTransport(
         [
@@ -680,9 +682,10 @@ def test_fa_run_opaque_exec_bash_allowed_after_pr_prepare(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     command = "python -c \"open('opaque.py', 'w').write('x')\""
     transport = _ScriptedTransport(
         [
@@ -727,9 +730,10 @@ def test_fa_run_repo_write_bash_allowed_after_pr_prepare(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
@@ -779,7 +783,7 @@ def test_fa_run_system_prompt_mentions_pr_prepare_before_mutation(
 ) -> None:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
-    monkeypatch.setenv("TEST_FA_RUN_KEY", "k")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     transport = _ScriptedTransport([_stop_body("ok")])
     args = _make_run_args(workspace=tmp_path, config=config)
 
