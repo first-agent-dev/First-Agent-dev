@@ -10,6 +10,84 @@ This is **host-level** work. The FA workload itself runs in a container
 (`docker-compose.fa.yml`) that has **no sshd** — these scripts do not touch it.
 Canonical deployment guide: [`knowledge/SETUP_AIO.md`](../../knowledge/SETUP_AIO.md).
 
+> **Everyday access vs. hardening.** If you just want to reach the agent securely
+> from your devices, you only need the next section
+> ([Access your agent from any device](#access-your-agent-from-any-device-everyday-path))
+> plus the `tailscale-acl.jsonc` policy. The `00`/`20`/`30` hardening scripts are
+> **optional** defense-in-depth for the *classic-sshd* recovery path; they do not
+> affect your everyday Tailscale-SSH login.
+
+## Access your agent from any device (everyday path)
+
+For a single operator who wants to reach the agent from many devices, the
+production-standard, **key-free** path is **Tailscale SSH**: you authenticate with
+your **Tailscale identity** (SSO), not an SSH key. The agent's CLI runs in a
+container with no sshd, so "connecting to the agent" means getting a shell on the
+**host** and running the `fa` CLI (or `docker exec` into the container).
+
+### Onboard a new device (≈2 min, nothing to copy)
+
+1. Install Tailscale on the device and sign in with the **same** account:
+   <https://tailscale.com/download>.
+2. Confirm it sees the host: `tailscale status` (look for `fa-hp` / its `100.x` IP).
+3. Connect: `ssh fa@fa-hp` (MagicDNS) or `ssh fa@100.76.34.40`. A one-time browser
+   re-auth may appear ("check" mode); then you get a shell.
+
+No `authorized_keys`, no key distribution — access is granted by the `ssh` rules
+in [`tailscale-acl.jsonc`](./tailscale-acl.jsonc).
+
+### Offboard a device (instant)
+
+Admin console → **Machines** → the device → **Remove** (delete) or **Disable**
+(pause). Its tailnet access, including SSH, is revoked immediately.
+
+### Tag the host as `tag:aio` (do this once)
+
+Tagging the server (a) **disables node-key expiry** so a headless 24/7 box is
+never silently logged out (~every 6 months), and (b) lets ACL rules name a stable
+identity. Tagging changes *which* rule matches your sessions, so follow this order
+exactly to avoid locking yourself out:
+
+```bash
+# 1) In the admin console, save tailscale-acl.jsonc FIRST. It adds the tag:aio
+#    ssh rule AND keeps the default "autogroup:self" rule as a safety net.
+# 2) On the host, advertise the tag (re-auth in the browser when prompted):
+sudo tailscale up --ssh --advertise-tags=tag:aio
+# 3) From a SECOND device, confirm `ssh fa@fa-hp` still works BEFORE closing your
+#    current session. Keep the physical console handy as a fallback.
+```
+
+### Break-glass: an emergency SSH key for `fa`
+
+Tailscale SSH is your everyday path and the **physical console** is the primary
+break-glass. An emergency SSH key is a useful extra (and a good way to learn keys).
+Honest caveat: while `tailscale up --ssh` is on, `tailscaled` owns port 22 on the
+tailnet IP, so this key only helps **after** you disable Tailscale SSH
+(`sudo tailscale up --ssh=false`) from the console, or over the LAN — it is *not* a
+second remote path on its own.
+
+Generate the keypair **on your laptop** (never on the server — the private half
+must stay with you):
+
+```bash
+# On your laptop:
+ssh-keygen -t ed25519 -C "fa-breakglass" -f ~/.ssh/fa_breakglass
+#   -> ~/.ssh/fa_breakglass      PRIVATE — never share, never commit
+#      ~/.ssh/fa_breakglass.pub  PUBLIC  — safe to copy to the server
+# Set a passphrase when asked (protects the key if the laptop is lost).
+```
+
+Install the **public** key on the host through your working Tailscale SSH session:
+
+```bash
+# From your laptop, append the public key to fa's authorized_keys on the host:
+ssh fa@fa-hp 'install -d -m700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys' < ~/.ssh/fa_breakglass.pub
+```
+
+Use a **separate** keypair per device (repeat `ssh-keygen` and append each `.pub`)
+rather than copying one private key around; revoke a device by deleting its line
+from `~/.ssh/authorized_keys`.
+
 ## Defense-in-depth layers
 
 ```text
@@ -33,7 +111,7 @@ recovery path. Everything survives reboot / tailscale restart / network change.
 | `10-diagnose.sh` | **Read-only audit.** Run first. Reports which server answers `:22` (system sshd vs Tailscale SSH), UFW/IPv6, effective `sshd -T` policy, authorized_keys, fail2ban, netfilter backend, Docker port-publish bypass. |
 | `20-harden.sh`   | **Apply Steps 1,2,3,5,6** idempotently. Refuses to run unless the failsafe is armed and `SSH_USER` exists; validates with `sshd -t` and asserts effective `allowusers` for a LAN vs tailnet source **before** `reload` (never `restart`). |
 | `30-verify.sh`   | **Final checklist.** Non-zero exit on failure; prints the manual LAN negative-test + reboot-test steps. |
-| `tailscale-acl.jsonc` | **Step 4 ACL** for the Tailscale admin console (control-plane deny). Not applied by any script — paste/merge it, replacing the `<...>` placeholders. |
+| `tailscale-acl.jsonc` | **Step 4 ACL** for the Tailscale admin console. Not applied by any script — paste it as the whole policy. Ships ready for the `fa` account + `tag:aio` (no placeholders to fill). |
 
 ## Order of operations (run on the AIO)
 
