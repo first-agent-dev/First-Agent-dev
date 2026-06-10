@@ -30,8 +30,9 @@ container with no sshd, so "connecting to the agent" means getting a shell on th
 1. Install Tailscale on the device and sign in with the **same** account:
    <https://tailscale.com/download>.
 2. Confirm it sees the host: `tailscale status` (look for `fa-hp` / its `100.x` IP).
-3. Connect: `ssh fa@fa-hp` (MagicDNS) or `ssh fa@100.76.34.40`. A one-time browser
-   re-auth may appear ("check" mode); then you get a shell.
+3. Connect: `ssh fa@fa-hp` (MagicDNS) or `ssh fa@100.76.34.40`. A browser re-auth
+   may appear ("check" mode — once per `checkPeriod`, set to 24h in the ACL); then
+   you get a shell.
 
 No `authorized_keys`, no key distribution — access is granted by the `ssh` rules
 in [`tailscale-acl.jsonc`](./tailscale-acl.jsonc).
