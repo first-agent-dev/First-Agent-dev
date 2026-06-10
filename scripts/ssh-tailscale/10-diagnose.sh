@@ -7,10 +7,10 @@
 # common lock-out / Docker-bypass foot-guns.
 #
 # Usage:  sudo bash 10-diagnose.sh
-#   SSH_USER may be set to override the audited account (default: fa-operator).
+#   SSH_USER may be set to override the audited account (default: fa).
 set -uo pipefail   # NOT -e: diagnostics must keep going past individual failures
 
-SSH_USER="${SSH_USER:-${FA_USER:-fa-operator}}"
+SSH_USER="${SSH_USER:-${FA_USER:-fa}}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 ok()    { echo -e "  ${GREEN}[ OK ]${NC} $*"; }

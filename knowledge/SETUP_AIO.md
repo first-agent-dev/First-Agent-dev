@@ -56,7 +56,7 @@ Save and exit.
 3. At the installer, choose **"Minimal installation"** (not the full one with office suites and games).
 4. **Disk setup:** ZFS or ext4 — both work. ZFS has built-in snapshots; ext4 is simpler. Pick one.
 5. **User setup:**
-   - Create your primary user (e.g., `fa-operator`).
+   - Create your primary user (e.g., `fa`).
    - Set a strong password.
    - **Do NOT check "automatic login"** — the cross-reference flagged this as a security risk.
 6. Finish the install, reboot, remove the USB stick.
@@ -149,7 +149,7 @@ sudo tailscale up --ssh
 
 ```bash
 # From your laptop (NOT the AIO)
-ssh fa-operator@100.x.y.z
+ssh fa@100.x.y.z
 ```
 
 If this works, you've confirmed remote access without exposing SSH to the public internet.
@@ -170,7 +170,7 @@ dead-man failsafe so a firewall/sshd mistake cannot lock you out.
 cd /srv/first-agent/repo/First-Agent-dev/scripts/ssh-tailscale
 sudo bash 10-diagnose.sh                       # read-only audit (run first)
 sudo bash 00-failsafe.sh arm                   # + open a SECOND ssh session
-sudo SSH_USER=fa-operator bash 20-harden.sh    # apply layers (reload, not restart)
+sudo SSH_USER=fa bash 20-harden.sh    # apply layers (reload, not restart)
 sudo bash 30-verify.sh                          # checklist; non-zero exit on fail
 # apply tailscale-acl.jsonc in the admin console, then:
 sudo bash 00-failsafe.sh disarm                 # only after a fresh login works
@@ -378,12 +378,12 @@ This stops the **entire container** (~10s). The container restarts automatically
 
 From your laptop:
 ```bash
-ssh fa-operator@100.x.y.z 'systemctl --user stop fa.service'
+ssh fa@100.x.y.z 'systemctl --user stop fa.service'
 ```
 
 Or start it back up:
 ```bash
-ssh fa-operator@100.x.y.z 'systemctl --user start fa.service'
+ssh fa@100.x.y.z 'systemctl --user start fa.service'
 ```
 
 ### Option C: iOS Shortcuts + Webhook (Future — One-Tap)
@@ -483,7 +483,7 @@ When you want a true one-tap button on your phone:
 | **Tailscale IP** | `tailscale ip -4` |
 | **UFW status** | `sudo ufw status verbose` |
 | **Run backup now** | `/srv/first-agent/scripts/backup-fa.sh` |
-| **SSH over Tailscale** | `ssh fa-operator@100.x.y.z` |
+| **SSH over Tailscale** | `ssh fa@100.x.y.z` |
 | **Emergency local access** | Plug in keyboard/mouse, log in at GNOME screen |
 
 ---

@@ -46,8 +46,8 @@ sudo bash 10-diagnose.sh
 # 1. SAFETY: arm the dead-man rollback AND open a SECOND ssh session, keep it open.
 sudo bash 00-failsafe.sh arm
 
-# 2. Harden (override the operator account if it isn't fa-operator).
-sudo SSH_USER=fa-operator bash 20-harden.sh
+# 2. Harden (override the operator account if it isn't fa).
+sudo SSH_USER=fa bash 20-harden.sh
 
 # 3. From a FRESH connection over Tailscale, confirm you can still log in,
 #    then verify.

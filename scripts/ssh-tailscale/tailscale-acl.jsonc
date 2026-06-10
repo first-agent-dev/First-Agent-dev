@@ -36,7 +36,7 @@
       "action": "check",
       "src": ["autogroup:admin"],            // who may open a Tailscale SSH session
       "dst": ["tag:aio"],
-      "users": ["<fa-operator>", "autogroup:nonroot"] // local users they may become
+      "users": ["<fa>", "autogroup:nonroot"] // local users they may become
     }
   ]
 }
