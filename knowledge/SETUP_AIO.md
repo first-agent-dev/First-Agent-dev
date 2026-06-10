@@ -165,6 +165,26 @@ If this works, you've confirmed remote access without exposing SSH to the public
 
 ---
 
+## Phase 6b — SSH Troubleshooting & Host Config
+
+The setup script creates `~/.ssh/config` so the **host shell** (not just the container) can fetch/pull from GitHub using the deploy key. This matters because:
+
+1. **Host-level git operations** (`git fetch`, `git pull` on the AIO shell) need the deploy key too — not just the container.
+2. **Known hosts rotation** — GitHub rotates its Ed25519 host key periodically. If you see `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!`, update the pinned key:
+   ```bash
+   ssh-keygen -f '/srv/first-agent/secrets/known_hosts' -R 'github.com'
+   ssh-keyscan -H -t ed25519 github.com >> /srv/first-agent/secrets/known_hosts
+   ```
+3. **Container sees stale known_hosts** — the mount is read-only in the container. After updating on the host, run `docker compose -f docker-compose.fa.yml down && up -d` to remount.
+4. **Deploy key without WRITE access** — GitHub deploy key must have "Allow write access" checked. Re-verify in repo Settings → Deploy keys.
+5. **Verification checklist:**
+   ```bash
+   ssh -T git@github.com
+   # Expected: "Hi <repo>! You've successfully authenticated..."
+   ```
+
+---
+
 ## Phase 7 — Build and Start the FA Container
 
 The `docker-compose.fa.yml` and `Dockerfile.fa` in the repo root define the hardened container.
@@ -188,7 +208,7 @@ docker compose -f docker-compose.fa.yml logs -f
 - `cap_drop: [ALL]` — all Linux capabilities dropped.
 - `cap_add: [CHOWN, SETGID, SETUID]` — only what's needed for uv/just.
 - `security_opt: [no-new-privileges:true]` — container cannot gain new privileges.
-- `pids_limit: 512` — fork-bomb protection.
+- `pids: 512` under `deploy.resources.limits` — fork-bomb protection (Compose schema v3).
 - `user: "1000:1000"` — runs as non-root.
 - Resource limits: 8GB RAM max, 8 CPUs.
 - Git key mounted at `/run/secrets/git_key` (read-only).
@@ -277,7 +297,7 @@ The deployment stack handles git auth (SSH deploy key) but never mentions LLM AP
 docker exec -it first-agent bash
 
 # Test git can see the key
-GIT_SSH_COMMAND="ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts" git ls-remote git@github.com:anton-sh/First-Agent-dev.git
+GIT_SSH_COMMAND="ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts" git ls-remote $(git remote get-url origin | sed 's|https://github.com/|git@github.com:|')
 
 # If that works, test a branch push
 cd /workspace

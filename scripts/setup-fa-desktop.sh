@@ -310,7 +310,35 @@ if ! grep -q "$GH_ED25519_KEY" "$FA_DIR/secrets/known_hosts" 2>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
-# 12. Unattended upgrades + auto-reboot
+# 12. Host SSH client config (for git fetch from AIO shell)
+# ---------------------------------------------------------------------------
+# The container uses GIT_SSH_COMMAND env var, but the host shell (where the
+# operator runs git fetch / git pull) also needs the deploy key. We append a
+# Host github.com block to ~/.ssh/config without destroying any existing entries.
+SSH_DIR="$FA_USER_HOME/.ssh"
+if [[ ! -d "$SSH_DIR" ]]; then
+    mkdir -p "$SSH_DIR"
+    chmod 700 "$SSH_DIR"
+fi
+if ! grep -q "^Host github.com$" "$SSH_DIR/config" 2>/dev/null; then
+    {
+        echo ""
+        echo "Host github.com"
+        echo "    HostName github.com"
+        echo "    User git"
+        echo "    IdentityFile $FA_DIR/secrets/github_deploy_key"
+        echo "    IdentitiesOnly yes"
+        echo "    UserKnownHostsFile $FA_DIR/secrets/known_hosts"
+    } >> "$SSH_DIR/config"
+    chmod 600 "$SSH_DIR/config"
+    log_info "Added github.com block to $SSH_DIR/config"
+else
+    log_warn "$SSH_DIR/config already contains Host github.com — skipping auto-config"
+    log_warn "Verify it points to $FA_DIR/secrets/github_deploy_key if git fetch fails"
+fi
+
+# ---------------------------------------------------------------------------
+# 13. Unattended upgrades + auto-reboot
 # ---------------------------------------------------------------------------
 log_info "Enabling unattended security updates..."
 
@@ -325,7 +353,7 @@ Unattended-Upgrade::Automatic-Reboot-Time "04:00";
 EOF
 
 # ---------------------------------------------------------------------------
-# 13. Weekly Docker prune (idempotent)
+# 14. Weekly Docker prune (idempotent)
 # ---------------------------------------------------------------------------
 log_info "Adding weekly Docker image cleanup cron job..."
 CRON_LINE="0 3 * * 0 /usr/bin/docker image prune -f > /dev/null 2>&1"
@@ -334,7 +362,7 @@ if ! (sudo crontab -l 2>/dev/null || true) | grep -qF "$CRON_LINE"; then
 fi
 
 # ---------------------------------------------------------------------------
-# 14. systemd user service
+# 15. systemd user service
 # ---------------------------------------------------------------------------
 log_info "Installing systemd user service template..."
 
@@ -342,8 +370,7 @@ mkdir -p "$FA_USER_HOME/.config/systemd/user"
 cat > "$FA_USER_HOME/.config/systemd/user/fa.service" <<EOF
 [Unit]
 Description=First-Agent 24/7 container
-After=docker.service network-online.target tailscaled.service
-Requires=docker.service
+After=network-online.target tailscaled.service
 Wants=network-online.target tailscaled.service
 
 [Service]
@@ -375,7 +402,7 @@ sudo loginctl enable-linger "$FA_USER" 2>/dev/null || true
 log_info "Service installed. Enable with: systemctl --user enable fa.service"
 
 # ---------------------------------------------------------------------------
-# 15. Backup script + credentials template
+# 16. Backup script + credentials template
 # ---------------------------------------------------------------------------
 log_info "Installing backup script..."
 
@@ -443,19 +470,20 @@ EOF
 fi
 
 # ---------------------------------------------------------------------------
-# 16. Summary
+# 17. Summary
 # ---------------------------------------------------------------------------
 log_info "====================================="
 log_info "Setup complete! Next steps:"
 log_info "====================================="
 echo ""
 echo "1. Run: sudo tailscale up --ssh"
-echo "2. Add deploy key to GitHub (public key shown above)"
-echo "3. Enable branch protection on 'main' — agent pushes to 'agent/*'"
-echo "4. Log out and back in for docker group membership"
-echo "5. Edit .env.fa:        micro $FA_DIR/repo/First-Agent-dev/.env.fa"
-echo "6. Edit models.yaml:    micro $FA_DIR/state/models.yaml"
-echo "7. Start FA:            bash scripts/fa-post-setup.sh"
+echo "2. Add deploy key to GitHub (public key shown above) — WRITE access"
+echo "3. Verify SSH:          ssh -T git@github.com   (expect 'successfully authenticated')"
+echo "4. Enable branch protection on 'main' — agent pushes to 'agent/*'"
+echo "5. Log out and back in for docker group membership"
+echo "6. Edit .env.fa:        micro $FA_DIR/repo/First-Agent-dev/.env.fa"
+echo "7. Edit models.yaml:    micro $FA_DIR/state/models.yaml"
+echo "8. Start FA:            bash scripts/fa-post-setup.sh"
 echo ""
 echo "FA workspace:   $FA_DIR/repo/First-Agent-dev"
 echo "FA state:       $FA_DIR/state"
