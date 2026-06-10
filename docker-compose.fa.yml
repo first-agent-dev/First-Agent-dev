@@ -18,6 +18,7 @@ services:
         limits:
           cpus: '8.0'
           memory: 8G
+          pids: 512
         reservations:
           cpus: '1.0'
           memory: 512M
@@ -33,9 +34,6 @@ services:
       - SETGID
       - SETUID
     user: "1000:1000"
-
-    # Process limits
-    pids_limit: 512
 
     # Environment
     environment:

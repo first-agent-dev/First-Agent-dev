@@ -59,6 +59,18 @@ fi
 
 cd "$REPO_DIR"
 
+# 0. Tailscale connectivity check (warn only, do not block)
+if command -v tailscale &>/dev/null; then
+    if ! tailscale status 2>/dev/null | grep -q "Connected"; then
+        log_warn "Tailscale does not appear to be connected."
+        log_warn "If your Git SSH depends on Tailscale DNS, the git test below may fail."
+        log_warn "Run: sudo tailscale up --ssh   (if not already done)"
+    fi
+fi
+
+# Derive the repo SSH URL from origin remote (supports forks)
+REPO_SSH_URL=$(git remote get-url origin 2>/dev/null | sed 's|https://github.com/|git@github.com:|' || echo "git@github.com:first-agent-dev/First-Agent-dev.git")
+
 # ---------------------------------------------------------------------------
 # 1. Build + start container
 # ---------------------------------------------------------------------------
@@ -98,7 +110,7 @@ docker exec first-agent bash -c 'cd /workspace && git config user.email "agent@f
 # ---------------------------------------------------------------------------
 log_info "Testing git SSH connectivity..."
 
-if docker exec first-agent bash -c 'cd /workspace && git ls-remote git@github.com:first-agent-dev/First-Agent-dev.git' >/dev/null 2>&1; then
+if docker exec first-agent bash -c "cd /workspace && git ls-remote ${REPO_SSH_URL}" >/dev/null 2>&1; then
     log_info "Git SSH connectivity: OK"
 else
     log_error "Git SSH test FAILED. Check:"
@@ -146,8 +158,14 @@ docker exec first-agent bash -c "
 # 6. Enable and start systemd service
 # ---------------------------------------------------------------------------
 log_info "Enabling FA systemd service..."
-systemctl --user daemon-reload
-systemctl --user enable fa.service
+if systemctl --user daemon-reload 2>/dev/null; then
+    log_info "systemd user daemon reloaded."
+else
+    log_warn "systemctl --user daemon-reload failed (D-Bus session not available)."
+    log_warn "Run manually after logging out and back in:"
+    log_warn "  systemctl --user daemon-reload && systemctl --user enable fa.service"
+fi
+systemctl --user enable fa.service 2>/dev/null || true
 
 # Stop any existing container first so the service starts fresh
 if docker ps --format '{{.Names}}' | grep -q '^first-agent$'; then

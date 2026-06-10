@@ -74,8 +74,9 @@ sudo NEEDRESTART_MODE=a apt-get install -y \
     restic \
     x11-xserver-utils \
     neovim \
+    micro \
     openssh-server \
-    cron
+    cron || true
 
 # ---------------------------------------------------------------------------
 # 2. Desktop pruning
@@ -102,6 +103,12 @@ sudo systemctl disable bluetooth || true
 
 # Keep power-profiles-daemon (TLP is for laptops, causes USB issues on desktop AIO)
 sudo systemctl enable power-profiles-daemon || true
+
+# Enable and start security services installed above
+sudo systemctl enable fail2ban 2>/dev/null || true
+sudo systemctl start fail2ban 2>/dev/null || true
+sudo systemctl enable unattended-upgrades 2>/dev/null || true
+sudo systemctl start unattended-upgrades 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 3. Suspend prevention — dual lock
@@ -444,8 +451,8 @@ echo "1. Run: sudo tailscale up --ssh"
 echo "2. Add deploy key to GitHub (public key shown above)"
 echo "3. Enable branch protection on 'main' — agent pushes to 'agent/*'"
 echo "4. Log out and back in for docker group membership"
-echo "5. Edit .env.fa:        nano $FA_DIR/repo/First-Agent-dev/.env.fa"
-echo "6. Edit models.yaml:    nano $FA_DIR/state/models.yaml"
+echo "5. Edit .env.fa:        micro $FA_DIR/repo/First-Agent-dev/.env.fa"
+echo "6. Edit models.yaml:    micro $FA_DIR/state/models.yaml"
 echo "7. Start FA:            bash scripts/fa-post-setup.sh"
 echo ""
 echo "FA workspace:   $FA_DIR/repo/First-Agent-dev"
