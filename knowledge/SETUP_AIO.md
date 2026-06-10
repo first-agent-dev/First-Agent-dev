@@ -238,7 +238,22 @@ This is idempotent — safe to re-run after any future `git pull` or `docker com
 - If you **manually** run `docker compose down`, it stays down until you run `up` again.
 - If you want the container to restart even after a manual `docker stop`, change to `restart: always` in `docker-compose.fa.yml`.
 
-**Note on container entrypoint:** The Dockerfile currently runs `sleep infinity` as a placeholder. When FA's M-8 runtime loop (`fa run --task`) is wired into the container, replace the `CMD` in `Dockerfile.fa` with the actual entrypoint. Until then, the container stays alive and you can `docker exec` into it to run FA manually.
+**Container entrypoint:** The Dockerfile now uses `fa-entrypoint.sh` as its entrypoint.
+
+- **Stand-by mode (default):** If `FA_TASK` is unset, the container runs `sleep infinity`
+  and you can `docker exec` into it to run FA manually.
+- **Auto-run mode:** Set `FA_TASK` in `docker-compose.fa.yml` (or pass
+  `-e FA_TASK="..."` to `docker run`) and the container will execute
+  `fa run --task "$FA_TASK"` on start. Optional: `FA_ROLE`, `FA_MAX_TURNS`, `FA_RUN_ID`.
+
+  ⚠ **Caveat:** With `restart: unless-stopped` (the current default), a completed
+  or crashed `fa run` triggers an immediate container restart — and the task runs
+  again, ad infinitum. For one-shot auto-run, either use `docker run --rm` directly
+  (bypassing compose), or change the restart policy to `restart: "no"` in the
+  compose file before setting `FA_TASK`. For 24/7 stand-by mode (the primary use
+  case), leave `FA_TASK` unset.
+- `PYTHONPATH=/workspace/src` ensures the container always uses the live bind-mounted
+  source code without requiring a rebuild after edits.
 
 **Enable auto-start on boot:**
 
