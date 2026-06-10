@@ -13,7 +13,6 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
-
 **As of:** 2026-06-10 — AIO live-deployment blocker fix (branch `devin/2026-06-10-aio-live-deploy-fixes`): Repairs four runtime failures discovered during Phase-2 AIO bootstrap: (1) `pids_limit: 512` at Compose service root is invalid in schema v3 → moved to `deploy.resources.limits.pids: 512`; (2) `useradd -u 1000` collides with Ubuntu 24.04 default `ubuntu` user → pre-delete before `useradd`; (3) `uv python install 3.13` places Python under `/root/.local` which is invisible after `/home/fa/.local` is mounted as tmpfs → symlinks into `/usr/local/bin/`; (4) `fail2ban`/`unattended-upgrades` installed but not enabled → added enable+start; (5) `fa-post-setup.sh` hardcodes SSH URL and lacks Tailscale check / `systemctl --user` fallback → derived from `git remote get-url origin`, added connectivity warning and D-Bus-aware fallback. Summary lines now reference `micro` instead of `nano`. **User will push via Git Desktop; AIO verification (`git pull` + re-run `fa-post-setup.sh`) pending.**
 
 **As of:** 2026-06-08 — ADR-11 **PR-10 follow-up PR-11 landed** (merge `c1d046a`, PR #11): V2/V11/V4 rule-correctness pass + PR-12 scope-prep. V2 `_extract_all` rewritten around an `_UNPROVABLE` sentinel (closes pass-1 BLOCKER-1/2/3); `_public_symbols` now returns defining `ast.stmt` nodes with per-node `node_input_hash` (HIGH-1, P2-HIGH-C); V11 self-contradiction split into a distinct `FA-AUTHORING-V11-CONTRADICTORY-ASSERT` code (HIGH-4); V4 exempts module-scope `pytest.skip(..., allow_module_level=True)` (HIGH-5); `_iter_decorated`→`_all_decorators` (MEDIUM-2); `SRC_SCOPE`/`TEST_SCOPE` hoisted into `_scan.py` (PR-12 prep); BACKLOG I-20/I-21/I-12-bis filed. **995 tests, 91.28 % cov, mypy strict (74 src files), ruff + pylint clean, `fa authoring-check` 0 diagnostics.** `RULE_ALLOWLIST` unchanged (3 callables). Next: PR-12 (kernel audit/corpus/advisory) then PR-13 (V4 evasion closure). Prior: 2026-06-06 — ADR-11 PR-2 landed (Level-1 rule packs); 2026-06-04 — CI/QA tooling hardening (R-1..R-6, R-15; local-first `just check`, advisory CI except sanity-check/audit/gitleaks; `uv.lock` deferred).
@@ -21,7 +20,6 @@ Overwritten each session! Details live at the pointer, not here.
 **As of:** 2026-06-09 — Secrets Hardening PR (branch `devin/secrets-hardening`, residual fixes landed): Container integration, runtime redaction (`SecretRedactor` with base64/URL encoding detection + `SecretRedactorError` typed exception), `EventLog` redaction, `LearningObserver` redaction, `SecretGuard` v0.3 (base64/URL/interpolation detection), `~/.fa/.env` loader with specific exception handling (`_load_fa_dotenv`), deployment docs (Secrets Management subsection in SETUP_AIO.md + README), repo hygiene (expanded `.gitleaks.toml` allowlist + policy comments). **32 total tests** (18 redaction + 10 SecretGuard + 4 loader), all passing. ruff clean. All review warnings addressed: encoding bypass closed, typed error on empty secrets, graceful loader degradation, expanded test coverage.
 
 **As of:** 2026-06-08 — Linux deployment suite v2 landed: cross-reference-verified against three independent LLM research passes. Major changes from v1: removed Portainer/TLP/auto-login, conservative pruning (mask tracker, don't purge), Docker from docker.com apt repo with version pin, power-profiles-daemon in power-saver, UFW binds SSH to tailscale0 only, restic → B2 S3-compatible endpoint, weekly docker prune cron, systemd user service, `GIT_SSH_COMMAND` with `IdentitiesOnly=yes`, GitHub Ed25519 host key pinned in known_hosts, branch protection on `main`, pids_limit: 512. Added: `scripts/fa.service`, `scripts/backup-fa.sh`, `knowledge/SETUP_AIO.md` (step-by-step bootstrap).
-
 
 ### Landmarks (what landed)
 
@@ -40,6 +38,7 @@ Overwritten each session! Details live at the pointer, not here.
 | Bug-fix pass on PR B + PR C: `IntentGuard` re-export + `SQUASH_MSG` skip + `edit_file`/`apply_patch` mutating recognition + path normalisation + shared `parse_field` dedup + stale `Blocked-on` text fix. | 2026-05-28 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py), [`tests/test_intent_guard.py`](./tests/test_intent_guard.py), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
 | PR C landed: `IntentGuard(GuardMiddleware)` on `BEFORE_TOOL_EXEC` reuses M-6's classifier + validator; closes M-7 (ADR-10 I-1: one validator, two consumers) | 2026-05-27 | [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py), [`tests/test_intent_guard.py`](./tests/test_intent_guard.py) |
 | PR B landed: `src/fa/hygiene/pr_intent.py` classifier + `prepare-commit-msg` / `commit-msg` hooks; snapshot test pins hook constants to skill §Output format (closes M-6) | 2026-05-27 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`hooks/`](./src/fa/hygiene/hooks/), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
+
 ### Gotchas (delete when resolved)
 
 | Gotcha | Pointer |
@@ -97,6 +96,7 @@ Priority-ordered. Completed items deleted, not struck through.
    today. Half-day fix (add an `ast` import-walker); land when an
    `fp-corpus` measurement (PR-4) shows a real bypass, or sooner if
    bandwidth allows.
+
 ## Session Protocol
 
 **Rules for updating this file.** Apply at session close.

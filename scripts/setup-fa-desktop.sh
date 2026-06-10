@@ -109,6 +109,8 @@ sudo systemctl enable fail2ban 2>/dev/null || true
 sudo systemctl start fail2ban 2>/dev/null || true
 sudo systemctl enable unattended-upgrades 2>/dev/null || true
 sudo systemctl start unattended-upgrades 2>/dev/null || true
+sudo systemctl enable apt-daily-upgrade.timer 2>/dev/null || true
+sudo systemctl start apt-daily-upgrade.timer 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 3. Suspend prevention — dual lock
