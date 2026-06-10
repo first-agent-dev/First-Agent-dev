@@ -76,7 +76,7 @@ Save and exit.
 ---
 
 ## Phase 4 — Get the Setup Script
- 
+
 **Option A: On your laptop (review before deploying)**
 ```bash
 git clone https://github.com/first-agent-dev/First-Agent-dev.git ~/First-Agent-dev
@@ -106,7 +106,9 @@ bash /tmp/setup-fa-desktop.sh
 - Dual-locks suspend prevention (`gsettings` + `logind.conf.d` drop-in).
 - Sets screen blank to **60 seconds**, no lock.
 - Sets power profile to **power-saver** via `power-profiles-daemon`.
-- Hardens SSH: key-only, no root, `AllowUsers`, binds to Tailscale CGNAT range.
+- Hardens SSH: key-only, no root, `AllowUsers` (single account). The
+  source-restricted **Tailscale CGNAT-range** layer (`sshd Match Address`) is
+  applied separately by `scripts/ssh-tailscale/` — see Phase 5b.
 - Configures UFW: default deny incoming; allows SSH **only** via `tailscale0` interface.
 - Installs Docker CE from the **official docker.com apt repo** (not Ubuntu snap).
 - Installs Tailscale.
@@ -151,6 +153,36 @@ ssh fa-operator@100.x.y.z
 ```
 
 If this works, you've confirmed remote access without exposing SSH to the public internet.
+
+---
+
+## Phase 5b — SSH-over-Tailscale defense-in-depth hardening
+
+`setup-fa-desktop.sh` (Phase 4) sets up the base SSH/UFW posture. To add the
+remaining defense-in-depth layers from the ops SSOT — UFW IPv6 filtering,
+`sshd Match Address` scoped to the Tailscale CGNAT ranges, a fail2ban jail with
+the **systemd** backend (correct for 24.04), and a Tailscale ACL — run the
+idempotent scripts in
+[`scripts/ssh-tailscale/`](../scripts/ssh-tailscale/README.md). They include a
+dead-man failsafe so a firewall/sshd mistake cannot lock you out.
+
+```bash
+cd /srv/first-agent/repo/First-Agent-dev/scripts/ssh-tailscale
+sudo bash 10-diagnose.sh                       # read-only audit (run first)
+sudo bash 00-failsafe.sh arm                   # + open a SECOND ssh session
+sudo SSH_USER=fa-operator bash 20-harden.sh    # apply layers (reload, not restart)
+sudo bash 30-verify.sh                          # checklist; non-zero exit on fail
+# apply tailscale-acl.jsonc in the admin console, then:
+sudo bash 00-failsafe.sh disarm                 # only after a fresh login works
+```
+
+> **Which `:22` are you on?** `tailscale up --ssh` (Phase 5) makes `tailscaled`
+> answer the Tailscale IP `:22`, **not** system `sshd`. Tailscale SSH sessions
+> are governed by the ACL `ssh` rules in `tailscale-acl.jsonc`; the `sshd`
+> Match-Address / UFW / fail2ban layers harden the classic `sshd` recovery path
+> (LAN, or if Tailscale SSH is disabled). `10-diagnose.sh` reports which server
+> is answering. See the script
+> [`README`](../scripts/ssh-tailscale/README.md) for details.
 
 ---
 

@@ -1,0 +1,42 @@
+// tailscale-acl.jsonc — SSOT Step 4: zero-trust access to the AIO at the
+// tailnet control-plane (login.tailscale.com -> Access Controls).
+//
+// This is NOT applied by any host script — paste/merge it in the admin console.
+// Replace the PLACEHOLDERS marked <...> before saving.
+//
+// Two access models are covered. Keep the block that matches your AIO:
+//   * Classic sshd over Tailscale  -> the "acls" port-22 rule governs reachability.
+//   * Tailscale SSH (tailscale up --ssh) -> the "ssh" rules govern the session;
+//     tailscaled answers :22 itself, so the port-22 acl is advisory there.
+// Having both is fine and is the recommended belt-and-suspenders posture.
+{
+  // Tag the AIO host so rules reference a stable identity, not a device name.
+  // On the AIO:  sudo tailscale up --ssh --advertise-tags=tag:aio
+  "tagOwners": {
+    "tag:aio": ["autogroup:admin"] // who may assign/own the tag
+  },
+
+  "acls": [
+    // Default-deny is implicit. Allow ONLY admins to reach the AIO's SSH port.
+    {
+      "action": "accept",
+      "src": ["autogroup:admin"], // or ["<you@example.com>"] / ["group:ops"]
+      "dst": ["tag:aio:22"]
+    }
+    // Everything else to tag:aio:22 is denied at the control plane: an
+    // unauthorised tailnet node cannot even complete the WireGuard handshake
+    // to this dst, regardless of host firewall state.
+  ],
+
+  // Tailscale SSH rules — only relevant if the AIO runs `tailscale up --ssh`.
+  // "check" forces periodic re-authentication (SSO) before a session starts;
+  // use "accept" instead if you do not want the check prompt.
+  "ssh": [
+    {
+      "action": "check",
+      "src": ["autogroup:admin"],            // who may open a Tailscale SSH session
+      "dst": ["tag:aio"],
+      "users": ["<fa-operator>", "autogroup:nonroot"] // local users they may become
+    }
+  ]
+}
