@@ -20,12 +20,12 @@
 #
 # Usage:
 #   sudo bash 20-harden.sh [--no-failsafe-check] [--yes]
-#   SSH_USER=fa-operator   -> account allowed from the tailnet (default: fa-operator)
+#   SSH_USER=fa   -> account allowed from the tailnet (default: fa)
 #   IGNORE_IP="100.x.y.z"  -> extra fail2ban ignoreip (your stable admin tailnet
 #                             IP) to prevent fail2ban self-lockout; optional.
 set -euo pipefail
 
-SSH_USER="${SSH_USER:-${FA_USER:-fa-operator}}"
+SSH_USER="${SSH_USER:-${FA_USER:-fa}}"
 # Optional: extra space-separated IP(s)/CIDR(s) fail2ban must never ban, e.g.
 # your laptop's STABLE tailnet IP, so a misbehaving client (key looping,
 # wrong key) can't ban your own only-way-in. Loopback is always included.

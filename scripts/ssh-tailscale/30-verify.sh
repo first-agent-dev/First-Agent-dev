@@ -6,10 +6,10 @@
 # itself (needs a second machine); its manual steps are printed at the end.
 #
 # Usage:  sudo bash 30-verify.sh
-#   SSH_USER overrides the audited account (default: fa-operator).
+#   SSH_USER overrides the audited account (default: fa).
 set -uo pipefail
 
-SSH_USER="${SSH_USER:-${FA_USER:-fa-operator}}"
+SSH_USER="${SSH_USER:-${FA_USER:-fa}}"
 TS_ONLY_CONF="/etc/ssh/sshd_config.d/99-tailscale-only.conf"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
