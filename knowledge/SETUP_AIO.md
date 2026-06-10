@@ -81,7 +81,7 @@ The script is idempotent — you can re-run it safely.
 
 ```bash
 # Clone the First-Agent repository (or copy the script via USB)
-git clone https://github.com/anton-sh/First-Agent-dev.git ~/First-Agent-dev
+git clone https://github.com/first-agent-dev/First-Agent-dev.git ~/First-Agent-dev
 cd ~/First-Agent-dev
 
 # Review the script before running it
@@ -201,6 +201,16 @@ docker compose -f docker-compose.fa.yml up -d
 # Check logs
 docker compose -f docker-compose.fa.yml logs -f
 ```
+
+**One-shot bootstrap verification:**
+
+After the container is up, run the post-setup script to verify git SSH, push a test branch, and enable the systemd service:
+
+```bash
+bash scripts/fa-post-setup.sh
+```
+
+This is idempotent — safe to re-run after any future `git pull` or `docker compose build`.
 
 **Hardening applied (per cross-reference):**
 

@@ -304,7 +304,8 @@ if [[ ! -f "$DEPLOY_KEY" ]]; then
 fi
 
 GH_ED25519_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okMS0XmZcBPwZR"
-if ! grep -q "$GH_ED25519_KEY" "$FA_DIR/secrets/known_hosts" 2>/dev/null; then
+# Use ssh-keygen -F to detect existing entries (handles both plain and hashed formats).
+if ! ssh-keygen -F github.com -f "$FA_DIR/secrets/known_hosts" >/dev/null 2>&1; then
     echo "github.com $GH_ED25519_KEY" >> "$FA_DIR/secrets/known_hosts"
     log_info "Pinned GitHub Ed25519 host key in $FA_DIR/secrets/known_hosts"
 fi
@@ -336,6 +337,8 @@ else
     log_warn "$SSH_DIR/config already contains Host github.com — skipping auto-config"
     log_warn "Verify it points to $FA_DIR/secrets/github_deploy_key if git fetch fails"
 fi
+# Ensure restrictive permissions regardless of whether we created or appended.
+chmod 600 "$SSH_DIR/config"
 
 # ---------------------------------------------------------------------------
 # 13. Unattended upgrades + auto-reboot
