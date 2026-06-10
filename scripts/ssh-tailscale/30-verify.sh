@@ -8,6 +8,9 @@
 # Usage:  sudo bash 30-verify.sh
 #   SSH_USER overrides the audited account (default: fa).
 set -uo pipefail
+# Force C locale so `ufw status` etc. parse in English on non-English systems
+# (ru_RU prints "Состояние: активен" rather than "Status: active").
+export LC_ALL=C
 
 SSH_USER="${SSH_USER:-${FA_USER:-fa}}"
 TS_ONLY_CONF="/etc/ssh/sshd_config.d/99-tailscale-only.conf"
