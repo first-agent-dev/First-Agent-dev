@@ -57,9 +57,7 @@ class SecretRedactor:
                 parts.append(f"empty: {', '.join(empty)}")
             if too_short:
                 parts.append(f"too short (<{self._MIN_LEN}): {', '.join(too_short)}")
-            raise SecretRedactorError(
-                f"No valid secrets loaded. {'; '.join(parts)}"
-            )
+            raise SecretRedactorError(f"No valid secrets loaded. {'; '.join(parts)}")
 
     @property
     def secrets(self) -> frozenset[str]:
@@ -92,15 +90,9 @@ class SecretRedactor:
         return text
 
     @classmethod
-    def from_models_config(
-        cls, env: Mapping[str, str], config: ModelsConfig
-    ) -> SecretRedactor:
+    def from_models_config(cls, env: Mapping[str, str], config: ModelsConfig) -> SecretRedactor:
         """Derive api_key_env list from a ModelsConfig."""
-        env_vars = [
-            entry.api_key_env
-            for role in config.roles.values()
-            for entry in role.chain
-        ]
+        env_vars = [entry.api_key_env for role in config.roles.values() for entry in role.chain]
         return cls(env, env_vars)
 
 
