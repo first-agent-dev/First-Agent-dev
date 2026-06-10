@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
-import fastjsonschema
+import fastjsonschema  # type: ignore[import-untyped]
 
 from fa.authoring_rules import RULE_ALLOWLIST
 from fa.authoring_tcb import run_all
@@ -19,7 +20,7 @@ from fa.authoring_tcb import run_all
 _SCHEMA_PATH = Path(__file__).resolve().parent / "_authoring_report.schema.json"
 
 
-def _validator():
+def _validator() -> Any:
     schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
     return fastjsonschema.compile(schema)
 
