@@ -331,6 +331,7 @@ if ! grep -q "^Host github.com$" "$SSH_DIR/config" 2>/dev/null; then
         echo "    IdentitiesOnly yes"
         echo "    UserKnownHostsFile $FA_DIR/secrets/known_hosts"
     } >> "$SSH_DIR/config"
+    chmod 600 "$SSH_DIR/config"
     log_info "Added github.com block to $SSH_DIR/config"
 else
     log_warn "$SSH_DIR/config already contains Host github.com — skipping auto-config"

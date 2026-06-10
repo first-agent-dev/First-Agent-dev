@@ -167,28 +167,13 @@ If this works, you've confirmed remote access without exposing SSH to the public
 
 ## Phase 6b — SSH Troubleshooting & Host Config
 
-`setup-fa-desktop.sh` (Phase 4) automatically creates `~/.ssh/config` on the AIO host so the **host shell** (not just the container) can fetch/pull from GitHub using the deploy key. If you skipped the script and configured things manually, create the file yourself:
-
-```bash
-mkdir -p ~/.ssh && chmod 700 ~/.ssh
-cat >> ~/.ssh/config <<'EOF'
-Host github.com
-    HostName github.com
-    User git
-    IdentityFile /srv/first-agent/secrets/github_deploy_key
-    IdentitiesOnly yes
-    UserKnownHostsFile /srv/first-agent/secrets/known_hosts
-EOF
-chmod 600 ~/.ssh/config
-```
-
-Common SSH issues on the AIO:
+The setup script creates `~/.ssh/config` so the **host shell** (not just the container) can fetch/pull from GitHub using the deploy key. This matters because:
 
 1. **Host-level git operations** (`git fetch`, `git pull` on the AIO shell) need the deploy key too — not just the container.
 2. **Known hosts rotation** — GitHub rotates its Ed25519 host key periodically. If you see `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!`, update the pinned key:
    ```bash
    ssh-keygen -f '/srv/first-agent/secrets/known_hosts' -R 'github.com'
-   ssh-keyscan -t ed25519 github.com >> /srv/first-agent/secrets/known_hosts
+   ssh-keyscan -H -t ed25519 github.com >> /srv/first-agent/secrets/known_hosts
    ```
 3. **Container sees stale known_hosts** — the mount is read-only in the container. After updating on the host, run `docker compose -f docker-compose.fa.yml down && up -d` to remount.
 4. **Deploy key without WRITE access** — GitHub deploy key must have "Allow write access" checked. Re-verify in repo Settings → Deploy keys.
