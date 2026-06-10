@@ -43,14 +43,26 @@ case "${cmd}" in
             log_error "MINUTES must be a positive integer. Got: '${minutes}'"
             exit 2
         fi
+        # Resolve an absolute ufw path so the rollback never depends on the
+        # transient unit's PATH.
+        ufw_bin="$(command -v ufw || echo /usr/sbin/ufw)"
+        if [[ ! -x "${ufw_bin}" ]]; then
+            log_error "ufw not found (looked at '${ufw_bin}'). Refusing to arm a no-op failsafe."
+            exit 1
+        fi
         # Clear any previous instance first (idempotent re-arm).
         disarm
         systemd-run --on-active="${minutes}min" --unit="${UNIT}" \
-            /bin/sh -c 'ufw disable' >/dev/null
-        log_info "Failsafe ARMED: 'ufw disable' will run in ${minutes} minute(s)."
+            "${ufw_bin}" disable >/dev/null
+        log_info "Failsafe ARMED: '${ufw_bin} disable' will run in ${minutes} minute(s)."
         log_warn "BEFORE you continue, open a SECOND SSH session to the AIO and keep it OPEN."
         log_warn "An established connection survives firewall changes (conntrack ESTABLISHED)"
         log_warn "and lets you roll back if the first session drops."
+        echo ""
+        log_warn "Caveats:"
+        log_warn "  * This transient timer does NOT survive a reboot — re-arm after one."
+        log_warn "  * If hardening takes longer than ${minutes} min, UFW will disable mid-way"
+        log_warn "    (the sshd Match-Address layer still protects you). Re-arm to extend."
         echo ""
         log_warn "After you have CONFIRMED access still works post-hardening, disarm with:"
         echo "    sudo bash $0 disarm"

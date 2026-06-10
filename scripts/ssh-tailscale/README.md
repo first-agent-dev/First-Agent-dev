@@ -81,6 +81,31 @@ ACL `ssh` rule missing, the host not authenticated to the tailnet
 (`tailscale status`), or no authorized key for the operator. Fix those before
 assuming a firewall problem.
 
+## If you get locked out (recovery)
+
+The hardening keeps **two independent ways back in** so a single mistake is
+recoverable:
+
+- **Tailscale SSH** (`tailscale up --ssh`) is served by `tailscaled`, so it
+  bypasses system `sshd`, UFW, *and* fail2ban. A fail2ban ban or an `sshd`
+  misconfig does **not** block it — use the Tailscale app/CLI to get a shell.
+- **Dead-man failsafe** (`00-failsafe.sh arm`) auto-runs `ufw disable` after the
+  timeout, undoing a bad firewall change.
+- **Physical console** at the AIO is always the last resort.
+
+Common self-lockout and its fix:
+
+```bash
+# fail2ban banned your own tailnet IP (key-only auth + a looping client)?
+sudo fail2ban-client status sshd          # see banned IPs
+sudo fail2ban-client set sshd unbanip <IP>
+# Prevent recurrence: pin your STABLE admin tailnet IP into ignoreip.
+sudo IGNORE_IP="100.x.y.z" bash 20-harden.sh
+```
+
+`IGNORE_IP` is whitespace-separated and additive to loopback. Use a **stable**
+tailnet IP (the AIO peer's address for your laptop), not an ephemeral one.
+
 ## Notes / edge cases
 
 - **IPv6 (Edge case 1).** `sshd` listens on `[::]:22`; if UFW `IPV6=no` it does
@@ -93,7 +118,19 @@ assuming a firewall problem.
   `AllowUsers`; because sshd takes the *first* `AllowUsers` it would override
   the source-scoped rule. `20-harden.sh` comments it out (with a timestamped
   backup) so `99-tailscale-only.conf` is the single owner, then proves the
-  result with `sshd -T -C`.
+  result with `sshd -T -C`. If *another* drop-in (or the main `sshd_config`)
+  also sets `AllowUsers`, the `sshd -T -C` self-test fails closed and the
+  reload is aborted — fix it with `grep -rn AllowUsers /etc/ssh/`.
+- **`authorized_keys` check is best-effort.** The pre-flight key check reads the
+  default `~/.ssh/authorized_keys`; if you use a custom `AuthorizedKeysFile`
+  (e.g. `/etc/ssh/authorized_keys/%u`) it may warn even though keys exist.
+  Confirm with `sudo sshd -T | grep -i authorizedkeysfile`.
+- **fail2ban self-lockout.** Key-only auth + `maxretry=3` means a looping or
+  misconfigured client can ban *your own* tailnet IP. Set `IGNORE_IP` to your
+  stable admin tailnet IP (see "If you get locked out" above).
+- **Config backups accumulate.** Each `20-harden.sh` run drops a
+  `*.bak-<timestamp>` next to the edited file. These do **not** end in `.conf`,
+  so sshd never loads them; prune them manually if they pile up.
 - **No manual iptables drop-in.** UFW (nftables frontend) + sshd Match + the
   Tailscale ACL already provide independent layers; a hand-written netfilter
   rule would be a second source of truth and conflict with Tailscale's

@@ -20,10 +20,16 @@
 #
 # Usage:
 #   sudo bash 20-harden.sh [--no-failsafe-check] [--yes]
-#   SSH_USER=fa-operator  -> account allowed from the tailnet (default: fa-operator)
+#   SSH_USER=fa-operator   -> account allowed from the tailnet (default: fa-operator)
+#   IGNORE_IP="100.x.y.z"  -> extra fail2ban ignoreip (your stable admin tailnet
+#                             IP) to prevent fail2ban self-lockout; optional.
 set -euo pipefail
 
 SSH_USER="${SSH_USER:-${FA_USER:-fa-operator}}"
+# Optional: extra space-separated IP(s)/CIDR(s) fail2ban must never ban, e.g.
+# your laptop's STABLE tailnet IP, so a misbehaving client (key looping,
+# wrong key) can't ban your own only-way-in. Loopback is always included.
+IGNORE_IP="${IGNORE_IP:-}"
 TS_V4_CGNAT="100.64.0.0/10"
 TS_V6_ULA="fd7a:115c:a1e0::/48"
 HARDENING_CONF="/etc/ssh/sshd_config.d/99-fa-hardening.conf"
@@ -204,7 +210,11 @@ if ! command -v fail2ban-client >/dev/null 2>&1; then
     log_warn "  fail2ban not installed; skipping (install: apt-get install -y fail2ban)."
 else
     mkdir -p /etc/fail2ban/jail.d
-    cat > /etc/fail2ban/jail.d/sshd-local.conf <<'EOF'
+    # ignoreip: loopback always; plus any operator-supplied IP(s) so a
+    # misbehaving client cannot ban your own only-way-in (see IGNORE_IP above).
+    ignore_line="127.0.0.1/8 ::1"
+    [[ -n "${IGNORE_IP}" ]] && ignore_line="${ignore_line} ${IGNORE_IP}"
+    cat > /etc/fail2ban/jail.d/sshd-local.conf <<EOF
 # Managed by scripts/ssh-tailscale/20-harden.sh (SSOT Step 3).
 # systemd backend is required on Ubuntu 24.04 (journald-only; no /var/log/auth.log).
 [sshd]
@@ -216,15 +226,20 @@ findtime = 10m
 bantime = 1h
 bantime.increment = true
 bantime.maxtime = 1w
-# Whitelist loopback only. We deliberately do NOT ignore the whole tailnet:
-# after Step 2 the only hosts that can attempt auth are tailnet nodes, so
-# fail2ban now defends against a compromised tailnet device (lateral movement).
-ignoreip = 127.0.0.1/8 ::1
+# Whitelist loopback (+ operator IPs). We deliberately do NOT ignore the whole
+# tailnet: after Step 2 the only hosts that can attempt auth are tailnet nodes,
+# so fail2ban now defends against a compromised tailnet device (lateral
+# movement). NOTE: with key-only auth a looping/misconfigured client can still
+# trip maxretry and ban its own tailnet IP — set IGNORE_IP to your stable
+# admin tailnet IP to avoid self-lockout.
+ignoreip = ${ignore_line}
 EOF
+    # enable (not just restart) so the jail survives the 04:00 auto-reboot.
+    systemctl enable fail2ban >/dev/null 2>&1 || true
     systemctl restart fail2ban
     sleep 1
     if fail2ban-client status sshd >/dev/null 2>&1; then
-        log_info "  sshd jail active."
+        log_info "  sshd jail active (ignoreip: ${ignore_line})."
     else
         log_warn "  sshd jail not reporting active yet; check: fail2ban-client status sshd"
     fi

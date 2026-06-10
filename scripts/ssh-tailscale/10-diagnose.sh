@@ -44,8 +44,12 @@ if command -v tailscale >/dev/null 2>&1; then
             warn "  -> Tailnet connections to ${ts_ip4:-<ts-ip>}:22 are served by tailscaled,"
             warn "     NOT system sshd. Access is governed by Tailscale ACL 'ssh' rules,"
             warn "     and fail2ban/sshd Match-Address do NOT see those sessions."
+            warn "  -> If remote SSH is BROKEN, the fix is most likely in the tailnet, NOT"
+            warn "     this host: add/repair an 'ssh' rule (tailscale-acl.jsonc) granting your"
+            warn "     identity to tag:aio, and confirm the node is up (tailscale status)."
         else
             info "Tailscale SSH appears DISABLED -> tailnet :22 is served by system sshd."
+            info "  -> If you intended Tailscale SSH, enable it: sudo tailscale up --ssh"
         fi
     else
         bad "tailscale installed but 'tailscale status' failed (not logged in / tailscaled down?)."
