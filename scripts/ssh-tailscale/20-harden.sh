@@ -24,6 +24,9 @@
 #   IGNORE_IP="100.x.y.z"  -> extra fail2ban ignoreip (your stable admin tailnet
 #                             IP) to prevent fail2ban self-lockout; optional.
 set -euo pipefail
+# Force C locale so locale-sensitive checks (e.g. `ufw status`) parse English
+# output on non-English systems (ru_RU prints "Состояние: активен").
+export LC_ALL=C
 
 SSH_USER="${SSH_USER:-${FA_USER:-fa}}"
 # Optional: extra space-separated IP(s)/CIDR(s) fail2ban must never ban, e.g.

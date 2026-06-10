@@ -9,6 +9,9 @@
 # Usage:  sudo bash 10-diagnose.sh
 #   SSH_USER may be set to override the audited account (default: fa).
 set -uo pipefail   # NOT -e: diagnostics must keep going past individual failures
+# Force C locale so we parse English command output (ufw/systemctl/etc.) even on
+# non-English systems (e.g. ru_RU prints "Состояние: активен" for UFW status).
+export LC_ALL=C
 
 SSH_USER="${SSH_USER:-${FA_USER:-fa}}"
 
