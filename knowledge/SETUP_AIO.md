@@ -75,21 +75,26 @@ Save and exit.
 
 ---
 
-## Phase 4 — Run the Automated Setup Script
-
-The script is idempotent — you can re-run it safely.
-
+## Phase 4 — Get the Setup Script
+ 
+**Option A: On your laptop (review before deploying)**
 ```bash
-# Clone the First-Agent repository (or copy the script via USB)
 git clone https://github.com/first-agent-dev/First-Agent-dev.git ~/First-Agent-dev
 cd ~/First-Agent-dev
-
-# Review the script before running it
 less scripts/setup-fa-desktop.sh
-
-# Run it
-bash scripts/setup-fa-desktop.sh
+# Copy to USB or scp to AIO
 ```
+
+**Option B: Directly on the AIO (if already logged in)**
+
+```bash
+# Download just the script — the repo will be cloned to /srv/... automatically
+curl -fsSL -o /tmp/setup-fa-desktop.sh \
+  https://raw.githubusercontent.com/first-agent-dev/First-Agent-dev/main/scripts/setup-fa-desktop.sh
+less /tmp/setup-fa-desktop.sh
+bash /tmp/setup-fa-desktop.sh
+```
+- The script is idempotent — you can re-run it safely.
 
 **What the script does (from the cross-reference):**
 
