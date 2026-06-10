@@ -81,7 +81,7 @@ The script is idempotent — you can re-run it safely.
 
 ```bash
 # Clone the First-Agent repository (or copy the script via USB)
-git clone https://github.com/anton-sh/First-Agent-dev.git ~/First-Agent-dev
+git clone https://github.com/first-agent-dev/First-Agent-dev.git ~/First-Agent-dev
 cd ~/First-Agent-dev
 
 # Review the script before running it
@@ -165,6 +165,41 @@ If this works, you've confirmed remote access without exposing SSH to the public
 
 ---
 
+## Phase 6b — SSH Troubleshooting & Host Config
+
+`setup-fa-desktop.sh` (Phase 4) automatically creates `~/.ssh/config` on the AIO host so the **host shell** (not just the container) can fetch/pull from GitHub using the deploy key. If you skipped the script and configured things manually, create the file yourself:
+
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+cat >> ~/.ssh/config <<'EOF'
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile /srv/first-agent/secrets/github_deploy_key
+    IdentitiesOnly yes
+    UserKnownHostsFile /srv/first-agent/secrets/known_hosts
+EOF
+chmod 600 ~/.ssh/config
+```
+
+Common SSH issues on the AIO:
+
+1. **Host-level git operations** (`git fetch`, `git pull` on the AIO shell) need the deploy key too — not just the container.
+2. **Known hosts rotation** — GitHub rotates its Ed25519 host key periodically. If you see `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!`, update the pinned key:
+   ```bash
+   ssh-keygen -f '/srv/first-agent/secrets/known_hosts' -R 'github.com'
+   ssh-keyscan -t ed25519 github.com >> /srv/first-agent/secrets/known_hosts
+   ```
+3. **Container sees stale known_hosts** — the mount is read-only in the container. After updating on the host, run `docker compose -f docker-compose.fa.yml down && up -d` to remount.
+4. **Deploy key without WRITE access** — GitHub deploy key must have "Allow write access" checked. Re-verify in repo Settings → Deploy keys.
+5. **Verification checklist:**
+   ```bash
+   ssh -T git@github.com
+   # Expected: "Hi <repo>! You've successfully authenticated..."
+   ```
+
+---
+
 ## Phase 7 — Build and Start the FA Container
 
 The `docker-compose.fa.yml` and `Dockerfile.fa` in the repo root define the hardened container.
@@ -182,13 +217,23 @@ docker compose -f docker-compose.fa.yml up -d
 docker compose -f docker-compose.fa.yml logs -f
 ```
 
+**One-shot bootstrap verification:**
+
+After the container is up, run the post-setup script to verify git SSH, push a test branch, and enable the systemd service:
+
+```bash
+bash scripts/fa-post-setup.sh
+```
+
+This is idempotent — safe to re-run after any future `git pull` or `docker compose build`.
+
 **Hardening applied (per cross-reference):**
 
 - `read_only: true` — root filesystem is read-only.
 - `cap_drop: [ALL]` — all Linux capabilities dropped.
 - `cap_add: [CHOWN, SETGID, SETUID]` — only what's needed for uv/just.
 - `security_opt: [no-new-privileges:true]` — container cannot gain new privileges.
-- `pids_limit: 512` — fork-bomb protection.
+- `pids: 512` under `deploy.resources.limits` — fork-bomb protection (Compose schema v3).
 - `user: "1000:1000"` — runs as non-root.
 - Resource limits: 8GB RAM max, 8 CPUs.
 - Git key mounted at `/run/secrets/git_key` (read-only).
@@ -277,7 +322,7 @@ The deployment stack handles git auth (SSH deploy key) but never mentions LLM AP
 docker exec -it first-agent bash
 
 # Test git can see the key
-GIT_SSH_COMMAND="ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts" git ls-remote git@github.com:anton-sh/First-Agent-dev.git
+GIT_SSH_COMMAND="ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts" git ls-remote $(git remote get-url origin | sed 's|https://github.com/|git@github.com:|')
 
 # If that works, test a branch push
 cd /workspace
