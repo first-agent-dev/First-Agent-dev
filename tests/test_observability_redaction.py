@@ -12,6 +12,7 @@ from fa.observability.redaction import SecretRedactor, SecretRedactorError
 
 class FakeModelsConfig:
     """Minimal stand-in for ModelsConfig with .roles[role].chain entries."""
+
     def __init__(self, env_vars: list[str]) -> None:
         self.roles = {
             "coder": type(
@@ -30,8 +31,7 @@ def test_substring_replacement() -> None:
     env = {"OPENROUTER_API_KEY": "sk-or-v1-real-key-12345"}
     redactor = SecretRedactor(env, ["OPENROUTER_API_KEY"])
     assert (
-        redactor.redact("prefix sk-or-v1-real-key-12345 suffix")
-        == "prefix ***REDACTED*** suffix"
+        redactor.redact("prefix sk-or-v1-real-key-12345 suffix") == "prefix ***REDACTED*** suffix"
     )
 
 

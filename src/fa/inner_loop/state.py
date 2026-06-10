@@ -143,9 +143,7 @@ class EventLog:
     ) -> TraceEvent:
         redacted_content: dict[str, object] = {}
         if content is not None:
-            redacted_content = {
-                k: self._redact_value(v) for k, v in content.items()
-            }
+            redacted_content = {k: self._redact_value(v) for k, v in content.items()}
         event = TraceEvent(
             event_id=f"ev-{self._next_id:06d}",
             ts=_now_iso_z(),

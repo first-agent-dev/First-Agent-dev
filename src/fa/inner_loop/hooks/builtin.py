@@ -355,9 +355,7 @@ class LearningObserver(ObserverMiddleware):
             )
             return
         summary = (
-            self.redactor.redact(result.summary)
-            if self.redactor is not None
-            else result.summary
+            self.redactor.redact(result.summary) if self.redactor is not None else result.summary
         )
         record_discovery(
             _learning_observer_key(call.name, call.params, call.call_id),
@@ -456,9 +454,7 @@ class SecretGuard(GuardMiddleware):
                 if any(d in command for d in dangerous):
                     for secret in self.secrets:
                         if secret in command:
-                            return Decision.deny(
-                                "secret leak detected in fs.run_bash command"
-                            )
+                            return Decision.deny("secret leak detected in fs.run_bash command")
         return Decision.allow()
 
 

@@ -627,7 +627,6 @@ def test_after_tool_exec_fires_on_invalid_payload(tmp_path: Path) -> None:
     events = state.log.read_all()
     hook_decisions = [e for e in events if e.kind == "hook_decision"]
     after_exec_decisions = [
-        e for e in hook_decisions
-        if e.content.get("point") == LifecyclePoint.AFTER_TOOL_EXEC.value
+        e for e in hook_decisions if e.content.get("point") == LifecyclePoint.AFTER_TOOL_EXEC.value
     ]
     assert len(after_exec_decisions) == 1

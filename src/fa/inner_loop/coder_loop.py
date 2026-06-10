@@ -409,9 +409,7 @@ def drive_session(
                         reason = str(row.content.get("reason", ""))
                         if not reason.startswith("iteration_cap"):
                             stop_reason_code = "run_stopped"
-                            stop_reason_detail = (
-                                f"tool call skipped: session stopped — {reason}"
-                            )
+                            stop_reason_detail = f"tool call skipped: session stopped — {reason}"
                         break
 
             synthetic = ToolResult.fail(
