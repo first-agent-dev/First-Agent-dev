@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from fa.inner_loop.loop import run_session
-from fa.inner_loop.registry import ToolCall, ToolError, ToolRegistry, ToolResult, ToolSpec
+from fa.inner_loop.registry import (
+    ToolCall,
+    ToolElider,
+    ToolError,
+    ToolRegistry,
+    ToolResult,
+    ToolSpec,
+)
 from fa.inner_loop.runtime_limits import (
     DEFAULT_BASH_TIMEOUT_SECONDS,
     DEFAULT_MAX_ITERATIONS,
@@ -20,6 +27,7 @@ __all__ = [
     "RuntimeLimitsLoadResult",
     "SessionState",
     "ToolCall",
+    "ToolElider",
     "ToolError",
     "ToolRegistry",
     "ToolResult",

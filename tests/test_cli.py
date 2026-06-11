@@ -522,7 +522,7 @@ def test_fa_run_registers_pr_prepare_tool(
     assert exit_code == 0
     tools = transport.calls[0]["tools"]
     names = [tool["function"]["name"] for tool in tools]
-    assert names == ["fs.read_file", "fs.write_file", "fs.run_bash", "pr.prepare"]
+    assert names == ["fs.read_file", "fs.run_bash", "fs.write_file", "pr.prepare"]
     prepare = next(tool for tool in tools if tool["function"]["name"] == "pr.prepare")
     assert "pr_draft.md" in prepare["function"]["description"]
     assert prepare["function"]["parameters"]["required"] == ["intent", "invariant"]

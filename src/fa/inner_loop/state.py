@@ -42,6 +42,11 @@ writer + the R-N anchor):
   :func:`fa.inner_loop.coder_loop.drive_session` logs each
   :class:`fa.providers.chain.ChainAttemptRecord` returned by
   :meth:`ProviderChain.request` (ADR-9 §4 Tier-1 observability).
+- ``usage`` — :func:`fa.inner_loop.coder_loop.drive_session` logs
+  provider-normalized token usage for every successful LLM response,
+  including prompt-cache read / creation counters when exposed.
+- ``session_summary`` — :func:`fa.inner_loop.coder_loop.drive_session`
+  logs run-level token totals and cache hit ratio at session end.
 
 Filesystem-canon observers such as
 :class:`fa.inner_loop.hooks.builtin.LearningObserver` (R-8) do not add
@@ -74,6 +79,17 @@ HARNESS_ID = "fa-inner-loop@0.1.0"
 
 def _now_iso_z() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _json_safe(value: object) -> object:
+    """Return a JSON-serializable projection without dropping structure."""
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, Mapping):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_json_safe(v) for v in value]
+    return repr(value)
 
 
 @dataclass(frozen=True)
@@ -130,10 +146,7 @@ class EventLog:
         if not path.exists():
             return 1
         try:
-            return (
-                sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line)
-                + 1
-            )
+            return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line) + 1
         except OSError:
             return 1
 
@@ -243,6 +256,8 @@ class SessionState:
             "artifacts": list(result.artifacts),
             "ok": result.error is None,
         }
+        if result.result is not None:
+            content["result"] = _json_safe(result.result)
         if result.error is not None:
             content["error"] = asdict(result.error)
         return self.log.append(

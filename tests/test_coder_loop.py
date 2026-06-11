@@ -24,6 +24,7 @@ import pytest
 from fa.inner_loop.coder_loop import (
     DEFAULT_MAX_TURNS,
     SessionOutcome,
+    _assert_tool_pairing_invariant,
     drive_session,
 )
 from fa.inner_loop.hooks import (
@@ -110,6 +111,8 @@ def _make_response(
     tool_calls: tuple[Mapping[str, Any], ...] = (),
     in_tokens: int = 10,
     out_tokens: int = 5,
+    cache_read_input_tokens: int = 0,
+    cache_creation_input_tokens: int = 0,
 ) -> ResponseInfo:
     return ResponseInfo(
         text=text,
@@ -117,6 +120,8 @@ def _make_response(
         out_tokens=out_tokens,
         finish_reason=finish_reason,
         tool_calls=tool_calls,
+        cache_read_input_tokens=cache_read_input_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
     )
 
 
@@ -217,7 +222,8 @@ def test_drive_session_dispatches_tool_calls_then_completes(tmp_path: Path) -> N
     tool_messages = [m for m in follow_up.messages if m.get("role") == "tool"]
     assert len(tool_messages) == 1
     assert tool_messages[0]["tool_call_id"] == "tc-1"
-    assert tool_messages[0]["content"] == "echo hi"
+    assert tool_messages[0]["content"].startswith("echo hi\n\n")
+    assert '"text": "hi"' in tool_messages[0]["content"]
 
 
 # -- Iteration cap -----------------------------------------------------------
@@ -353,6 +359,39 @@ def test_drive_session_renders_tool_specs_into_request(tmp_path: Path) -> None:
 # -- Malformed tool-call arguments -------------------------------------------
 
 
+def test_drive_session_canonicalizes_missing_tool_call_id_for_pairing(tmp_path: Path) -> None:
+    missing_id = {
+        "type": "function",
+        "function": {"name": "echo", "arguments": '{"text": "hi"}'},
+    }
+    provider = FakeProvider(
+        [
+            _make_response(finish_reason="tool_calls", tool_calls=(missing_id,)),
+            _make_response(text="recovered", finish_reason="stop"),
+        ]
+    )
+    chain = _make_chain(provider)
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    state = _make_state(tmp_path)
+
+    outcome = drive_session(
+        "echo without id",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert outcome.exit_code == 0
+    follow_up = provider.calls[1]
+    assistant_messages = [m for m in follow_up.messages if m.get("role") == "assistant"]
+    tool_messages = [m for m in follow_up.messages if m.get("role") == "tool"]
+    assert assistant_messages[-1]["tool_calls"][0]["id"] == "tc-0000"
+    assert tool_messages[-1]["tool_call_id"] == "tc-0000"
+
+
 def test_drive_session_handles_malformed_tool_arguments(tmp_path: Path) -> None:
     malformed = {
         "id": "tc-bad",
@@ -415,6 +454,114 @@ def test_drive_session_writes_user_and_model_msg_rows(tmp_path: Path) -> None:
     assert "user_msg" in kinds
     assert "model_msg" in kinds
     assert "run_started" in kinds
+
+
+def test_drive_session_logs_usage_and_session_summary(tmp_path: Path) -> None:
+    provider = FakeProvider(
+        [
+            _make_response(
+                text="hello",
+                finish_reason="stop",
+                in_tokens=100,
+                out_tokens=7,
+                cache_read_input_tokens=70,
+                cache_creation_input_tokens=20,
+            )
+        ]
+    )
+    chain = _make_chain(provider)
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    state = _make_state(tmp_path)
+
+    outcome = drive_session(
+        "greet",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert outcome.exit_code == 0
+    events = state.log.read_all() if state.log is not None else ()
+    usage_rows = [event for event in events if event.kind == "usage"]
+    assert len(usage_rows) == 1
+    assert usage_rows[0].content == {
+        "input_tokens": 100,
+        "cache_read_input_tokens": 70,
+        "cache_creation_input_tokens": 20,
+        "output_tokens": 7,
+    }
+    summary = [event for event in events if event.kind == "session_summary"][-1]
+    assert summary.content["n_turns"] == 1
+    assert summary.content["cache_hit_ratio"] == 0.7
+
+
+def test_drive_session_cache_slo_against_recorded_transcript(tmp_path: Path) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "cache_slo_transcript.json"
+    transcript = json.loads(fixture.read_text(encoding="utf-8"))
+    responses: list[ResponseInfo | Exception] = [
+        _make_response(
+            text=str(row["text"]),
+            finish_reason=str(row["finish_reason"]),
+            tool_calls=tuple(row["tool_calls"]),
+            in_tokens=int(row["usage"]["input_tokens"]),
+            out_tokens=int(row["usage"]["output_tokens"]),
+            cache_read_input_tokens=int(row["usage"].get("cache_read_input_tokens", 0)),
+            cache_creation_input_tokens=int(row["usage"].get("cache_creation_input_tokens", 0)),
+        )
+        for row in transcript
+    ]
+    provider = FakeProvider(responses)
+    chain = _make_chain(provider)
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    state = _make_state(tmp_path)
+
+    outcome = drive_session(
+        "follow recorded cache transcript",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+        max_turns=8,
+    )
+
+    assert outcome.exit_code == 0
+    events = state.log.read_all() if state.log is not None else ()
+    summary = [event for event in events if event.kind == "session_summary"][-1]
+    n_turns = summary.content["n_turns"]
+    cache_hit_ratio = summary.content["cache_hit_ratio"]
+    assert isinstance(n_turns, int)
+    assert isinstance(cache_hit_ratio, float)
+    assert n_turns >= 5
+    assert cache_hit_ratio >= 0.7
+
+
+def test_tool_pairing_invariant_accepts_complete_openai_pairs() -> None:
+    _assert_tool_pairing_invariant(
+        (
+            {"role": "user", "content": "task"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "tc-1", "type": "function"}],
+            },
+            {"role": "tool", "tool_call_id": "tc-1", "content": "ok"},
+        )
+    )
+
+
+def test_tool_pairing_invariant_rejects_orphaned_tool_result() -> None:
+    with pytest.raises(AssertionError, match="result_only"):
+        _assert_tool_pairing_invariant(
+            (
+                {"role": "user", "content": "task"},
+                {"role": "tool", "tool_call_id": "tc-missing", "content": "ok"},
+            )
+        )
 
 
 def test_drive_session_default_max_turns_constant_is_stable() -> None:

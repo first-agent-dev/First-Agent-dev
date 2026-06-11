@@ -1,0 +1,56 @@
+[
+  {
+    "text": "calling echo 1",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "tc-cache-1",
+        "type": "function",
+        "function": {"name": "echo", "arguments": "{\"text\": \"one\"}"}
+      }
+    ],
+    "usage": {"input_tokens": 1000, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 900, "output_tokens": 10}
+  },
+  {
+    "text": "calling echo 2",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "tc-cache-2",
+        "type": "function",
+        "function": {"name": "echo", "arguments": "{\"text\": \"two\"}"}
+      }
+    ],
+    "usage": {"input_tokens": 1200, "cache_read_input_tokens": 950, "cache_creation_input_tokens": 100, "output_tokens": 10}
+  },
+  {
+    "text": "calling echo 3",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "tc-cache-3",
+        "type": "function",
+        "function": {"name": "echo", "arguments": "{\"text\": \"three\"}"}
+      }
+    ],
+    "usage": {"input_tokens": 1400, "cache_read_input_tokens": 1150, "cache_creation_input_tokens": 100, "output_tokens": 10}
+  },
+  {
+    "text": "calling echo 4",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "tc-cache-4",
+        "type": "function",
+        "function": {"name": "echo", "arguments": "{\"text\": \"four\"}"}
+      }
+    ],
+    "usage": {"input_tokens": 1600, "cache_read_input_tokens": 1350, "cache_creation_input_tokens": 100, "output_tokens": 10}
+  },
+  {
+    "text": "done",
+    "finish_reason": "stop",
+    "tool_calls": [],
+    "usage": {"input_tokens": 1800, "cache_read_input_tokens": 1550, "cache_creation_input_tokens": 100, "output_tokens": 20}
+  }
+]

@@ -121,7 +121,11 @@ def test_response_preserves_tool_calls_and_provider_extras() -> None:
                         "finish_reason": "tool_calls",
                     }
                 ],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 0},
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 0,
+                    "prompt_tokens_details": {"cached_tokens": 6},
+                },
                 "system_fingerprint": "fp-123",
                 "provider": {"name": "openrouter"},
             },
@@ -138,6 +142,8 @@ def test_response_preserves_tool_calls_and_provider_extras() -> None:
     assert len(response.tool_calls) == 1
     assert response.tool_calls[0]["id"] == "tc-1"
     assert response.finish_reason == "tool_calls"
+    assert response.cache_read_input_tokens == 6
+    assert response.cache_creation_input_tokens == 0
     assert response.extras["system_fingerprint"] == "fp-123"
     assert response.extras["provider"] == {"name": "openrouter"}
 

@@ -170,6 +170,8 @@ def _normalize_success(body: Mapping[str, Any]) -> ResponseInfo:
     usage = cast(Mapping[str, Any], body.get("usage") or {})
     in_tokens = int(usage.get("input_tokens") or 0)
     out_tokens = int(usage.get("output_tokens") or 0)
+    cache_read_input_tokens = int(usage.get("cache_read_input_tokens") or 0)
+    cache_creation_input_tokens = int(usage.get("cache_creation_input_tokens") or 0)
 
     extras: dict[str, Any] = {}
     for key in ("id", "model", "role", "stop_sequence", "thinking"):
@@ -182,5 +184,7 @@ def _normalize_success(body: Mapping[str, Any]) -> ResponseInfo:
         out_tokens=out_tokens,
         finish_reason=finish_reason,
         tool_calls=tuple(tool_calls),
+        cache_read_input_tokens=cache_read_input_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
         extras=extras,
     )

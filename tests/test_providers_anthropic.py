@@ -133,7 +133,12 @@ def test_response_translates_tool_use_blocks_to_openai_tool_calls() -> None:
                     },
                 ],
                 "stop_reason": "tool_use",
-                "usage": {"input_tokens": 12, "output_tokens": 8},
+                "usage": {
+                    "input_tokens": 12,
+                    "output_tokens": 8,
+                    "cache_read_input_tokens": 7,
+                    "cache_creation_input_tokens": 3,
+                },
                 "model": "claude-3-5-sonnet-latest",
             },
         ),
@@ -150,6 +155,8 @@ def test_response_translates_tool_use_blocks_to_openai_tool_calls() -> None:
     assert response.finish_reason == "tool_calls"
     assert response.in_tokens == 12
     assert response.out_tokens == 8
+    assert response.cache_read_input_tokens == 7
+    assert response.cache_creation_input_tokens == 3
     assert len(response.tool_calls) == 1
     call = response.tool_calls[0]
     assert call["id"] == "toolu_01"
