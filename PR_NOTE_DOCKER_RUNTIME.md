@@ -70,6 +70,13 @@ This PR finalizes the Dockerized FA runtime so it is usable for real coding work
 - `scripts/fa.service`
   - Restores `Requires=docker.service` so the user service has a hard dependency on Docker, not just ordering.
 
+<<<<<<< Updated upstream
+=======
+- `scripts/fa-update.sh`
+  - Adds a host-side update/deploy helper for the AIO install.
+  - Fixes CI/review issues from the proposed script: tracks `Dockerfile.fa` rather than `Dockerfile`, ignores commented optional `FA_*` template rows during env validation, syncs dev dependencies in writable `/workspace` instead of read-only `/opt/first-agent`, persists `.env.fa` hash only after deploy succeeds, and runs tests through `uv run`.
+
+>>>>>>> Stashed changes
 - `scripts/fa-entrypoint.sh`
   - Command override mode runs first and always `exec`s the provided command.
   - Default mode is stand-by (`sleep infinity`) for manual `docker exec` workflows.
@@ -120,6 +127,12 @@ This PR finalizes the Dockerized FA runtime so it is usable for real coding work
   - `FA_TASK_FILE` inside workspace is accepted.
   - `FA_TASK_FILE` outside workspace is rejected.
 
+- `tests/test_fa_update_script.py`
+  - Bash syntax check.
+  - Actual build-critical files are tracked (`Dockerfile.fa`, `uv.lock`, `scripts/fa-entrypoint.sh`).
+  - Commented optional `FA_*` template variables are not treated as required env.
+  - Dev dependency sync/tests run in writable `/workspace`, not the image snapshot.
+
 - `tests/test_cli.py`
   - Empty `--task` returns exit code 2.
   - Unsafe `--run-id` returns exit code 2.
@@ -134,7 +147,7 @@ This PR finalizes the Dockerized FA runtime so it is usable for real coding work
 ## Validation Performed
 
 - `bash -n scripts/fa-entrypoint.sh` — pass.
-- `PYTHONPATH=src pytest -q -o addopts=''` — `1064 passed`.
+- `PYTHONPATH=src pytest -q -o addopts=''` — `1078 passed`.
   - Note: sandbox environment did not have pytest-cov initially, so repo coverage addopts were disabled for this run.
 - `python -m ruff check src/fa/cli.py src/fa/inner_loop/prompt.py src/fa/inner_loop/state.py tests/test_cli.py tests/test_fa_entrypoint.py tests/test_inner_loop_audit_sink.py` — pass.
 - `PYTHONPATH=src python -m mypy src/fa/cli.py src/fa/inner_loop/prompt.py src/fa/inner_loop/state.py tests/test_fa_entrypoint.py tests/test_inner_loop_audit_sink.py` — pass.

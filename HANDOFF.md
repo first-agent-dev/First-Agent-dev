@@ -22,8 +22,16 @@ per-turn `usage` rows, terminal `session_summary` with `cache_hit_ratio`, debug
 serialization, `ToolSpec.max_context_bytes` / `elide`, `ArtifactStore`, and
 `project_for_model()` as the sole provider-visible tool-result projection. Full
 successful `ToolResult.result` payloads now enter `events.jsonl`; model context receives
+<<<<<<< Updated upstream
 budgeted projections. Remaining plan is tracked in `knowledge/loop-improvement-workplan.md`.
 Validation in sandbox: `PYTHONPATH=src pytest -q -o addopts=''` → 1074 passed; ruff/mypy clean for touched Python files.
+=======
+budgeted projections. Added host-side `scripts/fa-update.sh` for AIO update/deploy with
+review fixes (tracks `Dockerfile.fa`, ignores commented optional `FA_*` env rows, tests via
+`uv run` in `/workspace`). Remaining plan is tracked in
+`knowledge/loop-improvement-workplan.md`. Validation in sandbox:
+`PYTHONPATH=src pytest -q -o addopts=''` → 1078 passed; ruff/mypy clean for touched Python files.
+>>>>>>> Stashed changes
 
 **As of:** 2026-06-08 — ADR-11 **PR-10 follow-up PR-11 landed** (merge `c1d046a`, PR #11): V2/V11/V4 rule-correctness pass + PR-12 scope-prep. V2 `_extract_all` rewritten around an `_UNPROVABLE` sentinel (closes pass-1 BLOCKER-1/2/3); `_public_symbols` now returns defining `ast.stmt` nodes with per-node `node_input_hash` (HIGH-1, P2-HIGH-C); V11 self-contradiction split into a distinct `FA-AUTHORING-V11-CONTRADICTORY-ASSERT` code (HIGH-4); V4 exempts module-scope `pytest.skip(..., allow_module_level=True)` (HIGH-5); `_iter_decorated`→`_all_decorators` (MEDIUM-2); `SRC_SCOPE`/`TEST_SCOPE` hoisted into `_scan.py` (PR-12 prep); BACKLOG I-20/I-21/I-12-bis filed. **995 tests, 91.28 % cov, mypy strict (74 src files), ruff + pylint clean, `fa authoring-check` 0 diagnostics.** `RULE_ALLOWLIST` unchanged (3 callables). Next: PR-12 (kernel audit/corpus/advisory) then PR-13 (V4 evasion closure). Prior: 2026-06-06 — ADR-11 PR-2 landed (Level-1 rule packs); 2026-06-04 — CI/QA tooling hardening (R-1..R-6, R-15; local-first `just check`, advisory CI except sanity-check/audit/gitleaks; `uv.lock` deferred).
 
@@ -37,7 +45,11 @@ Validation in sandbox: `PYTHONPATH=src pytest -q -o addopts=''` → 1074 passed;
 | What | Date | Pointer |
 | :--- | :--- | :--- |
 
+<<<<<<< Updated upstream
 | **Loop foundation + Docker untangling**: resolved Docker merge-conflict markers, explicit `FA_AUTO_RUN` entrypoint semantics preserved, `fa.service` Docker dependency restored; loop foundation adds cache-aware usage/session summaries, pairing invariant before provider calls, canonical tool serialization, budgeted `project_for_model()` projection, artifact store, and full tool-result audit payloads. Remaining phases tracked in workplan. | 2026-06-11 | [`coder_loop.py`](./src/fa/inner_loop/coder_loop.py), [`projection.py`](./src/fa/inner_loop/projection.py), [`artifacts.py`](./src/fa/inner_loop/artifacts.py), [`loop-improvement-workplan.md`](./knowledge/loop-improvement-workplan.md), [`PR_NOTE_LOOP_FOUNDATION.md`](./PR_NOTE_LOOP_FOUNDATION.md) |
+=======
+| **Loop foundation + Docker untangling**: resolved Docker merge-conflict markers, explicit `FA_AUTO_RUN` entrypoint semantics preserved, `fa.service` Docker dependency restored, host update helper added; loop foundation adds cache-aware usage/session summaries, pairing invariant before provider calls, canonical tool serialization, budgeted `project_for_model()` projection, artifact store, and full tool-result audit payloads. Remaining phases tracked in workplan. | 2026-06-11 | [`coder_loop.py`](./src/fa/inner_loop/coder_loop.py), [`projection.py`](./src/fa/inner_loop/projection.py), [`artifacts.py`](./src/fa/inner_loop/artifacts.py), [`fa-update.sh`](./scripts/fa-update.sh), [`loop-improvement-workplan.md`](./knowledge/loop-improvement-workplan.md), [`PR_NOTE_LOOP_FOUNDATION.md`](./PR_NOTE_LOOP_FOUNDATION.md) |
+>>>>>>> Stashed changes
 | **AIO deployment bootstrap follow-up** (branch `devin/2026-06-10-ssh-and-service-fixes`): Host `~/.ssh/config` auto-creation (append-only, fork-safe), `fa.service` removes `Requires=docker.service` system-unit dependency, `SETUP_AIO.md` Phase 6b SSH troubleshooting + clone URL fix + `fa-post-setup.sh` mention, `ssh-keygen -F` for known_hosts duplicate detection. **AIO operational: container healthy, service active, git push verified.** | 2026-06-10 | [`setup-fa-desktop.sh`](./scripts/setup-fa-desktop.sh), [`SETUP_AIO.md`](./knowledge/SETUP_AIO.md) |
 | **AIO live-deployment blocker fix** (branch `devin/2026-06-10-aio-live-deploy-fixes`, PR #15 merged): Compose schema v3 `pids` placement, Dockerfile UID-1000 collision + Python tmpfs visibility, setup script service enablement (`fail2ban`/`unattended-upgrades`), post-setup Tailscale check + fork-safe SSH URL + `systemctl --user` D-Bus fallback. | 2026-06-10 | [`docker-compose.fa.yml`](./docker-compose.fa.yml), [`Dockerfile.fa`](./Dockerfile.fa), [`setup-fa-desktop.sh`](./scripts/setup-fa-desktop.sh), [`fa-post-setup.sh`](./scripts/fa-post-setup.sh) |
 | **Secrets Hardening PR** (branch `devin/secrets-hardening`): Container integration, runtime redaction (`SecretRedactor` + tests), agent self-protection (`SecretGuard`), deployment docs (`SETUP_AIO.md` Phase 7b), repo hygiene (`.gitignore`, `.dockerignore`, `.gitleaks.toml`). **1002 tests, ruff clean.** | 2026-06-08 | [`redaction.py`](./src/fa/observability/redaction.py), [`test_observability_redaction.py`](./tests/test_observability_redaction.py), [`SETUP_AIO.md`](./knowledge/SETUP_AIO.md), [`docker-compose.fa.yml`](./docker-compose.fa.yml), [`setup-fa-desktop.sh`](./scripts/setup-fa-desktop.sh) |
