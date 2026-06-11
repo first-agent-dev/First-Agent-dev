@@ -291,13 +291,13 @@ def build_system_message_from_role(
     """Alias for :func:`build_system_message` — kept for backward
     compatibility with callers that passed ``role`` as a keyword arg.
     """
-    return build_system_message(role, extra=extra)
+    return build_system_message(extra, role=role)
 
 
 __all__ = [
-    "PLANNER_SYSTEM_PROMPT",
     "CODER_SYSTEM_PROMPT",
     "EVAL_SYSTEM_PROMPT",
+    "PLANNER_SYSTEM_PROMPT",
     "_ROLE_PROMPTS",
     "build_system_message",
     "build_system_message_from_role",

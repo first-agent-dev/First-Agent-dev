@@ -1,6 +1,7 @@
 [Unit]
 Description=First-Agent 24/7 container
 After=docker.service network-online.target tailscaled.service
+Requires=docker.service
 Wants=network-online.target tailscaled.service
 
 [Service]

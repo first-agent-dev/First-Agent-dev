@@ -10,6 +10,7 @@ from __future__ import annotations
 from fa.inner_loop.prompt import (
     CODER_SYSTEM_PROMPT,
     build_system_message,
+    build_system_message_from_role,
     render_tool_specs,
 )
 from fa.inner_loop.registry import ToolSpec
@@ -54,6 +55,12 @@ def test_build_system_message_with_role_uses_role_prompt() -> None:
 def test_build_system_message_unknown_role_falls_back_to_coder() -> None:
     message = build_system_message(role="nonexistent_role")
     assert message.startswith(CODER_SYSTEM_PROMPT)
+
+
+def test_build_system_message_from_role_alias_preserves_role_and_extra() -> None:
+    message = build_system_message_from_role("planner", extra="prior plan")
+    assert message.startswith("You are the First-Agent planner")
+    assert message.endswith("prior plan")
 
 
 def test_build_system_message_is_byte_deterministic() -> None:

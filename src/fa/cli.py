@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import sys
 from dataclasses import asdict
@@ -52,7 +53,15 @@ from fa.providers import (
     load_models_config_from_path,
 )
 from fa.providers.base import Provider, Transport
+from fa.providers.errors import ConfigurationError
+from fa.roles import EvalFamilyConflictError
 from fa.verifier import load_contracts_from_dir
+
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+
+
+def _valid_run_id(value: str) -> bool:
+    return bool(_RUN_ID_RE.fullmatch(value))
 
 
 def _load_fa_dotenv(path: Path) -> None:
@@ -399,9 +408,26 @@ def _cmd_run(
     swap in a deterministic fake transport; production callers pass
     ``None`` and the function constructs a :class:`UrllibTransport`.
     """
+    if not str(args.task).strip():
+        print("fa run: --task must be non-empty", file=sys.stderr)
+        return 2
+    if args.max_turns < 1:
+        print("fa run: --max-turns must be a positive integer", file=sys.stderr)
+        return 2
+    if args.run_id and not _valid_run_id(args.run_id):
+        print(
+            "fa run: --run-id must match [A-Za-z0-9_.-]{1,128}",
+            file=sys.stderr,
+        )
+        return 2
+
     workspace = args.workspace.resolve()
     config_path = args.config.expanduser().resolve()
-    models = load_models_config_from_path(config_path, env=os.environ)
+    try:
+        models = load_models_config_from_path(config_path, env=os.environ)
+    except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
+        print(f"fa run: configuration error: {exc}", file=sys.stderr)
+        return 2
     chain_config = models.roles.get(args.role)
     if chain_config is None:
         known = sorted(models.roles)

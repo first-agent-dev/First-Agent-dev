@@ -115,8 +115,27 @@ class EventLog:
     ) -> None:
         self.path = path
         self.run_id = run_id
-        self._next_id = 1
+        self._next_id = self._initial_next_id(path)
         self._redactor = redactor
+
+    @staticmethod
+    def _initial_next_id(path: Path) -> int:
+        """Continue event ids when appending to an existing run log.
+
+        ``fa run --resume --run-id <same-id>`` appends to the same
+        events.jsonl file. Re-starting at ``ev-000001`` would make the
+        resumed audit trail ambiguous, so seed the counter from the
+        current non-empty line count.
+        """
+        if not path.exists():
+            return 1
+        try:
+            return (
+                sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line)
+                + 1
+            )
+        except OSError:
+            return 1
 
     def _redact_value(self, value: object) -> object:
         if self._redactor is None:

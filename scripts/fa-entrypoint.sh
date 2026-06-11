@@ -1,102 +1,224 @@
 #!/usr/bin/env bash
-# fa-entrypoint.sh — Dual-mode entrypoint for First-Agent Docker container.
+# fa-entrypoint.sh — dual-mode entrypoint for the First-Agent container.
 #
 # Modes:
-#   1. Auto-run mode: FA_TASK is set → run fa once, log outcome, then stand-by.
-#   2. Command override: $@ is non-empty → exec "$@".
-#   3. Stand-by mode (default): sleep infinity, ready for docker exec.
+#   1. Command override: arguments are present -> exec "$@".
+#   2. Auto-run: FA_AUTO_RUN is truthy -> run `fa run` once as a child,
+#      write a status file, then transition to stand-by.
+#   3. Stand-by: default -> sleep infinity, ready for `docker exec`.
 #
-# The key design choice: auto-run mode does NOT exec fa. Instead, it runs fa
-# as a child process, captures its exit code, logs the outcome, and then
-# transitions to sleep infinity. This prevents the restart: unless-stopped
-# loop where a completed or crashed fa run triggers an immediate container
-# restart and re-execution.
-#
-# After an auto-run, the container stays alive and inspectable via docker exec.
-# The operator can review logs and the status file at:
-#   /workspace/.fa/entrypoint-status.txt
+# Auto-run deliberately does NOT exec `fa run`: the agent is a child
+# process so this wrapper can capture its exit code and keep the
+# container inspectable instead of triggering Docker restart loops.
 
-set -uo pipefail
+set -Eeuo pipefail
 
-# ── Status file path (on the persistent bind-mounted workspace) ──
-STATUS_FILE="/workspace/.fa/entrypoint-status.txt"
+WORKSPACE="${FA_WORKSPACE:-/workspace}"
+STATUS_FILE="${FA_STATUS_FILE:-${WORKSPACE}/.fa/entrypoint-status.txt}"
+TASK_TEXT=""
+TASK_SOURCE=""
+CHILD_PID=""
 
 log() {
   local ts
   ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  echo "[fa-entrypoint $ts] $*"
+  echo "[fa-entrypoint ${ts}] $*"
 }
 
-write_status() {
+_truthy() {
+  case "${1,,}" in
+    1|true|yes|y|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_one_line() {
+  tr '\r\n' '  ' | sed -e 's/[[:space:]][[:space:]]*/ /g' -e 's/^ //' -e 's/ $//'
+}
+
+_task_sha256() {
+  printf '%s' "$TASK_TEXT" | sha256sum | awk '{print $1}'
+}
+
+_task_preview() {
+  printf '%s' "$TASK_TEXT" | _one_line | cut -c 1-160
+}
+
+_write_status() {
   local exit_code="$1"
   local status_label="$2"
   local detail="${3:-}"
-  mkdir -p "$(dirname "$STATUS_FILE")"
+  local status_dir tmp_file
+
+  status_dir="$(dirname "$STATUS_FILE")"
+  if ! mkdir -p "$status_dir" 2>/dev/null; then
+    log "WARN: could not create status directory: $status_dir"
+    return 0
+  fi
+  tmp_file="${STATUS_FILE}.tmp.$$"
   {
-    echo "exit_code=$exit_code"
-    echo "status=$status_label"
+    echo "exit_code=${exit_code}"
+    echo "status=${status_label}"
     echo "timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    [ -n "${FA_TASK:-}" ] && echo "task=${FA_TASK}"
-    [ -n "${FA_ROLE:-}" ] && echo "role=${FA_ROLE}"
-    [ -n "${FA_MAX_TURNS:-}" ] && echo "max_turns=${FA_MAX_TURNS}"
-    [ -n "${FA_RUN_ID:-}" ] && echo "run_id=${FA_RUN_ID}"
-    [ -n "$detail" ] && echo "detail=$detail"
-  } > "$STATUS_FILE"
+    echo "workspace=${WORKSPACE}"
+    echo "auto_run=${FA_AUTO_RUN:-0}"
+    [[ -n "${TASK_SOURCE}" ]] && echo "task_source=${TASK_SOURCE}"
+    [[ -n "${TASK_TEXT}" ]] && echo "task_sha256=$(_task_sha256)"
+    [[ -n "${TASK_TEXT}" ]] && echo "task_preview=$(_task_preview)"
+    [[ -n "${FA_ROLE:-}" ]] && echo "role=${FA_ROLE}"
+    [[ -n "${FA_CONFIG:-}" ]] && echo "config=${FA_CONFIG}"
+    [[ -n "${FA_MAX_TURNS:-}" ]] && echo "max_turns=${FA_MAX_TURNS}"
+    [[ -n "${FA_RUN_ID:-}" ]] && echo "run_id=${FA_RUN_ID}"
+    [[ -n "${FA_RESUME:-}" ]] && echo "resume=${FA_RESUME}"
+    [[ -n "$detail" ]] && echo "detail=$(printf '%s' "$detail" | _one_line)"
+  } > "$tmp_file" && mv "$tmp_file" "$STATUS_FILE" || {
+    rm -f "$tmp_file" 2>/dev/null || true
+    log "WARN: could not write status file: $STATUS_FILE"
+  }
 }
 
-# ── PYTHONPATH: live bind-mounted source takes precedence ──
-export PYTHONPATH="/workspace/src${PYTHONPATH:+:$PYTHONPATH}"
+_standby() {
+  log "Stand-by mode: sleep infinity"
+  log "  Exec shell: docker exec -it ${FA_CONTAINER_NAME:-first-agent} bash"
+  log "  Status:     cat ${STATUS_FILE}"
+  exec sleep infinity
+}
+
+_fail_to_standby() {
+  local detail="$1"
+  log "Invalid auto-run configuration: $detail"
+  _write_status 2 "INVALID_CONFIG" "$detail"
+  _standby
+}
+
+_validate_run_id() {
+  local value="$1"
+  [[ "$value" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]
+}
+
+_load_task() {
+  local raw_file candidate workspace_real file_real
+
+  if [[ -n "${FA_TASK:-}" && -n "${FA_TASK_FILE:-}" ]]; then
+    _fail_to_standby "Set only one of FA_TASK or FA_TASK_FILE, not both"
+  fi
+
+  if [[ -n "${FA_TASK_FILE:-}" ]]; then
+    raw_file="$FA_TASK_FILE"
+    if [[ "$raw_file" = /* ]]; then
+      candidate="$raw_file"
+    else
+      candidate="${WORKSPACE%/}/$raw_file"
+    fi
+    workspace_real="$(readlink -f "$WORKSPACE" 2>/dev/null || true)"
+    file_real="$(readlink -f "$candidate" 2>/dev/null || true)"
+    [[ -n "$workspace_real" ]] || _fail_to_standby "Workspace does not exist: $WORKSPACE"
+    [[ -n "$file_real" ]] || _fail_to_standby "FA_TASK_FILE not found: $FA_TASK_FILE"
+    case "$file_real" in
+      "$workspace_real"|"$workspace_real"/*) ;;
+      *) _fail_to_standby "FA_TASK_FILE must resolve inside workspace: $FA_TASK_FILE" ;;
+    esac
+    [[ -f "$file_real" ]] || _fail_to_standby "FA_TASK_FILE is not a regular file: $FA_TASK_FILE"
+    [[ -r "$file_real" ]] || _fail_to_standby "FA_TASK_FILE is not readable: $FA_TASK_FILE"
+    TASK_TEXT="$(cat "$file_real")"
+    TASK_SOURCE="file:$file_real"
+  else
+    TASK_TEXT="${FA_TASK:-}"
+    TASK_SOURCE="env:FA_TASK"
+  fi
+
+  if [[ -z "${TASK_TEXT//[[:space:]]/}" ]]; then
+    _fail_to_standby "Task is empty or whitespace-only"
+  fi
+}
+
+_on_term() {
+  log "Received termination signal"
+  if [[ -n "$CHILD_PID" ]] && kill -0 "$CHILD_PID" 2>/dev/null; then
+    log "Forwarding SIGTERM to fa run child pid=$CHILD_PID"
+    kill -TERM "$CHILD_PID" 2>/dev/null || true
+    wait "$CHILD_PID" 2>/dev/null || true
+  fi
+  _write_status 143 "TERMINATED" "Container received SIGTERM/SIGINT during auto-run"
+  exit 143
+}
+
+# Live bind-mounted source wins over the image copy. The image's venv still
+# supplies dependencies and console scripts.
+export PYTHONPATH="${WORKSPACE%/}/src${PYTHONPATH:+:$PYTHONPATH}"
+if [[ -d /opt/fa-venv/bin ]]; then
+  export PATH="/opt/fa-venv/bin:$PATH"
+fi
 log "PYTHONPATH=$PYTHONPATH"
 
-if [[ -n "${FA_TASK:-}" ]]; then
-  # ── Auto-run mode ──
-  log "Auto-run mode: FA_TASK is set"
-  log "Starting: fa run --task \"${FA_TASK}\" --workspace /workspace"
+# Explicit docker command overrides always win, even if FA_AUTO_RUN is set.
+if [[ $# -gt 0 ]]; then
+  log "Command override mode: exec $*"
+  exec "$@"
+fi
 
-  FA_CMD=(fa run --task "$FA_TASK" --workspace /workspace)
+if _truthy "${FA_AUTO_RUN:-0}"; then
+  log "Auto-run mode enabled (FA_AUTO_RUN=${FA_AUTO_RUN})"
+  [[ -d "$WORKSPACE" ]] || _fail_to_standby "Workspace does not exist: $WORKSPACE"
+  [[ -w "$WORKSPACE" ]] || _fail_to_standby "Workspace is not writable: $WORKSPACE"
+  _load_task
 
-  if [[ -n "${FA_ROLE:-}" ]]; then
-    FA_CMD+=(--role "$FA_ROLE")
-    log "  --role=\"${FA_ROLE}\""
-  fi
-  if [[ -n "${FA_MAX_TURNS:-}" ]]; then
-    FA_CMD+=(--max-turns "$FA_MAX_TURNS")
-    log "  --max-turns=\"${FA_MAX_TURNS}\""
-  fi
-  if [[ -n "${FA_RUN_ID:-}" ]]; then
-    FA_CMD+=(--run-id "$FA_RUN_ID")
-    log "  --run-id=\"${FA_RUN_ID}\""
+  if [[ -n "${FA_MAX_TURNS:-}" && ! "${FA_MAX_TURNS}" =~ ^[1-9][0-9]*$ ]]; then
+    _fail_to_standby "FA_MAX_TURNS must be a positive integer; got '${FA_MAX_TURNS}'"
   fi
 
-  # Run fa as a child process (NOT exec). This is critical: we need to
-  # capture the exit code and then transition to stand-by mode instead
-  # of letting the container exit and trigger a Docker restart loop.
-  log "Launching fa run..."
-  fa_exit_code=0
-  # </dev/null prevents any interactive prompt from hanging the container.
-  # stdout and stderr both go to Docker logs for full traceability.
-  "${FA_CMD[@]}" </dev/null || fa_exit_code=$?
+  FA_ROLE="${FA_ROLE:-coder}"
+  export FA_ROLE
+
+  if [[ -z "${FA_RUN_ID:-}" ]]; then
+    FA_RUN_ID="docker-$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+    export FA_RUN_ID
+  fi
+  _validate_run_id "$FA_RUN_ID" || _fail_to_standby \
+    "FA_RUN_ID must match [A-Za-z0-9_.-]{1,128}; got '${FA_RUN_ID}'"
+
+  FA_CMD=(fa run --task "$TASK_TEXT" --workspace "$WORKSPACE" --role "$FA_ROLE" --run-id "$FA_RUN_ID")
+  [[ -n "${FA_CONFIG:-}" ]] && FA_CMD+=(--config "$FA_CONFIG")
+  [[ -n "${FA_MAX_TURNS:-}" ]] && FA_CMD+=(--max-turns "$FA_MAX_TURNS")
+  _truthy "${FA_RESUME:-0}" && FA_CMD+=(--resume)
+
+  log "Launching fa run as child process"
+  log "  workspace=${WORKSPACE}"
+  log "  role=${FA_ROLE:-coder}"
+  log "  run_id=${FA_RUN_ID}"
+  log "  task_source=${TASK_SOURCE}"
+  log "  task_sha256=$(_task_sha256)"
+  _write_status -1 "RUNNING" "fa run child process is active"
+
+  trap _on_term TERM INT
+  "${FA_CMD[@]}" </dev/null &
+  CHILD_PID=$!
+  if wait "$CHILD_PID"; then
+    fa_exit_code=0
+  else
+    fa_exit_code=$?
+  fi
+  CHILD_PID=""
+  trap - TERM INT
 
   if [[ $fa_exit_code -eq 0 ]]; then
     log "fa run completed successfully (exit code 0)"
-    write_status 0 "SUCCESS" "Task completed successfully"
+    _write_status 0 "SUCCESS" "Task completed successfully"
   else
     log "fa run exited with code $fa_exit_code"
-    write_status "$fa_exit_code" "FAILED" "fa run exited with code $fa_exit_code"
+    _write_status "$fa_exit_code" "FAILED" "fa run exited with code $fa_exit_code"
   fi
 
-  log "Transitioning to stand-by mode (sleep infinity). Container is alive for inspection."
-  log "  Review status: cat $STATUS_FILE"
-  log "  Re-run task:  docker exec first-agent fa run --task '${FA_TASK}' --workspace /workspace"
-  exec sleep infinity
-
-elif [[ $# -gt 0 ]]; then
-  # ── Command override mode ──
-  log "Command override mode: exec $*"
-  exec "$@"
-
-else
-  # ── Stand-by mode ──
-  log "Stand-by mode: sleep infinity"
-  exec sleep infinity
+  log "Auto-run completed once; transitioning to inspectable stand-by state"
+  _standby
 fi
+
+if [[ -n "${FA_TASK:-}" || -n "${FA_TASK_FILE:-}" ]]; then
+  log "FA_TASK/FA_TASK_FILE present but FA_AUTO_RUN is not truthy; not running automatically"
+  TASK_TEXT="${FA_TASK:-}"
+  TASK_SOURCE="manual-disabled"
+  _write_status 0 "STANDBY" "FA_AUTO_RUN is not enabled; ready for docker exec"
+else
+  _write_status 0 "STANDBY" "Ready for docker exec"
+fi
+_standby
