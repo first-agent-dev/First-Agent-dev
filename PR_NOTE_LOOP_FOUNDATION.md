@@ -139,7 +139,7 @@ This PR lands the first loop-optimization foundation slices from the tiered plan
 
 ## Validation Performed
 
-- `PYTHONPATH=src pytest -q -o addopts=''` — `1074 passed` in this sandbox.
+- `PYTHONPATH=src pytest -q -o addopts=''` — `1078 passed` in this sandbox.
 - `python -m ruff check ...` on all touched Python files — pass.
 - `PYTHONPATH=src python -m mypy ...` on all touched Python files/tests — pass.
 

@@ -120,6 +120,12 @@ This PR finalizes the Dockerized FA runtime so it is usable for real coding work
   - `FA_TASK_FILE` inside workspace is accepted.
   - `FA_TASK_FILE` outside workspace is rejected.
 
+- `tests/test_fa_update_script.py`
+  - Bash syntax check.
+  - Actual build-critical files are tracked (`Dockerfile.fa`, `uv.lock`, `scripts/fa-entrypoint.sh`).
+  - Commented optional `FA_*` template variables are not treated as required env.
+  - Dev dependency sync/tests run in writable `/workspace`, not the image snapshot.
+
 - `tests/test_cli.py`
   - Empty `--task` returns exit code 2.
   - Unsafe `--run-id` returns exit code 2.
@@ -134,7 +140,7 @@ This PR finalizes the Dockerized FA runtime so it is usable for real coding work
 ## Validation Performed
 
 - `bash -n scripts/fa-entrypoint.sh` — pass.
-- `PYTHONPATH=src pytest -q -o addopts=''` — `1064 passed`.
+- `PYTHONPATH=src pytest -q -o addopts=''` — `1078 passed`.
   - Note: sandbox environment did not have pytest-cov initially, so repo coverage addopts were disabled for this run.
 - `python -m ruff check src/fa/cli.py src/fa/inner_loop/prompt.py src/fa/inner_loop/state.py tests/test_cli.py tests/test_fa_entrypoint.py tests/test_inner_loop_audit_sink.py` — pass.
 - `PYTHONPATH=src python -m mypy src/fa/cli.py src/fa/inner_loop/prompt.py src/fa/inner_loop/state.py tests/test_fa_entrypoint.py tests/test_inner_loop_audit_sink.py` — pass.

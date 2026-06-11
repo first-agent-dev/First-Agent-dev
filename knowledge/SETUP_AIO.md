@@ -485,6 +485,7 @@ When you want a true one-tap button on your phone:
 | **Restart FA** | `systemctl --user restart fa.service` |
 | **Check auto-reboot status** | `cat /etc/apt/apt.conf.d/50unattended-upgrades-fa` |
 | **Manually trigger unattended upgrade** | `sudo unattended-upgrade --dry-run` |
+| **Update deployed FA** | `/srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh` |
 | **View logs** | `docker compose -f /srv/first-agent/repo/First-Agent-dev/docker-compose.fa.yml logs -f` |
 | **Enter container** | `docker exec -it first-agent bash` |
 | **Check container status** | `docker ps` |
