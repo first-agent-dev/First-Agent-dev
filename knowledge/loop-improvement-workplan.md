@@ -176,11 +176,7 @@ Reason: the foundation PR intentionally landed observability, pairing safety, ca
 
 Sandbox validation performed during the loop-foundation session:
 
-<<<<<<< Updated upstream
-- full test suite with repo coverage addopts disabled: `1074` tests passing at time of implementation
-=======
 - full test suite with repo coverage addopts disabled: `1078` tests passing at time of implementation
->>>>>>> Stashed changes
 - ruff clean for touched Python files
 - mypy clean for touched Python files/tests
 
