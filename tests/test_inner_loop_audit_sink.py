@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fa.inner_loop import EventLog, SessionState, ToolCall, run_session
+from fa.inner_loop import EventLog, SessionState, ToolCall, ToolResult, run_session
 from fa.inner_loop.hooks import AuditHook, HookRegistry, SandboxHook
 from fa.inner_loop.tools import build_baseline_registry
 
@@ -24,6 +24,18 @@ def test_event_log_appends_with_monotonic_ids_when_resuming(tmp_path: Path) -> N
         "ev-000002",
         "ev-000003",
     ]
+
+
+def test_session_state_records_full_tool_result_payload(tmp_path: Path) -> None:
+    log = EventLog(tmp_path / "events.jsonl", run_id="payload-run")
+    state = SessionState(workspace_root=tmp_path, run_id="payload-run", log=log)
+    call = ToolCall(name="demo.payload", params={}, call_id="tc-payload")
+
+    state.record_tool_result(call, ToolResult.ok("ok", result={"nested": {"value": 1}}))
+
+    row = log.read_all()[0]
+    assert row.kind == "tool_result"
+    assert row.content["result"] == {"nested": {"value": 1}}
 
 
 def test_audit_hook_writes_to_event_log(tmp_path: Path) -> None:

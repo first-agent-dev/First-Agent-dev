@@ -62,6 +62,8 @@ class ResponseInfo:
     out_tokens: int
     finish_reason: str
     tool_calls: tuple[Mapping[str, Any], ...] = ()
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
     extras: Mapping[str, Any] = field(default_factory=dict)
 
 

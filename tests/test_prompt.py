@@ -7,6 +7,8 @@ inputs. These tests pin that invariant.
 
 from __future__ import annotations
 
+import json
+
 from fa.inner_loop.prompt import (
     CODER_SYSTEM_PROMPT,
     build_system_message,
@@ -74,27 +76,29 @@ def test_render_tool_specs_projects_to_openai_function_shape() -> None:
     specs = (_make_spec("alpha"), _make_spec("beta"))
     rendered = render_tool_specs(specs)
     assert len(rendered) == 2
-    for tool, spec in zip(rendered, specs, strict=True):
+    specs_by_name = {spec.name: spec for spec in specs}
+    for tool in rendered:
+        spec = specs_by_name[tool["function"]["name"]]
         assert tool["type"] == "function"
         assert tool["function"]["name"] == spec.name
         assert tool["function"]["description"] == spec.description
         assert tool["function"]["parameters"] == spec.input_schema
 
 
-def test_render_tool_specs_preserves_order() -> None:
-    specs = tuple(_make_spec(f"tool-{i}") for i in range(5))
+def test_render_tool_specs_sorts_by_name() -> None:
+    specs = (_make_spec("tool-2"), _make_spec("tool-0"), _make_spec("tool-1"))
     rendered = render_tool_specs(specs)
     names = [t["function"]["name"] for t in rendered]
-    assert names == [f"tool-{i}" for i in range(5)]
+    assert names == ["tool-0", "tool-1", "tool-2"]
 
 
-def test_render_tool_specs_is_byte_deterministic() -> None:
-    specs = (_make_spec("a"), _make_spec("b"))
-    first = render_tool_specs(specs)
-    second = render_tool_specs(specs)
-    # Mappings are not necessarily identity-equal but the projection
-    # is dict-equal across runs — the A-bucket determinism property.
-    assert list(first) == list(second)
+def test_render_tool_specs_is_byte_stable_and_order_independent() -> None:
+    specs = (_make_spec("a"), _make_spec("b"), _make_spec("c"))
+    first = json.dumps(render_tool_specs(specs), ensure_ascii=False, sort_keys=True)
+    second = json.dumps(
+        render_tool_specs(tuple(reversed(specs))), ensure_ascii=False, sort_keys=True
+    )
+    assert first == second
 
 
 def test_render_tool_specs_empty_input_returns_empty_tuple() -> None:

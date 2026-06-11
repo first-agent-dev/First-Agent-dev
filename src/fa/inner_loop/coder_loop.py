@@ -68,16 +68,18 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from fa.inner_loop.artifacts import ArtifactStore
 from fa.inner_loop.hooks.base import HookPayload, HookRegistry, LifecyclePoint
 from fa.inner_loop.loop import run_session
+from fa.inner_loop.projection import project_for_model
 from fa.inner_loop.prompt import (
     build_system_message,
     render_tool_specs,
 )
-from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult
+from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import RuntimeLimits
 from fa.inner_loop.state import SessionState
-from fa.providers.base import RequestInfo
+from fa.providers.base import RequestInfo, ResponseInfo
 from fa.providers.chain import ProviderChain
 from fa.providers.errors import (
     ProviderChainExhaustedError,
@@ -108,6 +110,110 @@ DEFAULT_TEMPERATURE = 0.0
 # — large enough for a multi-tool-call response, small enough to flag
 # the rare runaway emission via the ``abnormal_stop:length`` outcome.
 DEFAULT_MAX_TOKENS = 2048
+
+
+def _usage_event_content(response: ResponseInfo) -> dict[str, int]:
+    return {
+        "input_tokens": response.in_tokens,
+        "cache_read_input_tokens": response.cache_read_input_tokens,
+        "cache_creation_input_tokens": response.cache_creation_input_tokens,
+        "output_tokens": response.out_tokens,
+    }
+
+
+def _session_summary_content(totals: Mapping[str, int], n_turns: int) -> dict[str, object]:
+    cache_read = totals["cache_read_input_tokens"]
+    cache_creation = totals["cache_creation_input_tokens"]
+    input_tokens = totals["input_tokens"]
+    uncached = max(input_tokens - cache_read - cache_creation, 0)
+    denominator = cache_read + cache_creation + uncached
+    cache_hit_ratio = (cache_read / denominator) if denominator else 0.0
+    return {
+        "n_turns": n_turns,
+        "input_tokens": input_tokens,
+        "cache_read_input_tokens": cache_read,
+        "cache_creation_input_tokens": cache_creation,
+        "uncached_input_tokens": uncached,
+        "output_tokens": totals["output_tokens"],
+        "cache_hit_ratio": cache_hit_ratio,
+    }
+
+
+def _assert_tool_pairing_invariant(messages: Sequence[Mapping[str, Any]]) -> None:
+    """Assert provider-visible tool call/result ids are exactly paired."""
+    use_ids: set[str] = set()
+    result_ids: set[str] = set()
+    for message in messages:
+        role = message.get("role")
+        if role == "assistant":
+            for call in message.get("tool_calls") or ():
+                if isinstance(call, Mapping):
+                    use_ids.add(str(call.get("id") or ""))
+            content = message.get("content")
+            if isinstance(content, Sequence) and not isinstance(content, str):
+                for block in content:
+                    if isinstance(block, Mapping) and block.get("type") == "tool_use":
+                        use_ids.add(str(block.get("id") or ""))
+        if role == "tool":
+            result_ids.add(str(message.get("tool_call_id") or ""))
+        if role == "user":
+            content = message.get("content")
+            if isinstance(content, Sequence) and not isinstance(content, str):
+                for block in content:
+                    if isinstance(block, Mapping) and block.get("type") == "tool_result":
+                        result_ids.add(str(block.get("tool_use_id") or ""))
+    if use_ids != result_ids:
+        raise AssertionError(
+            f"orphaned tool calls: use_only={use_ids - result_ids}, "
+            f"result_only={result_ids - use_ids}"
+        )
+
+
+def _fallback_projection_handler(_params: Mapping[str, object]) -> ToolResult:
+    return ToolResult.ok("projection fallback")
+
+
+def _projection_spec_for_call(registry: ToolRegistry, call: ToolCall) -> ToolSpec:
+    try:
+        return registry.lookup(call.name)
+    except KeyError:
+        return ToolSpec(
+            name=call.name,
+            description="Fallback projection spec for an unregistered tool call.",
+            input_schema={"type": "object"},
+            permission="read",
+            handler=_fallback_projection_handler,
+        )
+
+
+def _tool_calls_for_message(
+    raw_calls: Sequence[Mapping[str, Any]], parsed_calls: Sequence[ToolCall]
+) -> list[Mapping[str, Any]]:
+    """Return provider-history tool calls with ids matching ``parsed_calls``.
+
+    ``_build_tool_calls`` intentionally supplies fallback ids / names for
+    malformed model emissions so the registry can return a structured
+    failure instead of crashing. The assistant message sent back to the
+    provider must use the same fallback ids, otherwise the next request
+    would contain an orphaned ``tool`` result and fail the pairing
+    invariant before the model can correct itself.
+    """
+    projected: list[Mapping[str, Any]] = []
+    for raw, parsed in zip(raw_calls, parsed_calls, strict=True):
+        raw_function = raw.get("function")
+        function = raw_function if isinstance(raw_function, Mapping) else {}
+        name = str(function.get("name") or parsed.name)
+        arguments = function.get("arguments")
+        if not isinstance(arguments, str):
+            arguments = json.dumps(dict(parsed.params), ensure_ascii=False, sort_keys=True)
+        projected.append(
+            {
+                "id": parsed.call_id,
+                "type": "function",
+                "function": {"name": name, "arguments": arguments},
+            }
+        )
+    return projected
 
 
 @dataclass(frozen=True)
@@ -209,6 +315,15 @@ def drive_session(
 
     effective_limits = limits if limits is not None else RuntimeLimits.anchored_defaults()
     tool_payload = render_tool_specs(registry.specs())
+    artifact_store = ArtifactStore.from_event_log(state.log)
+    usage_totals = {
+        "input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "output_tokens": 0,
+    }
+    usage_turns = 0
+    summary_written = False
     system_message = build_system_message(system_prompt_extra, role=role)
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_message},
@@ -223,6 +338,28 @@ def drive_session(
 
     collected_results: list[ToolResult] = []
     turn = 0
+
+    def record_usage(response: ResponseInfo) -> None:
+        nonlocal usage_turns
+        assert state.log is not None
+        row = _usage_event_content(response)
+        state.log.append(actor="runtime", kind="usage", content=row)
+        for key, value in row.items():
+            usage_totals[key] += value
+        usage_turns += 1
+
+    def finish(outcome: SessionOutcome) -> SessionOutcome:
+        nonlocal summary_written
+        assert state.log is not None
+        if not summary_written:
+            state.log.append(
+                actor="runtime",
+                kind="session_summary",
+                content=_session_summary_content(usage_totals, usage_turns),
+            )
+            summary_written = True
+        return outcome
+
     while turn < max_turns:
         turn += 1
         try:
@@ -239,13 +376,17 @@ def drive_session(
                     "detail": str(exc),
                 },
             )
-            return SessionOutcome(
-                exit_code=1,
-                stop_reason=f"hook_deny:{LifecyclePoint.BEFORE_LLM_CALL.value}",
-                turns=turn,
-                final_text="",
-                tool_results=tuple(collected_results),
+            return finish(
+                SessionOutcome(
+                    exit_code=1,
+                    stop_reason=f"hook_deny:{LifecyclePoint.BEFORE_LLM_CALL.value}",
+                    turns=turn,
+                    final_text="",
+                    tool_results=tuple(collected_results),
+                )
             )
+        if __debug__:
+            _assert_tool_pairing_invariant(messages)
         request = RequestInfo(
             model_slug=provider_chain.config.model,
             messages=tuple(messages),
@@ -269,18 +410,21 @@ def drive_session(
                             "logical_call_id": _logical_id,
                         },
                     )
+            record_usage(response)
         except KeyboardInterrupt:
             state.log.append(
                 actor="runtime",
                 kind="run_stopped",
                 content={"reason": "abnormal_stop:interrupt"},
             )
-            return SessionOutcome(
-                exit_code=130,
-                stop_reason="abnormal_stop:interrupt",
-                turns=turn,
-                final_text="",
-                tool_results=tuple(collected_results),
+            return finish(
+                SessionOutcome(
+                    exit_code=130,
+                    stop_reason="abnormal_stop:interrupt",
+                    turns=turn,
+                    final_text="",
+                    tool_results=tuple(collected_results),
+                )
             )
         except ProviderChainExhaustedError as exc:
             state.log.append(
@@ -288,12 +432,14 @@ def drive_session(
                 kind="run_stopped",
                 content={"reason": "chain_exhausted", "detail": str(exc)},
             )
-            return SessionOutcome(
-                exit_code=2,
-                stop_reason="chain_exhausted",
-                turns=turn,
-                final_text="",
-                tool_results=tuple(collected_results),
+            return finish(
+                SessionOutcome(
+                    exit_code=2,
+                    stop_reason="chain_exhausted",
+                    turns=turn,
+                    final_text="",
+                    tool_results=tuple(collected_results),
+                )
             )
         except ProviderRequestShapeError as exc:
             state.log.append(
@@ -301,12 +447,14 @@ def drive_session(
                 kind="run_stopped",
                 content={"reason": "request_shape", "detail": str(exc)},
             )
-            return SessionOutcome(
-                exit_code=2,
-                stop_reason="request_shape",
-                turns=turn,
-                final_text="",
-                tool_results=tuple(collected_results),
+            return finish(
+                SessionOutcome(
+                    exit_code=2,
+                    stop_reason="request_shape",
+                    turns=turn,
+                    final_text="",
+                    tool_results=tuple(collected_results),
+                )
             )
         try:
             hooks.dispatch(
@@ -322,20 +470,25 @@ def drive_session(
                     "detail": str(exc),
                 },
             )
-            return SessionOutcome(
-                exit_code=1,
-                stop_reason=f"hook_deny:{LifecyclePoint.AFTER_LLM_CALL.value}",
-                turns=turn,
-                final_text="",
-                tool_results=tuple(collected_results),
+            return finish(
+                SessionOutcome(
+                    exit_code=1,
+                    stop_reason=f"hook_deny:{LifecyclePoint.AFTER_LLM_CALL.value}",
+                    turns=turn,
+                    final_text="",
+                    tool_results=tuple(collected_results),
+                )
             )
 
+        tool_calls = _build_tool_calls(response.tool_calls) if response.tool_calls else ()
         assistant_message: dict[str, Any] = {
             "role": "assistant",
             "content": response.text or "",
         }
-        if response.tool_calls:
-            assistant_message["tool_calls"] = [dict(c) for c in response.tool_calls]
+        if tool_calls:
+            assistant_message["tool_calls"] = _tool_calls_for_message(
+                response.tool_calls, tool_calls
+            )
         messages.append(assistant_message)
         state.log.append(
             actor="model",
@@ -345,18 +498,22 @@ def drive_session(
                 "tool_calls": [dict(c) for c in response.tool_calls],
                 "finish_reason": response.finish_reason,
                 "in_tokens": response.in_tokens,
+                "cache_read_input_tokens": response.cache_read_input_tokens,
+                "cache_creation_input_tokens": response.cache_creation_input_tokens,
                 "out_tokens": response.out_tokens,
             },
         )
 
-        if not response.tool_calls:
+        if not tool_calls:
             if response.finish_reason in _TERMINAL_FINISH_REASONS or not response.finish_reason:
-                return SessionOutcome(
-                    exit_code=0,
-                    stop_reason="stopped_by_llm",
-                    turns=turn,
-                    final_text=response.text,
-                    tool_results=tuple(collected_results),
+                return finish(
+                    SessionOutcome(
+                        exit_code=0,
+                        stop_reason="stopped_by_llm",
+                        turns=turn,
+                        final_text=response.text,
+                        tool_results=tuple(collected_results),
+                    )
                 )
             # LLM stopped for length / content_filter without a tool
             # call — terminal but ABNORMAL; surface as non-zero exit
@@ -368,15 +525,16 @@ def drive_session(
                 kind="run_stopped",
                 content={"reason": f"abnormal_stop:{response.finish_reason}"},
             )
-            return SessionOutcome(
-                exit_code=1,
-                stop_reason=f"abnormal_stop:{response.finish_reason}",
-                turns=turn,
-                final_text=response.text,
-                tool_results=tuple(collected_results),
+            return finish(
+                SessionOutcome(
+                    exit_code=1,
+                    stop_reason=f"abnormal_stop:{response.finish_reason}",
+                    turns=turn,
+                    final_text=response.text,
+                    tool_results=tuple(collected_results),
+                )
             )
 
-        tool_calls = _build_tool_calls(response.tool_calls)
         # Capture log length BEFORE run_session so we only inspect
         # rows appended during this invocation, not stale rows from
         # earlier turns (cross-turn contamination guard).
@@ -430,11 +588,12 @@ def drive_session(
                 state.record_tool_result(call, result)
         collected_results.extend(turn_results)
         for call, result in zip(tool_calls, turn_results, strict=True):
+            spec = _projection_spec_for_call(registry, call)
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": call.call_id,
-                    "content": result.summary,
+                    "content": project_for_model(spec, result, artifact_store),
                 }
             )
 
@@ -443,12 +602,14 @@ def drive_session(
         kind="run_stopped",
         content={"reason": "iteration_cap", "turns": turn},
     )
-    return SessionOutcome(
-        exit_code=1,
-        stop_reason="iteration_cap",
-        turns=turn,
-        final_text="",
-        tool_results=tuple(collected_results),
+    return finish(
+        SessionOutcome(
+            exit_code=1,
+            stop_reason="iteration_cap",
+            turns=turn,
+            final_text="",
+            tool_results=tuple(collected_results),
+        )
     )
 
 

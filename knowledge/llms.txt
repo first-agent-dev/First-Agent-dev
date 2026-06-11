@@ -33,7 +33,7 @@ Five files cover ~90% of session-start context. Read in order:
 
 Task type → primary entrypoint, then secondary:
 
-- **Inner-loop / tool-registry contract** → [knowledge/adr/ADR-7-inner-loop-tool-registry.md](./knowledge/adr/ADR-7-inner-loop-tool-registry.md) (canonical). Background: [knowledge/research/efficient-llm-agent-harness-2026-05.md](./knowledge/research/efficient-llm-agent-harness-2026-05.md) §0.
+- **Inner-loop / tool-registry contract** → [knowledge/adr/ADR-7-inner-loop-tool-registry.md](./knowledge/adr/ADR-7-inner-loop-tool-registry.md) (canonical). Current loop optimization tracker: [knowledge/loop-improvement-workplan.md](./knowledge/loop-improvement-workplan.md). Background: [knowledge/research/efficient-llm-agent-harness-2026-05.md](./knowledge/research/efficient-llm-agent-harness-2026-05.md) §0.
 - **New ADR or amendment** → [knowledge/adr/ADR-template.md](./knowledge/adr/ADR-template.md) + [knowledge/skills/pr-creation/SKILL.md](./knowledge/skills/pr-creation/SKILL.md) (must update `exploration_log.md` + `DIGEST.md` in same PR).
 - **New module / Phase M PR** → [knowledge/research/memory-architecture-design-2026-04-26.md](./knowledge/research/memory-architecture-design-2026-04-26.md) §9 roadmap + [knowledge/adr/DIGEST.md](./knowledge/adr/DIGEST.md).
 - **Research-briefing note** → [knowledge/prompts/research-briefing.md](./knowledge/prompts/research-briefing.md), then [knowledge/research/_template.md](./knowledge/research/_template.md).
@@ -51,10 +51,12 @@ Task type → primary entrypoint, then secondary:
 
 Materialised ADR-7 + ADR-8 runtime. Smoke: `fa inner-loop-smoke --workspace . --input README.md`. Tests: `tests/test_inner_loop_*.py` + `tests/test_hook_registry.py` + `tests/test_verifier.py` + `tests/test_cost_guardian.py` + `tests/test_roles.py`.
 
-- `src/fa/inner_loop/registry.py` — `ToolRegistry` + `ToolSpec` / `ToolResult` / `ToolCall` dataclasses; JSON-Schema validation per ADR-7 §5.
+- `src/fa/inner_loop/registry.py` — `ToolRegistry` + `ToolSpec` / `ToolResult` / `ToolCall` dataclasses; JSON-Schema validation per ADR-7 §5; `ToolSpec.max_context_bytes` + `elide` control provider-visible result projection.
 - `src/fa/inner_loop/loop.py` — deterministic `run_session()` driver; `max_iterations` from `RuntimeLimits` (default 6, ADR-7 §Amendment 2026-05-20).
-- `src/fa/inner_loop/coder_loop.py` — M-8 LLM-driven `drive_session()`; bridges `ProviderChain` and `run_session`; returns `SessionOutcome`.
-- `src/fa/inner_loop/prompt.py` — M-8 A-bucket residue: `CODER_SYSTEM_PROMPT` + `render_tool_specs()` (OpenAI function-tool shape) + `build_system_message()`.
+- `src/fa/inner_loop/coder_loop.py` — M-8 LLM-driven `drive_session()`; bridges `ProviderChain` and `run_session`; returns `SessionOutcome`; logs per-turn `usage`, writes `session_summary`, asserts tool-call/result pairing before provider requests, and sends tool results through `project_for_model()`.
+- `src/fa/inner_loop/prompt.py` — M-8 A-bucket residue: role prompts + canonical sorted `render_tool_specs()` (OpenAI function-tool shape) + `build_system_message()`.
+- `src/fa/inner_loop/artifacts.py` — content-addressed per-run artifact store for full payloads elided from model context.
+- `src/fa/inner_loop/projection.py` — sole full-`ToolResult` → model-visible string boundary (`project_for_model`), with context budget enforcement and default head/tail elision.
 - `src/fa/inner_loop/runtime_limits.py` — `RuntimeLimits` config loader from `~/.fa/config.yaml`; all knob defaults anchored.
 - `src/fa/inner_loop/hooks/base.py` — `HookRegistry`, `GuardMiddleware` / `ObserverMiddleware`, `Decision`, lifecycle dispatch. ADR-8 contract.
 - `src/fa/inner_loop/hooks/builtin.py` — `PauseGuard`, `CapabilityGuard`, `SandboxHook`, `ApprovalHook`, `AuditHook`, `VerifierObserver`, `LearningObserver` (R-8 canon writer).
@@ -65,7 +67,7 @@ Materialised ADR-7 + ADR-8 runtime. Smoke: `fa inner-loop-smoke --workspace . --
 - `src/fa/inner_loop/recovery/` — pure data layer for R-3 + R-6: `classify.py` (deterministic error→action table), `attempt_history.py` (sliding-window JSON writer).
 - `src/fa/inner_loop/bash_intent.py` — AST-backed (`bashlex`) `fs.run_bash` effect analyzer; classifies a command into READ_ONLY / VERIFY_ONLY / INDEX_WRITE / REPO_WRITE / OPAQUE_EXEC so `IntentGuard` can apply the draft-first contract to shell writes. Fails closed to OPAQUE_EXEC.
 - `src/fa/inner_loop/pr_draft.py` — `PrDraftStore`: current-session trusted PR-draft store at `~/.fa/state/runs/<run_id>/pr_draft.md`; atomic write + content-digest provenance so `IntentGuard` trusts only drafts produced this run (rejects stale / externally-fabricated files).
-- `src/fa/inner_loop/state.py` — `SessionState` + `EventLog`; ADR-7 §7 JSONL schema.
+- `src/fa/inner_loop/state.py` — `SessionState` + `EventLog`; ADR-7 §7 JSONL schema; records full successful `ToolResult.result` payloads and supports `usage` / `session_summary` rows.
 - `src/fa/inner_loop/tools/` — `build_baseline_registry()` (three M-1 tools: `fs.read_file`, `fs.write_file`, `fs.run_bash`) + `build_prepare_pr_tool()` (`pr.prepare` — M-7 §Q-N producer of `~/.fa/state/runs/<run_id>/pr_draft.md`).
 - `src/fa/verifier/` — R-5 DSV module: `verify_action(contract, events)` against `verifiers/*.yaml` contracts.
 - `verifiers/` — vendored DSV contracts for M-1 tools + `edit_file.yaml`.
@@ -74,7 +76,7 @@ Materialised ADR-7 + ADR-8 runtime. Smoke: `fa inner-loop-smoke --workspace . --
 
 ADR-9 implementation. Per-role explicit provider chain with cooldown in `~/.fa/models.yaml`.
 
-- `src/fa/providers/base.py` — `ProviderAdapter` ABC + `ResponseInfo` canonical response.
+- `src/fa/providers/base.py` — `ProviderAdapter` ABC + `ResponseInfo` canonical response, including prompt-cache read/creation counters.
 - `src/fa/providers/chain.py` — `ProviderChain` ordered fallback; `chain_from_mapping()` YAML→chain constructor with family normalization.
 - `src/fa/providers/openai_compat.py` — `OpenAICompatProvider`; covers OpenRouter / Fireworks / NVIDIA / Groq / etc.
 - `src/fa/providers/anthropic.py` — `AnthropicProvider`; system-as-separate-field + tool-use content blocks.
@@ -144,6 +146,7 @@ Quality gates run in CI. `make check` (ruff + mypy + authoring-check + pytest) m
 - [knowledge/glossary.md](./knowledge/glossary.md): Term definitions. Listed in §MUST READ FIRST.
 - [knowledge/README.md](./knowledge/README.md): Knowledge folder layout, schemas for `trace/` files, file placement rules.
 - [knowledge/project-overview.md](./knowledge/project-overview.md): Four-pillar goal, minimalism-first principle, v0.1 scope, three-stage evolution. Listed in §MUST READ FIRST.
+- [knowledge/loop-improvement-workplan.md](./knowledge/loop-improvement-workplan.md): Active tracker for cache/context loop optimization tiers; lists landed foundation work and remaining/deferred phases.
 - [knowledge/BACKLOG.md](./knowledge/BACKLOG.md) (Large): Deferred ideas with unblock triggers. Includes R-7..R-14 deferred CI/QA recommendations (ty, custom Semgrep rules, DeepEval/Promptfoo, Tach, garak, CodeQL, Vulture, pytest-recording). Active milestones: M-6 (PR B), M-7 (PR C). Closed: M-1..M-5, I-9.
 - [knowledge/MAINTENANCE.md](./knowledge/MAINTENANCE.md): Cross-reference cascade rules — touch-lists for archiving, amending, superseding, adding files. Companion to `BACKLOG.md`.
 - [knowledge/architecture.md](./knowledge/architecture.md): High-level architecture overview (inner-loop runtime, provider chain, hook families, sandbox + draft-first enforcement, ADR-10 invariants) with Mermaid diagram.

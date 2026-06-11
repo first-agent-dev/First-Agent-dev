@@ -19,6 +19,7 @@ import fastjsonschema  # type: ignore[import-untyped]
 
 ToolPermission = Literal["read", "workspace"]
 ToolHandler = Callable[[Mapping[str, object]], "ToolResult"]
+ToolElider = Callable[[Any, int], str]
 
 # ADR-7 §2: ``"full"`` is reserved for a future ADR (full-system access
 # tier). v0.1 ships read + workspace only.
@@ -80,6 +81,8 @@ class ToolSpec:
     tags: tuple[str, ...] = ()
     output_schema: dict[str, object] | None = None
     defer_loading: bool = False
+    max_context_bytes: int = 4096
+    elide: ToolElider | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -88,6 +91,8 @@ class ToolSpec:
             raise ValueError("tool description is required")
         if not self.input_schema:
             raise ValueError("tool input_schema is required")
+        if self.max_context_bytes < 0:
+            raise ValueError("max_context_bytes must be >= 0")
         # ADR-7 §2 / Acceptance criterion 2: reject reserved permission tier early.
         # ``"full"`` is reserved for a future ADR; explicit named check produces
         # the canonical message documented in the ADR. Compare via ``cast`` to
@@ -210,6 +215,7 @@ class ToolRegistry:
 
 __all__ = [
     "ToolCall",
+    "ToolElider",
     "ToolError",
     "ToolHandler",
     "ToolPermission",

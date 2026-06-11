@@ -40,6 +40,18 @@ def test_registry_rejects_full_permission() -> None:
         )
 
 
+def test_tool_spec_rejects_negative_context_budget() -> None:
+    with pytest.raises(ValueError, match="max_context_bytes"):
+        ToolSpec(
+            name="test.bad_budget",
+            description="Bad budget.",
+            input_schema={"type": "object"},
+            permission="read",
+            handler=_echo,
+            max_context_bytes=-1,
+        )
+
+
 def test_registry_rejects_duplicate_tool_name() -> None:
     spec = ToolSpec(
         name="test.echo",

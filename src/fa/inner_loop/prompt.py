@@ -32,6 +32,7 @@ References:
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -242,20 +243,32 @@ def render_tool_specs(specs: tuple[ToolSpec, ...]) -> tuple[Mapping[str, Any], .
     shape at request-build time (see :func:`fa.providers.anthropic._tool_schema`);
     the driver never has to know which adapter is in use.
 
-    Determinism: output ordering matches input ordering; no extra
-    fields, no whitespace normalisation, no schema rewriting.
+    Determinism: specs are sorted by name and each mapping is round-tripped
+    through canonical JSON (``sort_keys=True`` and compact separators) so
+    equivalent tool sets produce byte-identical request payloads regardless
+    of registration order or input-schema key insertion order.
     """
-    return tuple(
-        {
+    rendered: list[Mapping[str, Any]] = []
+    for spec in sorted(specs, key=lambda item: item.name):
+        payload = {
             "type": "function",
             "function": {
                 "name": spec.name,
                 "description": spec.description,
-                "parameters": dict(spec.input_schema),
+                "parameters": spec.input_schema,
             },
         }
-        for spec in specs
-    )
+        rendered.append(
+            json.loads(
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+        )
+    return tuple(rendered)
 
 
 def build_system_message(extra: str = "", *, role: str = "coder") -> str:
