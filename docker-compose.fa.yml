@@ -40,6 +40,11 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
       - UV_CACHE_DIR=/tmp/uv-cache
+      # Loop entrypoint controls (all optional; omit FA_TASK for stand-by mode)
+      - FA_TASK
+      - FA_ROLE
+      - FA_MAX_TURNS
+      - FA_RUN_ID
       # Use deploy key exclusively; ignore any other SSH keys in the container
       - GIT_SSH_COMMAND=ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts
     env_file:

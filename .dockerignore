@@ -39,11 +39,13 @@ build
 
 # CI/CD and scripts (not needed in runtime image)
 .github
-scripts
+scripts/**
+!scripts/fa-entrypoint.sh
 
 # Documentation (not needed in runtime image)
 docs
 *.md
+!README.md
 
 # Test data and temporary files
 tests/test_data

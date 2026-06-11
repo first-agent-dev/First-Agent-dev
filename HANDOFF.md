@@ -13,6 +13,19 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
+**As of:** 2026-06-10 — Loop entrypoint wired (branch `devin/2026-06-10-loop-entrypoint-from-main`):
+`Dockerfile.fa` now bakes runtime dependencies + installs the `fa` CLI at build-time;
+`PYTHONPATH=/workspace/src` guarantees live-reload from the bind-mount without rebuilds;
+`scripts/fa-entrypoint.sh` provides dual-mode entrypoint (auto-run when `FA_TASK` is set,
+stand-by `sleep infinity` otherwise); `scripts/fa.service` bonus-fix removes stale
+`Requires=docker.service`. `SETUP_AIO.md` and `docker-compose.fa.yml` updated with
+entrypoint env vars. **Ready for first `fa inner-loop-smoke` inside the container.**
+
+**As of:** 2026-06-08 — ADR-11 **PR-10 follow-up PR-11 landed** (merge `c1d046a`, PR #11): V2/V11/V4 rule-correctness pass + PR-12 scope-prep. V2 `_extract_all` rewritten around an `_UNPROVABLE` sentinel (closes pass-1 BLOCKER-1/2/3); `_public_symbols` now returns defining `ast.stmt` nodes with per-node `node_input_hash` (HIGH-1, P2-HIGH-C); V11 self-contradiction split into a distinct `FA-AUTHORING-V11-CONTRADICTORY-ASSERT` code (HIGH-4); V4 exempts module-scope `pytest.skip(..., allow_module_level=True)` (HIGH-5); `_iter_decorated`→`_all_decorators` (MEDIUM-2); `SRC_SCOPE`/`TEST_SCOPE` hoisted into `_scan.py` (PR-12 prep); BACKLOG I-20/I-21/I-12-bis filed. **995 tests, 91.28 % cov, mypy strict (74 src files), ruff + pylint clean, `fa authoring-check` 0 diagnostics.** `RULE_ALLOWLIST` unchanged (3 callables). Next: PR-12 (kernel audit/corpus/advisory) then PR-13 (V4 evasion closure). Prior: 2026-06-06 — ADR-11 PR-2 landed (Level-1 rule packs); 2026-06-04 — CI/QA tooling hardening (R-1..R-6, R-15; local-first `just check`, advisory CI except sanity-check/audit/gitleaks; `uv.lock` deferred).
+
+**As of:** 2026-06-09 — Secrets Hardening PR (branch `devin/secrets-hardening`, residual fixes landed): Container integration, runtime redaction (`SecretRedactor` with base64/URL encoding detection + `SecretRedactorError` typed exception), `EventLog` redaction, `LearningObserver` redaction, `SecretGuard` v0.3 (base64/URL/interpolation detection), `~/.fa/.env` loader with specific exception handling (`_load_fa_dotenv`), deployment docs (Secrets Management subsection in SETUP_AIO.md + README), repo hygiene (expanded `.gitleaks.toml` allowlist + policy comments). **32 total tests** (18 redaction + 10 SecretGuard + 4 loader), all passing. ruff clean. All review warnings addressed: encoding bypass closed, typed error on empty secrets, graceful loader degradation, expanded test coverage.
+
+**As of:** 2026-06-08 — Linux deployment suite v2 landed: cross-reference-verified against three independent LLM research passes. Major changes from v1: removed Portainer/TLP/auto-login, conservative pruning (mask tracker, don't purge), Docker from docker.com apt repo with version pin, power-profiles-daemon in power-saver, UFW binds SSH to tailscale0 only, restic → B2 S3-compatible endpoint, weekly docker prune cron, systemd user service, `GIT_SSH_COMMAND` with `IdentitiesOnly=yes`, GitHub Ed25519 host key pinned in known_hosts, branch protection on `main`, pids_limit: 512. Added: `scripts/fa.service`, `scripts/backup-fa.sh`, `knowledge/SETUP_AIO.md` (step-by-step bootstrap).
 **As of:** 2026-06-11 — Multi-role workflow with PR Draft as Work Log (branch `devin/2026-06-11-multi-role-worklog`): Role-aware system prompts (`prompt.py`: planner/coder/eval); role-specific registries (`tools/__init__.py`: planner/eval read-only, coder full baseline); `--resume` flag on `fa run` preserves draft file across sessions; `drive_session()` passes `role` to `build_system_message()`. PR Draft (`pr_draft.md`) repurposed as living work log — planner writes plan, coder updates progress, eval appends verification. `scripts/fa-entrypoint.sh` fixes restart loop (child process, not exec). **Ready for multi-role orchestration smoke test.** Prior: 2026-06-10 — AIO deployment bootstrap follow-up (container healthy, `fa.service` active, git push verified).
 
 ### Landmarks (what landed)
@@ -54,26 +67,25 @@ Overwritten each session! Details live at the pointer, not here.
 
 Priority-ordered. Completed items deleted, not struck through.
 
-1. **Open SSH/service follow-up PR** (`devin/2026-06-10-ssh-and-service-fixes` → `main`). Contains: host `~/.ssh/config` auto-creation, `fa.service` removes `Requires=docker.service`, `SETUP_AIO.md` Phase 6b + clone URL fix + `fa-post-setup.sh` mention, `ssh-keygen -F` for known_hosts. Verify CI passes.
-2. **First real `fa run --task` smoke against OpenRouter / Fireworks.**
+1. **First real `fa run --task` smoke against OpenRouter / Fireworks.**
    The driver shipped in PR D + the `pr.prepare` producer landing
    in PR E together close the contract loop, but adapter
    response-shape coverage stays theoretical until this runs
    end-to-end against a live provider. Yellow→green conversion
    item; provider-specific adapter fixes likely (e.g., a vendor
    that returns `tool_calls` under a non-canonical key).
-3. **Cross-session aggregation of `attempt_history.json` (R-10 /
+2. **Cross-session aggregation of `attempt_history.json` (R-10 /
    R-12).** Per-run history is already written under
    `<workspace>/.fa/runs/<run_id>/`; the missing piece is the
    roll-up surface that Pillar-3 measurement depends on (lessons
    moving across sessions instead of being re-discovered).
-4. **Orphan cross-ref sweep — ≈26 files** from PR A' extraction.
+3. **Orphan cross-ref sweep — ≈26 files** from PR A' extraction.
    Top-10: `llms.txt` (9), `MAINTENANCE.md` (7), `ADR-10` (6),
    `DIGEST.md` (4), `ADR-7` (4). Retarget «AGENTS.md PR Checklist
    rule #N» → [`pr-creation/SKILL.md` §PR Checklist](./knowledge/skills/pr-creation/SKILL.md).
-5. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
+4. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
    number» audit; `[CODE]` namespace + A23 lint.
-6. **ADR-11 rollout PR 3 — parity + docs rules.** PR-2 landed
+5. **ADR-11 rollout PR 3 — parity + docs rules.** PR-2 landed
    2026-06-06 (V2 exports / V4 test-decay / V11 placeholder-asserts).
    Next: `src/fa/authoring_rules/parity.py` (V3 — `SQUASH_MSG`
    Python↔Bash drift, F-3) + `src/fa/authoring_rules/docs.py` (V5 —
@@ -81,12 +93,12 @@ Priority-ordered. Completed items deleted, not struck through.
    (`seam.py` V6 + `catch-corpus/` + `fp-corpus/` consumers) →
    PR 5 (`messages.py` V12 + advisory tuning). V10 stays deferred
    indefinitely per [`I-14`](./knowledge/BACKLOG.md#i-14--adr-11-pr-3-rule-packs-v3-v5-v7-v10-v12-v14).
-7. **Authoring-rules scope coverage** ([`I-12`](./knowledge/BACKLOG.md#i-12--authoring-rules-scope-coverage-gap-scripts-verifiers)).
+6. **Authoring-rules scope coverage** ([`I-12`](./knowledge/BACKLOG.md#i-12--authoring-rules-scope-coverage-gap-scripts-verifiers)).
    PR-2 V2 scopes only to `src/`; V4/V11 to `tests/`. Extend to
    `scripts/` and `verifiers/` once either tree grows beyond its
    current single-file footprint, OR a V2-class regression is
    detected manually there.
-8. **V4 import-alias bypass** ([`I-13`](./knowledge/BACKLOG.md#i-13--v4-import-alias-bypass-from-pytest-import-skip)).
+7. **V4 import-alias bypass** ([`I-13`](./knowledge/BACKLOG.md#i-13--v4-import-alias-bypass-from-pytest-import-skip)).
    `from pytest import skip; skip(...)` slips past `TEST_SEMANTIC_DECAY`
    today. Half-day fix (add an `ast` import-walker); land when an
    `fp-corpus` measurement (PR-4) shows a real bypass, or sooner if
