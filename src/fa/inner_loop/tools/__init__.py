@@ -25,12 +25,55 @@ def build_baseline_registry(
     registry = ToolRegistry()
     registry.register(build_read_file_tool(workspace_root))
     registry.register(build_write_file_tool(workspace_root))
-    registry.register(build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds))
+    registry.register(
+        build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds)
+    )
+    return registry
+
+
+def build_planner_registry(
+    workspace_root: Path,
+    *,
+    bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
+) -> ToolRegistry:
+    """Planner/Architect role: read-only tools only.
+
+    The planner analyses the codebase and produces plans — it does NOT
+    mutate workspace files. ``fs.write_file`` is deliberately absent.
+    ``fs.run_bash`` is available for reconnaissance (read-only commands).
+    """
+    registry = ToolRegistry()
+    registry.register(build_read_file_tool(workspace_root))
+    registry.register(
+        build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds)
+    )
+    return registry
+
+
+def build_eval_registry(
+    workspace_root: Path,
+    *,
+    bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
+) -> ToolRegistry:
+    """Eval/Reviewer role: read-only tools only.
+
+    The evaluator verifies completed work — it does NOT mutate workspace
+    files except to update the work log via ``pr.prepare`` (added separately
+    by the CLI in ``_cmd_run``). ``fs.run_bash`` is available for running
+    tests, linters, and other verification commands.
+    """
+    registry = ToolRegistry()
+    registry.register(build_read_file_tool(workspace_root))
+    registry.register(
+        build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds)
+    )
     return registry
 
 
 __all__ = [
     "build_baseline_registry",
+    "build_planner_registry",
+    "build_eval_registry",
     "build_prepare_pr_tool",
     "build_read_file_tool",
     "build_run_bash_tool",
