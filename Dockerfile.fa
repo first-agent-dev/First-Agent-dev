@@ -66,26 +66,6 @@ COPY --chmod=755 scripts/fa-entrypoint.sh /usr/local/bin/fa-entrypoint.sh
 # Create /run/secrets for deploy key + known_hosts bind-mounts
 RUN mkdir -p /run/secrets && chmod 755 /run/secrets
 
-# Install project + runtime dependencies so the `fa` command exists.
-# We copy sources to a build directory because /workspace is a runtime bind-mount.
-COPY --chown=fa:fa pyproject.toml uv.lock README.md /tmp/fa-build/
-COPY --chown=fa:fa src/ /tmp/fa-build/src/
-RUN cd /tmp/fa-build && uv pip install --system .
-
-# Ensure the `fa` console script is on PATH. uv may install it to
-# <sys.prefix>/bin/ (deep under uv's managed Python directory), which
-# is not on the default container PATH.
-RUN FA_BIN="$(python3 -c 'import sys; print(sys.prefix)')/bin/fa" && \
-    [ -f "$FA_BIN" ] && \
-    ln -sf "$FA_BIN" /usr/local/bin/fa
-
-# Make live bind-mounted source take precedence over the baked snapshot.
-ENV PYTHONPATH=/workspace/src
-
-# Entrypoint supports auto-run (FA_TASK env var) or stand-by (sleep infinity).
-COPY --chown=fa:fa scripts/fa-entrypoint.sh /usr/local/bin/fa-entrypoint.sh
-RUN chmod +x /usr/local/bin/fa-entrypoint.sh
-
 # Set up working directories
 RUN mkdir -p /workspace /config \
     && chown -R fa:fa /workspace /config /home/fa /run/secrets
@@ -96,12 +76,6 @@ RUN mkdir -p /workspace /config \
 USER fa
 WORKDIR /workspace
 
-<<<<<<< Updated upstream
-# Default: entrypoint decides between auto-run and stand-by
-ENTRYPOINT ["/usr/local/bin/fa-entrypoint.sh"]
-CMD []
-=======
 # Default: entrypoint enters stand-by mode. Passing a docker command
 # override (e.g. `bash`) execs that command instead.
 ENTRYPOINT ["/usr/local/bin/fa-entrypoint.sh"]
->>>>>>> Stashed changes

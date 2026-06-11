@@ -39,11 +39,7 @@ build
 
 # CI/CD and scripts (not needed in runtime image)
 .github
-<<<<<<< Updated upstream
-scripts/**
-=======
 scripts/*
->>>>>>> Stashed changes
 !scripts/fa-entrypoint.sh
 
 # Documentation (not needed in runtime image)

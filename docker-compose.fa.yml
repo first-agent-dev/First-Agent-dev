@@ -40,20 +40,12 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
       - UV_CACHE_DIR=/tmp/uv-cache
-<<<<<<< Updated upstream
-      # Loop entrypoint controls (all optional; omit FA_TASK for stand-by mode)
-      - FA_TASK
-      - FA_ROLE
-      - FA_MAX_TURNS
-      - FA_RUN_ID
-=======
       - PYTHONPATH=/workspace/src
-      # Default is inspectable stand-by. Set FA_AUTO_RUN=1 plus FA_TASK
-      # or FA_TASK_FILE in .env.fa (or the host environment) for a
-      # deliberate one-shot startup run.
+      # Default is inspectable stand-by. For a deliberate one-shot
+      # startup run, set FA_AUTO_RUN=1 plus FA_TASK or FA_TASK_FILE
+      # in .env.fa (or pass them explicitly with docker compose run -e).
       - FA_WORKSPACE=/workspace
       - FA_CONTAINER_NAME=first-agent
->>>>>>> Stashed changes
       # Use deploy key exclusively; ignore any other SSH keys in the container
       - GIT_SSH_COMMAND=ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts
     env_file:

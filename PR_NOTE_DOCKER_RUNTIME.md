@@ -64,8 +64,11 @@ This PR finalizes the Dockerized FA runtime so it is usable for real coding work
 
 - `docker-compose.fa.yml`
   - Adds `PYTHONPATH=/workspace/src`, `FA_WORKSPACE=/workspace`, and `FA_CONTAINER_NAME=first-agent`.
-  - Documents that auto-run is opt-in via `.env.fa`/environment.
+  - Documents that auto-run is opt-in via `.env.fa` or explicit `docker compose run -e` overrides.
   - Changes healthcheck from “Python exists” to `fa --version` so it verifies the installed console script and imports.
+
+- `scripts/fa.service`
+  - Restores `Requires=docker.service` so the user service has a hard dependency on Docker, not just ordering.
 
 - `scripts/fa-entrypoint.sh`
   - Command override mode runs first and always `exec`s the provided command.
