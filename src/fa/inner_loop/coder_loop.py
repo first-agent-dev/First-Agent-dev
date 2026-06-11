@@ -70,7 +70,10 @@ from typing import Any
 
 from fa.inner_loop.hooks.base import HookPayload, HookRegistry, LifecyclePoint
 from fa.inner_loop.loop import run_session
-from fa.inner_loop.prompt import build_system_message, render_tool_specs
+from fa.inner_loop.prompt import (
+    build_system_message,
+    render_tool_specs,
+)
 from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult
 from fa.inner_loop.runtime_limits import RuntimeLimits
 from fa.inner_loop.state import SessionState
@@ -206,7 +209,7 @@ def drive_session(
 
     effective_limits = limits if limits is not None else RuntimeLimits.anchored_defaults()
     tool_payload = render_tool_specs(registry.specs())
-    system_message = build_system_message(system_prompt_extra)
+    system_message = build_system_message(system_prompt_extra, role=role)
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_message},
         {"role": "user", "content": task},
