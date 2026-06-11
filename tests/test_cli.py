@@ -384,6 +384,47 @@ def test_fa_run_returns_zero_on_clean_stop(
     assert messages[0]["role"] == "system"
 
 
+def test_fa_run_rejects_empty_task(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
+    args = _make_run_args(workspace=tmp_path, config=tmp_path / "models.yaml", task=" \n\t")
+
+    exit_code = _cmd_run(args, transport=_ScriptedTransport([]))
+
+    assert exit_code == 2
+    assert "--task must be non-empty" in capsys.readouterr().err
+
+
+def test_fa_run_rejects_unsafe_run_id(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
+    args = _make_run_args(workspace=tmp_path, config=tmp_path / "models.yaml", run_id="../escape")
+
+    exit_code = _cmd_run(args, transport=_ScriptedTransport([]))
+
+    assert exit_code == 2
+    assert "--run-id" in capsys.readouterr().err
+
+
+def test_fa_run_configuration_error_returns_two_without_traceback(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    args = _make_run_args(workspace=tmp_path, config=config)
+
+    exit_code = _cmd_run(args, transport=_ScriptedTransport([]))
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "configuration error" in captured.err
+    assert "TEST_FA_RUN_KEY" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_fa_run_returns_two_when_role_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

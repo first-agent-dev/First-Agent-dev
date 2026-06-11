@@ -136,9 +136,18 @@ EOF
 
 2. Docker Compose loads `.env.fa` via `env_file:` (see `docker-compose.fa.yml`).
 
-3. `models.yaml` lives in `/srv/first-agent/state/` (persistent bind-mount, auto-copied by `setup-fa-desktop.sh`).
+3. Default container mode is stand-by for manual operation:
+   ```bash
+   docker exec -it first-agent bash
+   fa run --task "inspect the repo" --role planner --workspace /workspace
+   ```
+   For an intentional one-shot startup run, set `FA_AUTO_RUN=1` plus either
+   `FA_TASK` or `FA_TASK_FILE`; the entrypoint writes
+   `/workspace/.fa/entrypoint-status.txt` and then returns to stand-by.
 
-4. Backup credentials (`B2_KEY_ID`, `B2_APPLICATION_KEY`) go in `/srv/first-agent/secrets/backup.env`, NOT in `.env.fa`.
+4. `models.yaml` lives in `/srv/first-agent/state/` (persistent bind-mount, auto-copied by `setup-fa-desktop.sh`).
+
+5. Backup credentials (`B2_KEY_ID`, `B2_APPLICATION_KEY`) go in `/srv/first-agent/secrets/backup.env`, NOT in `.env.fa`.
 
 ### Secrets Management
 

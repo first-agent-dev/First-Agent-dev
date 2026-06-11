@@ -270,6 +270,7 @@ This is idempotent — safe to re-run after any future `git pull` or `docker com
 - If you **manually** run `docker compose down`, it stays down until you run `up` again.
 - If you want the container to restart even after a manual `docker stop`, change to `restart: always` in `docker-compose.fa.yml`.
 
+<<<<<<< Updated upstream
 **Container entrypoint:** The Dockerfile now uses `fa-entrypoint.sh` as its entrypoint.
 
 - **Stand-by mode (default):** If `FA_TASK` is unset, the container runs `sleep infinity`
@@ -286,6 +287,18 @@ This is idempotent — safe to re-run after any future `git pull` or `docker com
   case), leave `FA_TASK` unset.
 - `PYTHONPATH=/workspace/src` ensures the container always uses the live bind-mounted
   source code without requiring a rebuild after edits.
+=======
+**Container entrypoint behavior:** The image uses `scripts/fa-entrypoint.sh` as its entrypoint.
+By default it enters inspectable stand-by mode (`sleep infinity`) so operators run FA manually via `docker exec`:
+
+```bash
+docker exec -it first-agent bash
+fa --version
+fa run --task "inspect the repo and propose a plan" --role planner --workspace /workspace
+```
+
+For a deliberate one-shot startup run, set `FA_AUTO_RUN=1` plus either `FA_TASK` or `FA_TASK_FILE` (not both). The entrypoint runs `fa run` as a child process, writes `/workspace/.fa/entrypoint-status.txt`, then returns to stand-by instead of exiting; this prevents `restart: unless-stopped` from re-running the same task in a restart loop. Prefer `FA_TASK_FILE=tasks/<name>.md` for long plan-following workflows; the file must resolve inside `/workspace`. Use `FA_RUN_ID=<stable-id>` and `FA_RESUME=1` to switch roles across sessions while preserving the work log.
+>>>>>>> Stashed changes
 
 **Enable auto-start on boot:**
 
