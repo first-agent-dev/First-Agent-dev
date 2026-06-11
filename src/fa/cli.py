@@ -34,7 +34,12 @@ from fa.inner_loop.hooks import (
     VerifierObserver,
 )
 from fa.inner_loop.pr_draft import PrDraftStore
-from fa.inner_loop.tools import build_baseline_registry, build_prepare_pr_tool
+from fa.inner_loop.tools import (
+    build_baseline_registry,
+    build_eval_registry,
+    build_planner_registry,
+    build_prepare_pr_tool,
+)
 from fa.observability import CostGuardian
 from fa.observability.redaction import SecretRedactor, SecretRedactorError
 from fa.providers import (
@@ -194,6 +199,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--run-id",
         default="",
         help="Override the run_id (default: derived from PID).",
+    )
+    run_parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=False,
+        help=(
+            "Resume an existing workflow session. Preserves the PR draft file "
+            "on disk so this session can read the previous role's work log, "
+            "then update it with fresh progress."
+        ),
     )
     run_parser.set_defaults(func=_cmd_run)
 
@@ -400,18 +415,58 @@ def _cmd_run(
     chain = _build_provider_chain(chain_config, transport=effective_transport)
 
     limits = load_runtime_limits_from_path().limits
-    registry = build_baseline_registry(
-        workspace,
-        bash_timeout_seconds=limits.bash_timeout_seconds,
-    )
+    # Role-aware registry: planner/eval get read-only tools, coder gets
+    # the full baseline (read + write + bash).
+    role = args.role
+    if role == "planner":
+        registry = build_planner_registry(
+            workspace,
+            bash_timeout_seconds=limits.bash_timeout_seconds,
+        )
+    elif role == "eval":
+        registry = build_eval_registry(
+            workspace,
+            bash_timeout_seconds=limits.bash_timeout_seconds,
+        )
+    else:
+        registry = build_baseline_registry(
+            workspace,
+            bash_timeout_seconds=limits.bash_timeout_seconds,
+        )
+
     run_id = args.run_id or f"run-{os.getpid()}"
     # M-7 §Q-N: ``pr.prepare`` is the producer side of the
     # IntentGuard read seam. The shared ``PrDraftStore`` binds the
     # stable on-disk path to current-session provenance so stale or
     # externally-fabricated drafts are not trusted by the guard.
-    draft_store = PrDraftStore(Path.home() / ".fa" / "state" / "runs" / run_id / "pr_draft.md")
+    draft_path = Path.home() / ".fa" / "state" / "runs" / run_id / "pr_draft.md"
+    draft_store = PrDraftStore(draft_path)
+
+    # --resume preserves the on-disk draft for the next role to read;
+    # only the in-memory SHA-256 digest is reset, which forces the
+    # current session to re-establish trust via a fresh ``pr.prepare``
+    # call before any mutating tool is allowed (IntentGuard contract).
+    # ``getattr`` fallback keeps pre-``--resume`` tests working.
+    resume = getattr(args, "resume", False)
+
+    # When resuming, inject the previous session's draft content as
+    # system-prompt extra so the LLM sees the existing plan/work-log
+    # from turn 1. This bridges the cross-session continuity gap:
+    # the draft lives under ~/.fa/state/ (not /workspace) so
+    # fs.read_file cannot reach it, but the system prompt can.
+    resume_draft_text: str = ""
+    if resume and draft_path.is_file():
+        try:
+            resume_draft_text = draft_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(
+                f"fa run: warning — could not read existing draft "
+                f"at {draft_path}: {exc}",
+                file=sys.stderr,
+            )
+
     try:
-        draft_store.clear(remove_file=True)
+        draft_store.clear(remove_file=not resume)
     except OSError as exc:
         print(
             f"fa run: failed to reset PR draft path {draft_store.path}: {exc}",
@@ -470,10 +525,11 @@ def _cmd_run(
         registry=registry,
         hooks=hooks,
         state=state,
-        role=args.role,
+        role=role,
         acting_family=chain_config.family,
         limits=limits,
         max_turns=args.max_turns,
+        system_prompt_extra=resume_draft_text,
     )
     status = "OK" if outcome.exit_code == 0 else "ERROR"
     print(f"{status}: {outcome.stop_reason} (turns={outcome.turns})")

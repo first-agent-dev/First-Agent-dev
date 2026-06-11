@@ -38,7 +38,22 @@ def test_build_system_message_appends_extra_after_blank_line() -> None:
     message = build_system_message("workspace: /tmp/wk")
     assert message.startswith(CODER_SYSTEM_PROMPT)
     assert message.endswith("workspace: /tmp/wk")
-    assert "\n\nworkspace: /tmp/wk" in message
+    assert "\n\n## Previous Work Log\nworkspace: /tmp/wk" in message
+
+
+def test_build_system_message_with_role_uses_role_prompt() -> None:
+    message = build_system_message(role="planner")
+    assert "You are the First-Agent planner" in message
+    assert message.startswith("You are the First-Agent planner")
+
+    message = build_system_message(role="eval")
+    assert "You are the First-Agent evaluator" in message
+    assert message.startswith("You are the First-Agent evaluator")
+
+
+def test_build_system_message_unknown_role_falls_back_to_coder() -> None:
+    message = build_system_message(role="nonexistent_role")
+    assert message.startswith(CODER_SYSTEM_PROMPT)
 
 
 def test_build_system_message_is_byte_deterministic() -> None:
