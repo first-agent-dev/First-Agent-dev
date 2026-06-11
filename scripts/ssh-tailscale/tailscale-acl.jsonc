@@ -1,0 +1,59 @@
+// tailscale-acl.jsonc — access policy for the AIO at the Tailscale control plane.
+//
+// WHERE: login.tailscale.com -> Access Controls. This is the WHOLE policy file;
+// saving REPLACES your current one, so this file is self-contained and valid.
+// It is NOT applied by any host script.
+//
+// MODEL (recommended for a single operator with many devices):
+//   * You reach the AIO with **Tailscale SSH** (`tailscale up --ssh`) — auth is
+//     your Tailscale identity, NOT an SSH key. Governed by the "ssh" rules below.
+//   * The AIO is **tagged** `tag:aio` so its node key never expires (a headless
+//     24/7 server otherwise gets logged out ~every 6 months) and so rules refer
+//     to a stable identity, not a device name.
+//
+// SAFE ROLLOUT ORDER (do NOT skip — tagging can lock you out otherwise):
+//   1. Save THIS policy first (it keeps the default "autogroup:self" ssh rule as
+//      a safety net AND adds the "tag:aio" rule).
+//   2. On the AIO:  sudo tailscale up --ssh --advertise-tags=tag:aio
+//   3. From a second device, confirm `ssh fa@fa-hp` still works — keep your
+//      current session open and the physical console handy until confirmed.
+//
+// Notes for a solo tailnet: "autogroup:member" and "autogroup:admin" are both
+// just you (the owner). "check" = re-confirm your SSO login before a session;
+// "checkPeriod" sets how long that confirmation lasts (here 24h; Tailscale's
+// default is 12h). Switch "check" -> "accept" if you want no re-auth prompt at all.
+{
+  "tagOwners": {
+    // Who may assign/own tag:aio. (You, as tailnet admin.)
+    "tag:aio": ["autogroup:admin"]
+  },
+
+  // Network-layer reachability. Kept permissive for a single-user tailnet so you
+  // never accidentally lock yourself out; tighten later if you add other people
+  // (e.g. replace "*" with "autogroup:member" and "*:*" with "tag:aio:22").
+  "acls": [
+    { "action": "accept", "src": ["*"], "dst": ["*:*"] }
+  ],
+
+  // Tailscale SSH rules — this is what actually governs your shell access.
+  "ssh": [
+    // Safety net: reach your own UNTAGGED personal devices (Tailscale default).
+    // Harmless to keep; it does NOT match the tagged AIO.
+    {
+      "action": "check",
+      "checkPeriod": "24h",
+      "src": ["autogroup:member"],
+      "dst": ["autogroup:self"],
+      "users": ["autogroup:nonroot", "root"]
+    },
+    // The AIO: any of your devices may open a Tailscale SSH session AS the local
+    // "fa" account (the agent's user). Not root — least privilege.
+    {
+      "action": "check",
+      "checkPeriod": "24h",
+      "src": ["autogroup:member"],
+      "dst": ["tag:aio"],
+      "users": ["fa"]
+    }
+  ]
+}

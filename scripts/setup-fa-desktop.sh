@@ -6,7 +6,7 @@
 # WARNING: modifies system settings (SSH, firewall, systemd, Docker, cron).
 #
 # Override defaults via environment:
-#   FA_USER=fa-operator  REPO_URL=https://... bash scripts/setup-fa-desktop.sh
+#   FA_USER=fa  REPO_URL=https://... bash scripts/setup-fa-desktop.sh
 
 set -euo pipefail
 
