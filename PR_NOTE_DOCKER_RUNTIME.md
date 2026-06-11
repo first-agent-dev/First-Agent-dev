@@ -70,13 +70,6 @@ This PR finalizes the Dockerized FA runtime so it is usable for real coding work
 - `scripts/fa.service`
   - Restores `Requires=docker.service` so the user service has a hard dependency on Docker, not just ordering.
 
-<<<<<<< Updated upstream
-=======
-- `scripts/fa-update.sh`
-  - Adds a host-side update/deploy helper for the AIO install.
-  - Fixes CI/review issues from the proposed script: tracks `Dockerfile.fa` rather than `Dockerfile`, ignores commented optional `FA_*` template rows during env validation, syncs dev dependencies in writable `/workspace` instead of read-only `/opt/first-agent`, persists `.env.fa` hash only after deploy succeeds, and runs tests through `uv run`.
-
->>>>>>> Stashed changes
 - `scripts/fa-entrypoint.sh`
   - Command override mode runs first and always `exec`s the provided command.
   - Default mode is stand-by (`sleep infinity`) for manual `docker exec` workflows.
