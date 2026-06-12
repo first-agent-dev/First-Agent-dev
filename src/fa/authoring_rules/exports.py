@@ -113,15 +113,19 @@ def _extract_all(tree: ast.Module) -> set[str] | None:
                 working = _UNPROVABLE
             else:
                 # working is a set (narrowed by the conditions above)
-                assert isinstance(working, set)
+                # Waiver: type-narrowing for mypy strict, not validation.
+                assert isinstance(working, set)  # noqa: S101
                 working = working | names
     if working is None or working is _UNPROVABLE:
         return None
-    assert isinstance(working, set)
+    # Waiver: type-narrowing for mypy strict, not validation.
+    assert isinstance(working, set)  # noqa: S101
     return working
 
 
-def _public_symbols(tree: ast.Module) -> dict[str, ast.stmt]:
+# C901-baseline waiver (16>15): AST walk over many node kinds; split when
+# next touched.
+def _public_symbols(tree: ast.Module) -> dict[str, ast.stmt]:  # noqa: C901
     """Return ``{name: defining_node}`` for every public top-level symbol.
 
     "Public top-level" means: (a) the body of the module (no recursion

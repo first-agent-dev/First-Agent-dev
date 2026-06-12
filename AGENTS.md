@@ -199,6 +199,18 @@ New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this t
 
 - Branch: `devin/<timestamp>-<slug>` from `main`.
 - All changes via Pull Request.
+- **Lint is autofix-first.** After editing code run `just fix`
+  (ruff autofix + format) — it mechanically resolves all style findings
+  (import order, `__all__` sorting, quoting, line wrapping). Never hand-fix
+  or memorise style rules; they are not part of your job. Gate before push:
+  `just check`.
+- **Judgment rules (not autofixable).** `S` (security), `BLE001`
+  (blind except), `C901` (complexity > 15), and pylint `duplicate-code`
+  findings mean: fix the design, not the lint line. A waiver
+  (`# noqa: <code> — <one-line reason>`) is allowed ONLY when the
+  flagged pattern is the intended design (e.g. a fail-closed boundary,
+  a sandboxed `shell=True`); never waive to silence a finding you do
+  not understand.
 - Commit messages: descriptive, English, present tense (`docs: add architecture note`).
 - Never push directly to `main`.
 - **`AI-Session:` git trailer** rule (per-commit; example included) lives in the [`pr-creation` skill §AI-Session trailer](./knowledge/skills/pr-creation/SKILL.md#ai-session-trailer)

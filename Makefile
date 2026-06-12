@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck authoring-check test check run audit deadcode
+.PHONY: install lint fix format typecheck authoring-check test lock-check check run audit deadcode
 
 install:
 	uv sync
@@ -8,10 +8,14 @@ lint:
 	ruff check .
 	ruff format --check .
 	deptry src/
+	pylint src/fa
 
-format:
-	ruff check --fix .
+fix:
+	ruff check --fix-only .
 	ruff format .
+	ruff check .
+
+format: fix
 
 typecheck:
 	mypy
@@ -20,9 +24,12 @@ authoring-check:
 	fa authoring-check
 
 test:
-	pytest
+	pytest --cov=fa --cov-report=term-missing --cov-report=xml
 
-check: lint typecheck authoring-check test
+lock-check:
+	uv lock --locked
+
+check: lock-check lint typecheck authoring-check test
 
 run:
 	fa --help

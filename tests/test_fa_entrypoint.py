@@ -33,7 +33,7 @@ def _write_fa_stub(bin_dir: Path, exit_code: int = 0) -> Path:
     stub = bin_dir / "fa"
     stub.write_text(
         "#!/usr/bin/env bash\n"
-        "printf '%q ' \"$@\" >> \"$FA_STUB_CALLS\"\n"
+        'printf \'%q \' "$@" >> "$FA_STUB_CALLS"\n'
         "printf '\\n' >> \"$FA_STUB_CALLS\"\n"
         f"exit {exit_code}\n",
         encoding="utf-8",

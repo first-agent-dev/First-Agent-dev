@@ -248,7 +248,9 @@ class SessionOutcome:
     tool_results: tuple[ToolResult, ...] = field(default_factory=tuple)
 
 
-def drive_session(
+# C901-baseline waiver (25>15): top-level session driver; decompose per
+# loop-improvement-workplan BEFORE adding more branches.
+def drive_session(  # noqa: C901
     task: str,
     *,
     provider_chain: ProviderChain,
@@ -341,7 +343,8 @@ def drive_session(
 
     def record_usage(response: ResponseInfo) -> None:
         nonlocal usage_turns
-        assert state.log is not None
+        # Waiver: internal invariant (log attached before loop starts).
+        assert state.log is not None  # noqa: S101
         row = _usage_event_content(response)
         state.log.append(actor="runtime", kind="usage", content=row)
         for key, value in row.items():
@@ -350,7 +353,8 @@ def drive_session(
 
     def finish(outcome: SessionOutcome) -> SessionOutcome:
         nonlocal summary_written
-        assert state.log is not None
+        # Waiver: internal invariant (log attached before loop starts).
+        assert state.log is not None  # noqa: S101
         if not summary_written:
             state.log.append(
                 actor="runtime",

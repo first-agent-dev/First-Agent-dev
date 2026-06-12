@@ -51,7 +51,8 @@ from fa.roles import FamilyExtractionError, extract_family
 DEFAULT_COOLDOWN_SECONDS = 300
 DEFAULT_HTTPX_RETRIES = 1
 DEFAULT_TIMEOUT_SECONDS = 60
-LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0"})
+# Waiver: allowlist for DETECTING local endpoints, not a bind address.
+LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0"})  # noqa: S104
 RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset(
     {"__internal__", "__metadata__", "__fallback_marker__"}
 )

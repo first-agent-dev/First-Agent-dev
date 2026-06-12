@@ -70,7 +70,11 @@ class UrllibTransport(Transport):
         timeout_seconds: float,
     ) -> TransportResponse:
         body_bytes = json.dumps(json_body).encode("utf-8")
-        request = urllib.request.Request(url, data=body_bytes, method="POST")
+        # Waiver: scheme constrained to https/http by provider-config
+        # validation upstream.
+        request = urllib.request.Request(  # noqa: S310
+            url, data=body_bytes, method="POST"
+        )
         # Defensive: urllib.request.Request does not set Content-Type
         # automatically in all Python versions when data is provided.
         # Set it here unless the caller already provided one, so a
@@ -82,7 +86,11 @@ class UrllibTransport(Transport):
             if key.lower() != "user-agent":
                 request.add_header(key, value)
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            # Waiver: scheme constrained to https/http by provider-config
+            # validation upstream.
+            with urllib.request.urlopen(  # noqa: S310
+                request, timeout=timeout_seconds
+            ) as response:
                 status = int(response.status)
                 raw = response.read()
                 retry_after = _parse_retry_after(response.headers.get("Retry-After"))
