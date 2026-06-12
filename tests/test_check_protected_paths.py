@@ -124,6 +124,74 @@ def test_main_fail_on_touch(tmp_path: Path) -> None:
     assert exit_code == 1
 
 
+def test_dependency_hits_matches_manifests_only() -> None:
+    paths = ["pyproject.toml", "uv.lock", "src/fa/cli.py", "./pyproject.toml"]
+    assert cpp.dependency_hits(paths) == ["pyproject.toml", "uv.lock"]
+    assert cpp.dependency_hits(["docs.md"]) == []
+
+
+def test_main_flags_dependency_manifest_non_blocking(
+    tmp_path: Path, capsys: CaptureFixture[str]
+) -> None:
+    # Supply-chain tier: editing pyproject.toml annotates (slopsquatting
+    # review prompt) but never blocks, and is not a TCB hit.
+    _init_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    _git(tmp_path, "checkout", "-b", "feature")
+    _git(tmp_path, "add", "pyproject.toml")
+    _git(tmp_path, "commit", "-m", "add dep manifest")
+
+    exit_code = cpp.main(["--base", "main", "--repo-root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "::warning file=pyproject.toml::dependency manifest modified" in captured.out
+    assert "no protected/TCB paths touched" in captured.out
+
+
+def test_added_suppressions_flags_new_noqa_only(tmp_path: Path) -> None:
+    # Pre-existing waivers must NOT re-flag; only lines ADDED in the diff.
+    _init_repo(tmp_path)
+    (tmp_path / "mod.py").write_text("x = 1  # noqa: S105\ny = 2\n", encoding="utf-8")
+    _git(tmp_path, "add", "mod.py")
+    _git(tmp_path, "commit", "-m", "baseline with existing waiver")
+    _git(tmp_path, "checkout", "-b", "feature")
+    (tmp_path / "mod.py").write_text(
+        "x = 1  # noqa: S105\ny = 2  # type: ignore[assignment]\nz = 3\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", "mod.py")
+    _git(tmp_path, "commit", "-m", "add new suppression")
+
+    hits = cpp.added_suppressions("main", tmp_path)
+    assert len(hits) == 1
+    assert hits[0][0] == "mod.py"
+    assert "type: ignore" in hits[0][1]
+
+
+def test_added_suppressions_clean_diff_is_empty(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _git(tmp_path, "checkout", "-b", "feature")
+    (tmp_path / "clean.py").write_text("a = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "clean.py")
+    _git(tmp_path, "commit", "-m", "no suppressions")
+    assert cpp.added_suppressions("main", tmp_path) == []
+
+
+def test_main_flags_new_suppression_non_blocking(
+    tmp_path: Path, capsys: CaptureFixture[str]
+) -> None:
+    _init_repo(tmp_path)
+    _git(tmp_path, "checkout", "-b", "feature")
+    (tmp_path / "w.py").write_text("b = 2  # noqa: BLE001\n", encoding="utf-8")
+    _git(tmp_path, "add", "w.py")
+    _git(tmp_path, "commit", "-m", "waiver")
+
+    exit_code = cpp.main(["--base", "main", "--repo-root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert exit_code == 0  # annotation tier is never blocking
+    assert "::warning file=w.py::new suppression added" in captured.out
+
+
 def test_main_clean_diff_reports_ok(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
     _init_repo(tmp_path)
     (tmp_path / "docs.md").write_text("d\n", encoding="utf-8")

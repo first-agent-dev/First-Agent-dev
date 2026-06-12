@@ -185,7 +185,9 @@ class LoopGuard(GuardMiddleware):
             return
         try:
             self._warn_sink(detector, message)
-        except Exception:  # pylint: disable=broad-exception-caught
+        # Waiver: observer boundary — a failing warn sink must never block
+        # tool execution.
+        except Exception:  # noqa: BLE001, S110
             # Observers must never block tool execution; swallow any
             # error from the warn sink and move on.
             pass

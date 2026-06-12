@@ -221,6 +221,12 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
     # constructor below can type-narrow each ``found.get`` call to its
     # exact field type (avoids ``int | float`` unions leaking into the
     # constructor under mypy --strict).
+    # Reviewed duplicate-code waiver: the line-scanner skeleton below
+    # mirrors fa.config.load_capabilities by design — both implement the
+    # same hand-rolled YAML-subset walk documented in pyproject.toml
+    # (pyyaml dependency comment). Unify when the shared YAML loader
+    # lands (v0.2 HookRegistry PR, R-1); until then keep both in sync.
+    # pylint: disable=duplicate-code
     found: dict[str, int] = {}
     found_float: dict[str, float] = {}
     warnings: list[RuntimeLimitsWarning] = []

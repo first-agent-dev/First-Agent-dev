@@ -33,7 +33,9 @@ def build_run_bash_tool(
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
         try:
-            completed = subprocess.run(
+            # Waiver: shell=True is the tool's contract — fs.run_bash
+            # executes agent bash inside the sandbox boundary (ADR-6).
+            completed = subprocess.run(  # noqa: S602
                 command,
                 cwd=root,
                 shell=True,

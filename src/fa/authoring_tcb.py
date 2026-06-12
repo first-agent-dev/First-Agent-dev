@@ -610,7 +610,9 @@ def _dispatch_rules(rules: Iterable[Rule], context: RuleContext) -> list[RuleRes
     for rule in rules:
         try:
             results = rule(context)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Waiver: fail-closed by design — any rule crash MUST become a
+        # HARD-BLOCK diagnostic (ADR-11-I1).
+        except Exception as exc:  # noqa: BLE001
             # Fail-closed: any rule crash becomes a HARD-BLOCK diagnostic.
             collected.append(_rule_crash_diagnostic(rule, exc))
             continue

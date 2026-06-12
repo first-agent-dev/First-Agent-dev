@@ -79,7 +79,7 @@ _RM_DENIED_TARGETS: frozenset[str] = frozenset(
         "/sbin",
         "/srv",
         "/sys",
-        "/tmp",
+        "/tmp",  # noqa: S108 (entry in the system-path DENYLIST)
         "/usr",
         "/var",
     }

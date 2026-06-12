@@ -68,9 +68,14 @@ dev = [
   # Parallel type checker (Meta, stable 1.0). Advisory-only; does not
   # replace mypy. Run via `just typecheck-advisory`.
   "pyrefly>=1.0",
-  # Pylint (strict profile for src/, relaxed for tests/). Two-pass because
-  # pylint does not support per-directory rc natively.
+  # Pylint gap-checks profile (duplicate-code + cyclic-import only; the
+  # rest is covered by ruff/mypy). Run via `just lint`. Blocking gate.
   "pylint>=3.2",
+  # Dead-code detector. LLM agents leave orphaned helpers behind when they
+  # rewrite instead of refactor; vulture surfaces them. Run via
+  # `just deadcode`. Advisory (not in `just check`) — vulture cannot see
+  # dynamic dispatch, so findings need human judgement before deletion.
+  "vulture>=2.11",
 ]
 
 [project.scripts]
@@ -87,17 +92,44 @@ extend-exclude = ["catch-corpus", "fp-corpus"]
 [tool.ruff.lint]
 select = [
   "B",
+  # BLE: blind `except Exception` — top LLM-agent smell: defensive swallow
+  # that hides real bugs for months. Every legitimate broad catch carries
+  # an inline `# noqa: BLE001` + one-line rationale (machine-checked intent).
+  "BLE",
   "C4",
+  # C90: cyclomatic-complexity ratchet (mccabe). LLM code measurably trends
+  # toward bloated functions (GitClear 2025; Sonar 2025). Threshold below.
+  "C90",
   "E",
   "F",
   "I",
   "N",
+  # PGH: blanket-suppression guard — `# noqa` without codes (PGH004) or
+  # bare `# type: ignore` (PGH003) would silently disable ALL checks on a
+  # line; force agents to name the exact rule they are waiving.
+  "PGH",
   "PYI",
   "RUF",
+  # S: bandit-derived security floor — ~45% of AI-generated code carries
+  # OWASP-class flaws (Veracode 2025), so a deterministic SAST gate runs
+  # on every PR, not weekly-advisory Semgrep alone. Intentional sites carry
+  # `# noqa: S###` + rationale; tests are exempt via per-file-ignores.
+  "S",
   "UP",
   "W",
 ]
 ignore = []
+
+[tool.ruff.lint.mccabe]
+# Drift-stop, not a style opinion: existing offenders got explicit waivers;
+# NEW functions above 15 fail CI. Agents must decompose instead of growing
+# god-functions. Do not raise this; lower it as waivers retire.
+max-complexity = 15
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: `assert` IS the framework; fake tokens / subprocess fixtures /
+# tmp paths are test scaffolding, not production attack surface.
+"tests/**" = ["S"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["fa"]
@@ -118,13 +150,16 @@ exclude = ["^catch-corpus/", "^fp-corpus/"]
 # --cov gates: fail the suite if line coverage drops below the threshold set
 # in [tool.coverage.report] (fail_under). This is the primary "is it tested"
 # safety net for LLM-written code, which often ships logic with no test at all.
+# NOTE: coverage flags intentionally NOT in addopts. A bare `pytest
+# tests/test_x.py` must work for agents iterating on a single module
+# (a partial run would always "fail" the 90% gate and teach agents to
+# ignore red output). The gate lives in `just test` / CI, which run the
+# FULL suite with --cov; fail_under in [tool.coverage.report] still
+# blocks merges.
 addopts = [
   "-ra",
   "--strict-config",
   "--strict-markers",
-  "--cov=fa",
-  "--cov-report=term-missing",
-  "--cov-report=xml",
 ]
 testpaths = ["tests"]
 asyncio_mode = "auto"
@@ -169,96 +204,54 @@ tests_dir = ["tests/"]
 # (mutmut 3.x reads this; for a focused run use: mutmut run -- src/fa/sandbox/)
 
 # ---------------------------------------------------------------------------
-# Pylint configuration
+# Pylint configuration — "gap checks only" profile.
 #
-# Policy (see PR adding this block): "balanced". Pylint runs in CI via
-# .github/workflows/pylint.yml. We:
-#   * keep every Error/Warning that points at real risk,
-#   * silence purely-cosmetic Convention/Refactor checks that this codebase
-#     deliberately does not follow (docstrings on every symbol, hard caps on
-#     returns/branches/locals, dataclass "too few public methods", etc.),
-#   * gate CI on a score threshold via `fail-under` rather than on "zero
-#     messages", so style nits never block a merge but real regressions do.
+# Policy: pylint runs ONLY the checks ruff does not implement and that have
+# real value for an LLM-agent-managed codebase:
+#   * duplicate-code (R0801) — copy-paste-and-tweak is the #1 LLM-agent code
+#     smell; ruff has no cross-file duplication detector.
+#   * cyclic-import  (R0401) — import cycles are a structural drift signal;
+#     ruff has no whole-program import-graph analysis.
+# Everything else pylint can report is already covered by ruff (E/W/F/B/N/UP)
+# or mypy strict, so it is disabled to avoid double-reporting and the fuzzy
+# 9.0-score gate. The gate is now binary: ANY message fails (exit code != 0).
 #
-# IMPORTANT: the matching CI job MUST install the project + dev extras
-# (`pip install -e ".[dev]"`) before invoking pylint. Without that, pylint
-# cannot import markdown_it / yaml / bashlex / pytest and emits
-# spurious E0401 import-error messages.
+# Scope: src/ only (invoked as `pylint src/fa` from `just lint`). Tests are
+# NOT linted by pylint: duplicate-code is expected in parallel test
+# scaffolding and cyclic imports cannot occur in a flat tests/ tree.
+#
+# Waivers: a finding that is reviewed-and-accepted gets a file-level
+# `# pylint: disable=duplicate-code` comment WITH a rationale next to it.
+#
+# IMPORTANT: the invoking environment MUST have the project + dev extras
+# installed (`uv sync --frozen --extra dev`); otherwise pylint cannot build
+# the import graph for cyclic-import.
 # ---------------------------------------------------------------------------
 [tool.pylint.main]
 # Treat the project as a real package so intra-repo imports resolve.
 init-hook = "import sys; sys.path.insert(0, 'src')"
-# Belt-and-suspenders: if a CI env can't install a runtime dep, don't let a
-# missing third-party module masquerade as a code error.
-ignored-modules = []
 ignore-paths = ["catch-corpus/.*", "fp-corpus/.*"]
+# Explicit binary gate: ANY emission of these checks fails the run,
+# regardless of score arithmetic. Without fail-on, the gate rests on
+# "score < 10.0 implies exit != 0", which silently breaks if anyone
+# reintroduces a fail-under threshold below 10.
+fail-on = ["duplicate-code", "cyclic-import"]
 
 [tool.pylint."messages control"]
-disable = [
-    # --- cosmetic: documentation. This repo documents modules/ADRs richly
-    #     but does not require a docstring on every function/class. ---
-    "missing-module-docstring",       # C0114
-    "missing-class-docstring",        # C0115
-    "missing-function-docstring",     # C0116
-
-    # --- cosmetic/structural: size & shape heuristics. These are opinions,
-    #     not bugs; the code intentionally has small dataclasses, single-
-    #     method strategy classes, and dispatch functions with many returns. ---
-    "too-few-public-methods",         # R0903
-    "too-many-instance-attributes",   # R0902
-    "too-many-return-statements",     # R0911
-    "too-many-branches",              # R0912
-    "too-many-arguments",             # R0913
-    "too-many-locals",                # R0914
-    "too-many-statements",            # R0915
-    "too-many-nested-blocks",         # R1702
-
-    # NOTE: `duplicate-code` (R0801) is intentionally NOT disabled here. It is
-    # one of the highest-value checks for an LLM-assisted codebase, because
-    # agents tend to copy-paste-and-tweak instead of extracting shared helpers
-    # (which silently causes "fix one copy, the other keeps the bug" drift).
-    # It stays ENABLED for src/. The tests/ pass disables it separately (see
-    # .pylintrc-tests and .github/workflows/pylint.yml) because parallel test
-    # scaffolding/fixtures are legitimately similar.
-
-    # --- test-suite ergonomics: idioms that are normal in pytest/tests. ---
-    "redefined-outer-name",           # W0621 (pytest fixtures shadow by design)
-    "unused-argument",                # W0613 (test doubles must match signatures)
-    "protected-access",               # W0212 (tests legitimately poke internals)
-    "import-outside-toplevel",        # C0415 (lazy/local imports in tests & hot paths)
+disable = ["all"]
+enable = [
+    "duplicate-code",   # R0801 — not in ruff; key anti-copy-paste guard
+    "cyclic-import",    # R0401 — not in ruff; import-graph hygiene
 ]
-
-[tool.pylint.basic]
-# These dataclass attributes are capability/config FLAG names that map 1:1 to
-# external config keys; SCREAMING_SNAKE_CASE is intentional and must not be
-# renamed. Pylint treats dataclass fields as *variables*, so the knob is the
-# variable-name regex (allow snake_case OR SCREAMING_SNAKE_CASE), plus an
-# explicit allow-list for the five capability flags.
-variable-rgx = "^(?:[a-z_][a-z0-9_]*|[A-Z_][A-Z0-9_]*)$"
-good-names = [
-    "ENABLE_DYNAMIC_TOOLS",
-    "REQUIRE_DYNAMIC_TOOL_SANDBOX",
-    "ENABLE_MCP_GATEWAY_MANAGEMENT",
-    "ENABLE_DYNAMIC_MCP_SERVERS",
-    "ENABLE_SERVER_OPS",
-]
-
-[tool.pylint.format]
-max-line-length = 100
 
 [tool.pylint.similarities]
-# duplicate-code (R0801) tuning for src/. Keep it sensitive to real logic
-# copy-paste (the #1 LLM-agent code smell) but don't flag boilerplate:
+# duplicate-code (R0801) tuning. Keep it sensitive to real logic copy-paste
+# but don't flag boilerplate:
 min-similarity-lines = 6   # default 4; 6 avoids tiny incidental matches
 ignore-comments = true
 ignore-docstrings = true
 ignore-imports = true      # parallel import blocks in __init__.py are fine
 ignore-signatures = true   # similar function signatures are not duplication
-
-[tool.pylint.reports]
-# CI passes when the score is at or above this. Real Errors/Warnings drag the
-# score down fast, so regressions still fail; lingering style nits don't.
-fail-under = 9.0
 
 # ---------------------------------------------------------------------------
 # pytest-gremlins — native-Windows mutation testing (no fork / no WSL).
@@ -295,5 +288,5 @@ implicit-any-empty-container = false
 DEP002 = [
     "mypy", "pre-commit", "pytest", "pytest-asyncio", "pytest-cov",
     "mutmut", "ruff", "types-PyYAML", "pytest-gremlins", "pip-audit",
-    "deptry", "pyrefly", "pylint",
+    "deptry", "pyrefly", "pylint", "vulture",
 ]

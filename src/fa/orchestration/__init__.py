@@ -23,6 +23,9 @@ from fa.orchestration.pause import (
     write_resume,
 )
 
+# Reviewed duplicate-code waiver: this re-export list necessarily mirrors
+# fa.orchestration.pause.__all__ — that is the point of a package facade.
+# pylint: disable=duplicate-code
 __all__ = [
     "AUTH_PAUSE_FILE",
     "AUTH_RESUME_CHECK_INTERVAL_MS",

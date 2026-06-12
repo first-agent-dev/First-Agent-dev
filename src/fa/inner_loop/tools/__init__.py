@@ -25,9 +25,7 @@ def build_baseline_registry(
     registry = ToolRegistry()
     registry.register(build_read_file_tool(workspace_root))
     registry.register(build_write_file_tool(workspace_root))
-    registry.register(
-        build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds)
-    )
+    registry.register(build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds))
     return registry
 
 
@@ -44,9 +42,7 @@ def build_planner_registry(
     """
     registry = ToolRegistry()
     registry.register(build_read_file_tool(workspace_root))
-    registry.register(
-        build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds)
-    )
+    registry.register(build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds))
     return registry
 
 
@@ -64,16 +60,14 @@ def build_eval_registry(
     """
     registry = ToolRegistry()
     registry.register(build_read_file_tool(workspace_root))
-    registry.register(
-        build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds)
-    )
+    registry.register(build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds))
     return registry
 
 
 __all__ = [
     "build_baseline_registry",
-    "build_planner_registry",
     "build_eval_registry",
+    "build_planner_registry",
     "build_prepare_pr_tool",
     "build_read_file_tool",
     "build_run_bash_tool",

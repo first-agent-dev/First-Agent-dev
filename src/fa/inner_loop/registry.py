@@ -189,7 +189,9 @@ class ToolRegistry:
         # / SystemExit still propagate.
         try:
             return self._tools[call.name].handler(call.params)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Waiver: resilience boundary (ADR-7 §10) — handler crash becomes a
+        # structured ToolResult.fail.
+        except Exception as exc:  # noqa: BLE001
             # Intentional resilience boundary (ADR-7 §10): a crashing tool
             # handler becomes a structured ToolResult.fail so the paired
             # audit row is preserved. Exception (not BaseException) is caught

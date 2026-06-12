@@ -67,6 +67,13 @@ class BashCategory(StrEnum):
 
 
 # Fast-path sets. Lookups are O(1) per token.
+# Reviewed duplicate-code waiver: overlaps with
+# fa.inner_loop.bash_intent._READ_ONLY_COMMANDS, but the two sets
+# intentionally differ (bash_intent includes shell builtins `:`, `[`,
+# `test`, `true`, `false`; this set includes `env`, `type`) because they
+# classify at different layers. Do NOT blindly merge; if unifying, keep a
+# shared core set plus per-layer extensions.
+# pylint: disable=duplicate-code
 _READ_ONLY_TOKENS: frozenset[str] = frozenset(
     {
         "ls",
@@ -321,7 +328,9 @@ def _scan_tokens_for_danger(tokens: list[str]) -> BashCategory | None:
     return None
 
 
-def classify_command(command: str) -> BashCategory:
+# C901-baseline waiver (16>15): flat token-dispatch ladder, intentionally
+# exhaustive.
+def classify_command(command: str) -> BashCategory:  # noqa: C901
     """Classify ``command`` into a single :class:`BashCategory`.
 
     The classifier is deterministic and side-effect-free. When the

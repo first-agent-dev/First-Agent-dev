@@ -1,0 +1,1426 @@
+diff --git a/.github/workflows/advisory.yml b/.github/workflows/advisory.yml
+index 0e1cda5..4f8926f 100644
+--- a/.github/workflows/advisory.yml
++++ b/.github/workflows/advisory.yml
+@@ -39,7 +39,7 @@ jobs:
+       - name: Install Python dependencies
+         run: uv sync --frozen --extra dev
+ 
+-      - name: Run checks (ruff + deptry + mypy + authoring-check + pytest, with coverage gate)
++      - name: Run checks (ruff + deptry + pylint-gap + mypy + authoring-check + pytest, with coverage gate)
+         run: uv run just check
+ 
+       - name: Upload coverage report (read by GitHub Code coverage analysis)
+diff --git a/.github/workflows/pylint.yml b/.github/workflows/pylint.yml
+deleted file mode 100644
+index 9eaeb2a..0000000
+--- a/.github/workflows/pylint.yml
++++ /dev/null
+@@ -1,46 +0,0 @@
+-name: Pylint
+-
+-# Scoped to PRs and pushes to main, matching advisory.yml /
+-# authoring-guardrails.yml. Feature-branch pushes do NOT pay the pylint cost;
+-# the PR opening event picks them up. If you want per-push signal on a
+-# specific branch, add it to the `branches:` list below.
+-
+-on:
+-  pull_request:
+-  push:
+-    branches:
+-      - main
+-
+-permissions:
+-  contents: read
+-
+-jobs:
+-  build:
+-    runs-on: ubuntu-latest
+-    strategy:
+-      matrix:
+-        python-version: ["3.13"]
+-    steps:
+-    - uses: actions/checkout@v4
+-    - name: Set up uv
+-      uses: astral-sh/setup-uv@v8.2.0
+-    - name: Install system dependencies
+-      run: |
+-        sudo apt-get update
+-        sudo apt-get install -y universal-ctags
+-    - name: Install dependencies
+-      # Install the project + dev extras so pylint can IMPORT every module.
+-      # Without this, third-party imports (markdown_it, yaml, bashlex, pytest)
+-      # raise spurious E0401 import-error.
+-      run: uv sync --frozen --extra dev
+-    - name: Lint src/ (strict; duplicate-code ENABLED)
+-      # Production code is held to the strict profile in [tool.pylint.*]
+-      # (pyproject.toml). duplicate-code (R0801) stays ON here because
+-      # copy-paste-and-tweak is the #1 LLM-agent code smell.
+-      run: |
+-        uv run pylint $(git ls-files 'src/*.py' 'verifiers/*.py')
+-    - name: Lint tests/ (relaxed; duplicate-code DISABLED)
+-      # Tests use pytest idioms (fixtures shadow names, parallel scaffolding)
+-      # that are legitimately "duplicated"; relax via .pylintrc-tests.
+-      run: |
+-        uv run pylint --rcfile=.pylintrc-tests $(git ls-files 'tests/*.py')
+diff --git a/.pylintrc-tests b/.pylintrc-tests
+deleted file mode 100644
+index 3d2c195..0000000
+--- a/.pylintrc-tests
++++ /dev/null
+@@ -1,54 +0,0 @@
+-# Pylint config for the tests/ pass ONLY.
+-#
+-# Why a separate file: pylint does not auto-merge per-directory .pylintrc, so
+-# CI lints src/ and tests/ in two passes. src/ uses [tool.pylint.*] in
+-# pyproject.toml (with duplicate-code ENABLED to catch LLM copy-paste). This
+-# file is used for the tests/ pass, where we relax checks that are normal and
+-# healthy in a pytest suite.
+-#
+-# Usage:  pylint --rcfile=.pylintrc-tests $(git ls-files 'tests/*.py')
+-
+-[MAIN]
+-init-hook = "import sys; sys.path.insert(0, 'src')"
+-
+-[MESSAGES CONTROL]
+-disable =
+-    # Documentation: tests are self-documenting via their names.
+-    missing-module-docstring,
+-    missing-class-docstring,
+-    missing-function-docstring,
+-    # Shape heuristics: irrelevant for test helpers/doubles.
+-    too-few-public-methods,
+-    too-many-instance-attributes,
+-    too-many-return-statements,
+-    too-many-branches,
+-    too-many-arguments,
+-    too-many-locals,
+-    too-many-statements,
+-    too-many-nested-blocks,
+-    # duplicate-code: parallel test setups/fixtures are legitimately similar.
+-    # We accept that in tests but NOT in src/ (see pyproject.toml).
+-    duplicate-code,
+-    # pytest / test-double idioms:
+-    redefined-outer-name,   # pytest fixtures shadow their function name by design
+-    unused-argument,        # test doubles must match the real signature
+-    protected-access,       # tests legitimately assert on internal state
+-    import-outside-toplevel, # lazy/local imports keep test modules cheap to collect
+-    consider-using-from-import,
+-    reimported,
+-    # use-implicit-booleaness-not-comparison (C1803): in tests, `x == ()` /
+-    # `x == []` / `x == {}` is intentionally STRONGER than `not x` because it
+-    # also pins the return TYPE (tuple vs list vs dict vs None). These are
+-    # contract tests, so we keep the explicit comparisons and silence the rule
+-    # here only. See docs/C1803-fix-plan.md for the full rationale.
+-    use-implicit-booleaness-not-comparison
+-
+-[FORMAT]
+-max-line-length = 100
+-
+-[REPORTS]
+-# Gate on score, not on zero-messages (mirrors the src/ pyproject profile).
+-# C1803 (`== ()` vs `not x`) is intentionally left ENABLED but does not block:
+-# `assert x == ()` asserts emptiness AND exact-tuple type, which is *stronger*
+-# than `not x`, so we keep the assertions as-is and let the score gate decide.
+-fail-under = 9.0
+diff --git a/AGENTS.md b/AGENTS.md
+index 7314f56..0db812c 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -199,6 +199,18 @@ New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this t
+ 
+ - Branch: `devin/<timestamp>-<slug>` from `main`.
+ - All changes via Pull Request.
++- **Lint is autofix-first.** After editing code run `just fix`
++  (ruff autofix + format) — it mechanically resolves all style findings
++  (import order, `__all__` sorting, quoting, line wrapping). Never hand-fix
++  or memorise style rules; they are not part of your job. Gate before push:
++  `just check`.
++- **Judgment rules (not autofixable).** `S` (security), `BLE001`
++  (blind except), `C901` (complexity > 15), and pylint `duplicate-code`
++  findings mean: fix the design, not the lint line. A waiver
++  (`# noqa: <code> — <one-line reason>`) is allowed ONLY when the
++  flagged pattern is the intended design (e.g. a fail-closed boundary,
++  a sandboxed `shell=True`); never waive to silence a finding you do
++  not understand.
+ - Commit messages: descriptive, English, present tense (`docs: add architecture note`).
+ - Never push directly to `main`.
+ - **`AI-Session:` git trailer** rule (per-commit; example included) lives in the [`pr-creation` skill §AI-Session trailer](./knowledge/skills/pr-creation/SKILL.md#ai-session-trailer)
+diff --git a/HANDOFF.md b/HANDOFF.md
+index 25dc571..1cbb22d 100644
+--- a/HANDOFF.md
++++ b/HANDOFF.md
+@@ -13,6 +13,24 @@
+ 
+ Overwritten each session! Details live at the pointer, not here.
+ 
++**As of:** 2026-06-12 — CI guardrails v2 (failure-mode hardening): ruff gains `S`
++(security floor, src-blocking, tests exempt), `BLE` (blind-except), `C90`
++(complexity ratchet, max 15, 4 baseline waivers), `PGH` (blanket-suppression
++guard); pylint narrowed to gap-checks only (`duplicate-code` + `cyclic-import`,
++explicit `fail-on`, binary gate) — `pylint.yml` workflow + `.pylintrc-tests`
++deleted, pylint runs inside `just lint`; coverage flags moved from pytest
++`addopts` to `just test` (bare `pytest` is gate-free for iteration);
++`just fix` = `--fix-only` → `format` → `check` (format always runs);
++`check_protected_paths.py` adds two non-blocking annotation tiers: dependency
++manifests (slopsquatting review) and newly-added suppression markers
++(waiver audit). 26 inline waivers (rationale-above + short `noqa`) document
++every intentional S/BLE/C901 site. Research note:
++[`llm-agent-failure-modes-guardrails-2026-06.md`](./knowledge/research/llm-agent-failure-modes-guardrails-2026-06.md)
++(6 TAKEN / 2 DEFER — read-only `tests/**` sandbox policy and mutmut survivor
++budget are the named next guardrails). **1083 tests, 90.42 % cov, mypy strict
++(137 files), ruff/pylint/deptry/authoring-check clean, vulture wired
++(`just deadcode`).** Prior: 2026-06-11 — Loop foundation + Docker untangling.
++
+ **As of:** 2026-06-11 — Loop foundation + Docker untangling (branch `untangling-fix`):
+ Docker conflict markers resolved; `scripts/fa-entrypoint.sh` is stand-by by default and
+ auto-runs only with explicit `FA_AUTO_RUN=1`; `scripts/fa.service` restores
+diff --git a/Makefile b/Makefile
+index d3b48e0..d06697d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,4 +1,4 @@
+-.PHONY: install lint format typecheck authoring-check test check run audit deadcode
++.PHONY: install lint fix format typecheck authoring-check test lock-check check run audit deadcode
+ 
+ install:
+ 	uv sync
+@@ -8,10 +8,14 @@ lint:
+ 	ruff check .
+ 	ruff format --check .
+ 	deptry src/
++	pylint src/fa
+ 
+-format:
+-	ruff check --fix .
++fix:
++	ruff check --fix-only .
+ 	ruff format .
++	ruff check .
++
++format: fix
+ 
+ typecheck:
+ 	mypy
+@@ -20,9 +24,12 @@ authoring-check:
+ 	fa authoring-check
+ 
+ test:
+-	pytest
++	pytest --cov=fa --cov-report=term-missing --cov-report=xml
++
++lock-check:
++	uv lock --locked
+ 
+-check: lint typecheck authoring-check test
++check: lock-check lint typecheck authoring-check test
+ 
+ run:
+ 	fa --help
+diff --git a/PR_BODY_GUARDRAILS_V2.md b/PR_BODY_GUARDRAILS_V2.md
+new file mode 100644
+index 0000000..5bc691f
+--- /dev/null
++++ b/PR_BODY_GUARDRAILS_V2.md
+@@ -0,0 +1,84 @@
++CHORE: CI guardrails v2 — align gates with empirical LLM-agent failure modes
++
++## Intent
++
++`CHORE` (tooling/CI; one behavioural surface touched: `scripts/check_protected_paths.py` gains two annotation tiers, covered by new tests).
++
++- goal_lens: Verify FA's CI/guardrail stack covers the empirically dominant LLM coding-agent failure modes; close cheap gaps only.
++- project-axes advanced: A noise-reduction (agents stop hand-fixing style; one autofix loop), C goal_lens-advancement (failure-mode coverage closed for security/bloat/swallow/supply-chain).
++- subtraction evaluated: YES — removes `.github/workflows/pylint.yml`, `.pylintrc-tests`, and ~95 lines of pylint config; net config -201/+81 across tooling files. Every addition is a rule-group in already-running tools (ruff, pylint, existing CI script) — zero new tools on the PR critical path.
++- session-type: chore (CI/QA hardening)
++
++## Why
++
++Researched typical LLM coding-agent failure modes and cross-referenced against our gates
++(full note: `knowledge/research/llm-agent-failure-modes-guardrails-2026-06.md`, house R-N format):
++
++| Failure family (evidence) | Before this PR | After |
++| :--- | :--- | :--- |
++| Copy-paste duplication (GitClear: 8x duplicated-block growth 2024) | pylint duplicate-code, but **9.0 score gate silently absorbed findings** | binary gate: `disable=all` + `enable=[duplicate-code, cyclic-import]` + explicit `fail-on` |
++| Function bloat / complexity creep (Sonar 2025) | no gate | `C901 max-complexity=15` ratchet; 4 baseline waivers |
++| Test decay / verifier gaming (ImpossibleBench) | ADR-11 V4/V11 — already strong | unchanged; 2 follow-ups filed (see §Deferred) |
++| OWASP-class security defects (Veracode: 45% of AI code) | Semgrep weekly-advisory only — **no per-PR SAST** | ruff `S` (bandit) blocking on src/; tests exempt |
++| Silent error-swallowing | comment-only convention | `BLE`/`S110` blocking; intent now machine-checked |
++| Hallucinated deps / slopsquatting (~20% of AI code) | `uv lock` (existence) + pip-audit (known CVEs) — **intent unverified** | dependency-manifest PR annotation tier |
++| Gate bypass via suppression comments | unmonitored | `PGH` (no blanket `noqa`/`type: ignore`) + suppression-audit annotation tier |
++
++## What changed
++
++### Lint/CI policy (pyproject.toml, justfile, Makefile, workflows)
++
++- **ruff `select` += `S`, `BLE`, `C90`, `PGH`** (each with an in-config rationale comment). `tests/**` exempt from `S` via per-file-ignores (`assert` IS the framework there). `mccabe.max-complexity = 15` — comment forbids raising; lower it as waivers retire.
++- **pylint → gap-checks-only profile**: `disable=all`, `enable=[duplicate-code, cyclic-import]` (the two checks ruff lacks), `fail-on` both so the gate is binary and score-independent. Runs in `just lint` (~7s, src/ only). Deleted `pylint.yml` workflow and `.pylintrc-tests`.
++- **`just fix` contract fixed**: `ruff check --fix-only .` → `ruff format .` → `ruff check .`. Previous `--fix`-first ordering exited non-zero on any unfixable finding, skipping the format step exactly when an agent hit a judgment rule.
++- **Coverage gate moved out of pytest `addopts`** into `just test` / CI: bare `pytest tests/test_x.py` now works for single-file iteration; the 90% `fail_under` still blocks merges (full-suite runs).
++- **Makefile parity**: `lock-check` added to `make check` (was justfile-only → Windows devs could pass locally, fail CI); `fix` target mirrored.
++- `vulture` added to dev extras (the existing `just deadcode` recipe was a no-op without it); `uv.lock` regenerated.
++
++### Waivers (26 sites, all pre-existing code)
++
++Pattern: rationale comment **above**, short `# noqa: CODE` inline — because ruff's E501 exempts noqa-bearing lines, long inline rationales would live in a lint-free zone. Breakdown: 6×S101 (mypy narrowing asserts), 7×BLE001+1×S110 (documented observer/fail-closed boundaries), 4×C901 (baseline: `drive_session` 25, `load_contract` 18, `classify_command` 16, `_public_symbols` 16 — each annotated with its retirement path), 5×subprocess (fixed git argv / sandboxed `shell=True`), 2×S310, S104, S108. Two stale `pylint: disable-next=broad-exception-caught` directives removed.
++
++### `scripts/check_protected_paths.py` — two annotation tiers (non-blocking, same enforcement-ceiling as TCB flags)
++
++1. **Dependency manifests**: edits to `pyproject.toml`/`uv.lock` emit a `::warning` telling the reviewer to verify each package name (slopsquatting counter).
++2. **Suppression audit**: newly **added** diff lines (`.py` only, corpus dirs excluded) containing `noqa` / `pylint: disable` / `pragma: no cover` / `type: ignore` are annotated — every blocking gate in this repo is comment-bypassable, so waiver issuance is now visible at review. Pre-existing waivers never re-flag.
++
+++5 tests for both tiers (script coverage 97%).
++
++### Docs / knowledge
++
++- `AGENTS.md`: autofix-first rule (`just fix` after every edit) + judgment-rules section (S/BLE/C901/duplicate-code = fix the design; waive only when the pattern is the intended design).
++- `knowledge/research/llm-agent-failure-modes-guardrails-2026-06.md` (new): failure-mode→guardrail cross-reference, 6 TAKEN / 2 DEFER, chain-of-custody to primary sources.
++- `knowledge/llms.txt` §Tooling & CI rewritten; `HANDOFF.md` §Current state updated.
++
++## Note for reviewer (expected CI annotations on this PR)
++
++This PR itself triggers its own new flags — that is correct behaviour, not noise:
++TCB-path warnings (it edits `check_protected_paths.py` and `authoring_rules/exports.py`),
++2 dependency-manifest warnings (vulture added), and ~30 suppression warnings (the 26
++documented waivers). All are review-once annotations; none block.
++
++## Deferred (filed in the research note, not this PR)
++
++- **R-6** — read-only `tests/**` for IMPLEMENT/FIX intents (ImpossibleBench's strongest anti-cheating lever; needs an ADR-6 intent-conditional sandbox amendment).
++- **R-7** — mutmut survivor budget (promote weekly mutation run from `|| true` after ~4 baseline runs, mirroring the Semgrep promotion protocol).
++
++## Verification
++
++All on a clean checkout of `main` + this patch:
++
++```text
++ruff check .                  All checks passed (incl. S/BLE/C90/PGH)
++ruff format --check .         clean
++mypy                          strict, 137 files, no issues
++pylint src/fa                 0 messages (gap profile, fail-on)
++deptry src/                   clean
++pytest (full + cov gate)      1083 passed (+8 vs main), coverage 90.42% >= 90
++fa authoring-check            0 diagnostics
++uv lock --check               OK
++vulture src/ (advisory)       0 findings at confidence 90
++workflow YAML                 4/4 parse
++```
++
++Adversarial probes run during review: injected cross-file duplicate → pylint exit 8 (caught); cyclic-import probe → exit 8; bare `# noqa` → PGH004 blocks; waived line's neighbour violation still fires; suppression scanner flags added markers only, ignores pre-existing ones.
+diff --git a/justfile b/justfile
+index 6d76a66..816b065 100644
+--- a/justfile
++++ b/justfile
+@@ -15,10 +15,22 @@ lint:
+     ruff check .
+     ruff format --check .
+     deptry src/
+-
+-format:
+-    ruff check --fix .
++    pylint src/fa
++
++# Agents: run `just fix` after editing; it auto-resolves every mechanical
++# lint/format finding (incl. RUF022 __all__ sorting) so none of it needs
++# to be done by hand or held in context. Sequencing matters: `--fix-only`
++# exits 0 even when judgment findings (S/BLE/C901/...) remain, so the
++# format pass ALWAYS runs; the final `ruff check` then reports what needs
++# an actual design decision (fix the code or add `# noqa: <code>` + a
++# rationale comment — see AGENTS.md §Judgment rules).
++fix:
++    ruff check --fix-only .
+     ruff format .
++    ruff check .
++
++# Back-compat alias for `just fix`.
++format: fix
+ 
+ typecheck:
+     mypy
+@@ -29,8 +41,10 @@ typecheck-advisory:
+ authoring-check:
+     fa authoring-check
+ 
++# Full suite with the coverage gate (fail_under in pyproject). For a quick
++# single-file iteration loop use plain `pytest tests/test_x.py` — no gate.
+ test:
+-    pytest
++    pytest --cov=fa --cov-report=term-missing --cov-report=xml
+ 
+ audit:
+     pip-audit
+diff --git a/knowledge/llms.txt b/knowledge/llms.txt
+index 60c4bcb..6adcb93 100644
+--- a/knowledge/llms.txt
++++ b/knowledge/llms.txt
+@@ -129,16 +129,14 @@ ADR-11 two-tier TCB: frozen stdlib-only Level-0 kernel + allowlisted Level-1 rul
+ - `.github/workflows/authoring-guardrails.yml` — always-run CI workflow (no `paths:` filter, ADR-11-I6); runs `fa authoring-check` + `check_protected_paths.py` on PRs.
+ - CLI: `fa authoring-check --workspace <path> --manifest <toml> --output text|json`.
+ 
+-### Tooling & CI (`pyproject.toml`, `.pylintrc-tests`, `.github/workflows/`)
++### Tooling & CI (`pyproject.toml`, `.github/workflows/`)
+ 
+-Quality gates run in CI. `make check` (ruff + mypy + authoring-check + pytest) mirrors CI locally; thresholds live in `pyproject.toml`, not in workflow YAML.
++Quality gates run in CI. `just check` (ruff + deptry + pylint-gap + mypy + authoring-check + pytest w/ coverage) mirrors CI locally; thresholds live in `pyproject.toml`, not in workflow YAML.
+ 
+-- `pyproject.toml` — single config surface: ruff, mypy (strict), pytest, `[tool.coverage.*]` (branch coverage + `fail_under = 90`), `[tool.pylint.*]` (cosmetic checks disabled, `duplicate-code` kept ON for src, `fail-under = 9.0`), `[tool.mutmut]`, `[tool.pyrefly]`, `[tool.deptry]`.
+-- `.pylintrc-tests` — tests-only pylint profile; relaxes pytest idioms (fixtures, test-double args, protected-access) and disables `duplicate-code` / `C1803` for `tests/` (the src profile keeps them ON). Two-pass lint because pylint does not auto-merge per-directory rc.
+-- `justfile` / `Makefile` — cross-platform task runner (`just` preferred) translating all local recipes: `install`, `lint` (ruff + deptry), `format`, `typecheck` (mypy), `typecheck-advisory` (pyrefly), `authoring-check`, `test`, `audit` (pip-audit), `deadcode` (vulture), `check`.
++- `pyproject.toml` — single config surface: ruff (incl. `S` security floor, `BLE` blind-except, `C90` complexity ratchet at 15 — waivers are inline `# noqa` + rationale; tests exempt from `S`), mypy (strict), pytest, `[tool.coverage.*]` (branch coverage + `fail_under = 90`; coverage flags live in `just test`, NOT in pytest addopts — bare `pytest tests/test_x.py` runs gate-free), `[tool.pylint.*]` (gap-checks-only profile: `disable=all` + `duplicate-code`/`cyclic-import`, src/ only, any message fails; waivers are inline `# pylint: disable=duplicate-code` comments with rationale), `[tool.mutmut]`, `[tool.pyrefly]`, `[tool.deptry]`.
++- `justfile` / `Makefile` — cross-platform task runner (`just` preferred) translating all local recipes: `install`, `lint` (ruff + deptry + pylint-gap), `fix` (ruff autofix + format; run after every edit — resolves all mechanical style findings incl. RUF022), `format` (alias of `fix`), `typecheck` (mypy), `typecheck-advisory` (pyrefly), `authoring-check`, `test` (full suite + coverage gate), `audit` (pip-audit), `deadcode` (vulture), `check`.
+ - `scripts/fa-update.sh` — host-side AIO update/deploy helper: ff-only pull from main, build/restart decision, env hash tracking, container health wait, smoke checks, optional `uv run` tests in `/workspace`, image prune.
+ - `.github/workflows/advisory.yml` — advisory-only CI (local-first architecture): blocking `sanity-check` (`uv lock --check` then `just check`), blocking `audit` (pip-audit), blocking `gitleaks`, advisory `pyrefly` (`continue-on-error: true`). All `uv sync` calls use `--frozen` (R-1 reproducible-builds; `uv.lock` is committed).
+-- `.github/workflows/pylint.yml` — two-pass pylint (src strict w/ duplicate-code; tests relaxed via `.pylintrc-tests`). Installs via `uv sync --frozen --extra dev`.
+ - `.github/workflows/tests.yml` — mutation testing (`mutmut`) only; manual + weekly, advisory (not a PR gate). Installs via `uv sync --frozen --extra dev`.
+ - `.github/workflows/semgrep.yml` — Semgrep OSS SAST (`--config=p/python --config=p/owasp-top-ten`); weekly + manual dispatch only (no `pull_request:` trigger per R-5), advisory (`continue-on-error: true`).
+ 
+@@ -221,6 +219,7 @@ Quality gates run in CI. `make check` (ruff + mypy + authoring-check + pytest) m
+ - [knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md](./knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md) (Large): [goal: Cross-reference 4 arxiv papers on correlated LLM errors against ADR-1/2/7. 9 R-Ns across §0 + §10.]
+ - [knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md) (Large): [goal: 9-repo determinism-pattern deep-dive → ADR-10 invariants I-1..I-5.] Jump-table use: read §0+§3+§4+§6 (~5k tokens), open §1.x only for cited pattern IDs.
+ - [knowledge/research/ci-qa-tooling-adversarial-2026-06.md](./knowledge/research/ci-qa-tooling-adversarial-2026-06.md): [goal: Adversarial review of CI/QA tooling for AI-managed Python. Tiered matrix: 6 GO / 4 DEFER / 4 SKIP. Stress-tests baseline claims with primary-source evidence.]
++- [knowledge/research/llm-agent-failure-modes-guardrails-2026-06.md](./knowledge/research/llm-agent-failure-modes-guardrails-2026-06.md): [goal: Cross-reference empirical LLM-agent failure modes against FA guardrails. 6 TAKEN (S-rules, C901=15, BLE001, dep+suppression flags, vulture) / 2 DEFER.]
+ - [knowledge/research/linux-dev-env-wsl2-2026-06.md](./knowledge/research/linux-dev-env-wsl2-2026-06.md): [goal: WSL2 + Ubuntu 24.04 recommended path for Windows 11 Pro contributors. Hardware-tuned .wslconfig, setup commands, CI parity rationale.]
+ - [knowledge/research/homelab-deployment-24-7-2026-06.md](./knowledge/research/homelab-deployment-24-7-2026-06.md): [goal: Production-tested 24/7 FA deployment on dedicated Ubuntu Desktop AIO. Docker CE + Tailscale + systemd stack with real-world citations. 434 lines.]
+ - [knowledge/research/First-Agent-ops-cross-reference.md](./knowledge/research/First-Agent-ops-cross-reference.md): [goal: Three-source cross-reference of production deployment research. Resolves 7 domain disagreements. Authoritative SSOT for the AIO stack.]
+diff --git a/knowledge/research/llm-agent-failure-modes-guardrails-2026-06.md b/knowledge/research/llm-agent-failure-modes-guardrails-2026-06.md
+new file mode 100644
+index 0000000..8592484
+--- /dev/null
++++ b/knowledge/research/llm-agent-failure-modes-guardrails-2026-06.md
+@@ -0,0 +1,142 @@
++---
++title: "LLM coding-agent failure modes — cross-reference against FA guardrails"
++source:
++  - "https://www.gitclear.com/ai_assistant_code_quality_2025_research (211M-line code-change analysis)"
++  - "https://www.sonarsource.com/blog/the-inevitable-rise-of-poor-code-quality-in-ai-accelerated-codebases/"
++  - "arXiv:2410.10628 (Test smells in LLM-Generated Unit Tests)"
++  - "arXiv:2510.20270 (ImpossibleBench — LLM propensity to exploit test cases)"
++  - "https://debugml.github.io/cheating-agents/ (widespread cheating on agent benchmarks, 2026-04)"
++  - "Veracode 2025 GenAI security report (100+ LLMs, 80 tasks)"
++  - "CSA research note 2026-05 (AI-generated CVE surge; slopsquatting)"
++  - "https://docs.astral.sh/ruff/rules/ (S/BLE/C90 rule groups)"
++compiled: "2026-06-12"
++chain_of_custody: |
++  - 8x duplicated-block growth, copy/paste > moved lines (first time, 2024),
++    refactoring 25%→<10%, churn 3.1%→5.7%: GitClear 2025 PDF §Trends 2020-2024
++  - cyclomatic complexity higher in LLM code: Sonar blog 2025-10-15
++  - LLM test smells (Lazy Test, Duplicate Assert, assertions matched to
++    training-data behaviour instead of actual code): arXiv:2410.10628;
++    semantic-grounding failure: arXiv:2603.23443 §Fig.3
++  - agents delete/weaken tests, hardcode test inputs, special-case to pass:
++    ImpossibleBench arXiv:2510.20270 §4.1; debugml cheating-agents post
++    (SWE-smith hardcoded-return commit, Terminal-Bench PASS-print exploit)
++  - read-only test access kills most cheating without hurting performance:
++    ImpossibleBench §Fig.7
++  - 45% of AI code carries OWASP-class flaws (stable 2025→2026): Veracode
++    via CSA research note 2026-05
++  - ~20% of AI code references non-existent packages; slopsquatting:
++    CSA research note 2026-05 §supply-chain
++goal_lens: "Verify FA's CI/guardrail stack covers the empirically dominant LLM coding-agent failure modes; close cheap gaps only."
++tier: stable
++links: ["./ci-qa-tooling-adversarial-2026-06.md", "../adr/ADR-11-authoring-guardrails.md"]
++mentions: []
++confidence: extracted
++claims_requiring_verification:
++  - "C901 threshold 15 is the right ratchet start — revisit after 10 PRs of data"
++  - "S-ruleset FP rate on FA-style subprocess-heavy code stays near zero — monitor waiver count"
++---
++
++> **Status:** active. §0 is the Decision Briefing; §1 is the failure-mode
++> taxonomy → guardrail cross-reference table (load on demand).
++
++## 0. Decision Briefing
++
++Empirical failure modes of LLM coding agents cluster into five families:
++(1) **duplication instead of refactoring** (GitClear: 8x duplicated-block
++growth; copy/paste lines exceeded moved lines for the first time in 2024),
++(2) **function bloat / complexity creep** (Sonar: cyclomatic complexity and
++LOC measurably higher in LLM code), (3) **test decay and verifier gaming**
++(ImpossibleBench: agents delete failing tests, hardcode expected values,
++special-case test inputs; test-smell corpus: Lazy Test / Duplicate Assert /
++placeholder assertions), (4) **security defects + silent-swallow defensive
++code** (Veracode: 45% of AI code carries OWASP-class flaws; broad
++`except: pass` hides real bugs), (5) **supply-chain via hallucinated
++dependencies** (~20% of AI code references non-existent packages;
++slopsquatting). FA already covers (1) and (3) better than industry baseline
++— pylint `duplicate-code` gap-check and ADR-11 V4/V11 + protected-path
++governance are precisely the right counters. Gaps were (2), (4), (5).
++
++### R-1 — Ruff `S` (bandit) ruleset as blocking SAST floor for src/
++
++- **What:** Enable `S` in `[tool.ruff.lint]`; tests exempt via
++  per-file-ignores; 15 intentional sites waived inline with rationale.
++- **Verdict:** TAKEN (this PR). Closes family (4) at zero runtime cost;
++  weekly-advisory Semgrep alone left every PR un-scanned at merge time.
++
++### R-2 — C901 cyclomatic-complexity ratchet at 15
++
++- **What:** `mccabe.max-complexity = 15`; 4 existing offenders carry
++  `# noqa: C901 — C901-baseline waiver` markers; new code cannot exceed.
++- **Verdict:** TAKEN (this PR). Closes family (2). Ratchet direction:
++  retire waivers when touched; never raise the threshold.
++
++### R-3 — BLE001 + S110 (blind except / try-except-pass) blocking
++
++- **What:** Every broad `except Exception` now needs `# noqa: BLE001` +
++  one-line rationale. 7 existing sites (all already commented as
++  intentional observer/fail-closed boundaries) waived.
++- **Verdict:** TAKEN (this PR). Converts comment-only intent into
++  machine-checked intent; future silent-swallow fails CI.
++
++### R-4 — Dependency-manifest review flag (slopsquatting counter)
++
++- **What:** `scripts/check_protected_paths.py` now annotates any
++  `pyproject.toml` / `uv.lock` edit on the PR (non-blocking, same
++  mechanism as TCB flags). `uv lock` proves existence, pip-audit proves
++  no known CVE; only a human confirms the dependency was *intended*.
++- **Verdict:** TAKEN (this PR). Closes family (5) at the enforcement
++  ceiling FA already uses (PR-only agent rights + human merge).
++
++### R-4b — Suppression-marker review flag (waiver-audit tier)
++
++- **What:** `check_protected_paths.py` also annotates every NEWLY ADDED
++  suppression comment in `.py` files (`noqa`, `pylint: disable`,
++  `pragma: no cover`, `type: ignore` — added diff lines only, so existing
++  waivers never re-flag). Closes the meta-gap: every blocking gate in
++  this repo is locally neutralisable by a comment, and an agent that
++  cannot fix a finding will eventually try to waive it. Non-blocking —
++  legitimate waivers are expected; *silent* ones are not.
++- **Verdict:** TAKEN (this PR; added during self-review).
++
++### R-5 — vulture in dev extras (dead-code counter, advisory)
++
++- **What:** `just deadcode` existed but vulture was not installed. Added
++  to dev extras; stays advisory (dynamic dispatch FPs need judgement).
++- **Verdict:** TAKEN (this PR).
++
++### R-6 — Read-only test files for the inner-loop agent
++
++- **What:** ImpossibleBench shows read-only test access eliminates most
++  test-modification cheating without hurting task performance. FA's
++  IntentGuard/sandbox could deny `fs.write_file` to `tests/**` for
++  IMPLEMENT/FIX intents (allow for test-authoring intents).
++- **Verdict:** DEFER — requires intent-conditional sandbox policy (ADR-6
++  amendment), not a CI change. Filed as the highest-value next guardrail.
++
++### R-7 — Mutation-testing survivor budget promotion
++
++- **What:** mutmut weekly run is `|| true` with no survivor budget; a
++  rising survivor count (weak tests, family 3) is currently invisible.
++- **Verdict:** DEFER until 4 weekly runs of baseline data exist (mirrors
++  the Semgrep promotion protocol already in semgrep.yml).
++
++## 1. Failure-mode → guardrail cross-reference
++
++| # | Failure mode (evidence) | FA guardrail before | Gap → action |
++|---|---|---|---|
++| 1a | Copy-paste-and-tweak duplication (GitClear 8x) | pylint `duplicate-code`, binary gate, src/ | covered |
++| 1b | Dead code left after rewrites | `just deadcode` broken (no vulture dep) | R-5 fixed |
++| 2a | Function bloat / complexity creep (Sonar) | none (pylint shape-caps correctly dropped as cosmetic) | R-2 C901=15 |
++| 3a | Test deletion / skip / xfail weakening (ImpossibleBench) | ADR-11 V4 HARD-BLOCK | covered |
++| 3b | Placeholder / tautological asserts (test-smell corpus) | ADR-11 V11 HARD-BLOCK | covered |
++| 3c | Assertion weakening `==`→`in` (F-9) | V11 ADVISORY pending corpus | covered (lifecycle) |
++| 3d | Tests that exercise but don't verify | coverage 90% + weekly mutmut | R-7 budget deferred |
++| 3e | Agent edits verifier/guardrail itself | ADR-11 I1/I6/I7 TCB + protected paths | covered |
++| 3f | Agent modifies tests to pass (cheating) | protected paths don't cover tests/ | R-6 deferred (sandbox) |
++| 4a | OWASP-class security defects (Veracode 45%) | Semgrep weekly advisory only | R-1 S-rules blocking |
++| 4b | Silent error-swallowing defensive code | comment-convention only | R-3 BLE001/S110 |
++| 4c | Known-CVE dependencies | pip-audit blocking | covered |
++| 4d | Secrets in code | gitleaks (hook + CI) | covered |
++| 5a | Hallucinated package names / slopsquatting | uv lock (existence only) | R-4 review flag |
++| 6a | Style drift / merge-conflict churn | ruff autofix-first via `just fix` | covered |
++| 6b | Type errors at integration seams | mypy strict + pyrefly advisory | covered |
+diff --git a/pyproject.toml b/pyproject.toml
+index baac0f1..f7d1852 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -68,9 +68,14 @@ dev = [
+   # Parallel type checker (Meta, stable 1.0). Advisory-only; does not
+   # replace mypy. Run via `just typecheck-advisory`.
+   "pyrefly>=1.0",
+-  # Pylint (strict profile for src/, relaxed for tests/). Two-pass because
+-  # pylint does not support per-directory rc natively.
++  # Pylint gap-checks profile (duplicate-code + cyclic-import only; the
++  # rest is covered by ruff/mypy). Run via `just lint`. Blocking gate.
+   "pylint>=3.2",
++  # Dead-code detector. LLM agents leave orphaned helpers behind when they
++  # rewrite instead of refactor; vulture surfaces them. Run via
++  # `just deadcode`. Advisory (not in `just check`) — vulture cannot see
++  # dynamic dispatch, so findings need human judgement before deletion.
++  "vulture>=2.11",
+ ]
+ 
+ [project.scripts]
+@@ -87,18 +92,45 @@ extend-exclude = ["catch-corpus", "fp-corpus"]
+ [tool.ruff.lint]
+ select = [
+   "B",
++  # BLE: blind `except Exception` — top LLM-agent smell: defensive swallow
++  # that hides real bugs for months. Every legitimate broad catch carries
++  # an inline `# noqa: BLE001` + one-line rationale (machine-checked intent).
++  "BLE",
+   "C4",
++  # C90: cyclomatic-complexity ratchet (mccabe). LLM code measurably trends
++  # toward bloated functions (GitClear 2025; Sonar 2025). Threshold below.
++  "C90",
+   "E",
+   "F",
+   "I",
+   "N",
++  # PGH: blanket-suppression guard — `# noqa` without codes (PGH004) or
++  # bare `# type: ignore` (PGH003) would silently disable ALL checks on a
++  # line; force agents to name the exact rule they are waiving.
++  "PGH",
+   "PYI",
+   "RUF",
++  # S: bandit-derived security floor — ~45% of AI-generated code carries
++  # OWASP-class flaws (Veracode 2025), so a deterministic SAST gate runs
++  # on every PR, not weekly-advisory Semgrep alone. Intentional sites carry
++  # `# noqa: S###` + rationale; tests are exempt via per-file-ignores.
++  "S",
+   "UP",
+   "W",
+ ]
+ ignore = []
+ 
++[tool.ruff.lint.mccabe]
++# Drift-stop, not a style opinion: existing offenders got explicit waivers;
++# NEW functions above 15 fail CI. Agents must decompose instead of growing
++# god-functions. Do not raise this; lower it as waivers retire.
++max-complexity = 15
++
++[tool.ruff.lint.per-file-ignores]
++# Tests: `assert` IS the framework; fake tokens / subprocess fixtures /
++# tmp paths are test scaffolding, not production attack surface.
++"tests/**" = ["S"]
++
+ [tool.ruff.lint.isort]
+ known-first-party = ["fa"]
+ 
+@@ -118,13 +150,16 @@ exclude = ["^catch-corpus/", "^fp-corpus/"]
+ # --cov gates: fail the suite if line coverage drops below the threshold set
+ # in [tool.coverage.report] (fail_under). This is the primary "is it tested"
+ # safety net for LLM-written code, which often ships logic with no test at all.
++# NOTE: coverage flags intentionally NOT in addopts. A bare `pytest
++# tests/test_x.py` must work for agents iterating on a single module
++# (a partial run would always "fail" the 90% gate and teach agents to
++# ignore red output). The gate lives in `just test` / CI, which run the
++# FULL suite with --cov; fail_under in [tool.coverage.report] still
++# blocks merges.
+ addopts = [
+   "-ra",
+   "--strict-config",
+   "--strict-markers",
+-  "--cov=fa",
+-  "--cov-report=term-missing",
+-  "--cov-report=xml",
+ ]
+ testpaths = ["tests"]
+ asyncio_mode = "auto"
+@@ -169,97 +204,55 @@ tests_dir = ["tests/"]
+ # (mutmut 3.x reads this; for a focused run use: mutmut run -- src/fa/sandbox/)
+ 
+ # ---------------------------------------------------------------------------
+-# Pylint configuration
++# Pylint configuration — "gap checks only" profile.
++#
++# Policy: pylint runs ONLY the checks ruff does not implement and that have
++# real value for an LLM-agent-managed codebase:
++#   * duplicate-code (R0801) — copy-paste-and-tweak is the #1 LLM-agent code
++#     smell; ruff has no cross-file duplication detector.
++#   * cyclic-import  (R0401) — import cycles are a structural drift signal;
++#     ruff has no whole-program import-graph analysis.
++# Everything else pylint can report is already covered by ruff (E/W/F/B/N/UP)
++# or mypy strict, so it is disabled to avoid double-reporting and the fuzzy
++# 9.0-score gate. The gate is now binary: ANY message fails (exit code != 0).
+ #
+-# Policy (see PR adding this block): "balanced". Pylint runs in CI via
+-# .github/workflows/pylint.yml. We:
+-#   * keep every Error/Warning that points at real risk,
+-#   * silence purely-cosmetic Convention/Refactor checks that this codebase
+-#     deliberately does not follow (docstrings on every symbol, hard caps on
+-#     returns/branches/locals, dataclass "too few public methods", etc.),
+-#   * gate CI on a score threshold via `fail-under` rather than on "zero
+-#     messages", so style nits never block a merge but real regressions do.
++# Scope: src/ only (invoked as `pylint src/fa` from `just lint`). Tests are
++# NOT linted by pylint: duplicate-code is expected in parallel test
++# scaffolding and cyclic imports cannot occur in a flat tests/ tree.
+ #
+-# IMPORTANT: the matching CI job MUST install the project + dev extras
+-# (`pip install -e ".[dev]"`) before invoking pylint. Without that, pylint
+-# cannot import markdown_it / yaml / bashlex / pytest and emits
+-# spurious E0401 import-error messages.
++# Waivers: a finding that is reviewed-and-accepted gets a file-level
++# `# pylint: disable=duplicate-code` comment WITH a rationale next to it.
++#
++# IMPORTANT: the invoking environment MUST have the project + dev extras
++# installed (`uv sync --frozen --extra dev`); otherwise pylint cannot build
++# the import graph for cyclic-import.
+ # ---------------------------------------------------------------------------
+ [tool.pylint.main]
+ # Treat the project as a real package so intra-repo imports resolve.
+ init-hook = "import sys; sys.path.insert(0, 'src')"
+-# Belt-and-suspenders: if a CI env can't install a runtime dep, don't let a
+-# missing third-party module masquerade as a code error.
+-ignored-modules = []
+ ignore-paths = ["catch-corpus/.*", "fp-corpus/.*"]
++# Explicit binary gate: ANY emission of these checks fails the run,
++# regardless of score arithmetic. Without fail-on, the gate rests on
++# "score < 10.0 implies exit != 0", which silently breaks if anyone
++# reintroduces a fail-under threshold below 10.
++fail-on = ["duplicate-code", "cyclic-import"]
+ 
+ [tool.pylint."messages control"]
+-disable = [
+-    # --- cosmetic: documentation. This repo documents modules/ADRs richly
+-    #     but does not require a docstring on every function/class. ---
+-    "missing-module-docstring",       # C0114
+-    "missing-class-docstring",        # C0115
+-    "missing-function-docstring",     # C0116
+-
+-    # --- cosmetic/structural: size & shape heuristics. These are opinions,
+-    #     not bugs; the code intentionally has small dataclasses, single-
+-    #     method strategy classes, and dispatch functions with many returns. ---
+-    "too-few-public-methods",         # R0903
+-    "too-many-instance-attributes",   # R0902
+-    "too-many-return-statements",     # R0911
+-    "too-many-branches",              # R0912
+-    "too-many-arguments",             # R0913
+-    "too-many-locals",                # R0914
+-    "too-many-statements",            # R0915
+-    "too-many-nested-blocks",         # R1702
+-
+-    # NOTE: `duplicate-code` (R0801) is intentionally NOT disabled here. It is
+-    # one of the highest-value checks for an LLM-assisted codebase, because
+-    # agents tend to copy-paste-and-tweak instead of extracting shared helpers
+-    # (which silently causes "fix one copy, the other keeps the bug" drift).
+-    # It stays ENABLED for src/. The tests/ pass disables it separately (see
+-    # .pylintrc-tests and .github/workflows/pylint.yml) because parallel test
+-    # scaffolding/fixtures are legitimately similar.
+-
+-    # --- test-suite ergonomics: idioms that are normal in pytest/tests. ---
+-    "redefined-outer-name",           # W0621 (pytest fixtures shadow by design)
+-    "unused-argument",                # W0613 (test doubles must match signatures)
+-    "protected-access",               # W0212 (tests legitimately poke internals)
+-    "import-outside-toplevel",        # C0415 (lazy/local imports in tests & hot paths)
+-]
+-
+-[tool.pylint.basic]
+-# These dataclass attributes are capability/config FLAG names that map 1:1 to
+-# external config keys; SCREAMING_SNAKE_CASE is intentional and must not be
+-# renamed. Pylint treats dataclass fields as *variables*, so the knob is the
+-# variable-name regex (allow snake_case OR SCREAMING_SNAKE_CASE), plus an
+-# explicit allow-list for the five capability flags.
+-variable-rgx = "^(?:[a-z_][a-z0-9_]*|[A-Z_][A-Z0-9_]*)$"
+-good-names = [
+-    "ENABLE_DYNAMIC_TOOLS",
+-    "REQUIRE_DYNAMIC_TOOL_SANDBOX",
+-    "ENABLE_MCP_GATEWAY_MANAGEMENT",
+-    "ENABLE_DYNAMIC_MCP_SERVERS",
+-    "ENABLE_SERVER_OPS",
++disable = ["all"]
++enable = [
++    "duplicate-code",   # R0801 — not in ruff; key anti-copy-paste guard
++    "cyclic-import",    # R0401 — not in ruff; import-graph hygiene
+ ]
+ 
+-[tool.pylint.format]
+-max-line-length = 100
+-
+ [tool.pylint.similarities]
+-# duplicate-code (R0801) tuning for src/. Keep it sensitive to real logic
+-# copy-paste (the #1 LLM-agent code smell) but don't flag boilerplate:
++# duplicate-code (R0801) tuning. Keep it sensitive to real logic copy-paste
++# but don't flag boilerplate:
+ min-similarity-lines = 6   # default 4; 6 avoids tiny incidental matches
+ ignore-comments = true
+ ignore-docstrings = true
+ ignore-imports = true      # parallel import blocks in __init__.py are fine
+ ignore-signatures = true   # similar function signatures are not duplication
+ 
+-[tool.pylint.reports]
+-# CI passes when the score is at or above this. Real Errors/Warnings drag the
+-# score down fast, so regressions still fail; lingering style nits don't.
+-fail-under = 9.0
+-
+ # ---------------------------------------------------------------------------
+ # pytest-gremlins — native-Windows mutation testing (no fork / no WSL).
+ # Local spot-check that tests actually CATCH bugs, not just execute lines.
+@@ -295,5 +288,5 @@ implicit-any-empty-container = false
+ DEP002 = [
+     "mypy", "pre-commit", "pytest", "pytest-asyncio", "pytest-cov",
+     "mutmut", "ruff", "types-PyYAML", "pytest-gremlins", "pip-audit",
+-    "deptry", "pyrefly", "pylint",
++    "deptry", "pyrefly", "pylint", "vulture",
+ ]
+diff --git a/scripts/check_protected_paths.py b/scripts/check_protected_paths.py
+index 297c54f..3cf1d41 100644
+--- a/scripts/check_protected_paths.py
++++ b/scripts/check_protected_paths.py
+@@ -40,6 +40,31 @@ _TCB_PATHS = frozenset(
+ # Any path beneath these prefixes is protected (the whole rule pack).
+ _TCB_PREFIXES: tuple[str, ...] = ("src/fa/authoring_rules/",)
+ 
++# Dependency manifests (supply-chain review tier). LLM authors hallucinate
++# package names at a measurable rate and attackers register them
++# ("slopsquatting"); `uv lock` only proves a package EXISTS and pip-audit
++# only catches KNOWN CVEs — neither proves the dependency was intended.
++# Flag every dependency-manifest edit so a human confirms each new/changed
++# package on the PR. Same non-blocking annotation mechanism as TCB paths.
++_DEPENDENCY_PATHS = frozenset({"pyproject.toml", "uv.lock"})
++
++# Suppression markers (waiver-review tier). Every blocking gate in this
++# repo can be locally neutralised by a comment: "noqa: <code>" (ruff),
++# "pylint: disable=..." (incl. duplicate-code, where a disable in ONE
++# copy suppresses the cross-file pair), "pragma: no cover" (coverage),
++# "type: ignore[...]" (mypy). A waiver is a *reviewed design decision*
++# (AGENTS.md, Judgment rules), so every ADDED marker is surfaced as a PR
++# annotation for the human reviewer. Non-blocking: legitimate waivers are
++# expected; silent ones are not.
++# Concatenation keeps these literals from matching THIS file's own source
++# when the script itself is edited in a PR.
++_SUPPRESSION_MARKERS: tuple[str, ...] = (
++    "# " + "noqa",
++    "# " + "pylint: disable",
++    "# " + "pragma: no cover",
++    "# " + "type: ignore",
++)
++
+ 
+ def _normalise(path: str) -> str:
+     return path.strip().replace("\\", "/").removeprefix("./")
+@@ -70,10 +95,52 @@ def protected_hits(paths: Iterable[str], repo_root: Path) -> list[str]:
+     return sorted(hits)
+ 
+ 
++def dependency_hits(paths: Iterable[str]) -> list[str]:
++    """Return the sorted dependency-manifest paths among ``paths``."""
++    return sorted({_normalise(p) for p in paths if _normalise(p) in _DEPENDENCY_PATHS})
++
++
++def added_suppressions(base_ref: str, repo_root: Path) -> list[tuple[str, str]]:
++    """Return ``(file, added_line)`` pairs that introduce a suppression marker.
++
++    Scans the unified diff (added lines only) so pre-existing waivers never
++    re-flag; only NEW suppressions surface on the PR.
++    """
++    # Waiver: fixed argv, no shell; base_ref comes from the CI-provided ref.
++    result = subprocess.run(  # noqa: S603
++        ["git", "diff", "--unified=0", f"{base_ref}...HEAD"],  # noqa: S607
++        cwd=repo_root,
++        capture_output=True,
++        text=True,
++        check=True,
++    )
++    hits: list[tuple[str, str]] = []
++    current_file = ""
++    for line in result.stdout.splitlines():
++        if line.startswith("+++ b/"):
++            current_file = line[6:]
++            continue
++        # Python sources only: docs/config legitimately *mention* the
++        # markers in prose; a directive only has effect in a .py file.
++        # Corpus fixtures are deliberate violation samples — skip them.
++        if not current_file.endswith(".py"):
++            continue
++        if current_file.startswith(("catch-corpus/", "fp-corpus/")):
++            continue
++        if not line.startswith("+") or line.startswith("+++"):
++            continue
++        added = line[1:]
++        if any(marker in added for marker in _SUPPRESSION_MARKERS):
++            hits.append((current_file, added.strip()))
++    return hits
++
++
+ def changed_paths(base_ref: str, repo_root: Path) -> list[str]:
+     """Return files changed between ``base_ref`` and ``HEAD`` (merge-base diff)."""
+-    result = subprocess.run(
+-        ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
++    # Waiver: fixed argv, no shell; base_ref comes from the CI-provided ref;
++    # bare "git" resolved via PATH is the portable convention.
++    result = subprocess.run(  # noqa: S603
++        ["git", "diff", "--name-only", f"{base_ref}...HEAD"],  # noqa: S607
+         cwd=repo_root,
+         capture_output=True,
+         text=True,
+@@ -82,6 +149,27 @@ def changed_paths(base_ref: str, repo_root: Path) -> list[str]:
+     return [line for line in result.stdout.splitlines() if line.strip()]
+ 
+ 
++def _emit_dependency_flags(hits: Sequence[str]) -> None:
++    """Annotate dependency-manifest edits (never blocking)."""
++    for hit in hits:
++        print(
++            f"::warning file={hit}::dependency manifest modified — reviewer: "
++            "verify each added/changed package name and version is intended "
++            "(LLM-hallucinated names are a supply-chain vector / slopsquatting)"
++        )
++
++
++def _emit_suppression_flags(hits: Sequence[tuple[str, str]]) -> None:
++    """Annotate newly added lint/coverage/type suppressions (never blocking)."""
++    for path, line in hits:
++        # Truncate the quoted line: annotations are pointers, not transcripts.
++        snippet = line if len(line) <= 120 else line[:117] + "..."
++        print(
++            f"::warning file={path}::new suppression added ({snippet}) — "
++            "reviewer: confirm the waiver rationale is sound, not a gate bypass"
++        )
++
++
+ def _emit(hits: Sequence[str], *, fail_on_touch: bool) -> int:
+     if not hits:
+         print("check_protected_paths: no protected/TCB paths touched.")
+@@ -132,6 +220,15 @@ def main(argv: Sequence[str] | None = None) -> int:
+         )
+         print(msg, file=sys.stderr)
+         return 0  # fail-open on diff errors: never block on missing git history
++    _emit_dependency_flags(dependency_hits(paths))
++    try:
++        _emit_suppression_flags(added_suppressions(args.base, repo_root))
++    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
++        # Same fail-open contract as the path diff above.
++        print(
++            f"::warning::check_protected_paths: could not scan suppressions: {exc}",
++            file=sys.stderr,
++        )
+     return _emit(protected_hits(paths, repo_root), fail_on_touch=args.fail_on_touch)
+ 
+ 
+diff --git a/src/fa/authoring_rules/exports.py b/src/fa/authoring_rules/exports.py
+index 0d7f511..54b06ea 100644
+--- a/src/fa/authoring_rules/exports.py
++++ b/src/fa/authoring_rules/exports.py
+@@ -113,15 +113,19 @@ def _extract_all(tree: ast.Module) -> set[str] | None:
+                 working = _UNPROVABLE
+             else:
+                 # working is a set (narrowed by the conditions above)
+-                assert isinstance(working, set)
++                # Waiver: type-narrowing for mypy strict, not validation.
++                assert isinstance(working, set)  # noqa: S101
+                 working = working | names
+     if working is None or working is _UNPROVABLE:
+         return None
+-    assert isinstance(working, set)
++    # Waiver: type-narrowing for mypy strict, not validation.
++    assert isinstance(working, set)  # noqa: S101
+     return working
+ 
+ 
+-def _public_symbols(tree: ast.Module) -> dict[str, ast.stmt]:
++# C901-baseline waiver (16>15): AST walk over many node kinds; split when
++# next touched.
++def _public_symbols(tree: ast.Module) -> dict[str, ast.stmt]:  # noqa: C901
+     """Return ``{name: defining_node}`` for every public top-level symbol.
+ 
+     "Public top-level" means: (a) the body of the module (no recursion
+diff --git a/src/fa/authoring_tcb.py b/src/fa/authoring_tcb.py
+index 6f5d539..f42e183 100644
+--- a/src/fa/authoring_tcb.py
++++ b/src/fa/authoring_tcb.py
+@@ -610,7 +610,9 @@ def _dispatch_rules(rules: Iterable[Rule], context: RuleContext) -> list[RuleRes
+     for rule in rules:
+         try:
+             results = rule(context)
+-        except Exception as exc:  # pylint: disable=broad-exception-caught
++        # Waiver: fail-closed by design — any rule crash MUST become a
++        # HARD-BLOCK diagnostic (ADR-11-I1).
++        except Exception as exc:  # noqa: BLE001
+             # Fail-closed: any rule crash becomes a HARD-BLOCK diagnostic.
+             collected.append(_rule_crash_diagnostic(rule, exc))
+             continue
+diff --git a/src/fa/cli.py b/src/fa/cli.py
+index ab5a09f..08409a1 100644
+--- a/src/fa/cli.py
++++ b/src/fa/cli.py
+@@ -486,8 +486,7 @@ def _cmd_run(
+             resume_draft_text = draft_path.read_text(encoding="utf-8")
+         except OSError as exc:
+             print(
+-                f"fa run: warning — could not read existing draft "
+-                f"at {draft_path}: {exc}",
++                f"fa run: warning — could not read existing draft at {draft_path}: {exc}",
+                 file=sys.stderr,
+             )
+ 
+diff --git a/src/fa/hygiene/pr_intent.py b/src/fa/hygiene/pr_intent.py
+index 56435c1..6655bb4 100644
+--- a/src/fa/hygiene/pr_intent.py
++++ b/src/fa/hygiene/pr_intent.py
+@@ -653,8 +653,10 @@ def parse_name_status(stdout: str) -> list[StagedPath]:
+ def _run_git(args: list[str], cwd: Path) -> str:
+     """Invoke git and return stdout; raise on non-zero exit."""
+ 
+-    result = subprocess.run(
+-        ["git", *args],
++    # Waiver: fixed "git" argv, no shell; args are repo-internal constants;
++    # bare "git" resolved via PATH is the portable convention.
++    result = subprocess.run(  # noqa: S603
++        ["git", *args],  # noqa: S607
+         cwd=cwd,
+         capture_output=True,
+         text=True,
+diff --git a/src/fa/inner_loop/bash_intent.py b/src/fa/inner_loop/bash_intent.py
+index 1e292d2..741fdbb 100644
+--- a/src/fa/inner_loop/bash_intent.py
++++ b/src/fa/inner_loop/bash_intent.py
+@@ -134,7 +134,9 @@ def analyze_bash_for_intent(command: str, *, repo_root: Path) -> BashIntentAnaly
+ 
+     try:
+         roots = bashlex.parse(command)
+-    except Exception as exc:  # pylint: disable=broad-exception-caught
++    # Waiver: bashlex raises arbitrary errors on malformed input; failure
++    # falls back to the conservative classification below.
++    except Exception as exc:  # noqa: BLE001
+         # Intentional broad catch: bashlex can raise arbitrary errors on
+         # malformed/unsupported input; any failure means we fall back to the
+         # safe OPAQUE_EXEC effect rather than asserting touched-path claims.
+diff --git a/src/fa/inner_loop/coder_loop.py b/src/fa/inner_loop/coder_loop.py
+index 7b40a1f..75fb3cd 100644
+--- a/src/fa/inner_loop/coder_loop.py
++++ b/src/fa/inner_loop/coder_loop.py
+@@ -248,7 +248,9 @@ class SessionOutcome:
+     tool_results: tuple[ToolResult, ...] = field(default_factory=tuple)
+ 
+ 
+-def drive_session(
++# C901-baseline waiver (25>15): top-level session driver; decompose per
++# loop-improvement-workplan BEFORE adding more branches.
++def drive_session(  # noqa: C901
+     task: str,
+     *,
+     provider_chain: ProviderChain,
+@@ -341,7 +343,8 @@ def drive_session(
+ 
+     def record_usage(response: ResponseInfo) -> None:
+         nonlocal usage_turns
+-        assert state.log is not None
++        # Waiver: internal invariant (log attached before loop starts).
++        assert state.log is not None  # noqa: S101
+         row = _usage_event_content(response)
+         state.log.append(actor="runtime", kind="usage", content=row)
+         for key, value in row.items():
+@@ -350,7 +353,8 @@ def drive_session(
+ 
+     def finish(outcome: SessionOutcome) -> SessionOutcome:
+         nonlocal summary_written
+-        assert state.log is not None
++        # Waiver: internal invariant (log attached before loop starts).
++        assert state.log is not None  # noqa: S101
+         if not summary_written:
+             state.log.append(
+                 actor="runtime",
+diff --git a/src/fa/inner_loop/hooks/base.py b/src/fa/inner_loop/hooks/base.py
+index edc0833..91385ad 100644
+--- a/src/fa/inner_loop/hooks/base.py
++++ b/src/fa/inner_loop/hooks/base.py
+@@ -218,8 +218,9 @@ class HookRegistry:
+                         ),
+                         current,
+                     )
+-                # pylint: disable-next=broad-exception-caught
+-                except Exception as exc:  # pragma: no cover - log branch asserted by trace.
++                # Waiver: observer middleware must never break the tool
++                # pipeline; failure is logged.
++                except Exception as exc:  # noqa: BLE001  # pragma: no cover
+                     LOGGER.debug(
+                         "observer middleware failed: %s",
+                         middleware.middleware_name,
+@@ -246,8 +247,9 @@ class HookRegistry:
+             return
+         try:
+             self._event_sink(record, payload)
+-        # pylint: disable-next=broad-exception-caught
+-        except Exception as exc:  # pragma: no cover - sink failure must not break runtime.
++        # Waiver: event sink is observability, not control flow; failure
++        # is logged.
++        except Exception as exc:  # noqa: BLE001  # pragma: no cover
+             LOGGER.debug("hook_decision sink failed: %s", exc, exc_info=exc)
+ 
+     def _validate_middleware(self, middleware: Middleware, *, acting_family: str) -> None:
+diff --git a/src/fa/inner_loop/hooks/intent_guard.py b/src/fa/inner_loop/hooks/intent_guard.py
+index 6df31cd..6dced04 100644
+--- a/src/fa/inner_loop/hooks/intent_guard.py
++++ b/src/fa/inner_loop/hooks/intent_guard.py
+@@ -254,7 +254,8 @@ class IntentGuard(GuardMiddleware):
+ 
+     def _default_git_runner(self) -> str:
+         result = subprocess.run(
+-            ["git", "diff", "--cached", "--name-status"],
++            # Waiver: bare "git" resolved via PATH is the portable convention.
++            ["git", "diff", "--cached", "--name-status"],  # noqa: S607
+             cwd=self._repo_root,
+             capture_output=True,
+             text=True,
+diff --git a/src/fa/inner_loop/hooks/loop_guard.py b/src/fa/inner_loop/hooks/loop_guard.py
+index f6c9bc4..cc1dfe8 100644
+--- a/src/fa/inner_loop/hooks/loop_guard.py
++++ b/src/fa/inner_loop/hooks/loop_guard.py
+@@ -185,7 +185,9 @@ class LoopGuard(GuardMiddleware):
+             return
+         try:
+             self._warn_sink(detector, message)
+-        except Exception:  # pylint: disable=broad-exception-caught
++        # Waiver: observer boundary — a failing warn sink must never block
++        # tool execution.
++        except Exception:  # noqa: BLE001, S110
+             # Observers must never block tool execution; swallow any
+             # error from the warn sink and move on.
+             pass
+diff --git a/src/fa/inner_loop/registry.py b/src/fa/inner_loop/registry.py
+index 55dc611..90c7626 100644
+--- a/src/fa/inner_loop/registry.py
++++ b/src/fa/inner_loop/registry.py
+@@ -189,7 +189,9 @@ class ToolRegistry:
+         # / SystemExit still propagate.
+         try:
+             return self._tools[call.name].handler(call.params)
+-        except Exception as exc:  # pylint: disable=broad-exception-caught
++        # Waiver: resilience boundary (ADR-7 §10) — handler crash becomes a
++        # structured ToolResult.fail.
++        except Exception as exc:  # noqa: BLE001
+             # Intentional resilience boundary (ADR-7 §10): a crashing tool
+             # handler becomes a structured ToolResult.fail so the paired
+             # audit row is preserved. Exception (not BaseException) is caught
+diff --git a/src/fa/inner_loop/runtime_limits.py b/src/fa/inner_loop/runtime_limits.py
+index d39236a..38680d4 100644
+--- a/src/fa/inner_loop/runtime_limits.py
++++ b/src/fa/inner_loop/runtime_limits.py
+@@ -221,6 +221,12 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
+     # constructor below can type-narrow each ``found.get`` call to its
+     # exact field type (avoids ``int | float`` unions leaking into the
+     # constructor under mypy --strict).
++    # Reviewed duplicate-code waiver: the line-scanner skeleton below
++    # mirrors fa.config.load_capabilities by design — both implement the
++    # same hand-rolled YAML-subset walk documented in pyproject.toml
++    # (pyyaml dependency comment). Unify when the shared YAML loader
++    # lands (v0.2 HookRegistry PR, R-1); until then keep both in sync.
++    # pylint: disable=duplicate-code
+     found: dict[str, int] = {}
+     found_float: dict[str, float] = {}
+     warnings: list[RuntimeLimitsWarning] = []
+diff --git a/src/fa/inner_loop/state.py b/src/fa/inner_loop/state.py
+index 7f2a22a..67892fc 100644
+--- a/src/fa/inner_loop/state.py
++++ b/src/fa/inner_loop/state.py
+@@ -240,7 +240,8 @@ class SessionState:
+             self.log.run_id = self.run_id
+ 
+     def record_tool_call(self, call: ToolCall) -> TraceEvent:
+-        assert self.log is not None
++        # Waiver: internal invariant (session always attaches a log).
++        assert self.log is not None  # noqa: S101
+         return self.log.append(
+             actor="coder",
+             kind="tool_call",
+@@ -250,7 +251,8 @@ class SessionState:
+         )
+ 
+     def record_tool_result(self, call: ToolCall, result: ToolResult) -> TraceEvent:
+-        assert self.log is not None
++        # Waiver: internal invariant (session always attaches a log).
++        assert self.log is not None  # noqa: S101
+         content: dict[str, object] = {
+             "summary": result.summary,
+             "artifacts": list(result.artifacts),
+diff --git a/src/fa/inner_loop/tools/__init__.py b/src/fa/inner_loop/tools/__init__.py
+index 54bd55c..21fa7a6 100644
+--- a/src/fa/inner_loop/tools/__init__.py
++++ b/src/fa/inner_loop/tools/__init__.py
+@@ -25,9 +25,7 @@ def build_baseline_registry(
+     registry = ToolRegistry()
+     registry.register(build_read_file_tool(workspace_root))
+     registry.register(build_write_file_tool(workspace_root))
+-    registry.register(
+-        build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds)
+-    )
++    registry.register(build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds))
+     return registry
+ 
+ 
+@@ -44,9 +42,7 @@ def build_planner_registry(
+     """
+     registry = ToolRegistry()
+     registry.register(build_read_file_tool(workspace_root))
+-    registry.register(
+-        build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds)
+-    )
++    registry.register(build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds))
+     return registry
+ 
+ 
+@@ -64,16 +60,14 @@ def build_eval_registry(
+     """
+     registry = ToolRegistry()
+     registry.register(build_read_file_tool(workspace_root))
+-    registry.register(
+-        build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds)
+-    )
++    registry.register(build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds))
+     return registry
+ 
+ 
+ __all__ = [
+     "build_baseline_registry",
+-    "build_planner_registry",
+     "build_eval_registry",
++    "build_planner_registry",
+     "build_prepare_pr_tool",
+     "build_read_file_tool",
+     "build_run_bash_tool",
+diff --git a/src/fa/inner_loop/tools/run_bash.py b/src/fa/inner_loop/tools/run_bash.py
+index c999f5b..6847378 100644
+--- a/src/fa/inner_loop/tools/run_bash.py
++++ b/src/fa/inner_loop/tools/run_bash.py
+@@ -33,7 +33,9 @@ def build_run_bash_tool(
+             return ToolResult.fail("invalid_params", str(exc), retryable=True)
+ 
+         try:
+-            completed = subprocess.run(
++            # Waiver: shell=True is the tool's contract — fs.run_bash
++            # executes agent bash inside the sandbox boundary (ADR-6).
++            completed = subprocess.run(  # noqa: S602
+                 command,
+                 cwd=root,
+                 shell=True,
+diff --git a/src/fa/orchestration/__init__.py b/src/fa/orchestration/__init__.py
+index bbe5ff2..65b6042 100644
+--- a/src/fa/orchestration/__init__.py
++++ b/src/fa/orchestration/__init__.py
+@@ -23,6 +23,9 @@ from fa.orchestration.pause import (
+     write_resume,
+ )
+ 
++# Reviewed duplicate-code waiver: this re-export list necessarily mirrors
++# fa.orchestration.pause.__all__ — that is the point of a package facade.
++# pylint: disable=duplicate-code
+ __all__ = [
+     "AUTH_PAUSE_FILE",
+     "AUTH_RESUME_CHECK_INTERVAL_MS",
+diff --git a/src/fa/providers/chain.py b/src/fa/providers/chain.py
+index bd806a3..c715484 100644
+--- a/src/fa/providers/chain.py
++++ b/src/fa/providers/chain.py
+@@ -51,7 +51,8 @@ from fa.roles import FamilyExtractionError, extract_family
+ DEFAULT_COOLDOWN_SECONDS = 300
+ DEFAULT_HTTPX_RETRIES = 1
+ DEFAULT_TIMEOUT_SECONDS = 60
+-LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0"})
++# Waiver: allowlist for DETECTING local endpoints, not a bind address.
++LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0"})  # noqa: S104
+ RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset(
+     {"__internal__", "__metadata__", "__fallback_marker__"}
+ )
+diff --git a/src/fa/providers/transport.py b/src/fa/providers/transport.py
+index 4eb35cf..33e4d4f 100644
+--- a/src/fa/providers/transport.py
++++ b/src/fa/providers/transport.py
+@@ -70,7 +70,11 @@ class UrllibTransport(Transport):
+         timeout_seconds: float,
+     ) -> TransportResponse:
+         body_bytes = json.dumps(json_body).encode("utf-8")
+-        request = urllib.request.Request(url, data=body_bytes, method="POST")
++        # Waiver: scheme constrained to https/http by provider-config
++        # validation upstream.
++        request = urllib.request.Request(  # noqa: S310
++            url, data=body_bytes, method="POST"
++        )
+         # Defensive: urllib.request.Request does not set Content-Type
+         # automatically in all Python versions when data is provided.
+         # Set it here unless the caller already provided one, so a
+@@ -82,7 +86,11 @@ class UrllibTransport(Transport):
+             if key.lower() != "user-agent":
+                 request.add_header(key, value)
+         try:
+-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
++            # Waiver: scheme constrained to https/http by provider-config
++            # validation upstream.
++            with urllib.request.urlopen(  # noqa: S310
++                request, timeout=timeout_seconds
++            ) as response:
+                 status = int(response.status)
+                 raw = response.read()
+                 retry_after = _parse_retry_after(response.headers.get("Retry-After"))
+diff --git a/src/fa/sandbox/classifier.py b/src/fa/sandbox/classifier.py
+index dd52a2a..192311b 100644
+--- a/src/fa/sandbox/classifier.py
++++ b/src/fa/sandbox/classifier.py
+@@ -67,6 +67,13 @@ class BashCategory(StrEnum):
+ 
+ 
+ # Fast-path sets. Lookups are O(1) per token.
++# Reviewed duplicate-code waiver: overlaps with
++# fa.inner_loop.bash_intent._READ_ONLY_COMMANDS, but the two sets
++# intentionally differ (bash_intent includes shell builtins `:`, `[`,
++# `test`, `true`, `false`; this set includes `env`, `type`) because they
++# classify at different layers. Do NOT blindly merge; if unifying, keep a
++# shared core set plus per-layer extensions.
++# pylint: disable=duplicate-code
+ _READ_ONLY_TOKENS: frozenset[str] = frozenset(
+     {
+         "ls",
+@@ -321,7 +328,9 @@ def _scan_tokens_for_danger(tokens: list[str]) -> BashCategory | None:
+     return None
+ 
+ 
+-def classify_command(command: str) -> BashCategory:
++# C901-baseline waiver (16>15): flat token-dispatch ladder, intentionally
++# exhaustive.
++def classify_command(command: str) -> BashCategory:  # noqa: C901
+     """Classify ``command`` into a single :class:`BashCategory`.
+ 
+     The classifier is deterministic and side-effect-free. When the
+diff --git a/src/fa/sandbox/validators.py b/src/fa/sandbox/validators.py
+index 625fa15..fddc57a 100644
+--- a/src/fa/sandbox/validators.py
++++ b/src/fa/sandbox/validators.py
+@@ -79,7 +79,7 @@ _RM_DENIED_TARGETS: frozenset[str] = frozenset(
+         "/sbin",
+         "/srv",
+         "/sys",
+-        "/tmp",
++        "/tmp",  # noqa: S108 (entry in the system-path DENYLIST)
+         "/usr",
+         "/var",
+     }
+diff --git a/src/fa/verifier/verify_action.py b/src/fa/verifier/verify_action.py
+index a549cbe..c471969 100644
+--- a/src/fa/verifier/verify_action.py
++++ b/src/fa/verifier/verify_action.py
+@@ -80,7 +80,9 @@ def verify_action(
+     )
+ 
+ 
+-def load_contract(text: str) -> VerifierContract:
++# C901-baseline waiver (18>15): hand-rolled YAML-subset parser; retires
++# with the v0.2 shared YAML loader.
++def load_contract(text: str) -> VerifierContract:  # noqa: C901
+     """Parse a YAML contract from ``text``.
+ 
+     The parser handles only the subset documented at the top of
+diff --git a/tests/test_check_protected_paths.py b/tests/test_check_protected_paths.py
+index b17000c..d698d69 100644
+--- a/tests/test_check_protected_paths.py
++++ b/tests/test_check_protected_paths.py
+@@ -124,6 +124,74 @@ def test_main_fail_on_touch(tmp_path: Path) -> None:
+     assert exit_code == 1
+ 
+ 
++def test_dependency_hits_matches_manifests_only() -> None:
++    paths = ["pyproject.toml", "uv.lock", "src/fa/cli.py", "./pyproject.toml"]
++    assert cpp.dependency_hits(paths) == ["pyproject.toml", "uv.lock"]
++    assert cpp.dependency_hits(["docs.md"]) == []
++
++
++def test_main_flags_dependency_manifest_non_blocking(
++    tmp_path: Path, capsys: CaptureFixture[str]
++) -> None:
++    # Supply-chain tier: editing pyproject.toml annotates (slopsquatting
++    # review prompt) but never blocks, and is not a TCB hit.
++    _init_repo(tmp_path)
++    (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
++    _git(tmp_path, "checkout", "-b", "feature")
++    _git(tmp_path, "add", "pyproject.toml")
++    _git(tmp_path, "commit", "-m", "add dep manifest")
++
++    exit_code = cpp.main(["--base", "main", "--repo-root", str(tmp_path)])
++    captured = capsys.readouterr()
++    assert exit_code == 0
++    assert "::warning file=pyproject.toml::dependency manifest modified" in captured.out
++    assert "no protected/TCB paths touched" in captured.out
++
++
++def test_added_suppressions_flags_new_noqa_only(tmp_path: Path) -> None:
++    # Pre-existing waivers must NOT re-flag; only lines ADDED in the diff.
++    _init_repo(tmp_path)
++    (tmp_path / "mod.py").write_text("x = 1  # noqa: S105\ny = 2\n", encoding="utf-8")
++    _git(tmp_path, "add", "mod.py")
++    _git(tmp_path, "commit", "-m", "baseline with existing waiver")
++    _git(tmp_path, "checkout", "-b", "feature")
++    (tmp_path / "mod.py").write_text(
++        "x = 1  # noqa: S105\ny = 2  # type: ignore[assignment]\nz = 3\n",
++        encoding="utf-8",
++    )
++    _git(tmp_path, "add", "mod.py")
++    _git(tmp_path, "commit", "-m", "add new suppression")
++
++    hits = cpp.added_suppressions("main", tmp_path)
++    assert len(hits) == 1
++    assert hits[0][0] == "mod.py"
++    assert "type: ignore" in hits[0][1]
++
++
++def test_added_suppressions_clean_diff_is_empty(tmp_path: Path) -> None:
++    _init_repo(tmp_path)
++    _git(tmp_path, "checkout", "-b", "feature")
++    (tmp_path / "clean.py").write_text("a = 1\n", encoding="utf-8")
++    _git(tmp_path, "add", "clean.py")
++    _git(tmp_path, "commit", "-m", "no suppressions")
++    assert cpp.added_suppressions("main", tmp_path) == []
++
++
++def test_main_flags_new_suppression_non_blocking(
++    tmp_path: Path, capsys: CaptureFixture[str]
++) -> None:
++    _init_repo(tmp_path)
++    _git(tmp_path, "checkout", "-b", "feature")
++    (tmp_path / "w.py").write_text("b = 2  # noqa: BLE001\n", encoding="utf-8")
++    _git(tmp_path, "add", "w.py")
++    _git(tmp_path, "commit", "-m", "waiver")
++
++    exit_code = cpp.main(["--base", "main", "--repo-root", str(tmp_path)])
++    captured = capsys.readouterr()
++    assert exit_code == 0  # annotation tier is never blocking
++    assert "::warning file=w.py::new suppression added" in captured.out
++
++
+ def test_main_clean_diff_reports_ok(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
+     _init_repo(tmp_path)
+     (tmp_path / "docs.md").write_text("d\n", encoding="utf-8")
+diff --git a/tests/test_fa_entrypoint.py b/tests/test_fa_entrypoint.py
+index 8a68660..9377893 100644
+--- a/tests/test_fa_entrypoint.py
++++ b/tests/test_fa_entrypoint.py
+@@ -33,7 +33,7 @@ def _write_fa_stub(bin_dir: Path, exit_code: int = 0) -> Path:
+     stub = bin_dir / "fa"
+     stub.write_text(
+         "#!/usr/bin/env bash\n"
+-        "printf '%q ' \"$@\" >> \"$FA_STUB_CALLS\"\n"
++        'printf \'%q \' "$@" >> "$FA_STUB_CALLS"\n'
+         "printf '\\n' >> \"$FA_STUB_CALLS\"\n"
+         f"exit {exit_code}\n",
+         encoding="utf-8",
+diff --git a/uv.lock b/uv.lock
+index 542268d..0293439 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -366,6 +366,7 @@ dev = [
+     { name = "pytest-gremlins" },
+     { name = "ruff" },
+     { name = "types-pyyaml" },
++    { name = "vulture" },
+ ]
+ 
+ [package.metadata]
+@@ -387,6 +388,7 @@ requires-dist = [
+     { name = "pyyaml", specifier = ">=6.0" },
+     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
+     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
++    { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.11" },
+ ]
+ provides-extras = ["dev"]
+ 
+@@ -1247,3 +1249,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/e1/0d/4e93c8e6d1001a757
+ wheels = [
+     { url = "https://files.pythonhosted.org/packages/bf/c4/557dc082be035381b85fdb2b74e21d3d21b57750b74f2b47a32f3a639ff9/virtualenv-21.4.2-py3-none-any.whl", hash = "sha256:854210ca524a1a4d0d744734f4acbc721c3ffe163b85bbf5d56d14d5ae2f0fae", size = 7594079, upload-time = "2026-05-31T17:01:20.735Z" },
+ ]
++
++[[package]]
++name = "vulture"
++version = "2.16"
++source = { registry = "https://pypi.org/simple" }
++sdist = { url = "https://files.pythonhosted.org/packages/66/3e/4d08c5903b2c0c70cad583c170cc4a663fc6a61e2ad00b711fcda61358cd/vulture-2.16.tar.gz", hash = "sha256:f8d9f6e2af03011664a3c6c240c9765b3f392917d3135fddca6d6a68d359f717", size = 52680, upload-time = "2026-03-25T14:41:27.141Z" }
++wheels = [
++    { url = "https://files.pythonhosted.org/packages/f5/be/f935130312330614811dae2ea9df3f395f6d63889eb6c2e68c14507152ee/vulture-2.16-py3-none-any.whl", hash = "sha256:6e0f1c312cef1c87856957e5c2ca9608834a7c794c2180477f30bf0e4cc58eee", size = 26993, upload-time = "2026-03-25T14:41:26.21Z" },
++]

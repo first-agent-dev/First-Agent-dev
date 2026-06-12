@@ -240,7 +240,8 @@ class SessionState:
             self.log.run_id = self.run_id
 
     def record_tool_call(self, call: ToolCall) -> TraceEvent:
-        assert self.log is not None
+        # Waiver: internal invariant (session always attaches a log).
+        assert self.log is not None  # noqa: S101
         return self.log.append(
             actor="coder",
             kind="tool_call",
@@ -250,7 +251,8 @@ class SessionState:
         )
 
     def record_tool_result(self, call: ToolCall, result: ToolResult) -> TraceEvent:
-        assert self.log is not None
+        # Waiver: internal invariant (session always attaches a log).
+        assert self.log is not None  # noqa: S101
         content: dict[str, object] = {
             "summary": result.summary,
             "artifacts": list(result.artifacts),

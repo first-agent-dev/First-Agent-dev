@@ -134,7 +134,9 @@ def analyze_bash_for_intent(command: str, *, repo_root: Path) -> BashIntentAnaly
 
     try:
         roots = bashlex.parse(command)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    # Waiver: bashlex raises arbitrary errors on malformed input; failure
+    # falls back to the conservative classification below.
+    except Exception as exc:  # noqa: BLE001
         # Intentional broad catch: bashlex can raise arbitrary errors on
         # malformed/unsupported input; any failure means we fall back to the
         # safe OPAQUE_EXEC effect rather than asserting touched-path claims.

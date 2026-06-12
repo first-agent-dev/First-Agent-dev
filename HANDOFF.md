@@ -13,6 +13,24 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
+**As of:** 2026-06-12 — CI guardrails v2 (failure-mode hardening): ruff gains `S`
+(security floor, src-blocking, tests exempt), `BLE` (blind-except), `C90`
+(complexity ratchet, max 15, 4 baseline waivers), `PGH` (blanket-suppression
+guard); pylint narrowed to gap-checks only (`duplicate-code` + `cyclic-import`,
+explicit `fail-on`, binary gate) — `pylint.yml` workflow + `.pylintrc-tests`
+deleted, pylint runs inside `just lint`; coverage flags moved from pytest
+`addopts` to `just test` (bare `pytest` is gate-free for iteration);
+`just fix` = `--fix-only` → `format` → `check` (format always runs);
+`check_protected_paths.py` adds two non-blocking annotation tiers: dependency
+manifests (slopsquatting review) and newly-added suppression markers
+(waiver audit). 26 inline waivers (rationale-above + short `noqa`) document
+every intentional S/BLE/C901 site. Research note:
+[`llm-agent-failure-modes-guardrails-2026-06.md`](./knowledge/research/llm-agent-failure-modes-guardrails-2026-06.md)
+(6 TAKEN / 2 DEFER — read-only `tests/**` sandbox policy and mutmut survivor
+budget are the named next guardrails). **1083 tests, 90.42 % cov, mypy strict
+(137 files), ruff/pylint/deptry/authoring-check clean, vulture wired
+(`just deadcode`).** Prior: 2026-06-11 — Loop foundation + Docker untangling.
+
 **As of:** 2026-06-11 — Loop foundation + Docker untangling (branch `untangling-fix`):
 Docker conflict markers resolved; `scripts/fa-entrypoint.sh` is stand-by by default and
 auto-runs only with explicit `FA_AUTO_RUN=1`; `scripts/fa.service` restores

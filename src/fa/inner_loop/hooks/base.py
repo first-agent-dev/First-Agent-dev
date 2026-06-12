@@ -218,8 +218,9 @@ class HookRegistry:
                         ),
                         current,
                     )
-                # pylint: disable-next=broad-exception-caught
-                except Exception as exc:  # pragma: no cover - log branch asserted by trace.
+                # Waiver: observer middleware must never break the tool
+                # pipeline; failure is logged.
+                except Exception as exc:  # noqa: BLE001  # pragma: no cover
                     LOGGER.debug(
                         "observer middleware failed: %s",
                         middleware.middleware_name,
@@ -246,8 +247,9 @@ class HookRegistry:
             return
         try:
             self._event_sink(record, payload)
-        # pylint: disable-next=broad-exception-caught
-        except Exception as exc:  # pragma: no cover - sink failure must not break runtime.
+        # Waiver: event sink is observability, not control flow; failure
+        # is logged.
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover
             LOGGER.debug("hook_decision sink failed: %s", exc, exc_info=exc)
 
     def _validate_middleware(self, middleware: Middleware, *, acting_family: str) -> None:

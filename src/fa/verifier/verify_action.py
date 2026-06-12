@@ -80,7 +80,9 @@ def verify_action(
     )
 
 
-def load_contract(text: str) -> VerifierContract:
+# C901-baseline waiver (18>15): hand-rolled YAML-subset parser; retires
+# with the v0.2 shared YAML loader.
+def load_contract(text: str) -> VerifierContract:  # noqa: C901
     """Parse a YAML contract from ``text``.
 
     The parser handles only the subset documented at the top of

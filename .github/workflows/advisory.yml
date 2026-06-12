@@ -39,7 +39,7 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --frozen --extra dev
 
-      - name: Run checks (ruff + deptry + mypy + authoring-check + pytest, with coverage gate)
+      - name: Run checks (ruff + deptry + pylint-gap + mypy + authoring-check + pytest, with coverage gate)
         run: uv run just check
 
       - name: Upload coverage report (read by GitHub Code coverage analysis)

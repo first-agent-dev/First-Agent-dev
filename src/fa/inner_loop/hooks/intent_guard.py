@@ -254,7 +254,8 @@ class IntentGuard(GuardMiddleware):
 
     def _default_git_runner(self) -> str:
         result = subprocess.run(
-            ["git", "diff", "--cached", "--name-status"],
+            # Waiver: bare "git" resolved via PATH is the portable convention.
+            ["git", "diff", "--cached", "--name-status"],  # noqa: S607
             cwd=self._repo_root,
             capture_output=True,
             text=True,

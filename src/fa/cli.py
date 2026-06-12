@@ -486,8 +486,7 @@ def _cmd_run(
             resume_draft_text = draft_path.read_text(encoding="utf-8")
         except OSError as exc:
             print(
-                f"fa run: warning — could not read existing draft "
-                f"at {draft_path}: {exc}",
+                f"fa run: warning — could not read existing draft at {draft_path}: {exc}",
                 file=sys.stderr,
             )
 

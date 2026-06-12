@@ -653,8 +653,10 @@ def parse_name_status(stdout: str) -> list[StagedPath]:
 def _run_git(args: list[str], cwd: Path) -> str:
     """Invoke git and return stdout; raise on non-zero exit."""
 
-    result = subprocess.run(
-        ["git", *args],
+    # Waiver: fixed "git" argv, no shell; args are repo-internal constants;
+    # bare "git" resolved via PATH is the portable convention.
+    result = subprocess.run(  # noqa: S603
+        ["git", *args],  # noqa: S607
         cwd=cwd,
         capture_output=True,
         text=True,
