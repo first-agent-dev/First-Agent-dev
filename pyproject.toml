@@ -87,7 +87,7 @@ packages = ["src/fa"]
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-extend-exclude = ["catch-corpus", "fp-corpus"]
+extend-exclude = ["catch-corpus", "fp-corpus", "mutants"]
 
 [tool.ruff.lint]
 select = [
@@ -144,7 +144,7 @@ python_version = "3.13"
 strict = true
 warn_unused_configs = true
 files = ["src", "tests"]
-exclude = ["^catch-corpus/", "^fp-corpus/"]
+exclude = ["^catch-corpus/", "^fp-corpus/", "^mutants/"]
 
 [tool.pytest.ini_options]
 # --cov gates: fail the suite if line coverage drops below the threshold set
@@ -197,11 +197,18 @@ exclude_lines = [
 #                mutmut show <id>    (see the exact mutation that survived)
 # ---------------------------------------------------------------------------
 [tool.mutmut]
-paths_to_mutate = ["src/fa/"]
-tests_dir = ["tests/"]
-# Keep CI fast: run mutation on the high-risk logic modules first. Expand this
-# list as you harden more of the codebase.
-# (mutmut 3.x reads this; for a focused run use: mutmut run -- src/fa/sandbox/)
+# mutmut 3.x key names (the 2.x `paths_to_mutate` / `tests_dir` keys are
+# deprecated aliases and the 2.x CLI flags were REMOVED — passing
+# `--paths-to-mutate` errors out; see tests.yml history note).
+# Scope: high-risk sandbox modules first; expand as modules are hardened.
+# Survivor-clearing tracker: knowledge/mutation-survivors-workplan.md
+source_paths = ["src/fa/sandbox"]
+pytest_add_cli_args_test_selection = [
+  "tests/test_sandbox_classifier.py",
+  "tests/test_sandbox_validators.py",
+  "tests/test_sandbox_bash_gate.py",
+  "tests/test_sandbox_path_containment.py",
+]
 
 # ---------------------------------------------------------------------------
 # Pylint configuration — "gap checks only" profile.
@@ -230,7 +237,7 @@ tests_dir = ["tests/"]
 [tool.pylint.main]
 # Treat the project as a real package so intra-repo imports resolve.
 init-hook = "import sys; sys.path.insert(0, 'src')"
-ignore-paths = ["catch-corpus/.*", "fp-corpus/.*"]
+ignore-paths = ["catch-corpus/.*", "fp-corpus/.*", "mutants/.*"]
 # Explicit binary gate: ANY emission of these checks fails the run,
 # regardless of score arithmetic. Without fail-on, the gate rests on
 # "score < 10.0 implies exit != 0", which silently breaks if anyone

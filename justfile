@@ -10,6 +10,17 @@ _default:
 install:
     uv sync
     pre-commit install
+    just install-hooks
+
+# Symlink the M-6 commit-message hooks (prepare-commit-msg / commit-msg)
+# into .git/hooks. Without this the git-hook seat of pr_intent +
+# validate_test_edits is INERT — pre-commit does not manage the
+# commit-msg stage in this repo. Idempotent (force-overwrites).
+install-hooks:
+    git config core.hooksPath .git/hooks
+    cp -f src/fa/hygiene/hooks/prepare-commit-msg .git/hooks/prepare-commit-msg
+    cp -f src/fa/hygiene/hooks/commit-msg .git/hooks/commit-msg
+    chmod +x .git/hooks/prepare-commit-msg .git/hooks/commit-msg
 
 lint:
     ruff check .
@@ -51,6 +62,14 @@ audit:
 
 deadcode:
     -vulture src/ --min-confidence 90
+
+# Mutation testing on the high-risk sandbox scope ([tool.mutmut] in
+# pyproject). Slow (~1 min): runs the sandbox test files per mutant.
+# Survivor-clearing tracker: knowledge/mutation-survivors-workplan.md
+mutation:
+    mutmut run
+    mutmut results
+    mutmut export-cicd-stats
 
 lock-check:
     uv lock --locked

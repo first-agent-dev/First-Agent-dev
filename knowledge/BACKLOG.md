@@ -1328,7 +1328,11 @@
 
 ## R-13 — SKIP `Vulture` dead-code detection as a CI gate
 
-- **Status:** skip from CI/QA tooling audit (2026-06-04).
+- **Status:** skip from CI/QA tooling audit (2026-06-04). **Partial landing in
+  PR #28 (guardrails-v2, 2026-06-12):** vulture added to dev extras so the
+  existing `just deadcode` recipe actually runs (it was a silent no-op without
+  the package). Still advisory-only / not a CI gate — the SKIP verdict on
+  gating stands unchanged.
 - **Idea:** Vulture finds dead code (unused functions/classes/variables). AI projects accumulate it, but Vulture has high false positives on dynamically dispatched code.
 - **Blocked-on:** Manual dead-code audit desired (monthly).
 - **Unblock-trigger:** Manual dead-code audit desired (monthly).
@@ -1399,6 +1403,27 @@
 - **Blocked-on:** A measured need — ADR-11 currently has no suppression mechanism and minimalism-first says we add one only when forced.
 - **Unblock-trigger:** ≥3 acknowledged false-positive findings on `main` cannot be resolved through the `fp-corpus/` measurement loop within 1 week.
 - **First concrete step once unblocked:** One ADR-11 amendment paragraph choosing between "frozen suppression TOML" and "forbid loudly + corpus-only"; the amendment becomes the spec for the implementation PR.
+
+## I-23 — Mutation testing: promotion to blocking gate
+
+- **Status:** deferred from the test-gaming-hardening PR (2026-06-12), which repaired
+  the silently-dead weekly mutation workflow (mutmut 2.x CLI flag removed in 3.x;
+  `|| true` swallowed the instant error — every prior weekly run tested nothing) and
+  measured the first honest baseline: 633 mutants / 470 killed / **163 survived**
+  (sandbox scope).
+- **Idea:** once all baseline survivors are cleared (or explicitly accepted with
+  rationale), flip `.github/workflows/tests.yml` to `continue-on-error: false` and
+  gate on `survived == 0` from `mutants/mutmut-cicd-stats.json`. No numeric budget
+  file: the governance surface is the incremental workplan, not a threshold knob.
+- **Blocked-on:** survivor-clearing work tracked in
+  [`knowledge/mutation-survivors-workplan.md`](./mutation-survivors-workplan.md)
+  (per-module table, clearing order, accepted-survivor rule).
+- **Unblock-trigger:** `knowledge/mutation-survivors-workplan.md` is **deleted**
+  (all rows cleared/accepted). The workplan's own header mirrors this trigger.
+- **First concrete step once unblocked:** in `tests.yml` set
+  `continue-on-error: false`; replace the `|| true` on the results step with a
+  jq assert `.survived == 0` on the stats JSON; close this entry with a
+  «landed in PR #N» marker.
 
 ## I-19 — `# fa-noqa` inline-suppression policy decision
 

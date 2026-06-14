@@ -106,6 +106,7 @@ def test_intent_guard_uses_skill_classifier_directly() -> None:
 
     assert intent_guard_mod.classify_intent is pr_intent.classify_intent
     assert intent_guard_mod.validate_commit_msg is pr_intent.validate_commit_msg
+    assert intent_guard_mod.validate_test_edits is pr_intent.validate_test_edits
 
 
 # ---------------------------------------------------------------------------

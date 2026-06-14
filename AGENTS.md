@@ -211,6 +211,11 @@ New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this t
   flagged pattern is the intended design (e.g. a fail-closed boundary,
   a sandboxed `shell=True`); never waive to silence a finding you do
   not understand.
+- **Existing tests are protected.** Deleting/renaming any `tests/**`
+  file is blocked at the hook and harness seats; modifying one during a
+  FIX-shaped diff requires a `TEST-EDITS:` declaration in the PR draft
+  (see [`pr-creation` skill §Test-edit declaration](./knowledge/skills/pr-creation/SKILL.md#test-edit-declaration)).
+  Fix the code, not the test.
 - Commit messages: descriptive, English, present tense (`docs: add architecture note`).
 - Never push directly to `main`.
 - **`AI-Session:` git trailer** rule (per-commit; example included) lives in the [`pr-creation` skill §AI-Session trailer](./knowledge/skills/pr-creation/SKILL.md#ai-session-trailer)

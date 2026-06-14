@@ -20,18 +20,55 @@ jobs:
     name: mutation testing (advisory)
     runs-on: ubuntu-latest
     # Mutation runs are slow (the suite reruns per mutant), so they are NOT on
-    # the PR critical path. Flip continue-on-error to false once you trust your
-    # survivor budget and want surviving mutants to fail the job.
+    # the PR critical path. Promotion to blocking is gated on the survivor
+    # workplan: when knowledge/mutation-survivors-workplan.md is DELETED
+    # (all baseline survivors cleared), flip continue-on-error to false and
+    # gate on survived == 0. See BACKLOG I-23.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v8.2.0
       - name: Install dependencies
         run: uv sync --frozen --extra dev
-      - name: Run mutation testing on high-risk modules
-        # Scoped to the security-critical sandbox/provider logic where a
-        # surviving mutant (a bug your tests would NOT catch) matters most.
-        # Expand the path list as you harden more modules.
+      - name: Sanity — fa resolves to the checked-out tree (editable install)
+        # mutmut mutates a copy under mutants/ and relies on import-path
+        # shadowing; a non-editable site-packages install would silently
+        # mutate the WRONG tree and report nonsense numbers.
         run: |
-          uv run mutmut run --paths-to-mutate src/fa/sandbox/ || true
-          uv run mutmut results || true
+          uv run python - <<'PYEOF'
+          import pathlib
+          import fa
+          p = pathlib.Path(fa.__file__).resolve()
+          root = pathlib.Path("src").resolve()
+          assert str(p).startswith(str(root)), f"fa resolved outside workspace: {p}"
+          print("fa ->", p)
+          PYEOF
+      - name: Run mutation testing (scope = pyproject [tool.mutmut])
+        # HISTORY NOTE: until 2026-06 this step passed --paths-to-mutate,
+        # a mutmut 2.x flag REMOVED in 3.x. The command errored instantly
+        # and `|| true` swallowed it — every prior weekly run tested
+        # nothing. Scope now lives in pyproject [tool.mutmut] only.
+        run: uv run mutmut run
+      - name: Export stats to job summary
+        if: always()
+        run: |
+          uv run mutmut export-cicd-stats || true
+          {
+            echo '## Mutation testing (src/fa/sandbox)'
+            echo '```json'
+            cat mutants/mutmut-cicd-stats.json 2>/dev/null || echo '{"error": "stats file missing"}'
+            echo ''
+            echo '```'
+            echo 'Survivor-clearing tracker: knowledge/mutation-survivors-workplan.md'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: List survivors (log surface)
+        if: always()
+        run: uv run mutmut results || true
+      - name: Upload stats artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-stats
+          path: mutants/mutmut-cicd-stats.json
+          retention-days: 90
+          if-no-files-found: warn

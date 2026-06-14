@@ -75,6 +75,7 @@ from fa.hygiene.pr_intent import (
     parse_field,
     parse_name_status,
     validate_commit_msg,
+    validate_test_edits,
 )
 from fa.inner_loop.bash_intent import BashIntentAnalysis, BashIntentEffect, analyze_bash_for_intent
 from fa.inner_loop.hooks.base import (
@@ -100,6 +101,7 @@ __all__ = [
     "parse_field",
     "parse_name_status",
     "validate_commit_msg",
+    "validate_test_edits",
 ]
 
 # A pluggable ``git diff --cached --name-status`` runner. Production
@@ -303,6 +305,11 @@ class IntentGuard(GuardMiddleware):
             projected,
             self._repo_root,
         )
+        # Test-protection seat (R-6): keyed on CLASSIFIER intent — the
+        # typed D-5 override governs shape checks only; honouring it here
+        # would let a blocked agent disarm the rule from its own draft
+        # (see validate_test_edits docstring SECURITY INVARIANT).
+        violations.extend(validate_test_edits(draft_text, classifier_intent, projected))
         if not violations:
             return Decision.allow()
         # Echo the git hook's wording so agent error-recovery sees the

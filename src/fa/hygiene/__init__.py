@@ -28,9 +28,11 @@ from fa.hygiene.pr_intent import (
     detect_multi_intent,
     is_mirror_only,
     parse_name_status,
+    parse_test_edits,
     render_prepare_buffer,
     resolve_citation,
     validate_commit_msg,
+    validate_test_edits,
 )
 from fa.hygiene.suggestions import AuditReport, build_suggestions
 from fa.hygiene.tokens import TokenKind, classify_token, classify_tokens
@@ -52,7 +54,9 @@ __all__ = [
     "detect_multi_intent",
     "is_mirror_only",
     "parse_name_status",
+    "parse_test_edits",
     "render_prepare_buffer",
     "resolve_citation",
     "validate_commit_msg",
+    "validate_test_edits",
 ]
