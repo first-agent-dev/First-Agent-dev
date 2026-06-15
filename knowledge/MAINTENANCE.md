@@ -55,7 +55,6 @@ repo navigable. The one hard rule is **no dangling links** (see
    `check-doc-links` pre-commit hook run on the changed files — and a final
    `grep -rn '<old-path>'` returns nothing unexpected.
 
-<<<<<<< HEAD
 ## §When merging an ADR amendment
 
 1. Update [`knowledge/adr/DIGEST.md`](./adr/DIGEST.md) — extend
