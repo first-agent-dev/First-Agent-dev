@@ -9,6 +9,7 @@ Newest first:
 
 | Date | Note | Summary |
 |------|------|---------|
+| 2026-06-15 | [`PR_NOTE_DOCS_IA_RESTRUCTURE.md`](./PR_NOTE_DOCS_IA_RESTRUCTURE.md) | CHORE — docs IA restructure: move operator guides to `knowledge/instructions/`, de-overlap install/ops, prune-allowing policy + offline link checker. |
 | 2026-06-15 | [`PR_NOTE_DOCKER_DOCS_CONSOLIDATION.md`](./PR_NOTE_DOCKER_DOCS_CONSOLIDATION.md) | CHORE — consolidate Docker deploy scripts + Russian operator manual; `fa.service` user-unit fix; backup-doc fix. |
 | 2026-06-12 | [`PR_BODY_GUARDRAILS_V2.md`](./PR_BODY_GUARDRAILS_V2.md) | CHORE — CI guardrails v2: align gates with empirical LLM-agent failure modes. |
 | 2026-06-11 | [`PR_NOTE_LOOP_FOUNDATION.md`](./PR_NOTE_LOOP_FOUNDATION.md) | FIX — inner-loop foundation: cache-aware usage, session summary, tool projection chokepoint. |
