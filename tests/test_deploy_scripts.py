@@ -56,7 +56,7 @@ def test_shell_script_passes_shellcheck(script: Path) -> None:
 def test_bootstrap_script_is_self_contained() -> None:
     """setup-fa-desktop.sh must NOT source a sibling file.
 
-    knowledge/SETUP_AIO.md Phase 4 Option B documents downloading *only* this
+    knowledge/instructions/01-install.md Phase 4 Option B documents downloading *only* this
     file to /tmp and running it; the repo is cloned later, by the script itself.
     A `source ./lib/...` at startup would die before the clone exists. This test
     pins that contract so the DRY refactor that broke it cannot return.

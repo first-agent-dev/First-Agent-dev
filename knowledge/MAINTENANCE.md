@@ -13,9 +13,10 @@
    directory).
 2. Add `superseded_by:` frontmatter field if applicable.
 3. Update [`knowledge/llms.txt`](./llms.txt) BY-DEMAND-INDEX —
-   move the row to the «Archived» footer (never delete the row;
-   preserve discoverability for an agent looking for the note by
-   filename or topic keyword).
+   re-path or remove the row. If the note was archived in place, move
+   the row to the «Archived» footer; if the note was **deleted**, drop
+   the row — never leave a row pointing at a missing file. (Pruning is
+   allowed — see §When moving or pruning a doc.)
 4. Cross-check [`HANDOFF.md`](../HANDOFF.md) §Current state — if
    the note was cited there as input to a current decision,
    replace the citation with the superseding artefact.
@@ -25,6 +26,33 @@
 6. Cross-check [`knowledge/glossary.md`](./glossary.md) — if any
    glossary row's `See:` link pointed at this note, retarget or
    remove.
+
+## § When moving or pruning a doc
+
+Renaming, relocating, or deleting a file is allowed — pruning keeps the
+repo navigable. The one hard rule is **no dangling links** (see
+[`README.md` §Conventions](./README.md)). In the **same PR**:
+
+1. `grep -rn '<old-filename>' .` (or the old relative path) to find
+   every reference — markdown links, prose code-spans, code comments,
+   test assertions, and `llms.txt` rows.
+2. For a **move/rename**: re-path every reference to the new location.
+   Remember that links *inside* the moved file also change depth — a
+   file going one directory deeper turns `](../X)` into `](../../X)`.
+3. For a **deletion**: remove the references (or retarget them to the
+   superseding artefact). Drop the `llms.txt` row entirely.
+4. Update [`knowledge/llms.txt`](./llms.txt) (BY-DEMAND INDEX rows and,
+   if the doc is an entry point, a §TASK ROUTING row),
+   [`HANDOFF.md`](../HANDOFF.md) only where a line is an *active* link
+   (dated history prose stays as written), and the file indexes in
+   [`README.md`](../README.md) §Основные файлы / [`AGENTS.md`](../AGENTS.md)
+   §Repository Structure if a top-level entry changed.
+5. Keep a `> **Status:** moved to <link>` stub at the old path **only**
+   when an external entry point may still target it (e.g. a URL shared
+   outside the repo). Otherwise no stub is needed.
+6. Verify: the repo's `markdown-link-check` pre-commit hook must pass
+   (zero broken relative targets), and a final `grep -rn '<old-path>'`
+   returns nothing unexpected.
 
 ## § When merging an ADR amendment
 

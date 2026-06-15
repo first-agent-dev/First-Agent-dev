@@ -17,6 +17,8 @@ Goal-formulation in 4 pillars + minimalism-first principle:
 - [`README.md`](./README.md) — project overview.
 - [`AGENTS.md`](./AGENTS.md) — this file.
 - [`knowledge/`](./knowledge/README.md) — durable memory (project-overview, ADR, prompts, research).
+- [`knowledge/instructions/`](./knowledge/instructions/README.md) — deploy + operate the AIO (install / operations).
+- [`knowledge/pr-notes/`](./knowledge/pr-notes/README.md) — archived PR notes/bodies (point-in-time artifacts).
 
 ## Pre-flight checklist
 

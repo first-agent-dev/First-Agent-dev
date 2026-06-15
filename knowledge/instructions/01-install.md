@@ -1,287 +1,325 @@
-# First-Agent AIO Deployment Bootstrap
+# Первичное развёртывание First-Agent (AIO, с нуля)
 
-> **Cross-referenced, production-tested stack for running FA 24/7 on a dedicated Intel i5-1235U / 16GB AIO.**
-> Canonical research: [`knowledge/research/First-Agent-ops-cross-reference.md`](./research/First-Agent-ops-cross-reference.md)
-> Hardware: Intel i5-1235U (2P+8E, 12 threads), 16GB DDR4, NVMe SSD, AIO form factor.
+> Production-проверенный стек для запуска First-Agent в режиме 24/7 на выделенном
+> мини-ПК (AIO — «всё в одном»). Эталонное «железо»: Intel i5-1235U (2P+8E,
+> 12 потоков), 16 ГБ DDR4, NVMe SSD.
+> Исследование-первоисточник: [`knowledge/research/First-Agent-ops-cross-reference.md`](../research/First-Agent-ops-cross-reference.md).
 
-## What You'll Have After This Guide
+Этот документ — **однократная** установка «от чистого железа до первого
+запущенного агента». Всё, что делается **повседневно** (обновление, бэкапы,
+перезапуск, диагностика), вынесено в отдельное руководство:
+**[`02-operations.md`](./02-operations.md)**. Здесь мы это не дублируем.
 
-- **Ubuntu Desktop 24.04 LTS** running headless-ish (GUI available for emergency local access).
-- **Docker CE** from the official docker.com repo with a hardened, read-only FA container.
-- **Tailscale** as the sole remote access path — SSH is reachable **only** over the Tailscale interface.
-- **systemd user service** auto-starting FA on boot.
-- **SSH deploy key** for scoped, non-expiring git push from the container.
-- **restic → Backblaze B2** (S3-compatible endpoint) for nightly off-site backup.
-- Expected idle: **~1.5–2.4 GB RAM used**, **~15–30W at wall**.
+> Новичок в Docker? Сначала прочитайте «Глоссарий для новичка» и «Как устроено»
+> в [`02-operations.md`](./02-operations.md) — там простыми словами объяснены
+> контейнеры, образы, тома и сервис.
 
----
+## Что вы получите в итоге
 
-## Phase 0 — Prerequisites
-
-| Item | Requirement |
-|------|-------------|
-| **USB stick** | 8GB+ for Ubuntu Desktop 24.04 LTS installer |
-| **Internet** | Wired Ethernet preferred (no Wi-Fi driver hassles) |
-| **Tailscale account** | Free tier (20 devices) at [tailscale.com](https://tailscale.com) |
-| **GitHub account** | Repo access to add deploy keys and branch protection |
-| **Backblaze B2** | Free tier (10GB) for off-site backup |
-| **Phone** | iOS/Android Tailscale app for remote verification |
-| **Kill-a-watt or smart plug** | Optional — measure idle power at wall |
-
----
-
-## Phase 1 — BIOS Setup (before installing Ubuntu)
-
-Boot into the AIO's BIOS/UEFI setup. These settings are **critical** for 24/7 idle power.
-
-| Setting | Value | Why |
-|---------|-------|-----|
-| **CPU C-states** | Enabled | Allows CPU to drop to deep sleep states |
-| **Package C-state limit** | C10 (or C8 if C10 unavailable) | Deepest idle state |
-| **PCIe ASPM** | L1 substates | Power-gate PCIe lanes |
-| **Intel SpeedShift** | Enabled | Faster P-state transitions |
-| **Restore on AC Power Loss** | Power On | Auto-boot after power outage |
-| **Wake on LAN** | Disabled | Unnecessary attack surface |
-| **Legacy USB / Serial** | Disabled if unused | Saves a few watts |
-| **Secure Boot** | Optional — disable if Linux drivers complain | |
-
-Save and exit.
+- **Ubuntu Desktop 24.04 LTS** в «почти headless» режиме (GUI остаётся для
+  аварийного локального доступа).
+- **Docker CE** из официального репозитория docker.com, с защищённым
+  read-only контейнером FA.
+- **Tailscale** как единственный путь удалённого доступа — SSH доступен
+  **только** через интерфейс Tailscale.
+- **systemd user service**, поднимающий FA при загрузке.
+- **SSH deploy key** для ограниченного, не истекающего git push из контейнера.
+- **restic → Backblaze B2** (S3-совместимый endpoint) — ночной офсайт-бэкап.
+- Ожидаемый простой: **~1.5–2.4 ГБ RAM**, **~15–30 Вт от розетки**.
 
 ---
 
-## Phase 2 — Install Ubuntu Desktop 24.04 LTS
+## Фаза 0 — что подготовить
 
-1. Boot from the Ubuntu USB stick.
-2. Select **"Try or Install Ubuntu"**.
-3. At the installer, choose **"Minimal installation"** (not the full one with office suites and games).
-4. **Disk setup:** ZFS or ext4 — both work. ZFS has built-in snapshots; ext4 is simpler. Pick one.
-5. **User setup:**
-   - Create your primary user (e.g., `fa`).
-   - Set a strong password.
-   - **Do NOT check "automatic login"** — the cross-reference flagged this as a security risk.
-6. Finish the install, reboot, remove the USB stick.
+| Что | Требование |
+|-----|------------|
+| **USB-флешка** | 8 ГБ+ для установщика Ubuntu Desktop 24.04 LTS |
+| **Интернет** | Лучше проводной Ethernet (меньше возни с Wi-Fi драйверами) |
+| **Аккаунт Tailscale** | Бесплатный тариф (20 устройств), [tailscale.com](https://tailscale.com) |
+| **Аккаунт GitHub** | Доступ к репозиторию для deploy-ключей и branch protection |
+| **Backblaze B2** | Бесплатный тариф (10 ГБ) для офсайт-бэкапа |
+| **Телефон** | Приложение Tailscale (iOS/Android) для удалённой проверки |
+| **Ваттметр / умная розетка** | Опционально — измерить потребление |
 
 ---
 
-## Phase 3 — First Boot & Network
+## Фаза 1 — настройка BIOS (до установки Ubuntu)
 
-1. At the GNOME login screen, log in normally.
-2. Connect to Ethernet (or Wi-Fi if Ethernet is unavailable).
-3. Open a terminal (`Ctrl+Alt+T`).
-4. Verify internet:
+Зайдите в BIOS/UEFI. Эти настройки **критичны** для низкого потребления в 24/7.
+
+| Параметр | Значение | Зачем |
+|----------|----------|-------|
+| **CPU C-states** | Enabled | Позволяет процессору уходить в глубокий сон |
+| **Package C-state limit** | C10 (или C8, если C10 нет) | Самое глубокое состояние простоя |
+| **PCIe ASPM** | L1 substates | Энергогейтинг линий PCIe |
+| **Intel SpeedShift** | Enabled | Быстрее переключение P-state |
+| **Restore on AC Power Loss** | Power On | Автозагрузка после отключения питания |
+| **Wake on LAN** | Disabled | Лишняя поверхность атаки |
+| **Legacy USB / Serial** | Disabled, если не нужны | Экономит пару ватт |
+| **Secure Boot** | Опционально — отключите, если Linux-драйверы конфликтуют | |
+
+Сохраните и выйдите.
+
+---
+
+## Фаза 2 — установка Ubuntu Desktop 24.04 LTS
+
+1. Загрузитесь с USB-флешки.
+2. Выберите **«Try or Install Ubuntu»**.
+3. В установщике выберите **«Minimal installation»** (не полную с офисом и играми).
+4. **Разметка диска:** ZFS или ext4 — оба подходят. ZFS умеет снапшоты; ext4 проще. Выберите одно.
+5. **Пользователь:**
+   - Создайте основного пользователя (например, `fa`).
+   - Задайте надёжный пароль.
+   - **НЕ ставьте «автоматический вход»** — это отмечено как риск безопасности.
+6. Завершите установку, перезагрузитесь, выньте флешку.
+
+---
+
+## Фаза 3 — первая загрузка и сеть
+
+1. Войдите на экране входа GNOME.
+2. Подключите Ethernet (или Wi-Fi, если Ethernet недоступен).
+3. Откройте терминал (`Ctrl+Alt+T`).
+4. Проверьте интернет:
+
    ```bash
    curl -I https://github.com
    ```
 
+   > `curl -I` запрашивает только заголовки ответа — быстрый способ проверить, что
+   > сеть и DNS работают.
+
 ---
 
-## Phase 4 — Get the Setup Script
+## Фаза 4 — получить скрипт установки
 
-**Option A: On your laptop (review before deploying)**
+### Вариант A: на вашем ноутбуке (проверить перед развёртыванием)
+
 ```bash
 git clone https://github.com/first-agent-dev/First-Agent-dev.git ~/First-Agent-dev
 cd ~/First-Agent-dev
 less scripts/setup-fa-desktop.sh
-# Copy to USB or scp to AIO
+# Скопировать на USB или передать на AIO по scp
 ```
 
-**Option B: Directly on the AIO (if already logged in)**
+### Вариант B: прямо на AIO (если уже вошли в систему)
 
 ```bash
-# Download just the script — the repo will be cloned to /srv/... automatically
+# Скачиваем ТОЛЬКО скрипт — репозиторий он клонирует в /srv/... сам
 curl -fsSL -o /tmp/setup-fa-desktop.sh \
   https://raw.githubusercontent.com/first-agent-dev/First-Agent-dev/main/scripts/setup-fa-desktop.sh
 less /tmp/setup-fa-desktop.sh
 bash /tmp/setup-fa-desktop.sh
 ```
-- The script is idempotent — you can re-run it safely.
 
-**What the script does (from the cross-reference):**
+> Скрипт **самодостаточен** и **идемпотентен** — его можно скачать одним файлом и
+> запускать сколько угодно раз: он не ломает уже настроенное.
 
-- Updates system packages.
-- Removes `gnome-software` (known memory leaks ~2-3GB).
-- **Masks** (not removes) `tracker-miner-fs-3.service` — removing the package breaks the `ubuntu-desktop` metapackage.
-- Disables `whoopsie` and `apport` (crash reporting).
-- Disables Bluetooth.
-- Dual-locks suspend prevention (`gsettings` + `logind.conf.d` drop-in).
-- Sets screen blank to **60 seconds**, no lock.
-- Sets power profile to **power-saver** via `power-profiles-daemon`.
-- Hardens SSH: key-only, no root, `AllowUsers` (single account). The
-  source-restricted **Tailscale CGNAT-range** layer (`sshd Match Address`) is
-  applied separately by `scripts/ssh-tailscale/` — see Phase 5b.
-- Configures UFW: default deny incoming; allows SSH **only** via `tailscale0` interface.
-- Installs Docker CE from the **official docker.com apt repo** (not Ubuntu snap).
-- Installs Tailscale.
-- Creates `/srv/first-agent/{repo,state,secrets,backup,scripts}`.
-- Generates an **ED25519 deploy key**.
-- Pins GitHub's Ed25519 host key in `/srv/first-agent/secrets/known_hosts`.
-- Installs `restic`.
-- Sets `xset dpms 0 0 60` for aggressive AIO panel backlight blanking (~5-15W savings).
-- Pins Docker CE packages with `apt-mark hold` to prevent surprise upgrades.
-- Enables Docker `live-restore` + daemon-level log rotation (10m/3 files) so containers survive daemon restarts and logs don't fill the disk.
-- Adds weekly `docker image prune -f` cron job (scoped to unused images only).
-- Configures unattended-upgrades with **auto-reboot at 04:00**.
-- Enables systemd **lingering** so user services survive logout and auto-start after reboot.
-- Installs a systemd user service template at `~/.config/systemd/user/fa.service`.
-- Creates a backup script template.
+**Что делает скрипт (по материалам cross-reference):**
 
-**After the script finishes, follow the printed next steps.**
+- Обновляет системные пакеты.
+- Удаляет `gnome-software` (известные утечки памяти ~2–3 ГБ).
+- **Маскирует** (не удаляет) `tracker-miner-fs-3.service` — удаление пакета сломало
+  бы метапакет `ubuntu-desktop`.
+- Отключает `whoopsie` и `apport` (отчёты о сбоях).
+- Отключает Bluetooth.
+- Двойная защита от «засыпания» (`gsettings` + drop-in в `logind.conf.d`).
+- Гасит экран через **60 секунд**, без блокировки.
+- Ставит профиль питания **power-saver** через `power-profiles-daemon`.
+- Усиливает SSH: только ключи, без root, `AllowUsers` (один аккаунт). Слой с
+  ограничением по **диапазону Tailscale CGNAT** (`sshd Match Address`)
+  применяется отдельно скриптами `scripts/ssh-tailscale/` — см. Фазу 5b.
+- Настраивает UFW: по умолчанию запрет входящих; SSH разрешён **только** через
+  интерфейс `tailscale0`.
+- Ставит Docker CE из **официального apt-репозитория docker.com** (не из snap).
+- Ставит Tailscale.
+- Создаёт `/srv/first-agent/{repo,state,secrets,backup,scripts}`.
+- Генерирует **ED25519 deploy key**.
+- Пинит Ed25519 host-key GitHub в `/srv/first-agent/secrets/known_hosts`.
+- Ставит `restic`.
+- `xset dpms 0 0 60` — агрессивное гашение подсветки панели AIO (~5–15 Вт экономии).
+- Пинит пакеты Docker CE через `apt-mark hold` (защита от внезапных апгрейдов).
+- Включает `live-restore` Docker + ротацию логов демона (10m/3 файла), чтобы
+  контейнеры переживали перезапуск демона, а логи не забивали диск.
+- Добавляет еженедельный `docker image prune -f` в cron (только неиспользуемые образы).
+- Настраивает unattended-upgrades с **авто-ребутом в 04:00**.
+- Включает systemd **lingering**, чтобы user-сервисы переживали logout и
+  поднимались после ребута.
+- Ставит шаблон systemd user-сервиса в `~/.config/systemd/user/fa.service`.
+- Создаёт шаблон скрипта бэкапа.
+
+**Когда скрипт закончит — выполните напечатанные им «next steps» (Фазы 5–7 ниже).**
+
+> Группа `docker`: скрипт добавил вашего пользователя в группу `docker`. Чтобы
+> это применилось, **выйдите из системы и войдите снова** (или перезагрузитесь).
+> Проверка: `id -nG | grep -w docker`.
 
 ---
 
-## Phase 5 — Tailscale Authentication
+## Фаза 5 — авторизация Tailscale
 
 ```bash
 sudo tailscale up --ssh
 ```
 
-1. A URL will print to the terminal. Open it on your phone or laptop.
-2. Log in with your Tailscale account.
-3. The AIO is now on your tailnet.
+1. В терминал выведется URL. Откройте его на телефоне или ноутбуке.
+2. Войдите в аккаунт Tailscale.
+3. AIO теперь в вашей частной сети (tailnet).
 
-**Verify from your phone (on cellular, not Wi-Fi):**
+**Проверка с телефона (по сотовой сети, не Wi-Fi):**
 
-1. Open the Tailscale app.
-2. You should see the AIO listed.
-3. Copy the AIO's Tailscale IP (e.g., `100.x.y.z`).
+1. Откройте приложение Tailscale.
+2. В списке должен быть ваш AIO.
+3. Скопируйте его Tailscale-IP (например, `100.x.y.z`).
 
-**Test SSH over Tailscale:**
+**Тест SSH через Tailscale:**
 
 ```bash
-# From your laptop (NOT the AIO)
+# С ноутбука (НЕ с AIO)
 ssh fa@100.x.y.z
 ```
 
-If this works, you've confirmed remote access without exposing SSH to the public internet.
+Если сработало — удалённый доступ есть, и SSH не торчит в публичный интернет.
 
 ---
 
-## Phase 5b — SSH-over-Tailscale defense-in-depth hardening
+## Фаза 5b — углублённое усиление SSH-over-Tailscale (defense-in-depth)
 
-`setup-fa-desktop.sh` (Phase 4) sets up the base SSH/UFW posture. To add the
-remaining defense-in-depth layers from the ops SSOT — UFW IPv6 filtering,
-`sshd Match Address` scoped to the Tailscale CGNAT ranges, a fail2ban jail with
-the **systemd** backend (correct for 24.04), and a Tailscale ACL — run the
-idempotent scripts in
-[`scripts/ssh-tailscale/`](../scripts/ssh-tailscale/README.md). They include a
-dead-man failsafe so a firewall/sshd mistake cannot lock you out.
+`setup-fa-desktop.sh` (Фаза 4) задаёт базовую SSH/UFW-конфигурацию. Чтобы
+добавить остальные слои защиты из ops-SSOT — фильтрацию IPv6 в UFW,
+`sshd Match Address` по диапазонам Tailscale CGNAT, jail fail2ban с бэкендом
+**systemd** (правильный для 24.04) и Tailscale ACL — запустите идемпотентные
+скрипты в [`scripts/ssh-tailscale/`](../../scripts/ssh-tailscale/README.md). В них
+встроен «dead-man failsafe», чтобы ошибка в firewall/sshd не заблокировала вас.
 
 ```bash
 cd /srv/first-agent/repo/First-Agent-dev/scripts/ssh-tailscale
-sudo bash 10-diagnose.sh                       # read-only audit (run first)
-sudo bash 00-failsafe.sh arm                   # + open a SECOND ssh session
-sudo SSH_USER=fa bash 20-harden.sh    # apply layers (reload, not restart)
-sudo bash 30-verify.sh                          # checklist; non-zero exit on fail
-# apply tailscale-acl.jsonc in the admin console, then:
-sudo bash 00-failsafe.sh disarm                 # only after a fresh login works
+sudo bash 10-diagnose.sh                  # read-only аудит (запустить первым)
+sudo bash 00-failsafe.sh arm              # + откройте ВТОРУЮ ssh-сессию и держите
+sudo SSH_USER=fa bash 20-harden.sh        # применить слои (reload, не restart)
+sudo bash 30-verify.sh                     # чек-лист; ненулевой код = провал
+# примените tailscale-acl.jsonc в админ-консоли, затем:
+sudo bash 00-failsafe.sh disarm           # только после успешного свежего логина
 ```
 
-> **Which `:22` are you on?** `tailscale up --ssh` (Phase 5) makes `tailscaled`
-> answer the Tailscale IP `:22`, **not** system `sshd`. Tailscale SSH sessions
-> are governed by the ACL `ssh` rules in `tailscale-acl.jsonc`; the `sshd`
-> Match-Address / UFW / fail2ban layers harden the classic `sshd` recovery path
-> (LAN, or if Tailscale SSH is disabled). `10-diagnose.sh` reports which server
-> is answering. See the script
-> [`README`](../scripts/ssh-tailscale/README.md) for details.
+> **Какой `:22` отвечает?** `tailscale up --ssh` (Фаза 5) заставляет `tailscaled`
+> отвечать на Tailscale-IP `:22`, **а не** системный `sshd`. Сессии Tailscale SSH
+> управляются правилами `ssh` в `tailscale-acl.jsonc`; слои `sshd` Match-Address /
+> UFW / fail2ban защищают «классический» путь восстановления через `sshd` (LAN или
+> если Tailscale SSH отключат). `10-diagnose.sh` показывает, кто отвечает.
+> Подробности — в [`README`](../../scripts/ssh-tailscale/README.md).
 
 ---
 
-## Phase 6 — GitHub Deploy Key + Branch Protection
+## Фаза 6 — GitHub Deploy Key + Branch Protection
 
-1. In the AIO terminal, the setup script printed your **public deploy key**:
+1. Скрипт уже напечатал ваш **публичный deploy-ключ**. Показать снова:
+
    ```bash
    cat /srv/first-agent/secrets/github_deploy_key.pub
    ```
-2. Go to your GitHub repo → **Settings** → **Deploy keys** → **Add deploy key**.
-3. Paste the public key, give it a title (e.g., `fa-aio-deploy`), and **check "Allow write access"**.
-4. Go to **Settings** → **Branches** → **Add rule** for `main`:
-   - Check **"Require a pull request before merging"**.
-   - Check **"Require approvals"** (set to 1).
-   - This prevents the agent from accidentally force-pushing to `main`.
-5. The agent should push to branches named `agent/yyyy-mm-dd-topic`.
+
+2. В репозитории на GitHub: **Settings → Deploy keys → Add deploy key**.
+3. Вставьте публичный ключ, дайте имя (например, `fa-aio-deploy`) и поставьте
+   галочку **«Allow write access»**.
+4. **Settings → Branches → Add rule** для `main`:
+   - Включите **«Require a pull request before merging»**.
+   - Включите **«Require approvals»** (1).
+   - Это не даст агенту случайно сделать force-push в `main`.
+5. Агент должен пушить в ветки вида `agent/yyyy-mm-dd-topic`.
 
 ---
 
-## Phase 6b — SSH Troubleshooting & Host Config
+## Фаза 6b — SSH-диагностика и конфиг хоста
 
-The setup script creates `~/.ssh/config` so the **host shell** (not just the container) can fetch/pull from GitHub using the deploy key. This matters because:
+Скрипт создаёт `~/.ssh/config`, чтобы **хостовая оболочка** (не только контейнер)
+могла делать fetch/pull из GitHub по deploy-ключу. Почему это важно:
 
-1. **Host-level git operations** (`git fetch`, `git pull` on the AIO shell) need the deploy key too — not just the container.
-2. **Known hosts rotation** — GitHub rotates its Ed25519 host key periodically. If you see `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!`, update the pinned key:
+1. **Git-операции на хосте** (`git fetch`, `git pull` в оболочке AIO) тоже
+   требуют deploy-ключ — не только контейнер.
+2. **Ротация known_hosts.** GitHub периодически меняет свой Ed25519 host-key. Если
+   увидите `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!`, обновите пин:
+
    ```bash
    ssh-keygen -f '/srv/first-agent/secrets/known_hosts' -R 'github.com'
    ssh-keyscan -H -t ed25519 github.com >> /srv/first-agent/secrets/known_hosts
    ```
-3. **Container sees stale known_hosts** — the mount is read-only in the container. After updating on the host, run `docker compose -f docker-compose.fa.yml down && up -d` to remount.
-4. **Deploy key without WRITE access** — GitHub deploy key must have "Allow write access" checked. Re-verify in repo Settings → Deploy keys.
-5. **Verification checklist:**
+
+3. **Контейнер видит устаревший known_hosts** — монтирование read-only. После
+   обновления на хосте пересоздайте контейнер:
+   `docker compose -f docker-compose.fa.yml down && docker compose -f docker-compose.fa.yml up -d`.
+4. **Deploy-ключ без WRITE-доступа** — проверьте галочку «Allow write access» в
+   Settings → Deploy keys.
+5. **Проверка:**
+
    ```bash
    ssh -T git@github.com
-   # Expected: "Hi <repo>! You've successfully authenticated..."
+   # Ожидается: "Hi <repo>! You've successfully authenticated..."
    ```
 
 ---
 
-## Phase 7 — Build and Start the FA Container
+## Фаза 7 — собрать и запустить контейнер FA
 
-The `docker-compose.fa.yml` and `Dockerfile.fa` in the repo root define the hardened container.
+Файлы `docker-compose.fa.yml` и `Dockerfile.fa` в корне репозитория описывают
+защищённый контейнер.
 
 ```bash
 cd /srv/first-agent/repo/First-Agent-dev
 
-# Build the image
+# Собрать образ
 docker compose -f docker-compose.fa.yml build
 
-# Start in the background
+# Запустить в фоне
 docker compose -f docker-compose.fa.yml up -d
 
-# Check logs
+# Посмотреть логи
 docker compose -f docker-compose.fa.yml logs -f
 ```
 
-**One-shot bootstrap verification:**
+**Проверка bootstrap «в один заход»:**
 
-After the container is up, run the post-setup script to verify git SSH, push a test branch, and enable the systemd service:
+После старта контейнера запустите post-setup — он проверит git SSH, запушит и
+удалит тестовую ветку и включит systemd-сервис:
 
 ```bash
 bash scripts/fa-post-setup.sh
 ```
 
-This is idempotent — safe to re-run after any future `git pull` or `docker compose build`.
+Скрипт идемпотентен — безопасно перезапускать после любого `git pull` или
+`docker compose build`.
 
-**Hardening applied (per cross-reference):**
+**Применённое усиление (per cross-reference):**
 
-- `read_only: true` — root filesystem is read-only.
-- `cap_drop: [ALL]` — all Linux capabilities dropped.
-- `cap_add: [CHOWN, SETGID, SETUID]` — only what's needed for uv/just.
-- `security_opt: [no-new-privileges:true]` — container cannot gain new privileges.
-- `pids: 512` under `deploy.resources.limits` — fork-bomb protection (Compose schema v3).
-- `user: "1000:1000"` — runs as non-root.
-- Resource limits: 8GB RAM max, 8 CPUs.
-- Git key mounted at `/run/secrets/git_key` (read-only).
-- `GIT_SSH_COMMAND` configured with `IdentitiesOnly=yes`.
-- No `/var/run/docker.sock` mount.
-- `init: true` — `tini` handles zombie process reaping (PID 1 responsibility).
-- `hostname: first-agent` — identifiable in logs and `docker ps`.
-- tmpfs mounts for `/tmp`, `~/.cache`, `~/.local`, `/tmp/uv-cache` — writable scratch space without compromising the read-only root fs.
+- `read_only: true` — корневая ФС только для чтения.
+- `cap_drop: [ALL]` — сняты все Linux-capabilities.
+- `cap_add: [CHOWN, SETGID, SETUID]` — только нужное для uv/just.
+- `security_opt: [no-new-privileges:true]` — контейнер не может повысить привилегии.
+- `pids: 512` в `deploy.resources.limits` — защита от fork-бомбы (Compose схема v3).
+- `user: "1000:1000"` — запуск не от root.
+- Лимиты ресурсов: 8 ГБ RAM, 8 CPU.
+- Git-ключ смонтирован в `/run/secrets/git_key` (read-only).
+- `GIT_SSH_COMMAND` с `IdentitiesOnly=yes`.
+- Нет монтирования `/var/run/docker.sock`.
+- `init: true` — `tini` собирает зомби-процессы (ответственность PID 1).
+- `hostname: first-agent` — узнаваемо в логах и `docker ps`.
+- tmpfs для `/tmp`, `~/.cache`, `~/.local`, `/tmp/uv-cache` — запись без нарушения
+  read-only корня.
 
-**Restart policy:** The compose file uses `restart: unless-stopped`. This means:
-- If the container crashes or the host reboots, it restarts automatically.
-- If you **manually** run `docker compose down`, it stays down until you run `up` again.
-- If you want the container to restart even after a manual `docker stop`, change to `restart: always` in `docker-compose.fa.yml`.
+**Политика перезапуска:** в compose стоит `restart: unless-stopped`:
 
-**Container entrypoint behavior:** The image uses `scripts/fa-entrypoint.sh` as its entrypoint.
-By default it enters inspectable stand-by mode (`sleep infinity`) so operators run FA manually via `docker exec`:
+- При сбое контейнера или ребуте хоста он поднимается сам.
+- Если вы **вручную** сделали `docker compose down`, он останется выключенным.
+- Чтобы поднимался даже после ручного `docker stop`, поменяйте на
+  `restart: always` в `docker-compose.fa.yml`.
 
-```bash
-docker exec -it first-agent bash
-fa --version
-fa run --task "inspect the repo and propose a plan" --role planner --workspace /workspace
-```
+**Поведение entrypoint:** образ использует `scripts/fa-entrypoint.sh`. По
+умолчанию — режим ожидания (`sleep infinity`), агент запускают вручную через
+`docker exec`. Подробно про режимы запуска агента (stand-by / auto-run /
+planner→coder→eval) — в [`02-operations.md` §7](./02-operations.md).
 
-For a deliberate one-shot startup run, set `FA_AUTO_RUN=1` plus either `FA_TASK` or `FA_TASK_FILE` (not both). The entrypoint runs `fa run` as a child process, writes `/workspace/.fa/entrypoint-status.txt`, then returns to stand-by instead of exiting; this prevents `restart: unless-stopped` from re-running the same task in a restart loop. Prefer `FA_TASK_FILE=tasks/<name>.md` for long plan-following workflows; the file must resolve inside `/workspace`. Use `FA_RUN_ID=<stable-id>` and `FA_RESUME=1` to switch roles across sessions while preserving the work log.
-
-**Enable auto-start on boot:**
+**Включить автозапуск при загрузке:**
 
 ```bash
 systemctl --user enable fa.service
@@ -290,72 +328,76 @@ systemctl --user start fa.service
 
 ---
 
-## Phase 7b — Configure LLM API Keys
+## Фаза 7b — настроить API-ключи LLM
 
-The deployment stack handles git auth (SSH deploy key) but never mentions LLM API keys. The compose file references `.env.fa` via `env_file:` — this is where your OpenRouter / Fireworks / etc. keys live.
+Стек развёртывания закрывает git-аутентификацию (deploy-ключ), но не API-ключи
+LLM. Compose читает `.env.fa` через `env_file:` — туда кладутся ключи
+OpenRouter / Fireworks / и т.д.
 
-1. Copy the template and edit with real keys:
+1. Скопируйте шаблон и впишите реальные ключи:
+
    ```bash
    cd /srv/first-agent/repo/First-Agent-dev
    cp .env.fa.template .env.fa
-   # Edit .env.fa with your keys
+   nano .env.fa            # вписать ключи; раскомментировать нужные строки
    chmod 600 .env.fa
    ```
 
-2. Verify `models.yaml` exists (auto-copied by `setup-fa-desktop.sh`):
+2. Проверьте, что есть `models.yaml` (копируется `setup-fa-desktop.sh`):
+
    ```bash
    ls /srv/first-agent/state/models.yaml
    ```
-   If missing, copy from the example:
+
+   Если нет — скопируйте из примера:
+
    ```bash
    cp knowledge/examples/models.yaml.example /srv/first-agent/state/models.yaml
    ```
 
-3. **Convention separation:**
-   - **Docker deployment** (AIO): uses `.env.fa` in repo root, loaded by compose.
-   - **Local WSL dev**: uses `~/.fa/.env` (auto-loaded by CLI) or shell exports.
-   - Never mix the two — the container does not read `~/.fa/.env`.
+3. **Разделение по назначению:**
+   - **Docker-деплой (AIO)**: использует `.env.fa` в корне репо, читается compose.
+   - **Локальная разработка (WSL)**: использует `~/.fa/.env` (читается CLI) или
+     shell-экспорты.
+   - Не смешивайте — контейнер не читает `~/.fa/.env`.
 
-4. **Backup credentials** (`B2_KEY_ID`, `B2_APPLICATION_KEY`) belong in `/srv/first-agent/secrets/backup.env`, NOT in `.env.fa`. The container does not need them.
+4. **Креды бэкапа** (`B2_KEY_ID`, `B2_APPLICATION_KEY`) идут в
+   `/srv/first-agent/secrets/backup.env`, **не** в `.env.fa`. Контейнеру они не нужны.
 
 ---
 
-### Secrets Management
+### Управление секретами
 
-| Category | Storage | Scope |
+| Категория | Хранение | Область |
 | --- | --- | --- |
-| **LLM API keys** | `.env.fa` (repo root) | Container runtime |
-| **Backup credentials** | `/srv/first-agent/secrets/backup.env` | Host only (restic) |
-| **Git deploy key** | `/srv/first-agent/secrets/github_deploy_key` | Host + container (read-only) |
+| **API-ключи LLM** | `.env.fa` (корень репо) | Runtime контейнера |
+| **Креды бэкапа** | `/srv/first-agent/secrets/backup.env` | Только хост (restic) |
+| **Git deploy key** | `/srv/first-agent/secrets/github_deploy_key` | Хост + контейнер (read-only) |
 
-**Why separation matters:**
+**Почему разделение важно:**
 
-- The operator user is in the `docker` group. Any member can `docker inspect` and see container env vars (including API keys from `.env.fa`). Backup credentials are never injected into the container, so a container compromise does not grant B2 access.
-- `SecretRedactor` (exact-match + base64/URL encoding detection) masks secrets before they reach `events.jsonl` or `knowledge/trace/`. If a key leaks before redaction, the encrypted backup still contains it. Redaction is primary; encryption is secondary.
-- restic encrypts backups *before* uploading to B2. Test restores quarterly to verify integrity.
-
----
-
-### Security Notes for AIO Deployment
-
-**Docker trust boundary.** The operator user is in the `docker` group. Any user in this group can run `docker inspect` and see container env vars (including API keys loaded from `.env.fa`). This is the trust boundary for the AIO deployment — keep the operator account exclusive.
-
-**Docker log security.** Docker logs are not encrypted at rest. The compose uses `max-size: 10m`, `max-file: 3` to limit the leak window. FA's `SecretRedactor` masks API keys in `events.jsonl` before writing. Do NOT print API keys to stdout from FA code or tools.
-
-**Backup security.** restic encrypts backups before sending to B2. If a key is leaked into `events.jsonl` before redaction, the encrypted backup still contains it. Redaction is the primary defense; encryption is secondary (protects against B2 compromise, not restore leakage). Test restores quarterly.
+- Пользователь-оператор состоит в группе `docker`. Любой её член может через
+  `docker inspect` увидеть env-переменные контейнера (включая API-ключи из
+  `.env.fa`). Креды бэкапа в контейнер не попадают — компрометация контейнера не
+  даёт доступа к B2.
+- `SecretRedactor` (точное совпадение + распознавание base64/URL) маскирует
+  секреты до записи в `events.jsonl` / `knowledge/trace/`. Если ключ утёк до
+  редактирования, он останется в зашифрованном бэкапе. Редактирование — основная
+  защита, шифрование — вторичная.
+- restic шифрует бэкапы *до* загрузки в B2. Проверяйте восстановление ежеквартально.
 
 ---
 
-## Phase 8 — Test Git Push from the Container
+## Фаза 8 — проверить git push из контейнера
 
 ```bash
-# Enter the container
+# Войти в контейнер
 docker exec -it first-agent bash
 
-# Test git can see the key
+# Проверить, что git видит ключ
 GIT_SSH_COMMAND="ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts" git ls-remote $(git remote get-url origin | sed 's|https://github.com/|git@github.com:|')
 
-# If that works, test a branch push
+# Если ок — тестовый push ветки
 cd /workspace
 git checkout -b agent/test-bootstrap
 touch bootstrap-test.txt
@@ -364,65 +406,29 @@ git commit -m "test: bootstrap verification"
 GIT_SSH_COMMAND="ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts" git push origin agent/test-bootstrap
 ```
 
-If the push succeeds and appears on GitHub, your git auth is working end-to-end.
+Если push прошёл и ветка появилась на GitHub — аутентификация git работает
+end-to-end. (`fa-post-setup.sh` из Фазы 7 делает эту проверку автоматически.)
 
 ---
 
-## Phase 8a — Process Toggle (How to Stop/Start FA Remotely)
+## Фаза 9 — настройка бэкапа
 
-> Cross-reference calls this a **tooling ecosystem gap** — there is no off-the-shelf "container stays up; agent toggles without SSH" solution.
+1. На [Backblaze B2](https://www.backblaze.com/b2) создайте bucket.
+2. Сгенерируйте **Application Key** с доступом read/write к этому bucket.
+3. Впишите креды в `/srv/first-agent/secrets/backup.env` (**не** в сам скрипт —
+   `backup-fa.sh` читает этот файл через `source`, а сам скрипт перезаписывается
+   из репо при каждом перезапуске `setup-fa-desktop.sh`, так что правки в нём
+   потерялись бы). Шаблон с `CHANGEME` создаётся скриптом установки:
 
-Here are three options, from lowest friction to most sophisticated:
-
-### Option A: Tailscale SSH (Recommended — Zero Custom Code)
-
-The Tailscale mobile app has a built-in terminal. Two taps on your phone:
-
-1. Open Tailscale app → tap the AIO machine.
-2. Run: `systemctl --user stop fa.service` (or `start` to resume).
-
-This stops the **entire container** (~10s). The container restarts automatically on next boot because `fa.service` is enabled.
-
-### Option B: SSH Exec (Slightly Faster — One Command)
-
-From your laptop:
-```bash
-ssh fa@100.x.y.z 'systemctl --user stop fa.service'
-```
-
-Or start it back up:
-```bash
-ssh fa@100.x.y.z 'systemctl --user start fa.service'
-```
-
-### Option C: iOS Shortcuts + Webhook (Future — One-Tap)
-
-When you want a true one-tap button on your phone:
-
-1. Deploy a tiny `adnanh/webhook` container alongside FA.
-2. Configure it to receive an HTTP POST and run `docker exec first-agent pkill -f "fa run"`.
-3. Expose the webhook **only** via Tailscale (never publicly).
-4. Create an iOS Shortcut that sends the POST.
-
-**Why this isn't implemented yet:** The cross-reference explicitly notes this is "custom engineering." Options A and B are fully functional today with no extra code.
-
----
-
-## Phase 9 — Backup Configuration
-
-1. Go to [Backblaze B2](https://www.backblaze.com/b2), create a bucket.
-2. Generate an **Application Key** with read/write access to that bucket.
-3. Put your credentials in `/srv/first-agent/secrets/backup.env` (NOT in the
-   script itself — `backup-fa.sh` `source`s this file, and the script is
-   overwritten from the repo on every `setup-fa-desktop.sh` re-run, so inline
-   edits would be lost). The setup script creates a `CHANGEME` template here:
    ```bash
    nano /srv/first-agent/secrets/backup.env
    # B2_KEY_ID=your-key-id
    # B2_APPLICATION_KEY=your-app-key
    # B2_BUCKET=your-bucket-name
    ```
-4. Initialize the restic repository (one-time):
+
+4. Инициализируйте репозиторий restic (однократно):
+
    ```bash
    source /srv/first-agent/secrets/backup.env
    export AWS_ACCESS_KEY_ID="$B2_KEY_ID"
@@ -430,130 +436,81 @@ When you want a true one-tap button on your phone:
    RESTIC_REPO="s3:https://s3.us-west-004.backblazeb2.com/$B2_BUCKET"
    restic -r "$RESTIC_REPO" init
    ```
-5. Test a backup:
+
+5. Проверьте бэкап:
+
    ```bash
    /srv/first-agent/scripts/backup-fa.sh
    ```
-6. Schedule nightly via cron:
-   ```bash
-   crontab -e
-   # Add:
-   0 3 * * * /srv/first-agent/scripts/backup-fa.sh >> /srv/first-agent/backup/backup.log 2>&1
-   ```
-7. **Test restore quarterly:**
-   ```bash
-   RESTIC_REPO="s3:https://s3.us-west-004.backblazeb2.com/$B2_BUCKET"
-   restic -r "$RESTIC_REPO" restore latest --target /tmp/restore-test
-   ```
+
+> Ночной запуск по cron, ручной бэкап и восстановление подробно описаны в
+> [`02-operations.md` §8](./02-operations.md). `setup-fa-desktop.sh` /
+> `fa-post-setup.sh` уже ставят ночной cron, если креды заполнены.
 
 ---
 
-## Phase 10 — Power Verification
+## Фаза 10 — проверка энергопотребления
 
-1. **Check idle RAM:**
+1. **Простой по RAM:**
+
    ```bash
    free -h
    ```
-   Expect: ~1.2–1.8 GB used by OS + Docker.
 
-2. **Check power profile:**
+   Ожидается: ~1.2–1.8 ГБ занято ОС + Docker.
+
+2. **Профиль питания:**
+
    ```bash
    powerprofilesctl get
    ```
-   Should say `power-saver`.
 
-3. **Screen blank test:** Wait 60 seconds without touching mouse/keyboard. The screen should blank but the machine stays responsive over Tailscale SSH.
+   Должно быть `power-saver`.
 
-4. **Measure at wall** (if you have a kill-a-watt):
-   - Screen on, idle: ~20–35W
-   - Screen blanked: ~15–25W
-   - Cross-reference target: ~7–15W for CPU+board alone (screen contributes the rest).
+3. **Тест гашения экрана:** не трогайте мышь/клавиатуру 60 секунд. Экран должен
+   погаснуть, но машина остаётся доступной по Tailscale SSH.
 
-5. **powertop analysis** (optional):
+4. **Замер от розетки** (если есть ваттметр):
+   - Экран включён, простой: ~20–35 Вт
+   - Экран погашен: ~15–25 Вт
+   - Цель cross-reference: ~7–15 Вт на CPU+плату (остальное — экран).
+
+5. **Анализ powertop** (опционально):
+
    ```bash
    sudo powertop --html=/tmp/power-report.html
    ```
-   Review the HTML for tunables, but **do not** enable `powertop --auto-tune` as a service — it is not persistent and can conflict with `power-profiles-daemon`.
+
+   Изучите HTML, но **не** включайте `powertop --auto-tune` как сервис — он не
+   персистентен и может конфликтовать с `power-profiles-daemon`.
 
 ---
 
-## Operational Quick Reference
+## Что дальше — повседневная эксплуатация
 
-| Task | Command |
-|------|---------|
-| **Start FA** | `systemctl --user start fa.service` |
-| **Stop FA** | `systemctl --user stop fa.service` |
-| **Restart FA** | `systemctl --user restart fa.service` |
-| **Check auto-reboot status** | `cat /etc/apt/apt.conf.d/50unattended-upgrades-fa` |
-| **Manually trigger unattended upgrade** | `sudo unattended-upgrade --dry-run` |
-| **Update deployed FA** | `/srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh` |
-| **View logs** | `docker compose -f /srv/first-agent/repo/First-Agent-dev/docker-compose.fa.yml logs -f` |
-| **Enter container** | `docker exec -it first-agent bash` |
-| **Check container status** | `docker ps` |
-| **Tailscale status** | `tailscale status` |
-| **Tailscale IP** | `tailscale ip -4` |
-| **UFW status** | `sudo ufw status verbose` |
-| **Run backup now** | `/srv/first-agent/scripts/backup-fa.sh` |
-| **SSH over Tailscale** | `ssh fa@100.x.y.z` |
-| **Emergency local access** | Plug in keyboard/mouse, log in at GNOME screen |
+Установка завершена. Всё остальное (обновление/пересборка, управление сервисом,
+запуск задач агента, бэкапы, восстановление, диагностика, шпаргалка команд) —
+в **[`02-operations.md`](./02-operations.md)**. Чтобы не было двух источников
+правды, эти разделы здесь намеренно не повторяются:
+
+- **Старт/стоп/перезапуск агента** (удалённо через Tailscale) →
+  [`02-operations.md` §6](./02-operations.md).
+- **Обновление деплоя** (`fa-update.sh` и ручной путь) →
+  [`02-operations.md` §4–5](./02-operations.md).
+- **Бэкап и восстановление** → [`02-operations.md` §8](./02-operations.md).
+- **Восстановление после сбоев и диагностика** →
+  [`02-operations.md` §10](./02-operations.md).
 
 ---
 
-## Recovery Procedures
+## Ссылки
 
-| Scenario | Recovery |
-|----------|----------|
-| **"Agent goes rogue"** | `systemctl --user stop fa.service && systemctl --user start fa.service` (~10s) |
-| **"Container is wedged"** | `docker compose -f /srv/first-agent/repo/First-Agent-dev/docker-compose.fa.yml down && docker compose up -d` (~30s) |
-| **"Tailscale won't connect"** | Local keyboard + monitor → `sudo tailscale up` again. WireGuard config on phone as cold backup. |
-| **"NVMe dies"** | New NVMe → reinstall Ubuntu → run `scripts/setup-fa-desktop.sh` → `restic restore latest --target /srv/first-agent` (~30 min) |
-| **"OS borked, data intact"** | Reinstall Ubuntu, run setup script, re-auth Tailscale, re-add deploy key, `systemctl --user start fa.service` (~1 hour) |
-| **"Git push fails with host key error"** | The pinned Ed25519 key should prevent this. If GitHub rotates keys again, update `/srv/first-agent/secrets/known_hosts`. |
-
----
-
-## Troubleshooting
-
-**"Docker bypasses UFW"**
-- This is by design. Docker directly manages `iptables`. Mitigation: do not publish ports publicly. The compose file binds nothing to `0.0.0.0`. All access is via Tailscale.
-
-**"Tracker / evolution packages got removed and GNOME is broken"**
-- The setup script **masks** these services (disables them at systemd level) rather than removing the packages. If you accidentally purged them, reinstall: `sudo apt install ubuntu-desktop`.
-
-**"Screen locks despite gsettings"**
-- The cross-reference found that `gsettings` alone is sometimes ignored. The setup script adds a `logind.conf.d` drop-in as a second lock. Reboot after running the script.
-
-**"Tailscale SSH doesn't work"**
-- Ensure you ran `sudo tailscale up --ssh` (not just `tailscale up`).
-- Check `tailscale status` shows the AIO.
-- Ensure UFW allows `tailscale0` to port 22.
-
-**"Deploy key push is denied"**
-- Verify the key has **write access** in GitHub repo settings.
-- Verify branch protection on `main` isn't blocking the push — agent should push to `agent/*` branches.
-- Check `GIT_SSH_COMMAND` is set correctly inside the container.
-
-**"restic backup hangs"**
-- The cross-reference flagged that restic's **native** B2 backend can hang. The backup script uses the **S3-compatible** endpoint (`s3:https://s3.us-west-004.backblazeb2.com/...`). Ensure your B2 Application Key has the S3 capabilities enabled.
-
-**"FA doesn't auto-start after reboot"**
-- Check that lingering is enabled: `loginctl show-user $USER | grep Linger` should say `yes`.
-- Check the service status: `systemctl --user status fa.service`.
-- Check that the service is enabled: `systemctl --user is-enabled fa.service`.
-
-**"Container stopped but auto-reboot brought it back"**
-- This is expected: `restart: unless-stopped` in the compose file means Docker will restart the container unless explicitly stopped via `docker compose down`.
-- To stop FA and keep it stopped: `systemctl --user stop fa.service` (stops the systemd service, which runs `docker compose down`).
-
----
-
-## References
-
-- [`scripts/setup-fa-desktop.sh`](../scripts/setup-fa-desktop.sh) — automated host hardening
-- [`docker-compose.fa.yml`](../docker-compose.fa.yml) — hardened FA container definition
-- [`Dockerfile.fa`](../Dockerfile.fa) — FA runtime image
-- [`scripts/fa.service`](../scripts/fa.service) — systemd user service
-- [`.dockerignore`](../.dockerignore) — build context exclusions
-- [`scripts/backup-fa.sh`](../scripts/backup-fa.sh) — restic backup script
-- [`knowledge/research/First-Agent-ops-cross-reference.md`](./research/First-Agent-ops-cross-reference.md) — three-source cross-reference
-- [`knowledge/research/homelab-deployment-24-7-2026-06.md`](./research/homelab-deployment-24-7-2026-06.md) — research note with citations
+- [`scripts/setup-fa-desktop.sh`](../../scripts/setup-fa-desktop.sh) — автоматическое усиление хоста
+- [`docker-compose.fa.yml`](../../docker-compose.fa.yml) — описание защищённого контейнера
+- [`Dockerfile.fa`](../../Dockerfile.fa) — образ runtime FA
+- [`scripts/fa.service`](../../scripts/fa.service) — systemd user-сервис
+- [`.dockerignore`](../../.dockerignore) — исключения build-контекста
+- [`scripts/backup-fa.sh`](../../scripts/backup-fa.sh) — скрипт бэкапа restic
+- [`02-operations.md`](./02-operations.md) — повседневная эксплуатация (RU)
+- [`knowledge/research/First-Agent-ops-cross-reference.md`](../research/First-Agent-ops-cross-reference.md) — трёхсточниковый cross-reference
+- [`knowledge/research/homelab-deployment-24-7-2026-06.md`](../research/homelab-deployment-24-7-2026-06.md) — research-заметка с цитатами
