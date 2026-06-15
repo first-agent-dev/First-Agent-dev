@@ -1,7 +1,12 @@
 [Unit]
+# systemd USER unit (installed to ~/.config/systemd/user/fa.service).
+# NOTE: a user unit cannot Requires=/After= a *system* unit such as
+# docker.service — systemd resolves dependencies within the user manager only.
+# Boot ordering against Docker is handled by the container's own
+# `restart: unless-stopped` policy plus Docker's `live-restore`. We only order
+# softly against networking so `up -d` does not race a cold network.
 Description=First-Agent 24/7 container
-After=docker.service network-online.target tailscaled.service
-Requires=docker.service
+After=network-online.target tailscaled.service
 Wants=network-online.target tailscaled.service
 
 [Service]

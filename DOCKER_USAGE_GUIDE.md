@@ -1,997 +1,712 @@
-# First-Agent Docker/AIO Usage Guide
+# Руководство по эксплуатации First-Agent (Docker / AIO)
 
-> Обновлено: 2026-06-11  
-> Назначение: единая практическая инструкция по Docker/AIO-скриптам First-Agent.
+> Обновлено: 2026-06-15
+> Язык: русский (команды — английские, их можно копировать как есть).
+> Для кого: для администратора сервера, который **раньше не работал с Docker**.
+> Файлы конфигурации в репозитории — единственный источник правды; это
+> руководство только объясняет, как ими пользоваться.
 
----
+Это полный практический мануал по развёртыванию, обновлению и администрированию
+агента First-Agent на выделенном сервере (AIO — «всё в одном»). Здесь есть два
+пути для каждой операции:
 
-## 0. Важные уточнения к предыдущей инструкции
-
-При повторной проверке я нашёл несколько моментов, которые важно явно зафиксировать:
-
-1. **`FA_TASK` сам по себе не запускает агента.**  
-   Auto-run включается только при:
-   ```env
-   FA_AUTO_RUN=1
-   ```
-   Это сделано специально, чтобы `restart: unless-stopped` не запускал одну и ту же задачу бесконечно.
-
-2. **`scripts/fa-update.sh` всегда переключается на `main` и делает `git pull --ff-only origin main`.**  
-   Это production-update скрипт для уже смерженного кода. Для теста feature-ветки вручную переключайтесь на нужную ветку и не используйте `fa-update.sh`, пока PR не смержен.
-
-3. **`scripts/fa-update.sh` надо запускать из репо или по абсолютному пути из репо:**
-   ```bash
-   /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
-   ```
-   Он не копируется автоматически в `/srv/first-agent/scripts/` текущим `setup-fa-desktop.sh`. В `/srv/first-agent/scripts/` сейчас копируется backup script.
-
-4. **`setup-fa-desktop.sh` генерирует systemd user service inline.**  
-   В репо есть `scripts/fa.service` как шаблон, но setup-скрипт пишет свой unit в `~/.config/systemd/user/fa.service`. После изменения шаблона стоит проверить установленный unit:
-   ```bash
-   systemctl --user cat fa.service
-   ```
-
-5. **Тесты внутри контейнера лучше запускать через `uv run` из `/workspace`, а не из `/opt/first-agent`.**  
-   `/opt/first-agent` — baked snapshot в read-only image. Живой код и writable dev venv находятся в `/workspace`.
+- **Авто** — готовые скрипты, которые делают всё за вас (рекомендуется).
+- **Вручную** — пошаговые команды на случай, если скрипт не сработал.
 
 ---
 
-## 1. Mental model
+## Содержание
 
-Production Docker setup состоит из трёх слоёв:
+1. [Что это и как устроено](#1-что-это-и-как-устроено)
+2. [Глоссарий для новичка](#2-глоссарий-для-новичка)
+3. [Первый запуск (первичное развёртывание)](#3-первый-запуск-первичное-развёртывание)
+4. [Ежедневное обновление и пересборка — авто](#4-ежедневное-обновление-и-пересборка--авто)
+5. [Ежедневное обновление и пересборка — вручную](#5-ежедневное-обновление-и-пересборка--вручную)
+6. [Управление сервисом и контейнером](#6-управление-сервисом-и-контейнером)
+7. [Запуск задач агента](#7-запуск-задач-агента)
+8. [Резервное копирование и восстановление](#8-резервное-копирование-и-восстановление)
+9. [Безопасность и удалённый доступ](#9-безопасность-и-удалённый-доступ)
+10. [Диагностика и типичные проблемы](#10-диагностика-и-типичные-проблемы)
+11. [Шпаргалка](#11-шпаргалка)
+12. [Справочник по скриптам](#12-справочник-по-скриптам)
+
+---
+
+## 1. Что это и как устроено
+
+First-Agent работает не «голым процессом» на сервере, а внутри **Docker-контейнера**.
+Представьте контейнер как изолированную коробку, в которой уже собрана вся среда
+(Python, зависимости, сам агент). Это позволяет обновлять и перезапускать агента,
+не трогая остальной сервер.
+
+Развёртывание состоит из трёх слоёв:
 
 ```text
-Host Ubuntu AIO
-└── systemd user service: fa.service
-    └── docker compose
-        └── container: first-agent
-            ├── /workspace       -> bind mount репозитория
-            ├── /home/fa/.fa     -> persistent state/config
-            ├── /run/secrets/*   -> deploy key + known_hosts
-            └── fa-entrypoint.sh -> stand-by / explicit auto-run
+Сервер Ubuntu (AIO)
+└── systemd user service: fa.service        ← автозапуск при загрузке
+    └── docker compose                       ← оркестратор контейнера
+        └── контейнер: first-agent           ← сам агент
+            ├── /workspace        → код репозитория (bind-mount с хоста)
+            ├── /home/fa/.fa      → постоянные данные/конфиг (models.yaml и пр.)
+            ├── /run/secrets/*    → deploy-ключ + known_hosts (только чтение)
+            └── fa-entrypoint.sh  → режим ожидания / разовый запуск задачи
 ```
 
-Ключевая идея:
+Ключевые идеи, которые важно понять сразу:
 
-> Контейнер по умолчанию — это **готовая среда для запуска агента**, а не бесконечно работающий агент.
+- **Контейнер по умолчанию не «крутит» агента бесконечно.** Он стартует в
+  режиме ожидания (stand-by) и ждёт, пока вы дадите ему задачу. Это сделано
+  специально, чтобы политика автоперезапуска не запускала одну и ту же задачу
+  в цикле.
+- **Данные переживают пересборку.** Память агента, история и настройки лежат на
+  хосте в `/srv/first-agent/state/`. Даже если удалить контейнер, данные
+  останутся.
+- **Код живёт на хосте**, в `/srv/first-agent/repo/First-Agent-dev/`, и
+  «пробрасывается» внутрь контейнера. Поэтому правка исходников не всегда требует
+  пересборки образа — а вот смена зависимостей или `Dockerfile.fa` требует.
 
-Обычный режим:
+Главные файлы (лежат в корне репозитория):
 
-```bash
-docker exec -it first-agent bash
-fa run --workspace /workspace --role coder --task "..."
-```
-
-Auto-run — отдельный явный режим через `FA_AUTO_RUN=1`.
+| Файл | Назначение |
+|------|------------|
+| `Dockerfile.fa` | Рецепт сборки образа контейнера (Ubuntu + Python + агент). |
+| `docker-compose.fa.yml` | Описание запуска контейнера: лимиты, тома, сеть, healthcheck. |
+| `.env.fa` | Ваши секреты — API-ключи LLM. **Не коммитится в git.** |
+| `scripts/` | Скрипты установки, обновления, бэкапа и обслуживания. |
 
 ---
 
-## 2. Основные Docker-файлы
+## 2. Глоссарий для новичка
 
-### `Dockerfile.fa`
+Если вы никогда не работали с Docker — прочитайте эту таблицу один раз, дальше
+будет понятнее.
 
-Собирает Ubuntu-based runtime image.
+| Термин | Простыми словами |
+|--------|------------------|
+| **Образ (image)** | «Слепок» готовой среды. Из него создаются контейнеры. |
+| **Контейнер (container)** | Запущенный экземпляр образа — изолированная «коробка» с программой. |
+| **`docker compose`** | Инструмент, который запускает контейнер по описанию из `docker-compose.fa.yml`. |
+| **Сборка (build)** | Создание образа из `Dockerfile.fa`. Нужна при смене зависимостей. |
+| **bind-mount / том (volume)** | «Окно» из папки хоста внутрь контейнера. Через него данные сохраняются. |
+| **healthcheck** | Автопроверка «жив ли агент». Контейнер бывает `healthy` / `unhealthy`. |
+| **systemd / сервис** | Менеджер автозапуска: поднимает контейнер при загрузке сервера. |
+| **Tailscale** | Частная VPN-сеть. Через неё вы безопасно заходите на сервер. |
+| **deploy key** | SSH-ключ, которым контейнер пушит код в GitHub. |
+| **`-d` (detached)** | «Фоновый режим» — контейнер работает, консоль свободна. |
+| **`-f файл`** | Указывает, какой compose-файл использовать (`-f docker-compose.fa.yml`). |
 
-Что делает:
+> Подсказка: почти все команды ниже запускаются из папки проекта. Перейдите в неё
+> один раз и оставайтесь там:
+>
+> ```bash
+> cd /srv/first-agent/repo/First-Agent-dev
+> ```
+>
+> `cd` (change directory) — это просто «зайти в папку».
 
-- база: `ubuntu:24.04`;
-- ставит системные зависимости:
-  - `git`, `curl`, `openssh-client`, `universal-ctags`, build tools;
-- создаёт пользователя `fa` с UID `1000`;
-- ставит `uv`, `uvx`, `just`;
-- ставит Python 3.13;
-- создаёт image-owned venv:
-  ```text
-  /opt/fa-venv
-  ```
-- ставит runtime dependencies:
-  ```bash
-  uv sync --frozen --no-dev
-  ```
-- копирует entrypoint:
-  ```text
-  /usr/local/bin/fa-entrypoint.sh
-  ```
-- задаёт:
-  ```dockerfile
-  ENTRYPOINT ["/usr/local/bin/fa-entrypoint.sh"]
-  ```
+---
 
-Важное поведение:
+## 3. Первый запуск (первичное развёртывание)
+
+> Важно про «развёртывание в один клик». Полностью автоматический деплой «одной
+> кнопкой» невозможен без потери безопасности: посередине обязательно нужны
+> действия человека — добавить ключ на GitHub, авторизовать Tailscale в браузере
+> и вписать API-ключи. Поэтому правильная и безопасная схема — **два скрипта и
+> три коротких ручных шага между ними.** Это и есть наш «однокнопочный» рабочий
+> процесс: запомнить нужно всего две команды.
+
+### 3.1. Схема процесса
 
 ```text
-PYTHONPATH=/workspace/src
+[Скрипт 1] setup-fa-desktop.sh   ← ставит систему, Docker, Tailscale, клонирует репо
+        │
+        ▼
+[Ручные шаги]  1) добавить deploy-ключ на GitHub
+               2) sudo tailscale up --ssh   (авторизация)
+               3) вписать API-ключи в .env.fa
+        │
+        ▼
+[Скрипт 2] fa-post-setup.sh      ← собирает контейнер, проверяет git, запускает сервис
 ```
 
-Это значит, что bind-mounted код в `/workspace/src` имеет приоритет над baked snapshot. Обычные изменения `.py` файлов видны без rebuild image. Rebuild нужен при изменении зависимостей, Dockerfile, entrypoint и т.п.
+### 3.2. Шаг 1 — получить репозиторий на сервер
 
----
-
-### `docker-compose.fa.yml`
-
-Описывает production service:
-
-```text
-first-agent
-```
-
-Важные настройки:
-
-```yaml
-container_name: first-agent
-restart: unless-stopped
-init: true
-read_only: true
-user: "1000:1000"
-security_opt:
-  - no-new-privileges:true
-cap_drop:
-  - ALL
-```
-
-Основные mount points:
-
-| Host path | Container path | Назначение |
-|---|---|---|
-| `/srv/first-agent/repo/First-Agent-dev` | `/workspace` | живой код проекта |
-| `/srv/first-agent/state` | `/home/fa/.fa` | state/config/work logs |
-| `/srv/first-agent/secrets/github_deploy_key` | `/run/secrets/git_key` | GitHub deploy key |
-| `/srv/first-agent/secrets/known_hosts` | `/run/secrets/known_hosts` | pinned GitHub host key |
-
-Writable tmpfs:
-
-- `/tmp`
-- `/home/fa/.cache`
-- `/tmp/uv-cache`
-- `/home/fa/.local`
-
-Healthcheck:
+Если репозитория ещё нет, склонируйте его (это делает и скрипт 1 автоматически,
+но для самого первого запуска удобно иметь файлы под рукой):
 
 ```bash
-fa --version
+sudo mkdir -p /srv/first-agent/repo
+sudo chown -R "$USER:$USER" /srv/first-agent
+git clone https://github.com/first-agent-dev/First-Agent-dev.git \
+    /srv/first-agent/repo/First-Agent-dev
+cd /srv/first-agent/repo/First-Agent-dev
 ```
 
----
+> `git clone` — скачивает копию репозитория с GitHub.
+> `chown` — делает вашего пользователя владельцем папки, чтобы не нужен был root.
 
-### `.env.fa.template`
-
-Шаблон для `.env.fa`.
-
-Содержит:
-
-- LLM provider API keys;
-- optional container auto-run controls.
-
-Пример provider key:
-
-```env
-OPENROUTER_API_KEY=sk-or-v1-...
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Auto-run controls обычно закомментированы:
-
-```env
-# FA_AUTO_RUN=0
-# FA_TASK=...
-# FA_TASK_FILE=tasks/example.md
-# FA_ROLE=coder
-# FA_MAX_TURNS=16
-# FA_RUN_ID=my-run-id
-# FA_RESUME=0
-# FA_CONFIG=/home/fa/.fa/models.yaml
-```
-
-**Не коммитьте `.env.fa`.** Он содержит секреты и игнорируется Git.
-
----
-
-## 3. Скрипты верхнего уровня
-
-### `scripts/fa-entrypoint.sh`
-
-Используется **внутри контейнера** как Docker entrypoint.
-
-Обычно руками его не запускают.
-
-#### Режим 1 — stand-by, дефолт
-
-Если нет command override и `FA_AUTO_RUN` не truthy:
-
-```bash
-sleep infinity
-```
-
-Контейнер живой и готов для:
-
-```bash
-docker exec -it first-agent bash
-```
-
-#### Режим 2 — command override
-
-Если контейнеру передана команда, entrypoint делает:
-
-```bash
-exec "$@"
-```
-
-Пример:
-
-```bash
-docker compose -f docker-compose.fa.yml run --rm first-agent bash
-```
-
-#### Режим 3 — explicit auto-run
-
-Включается только если:
-
-```env
-FA_AUTO_RUN=1
-```
-
-и задано ровно одно из:
-
-```env
-FA_TASK=...
-```
-
-или:
-
-```env
-FA_TASK_FILE=tasks/my-task.md
-```
-
-Что делает:
-
-1. Валидирует task и env.
-2. Запускает `fa run` как child process.
-3. Пишет status file:
-   ```text
-   /workspace/.fa/entrypoint-status.txt
-   ```
-4. После завершения возвращается в stand-by.
-
-Статусы:
-
-```text
-STANDBY
-RUNNING
-SUCCESS
-FAILED
-INVALID_CONFIG
-TERMINATED
-```
-
-Проверить:
-
-```bash
-docker exec first-agent cat /workspace/.fa/entrypoint-status.txt
-```
-
----
-
-### `scripts/fa-update.sh`
-
-Host-side update/deploy helper для AIO.
-
-Основной способ обновлять production-деплой после merge в `main`:
-
-```bash
-/srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
-```
-
-Что делает:
-
-1. Берёт lock:
-   ```text
-   /tmp/fa-update.lock
-   ```
-2. Логирует в:
-   ```text
-   /tmp/fa-update.log
-   ```
-3. Проверяет команды: `git`, `docker`, `sha256sum`, `awk`, `grep`, `sed`, `flock`.
-4. Проверяет Docker disk usage.
-5. Проверяет dirty working tree.
-6. Делает:
-   ```bash
-   git fetch origin --prune
-   git switch main
-   git pull --ff-only origin main
-   ```
-7. Решает, нужен ли rebuild/restart.
-8. Отслеживает изменение `.env.fa` через `.env.fa.sha256`.
-9. Валидирует активные `FA_*` env rows.
-10. Делает build/restart через Docker Compose.
-11. Ждёт healthcheck.
-12. Проверяет `fa --version` и core imports.
-13. Опционально запускает tests внутри контейнера.
-14. Печатает usage examples.
-15. Делает `docker image prune` старых images.
-
-Частые варианты:
-
-```bash
-# быстро обновить без тестов
-SKIP_TESTS=1 /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
-
-# auto-stash локальных изменений
-AUTO_STASH=1 /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
-
-# clean rebuild
-NO_CACHE=1 /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
-
-# не чистить старые images
-PRUNE=0 /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
-```
-
-Важное ограничение:
-
-> Скрипт предназначен для `main`. Он сам переключается на `main`.
-
----
-
-### `scripts/setup-fa-desktop.sh`
-
-Первичный bootstrap Ubuntu Desktop/AIO host.
-
-Запуск:
+### 3.3. Шаг 2 — запустить bootstrap хоста (Скрипт 1)
 
 ```bash
 bash scripts/setup-fa-desktop.sh
 ```
 
-Что делает:
+> Что делает этот скрипт: обновляет систему, отключает «засыпание» сервера,
+> усиливает SSH, настраивает фаервол (UFW), ставит Docker CE и Tailscale,
+> создаёт рабочие папки в `/srv/first-agent/`, клонирует репозиторий, генерирует
+> deploy-ключ для GitHub, создаёт шаблоны `.env.fa` и `models.yaml`, ставит
+> systemd-сервис и шаблон бэкапа.
+>
+> Скрипт **идемпотентный** — его можно запускать сколько угодно раз. Он не
+> ломает уже настроенное, а лишь донастраивает недостающее.
 
-- обновляет систему;
-- ставит Docker CE из официального Docker apt repo;
-- ставит Tailscale;
-- создаёт `/srv/first-agent/...`;
-- клонирует репозиторий, если его нет;
-- создаёт `.env.fa` из шаблона;
-- создаёт `/srv/first-agent/state/models.yaml` из example;
-- создаёт backup credentials template;
-- ставит user systemd service;
-- настраивает базовую host security / power behavior.
+В конце скрипт напечатает **публичный deploy-ключ** — он понадобится дальше.
 
-После него обычно нужны ручные шаги:
+### 3.4. Шаг 3 — три ручных действия
 
-```bash
-sudo tailscale up --ssh
-nano /srv/first-agent/repo/First-Agent-dev/.env.fa
-nano /srv/first-agent/state/models.yaml
-```
-
-Затем:
+**(а) Добавить deploy-ключ на GitHub.** Скопируйте напечатанный публичный ключ и
+добавьте его в репозиторий: *Settings → Deploy keys → Add deploy key*, поставьте
+галочку **Allow write access**. Если потеряли вывод, ключ всегда можно показать
+снова:
 
 ```bash
-bash scripts/fa-post-setup.sh
+cat /srv/first-agent/secrets/github_deploy_key.pub
 ```
 
----
-
-### `scripts/fa-post-setup.sh`
-
-Второй этап после setup и ручной настройки.
-
-Запускать после:
-
-- Tailscale auth;
-- GitHub deploy key;
-- заполнения `.env.fa`;
-- настройки `models.yaml`.
-
-Запуск:
-
-```bash
-bash scripts/fa-post-setup.sh
-```
-
-Что делает:
-
-1. Проверяет, что пользователь не root.
-2. Проверяет Docker group.
-3. Проверяет `.env.fa`.
-4. Собирает контейнер:
-   ```bash
-   docker compose -f docker-compose.fa.yml build
-   ```
-5. Запускает контейнер:
-   ```bash
-   docker compose -f docker-compose.fa.yml up -d
-   ```
-6. Настраивает Git внутри `/workspace`.
-7. Проверяет Git SSH.
-8. Делает test branch push/delete.
-9. Включает и запускает `fa.service`.
-10. Настраивает backup cron, если есть B2 credentials.
-
----
-
-### `scripts/fa.service`
-
-Шаблон user systemd unit для управления Docker Compose service.
-
-Обычно установленный путь:
-
-```text
-~/.config/systemd/user/fa.service
-```
-
-Управление:
-
-```bash
-systemctl --user status fa.service
-systemctl --user start fa.service
-systemctl --user stop fa.service
-systemctl --user restart fa.service
-```
-
-Unit запускает:
-
-```bash
-docker compose -f docker-compose.fa.yml up -d
-```
-
-и останавливает:
-
-```bash
-docker compose -f docker-compose.fa.yml down
-```
-
----
-
-### `scripts/backup-fa.sh`
-
-Backup через `restic` в Backblaze B2 S3-compatible endpoint.
-
-Credentials ожидаются в:
-
-```text
-/srv/first-agent/secrets/backup.env
-```
-
-Пример:
-
-```env
-B2_KEY_ID=...
-B2_APPLICATION_KEY=...
-B2_BUCKET=...
-```
-
-Ручной запуск:
-
-```bash
-/srv/first-agent/scripts/backup-fa.sh
-```
-
-или из репо:
-
-```bash
-scripts/backup-fa.sh
-```
-
-Cron example:
-
-```cron
-0 3 * * * /srv/first-agent/scripts/backup-fa.sh >> /srv/first-agent/backup/backup.log 2>&1
-```
-
----
-
-### `scripts/check_protected_paths.py`
-
-Не Docker runtime script.
-
-Это CI/authoring guardrail для проверки protected paths. Обычно пользователю AIO-деплоя напрямую не нужен.
-
----
-
-## 4. SSH/Tailscale скрипты
-
-Каталог:
-
-```text
-scripts/ssh-tailscale/
-```
-
-Эти скрипты настраивают **host-level remote access**, не контейнер.
-
-### `scripts/ssh-tailscale/README.md`
-
-Главный runbook. Читать перед запуском остальных.
-
----
-
-### `00-failsafe.sh`
-
-Anti-lockout подготовка перед hardening.
-
-Запуск:
-
-```bash
-cd scripts/ssh-tailscale
-sudo bash 00-failsafe.sh
-```
-
----
-
-### `10-diagnose.sh`
-
-Read-only диагностика Tailscale/SSH/UFW.
-
-```bash
-sudo bash 10-diagnose.sh
-```
-
----
-
-### `20-harden.sh`
-
-Применяет SSH-over-Tailscale hardening.
-
-```bash
-sudo bash 20-harden.sh
-```
-
-Настраивает:
-
-- UFW;
-- sshd restrictions;
-- Match Address;
-- fail2ban-related checks.
-
----
-
-### `30-verify.sh`
-
-Read-only verification после hardening.
-
-```bash
-sudo bash 30-verify.sh
-```
-
----
-
-### `tailscale-acl.jsonc`
-
-Пример Tailscale ACL policy для admin console.
-
-Используется для:
-
-- `tag:aio`;
-- Tailscale SSH rules;
-- доступа только нужному пользователю/device set.
-
----
-
-## 5. Первый production-деплой
-
-### Шаг 1 — получить репозиторий
-
-Если репо ещё нет:
-
-```bash
-mkdir -p /srv/first-agent/repo
-cd /srv/first-agent/repo
-git clone https://github.com/first-agent-dev/First-Agent-dev.git
-cd First-Agent-dev
-```
-
-Если вы запускаете `setup-fa-desktop.sh`, он сам клонирует репо при отсутствии.
-
----
-
-### Шаг 2 — bootstrap host
-
-```bash
-bash scripts/setup-fa-desktop.sh
-```
-
-После добавления пользователя в Docker group может понадобиться logout/login или reboot.
-
----
-
-### Шаг 3 — Tailscale
-
-Минимально:
+**(б) Авторизовать Tailscale** (это и есть «защита сервера» — после неё доступ по
+SSH будет только через вашу частную сеть):
 
 ```bash
 sudo tailscale up --ssh
 ```
 
-Проверить:
+> Команда выведет ссылку — откройте её в браузере и войдите в свой аккаунт
+> Tailscale. После этого сервер станет виден в вашей частной сети.
 
-```bash
-tailscale status
-```
-
-Опциональный hardening:
-
-```bash
-cd scripts/ssh-tailscale
-sudo bash 00-failsafe.sh
-sudo bash 10-diagnose.sh
-sudo bash 20-harden.sh
-sudo bash 30-verify.sh
-```
-
----
-
-### Шаг 4 — secrets
+**(в) Вписать API-ключи LLM** в файл `.env.fa`:
 
 ```bash
 nano /srv/first-agent/repo/First-Agent-dev/.env.fa
-chmod 600 /srv/first-agent/repo/First-Agent-dev/.env.fa
 ```
 
-Заполнить LLM provider keys.
+> `nano` — простой текстовый редактор. Раскомментируйте нужные строки (уберите
+> `#` в начале) и подставьте свои ключи, например `OPENROUTER_API_KEY=...`.
+> Сохранить: `Ctrl+O`, затем `Enter`. Выйти: `Ctrl+X`.
+>
+> Также проверьте/настройте провайдеров модели:
+> `nano /srv/first-agent/state/models.yaml`
 
----
+### 3.5. Шаг 4 — перелогиниться (один раз)
 
-### Шаг 5 — model config
-
-Файл на host:
-
-```text
-/srv/first-agent/state/models.yaml
-```
-
-В контейнере:
-
-```text
-/home/fa/.fa/models.yaml
-```
-
-Минимальная форма:
-
-```yaml
-coder:
-  model: "test-model"
-  family: "openai"
-  chain:
-    - provider: openrouter
-      slug: "provider/model"
-      base_url: "https://openrouter.ai/api/v1"
-      api_key_env: OPENROUTER_API_KEY
-```
-
-Для multi-role workflow добавьте `planner` и `eval`.
-
----
-
-### Шаг 6 — post setup
+Скрипт добавил вашего пользователя в группу `docker`. Чтобы это применилось,
+**выйдите из системы и зайдите снова** (или перезагрузите сервер). Проверить:
 
 ```bash
+id -nG | grep -w docker && echo "docker-группа активна"
+```
+
+### 3.6. Шаг 5 — финальная сборка и запуск (Скрипт 2)
+
+```bash
+cd /srv/first-agent/repo/First-Agent-dev
 bash scripts/fa-post-setup.sh
 ```
 
-После успешного выполнения:
+> Что делает: собирает образ, поднимает контейнер, ждёт пока он станет `healthy`,
+> настраивает git внутри контейнера, **проверяет, что git push на GitHub
+> работает** (создаёт и удаляет тестовую ветку), включает и стартует
+> systemd-сервис, ставит ночной бэкап в cron.
+
+Если скрипт завершился без красных `[ERROR]` — поздравляю, деплой готов. Проверка:
 
 ```bash
 docker ps
-systemctl --user status fa.service
 ```
+
+В списке должна быть строка с контейнером `first-agent` и статусом `Up ...`.
 
 ---
 
-## 6. Ежедневная работа
+## 4. Ежедневное обновление и пересборка — авто
 
-### Войти в контейнер
-
-```bash
-docker exec -it first-agent bash
-```
-
-Внутри:
-
-```bash
-cd /workspace
-fa --version
-```
-
----
-
-### Запустить задачу вручную
-
-```bash
-fa run \
-  --workspace /workspace \
-  --role coder \
-  --task "Сделай нужное изменение"
-```
-
----
-
-### Planner → Coder → Eval workflow
-
-Planner:
-
-```bash
-fa run \
-  --workspace /workspace \
-  --role planner \
-  --run-id feature-auth-001 \
-  --task "Составь план для JWT auth"
-```
-
-Coder:
-
-```bash
-fa run \
-  --workspace /workspace \
-  --role coder \
-  --run-id feature-auth-001 \
-  --resume \
-  --task "Выполни план из work log"
-```
-
-Eval:
-
-```bash
-fa run \
-  --workspace /workspace \
-  --role eval \
-  --run-id feature-auth-001 \
-  --resume \
-  --task "Проверь реализацию по work log"
-```
-
----
-
-## 7. Auto-run режим
-
-Использовать только осознанно.
-
-В `.env.fa`:
-
-```env
-FA_AUTO_RUN=1
-FA_TASK_FILE=tasks/my-task.md
-FA_ROLE=coder
-FA_RUN_ID=my-task-001
-FA_MAX_TURNS=24
-FA_RESUME=0
-```
-
-Перезапустить:
-
-```bash
-cd /srv/first-agent/repo/First-Agent-dev
-docker compose -f docker-compose.fa.yml restart
-```
-
-Проверить:
-
-```bash
-docker exec first-agent cat /workspace/.fa/entrypoint-status.txt
-```
-
-После завершения задача не повторяется сама по себе, пока контейнер остаётся живым. Но если оставить `FA_AUTO_RUN=1` в `.env.fa` и пересоздать контейнер, задача снова стартует. После one-shot запуска лучше вернуть:
-
-```env
-FA_AUTO_RUN=0
-```
-
-или закомментировать auto-run variables.
-
----
-
-## 8. Обновление production-деплоя
-
-После merge в `main`:
+Когда в `main` на GitHub появился новый код, обновите деплой одной командой.
+Это **главный сценарий повседневного администрирования.**
 
 ```bash
 /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
 ```
 
-Быстро без тестов:
+> Что делает `fa-update.sh` (по шагам, безопасно и предсказуемо):
+>
+> 1. **Preflight** — проверяет наличие команд, что Docker жив и есть место на диске.
+> 2. **Git-обновление** — переключается на `main` и делает `git pull --ff-only`.
+>    Если в рабочем дереве есть несохранённые правки — **останавливается**, чтобы
+>    ничего не затереть (см. флаг `AUTO_STASH`).
+> 3. **Анализ изменений** — сам решает, что нужно: только перезапуск или полная
+>    пересборка (пересборка — если поменялись `Dockerfile.fa`, `uv.lock`,
+>    `pyproject.toml`, `docker-compose.fa.yml`, `.dockerignore` или
+>    `fa-entrypoint.sh`). Если изменений нет — ничего не делает.
+> 4. **Проверка `.env.fa`** — если файл изменился, контейнер будет пересоздан,
+>    чтобы подхватить новые переменные.
+> 5. **Сборка и деплой**, затем **ожидание `healthy`**.
+> 6. **Smoke-тесты** (быстрая проверка, что `fa` и импорты работают) и **pytest**
+>    внутри контейнера (необязательные — не валят обновление).
+> 7. **Очистка** старых образов.
+>
+> Скрипт защищён блокировкой (нельзя запустить две копии сразу) и ведёт лог в
+> `/tmp/fa-update.log`.
+
+### Полезные флаги (переменные окружения)
+
+Указываются перед командой. Можно комбинировать.
+
+| Команда | Когда использовать |
+|---------|--------------------|
+| `SKIP_TESTS=1 .../fa-update.sh` | Быстро обновить без прогона pytest. |
+| `AUTO_STASH=1 .../fa-update.sh` | Автоматически отложить локальные правки перед обновлением. |
+| `NO_CACHE=1 .../fa-update.sh` | Чистая пересборка «с нуля», игнорируя кэш слоёв. |
+| `SKIP_UV_SYNC=1 .../fa-update.sh` | Не синхронизировать dev-зависимости перед тестами. |
+| `PRUNE=0 .../fa-update.sh` | Не удалять старые образы после обновления. |
+| `HEALTH_TIMEOUT_SECONDS=120 .../fa-update.sh` | Дать контейнеру больше времени стать `healthy`. |
+
+Примеры:
 
 ```bash
-SKIP_TESTS=1 /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
-```
+# Обычное обновление
+/srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
 
-С авто-stash:
+# Быстро, без тестов, с авто-stash локальных изменений
+SKIP_TESTS=1 AUTO_STASH=1 /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
 
-```bash
-AUTO_STASH=1 /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
-```
-
-Clean rebuild:
-
-```bash
+# Полная чистая пересборка (например, после крупного апгрейда зависимостей)
 NO_CACHE=1 /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
 ```
 
+> Важно: `fa-update.sh` всегда работает с веткой `main`. Для тестирования
+> feature-ветки не используйте его — переключайтесь на ветку вручную (см. раздел 5).
+
 ---
 
-## 9. Управление сервисом
+## 5. Ежедневное обновление и пересборка — вручную
 
-```bash
-systemctl --user status fa.service
-systemctl --user restart fa.service
-systemctl --user stop fa.service
-systemctl --user start fa.service
-```
-
-Логи:
+Используйте этот путь, если `fa-update.sh` по какой-то причине не отрабатывает
+(конфликт версий, тест другой ветки, отладка). Все команды — из папки проекта.
 
 ```bash
 cd /srv/first-agent/repo/First-Agent-dev
-docker compose -f docker-compose.fa.yml logs -f
 ```
 
-Если контейнер сломан:
+**1. Остановить контейнер** (данные при этом не теряются):
 
 ```bash
-cd /srv/first-agent/repo/First-Agent-dev
+docker compose -f docker-compose.fa.yml down
+```
+
+> `down` аккуратно «тушит» контейнер. Тома с данными остаются на хосте.
+
+**2. Скачать свежий код с GitHub:**
+
+```bash
+git pull origin main
+```
+
+> Если git ругается на несохранённые изменения (`working tree dirty`) — либо
+> сохраните их (`git stash`), либо сбросьте: `git reset --hard HEAD`
+> (осторожно — это удалит незакоммиченные правки).
+
+**3. Пересобрать образ** (нужно, если менялись зависимости или `Dockerfile.fa`):
+
+```bash
+docker compose -f docker-compose.fa.yml build --no-cache
+```
+
+> `--no-cache` заставляет Docker собрать всё заново, игнорируя сохранённый кэш.
+> Дольше, но гарантирует чистую сборку. Если зависимости не менялись, флаг можно
+> опустить — будет быстрее.
+
+**4. Запустить контейнер в фоне:**
+
+```bash
+docker compose -f docker-compose.fa.yml up -d --force-recreate
+```
+
+> `-d` — фоновый режим. `--force-recreate` пересоздаёт контейнер, чтобы он
+> гарантированно подхватил новый образ и свежий `.env.fa`.
+
+**5. Проверить, что всё поднялось:**
+
+```bash
+docker ps
+docker compose -f docker-compose.fa.yml logs --tail=50
+```
+
+> Дождитесь в `docker ps` статуса `healthy` (может занять до минуты).
+
+**Минимальный «жёсткий» перезапуск** (если агент завис, без обновления кода):
+
+```bash
 docker compose -f docker-compose.fa.yml down
 docker compose -f docker-compose.fa.yml up -d
 ```
 
 ---
 
-## 10. Backup
+## 6. Управление сервисом и контейнером
 
-Проверить credentials:
+Автозапуском контейнера при загрузке управляет **systemd user service**
+`fa.service`. Это и есть «правильный» способ останавливать и запускать агента в
+проде (а не голым `docker compose`), потому что сервис переживает перезагрузки.
 
 ```bash
-cat /srv/first-agent/secrets/backup.env
+systemctl --user status  fa.service   # текущее состояние
+systemctl --user restart fa.service   # перезапустить
+systemctl --user stop    fa.service   # остановить
+systemctl --user start   fa.service   # запустить
 ```
 
-Ручной backup:
+> `--user` означает «сервис от вашего пользователя», а не системный. Именно так
+> он и установлен. После правки `.env.fa` достаточно `systemctl --user restart
+> fa.service` — этот сервис при перезапуске выполняет `down` + `up -d`, то есть
+> пересоздаёт контейнер и перечитывает `.env.fa`. (Не путайте с `docker compose
+> restart`, который окружение **не** перечитывает — см. раздел 7.3.)
+
+Прямая работа с контейнером (для диагностики):
+
+```bash
+cd /srv/first-agent/repo/First-Agent-dev
+
+docker ps                                              # запущенные контейнеры
+docker compose -f docker-compose.fa.yml logs -f        # логи в реальном времени
+docker exec -it first-agent bash                        # войти внутрь контейнера
+```
+
+> `logs -f` (follow) — поток логов вживую. Выйти из просмотра: `Ctrl+C` (агент
+> при этом продолжит работать). Войдя внутрь через `docker exec`, выйти обратно:
+> наберите `exit`.
+
+Освободить место от мусора Docker (старые образы и слои):
+
+```bash
+docker system prune -f
+```
+
+> Запущенные контейнеры не пострадают. `setup-fa-desktop.sh` уже ставит
+> еженедельную авто-очистку, но иногда полезно запустить вручную.
+
+---
+
+## 7. Запуск задач агента
+
+Контейнер по умолчанию — это **готовая среда**, а не вечно работающий агент.
+Есть два способа дать ему работу.
+
+### 7.1. Ручной запуск (рекомендуется для интерактивной работы)
+
+```bash
+cd /srv/first-agent/repo/First-Agent-dev
+docker compose -f docker-compose.fa.yml exec -T first-agent \
+    fa run --role coder --workspace /workspace --task "Опишите задачу здесь"
+```
+
+### 7.2. Workflow из трёх ролей (planner → coder → eval)
+
+Каждая команда — это отдельный вызов LLM. Связываются через общий `--run-id`.
+
+```bash
+cd /srv/first-agent/repo/First-Agent-dev
+CF="docker-compose.fa.yml"
+
+# Планировщик
+docker compose -f $CF exec -T first-agent \
+    fa run --role planner --workspace /workspace --run-id work-1 --task "Спланируй X"
+
+# Кодер (продолжает черновик планировщика)
+docker compose -f $CF exec -T first-agent \
+    fa run --role coder --workspace /workspace --run-id work-1 --resume --task "Реализуй X"
+
+# Проверяющий (верифицирует работу кодера)
+docker compose -f $CF exec -T first-agent \
+    fa run --role eval --workspace /workspace --run-id work-1 --resume --task "Проверь X"
+```
+
+### 7.3. Авто-запуск одной задачи при старте контейнера
+
+Полезно для разовых пакетных заданий. Включается **только** при `FA_AUTO_RUN=1`
+(иначе из-за политики автоперезапуска задача крутилась бы в цикле).
+
+Впишите в `.env.fa`:
+
+```env
+FA_AUTO_RUN=1
+FA_TASK=Реализуй то, что описано в задаче
+FA_ROLE=coder
+FA_RUN_ID=batch-1
+```
+
+Затем **пересоздайте** контейнер и проверьте результат:
+
+```bash
+cd /srv/first-agent/repo/First-Agent-dev
+docker compose -f docker-compose.fa.yml up -d --force-recreate
+docker compose -f docker-compose.fa.yml exec -T first-agent \
+    cat /workspace/.fa/entrypoint-status.txt
+```
+
+> Важно: именно `up -d --force-recreate`, а **не** `restart`. Команда `restart`
+> только перезапускает контейнер со старым окружением и **не перечитывает**
+> `.env.fa`; новые переменные подхватываются лишь при пересоздании контейнера
+> (`up`). То же касается любого изменения `.env.fa` (см. раздел 10).
+>
+> Задаётся **либо** `FA_TASK` (текст), **либо** `FA_TASK_FILE` (путь к файлу
+> внутри `/workspace`), но не оба сразу. После выполнения контейнер переходит в
+> режим ожидания, оставаясь доступным для осмотра.
+
+---
+
+## 8. Резервное копирование и восстановление
+
+Бэкапы делает скрипт `backup-fa.sh` через **restic** в облако Backblaze B2.
+`setup-fa-desktop.sh`/`fa-post-setup.sh` ставят его в cron на каждую ночь.
+
+### Что и где
+
+- **Данные агента**: `/srv/first-agent/state/` (память, история, конфиг).
+- **Секреты**: `/srv/first-agent/secrets/` (deploy-ключ, креды бэкапа).
+- **Лог бэкапа**: `/srv/first-agent/backup/backup.log`.
+
+### Настройка (один раз)
+
+```bash
+nano /srv/first-agent/secrets/backup.env
+```
+
+> Впишите реальные `B2_KEY_ID`, `B2_APPLICATION_KEY`, `B2_BUCKET` вместо
+> `CHANGEME`. Это ключи приложения Backblaze B2 с доступом на чтение/запись.
+
+Инициализировать хранилище (только при первом использовании):
+
+```bash
+source /srv/first-agent/secrets/backup.env
+export AWS_ACCESS_KEY_ID="$B2_KEY_ID" AWS_SECRET_ACCESS_KEY="$B2_APPLICATION_KEY"
+restic -r "s3:https://s3.us-west-004.backblazeb2.com/$B2_BUCKET" init
+```
+
+### Ручной бэкап
 
 ```bash
 /srv/first-agent/scripts/backup-fa.sh
 ```
 
-Проверить restore хотя бы иногда:
+> Скрипт сам делает бэкап и применяет политику хранения: 7 дневных, 4 недельных
+> и 6 месячных копий.
+
+### Восстановление (проверяйте хотя бы раз в квартал)
 
 ```bash
+source /srv/first-agent/secrets/backup.env
+export AWS_ACCESS_KEY_ID="$B2_KEY_ID" AWS_SECRET_ACCESS_KEY="$B2_APPLICATION_KEY"
+RESTIC_REPO="s3:https://s3.us-west-004.backblazeb2.com/$B2_BUCKET"
+
+restic -r "$RESTIC_REPO" snapshots                       # список копий
 restic -r "$RESTIC_REPO" restore latest --target /tmp/restore-test
 ```
 
+> `restore latest` достаёт последнюю копию в указанную папку. Проверьте, что
+> файлы на месте, прежде чем доверять бэкапу.
+
 ---
 
-## 11. Troubleshooting
+## 9. Безопасность и удалённый доступ
 
-### Контейнер не healthy
+Удалённый доступ к серверу настроен так, что SSH доступен **только через
+Tailscale** (вашу частную сеть), а не из открытого интернета.
+
+- **Повседневный доступ к агенту** с любого устройства — через Tailscale SSH:
+  установите Tailscale на устройство, войдите в тот же аккаунт и подключайтесь
+  (`ssh <user>@<имя-или-100.x-адрес-сервера>`). Ключи копировать не нужно.
+- **Углублённое усиление защиты** (firewall, fail2ban, защита от блокировки
+  самого себя) реализовано отдельным набором идемпотентных скриптов с подробным
+  руководством:
+
+  ```text
+  scripts/ssh-tailscale/README.md
+  ```
+
+> Подробные пошаговые инструкции по hardening здесь не дублируются специально —
+> чтобы не было двух источников правды. Открывайте
+> [`scripts/ssh-tailscale/README.md`](scripts/ssh-tailscale/README.md): там
+> описан безопасный порядок запуска `00-failsafe → 10-diagnose → 20-harden →
+> 30-verify`, восстановление при блокировке и Tailscale ACL.
+
+---
+
+## 10. Диагностика и типичные проблемы
+
+### Контейнер не становится healthy
 
 ```bash
+cd /srv/first-agent/repo/First-Agent-dev
 docker ps
 docker inspect first-agent --format='{{json .State.Health}}'
 docker compose -f docker-compose.fa.yml logs --tail=200 first-agent
 ```
 
-### `fa` не найден внутри контейнера
+> Смотрите последние строки логов — обычно там видно причину (нехватка памяти
+> `OOM`, ошибка конфигурации, отсутствующий API-ключ).
 
-Проверить image build и PATH:
+### Внутри контейнера не находится команда `fa`
 
 ```bash
 docker exec first-agent bash -lc 'echo $PATH && which fa && fa --version'
 ```
 
-Если нет — rebuild:
+Если не находит — пересоберите образ:
 
 ```bash
-cd /srv/first-agent/repo/First-Agent-dev
 docker compose -f docker-compose.fa.yml build --no-cache
 docker compose -f docker-compose.fa.yml up -d --force-recreate
 ```
 
-### `.env.fa` поменялся, но контейнер не видит изменения
+### Изменил `.env.fa`, но контейнер не видит изменений
 
-Нужно пересоздать контейнер:
+Контейнер читает переменные при старте. Нужно его **пересоздать**:
 
 ```bash
-cd /srv/first-agent/repo/First-Agent-dev
 docker compose -f docker-compose.fa.yml up -d --force-recreate
 ```
 
-или:
-
-```bash
-scripts/fa-update.sh
-```
+или просто запустите `scripts/fa-update.sh` — он сделает это сам.
 
 ### Auto-run не стартует
-
-Проверить:
 
 ```bash
 docker exec first-agent env | grep '^FA_'
 docker exec first-agent cat /workspace/.fa/entrypoint-status.txt
 ```
 
-Убедиться, что есть:
-
-```env
-FA_AUTO_RUN=1
-```
-
-и ровно один task source:
-
-```env
-FA_TASK=...
-```
-
-или:
-
-```env
-FA_TASK_FILE=...
-```
+> Убедитесь, что задан `FA_AUTO_RUN=1` и ровно один источник задачи (`FA_TASK`
+> **или** `FA_TASK_FILE`).
 
 ### Git push из контейнера не работает
 
-Проверить:
-
 ```bash
-docker exec -it first-agent bash
-cd /workspace
-echo "$GIT_SSH_COMMAND"
-git ls-remote origin
-```
-
-Проверить host files:
-
-```bash
+docker exec -it first-agent bash -lc 'cd /workspace && echo "$GIT_SSH_COMMAND" && git ls-remote origin'
 ls -l /srv/first-agent/secrets/github_deploy_key
 ls -l /srv/first-agent/secrets/known_hosts
 ```
 
+> Чаще всего причина: deploy-ключ не добавлен на GitHub с правом **write**, либо
+> Tailscale не поднят (`sudo tailscale up --ssh`).
+
+### `fa-update.sh` пишет «working tree dirty»
+
+Вы (или агент) изменили файлы, и git отказывается их затирать. Варианты:
+
+```bash
+cd /srv/first-agent/repo/First-Agent-dev
+git status                       # посмотреть, что изменилось
+git stash                        # временно отложить изменения
+# или, если изменения не нужны:
+git reset --hard HEAD
+```
+
+Либо запустите обновление с авто-stash: `AUTO_STASH=1 .../fa-update.sh`.
+
+### Docker отвечает «permission denied»
+
+Ваш пользователь ещё не в группе `docker`. Выйдите из системы и зайдите снова
+(или перезагрузитесь). Проверка: `id -nG | grep -w docker`.
+
+### Агент завис / бесконечные ошибки / `OOM`
+
+Скорее всего не хватило оперативной памяти. Сделайте жёсткий перезапуск
+(раздел 5, минимальный перезапуск) и проверьте логи.
+
 ---
 
-## 12. Быстрая шпаргалка
+## 11. Шпаргалка
+
+Все команды предполагают, что вы в папке проекта
+(`cd /srv/first-agent/repo/First-Agent-dev`), либо используйте полные пути.
 
 ### Первый деплой
 
 ```bash
 bash scripts/setup-fa-desktop.sh
-# logout/login or reboot if Docker group changed
-sudo tailscale up --ssh
-nano /srv/first-agent/repo/First-Agent-dev/.env.fa
-nano /srv/first-agent/state/models.yaml
+# 1) добавить deploy-ключ на GitHub (write access)
+# 2) sudo tailscale up --ssh
+# 3) nano .env.fa   (вписать API-ключи)
+# перелогиниться (группа docker), затем:
 bash scripts/fa-post-setup.sh
 ```
 
-### Обычная работа
-
-```bash
-docker exec -it first-agent bash
-cd /workspace
-fa run --workspace /workspace --role coder --task "..."
-```
-
-### Multi-role
-
-```bash
-fa run --workspace /workspace --role planner --run-id work-1 --task "Plan X"
-fa run --workspace /workspace --role coder   --run-id work-1 --resume --task "Implement X"
-fa run --workspace /workspace --role eval    --run-id work-1 --resume --task "Verify X"
-```
-
-### Обновить деплой
+### Обновить деплой (авто)
 
 ```bash
 /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
 ```
 
-### Логи
+### Обновить деплой (вручную)
 
 ```bash
-docker compose -f /srv/first-agent/repo/First-Agent-dev/docker-compose.fa.yml logs -f
+docker compose -f docker-compose.fa.yml down
+git pull origin main
+docker compose -f docker-compose.fa.yml build --no-cache
+docker compose -f docker-compose.fa.yml up -d --force-recreate
 ```
 
-### Статус auto-run
+### Сервис
 
 ```bash
-docker exec first-agent cat /workspace/.fa/entrypoint-status.txt
+systemctl --user status  fa.service
+systemctl --user restart fa.service
 ```
 
-### Остановить/запустить сервис
+### Логи и вход внутрь
 
 ```bash
-systemctl --user stop fa.service
-systemctl --user start fa.service
+docker compose -f docker-compose.fa.yml logs -f
+docker exec -it first-agent bash
 ```
+
+### Запуск задачи
+
+```bash
+docker compose -f docker-compose.fa.yml exec -T first-agent \
+    fa run --role coder --workspace /workspace --task "..."
+```
+
+### Бэкап
+
+```bash
+/srv/first-agent/scripts/backup-fa.sh
+```
+
+---
+
+## 12. Справочник по скриптам
+
+Все скрипты лежат в `scripts/`. Идемпотентны (безопасно перезапускать).
+
+| Скрипт | Что делает | Когда запускать |
+|--------|------------|------------------|
+| `setup-fa-desktop.sh` | Bootstrap хоста: система, Docker, Tailscale, репо, ключи, сервис. | Первый деплой, шаг 1. |
+| `fa-post-setup.sh` | Сборка, проверка git push, запуск сервиса, cron бэкапа. | Первый деплой, шаг 2. |
+| `fa-update.sh` | Умное обновление/пересборка с проверкой здоровья и тестами. | Каждое обновление. |
+| `backup-fa.sh` | Бэкап в Backblaze B2 через restic + ротация. | По cron ночью / вручную. |
+| `fa-entrypoint.sh` | Точка входа контейнера (stand-by / авто-run). | Внутри образа, вручную не нужен. |
+| `fa.service` | Шаблон systemd user-сервиса (единый источник). | Ставится скриптом 1. |
+| `ssh-tailscale/*` | Усиление защиты SSH-over-Tailscale + руководство. | См. раздел 9. |
+
+> Внутренняя архитектура: `fa.service` и `backup-fa.sh` хранятся в одном
+> экземпляре в репозитории и копируются на место при установке (без дублирования
+> внутри установочного скрипта) — править нужно только файлы в `scripts/`.
+> Скрипт `setup-fa-desktop.sh` намеренно самодостаточен: его можно скачать
+> отдельным файлом и запустить (см. `knowledge/SETUP_AIO.md`, Phase 4, Option B),
+> поэтому он не подключает вспомогательные библиотеки.
+
+---
+
+*Соблюдение этого руководства обеспечивает стабильную, безопасную и
+предсказуемую работу вашего сервера с First-Agent. Если что-то идёт не так —
+начните с раздела 10 «Диагностика».*
