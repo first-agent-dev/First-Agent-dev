@@ -31,9 +31,22 @@ import re
 import sys
 from pathlib import Path
 
-_LINK_RE = re.compile(r"\]\(\s*([^)\s]+)\s*\)")
+# Inline link: ](target) | ](target "title") | ](<target>). Captures only the
+# target URL/path. The optional title (" ... " / ' ... ' / ( ... )) and optional
+# angle brackets are tolerated so a broken link with a title is not missed.
+_LINK_RE = re.compile(
+    r"""\]\(\s*
+        (?:<(?P<angle>[^>]*)>|(?P<bare>[^)\s]+))
+        (?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?
+        \s*\)""",
+    re.VERBOSE,
+)
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
+# Inline code spans (`...`, ``...``) — their contents are not live links, so we
+# blank them out before scanning a line (mirrors how fenced blocks are skipped).
+# Example: a doc may legitimately show `](../X)` as literal text.
+_INLINE_CODE_RE = re.compile(r"(`+)(?:.+?)\1")
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -49,7 +62,6 @@ _LEGACY_SKIP = (
     "knowledge/project-overview.md",
     "knowledge/anti-patterns/README.md",
     "knowledge/glossary.md",
-    "knowledge/MAINTENANCE.md",  # contains intentional `../X` example placeholders
 )
 
 
@@ -82,8 +94,12 @@ def _iter_links(path: Path):
             continue
         if in_fence:
             continue
-        for m in _LINK_RE.finditer(line):
-            yield lineno, m.group(1)
+        # Neutralise inline code spans so example link syntax inside backticks
+        # (e.g. `](../X)`) is not mistaken for a real link.
+        scrub = _INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), line)
+        for m in _LINK_RE.finditer(scrub):
+            target = m.group("angle") if m.group("angle") is not None else m.group("bare")
+            yield lineno, target
 
 
 def _is_external(target: str) -> bool:
@@ -120,14 +136,22 @@ def check_file(path: Path, *, anchors: bool) -> list[str]:
     return errors
 
 
+def _is_legacy(path: Path) -> bool:
+    """True if ``path`` lives in a known pre-existing-debt tree (``_LEGACY_SKIP``)."""
+    try:
+        relstr = str(path.resolve().relative_to(_REPO_ROOT))
+    except ValueError:
+        return False
+    return relstr.startswith(_LEGACY_SKIP)
+
+
 def _discover(include_legacy: bool) -> list[Path]:
     skip_dirs = {".git", "node_modules", ".venv", "__pycache__"}
     out: list[Path] = []
     for p in _REPO_ROOT.rglob("*.md"):
-        relstr = str(p.relative_to(_REPO_ROOT))
         if any(part in skip_dirs for part in p.relative_to(_REPO_ROOT).parts):
             continue
-        if not include_legacy and relstr.startswith(_LEGACY_SKIP):
+        if not include_legacy and _is_legacy(p):
             continue
         out.append(p)
     return sorted(out)
@@ -139,7 +163,14 @@ def main(argv: list[str]) -> int:
     files_args = [a for a in argv if not a.startswith("--")]
 
     if files_args:
+        # Explicitly-passed files (e.g. from the pre-commit hook) are still
+        # filtered against _LEGACY_SKIP unless --all is given, so that merely
+        # *touching* a known-debt doc does not block an unrelated commit on
+        # pre-existing breakage. --all forces a full check (e.g. when cleaning
+        # up a legacy file on purpose).
         files = [Path(a).resolve() for a in files_args if a.endswith(".md")]
+        if not include_legacy:
+            files = [f for f in files if not _is_legacy(f)]
     else:
         files = _discover(include_legacy)
 
