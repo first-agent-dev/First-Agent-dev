@@ -22,6 +22,22 @@ repos:
       - id: markdownlint
         args: [--disable, MD013]
 
+  # Internal-link integrity: catches dangling *relative* markdown links when
+  # docs are moved/pruned (enforces knowledge/MAINTENANCE.md §When moving or
+  # pruning a doc). Dependency-free, offline, deterministic — checks that local
+  # file targets exist (anchor validation is opt-in via --anchors, off here to
+  # avoid slug-algorithm noise). Pre-commit passes only the changed .md files,
+  # so the hook judges only what a commit touches. The whole-repo gate runs in
+  # CI via tests/test_doc_links.py, mirroring check_protected_paths.py.
+  - repo: local
+    hooks:
+      - id: check-doc-links
+        name: check internal doc links
+        entry: python scripts/check_doc_links.py
+        language: system
+        pass_filenames: true
+        files: \.md$
+
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1
     hooks:

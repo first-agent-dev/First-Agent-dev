@@ -18,7 +18,7 @@ FA_DIR="/srv/first-agent"
 REPO_URL="${REPO_URL:-https://github.com/first-agent-dev/First-Agent-dev.git}"
 
 # NOTE: this bootstrap script is intentionally SELF-CONTAINED (no `source`d
-# helper library). knowledge/SETUP_AIO.md Phase 4 Option B documents downloading
+# helper library). knowledge/instructions/01-install.md Phase 4 Option B documents downloading
 # *only* this file to /tmp and running it — the repo is cloned later, by step 9
 # below — so it must not depend on any sibling file at startup.
 RED='\033[0;31m'

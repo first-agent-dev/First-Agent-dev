@@ -8,7 +8,7 @@ scripts.
 
 This is **host-level** work. The FA workload itself runs in a container
 (`docker-compose.fa.yml`) that has **no sshd** — these scripts do not touch it.
-Canonical deployment guide: [`knowledge/SETUP_AIO.md`](../../knowledge/SETUP_AIO.md).
+Canonical deployment guide: [`knowledge/instructions/01-install.md`](../../knowledge/instructions/01-install.md).
 
 > **Everyday access vs. hardening.** If you just want to reach the agent securely
 > from your devices, you only need the next section
