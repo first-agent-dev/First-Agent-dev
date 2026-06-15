@@ -41,7 +41,7 @@ knowledge/
 
 - One concept per file.
 - Markdown only. **File-length tiers per
-  [AGENTS.md PR Checklist rule #3](../AGENTS.md#pr-checklist):**
+  [`pr-creation` skill PR Checklist rule #3](skills/pr-creation/SKILL.md#pr-checklist):**
   - **Summaries / overviews:** <1000 lines.
   - **Deep-dive research:** <2000 lines.
   - **Readability > size.** Split topic-wise only when readability
@@ -54,11 +54,19 @@ knowledge/
   recommendations so the human review path stays natural; keep exact
   protocol/API names, code, frontmatter keys, and direct quotes in the
   original language when precision matters.
-- **Never silently overwrite.** When a file is superseded: mark the old
-  file with `> **Status:** superseded by <link>` at the top, add a
-  `superseded_by:` field to its frontmatter if present, and keep the old
-  content for audit. See the critique-driven rationale in
-  [`research/llm-wiki-critique.md`](./research/llm-wiki-critique.md).
+- **Prune deliberately; never leave a dangling link.** Deleting or
+  replacing a superseded file is allowed — pruning is part of keeping the
+  repo navigable, and PRs are human-reviewed. The binding rule is **link
+  integrity, not file permanence**: in the *same PR* that removes, renames,
+  or replaces a file, update or delete **every** reference to it. Find them
+  with `grep -rn <old-path>` and fix `llms.txt`, `HANDOFF.md`, ADR
+  [`DIGEST.md`](./adr/DIGEST.md), [`glossary.md`](./glossary.md), any in-doc
+  links, and code comments. Keep a `> **Status:** superseded by <link>` /
+  `> **Status:** moved to <link>` stub **only** when an external entry point
+  or an inbound link you cannot edit may still target the old path. Working
+  links are the priority, not retaining every file indefinitely. Full
+  checklist: [`MAINTENANCE.md` §When moving or pruning a doc](./MAINTENANCE.md).
+  Rationale: [`research/llm-wiki-critique.md`](./research/llm-wiki-critique.md).
 
 ### Provenance-frontmatter (for `research/` and any summary notes)
 
@@ -82,7 +90,7 @@ The minimum required fields are `source` and `compiled`. `chain_of_custody` is m
 the note contains numbers, dates, quotes, or decisions that someone might
 reference. The goal is not to lose the connection between the LLM-written summary and
 the primary source. For more details, see
-[`research/llm-wiki-critique-first-agent.md §9`](./research/llm-wiki-critique-first-agent.md#9-specific-edits-to-existing-files).
+[`research/llm-wiki-critique-first-agent.md`](./research/llm-wiki-critique-first-agent.md).
 
 ### Frontmatter v2 — optional fields (additive)
 
@@ -202,7 +210,7 @@ referencing the parent `Q-N` via `Coupling:`):
 
 ADR text is the source of truth for any specific decision; this log
 is a pointer overlay. New ADR PRs MUST append a block here —
-see [`AGENTS.md` PR Checklist rule #9](../AGENTS.md#pr-checklist).
+see [`pr-creation` skill PR Checklist rule #9](skills/pr-creation/SKILL.md#pr-checklist).
 
 ## What goes where
 
@@ -225,6 +233,6 @@ see [`AGENTS.md` PR Checklist rule #9](../AGENTS.md#pr-checklist).
 | "What did we find during the research of Z?" | `knowledge/research/<Z>.md` | Primary sources from `source:` frontmatter |
 | Specific number / date / quote | **Always** the primary source (`source:` of the note), not the summary | — |
 | Procedure / how-to | `knowledge/skills/<name>/SKILL.md` for per-task disciplines | `knowledge/prompts/` for prompt templates |
-| Before opening a PR (intent classification, anti-shallow-fix gate) | [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md) | [`AGENTS.md` PR Checklist rule #12](../AGENTS.md#pr-checklist) (load-directive) |
+| Before opening a PR (intent classification, anti-shallow-fix gate) | [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md) | [`AGENTS.md` §Loadable skills (PR-creation load-directive)](../AGENTS.md#loadable-skills) (load-directive) |
 
 This same rule is documented in [`AGENTS.md`](../AGENTS.md#query-routing).

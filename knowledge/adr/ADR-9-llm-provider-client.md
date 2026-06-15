@@ -887,7 +887,7 @@ This ADR is re-opened (amended or replaced) when any of:
 ## Prior Art
 
 Per [AGENTS.md §Cross-project anti-patterns rule
-#4](../../AGENTS.md#cross-project-anti-patterns) (forward-only
+#4](../../AGENTS.md#cross-project-anti-patterns---learnt-from-precedents) (forward-only
 from 2026-05-20). Each prior-art entry maps a design choice in
 this ADR to an existing project / paper / FA prior decision, so
 reviewers can verify FA is not re-inventing. Full audit evidence

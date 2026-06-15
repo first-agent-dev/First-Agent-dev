@@ -135,7 +135,7 @@ Three layers, ranked by leverage-per-token. Implemented incrementally
    writing «CLASS: WORKAROUND, INVARIANT: R-8 writes to
    `knowledge/trace/`» makes the contradiction visible to the agent
    mid-write, and to the reviewer in two seconds. Codified in
-   [`AGENTS.md` §Change Classification](../../AGENTS.md#change-classification).
+   [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference).
 
 2. **Named ADR-bound invariant tests (Layer 2).** For each ADR
    amendment's invariant, one test whose **name** encodes the

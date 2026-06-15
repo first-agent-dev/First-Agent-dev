@@ -2,6 +2,10 @@
 
 Репозиторий, в котором я собираю **собственного LLM-агента** вместе с devin.ai/arena.ai
 
+📖 **Развернуть / администрировать?** Начните отсюда:
+**[knowledge/instructions/README.md](./knowledge/instructions/README.md)** —
+установка, обновление и эксплуатация AIO-деплоя.
+
 > **Статус:** 
 Разработка ARD-9-llm-provider-client;
 deterministic harness ADR-10-runtime determinism,
@@ -102,7 +106,10 @@ posts), MCP-экосистема, и Devin / Claude Code / OSS repo's как ref
   проекта (frontmatter schema, конвенции, supersession-rule).
 - [`knowledge/llms.txt`](./knowledge/llms.txt) — one-fetch индекс
   всех документов.
+- [`knowledge/instructions/`](./knowledge/instructions/README.md) —
+  инструкции по развёртыванию и эксплуатации (install + operations).
 - [`knowledge/adr/README.md`](./knowledge/adr/README.md) — индекс ADR.
+- [`knowledge/pr-notes/`](./knowledge/pr-notes/README.md) — архив PR-заметок.
 
 ---
 

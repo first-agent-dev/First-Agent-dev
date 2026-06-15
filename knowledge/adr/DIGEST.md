@@ -7,7 +7,7 @@
 >
 > **Maintenance rule.** When an ADR amendment lands, update the
 > matching row here in the **same PR**. Per
-> [AGENTS.md PR Checklist rule #9](../../AGENTS.md#pr-checklist).
+> [`pr-creation` skill PR Checklist rule #9](../skills/pr-creation/SKILL.md#pr-checklist).
 > Stale rows defeat the purpose.
 
 ## ADR-1 — v0.1 use-case scope (accepted 2026-04-27)
@@ -305,7 +305,7 @@ concrete carriers; single source of truth for every tool PR.
   catalogued at
   [`knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md`](../anti-patterns/AP-001-spec-bypassing-workaround.md),
   the
-  [`AGENTS.md` §Change Classification](../../AGENTS.md#change-classification)
+  [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference)
   forcing function (Layer 1) is now active, and
   [`test_invariant_adr7_r8_canon_root_is_knowledge_trace`](../../tests/test_cli.py)
   is the Layer-2 worked example (named-invariant test).
@@ -604,7 +604,7 @@ Layer-2 named-invariant test).
 cross-cutting reading); Option B (one micro-ADR per invariant —
 artefact bloat); Option D (inline into AGENTS.md PR Checklist rules
 — conflates procedural rules with architectural decisions). See
-[`exploration_log.md` Q-14](../trace/exploration_log.md#q-14) for
+[`exploration_log.md` Q-14](../trace/exploration_log.md#q-14--what-deterministic-harness-invariants-does-the-adr-10-slate-carry-and-where-do-they-live-2026-05-25) for
 the full reject rationale + lessons + re-evaluation triggers.
 
 **Follow-up work unlocked.** (1) I-5 FA-surface audit — `fa` CLI
@@ -651,7 +651,7 @@ author it polices.
 (bypassable; threat unmodelled); (b) heavy rule engine — Grafema
 Datalog / NeMo runtime rails (dependency footprint wrong for Level 0);
 (c) standalone CODEOWNERS / pre-commit-only (false security boundary,
-R-9). See [`exploration_log.md` Q-16](../trace/exploration_log.md#q-16)
+R-9). See [`exploration_log.md` Q-16](../trace/exploration_log.md#q-16--what-authoring-time-guardrail-architecture-does-fa-adopt-and-how-is-it-enforced-2026-06-01)
 for full reject rationale + lessons.
 
 **Follow-up work unlocked.** Code ships across the blueprint Appendix B

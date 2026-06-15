@@ -527,7 +527,7 @@ until ADR-10 lands). §6b resolves Q10 (§1.2.5 vs Pillar 5 → §1.2.5).
 ## Prior Art
 
 Per [AGENTS.md §Cross-project anti-patterns rule
-#4](../../AGENTS.md#cross-project-anti-patterns) (forward-only
+#4](../../AGENTS.md#cross-project-anti-patterns---learnt-from-precedents) (forward-only
 from 2026-05-20). Each prior-art entry maps a design choice in
 this ADR to an existing project / paper / FA prior decision, so
 reviewers can verify FA is not re-inventing. Full audit evidence
@@ -681,9 +681,9 @@ are we not reusing them verbatim?».
 - [`knowledge/project-overview.md` §1.2.5](../project-overview.md#125--compliance-by-construction-failure-observable)
   — companion §1.2.5 landing decided per deep-dive §6b; carries the
   five KPI candidates the invariants instantiate.
-- [`AGENTS.md` §PR Checklist rule #9](../../AGENTS.md#pr-checklist)
+- [`pr-creation` skill §PR Checklist rule #9](../skills/pr-creation/SKILL.md#pr-checklist)
   — exploration_log + DIGEST + HANDOFF same-PR enforcement.
-- [`AGENTS.md` §PR Checklist rule #10](../../AGENTS.md#pr-checklist)
+- [`pr-creation` skill §PR Checklist rule #10](../skills/pr-creation/SKILL.md#pr-checklist)
   — 4-question minimalism-first evidence binding constraint on
   harness-component PRs; this ADR's §1 per-invariant evidence cells
   satisfy it for I-1..I-5.
@@ -697,5 +697,5 @@ are we not reusing them verbatim?».
 - [`ADR-9`](./ADR-9-llm-provider-client.md) — LLM provider client
   (cost+token accounting source, downstream consumer of I-3
   `[CODE]` prefix for CostGuardian gating).
-- [`knowledge/trace/exploration_log.md` Q-14](../trace/exploration_log.md#q-14)
+- [`knowledge/trace/exploration_log.md` Q-14](../trace/exploration_log.md#q-14--what-deterministic-harness-invariants-does-the-adr-10-slate-carry-and-where-do-they-live-2026-05-25)
   — alternatives considered + rejected at ADR-10 decision time.

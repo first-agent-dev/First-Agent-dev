@@ -266,7 +266,7 @@ is the merge gate for the runtime PR, not for ADR-8.
 
 ### 7. Acceptance criteria for the runtime PR (M-1)
 
-Per [`AGENTS.md` §PR Checklist rule #10](../../AGENTS.md#pr-checklist)
+Per [`pr-creation` skill §PR Checklist rule #10](../skills/pr-creation/SKILL.md#pr-checklist)
 4-question minimalism-first test:
 
 1. **Research-evidence:** 8-project convergence (DPC ADR-007,
@@ -406,7 +406,7 @@ caption to a contract clause.
 
 ## Prior Art
 
-Per [AGENTS.md PR Checklist rule #10](../../AGENTS.md#pr-checklist)
+Per [`pr-creation` skill PR Checklist rule #10](../skills/pr-creation/SKILL.md#pr-checklist)
 + DPC AP8 / Prior-Art rule. Each prior-art entry maps a design
 choice in this ADR to an existing project / paper, so reviewers
 can verify FA is not re-inventing.

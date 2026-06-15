@@ -239,7 +239,7 @@ committed manifest; no silent claim that CI validates local state it cannot see.
 
 ### Active consumer for every write target (blueprint §9.9; AGENTS.md anti-pattern #3)
 
-Per [AGENTS.md §Cross-project anti-patterns rule #3](../../AGENTS.md#cross-project-anti-patterns),
+Per [AGENTS.md §Cross-project anti-patterns rule #3](../../AGENTS.md#cross-project-anti-patterns---learnt-from-precedents),
 every new write target lands with a named consumer:
 
 | Write target | Active consumer |
@@ -337,7 +337,7 @@ the kernel on an unchanged snapshot and asserting identical `snapshot_id` / `ker
 
 ## Prior Art
 
-Per [AGENTS.md §Cross-project anti-patterns rule #4](../../AGENTS.md#cross-project-anti-patterns)
+Per [AGENTS.md §Cross-project anti-patterns rule #4](../../AGENTS.md#cross-project-anti-patterns---learnt-from-precedents)
 (every new ADR documents existing tools/papers/projects to prove we are not re-inventing). Full audit
 evidence — file inventories with line ranges — lives in the SSOT blueprint
 [`ADR-11-Authoring-Guardrails-Blueprint.md`](../research/ADR-11-Authoring-Guardrails-Blueprint.md)
@@ -410,11 +410,11 @@ evidence — file inventories with line ranges — lives in the SSOT blueprint
   HookRegistry contracts that the future `IntentGuard` / authoring hooks plug into.
 - [`knowledge/skills/pr-creation/SKILL.md`](../skills/pr-creation/SKILL.md) — the parity counterpart
   of ADR-11-I3 (its §Output format is mirrored by `src/fa/hygiene/pr_intent.py`).
-- [`AGENTS.md` §Cross-project anti-patterns](../../AGENTS.md#cross-project-anti-patterns) — rule #3
+- [`AGENTS.md` §Cross-project anti-patterns](../../AGENTS.md#cross-project-anti-patterns---learnt-from-precedents) — rule #3
   (active consumer, ADR-11-I-table) and rule #4 (mandatory Prior Art).
 - [`knowledge/project-overview.md` §1.2](../project-overview.md#12-enforceable-principle--minimalism-first)
   — minimalism-first 4-question test applied to Option D.
-- [`knowledge/trace/exploration_log.md` Q-16](../trace/exploration_log.md#q-16) — alternatives
+- [`knowledge/trace/exploration_log.md` Q-16](../trace/exploration_log.md#q-16--what-authoring-time-guardrail-architecture-does-fa-adopt-and-how-is-it-enforced-2026-06-01) — alternatives
   considered and rejected at ADR-11 decision time.
 
 ### Amendment 2026-06-08 — KernelReport audit fields + advisory-undated policy

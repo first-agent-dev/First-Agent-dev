@@ -801,9 +801,9 @@ auto-escalation» добавить one-paragraph after existing «v0.2 may
 revisit»:
 
 > Эта позиция дополнительно подкрепляется primary-source evidence
-> [P-1 §4](./correlated-llm-errors-and-ensembling-2026-05.md#4-1-p-1-correlated-errors--adr-2-eval-role-and-no-cross-tier-auto-escalation)
+> [P-1 §4](./correlated-llm-errors-and-ensembling-2026-05.md#41-p-1-correlated-errors--adr-2-eval-role-and-no-cross-tier-auto-escalation)
 > (top-tier accuracy → cross-provider correlation persists) и
-> [P-3 §4](./correlated-llm-errors-and-ensembling-2026-05.md#4-3-p-3-model-capability-dominates--agentsmd-rule-10--adr-7-prompt-design--uc5-verifier)
+> [P-3 §4](./correlated-llm-errors-and-ensembling-2026-05.md#43-p-3-model-capability-dominates--agentsmd-rule-10--adr-7-prompt-design--uc5-verifier)
 > (model capability dominates ±2pt prompt-optimization range). Если
 > Coder failure на hard task — это primarily capability-bound (Pillar-3
 > evidence), а не stochastic-bound, тогда auto-escalation **expected
@@ -816,7 +816,7 @@ revisit»:
 
 - (a) **DIGEST.md §See also** — добавить one-bullet «Prompt-diversity
   as harness component is empirically a known anti-pattern; primary
-  source [P-3](./correlated-llm-errors-and-ensembling-2026-05.md#4-3-p-3-model-capability-dominates--agentsmd-rule-10--adr-7-prompt-design--uc5-verifier)
+  source [P-3](./correlated-llm-errors-and-ensembling-2026-05.md#43-p-3-model-capability-dominates--agentsmd-rule-10--adr-7-prompt-design--uc5-verifier)
   §3 + §4». Less invasive AGENTS-edit; agents discover via DIGEST
   lookup.
 - (b) **AGENTS.md rule #10** — добавить explicit example «E.g.,

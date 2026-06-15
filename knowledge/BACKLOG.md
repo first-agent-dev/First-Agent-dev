@@ -43,7 +43,7 @@
   registry.
 - **Why it satisfies rule #11 mitigation (b) «Lazy-load».** This
   idea is the lazy-load primitive
-  [AGENTS.md rule #11](../AGENTS.md#pr-checklist) explicitly
+  [`AGENTS.md` §Context-budget discipline (rule #11)](../AGENTS.md#context-budget-discipline) explicitly
   references when a harness component pushes past ~100 k tokens.
 
 ## I-2 — Agent + sub-agents for context-load reduction
@@ -92,8 +92,8 @@
      further sub-agents. The orchestrator removes the spawn-
      tool from the child's tool registry at dispatch time —
      not by trusting the child to «not call it». Cross-link:
-     [AGENTS.md §PR Checklist rule #10 question 1 «Spawn-
-     recursion anti-pattern»](../AGENTS.md#pr-checklist).
+     [`pr-creation` skill §PR Checklist rule #10 question 1 «Spawn-
+     recursion anti-pattern»](skills/pr-creation/SKILL.md#pr-checklist).
   3. **`SUBAGENT_MAX_STEPS ≤ 100`.** Hard cap on a single sub-
      agent's iteration count. Aperant uses exactly `100`; FA
      inherits the number until measured otherwise. The cap
@@ -209,7 +209,7 @@
   supersession banner). A pre-commit hook + CI workflow run
   `python scripts/regenerate_llms_txt.py && git diff --exit-code
   knowledge/llms.txt` so a stale `llms.txt` blocks the commit /
-  fails CI. After landing, [AGENTS.md PR Checklist rule #7](../AGENTS.md#pr-checklist)
+  fails CI. After landing, [`pr-creation` skill PR Checklist rule #7](skills/pr-creation/SKILL.md#pr-checklist)
   and [`MAINTENANCE.md` §When adding a new file](./MAINTENANCE.md)
   stop being a human responsibility — drift becomes technically
   impossible.

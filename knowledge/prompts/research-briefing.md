@@ -147,7 +147,7 @@ reason.
 [Constraints]
 - Markdown only.
 - File length tier: deep-dive (<2000 lines) per
-  [AGENTS.md PR Checklist rule #3](../../AGENTS.md#pr-checklist).
+  [`pr-creation` skill PR Checklist rule #3](../skills/pr-creation/SKILL.md#pr-checklist).
 - Frontmatter v1 mandatory; `goal_lens:` mandatory (this workflow);
   other v2 fields optional and additive.
 - No code changes inside this PR. Implementations of TAKE

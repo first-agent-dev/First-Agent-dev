@@ -26,4 +26,4 @@ You do **not** need an ADR for routine code-level choices.
 plus its amendments. Read this **instead of** the per-ADR files
 unless your task needs schema / Consequences wording / full
 Amendment text. Updated in the same PR whenever an ADR amendment
-lands ([AGENTS.md PR Checklist rule #9](../../AGENTS.md#pr-checklist)).
+lands ([`pr-creation` skill PR Checklist rule #9](../skills/pr-creation/SKILL.md#pr-checklist)).
