@@ -11,7 +11,7 @@
 >
 > **Maintenance rule.** When an ADR PR lands, append (or amend)
 > the matching block in the same PR. Per
-> [AGENTS.md PR Checklist rule #9](../../AGENTS.md#pr-checklist).
+> [`pr-creation` skill PR Checklist rule #9](../skills/pr-creation/SKILL.md#pr-checklist).
 >
 > Origin: research note
 > [`ara-protocol-cross-reference-2026-05.md`](../research/ara-protocol-cross-reference-2026-05.md)
@@ -147,7 +147,7 @@
   - **Land the `~/.fa/models.yaml` loader + `RoleConfig`
     dataclass in this PR.** Reason: the loader is part of T-2
     (LLM driver) scope per
-    [`research/fa-0.1-release-gaps-2026-05.md`](../research/fa-0.1-release-gaps-2026-05.md);
+    `research/fa-0.1-release-gaps-2026-05.md` (note pruned);
     bundling it here couples the role-layer enforcement to a
     much larger scope-shift and inflates the PR past the
     «one stack» budget. Lesson: revisit when T-2 lands — at
@@ -450,7 +450,7 @@
   - **Land R-45 artifact emitter (T-2 scope) in the same
     PR to wake the cost-budget axis immediately.** Reason:
     T-2 is full LLM-driver scope per
-    [`research/fa-0.1-release-gaps-2026-05.md`](../research/fa-0.1-release-gaps-2026-05.md);
+    `research/fa-0.1-release-gaps-2026-05.md` (note pruned);
     bundling it busts the «one stack» budget by an order of
     magnitude and ties cost-guardian iteration to driver
     iteration. Lesson: ship the observer first (dormant on
@@ -872,7 +872,7 @@
 
 - **Closed by:**
   [`knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md`](../anti-patterns/AP-001-spec-bypassing-workaround.md)
-  + [AGENTS.md §Change Classification](../../AGENTS.md#change-classification)
+  + [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference)
   + [`tests/test_cli.py::test_invariant_adr7_r8_canon_root_is_knowledge_trace`](../../tests/test_cli.py)
   (M1 PR; no new ADR).
 - **Coupling:** Q-7 §Sub-amendment 2026-05-21b — the AP-001
@@ -881,7 +881,7 @@
 - **Chosen:** Three structural layers, ranked by leverage-per-token,
   optimised for **action count** rather than rule count:
   (1) **Layer 1 — Change-Classification prefix** in
-  [`AGENTS.md` §Change Classification](../../AGENTS.md#change-classification).
+  [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference).
   Module-touching PRs and the first module-touching commit on a
   branch open with `CLASS: REPAIR | RELAX | WORKAROUND` +
   `INVARIANT: <one sentence>`. One mandatory action per PR; the
@@ -923,7 +923,7 @@
     cost (token spend, latency, queue depth) without a measured
     improvement over Layers 1+2 first. Also imports the «retry
     with paraphrase» anti-pattern explicitly rejected by
-    [`AGENTS.md` PR Checklist rule #10](../../AGENTS.md#pr-checklist)
+    [`pr-creation` skill PR Checklist rule #10](../skills/pr-creation/SKILL.md#pr-checklist)
     («prompt-diversity layer is not a valid harness component»).
     Lesson: revisit only if Layers 1+2 leave a measurable
     invariant-bypass rate after one full Stage-2 cycle.
@@ -947,7 +947,7 @@
   common slug.
 - **Source:**
   [`knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md`](../anti-patterns/AP-001-spec-bypassing-workaround.md)
-  + [AGENTS.md §Change Classification](../../AGENTS.md#change-classification)
+  + [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference)
   + [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
   §R-32.
 
@@ -958,7 +958,7 @@
   + [`MAINTENANCE.md` §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge)
   + sweep of all 58 rows in `knowledge/llms.txt` (M2 PR; no new ADR).
 - **Coupling:** Q-11 — first **RELAX** dogfood of the
-  [`AGENTS.md` §Change Classification](../../AGENTS.md#change-classification)
+  [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference)
   discipline introduced in M1; second entry in the
   [`knowledge/anti-patterns/`](../anti-patterns/README.md) catalog.
 - **Chosen:** **Hybrid 4-bucket label + raw count at boundaries
@@ -1026,7 +1026,7 @@
 - **Source:**
   [`knowledge/anti-patterns/AP-002-stale-routing-index-counts.md`](../anti-patterns/AP-002-stale-routing-index-counts.md)
   + [`MAINTENANCE.md` §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge)
-  + [AGENTS.md §Change Classification](../../AGENTS.md#change-classification)
+  + [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference)
   + Q-11 (Layers 1 / 2 / 3 model this Q-12 inherits).
 
 ## Q-13 — How is the T-2 LLM provider client (driver) shaped? (2026-05-22)
@@ -1275,7 +1275,7 @@
 
 ## Q-15 — How does FA classify the intent of a PR, and how does it enforce the anti-shallow-fix gate? (2026-05-25)
 
-- **Closed by:** [`AGENTS.md` §PR Intent Classification](../../AGENTS.md#pr-intent-classification)
+- **Closed by:** [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference)
   (5-intent closed enum + Level-2 CLASS sub-classifier scoped to
   `INTENT: FIX`) + [`project-overview.md` §1.2.5 anti-shallow-fix
   gate](../project-overview.md#125--compliance-by-construction-failure-observable)
@@ -1443,7 +1443,7 @@
     a third PR amends the rule before B lands) — at which point
     the right fix is to compress the timeline, not bundle the
     PRs.
-- **Source:** [`AGENTS.md` §PR Intent Classification](../../AGENTS.md#pr-intent-classification),
+- **Source:** [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference),
   [`project-overview.md` §1.2.5 anti-shallow-fix gate](../project-overview.md#125--compliance-by-construction-failure-observable),
   [`AP-003-shallow-fix-no-mechanism.md`](../anti-patterns/AP-003-shallow-fix-no-mechanism.md),
   [`AP-001` §Why-wrong-shape-dominates](../anti-patterns/AP-001-spec-bypassing-workaround.md#why-the-wrong-shape-dominates)
@@ -1465,7 +1465,7 @@
   + the four-place commit already on disk
   ([`project-overview.md`:70](../project-overview.md),
   [`BACKLOG.md`:117](../BACKLOG.md),
-  [`docs/glossary.md`:62-64](../../docs/glossary.md)).
+  [`knowledge/glossary.md`:62-64](../glossary.md)).
   Closes BACKLOG I-9 path (b) by moving
   `knowledge/prompts/repo-audit-playbook.md` to
   `knowledge/skills/repo-audit/SKILL.md` in the same PR.
@@ -1557,8 +1557,8 @@
     `knowledge/skills/` naming (per R-24, not the I-9 wording's
     `playbooks/`).
 - **Source:** [`knowledge/skills/pr-creation/SKILL.md`](../skills/pr-creation/SKILL.md),
-  [`AGENTS.md` §PR Intent Classification (moved-stub)](../../AGENTS.md#pr-intent-classification),
-  [`AGENTS.md` PR Checklist rule #12](../../AGENTS.md#pr-checklist),
+  [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference),
+  [`AGENTS.md` §Loadable skills (PR-creation load-directive)](../../AGENTS.md#loadable-skills),
   [`knowledge/skills/README.md`](../skills/README.md),
   [`borrow-roadmap-2026-05.md` §R-24](../research/borrow-roadmap-2026-05.md#r-24--filesystem-canonical-skill-store--safe-community-import),
   [`BACKLOG.md` I-9 (closed)](../BACKLOG.md).
@@ -1708,7 +1708,7 @@
   [`AGENTS.md` §Development Workflow](../../AGENTS.md#development-workflow)
   (AI-Session trailer paragraph deleted; cross-link to skill
   retained),
-  [`HANDOFF.md` §Process / rule changes 2026-05-26 PR A'](../../HANDOFF.md#current-state-as-of-2026-05-26)
+  [`HANDOFF.md` §Process / rule changes 2026-05-26 PR A'](../../HANDOFF.md#current-state)
   (expanded scope disclosure).
 
 ## Q-16 — What authoring-time guardrail architecture does FA adopt, and how is it enforced? (2026-06-01)

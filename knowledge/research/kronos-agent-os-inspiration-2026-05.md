@@ -96,7 +96,7 @@ chain_of_custody: |
   fails loudly» + user-driven retry, no automatic circuit-breaker.
 - **Concrete first step (if TAKE):** Read `kronos/security/loop_detector.py`
   (99 LOC) full; map 3 detectors to FA's
-  [ADR-7 §7 trace fields](../adr/ADR-7-inner-loop-tool-registry.md#7-trace-separation--eventsjsonl--hotmd);
+  [ADR-7 §7 trace fields](../adr/ADR-7-inner-loop-tool-registry.md#7-trace--eventsjsonl--hotmd);
   draft B-NEW-8 (loop-detector middleware) for B-NEW-5 DPC HookRegistry
   consumption — это middleware, не отдельный subsystem.
 

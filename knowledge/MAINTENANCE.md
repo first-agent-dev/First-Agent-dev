@@ -6,7 +6,7 @@
 > `DIGEST.md`, a new prompt template registered in `RESOLVER.md`),
 > append a section here in the same PR.
 
-## § When archiving a research note
+## §When archiving a research note
 
 1. Add the `> **Status:** archived 2026-MM-DD` banner at top
    (in-place stub per PR #2, Option B — no separate `/archive/`
@@ -27,7 +27,7 @@
    glossary row's `See:` link pointed at this note, retarget or
    remove.
 
-## § When moving or pruning a doc
+## §When moving or pruning a doc
 
 Renaming, relocating, or deleting a file is allowed — pruning keeps the
 repo navigable. The one hard rule is **no dangling links** (see
@@ -55,11 +55,11 @@ repo navigable. The one hard rule is **no dangling links** (see
    `check-doc-links` pre-commit hook run on the changed files — and a final
    `grep -rn '<old-path>'` returns nothing unexpected.
 
-## § When merging an ADR amendment
+## §When merging an ADR amendment
 
 1. Update [`knowledge/adr/DIGEST.md`](./adr/DIGEST.md) — extend
    the matching **Amendments** bullet of the ADR's row (per
-   [AGENTS.md PR Checklist rule #9](../AGENTS.md#pr-checklist)
+   [`pr-creation` skill PR Checklist rule #9](skills/pr-creation/SKILL.md#pr-checklist)
    second sentence).
 2. Append (or amend) the block in
    [`knowledge/trace/exploration_log.md`](./trace/exploration_log.md)
@@ -73,7 +73,7 @@ repo navigable. The one hard rule is **no dangling links** (see
    list — bump the amendment date if the amended ADR is listed
    there.
 
-## § When adding a new file under docs/ or knowledge/
+## §When adding a new file under docs/ or knowledge/
 
 Add a row in knowledge/llms.txt BY-DEMAND INDEX
 under the matching folder section. Row format:
@@ -86,7 +86,7 @@ Crossing a boundary triggers a prefix update.
 Row prose cap - The description after the closing of the Markdown link MUST be ≤ 200 characters.
 Keep llms.txt a routing index, If agent needs more context, follow link.
 
-## § When adding a new prompt template
+## §When adding a new prompt template
 
 Add a row to knowledge/prompts/RESOLVER.md
 intent table only if the same intent has resolved to the
@@ -99,7 +99,7 @@ research-briefing.md ↔ rule #8), cross-link from both sides
 so the rule survives without the prompt and the prompt's
 header points at its enforcement clause.
 
-## § When adding a new anti-pattern entry
+## §When adding a new anti-pattern entry
 
 Cheap-read overlay; authoritative source remains
 knowledge/anti-patterns/README.md §How a new entry lands.

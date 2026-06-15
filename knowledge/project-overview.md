@@ -116,7 +116,7 @@ overengineering Critic-loops, dynamic prompt-assembly без cache-
 invariant - используем прошлый опыт.
 
 References supporting principle: см.
-[`research/efficient-llm-agent-harness-deep-dive-2026-05.md`](./research/efficient-llm-agent-harness-deep-dive-2026-05.md)
+[`research/efficient-llm-agent-harness-deep-dive-2026-05.md`](./research/efficient-llm-agent-harness-2026-05.md)
 §3.5 + §0 R-7 (Anthropic «code execution» subtraction
 principle, Tsinghua module-ablation `arXiv:2603.25723`).
 
@@ -176,7 +176,7 @@ degree of freedom they were ostensibly closing — lives as a
 loadable skill at
 [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md)
 and applies to every PR with `INTENT: FIX` (see
-[`AGENTS.md` PR Checklist rule #12](../AGENTS.md#pr-checklist) for
+[`AGENTS.md` §Loadable skills (PR-creation load-directive)](../AGENTS.md#loadable-skills) for
 the load-directive).
 
 Operationally, FIX PRs carry `DEGREE-OF-FREEDOM CLOSED:` +

@@ -41,7 +41,7 @@ knowledge/
 
 - One concept per file.
 - Markdown only. **File-length tiers per
-  [AGENTS.md PR Checklist rule #3](../AGENTS.md#pr-checklist):**
+  [`pr-creation` skill PR Checklist rule #3](skills/pr-creation/SKILL.md#pr-checklist):**
   - **Summaries / overviews:** <1000 lines.
   - **Deep-dive research:** <2000 lines.
   - **Readability > size.** Split topic-wise only when readability
@@ -90,7 +90,7 @@ The minimum required fields are `source` and `compiled`. `chain_of_custody` is m
 the note contains numbers, dates, quotes, or decisions that someone might
 reference. The goal is not to lose the connection between the LLM-written summary and
 the primary source. For more details, see
-[`research/llm-wiki-critique-first-agent.md §9`](./research/llm-wiki-critique-first-agent.md#9-specific-edits-to-existing-files).
+[`research/llm-wiki-critique-first-agent.md`](./research/llm-wiki-critique-first-agent.md).
 
 ### Frontmatter v2 — optional fields (additive)
 
@@ -210,7 +210,7 @@ referencing the parent `Q-N` via `Coupling:`):
 
 ADR text is the source of truth for any specific decision; this log
 is a pointer overlay. New ADR PRs MUST append a block here —
-see [`AGENTS.md` PR Checklist rule #9](../AGENTS.md#pr-checklist).
+see [`pr-creation` skill PR Checklist rule #9](skills/pr-creation/SKILL.md#pr-checklist).
 
 ## What goes where
 
@@ -233,6 +233,6 @@ see [`AGENTS.md` PR Checklist rule #9](../AGENTS.md#pr-checklist).
 | "What did we find during the research of Z?" | `knowledge/research/<Z>.md` | Primary sources from `source:` frontmatter |
 | Specific number / date / quote | **Always** the primary source (`source:` of the note), not the summary | — |
 | Procedure / how-to | `knowledge/skills/<name>/SKILL.md` for per-task disciplines | `knowledge/prompts/` for prompt templates |
-| Before opening a PR (intent classification, anti-shallow-fix gate) | [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md) | [`AGENTS.md` PR Checklist rule #12](../AGENTS.md#pr-checklist) (load-directive) |
+| Before opening a PR (intent classification, anti-shallow-fix gate) | [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md) | [`AGENTS.md` §Loadable skills (PR-creation load-directive)](../AGENTS.md#loadable-skills) (load-directive) |
 
 This same rule is documented in [`AGENTS.md`](../AGENTS.md#query-routing).

@@ -13,7 +13,7 @@ status: accepted
 > Catalog entry for the *prospective* anti-pattern that
 > [`knowledge/skills/pr-creation/SKILL.md`](../skills/pr-creation/SKILL.md)
 > (loadable skill carrying the operational rule, loaded via
-> [`AGENTS.md` PR Checklist rule #12](../../AGENTS.md#pr-checklist))
+> [`AGENTS.md` §Loadable skills (PR-creation load-directive)](../../AGENTS.md#loadable-skills))
 > + [`project-overview.md` §1.2.5 anti-shallow-fix gate](../project-overview.md#125--compliance-by-construction-failure-observable)
 > are forcing-against. AP-001 captures a backward-looking worked
 > incident; AP-003 is the **forward-acting** companion — fires on
@@ -262,7 +262,7 @@ documentary and review-time.
 - [`knowledge/skills/pr-creation/SKILL.md`](../skills/pr-creation/SKILL.md)
   — `INTENT: FIX` clause + anti-shallow-fix gate clause (relocated
   from AGENTS.md §PR Intent Classification 2026-05-26 — PR A';
-  load-directive lives at [`AGENTS.md` PR Checklist rule #12](../../AGENTS.md#pr-checklist)).
+  load-directive lives at [`AGENTS.md` §Loadable skills (PR-creation load-directive)](../../AGENTS.md#loadable-skills)).
   AP-003 is
   the catalogued anti-pattern the gate is forcing-against.
 - [`project-overview.md` §1.2.5 anti-shallow-fix gate](../project-overview.md#125--compliance-by-construction-failure-observable)
@@ -301,7 +301,7 @@ documentary and review-time.
   is the backward-looking worked incident; AP-003 is the
   forward-acting prospective sibling.
 - **Decision trail (chosen vs rejected branches for AP-003 itself):**
-  [`exploration_log.md` Q-15](../trace/exploration_log.md#q-15---how-does-fa-classify-the-intent-of-a-pr-and-how-does-it-enforce-the-anti-shallow-fix-gate-2026-05-25)
+  [`exploration_log.md` Q-15](../trace/exploration_log.md#q-15--how-does-fa-classify-the-intent-of-a-pr-and-how-does-it-enforce-the-anti-shallow-fix-gate-2026-05-25)
   §Rejected — «PR-description-only enforcement (no hook)»;
   «standalone §1.2.6 anti-shallow principle»; «keep §Change
   Classification + add ADR-CREATE exception clause»; «single-intent

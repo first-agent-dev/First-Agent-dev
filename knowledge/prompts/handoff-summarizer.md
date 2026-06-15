@@ -19,7 +19,7 @@ blocks below verbatim into the writing-style scaffold.
 [When to use]
 - Writing or updating [`HANDOFF.md`](../../HANDOFF.md).
 - Emitting an inner-loop compaction when the active context approaches the
-  rule #11 ~100 k-token ceiling (see [AGENTS.md](../../AGENTS.md#pr-checklist)).
+  rule #11 ~100 k-token ceiling (see [`pr-creation` skill §PR Checklist](../skills/pr-creation/SKILL.md#pr-checklist)).
 - Writing a session-end note for the operator / next-session agent.
 - Summarising a tool trace, a research note, or a long PR comment thread when
   the receiver is another LLM agent.

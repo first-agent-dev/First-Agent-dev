@@ -118,7 +118,7 @@ superseded_by: none
 ---
 
 > **Status:** active. Note produced via
-> [`knowledge/prompts/research-briefing.md`](../prompts/research-briefing.md)
+> [`knowledge/prompts/research-briefing.md`](../knowledge/prompts/research-briefing.md)
 > workflow. §0 — Decision Briefing для project lead и future LLM agents,
 > читающих ноту сверху; §1.. — deep-dive, грузить только если §0
 > недостаточно.
@@ -183,14 +183,14 @@ UNCERTAIN-ASK.
   обнаружения. Cost-of-rejection ≥ 1-2 дня re-run + repuration cost
   Pillar-4 «iteration via measurement» если bias выяснится post-baseline.
 - **Concrete first step (if TAKE):** В
-  [`knowledge/adr/ADR-2-llm-tiering.md`](../adr/ADR-2-llm-tiering.md)
+  [`knowledge/adr/ADR-2-llm-tiering.md`](../knowledge/adr/ADR-2-llm-tiering.md)
   §Amendments добавить блок `### Amendment 2026-05-XX — Eval-role
   provider/family disjoint constraint` с (a) формальным правилом, (b)
   ссылкой на P-1 §4 как primary-source, (c) one-line config example,
   (d) loader-error wording. В same PR обновить
-  [`adr/DIGEST.md`](../adr/DIGEST.md) ADR-2 row, добавить bullet под
+  [`adr/DIGEST.md`](../knowledge/adr/DIGEST.md) ADR-2 row, добавить bullet под
   `**Amendments.**`. Per AGENTS.md PR Checklist rule #9 — appended
-  block в [`knowledge/trace/exploration_log.md`](../trace/exploration_log.md)
+  block в [`knowledge/trace/exploration_log.md`](../knowledge/trace/exploration_log.md)
   для ADR-2 Q-2 («judge selection») как amendment, не новый Q.
 
 ### R-2 — Strengthen ADR-2 «no cross-tier auto-escalation» rationale primary-source citation
@@ -268,8 +268,8 @@ UNCERTAIN-ASK.
   weaker OSS Coder reviewer **не** найдёт P-3 на 5-min search и одобрит
   prompt-diversity, который при baseline-prove deteriorate UC5 metrics.
 - **Concrete first step (if TAKE):** В same PR как R-1+R-2 добавить
-  однострочный mention в [`adr/DIGEST.md`](../adr/DIGEST.md) §See also
-  или в [`AGENTS.md`](../../AGENTS.md) PR Checklist rule #10 (выбор
+  однострочный mention в [`adr/DIGEST.md`](../knowledge/adr/DIGEST.md) §See also
+  или в [`AGENTS.md`](../AGENTS.md) PR Checklist rule #10 (выбор
   места — в §6 R-3 deep-dive обоснован выбор DIGEST §See also как
   менее invasive AGENTS-edit).
 
@@ -305,7 +305,7 @@ UNCERTAIN-ASK.
   scope; SKIP-permanently — теряет один из самых empirically-strong
   Pillar-3 efficient-harness wins на горизонте 2026 года.
 - **Concrete first step (if TAKE → defer marker):** Добавить entry
-  в [`knowledge/BACKLOG.md`](../BACKLOG.md) — новый `I-10` row:
+  в [`knowledge/BACKLOG.md`](../knowledge/BACKLOG.md) — новый `I-10` row:
   «Multi-model ensembling with diversity-based selector (UC5-candidate)»
   с unblock-trigger «UC5d implementation (score tracking / leaderboard)
   ships + selector primitive lands». В **отдельном** последующем PR;
@@ -343,7 +343,7 @@ UNCERTAIN-ASK.
   что снижает navigation value для будущих v0.2 readers.
 - **Concrete first step (if TAKE → defer marker):** В §4.3 этой ноты
   явная one-line ссылка на
-  [`latent-verifier-evolve-research-2026-05.md` R-4](./latent-verifier-evolve-research-2026-05.md);
+  [`latent-verifier-evolve-research-2026-05.md` R-4](../knowledge/research/latent-verifier-evolve-research-2026-05.md);
   при future-revision этой латер-noty (post-merge этого PR, либо в
   UC5 ADR draft) добавить symmetric cross-link.
 
@@ -590,7 +590,7 @@ selector реализован. НО:
   (deferred).
 - P-2 ensembling требует **selector machinery**, которая ≈
   «universal verifier without runtime» (cross-ref с
-  [`latent-verifier-evolve-research-2026-05.md`](./latent-verifier-evolve-research-2026-05.md)
+  [`latent-verifier-evolve-research-2026-05.md`](../knowledge/research/latent-verifier-evolve-research-2026-05.md)
   R-1 acceptance-rubric-fixtures, R-4 latent-watch-list-only); selector
   build cost = medium-to-expensive.
 - AGENTS.md PR Checklist rule #10 question 1 (research-evidence) для
@@ -801,9 +801,9 @@ auto-escalation» добавить one-paragraph after existing «v0.2 may
 revisit»:
 
 > Эта позиция дополнительно подкрепляется primary-source evidence
-> [P-1 §4](./correlated-llm-errors-and-ensembling-2026-05.md#4-1-p-1-correlated-errors--adr-2-eval-role-and-no-cross-tier-auto-escalation)
+> [P-1 §4](./correlated-llm-errors-and-ensembling-2026-05.md#41-p-1-correlated-errors--adr-2-eval-role-and-no-cross-tier-auto-escalation)
 > (top-tier accuracy → cross-provider correlation persists) и
-> [P-3 §4](./correlated-llm-errors-and-ensembling-2026-05.md#4-3-p-3-model-capability-dominates--agentsmd-rule-10--adr-7-prompt-design--uc5-verifier)
+> [P-3 §4](./correlated-llm-errors-and-ensembling-2026-05.md#43-p-3-model-capability-dominates--agentsmd-rule-10--adr-7-prompt-design--uc5-verifier)
 > (model capability dominates ±2pt prompt-optimization range). Если
 > Coder failure на hard task — это primarily capability-bound (Pillar-3
 > evidence), а не stochastic-bound, тогда auto-escalation **expected
@@ -816,7 +816,7 @@ revisit»:
 
 - (a) **DIGEST.md §See also** — добавить one-bullet «Prompt-diversity
   as harness component is empirically a known anti-pattern; primary
-  source [P-3](./correlated-llm-errors-and-ensembling-2026-05.md#4-3-p-3-model-capability-dominates--agentsmd-rule-10--adr-7-prompt-design--uc5-verifier)
+  source [P-3](./correlated-llm-errors-and-ensembling-2026-05.md#43-p-3-model-capability-dominates--agentsmd-rule-10--adr-7-prompt-design--uc5-verifier)
   §3 + §4». Less invasive AGENTS-edit; agents discover via DIGEST
   lookup.
 - (b) **AGENTS.md rule #10** — добавить explicit example «E.g.,
@@ -832,7 +832,7 @@ escalation level и стоит follow-up PR-обсуждения.
 
 См. §0 R-4 для full block. Embed:
 
-В [`knowledge/BACKLOG.md`](../BACKLOG.md) — новый row:
+В [`knowledge/BACKLOG.md`](../knowledge/BACKLOG.md) — новый row:
 
 ```text
 ## I-10 — Multi-model ensembling with diversity-based selector (UC5-candidate)
@@ -863,7 +863,7 @@ config in `models.yaml`; selector implementation under
 
 Минимальная forma — one-line добавление в этой ноте §4.3 (уже сделано
 в этом drafting pass; см. §4.3 final paragraph). При future-revision
-[`latent-verifier-evolve-research-2026-05.md`](./latent-verifier-evolve-research-2026-05.md)
+[`latent-verifier-evolve-research-2026-05.md`](../knowledge/research/latent-verifier-evolve-research-2026-05.md)
 R-4 — symmetric back-link на эту ноту §4.3.
 
 Не отдельный PR. Запись в §6 фиксирует обязательство для future maintainer.
@@ -936,28 +936,28 @@ Primary sources:
 
 FA repo files (local git HEAD `59dcb9b`, 2026-05-12):
 
-- [`AGENTS.md`](../../AGENTS.md) §PR Checklist rules #8 / #9 / #10 /
+- [`AGENTS.md`](../AGENTS.md) §PR Checklist rules #8 / #9 / #10 /
   #11; §Pre-flight checklist Steps 1-5.
-- [`knowledge/adr/ADR-1-v01-use-case-scope.md`](../adr/ADR-1-v01-use-case-scope.md)
+- [`knowledge/adr/ADR-1-v01-use-case-scope.md`](../knowledge/adr/ADR-1-v01-use-case-scope.md)
   §Decision (UC1+UC3 in scope; UC5 deferred) + §Amendment 2026-05-06
   (UC5a-5e eval-driven harness iteration).
-- [`knowledge/adr/ADR-2-llm-tiering.md`](../adr/ADR-2-llm-tiering.md)
+- [`knowledge/adr/ADR-2-llm-tiering.md`](../knowledge/adr/ADR-2-llm-tiering.md)
   §Decision §Option B + §Amendment 2026-04-29 (`tool_protocol`, no
   Critic) + §Amendment 2026-05-01 (MCP forward-compat).
-- [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](../adr/ADR-7-inner-loop-tool-registry.md)
+- [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](../knowledge/adr/ADR-7-inner-loop-tool-registry.md)
   §Decision (no prompt-diversity layer; tool-disclosure 3-tier; static
   layered prompt).
-- [`knowledge/adr/DIGEST.md`](../adr/DIGEST.md) — ADR-2 / ADR-7 rows.
-- [`knowledge/research/efficient-llm-agent-harness-2026-05.md`](./efficient-llm-agent-harness-2026-05.md)
+- [`knowledge/adr/DIGEST.md`](../knowledge/adr/DIGEST.md) — ADR-2 / ADR-7 rows.
+- [`knowledge/research/efficient-llm-agent-harness-2026-05.md`](../knowledge/research/efficient-llm-agent-harness-2026-05.md)
   — surface-grep по `judge` / `ensemble` (absence-confirms unique value
   этой ноты).
-- [`knowledge/research/latent-verifier-evolve-research-2026-05.md`](./latent-verifier-evolve-research-2026-05.md)
+- [`knowledge/research/latent-verifier-evolve-research-2026-05.md`](../knowledge/research/latent-verifier-evolve-research-2026-05.md)
   §0 R-4 (latent-space watch-list only) — cross-link target из R-5.
-- [`knowledge/BACKLOG.md`](../BACKLOG.md) — existing I-1..I-9; R-4
+- [`knowledge/BACKLOG.md`](../knowledge/BACKLOG.md) — existing I-1..I-9; R-4
   proposes I-10.
-- [`knowledge/prompts/research-briefing.md`](../prompts/research-briefing.md)
+- [`knowledge/prompts/research-briefing.md`](../knowledge/prompts/research-briefing.md)
   — Stage 1-5 workflow (this note's production process).
-- [`knowledge/research/_template.md`](./_template.md) — frontmatter
+- [`knowledge/research/_template.md`](../knowledge/research/_template.md) — frontmatter
   + §0 + §1..§9 skeleton.
 
 ## 9. Out of scope
@@ -1067,7 +1067,7 @@ actionable transfer, см. §10.4 CUT #6.
   и landing AIMO-style regression (per P-3 §4.3). Cost-of-rejection ≥
   1 retro-amendment PR + 1 Pillar-4 measurement run для baseline.
 - **Concrete first step (if TAKE):** В
-  [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](../adr/ADR-7-inner-loop-tool-registry.md)
+  [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](../knowledge/adr/ADR-7-inner-loop-tool-registry.md)
   §Decision §«Inner loop» добавить bullet `**Retry budgets.**` с
   rule «`max_retry_per_role <= 3` default; configurable per role;
   promotion к более высокому $N$ требует Pillar-4 measurement
@@ -1155,7 +1155,7 @@ actionable transfer, см. §10.4 CUT #6.
   ≥ 1 retro-amendment + потенциальный re-run UC5b baselines, если hook
   использовался для filter-pass measurements.
 - **Concrete first step (if TAKE):** В
-  [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](../adr/ADR-7-inner-loop-tool-registry.md)
+  [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](../knowledge/adr/ADR-7-inner-loop-tool-registry.md)
   §Decision §«Mini hook pipeline» добавить bullet `**LLM-using hook
   constraint.**` с rule «если hook вызывает LLM (rare in v0.1; default
   hooks — deterministic Python), hook.primary MUST satisfy provider/family

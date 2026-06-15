@@ -574,7 +574,7 @@ tasks (the threshold is set in the UC5 ADR, not here).
 16 files / ~95 K vs Session B = 7 files / ~95 K — same total context,
 different reading depth). Arena.ai sessions land in the 70–95 K
 range. The static layered prefix shape above therefore lands within
-the [AGENTS.md PR Checklist rule #11](../../AGENTS.md#pr-checklist)
+the [`AGENTS.md` §Context-budget discipline (rule #11)](../../AGENTS.md#context-budget-discipline)
 ≤100 K budget on every measured session — independent empirical
 validation that the prefix-cache invariant is achievable on both
 Devin and external harnesses.
@@ -700,7 +700,7 @@ shape is pinned so the migration is config-only:
 
 - **Positive — single source of truth for every tool PR.**
   The first implementation PR (inner-loop scaffolding,
-  [HANDOFF §Next steps item 1](../../HANDOFF.md#next-steps-intended-order))
+  [HANDOFF §Next steps item 1](../../HANDOFF.md#next))
   consumes the contract verbatim — `src/fa/inner_loop/registry.py`,
   `loop.py`, `hooks/`, `tools/`, `trace.py` — and item 2
   (chunker indexer end-to-end) is the first downstream consumer of
@@ -852,7 +852,7 @@ loop's three-tier disclosure (§6), static layered prompt
 3. **§9 Loop invariant** — empirical context-budget paragraph
    citing baseline §5 (Devin sessions converging to ~80–95 K
    total context, Arena.ai 70–95 K — all within the
-   [AGENTS.md PR Checklist rule #11](../../AGENTS.md#pr-checklist)
+   [`AGENTS.md` §Context-budget discipline (rule #11)](../../AGENTS.md#context-budget-discipline)
    ≤100 K envelope).
 4. **§11 R-9 cross-model harness transferability** — motivation
    block citing baseline §1 `chain_of_custody` + §7 caveats
@@ -1038,7 +1038,7 @@ The accompanying ADR-2 §Amendment 2026-04-29 closed the «no
 auto-escalation» question and left **intra-role** retries
 allowed, but did not pin the retry parameters. Without explicit
 invariants, the inner-loop scaffolding PR
-([HANDOFF §Next steps item 1](../../HANDOFF.md#next-steps-intended-order))
+([HANDOFF §Next steps item 1](../../HANDOFF.md#next))
 would land magic-numbers in hook code, with no audit trail tying
 the choice back to research evidence. The §8 Hook pipeline is
 silent on whether a hook may itself call an LLM (e.g. a future
@@ -1306,7 +1306,7 @@ under a workspace-canon root, not new event rows.
   («Spec-bypassing workaround masquerading as fix») so future
   sessions recognise the shape without re-paying the lesson. The
   same PR adds the
-  [`AGENTS.md` §Change Classification](../../AGENTS.md#change-classification)
+  [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference)
   forcing function (Layer 1) and one named-invariant test
   ([`test_invariant_adr7_r8_canon_root_is_knowledge_trace`](../../tests/test_cli.py))
   as the worked example of Layer 2 — a test whose name mechanically
@@ -1485,7 +1485,7 @@ under a workspace-canon root, not new event rows.
 
 ## References
 
-- [HANDOFF.md §Next steps item 1](../../HANDOFF.md#next-steps-intended-order) — the explicit six-surface scope this ADR pins.
+- [HANDOFF.md §Next steps item 1](../../HANDOFF.md#next) — the explicit six-surface scope this ADR pins.
 - [`research/efficient-llm-agent-harness-2026-05.md`](../research/efficient-llm-agent-harness-2026-05.md) §0 (R-1..R-8) + §10 (contract sketch).
 - [`research/bootstrap-cost-baseline-2026-05.md`](../research/bootstrap-cost-baseline-2026-05.md) §3 (6-file irreducible core), §5 (context-saturation), §6 (baseline range), §9 (re-measurement triggers) — measurement counterpart, cited from §6 / §7 / §9 / §11 / §Consequences in this ADR's §Amendment 2026-05-12.
 - [`research/cross-reference-ampcode-sliders-to-adr-2026-04.md`](../research/cross-reference-ampcode-sliders-to-adr-2026-04.md) §10 R-1, R-3, R-7.

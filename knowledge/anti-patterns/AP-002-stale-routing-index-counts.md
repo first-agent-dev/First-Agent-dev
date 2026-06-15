@@ -91,7 +91,7 @@ Boundary rationale:
   approximate this as «single read, batch freely».
 - **M 301 – 800** — fits 2-3 instances inside a 24 K usable-token
   context (DeepSeek 4 typical). Below
-  [AGENTS.md PR Checklist rule #3](../../AGENTS.md#pr-checklist)
+  [`pr-creation` skill PR Checklist rule #3](../skills/pr-creation/SKILL.md#pr-checklist)
   «summaries / overviews < 1000 lines» so M is the «routine
   documentation» tier.
 - **L 801 – 1500** — read alone on mid-tier; below rule #3's
@@ -163,10 +163,10 @@ Three layers, same shape as
 
 - [`knowledge/MAINTENANCE.md` §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge)
   — owns the row-format rule that this anti-pattern strengthens.
-- [`AGENTS.md` §PR Checklist rule #3](../../AGENTS.md#pr-checklist)
+- [`pr-creation` skill §PR Checklist rule #3](../skills/pr-creation/SKILL.md#pr-checklist)
   — declares the 1000 / 2000 thresholds that informed the M / L
   boundary placement.
-- [`AGENTS.md` §Change Classification](../../AGENTS.md#change-classification)
+- [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference)
   — the Layer-1 forcing function for any future change to the
   invariant.
 

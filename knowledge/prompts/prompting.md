@@ -159,6 +159,6 @@
 
 ## Где хранить промпты
 
-Переиспользуемые промпты коммитим в [`knowledge/prompts/`](../knowledge/prompts/).
+Переиспользуемые промпты коммитим в [`knowledge/prompts/`](.).
 Один файл — один промпт, имя `<verb>-<slug>.md`. Шаблон —
-в [`knowledge/prompts/README.md`](../knowledge/prompts/README.md).
+в [`knowledge/prompts/README.md`](./README.md).

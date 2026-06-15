@@ -9,7 +9,7 @@
 1. Follow [`knowledge/llms.txt`](./knowledge/llms.txt) §MUST READ FIRST (5 files, in order).
 2. Return here — read **§Current state**, then **§Next**.
 
-## § Current state
+## §Current state
 
 Overwritten each session! Details live at the pointer, not here.
 
@@ -145,7 +145,7 @@ review fixes (tracks `Dockerfile.fa`, ignores commented optional `FA_*` env rows
 | :--- | :--- | :--- |
 | _(none in flight)_ | M-1..M-8 landed; AIO deployment operational. Next: open SSH/service follow-up PR (§Next #1). | — |
 
-## § Next
+## §Next
 
 Priority-ordered. Completed items deleted, not struck through.
 

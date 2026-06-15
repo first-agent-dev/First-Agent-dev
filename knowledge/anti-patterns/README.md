@@ -33,7 +33,7 @@ attention and loses under load. The catalog therefore optimises for
   paid the lesson before us). No speculative anti-patterns.
 
 This sits **alongside**, not duplicates,
-[`AGENTS.md` §Cross-project anti-patterns](../../AGENTS.md#cross-project-anti-patterns),
+[`AGENTS.md` §Cross-project anti-patterns](../../AGENTS.md#cross-project-anti-patterns---learnt-from-precedents),
 which captures four citations from neighbouring agent stacks. The two
 are complementary:
 
@@ -94,7 +94,7 @@ this order:
 5. Include in the PR description: «Anti-pattern catalogued: `AP-NNN`
    ([link]). CLASS: <REPAIR|RELAX|WORKAROUND>. INVARIANT: <one
    sentence>.» — see
-   [`AGENTS.md` §Change Classification](../../AGENTS.md#change-classification).
+   [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference).
 
 ## Detector personas (deferred to M1+)
 
@@ -104,7 +104,7 @@ specific anti-pattern on demand. The personas are **deferred** until at
 least three entries exist (n=3 is the cheapest evidence that a generic
 detector shape is worth designing). For now, the catalog is the
 passive-read surface; detection happens through the
-[`AGENTS.md` §Change Classification](../../AGENTS.md#change-classification)
+[`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference)
 forcing function + named-invariant tests
 ([test_invariant_adr7_r8_canon_root_is_knowledge_trace](../../tests/test_cli.py)
 is the worked example).

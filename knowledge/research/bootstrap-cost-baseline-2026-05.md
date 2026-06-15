@@ -44,7 +44,7 @@ claims_requiring_verification:
 ---
 
 > **Status:** active. Measurement-evidence note (not a research-briefing
-> note — exempt from [AGENTS.md PR Checklist rule #8](../../AGENTS.md#pr-checklist)
+> note — exempt from [`pr-creation` skill PR Checklist rule #8](../skills/pr-creation/SKILL.md#pr-checklist)
 > §0 Decision Briefing requirement, which is forward-only for the
 > research-briefing workflow). First persistent datapoint for
 > [`project-overview.md` §1.1](../project-overview.md#11-четыре-столпа-цели-project-goal--four-pillars)
@@ -144,7 +144,7 @@ Four of these six (`HANDOFF`, `llms.txt`, `DIGEST`,
 `efficient-llm-agent-harness`) reproduce `llms.txt` §MUST READ FIRST
 top-4 + §TASK ROUTING ADR-7 primary entry. `ADR-template.md` and
 `exploration_log.md` are mandated for ADR-authoring tasks by
-[AGENTS.md PR Checklist rule #9](../../AGENTS.md#pr-checklist) and
+[`pr-creation` skill PR Checklist rule #9](../skills/pr-creation/SKILL.md#pr-checklist) and
 the §When merging an ADR amendment cascade in
 [`MAINTENANCE.md`](../MAINTENANCE.md).
 
