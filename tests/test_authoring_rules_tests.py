@@ -32,6 +32,80 @@ def _codes(report) -> list[str]:  # type: ignore[no-untyped-def]
 
 
 # =========================================================================
+# V4 — I-13 import-alias bypass closure
+# =========================================================================
+
+
+def test_from_import_skip_bypass_is_flagged(tmp_path: Path) -> None:
+    """`from pytest import skip; skip(...)` — the original I-13 evasion."""
+    _make_workspace(tmp_path)
+    body = 'from pytest import skip\n\ndef test_thing():\n    skip("nope")\n'
+    _write_test(tmp_path, "tests/test_alias_from.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert _codes(report) == ["FA-AUTHORING-V4-PYTEST-SKIP"]
+
+
+def test_module_alias_skip_bypass_is_flagged(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = 'import pytest as pt\n\ndef test_thing():\n    pt.skip("nope")\n'
+    _write_test(tmp_path, "tests/test_alias_module.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert _codes(report) == ["FA-AUTHORING-V4-PYTEST-SKIP"]
+
+
+def test_renamed_from_import_skip_bypass_is_flagged(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = 'from pytest import skip as s\n\ndef test_thing():\n    s("nope")\n'
+    _write_test(tmp_path, "tests/test_alias_renamed.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert _codes(report) == ["FA-AUTHORING-V4-PYTEST-SKIP"]
+
+
+def test_module_alias_mark_skip_decorator_is_flagged(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = "import pytest as pt\n\n@pt.mark.skip\ndef test_thing():\n    assert 1 == 2\n"
+    _write_test(tmp_path, "tests/test_alias_mark.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert _codes(report) == ["FA-AUTHORING-V4-PYTEST-SKIP"]
+
+
+def test_bare_mark_xfail_via_from_import_is_flagged(tmp_path: Path) -> None:
+    _make_workspace(tmp_path)
+    body = "from pytest import mark\n\n@mark.xfail\ndef test_thing():\n    assert 1 == 2\n"
+    _write_test(tmp_path, "tests/test_alias_bare_mark.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert _codes(report) == ["FA-AUTHORING-V4-NON-STRICT-XFAIL"]
+
+
+def test_local_skip_shadowing_is_not_flagged(tmp_path: Path) -> None:
+    """A locally defined `skip(...)` helper is NOT pytest.skip.
+
+    The alias map drops a `from pytest import` binding when the file
+    also defines the same name (conservative shadowing rule).
+    """
+    _make_workspace(tmp_path)
+    body = (
+        "def skip(reason):\n"
+        '    return f"noted: {reason}"\n'
+        "\n"
+        "def test_thing():\n"
+        '    assert skip("custom helper") == "noted: custom helper"\n'
+    )
+    _write_test(tmp_path, "tests/test_local_skip.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert _codes(report) == []
+
+
+def test_alias_module_scope_allow_module_level_still_exempt(tmp_path: Path) -> None:
+    """The allow_module_level exemption survives the alias-map rewrite."""
+    _make_workspace(tmp_path)
+    body = 'import pytest as pt\n\npt.skip("missing optional dep", allow_module_level=True)\n'
+    _write_test(tmp_path, "tests/test_alias_module_level.py", body)
+    report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
+    assert _codes(report) == []
+
+
+# =========================================================================
 # V4 — pytest.skip / @pytest.mark.skip
 # =========================================================================
 

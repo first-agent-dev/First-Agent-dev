@@ -31,6 +31,8 @@ Thumbs.db
 # Coverage / mutation artifacts
 .coverage
 coverage.xml
+# mutmut 3.x writes a full mutated source tree at repo root during `just mutation`
+mutants/
 htmlcov/
 .mutmut-cache
 .gremlins-cache/

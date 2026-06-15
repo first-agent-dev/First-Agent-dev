@@ -30,6 +30,7 @@ from fa.hygiene.pr_intent import (
     HEADER_DOF_CLOSED,
     HEADER_INTENT,
     HEADER_INVARIANT,
+    HEADER_TEST_EDITS,
     INTENT_VALUES,
     INVARIANT_REQUIRED_PREFIXES,
     FieldSpec,
@@ -145,6 +146,29 @@ def test_output_format_matches_hook_constants() -> None:
     # `repo/file.ext:line` citation.
     assert "repo/file.ext:line" in fix_block
     assert "n/a (reason)" in fix_block
+
+
+def test_test_edit_declaration_section_pins_header() -> None:
+    """Pin HEADER_TEST_EDITS to the skill §Test-edit declaration section.
+
+    Same dual-located-rule guard as the §Output format snapshot: the
+    skill section documents the TEST-EDITS block; the hook constant
+    must appear verbatim inside that section's fenced example so the
+    two views cannot drift. Deliberately NOT a third block under
+    §Output format — that section's snapshot asserts exactly two
+    fenced blocks.
+    """
+
+    body = SKILL_PATH.read_text(encoding="utf-8")
+    blocks = _extract_text_blocks_under("Test-edit declaration", body)
+    assert len(blocks) == 1, (
+        "skill §Test-edit declaration must contain exactly one ```text "
+        f"fenced example block; found {len(blocks)}."
+    )
+    assert HEADER_TEST_EDITS in blocks[0], (
+        f"skill §Test-edit declaration example must carry the literal "
+        f"`{HEADER_TEST_EDITS}` header the hook parses."
+    )
 
 
 def test_invariant_required_prefixes_export_is_read_only() -> None:

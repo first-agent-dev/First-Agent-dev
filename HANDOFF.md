@@ -13,6 +13,25 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
+**As of:** 2026-06-12 (later session) — Test-gaming hardening (branch
+`devin/2026-06-12-test-gaming-hardening`): closes guardrails-v2 deferred items R-6 +
+R-7 + BACKLOG I-13. (A) Existing-test protection: `validate_test_edits` in
+`pr_intent.py` (ADR-10 I-1: one function, two seats — git hook `_cli_validate` +
+IntentGuard) — `D`/`R`/`C` on `tests/**.py` blocked under every intent, `M` under
+FIX-shaped diffs needs a `TEST-EDITS: <path> — <reason>` draft declaration; keyed on
+CLASSIFIER intent (typed D-5 override can NOT disarm — security invariant pinned by
+test). Skill §Test-edit declaration + snapshot-test pin. (B) Mutation testing
+resurrected: weekly `tests.yml` had been dead since adoption (mutmut-2.x CLI flag
+removed in 3.x, error swallowed by `|| true`); config → 3.x keys
+(`source_paths`/`pytest_add_cli_args_test_selection`), workflow emits stats to job
+summary + artifact, `mutants/` excluded everywhere, `just mutation` recipe. First
+honest baseline **633 mutants / 470 killed / 163 survived** →
+`knowledge/mutation-survivors-workplan.md` (delete-on-completion flips workflow to
+blocking; BACKLOG I-23). (C) I-13 closed: V4 alias-map (`from pytest import skip`,
+`import pytest as pt`, renamed imports, bare `mark.<X>`) with shadowing negative;
+TCB-path edit (`authoring_rules/tests.py`) — protected-path flag on PR is expected.
+**1108 tests, 90.43 % cov, all gates green.** Prior: 2026-06-12 — CI guardrails v2.
+
 **As of:** 2026-06-12 — CI guardrails v2 (failure-mode hardening): ruff gains `S`
 (security floor, src-blocking, tests exempt), `BLE` (blind-except), `C90`
 (complexity ratchet, max 15, 4 baseline waivers), `PGH` (blanket-suppression

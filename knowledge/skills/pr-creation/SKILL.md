@@ -216,6 +216,33 @@ PR B hook. The hook's regex matches against the shape above; a
 snapshot test in PR B pins the hook regex to this section so the
 two views cannot drift.
 
+## Test-edit declaration
+
+Existing-test protection (research note
+[`llm-agent-failure-modes-guardrails-2026-06.md`](../../research/llm-agent-failure-modes-guardrails-2026-06.md)
+R-6; empirical basis: agents blocked by a failing test tend to edit
+the test, not the code). Enforced by `validate_test_edits` at both
+seats (git hook + IntentGuard), keyed on the **classifier** intent —
+the D-5 typed-`INTENT:` override never applies to this rule.
+
+- Deleting or renaming a file under `tests/**`: **blocked under every
+  intent shape**, no declaration escape. A genuinely obsolete test is
+  removed by a human in a dedicated `CHORE` PR.
+- Modifying an existing `tests/**` file while the staged diff is
+  FIX-shaped: requires a declaration block in the PR draft —
+
+```text
+TEST-EDITS:
+tests/test_x.py — fixture must track the new enum member
+tests/test_y.py — expected message text changed by this fix
+```
+
+One entry per line, `<path> — <one-line reason>` (em-dash or `-`).
+The block ends at the first blank line or next `HEADER:` line.
+Malformed entries (missing separator / empty reason) do NOT count as
+declarations. Adding **new** test files is always allowed; modifying
+tests in an IMPLEMENT-shaped diff is always allowed.
+
 ## PR Checklist
 
 Verify before opening any PR. Each item has triggered wasted

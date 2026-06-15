@@ -340,6 +340,10 @@ HEADER_CLASS = "CLASS:"
 HEADER_INVARIANT = "INVARIANT:"
 HEADER_DOF_CLOSED = "DEGREE-OF-FREEDOM CLOSED:"
 HEADER_DET_MECHANISM = "DETERMINISTIC MECHANISM:"
+# Existing-test-protection declaration field (skill §Test-edit declaration).
+# One entry per line below the header: ``tests/test_x.py — <one-line reason>``.
+# Consumed by :func:`validate_test_edits`; see that function for the rule.
+HEADER_TEST_EDITS = "TEST-EDITS:"
 
 # Citation must end with `path/file.ext:line`. The path component
 # must contain a dot (skill §D-4: «repo/file.ext:line»). The regex
@@ -391,6 +395,128 @@ def parse_field(text: str, header: str) -> str | None:
     if match is None:
         return None
     return match.group("value").strip()
+
+
+def parse_test_edits(text: str) -> dict[str, str]:
+    """Parse the ``TEST-EDITS:`` declaration block from a PR draft.
+
+    Format (skill §Test-edit declaration): the header line, then one
+    entry per immediately-following line, each ``<path> — <reason>``
+    (em-dash or ``-`` accepted). The block ends at the first blank
+    line or the first line that parses as another ``HEADER:`` field.
+    Returns ``{normalised_path: reason}``; malformed entry lines
+    (no separator / empty reason) are EXCLUDED so an undeclared edit
+    cannot smuggle through on a half-written row — the caller's
+    violation message tells the author how to fix the row.
+    """
+
+    lines = text.splitlines()
+    out: dict[str, str] = {}
+    in_block = False
+    for line in lines:
+        stripped = line.strip()
+        if not in_block:
+            if stripped.startswith(HEADER_TEST_EDITS):
+                in_block = True
+                # Same-line first entry is allowed: ``TEST-EDITS: path — reason``.
+                rest = stripped[len(HEADER_TEST_EDITS) :].strip()
+                if rest:
+                    _add_test_edit_entry(rest, out)
+            continue
+        if not stripped:
+            break
+        # A new ``WORD:`` header terminates the block (any of the known
+        # headers, or an unknown-but-header-shaped line).
+        if re.match(r"^[A-Z][A-Z -]*:", stripped):
+            break
+        _add_test_edit_entry(stripped, out)
+    return out
+
+
+def _add_test_edit_entry(entry: str, out: dict[str, str]) -> None:
+    # Accept em-dash (skill convention) or plain hyphen separator.
+    for sep in (" — ", " - "):
+        if sep in entry:
+            path, _, reason = entry.partition(sep)
+            path = path.strip().replace("\\", "/").removeprefix("./")
+            reason = reason.strip()
+            if path and reason:
+                out[path] = reason
+            return
+    # No separator → malformed; excluded (fail-closed).
+
+
+def _is_test_path(path: str) -> bool:
+    """True for Python files under ``tests/`` (the protected set).
+
+    Deliberately ``.py``-only: deleting a *data* fixture under
+    ``tests/`` breaks its consuming tests LOUDLY (collection/runtime
+    error), while deleting a test file silences coverage — only the
+    silent direction needs a guard.
+    """
+    normalised = path.replace("\\", "/").removeprefix("./")
+    return normalised.startswith("tests/") and normalised.endswith(".py")
+
+
+def validate_test_edits(
+    draft_text: str,
+    classifier_intent: Intent,
+    staged: Sequence[StagedPath],
+) -> list[Violation]:
+    """Existing-test-protection rule (research-note R-6; ImpossibleBench).
+
+    Counters the dominant agent test-gaming move: when blocked by a
+    failing test, delete or rewrite the test instead of the code.
+
+    - ``D`` (delete) or ``R``/``C`` (rename/copy destination — the
+      *source* test vanished from the dest-only ``--name-status``
+      view) row on ``tests/**``: violation under EVERY intent shape.
+      No declaration escape — removing a test needs a human decision,
+      not a draft field.
+    - ``M`` (modify) row on ``tests/**`` when ``classifier_intent``
+      is ``FIX``: violation unless the path is declared under
+      ``TEST-EDITS:`` with a reason. New test files (``A``) are
+      always fine; ``IMPLEMENT``-shaped diffs may modify tests freely
+      (extending an existing test module is normal feature work).
+
+    SECURITY INVARIANT — classifier intent only: this function MUST
+    receive the intent derived from the staged diff, NEVER the
+    draft's typed ``INTENT:`` override (skill D-5). The draft is
+    agent-authored; honouring the typed value here would let a
+    blocked agent disarm the rule by editing its own draft. The two
+    seats (IntentGuard / git hook) therefore call this with their
+    ``classify_intent(...)`` result, bypassing the D-5 override that
+    governs shape validation only.
+    """
+
+    violations: list[Violation] = []
+    declared = parse_test_edits(draft_text)
+    for row in staged:
+        if not _is_test_path(row.path):
+            continue
+        if row.status in ("D", "R", "C"):
+            violations.append(
+                Violation(
+                    "test_delete_blocked",
+                    f"deleting/renaming an existing test is blocked: `{row.path}` "
+                    f"(status {row.status}). Fix the code, not the test; if the "
+                    "test is genuinely obsolete a human removes it in a "
+                    "dedicated CHORE PR.",
+                )
+            )
+        elif row.status == "M" and classifier_intent is Intent.FIX:
+            if row.path not in declared:
+                violations.append(
+                    Violation(
+                        "test_edit_undeclared",
+                        f"modifying existing test `{row.path}` during a "
+                        f"FIX-shaped diff requires a `{HEADER_TEST_EDITS}` "
+                        "declaration line (`<path> — <one-line reason>`) in "
+                        "the PR draft. Fix the code, not the test — or "
+                        "declare why this test must change.",
+                    )
+                )
+    return violations
 
 
 def validate_commit_msg(
@@ -814,6 +940,10 @@ def _cli_validate(commit_msg_file: Path, repo_root: Path) -> int:
     else:
         intent = classifier_intent
     violations = validate_commit_msg(text, intent, staged, repo_root)
+    # Test-protection seat (R-6): keyed on CLASSIFIER intent — the typed
+    # D-5 override governs shape checks above, never this rule (see
+    # validate_test_edits docstring SECURITY INVARIANT).
+    violations.extend(validate_test_edits(text, classifier_intent, staged))
     if not violations:
         return 0
     sys.stderr.write(

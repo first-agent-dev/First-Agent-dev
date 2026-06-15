@@ -43,7 +43,8 @@ historical omission **F-9** ("test weakened from ``==`` to ``in``").
 from __future__ import annotations
 
 import ast
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import TypeGuard
 
 from fa.authoring_rules._scan import TEST_SCOPE, iter_python_files, node_input_hash
@@ -55,34 +56,98 @@ __all__ = ["PLACEHOLDER_ASSERTION", "TEST_SEMANTIC_DECAY"]
 # --- V4 — test semantic decay (skip / xfail / focus) -----------------------
 
 
-def _is_pytest_call(node: ast.AST, attr: str) -> TypeGuard[ast.Call]:
-    """Match ``pytest.<attr>(...)`` call expressions, exact match on ``attr``."""
+@dataclass(frozen=True)
+class _PytestAliases:
+    """Per-file import-alias map (I-13 evasion closure).
+
+    ``modules`` — local names bound to the pytest module itself
+    (``import pytest`` → ``pytest``; ``import pytest as pt`` → ``pt``).
+    ``attrs`` — local names bound to a pytest attribute via
+    ``from pytest import X [as Y]`` (``{local_name: canonical_attr}``;
+    e.g. ``from pytest import skip as s`` → ``{"s": "skip"}``).
+
+    Shadowing rule (conservative, per ADR-11 §12.4 «raise the cost of
+    bypass»): a ``from pytest import`` binding is dropped from ``attrs``
+    when the file ALSO defines a function/class/assignment of the same
+    name anywhere — a local ``def skip(...)`` is the common legitimate
+    pattern and must not flag. An adversary combining a pytest import
+    WITH a same-name decoy definition is out of scope here; the V4
+    catch-corpus measurement loop owns that residual.
+    """
+
+    modules: frozenset[str]
+    attrs: Mapping[str, str]
+
+
+_PYTEST_ATTRS_OF_INTEREST: frozenset[str] = frozenset({"skip", "mark"})
+
+
+def _pytest_aliases(tree: ast.Module) -> _PytestAliases:
+    modules: set[str] = set()
+    attrs: dict[str, str] = {}
+    shadowed: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "pytest":
+                    modules.add(alias.asname or "pytest")
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "pytest" and node.level == 0:
+                for alias in node.names:
+                    if alias.name in _PYTEST_ATTRS_OF_INTEREST:
+                        attrs[alias.asname or alias.name] = alias.name
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            shadowed.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    shadowed.add(target.id)
+    for name in shadowed:
+        attrs.pop(name, None)
+    return _PytestAliases(modules=frozenset(modules), attrs=attrs)
+
+
+def _is_pytest_call(node: ast.AST, attr: str, aliases: _PytestAliases) -> TypeGuard[ast.Call]:
+    """Match ``pytest.<attr>(...)`` in every import shape (I-13).
+
+    Covered shapes: ``pytest.skip(...)``, ``pt.skip(...)`` (module
+    alias), ``skip(...)`` / ``s(...)`` (``from pytest import skip
+    [as s]``).
+    """
     if not isinstance(node, ast.Call):
         return False
     func = node.func
-    return (
-        isinstance(func, ast.Attribute)
-        and isinstance(func.value, ast.Name)
-        and func.value.id == "pytest"
-        and func.attr == attr
-    )
+    if isinstance(func, ast.Attribute):
+        return (
+            isinstance(func.value, ast.Name)
+            and func.value.id in aliases.modules
+            and func.attr == attr
+        )
+    if isinstance(func, ast.Name):
+        return aliases.attrs.get(func.id) == attr
+    return False
 
 
-def _pytest_mark_attr(decorator: ast.expr) -> str | None:
-    """If ``decorator`` is ``pytest.mark.<X>`` or ``pytest.mark.<X>(...)``,
-    return ``<X>``; otherwise return ``None``."""
+def _pytest_mark_attr(decorator: ast.expr, aliases: _PytestAliases) -> str | None:
+    """If ``decorator`` is ``<pytest>.mark.<X>`` / ``mark.<X>`` (bare or
+    called), return ``<X>``; otherwise ``None``. Honours module aliases
+    (``pt.mark.skip``) and ``from pytest import mark`` (I-13)."""
     node: ast.expr = decorator
     if isinstance(node, ast.Call):
         node = node.func
     if not isinstance(node, ast.Attribute):
         return None
     inner = node.value
-    if not (isinstance(inner, ast.Attribute) and inner.attr == "mark"):
+    # ``<module-alias>.mark.<X>``
+    if isinstance(inner, ast.Attribute) and inner.attr == "mark":
+        base = inner.value
+        if isinstance(base, ast.Name) and base.id in aliases.modules:
+            return node.attr
         return None
-    base = inner.value
-    if not (isinstance(base, ast.Name) and base.id == "pytest"):
-        return None
-    return node.attr
+    # ``mark.<X>`` after ``from pytest import mark [as m]``
+    if isinstance(inner, ast.Name) and aliases.attrs.get(inner.id) == "mark":
+        return node.attr
+    return None
 
 
 def _xfail_has_strict_true(decorator: ast.expr) -> bool:
@@ -110,7 +175,7 @@ def _all_decorators(tree: ast.Module) -> list[ast.expr]:
     return decorators
 
 
-def _module_scope_skip_calls(tree: ast.Module) -> set[int]:
+def _module_scope_skip_calls(tree: ast.Module, aliases: _PytestAliases) -> set[int]:
     """Return ``{id(call_node)}`` for every ``pytest.skip(..., allow_module_level=True)``
     call appearing at module body or inside an ``If``/``Try``/``With``/``AsyncWith``
     at module body (i.e., NOT inside any ``FunctionDef`` / ``AsyncFunctionDef`` /
@@ -123,29 +188,29 @@ def _module_scope_skip_calls(tree: ast.Module) -> set[int]:
     actually be at module scope.
     """
     exempt: set[int] = set()
-    _walk_module_scope(tree.body, exempt)
+    _walk_module_scope(tree.body, exempt, aliases)
     return exempt
 
 
-def _walk_module_scope(stmts: list[ast.stmt], exempt: set[int]) -> None:
+def _walk_module_scope(stmts: list[ast.stmt], exempt: set[int], aliases: _PytestAliases) -> None:
     for stmt in stmts:
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             continue  # do not recurse — calls inside functions/classes are NOT module-scope
         if isinstance(stmt, (ast.If, ast.Try, ast.With, ast.AsyncWith)):
             # Recurse into bodies that are still module-scope.
-            _walk_module_scope(list(stmt.body), exempt)
+            _walk_module_scope(list(stmt.body), exempt, aliases)
             if isinstance(stmt, ast.If):
-                _walk_module_scope(list(stmt.orelse), exempt)
+                _walk_module_scope(list(stmt.orelse), exempt, aliases)
             elif isinstance(stmt, ast.Try):
                 for handler in stmt.handlers:
-                    _walk_module_scope(list(handler.body), exempt)
-                _walk_module_scope(list(stmt.orelse), exempt)
-                _walk_module_scope(list(stmt.finalbody), exempt)
+                    _walk_module_scope(list(handler.body), exempt, aliases)
+                _walk_module_scope(list(stmt.orelse), exempt, aliases)
+                _walk_module_scope(list(stmt.finalbody), exempt, aliases)
             continue
         # For other statements, scan the expression tree for pytest.skip calls
         # with the exemption kwarg.
         for inner in ast.walk(stmt):
-            if _is_pytest_call(inner, "skip") and _has_allow_module_level_true(inner):
+            if _is_pytest_call(inner, "skip", aliases) and _has_allow_module_level_true(inner):
                 exempt.add(id(inner))
 
 
@@ -169,9 +234,10 @@ class _TestSemanticDecayRule:
         results: list[RuleResult] = []
         for rel, source_bytes, tree in iter_python_files(context, included_prefixes=TEST_SCOPE):
             # pytest.skip(...) call expressions (anywhere in the file)
-            exempt = _module_scope_skip_calls(tree)
+            aliases = _pytest_aliases(tree)
+            exempt = _module_scope_skip_calls(tree, aliases)
             for node in ast.walk(tree):
-                if _is_pytest_call(node, "skip"):
+                if _is_pytest_call(node, "skip", aliases):
                     if id(node) in exempt:
                         continue
                     results.append(
@@ -196,7 +262,7 @@ class _TestSemanticDecayRule:
 
             # Decorator-style markers (skip / xfail / focus / only).
             for dec in _all_decorators(tree):
-                attr = _pytest_mark_attr(dec)
+                attr = _pytest_mark_attr(dec, aliases)
                 if attr is None:
                     continue
                 if attr == "skip":
