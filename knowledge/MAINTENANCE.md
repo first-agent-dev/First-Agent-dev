@@ -50,9 +50,10 @@ repo navigable. The one hard rule is **no dangling links** (see
 5. Keep a `> **Status:** moved to <link>` stub at the old path **only**
    when an external entry point may still target it (e.g. a URL shared
    outside the repo). Otherwise no stub is needed.
-6. Verify: the repo's `markdown-link-check` pre-commit hook must pass
-   (zero broken relative targets), and a final `grep -rn '<old-path>'`
-   returns nothing unexpected.
+6. Verify: the repo's internal-link checker must pass — run
+   `python scripts/check_doc_links.py` (whole repo) or let the
+   `check-doc-links` pre-commit hook run on the changed files — and a final
+   `grep -rn '<old-path>'` returns nothing unexpected.
 
 ## § When merging an ADR amendment
 

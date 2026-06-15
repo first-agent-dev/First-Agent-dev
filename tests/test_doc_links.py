@@ -54,3 +54,52 @@ def test_checker_detects_a_broken_link(tmp_path: Path) -> None:
     result = _run(str(bad))
     assert result.returncode == 1
     assert "broken link target" in result.stderr
+
+
+def test_checker_detects_broken_link_with_title(tmp_path: Path) -> None:
+    """A broken link carrying a "title" must not slip past the target regex."""
+    bad = tmp_path / "titled.md"
+    bad.write_text('[x](./nope-missing.md "a title")\n', encoding="utf-8")
+    result = _run(str(bad))
+    assert result.returncode == 1
+    assert "nope-missing.md" in result.stderr
+
+
+def test_explicit_legacy_file_is_skipped_unless_all() -> None:
+    """The pre-commit hook passes filenames; touching a known-debt doc must not
+    block the commit on pre-existing breakage. ``--all`` overrides."""
+    legacy = _REPO_ROOT / "knowledge" / "trace" / "exploration_log.md"
+    if not legacy.exists():  # pragma: no cover - repo layout guard
+        return
+    skipped = _run(str(legacy))
+    assert skipped.returncode == 0, skipped.stdout + skipped.stderr
+    forced = _run("--all", str(legacy))
+    assert forced.returncode == 1
+
+
+def test_link_syntax_inside_inline_code_is_ignored(tmp_path: Path) -> None:
+    """Example link syntax in `backticks` is documentation, not a live link."""
+    src = tmp_path / "doc.md"
+    src.write_text(
+        "A doc may show `](../X)` as an example without it being checked.\n",
+        encoding="utf-8",
+    )
+    result = _run(str(src))
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_real_link_on_same_line_as_inline_code_still_checked(tmp_path: Path) -> None:
+    src = tmp_path / "doc.md"
+    src.write_text("[x](./missing.md) next to `](../X)` example\n", encoding="utf-8")
+    result = _run(str(src))
+    assert result.returncode == 1
+    assert "missing.md" in result.stderr
+
+
+def test_checker_accepts_valid_link_with_title_and_fragment(tmp_path: Path) -> None:
+    target = tmp_path / "real.md"
+    target.write_text("# Heading Here\n", encoding="utf-8")
+    src = tmp_path / "src.md"
+    src.write_text('[a](./real.md "ok")\n[b](./real.md#heading-here)\n', encoding="utf-8")
+    result = _run("--anchors", str(src))
+    assert result.returncode == 0, result.stdout + result.stderr

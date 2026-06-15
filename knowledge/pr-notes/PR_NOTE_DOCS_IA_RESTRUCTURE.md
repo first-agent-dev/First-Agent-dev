@@ -101,14 +101,39 @@ Root `.md` is now just `README.md`, `AGENTS.md`, `HANDOFF.md`.
 - `python scripts/check_doc_links.py` (whole repo): green; `--anchors` clean on
   all `knowledge/instructions/` docs; negative test confirms it catches breakage.
 - `pytest tests/test_doc_links.py tests/test_deploy_scripts.py
-  tests/test_fa_update_script.py` → **29 passed** (shellcheck cases skip when the
-  binary is absent).
+  tests/test_fa_update_script.py` → all green (shellcheck cases skip when the
+  binary is absent). `test_doc_links.py` covers file/anchor/title/inline-code/
+  legacy-skip behaviour + a negative test.
 - `ruff check` + `ruff format --check` on new Python: clean.
 - Move commit verified as pure renames under `git show --find-renames`.
 
 > Sandbox caveat: `pre-commit`/`uv`/`docker` not installed here; the hook config
 > is YAML-validated and the checker is exercised directly + via pytest. Run
 > `pre-commit run --all-files` once on a dev box to confirm hook wiring.
+
+## Review fixes applied during final pass
+
+A self-review pass before merge caught and fixed several issues in this PR's own
+additions:
+
+1. **Hook would block commits that merely touch a legacy doc.** `_LEGACY_SKIP`
+   was only honoured in whole-repo discovery, not for explicitly-passed files —
+   but the pre-commit hook passes filenames. Editing e.g.
+   `knowledge/trace/exploration_log.md` would have failed the commit on
+   pre-existing breakage. Fixed: explicit files are filtered against
+   `_LEGACY_SKIP` too (override with `--all`). Pinned by a test.
+2. **Link checker missed broken links carrying a `"title"`.** The target regex
+   stopped at the first space, so `[x](./missing.md "t")` slipped through.
+   Hardened the regex to parse optional titles and `<...>` angle brackets;
+   added tests.
+3. **Link checker false-positived on example link syntax in `` `backticks` ``.**
+   The new `MAINTENANCE.md` legitimately shows `` `](../X)` `` as an example;
+   the checker flagged it. Now inline code spans are neutralised before scanning
+   (mirrors the existing fenced-block skip). This let `MAINTENANCE.md` leave
+   `_LEGACY_SKIP` and be actively guarded.
+4. **Stale tool reference in my own docs.** `MAINTENANCE.md` step 6 said "the
+   repo's `markdown-link-check` pre-commit hook" — a tool this PR rejected.
+   Corrected to `scripts/check_doc_links.py` / the `check-doc-links` hook.
 
 ## Decisions taken (per your answers)
 
