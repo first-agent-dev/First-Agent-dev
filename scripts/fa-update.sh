@@ -61,6 +61,7 @@ flock -n 9 || {
 }
 
 exec > >(tee -a "${LOG_FILE}") 2>&1
+# shellcheck disable=SC2154  # rc IS assigned (rc=$?) inside this same trap string.
 trap 'rc=$?; echo "❌ ERROR at line ${LINENO}: ${BASH_COMMAND}"; exit "${rc}"' ERR
 
 # ═══════════════════════════════════════════════════════════════

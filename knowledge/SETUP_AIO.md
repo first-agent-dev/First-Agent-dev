@@ -412,18 +412,19 @@ When you want a true one-tap button on your phone:
 
 1. Go to [Backblaze B2](https://www.backblaze.com/b2), create a bucket.
 2. Generate an **Application Key** with read/write access to that bucket.
-3. Edit `/srv/first-agent/scripts/backup-fa.sh`:
+3. Put your credentials in `/srv/first-agent/secrets/backup.env` (NOT in the
+   script itself — `backup-fa.sh` `source`s this file, and the script is
+   overwritten from the repo on every `setup-fa-desktop.sh` re-run, so inline
+   edits would be lost). The setup script creates a `CHANGEME` template here:
    ```bash
-   B2_KEY_ID="your-key-id"
-   B2_APPLICATION_KEY="your-app-key"
-   B2_BUCKET="your-bucket-name"
+   nano /srv/first-agent/secrets/backup.env
+   # B2_KEY_ID=your-key-id
+   # B2_APPLICATION_KEY=your-app-key
+   # B2_BUCKET=your-bucket-name
    ```
 4. Initialize the restic repository (one-time):
    ```bash
-   cd /srv/first-agent/scripts
-   export B2_KEY_ID="..."
-   export B2_APPLICATION_KEY="..."
-   export B2_BUCKET="..."
+   source /srv/first-agent/secrets/backup.env
    export AWS_ACCESS_KEY_ID="$B2_KEY_ID"
    export AWS_SECRET_ACCESS_KEY="$B2_APPLICATION_KEY"
    RESTIC_REPO="s3:https://s3.us-west-004.backblazeb2.com/$B2_BUCKET"
@@ -431,7 +432,7 @@ When you want a true one-tap button on your phone:
    ```
 5. Test a backup:
    ```bash
-   ./backup-fa.sh
+   /srv/first-agent/scripts/backup-fa.sh
    ```
 6. Schedule nightly via cron:
    ```bash

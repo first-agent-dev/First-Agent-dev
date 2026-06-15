@@ -13,6 +13,25 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
+**As of:** 2026-06-15 — Docker deploy-script consolidation + Russian ops manual:
+de-duplicated the host scripts without breaking the bootstrap contract.
+`scripts/fa.service` template fixed to a valid systemd **user** unit (dropped the
+invalid `Requires=docker.service`/`After=docker.service` — a user unit cannot
+depend on a system unit; aligns the committed template with the 2026-06-10
+decision and the unit actually installed). `setup-fa-desktop.sh` now installs
+`fa.service` **and** `backup-fa.sh` from the cloned-repo copies (no inline
+heredoc duplicates) — but stays **self-contained** (no sourced helper lib) so
+`SETUP_AIO.md` Phase 4 Option B (download script alone to /tmp, it clones the
+repo itself) still works. `DOCKER_USAGE_GUIDE.md` rewritten as a Russian operator
+manual (install / auto+manual update / service admin / tasks / backup /
+troubleshooting). Fixed a `.env.fa`-reload logic bug in the guide (`up -d
+--force-recreate`, not `docker compose restart`). Fixed `SETUP_AIO.md` Phase 9
+(credentials go in `secrets/backup.env`, not edited into the overwritten script).
+Added `tests/test_deploy_scripts.py`: `bash -n` + `shellcheck` over all deploy
+scripts + pins the self-contained-bootstrap + no-inline-duplicate + valid-user-
+unit invariants. **All deploy scripts shellcheck-clean; 31 deploy/entrypoint/
+update tests pass.** Prior: 2026-06-12 (later session) — Test-gaming hardening.
+
 **As of:** 2026-06-12 (later session) — Test-gaming hardening (branch
 `devin/2026-06-12-test-gaming-hardening`): closes guardrails-v2 deferred items R-6 +
 R-7 + BACKLOG I-13. (A) Existing-test protection: `validate_test_edits` in

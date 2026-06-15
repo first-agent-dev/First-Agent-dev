@@ -17,6 +17,10 @@ FA_USER="${FA_USER:-$USER}"
 FA_DIR="/srv/first-agent"
 REPO_URL="${REPO_URL:-https://github.com/first-agent-dev/First-Agent-dev.git}"
 
+# NOTE: this bootstrap script is intentionally SELF-CONTAINED (no `source`d
+# helper library). knowledge/SETUP_AIO.md Phase 4 Option B documents downloading
+# *only* this file to /tmp and running it — the repo is cloned later, by step 9
+# below — so it must not depend on any sibling file at startup.
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -367,29 +371,23 @@ fi
 # ---------------------------------------------------------------------------
 # 15. systemd user service
 # ---------------------------------------------------------------------------
-log_info "Installing systemd user service template..."
+log_info "Installing systemd user service from scripts/fa.service (single source of truth)..."
 
 mkdir -p "$FA_USER_HOME/.config/systemd/user"
-cat > "$FA_USER_HOME/.config/systemd/user/fa.service" <<EOF
-[Unit]
-Description=First-Agent 24/7 container
-After=network-online.target tailscaled.service
-Wants=network-online.target tailscaled.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-OOMScoreAdjust=-500
-Restart=on-failure
-RestartSec=10
-WorkingDirectory=$FA_DIR/repo/First-Agent-dev
-ExecStart=/usr/bin/docker compose -f docker-compose.fa.yml up -d
-ExecStop=/usr/bin/docker compose -f docker-compose.fa.yml down
-TimeoutStartSec=0
-
-[Install]
-WantedBy=default.target
-EOF
+# Install from the version-controlled template in the cloned repo (single source
+# of truth — no inline duplicate to drift out of sync), rewriting
+# WorkingDirectory to the resolved $FA_DIR so a non-default FA_DIR still works.
+# We read from the clone (step 9), NOT from the script's own directory, so this
+# works whether the script was run from the repo or downloaded standalone to /tmp.
+SERVICE_SRC="$FA_DIR/repo/First-Agent-dev/scripts/fa.service"
+if [[ -f "$SERVICE_SRC" ]]; then
+    sed "s|^WorkingDirectory=.*|WorkingDirectory=$FA_DIR/repo/First-Agent-dev|" \
+        "$SERVICE_SRC" > "$FA_USER_HOME/.config/systemd/user/fa.service"
+else
+    log_error "Service template not found in repo: $SERVICE_SRC"
+    log_error "Repo clone may have failed — re-run after fixing the clone."
+    exit 1
+fi
 
 # daemon-reload may fail if D-Bus user session is not available (e.g. running via sudo in a bare terminal).
 # We attempt it; if it fails we print a clear instruction instead of aborting.
@@ -409,57 +407,18 @@ log_info "Service installed. Enable with: systemctl --user enable fa.service"
 # ---------------------------------------------------------------------------
 log_info "Installing backup script..."
 
-# Prefer the version-controlled backup script from the repo
-if [[ -f "$FA_DIR/repo/First-Agent-dev/scripts/backup-fa.sh" ]]; then
-    cp "$FA_DIR/repo/First-Agent-dev/scripts/backup-fa.sh" "$FA_DIR/scripts/backup-fa.sh"
+# Install the version-controlled backup script from the repo (single source of
+# truth — no inline duplicate to drift out of sync). The repo is guaranteed
+# present at this point because step 9 cloned it above.
+BACKUP_SRC="$FA_DIR/repo/First-Agent-dev/scripts/backup-fa.sh"
+if [[ -f "$BACKUP_SRC" ]]; then
+    cp "$BACKUP_SRC" "$FA_DIR/scripts/backup-fa.sh"
+    chmod +x "$FA_DIR/scripts/backup-fa.sh"
 else
-    # Inline fallback (keep in sync with scripts/backup-fa.sh)
-    cat > "$FA_DIR/scripts/backup-fa.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [ -f /srv/first-agent/secrets/backup.env ]; then
-    source /srv/first-agent/secrets/backup.env
+    log_error "Backup script not found in repo: $BACKUP_SRC"
+    log_error "Repo clone may have failed — re-run after fixing the clone."
+    exit 1
 fi
-
-B2_KEY_ID="${B2_KEY_ID:-CHANGEME}"
-B2_APPLICATION_KEY="${B2_APPLICATION_KEY:-CHANGEME}"
-B2_BUCKET="${B2_BUCKET:-CHANGEME}"
-RESTIC_REPO="s3:https://s3.us-west-004.backblazeb2.com/${B2_BUCKET}"
-BACKUP_TAG="fa-$(hostname)"
-
-export AWS_ACCESS_KEY_ID="$B2_KEY_ID"
-export AWS_SECRET_ACCESS_KEY="$B2_APPLICATION_KEY"
-
-restic -r "$RESTIC_REPO" backup \
-    /srv/first-agent/state \
-    /srv/first-agent/secrets \
-    /srv/first-agent/scripts \
-    /srv/first-agent/repo/First-Agent-dev/docker-compose.fa.yml \
-    /srv/first-agent/repo/First-Agent-dev/.env.fa \
-    /etc/ssh/sshd_config.d/99-fa-hardening.conf \
-    /etc/systemd/logind.conf.d/no-suspend.conf \
-    /etc/apt/apt.conf.d/50unattended-upgrades-fa \
-    /etc/docker/daemon.json \
-    --tag "$BACKUP_TAG" \
-    --exclude-if-present .nobackup \
-    --exclude "**/__pycache__" \
-    --exclude "**/.mypy_cache" \
-    --exclude "**/.pytest_cache" \
-    --exclude "**/.ruff_cache" \
-    --exclude "**/.venv" \
-    --exclude "**/*.pyc"
-
-restic -r "$RESTIC_REPO" forget \
-    --tag "$BACKUP_TAG" \
-    --keep-daily 7 \
-    --keep-weekly 4 \
-    --keep-monthly 6 \
-    --prune
-EOF
-fi
-
-chmod +x "$FA_DIR/scripts/backup-fa.sh"
 
 BACKUP_ENV="$FA_DIR/secrets/backup.env"
 if [[ ! -f "$BACKUP_ENV" ]]; then
