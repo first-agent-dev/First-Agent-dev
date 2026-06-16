@@ -450,7 +450,23 @@ class SecretGuard(GuardMiddleware):
                 # Raw exact-match kept behind dangerous-keyword gate for
                 # performance: only when the command explicitly references
                 # env inspection.
-                dangerous = {"printenv", "env", "echo $"}
+                # Tripwire keyword set (defense-in-depth, ADR-12). The real
+                # boundary is keys-not-reachable (private store + scrubbed bash
+                # env); this catches obvious env-inspection attempts early.
+                dangerous = {
+                    "printenv",
+                    "env",
+                    "echo $",
+                    "/proc/self/environ",
+                    "/proc/1/environ",
+                    "declare",
+                    "set",
+                    "python -c",
+                    "python3 -c",
+                    "node -e",
+                    "perl -e",
+                    "ruby -e",
+                }
                 if any(d in command for d in dangerous):
                     for secret in self.secrets:
                         if secret in command:
