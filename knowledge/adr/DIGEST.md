@@ -678,20 +678,26 @@ imported into Level 0.
 
 ## ADR-12 — API-key isolation from the agent (accepted 2026-06-16)
 
-**Decision.** Keep LLM API keys out of every surface the sandboxed agent can
-reach. Three independent barriers: (1) keys live only in
-`/srv/first-agent/secrets/fa.env`, mounted read-only at `/run/secrets/fa.env`
-**outside** `/workspace` (sandbox path-containment denies `fs.read_file`/`bash`);
-(2) keys are read once into a private in-memory `SecretStore` and **never** placed
-in `os.environ` (so `printenv` / `/proc/self/environ` / `os.environ` are empty),
-threaded through the existing injectable `env=` seam of `load_models_config` /
-`ProviderChain` / `SecretRedactor` — strict file-only, no `os.environ` fallback;
-(3) `fs.run_bash` runs with an allowlist-scrubbed child env plus a fail-closed
-secret-name filter. Backstops: encoding-aware redaction + broadened SecretGuard
-tripwires. `.env.fa` keeps only non-secret `FA_*` controls. Enforced by
-`tests/test_secret_exfiltration.py` (12 exfil vectors blocked) and
-`tests/test_secret_isolation_invariants.py` (structural regression guard).
-Egress-injection proxy deferred to BACKLOG (v0.2).
+**Decision.** Keep LLM API keys out of every surface the agent can reach. The
+**boundary is an egress-injection proxy** (Option C, brought forward to v0.1
+after a blocking review found bash READ_ONLY commands bypassed path-containment
+and the model channel was unredacted): LLM keys live ONLY in a separate
+`fa-egress-proxy` container (ro mount `/run/secrets/fa.env`); the agent container
+holds no key in any file/env/memory and reaches providers via the proxy
+(`base_url → http://fa-egress-proxy:8080/route/<name>`, carrying a non-key
+`X-FA-Proxy-Token`); the proxy strips caller auth and injects the real header.
+Container separation (mount/PID namespaces) is the boundary, so it holds with the
+agent as unprivileged `fa` (no root). A compromised agent can *use* a key but
+never *read* it. Defense-in-depth + deploy-key protection (the deploy key still
+lives in the agent for git push): (1) `fs.run_bash` reads of secret paths
+(`/run/secrets`, `/srv/first-agent/secrets`, `~/.fa/.env`) are denied fail-closed
+(`sandbox/secret_paths.py`); (2) the model-facing tool-result channel is redacted
+at one chokepoint (`coder_loop._redact`: raw/base64/hex/url/reversed); (3) private
+`SecretStore` (keys never in `os.environ`), env allowlist-scrub, SecretGuard.
+Enforced by `tests/test_egress_proxy.py`, `tests/test_proxy_wiring_cli.py`,
+`tests/test_sandbox_secret_paths.py`, `tests/test_model_egress_redaction.py`,
+`tests/test_secret_exfiltration.py`, `tests/test_secret_isolation_invariants.py`.
+Residual (deploy-key exotic-encoding) + proxy egress allowlist → BACKLOG I-24.
 
 **Source:** [`ADR-12`](./ADR-12-secret-isolation.md).
 

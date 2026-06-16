@@ -330,11 +330,13 @@ systemctl --user start fa.service
 
 ## Фаза 7b — настроить API-ключи LLM
 
-Стек закрывает git-аутентификацию (deploy-ключ) и API-ключи LLM. Ключи живут
+Стек закрывает git-аутентификацию (deploy-ключ) и API-ключи LLM. LLM-ключи живут
 **вне репозитория и вне песочницы агента** — в `/srv/first-agent/secrets/fa.env`
-(права `0600`), монтируются read-only в `/run/secrets/fa.env` и читаются `fa` в
-приватную память (в окружение контейнера НЕ попадают). Агент не может их прочитать
-(ADR-12). `setup-fa-desktop.sh` создаёт этот файл-шаблон автоматически.
+(права `0600`). Они монтируются read-only **только в контейнер `fa-egress-proxy`**;
+контейнер агента их не видит вообще. Агент обращается к провайдерам через прокси,
+который подставляет реальный ключ вне досягаемости агента (ADR-12 Option C —
+egress-injection proxy). `setup-fa-desktop.sh` создаёт файл-шаблон ключей и
+генерирует токен `fa→proxy` автоматически.
 
 1. Впишите реальные ключи в файл секретов (создан скриптом установки):
 
@@ -359,11 +361,15 @@ systemctl --user start fa.service
    ```
 
 3. **Разделение по назначению:**
-   - **Docker-деплой (AIO)**: ключи в `/srv/first-agent/secrets/fa.env`
-     (mount → `/run/secrets/fa.env`, читаются в приватную память).
-   - **Локальная разработка (WSL)**: те же ключи в `~/.fa/.env` (тоже читаются в
-     приватный стор, а не в `os.environ`).
-   - Не смешивайте — контейнер не читает `~/.fa/.env`.
+   - **Docker-деплой (AIO)**: ключи в `/srv/first-agent/secrets/fa.env`,
+     смонтированы ro **только в `fa-egress-proxy`** (`/run/secrets/fa.env`).
+     Контейнер агента ключей не получает; он ходит через прокси
+     (`FA_EGRESS_PROXY_URL=http://fa-egress-proxy:8080`).
+   - **Локальная разработка (WSL)**: без прокси `fa run` работает в legacy-режиме
+     строгого файла — ключи в `~/.fa/.env` читаются в приватный стор (не в
+     `os.environ`). Для прод-аналога можно поднять прокси и задать
+     `FA_EGRESS_PROXY_URL`.
+   - Не смешивайте — контейнер агента не читает ни `~/.fa/.env`, ни `fa.env`.
 
 4. **Креды бэкапа** (`B2_KEY_ID`, `B2_APPLICATION_KEY`) идут в
    `/srv/first-agent/secrets/backup.env`, **не** к ключам LLM. Контейнеру они не нужны.
@@ -374,9 +380,10 @@ systemctl --user start fa.service
 
 | Категория | Хранение | Область |
 | --- | --- | --- |
-| **API-ключи LLM** | `/srv/first-agent/secrets/fa.env` (хост, 0600) → ro mount `/run/secrets/fa.env` | Только приватная память `fa`; **не** в env контейнера |
+| **API-ключи LLM** | `/srv/first-agent/secrets/fa.env` (хост, 0600) → ro mount `/run/secrets/fa.env` **только в `fa-egress-proxy`** | Только память процесса прокси; контейнер агента их **не видит** |
+| **Токен fa→proxy** | `/srv/first-agent/secrets/fa_proxy_token` (хост, 0600) → ro mount в оба контейнера | Не ключ; только аутентифицирует агента у прокси |
 | **Креды бэкапа** | `/srv/first-agent/secrets/backup.env` | Только хост (restic) |
-| **Git deploy key** | `/srv/first-agent/secrets/github_deploy_key` → ro mount `/run/secrets/git_key` | Хост + контейнер (read-only) |
+| **Git deploy key** | `/srv/first-agent/secrets/github_deploy_key` → ro mount `/run/secrets/git_key` | Хост + контейнер агента (read-only; защищён bash-gate + редактором) |
 
 **Почему так (ADR-12 — изоляция секретов):**
 

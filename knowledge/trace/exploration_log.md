@@ -1822,4 +1822,41 @@
 - **Coupling:** Q-6 (ADR-6 sandbox path-containment — the file-outside-`/workspace`
   barrier rides on it); AP-003 (shallow-fix — denylist guards alone were the
   shallow fix this ADR replaces with an architectural boundary).
-- **Source:** [ADR-12 §Decision](../adr/ADR-12-secret-isolation.md#decision).
+- **Source:** [ADR-12 §Decision](../adr/ADR-12-secret-isolation.md).
+
+## Q-18 — Why did Option B not hold, and why is the proxy the real boundary? (2026-06-16)
+
+- **Trigger:** a blocking security review of the Q-17 / Option-B implementation
+  found two holes: (1) `fs.run_bash` READ_ONLY commands (`cat`/`grep`/`dd`/…)
+  bypass sandbox path-containment, so `cat /run/secrets/fa.env` and the deploy
+  key were readable; (2) the model-facing tool-result channel went through
+  `project_for_model` with NO redaction (only the trace was redacted).
+- **Root cause (POSIX):** `run_bash` is a subprocess of `fa` at the SAME uid, so
+  file permissions cannot grant "fa may read F via SecretStore" while denying
+  "fa may read F via cat". Moving the file out of `/workspace` only defeats
+  `fs.read_file`, never `fs.run_bash`.
+- **Closed by:** [ADR-12 §Decision update](../adr/ADR-12-secret-isolation.md).
+  Brought Option C (egress-injection proxy) forward to v0.1: LLM keys live only
+  in a separate `fa-egress-proxy` container; the agent holds no key in file/env/
+  memory. The boundary is **container separation**, so it works with the agent as
+  unprivileged `fa` (no root) — verified against prior art (Hermes-CVE #7071's own
+  conclusion: in-process scrub/redaction is "accident-prevention", the real
+  boundary is a separate execution backend that holds no secret; openclaw-vault:
+  a separate OS principal owns the secret; Arcade/CaMeL: credentials never in the
+  agent process).
+- **Kept as defense-in-depth:** fail-closed bash-gate deny of secret-path reads
+  (also the deploy-key guard) + a single model-egress redaction chokepoint
+  (raw/base64/hex/url/reversed) + the private SecretStore/env-scrub from Q-17.
+- **Rejected (i) deny-list as the boundary.** Reason: read-side pattern-matching
+  is unbounded (cat/head/dd/od/sed/awk/$(<f)/mapfile/symlinks/proc-root); fragile
+  by construction. Kept only as a tripwire. Lesson: never rely on a denylist for
+  a security boundary.
+- **Rejected (ii) separate-uid + FD delivery in one container.** Reason: needs
+  root at init (drop to fa) — user constraint was "USER fa, no root". The separate
+  *container* achieves the same kernel boundary without root.
+- **Residual (documented):** the deploy key still lives in the agent container;
+  exotic-encoding exfil past the redactor is possible → BACKLOG I-24(a)
+  constrained-git interface. LLM keys do not share this residual.
+- **Coupling:** Q-17 (superseded boundary); Q-6 (path-containment — the gap that
+  motivated the proxy); AP-003 (shallow-fix — the denylist-as-boundary trap).
+- **Source:** [ADR-12 §Decision update](../adr/ADR-12-secret-isolation.md).

@@ -54,9 +54,58 @@ the PR note.
   "use"-vector too.
 - Cons: heavyweight; overkill for single-operator AIO v0.1. Recorded in BACKLOG.
 
-## Decision
+## Decision update (2026-06-16): Option C brought forward to v0.1
 
-We choose **Option B**. Concretely (enforced invariant):
+A blocking security review of the Option-B implementation found the boundary was
+not airtight: `fs.run_bash` READ_ONLY commands (`cat`/`grep`/`dd`/…) bypassed
+sandbox path-containment and could read `/run/secrets/fa.env` and the deploy key
+directly, and the model-facing tool-result channel was not redacted (only the
+trace was). Moving the file out of `/workspace` defeats `fs.read_file` but not
+`fs.run_bash`, which shares the agent's uid — file permissions cannot separate
+"the `fa` process reading via SecretStore" from "the `fa` process reading via
+`cat` in run_bash".
+
+We therefore brought **Option C (egress-injection proxy)** forward into v0.1 as
+the boundary for LLM provider keys, keeping Option B's barriers as
+defense-in-depth and as the boundary for the GitHub deploy key.
+
+```text
+ first-agent container (USER fa)                 fa-egress-proxy container (USER fa)
+ ── agent + fs.run_bash ──                        ── reads /run/secrets/fa.env (ro) ──
+   ProviderChain.base_url = ───── HTTP ─────────►  injects real Authorization / x-api-key
+     http://fa-egress-proxy:8080/route/<name>      forwards to the real provider
+   carries X-FA-Proxy-Token (NOT a key)  ◄───────  returns provider JSON
+   NO LLM-key file/env/memory here                 NO /workspace, no agent code
+```
+
+Properties: LLM provider keys exist on NO file, env var, or process memory the
+agent's uid/namespace can reach. A fully prompt-injected agent can *use* a key
+(make a metered call through the proxy) but can never *read* its value — the
+boundary is the **container separation** (separate mount/PID namespaces), not a
+uid trick, so it holds without running the agent container as root.
+
+Guarantees (each test-enforced):
+
+- **G1** — LLM keys unreachable by the agent: `tests/test_secret_isolation_invariants.py`
+  (agent has no key mount / `FA_SECRETS_FILE`; proxy holds keys ro, no agent
+  workspace), `tests/test_proxy_wiring_cli.py` (no provider key on the fa side).
+- **G2** — deploy key not exfiltrable: `tests/test_sandbox_secret_paths.py` +
+  `tests/test_secret_exfiltration.py` (bash-read of secret paths denied) and
+  `tests/test_model_egress_redaction.py` (model channel masks any leaked value).
+- **G4** — acceptance criterion ("remind me my key → name only"): the
+  model-egress redactor masks the value in raw/base64/hex/url/reversed forms.
+
+Residual (documented, not hidden): a determined attacker who both reads the
+deploy-key file via a bash form the lexical tripwire misses AND applies an
+exotic encoding the redactor doesn't know (e.g. gzip+xor) could still surface it.
+The airtight closure is a constrained-git interface — recorded in BACKLOG as the
+first unblock-ready follow-up. LLM keys do not share this residual (they are not
+in the agent container at all).
+
+## Decision (original Option B, retained as defense-in-depth)
+
+We choose **Option B** for the in-process / deploy-key layers. Concretely
+(enforced invariant):
 
 1. **Keys live only in `/srv/first-agent/secrets/fa.env`** (host, `0600`),
    mounted **read-only** at `/run/secrets/fa.env` — *outside* `/workspace`, so the
