@@ -37,6 +37,10 @@ build
 .env*
 !.env.fa.template
 
+# Never bake secret material into an image (ADR-12).
+secrets/*
+!secrets/*.template
+
 # CI/CD and scripts (not needed in runtime image)
 .github
 scripts/*

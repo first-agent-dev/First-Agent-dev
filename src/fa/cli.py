@@ -66,44 +66,6 @@ def _valid_run_id(value: str) -> bool:
     return bool(_RUN_ID_RE.fullmatch(value))
 
 
-def _load_fa_dotenv(path: Path) -> None:
-    """Load key=value pairs from ``path`` into ``os.environ`` (setdefault).
-
-    Fails gracefully with a warning on missing file, permission error,
-    or malformed encoding.  Never logs the parsed key/value content.
-    """
-    import warnings
-
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return
-    except PermissionError as exc:
-        warnings.warn(
-            f"Permission denied reading {path}: {exc}",
-            stacklevel=2,
-        )
-        return
-    except UnicodeDecodeError as exc:
-        warnings.warn(
-            f"Malformed encoding in {path} ({exc.encoding}): {exc}",
-            stacklevel=2,
-        )
-        return
-    except OSError as exc:
-        warnings.warn(f"Could not load {path}: {exc}", stacklevel=2)
-        return
-
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        k, v = k.strip(), v.strip()
-        if k:
-            os.environ.setdefault(k, v)
-
-
 def _resolve_secrets_path() -> Path:
     """Locate the API-key file (secret-isolation invariant, ADR-12).
 
