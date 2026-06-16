@@ -72,31 +72,56 @@ fi
 REPO_SSH_URL=$(git remote get-url origin 2>/dev/null | sed 's|https://github.com/|git@github.com:|' || echo "git@github.com:first-agent-dev/First-Agent-dev.git")
 
 # ---------------------------------------------------------------------------
-# 1. Build + start container
+# 1. Build + start the stack (two services: fa-egress-proxy + first-agent)
 # ---------------------------------------------------------------------------
-log_info "Building FA container..."
+log_info "Building FA images..."
 docker compose -f docker-compose.fa.yml build
 
-log_info "Starting FA container..."
+log_info "Starting FA stack (egress-proxy then agent via depends_on)..."
 docker compose -f docker-compose.fa.yml up -d
 
 # ---------------------------------------------------------------------------
-# 2. Wait for container to be running and healthy
+# 2. Wait for BOTH containers to be healthy (ADR-12 two-container topology).
+#    The agent has `depends_on: fa-egress-proxy (service_healthy)`, so if the
+#    proxy never becomes healthy the agent will not start at all — detect that
+#    explicitly instead of waiting on a container that never appears.
 # ---------------------------------------------------------------------------
-log_info "Waiting for container to become healthy..."
-for i in {1..30}; do
-    status=$(docker inspect --format='{{.State.Status}}' first-agent 2>/dev/null || echo "missing")
-    if [[ "$status" == "running" ]]; then
-        log_info "Container 'first-agent' is running."
-        break
-    fi
-    sleep 1
-    if [[ "$i" -eq 30 ]]; then
-        log_error "Container did not start within 30s. Check logs:"
-        log_error "  docker compose -f docker-compose.fa.yml logs"
-        exit 1
-    fi
-done
+wait_for_container() {
+    # $1 = container name, $2 = require "healthy" (1) or just "running" (0)
+    local name="$1" need_health="$2" status health
+    for _ in {1..60}; do
+        status=$(docker inspect --format='{{.State.Status}}' "$name" 2>/dev/null || echo "missing")
+        health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$name" 2>/dev/null || echo "none")
+        if [[ "$need_health" -eq 1 ]]; then
+            if [[ "$status" == "running" && ( "$health" == "healthy" || "$health" == "none" ) ]]; then
+                log_info "Container '$name' is running (health=$health)."
+                return 0
+            fi
+        elif [[ "$status" == "running" ]]; then
+            log_info "Container '$name' is running."
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+log_info "Waiting for egress proxy 'fa-egress-proxy' to become healthy..."
+if ! wait_for_container "fa-egress-proxy" 1; then
+    log_error "Egress proxy did not become healthy within 60s."
+    log_error "The agent will NOT start until the proxy is healthy (depends_on)."
+    log_error "Common causes: missing/empty proxy token or models.yaml. Check:"
+    log_error "  ls -l /srv/first-agent/secrets/fa_proxy_token /srv/first-agent/state/models.yaml"
+    log_error "  docker compose -f docker-compose.fa.yml logs fa-egress-proxy"
+    exit 1
+fi
+
+log_info "Waiting for agent 'first-agent' to start..."
+if ! wait_for_container "first-agent" 0; then
+    log_error "Agent container did not start within 60s. Check logs:"
+    log_error "  docker compose -f docker-compose.fa.yml logs"
+    exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Configure git inside container (local config, since /workspace is writable bind-mount)
@@ -155,6 +180,23 @@ docker exec first-agent bash -c "
 " || true
 
 # ---------------------------------------------------------------------------
+# 5b. Secret-isolation smoke check (ADR-12): the AGENT container must hold no
+#     LLM provider key — no key file, no key env var. (Warn-only: a finding here
+#     means the isolation regressed; it does not block the deploy.)
+# ---------------------------------------------------------------------------
+log_info "Verifying the agent container holds no LLM key (ADR-12)..."
+if docker exec first-agent sh -c 'test -e /run/secrets/fa.env' 2>/dev/null; then
+    log_warn "  agent has /run/secrets/fa.env mounted — it must NOT (keys belong in the proxy)."
+else
+    log_info "  OK: no LLM key file in the agent container."
+fi
+if docker exec first-agent sh -c 'printenv | grep -qiE "API_KEY|_TOKEN=|SECRET"' 2>/dev/null; then
+    log_warn "  agent env contains an API_KEY/TOKEN/SECRET variable — investigate."
+else
+    log_info "  OK: no key-shaped variable in the agent environment."
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Enable and start systemd service
 # ---------------------------------------------------------------------------
 log_info "Enabling FA systemd service..."
@@ -205,8 +247,9 @@ log_info "====================================="
 log_info "Post-setup complete!"
 log_info "====================================="
 echo ""
-echo "Container:    docker ps"
+echo "Containers:   docker compose -f docker-compose.fa.yml ps   (expect first-agent + fa-egress-proxy)"
 echo "Logs:         docker compose -f docker-compose.fa.yml logs -f"
+echo "Proxy logs:   docker compose -f docker-compose.fa.yml logs -f fa-egress-proxy"
 echo "Service:      systemctl --user status fa.service"
 echo "Backup:       /srv/first-agent/scripts/backup-fa.sh"
 echo ""

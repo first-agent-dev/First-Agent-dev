@@ -18,8 +18,9 @@
 
 - **Ubuntu Desktop 24.04 LTS** в «почти headless» режиме (GUI остаётся для
   аварийного локального доступа).
-- **Docker CE** из официального репозитория docker.com, с защищённым
-  read-only контейнером FA.
+- **Docker CE** из официального репозитория docker.com, со стеком FA из **двух**
+  защищённых read-only контейнеров: `first-agent` (агент) и `fa-egress-proxy`
+  (держит LLM-ключи; агент их не видит — изоляция секретов ADR-12).
 - **Tailscale** как единственный путь удалённого доступа — SSH доступен
   **только** через интерфейс Tailscale.
 - **systemd user service**, поднимающий FA при загрузке.
@@ -136,6 +137,10 @@ bash /tmp/setup-fa-desktop.sh
 - Ставит Tailscale.
 - Создаёт `/srv/first-agent/{repo,state,secrets,backup,scripts}`.
 - Генерирует **ED25519 deploy key**.
+- Генерирует токен **`fa→proxy`** (`/srv/first-agent/secrets/fa_proxy_token`, 0600)
+  — им агент аутентифицируется у egress-прокси (это не LLM-ключ).
+- Создаёт шаблон файла LLM-ключей (`/srv/first-agent/secrets/fa.env`) — ключи
+  вписываются в Фазе 7b; их читает только контейнер прокси.
 - Пинит Ed25519 host-key GitHub в `/srv/first-agent/secrets/known_hosts`.
 - Ставит `restic`.
 - `xset dpms 0 0 60` — агрессивное гашение подсветки панели AIO (~5–15 Вт экономии).
@@ -260,23 +265,46 @@ sudo bash 00-failsafe.sh disarm           # только после успешн
 
 ---
 
-## Фаза 7 — собрать и запустить контейнер FA
+## Фаза 7 — собрать и запустить стек FA (ДВА контейнера)
 
 Файлы `docker-compose.fa.yml` и `Dockerfile.fa` в корне репозитория описывают
-защищённый контейнер.
+**два** защищённых сервиса (изоляция секретов, ADR-12 Option C):
+
+- **`first-agent`** — сам агент (`fs.run_bash` и т.д.). LLM-ключей у него нет.
+- **`fa-egress-proxy`** — граница LLM-ключей: ключи смонтированы read-only
+  **только сюда**; агент ходит к провайдерам через прокси, который подставляет
+  реальный ключ вне досягаемости агента. У прокси нет `/workspace` и кода агента.
+
+`depends_on: service_healthy` гарантирует, что агент не стартует, пока прокси не
+станет healthy.
+
+> **Порядок:** проверьте, что `setup-fa-desktop.sh` (Фаза 4) уже сгенерировал
+> токен `fa→proxy` (`/srv/first-agent/secrets/fa_proxy_token`) — без него прокси
+> не примет вызовы агента. Реальные LLM-ключи прописываются в **Фазе 7b** (ниже);
+> прокси стартует healthy и с пустым файлом ключей, но `fa run` без ключей
+> завершится ошибкой конфигурации — это ожидаемо до Фазы 7b.
 
 ```bash
 cd /srv/first-agent/repo/First-Agent-dev
 
-# Собрать образ
+# Собрать образы (один образ на оба сервиса)
 docker compose -f docker-compose.fa.yml build
 
-# Запустить в фоне
+# Запустить в фоне (compose поднимет прокси, затем агента)
 docker compose -f docker-compose.fa.yml up -d
 
-# Посмотреть логи
+# Должны быть ОБА сервиса; дождитесь, пока fa-egress-proxy = healthy
+docker compose -f docker-compose.fa.yml ps
+
+# Логи (всех сервисов или только прокси)
 docker compose -f docker-compose.fa.yml logs -f
+docker compose -f docker-compose.fa.yml logs -f fa-egress-proxy
 ```
+
+> Если `fa-egress-proxy` не становится healthy — проверьте
+> `ls -l /srv/first-agent/secrets/fa_proxy_token /srv/first-agent/state/models.yaml`
+> и `docker compose -f docker-compose.fa.yml logs fa-egress-proxy`. Пока прокси
+> не здоров, `first-agent` не запустится (это by design).
 
 **Проверка bootstrap «в один заход»:**
 
@@ -299,6 +327,9 @@ bash scripts/fa-post-setup.sh
 - `pids: 512` в `deploy.resources.limits` — защита от fork-бомбы (Compose схема v3).
 - `user: "1000:1000"` — запуск не от root.
 - Лимиты ресурсов: 8 ГБ RAM, 8 CPU.
+- LLM-ключи смонтированы read-only **только в `fa-egress-proxy`**; в контейнере
+  агента их нет ни в файле, ни в env (ADR-12 Option C). Агент получает лишь
+  `FA_EGRESS_PROXY_URL` и read-only токен `/run/secrets/fa_proxy_token` (не ключ).
 - Git-ключ смонтирован в `/run/secrets/git_key` (read-only).
 - `GIT_SSH_COMMAND` с `IdentitiesOnly=yes`.
 - Нет монтирования `/var/run/docker.sock`.
@@ -420,7 +451,20 @@ GIT_SSH_COMMAND="ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownH
 ```
 
 Если push прошёл и ветка появилась на GitHub — аутентификация git работает
-end-to-end. (`fa-post-setup.sh` из Фазы 7 делает эту проверку автоматически.)
+end-to-end. (`fa-post-setup.sh` из Фазы 7 делает эту проверку автоматически, а
+также ждёт healthy у **обоих** контейнеров и проверяет, что у агента нет
+LLM-ключа.)
+
+**Проверка изоляции секретов (ADR-12) — у агента не должно быть LLM-ключа:**
+
+```bash
+# Нет файла ключей в контейнере агента (ожидаем «нет»):
+docker exec first-agent sh -c 'cat /run/secrets/fa.env 2>&1 || echo "нет ключей у агента — OK"'
+# Нет ключеподобных переменных окружения у агента (ожидаем пусто):
+docker exec first-agent printenv | grep -iE 'API_KEY|TOKEN=|SECRET' || echo "в окружении агента ключей нет — OK"
+# LLM-ключи есть ТОЛЬКО в контейнере прокси:
+docker exec fa-egress-proxy sh -c 'test -s /run/secrets/fa.env && echo "ключи у прокси — OK"'
+```
 
 ---
 
