@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import sys
+from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 
@@ -48,6 +49,7 @@ from fa.providers import (
     ChainConfig,
     ChainEntry,
     ProviderChain,
+    SecretStore,
     UrllibTransport,
     build_provider,
     load_models_config_from_path,
@@ -102,9 +104,34 @@ def _load_fa_dotenv(path: Path) -> None:
             os.environ.setdefault(k, v)
 
 
-# Optional: load ~/.fa/.env for local development convenience.
-# Production (AIO) uses .env.fa in repo root loaded by Docker Compose.
-_load_fa_dotenv(Path.home() / ".fa" / ".env")
+def _resolve_secrets_path() -> Path:
+    """Locate the API-key file (secret-isolation invariant, ADR-12).
+
+    Strict, file-only — keys are NEVER read from ``os.environ`` (so child
+    processes such as ``fs.run_bash`` inherit nothing to exfiltrate). Resolution
+    order:
+
+    1. ``$FA_SECRETS_FILE`` (set by docker-compose to ``/run/secrets/fa.env``),
+    2. AIO default ``/run/secrets/fa.env`` if it exists,
+    3. WSL/dev default ``~/.fa/.env``.
+    """
+    override = os.environ.get("FA_SECRETS_FILE")
+    if override:
+        return Path(override)
+    aio_default = Path("/run/secrets/fa.env")
+    if aio_default.exists():
+        return aio_default
+    return Path.home() / ".fa" / ".env"
+
+
+def _load_secret_store() -> SecretStore:
+    """Build the private :class:`SecretStore` from the resolved secrets file.
+
+    Lazy (called inside ``_cmd_run``), file-only, and does not touch
+    ``os.environ``. Replaces the old import-time ``_load_fa_dotenv`` that
+    mutated the process environment.
+    """
+    return SecretStore.from_file(_resolve_secrets_path())
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -401,12 +428,18 @@ def _cmd_run(
     args: argparse.Namespace,
     *,
     transport: Transport | None = None,
+    secrets: Mapping[str, str] | None = None,
 ) -> int:
     """Drive an LLM-driven coder session.
 
     ``transport`` is the dependency-injection seam used by tests to
     swap in a deterministic fake transport; production callers pass
     ``None`` and the function constructs a :class:`UrllibTransport`.
+
+    ``secrets`` is the analogous seam for the private API-key store
+    (ADR-12). Production passes ``None`` and the function loads keys from
+    the resolved secrets file (strict, file-only — never ``os.environ``);
+    tests inject a :class:`SecretStore`/mapping directly.
     """
     if not str(args.task).strip():
         print("fa run: --task must be non-empty", file=sys.stderr)
@@ -423,8 +456,13 @@ def _cmd_run(
 
     workspace = args.workspace.resolve()
     config_path = args.config.expanduser().resolve()
+    # Secret-isolation (ADR-12): API keys live ONLY in this private store, never
+    # in os.environ. Every key reader below (config validation, provider chain,
+    # redactor) is fed `secrets` instead of os.environ.
+    if secrets is None:
+        secrets = _load_secret_store()
     try:
-        models = load_models_config_from_path(config_path, env=os.environ)
+        models = load_models_config_from_path(config_path, env=secrets)
     except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
         print(f"fa run: configuration error: {exc}", file=sys.stderr)
         return 2
@@ -438,7 +476,7 @@ def _cmd_run(
         return 2
 
     effective_transport: Transport = transport if transport is not None else UrllibTransport()
-    chain = _build_provider_chain(chain_config, transport=effective_transport)
+    chain = _build_provider_chain(chain_config, transport=effective_transport, secrets=secrets)
 
     limits = load_runtime_limits_from_path().limits
     # Role-aware registry: planner/eval get read-only tools, coder gets
@@ -501,7 +539,7 @@ def _cmd_run(
     registry.register(build_prepare_pr_tool(draft_store))
     log_path = workspace / ".fa" / "runs" / run_id / "events.jsonl"
     try:
-        redactor = SecretRedactor.from_models_config(os.environ, models)
+        redactor = SecretRedactor.from_models_config(secrets, models)
     except SecretRedactorError as exc:
         print(f"fa run: secret redactor configuration error: {exc}", file=sys.stderr)
         return 2
@@ -585,6 +623,7 @@ def _build_provider_chain(
     config: ChainConfig,
     *,
     transport: Transport,
+    secrets: Mapping[str, str] | None = None,
 ) -> ProviderChain:
     """Wire a :class:`ProviderChain` against ``transport``.
 
@@ -593,12 +632,17 @@ def _build_provider_chain(
     the single transport. Tests can call this helper directly with a
     fake transport to exercise the wiring without touching the CLI
     argument-parsing layer.
+
+    ``secrets`` is the private key source (ADR-12 secret isolation). It is
+    forwarded to ``ProviderChain(env=...)`` so the chain reads API keys from the
+    isolated store rather than ``os.environ``. When omitted the chain falls back
+    to its own default (``os.environ``) — production always passes the store.
     """
 
     def factory(entry: ChainEntry) -> Provider:
         return build_provider(entry.provider, transport=transport)
 
-    return ProviderChain(config, provider_factory=factory)
+    return ProviderChain(config, provider_factory=factory, env=secrets)
 
 
 def main() -> None:

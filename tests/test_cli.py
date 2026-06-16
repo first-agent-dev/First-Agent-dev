@@ -11,7 +11,12 @@ import pytest
 from _pytest.capture import CaptureFixture
 
 from fa.cli import _cmd_run, build_parser
+from fa.providers import SecretStore
 from fa.providers.base import TransportResponse
+
+# Injected via the _cmd_run(secrets=...) seam (ADR-12): tests supply keys through
+# the private store instead of os.environ, matching production's file-only model.
+_TEST_SECRETS = SecretStore({"TEST_FA_RUN_KEY": "sk-test-x"})
 
 
 def test_cli_help_contains_project_name() -> None:
@@ -371,7 +376,7 @@ def test_fa_run_returns_zero_on_clean_stop(
     transport = _ScriptedTransport([_stop_body("hello world")])
     args = _make_run_args(workspace=tmp_path, config=config)
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
     captured = capsys.readouterr().out
@@ -436,7 +441,7 @@ def test_fa_run_returns_two_when_role_missing(
     transport = _ScriptedTransport([])
     args = _make_run_args(workspace=tmp_path, config=config, role="planner")
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 2
     assert "planner" in capsys.readouterr().err
@@ -452,7 +457,7 @@ def test_fa_run_writes_events_jsonl(
     transport = _ScriptedTransport([_stop_body("ok")])
     args = _make_run_args(workspace=tmp_path, config=config, run_id="audit-run")
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
     events = tmp_path / ".fa" / "runs" / "audit-run" / "events.jsonl"
@@ -501,7 +506,7 @@ def test_fa_run_hits_turn_cap(
     transport = _ScriptedTransport([looping_body, looping_body])
     args = _make_run_args(workspace=tmp_path, config=config, max_turns=2)
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 1
     assert "iteration_cap" in capsys.readouterr().out
@@ -517,7 +522,7 @@ def test_fa_run_registers_pr_prepare_tool(
     transport = _ScriptedTransport([_stop_body("ok")])
     args = _make_run_args(workspace=tmp_path, config=config)
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
     tools = transport.calls[0]["tools"]
@@ -551,7 +556,7 @@ def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
     )
     args = _make_run_args(workspace=tmp_path, config=config, run_id="test-run")
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
     assert not (tmp_path / "src" / "fa" / "x.py").exists()
@@ -589,7 +594,7 @@ def test_fa_run_clears_stale_pr_draft_on_startup(
     transport = _ScriptedTransport([_stop_body("ok")])
     args = _make_run_args(workspace=tmp_path, config=config, run_id="reuse-run")
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
     assert not stale.exists()
@@ -617,7 +622,7 @@ def test_fa_run_verify_only_bash_allowed_before_pr_prepare(
     )
     args = _make_run_args(workspace=tmp_path, config=config, run_id="test-run")
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
     events = [
@@ -657,7 +662,7 @@ def test_fa_run_repo_write_bash_requires_pr_prepare(
     )
     args = _make_run_args(workspace=tmp_path, config=config, run_id="test-run")
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
     assert not (tmp_path / "src" / "fa" / "x.py").exists()
@@ -696,7 +701,7 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
     )
     args = _make_run_args(workspace=tmp_path, config=config, run_id="test-run")
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
     assert not (tmp_path / "src" / "fa" / "x.py").exists()
@@ -743,7 +748,7 @@ def test_fa_run_opaque_exec_bash_allowed_after_pr_prepare(
     )
     args = _make_run_args(workspace=tmp_path, config=config, run_id="test-run")
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
     draft_path = home / ".fa" / "state" / "runs" / "test-run" / "pr_draft.md"
@@ -794,7 +799,7 @@ def test_fa_run_repo_write_bash_allowed_after_pr_prepare(
     )
     args = _make_run_args(workspace=tmp_path, config=config, run_id="test-run")
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
     assert (tmp_path / "src" / "fa" / "x.py").read_text(encoding="utf-8") == "x\n"
@@ -828,7 +833,7 @@ def test_fa_run_system_prompt_mentions_pr_prepare_before_mutation(
     transport = _ScriptedTransport([_stop_body("ok")])
     args = _make_run_args(workspace=tmp_path, config=config)
 
-    exit_code = _cmd_run(args, transport=transport)
+    exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
     system_message = transport.calls[0]["messages"][0]["content"]
