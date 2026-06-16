@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fa.sandbox.classifier import BashCategory, classify_command
+from fa.sandbox.secret_paths import command_reads_secret_path
 from fa.sandbox.validators import ValidationResult, validate_command
 
 __all__ = [
@@ -75,6 +76,7 @@ def evaluate_bash(
     workspace_root: Path,
     allow_package_install: bool = False,
     allow_general_write: bool = True,
+    secret_path_extra: tuple[str, ...] = (),
 ) -> BashGateDecision:
     """Evaluate ``command`` against the three-layer gate.
 
@@ -98,6 +100,18 @@ def evaluate_bash(
     via ``Path.resolve()``).
     """
     category = classify_command(command)
+
+    # Secret-isolation tripwire (ADR-12): deny reads of known secret paths
+    # BEFORE the READ_ONLY fast-allow. This is defense-in-depth + the runtime
+    # guard for the deploy key (LLM keys live in the egress proxy, not here).
+    # Fail-closed: an unparseable command that references a secret prefix is
+    # also denied (see ``command_reads_secret_path``).
+    if command_reads_secret_path(command, extra_prefixes=secret_path_extra):
+        return BashGateDecision(
+            allow=False,
+            category=category,
+            reason="read of secret path blocked (ADR-12 secret isolation)",
+        )
 
     if category is BashCategory.READ_ONLY:
         return BashGateDecision(

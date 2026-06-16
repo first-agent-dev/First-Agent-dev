@@ -48,6 +48,7 @@ from fa.providers.errors import (
     ReservedProviderError,
 )
 from fa.providers.registry import PROVIDERS, ProviderSpec, build_provider
+from fa.providers.secret_store import SecretStore
 from fa.providers.transport import DEFAULT_USER_AGENT, UrllibTransport
 
 __all__ = [
@@ -70,6 +71,7 @@ __all__ = [
     "RequestInfo",
     "ReservedProviderError",
     "ResponseInfo",
+    "SecretStore",
     "Transport",
     "TransportResponse",
     "UrllibTransport",

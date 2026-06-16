@@ -89,12 +89,24 @@ class ChainConfig:
     family: str
     chain: tuple[ChainEntry, ...]
 
-    def validate(self, env: Mapping[str, str] | None = None) -> list[str]:
+    def validate(
+        self,
+        env: Mapping[str, str] | None = None,
+        *,
+        require_api_keys: bool = True,
+    ) -> list[str]:
         """Enforce config-load invariants from ADR-9 §1.
 
         Returns a list of WARNING strings (best-effort heuristics that
         do not justify raising); raises :class:`ConfigurationError`
         (or :class:`ReservedProviderError`) for hard failures.
+
+        ``require_api_keys`` (default True) enforces that each entry's
+        ``api_key_env`` is present and non-empty in ``env``. In
+        egress-proxy mode (ADR-12) the provider keys live in the proxy,
+        not in the agent process, so the caller passes ``False`` and the
+        presence check is skipped (the ``api_key_env`` name must still be
+        declared, since the proxy uses it for routing).
         """
 
         warnings: list[str] = []
@@ -125,9 +137,10 @@ class ChainConfig:
                 )
             if not entry.api_key_env:
                 raise ConfigurationError(f"{label}: api_key_env must be non-empty")
-            if not environ.get(entry.api_key_env, "").strip():
+            if require_api_keys and not environ.get(entry.api_key_env, "").strip():
                 raise ConfigurationError(
-                    f"{label}: api_key_env={entry.api_key_env} not set or empty in os.environ"
+                    f"{label}: api_key_env={entry.api_key_env} not set or empty "
+                    f"in the configured secret store"
                 )
             # Best-effort model-identity check (ADR-9 §1 + §7 reframed):
             # slug strings vary legitimately across providers, so we

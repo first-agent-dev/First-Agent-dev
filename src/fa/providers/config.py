@@ -171,6 +171,7 @@ def load_models_config(
     text: str,
     *,
     env: Mapping[str, str] | None = None,
+    require_api_keys: bool = True,
 ) -> ModelsConfig:
     """Parse + validate a ``~/.fa/models.yaml`` document.
 
@@ -254,7 +255,7 @@ def load_models_config(
                 f"got {type(raw_role).__name__}"
             )
         chain_config = chain_from_mapping(role_name, raw_role)
-        warnings.extend(chain_config.validate(environ))
+        warnings.extend(chain_config.validate(environ, require_api_keys=require_api_keys))
         roles[role_name] = chain_config
 
     # Family-disjoint check (ADR-2 §Amendment 2026-05-20 rule 1).
@@ -303,6 +304,7 @@ def load_models_config_from_path(
     path: Path = DEFAULT_MODELS_YAML_PATH,
     *,
     env: Mapping[str, str] | None = None,
+    require_api_keys: bool = True,
 ) -> ModelsConfig:
     """Read ``path`` and parse + validate it via :func:`load_models_config`.
 
@@ -315,7 +317,7 @@ def load_models_config_from_path(
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return ModelsConfig(roles={})
-    return load_models_config(text, env=env)
+    return load_models_config(text, env=env, require_api_keys=require_api_keys)
 
 
 __all__ = [

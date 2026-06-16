@@ -18,8 +18,9 @@
 
 - **Ubuntu Desktop 24.04 LTS** в «почти headless» режиме (GUI остаётся для
   аварийного локального доступа).
-- **Docker CE** из официального репозитория docker.com, с защищённым
-  read-only контейнером FA.
+- **Docker CE** из официального репозитория docker.com, со стеком FA из **двух**
+  защищённых read-only контейнеров: `first-agent` (агент) и `fa-egress-proxy`
+  (держит LLM-ключи; агент их не видит — изоляция секретов ADR-12).
 - **Tailscale** как единственный путь удалённого доступа — SSH доступен
   **только** через интерфейс Tailscale.
 - **systemd user service**, поднимающий FA при загрузке.
@@ -136,6 +137,10 @@ bash /tmp/setup-fa-desktop.sh
 - Ставит Tailscale.
 - Создаёт `/srv/first-agent/{repo,state,secrets,backup,scripts}`.
 - Генерирует **ED25519 deploy key**.
+- Генерирует токен **`fa→proxy`** (`/srv/first-agent/secrets/fa_proxy_token`, 0600)
+  — им агент аутентифицируется у egress-прокси (это не LLM-ключ).
+- Создаёт шаблон файла LLM-ключей (`/srv/first-agent/secrets/fa.env`) — ключи
+  вписываются в Фазе 7b; их читает только контейнер прокси.
 - Пинит Ed25519 host-key GitHub в `/srv/first-agent/secrets/known_hosts`.
 - Ставит `restic`.
 - `xset dpms 0 0 60` — агрессивное гашение подсветки панели AIO (~5–15 Вт экономии).
@@ -260,23 +265,46 @@ sudo bash 00-failsafe.sh disarm           # только после успешн
 
 ---
 
-## Фаза 7 — собрать и запустить контейнер FA
+## Фаза 7 — собрать и запустить стек FA (ДВА контейнера)
 
 Файлы `docker-compose.fa.yml` и `Dockerfile.fa` в корне репозитория описывают
-защищённый контейнер.
+**два** защищённых сервиса (изоляция секретов, ADR-12 Option C):
+
+- **`first-agent`** — сам агент (`fs.run_bash` и т.д.). LLM-ключей у него нет.
+- **`fa-egress-proxy`** — граница LLM-ключей: ключи смонтированы read-only
+  **только сюда**; агент ходит к провайдерам через прокси, который подставляет
+  реальный ключ вне досягаемости агента. У прокси нет `/workspace` и кода агента.
+
+`depends_on: service_healthy` гарантирует, что агент не стартует, пока прокси не
+станет healthy.
+
+> **Порядок:** проверьте, что `setup-fa-desktop.sh` (Фаза 4) уже сгенерировал
+> токен `fa→proxy` (`/srv/first-agent/secrets/fa_proxy_token`) — без него прокси
+> не примет вызовы агента. Реальные LLM-ключи прописываются в **Фазе 7b** (ниже);
+> прокси стартует healthy и с пустым файлом ключей, но `fa run` без ключей
+> завершится ошибкой конфигурации — это ожидаемо до Фазы 7b.
 
 ```bash
 cd /srv/first-agent/repo/First-Agent-dev
 
-# Собрать образ
+# Собрать образы (один образ на оба сервиса)
 docker compose -f docker-compose.fa.yml build
 
-# Запустить в фоне
+# Запустить в фоне (compose поднимет прокси, затем агента)
 docker compose -f docker-compose.fa.yml up -d
 
-# Посмотреть логи
+# Должны быть ОБА сервиса; дождитесь, пока fa-egress-proxy = healthy
+docker compose -f docker-compose.fa.yml ps
+
+# Логи (всех сервисов или только прокси)
 docker compose -f docker-compose.fa.yml logs -f
+docker compose -f docker-compose.fa.yml logs -f fa-egress-proxy
 ```
+
+> Если `fa-egress-proxy` не становится healthy — проверьте
+> `ls -l /srv/first-agent/secrets/fa_proxy_token /srv/first-agent/state/models.yaml`
+> и `docker compose -f docker-compose.fa.yml logs fa-egress-proxy`. Пока прокси
+> не здоров, `first-agent` не запустится (это by design).
 
 **Проверка bootstrap «в один заход»:**
 
@@ -299,6 +327,9 @@ bash scripts/fa-post-setup.sh
 - `pids: 512` в `deploy.resources.limits` — защита от fork-бомбы (Compose схема v3).
 - `user: "1000:1000"` — запуск не от root.
 - Лимиты ресурсов: 8 ГБ RAM, 8 CPU.
+- LLM-ключи смонтированы read-only **только в `fa-egress-proxy`**; в контейнере
+  агента их нет ни в файле, ни в env (ADR-12 Option C). Агент получает лишь
+  `FA_EGRESS_PROXY_URL` и read-only токен `/run/secrets/fa_proxy_token` (не ключ).
 - Git-ключ смонтирован в `/run/secrets/git_key` (read-only).
 - `GIT_SSH_COMMAND` с `IdentitiesOnly=yes`.
 - Нет монтирования `/var/run/docker.sock`.
@@ -330,18 +361,23 @@ systemctl --user start fa.service
 
 ## Фаза 7b — настроить API-ключи LLM
 
-Стек развёртывания закрывает git-аутентификацию (deploy-ключ), но не API-ключи
-LLM. Compose читает `.env.fa` через `env_file:` — туда кладутся ключи
-OpenRouter / Fireworks / и т.д.
+Стек закрывает git-аутентификацию (deploy-ключ) и API-ключи LLM. LLM-ключи живут
+**вне репозитория и вне песочницы агента** — в `/srv/first-agent/secrets/fa.env`
+(права `0600`). Они монтируются read-only **только в контейнер `fa-egress-proxy`**;
+контейнер агента их не видит вообще. Агент обращается к провайдерам через прокси,
+который подставляет реальный ключ вне досягаемости агента (ADR-12 Option C —
+egress-injection proxy). `setup-fa-desktop.sh` создаёт файл-шаблон ключей и
+генерирует токен `fa→proxy` автоматически.
 
-1. Скопируйте шаблон и впишите реальные ключи:
+1. Впишите реальные ключи в файл секретов (создан скриптом установки):
 
    ```bash
-   cd /srv/first-agent/repo/First-Agent-dev
-   cp .env.fa.template .env.fa
-   nano .env.fa            # вписать ключи; раскомментировать нужные строки
-   chmod 600 .env.fa
+   micro /srv/first-agent/secrets/fa.env   # вписать ключи; раскомментировать нужные строки
+   chmod 600 /srv/first-agent/secrets/fa.env
    ```
+
+   > `.env.fa` в корне репо теперь хранит только несекретные `FA_*`-настройки
+   > (`FA_AUTO_RUN`, `FA_TASK`, …) — API-ключей там быть не должно.
 
 2. Проверьте, что есть `models.yaml` (копируется `setup-fa-desktop.sh`):
 
@@ -356,13 +392,18 @@ OpenRouter / Fireworks / и т.д.
    ```
 
 3. **Разделение по назначению:**
-   - **Docker-деплой (AIO)**: использует `.env.fa` в корне репо, читается compose.
-   - **Локальная разработка (WSL)**: использует `~/.fa/.env` (читается CLI) или
-     shell-экспорты.
-   - Не смешивайте — контейнер не читает `~/.fa/.env`.
+   - **Docker-деплой (AIO)**: ключи в `/srv/first-agent/secrets/fa.env`,
+     смонтированы ro **только в `fa-egress-proxy`** (`/run/secrets/fa.env`).
+     Контейнер агента ключей не получает; он ходит через прокси
+     (`FA_EGRESS_PROXY_URL=http://fa-egress-proxy:8080`).
+   - **Локальная разработка (WSL)**: без прокси `fa run` работает в legacy-режиме
+     строгого файла — ключи в `~/.fa/.env` читаются в приватный стор (не в
+     `os.environ`). Для прод-аналога можно поднять прокси и задать
+     `FA_EGRESS_PROXY_URL`.
+   - Не смешивайте — контейнер агента не читает ни `~/.fa/.env`, ни `fa.env`.
 
 4. **Креды бэкапа** (`B2_KEY_ID`, `B2_APPLICATION_KEY`) идут в
-   `/srv/first-agent/secrets/backup.env`, **не** в `.env.fa`. Контейнеру они не нужны.
+   `/srv/first-agent/secrets/backup.env`, **не** к ключам LLM. Контейнеру они не нужны.
 
 ---
 
@@ -370,20 +411,23 @@ OpenRouter / Fireworks / и т.д.
 
 | Категория | Хранение | Область |
 | --- | --- | --- |
-| **API-ключи LLM** | `.env.fa` (корень репо) | Runtime контейнера |
+| **API-ключи LLM** | `/srv/first-agent/secrets/fa.env` (хост, 0600) → ro mount `/run/secrets/fa.env` **только в `fa-egress-proxy`** | Только память процесса прокси; контейнер агента их **не видит** |
+| **Токен fa→proxy** | `/srv/first-agent/secrets/fa_proxy_token` (хост, 0600) → ro mount в оба контейнера | Не ключ; только аутентифицирует агента у прокси |
 | **Креды бэкапа** | `/srv/first-agent/secrets/backup.env` | Только хост (restic) |
-| **Git deploy key** | `/srv/first-agent/secrets/github_deploy_key` | Хост + контейнер (read-only) |
+| **Git deploy key** | `/srv/first-agent/secrets/github_deploy_key` → ro mount `/run/secrets/git_key` | Хост + контейнер агента (read-only; защищён bash-gate + редактором) |
 
-**Почему разделение важно:**
+**Почему так (ADR-12 — изоляция секретов):**
 
-- Пользователь-оператор состоит в группе `docker`. Любой её член может через
-  `docker inspect` увидеть env-переменные контейнера (включая API-ключи из
-  `.env.fa`). Креды бэкапа в контейнер не попадают — компрометация контейнера не
-  даёт доступа к B2.
-- `SecretRedactor` (точное совпадение + распознавание base64/URL) маскирует
-  секреты до записи в `events.jsonl` / `knowledge/trace/`. Если ключ утёк до
-  редактирования, он останется в зашифрованном бэкапе. Редактирование — основная
-  защита, шифрование — вторичная.
+- **Агент не может прочитать ключи.** Три барьера: файл вне `/workspace`
+  (песочница `fs.read_file`/`bash` не выходит за её пределы); ключи не в
+  `os.environ` (значит `printenv`/`/proc/self/environ`/`os.environ` пусты);
+  `fs.run_bash` запускается с очищенным allowlist-окружением.
+- **Trust boundary оператора.** Член группы `docker` на хосте всё ещё может
+  `docker inspect`/`docker exec` — но это вы, оператор, а не LLM. Держите
+  операторский аккаунт эксклюзивным.
+- `SecretRedactor` (точное совпадение + base64/hex/URL + скан декодированных окон)
+  маскирует секреты в `events.jsonl` / `knowledge/trace/` — это резервный слой,
+  не основная граница (основная — недоступность ключей агенту).
 - restic шифрует бэкапы *до* загрузки в B2. Проверяйте восстановление ежеквартально.
 
 ---
@@ -407,7 +451,20 @@ GIT_SSH_COMMAND="ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownH
 ```
 
 Если push прошёл и ветка появилась на GitHub — аутентификация git работает
-end-to-end. (`fa-post-setup.sh` из Фазы 7 делает эту проверку автоматически.)
+end-to-end. (`fa-post-setup.sh` из Фазы 7 делает эту проверку автоматически, а
+также ждёт healthy у **обоих** контейнеров и проверяет, что у агента нет
+LLM-ключа.)
+
+**Проверка изоляции секретов (ADR-12) — у агента не должно быть LLM-ключа:**
+
+```bash
+# Нет файла ключей в контейнере агента (ожидаем «нет»):
+docker exec first-agent sh -c 'cat /run/secrets/fa.env 2>&1 || echo "нет ключей у агента — OK"'
+# Нет ключеподобных переменных окружения у агента (ожидаем пусто):
+docker exec first-agent printenv | grep -iE 'API_KEY|TOKEN=|SECRET' || echo "в окружении агента ключей нет — OK"
+# LLM-ключи есть ТОЛЬКО в контейнере прокси:
+docker exec fa-egress-proxy sh -c 'test -s /run/secrets/fa.env && echo "ключи у прокси — OK"'
+```
 
 ---
 
@@ -421,7 +478,7 @@ end-to-end. (`fa-post-setup.sh` из Фазы 7 делает эту провер
    потерялись бы). Шаблон с `CHANGEME` создаётся скриптом установки:
 
    ```bash
-   nano /srv/first-agent/secrets/backup.env
+   micro /srv/first-agent/secrets/backup.env
    # B2_KEY_ID=your-key-id
    # B2_APPLICATION_KEY=your-app-key
    # B2_BUCKET=your-bucket-name

@@ -1433,6 +1433,39 @@
 - **Unblock-trigger:** I-17 merged AND ≥1 PR explicitly asks for line-level suppression after file-level mechanism exists.
 - **First concrete step once unblocked:** Decide on the suppression syntax (`# fa-noqa: V<N>` vs. `# fa-suppress(<CODE>): <justification>`); implement parser; integrate with the per-finding hash so a suppression cannot drift to a different finding silently.
 
+## I-24 — Secret-isolation follow-ups (ADR-12)
+
+- **Status (updated 2026-06-16):** the egress-injection proxy (formerly the
+  "heavy v0.2" tier here) **shipped in v0.1** — LLM provider keys now live only
+  in the `fa-egress-proxy` container; the agent cannot read OR redirect them.
+  Two follow-ups remain, ordered by how unblock-ready they are.
+
+- **(a) Constrained git interface — close the deploy-key residual (FIRST, unblock-ready).**
+  The GitHub deploy key still lives in the agent container (git push runs there).
+  It is protected by the bash-gate secret-path deny + the model-egress redactor,
+  but a determined attacker who reads the key file via a bash form the lexical
+  tripwire misses AND applies an exotic encoding (gzip+xor) the redactor doesn't
+  know could still surface it. Airtight closure: expose git push as a narrow tool
+  (or a second tiny proxy / credential-helper) that holds the key outside the
+  agent's reach, mirroring the LLM-key proxy. LLM keys do NOT share this residual.
+  - **First concrete step:** add a `git.push` tool that shells out with the key
+    delivered via a credential helper the agent's uid cannot read, then remove
+    the `git_key` mount from the agent container.
+
+- **(b) Proxy egress allowlist — limit the proxy's own outbound.** Restrict the
+  `fa-egress-proxy` container's outbound network to the provider hosts derived
+  from `models.yaml` `base_url`s (host UFW/iptables or a tiny allowlist). The
+  agent container itself can then be tightened (it only needs to reach the proxy
+  and GitHub). Hardens a compromised-proxy scenario and prevents key redirection.
+  - **First concrete step:** emit a UFW egress snippet from `models.yaml` hosts
+    in `setup-fa-desktop.sh`; document update-together with `models.yaml`.
+
+- **(c) Future hardening (v0.2+).** Per-route scopes + rotation hooks on the
+  proxy; mTLS for fa→proxy instead of the shared bootstrap token; entropy-based
+  output redaction (PII-Shield style) as an additional backstop.
+- **Unblock-trigger:** (a) is ready now; (b)/(c) when remote sandboxes,
+  multi-tenant use, or a compromised-proxy threat model land.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

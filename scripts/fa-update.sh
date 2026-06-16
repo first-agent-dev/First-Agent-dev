@@ -20,7 +20,15 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.fa.yml}"
 
 ENV_TEMPLATE="${ENV_TEMPLATE:-.env.fa.template}"
 ENV_FA="${ENV_FA:-.env.fa}"
-ENV_HASH_FILE="${ENV_HASH_FILE:-.env.fa.sha256}"
+# Hash-tracking state lives OUTSIDE the repo (ADR-12: never write tracking files
+# into the agent's /workspace). Defaults to the host state dir.
+ENV_HASH_FILE="${ENV_HASH_FILE:-/srv/first-agent/state/.env.fa.sha256}"
+# Secret isolation (ADR-12 Option C): LLM keys live here, consumed ONLY by the
+# egress-proxy container. The fa->proxy token and models.yaml routing also
+# trigger a recreate when changed (the proxy reads all three at startup).
+SECRETS_ENV="${SECRETS_ENV:-/srv/first-agent/secrets/fa.env}"
+PROXY_TOKEN_FILE="${PROXY_TOKEN_FILE:-/srv/first-agent/secrets/fa_proxy_token}"
+MODELS_YAML_FILE="${MODELS_YAML_FILE:-/srv/first-agent/state/models.yaml}"
 
 SERVICE_NAME_OVERRIDE="${SERVICE_NAME_OVERRIDE:-}"
 
@@ -219,26 +227,28 @@ evaluate_changes() {
     NEEDS_RESTART=1
   fi
 
-  # Detect .env.fa changes (requires restart, not necessarily rebuild).
-  # Persist the new hash only after deploy succeeds; otherwise a failed deploy
-  # could hide an env change on the next run.
-  if [[ -f "${ENV_FA}" ]]; then
+  # Detect changes to any input the running containers read at startup (require
+  # restart, not rebuild): non-secret controls (.env.fa), the LLM keys file +
+  # fa->proxy token + models.yaml routing (all consumed by the egress-proxy /
+  # agent at boot). Persist the new hash only after deploy succeeds; otherwise a
+  # failed deploy could hide a change on the next run.
+  if [[ -f "${ENV_FA}" || -f "${SECRETS_ENV}" || -f "${PROXY_TOKEN_FILE}" || -f "${MODELS_YAML_FILE}" ]]; then
     local current_hash prev_hash
-    current_hash=$(sha256sum "${ENV_FA}" | awk '{print $1}')
+    current_hash=$(cat "${ENV_FA}" "${SECRETS_ENV}" "${PROXY_TOKEN_FILE}" "${MODELS_YAML_FILE}" 2>/dev/null | sha256sum | awk '{print $1}')
     ENV_HASH_VALUE="${current_hash}"
     ENV_HASH_PENDING=1
     if [[ -f "${ENV_HASH_FILE}" ]]; then
       prev_hash=$(cat "${ENV_HASH_FILE}" || true)
       if [[ "${current_hash}" != "${prev_hash}" ]]; then
         NEEDS_RESTART=1
-        echo "  → ${ENV_FA} changed (hash mismatch) → restart needed."
+        echo "  → env/secrets/proxy-token/models changed (hash mismatch) → restart needed."
       fi
     else
       NEEDS_RESTART=1
       echo "  → First run with hash tracking → restart needed."
     fi
   else
-    echo "  ⚠ ${ENV_FA} not found. Container will use defaults."
+    echo "  ⚠ No env/secrets/proxy inputs found. Containers will use defaults."
     NEEDS_RESTART=1
   fi
 

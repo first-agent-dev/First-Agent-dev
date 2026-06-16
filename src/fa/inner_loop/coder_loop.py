@@ -79,6 +79,7 @@ from fa.inner_loop.prompt import (
 from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import RuntimeLimits
 from fa.inner_loop.state import SessionState
+from fa.observability.redaction import SecretRedactor
 from fa.providers.base import RequestInfo, ResponseInfo
 from fa.providers.chain import ProviderChain
 from fa.providers.errors import (
@@ -110,6 +111,20 @@ DEFAULT_TEMPERATURE = 0.0
 # — large enough for a multi-tool-call response, small enough to flag
 # the rare runaway emission via the ``abnormal_stop:length`` outcome.
 DEFAULT_MAX_TOKENS = 2048
+
+
+def _redact(redactor: SecretRedactor | None, text: str) -> str:
+    """Mask known secret values in model-facing tool output (ADR-12 B2).
+
+    This is the single egress chokepoint between tool results and the LLM
+    message stream (pi-style input-side redaction). Even if a tool returns a
+    secret value (e.g. the deploy key read via some path the gate missed), it
+    is masked — in raw, base64, hex, and url-encoded forms — before it can
+    reach the provider and therefore before the model can ever repeat it.
+    """
+    if redactor is None:
+        return text
+    return redactor.redact(text)
 
 
 def _usage_event_content(response: ResponseInfo) -> dict[str, int]:
@@ -264,6 +279,7 @@ def drive_session(  # noqa: C901
     system_prompt_extra: str = "",
     temperature: float = DEFAULT_TEMPERATURE,
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    redactor: SecretRedactor | None = None,
 ) -> SessionOutcome:
     """Drive an LLM-driven coder session to terminal state.
 
@@ -597,7 +613,7 @@ def drive_session(  # noqa: C901
                 {
                     "role": "tool",
                     "tool_call_id": call.call_id,
-                    "content": project_for_model(spec, result, artifact_store),
+                    "content": _redact(redactor, project_for_model(spec, result, artifact_store)),
                 }
             )
 

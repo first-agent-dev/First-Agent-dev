@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import os
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
 from fa.inner_loop.tools.base import require_string
+from fa.inner_loop.tools.bash_env import build_scrubbed_env
 
 
 def build_run_bash_tool(
     workspace_root: Path,
     *,
     timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
+    env_allowlist_extra: Iterable[str] = (),
 ) -> ToolSpec:
     """Build the ``fs.run_bash`` ToolSpec.
 
@@ -21,9 +24,16 @@ def build_run_bash_tool(
     the user-configured value from ``RuntimeLimits.bash_timeout_seconds``
     (ADR-7 \u00a7Amendment 2026-05-20 rule 1: caps live in
     ``~/.fa/config.yaml``, never in code constants).
+
+    Secret isolation (ADR-12): the agent's shell runs with an
+    allowlist-scrubbed environment (``bash_env.build_scrubbed_env``) so it
+    inherits no credential-bearing variables, even if one ever re-enters the
+    parent environment. ``env_allowlist_extra`` may add *non-secret* names; the
+    fail-closed secret filter still applies on top.
     """
 
     root = workspace_root.resolve()
+    extra_allow = frozenset(env_allowlist_extra)
 
     def handler(params: Mapping[str, object]) -> ToolResult:
         data = dict(params)
@@ -43,6 +53,10 @@ def build_run_bash_tool(
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
+                # Secret isolation (ADR-12): hand the child an allowlist-scrubbed
+                # env so the agent shell (and anything it spawns) inherits no
+                # credential-bearing variables.
+                env=build_scrubbed_env(os.environ, extra_allow=extra_allow),
             )
         except subprocess.TimeoutExpired:
             return ToolResult.fail(

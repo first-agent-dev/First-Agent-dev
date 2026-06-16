@@ -13,6 +13,28 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
+**As of:** 2026-06-16 — API-key isolation hardened to an egress-injection proxy
+([ADR-12](./knowledge/adr/ADR-12-secret-isolation.md), Option C in v0.1). A
+blocking review found Option B leaked: `fs.run_bash` READ_ONLY commands bypassed
+path-containment (could `cat /run/secrets/fa.env` + the deploy key) and the
+model-facing channel was unredacted. **Boundary now:** LLM keys live ONLY in a
+separate `fa-egress-proxy` container (`src/fa/egress_proxy/`, `fa egress-proxy`
+CLI); the agent container holds no key in any file/env/memory and reaches
+providers via the proxy (`FA_EGRESS_PROXY_URL`, base_url→`/route/<name>`, non-key
+`X-FA-Proxy-Token`); the proxy strips caller auth + injects the real header.
+Container separation is the boundary (works with agent as unprivileged `fa`, no
+root). **Defense-in-depth + deploy key:** fail-closed bash-gate deny of secret-path
+reads (`src/fa/sandbox/secret_paths.py`); single model-egress redaction chokepoint
+(`coder_loop._redact`, raw/base64/hex/url/reversed); private `SecretStore`,
+env-scrub, `SecretGuard` retained. Two-container `docker-compose.fa.yml`;
+`setup-fa-desktop.sh` generates the proxy token; `fa-update.sh` hashes
+keys+token+models (hash file moved to state dir). Proven by `test_egress_proxy.py`,
+`test_proxy_wiring_cli.py`, `test_sandbox_secret_paths.py`,
+`test_model_egress_redaction.py`, `test_secret_exfiltration.py`,
+`test_secret_isolation_invariants.py`. Docs (`01-install`, `02-operations` §🔒,
+DIGEST, llms.txt, exploration_log Q-18) updated. Residual + proxy egress allowlist
+→ BACKLOG I-24. Prior: 2026-06-15 — docs IA restructure.
+
 **As of:** 2026-06-15 (later) — Docs information-architecture restructure:
 operator docs moved out of the cluttered repo root into a task-scoped home.
 `DOCKER_USAGE_GUIDE.md` → `knowledge/instructions/02-operations.md`;

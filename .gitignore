@@ -17,6 +17,11 @@ build/
 # Explicit secret markers (already covered by .env* above, but explicit for operators)
 .env.fa
 
+# Secret material directory (ADR-12). Block everything except templates so a
+# real fa.env / proxy token can never be committed.
+secrets/*
+!secrets/*.template
+
 # Prevent accidental copies of FA config files into repo
 models.yaml
 config.yaml

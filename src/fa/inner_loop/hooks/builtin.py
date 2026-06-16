@@ -450,12 +450,36 @@ class SecretGuard(GuardMiddleware):
                 # Raw exact-match kept behind dangerous-keyword gate for
                 # performance: only when the command explicitly references
                 # env inspection.
-                dangerous = {"printenv", "env", "echo $"}
-                if any(d in command for d in dangerous):
+                # Tripwire keyword set (defense-in-depth, ADR-12). The real
+                # boundary is keys-not-reachable (private store + scrubbed bash
+                # env); this catches obvious env-inspection attempts early.
+                # Substring markers (safe — distinctive enough not to collide):
+                dangerous_substrings = (
+                    "printenv",
+                    "echo $",
+                    "/proc/self/environ",
+                    "/proc/1/environ",
+                    "python -c",
+                    "python3 -c",
+                    "node -e",
+                    "perl -e",
+                    "ruby -e",
+                )
+                # Bare-word builtins matched on word boundaries so common tokens
+                # like ``reset``/``offset``/``settings`` don't false-positive
+                # (N5). ``\b`` anchors the whole word.
+                if self._matches_env_inspection(command, dangerous_substrings):
                     for secret in self.secrets:
                         if secret in command:
                             return Decision.deny("secret leak detected in fs.run_bash command")
         return Decision.allow()
+
+    _ENV_WORD_RE = re.compile(r"\b(env|set|declare|export)\b")
+
+    def _matches_env_inspection(self, command: str, substrings: tuple[str, ...]) -> bool:
+        if any(s in command for s in substrings):
+            return True
+        return bool(self._ENV_WORD_RE.search(command))
 
 
 def default_tool_result_for_denial(reason: str) -> ToolResult:
