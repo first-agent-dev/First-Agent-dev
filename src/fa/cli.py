@@ -248,6 +248,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     authoring_parser.set_defaults(func=_cmd_authoring_check)
 
+    proxy_parser = subparsers.add_parser(
+        "egress-proxy",
+        help="Run the egress-injection proxy (ADR-12 secret isolation).",
+        description=(
+            "Run the LLM-key egress-injection proxy. Reads provider keys from "
+            "--secrets and routing from --models, then injects the real key at "
+            "the transport layer so the agent container never holds a key. "
+            "Intended to run as a SEPARATE container from the agent."
+        ),
+    )
+    proxy_parser.add_argument(
+        "--models",
+        type=Path,
+        default=DEFAULT_MODELS_YAML_PATH,
+        help="Path to models.yaml (routing source; non-secret).",
+    )
+    proxy_parser.add_argument(
+        "--secrets",
+        type=Path,
+        default=Path("/run/secrets/fa.env"),
+        help="Path to the provider-keys file (mounted ro into the proxy only).",
+    )
+    proxy_parser.add_argument(
+        "--token-file",
+        type=Path,
+        default=Path("/run/secrets/fa_proxy_token"),
+        help="Path to the fa→proxy bootstrap token file.",
+    )
+    proxy_parser.add_argument(
+        "--listen",
+        type=str,
+        default="0.0.0.0:8080",
+        help="host:port to bind (default 0.0.0.0:8080).",
+    )
+    proxy_parser.set_defaults(func=_cmd_egress_proxy)
+
     return parser
 
 
@@ -580,6 +616,71 @@ def _cmd_authoring_check(args: argparse.Namespace) -> int:
     rendered = render_json(report) if args.output == "json" else render_text(report)
     print(rendered)
     return report.exit_code
+
+
+def _cmd_egress_proxy(args: argparse.Namespace) -> int:
+    """Run the egress-injection proxy (ADR-12 secret isolation).
+
+    Reads provider keys from ``--secrets`` and routing from ``--models``; binds
+    ``--listen`` and forwards POSTs to upstream providers with the real key
+    injected. Runs in a separate container from the agent; the agent never holds
+    a provider key.
+    """
+    from fa.egress_proxy.routing import ProxyConfigError, build_route_table
+    from fa.egress_proxy.server import serve
+
+    # Routing source (non-secret). Skip api_key presence check: keys live in the
+    # proxy's own secrets file, validated below.
+    try:
+        models = load_models_config_from_path(
+            args.models.expanduser().resolve(), require_api_keys=False
+        )
+    except (ConfigurationError, OSError) as exc:
+        print(f"fa egress-proxy: models config error: {exc}", file=sys.stderr)
+        return 2
+
+    chain_entries = [
+        (entry.provider, entry.slug, entry.base_url, entry.api_key_env)
+        for role in models.roles.values()
+        for entry in role.chain
+    ]
+    try:
+        route_table = build_route_table(chain_entries)
+    except ProxyConfigError as exc:
+        print(f"fa egress-proxy: route table error: {exc}", file=sys.stderr)
+        return 2
+
+    secret_store = SecretStore.from_file(args.secrets.expanduser())
+    secrets = dict(secret_store)
+
+    token = _read_token_file(args.token_file.expanduser())
+    if not token:
+        print(
+            f"fa egress-proxy: empty/missing proxy token at {args.token_file}",
+            file=sys.stderr,
+        )
+        return 2
+
+    host, _, port_str = args.listen.rpartition(":")
+    if not host or not port_str.isdigit():
+        print(f"fa egress-proxy: invalid --listen {args.listen!r}", file=sys.stderr)
+        return 2
+
+    serve(
+        route_table=route_table,
+        secrets=secrets,
+        proxy_token=token,
+        host=host,
+        port=int(port_str),
+    )
+    return 0
+
+
+def _read_token_file(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def _build_provider_chain(

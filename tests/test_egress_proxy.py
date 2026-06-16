@@ -1,0 +1,174 @@
+"""Phase D (ADR-12): egress-injection proxy unit tests (no network).
+
+Proves the proxy injects the real key, strips caller-supplied auth, rejects a
+bad/absent token, 404s unknown routes, healthchecks, and NEVER echoes a key.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
+
+import pytest
+
+from fa.egress_proxy.routing import (
+    ProxyConfigError,
+    build_route_table,
+    inject_headers,
+    route_name_for,
+)
+from fa.egress_proxy.server import build_handler_class
+
+_KEY = "fw-PROXY-REAL-KEY-0xDEADBEEF-123456"
+_TOKEN = "fa-proxy-bootstrap-token-xyz"
+
+
+# --- routing (pure) --------------------------------------------------------
+def test_route_name_is_url_safe() -> None:
+    assert route_name_for("openrouter", "meta-llama/llama-3.1-8b") == (
+        "openrouter-meta-llama-llama-3-1-8b"
+    )
+
+
+def test_build_route_table_dedupes_and_detects_conflict() -> None:
+    t = build_route_table(
+        [
+            ("openrouter", "x", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+            ("openrouter", "x", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+        ]
+    )
+    assert len(t) == 1
+    with pytest.raises(ProxyConfigError):
+        build_route_table(
+            [
+                ("p", "s", "https://a.example", "K"),
+                ("p", "s", "https://b.example", "K"),
+            ]
+        )
+
+
+def test_inject_headers_strips_caller_auth_openai() -> None:
+    t = build_route_table([("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY")])
+    route = t.get("openrouter-s")
+    assert route is not None
+    out = inject_headers(
+        route,
+        {"Authorization": "Bearer attacker", "X-FA-Proxy-Token": _TOKEN, "X-Keep": "1"},
+        _KEY,
+    )
+    assert out["Authorization"] == f"Bearer {_KEY}"
+    assert "X-FA-Proxy-Token" not in set(out)  # stripped
+    assert out["X-Keep"] == "1"
+
+
+def test_inject_headers_anthropic_uses_x_api_key() -> None:
+    t = build_route_table(
+        [("anthropic", "claude", "https://api.anthropic.com", "ANTHROPIC_API_KEY")]
+    )
+    route = t.get("anthropic-claude")
+    assert route is not None
+    out = inject_headers(route, {"x-api-key": "attacker"}, _KEY)
+    assert out["x-api-key"] == _KEY
+    assert out["anthropic-version"]
+    assert "Authorization" not in out
+
+
+# --- server (in-process, injected forwarder) -------------------------------
+def _make_server() -> tuple[ThreadingHTTPServer, list[dict]]:
+    captured: list[dict] = []
+
+    def fake_forward(url, headers, body, timeout):
+        captured.append({"url": url, "headers": headers, "body": body})
+        return 200, {"Content-Type": "application/json"}, json.dumps({"ok": True}).encode()
+
+    table = build_route_table(
+        [("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY")]
+    )
+    handler = build_handler_class(
+        route_table=table,
+        secrets={"OPENROUTER_API_KEY": _KEY},
+        proxy_token=_TOKEN,
+        forward=fake_forward,
+    )
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    httpd._captured = captured  # type: ignore[attr-defined]
+    return httpd, captured
+
+
+def _run(httpd: ThreadingHTTPServer):
+    t = threading.Thread(target=httpd.handle_request)
+    t.daemon = True
+    t.start()
+    return t
+
+
+def _request(port: int, method: str, path: str, *, headers=None, body=b""):
+    conn = HTTPConnection("127.0.0.1", port, timeout=5)
+    conn.request(method, path, body=body, headers=headers or {})
+    resp = conn.getresponse()
+    data = resp.read()
+    conn.close()
+    return resp.status, data
+
+
+def test_healthz_ok() -> None:
+    httpd, _ = _make_server()
+    port = httpd.server_address[1]
+    _run(httpd)
+    status, data = _request(port, "GET", "/healthz")
+    assert status == 200
+    assert b"ok" in data
+
+
+def test_post_injects_key_and_strips_caller_auth() -> None:
+    httpd, captured = _make_server()
+    port = httpd.server_address[1]
+    _run(httpd)
+    status, data = _request(
+        port,
+        "POST",
+        "/route/openrouter-s/chat/completions",
+        headers={
+            "X-FA-Proxy-Token": _TOKEN,
+            "Authorization": "Bearer attacker-supplied",
+            "Content-Type": "application/json",
+        },
+        body=b'{"model":"x","messages":[]}',
+    )
+    assert status == 200
+    assert captured, "forwarder should have been called"
+    sent = captured[0]
+    assert sent["url"] == "https://up.example/v1/chat/completions"
+    assert sent["headers"]["Authorization"] == f"Bearer {_KEY}"
+    # The key must never be echoed back to the caller.
+    assert _KEY.encode() not in data
+
+
+def test_bad_token_rejected() -> None:
+    httpd, _ = _make_server()
+    port = httpd.server_address[1]
+    _run(httpd)
+    status, _ = _request(
+        port,
+        "POST",
+        "/route/openrouter-s/chat/completions",
+        headers={"X-FA-Proxy-Token": "wrong", "Content-Type": "application/json"},
+        body=b"{}",
+    )
+    assert status == 403
+
+
+def test_unknown_route_404() -> None:
+    httpd, _ = _make_server()
+    port = httpd.server_address[1]
+    _run(httpd)
+    status, _ = _request(
+        port,
+        "POST",
+        "/route/does-not-exist/chat/completions",
+        headers={"X-FA-Proxy-Token": _TOKEN, "Content-Type": "application/json"},
+        body=b"{}",
+    )
+    assert status == 404
