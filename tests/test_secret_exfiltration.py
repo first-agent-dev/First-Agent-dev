@@ -63,6 +63,52 @@ def test_bash_env_has_no_credential_named_vars(tmp_path: Path, monkeypatch) -> N
         assert leaked not in out
 
 
+def test_bash_gate_denies_reading_secret_files() -> None:
+    """The real SandboxHook must DENY fs.run_bash reads of the secret paths.
+
+    This is the vector the previous design left open (READ_ONLY commands bypass
+    path-containment). Before Phase A this assertion would FAIL — that is the
+    point: the boundary, not the absence of a test, is what makes it pass.
+    """
+    from fa.inner_loop.hooks.base import HookPayload, LifecyclePoint
+    from fa.inner_loop.hooks.builtin import SandboxHook
+    from fa.inner_loop.registry import ToolCall
+
+    sand = SandboxHook(Path("/workspace"))
+    blocked = [
+        "cat /run/secrets/fa.env",
+        "cat /run/secrets/git_key",
+        "grep KEY /srv/first-agent/secrets/fa.env",
+        "head -c 10 /run/secrets/fa.env",
+        "cd /run/secrets && cat fa.env",
+        "cat /proc/self/root/run/secrets/fa.env",
+    ]
+    for cmd in blocked:
+        call = ToolCall(name="fs.run_bash", params={"command": cmd}, call_id="c")
+        decision = sand.handle(
+            LifecyclePoint.BEFORE_TOOL_EXEC,
+            HookPayload(tool_call=call, role="coder", acting_family="x"),
+        )
+        assert decision.action == "deny", f"gate must deny: {cmd}"
+
+
+def test_model_channel_masks_a_leaked_key() -> None:
+    """Acceptance criterion (G4): even if a value reaches a tool result, the
+    model-facing channel masks it (raw + base64). Ties the redactor to the
+    'remind me my key -> name only' requirement."""
+    import base64 as _b64
+
+    from fa.inner_loop.coder_loop import _redact
+    from fa.observability.redaction import SecretRedactor
+
+    key = "fw-REDTEAM-acceptance-0xC0FFEE-9876543210"
+    redactor = SecretRedactor({"FIREWORKS_API_KEY": key}, ["FIREWORKS_API_KEY"])
+    raw = _redact(redactor, f"FIREWORKS_API_KEY={key}")
+    assert key not in raw
+    enc = _b64.b64encode(key.encode()).decode()
+    assert key not in _redact(redactor, f"b64={enc}")
+
+
 def test_workspace_env_files_are_not_present(tmp_path: Path) -> None:
     """`.env.fa` must not be a readable file inside the workspace anymore.
 
