@@ -78,6 +78,8 @@ class SecretRedactor:
                 return True
             if secret in urllib.parse.unquote(text):
                 return True
+            if secret[::-1] in text:
+                return True
         return False
 
     def redact(self, text: str) -> str:
@@ -87,6 +89,9 @@ class SecretRedactor:
             text = text.replace(base64.b64encode(secret.encode()).decode(), self._MASK)
             text = text.replace(secret.encode().hex(), self._MASK)
             text = text.replace(urllib.parse.quote(secret), self._MASK)
+            # Reversed-string form (cheap, deterministic; covers the common
+            # "print the key backwards" redaction bypass — Hermes-CVE class).
+            text = text.replace(secret[::-1], self._MASK)
         # Final pass: unquote the whole text in case the secret was
         # URL-encoded as part of a larger string not matched above.
         if self._normalize_and_check(text):

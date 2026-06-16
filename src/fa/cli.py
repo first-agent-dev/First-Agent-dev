@@ -593,6 +593,7 @@ def _cmd_run(
         limits=limits,
         max_turns=args.max_turns,
         system_prompt_extra=resume_draft_text,
+        redactor=redactor,
     )
     status = "OK" if outcome.exit_code == 0 else "ERROR"
     print(f"{status}: {outcome.stop_reason} (turns={outcome.turns})")
