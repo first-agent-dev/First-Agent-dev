@@ -250,11 +250,14 @@ fi
 # ---------------------------------------------------------------------------
 # 10. Secrets (API keys) + .env.fa (non-secret controls) + models.yaml
 # ---------------------------------------------------------------------------
-# Secret isolation (ADR-12): API KEYS live OUTSIDE the repo / /workspace, in
-# $FA_DIR/secrets/fa.env (0600), mounted read-only at /run/secrets/fa.env and
-# read by `fa` into a private in-memory store (never into the container env, so
-# the agent's shell cannot sniff them).
+# Secret isolation (ADR-12, Option C — egress-injection proxy): LLM API KEYS
+# live OUTSIDE the repo / /workspace, in $FA_DIR/secrets/fa.env (0600). They are
+# mounted read-only ONLY into the fa-egress-proxy container at
+# /run/secrets/fa.env. The agent container never mounts this file and never
+# receives the values — it reaches providers through the proxy, which injects
+# the real key outside the agent's reach.
 SECRETS_ENV="$FA_DIR/secrets/fa.env"
+PROXY_TOKEN="$FA_DIR/secrets/fa_proxy_token"
 ENV_FA="$FA_DIR/repo/First-Agent-dev/.env.fa"
 
 # Migration: older deployments kept API keys in the repo .env.fa. If that file
@@ -289,6 +292,16 @@ EOF
     fi
     chmod 600 "$SECRETS_ENV"
     log_warn "API-keys file created at $SECRETS_ENV. EDIT IT (with: micro $SECRETS_ENV) before first run."
+fi
+
+# fa->proxy bootstrap token (ADR-12 Option C): proves the agent container is the
+# legitimate caller of the egress proxy. NOT an LLM key — leaking it only allows
+# metered LLM calls through the proxy, never key disclosure. Generated once.
+if [[ ! -s "$PROXY_TOKEN" ]]; then
+    # 32 random bytes, url-safe base64 (no shell-special chars).
+    head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' > "$PROXY_TOKEN"
+    chmod 600 "$PROXY_TOKEN"
+    log_info "Generated fa->proxy token at $PROXY_TOKEN"
 fi
 
 # .env.fa now holds ONLY non-secret runtime controls (FA_AUTO_RUN, FA_TASK, ...).

@@ -48,15 +48,23 @@ services:
       - FA_CONTAINER_NAME=first-agent
       # Use deploy key exclusively; ignore any other SSH keys in the container
       - GIT_SSH_COMMAND=ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts
-      # Secret isolation (ADR-12): API keys are NOT injected as container env.
-      # `fa` reads them from this read-only, out-of-/workspace file into a
-      # private in-memory store. FA_SECRETS_FILE carries only the PATH, not a key.
-      - FA_SECRETS_FILE=/run/secrets/fa.env
+      # Secret isolation (ADR-12, Option C — egress-injection proxy):
+      # The agent container holds NO LLM provider keys. It reaches providers
+      # ONLY through the fa-egress-proxy service, which injects the real key
+      # outside this container. FA_EGRESS_PROXY_URL is a routing address, not a
+      # secret; FA_PROXY_TOKEN_FILE points at the (non-key) fa->proxy token.
+      - FA_EGRESS_PROXY_URL=http://fa-egress-proxy:8080
+      - FA_PROXY_TOKEN_FILE=/run/secrets/fa_proxy_token
     # NOTE: .env.fa here holds ONLY non-secret runtime controls (FA_AUTO_RUN,
-    # FA_TASK, FA_ROLE, ...). API keys live in /run/secrets/fa.env (see volumes).
+    # FA_TASK, FA_ROLE, ...). LLM API keys live ONLY in the proxy container.
     env_file:
       - path: ./.env.fa
         required: false
+
+    # The agent must not start before the key-injecting proxy is healthy.
+    depends_on:
+      fa-egress-proxy:
+        condition: service_healthy
 
     # Volumes
     volumes:
@@ -70,12 +78,12 @@ services:
         source: /srv/first-agent/state
         target: /home/fa/.fa
         read_only: false
-      # API keys (read-only) — secret-isolation (ADR-12). Mounted OUTSIDE
-      # /workspace so fs.read_file (sandbox path-containment) cannot reach it;
-      # read once at startup into a private in-memory store, never into env.
+      # fa->proxy bootstrap token (read-only). NOT an LLM key — it only proves
+      # this container is the agent so the proxy accepts its calls. LLM provider
+      # keys are NEVER mounted into the agent container (ADR-12 Option C).
       - type: bind
-        source: /srv/first-agent/secrets/fa.env
-        target: /run/secrets/fa.env
+        source: /srv/first-agent/secrets/fa_proxy_token
+        target: /run/secrets/fa_proxy_token
         read_only: true
       # SSH deploy key (read-only) — cross-reference: mount at /run/secrets, not ~/.ssh
       - type: bind
@@ -120,6 +128,101 @@ services:
       start_period: 30s
 
     # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # Egress-injection proxy (ADR-12 Option C) — the LLM-key boundary.
+  # This is the ONLY place LLM provider keys exist. It runs in a SEPARATE
+  # container: the agent's fs.run_bash cannot read this container's filesystem
+  # or process memory (separate mount/PID namespaces), so a fully compromised
+  # agent can *use* a key (call through the proxy) but never *read* it.
+  # No /workspace mount, no agent code reachable by the agent.
+  # ---------------------------------------------------------------------------
+  fa-egress-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.fa
+    container_name: fa-egress-proxy
+    hostname: fa-egress-proxy
+    init: true
+    restart: unless-stopped
+    command:
+      - fa
+      - egress-proxy
+      - --models
+      - /home/fa/.fa/models.yaml
+      - --secrets
+      - /run/secrets/fa.env
+      - --token-file
+      - /run/secrets/fa_proxy_token
+      - --listen
+      - 0.0.0.0:8080
+
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 512M
+          pids: 128
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "1000:1000"
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONPATH=/workspace/src
+
+    volumes:
+      # LLM provider keys (read-only) — ONLY mounted here, never in the agent.
+      - type: bind
+        source: /srv/first-agent/secrets/fa.env
+        target: /run/secrets/fa.env
+        read_only: true
+      # fa->proxy token (read-only) — verifies the caller is the agent.
+      - type: bind
+        source: /srv/first-agent/secrets/fa_proxy_token
+        target: /run/secrets/fa_proxy_token
+        read_only: true
+      # models.yaml (read-only) — routing source (non-secret). Reuse state dir
+      # but the proxy has NO write access and NO /workspace.
+      - type: bind
+        source: /srv/first-agent/state
+        target: /home/fa/.fa
+        read_only: true
+      # Source code (read-only) so `fa` is importable; NOT the agent workspace.
+      - type: bind
+        source: /srv/first-agent/repo/First-Agent-dev
+        target: /workspace
+        read_only: true
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 64M
+
+    networks:
+      - fa-network
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3).status==200 else 1)\""
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
     logging:
       driver: json-file
       options:

@@ -15,23 +15,46 @@ _RUN_BASH = _ROOT / "src" / "fa" / "inner_loop" / "tools" / "run_bash.py"
 _CLI = _ROOT / "src" / "fa" / "cli.py"
 
 
-def test_compose_mounts_secrets_readonly_outside_workspace() -> None:
-    text = _COMPOSE.read_text(encoding="utf-8")
-    # API keys mounted read-only at /run/secrets/fa.env (outside /workspace).
-    assert "/run/secrets/fa.env" in text
-    assert "FA_SECRETS_FILE=/run/secrets/fa.env" in text
+def test_compose_agent_container_has_no_llm_key_mount() -> None:
+    """ADR-12 Option C: the AGENT container must NOT mount the LLM keys file
+    and must NOT carry FA_SECRETS_FILE — keys live only in the proxy."""
+    import yaml
+
+    doc = yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))
+    agent = doc["services"]["first-agent"]
+    # No /run/secrets/fa.env mount on the agent.
+    for vol in agent.get("volumes", []):
+        if isinstance(vol, dict):
+            assert vol.get("target") != "/run/secrets/fa.env", (
+                "agent container must not mount the LLM keys file"
+            )
+    # No FA_SECRETS_FILE env on the agent.
+    env = agent.get("environment", [])
+    assert not any(str(e).startswith("FA_SECRETS_FILE") for e in env)
+    # Agent targets the proxy instead.
+    assert any("FA_EGRESS_PROXY_URL=" in str(e) for e in env)
 
 
-def test_compose_does_not_inject_api_keys_as_container_env() -> None:
-    """env_file may carry FA_* controls, but NOT API keys.
+def test_compose_proxy_service_holds_the_keys_and_no_workspace() -> None:
+    """The egress-proxy service mounts the keys ro and has NO agent /workspace
+    write mount (it is the boundary, not an agent)."""
+    import yaml
 
-    We can't see operator key values here, but we assert the mount-based path
-    exists and FA_SECRETS_FILE is a PATH (not a key value).
-    """
-    text = _COMPOSE.read_text(encoding="utf-8")
-    # The secrets mount is the key-delivery mechanism, not env injection.
-    assert "source: /srv/first-agent/secrets/fa.env" in text
-    assert "target: /run/secrets/fa.env" in text
+    doc = yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))
+    assert "fa-egress-proxy" in doc["services"], "proxy service must exist"
+    proxy = doc["services"]["fa-egress-proxy"]
+    targets = {
+        v.get("target"): v for v in proxy.get("volumes", []) if isinstance(v, dict)
+    }
+    assert "/run/secrets/fa.env" in targets, "proxy must mount the LLM keys"
+    assert targets["/run/secrets/fa.env"].get("read_only") is True
+    # If the proxy mounts /workspace at all, it must be read-only (no agent rw).
+    if "/workspace" in targets:
+        assert targets["/workspace"].get("read_only") is True
+    # The agent depends on the proxy being healthy.
+    assert doc["services"]["first-agent"]["depends_on"]["fa-egress-proxy"][
+        "condition"
+    ] == "service_healthy"
 
 
 def test_run_bash_passes_scrubbed_env() -> None:
