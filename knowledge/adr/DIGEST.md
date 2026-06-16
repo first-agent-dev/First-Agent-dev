@@ -676,6 +676,25 @@ imported into Level 0.
 
 **Source:** [`ADR-11`](./ADR-11-authoring-guardrails.md).
 
+## ADR-12 — API-key isolation from the agent (accepted 2026-06-16)
+
+**Decision.** Keep LLM API keys out of every surface the sandboxed agent can
+reach. Three independent barriers: (1) keys live only in
+`/srv/first-agent/secrets/fa.env`, mounted read-only at `/run/secrets/fa.env`
+**outside** `/workspace` (sandbox path-containment denies `fs.read_file`/`bash`);
+(2) keys are read once into a private in-memory `SecretStore` and **never** placed
+in `os.environ` (so `printenv` / `/proc/self/environ` / `os.environ` are empty),
+threaded through the existing injectable `env=` seam of `load_models_config` /
+`ProviderChain` / `SecretRedactor` — strict file-only, no `os.environ` fallback;
+(3) `fs.run_bash` runs with an allowlist-scrubbed child env plus a fail-closed
+secret-name filter. Backstops: encoding-aware redaction + broadened SecretGuard
+tripwires. `.env.fa` keeps only non-secret `FA_*` controls. Enforced by
+`tests/test_secret_exfiltration.py` (12 exfil vectors blocked) and
+`tests/test_secret_isolation_invariants.py` (structural regression guard).
+Egress-injection proxy deferred to BACKLOG (v0.2).
+
+**Source:** [`ADR-12`](./ADR-12-secret-isolation.md).
+
 ## See also
 
 - [`README.md`](./README.md) — ADR process and ordered index.

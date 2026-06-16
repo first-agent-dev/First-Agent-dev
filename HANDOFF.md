@@ -13,6 +13,23 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
+**As of:** 2026-06-16 — API-key isolation ([ADR-12](./knowledge/adr/ADR-12-secret-isolation.md)).
+Keys are no longer reachable by the sandboxed agent. Three barriers: (1) keys
+live only in `/srv/first-agent/secrets/fa.env`, ro-mounted at `/run/secrets/fa.env`
+**outside** `/workspace`; (2) read once into a private `SecretStore`
+(`src/fa/providers/secret_store.py`) and **never** placed in `os.environ` —
+threaded through the injectable `env=` of `load_models_config`/`ProviderChain`/
+`SecretRedactor` (strict file-only); (3) `fs.run_bash` runs with an
+allowlist-scrubbed child env (`src/fa/inner_loop/tools/bash_env.py`). Backstops:
+encoding-aware `SecretRedactor` + broadened `SecretGuard`. `.env.fa` now holds
+only non-secret `FA_*` controls. Proven by `tests/test_secret_exfiltration.py`
+(12 vectors blocked) + `tests/test_secret_isolation_invariants.py`. Compose adds
+the ro secrets mount + `FA_SECRETS_FILE`; `setup-fa-desktop.sh` seeds/migrates the
+file; `fa-update.sh` hashes it for change-detection. Docs (`01-install` §7b,
+`02-operations` §🔒, `nano`→`micro`) + DIGEST + exploration_log Q-17 updated.
+Follow-up (BACKLOG): egress allowlist, then egress-injection proxy (v0.2).
+Prior: 2026-06-15 — docs IA restructure.
+
 **As of:** 2026-06-15 (later) — Docs information-architecture restructure:
 operator docs moved out of the cluttered repo root into a task-scoped home.
 `DOCKER_USAGE_GUIDE.md` → `knowledge/instructions/02-operations.md`;

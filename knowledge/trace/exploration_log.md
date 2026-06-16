@@ -1802,3 +1802,24 @@
     natural home in `.fa/session.toml`.
 - **Source:** [ADR-11 §Verification](../adr/ADR-11-authoring-guardrails.md#verification);
   [ADR-11 §ADR-11-I2](../adr/ADR-11-authoring-guardrails.md#adr-11-i2--severity-lifecycle-as-a-false-positive-budget).
+
+## Q-17 — How does FA keep LLM API keys unreachable by the sandboxed agent? (2026-06-16)
+
+- **Closed by:** [ADR-12](../adr/ADR-12-secret-isolation.md). Three independent
+  barriers (file outside `/workspace`; private in-memory `SecretStore` so keys
+  never enter `os.environ`; allowlist-scrubbed `fs.run_bash` child env), with
+  encoding-aware redaction + broadened SecretGuard as backstops.
+- **Chosen:** Option B (private SecretStore + out-of-workspace file + bash scrub).
+  Reason: `ProviderChain` was already injectable (`env=`), so the strongest design
+  was also the smallest change; gives a real boundary, not a denylist filter.
+- **Rejected (i) env-scrub only.** Reason: keys would remain in `os.environ` of
+  the `fa` process and PID-1 env — any non-bash reader of `os.environ` leaks.
+  Lesson: re-opens never; superseded by B.
+- **Rejected (ii) egress-injection proxy now (Vercel-style).** Reason:
+  subtraction-first — heavyweight, addresses the "use"-vector which requires a
+  deeper compromise than the "read"-vector the user asked about. Lesson: re-opens
+  when remote sandboxes or multi-tenancy land (BACKLOG).
+- **Coupling:** Q-6 (ADR-6 sandbox path-containment — the file-outside-`/workspace`
+  barrier rides on it); AP-003 (shallow-fix — denylist guards alone were the
+  shallow fix this ADR replaces with an architectural boundary).
+- **Source:** [ADR-12 §Decision](../adr/ADR-12-secret-isolation.md#decision).

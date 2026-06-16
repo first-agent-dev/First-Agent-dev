@@ -330,18 +330,21 @@ systemctl --user start fa.service
 
 ## Фаза 7b — настроить API-ключи LLM
 
-Стек развёртывания закрывает git-аутентификацию (deploy-ключ), но не API-ключи
-LLM. Compose читает `.env.fa` через `env_file:` — туда кладутся ключи
-OpenRouter / Fireworks / и т.д.
+Стек закрывает git-аутентификацию (deploy-ключ) и API-ключи LLM. Ключи живут
+**вне репозитория и вне песочницы агента** — в `/srv/first-agent/secrets/fa.env`
+(права `0600`), монтируются read-only в `/run/secrets/fa.env` и читаются `fa` в
+приватную память (в окружение контейнера НЕ попадают). Агент не может их прочитать
+(ADR-12). `setup-fa-desktop.sh` создаёт этот файл-шаблон автоматически.
 
-1. Скопируйте шаблон и впишите реальные ключи:
+1. Впишите реальные ключи в файл секретов (создан скриптом установки):
 
    ```bash
-   cd /srv/first-agent/repo/First-Agent-dev
-   cp .env.fa.template .env.fa
-   nano .env.fa            # вписать ключи; раскомментировать нужные строки
-   chmod 600 .env.fa
+   micro /srv/first-agent/secrets/fa.env   # вписать ключи; раскомментировать нужные строки
+   chmod 600 /srv/first-agent/secrets/fa.env
    ```
+
+   > `.env.fa` в корне репо теперь хранит только несекретные `FA_*`-настройки
+   > (`FA_AUTO_RUN`, `FA_TASK`, …) — API-ключей там быть не должно.
 
 2. Проверьте, что есть `models.yaml` (копируется `setup-fa-desktop.sh`):
 
@@ -356,13 +359,14 @@ OpenRouter / Fireworks / и т.д.
    ```
 
 3. **Разделение по назначению:**
-   - **Docker-деплой (AIO)**: использует `.env.fa` в корне репо, читается compose.
-   - **Локальная разработка (WSL)**: использует `~/.fa/.env` (читается CLI) или
-     shell-экспорты.
+   - **Docker-деплой (AIO)**: ключи в `/srv/first-agent/secrets/fa.env`
+     (mount → `/run/secrets/fa.env`, читаются в приватную память).
+   - **Локальная разработка (WSL)**: те же ключи в `~/.fa/.env` (тоже читаются в
+     приватный стор, а не в `os.environ`).
    - Не смешивайте — контейнер не читает `~/.fa/.env`.
 
 4. **Креды бэкапа** (`B2_KEY_ID`, `B2_APPLICATION_KEY`) идут в
-   `/srv/first-agent/secrets/backup.env`, **не** в `.env.fa`. Контейнеру они не нужны.
+   `/srv/first-agent/secrets/backup.env`, **не** к ключам LLM. Контейнеру они не нужны.
 
 ---
 
@@ -370,20 +374,22 @@ OpenRouter / Fireworks / и т.д.
 
 | Категория | Хранение | Область |
 | --- | --- | --- |
-| **API-ключи LLM** | `.env.fa` (корень репо) | Runtime контейнера |
+| **API-ключи LLM** | `/srv/first-agent/secrets/fa.env` (хост, 0600) → ro mount `/run/secrets/fa.env` | Только приватная память `fa`; **не** в env контейнера |
 | **Креды бэкапа** | `/srv/first-agent/secrets/backup.env` | Только хост (restic) |
-| **Git deploy key** | `/srv/first-agent/secrets/github_deploy_key` | Хост + контейнер (read-only) |
+| **Git deploy key** | `/srv/first-agent/secrets/github_deploy_key` → ro mount `/run/secrets/git_key` | Хост + контейнер (read-only) |
 
-**Почему разделение важно:**
+**Почему так (ADR-12 — изоляция секретов):**
 
-- Пользователь-оператор состоит в группе `docker`. Любой её член может через
-  `docker inspect` увидеть env-переменные контейнера (включая API-ключи из
-  `.env.fa`). Креды бэкапа в контейнер не попадают — компрометация контейнера не
-  даёт доступа к B2.
-- `SecretRedactor` (точное совпадение + распознавание base64/URL) маскирует
-  секреты до записи в `events.jsonl` / `knowledge/trace/`. Если ключ утёк до
-  редактирования, он останется в зашифрованном бэкапе. Редактирование — основная
-  защита, шифрование — вторичная.
+- **Агент не может прочитать ключи.** Три барьера: файл вне `/workspace`
+  (песочница `fs.read_file`/`bash` не выходит за её пределы); ключи не в
+  `os.environ` (значит `printenv`/`/proc/self/environ`/`os.environ` пусты);
+  `fs.run_bash` запускается с очищенным allowlist-окружением.
+- **Trust boundary оператора.** Член группы `docker` на хосте всё ещё может
+  `docker inspect`/`docker exec` — но это вы, оператор, а не LLM. Держите
+  операторский аккаунт эксклюзивным.
+- `SecretRedactor` (точное совпадение + base64/hex/URL + скан декодированных окон)
+  маскирует секреты в `events.jsonl` / `knowledge/trace/` — это резервный слой,
+  не основная граница (основная — недоступность ключей агенту).
 - restic шифрует бэкапы *до* загрузки в B2. Проверяйте восстановление ежеквартально.
 
 ---
@@ -421,7 +427,7 @@ end-to-end. (`fa-post-setup.sh` из Фазы 7 делает эту провер
    потерялись бы). Шаблон с `CHANGEME` создаётся скриптом установки:
 
    ```bash
-   nano /srv/first-agent/secrets/backup.env
+   micro /srv/first-agent/secrets/backup.env
    # B2_KEY_ID=your-key-id
    # B2_APPLICATION_KEY=your-app-key
    # B2_BUCKET=your-bucket-name

@@ -1433,6 +1433,26 @@
 - **Unblock-trigger:** I-17 merged AND ≥1 PR explicitly asks for line-level suppression after file-level mechanism exists.
 - **First concrete step once unblocked:** Decide on the suppression syntax (`# fa-noqa: V<N>` vs. `# fa-suppress(<CODE>): <justification>`); implement parser; integrate with the per-finding hash so a suppression cannot drift to a different finding silently.
 
+## I-24 — Egress controls for API-key "use"-vector (ADR-12 follow-up)
+
+- **Status:** deferred from ADR-12 (secret isolation, 2026-06-16). ADR-12 closes
+  the "read"-vector (agent cannot read keys). The "use"-vector (a deeply
+  compromised `fa` process *using* a key it cannot read to call/exfiltrate)
+  remains.
+- **Idea (two tiers):**
+  1. **Cheap — container egress allowlist.** Restrict the FA container's
+     outbound network to LLM-provider hosts (derived from `models.yaml`
+     `base_url`s) + GitHub. Host UFW/iptables rule or a tiny allowlist sidecar.
+     Keep `internal: false` (agent needs provider access) but deny arbitrary egress.
+  2. **Heavy (v0.2) — egress-injection proxy** (Vercel-style): keys held by a
+     separate proxy process; `fa` calls providers *through* it; the proxy injects
+     `Authorization` and allows only whitelisted hosts, so code can *use* but
+     never *read* or redirect a key.
+- **Unblock-trigger:** remote sandboxes, multi-tenant use, or any threat model
+  where the `fa` process itself is considered compromised.
+- **First concrete step:** tier-1 — emit a UFW egress snippet from `models.yaml`
+  hosts in `setup-fa-desktop.sh`; document update-together with `models.yaml`.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring
