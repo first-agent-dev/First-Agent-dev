@@ -1,15 +1,15 @@
 # First-Agent
 
-Репозиторий, в котором я собираю **собственного LLM-агента** вместе с devin.ai/arena.ai
+Репозиторий, в котором я собираю **собственного LLM-агента** используя другие llm c 0.
 
-📖 **Развернуть / администрировать?** Начните отсюда:
+📖 **Деплой / управление?** вам сюда:
 **[knowledge/instructions/README.md](./knowledge/instructions/README.md)** —
-установка, обновление и эксплуатация AIO-деплоя.
+установка, обновление и эксплуатация First-Agent, docker, ubuntu 24.
 
 > **Статус:** 
 Разработка ARD-9-llm-provider-client;
 deterministic harness ADR-10-runtime determinism,
-prep work for ADR-11-autoring determinism cretion;
+work on ADR-11-autoring determinism cretion;
 first tests cli-ready.
 ---
 
