@@ -24,7 +24,7 @@ import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, override
 
 from fa.egress_proxy.routing import RouteTable, inject_headers
 
@@ -52,7 +52,8 @@ def build_handler_class(
     class _Handler(BaseHTTPRequestHandler):
         # Silence default stderr access logging (could leak paths); we log our
         # own minimal line instead.
-        def log_message(self, *args: Any) -> None:
+        @override
+        def log_message(self, format: str, *args: Any) -> None:
             return
 
         def _send(self, status: int, body: bytes, content_type: str = "application/json") -> None:

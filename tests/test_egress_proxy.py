@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Mapping
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
+from threading import Thread
+from typing import Any
 
 import pytest
 
@@ -76,10 +79,12 @@ def test_inject_headers_anthropic_uses_x_api_key() -> None:
 
 
 # --- server (in-process, injected forwarder) -------------------------------
-def _make_server() -> tuple[ThreadingHTTPServer, list[dict]]:
-    captured: list[dict] = []
+def _make_server() -> tuple[ThreadingHTTPServer, list[dict[str, Any]]]:
+    captured: list[dict[str, Any]] = []
 
-    def fake_forward(url, headers, body, timeout):
+    def fake_forward(
+        url: str, headers: Mapping[str, str], body: bytes, timeout: float
+    ) -> tuple[int, dict[str, str], bytes]:
         captured.append({"url": url, "headers": headers, "body": body})
         return 200, {"Content-Type": "application/json"}, json.dumps({"ok": True}).encode()
 
@@ -97,14 +102,21 @@ def _make_server() -> tuple[ThreadingHTTPServer, list[dict]]:
     return httpd, captured
 
 
-def _run(httpd: ThreadingHTTPServer):
+def _run(httpd: ThreadingHTTPServer) -> Thread:
     t = threading.Thread(target=httpd.handle_request)
     t.daemon = True
     t.start()
     return t
 
 
-def _request(port: int, method: str, path: str, *, headers=None, body=b""):
+def _request(
+    port: int,
+    method: str,
+    path: str,
+    *,
+    headers: dict[str, str] | None = None,
+    body: bytes = b"",
+) -> tuple[int, bytes]:
     conn = HTTPConnection("127.0.0.1", port, timeout=5)
     conn.request(method, path, body=body, headers=headers or {})
     resp = conn.getresponse()

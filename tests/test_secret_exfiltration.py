@@ -35,7 +35,9 @@ _EXFIL_COMMANDS = [
 
 
 @pytest.mark.parametrize("command", _EXFIL_COMMANDS, ids=lambda c: c[:32])
-def test_bash_cannot_exfiltrate_key(command: str, tmp_path: Path, monkeypatch) -> None:
+def test_bash_cannot_exfiltrate_key(
+    command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Worst case: the key IS in the parent process env. The scrubbed child env
     # must still keep it out of the agent shell.
     monkeypatch.setenv(_VAR, _FAKE_KEY)
@@ -52,12 +54,15 @@ def test_bash_cannot_exfiltrate_key(command: str, tmp_path: Path, monkeypatch) -
     assert _FAKE_KEY.encode().hex() not in blob
 
 
-def test_bash_env_has_no_credential_named_vars(tmp_path: Path, monkeypatch) -> None:
+def test_bash_env_has_no_credential_named_vars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-x")
     monkeypatch.setenv("GITHUB_TOKEN", "gh-x")
     monkeypatch.setenv("DB_PASSWORD", "pw-x")
     tool = build_run_bash_tool(tmp_path)
     res = tool.handler({"command": "env"})
+    assert res.result is not None
     out = res.result["stdout"]
     for leaked in ("or-x", "gh-x", "pw-x"):
         assert leaked not in out
@@ -118,6 +123,7 @@ def test_workspace_env_files_are_not_present(tmp_path: Path) -> None:
     """
     tool = build_run_bash_tool(tmp_path)
     res = tool.handler({"command": "cat .env.fa 2>/dev/null; echo DONE"})
+    assert res.result is not None
     assert "DONE" in res.result["stdout"]
     # nothing key-shaped leaked
     assert "sk-" not in res.result["stdout"]

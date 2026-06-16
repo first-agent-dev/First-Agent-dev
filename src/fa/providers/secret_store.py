@@ -23,6 +23,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterator, Mapping
 from pathlib import Path
+from typing import override
 
 __all__ = ["SecretStore", "parse_env_file"]
 
@@ -85,16 +86,20 @@ class SecretStore(Mapping[str, str]):
         return cls(parse_env_file(text))
 
     # --- Mapping protocol --------------------------------------------------
+    @override
     def __getitem__(self, key: str) -> str:
         return self._data[key]
 
+    @override
     def __iter__(self) -> Iterator[str]:
         return iter(self._data)
 
+    @override
     def __len__(self) -> int:
         return len(self._data)
 
     # --- leak-proof representation ----------------------------------------
+    @override
     def __repr__(self) -> str:  # pragma: no cover - exercised via test
         return f"SecretStore({len(self._data)} keys)"
 

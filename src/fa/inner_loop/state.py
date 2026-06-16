@@ -87,7 +87,7 @@ def _json_safe(value: object) -> object:
         return value
     if isinstance(value, Mapping):
         return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, list | tuple):
+    if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
     return repr(value)
 
