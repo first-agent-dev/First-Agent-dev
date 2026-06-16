@@ -7,7 +7,7 @@ import re
 import shlex
 import sys
 from collections.abc import Mapping
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from fa import __version__
@@ -90,10 +90,88 @@ def _load_secret_store() -> SecretStore:
     """Build the private :class:`SecretStore` from the resolved secrets file.
 
     Lazy (called inside ``_cmd_run``), file-only, and does not touch
-    ``os.environ``. Replaces the old import-time ``_load_fa_dotenv`` that
-    mutated the process environment.
+    ``os.environ``. (The old import-time dotenv loader that mutated the
+    process environment has been removed entirely — ADR-12.)
     """
     return SecretStore.from_file(_resolve_secrets_path())
+
+
+# Header the agent sends to the egress proxy to prove it is the fa process.
+# It is NOT a provider key (leaking it only enables metered LLM calls via the
+# proxy, a cost risk, never key disclosure).
+_PROXY_TOKEN_HEADER = "X-FA-Proxy-Token"  # noqa: S105 - HTTP header name, not a secret
+
+
+def _resolve_proxy_url() -> str:
+    """Return the egress-proxy base URL, or empty string for legacy mode.
+
+    When ``FA_EGRESS_PROXY_URL`` is set, ``fa run`` operates in proxy mode:
+    provider keys live in the proxy (not in this process), and the chain targets
+    the proxy. When unset, the legacy strict-file SecretStore mode is used.
+    """
+    return os.environ.get("FA_EGRESS_PROXY_URL", "").strip()
+
+
+def _resolve_proxy_token() -> str:
+    """Read the fa→proxy bootstrap token (file pointer, never os.environ value).
+
+    Resolution: ``$FA_PROXY_TOKEN_FILE`` → ``/run/secrets/fa_proxy_token``.
+    """
+    override = os.environ.get("FA_PROXY_TOKEN_FILE", "").strip()
+    path = Path(override) if override else Path("/run/secrets/fa_proxy_token")
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _proxy_rewrite_chain(
+    chain_config: ChainConfig, proxy_url: str
+) -> tuple[ChainConfig, str]:
+    """Resolve the proxy token and rewrite the chain, or return an error string.
+
+    Extracted from ``_cmd_run`` to keep that function's complexity bounded.
+    """
+    proxy_token = _resolve_proxy_token()
+    if not proxy_token:
+        return chain_config, (
+            "FA_EGRESS_PROXY_URL set but no proxy token found "
+            "(set FA_PROXY_TOKEN_FILE or /run/secrets/fa_proxy_token)"
+        )
+    return (
+        _apply_proxy_mode(chain_config, proxy_url=proxy_url, proxy_token=proxy_token),
+        "",
+    )
+
+
+def _apply_proxy_mode(
+    chain_config: ChainConfig,
+    *,
+    proxy_url: str,
+    proxy_token: str,
+) -> ChainConfig:
+    """Rewrite a role's chain to target the egress proxy (ADR-12).
+
+    Each entry's ``base_url`` becomes ``<proxy>/route/<name>`` and the entry
+    carries the fa→proxy token via ``extra_headers``. No provider key is placed
+    anywhere on the fa side — the proxy injects it.
+    """
+    from fa.egress_proxy.routing import route_name_for
+
+    base = proxy_url.rstrip("/")
+    new_entries = []
+    for entry in chain_config.chain:
+        name = route_name_for(entry.provider, entry.slug)
+        headers = dict(entry.extra_headers)
+        headers[_PROXY_TOKEN_HEADER] = proxy_token
+        new_entries.append(
+            replace(
+                entry,
+                base_url=f"{base}/route/{name}",
+                extra_headers=headers,
+            )
+        )
+    return replace(chain_config, chain=tuple(new_entries))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -422,7 +500,7 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     return 1 if any(result.error is not None for result in results) else 0
 
 
-def _cmd_run(
+def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→proxy→loop)
     args: argparse.Namespace,
     *,
     transport: Transport | None = None,
@@ -457,10 +535,17 @@ def _cmd_run(
     # Secret-isolation (ADR-12): API keys live ONLY in this private store, never
     # in os.environ. Every key reader below (config validation, provider chain,
     # redactor) is fed `secrets` instead of os.environ.
+    proxy_url = _resolve_proxy_url()
+    proxy_mode = bool(proxy_url)
     if secrets is None:
-        secrets = _load_secret_store()
+        # Proxy mode: provider keys live in the proxy, NOT this process. The
+        # chain's key store is intentionally empty; only the deploy key / proxy
+        # token are tracked (for the redactor). Legacy mode: strict-file store.
+        secrets = SecretStore({}) if proxy_mode else _load_secret_store()
     try:
-        models = load_models_config_from_path(config_path, env=secrets)
+        models = load_models_config_from_path(
+            config_path, env=secrets, require_api_keys=not proxy_mode
+        )
     except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
         print(f"fa run: configuration error: {exc}", file=sys.stderr)
         return 2
@@ -472,6 +557,13 @@ def _cmd_run(
             file=sys.stderr,
         )
         return 2
+
+    if proxy_mode:
+        rewritten, proxy_err = _proxy_rewrite_chain(chain_config, proxy_url)
+        if proxy_err:
+            print(f"fa run: {proxy_err}", file=sys.stderr)
+            return 2
+        chain_config = rewritten
 
     effective_transport: Transport = transport if transport is not None else UrllibTransport()
     chain = _build_provider_chain(chain_config, transport=effective_transport, secrets=secrets)
@@ -536,8 +628,16 @@ def _cmd_run(
         return 2
     registry.register(build_prepare_pr_tool(draft_store))
     log_path = workspace / ".fa" / "runs" / run_id / "events.jsonl"
+    # In proxy mode the provider keys are absent here (they live in the proxy),
+    # so the redactor is seeded from the secrets the agent process DOES hold:
+    # the fa→proxy token and the deploy key (read value-only, never logged).
     try:
-        redactor = SecretRedactor.from_models_config(secrets, models)
+        redactor = SecretRedactor.from_models_config(
+            secrets,
+            models,
+            extra_values=_proxy_redactor_extra() if proxy_mode else (),
+            allow_empty=proxy_mode,
+        )
     except SecretRedactorError as exc:
         print(f"fa run: secret redactor configuration error: {exc}", file=sys.stderr)
         return 2
@@ -681,6 +781,33 @@ def _read_token_file(path: Path) -> str:
         return path.read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+
+
+def _proxy_redactor_extra() -> tuple[str, ...]:
+    """Non-env secret values the redactor should mask in proxy mode."""
+    return tuple(v for v in (_resolve_proxy_token(), _read_deploy_key_material()) if v)
+
+
+def _read_deploy_key_material() -> str:
+    """Return the deploy private-key body (value-only) for the redactor.
+
+    Best-effort: returns the base64 body between the PEM markers so the redactor
+    can mask it if it ever appears in tool output. Never logs the content.
+    Returns empty string if the key is absent/unreadable (dev boxes).
+    """
+    for candidate in (Path("/run/secrets/git_key"),):
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        body = "".join(
+            line.strip()
+            for line in text.splitlines()
+            if line and not line.startswith("-----")
+        )
+        if len(body) >= 16:
+            return body
+    return ""
 
 
 def _build_provider_chain(

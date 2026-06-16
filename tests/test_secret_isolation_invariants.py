@@ -43,9 +43,19 @@ def test_run_bash_passes_scrubbed_env() -> None:
 
 def test_cli_reads_keys_from_store_not_environ() -> None:
     text = _CLI.read_text(encoding="utf-8")
-    # The three key-read sites must use the private store, not os.environ.
-    assert "load_models_config_from_path(config_path, env=secrets)" in text
-    assert "SecretRedactor.from_models_config(secrets, models)" in text
+    # The key-read sites must use the private store, not os.environ.
+    assert "load_models_config_from_path(" in text
+    assert "config_path, env=secrets" in text
+    assert "SecretRedactor.from_models_config(" in text
     assert "secrets=secrets" in text
-    # The old import-time os.environ mutation must be gone.
-    assert "_load_fa_dotenv(Path.home()" not in text
+    # The old import-time os.environ mutation must be gone (function deleted).
+    assert "_load_fa_dotenv" not in text
+
+
+def test_cli_supports_egress_proxy_mode() -> None:
+    text = _CLI.read_text(encoding="utf-8")
+    # Proxy mode: provider keys live in the proxy, not this process.
+    assert "FA_EGRESS_PROXY_URL" in text
+    assert "_apply_proxy_mode" in text
+    # In proxy mode the chain's key store is empty (no provider keys on fa side).
+    assert "SecretStore({}) if proxy_mode" in text

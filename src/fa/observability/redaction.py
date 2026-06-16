@@ -36,7 +36,14 @@ class SecretRedactor:
     _B64_WINDOW_RE = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
     _HEX_WINDOW_RE = re.compile(r"(?:[0-9a-fA-F]{2}){8,}")
 
-    def __init__(self, env: Mapping[str, str], api_key_env_vars: Sequence[str]) -> None:
+    def __init__(
+        self,
+        env: Mapping[str, str],
+        api_key_env_vars: Sequence[str],
+        *,
+        extra_values: Sequence[str] = (),
+        allow_empty: bool = False,
+    ) -> None:
         missing: list[str] = []
         empty: list[str] = []
         too_short: list[str] = []
@@ -55,7 +62,13 @@ class SecretRedactor:
                 continue
             self._secrets.add(value)
 
-        if api_key_env_vars and not self._secrets:
+        # Extra non-env secret values (e.g. proxy bootstrap token, deploy-key
+        # material in egress-proxy mode where provider keys are absent here).
+        for value in extra_values:
+            if value and len(value) >= self._MIN_LEN:
+                self._secrets.add(value)
+
+        if api_key_env_vars and not self._secrets and not allow_empty:
             parts: list[str] = []
             if missing:
                 parts.append(f"missing: {', '.join(missing)}")
@@ -133,10 +146,22 @@ class SecretRedactor:
         return text
 
     @classmethod
-    def from_models_config(cls, env: Mapping[str, str], config: ModelsConfig) -> SecretRedactor:
-        """Derive api_key_env list from a ModelsConfig."""
+    def from_models_config(
+        cls,
+        env: Mapping[str, str],
+        config: ModelsConfig,
+        *,
+        extra_values: Sequence[str] = (),
+        allow_empty: bool = False,
+    ) -> SecretRedactor:
+        """Derive api_key_env list from a ModelsConfig.
+
+        In egress-proxy mode the provider keys are absent from ``env`` (they
+        live in the proxy), so pass ``allow_empty=True`` and seed ``extra_values``
+        with the deploy key / proxy token that DO live in this process.
+        """
         env_vars = [entry.api_key_env for role in config.roles.values() for entry in role.chain]
-        return cls(env, env_vars)
+        return cls(env, env_vars, extra_values=extra_values, allow_empty=allow_empty)
 
 
 __all__ = ["SecretRedactor", "SecretRedactorError"]
