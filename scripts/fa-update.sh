@@ -21,6 +21,9 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.fa.yml}"
 ENV_TEMPLATE="${ENV_TEMPLATE:-.env.fa.template}"
 ENV_FA="${ENV_FA:-.env.fa}"
 ENV_HASH_FILE="${ENV_HASH_FILE:-.env.fa.sha256}"
+# Secret isolation (ADR-12): API keys live here, outside the repo. A change to it
+# must also trigger a container recreate so the new key is read at startup.
+SECRETS_ENV="${SECRETS_ENV:-/srv/first-agent/secrets/fa.env}"
 
 SERVICE_NAME_OVERRIDE="${SERVICE_NAME_OVERRIDE:-}"
 
@@ -219,26 +222,28 @@ evaluate_changes() {
     NEEDS_RESTART=1
   fi
 
-  # Detect .env.fa changes (requires restart, not necessarily rebuild).
+  # Detect .env.fa AND secrets-file changes (require restart, not rebuild).
+  # Hash both: non-secret controls (.env.fa) and the API-keys file
+  # (/srv/first-agent/secrets/fa.env). A new key must be picked up at startup.
   # Persist the new hash only after deploy succeeds; otherwise a failed deploy
   # could hide an env change on the next run.
-  if [[ -f "${ENV_FA}" ]]; then
+  if [[ -f "${ENV_FA}" || -f "${SECRETS_ENV}" ]]; then
     local current_hash prev_hash
-    current_hash=$(sha256sum "${ENV_FA}" | awk '{print $1}')
+    current_hash=$(cat "${ENV_FA}" "${SECRETS_ENV}" 2>/dev/null | sha256sum | awk '{print $1}')
     ENV_HASH_VALUE="${current_hash}"
     ENV_HASH_PENDING=1
     if [[ -f "${ENV_HASH_FILE}" ]]; then
       prev_hash=$(cat "${ENV_HASH_FILE}" || true)
       if [[ "${current_hash}" != "${prev_hash}" ]]; then
         NEEDS_RESTART=1
-        echo "  → ${ENV_FA} changed (hash mismatch) → restart needed."
+        echo "  → env/secrets changed (hash mismatch) → restart needed."
       fi
     else
       NEEDS_RESTART=1
       echo "  → First run with hash tracking → restart needed."
     fi
   else
-    echo "  ⚠ ${ENV_FA} not found. Container will use defaults."
+    echo "  ⚠ Neither ${ENV_FA} nor ${SECRETS_ENV} found. Container will use defaults."
     NEEDS_RESTART=1
   fi
 

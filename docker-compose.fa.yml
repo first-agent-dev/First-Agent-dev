@@ -48,6 +48,12 @@ services:
       - FA_CONTAINER_NAME=first-agent
       # Use deploy key exclusively; ignore any other SSH keys in the container
       - GIT_SSH_COMMAND=ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts
+      # Secret isolation (ADR-12): API keys are NOT injected as container env.
+      # `fa` reads them from this read-only, out-of-/workspace file into a
+      # private in-memory store. FA_SECRETS_FILE carries only the PATH, not a key.
+      - FA_SECRETS_FILE=/run/secrets/fa.env
+    # NOTE: .env.fa here holds ONLY non-secret runtime controls (FA_AUTO_RUN,
+    # FA_TASK, FA_ROLE, ...). API keys live in /run/secrets/fa.env (see volumes).
     env_file:
       - path: ./.env.fa
         required: false
@@ -64,6 +70,13 @@ services:
         source: /srv/first-agent/state
         target: /home/fa/.fa
         read_only: false
+      # API keys (read-only) — secret-isolation (ADR-12). Mounted OUTSIDE
+      # /workspace so fs.read_file (sandbox path-containment) cannot reach it;
+      # read once at startup into a private in-memory store, never into env.
+      - type: bind
+        source: /srv/first-agent/secrets/fa.env
+        target: /run/secrets/fa.env
+        read_only: true
       # SSH deploy key (read-only) — cross-reference: mount at /run/secrets, not ~/.ssh
       - type: bind
         source: /srv/first-agent/secrets/github_deploy_key

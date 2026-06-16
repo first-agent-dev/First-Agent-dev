@@ -248,28 +248,62 @@ if [[ ! -d "$FA_DIR/repo/First-Agent-dev" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 10. .env.fa  +  models.yaml  (from repo templates, with inline fallback)
+# 10. Secrets (API keys) + .env.fa (non-secret controls) + models.yaml
 # ---------------------------------------------------------------------------
+# Secret isolation (ADR-12): API KEYS live OUTSIDE the repo / /workspace, in
+# $FA_DIR/secrets/fa.env (0600), mounted read-only at /run/secrets/fa.env and
+# read by `fa` into a private in-memory store (never into the container env, so
+# the agent's shell cannot sniff them).
+SECRETS_ENV="$FA_DIR/secrets/fa.env"
 ENV_FA="$FA_DIR/repo/First-Agent-dev/.env.fa"
-if [[ ! -f "$ENV_FA" ]]; then
+
+# Migration: older deployments kept API keys in the repo .env.fa. If that file
+# has uncommented API-key lines, move them to the secrets file (idempotent).
+if [[ ! -f "$SECRETS_ENV" && -f "$ENV_FA" ]] && grep -qE '^[[:space:]]*[A-Z0-9_]*API_KEY[[:space:]]*=' "$ENV_FA"; then
+    log_warn "Migrating API keys from repo .env.fa to $SECRETS_ENV (secret isolation)."
+    cp "$ENV_FA" "$ENV_FA.pre-secret-migration.bak"
+    # Extract uncommented *_API_KEY / *_TOKEN / *_SECRET lines into the secrets file.
+    grep -E '^[[:space:]]*[A-Z0-9_]+(API_KEY|_TOKEN|_SECRET)[[:space:]]*=' "$ENV_FA" > "$SECRETS_ENV" || true
+    chmod 600 "$SECRETS_ENV"
+    # Strip those secret lines from the repo .env.fa (keep non-secret FA_* controls).
+    sed -i -E '/^[[:space:]]*[A-Z0-9_]+(API_KEY|_TOKEN|_SECRET)[[:space:]]*=/d' "$ENV_FA"
+    log_warn "Migrated. Backup at $ENV_FA.pre-secret-migration.bak — delete it once verified."
+fi
+
+# Seed the secrets file from template if still absent.
+if [[ ! -f "$SECRETS_ENV" ]]; then
     TEMPLATE="$FA_DIR/repo/First-Agent-dev/.env.fa.template"
     if [[ -f "$TEMPLATE" ]]; then
-        cp "$TEMPLATE" "$ENV_FA"
-    else
-        # Inline fallback — should only hit on very old repo clones
-        cat > "$ENV_FA" <<'EOF'
-# First-Agent production environment variables
-# NEVER commit this file to git.
-# Uncomment and fill in the keys for providers you use.
-
+        # Keep only the API-key lines from the template (commented placeholders).
+        grep -E 'API_KEY|_TOKEN|_SECRET' "$TEMPLATE" > "$SECRETS_ENV" 2>/dev/null || true
+    fi
+    if [[ ! -s "$SECRETS_ENV" ]]; then
+        cat > "$SECRETS_ENV" <<'EOF'
+# First-Agent API KEYS — read-only mounted at /run/secrets/fa.env (ADR-12).
+# NEVER commit. Uncomment and fill in the providers you use.
 # OPENROUTER_API_KEY=sk-or-v1-CHANGEME
 # FIREWORKS_API_KEY=fw-CHANGEME
 # ANTHROPIC_API_KEY=sk-ant-CHANGEME
 # OPENAI_API_KEY=sk-CHANGEME
 EOF
     fi
+    chmod 600 "$SECRETS_ENV"
+    log_warn "API-keys file created at $SECRETS_ENV. EDIT IT (with: micro $SECRETS_ENV) before first run."
+fi
+
+# .env.fa now holds ONLY non-secret runtime controls (FA_AUTO_RUN, FA_TASK, ...).
+if [[ ! -f "$ENV_FA" ]]; then
+    cat > "$ENV_FA" <<'EOF'
+# First-Agent NON-SECRET runtime controls (loaded by Docker Compose env_file).
+# API KEYS do NOT go here — they live in /srv/first-agent/secrets/fa.env (ADR-12).
+# Optional one-shot auto-run controls:
+# FA_AUTO_RUN=0
+# FA_TASK=...
+# FA_ROLE=coder
+# FA_RUN_ID=my-run-id
+EOF
     chmod 600 "$ENV_FA"
-    log_warn "Template .env.fa created at $ENV_FA. EDIT IT to add your LLM API keys before first run."
+    log_warn "Created $ENV_FA for non-secret controls. API keys go in $SECRETS_ENV."
 fi
 
 MODELS_YAML="$FA_DIR/state/models.yaml"
