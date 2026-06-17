@@ -70,6 +70,31 @@ fi
 
 cd "$REPO_DIR"
 
+# ---------------------------------------------------------------------------
+# 0b. Re-sync the PROXY-ONLY routing config (R2-2) BEFORE building/starting.
+# ---------------------------------------------------------------------------
+# The egress proxy reads its routing from /srv/first-agent/proxy/models.yaml (a
+# dir the agent cannot write); the operator edits state/models.yaml. The setup
+# script seeds the proxy copy BEFORE the operator edits models.yaml, so without
+# this re-sync the proxy would start with the STALE example routing while the
+# agent computes route names from the freshly-edited config — the names diverge,
+# the proxy returns 404 unknown route, and `fa run` fails with chain_exhausted
+# even though keys are present and both containers report healthy. fa-update.sh
+# and fa-clean-rebuild.sh already do this sync; the first-deploy path did not.
+MODELS_YAML="/srv/first-agent/state/models.yaml"
+PROXY_MODELS="/srv/first-agent/proxy/models.yaml"
+if [[ -f "$MODELS_YAML" ]]; then
+    log_info "Syncing proxy routing config ($MODELS_YAML → $PROXY_MODELS)..."
+    sudo mkdir -p "$(dirname "$PROXY_MODELS")"
+    sudo cp "$MODELS_YAML" "$PROXY_MODELS"
+    sudo chown -R 1000:1000 "$(dirname "$PROXY_MODELS")"
+    sudo chmod 750 "$(dirname "$PROXY_MODELS")"
+    sudo chmod 640 "$PROXY_MODELS"
+else
+    log_warn "No $MODELS_YAML found — the proxy will have no routing config."
+    log_warn "Create it (e.g. from knowledge/examples/models.yaml.example) and re-run."
+fi
+
 # 0. Tailscale connectivity check (warn only, do not block)
 if command -v tailscale &>/dev/null; then
     if ! tailscale status 2>/dev/null | grep -q "Connected"; then
@@ -205,6 +230,24 @@ if docker exec first-agent sh -c 'printenv | grep -qiE "API_KEY|_TOKEN=|SECRET"'
     log_warn "  agent env contains an API_KEY/TOKEN/SECRET variable — investigate."
 else
     log_info "  OK: no key-shaped variable in the agent environment."
+fi
+
+# ---------------------------------------------------------------------------
+# 5c. LLM-path readiness probe (warn-only): a green agent (fa --version) does
+#     NOT prove the LLM tract works. Confirm the agent can reach the proxy and
+#     the proxy actually serves /healthz. This catches the "both healthy but
+#     chain_exhausted" class (stale routing copy, bad token) at deploy time
+#     instead of the operator's first `fa run`.
+# ---------------------------------------------------------------------------
+log_info "Checking the agent can reach the egress proxy..."
+if docker exec first-agent python3 -c \
+    "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://fa-egress-proxy:8080/healthz',timeout=5).status==200 else 1)" \
+    >/dev/null 2>&1; then
+    log_info "  OK: agent → fa-egress-proxy /healthz reachable."
+else
+    log_warn "  Agent could NOT reach the proxy at http://fa-egress-proxy:8080/healthz."
+    log_warn "  'fa run' will fail (chain_exhausted) until this is fixed. Check:"
+    log_warn "    docker compose -f docker-compose.fa.yml logs fa-egress-proxy"
 fi
 
 # ---------------------------------------------------------------------------

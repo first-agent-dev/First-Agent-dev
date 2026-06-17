@@ -93,3 +93,41 @@ def test_fa_service_is_a_valid_user_unit() -> None:
     unit = (_SCRIPTS / "fa.service").read_text(encoding="utf-8")
     assert "Requires=docker.service" not in unit
     assert "docker compose -f docker-compose.fa.yml up -d" in unit
+
+
+def test_post_setup_resyncs_proxy_routing_before_start() -> None:
+    """F-1: fa-post-setup.sh must re-sync state/models.yaml → proxy/models.yaml.
+
+    The first-deploy path seeds the proxy copy BEFORE the operator edits
+    models.yaml; without a re-sync the proxy serves the stale example routing,
+    the route names diverge from the agent's, and `fa run` fails with
+    chain_exhausted even though keys are present and both containers are healthy.
+    """
+    text = (_SCRIPTS / "fa-post-setup.sh").read_text(encoding="utf-8")
+    assert "/srv/first-agent/proxy/models.yaml" in text
+    # The sync must copy the operator source into the proxy-only copy.
+    assert re.search(r"cp\s+\"?\$\{?MODELS_YAML\}?\"?\s+\"?\$\{?PROXY_MODELS\}?\"?", text), (
+        "fa-post-setup.sh must copy state models.yaml into the proxy copy"
+    )
+
+
+def test_fa_update_targets_the_agent_service_not_first_listed() -> None:
+    """F-3: never pick the first `config --services` entry (order not guaranteed).
+
+    Alphabetically 'fa-egress-proxy' sorts before 'first-agent'; selecting the
+    proxy would point health/smoke/pytest at a container with no /workspace.
+    """
+    text = (_SCRIPTS / "fa-update.sh").read_text(encoding="utf-8")
+    assert "config --services 2>/dev/null | head -n1" not in text, (
+        "must not blindly take the first service from `config --services`"
+    )
+    # Explicitly resolves to the agent service.
+    assert "grep -qx 'first-agent'" in text
+
+
+def test_fa_update_probes_the_llm_path() -> None:
+    """F-4: update must verify the egress proxy / agent→proxy reachability."""
+    text = (_SCRIPTS / "fa-update.sh").read_text(encoding="utf-8")
+    assert "fa-egress-proxy" in text
+    assert "/healthz" in text
+    assert "check_proxy_path" in text
