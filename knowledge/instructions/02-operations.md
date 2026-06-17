@@ -329,22 +329,60 @@ docker compose -f docker-compose.fa.yml up -d
 
 ## 6. Управление сервисом и контейнером
 
-Автозапуском контейнера при загрузке управляет **systemd user service**
-`fa.service`. Это и есть «правильный» способ останавливать и запускать агента в
-проде (а не голым `docker compose`), потому что сервис переживает перезагрузки.
+Стек поднимается **`docker compose`**, а **systemd** добавляет автозапуск при
+перезагрузке. Запомните разделение:
+
+- **Поднять/обновить стек прямо сейчас** → `docker compose ... up -d` (основной
+  способ; идемпотентен, не зависит от user-сессии / D-Bus / linger).
+- **Автозапуск при ребуте** → один раз настроить `fa.service` (ниже).
+
+> Почему compose — основной: контейнер живёт постоянно в режиме ожидания
+> (`restart: unless-stopped`), а задачи запускаются в него через
+> `docker compose exec` (а в будущем — через WebUI-бэкенд). `docker compose
+> up -d` срабатывает всегда; `systemctl --user start` молча НЕ поднимет стек,
+> если user-сервис не загружен (нет linger / не было `daemon-reload`) — частая
+> засада.
+
+**Поднять стек (всегда работает):**
+
+```bash
+cd /srv/first-agent/repo/First-Agent-dev
+docker compose -f docker-compose.fa.yml up -d
+docker compose -f docker-compose.fa.yml ps   # дождитесь: ОБА контейнера healthy
+                                             # (сначала fa-egress-proxy, затем first-agent)
+```
+
+**Первичная настройка автозапуска (один раз, от пользователя `fa`):**
+`setup-fa-desktop.sh` устанавливает юнит, но НЕ включает его (и предупреждает,
+если не было user-сессии для `daemon-reload`). Завершите вручную:
+
+```bash
+loginctl enable-linger fa                # чтобы user-сервис жил без активной сессии
+systemctl --user daemon-reload
+systemctl --user enable fa.service       # автозапуск при загрузке
+systemctl --user start  fa.service       # поднять сейчас
+systemctl --user status fa.service       # ожидаем: active (exited), RemainAfterExit
+```
+
+> Если `systemctl --user` отвечает `Failed to connect to bus` — нет активной
+> user-сессии: выполните `loginctl enable-linger fa`, затем зайдите по SSH
+> заново как `fa` (полноценный логин) и повторите. До настройки автозапуска
+> просто пользуйтесь `docker compose up -d`.
+
+**Повседневное управление сервисом** (после настройки автозапуска):
 
 ```bash
 systemctl --user status  fa.service   # текущее состояние
-systemctl --user restart fa.service   # перезапустить
+systemctl --user restart fa.service   # перезапустить (down + up -d; перечитает .env.fa)
 systemctl --user stop    fa.service   # остановить
 systemctl --user start   fa.service   # запустить
 ```
 
-> `--user` означает «сервис от вашего пользователя», а не системный. Именно так
-> он и установлен. После правки `.env.fa` достаточно `systemctl --user restart
-> fa.service` — этот сервис при перезапуске выполняет `down` + `up -d`, то есть
-> пересоздаёт контейнер и перечитывает `.env.fa`. (Не путайте с `docker compose
-> restart`, который окружение **не** перечитывает — см. раздел 7.3.)
+> После правки `.env.fa` достаточно `systemctl --user restart fa.service` —
+> сервис выполняет `down` + `up -d`, пересоздаёт контейнер и перечитывает
+> окружение. (Не путайте с `docker compose restart`, который окружение **не**
+> перечитывает — см. раздел 7.3.) Эквивалент без systemd:
+> `docker compose -f docker-compose.fa.yml up -d --force-recreate`.
 
 Прямая работа с контейнером (для диагностики):
 
@@ -460,14 +498,31 @@ docker exec fa-egress-proxy sh -c 'test -s /run/secrets/fa.env && echo "ключ
 
 ## 7. Запуск задач агента
 
-Контейнер по умолчанию — это **готовая среда**, а не вечно работающий агент.
-Есть два способа дать ему работу.
+Контейнер по умолчанию — это **готовая среда** (режим ожидания), а не вечно
+работающий агент. Задачи запускаются командой `fa run` **внутри уже поднятого**
+контейнера.
+
+> **Сначала убедитесь, что стек запущен.** `docker compose exec` работает только
+> с РАБОТАЮЩИМ контейнером и сам его не поднимает. Если видите
+> `service "first-agent" is not running` — стек не запущен (см. §6 «Поднять
+> стек» или troubleshooting в §10):
+>
+> ```bash
+> cd /srv/first-agent/repo/First-Agent-dev
+> docker compose -f docker-compose.fa.yml up -d
+> docker compose -f docker-compose.fa.yml ps   # дождитесь: оба healthy
+> ```
 
 ### 7.1. Ручной запуск (рекомендуется для интерактивной работы)
 
 ```bash
 cd /srv/first-agent/repo/First-Agent-dev
+# одноразовый вывод (для скриптов/CI):
 docker compose -f docker-compose.fa.yml exec -T first-agent \
+    fa run --role coder --workspace /workspace --task "Опишите задачу здесь"
+
+# интерактивно (живой TTY) — уберите -T:
+docker compose -f docker-compose.fa.yml exec first-agent \
     fa run --role coder --workspace /workspace --task "Опишите задачу здесь"
 ```
 
@@ -604,6 +659,24 @@ Tailscale** (вашу частную сеть), а не из открытого 
 ---
 
 ## 10. Диагностика и типичные проблемы
+
+### `service "first-agent" is not running` при `docker compose exec` / `fa run`
+
+Самая частая первая ошибка. Значит **стек не запущен** — `exec` требует уже
+работающий контейнер и сам его не поднимает.
+
+```bash
+cd /srv/first-agent/repo/First-Agent-dev
+docker compose -f docker-compose.fa.yml ps        # пусто/Exited → стек не поднят
+docker compose -f docker-compose.fa.yml up -d     # поднять (основной способ)
+docker compose -f docker-compose.fa.yml ps        # дождитесь: оба healthy
+```
+
+> Подвох: `systemctl --user start fa.service` может завершиться БЕЗ ошибки, но
+> ничего не поднять, если user-сервис не загружен (нет linger / не было
+> `daemon-reload` — см. предупреждения `setup-fa-desktop.sh`). Поэтому для
+> «просто подними стек» используйте `docker compose up -d`; systemd настраивайте
+> один раз для автозапуска при ребуте (§6).
 
 ### Контейнер не становится healthy
 
