@@ -84,3 +84,28 @@ jobs:
       - run: uv sync --frozen --extra dev
       - name: Run pyrefly (advisory type-checking signal)
         run: uv run pyrefly check
+
+  # Build the runtime image and smoke-test it AS THE NON-ROOT RUNTIME USER.
+  # This single check catches the whole class of "image builds but won't start"
+  # failures — e.g. an interpreter the non-root user can't execute, or HOME not
+  # resolving on the read-only rootfs — before they reach a deploy.
+  container-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the FA image
+        run: docker build -f Dockerfile.fa -t fa-image:ci .
+      - name: Smoke-test as the runtime user (numeric 1000:1000, like compose)
+        run: |
+          set -euo pipefail
+          # `fa --version` exercises the full import chain + console script + the
+          # venv interpreter, exactly as the compose healthcheck does.
+          docker run --rm --user 1000:1000 --read-only \
+            --tmpfs /tmp fa-image:ci fa --version
+      - name: Smoke-test the egress-proxy subcommand starts (no network/keys)
+        run: |
+          set -euo pipefail
+          # --help must run as the runtime user (proves the subcommand + imports
+          # load under the same constraints the proxy container uses).
+          docker run --rm --user 1000:1000 --read-only --tmpfs /tmp \
+            fa-image:ci fa egress-proxy --help >/dev/null

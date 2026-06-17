@@ -52,6 +52,18 @@ def test_build_route_table_dedupes_and_detects_conflict() -> None:
         )
 
 
+def test_build_route_table_rejects_non_https_upstream() -> None:
+    """R2-2: a tampered models.yaml must not redirect the key-injecting proxy to
+    an http:// or attacker host. https required (http only for localhost)."""
+    with pytest.raises(ProxyConfigError):
+        build_route_table([("p", "s", "http://attacker.example/v1", "K")])
+    with pytest.raises(ProxyConfigError):
+        build_route_table([("p", "s", "ftp://x/v1", "K")])
+    # localhost gateway over http is tolerated (matches provider-config policy).
+    t = build_route_table([("p", "s", "http://localhost:8000/v1", "K")])
+    assert len(t) == 1
+
+
 def test_inject_headers_strips_caller_auth_openai() -> None:
     t = build_route_table([("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY")])
     route = t.get("openrouter-s")

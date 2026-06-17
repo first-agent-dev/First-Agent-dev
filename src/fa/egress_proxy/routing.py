@@ -27,6 +27,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 __all__ = [
     "ANTHROPIC_API_VERSION",
@@ -42,6 +43,11 @@ ANTHROPIC_API_VERSION = "2023-06-01"
 
 # Providers whose auth is ``x-api-key`` rather than ``Authorization: Bearer``.
 _XAPIKEY_PROVIDERS = frozenset({"anthropic"})
+
+# Hosts for which http:// is tolerated (a local gateway), matching the provider
+# config validator. Everything else MUST be https:// so the injected key is not
+# sent in clear or redirected to an attacker.
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0"})  # noqa: S104
 
 _NAME_SAFE_RE = re.compile(r"[^a-z0-9]+")
 
@@ -100,6 +106,19 @@ def build_route_table(chain_entries: list[tuple[str, str, str, str]]) -> RouteTa
     routes: dict[str, ProxyRoute] = {}
     for provider, slug, base_url, api_key_env in chain_entries:
         name = route_name_for(provider, slug)
+        # Belt-and-braces (R2-2): refuse to build a route whose upstream is not
+        # https (the proxy injects the real key into the request, so an http or
+        # otherwise-rewritten base_url would send the key in clear / to an
+        # attacker). The proxy's models.yaml is mounted from a proxy-only dir the
+        # agent cannot write, but this is a second, independent guard.
+        parsed = urlparse(base_url)
+        _https = parsed.scheme == "https" and bool(parsed.hostname)
+        _local_http = parsed.scheme == "http" and parsed.hostname in _LOCAL_HOSTS
+        if not (_https or _local_http):
+            raise ProxyConfigError(
+                f"route {name!r}: upstream base_url must be https:// (or "
+                f"http://localhost); got {base_url!r}"
+            )
         existing = routes.get(name)
         candidate = ProxyRoute(
             name=name,

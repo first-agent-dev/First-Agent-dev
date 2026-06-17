@@ -40,6 +40,7 @@
 | **Аккаунт GitHub** | Доступ к репозиторию для deploy-ключей и branch protection |
 | **Backblaze B2** | Бесплатный тариф (10 ГБ) для офсайт-бэкапа |
 | **Телефон** | Приложение Tailscale (iOS/Android) для удалённой проверки |
+| **Ваттметр / умная розетка** | Опционально — измерить потребление |
 
 ---
 
@@ -320,11 +321,14 @@ bash scripts/fa-post-setup.sh
 **Применённое усиление (per cross-reference):**
 
 - `read_only: true` — корневая ФС только для чтения.
-- `cap_drop: [ALL]` — сняты все Linux-capabilities.
-- `cap_add: [CHOWN, SETGID, SETUID]` — только нужное для uv/just.
+- `cap_drop: [ALL]` — сняты все Linux-capabilities; **никаких `cap_add`** в
+  рантайме (uv/just нужны только при сборке, под root, не во время работы).
 - `security_opt: [no-new-privileges:true]` — контейнер не может повысить привилегии.
 - `pids: 512` в `deploy.resources.limits` — защита от fork-бомбы (Compose схема v3).
-- `user: "1000:1000"` — запуск не от root.
+- `user: "1000:1000"` — запуск не от root. **Важно:** файлы на хосте в
+  `/srv/first-agent/{state,secrets}` должны принадлежать **uid 1000** (это делает
+  `setup-fa-desktop.sh`/`fa-clean-rebuild.sh`); иначе контейнер не сможет читать
+  ключи/писать state.
 - Лимиты ресурсов: 8 ГБ RAM, 8 CPU.
 - LLM-ключи смонтированы read-only **только в `fa-egress-proxy`**; в контейнере
   агента их нет ни в файле, ни в env (ADR-12 Option C). Агент получает лишь

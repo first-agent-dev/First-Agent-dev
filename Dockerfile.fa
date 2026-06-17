@@ -9,6 +9,11 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV UV_CACHE_DIR=/tmp/uv-cache
 ENV PYTHONPATH=/workspace/src
+# Authoritative HOME for the runtime user. docker-compose runs the container with
+# the NUMERIC `user: "1000:1000"`, for which Docker does NOT reliably derive HOME
+# from /etc/passwd (it can default to "/"). The agent uses Path.home() for state
+# (e.g. ~/.fa/state/...), so pin HOME explicitly to the fa user's home.
+ENV HOME=/home/fa
 ENV PATH=/opt/fa-venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Install system dependencies
@@ -41,23 +46,34 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 # Install just (task runner)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
-# Install Python 3.13 + symlink globally (tmpfs wipes ~/.local at runtime)
-RUN uv python install 3.13 && \
+# Install Python 3.13 into a WORLD-READABLE shared location (not /root/.local,
+# which is mode 700 and unreadable by the non-root 'fa' user at runtime — that
+# caused `bad interpreter: Permission denied` when the venv's python3 symlink
+# pointed into root's home). UV_PYTHON_INSTALL_DIR puts it under /opt so any uid
+# can traverse + execute it.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
+RUN mkdir -p /opt/uv-python && \
+    uv python install 3.13 && \
     PYTHON_BIN=$(uv python find 3.13) && \
     [ -n "$PYTHON_BIN" ] && \
     ln -sf "$PYTHON_BIN" /usr/local/bin/python3.13 && \
     ln -sf python3.13 /usr/local/bin/python3 && \
-    ln -sf python3.13 /usr/local/bin/python
+    ln -sf python3.13 /usr/local/bin/python && \
+    chmod -R a+rX /opt/uv-python /usr/local/bin/python3.13
 
 # Install FA runtime dependencies into an image-owned venv. The live
 # bind-mounted /workspace/src still wins at runtime via PYTHONPATH, so
 # normal source edits do not require an image rebuild; dependency changes do.
 COPY pyproject.toml uv.lock README.md /opt/first-agent/
 COPY src /opt/first-agent/src
+# After building the image-owned venv, make it world-readable/executable so the
+# non-root 'fa' user can run /opt/fa-venv/bin/python3 at runtime (defends against
+# any root-only default perms).
 RUN cd /opt/first-agent && \
     uv venv /opt/fa-venv --python /usr/local/bin/python3.13 && \
     UV_PROJECT_ENVIRONMENT=/opt/fa-venv uv sync --frozen --no-dev && \
-    rm -rf /tmp/uv-cache
+    rm -rf /tmp/uv-cache && \
+    chmod -R a+rX /opt/fa-venv /opt/first-agent
 
 # Container entrypoint: command override, explicit one-shot auto-run,
 # or default inspectable stand-by mode.

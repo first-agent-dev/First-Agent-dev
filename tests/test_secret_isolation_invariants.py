@@ -48,9 +48,23 @@ def test_compose_proxy_service_holds_the_keys_and_no_workspace() -> None:
     }
     assert "/run/secrets/fa.env" in targets, "proxy must mount the LLM keys"
     assert targets["/run/secrets/fa.env"].get("read_only") is True
-    # If the proxy mounts /workspace at all, it must be read-only (no agent rw).
-    if "/workspace" in targets:
-        assert targets["/workspace"].get("read_only") is True
+    # R2-1: the proxy must NOT mount /workspace at all. Even read-only, the host
+    # files are the same ones the agent mounts RW, and the entrypoint would
+    # prepend /workspace/src to PYTHONPATH → the proxy would run agent-writable
+    # code in the key-holding container.
+    assert "/workspace" not in targets, (
+        "proxy must NOT mount /workspace — it must run immutable image code (R2-1)"
+    )
+    # R2-1: and must not be told to import from /workspace/src.
+    proxy_env = proxy.get("environment", [])
+    assert not any("PYTHONPATH=/workspace" in str(e) for e in proxy_env), (
+        "proxy must not set PYTHONPATH=/workspace/src (R2-1)"
+    )
+    # R2-2: the proxy's routing config must come from a dir the agent does NOT
+    # mount read-write (state is agent-RW), so the agent cannot redirect it.
+    assert "/home/fa/.fa" not in targets, (
+        "proxy must not read models.yaml from the agent-writable state dir (R2-2)"
+    )
     # The agent depends on the proxy being healthy.
     assert doc["services"]["first-agent"]["depends_on"]["fa-egress-proxy"][
         "condition"

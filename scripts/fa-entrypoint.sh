@@ -143,13 +143,18 @@ _on_term() {
   exit 143
 }
 
-# Live bind-mounted source wins over the image copy. The image's venv still
-# supplies dependencies and console scripts.
-export PYTHONPATH="${WORKSPACE%/}/src${PYTHONPATH:+:$PYTHONPATH}"
+# Live bind-mounted source wins over the image copy — but ONLY when /workspace
+# actually holds the source (the agent container). The egress-proxy container
+# deliberately has NO /workspace mount so it runs the IMMUTABLE image code from
+# /opt/fa-venv; never prepend a non-existent (or, worse, agent-writable) path.
+# Guard with a real file check so a stray empty /workspace can't shadow the image.
+if [[ -f "${WORKSPACE%/}/src/fa/__init__.py" ]]; then
+  export PYTHONPATH="${WORKSPACE%/}/src${PYTHONPATH:+:$PYTHONPATH}"
+fi
 if [[ -d /opt/fa-venv/bin ]]; then
   export PATH="/opt/fa-venv/bin:$PATH"
 fi
-log "PYTHONPATH=$PYTHONPATH"
+log "PYTHONPATH=${PYTHONPATH:-<image-default>}"
 
 # Explicit docker command overrides always win, even if FA_AUTO_RUN is set.
 if [[ $# -gt 0 ]]; then

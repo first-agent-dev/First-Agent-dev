@@ -29,10 +29,11 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      - SETGID
-      - SETUID
+    # No cap_add: the agent runs as a single non-root uid and performs only file
+    # I/O + git as that uid. CHOWN/SETUID/SETGID were build-time needs (uv/just
+    # run as root during build), never runtime — granting them at runtime widens
+    # the blast radius for no benefit. Re-add a specific cap only if a concrete
+    # runtime failure proves it is required.
     user: "1000:1000"
 
     # Environment
@@ -40,14 +41,17 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
       - UV_CACHE_DIR=/tmp/uv-cache
-      - PYTHONPATH=/workspace/src
+      # PYTHONPATH is set by fa-entrypoint.sh (it prepends /workspace/src); do not
+      # also set it here or it ends up duplicated (/workspace/src:/workspace/src).
       # Default is inspectable stand-by. For a deliberate one-shot
       # startup run, set FA_AUTO_RUN=1 plus FA_TASK or FA_TASK_FILE
       # in .env.fa (or pass them explicitly with docker compose run -e).
       - FA_WORKSPACE=/workspace
       - FA_CONTAINER_NAME=first-agent
-      # Use deploy key exclusively; ignore any other SSH keys in the container
-      - GIT_SSH_COMMAND=ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts
+      # Use deploy key exclusively; ignore any other SSH keys in the container.
+      # BatchMode=yes + StrictHostKeyChecking=accept-new prevent interactive
+      # prompts that would HANG the headless container on a host-key change.
+      - GIT_SSH_COMMAND=ssh -i /run/secrets/git_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/secrets/known_hosts -o StrictHostKeyChecking=accept-new -o BatchMode=yes
       # Secret isolation (ADR-12, Option C — egress-injection proxy):
       # The agent container holds NO LLM provider keys. It reaches providers
       # ONLY through the fa-egress-proxy service, which injects the real key
@@ -149,12 +153,17 @@ services:
     container_name: fa-egress-proxy
     hostname: fa-egress-proxy
     init: true
+    # Self-heal transient faults on a 24/7 box (slow boot, brief config edit).
+    # The earlier infinite crash-loop was a SYMPTOM of an image build bug (the
+    # interpreter was unrunnable as non-root); with that fixed a correctly-built
+    # image starts cleanly, so unless-stopped is the right unattended policy.
+    # The healthcheck still reports `unhealthy` if the proxy can't serve.
     restart: unless-stopped
     command:
       - fa
       - egress-proxy
       - --models
-      - /home/fa/.fa/models.yaml
+      - /etc/fa/models.yaml
       - --secrets
       - /run/secrets/fa.env
       - --token-file
@@ -182,7 +191,8 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
-      - PYTHONPATH=/workspace/src
+      # NO PYTHONPATH=/workspace/src here: the proxy must run the IMMUTABLE image
+      # code from /opt/fa-venv, never agent-writable /workspace/src. (R2-1)
 
     volumes:
       # LLM provider keys (read-only) — ONLY mounted here, never in the agent.
@@ -195,17 +205,14 @@ services:
         source: /srv/first-agent/secrets/fa_proxy_token
         target: /run/secrets/fa_proxy_token
         read_only: true
-      # models.yaml (read-only) — routing source (non-secret). Reuse state dir
-      # but the proxy has NO write access and NO /workspace.
+      # Routing config (read-only) from a PROXY-ONLY dir the agent does NOT
+      # mount — so a compromised agent cannot rewrite base_url to redirect the
+      # proxy (with the real key) at an attacker host. (R2-2)
       - type: bind
-        source: /srv/first-agent/state
-        target: /home/fa/.fa
+        source: /srv/first-agent/proxy/models.yaml
+        target: /etc/fa/models.yaml
         read_only: true
-      # Source code (read-only) so `fa` is importable; NOT the agent workspace.
-      - type: bind
-        source: /srv/first-agent/repo/First-Agent-dev
-        target: /workspace
-        read_only: true
+      # NO /workspace mount: the proxy runs immutable image code only. (R2-1)
       - type: tmpfs
         target: /tmp
         tmpfs:
