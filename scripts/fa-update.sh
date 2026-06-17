@@ -93,9 +93,23 @@ get_service_name() {
     echo "${SERVICE_NAME_OVERRIDE}"
     return
   fi
-  local svc
-  svc=$(docker compose -f "${COMPOSE_FILE}" config --services 2>/dev/null | head -n1 || true)
-  echo "${svc:-first-agent}"
+  # Pin to the agent service explicitly. We must NOT pick the first service from
+  # `docker compose config --services`: that output's order is not guaranteed by
+  # the compose spec and is sorted in several Docker Compose versions, where
+  # 'fa-egress-proxy' (e) sorts before 'first-agent' (i). Selecting the proxy
+  # would make health waits, smoke tests, and `cd /workspace && pytest` all
+  # target the proxy container — which deliberately has NO /workspace mount,
+  # producing confusing deploy failures while the agent is actually healthy.
+  # The agent service name is stable (container_name/hostname in compose).
+  local services fallback
+  services=$(docker compose -f "${COMPOSE_FILE}" config --services 2>/dev/null || true)
+  if grep -qx 'first-agent' <<<"${services}"; then
+    echo "first-agent"
+    return
+  fi
+  # Fall back to the first non-proxy service if the canonical name ever changes.
+  fallback=$(grep -v '^fa-egress-proxy$' <<<"${services}" | head -n1 || true)
+  echo "${fallback:-first-agent}"
 }
 
 compose_container_id() {
@@ -410,6 +424,45 @@ wait_for_health() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+#  Step 5b — Egress-proxy health + LLM-path probe
+# ═══════════════════════════════════════════════════════════════
+# A healthy agent (fa --version) does NOT prove the LLM tract works: keys live
+# in the proxy, routing is a separate copy, and the agent reaches providers only
+# THROUGH the proxy. Verify (a) the proxy container is healthy and (b) the agent
+# can actually reach it, so a broken update (stale routing copy, bad token,
+# crashed proxy) is caught here instead of on the operator's first `fa run`
+# (where it shows up as the opaque chain_exhausted). Warn-only: it never fails
+# the update — the agent itself may be fine and the cause operator-fixable.
+check_proxy_path() {
+  echo ""
+  echo "╔═══════════════════════════════════════════════════╗"
+  echo "║  STEP 5b — Egress-proxy health + LLM-path probe  ║"
+  echo "╚═══════════════════════════════════════════════════╝"
+
+  local pid phealth
+  pid=$(compose_container_id "fa-egress-proxy")
+  if [[ -z "${pid}" ]]; then
+    echo "  ⚠ No fa-egress-proxy container found — the agent cannot call any LLM."
+    return
+  fi
+  phealth=$(health_status "${pid}")
+  case "${phealth}" in
+    healthy | no-healthcheck) echo "  ✓ fa-egress-proxy status=${phealth}." ;;
+    *) echo "  ⚠ fa-egress-proxy not healthy (status=${phealth}); 'fa run' will fail." ;;
+  esac
+
+  # Agent → proxy reachability (routing-independent: just /healthz).
+  if docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" \
+      python3 -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://fa-egress-proxy:8080/healthz',timeout=5).status==200 else 1)" \
+      >/dev/null 2>&1; then
+    echo "  ✓ Agent can reach the proxy at http://fa-egress-proxy:8080/healthz."
+  else
+    echo "  ⚠ Agent could NOT reach the proxy. 'fa run' will fail (chain_exhausted)."
+    echo "    Logs: docker compose -f ${COMPOSE_FILE} logs fa-egress-proxy"
+  fi
+}
+
+# ═══════════════════════════════════════════════════════════════
 #  Step 6 — Smoke tests
 # ═══════════════════════════════════════════════════════════════
 
@@ -561,6 +614,7 @@ main() {
   validate_env
   build_and_deploy
   wait_for_health
+  check_proxy_path
   smoke_tests
   run_tests
   print_usage_info
