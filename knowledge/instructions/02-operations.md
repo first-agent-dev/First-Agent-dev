@@ -372,26 +372,39 @@ docker system prune -f
 получить заведомо чистый стек. **Данные и ключи при этом сохраняются** — они
 живут в host bind-mount'ах `/srv/first-agent/{state,secrets}`, а не в контейнерах.
 
-**Способ А — скрипт (рекомендуется).** Идемпотентный, делает бэкап, сносит
-контейнеры, пересобирает `--no-cache`, поднимает оба контейнера и проверяет
-изоляцию секретов:
+**Способ А — скрипт (рекомендуется).** Идемпотентный: **обновляет локальный репо
+до `main`** (`git pull --ff-only` и перезапускает себя обновлённой версией),
+делает бэкап, сносит контейнеры, пересобирает `--no-cache`, поднимает оба
+контейнера и проверяет изоляцию секретов:
 
 ```bash
-# Снести контейнеры + образы, пересобрать с нуля. Ключи и models.yaml остаются.
+# Снести контейнеры + образы, обновить репо до main, пересобрать с нуля.
+# Ключи и models.yaml остаются.
 /srv/first-agent/repo/First-Agent-dev/scripts/fa-clean-rebuild.sh
 
 # Дополнительно сбросить state (models.yaml/config.yaml/историю) — КЛЮЧИ остаются.
-# setup-fa-desktop.sh пересоздаст шаблон models.yaml, его нужно будет заполнить.
+# Скрипт пересоздаст шаблон models.yaml, его нужно будет заполнить.
 WIPE_STATE=1 /srv/first-agent/repo/First-Agent-dev/scripts/fa-clean-rebuild.sh
 ```
+
+> **Bootstrap на старом сервере:** если на машине ещё СТАРАЯ версия репо (этого
+> скрипта/шага обновления там нет) — один раз обновите репо вручную, потом
+> запустите скрипт:
+>
+> ```bash
+> cd /srv/first-agent/repo/First-Agent-dev && git pull --ff-only origin main
+> scripts/fa-clean-rebuild.sh
+> ```
 
 > Флаги: `WIPE_STATE=1` — сбросить весь `state/` (ключи в `secrets/` не трогаются);
 > `PRUNE=1` — удалить все неиспользуемые образы и кэш сборки; `NO_BACKUP=1` —
 > пропустить бэкап (не рекомендуется); `ASSUME_YES=1` — не спрашивать
-> подтверждение для разрушающих флагов (нужно при запуске без TTY/из cron).
-> Скрипт **никогда** не удаляет `secrets/` и не запускает `setup-fa-desktop.sh`
-> (тот переустанавливает весь хост) — только пересоздаёт контейнеры и, при
-> `WIPE_STATE=1`, шаблон `models.yaml`.
+> подтверждение для разрушающих флагов (нужно без TTY/из cron); `SKIP_UPDATE=1` —
+> не трогать репо (использовать как есть); `AUTO_STASH=1` — отложить локальные
+> правки перед `git pull` (иначе скрипт остановится). Скрипт **никогда** не
+> удаляет `secrets/` и **не** запускает `setup-fa-desktop.sh` (тот
+> переустанавливает весь хост) — только обновляет репо, пересоздаёт контейнеры
+> и, при `WIPE_STATE=1`, шаблон `models.yaml`.
 
 **Способ Б — вручную** (если хотите контролировать каждый шаг):
 
@@ -401,22 +414,30 @@ cd /srv/first-agent/repo/First-Agent-dev
 # 0) бэкап (на всякий случай)
 TS=$(date +%Y%m%d-%H%M%S); sudo cp -a /srv/first-agent/state ~/fa-bk-$TS-state; sudo cp -a /srv/first-agent/secrets ~/fa-bk-$TS-secrets
 
-# 1) остановить сервис и снести контейнеры
+# 1) обновить репо до main (чистая установка = последняя версия кода/compose)
+git fetch origin && git switch main && git pull --ff-only origin main
+
+# 2) остановить сервис и снести контейнеры
 systemctl --user stop fa.service
 docker compose -f docker-compose.fa.yml down --remove-orphans
 
-# 2) (опц.) сбросить state — КЛЮЧИ В secrets/ НЕ ТРОГАЕМ
+# 3) (опц.) сбросить state — КЛЮЧИ В secrets/ НЕ ТРОГАЕМ
 sudo rm -rf /srv/first-agent/state/*
 
-# 3) догенерировать proxy-токен + шаблоны state (идемпотентно; ключи сохраняются)
-bash scripts/setup-fa-desktop.sh
+# 4) догенерировать proxy-токен, если его нет (ключи сохраняются)
+test -s /srv/first-agent/secrets/fa_proxy_token || \
+  { head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=' | \
+    sudo tee /srv/first-agent/secrets/fa_proxy_token >/dev/null; \
+    sudo chmod 600 /srv/first-agent/secrets/fa_proxy_token; }
+# (если сбрасывали state — создайте models.yaml из примера:)
+# sudo cp knowledge/examples/models.yaml.example /srv/first-agent/state/models.yaml
 
-# 4) чистая пересборка и подъём двух контейнеров
+# 5) чистая пересборка и подъём двух контейнеров
 docker compose -f docker-compose.fa.yml build --no-cache
 docker compose -f docker-compose.fa.yml up -d
 docker compose -f docker-compose.fa.yml ps        # ждём fa-egress-proxy = healthy, затем first-agent
 
-# 5) вернуть автозапуск
+# 6) вернуть автозапуск
 systemctl --user start fa.service
 ```
 
