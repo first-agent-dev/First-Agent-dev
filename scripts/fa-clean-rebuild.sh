@@ -208,7 +208,7 @@ if [[ "${WIPE_STATE}" == "1" ]]; then
 fi
 
 # Recreate a models.yaml template if it is now missing (e.g. after WIPE_STATE),
-# owned by the host user so the container (uid of FA_USER) can read/write it.
+# owned by uid 1000 so the container (which runs as numeric 1000:1000) can read/write it.
 MODELS_YAML="${FA_DIR}/state/models.yaml"
 if [[ ! -f "${MODELS_YAML}" ]]; then
     log_warn "No models.yaml — creating a template at ${MODELS_YAML} (EDIT IT to set providers)."
@@ -229,7 +229,19 @@ EOF
     fi
 fi
 # Ensure state is owned by the host user (container runs as that uid).
-sudo chown -R "${FA_USER}:${FA_USER}" "${FA_DIR}/state" 2>/dev/null || true
+sudo chown -R 1000:1000 "${FA_DIR}/state" 2>/dev/null || true
+
+# Re-sync the PROXY-ONLY routing config (R2-2). The proxy reads models.yaml from
+# /srv/first-agent/proxy (which the agent does NOT mount), so a compromised agent
+# cannot redirect the key-injecting proxy. Refresh it from the operator's
+# models.yaml on every rebuild.
+PROXY_DIR="${FA_DIR}/proxy"
+sudo mkdir -p "${PROXY_DIR}"
+sudo cp "${MODELS_YAML}" "${PROXY_DIR}/models.yaml"
+sudo chown -R 1000:1000 "${PROXY_DIR}"
+sudo chmod 750 "${PROXY_DIR}"
+sudo chmod 640 "${PROXY_DIR}/models.yaml"
+log_info "Synced proxy routing config → ${PROXY_DIR}/models.yaml"
 
 # ───────────────────────────────────────────────────────────────
 # 6. Secrets: keep keys; ensure the fa->proxy token exists
@@ -245,8 +257,11 @@ if [[ ! -s "${TOKEN_FILE}" ]]; then
     sudo mkdir -p "${FA_DIR}/secrets"
     head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' | sudo tee "${TOKEN_FILE}" >/dev/null
     sudo chmod 600 "${TOKEN_FILE}"
-    sudo chown "${FA_USER}:${FA_USER}" "${TOKEN_FILE}" 2>/dev/null || true
 fi
+# Ensure ALL of secrets/ is owned by the container uid (the proxy reads fa.env +
+# token; the agent reads the deploy key). A stale root-owned file here is the
+# classic "proxy unhealthy / git push fails" cause after a manual wipe.
+sudo chown -R 1000:1000 "${FA_DIR}/secrets" 2>/dev/null || true
 # Hard requirement: the proxy rejects the agent without this token.
 if [[ ! -s "${TOKEN_FILE}" ]]; then
     log_error "Could not create ${TOKEN_FILE}. The proxy would reject the agent. Aborting."

@@ -235,7 +235,18 @@ log_warn "Then authenticate with your Tailscale account."
 # ---------------------------------------------------------------------------
 log_info "Creating FA workspace at $FA_DIR..."
 sudo mkdir -p "$FA_DIR"/{repo,state,secrets,backup,scripts}
-sudo chown -R "$FA_USER:$FA_USER" "$FA_DIR"
+# Ownership MUST match the container's runtime uid:gid. The container runs as the
+# hardcoded numeric 1000:1000 (Dockerfile `useradd -u 1000 fa` +
+# docker-compose `user: "1000:1000"`). Chowning to the host *username* only works
+# when that user happens to be uid 1000 — on a host where the operator is a
+# different uid, the bind-mounted state/secrets would be unreadable by the
+# container (proxy can't read keys, agent can't write state). Pin to 1000:1000.
+FA_UID="$(id -u "$FA_USER")"
+if [[ "$FA_UID" != "1000" ]]; then
+    log_warn "Host user '$FA_USER' is uid $FA_UID, but the container runs as uid 1000."
+    log_warn "Chowning $FA_DIR to 1000:1000 so the container can access bind mounts."
+fi
+sudo chown -R 1000:1000 "$FA_DIR"
 sudo chmod 700 "$FA_DIR/state"
 sudo chmod 700 "$FA_DIR/secrets"
 
@@ -339,6 +350,18 @@ EOF
     fi
     log_warn "Template models.yaml created at $MODELS_YAML. EDIT IT to configure provider chains."
 fi
+
+# Proxy-only copy of models.yaml (R2-2): the egress proxy reads its routing from
+# a directory the AGENT cannot write, so a compromised agent cannot rewrite a
+# base_url to redirect the key-injecting proxy at an attacker host. The agent
+# mounts /srv/first-agent/state read-write; it does NOT mount /srv/first-agent/proxy.
+PROXY_DIR="$FA_DIR/proxy"
+sudo mkdir -p "$PROXY_DIR"
+sudo cp "$MODELS_YAML" "$PROXY_DIR/models.yaml"
+sudo chown -R 1000:1000 "$PROXY_DIR"
+sudo chmod 750 "$PROXY_DIR"
+sudo chmod 640 "$PROXY_DIR/models.yaml"
+log_info "Synced proxy routing config → $PROXY_DIR/models.yaml (agent has no write access)."
 
 # ---------------------------------------------------------------------------
 # 11. SSH deploy key + pinned GitHub host key
