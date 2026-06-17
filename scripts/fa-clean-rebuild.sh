@@ -300,13 +300,17 @@ done
 log_info "Building images (--no-cache)..."
 docker compose -f "${COMPOSE_FILE}" build --no-cache
 
-log_info "Starting stack via systemd service (single source of truth)..."
-# The service's ExecStart is `docker compose up -d`; using it avoids a double
-# `up -d` and keeps runtime ownership with systemd.
-if ! systemctl --user start "${SERVICE}" 2>/dev/null; then
-    log_warn "systemd service unavailable; starting with docker compose directly."
-    docker compose -f "${COMPOSE_FILE}" up -d
-fi
+log_info "Starting stack (docker compose up -d — authoritative)..."
+# Compose is the authoritative bring-up: idempotent and independent of the user
+# D-Bus/linger session. `systemctl --user start` is NOT used here because it
+# silently no-ops without a loaded user service, which would leave the stack
+# down. systemd is only armed for REBOOT autostart below.
+docker compose -f "${COMPOSE_FILE}" up -d
+# Arm boot autostart (best-effort; never blocks the rebuild).
+systemctl --user daemon-reload 2>/dev/null \
+    && systemctl --user enable "${SERVICE}" 2>/dev/null \
+    && log_info "fa.service enabled for reboot autostart." \
+    || log_warn "Could not arm systemd autostart (no user session?); stack is up via compose."
 
 wait_for_health() {
     # $1 = container name; success = running AND (healthy | no healthcheck).

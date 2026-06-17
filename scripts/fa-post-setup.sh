@@ -197,31 +197,36 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Enable and start systemd service
+# 6. Configure boot autostart — WITHOUT tearing down the running stack.
 # ---------------------------------------------------------------------------
-log_info "Enabling FA systemd service..."
+# The stack is already UP and healthy (step 1) and the agent is in stand-by,
+# ready for `docker compose exec` / the WebUI backend. Do NOT `down` it to hand
+# off to systemd: `systemctl --user start` silently no-ops when there is no
+# user D-Bus/linger session, which would leave NOTHING running. Keep compose as
+# the authoritative runtime; use systemd only to (re)start on REBOOT.
+log_info "Configuring boot autostart (systemd user service)..."
+loginctl enable-linger "${USER}" 2>/dev/null || \
+    sudo loginctl enable-linger "${USER}" 2>/dev/null || \
+    log_warn "Could not enable linger; the service may not autostart until you log in."
 if systemctl --user daemon-reload 2>/dev/null; then
-    log_info "systemd user daemon reloaded."
+    systemctl --user enable fa.service 2>/dev/null \
+        && log_info "fa.service enabled (will start on reboot)." \
+        || log_warn "Could not enable fa.service; enable it later: systemctl --user enable fa.service"
 else
-    log_warn "systemctl --user daemon-reload failed (D-Bus session not available)."
-    log_warn "Run manually after logging out and back in:"
+    log_warn "systemctl --user not available in this session (no D-Bus/linger)."
+    log_warn "The stack is running via docker compose right now. To arm reboot autostart,"
+    log_warn "log in as ${USER} over SSH and run:"
+    log_warn "  loginctl enable-linger ${USER}"
     log_warn "  systemctl --user daemon-reload && systemctl --user enable fa.service"
 fi
-systemctl --user enable fa.service 2>/dev/null || true
 
-# Stop any existing container first so the service starts fresh
+# Final guarantee: the stack must be UP and in stand-by when this script exits,
+# regardless of the systemd outcome above (idempotent — no-op if already up).
+docker compose -f docker-compose.fa.yml up -d >/dev/null 2>&1 || true
 if docker ps --format '{{.Names}}' | grep -q '^first-agent$'; then
-    log_warn "Stopping existing container before service hand-off..."
-    docker compose -f docker-compose.fa.yml down || true
-fi
-
-systemctl --user start fa.service
-
-sleep 2
-if systemctl --user is-active fa.service >/dev/null 2>&1; then
-    log_info "FA service is ACTIVE."
+    log_info "Stack is UP; agent is in stand-by, ready for 'docker compose exec ... fa run'."
 else
-    log_warn "FA service status uncertain. Check with: systemctl --user status fa.service"
+    log_warn "Stack is not running — check: docker compose -f docker-compose.fa.yml ps"
 fi
 
 # ---------------------------------------------------------------------------
@@ -250,9 +255,10 @@ echo ""
 echo "Containers:   docker compose -f docker-compose.fa.yml ps   (expect first-agent + fa-egress-proxy)"
 echo "Logs:         docker compose -f docker-compose.fa.yml logs -f"
 echo "Proxy logs:   docker compose -f docker-compose.fa.yml logs -f fa-egress-proxy"
-echo "Service:      systemctl --user status fa.service"
+echo "Run a task:   docker compose -f docker-compose.fa.yml exec first-agent fa run --role coder --workspace /workspace --task \"...\""
 echo "Backup:       /srv/first-agent/scripts/backup-fa.sh"
 echo ""
-echo "To stop FA:   systemctl --user stop fa.service"
-echo "To start:     systemctl --user start fa.service"
-echo "To restart:   systemctl --user restart fa.service"
+echo "Primary control (always works):"
+echo "  Up/refresh: docker compose -f docker-compose.fa.yml up -d"
+echo "  Stop:       docker compose -f docker-compose.fa.yml down"
+echo "Reboot autostart (systemd, once configured): systemctl --user {status,restart} fa.service"

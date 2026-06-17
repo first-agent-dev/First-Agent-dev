@@ -16,6 +16,8 @@ _ROOT = Path(__file__).resolve().parents[1]
 _DOCKERFILE = _ROOT / "Dockerfile.fa"
 _COMPOSE = _ROOT / "docker-compose.fa.yml"
 _SETUP = _ROOT / "scripts" / "setup-fa-desktop.sh"
+_POST_SETUP = _ROOT / "scripts" / "fa-post-setup.sh"
+_CLEAN_REBUILD = _ROOT / "scripts" / "fa-clean-rebuild.sh"
 
 
 def _compose() -> dict:
@@ -139,4 +141,31 @@ def test_migration_backup_not_left_in_workspace() -> None:
     )
     assert "secrets/.env.fa.pre-secret-migration.bak" in text, (
         "migration backup must live under the host-only secrets dir"
+    )
+
+
+# --- deploy scripts leave the stack UP + in stand-by --------------------------
+def test_post_setup_does_not_teardown_to_hand_off_to_systemd() -> None:
+    """fa-post-setup must NOT `docker compose down` and then rely on
+    `systemctl --user start` (which silently no-ops without a user D-Bus/linger
+    session) — that would leave the stack DOWN. Compose is the authoritative
+    bring-up; systemd is only armed for reboot autostart."""
+    text = _POST_SETUP.read_text(encoding="utf-8")
+    assert "systemctl --user start fa.service" not in text, (
+        "post-setup must not START via systemd (no-ops without a user session); "
+        "use docker compose up -d"
+    )
+    assert "docker compose -f docker-compose.fa.yml up -d" in text, (
+        "post-setup must bring the stack up via compose"
+    )
+
+
+def test_clean_rebuild_brings_up_via_compose_not_systemd_start() -> None:
+    """fa-clean-rebuild must bring the stack up with `docker compose up -d`
+    (authoritative), not `systemctl --user start` which can silently no-op."""
+    text = _CLEAN_REBUILD.read_text(encoding="utf-8")
+    assert "docker compose -f \"${COMPOSE_FILE}\" up -d" in text
+    # It may still `enable` for reboot, but must not depend on `start` to run.
+    assert "systemctl --user start \"${SERVICE}\"" not in text, (
+        "clean-rebuild must not rely on systemctl start to run the stack"
     )
