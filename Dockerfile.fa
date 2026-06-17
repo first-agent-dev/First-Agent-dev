@@ -9,11 +9,6 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV UV_CACHE_DIR=/tmp/uv-cache
 ENV PYTHONPATH=/workspace/src
-# Authoritative HOME for the runtime user. docker-compose runs the container with
-# the NUMERIC `user: "1000:1000"`, for which Docker does NOT reliably derive HOME
-# from /etc/passwd (it can default to "/"). The agent uses Path.home() for state
-# (e.g. ~/.fa/state/...), so pin HOME explicitly to the fa user's home.
-ENV HOME=/home/fa
 ENV PATH=/opt/fa-venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Install system dependencies
@@ -37,11 +32,14 @@ RUN if id -u 1000 >/dev/null 2>&1; then \
     mkdir -p /home/fa/.ssh && \
     chmod 700 /home/fa/.ssh
 
-# Install uv (Astral package manager)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
-    && mv /root/.local/bin/uv /usr/local/bin/ \
-    && mv /root/.local/bin/uvx /usr/local/bin/ \
-    && chmod +x /usr/local/bin/uv /usr/local/bin/uvx
+# Install uv (Astral package manager) straight into /usr/local/bin. Use the
+# installer's own UV_INSTALL_DIR so it never depends on $HOME (which differs
+# between the build-time root user and the runtime fa user) — the previous
+# `mv /root/.local/bin/...` broke as soon as HOME was pinned.
+RUN curl -LsSf https://astral.sh/uv/install.sh \
+    | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh \
+    && chmod +x /usr/local/bin/uv /usr/local/bin/uvx \
+    && uv --version
 
 # Install just (task runner)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
@@ -88,6 +86,13 @@ RUN mkdir -p /workspace /config \
 
 # SSH client is installed above; Git auth is configured via GIT_SSH_COMMAND env var
 # in docker-compose.fa.yml (points to /run/secrets/git_key + known_hosts)
+
+# Authoritative HOME for the RUNTIME user. Set AFTER all root build steps so it
+# does not perturb build-time tools that key off $HOME (the uv installer did).
+# docker-compose runs the container as numeric `user: "1000:1000"`, for which
+# Docker does not reliably derive HOME from /etc/passwd (it can default to "/");
+# the agent uses Path.home() for state (~/.fa/...), so pin it to the fa home.
+ENV HOME=/home/fa
 
 USER fa
 WORKDIR /workspace

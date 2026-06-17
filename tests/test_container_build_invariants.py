@@ -30,6 +30,31 @@ def test_home_is_pinned_for_numeric_user() -> None:
     assert "ENV HOME=/home/fa" in text, "Dockerfile must pin HOME=/home/fa"
 
 
+def test_home_is_set_after_build_time_tools() -> None:
+    """Regression: `ENV HOME=/home/fa` must come AFTER the uv installer RUN.
+
+    The uv install.sh honors $HOME; if HOME is pinned to /home/fa before that
+    step (which runs as root), uv installs to /home/fa/.local and the build
+    breaks. HOME must be set only once all root build steps have run."""
+    text = _DOCKERFILE.read_text(encoding="utf-8")
+    home_pos = text.index("ENV HOME=/home/fa")
+    uv_install_pos = text.index("astral.sh/uv/install.sh")
+    assert home_pos > uv_install_pos, (
+        "ENV HOME must be placed AFTER the uv installer (and other root build "
+        "steps), otherwise it perturbs build-time tools that key off $HOME"
+    )
+
+
+def test_uv_install_does_not_depend_on_home() -> None:
+    """Regression: install uv via UV_INSTALL_DIR, not `mv /root/.local/bin/...`
+    (which breaks the moment HOME is changed)."""
+    text = _DOCKERFILE.read_text(encoding="utf-8")
+    assert "UV_INSTALL_DIR=/usr/local/bin" in text
+    assert "/root/.local/bin/uv" not in text, (
+        "do not mv uv from /root/.local; use UV_INSTALL_DIR (HOME-independent)"
+    )
+
+
 def test_python_installed_in_world_readable_location() -> None:
     """B2: the uv-managed interpreter must NOT live under root-only /root/.local;
     install it to a shared dir and make it world-traversable/executable."""
