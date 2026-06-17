@@ -1,4 +1,5 @@
 # First-Agent
+- For llm agents reading - **[AGENTS.md](./AGENTS.md)**
 
 Репозиторий, в котором я собираю **собственного LLM-агента** используя другие llm c 0.
 
