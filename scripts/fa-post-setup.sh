@@ -18,6 +18,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
 REPO_DIR="/srv/first-agent/repo/First-Agent-dev"
 ENV_FA="$REPO_DIR/.env.fa"
+SECRETS_ENV="/srv/first-agent/secrets/fa.env"   # LLM API keys (consumed by the proxy)
 BACKUP_ENV="/srv/first-agent/secrets/backup.env"
 SERVICE_FILE="$HOME/.config/systemd/user/fa.service"
 TEST_BRANCH="agent/test-bootstrap"
@@ -49,12 +50,22 @@ if [[ ! -f "$ENV_FA" ]]; then
     exit 1
 fi
 
-# Validate .env.fa is not still a raw template
-if [[ ! -s "$ENV_FA" ]] || grep -qi 'CHANGEME' "$ENV_FA"; then
-    log_warn ".env.fa looks unedited (still contains placeholder hints)."
-    log_warn "Edit it first: nano $ENV_FA"
-    read -rp "Continue anyway? [y/N] " ans
-    [[ "$ans" =~ ^[Yy]$ ]] || exit 1
+# Validate the LLM API keys are actually set. In the egress-proxy model the keys
+# live in $SECRETS_ENV (consumed ONLY by the proxy); .env.fa holds non-secret
+# FA_* controls. Check the RIGHT file: at least one uncommented *_API_KEY= /
+# *_TOKEN= / *_SECRET= line. Without keys, `fa run` fails with chain_exhausted.
+if [[ ! -s "$SECRETS_ENV" ]] || \
+   ! grep -qE '^[[:space:]]*[A-Z0-9_]+(API_KEY|_TOKEN|_SECRET)[[:space:]]*=[[:space:]]*[^[:space:]]' "$SECRETS_ENV" || \
+   grep -qi 'CHANGEME' "$SECRETS_ENV"; then
+    log_warn "No LLM API keys found in $SECRETS_ENV (or still placeholders)."
+    log_warn "The proxy will be healthy but 'fa run' will fail (chain_exhausted)."
+    log_warn "Edit it first: micro $SECRETS_ENV"
+    if [[ -t 0 ]]; then
+        read -rp "Continue anyway? [y/N] " ans
+        [[ "$ans" =~ ^[Yy]$ ]] || exit 1
+    else
+        log_warn "Non-interactive shell — continuing (set keys before 'fa run')."
+    fi
 fi
 
 cd "$REPO_DIR"
@@ -110,8 +121,8 @@ log_info "Waiting for egress proxy 'fa-egress-proxy' to become healthy..."
 if ! wait_for_container "fa-egress-proxy" 1; then
     log_error "Egress proxy did not become healthy within 60s."
     log_error "The agent will NOT start until the proxy is healthy (depends_on)."
-    log_error "Common causes: missing/empty proxy token or models.yaml. Check:"
-    log_error "  ls -l /srv/first-agent/secrets/fa_proxy_token /srv/first-agent/state/models.yaml"
+    log_error "Common causes: missing/empty proxy token or routing config. Check:"
+    log_error "  ls -l /srv/first-agent/secrets/fa_proxy_token /srv/first-agent/proxy/models.yaml"
     log_error "  docker compose -f docker-compose.fa.yml logs fa-egress-proxy"
     exit 1
 fi

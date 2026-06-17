@@ -29,6 +29,11 @@ ENV_HASH_FILE="${ENV_HASH_FILE:-/srv/first-agent/state/.env.fa.sha256}"
 SECRETS_ENV="${SECRETS_ENV:-/srv/first-agent/secrets/fa.env}"
 PROXY_TOKEN_FILE="${PROXY_TOKEN_FILE:-/srv/first-agent/secrets/fa_proxy_token}"
 MODELS_YAML_FILE="${MODELS_YAML_FILE:-/srv/first-agent/state/models.yaml}"
+# Proxy-only routing copy (R2-2). The egress proxy reads models.yaml from here
+# (a dir the agent cannot write); the operator edits MODELS_YAML_FILE. This
+# script re-syncs the copy on deploy so model/provider edits actually take
+# effect — without the sync the proxy would keep using a stale routing table.
+PROXY_MODELS_FILE="${PROXY_MODELS_FILE:-/srv/first-agent/proxy/models.yaml}"
 
 SERVICE_NAME_OVERRIDE="${SERVICE_NAME_OVERRIDE:-}"
 
@@ -341,6 +346,19 @@ build_and_deploy() {
   fi
 
   if [[ "${NEEDS_RESTART}" == "1" ]]; then
+    # Re-sync the proxy-only routing copy BEFORE the restart, so model/provider
+    # edits to MODELS_YAML_FILE actually take effect (the proxy reads the copy,
+    # not the operator-edited source). Without this the proxy restarts but keeps
+    # the stale routing table.
+    if [[ -f "${MODELS_YAML_FILE}" ]]; then
+      echo "  → Syncing proxy routing config (${MODELS_YAML_FILE} → ${PROXY_MODELS_FILE})..."
+      sudo mkdir -p "$(dirname "${PROXY_MODELS_FILE}")"
+      sudo cp "${MODELS_YAML_FILE}" "${PROXY_MODELS_FILE}"
+      sudo chown -R 1000:1000 "$(dirname "${PROXY_MODELS_FILE}")"
+      sudo chmod 750 "$(dirname "${PROXY_MODELS_FILE}")"
+      sudo chmod 640 "${PROXY_MODELS_FILE}"
+    fi
+
     echo "  → Deploying containers..."
     local up_cmd=(docker compose -f "${COMPOSE_FILE}" up -d --remove-orphans)
     # Force recreate when env changed but no rebuild (picks up new env vars).

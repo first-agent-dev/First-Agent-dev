@@ -18,6 +18,7 @@ _COMPOSE = _ROOT / "docker-compose.fa.yml"
 _SETUP = _ROOT / "scripts" / "setup-fa-desktop.sh"
 _POST_SETUP = _ROOT / "scripts" / "fa-post-setup.sh"
 _CLEAN_REBUILD = _ROOT / "scripts" / "fa-clean-rebuild.sh"
+_UPDATE = _ROOT / "scripts" / "fa-update.sh"
 
 
 def _compose() -> dict:
@@ -169,3 +170,28 @@ def test_clean_rebuild_brings_up_via_compose_not_systemd_start() -> None:
     assert "systemctl --user start \"${SERVICE}\"" not in text, (
         "clean-rebuild must not rely on systemctl start to run the stack"
     )
+
+
+# --- proxy routing copy must stay in sync (F8) --------------------------------
+def test_fa_update_resyncs_proxy_models_copy() -> None:
+    """F8: the egress proxy reads models.yaml from a proxy-only copy; the
+    operator edits the state source. fa-update must re-sync the copy on deploy,
+    otherwise model/provider changes restart the proxy but silently don't apply."""
+    text = _UPDATE.read_text(encoding="utf-8")
+    assert "proxy/models.yaml" in text, (
+        "fa-update must reference the proxy routing copy"
+    )
+    # The sync must copy state source → proxy copy.
+    assert 'cp "${MODELS_YAML_FILE}" "${PROXY_MODELS_FILE}"' in text, (
+        "fa-update must copy state/models.yaml → proxy/models.yaml on deploy"
+    )
+
+
+def test_post_setup_validates_the_real_keys_file() -> None:
+    """F1: the 'did you add keys' gate must check the secrets file the proxy
+    actually reads (secrets/fa.env), not .env.fa (which holds non-secret FA_*)."""
+    text = _POST_SETUP.read_text(encoding="utf-8")
+    assert "/srv/first-agent/secrets/fa.env" in text, (
+        "post-setup must validate the real LLM-keys file (secrets/fa.env)"
+    )
+    assert "nano " not in text, "use micro, not nano (repo standard)"
