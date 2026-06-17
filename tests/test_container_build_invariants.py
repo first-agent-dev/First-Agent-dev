@@ -111,3 +111,32 @@ def test_setup_chowns_state_to_container_uid() -> None:
     assert "chown -R 1000:1000" in text, (
         "setup must chown FA_DIR to numeric 1000:1000 to match the container uid"
     )
+
+
+def test_setup_normalizes_secret_ownership_after_creation() -> None:
+    """A1: secret files are created AFTER the early global chown (and without
+    sudo → operator-owned). There must be a final pass that re-chowns the secrets
+    dir to uid 1000, otherwise the container can't read keys/token/deploy-key on
+    a host whose operator uid != 1000."""
+    text = _SETUP.read_text(encoding="utf-8")
+    # The normalization chown must appear AFTER the deploy-key creation.
+    chown_pos = text.rfind('chown -R 1000:1000 "$FA_DIR/secrets"')
+    deploykey_pos = text.index("ssh-keygen -t ed25519 -f")
+    assert chown_pos != -1, "setup must re-chown secrets/ to 1000 after creating them"
+    assert chown_pos > deploykey_pos, (
+        "the secret-ownership normalization must run AFTER the deploy key (and all "
+        "other secret files) are created"
+    )
+
+
+def test_migration_backup_not_left_in_workspace() -> None:
+    """A2: the migration backup contains LIVE API keys; it must not be written to
+    the repo root (the agent's RW /workspace), where the agent could cat it."""
+    text = _SETUP.read_text(encoding="utf-8")
+    # The .bak must be written under the host secrets dir, not next to .env.fa.
+    assert 'cp "$ENV_FA" "$ENV_FA.pre-secret-migration.bak"' not in text, (
+        "migration backup must NOT be written into the repo/workspace"
+    )
+    assert "secrets/.env.fa.pre-secret-migration.bak" in text, (
+        "migration backup must live under the host-only secrets dir"
+    )

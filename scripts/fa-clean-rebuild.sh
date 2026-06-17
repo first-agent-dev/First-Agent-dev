@@ -268,6 +268,32 @@ if [[ ! -s "${TOKEN_FILE}" ]]; then
     exit 1
 fi
 
+# Preflight: every FILE bind-mount source must already exist as a regular file.
+# If a source is missing at `docker compose up`, Docker silently creates a
+# ROOT-OWNED DIRECTORY there, and the container then reads a directory-as-file →
+# a confusing crash that also leaves a root-owned path the scripts can't fix.
+# Fail loudly here instead. (Deploy-key/known_hosts come from setup-fa-desktop.)
+_required_files=(
+    "${FA_DIR}/secrets/fa.env"
+    "${FA_DIR}/secrets/fa_proxy_token"
+    "${FA_DIR}/secrets/github_deploy_key"
+    "${FA_DIR}/secrets/known_hosts"
+    "${PROXY_DIR}/models.yaml"
+)
+_missing=0
+for _rf in "${_required_files[@]}"; do
+    if [[ -d "${_rf}" ]]; then
+        log_error "Mount source is a DIRECTORY (should be a file): ${_rf}"
+        log_error "  Likely created by a bare 'docker compose up' before setup. Remove it:"
+        log_error "    sudo rm -rf '${_rf}'  then re-run setup-fa-desktop.sh"
+        _missing=1
+    elif [[ ! -e "${_rf}" ]]; then
+        log_error "Required mount source missing: ${_rf} (run setup-fa-desktop.sh first)"
+        _missing=1
+    fi
+done
+[[ "${_missing}" -eq 0 ]] || { log_error "Aborting before build — fix the above."; exit 1; }
+
 # ───────────────────────────────────────────────────────────────
 # 7. Rebuild clean + bring up the two containers
 # ───────────────────────────────────────────────────────────────
