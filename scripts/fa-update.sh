@@ -309,8 +309,14 @@ validate_env() {
   if [[ -n "${missing}" ]]; then
     echo "  ✗ Variables missing from ${ENV_FA} (active in template):"
     echo "${missing}" | sed 's/^/    - /'
-    cp "${ENV_FA}" "${ENV_FA}.bak-$(date +%s)"
-    echo "  → Backed up ${ENV_FA}"
+    # Back up OUTSIDE the repo/workspace (the agent's RW mount). Even though a
+    # post-migration .env.fa holds only non-secret FA_* controls, never drop
+    # *.bak into /workspace — it is the same anti-pattern that leaked keys via
+    # the migration backup (ADR-12). Park it in the host state dir.
+    _state_dir="$(dirname "${ENV_HASH_FILE}")"
+    mkdir -p "${_state_dir}" 2>/dev/null || true
+    cp "${ENV_FA}" "${_state_dir}/$(basename "${ENV_FA}").bak-$(date +%s)"
+    echo "  → Backed up ${ENV_FA} to ${_state_dir}"
   else
     echo "  ✓ All active template variables present in ${ENV_FA}."
   fi
