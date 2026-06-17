@@ -24,6 +24,7 @@ _SHELL_SCRIPTS = [
     _SCRIPTS / "setup-fa-desktop.sh",
     _SCRIPTS / "fa-post-setup.sh",
     _SCRIPTS / "fa-update.sh",
+    _SCRIPTS / "fa-clean-rebuild.sh",
     _SCRIPTS / "backup-fa.sh",
     _SCRIPTS / "fa-entrypoint.sh",
     _SCRIPTS / "ssh-tailscale" / "00-failsafe.sh",

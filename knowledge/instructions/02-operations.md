@@ -370,6 +370,72 @@ docker system prune -f
 > Запущенные контейнеры не пострадают. `setup-fa-desktop.sh` уже ставит
 > еженедельную авто-очистку, но иногда полезно запустить вручную.
 
+### 6.1. Чистая переустановка стека (снести контейнеры → собрать заново)
+
+Когда нужно: после крупного апгрейда, «застрявшего» состояния, или просто чтобы
+получить заведомо чистый стек. **Данные и ключи при этом сохраняются** — они
+живут в host bind-mount'ах `/srv/first-agent/{state,secrets}`, а не в контейнерах.
+
+**Способ А — скрипт (рекомендуется).** Идемпотентный, делает бэкап, сносит
+контейнеры, пересобирает `--no-cache`, поднимает оба контейнера и проверяет
+изоляцию секретов:
+
+```bash
+# Снести контейнеры + образы, пересобрать с нуля. Ключи и models.yaml остаются.
+/srv/first-agent/repo/First-Agent-dev/scripts/fa-clean-rebuild.sh
+
+# Дополнительно сбросить state (models.yaml/config.yaml/историю) — КЛЮЧИ остаются.
+# setup-fa-desktop.sh пересоздаст шаблон models.yaml, его нужно будет заполнить.
+WIPE_STATE=1 /srv/first-agent/repo/First-Agent-dev/scripts/fa-clean-rebuild.sh
+```
+
+> Флаги: `WIPE_STATE=1` — сбросить весь `state/` (ключи в `secrets/` не трогаются);
+> `PRUNE=1` — удалить все неиспользуемые образы и кэш сборки; `NO_BACKUP=1` —
+> пропустить бэкап (не рекомендуется); `ASSUME_YES=1` — не спрашивать
+> подтверждение для разрушающих флагов (нужно при запуске без TTY/из cron).
+> Скрипт **никогда** не удаляет `secrets/` и не запускает `setup-fa-desktop.sh`
+> (тот переустанавливает весь хост) — только пересоздаёт контейнеры и, при
+> `WIPE_STATE=1`, шаблон `models.yaml`.
+
+**Способ Б — вручную** (если хотите контролировать каждый шаг):
+
+```bash
+cd /srv/first-agent/repo/First-Agent-dev
+
+# 0) бэкап (на всякий случай)
+TS=$(date +%Y%m%d-%H%M%S); sudo cp -a /srv/first-agent/state ~/fa-bk-$TS-state; sudo cp -a /srv/first-agent/secrets ~/fa-bk-$TS-secrets
+
+# 1) остановить сервис и снести контейнеры
+systemctl --user stop fa.service
+docker compose -f docker-compose.fa.yml down --remove-orphans
+
+# 2) (опц.) сбросить state — КЛЮЧИ В secrets/ НЕ ТРОГАЕМ
+sudo rm -rf /srv/first-agent/state/*
+
+# 3) догенерировать proxy-токен + шаблоны state (идемпотентно; ключи сохраняются)
+bash scripts/setup-fa-desktop.sh
+
+# 4) чистая пересборка и подъём двух контейнеров
+docker compose -f docker-compose.fa.yml build --no-cache
+docker compose -f docker-compose.fa.yml up -d
+docker compose -f docker-compose.fa.yml ps        # ждём fa-egress-proxy = healthy, затем first-agent
+
+# 5) вернуть автозапуск
+systemctl --user start fa.service
+```
+
+> **Полностью «с нуля», включая ключи** (придётся заново вписать LLM-ключи и
+> заново зарегистрировать deploy key на GitHub) — только сознательно:
+> `sudo rm -rf /srv/first-agent/secrets/*` перед шагом 3. В обычной «чистой
+> переустановке» этого делать НЕ нужно.
+
+**Проверка изоляции после подъёма** (у агента не должно быть LLM-ключа):
+
+```bash
+docker exec first-agent sh -c 'cat /run/secrets/fa.env 2>&1 || echo "у агента ключей нет — OK"'
+docker exec fa-egress-proxy sh -c 'test -s /run/secrets/fa.env && echo "ключи у прокси — OK"'
+```
+
 ---
 
 ## 7. Запуск задач агента
