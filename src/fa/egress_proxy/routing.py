@@ -145,7 +145,14 @@ def inject_headers(
     Any inbound ``Authorization`` / ``x-api-key`` / proxy token header is
     dropped so the agent can neither supply nor influence provider auth.
     """
-    drop = {"authorization", "x-api-key", "x-fa-proxy-token", "host", "content-length"}
+    drop = {
+        "authorization",
+        "x-api-key",
+        "x-fa-proxy-token",
+        "x-fa-timeout",
+        "host",
+        "content-length",
+    }
     out: dict[str, str] = {
         k: v for k, v in inbound_headers.items() if k.lower() not in drop
     }

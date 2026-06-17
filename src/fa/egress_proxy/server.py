@@ -32,6 +32,30 @@ __all__ = ["build_handler_class", "serve"]
 
 _MAX_BODY_BYTES = 8 * 1024 * 1024  # 8 MiB cap on request bodies.
 
+# Upstream forward timeout. The agent advertises its per-route timeout via the
+# ``X-FA-Timeout`` header (so a slow reasoning model configured with e.g.
+# ``timeout_seconds: 240`` is honored instead of being cut at a hardcoded 60s,
+# which surfaced as a spurious 502 → chain_exhausted). The value is clamped to
+# ``_MAX_UPSTREAM_TIMEOUT`` so a compromised/buggy agent cannot pin a proxy
+# worker thread open indefinitely. ``X-FA-Timeout: 0`` means "no transport
+# timeout" on the agent side; we map it to the ceiling rather than unbounded.
+_DEFAULT_UPSTREAM_TIMEOUT = 60.0
+_MAX_UPSTREAM_TIMEOUT = 600.0
+
+
+def _resolve_upstream_timeout(raw: str | None) -> float:
+    """Parse + clamp the agent-advertised upstream timeout (seconds)."""
+    if raw is None or not raw.strip():
+        return _DEFAULT_UPSTREAM_TIMEOUT
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        return _DEFAULT_UPSTREAM_TIMEOUT
+    if value <= 0:
+        # 0 = "opt out of the transport timeout" on the agent side; bound it.
+        return _MAX_UPSTREAM_TIMEOUT
+    return min(value, _MAX_UPSTREAM_TIMEOUT)
+
 
 def build_handler_class(
     *,
@@ -103,10 +127,13 @@ def build_handler_class(
             # 4. Inject real key, strip caller auth, forward.
             api_key = secrets.get(route.api_key_env, "")
             inbound = dict(self.headers.items())
+            # Honor the agent's per-route timeout (clamped) before inject_headers
+            # strips the X-FA-Timeout hop header.
+            timeout = _resolve_upstream_timeout(self.headers.get("X-FA-Timeout"))
             headers = inject_headers(route, inbound, api_key)
             url = f"{route.upstream_base_url}/{upstream_path.lstrip('/')}"
             try:
-                status, _resp_headers, resp_body = _forward(url, headers, body, 60.0)
+                status, _resp_headers, resp_body = _forward(url, headers, body, timeout)
             except Exception:  # noqa: BLE001 - never leak upstream exception text
                 self._send_json_error(502, "upstream error")
                 self._log(name, 502, start)

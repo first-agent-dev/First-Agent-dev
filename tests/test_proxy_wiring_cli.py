@@ -7,7 +7,7 @@ provider API key.
 
 from __future__ import annotations
 
-from fa.cli import _PROXY_TOKEN_HEADER, _apply_proxy_mode
+from fa.cli import _PROXY_TIMEOUT_HEADER, _PROXY_TOKEN_HEADER, _apply_proxy_mode
 from fa.providers.chain import ChainConfig, ChainEntry
 
 _TOKEN = "fa-proxy-token-abcdef123456"
@@ -42,6 +42,17 @@ def test_proxy_rewrite_targets_proxy_and_carries_token() -> None:
     for entry in rewritten.chain:
         assert entry.base_url.startswith("http://fa-egress-proxy:8080/route/")
         assert entry.extra_headers[_PROXY_TOKEN_HEADER] == _TOKEN
+
+
+def test_proxy_rewrite_advertises_per_route_timeout() -> None:
+    """F-2: each rewritten entry tells the proxy its upstream timeout so a slow
+    model's configured timeout_seconds is honored instead of a hardcoded cap."""
+    chain = _chain()
+    rewritten = _apply_proxy_mode(
+        chain, proxy_url="http://fa-egress-proxy:8080", proxy_token=_TOKEN
+    )
+    for original, entry in zip(chain.chain, rewritten.chain, strict=True):
+        assert entry.extra_headers[_PROXY_TIMEOUT_HEADER] == str(original.timeout_seconds)
 
 
 def test_proxy_rewrite_places_no_provider_key_anywhere() -> None:

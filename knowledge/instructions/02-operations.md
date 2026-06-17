@@ -134,7 +134,7 @@ systemctl --user restart fa.service          # пересоздать стек (
 > (его и правьте). Прокси читает НЕ его, а свою копию
 > `/srv/first-agent/proxy/models.yaml` (каталог, недоступный агенту на запись).
 > Копия пересоздаётся автоматически при `fa-update.sh` / `fa-clean-rebuild.sh` /
-> `setup-fa-desktop.sh`. **После правки `models.yaml` примените изменения через
+> `fa-post-setup.sh` / `setup-fa-desktop.sh`. **После правки `models.yaml` примените изменения через
 > `fa-update.sh`** (он пере-синхронизирует копию и перезапустит прокси). Голый
 > `docker compose up -d` без ре-синка копию НЕ обновит — маршрутизация останется
 > старой.

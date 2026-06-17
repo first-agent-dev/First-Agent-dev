@@ -196,3 +196,89 @@ def test_unknown_route_404() -> None:
         body=b"{}",
     )
     assert status == 404
+
+
+# --- F-2: per-route upstream timeout ---------------------------------------
+def test_resolve_upstream_timeout_clamps_and_defaults() -> None:
+    from fa.egress_proxy.server import (
+        _DEFAULT_UPSTREAM_TIMEOUT,
+        _MAX_UPSTREAM_TIMEOUT,
+        _resolve_upstream_timeout,
+    )
+
+    assert _resolve_upstream_timeout(None) == _DEFAULT_UPSTREAM_TIMEOUT
+    assert _resolve_upstream_timeout("") == _DEFAULT_UPSTREAM_TIMEOUT
+    assert _resolve_upstream_timeout("not-a-number") == _DEFAULT_UPSTREAM_TIMEOUT
+    assert _resolve_upstream_timeout("240") == 240.0
+    # 0 = "no transport timeout" on the agent side → bounded to the ceiling.
+    assert _resolve_upstream_timeout("0") == _MAX_UPSTREAM_TIMEOUT
+    # A buggy/hostile agent cannot pin a worker open beyond the ceiling.
+    assert _resolve_upstream_timeout("99999") == _MAX_UPSTREAM_TIMEOUT
+
+
+def test_inject_headers_strips_x_fa_timeout() -> None:
+    t = build_route_table([("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY")])
+    route = t.get("openrouter-s")
+    assert route is not None
+    out = inject_headers(route, {"X-FA-Timeout": "240", "X-Keep": "1"}, _KEY)
+    assert "X-FA-Timeout" not in set(out)
+    assert all(k.lower() != "x-fa-timeout" for k in out)
+    assert out["X-Keep"] == "1"
+
+
+def _make_server_capturing_timeout() -> tuple[ThreadingHTTPServer, list[dict[str, Any]]]:
+    captured: list[dict[str, Any]] = []
+
+    def fake_forward(
+        url: str, headers: Mapping[str, str], body: bytes, timeout: float
+    ) -> tuple[int, dict[str, str], bytes]:
+        captured.append({"url": url, "headers": headers, "timeout": timeout})
+        return 200, {"Content-Type": "application/json"}, b"{}"
+
+    table = build_route_table(
+        [("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY")]
+    )
+    handler = build_handler_class(
+        route_table=table,
+        secrets={"OPENROUTER_API_KEY": _KEY},
+        proxy_token=_TOKEN,
+        forward=fake_forward,
+    )
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    return httpd, captured
+
+
+def test_post_honors_agent_supplied_timeout() -> None:
+    httpd, captured = _make_server_capturing_timeout()
+    port = httpd.server_address[1]
+    _run(httpd)
+    status, _ = _request(
+        port,
+        "POST",
+        "/route/openrouter-s/chat/completions",
+        headers={
+            "X-FA-Proxy-Token": _TOKEN,
+            "X-FA-Timeout": "240",
+            "Content-Type": "application/json",
+        },
+        body=b"{}",
+    )
+    assert status == 200
+    assert captured and captured[0]["timeout"] == 240.0
+
+
+def test_post_without_timeout_header_uses_default() -> None:
+    from fa.egress_proxy.server import _DEFAULT_UPSTREAM_TIMEOUT
+
+    httpd, captured = _make_server_capturing_timeout()
+    port = httpd.server_address[1]
+    _run(httpd)
+    status, _ = _request(
+        port,
+        "POST",
+        "/route/openrouter-s/chat/completions",
+        headers={"X-FA-Proxy-Token": _TOKEN, "Content-Type": "application/json"},
+        body=b"{}",
+    )
+    assert status == 200
+    assert captured and captured[0]["timeout"] == _DEFAULT_UPSTREAM_TIMEOUT

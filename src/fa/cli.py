@@ -100,6 +100,9 @@ def _load_secret_store() -> SecretStore:
 # It is NOT a provider key (leaking it only enables metered LLM calls via the
 # proxy, a cost risk, never key disclosure).
 _PROXY_TOKEN_HEADER = "X-FA-Proxy-Token"  # noqa: S105 - HTTP header name, not a secret
+# Advertises the per-route upstream timeout (seconds) to the proxy so it forwards
+# with the same deadline the agent uses, instead of a hardcoded ceiling.
+_PROXY_TIMEOUT_HEADER = "X-FA-Timeout"
 
 
 def _resolve_proxy_url() -> str:
@@ -164,6 +167,11 @@ def _apply_proxy_mode(
         name = route_name_for(entry.provider, entry.slug)
         headers = dict(entry.extra_headers)
         headers[_PROXY_TOKEN_HEADER] = proxy_token
+        # Advertise this route's upstream timeout so the proxy forwards with the
+        # SAME deadline the agent uses (clamped proxy-side). Without it the proxy
+        # cut every upstream at a hardcoded 60s, so a model configured with a
+        # longer timeout_seconds would 502 → chain_exhausted on slow providers.
+        headers[_PROXY_TIMEOUT_HEADER] = str(entry.timeout_seconds)
         new_entries.append(
             replace(
                 entry,
