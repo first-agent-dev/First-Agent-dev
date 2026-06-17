@@ -1,20 +1,14 @@
 # First-Agent
 - For llm agents reading - **[AGENTS.md](./AGENTS.md)**
 
-Репозиторий, в котором я собираю **собственного LLM-агента** используя другие llm c 0.
+📖 **Деплой / обновление / управление?** вам сюда:
+**[knowledge/instructions/README.md](./knowledge/instructions/README.md)**
 
-📖 **Деплой / управление?** вам сюда:
-**[knowledge/instructions/README.md](./knowledge/instructions/README.md)** —
-установка, обновление и эксплуатация First-Agent, docker, ubuntu 24.
-
-> **Статус:** 
-Разработка ARD-9-llm-provider-client;
-deterministic harness ADR-10-runtime determinism,
-work on ADR-11-autoring determinism cretion;
-first tests cli-ready.
 ---
 
 ## 1. Зачем это
+
+**First-Agent-dev** - репозиторий, в котором я собираю **собственного LLM-агента**.
 
 **First-Agent** — research-backed implementation-first проект, стремящийся
 стать open-source reference implementation для locally orchestrated coding
@@ -111,74 +105,5 @@ posts), MCP-экосистема, и Devin / Claude Code / OSS repo's как ref
   инструкции по развёртыванию и эксплуатации (install + operations).
 - [`knowledge/adr/README.md`](./knowledge/adr/README.md) — индекс ADR.
 - [`knowledge/pr-notes/`](./knowledge/pr-notes/README.md) — архив PR-заметок.
-
----
-
-## Security / API Keys
-
-### Local Development (WSL)
-
-Export API keys in your shell (e.g. `~/.bashrc`):
-```bash
-export OPENROUTER_API_KEY=sk-or-v1-...
-```
-
-Or use `~/.fa/.env` (auto-loaded by the FA CLI):
-```bash
-mkdir -p ~/.fa
-cat > ~/.fa/.env <<EOF
-OPENROUTER_API_KEY=sk-or-v1-...
-EOF
-```
-
-`~/.fa/models.yaml` references env var names via `api_key_env` — never paste real keys into `models.yaml`. Both `models.yaml` and `config.yaml` are gitignored.
-
-### Production Deployment (AIO)
-
-1. Copy the template and edit with real keys:
-   ```bash
-   cp .env.fa.template .env.fa
-   # Edit .env.fa
-   chmod 600 .env.fa
-   ```
-
-2. Docker Compose loads `.env.fa` via `env_file:` (see `docker-compose.fa.yml`).
-
-3. Default container mode is stand-by for manual operation:
-   ```bash
-   docker exec -it first-agent bash
-   fa run --task "inspect the repo" --role planner --workspace /workspace
-   ```
-   For an intentional one-shot startup run, set `FA_AUTO_RUN=1` plus either
-   `FA_TASK` or `FA_TASK_FILE`; the entrypoint writes
-   `/workspace/.fa/entrypoint-status.txt` and then returns to stand-by.
-
-4. `models.yaml` lives in `/srv/first-agent/state/` (persistent bind-mount, auto-copied by `setup-fa-desktop.sh`).
-
-5. Backup credentials (`B2_KEY_ID`, `B2_APPLICATION_KEY`) go in `/srv/first-agent/secrets/backup.env`, NOT in `.env.fa`.
-
-### Secrets Management
-
-| Category | Storage | Scope |
-| --- | --- | --- |
-| **LLM API keys** | `~/.fa/.env` (WSL) or `.env.fa` (AIO) | Container runtime only |
-| **Backup credentials** | `/srv/first-agent/secrets/backup.env` | Host only (restic) |
-| **Git deploy key** | `/srv/first-agent/secrets/github_deploy_key` | Host + container (read-only mount) |
-
-- **LLM API keys** are needed for every LLM call. Stored in `~/.fa/.env` (WSL) or `.env.fa` (AIO).
-- **Backup credentials** (B2 keys) are needed by the host cron job, not the container. Keeping them separate limits blast radius if the container is compromised.
-- **Git deploy key** is an SSH key for git push; mounted read-only into the container.
-
-**Why the separation matters:**
-
-- The container trust boundary (Docker group membership) means any operator can `docker inspect` and see container env vars. Backup credentials are never injected into the container, so a container compromise does not grant B2 access.
-- restic encrypts backups *before* uploading. If an API key leaks into `events.jsonl` before `SecretRedactor` masks it, the encrypted backup still contains it. Redaction is the primary defense; separation is secondary.
-- `SecretRedactor` (exact-match + base64/URL encoding detection) runs in the observability layer and masks secrets before they reach `events.jsonl` or `knowledge/trace/`.
-
-### Repository Hygiene
-
-- `gitleaks` runs as a pre-commit hook and in GitHub Actions CI.
-- Dummy test keys are allowlisted in `.gitleaks.toml`.
-- **Never commit real API keys.**
 
 ---
