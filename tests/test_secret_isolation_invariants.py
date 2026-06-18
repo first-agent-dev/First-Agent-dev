@@ -13,6 +13,8 @@ _ROOT = Path(__file__).resolve().parents[1]
 _COMPOSE = _ROOT / "docker-compose.fa.yml"
 _RUN_BASH = _ROOT / "src" / "fa" / "inner_loop" / "tools" / "run_bash.py"
 _CLI = _ROOT / "src" / "fa" / "cli.py"
+_GITLEAKS = _ROOT / ".gitleaks.toml"
+_BACKUP = _ROOT / "scripts" / "backup-fa.sh"
 
 
 def test_compose_agent_container_has_no_llm_key_mount() -> None:
@@ -97,6 +99,7 @@ def test_cli_supports_egress_proxy_mode() -> None:
     # In proxy mode the chain's key store is empty (no provider keys on fa side).
     assert "SecretStore({}) if proxy_mode" in text
 
+
 def test_agent_routing_models_mount_is_read_only_file_after_state_mount() -> None:
     """R2-2: the agent sees routing metadata but cannot rewrite it.
 
@@ -124,3 +127,16 @@ def test_agent_routing_models_mount_is_read_only_file_after_state_mount() -> Non
     assert routing_idx > state_idx, "routing file mount must come AFTER state dir mount"
     assert routing.get("source") == "/srv/first-agent/routing/models.yaml"
     assert routing.get("read_only") is True
+
+
+def test_secret_policy_comments_point_aio_keys_only_at_host_secrets() -> None:
+    """ADR-12 comments must not tell operators to put AIO keys in .env.fa."""
+    gitleaks_text = _GITLEAKS.read_text(encoding="utf-8")
+    backup_text = _BACKUP.read_text(encoding="utf-8")
+    combined = f"{gitleaks_text}\n{backup_text}"
+
+    assert "LLM API keys belong in ~/.fa/.env (local dev) or .env.fa" not in combined
+    assert "/srv/first-agent/secrets/fa.env" in combined
+    assert ".env.fa" in combined
+    assert "non-secret" in combined.lower()
+    assert "/srv/first-agent/routing" in backup_text

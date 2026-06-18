@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
-# Backup First-Agent state to Backblaze B2 (S3-compatible endpoint)
+# Backup First-Agent persistent host state to Backblaze B2 (S3-compatible endpoint)
 # Cross-reference: restic community recommends S3-compatible B2 endpoint over native B2 backend.
+#
+# Backup scope:
+#   - /srv/first-agent/state      agent state/history/config (no LLM keys)
+#   - /srv/first-agent/routing    source-of-truth models.yaml
+#   - /srv/first-agent/secrets    LLM keys, proxy token, deploy key, backup creds
+#   - .env.fa                    NON-SECRET runtime controls only
+#
+# ADR-12 secret/routing policy:
+#   - LLM API keys live in /srv/first-agent/secrets/fa.env only.
+#   - .env.fa is backed up only as non-secret runtime controls.
+#   - /srv/first-agent/proxy is intentionally not backed up: after unified
+#     routing it is legacy/not mounted and is not a source of truth.
 #
 # Pre-requisites:
 #   1. Create a Backblaze B2 bucket

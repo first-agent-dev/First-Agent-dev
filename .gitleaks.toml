@@ -1,10 +1,16 @@
 # First-Agent gitleaks allowlist
 #
-# Production secret policy:
-#   - LLM API keys belong in ~/.fa/.env (local dev) or .env.fa (AIO container).
+# Production/AIO secret policy (ADR-12 Option C):
+#   - LLM API keys belong ONLY in /srv/first-agent/secrets/fa.env
+#     (mounted read-only only into fa-egress-proxy as /run/secrets/fa.env).
+#   - .env.fa is NON-SECRET runtime controls only (FA_AUTO_RUN, FA_TASK, ...).
 #   - Backblaze B2 credentials belong in /srv/first-agent/secrets/backup.env.
 #   - NEVER commit real secrets to this repository.
 #   - Dummy / test keys used in test fixtures are allowlisted below.
+#
+# Local legacy/dev note:
+#   - A non-container legacy/dev run may use ~/.fa/.env outside the repo, but
+#     that is not the AIO deployment source and must never be committed.
 
 [allowlist]
 regexTarget = "match"

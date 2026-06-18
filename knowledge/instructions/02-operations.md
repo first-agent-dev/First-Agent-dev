@@ -736,6 +736,52 @@ docker compose -f docker-compose.fa.yml up -d --force-recreate
 
 или просто запустите `scripts/fa-update.sh` — он сделает это сам.
 
+### `chain_exhausted`, а в логах прокси `status=200`
+
+Сначала исключите routing/key drift:
+
+```bash
+cd /srv/first-agent/repo/First-Agent-dev
+docker compose -f docker-compose.fa.yml exec -T first-agent fa selfcheck
+```
+
+Если `fa selfcheck` показывает missing route или `has_key=false` — чините
+проблему из его сообщения. Если `fa selfcheck` OK, но `fa run` всё равно падает
+с `chain_exhausted`, посмотрите логи прокси:
+
+```bash
+docker compose -f docker-compose.fa.yml logs --tail=200 fa-egress-proxy
+```
+
+Строка вида:
+
+```text
+egress-proxy route=<route> status=200 ms=<...>
+```
+
+означает только то, что upstream HTTP-запрос до провайдера вернулся с HTTP 200.
+Это **не** гарантирует, что provider adapter получил валидный JSON-ответ нужной
+схемы. `UrllibTransport` намеренно нормализует non-JSON / non-object JSON body
+в `{}`; декодер не меняйте — это fail-closed дизайн.
+
+Частые причины:
+
+- неверный `slug`;
+- wrong `base_url` / endpoint;
+- провайдер вернул HTML/plaintext landing page;
+- OpenAI-compatible adapter направлен на не-OpenAI-compatible endpoint;
+- Anthropic/OpenAI request/response shape mismatch.
+
+Что проверить:
+
+```bash
+micro /srv/first-agent/routing/models.yaml
+docker compose -f docker-compose.fa.yml exec -T first-agent fa selfcheck
+```
+
+Если route есть и `has_key=true`, проверьте `provider`, `slug`, `base_url` и
+adapter compatibility.
+
 ### Auto-run не стартует
 
 ```bash
