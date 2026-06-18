@@ -96,6 +96,10 @@ class RouteTable:
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._routes))
 
+    def routes(self) -> tuple[ProxyRoute, ...]:
+        """Return routes in stable, name-sorted order for safe diagnostics."""
+        return tuple(self._routes[name] for name in sorted(self._routes))
+
 
 def build_route_table(chain_entries: list[tuple[str, str, str, str]]) -> RouteTable:
     """Build a :class:`RouteTable` from ``(provider, slug, base_url, api_key_env)``.

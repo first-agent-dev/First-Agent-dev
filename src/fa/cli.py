@@ -6,6 +6,9 @@ import os
 import re
 import shlex
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections.abc import Mapping
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -103,6 +106,10 @@ _PROXY_TOKEN_HEADER = "X-FA-Proxy-Token"  # noqa: S105 - HTTP header name, not a
 # Advertises the per-route upstream timeout (seconds) to the proxy so it forwards
 # with the same deadline the agent uses, instead of a hardcoded ceiling.
 _PROXY_TIMEOUT_HEADER = "X-FA-Timeout"
+
+
+class _SelfcheckNetworkError(Exception):
+    """Raised when fa selfcheck cannot reach the local egress proxy."""
 
 
 def _resolve_proxy_url() -> str:
@@ -295,6 +302,30 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_parser.set_defaults(func=_cmd_run)
+
+    selfcheck_parser = subparsers.add_parser(
+        "selfcheck",
+        help="Diagnose the ADR-12 egress-proxy LLM path.",
+        description=(
+            "Check that the agent can reach the egress proxy, that the proxy's "
+            "route table matches the selected role in ~/.fa/models.yaml, and "
+            "that the proxy has a provider key for every selected route. The "
+            "agent never reads provider key values; it only consumes the "
+            "proxy's safe name/has_key diagnostics."
+        ),
+    )
+    selfcheck_parser.add_argument(
+        "--role",
+        default="coder",
+        help="Role to check (matches a top-level key in ~/.fa/models.yaml).",
+    )
+    selfcheck_parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_MODELS_YAML_PATH,
+        help="Path to the per-role chain config (default: ~/.fa/models.yaml).",
+    )
+    selfcheck_parser.set_defaults(func=_cmd_selfcheck)
 
     authoring_parser = subparsers.add_parser(
         "authoring-check",
@@ -706,6 +737,190 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     if outcome.final_text:
         print(outcome.final_text)
     return outcome.exit_code
+
+
+def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic flow
+    """Diagnose the fa→egress-proxy→provider routing seam (ADR-12)."""
+    proxy_url = _resolve_proxy_url()
+    config_path = args.config.expanduser().resolve()
+    role_name = str(args.role)
+
+    print("fa selfcheck: egress proxy diagnostics")
+    print(f"- proxy: {proxy_url or '<not set>'}")
+    print(f"- config: {config_path}")
+    print(f"- role: {role_name}")
+
+    if not proxy_url:
+        print(
+            "ERROR: FA_EGRESS_PROXY_URL is not set; the agent is not in proxy mode."
+        )
+        print(
+            "Hint: in Docker deployment it should point to "
+            "http://fa-egress-proxy:8080."
+        )
+        return 2
+
+    proxy_url_error = _validate_proxy_url(proxy_url)
+    if proxy_url_error:
+        print(f"ERROR: invalid FA_EGRESS_PROXY_URL: {proxy_url_error}")
+        return 2
+
+    proxy_token = _resolve_proxy_token()
+    if not proxy_token:
+        print(
+            "ERROR: proxy token is missing; set FA_PROXY_TOKEN_FILE or mount "
+            "/run/secrets/fa_proxy_token."
+        )
+        return 2
+
+    health_url = _proxy_endpoint(proxy_url, "/healthz")
+    try:
+        health_status, _health_body = _selfcheck_http_get(health_url)
+    except _SelfcheckNetworkError as exc:
+        print(f"ERROR: proxy is not reachable at {health_url}: {exc}")
+        print("Hint: check `docker compose logs fa-egress-proxy` and container health.")
+        return 1
+    if health_status != 200:
+        print(f"ERROR: proxy /healthz returned HTTP {health_status}.")
+        print("Hint: check `docker compose logs fa-egress-proxy`.")
+        return 1
+    print("OK: proxy /healthz reachable")
+
+    routes_url = _proxy_endpoint(proxy_url, "/routes")
+    try:
+        routes_status, routes_body = _selfcheck_http_get(
+            routes_url, headers={_PROXY_TOKEN_HEADER: proxy_token}
+        )
+    except _SelfcheckNetworkError as exc:
+        print(f"ERROR: proxy /routes is not reachable at {routes_url}: {exc}")
+        print("Hint: check `docker compose logs fa-egress-proxy`.")
+        return 1
+    if routes_status == 403:
+        print("ERROR: proxy /routes rejected the fa→proxy token (HTTP 403).")
+        print("Hint: verify FA_PROXY_TOKEN_FILE and /run/secrets/fa_proxy_token match the proxy.")
+        return 1
+    if routes_status != 200:
+        print(f"ERROR: proxy /routes returned HTTP {routes_status}.")
+        print("Hint: check `docker compose logs fa-egress-proxy`.")
+        return 1
+
+    try:
+        routes_payload = json.loads(routes_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        print("ERROR: proxy /routes returned non-JSON or malformed JSON.")
+        return 1
+    proxy_routes, payload_error = _selfcheck_parse_routes_payload(routes_payload)
+    if payload_error:
+        print(f"ERROR: unsafe or malformed proxy /routes payload: {payload_error}")
+        return 1
+    print(f"OK: proxy /routes returned {len(proxy_routes)} route(s)")
+
+    try:
+        models = load_models_config_from_path(config_path, require_api_keys=False)
+    except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
+        print(f"ERROR: models config error: {exc}")
+        return 2
+
+    chain_config = models.roles.get(role_name)
+    if chain_config is None:
+        print(
+            f"ERROR: role {role_name!r} not found in {config_path}; "
+            f"known: {sorted(models.roles)}"
+        )
+        return 2
+
+    from fa.egress_proxy.routing import ProxyConfigError
+
+    try:
+        expected_routes = _selfcheck_expected_routes(chain_config)
+    except ProxyConfigError as exc:
+        print(f"ERROR: could not compute agent route names: {exc}")
+        return 2
+
+    problems: list[str] = []
+    for route_name, api_key_env in expected_routes.items():
+        has_key = proxy_routes.get(route_name)
+        if has_key is None:
+            problems.append(
+                f"route {route_name!r} is in {config_path} for role {role_name!r}, "
+                "but is absent from proxy /routes — re-sync routing via "
+                "scripts/fa-update.sh (state/models.yaml → proxy/models.yaml)."
+            )
+        elif not has_key:
+            problems.append(
+                f"route {route_name!r}: key for {api_key_env} is absent in "
+                "/srv/first-agent/secrets/fa.env (mounted as /run/secrets/fa.env "
+                "in fa-egress-proxy)."
+            )
+
+    if problems:
+        print("fa selfcheck: ERROR")
+        for problem in problems:
+            print(f"- {problem}")
+        return 1
+
+    print("fa selfcheck: OK")
+    print(f"- checked role routes: {len(expected_routes)}")
+    return 0
+
+
+def _proxy_endpoint(proxy_url: str, path: str) -> str:
+    return f"{proxy_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _validate_proxy_url(proxy_url: str) -> str:
+    parsed = urllib.parse.urlparse(proxy_url)
+    if parsed.scheme not in {"http", "https"}:
+        return "expected http:// or https:// URL"
+    if not parsed.hostname:
+        return "missing host"
+    return ""
+
+
+def _selfcheck_http_get(
+    url: str,
+    *,
+    headers: Mapping[str, str] | None = None,
+    timeout_seconds: float = 5.0,
+) -> tuple[int, bytes]:
+    try:
+        request = urllib.request.Request(url, method="GET")  # noqa: S310
+        for key, value in (headers or {}).items():
+            request.add_header(key, value)
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
+            return int(response.status), response.read()
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), exc.read()
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        raise _SelfcheckNetworkError(str(exc)) from exc
+
+
+def _selfcheck_expected_routes(chain_config: ChainConfig) -> dict[str, str]:
+    from fa.egress_proxy.routing import route_name_for
+
+    routes: dict[str, str] = {}
+    for entry in chain_config.chain:
+        routes.setdefault(route_name_for(entry.provider, entry.slug), entry.api_key_env)
+    return routes
+
+
+def _selfcheck_parse_routes_payload(payload: object) -> tuple[dict[str, bool], str]:
+    if not isinstance(payload, list):
+        return {}, "expected a JSON list"
+    routes: dict[str, bool] = {}
+    for index, item in enumerate(payload):
+        if not isinstance(item, dict):
+            return {}, f"routes[{index}] is not an object"
+        if set(item) != {"name", "has_key"}:
+            return {}, f"routes[{index}] must contain only name and has_key"
+        name = item["name"]
+        has_key = item["has_key"]
+        if not isinstance(name, str) or not name:
+            return {}, f"routes[{index}].name must be a non-empty string"
+        if not isinstance(has_key, bool):
+            return {}, f"routes[{index}].has_key must be a boolean"
+        routes[name] = has_key
+    return routes, ""
 
 
 def _cmd_authoring_check(args: argparse.Namespace) -> int:

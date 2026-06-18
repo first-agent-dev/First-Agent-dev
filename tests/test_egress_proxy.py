@@ -146,6 +146,82 @@ def test_healthz_ok() -> None:
     assert b"ok" in data
 
 
+def test_routes_requires_proxy_token() -> None:
+    httpd, _ = _make_server()
+    port = httpd.server_address[1]
+    _run(httpd)
+    status, _ = _request(port, "GET", "/routes")
+    assert status == 403
+
+
+def test_routes_returns_only_safe_fields_and_has_key() -> None:
+    table = build_route_table(
+        [
+            ("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY"),
+            ("anthropic", "claude", "https://api.anthropic.com", "ANTHROPIC_API_KEY"),
+        ]
+    )
+    handler = build_handler_class(
+        route_table=table,
+        secrets={"OPENROUTER_API_KEY": _KEY, "ANTHROPIC_API_KEY": ""},
+        proxy_token=_TOKEN,
+        forward=None,
+    )
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    port = httpd.server_address[1]
+    _run(httpd)
+
+    status, data = _request(
+        port,
+        "GET",
+        "/routes",
+        headers={"X-FA-Proxy-Token": _TOKEN},
+    )
+
+    assert status == 200
+    routes = json.loads(data.decode("utf-8"))
+    assert routes == [
+        {"has_key": False, "name": "anthropic-claude"},
+        {"has_key": True, "name": "openrouter-s"},
+    ]
+    assert all(set(row) == {"name", "has_key"} for row in routes)
+    body = data.decode("utf-8")
+    # /routes must not expand the agent's leak/use surface: no key values, no
+    # env-var names (which can be sensitive operational metadata), and no
+    # upstream URLs that a compromised caller could enumerate.
+    assert _KEY not in body
+    assert "OPENROUTER_API_KEY" not in body
+    assert "ANTHROPIC_API_KEY" not in body
+    assert "up.example" not in body
+    assert "api.anthropic.com" not in body
+    assert "api_key_env" not in body
+    assert "upstream" not in body
+
+
+def test_routes_treats_whitespace_secret_as_missing() -> None:
+    table = build_route_table(
+        [("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY")]
+    )
+    handler = build_handler_class(
+        route_table=table,
+        secrets={"OPENROUTER_API_KEY": "   "},
+        proxy_token=_TOKEN,
+        forward=None,
+    )
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    port = httpd.server_address[1]
+    _run(httpd)
+
+    status, data = _request(
+        port, "GET", "/routes", headers={"X-FA-Proxy-Token": _TOKEN}
+    )
+
+    assert status == 200
+    assert json.loads(data.decode("utf-8")) == [
+        {"has_key": False, "name": "openrouter-s"}
+    ]
+
+
 def test_post_injects_key_and_strips_caller_auth() -> None:
     httpd, captured = _make_server()
     port = httpd.server_address[1]
