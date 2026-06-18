@@ -234,7 +234,7 @@ log_warn "Then authenticate with your Tailscale account."
 # 8. FA workspace directories
 # ---------------------------------------------------------------------------
 log_info "Creating FA workspace at $FA_DIR..."
-sudo mkdir -p "$FA_DIR"/{repo,state,secrets,backup,scripts}
+sudo mkdir -p "$FA_DIR"/{repo,state,secrets,backup,scripts,routing}
 # Ownership MUST match the container's runtime uid:gid. The container runs as the
 # hardcoded numeric 1000:1000 (Dockerfile `useradd -u 1000 fa` +
 # docker-compose `user: "1000:1000"`). Chowning to the host *username* only works
@@ -249,6 +249,7 @@ fi
 sudo chown -R 1000:1000 "$FA_DIR"
 sudo chmod 700 "$FA_DIR/state"
 sudo chmod 700 "$FA_DIR/secrets"
+sudo chmod 750 "$FA_DIR/routing"
 
 # ---------------------------------------------------------------------------
 # 9. Clone repo
@@ -337,14 +338,29 @@ EOF
     log_warn "Created $ENV_FA for non-secret controls. API keys go in $SECRETS_ENV."
 fi
 
-MODELS_YAML="$FA_DIR/state/models.yaml"
-if [[ ! -f "$MODELS_YAML" ]]; then
-    EXAMPLE="$FA_DIR/repo/First-Agent-dev/knowledge/examples/models.yaml.example"
-    if [[ -f "$EXAMPLE" ]]; then
-        cp "$EXAMPLE" "$MODELS_YAML"
-    else
-        # Inline fallback
-        cat > "$MODELS_YAML" <<'EOF'
+ROUTING_DIR="$FA_DIR/routing"
+ROUTING_MODELS_FILE="$ROUTING_DIR/models.yaml"
+LEGACY_STATE_MODELS="$FA_DIR/state/models.yaml"
+LEGACY_PROXY_MODELS="$FA_DIR/proxy/models.yaml"
+EXAMPLE_MODELS="$FA_DIR/repo/First-Agent-dev/knowledge/examples/models.yaml.example"
+
+ensure_routing_models() {
+    sudo mkdir -p "$ROUTING_DIR"
+    sudo chown 1000:1000 "$ROUTING_DIR"
+    sudo chmod 750 "$ROUTING_DIR"
+
+    if [[ ! -f "$ROUTING_MODELS_FILE" ]]; then
+        if [[ -f "$LEGACY_STATE_MODELS" ]]; then
+            sudo cp "$LEGACY_STATE_MODELS" "$ROUTING_MODELS_FILE"
+            log_info "Migrated legacy routing config: $LEGACY_STATE_MODELS → $ROUTING_MODELS_FILE"
+        elif [[ -f "$LEGACY_PROXY_MODELS" ]]; then
+            sudo cp "$LEGACY_PROXY_MODELS" "$ROUTING_MODELS_FILE"
+            log_info "Migrated legacy routing config: $LEGACY_PROXY_MODELS → $ROUTING_MODELS_FILE"
+        elif [[ -f "$EXAMPLE_MODELS" ]]; then
+            sudo cp "$EXAMPLE_MODELS" "$ROUTING_MODELS_FILE"
+            log_warn "Template models.yaml created at $ROUTING_MODELS_FILE. EDIT IT to configure provider chains."
+        else
+            sudo tee "$ROUTING_MODELS_FILE" >/dev/null <<'EOF'
 coder:
   model: "deepseek-v3"
   family: "deepseek"
@@ -354,21 +370,16 @@ coder:
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: OPENROUTER_API_KEY
 EOF
+            log_warn "Fallback models.yaml created at $ROUTING_MODELS_FILE. EDIT IT to configure provider chains."
+        fi
     fi
-    log_warn "Template models.yaml created at $MODELS_YAML. EDIT IT to configure provider chains."
-fi
 
-# Proxy-only copy of models.yaml (R2-2): the egress proxy reads its routing from
-# a directory the AGENT cannot write, so a compromised agent cannot rewrite a
-# base_url to redirect the key-injecting proxy at an attacker host. The agent
-# mounts /srv/first-agent/state read-write; it does NOT mount /srv/first-agent/proxy.
-PROXY_DIR="$FA_DIR/proxy"
-sudo mkdir -p "$PROXY_DIR"
-sudo cp "$MODELS_YAML" "$PROXY_DIR/models.yaml"
-sudo chown -R 1000:1000 "$PROXY_DIR"
-sudo chmod 750 "$PROXY_DIR"
-sudo chmod 640 "$PROXY_DIR/models.yaml"
-log_info "Synced proxy routing config → $PROXY_DIR/models.yaml (agent has no write access)."
+    sudo chown 1000:1000 "$ROUTING_MODELS_FILE"
+    sudo chmod 640 "$ROUTING_MODELS_FILE"
+    log_info "Routing source ready: $ROUTING_MODELS_FILE (mounted read-only into both containers)."
+}
+
+ensure_routing_models
 
 # ---------------------------------------------------------------------------
 # 11. SSH deploy key + pinned GitHub host key
@@ -539,11 +550,12 @@ echo "3. Verify SSH:          ssh -T git@github.com   (expect 'successfully auth
 echo "4. Enable branch protection on 'main' — agent pushes to 'agent/*'"
 echo "5. Log out and back in for docker group membership"
 echo "6. Edit .env.fa:        micro $FA_DIR/repo/First-Agent-dev/.env.fa"
-echo "7. Edit models.yaml:    micro $FA_DIR/state/models.yaml"
+echo "7. Edit models.yaml:    micro $FA_DIR/routing/models.yaml"
 echo "8. Start FA:            bash scripts/fa-post-setup.sh"
 echo ""
 echo "FA workspace:   $FA_DIR/repo/First-Agent-dev"
 echo "FA state:       $FA_DIR/state"
+echo "FA routing:     $FA_DIR/routing/models.yaml"
 echo "FA secrets:     $FA_DIR/secrets"
 echo "FA backup:      $FA_DIR/scripts/backup-fa.sh"
 echo "FA service:     $FA_USER_HOME/.config/systemd/user/fa.service"

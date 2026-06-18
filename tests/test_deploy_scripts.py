@@ -95,20 +95,18 @@ def test_fa_service_is_a_valid_user_unit() -> None:
     assert "docker compose -f docker-compose.fa.yml up -d" in unit
 
 
-def test_post_setup_resyncs_proxy_routing_before_start() -> None:
-    """F-1: fa-post-setup.sh must re-sync state/models.yaml → proxy/models.yaml.
+def test_post_setup_ensures_unified_routing_before_start() -> None:
+    """B: fa-post-setup.sh must prepare the single routing file before compose up.
 
-    The first-deploy path seeds the proxy copy BEFORE the operator edits
-    models.yaml; without a re-sync the proxy serves the stale example routing,
-    the route names diverge from the agent's, and `fa run` fails with
-    chain_exhausted even though keys are present and both containers are healthy.
+    The proxy no longer reads a separate proxy/models.yaml copy. Both containers
+    mount /srv/first-agent/routing/models.yaml read-only, so post-setup must
+    create or migrate that file before Docker sees the file bind mount.
     """
     text = (_SCRIPTS / "fa-post-setup.sh").read_text(encoding="utf-8")
-    assert "/srv/first-agent/proxy/models.yaml" in text
-    # The sync must copy the operator source into the proxy-only copy.
-    assert re.search(r"cp\s+\"?\$\{?MODELS_YAML\}?\"?\s+\"?\$\{?PROXY_MODELS\}?\"?", text), (
-        "fa-post-setup.sh must copy state models.yaml into the proxy copy"
-    )
+    assert "/srv/first-agent/routing/models.yaml" in text
+    assert "ensure_routing_models" in text
+    assert "PROXY_MODELS_FILE" not in text
+    assert "Syncing proxy routing config" not in text
 
 
 def test_fa_update_targets_the_agent_service_not_first_listed() -> None:

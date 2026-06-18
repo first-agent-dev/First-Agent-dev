@@ -9,10 +9,10 @@
 #   2. Update the local repo to origin/<branch> (--ff-only); re-exec the updated
 #      copy of THIS script so the rest runs the new code/compose. SKIP_UPDATE=1
 #      to skip. (A truly clean install should run the latest main.)
-#   3. Back up /srv/first-agent/{state,secrets} to a timestamped 0700 dir.
+#   3. Back up /srv/first-agent/{state,routing,secrets} to a timestamped 0700 dir.
 #   4. Stop the systemd service + `docker compose down --remove-orphans`.
-#   5. Reset run history (/srv/first-agent/state/runs/*); with WIPE_STATE=1 the
-#      whole state dir, then recreate a models.yaml template (host-user-owned).
+#   5. Reset run history (/srv/first-agent/state/runs/*); with WIPE_STATE=1,
+#      clear state and reset routing/models.yaml for backward compatibility.
 #   6. KEEP secrets/ untouched (LLM keys, deploy key, fa_proxy_token); generate
 #      the fa->proxy token if it is missing. NEVER deletes secrets.
 #   7. Rebuild images --no-cache and bring the TWO containers up
@@ -32,9 +32,9 @@
 # containers/images never loses keys or config.
 #
 # Flags (env vars):
-#   WIPE_STATE=1     clear ALL of state/ (models.yaml/config.yaml/history); a
-#                    models.yaml template is recreated for you to re-fill.
-#                    Keys in secrets/ are preserved. Default: keep state.
+#   WIPE_STATE=1     clear ALL of state/ and reset routing/models.yaml (old
+#                    versions stored models.yaml under state/). A routing
+#                    template is recreated for you to re-fill. Keys preserved.
 #   PRUNE=1          `docker system prune -af` after teardown (frees disk; removes
 #                    ALL unused images/build cache). Default: off.
 #   NO_BACKUP=1      skip the backup step (NOT recommended).
@@ -66,6 +66,10 @@ HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
 # so the updated copy does not try to update the repo again (loop guard).
 _FA_REBUILD_REEXEC="${_FA_REBUILD_REEXEC:-0}"
 EXAMPLE_MODELS="${REPO_DIR}/knowledge/examples/models.yaml.example"
+ROUTING_DIR="${FA_DIR}/routing"
+ROUTING_MODELS_FILE="${ROUTING_DIR}/models.yaml"
+LEGACY_STATE_MODELS="${FA_DIR}/state/models.yaml"
+LEGACY_PROXY_MODELS="${FA_DIR}/proxy/models.yaml"
 
 log_info()  { echo -e "\033[0;32m[INFO]\033[0m  $*"; }
 log_warn()  { echo -e "\033[0;33m[WARN]\033[0m  $*"; }
@@ -73,6 +77,40 @@ log_error() { echo -e "\033[0;31m[ERROR]\033[0m $*" >&2; }
 
 on_error() { log_error "Failed at line $1. The stack may be partially rebuilt; re-run after fixing."; }
 trap 'on_error $LINENO' ERR
+
+ensure_routing_models() {
+    sudo mkdir -p "${ROUTING_DIR}"
+    sudo chown 1000:1000 "${ROUTING_DIR}"
+    sudo chmod 750 "${ROUTING_DIR}"
+
+    if [[ ! -f "${ROUTING_MODELS_FILE}" ]]; then
+        if [[ -f "${LEGACY_STATE_MODELS}" ]]; then
+            sudo cp "${LEGACY_STATE_MODELS}" "${ROUTING_MODELS_FILE}"
+            log_info "Migrated legacy routing config: ${LEGACY_STATE_MODELS} → ${ROUTING_MODELS_FILE}"
+        elif [[ -f "${LEGACY_PROXY_MODELS}" ]]; then
+            sudo cp "${LEGACY_PROXY_MODELS}" "${ROUTING_MODELS_FILE}"
+            log_info "Migrated legacy routing config: ${LEGACY_PROXY_MODELS} → ${ROUTING_MODELS_FILE}"
+        elif [[ -f "${EXAMPLE_MODELS}" ]]; then
+            sudo cp "${EXAMPLE_MODELS}" "${ROUTING_MODELS_FILE}"
+            log_warn "Template models.yaml created at ${ROUTING_MODELS_FILE} (EDIT IT to set providers)."
+        else
+            sudo tee "${ROUTING_MODELS_FILE}" >/dev/null <<'EOF'
+coder:
+  model: "deepseek-v3"
+  family: "deepseek"
+  chain:
+    - provider: openrouter
+      slug: "deepseek/deepseek-chat-v3"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: OPENROUTER_API_KEY
+EOF
+            log_warn "Fallback models.yaml created at ${ROUTING_MODELS_FILE} (EDIT IT to set providers)."
+        fi
+    fi
+
+    sudo chown 1000:1000 "${ROUTING_MODELS_FILE}"
+    sudo chmod 640 "${ROUTING_MODELS_FILE}"
+}
 
 if [[ $EUID -eq 0 ]]; then
     log_error "Do not run as root. Run as your normal user with passwordless sudo."
@@ -137,7 +175,7 @@ if [[ "${SKIP_UPDATE}" != "1" && "${_FA_REBUILD_REEXEC}" != "1" ]]; then
             export _FA_REBUILD_REEXEC=1
             export WIPE_STATE NO_BACKUP PRUNE ASSUME_YES SKIP_UPDATE AUTO_STASH \
                    GIT_BRANCH HEALTH_TIMEOUT_SECONDS FA_DIR REPO_DIR COMPOSE_FILE \
-                   SERVICE FA_USER
+                   SERVICE FA_USER ROUTING_DIR ROUTING_MODELS_FILE LEGACY_STATE_MODELS LEGACY_PROXY_MODELS
             exec bash "${REPO_DIR}/scripts/fa-clean-rebuild.sh" "$@"
         fi
         log_info "Repo already up to date (${after:0:8})."
@@ -146,7 +184,7 @@ fi
 
 # Confirmation for destructive flags (skip with ASSUME_YES=1 or non-interactive).
 if [[ "${WIPE_STATE}" == "1" || "${PRUNE}" == "1" ]] && [[ "${ASSUME_YES}" != "1" ]]; then
-    [[ "${WIPE_STATE}" == "1" ]] && log_warn "WIPE_STATE=1 will DELETE all of ${FA_DIR}/state/* (keys are kept)."
+    [[ "${WIPE_STATE}" == "1" ]] && log_warn "WIPE_STATE=1 will DELETE ${FA_DIR}/state/* and reset ${ROUTING_MODELS_FILE} (keys are kept)."
     [[ "${PRUNE}" == "1" ]] && log_warn "PRUNE=1 will remove ALL unused Docker images + build cache."
     if [[ -t 0 ]]; then
         read -r -p "Proceed? [y/N] " reply
@@ -164,8 +202,9 @@ BK=""
 if [[ "${NO_BACKUP}" != "1" ]]; then
     BK="${HOME}/fa-backup-$(date +%Y%m%d-%H%M%S)"
     ( umask 077; mkdir -p "${BK}" )
-    log_info "Backing up state + secrets to ${BK} (0700) ..."
+    log_info "Backing up state + routing + secrets to ${BK} (0700) ..."
     sudo cp -a "${FA_DIR}/state" "${BK}/state" 2>/dev/null || true
+    sudo cp -a "${FA_DIR}/routing" "${BK}/routing" 2>/dev/null || true
     sudo cp -a "${FA_DIR}/secrets" "${BK}/secrets" 2>/dev/null || true
     sudo chown -R "${USER}:${USER}" "${BK}" 2>/dev/null || true
     chmod -R go-rwx "${BK}" 2>/dev/null || true
@@ -203,45 +242,21 @@ if [[ -d "${FA_DIR}/state/runs" ]]; then
 fi
 
 if [[ "${WIPE_STATE}" == "1" ]]; then
-    log_warn "WIPE_STATE=1 — clearing ALL of ${FA_DIR}/state/* (keys in secrets/ preserved)."
+    log_warn "WIPE_STATE=1 — clearing ALL of ${FA_DIR}/state/* and resetting ${ROUTING_MODELS_FILE} (keys preserved)."
     sudo rm -rf "${FA_DIR}/state/"* 2>/dev/null || true
+    sudo rm -f "${ROUTING_MODELS_FILE}" 2>/dev/null || true
+    # WIPE_STATE historically reset models.yaml. Do not resurrect a stale
+    # legacy proxy/state copy during this explicit reset; recreate from the
+    # checked-in example (or fallback) instead.
+    LEGACY_STATE_MODELS=""
+    LEGACY_PROXY_MODELS=""
 fi
 
-# Recreate a models.yaml template if it is now missing (e.g. after WIPE_STATE),
-# owned by uid 1000 so the container (which runs as numeric 1000:1000) can read/write it.
-MODELS_YAML="${FA_DIR}/state/models.yaml"
-if [[ ! -f "${MODELS_YAML}" ]]; then
-    log_warn "No models.yaml — creating a template at ${MODELS_YAML} (EDIT IT to set providers)."
-    sudo mkdir -p "${FA_DIR}/state"
-    if [[ -f "${EXAMPLE_MODELS}" ]]; then
-        sudo cp "${EXAMPLE_MODELS}" "${MODELS_YAML}"
-    else
-        sudo tee "${MODELS_YAML}" >/dev/null <<'EOF'
-coder:
-  model: "deepseek-v3"
-  family: "deepseek"
-  chain:
-    - provider: openrouter
-      slug: "deepseek/deepseek-chat-v3"
-      base_url: "https://openrouter.ai/api/v1"
-      api_key_env: OPENROUTER_API_KEY
-EOF
-    fi
-fi
-# Ensure state is owned by the host user (container runs as that uid).
+# Ensure state exists/ownership is correct; routing is a separate read-only file
+# mount into both containers and is prepared by ensure_routing_models.
+sudo mkdir -p "${FA_DIR}/state"
 sudo chown -R 1000:1000 "${FA_DIR}/state" 2>/dev/null || true
-
-# Re-sync the PROXY-ONLY routing config (R2-2). The proxy reads models.yaml from
-# /srv/first-agent/proxy (which the agent does NOT mount), so a compromised agent
-# cannot redirect the key-injecting proxy. Refresh it from the operator's
-# models.yaml on every rebuild.
-PROXY_DIR="${FA_DIR}/proxy"
-sudo mkdir -p "${PROXY_DIR}"
-sudo cp "${MODELS_YAML}" "${PROXY_DIR}/models.yaml"
-sudo chown -R 1000:1000 "${PROXY_DIR}"
-sudo chmod 750 "${PROXY_DIR}"
-sudo chmod 640 "${PROXY_DIR}/models.yaml"
-log_info "Synced proxy routing config → ${PROXY_DIR}/models.yaml"
+ensure_routing_models
 
 # ───────────────────────────────────────────────────────────────
 # 6. Secrets: keep keys; ensure the fa->proxy token exists
@@ -278,7 +293,7 @@ _required_files=(
     "${FA_DIR}/secrets/fa_proxy_token"
     "${FA_DIR}/secrets/github_deploy_key"
     "${FA_DIR}/secrets/known_hosts"
-    "${PROXY_DIR}/models.yaml"
+    "${ROUTING_MODELS_FILE}"
 )
 _missing=0
 for _rf in "${_required_files[@]}"; do
@@ -334,7 +349,7 @@ wait_for_health() {
 log_info "Waiting for fa-egress-proxy to become healthy..."
 if ! wait_for_health "fa-egress-proxy"; then
     log_error "Egress proxy did not become healthy in ${HEALTH_TIMEOUT_SECONDS}s."
-    log_error "  Check: ls -l ${TOKEN_FILE} ${MODELS_YAML}"
+    log_error "  Check: ls -l ${TOKEN_FILE} ${ROUTING_MODELS_FILE}"
     log_error "  Logs:  docker compose -f ${COMPOSE_FILE} logs fa-egress-proxy"
     exit 1
 fi

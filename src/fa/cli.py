@@ -843,8 +843,11 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
         if has_key is None:
             problems.append(
                 f"route {route_name!r} is in {config_path} for role {role_name!r}, "
-                "but is absent from proxy /routes — re-sync routing via "
-                "scripts/fa-update.sh (state/models.yaml → proxy/models.yaml)."
+                "but is absent from proxy /routes — agent and proxy should read "
+                "/srv/first-agent/routing/models.yaml; after editing it, "
+                "restart/recreate the proxy (for example: scripts/fa-update.sh, or "
+                "docker compose -f docker-compose.fa.yml up -d --force-recreate "
+                "fa-egress-proxy)."
             )
         elif not has_key:
             problems.append(

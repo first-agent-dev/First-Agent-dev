@@ -28,12 +28,10 @@ ENV_HASH_FILE="${ENV_HASH_FILE:-/srv/first-agent/state/.env.fa.sha256}"
 # trigger a recreate when changed (the proxy reads all three at startup).
 SECRETS_ENV="${SECRETS_ENV:-/srv/first-agent/secrets/fa.env}"
 PROXY_TOKEN_FILE="${PROXY_TOKEN_FILE:-/srv/first-agent/secrets/fa_proxy_token}"
-MODELS_YAML_FILE="${MODELS_YAML_FILE:-/srv/first-agent/state/models.yaml}"
-# Proxy-only routing copy (R2-2). The egress proxy reads models.yaml from here
-# (a dir the agent cannot write); the operator edits MODELS_YAML_FILE. This
-# script re-syncs the copy on deploy so model/provider edits actually take
-# effect — without the sync the proxy would keep using a stale routing table.
-PROXY_MODELS_FILE="${PROXY_MODELS_FILE:-/srv/first-agent/proxy/models.yaml}"
+MODELS_YAML_FILE="${MODELS_YAML_FILE:-/srv/first-agent/routing/models.yaml}"
+ROUTING_DIR="${ROUTING_DIR:-$(dirname "${MODELS_YAML_FILE}")}"
+LEGACY_STATE_MODELS="${LEGACY_STATE_MODELS:-/srv/first-agent/state/models.yaml}"
+LEGACY_PROXY_MODELS="${LEGACY_PROXY_MODELS:-/srv/first-agent/proxy/models.yaml}"
 
 SERVICE_NAME_OVERRIDE="${SERVICE_NAME_OVERRIDE:-}"
 
@@ -62,6 +60,8 @@ TEST_RC=0
 SERVICE_NAME="first-agent"
 ENV_HASH_PENDING=0
 ENV_HASH_VALUE=""
+_FA_UPDATE_REEXEC="${_FA_UPDATE_REEXEC:-0}"
+_FA_UPDATE_REEXEC_HEAD_CHANGED="${_FA_UPDATE_REEXEC_HEAD_CHANGED:-0}"
 
 # ═══════════════════════════════════════════════════════════════
 #  Logging / Locking / Error handling
@@ -86,6 +86,44 @@ need_cmd() {
     echo "Missing command: $1"
     exit 1
   }
+}
+
+ensure_routing_models() {
+  # Migration/idempotency: both containers now mount the SAME routing file
+  # read-only. Legacy state/proxy copies are inputs only; no proxy copy is
+  # maintained after this point.
+  local example_models="${REPO_DIR}/knowledge/examples/models.yaml.example"
+  sudo mkdir -p "${ROUTING_DIR}"
+  sudo chown 1000:1000 "${ROUTING_DIR}"
+  sudo chmod 750 "${ROUTING_DIR}"
+
+  if [[ ! -f "${MODELS_YAML_FILE}" ]]; then
+    if [[ -f "${LEGACY_STATE_MODELS}" ]]; then
+      sudo cp "${LEGACY_STATE_MODELS}" "${MODELS_YAML_FILE}"
+      echo "  → Migrated legacy routing config: ${LEGACY_STATE_MODELS} → ${MODELS_YAML_FILE}"
+    elif [[ -f "${LEGACY_PROXY_MODELS}" ]]; then
+      sudo cp "${LEGACY_PROXY_MODELS}" "${MODELS_YAML_FILE}"
+      echo "  → Migrated legacy routing config: ${LEGACY_PROXY_MODELS} → ${MODELS_YAML_FILE}"
+    elif [[ -f "${example_models}" ]]; then
+      sudo cp "${example_models}" "${MODELS_YAML_FILE}"
+      echo "  ⚠ Created routing template at ${MODELS_YAML_FILE}; edit it before fa run."
+    else
+      sudo tee "${MODELS_YAML_FILE}" >/dev/null <<'EOF'
+coder:
+  model: "deepseek-v3"
+  family: "deepseek"
+  chain:
+    - provider: openrouter
+      slug: "deepseek/deepseek-chat-v3"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: OPENROUTER_API_KEY
+EOF
+      echo "  ⚠ Created fallback routing template at ${MODELS_YAML_FILE}; edit it before fa run."
+    fi
+  fi
+
+  sudo chown 1000:1000 "${MODELS_YAML_FILE}"
+  sudo chmod 640 "${MODELS_YAML_FILE}"
 }
 
 get_service_name() {
@@ -248,7 +286,7 @@ evaluate_changes() {
 
   # Detect changes to any input the running containers read at startup (require
   # restart, not rebuild): non-secret controls (.env.fa), the LLM keys file +
-  # fa->proxy token + models.yaml routing (all consumed by the egress-proxy /
+  # fa->proxy token + routing (all consumed by the egress-proxy /
   # agent at boot). Persist the new hash only after deploy succeeds; otherwise a
   # failed deploy could hide a change on the next run.
   if [[ -f "${ENV_FA}" || -f "${SECRETS_ENV}" || -f "${PROXY_TOKEN_FILE}" || -f "${MODELS_YAML_FILE}" ]]; then
@@ -260,7 +298,7 @@ evaluate_changes() {
       prev_hash=$(cat "${ENV_HASH_FILE}" || true)
       if [[ "${current_hash}" != "${prev_hash}" ]]; then
         NEEDS_RESTART=1
-        echo "  → env/secrets/proxy-token/models changed (hash mismatch) → restart needed."
+        echo "  → env/secrets/proxy-token/routing changed (hash mismatch) → restart needed."
       fi
     else
       NEEDS_RESTART=1
@@ -360,19 +398,6 @@ build_and_deploy() {
   fi
 
   if [[ "${NEEDS_RESTART}" == "1" ]]; then
-    # Re-sync the proxy-only routing copy BEFORE the restart, so model/provider
-    # edits to MODELS_YAML_FILE actually take effect (the proxy reads the copy,
-    # not the operator-edited source). Without this the proxy restarts but keeps
-    # the stale routing table.
-    if [[ -f "${MODELS_YAML_FILE}" ]]; then
-      echo "  → Syncing proxy routing config (${MODELS_YAML_FILE} → ${PROXY_MODELS_FILE})..."
-      sudo mkdir -p "$(dirname "${PROXY_MODELS_FILE}")"
-      sudo cp "${MODELS_YAML_FILE}" "${PROXY_MODELS_FILE}"
-      sudo chown -R 1000:1000 "$(dirname "${PROXY_MODELS_FILE}")"
-      sudo chmod 750 "$(dirname "${PROXY_MODELS_FILE}")"
-      sudo chmod 640 "${PROXY_MODELS_FILE}"
-    fi
-
     echo "  → Deploying containers..."
     local up_cmd=(docker compose -f "${COMPOSE_FILE}" up -d --remove-orphans)
     # Force recreate when env changed but no rebuild (picks up new env vars).
@@ -606,10 +631,22 @@ main() {
 
   preflight_checks
   git_update
+  if [[ "${HEAD_CHANGED}" == "1" && "${_FA_UPDATE_REEXEC}" != "1" && "${STASHED}" != "1" ]]; then
+    echo "  → Re-executing updated fa-update.sh so deploy uses the new script logic..."
+    export _FA_UPDATE_REEXEC=1
+    export _FA_UPDATE_REEXEC_HEAD_CHANGED=1
+    export REPO_DIR COMPOSE_FILE ENV_TEMPLATE ENV_FA ENV_HASH_FILE SECRETS_ENV       PROXY_TOKEN_FILE MODELS_YAML_FILE ROUTING_DIR LEGACY_STATE_MODELS       LEGACY_PROXY_MODELS SERVICE_NAME_OVERRIDE NO_CACHE COMPOSE_BUILD_PULL       AUTO_STASH SKIP_TESTS SKIP_UV_SYNC HEALTH_TIMEOUT_SECONDS PRUNE PRUNE_UNTIL
+    exec bash "${REPO_DIR}/scripts/fa-update.sh" "$@"
+  fi
+  if [[ "${_FA_UPDATE_REEXEC_HEAD_CHANGED}" == "1" ]]; then
+    HEAD_CHANGED=1
+    echo "  → Continuing after re-exec; preserving HEAD_CHANGED=1 for build/deploy."
+  fi
 
   SERVICE_NAME=$(get_service_name)
   echo "  → Service: ${SERVICE_NAME}"
 
+  ensure_routing_models
   evaluate_changes
   validate_env
   build_and_deploy

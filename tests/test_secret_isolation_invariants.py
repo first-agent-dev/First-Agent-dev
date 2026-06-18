@@ -96,3 +96,31 @@ def test_cli_supports_egress_proxy_mode() -> None:
     assert "_apply_proxy_mode" in text
     # In proxy mode the chain's key store is empty (no provider keys on fa side).
     assert "SecretStore({}) if proxy_mode" in text
+
+def test_agent_routing_models_mount_is_read_only_file_after_state_mount() -> None:
+    """R2-2: the agent sees routing metadata but cannot rewrite it.
+
+    The nested file mount must come AFTER the /home/fa/.fa state directory mount
+    so Docker's later, more-specific read-only file mount wins over any legacy
+    state/models.yaml inside the agent-writable state directory.
+    """
+    import yaml
+
+    doc = yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))
+    agent = doc["services"]["first-agent"]
+    vols = agent.get("volumes", [])
+    state_idx = next(
+        i
+        for i, vol in enumerate(vols)
+        if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa"
+    )
+    routing_idx = next(
+        i
+        for i, vol in enumerate(vols)
+        if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa/models.yaml"
+    )
+    routing = vols[routing_idx]
+
+    assert routing_idx > state_idx, "routing file mount must come AFTER state dir mount"
+    assert routing.get("source") == "/srv/first-agent/routing/models.yaml"
+    assert routing.get("read_only") is True

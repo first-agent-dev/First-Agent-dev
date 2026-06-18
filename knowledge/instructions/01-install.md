@@ -302,7 +302,7 @@ docker compose -f docker-compose.fa.yml logs -f fa-egress-proxy
 ```
 
 > Если `fa-egress-proxy` не становится healthy — проверьте
-> `ls -l /srv/first-agent/secrets/fa_proxy_token /srv/first-agent/state/models.yaml`
+> `ls -l /srv/first-agent/secrets/fa_proxy_token /srv/first-agent/routing/models.yaml`
 > и `docker compose -f docker-compose.fa.yml logs fa-egress-proxy`. Пока прокси
 > не здоров, `first-agent` не запустится (это by design).
 
@@ -385,13 +385,14 @@ egress-injection proxy). `setup-fa-desktop.sh` создаёт файл-шабл�
 2. Проверьте, что есть `models.yaml` (копируется `setup-fa-desktop.sh`):
 
    ```bash
-   ls /srv/first-agent/state/models.yaml
+   ls /srv/first-agent/routing/models.yaml
    ```
 
    Если нет — скопируйте из примера:
 
    ```bash
-   cp knowledge/examples/models.yaml.example /srv/first-agent/state/models.yaml
+   sudo mkdir -p /srv/first-agent/routing
+   sudo cp knowledge/examples/models.yaml.example /srv/first-agent/routing/models.yaml
    ```
 
 3. **Разделение по назначению:**

@@ -111,6 +111,8 @@ def test_selfcheck_reports_route_desync(
     assert "openrouter-meta-llama-llama-3-1-8b" in out
     assert "absent from proxy /routes" in out
     assert "scripts/fa-update.sh" in out
+    assert "/srv/first-agent/routing/models.yaml" in out
+    assert "restart/recreate" in out
     assert _KEY not in out
 
 

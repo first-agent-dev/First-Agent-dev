@@ -45,6 +45,7 @@ export AWS_SECRET_ACCESS_KEY="$B2_APPLICATION_KEY"
 
 restic -r "$RESTIC_REPO" backup \
     /srv/first-agent/state \
+    /srv/first-agent/routing \
     /srv/first-agent/secrets \
     /srv/first-agent/scripts \
     /srv/first-agent/repo/First-Agent-dev/docker-compose.fa.yml \

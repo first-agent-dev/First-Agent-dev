@@ -71,29 +71,54 @@ fi
 cd "$REPO_DIR"
 
 # ---------------------------------------------------------------------------
-# 0b. Re-sync the PROXY-ONLY routing config (R2-2) BEFORE building/starting.
+# 0b. Ensure the unified routing source exists BEFORE building/starting.
 # ---------------------------------------------------------------------------
-# The egress proxy reads its routing from /srv/first-agent/proxy/models.yaml (a
-# dir the agent cannot write); the operator edits state/models.yaml. The setup
-# script seeds the proxy copy BEFORE the operator edits models.yaml, so without
-# this re-sync the proxy would start with the STALE example routing while the
-# agent computes route names from the freshly-edited config — the names diverge,
-# the proxy returns 404 unknown route, and `fa run` fails with chain_exhausted
-# even though keys are present and both containers report healthy. fa-update.sh
-# and fa-clean-rebuild.sh already do this sync; the first-deploy path did not.
-MODELS_YAML="/srv/first-agent/state/models.yaml"
-PROXY_MODELS="/srv/first-agent/proxy/models.yaml"
-if [[ -f "$MODELS_YAML" ]]; then
-    log_info "Syncing proxy routing config ($MODELS_YAML → $PROXY_MODELS)..."
-    sudo mkdir -p "$(dirname "$PROXY_MODELS")"
-    sudo cp "$MODELS_YAML" "$PROXY_MODELS"
-    sudo chown -R 1000:1000 "$(dirname "$PROXY_MODELS")"
-    sudo chmod 750 "$(dirname "$PROXY_MODELS")"
-    sudo chmod 640 "$PROXY_MODELS"
-else
-    log_warn "No $MODELS_YAML found — the proxy will have no routing config."
-    log_warn "Create it (e.g. from knowledge/examples/models.yaml.example) and re-run."
-fi
+# Both the agent and egress proxy mount /srv/first-agent/routing/models.yaml
+# read-only. The proxy loads it at startup, so post-setup must create/migrate it
+# before the first compose up. Legacy state/proxy copies are migration inputs
+# only; they are not mounted after ADR-12 Option C/B unified routing.
+ROUTING_DIR="/srv/first-agent/routing"
+ROUTING_MODELS_FILE="$ROUTING_DIR/models.yaml"
+LEGACY_STATE_MODELS="/srv/first-agent/state/models.yaml"
+LEGACY_PROXY_MODELS="/srv/first-agent/proxy/models.yaml"
+EXAMPLE_MODELS="$REPO_DIR/knowledge/examples/models.yaml.example"
+
+ensure_routing_models() {
+    sudo mkdir -p "$ROUTING_DIR"
+    sudo chown 1000:1000 "$ROUTING_DIR"
+    sudo chmod 750 "$ROUTING_DIR"
+
+    if [[ ! -f "$ROUTING_MODELS_FILE" ]]; then
+        if [[ -f "$LEGACY_STATE_MODELS" ]]; then
+            sudo cp "$LEGACY_STATE_MODELS" "$ROUTING_MODELS_FILE"
+            log_info "Migrated legacy routing config: $LEGACY_STATE_MODELS → $ROUTING_MODELS_FILE"
+        elif [[ -f "$LEGACY_PROXY_MODELS" ]]; then
+            sudo cp "$LEGACY_PROXY_MODELS" "$ROUTING_MODELS_FILE"
+            log_info "Migrated legacy routing config: $LEGACY_PROXY_MODELS → $ROUTING_MODELS_FILE"
+        elif [[ -f "$EXAMPLE_MODELS" ]]; then
+            sudo cp "$EXAMPLE_MODELS" "$ROUTING_MODELS_FILE"
+            log_warn "Template models.yaml created at $ROUTING_MODELS_FILE. EDIT IT to configure provider chains."
+        else
+            sudo tee "$ROUTING_MODELS_FILE" >/dev/null <<'EOF'
+coder:
+  model: "deepseek-v3"
+  family: "deepseek"
+  chain:
+    - provider: openrouter
+      slug: "deepseek/deepseek-chat-v3"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: OPENROUTER_API_KEY
+EOF
+            log_warn "Fallback models.yaml created at $ROUTING_MODELS_FILE. EDIT IT to configure provider chains."
+        fi
+    fi
+
+    sudo chown 1000:1000 "$ROUTING_MODELS_FILE"
+    sudo chmod 640 "$ROUTING_MODELS_FILE"
+    log_info "Routing source ready: $ROUTING_MODELS_FILE"
+}
+
+ensure_routing_models
 
 # 0. Tailscale connectivity check (warn only, do not block)
 if command -v tailscale &>/dev/null; then
@@ -147,7 +172,7 @@ if ! wait_for_container "fa-egress-proxy" 1; then
     log_error "Egress proxy did not become healthy within 60s."
     log_error "The agent will NOT start until the proxy is healthy (depends_on)."
     log_error "Common causes: missing/empty proxy token or routing config. Check:"
-    log_error "  ls -l /srv/first-agent/secrets/fa_proxy_token /srv/first-agent/proxy/models.yaml"
+    log_error "  ls -l /srv/first-agent/secrets/fa_proxy_token /srv/first-agent/routing/models.yaml"
     log_error "  docker compose -f docker-compose.fa.yml logs fa-egress-proxy"
     exit 1
 fi

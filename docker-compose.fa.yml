@@ -77,11 +77,20 @@ services:
         source: /srv/first-agent/repo/First-Agent-dev
         target: /workspace
         read_only: false
-      # FA state/config (persistent) — ~/.fa for models.yaml, config.yaml, pr_draft.md
+      # FA state (persistent) — ~/.fa for config.yaml, runs, drafts, history.
+      # Routing is mounted as a separate read-only file below so the agent can
+      # read route metadata but cannot rewrite the proxy's route table (R2-2).
       - type: bind
         source: /srv/first-agent/state
         target: /home/fa/.fa
         read_only: false
+      # Single routing source. MUST come AFTER the /home/fa/.fa directory mount:
+      # this nested ro file mount hides any legacy state/models.yaml from the
+      # agent and preserves R2-2.
+      - type: bind
+        source: /srv/first-agent/routing/models.yaml
+        target: /home/fa/.fa/models.yaml
+        read_only: true
       # fa->proxy bootstrap token (read-only). NOT an LLM key — it only proves
       # this container is the agent so the proxy accepts its calls. LLM provider
       # keys are NEVER mounted into the agent container (ADR-12 Option C).
@@ -205,11 +214,11 @@ services:
         source: /srv/first-agent/secrets/fa_proxy_token
         target: /run/secrets/fa_proxy_token
         read_only: true
-      # Routing config (read-only) from a PROXY-ONLY dir the agent does NOT
-      # mount — so a compromised agent cannot rewrite base_url to redirect the
-      # proxy (with the real key) at an attacker host. (R2-2)
+      # Single routing source. Both containers read the same file read-only;
+      # only the host operator edits it. The proxy loads routes at startup, so
+      # restart/recreate it after routing edits. (R2-2)
       - type: bind
-        source: /srv/first-agent/proxy/models.yaml
+        source: /srv/first-agent/routing/models.yaml
         target: /etc/fa/models.yaml
         read_only: true
       # NO /workspace mount: the proxy runs immutable image code only. (R2-1)

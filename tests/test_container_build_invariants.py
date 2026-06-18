@@ -172,20 +172,94 @@ def test_clean_rebuild_brings_up_via_compose_not_systemd_start() -> None:
     )
 
 
-# --- proxy routing copy must stay in sync (F8) --------------------------------
-def test_fa_update_resyncs_proxy_models_copy() -> None:
-    """F8: the egress proxy reads models.yaml from a proxy-only copy; the
-    operator edits the state source. fa-update must re-sync the copy on deploy,
-    otherwise model/provider changes restart the proxy but silently don't apply."""
-    text = _UPDATE.read_text(encoding="utf-8")
-    assert "proxy/models.yaml" in text, (
-        "fa-update must reference the proxy routing copy"
-    )
-    # The sync must copy state source → proxy copy.
-    assert 'cp "${MODELS_YAML_FILE}" "${PROXY_MODELS_FILE}"' in text, (
-        "fa-update must copy state/models.yaml → proxy/models.yaml on deploy"
+# --- unified routing file (ADR-12 Option C / R2-2) ----------------------------
+def _volume_by_target(service: dict, target: str) -> dict:
+    return next(
+        vol
+        for vol in service.get("volumes", [])
+        if isinstance(vol, dict) and vol.get("target") == target
     )
 
+
+def test_compose_uses_single_routing_source_for_agent_and_proxy() -> None:
+    """Both containers read the same routing file read-only; no copy exists."""
+    doc = _compose()
+    agent = doc["services"]["first-agent"]
+    proxy = doc["services"]["fa-egress-proxy"]
+    agent_routing = _volume_by_target(agent, "/home/fa/.fa/models.yaml")
+    proxy_routing = _volume_by_target(proxy, "/etc/fa/models.yaml")
+
+    assert agent_routing.get("source") == proxy_routing.get("source")
+    assert agent_routing.get("source") == "/srv/first-agent/routing/models.yaml"
+    assert agent_routing.get("read_only") is True
+    assert proxy_routing.get("read_only") is True
+
+
+def test_routing_source_is_not_agent_writable_state_or_legacy_proxy_copy() -> None:
+    """Active compose mounts must not use the old split-brain files."""
+    forbidden = {
+        "/srv/first-agent/state/models.yaml",
+        "/srv/first-agent/proxy/models.yaml",
+    }
+    for service in _compose()["services"].values():
+        for vol in service.get("volumes", []):
+            if isinstance(vol, dict):
+                assert vol.get("source") not in forbidden
+
+
+def test_agent_routing_file_mount_order() -> None:
+    """Nested ro routing file mount must come after the rw state dir mount."""
+    agent = _compose()["services"]["first-agent"]
+    vols = agent.get("volumes", [])
+    state_idx = next(
+        i
+        for i, vol in enumerate(vols)
+        if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa"
+    )
+    routing_idx = next(
+        i
+        for i, vol in enumerate(vols)
+        if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa/models.yaml"
+    )
+    assert routing_idx > state_idx
+
+
+def test_fa_update_hash_tracks_routing_file_not_proxy_copy() -> None:
+    text = _UPDATE.read_text(encoding="utf-8")
+    assert 'MODELS_YAML_FILE="${MODELS_YAML_FILE:-/srv/first-agent/routing/models.yaml}"' in text
+    assert '"${MODELS_YAML_FILE}"' in text
+    assert "PROXY_MODELS_FILE" not in text
+    assert 'cp "${MODELS_YAML_FILE}"' not in text
+
+
+def test_deploy_scripts_do_not_sync_proxy_models_copy() -> None:
+    """Legacy proxy/models.yaml may be read for migration, never maintained."""
+    for script in (_UPDATE, _POST_SETUP, _CLEAN_REBUILD):
+        text = script.read_text(encoding="utf-8")
+        assert "PROXY_MODELS_FILE" not in text
+        assert 'cp "${MODELS_YAML_FILE}" "${PROXY_MODELS_FILE}"' not in text
+        assert "Syncing proxy routing config" not in text
+
+
+
+def test_fa_update_reexecs_after_git_pull_to_use_new_deploy_logic() -> None:
+    """Updating deploy code and compose in one pull must run the updated script.
+
+    Without a re-exec, the old in-memory fa-update.sh can pull a compose file
+    that expects new host paths (for example routing/models.yaml) but keep using
+    stale deploy logic that never creates them.
+    """
+    text = _UPDATE.read_text(encoding="utf-8")
+    assert "_FA_UPDATE_REEXEC" in text
+    assert 'exec bash "${REPO_DIR}/scripts/fa-update.sh" "$@"' in text
+    assert "_FA_UPDATE_REEXEC_HEAD_CHANGED" in text
+
+
+def test_clean_rebuild_wipe_state_ignores_legacy_models_when_recreating_routing() -> None:
+    """WIPE_STATE=1 must reset routing, not migrate a stale legacy proxy copy."""
+    text = _CLEAN_REBUILD.read_text(encoding="utf-8")
+    assert 'LEGACY_STATE_MODELS=""' in text
+    assert 'LEGACY_PROXY_MODELS=""' in text
 
 def test_post_setup_validates_the_real_keys_file() -> None:
     """F1: the 'did you add keys' gate must check the secrets file the proxy
