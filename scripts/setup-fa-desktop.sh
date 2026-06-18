@@ -303,10 +303,9 @@ fi
 
 # Seed the secrets file from template if still absent.
 if [[ ! -f "$SECRETS_ENV" ]]; then
-    TEMPLATE="$FA_DIR/repo/First-Agent-dev/.env.fa.template"
+    TEMPLATE="$FA_DIR/repo/First-Agent-dev/secrets/fa.env.template"
     if [[ -f "$TEMPLATE" ]]; then
-        # Keep only the API-key lines from the template (commented placeholders).
-        grep -E 'API_KEY|_TOKEN|_SECRET' "$TEMPLATE" > "$SECRETS_ENV" 2>/dev/null || true
+        cp "$TEMPLATE" "$SECRETS_ENV"
     fi
     if [[ ! -s "$SECRETS_ENV" ]]; then
         cat > "$SECRETS_ENV" <<'EOF'
@@ -334,7 +333,11 @@ fi
 
 # .env.fa now holds ONLY non-secret runtime controls (FA_AUTO_RUN, FA_TASK, ...).
 if [[ ! -f "$ENV_FA" ]]; then
-    cat > "$ENV_FA" <<'EOF'
+    ENV_TEMPLATE="$FA_DIR/repo/First-Agent-dev/.env.fa.template"
+    if [[ -f "$ENV_TEMPLATE" ]]; then
+        cp "$ENV_TEMPLATE" "$ENV_FA"
+    else
+        cat > "$ENV_FA" <<'EOF'
 # First-Agent NON-SECRET runtime controls (loaded by Docker Compose env_file).
 # API KEYS do NOT go here — they live in /srv/first-agent/secrets/fa.env (ADR-12).
 # Optional one-shot auto-run controls:
@@ -343,8 +346,19 @@ if [[ ! -f "$ENV_FA" ]]; then
 # FA_ROLE=coder
 # FA_RUN_ID=my-run-id
 EOF
+    fi
     chmod 600 "$ENV_FA"
     log_warn "Created $ENV_FA for non-secret controls. API keys go in $SECRETS_ENV."
+fi
+
+NORMALIZE_ENV="$FA_DIR/repo/First-Agent-dev/scripts/fa-normalize-env.sh"
+if [[ -f "$NORMALIZE_ENV" ]]; then
+    env \
+        REPO_DIR="$FA_DIR/repo/First-Agent-dev" \
+        ENV_FA="$ENV_FA" \
+        SECRETS_ENV="$SECRETS_ENV" \
+        BACKUP_DIR="$FA_DIR/secrets" \
+        bash "$NORMALIZE_ENV"
 fi
 
 ROUTING_DIR="$FA_DIR/routing"

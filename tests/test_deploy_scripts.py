@@ -10,6 +10,7 @@ when available + simple substring assertions); they do not spin up Docker.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import stat
@@ -27,6 +28,7 @@ _SHELL_SCRIPTS = [
     _SCRIPTS / "fa-update.sh",
     _SCRIPTS / "fa-clean-rebuild.sh",
     _SCRIPTS / "backup-fa.sh",
+    _SCRIPTS / "fa-normalize-env.sh",
     _SCRIPTS / "fa-entrypoint.sh",
     _SCRIPTS / "ssh-tailscale" / "00-failsafe.sh",
     _SCRIPTS / "ssh-tailscale" / "10-diagnose.sh",
@@ -177,3 +179,91 @@ def test_post_setup_does_not_interpolate_remote_or_branch_inside_docker_exec_she
     assert "git push origin $TEST_BRANCH" not in text
     assert "-e REPO_SSH_URL=" in text
     assert "-e TEST_BRANCH=" in text
+
+
+
+def _write_env_templates(repo: Path) -> None:
+    (repo / "secrets").mkdir(parents=True)
+    (repo / ".env.fa.template").write_text(
+        "# First-Agent NON-SECRET runtime controls.\n"
+        "# API KEYS DO NOT GO HERE.\n"
+        "# FA_AUTO_RUN=0\n",
+        encoding="utf-8",
+    )
+    (repo / "secrets" / "fa.env.template").write_text(
+        "# First-Agent LLM API KEYS — consumed ONLY by the fa-egress-proxy container.\n"
+        "# OPENROUTER_API_KEY=sk-or-v1-CHANGEME\n"
+        "# FIREWORKS_API_KEY=fw-CHANGEME\n",
+        encoding="utf-8",
+    )
+
+
+def _run_normalizer(
+    repo: Path, env_fa: Path, secrets_env: Path, backup_dir: Path
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(_SCRIPTS / "fa-normalize-env.sh")],
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "FA_NORMALIZE_USE_SUDO": "0",
+            "REPO_DIR": str(repo),
+            "ENV_FA": str(env_fa),
+            "SECRETS_ENV": str(secrets_env),
+            "BACKUP_DIR": str(backup_dir),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_normalize_env_replaces_legacy_comment_only_env_and_preserves_fa_controls(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_env_templates(repo)
+    env_fa = repo / ".env.fa"
+    env_fa.write_text(
+        "# Convention separation:\n"
+        "# - LLM API keys -> .env.fa (container runtime, loaded by compose)\n"
+        "# OPENROUTER_API_KEY=sk-or-v1-CHANGEME\n"
+        "FA_AUTO_RUN=1\n",
+        encoding="utf-8",
+    )
+    secrets_env = tmp_path / "secrets" / "fa.env"
+
+    result = _run_normalizer(repo, env_fa, secrets_env, tmp_path / "backups")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    env_text = env_fa.read_text(encoding="utf-8")
+    assert "LLM API keys -> .env.fa" not in env_text
+    assert "API KEYS DO NOT GO HERE" in env_text
+    assert "FA_AUTO_RUN=1" in env_text
+    assert "FIREWORKS_API_KEY" in secrets_env.read_text(encoding="utf-8")
+
+
+def test_normalize_env_migrates_active_secret_lines_out_of_env_fa(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_env_templates(repo)
+    env_fa = repo / ".env.fa"
+    env_fa.write_text(
+        "OPENROUTER_API_KEY=sk-real\n"
+        "FA_ROLE=coder\n",
+        encoding="utf-8",
+    )
+    secrets_env = tmp_path / "secrets" / "fa.env"
+    secrets_env.parent.mkdir()
+    secrets_env.write_text("FIREWORKS_API_KEY=fw-existing\n", encoding="utf-8")
+
+    result = _run_normalizer(repo, env_fa, secrets_env, tmp_path / "backups")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    env_text = env_fa.read_text(encoding="utf-8")
+    secret_text = secrets_env.read_text(encoding="utf-8")
+    assert "OPENROUTER_API_KEY" not in env_text
+    assert "FA_ROLE=coder" in env_text
+    assert "OPENROUTER_API_KEY=sk-real" in secret_text
+    assert "FIREWORKS_API_KEY=fw-existing" in secret_text
+    assert "First-Agent LLM API KEYS" in secret_text

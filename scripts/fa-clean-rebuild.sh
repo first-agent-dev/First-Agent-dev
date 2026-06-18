@@ -75,6 +75,8 @@ STASHED=0
 # so the updated copy does not try to update the repo again (loop guard).
 _FA_REBUILD_REEXEC="${_FA_REBUILD_REEXEC:-0}"
 EXAMPLE_MODELS="${REPO_DIR}/knowledge/examples/models.yaml.example"
+ENV_FA="${REPO_DIR}/.env.fa"
+SECRETS_ENV="${FA_DIR}/secrets/fa.env"
 ROUTING_DIR="${FA_DIR}/routing"
 ROUTING_MODELS_FILE="${ROUTING_DIR}/models.yaml"
 LEGACY_STATE_MODELS="${FA_DIR}/state/models.yaml"
@@ -133,6 +135,18 @@ EOF
 
     sudo chown 1000:1000 "${ROUTING_MODELS_FILE}"
     sudo chmod 640 "${ROUTING_MODELS_FILE}"
+}
+
+normalize_env_files() {
+    local normalizer="${REPO_DIR}/scripts/fa-normalize-env.sh"
+    if [[ -f "${normalizer}" ]]; then
+        env \
+            REPO_DIR="${REPO_DIR}" \
+            ENV_FA="${ENV_FA}" \
+            SECRETS_ENV="${SECRETS_ENV}" \
+            BACKUP_DIR="${FA_DIR}/secrets" \
+            bash "${normalizer}"
+    fi
 }
 
 if [[ $EUID -eq 0 ]]; then
@@ -221,6 +235,7 @@ if [[ "${SKIP_UPDATE}" != "1" && "${_FA_REBUILD_REEXEC}" != "1" ]]; then
 fi
 
 assert_safe_fa_dir
+normalize_env_files
 
 # Confirmation for destructive flags (skip with ASSUME_YES=1 or non-interactive).
 if [[ "${WIPE_STATE}" == "1" || "${PRUNE}" == "1" ]] && [[ "${ASSUME_YES}" != "1" ]]; then
@@ -301,9 +316,9 @@ ensure_routing_models
 # ───────────────────────────────────────────────────────────────
 # 6. Secrets: keep keys; ensure the fa->proxy token exists
 # ───────────────────────────────────────────────────────────────
-if [[ ! -s "${FA_DIR}/secrets/fa.env" ]]; then
-    log_warn "No ${FA_DIR}/secrets/fa.env (LLM keys) — the agent cannot call providers until you set it:"
-    log_warn "  sudo micro ${FA_DIR}/secrets/fa.env"
+if [[ ! -s "${SECRETS_ENV}" ]]; then
+    log_warn "No ${SECRETS_ENV} (LLM keys) — the agent cannot call providers until you set it:"
+    log_warn "  sudo micro ${SECRETS_ENV}"
 fi
 
 TOKEN_FILE="${FA_DIR}/secrets/fa_proxy_token"
@@ -329,7 +344,7 @@ fi
 # a confusing crash that also leaves a root-owned path the scripts can't fix.
 # Fail loudly here instead. (Deploy-key/known_hosts come from setup-fa-desktop.)
 _required_files=(
-    "${FA_DIR}/secrets/fa.env"
+    "${SECRETS_ENV}"
     "${FA_DIR}/secrets/fa_proxy_token"
     "${FA_DIR}/secrets/github_deploy_key"
     "${FA_DIR}/secrets/known_hosts"

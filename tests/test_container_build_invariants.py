@@ -134,6 +134,25 @@ def test_no_duplicate_pythonpath_on_agent() -> None:
 
 
 # --- setup script ---------------------------------------------------------
+
+
+def test_setup_seeds_provider_secrets_from_fa_env_template() -> None:
+    """secrets/fa.env must be seeded from the provider-key template, not .env.fa."""
+    text = _SETUP.read_text(encoding="utf-8")
+    assert "secrets/fa.env.template" in text
+    assert not re.search(
+        r'^\s*TEMPLATE=\"\$FA_DIR/repo/First-Agent-dev/\.env\.fa\.template\"',
+        text,
+        re.MULTILINE,
+    )
+    assert "fa-normalize-env.sh" in text
+
+
+def test_post_setup_checks_changeme_only_on_active_secret_lines() -> None:
+    text = _POST_SETUP.read_text(encoding="utf-8")
+    assert "grep -qiE" in text
+    assert "^[[:space:]]*[A-Z0-9_]+(API_KEY|_TOKEN|_SECRET)" in text
+    assert "grep -qi 'CHANGEME'" not in text
 def test_setup_chowns_state_to_container_uid() -> None:
     """B3: bind-mounted state/secrets must be owned by the container's uid (1000),
     not the host username (which may be a different uid)."""

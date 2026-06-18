@@ -150,6 +150,18 @@ validate_file_mount_sources() {
   fi
 }
 
+normalize_env_files() {
+  local normalizer="${REPO_DIR}/scripts/fa-normalize-env.sh"
+  if [[ -f "${normalizer}" ]]; then
+    env \
+      REPO_DIR="${REPO_DIR}" \
+      ENV_FA="${ENV_FA}" \
+      SECRETS_ENV="${SECRETS_ENV}" \
+      BACKUP_DIR="/srv/first-agent/secrets" \
+      bash "${normalizer}"
+  fi
+}
+
 get_service_name() {
   if [[ -n "${SERVICE_NAME_OVERRIDE}" ]]; then
     echo "${SERVICE_NAME_OVERRIDE}"
@@ -675,6 +687,7 @@ main() {
   SERVICE_NAME=$(get_service_name)
   echo "  → Service: ${SERVICE_NAME}"
 
+  normalize_env_files
   ensure_routing_models
   evaluate_changes
   validate_env

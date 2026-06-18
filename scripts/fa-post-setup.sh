@@ -56,7 +56,7 @@ fi
 # *_TOKEN= / *_SECRET= line. Without keys, `fa run` fails with chain_exhausted.
 if [[ ! -s "$SECRETS_ENV" ]] || \
    ! grep -qE '^[[:space:]]*[A-Z0-9_]+(API_KEY|_TOKEN|_SECRET)[[:space:]]*=[[:space:]]*[^[:space:]]' "$SECRETS_ENV" || \
-   grep -qi 'CHANGEME' "$SECRETS_ENV"; then
+   grep -qiE '^[[:space:]]*[A-Z0-9_]+(API_KEY|_TOKEN|_SECRET)[[:space:]]*=.*CHANGEME' "$SECRETS_ENV"; then
     log_warn "No LLM API keys found in $SECRETS_ENV (or still placeholders)."
     log_warn "The proxy will be healthy but 'fa run' will fail (chain_exhausted)."
     log_warn "Edit it first: micro $SECRETS_ENV"
@@ -69,6 +69,16 @@ if [[ ! -s "$SECRETS_ENV" ]] || \
 fi
 
 cd "$REPO_DIR"
+
+NORMALIZE_ENV="$REPO_DIR/scripts/fa-normalize-env.sh"
+if [[ -f "$NORMALIZE_ENV" ]]; then
+    env \
+        REPO_DIR="$REPO_DIR" \
+        ENV_FA="$ENV_FA" \
+        SECRETS_ENV="$SECRETS_ENV" \
+        BACKUP_DIR="/srv/first-agent/secrets" \
+        bash "$NORMALIZE_ENV"
+fi
 
 # ---------------------------------------------------------------------------
 # 0b. Ensure the unified routing source exists BEFORE building/starting.
