@@ -1,5 +1,5 @@
 # Dockerfile for First-Agent runtime container
-# Ubuntu 24.04 base with uv, just, and Python 3.13
+# Ubuntu 24.04 base with uv, just (from apt), and Python 3.13
 
 FROM ubuntu:24.04
 
@@ -8,17 +8,30 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV UV_CACHE_DIR=/tmp/uv-cache
-ENV PYTHONPATH=/workspace/src
 ENV PATH=/opt/fa-venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Install system dependencies
+# Make curl/installer pipelines fail as a unit, and make apt downloads less
+# brittle on headless rebuilds where transient mirror/network failures are common.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN printf '%s\n' \
+    'Acquire::Retries "5";' \
+    'Acquire::http::Timeout "30";' \
+    'Acquire::https::Timeout "30";' \
+    > /etc/apt/apt.conf.d/80-retries
+
+# Install system dependencies. `just` is intentionally installed from Ubuntu's
+# apt package instead of the dynamic just.systems/GitHub Releases installer: the
+# runtime image keeps the dependency, but clean AIO rebuilds no longer depend on
+# a second, fragile release-download path.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \
     git \
+    just \
     openssh-client \
     universal-ctags \
+    && just --version \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user matching host UID (1000).
@@ -36,13 +49,13 @@ RUN if id -u 1000 >/dev/null 2>&1; then \
 # installer's own UV_INSTALL_DIR so it never depends on $HOME (which differs
 # between the build-time root user and the runtime fa user) — the previous
 # `mv /root/.local/bin/...` broke as soon as HOME was pinned.
-RUN curl -LsSf https://astral.sh/uv/install.sh \
-    | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh \
+RUN curl --fail --location --show-error --silent \
+        --retry 5 --retry-all-errors --connect-timeout 15 --max-time 180 \
+        -o /tmp/uv-install.sh https://astral.sh/uv/install.sh \
+    && env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh /tmp/uv-install.sh \
+    && rm -f /tmp/uv-install.sh \
     && chmod +x /usr/local/bin/uv /usr/local/bin/uvx \
     && uv --version
-
-# Install just (task runner)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
 # Install Python 3.13 into a WORLD-READABLE shared location (not /root/.local,
 # which is mode 700 and unreadable by the non-root 'fa' user at runtime — that

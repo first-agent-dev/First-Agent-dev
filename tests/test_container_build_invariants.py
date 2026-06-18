@@ -8,6 +8,7 @@ They parse the files as text/YAML — no Docker required — so they run anywher
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -56,6 +57,32 @@ def test_uv_install_does_not_depend_on_home() -> None:
     assert "/root/.local/bin/uv" not in text, (
         "do not mv uv from /root/.local; use UV_INSTALL_DIR (HOME-independent)"
     )
+
+
+def test_dockerfile_uses_retrying_downloads_for_apt_and_uv() -> None:
+    """Clean AIO rebuilds must tolerate transient apt/installer network failures."""
+    text = _DOCKERFILE.read_text(encoding="utf-8")
+    assert "Acquire::Retries" in text
+    assert 'SHELL ["/bin/bash", "-o", "pipefail", "-c"]' in text
+    assert "--retry 5" in text
+    assert "--retry-all-errors" in text
+    assert "/tmp/uv-install.sh" in text
+    assert "| env UV_INSTALL_DIR=/usr/local/bin" not in text
+
+
+def test_runtime_image_installs_just_from_apt_not_github_releases() -> None:
+    """Keep just, but do not fetch it from just.systems/GitHub Releases."""
+    text = _DOCKERFILE.read_text(encoding="utf-8")
+    assert "just.systems/install.sh" not in text
+    assert "casey/just/releases" not in text
+    assert re.search(r"apt-get install[\s\S]*\bjust\b", text)
+    assert "just --version" in text
+
+
+def test_dockerfile_does_not_set_workspace_pythonpath_globally() -> None:
+    """Only the entrypoint may add /workspace/src, and only when it exists."""
+    text = _DOCKERFILE.read_text(encoding="utf-8")
+    assert "ENV PYTHONPATH=/workspace/src" not in text
 
 
 def test_python_installed_in_world_readable_location() -> None:
@@ -260,6 +287,32 @@ def test_clean_rebuild_wipe_state_ignores_legacy_models_when_recreating_routing(
     text = _CLEAN_REBUILD.read_text(encoding="utf-8")
     assert 'LEGACY_STATE_MODELS=""' in text
     assert 'LEGACY_PROXY_MODELS=""' in text
+
+def test_clean_rebuild_no_cache_and_progress_are_configurable() -> None:
+    text = _CLEAN_REBUILD.read_text(encoding="utf-8")
+    assert 'NO_CACHE="${NO_CACHE:-1}"' in text
+    assert 'COMPOSE_BUILD_PULL="${COMPOSE_BUILD_PULL:-1}"' in text
+    assert 'BUILD_PROGRESS="${BUILD_PROGRESS:-auto}"' in text
+    assert 'build_cmd+=(--no-cache)' in text
+    assert 'build_cmd+=(--progress "${BUILD_PROGRESS}")' in text
+
+
+def test_update_and_clean_rebuild_stash_failures_are_not_ignored() -> None:
+    for script in (_UPDATE, _CLEAN_REBUILD):
+        text = script.read_text(encoding="utf-8")
+        push_idx = text.index("git stash push")
+        fetch_idx = text.index("git fetch")
+        assert "|| true" not in text[push_idx:fetch_idx]
+        assert "git stash pop" in text
+        assert "STASHED=0" in text
+
+
+def test_clean_rebuild_guards_destructive_fa_dir_override() -> None:
+    text = _CLEAN_REBUILD.read_text(encoding="utf-8")
+    assert "assert_safe_fa_dir" in text
+    assert "ALLOW_NONSTANDARD_FA_DIR" in text
+    assert 'normalized_fa_dir="${FA_DIR%/}"' in text
+
 
 def test_post_setup_validates_the_real_keys_file() -> None:
     """F1: the 'did you add keys' gate must check the secrets file the proxy

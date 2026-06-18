@@ -30,7 +30,7 @@ services:
     cap_drop:
       - ALL
     # No cap_add: the agent runs as a single non-root uid and performs only file
-    # I/O + git as that uid. CHOWN/SETUID/SETGID were build-time needs (uv/just
+    # I/O + git as that uid. CHOWN/SETUID/SETGID were build-time needs (apt/uv
     # run as root during build), never runtime — granting them at runtime widens
     # the blast radius for no benefit. Re-add a specific cap only if a concrete
     # runtime failure proves it is required.

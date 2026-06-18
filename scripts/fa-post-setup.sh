@@ -118,7 +118,29 @@ EOF
     log_info "Routing source ready: $ROUTING_MODELS_FILE"
 }
 
+validate_file_mount_sources() {
+    local required_files=(
+        "$SECRETS_ENV"
+        "/srv/first-agent/secrets/fa_proxy_token"
+        "/srv/first-agent/secrets/github_deploy_key"
+        "/srv/first-agent/secrets/known_hosts"
+        "$ROUTING_MODELS_FILE"
+    )
+    local missing=0
+    for path in "${required_files[@]}"; do
+        if [[ -d "$path" ]]; then
+            log_error "Mount source is a DIRECTORY (should be a file): $path"
+            missing=1
+        elif [[ ! -e "$path" ]]; then
+            log_error "Required file bind-mount source missing: $path"
+            missing=1
+        fi
+    done
+    [[ "$missing" -eq 0 ]] || { log_error "Aborting before docker compose up — fix the missing mount sources."; exit 1; }
+}
+
 ensure_routing_models
+validate_file_mount_sources
 
 # 0. Tailscale connectivity check (warn only, do not block)
 if command -v tailscale &>/dev/null; then
@@ -196,7 +218,7 @@ docker exec first-agent bash -c 'cd /workspace && git config user.email "agent@f
 # ---------------------------------------------------------------------------
 log_info "Testing git SSH connectivity..."
 
-if docker exec first-agent bash -c "cd /workspace && git ls-remote ${REPO_SSH_URL}" >/dev/null 2>&1; then
+if docker exec -e REPO_SSH_URL="$REPO_SSH_URL" first-agent bash -lc 'cd /workspace && git ls-remote "$REPO_SSH_URL"' >/dev/null 2>&1; then
     log_info "Git SSH connectivity: OK"
 else
     log_error "Git SSH test FAILED. Check:"
@@ -213,32 +235,32 @@ log_info "Testing git push..."
 
 # Idempotent cleanup: remove remote + local test branch from any previous aborted run
 log_info "Preparing clean test state..."
-docker exec first-agent bash -c "cd /workspace && git push origin --delete $TEST_BRANCH || true" 2>/dev/null || true
-if docker exec first-agent bash -c "cd /workspace && git rev-parse --verify $TEST_BRANCH" >/dev/null 2>&1; then
-    docker exec first-agent bash -c "cd /workspace && git checkout - || true; git branch -D $TEST_BRANCH || true"
+docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc 'cd /workspace && git push origin --delete "$TEST_BRANCH" || true' 2>/dev/null || true
+if docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc 'cd /workspace && git rev-parse --verify "$TEST_BRANCH"' >/dev/null 2>&1; then
+    docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc 'cd /workspace && git checkout - || true; git branch -D "$TEST_BRANCH" || true'
 fi
 
 # Push test branch
-docker exec first-agent bash -c "
+docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc '
     cd /workspace &&
-    git checkout -b $TEST_BRANCH &&
+    git checkout -b "$TEST_BRANCH" &&
     touch bootstrap-test.txt &&
     git add bootstrap-test.txt &&
-    git commit -m 'test: bootstrap verification' &&
-    git push origin $TEST_BRANCH
-" || {
+    git commit -m "test: bootstrap verification" &&
+    git push origin "$TEST_BRANCH"
+' || {
     log_error "Git push test FAILED."
     exit 1
 }
 
 log_info "Git push test passed. Cleaning up test branch..."
-docker exec first-agent bash -c "
+docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc '
     cd /workspace &&
     git checkout - || true;
-    git branch -D $TEST_BRANCH || true;
-    git push origin --delete $TEST_BRANCH || true;
+    git branch -D "$TEST_BRANCH" || true;
+    git push origin --delete "$TEST_BRANCH" || true;
     rm -f bootstrap-test.txt
-" || true
+' || true
 
 # ---------------------------------------------------------------------------
 # 5b. Secret-isolation smoke check (ADR-12): the AGENT container must hold no

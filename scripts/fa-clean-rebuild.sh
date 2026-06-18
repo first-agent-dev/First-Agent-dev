@@ -36,13 +36,18 @@
 #                    versions stored models.yaml under state/). A routing
 #                    template is recreated for you to re-fill. Keys preserved.
 #   PRUNE=1          `docker system prune -af` after teardown (frees disk; removes
-#                    ALL unused images/build cache). Default: off.
+#                    ALL unused images/build cache on the host). Default: off.
+#   NO_CACHE=0       use Docker cache for the image build (default: 1 = --no-cache).
+#   COMPOSE_BUILD_PULL=0  do not pass --pull to docker compose build (default: 1).
+#   BUILD_PROGRESS=plain  pass --progress plain for debuggable BuildKit logs.
 #   NO_BACKUP=1      skip the backup step (NOT recommended).
 #   ASSUME_YES=1     do not prompt for confirmation on destructive flags.
 #   SKIP_UPDATE=1    do not git-pull the repo (use the checkout as-is).
 #   AUTO_STASH=1     stash a dirty working tree before pulling (else: abort).
 #   GIT_BRANCH=main  branch to fast-forward to (default main).
 #   HEALTH_TIMEOUT_SECONDS  per-container health wait (default 90).
+#   ALLOW_NONSTANDARD_FA_DIR=1  allow destructive ops outside /srv/first-agent
+#                    (only for disposable test installs).
 
 set -Eeuo pipefail
 
@@ -62,6 +67,10 @@ SKIP_UPDATE="${SKIP_UPDATE:-0}"
 AUTO_STASH="${AUTO_STASH:-0}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
+NO_CACHE="${NO_CACHE:-1}"
+COMPOSE_BUILD_PULL="${COMPOSE_BUILD_PULL:-1}"
+BUILD_PROGRESS="${BUILD_PROGRESS:-auto}"
+STASHED=0
 # Internal: set to 1 after we re-exec the post-pull version of this script,
 # so the updated copy does not try to update the repo again (loop guard).
 _FA_REBUILD_REEXEC="${_FA_REBUILD_REEXEC:-0}"
@@ -77,6 +86,20 @@ log_error() { echo -e "\033[0;31m[ERROR]\033[0m $*" >&2; }
 
 on_error() { log_error "Failed at line $1. The stack may be partially rebuilt; re-run after fixing."; }
 trap 'on_error $LINENO' ERR
+
+assert_safe_fa_dir() {
+    # This script performs recursive deletes/chowns. In production the managed
+    # root is fixed; allow overrides only for explicit disposable test installs.
+    if [[ "${ALLOW_NONSTANDARD_FA_DIR:-0}" == "1" ]]; then
+        return
+    fi
+    local normalized_fa_dir="${FA_DIR%/}"
+    if [[ "${normalized_fa_dir}" != "/srv/first-agent" ]]; then
+        log_error "Refusing destructive operation with FA_DIR=${FA_DIR}"
+        log_error "Set ALLOW_NONSTANDARD_FA_DIR=1 only for a disposable test install."
+        exit 1
+    fi
+}
 
 ensure_routing_models() {
     sudo mkdir -p "${ROUTING_DIR}"
@@ -148,7 +171,12 @@ if [[ "${SKIP_UPDATE}" != "1" && "${_FA_REBUILD_REEXEC}" != "1" ]]; then
             git status --short || true
             if [[ "${AUTO_STASH}" == "1" ]]; then
                 log_info "Auto-stashing (AUTO_STASH=1)..."
-                git stash push -u -m "fa-clean-rebuild $(date -u '+%Y%m%dT%H%M%SZ')" || true
+                if git stash push -u -m "fa-clean-rebuild $(date -u '+%Y%m%dT%H%M%SZ')"; then
+                    STASHED=1
+                else
+                    log_error "git stash failed — resolve local changes manually and re-run."
+                    exit 1
+                fi
             else
                 log_error "Refusing to update over local changes. Commit/stash them, or set AUTO_STASH=1."
                 exit 1
@@ -164,6 +192,15 @@ if [[ "${SKIP_UPDATE}" != "1" && "${_FA_REBUILD_REEXEC}" != "1" ]]; then
         before=$(git rev-parse HEAD)
         git pull --ff-only origin "${GIT_BRANCH}"
         after=$(git rev-parse HEAD)
+        if [[ "${STASHED}" == "1" ]]; then
+            log_info "Restoring stashed changes before continuing..."
+            if git stash pop; then
+                STASHED=0
+            else
+                log_error "Stash pop failed — resolve conflicts, then re-run before rebuilding."
+                exit 1
+            fi
+        fi
         if [[ "${before}" != "${after}" ]]; then
             log_info "Repo updated: ${before:0:8} → ${after:0:8} ($(git rev-list --count "${before}..${after}") commit(s))."
             # The pull may have rewritten THIS file; re-exec the updated copy so
@@ -174,18 +211,21 @@ if [[ "${SKIP_UPDATE}" != "1" && "${_FA_REBUILD_REEXEC}" != "1" ]]; then
             # if a flag was set but not exported into the environment).
             export _FA_REBUILD_REEXEC=1
             export WIPE_STATE NO_BACKUP PRUNE ASSUME_YES SKIP_UPDATE AUTO_STASH \
-                   GIT_BRANCH HEALTH_TIMEOUT_SECONDS FA_DIR REPO_DIR COMPOSE_FILE \
-                   SERVICE FA_USER ROUTING_DIR ROUTING_MODELS_FILE LEGACY_STATE_MODELS LEGACY_PROXY_MODELS
+                   GIT_BRANCH HEALTH_TIMEOUT_SECONDS NO_CACHE COMPOSE_BUILD_PULL BUILD_PROGRESS \
+                   FA_DIR REPO_DIR COMPOSE_FILE SERVICE FA_USER ROUTING_DIR \
+                   ROUTING_MODELS_FILE LEGACY_STATE_MODELS LEGACY_PROXY_MODELS
             exec bash "${REPO_DIR}/scripts/fa-clean-rebuild.sh" "$@"
         fi
         log_info "Repo already up to date (${after:0:8})."
     fi
 fi
 
+assert_safe_fa_dir
+
 # Confirmation for destructive flags (skip with ASSUME_YES=1 or non-interactive).
 if [[ "${WIPE_STATE}" == "1" || "${PRUNE}" == "1" ]] && [[ "${ASSUME_YES}" != "1" ]]; then
     [[ "${WIPE_STATE}" == "1" ]] && log_warn "WIPE_STATE=1 will DELETE ${FA_DIR}/state/* and reset ${ROUTING_MODELS_FILE} (keys are kept)."
-    [[ "${PRUNE}" == "1" ]] && log_warn "PRUNE=1 will remove ALL unused Docker images + build cache."
+    [[ "${PRUNE}" == "1" ]] && log_warn "PRUNE=1 will remove ALL unused Docker images + build cache on this host, not only First-Agent."
     if [[ -t 0 ]]; then
         read -r -p "Proceed? [y/N] " reply
         [[ "${reply}" =~ ^[Yy]$ ]] || { log_info "Aborted by user."; exit 0; }
@@ -312,8 +352,12 @@ done
 # ───────────────────────────────────────────────────────────────
 # 7. Rebuild clean + bring up the two containers
 # ───────────────────────────────────────────────────────────────
-log_info "Building images (--no-cache)..."
-docker compose -f "${COMPOSE_FILE}" build --no-cache
+log_info "Building images (NO_CACHE=${NO_CACHE}, COMPOSE_BUILD_PULL=${COMPOSE_BUILD_PULL}, BUILD_PROGRESS=${BUILD_PROGRESS})..."
+build_cmd=(docker compose -f "${COMPOSE_FILE}" build)
+[[ "${COMPOSE_BUILD_PULL}" == "1" ]] && build_cmd+=(--pull)
+[[ "${NO_CACHE}" == "1" ]] && build_cmd+=(--no-cache)
+[[ "${BUILD_PROGRESS}" != "auto" ]] && build_cmd+=(--progress "${BUILD_PROGRESS}")
+"${build_cmd[@]}"
 
 log_info "Starting stack (docker compose up -d — authoritative)..."
 # Compose is the authoritative bring-up: idempotent and independent of the user

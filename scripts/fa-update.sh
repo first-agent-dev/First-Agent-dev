@@ -126,6 +126,30 @@ EOF
   sudo chmod 640 "${MODELS_YAML_FILE}"
 }
 
+validate_file_mount_sources() {
+  local required_files=(
+    "${SECRETS_ENV}"
+    "${PROXY_TOKEN_FILE}"
+    "/srv/first-agent/secrets/github_deploy_key"
+    "/srv/first-agent/secrets/known_hosts"
+    "${MODELS_YAML_FILE}"
+  )
+  local missing=0
+  for path in "${required_files[@]}"; do
+    if [[ -d "${path}" ]]; then
+      echo "  ✗ Mount source is a DIRECTORY (should be a file): ${path}"
+      missing=1
+    elif [[ ! -e "${path}" ]]; then
+      echo "  ✗ Required file bind-mount source missing: ${path}"
+      missing=1
+    fi
+  done
+  if [[ "${missing}" -ne 0 ]]; then
+    echo "  ✗ Aborting before docker compose up. Run setup-fa-desktop.sh or restore the missing files."
+    exit 1
+  fi
+}
+
 get_service_name() {
   if [[ -n "${SERVICE_NAME_OVERRIDE}" ]]; then
     echo "${SERVICE_NAME_OVERRIDE}"
@@ -224,8 +248,12 @@ git_update() {
     git status --short || true
     if [[ "${AUTO_STASH}" == "1" ]]; then
       echo "  → Auto-stashing (AUTO_STASH=1)..."
-      git stash push -u -m "auto-stash $(date -u '+%Y%m%dT%H%M%SZ')" || true
-      STASHED=1
+      if git stash push -u -m "auto-stash $(date -u '+%Y%m%dT%H%M%SZ')"; then
+        STASHED=1
+      else
+        echo "  ✗ git stash failed — resolve local changes manually and rerun."
+        exit 1
+      fi
     else
       echo "  ✗ Aborting. Commit/stash manually, or set AUTO_STASH=1."
       exit 1
@@ -252,6 +280,7 @@ git_update() {
       echo "  ✗ Stash pop failed — resolve conflicts and rerun."
       exit 1
     }
+    STASHED=0
   fi
 
   HEAD_CHANGED=0
@@ -649,6 +678,7 @@ main() {
   ensure_routing_models
   evaluate_changes
   validate_env
+  validate_file_mount_sources
   build_and_deploy
   wait_for_health
   check_proxy_path

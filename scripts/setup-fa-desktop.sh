@@ -189,8 +189,12 @@ sudo ufw --force enable
 log_info "Installing Docker CE from official repository..."
 
 sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
+DOCKER_GPG_TMP="$(mktemp)"
+curl --fail --location --show-error --silent \
+    --retry 5 --retry-all-errors --connect-timeout 15 --max-time 120 \
+    -o "$DOCKER_GPG_TMP" https://download.docker.com/linux/ubuntu/gpg
+sudo install -m 0644 "$DOCKER_GPG_TMP" /etc/apt/keyrings/docker.asc
+rm -f "$DOCKER_GPG_TMP"
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo NEEDRESTART_MODE=a apt-get update
 sudo NEEDRESTART_MODE=a apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
@@ -226,7 +230,12 @@ sudo systemctl restart docker
 # 7. Tailscale
 # ---------------------------------------------------------------------------
 log_info "Installing Tailscale..."
-curl -fsSL https://tailscale.com/install.sh | sudo sh
+TAILSCALE_INSTALL_TMP="$(mktemp)"
+curl --fail --location --show-error --silent \
+    --retry 5 --retry-all-errors --connect-timeout 15 --max-time 180 \
+    -o "$TAILSCALE_INSTALL_TMP" https://tailscale.com/install.sh
+sudo sh "$TAILSCALE_INSTALL_TMP"
+rm -f "$TAILSCALE_INSTALL_TMP"
 log_warn "Tailscale installed. Run: sudo tailscale up --ssh"
 log_warn "Then authenticate with your Tailscale account."
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -52,6 +53,23 @@ def test_shell_script_passes_shellcheck(script: Path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_executable_script_modes_are_pinned() -> None:
+    """Scripts invoked directly by operators/git must keep executable mode."""
+    expected_exec = [
+        _SCRIPTS / "fa-update.sh",
+        _SCRIPTS / "fa-clean-rebuild.sh",
+        _SCRIPTS / "fa-post-setup.sh",
+        _SCRIPTS / "ssh-tailscale" / "00-failsafe.sh",
+        _SCRIPTS / "ssh-tailscale" / "10-diagnose.sh",
+        _SCRIPTS / "ssh-tailscale" / "20-harden.sh",
+        _SCRIPTS / "ssh-tailscale" / "30-verify.sh",
+        _SCRIPTS.parent / "src" / "fa" / "hygiene" / "hooks" / "commit-msg",
+        _SCRIPTS.parent / "src" / "fa" / "hygiene" / "hooks" / "prepare-commit-msg",
+    ]
+    for path in expected_exec:
+        assert path.stat().st_mode & stat.S_IXUSR, f"missing executable bit: {path}"
 
 
 def test_bootstrap_script_is_self_contained() -> None:
@@ -129,3 +147,33 @@ def test_fa_update_probes_the_llm_path() -> None:
     assert "fa-egress-proxy" in text
     assert "/healthz" in text
     assert "check_proxy_path" in text
+
+
+
+def test_compose_up_scripts_validate_file_mount_sources() -> None:
+    for name in ("fa-update.sh", "fa-post-setup.sh", "fa-clean-rebuild.sh"):
+        text = (_SCRIPTS / name).read_text(encoding="utf-8")
+        assert "routing/models.yaml" in text
+        assert "fa_proxy_token" in text
+        assert "github_deploy_key" in text
+        assert "known_hosts" in text
+        assert "Mount source is a DIRECTORY" in text or "validate_file_mount_sources" in text
+
+
+def test_setup_downloads_host_installers_with_retry_and_without_pipe_to_root_shell() -> None:
+    text = (_SCRIPTS / "setup-fa-desktop.sh").read_text(encoding="utf-8")
+    assert "curl -fsSL https://tailscale.com/install.sh | sudo sh" not in text
+    assert "https://download.docker.com/linux/ubuntu/gpg" in text
+    assert "https://tailscale.com/install.sh" in text
+    assert "--retry" in text
+    assert "--retry-all-errors" in text
+    assert "mktemp" in text
+
+
+def test_post_setup_does_not_interpolate_remote_or_branch_inside_docker_exec_shell() -> None:
+    text = (_SCRIPTS / "fa-post-setup.sh").read_text(encoding="utf-8")
+    assert "git ls-remote ${REPO_SSH_URL}" not in text
+    assert "git push origin --delete $TEST_BRANCH" not in text
+    assert "git push origin $TEST_BRANCH" not in text
+    assert "-e REPO_SSH_URL=" in text
+    assert "-e TEST_BRANCH=" in text
