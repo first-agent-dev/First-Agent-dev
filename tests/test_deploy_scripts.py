@@ -267,3 +267,100 @@ def test_normalize_env_migrates_active_secret_lines_out_of_env_fa(tmp_path: Path
     assert "OPENROUTER_API_KEY=sk-real" in secret_text
     assert "FIREWORKS_API_KEY=fw-existing" in secret_text
     assert "First-Agent LLM API KEYS" in secret_text
+
+
+def test_normalize_env_replaces_changeme_secret_with_real_legacy_value(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_env_templates(repo)
+    env_fa = repo / ".env.fa"
+    env_fa.write_text("OPENROUTER_API_KEY=sk-real\n", encoding="utf-8")
+    secrets_env = tmp_path / "secrets" / "fa.env"
+    secrets_env.parent.mkdir()
+    secrets_env.write_text("OPENROUTER_API_KEY=sk-CHANGEME\n", encoding="utf-8")
+
+    result = _run_normalizer(repo, env_fa, secrets_env, tmp_path / "backups")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    env_text = env_fa.read_text(encoding="utf-8")
+    secret_text = secrets_env.read_text(encoding="utf-8")
+    assert "OPENROUTER_API_KEY" not in env_text
+    assert "OPENROUTER_API_KEY=sk-real" in secret_text
+    assert "OPENROUTER_API_KEY=sk-CHANGEME" not in secret_text
+    backups = list((tmp_path / "backups").glob("fa.env.pre-adr12-normalize.*.bak"))
+    assert backups, "fa.env should be backed up before replacing a placeholder"
+
+
+def test_normalize_env_does_not_overwrite_existing_real_secret(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_env_templates(repo)
+    env_fa = repo / ".env.fa"
+    env_fa.write_text("OPENROUTER_API_KEY=sk-other\n", encoding="utf-8")
+    secrets_env = tmp_path / "secrets" / "fa.env"
+    secrets_env.parent.mkdir()
+    secrets_env.write_text("OPENROUTER_API_KEY=sk-existing\n", encoding="utf-8")
+
+    result = _run_normalizer(repo, env_fa, secrets_env, tmp_path / "backups")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "OPENROUTER_API_KEY" not in env_fa.read_text(encoding="utf-8")
+    secret_text = secrets_env.read_text(encoding="utf-8")
+    assert "OPENROUTER_API_KEY=sk-existing" in secret_text
+    assert "OPENROUTER_API_KEY=sk-other" not in secret_text
+
+
+def test_normalize_env_combined_secret_and_legacy_comments_keeps_original_backup(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_env_templates(repo)
+    env_fa = repo / ".env.fa"
+    env_fa.write_text(
+        "# LLM API keys -> .env.fa\n"
+        "OPENROUTER_API_KEY=sk-real\n"
+        "FA_ROLE=coder\n",
+        encoding="utf-8",
+    )
+    secrets_env = tmp_path / "secrets" / "fa.env"
+
+    result = _run_normalizer(repo, env_fa, secrets_env, tmp_path / "backups")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    env_text = env_fa.read_text(encoding="utf-8")
+    assert "LLM API keys -> .env.fa" not in env_text
+    assert "FA_ROLE=coder" in env_text
+    assert "OPENROUTER_API_KEY=sk-real" in secrets_env.read_text(encoding="utf-8")
+    backup_texts = [
+        path.read_text(encoding="utf-8")
+        for path in (tmp_path / "backups").glob(".env.fa.pre-adr12-normalize.*.bak")
+    ]
+    assert any(
+        "LLM API keys -> .env.fa" in text and "OPENROUTER_API_KEY=sk-real" in text
+        for text in backup_texts
+    )
+
+
+def test_normalize_env_provider_placeholder_append_is_idempotent(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_env_templates(repo)
+    env_fa = repo / ".env.fa"
+    env_fa.write_text("# clean non-secret file\n", encoding="utf-8")
+    secrets_env = tmp_path / "secrets" / "fa.env"
+    secrets_env.parent.mkdir()
+    secrets_env.write_text("FIREWORKS_API_KEY=fw-existing\n", encoding="utf-8")
+
+    first = _run_normalizer(repo, env_fa, secrets_env, tmp_path / "backups")
+    second = _run_normalizer(repo, env_fa, secrets_env, tmp_path / "backups")
+
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert second.returncode == 0, second.stdout + second.stderr
+    secret_text = secrets_env.read_text(encoding="utf-8")
+    assert secret_text.count("Provider placeholders from secrets/fa.env.template") == 1
+
+
+def test_post_setup_normalizes_env_before_validating_keys() -> None:
+    text = (_SCRIPTS / "fa-post-setup.sh").read_text(encoding="utf-8")
+    assert text.index("fa-normalize-env.sh") < text.index("Validate the LLM API keys")

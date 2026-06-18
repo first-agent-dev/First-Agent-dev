@@ -44,6 +44,18 @@ if [[ ! -f "$SERVICE_FILE" ]]; then
     exit 1
 fi
 
+cd "$REPO_DIR"
+
+NORMALIZE_ENV="$REPO_DIR/scripts/fa-normalize-env.sh"
+if [[ -f "$NORMALIZE_ENV" ]]; then
+    env \
+        REPO_DIR="$REPO_DIR" \
+        ENV_FA="$ENV_FA" \
+        SECRETS_ENV="$SECRETS_ENV" \
+        BACKUP_DIR="/srv/first-agent/secrets" \
+        bash "$NORMALIZE_ENV"
+fi
+
 if [[ ! -f "$ENV_FA" ]]; then
     log_error ".env.fa not found: $ENV_FA"
     log_error "Run setup-fa-desktop.sh first."
@@ -66,18 +78,6 @@ if [[ ! -s "$SECRETS_ENV" ]] || \
     else
         log_warn "Non-interactive shell — continuing (set keys before 'fa run')."
     fi
-fi
-
-cd "$REPO_DIR"
-
-NORMALIZE_ENV="$REPO_DIR/scripts/fa-normalize-env.sh"
-if [[ -f "$NORMALIZE_ENV" ]]; then
-    env \
-        REPO_DIR="$REPO_DIR" \
-        ENV_FA="$ENV_FA" \
-        SECRETS_ENV="$SECRETS_ENV" \
-        BACKUP_DIR="/srv/first-agent/secrets" \
-        bash "$NORMALIZE_ENV"
 fi
 
 # ---------------------------------------------------------------------------
