@@ -146,6 +146,7 @@ def test_setup_seeds_provider_secrets_from_fa_env_template() -> None:
         re.MULTILINE,
     )
     assert "fa-normalize-env.sh" in text
+    assert "Migrating API keys from repo .env.fa" not in text
 
 
 def test_post_setup_checks_changeme_only_on_active_secret_lines() -> None:
@@ -179,16 +180,16 @@ def test_setup_normalizes_secret_ownership_after_creation() -> None:
 
 
 def test_migration_backup_not_left_in_workspace() -> None:
-    """A2: the migration backup contains LIVE API keys; it must not be written to
-    the repo root (the agent's RW /workspace), where the agent could cat it."""
-    text = _SETUP.read_text(encoding="utf-8")
-    # The .bak must be written under the host secrets dir, not next to .env.fa.
-    assert 'cp "$ENV_FA" "$ENV_FA.pre-secret-migration.bak"' not in text, (
-        "migration backup must NOT be written into the repo/workspace"
-    )
-    assert "secrets/.env.fa.pre-secret-migration.bak" in text, (
-        "migration backup must live under the host-only secrets dir"
-    )
+    """A2: key-bearing .env.fa backups must live outside the agent workspace."""
+    setup_text = _SETUP.read_text(encoding="utf-8")
+    normalizer_text = (_ROOT / "scripts" / "fa-normalize-env.sh").read_text(encoding="utf-8")
+    # The old in-workspace backup form must not return.
+    assert 'cp "$ENV_FA" "$ENV_FA.pre-secret-migration.bak"' not in setup_text
+    assert 'cp "$ENV_FA" "$ENV_FA.pre-secret-migration.bak"' not in normalizer_text
+    # The normalizer backs up under BACKUP_DIR, which deploy callers set to
+    # /srv/first-agent/secrets (host-only, not /workspace).
+    assert 'BACKUP_DIR="${BACKUP_DIR:-/srv/first-agent/secrets}"' in normalizer_text
+    assert ".env.fa.pre-adr12-normalize" in normalizer_text
 
 
 # --- deploy scripts leave the stack UP + in stand-by --------------------------

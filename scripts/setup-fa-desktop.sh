@@ -281,26 +281,6 @@ SECRETS_ENV="$FA_DIR/secrets/fa.env"
 PROXY_TOKEN="$FA_DIR/secrets/fa_proxy_token"
 ENV_FA="$FA_DIR/repo/First-Agent-dev/.env.fa"
 
-# Migration: older deployments kept API keys in the repo .env.fa. If that file
-# has uncommented API-key lines, move them to the secrets file (idempotent).
-if [[ ! -f "$SECRETS_ENV" && -f "$ENV_FA" ]] && grep -qE '^[[:space:]]*[A-Z0-9_]*API_KEY[[:space:]]*=' "$ENV_FA"; then
-    log_warn "Migrating API keys from repo .env.fa to $SECRETS_ENV (secret isolation)."
-    # Backup the key-bearing .env.fa OUTSIDE /workspace (the agent's RW mount).
-    # Writing it to the repo root would leave live keys where the agent can cat
-    # them (ADR-12 bypass). Park it in the host-only secrets dir, mode 0600.
-    MIGRATION_BAK="$FA_DIR/secrets/.env.fa.pre-secret-migration.bak"
-    cp "$ENV_FA" "$MIGRATION_BAK"
-    chmod 600 "$MIGRATION_BAK"
-    # Remove any legacy in-workspace backup from a prior run of the old script.
-    rm -f "$ENV_FA.pre-secret-migration.bak" 2>/dev/null || true
-    # Extract uncommented *_API_KEY / *_TOKEN / *_SECRET lines into the secrets file.
-    grep -E '^[[:space:]]*[A-Z0-9_]+(API_KEY|_TOKEN|_SECRET)[[:space:]]*=' "$ENV_FA" > "$SECRETS_ENV" || true
-    chmod 600 "$SECRETS_ENV"
-    # Strip those secret lines from the repo .env.fa (keep non-secret FA_* controls).
-    sed -i -E '/^[[:space:]]*[A-Z0-9_]+(API_KEY|_TOKEN|_SECRET)[[:space:]]*=/d' "$ENV_FA"
-    log_warn "Migrated. Backup at $MIGRATION_BAK (host-only, 0600) — delete it once verified."
-fi
-
 # Seed the secrets file from template if still absent.
 if [[ ! -f "$SECRETS_ENV" ]]; then
     TEMPLATE="$FA_DIR/repo/First-Agent-dev/secrets/fa.env.template"
