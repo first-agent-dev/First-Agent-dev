@@ -1,0 +1,28 @@
+# First-Agent runtime capability config — example template.
+#
+# Deploy location (AIO): /srv/first-agent/state/config.yaml
+#   (the container mounts /srv/first-agent/state at ~/.fa, so the agent reads it
+#    as ~/.fa/config.yaml — see src/fa/config.py DEFAULT_CONFIG_PATH).
+# Local dev: ~/.fa/config.yaml.
+#
+# This file is OPTIONAL. Omitting it (or the capabilities block) is identical to
+# every flag = false — the safe deny-by-default posture. Only create it to
+# OPT IN to a capability class. Editing it does NOT require a rebuild, but the
+# agent reads it at the start of a run, so start a fresh `fa run` after changes.
+#
+# All five flags are runtime capability gates (ADR-6 §Amendment 2026-05-20).
+# They are AND-ed with the per-role allowed_tools whitelist and the path policy
+# check: all three must permit a call for a tool to run. Shown here at their
+# defaults (false) — uncomment and set true to enable.
+
+capabilities:
+  # Load new tools at runtime.
+  # ENABLE_DYNAMIC_TOOLS: false
+  # Force the sandbox policy check on a dynamically-loaded tool's first call.
+  # REQUIRE_DYNAMIC_TOOL_SANDBOX: false
+  # MCP gateway management (register / configure / deregister upstream servers).
+  # ENABLE_MCP_GATEWAY_MANAGEMENT: false
+  # Spawn new MCP server subprocesses at runtime.
+  # ENABLE_DYNAMIC_MCP_SERVERS: false
+  # Mutating remote-service API calls (deploy / restart / scale / ...).
+  # ENABLE_SERVER_OPS: false

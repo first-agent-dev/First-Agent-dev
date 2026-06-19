@@ -131,6 +131,17 @@ systemctl --user restart fa.service          # пересоздать стек (
 > (несекретные `FA_*`) редактируются так же — на хосте. Спрашивать у агента про
 > роли/схему запроса можно; сами ключи он физически не достанет.
 >
+> 📍 **Где какой файл лежит на хосте** (контейнер монтирует `state` как `~/.fa`):
+>
+> - `config.yaml` (опциональные capability-флаги) → `/srv/first-agent/state/config.yaml`
+>   (читается как `~/.fa/config.yaml`). Файл **необязателен**: его отсутствие = все
+>   флаги `false` (безопасный deny-by-default). Создавайте только чтобы что-то
+>   включить — шаблон: [`knowledge/examples/config.yaml.example`](../examples/config.yaml.example).
+> - `models.yaml` (маршрутизация) → `/srv/first-agent/routing/models.yaml` (см. ниже).
+> - `.env.fa` (несекретные `FA_*`) → `/srv/first-agent/repo/First-Agent-dev/.env.fa`.
+>
+> Не uid 1000 на хосте? Тогда правка через `sudo micro <путь>`.
+>
 > ⚠️ **Источник истины для маршрутизации — `/srv/first-agent/routing/models.yaml`**
 > (его и правьте). И агент, и прокси монтируют один и тот же файл read-only;
 > отдельной копии `proxy/models.yaml` больше нет. Прокси загружает таблицу
