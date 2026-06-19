@@ -451,3 +451,28 @@ def test_fa_update_extract_active_fa_vars_survives_commented_only_template(
         f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
     )
     assert "RESULT=[]" in proc.stdout, proc.stdout
+
+
+def test_fa_update_run_tests_step_is_truly_non_fatal() -> None:
+    """STEP 7 (run_tests) must not abort the deploy when pytest fails.
+
+    fa-update.sh runs with `set -Eeuo pipefail`. With `set -E` (errtrace) the ERR
+    trap fires on a non-zero command EVEN AFTER `set +e`, so a red pytest would
+    trip the trap and exit the script — despite STEP 7 being documented as
+    non-fatal (the stack is already up). The fix disables the ERR trap around the
+    pytest invocation and restores it after capturing TEST_RC. Guard both pieces.
+    """
+    text = (_SCRIPTS / "fa-update.sh").read_text(encoding="utf-8")
+    run_tests = text[text.index("run_tests()") :]
+    run_tests = run_tests[: run_tests.index("\n}\n") + 2]
+    # The non-fatal block must drop the ERR trap before running pytest and
+    # reinstate it afterwards.
+    assert "trap - ERR" in run_tests, "run_tests must disable the ERR trap for pytest"
+    # The trap must be reinstated after the run (a bare `trap - ERR` with no
+    # restore would leak the disabled state into the rest of main()).
+    assert "ERR\n  set -e" in run_tests, "run_tests must restore the ERR trap after pytest"
+    # Ordering: drop the trap BEFORE the pytest invocation, restore AFTER it.
+    drop = run_tests.index("trap - ERR")
+    invoke = run_tests.index("-m pytest")
+    restore = run_tests.index("ERR\n  set -e")
+    assert drop < invoke < restore, "must drop ERR trap before pytest and restore after"

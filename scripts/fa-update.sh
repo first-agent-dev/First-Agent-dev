@@ -610,10 +610,17 @@ run_tests() {
   fi
 
   echo "  → Running pytest..."
+  # STEP 7 is non-fatal by contract: a failing test must NOT abort the deploy
+  # (the stack is already up). `set +e` alone is insufficient here — the script
+  # runs with `set -E` (errtrace), so the ERR trap still fires on a non-zero
+  # command even with errexit disabled. Disable the ERR trap for this block and
+  # restore it afterwards so a red pytest is recorded in TEST_RC, not fatal.
   set +e
+  trap - ERR
   docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" \
     bash -lc 'cd /workspace && if command -v uv >/dev/null 2>&1; then uv run python -m pytest -v --tb=short; else python -m pytest -v --tb=short; fi'
   TEST_RC=$?
+  trap 'rc=$?; echo "❌ ERROR at line ${LINENO}: ${BASH_COMMAND}"; exit "${rc}"' ERR
   set -e
 
   if [[ "${TEST_RC}" -ne 0 ]]; then
