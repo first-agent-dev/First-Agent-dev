@@ -115,7 +115,7 @@ def test_request_supplies_default_max_tokens_when_absent() -> None:
         timeout_seconds=60.0,
         extra_headers={},
     )
-    assert transport.last_body["max_tokens"] == 4096
+    assert transport.last_body["max_tokens"] == 64000
 
 
 def test_response_translates_tool_use_blocks_to_openai_tool_calls() -> None:

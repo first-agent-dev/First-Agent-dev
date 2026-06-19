@@ -101,16 +101,23 @@ DEFAULT_MAX_TURNS = 16
 # :data:`fa.providers.anthropic._STOP_REASON_MAP`.
 _TERMINAL_FINISH_REASONS: frozenset[str] = frozenset({"stop", "end_turn"})
 
-# Coder-role default sampling temperature. T=0.0 keeps the v0.1 loop
-# deterministic for replay; ADR-7 §Amendment 2026-05-20 rule 3's
-# T=1.0-on-retry is a *retry* policy, not a first-attempt policy, and
-# only applies once the FailureClassifierObserver fires.
+# Default sampling temperature. T=0.0 keeps the v0.1 loop deterministic for
+# replay; ADR-7 §Amendment 2026-05-20 rule 3's T=1.0-on-retry is a *retry*
+# policy, not a first-attempt policy, and only applies once the
+# FailureClassifierObserver fires. The CLI overrides this per role (the coder
+# role uses DEFAULT_CODER_TEMPERATURE for slightly less rigid edits).
 DEFAULT_TEMPERATURE = 0.0
 
-# Default max output tokens per turn. Anchored conservatively for v0.1
-# — large enough for a multi-tool-call response, small enough to flag
-# the rare runaway emission via the ``abnormal_stop:length`` outcome.
-DEFAULT_MAX_TOKENS = 2048
+# Coder-role first-attempt temperature. A small amount of sampling (0.2) gives
+# the coder room for non-degenerate edits while staying close to deterministic.
+# Planner/eval keep T=0.0. See fa.cli._cmd_run for the per-role selection.
+DEFAULT_CODER_TEMPERATURE = 0.2
+
+# Default max output tokens per turn. Sized for modern long-context reasoning
+# models (e.g. the Fireworks lineup in models.yaml.example) so multi-tool-call
+# turns and long reasoning are not truncated; a runaway emission still surfaces
+# via the ``abnormal_stop:length`` outcome.
+DEFAULT_MAX_TOKENS = 64000
 
 
 def _redact(redactor: SecretRedactor | None, text: str) -> str:
@@ -682,6 +689,7 @@ def _build_tool_calls(raw_calls: Sequence[Mapping[str, Any]]) -> tuple[ToolCall,
 
 
 __all__ = [
+    "DEFAULT_CODER_TEMPERATURE",
     "DEFAULT_MAX_TOKENS",
     "DEFAULT_MAX_TURNS",
     "DEFAULT_TEMPERATURE",

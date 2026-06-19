@@ -95,9 +95,11 @@ def _build_request_body(request: RequestInfo) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": request.model_slug,
         "messages": msgs,
-        # Anthropic requires ``max_tokens``; the canonical default
-        # matches the ``max_tokens`` default in `~/.fa/models.yaml`.
-        "max_tokens": request.max_tokens if request.max_tokens is not None else 4096,
+        # Anthropic requires ``max_tokens``; the canonical fallback matches the
+        # coder-loop ``DEFAULT_MAX_TOKENS`` (64000) so an Anthropic route is not
+        # silently capped lower than the OpenAI-compatible routes when the caller
+        # does not set ``max_tokens`` explicitly.
+        "max_tokens": request.max_tokens if request.max_tokens is not None else 64000,
     }
     if system_parts:
         body["system"] = "\n\n".join(system_parts)
