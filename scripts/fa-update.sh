@@ -207,7 +207,12 @@ extract_active_fa_vars() {
   local file="$1"
   # Only uncommented FA_* assignments are required. Commented FA_* rows in
   # .env.fa.template document optional controls and must not make deploys fail.
-  grep -E '^[[:space:]]*FA_[A-Z0-9_]+[[:space:]]*=' "${file}" 2>/dev/null \
+  # `grep` exits 1 when nothing matches; under `set -Eeuo pipefail` that 1
+  # propagates out of the command substitution and trips the ERR trap, aborting
+  # the deploy even though "no active FA_* vars" is the expected, valid case
+  # (the caller guards on an empty result). `|| true` keeps the no-match case a
+  # success without masking sed/sort failures.
+  { grep -E '^[[:space:]]*FA_[A-Z0-9_]+[[:space:]]*=' "${file}" 2>/dev/null || true; } \
     | sed -E 's/^[[:space:]]*(FA_[A-Z0-9_]+)[[:space:]]*=.*$/\1/' \
     | sort -u
 }

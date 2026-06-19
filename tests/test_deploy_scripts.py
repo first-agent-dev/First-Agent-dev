@@ -415,3 +415,39 @@ def test_legacy_routing_migration_blocks_have_sunset_notes() -> None:
         text = (_SCRIPTS / name).read_text(encoding="utf-8")
         assert "LEGACY_STATE_MODELS" in text  # block still present
         assert "SUNSET (remove after" in text, f"{name} needs a sunset note"
+
+
+def test_fa_update_extract_active_fa_vars_survives_commented_only_template(
+    tmp_path: Path,
+) -> None:
+    """Regression: `extract_active_fa_vars` on a template whose FA_* lines are
+    ALL commented must not abort fa-update.sh under `set -Eeuo pipefail`.
+
+    `grep` exits 1 on no-match; without the `|| true` guard that status
+    propagates out of the command substitution and trips the ERR trap, killing
+    the deploy at STEP 3 (the field-observed failure). The function is expected
+    to return an empty result here, which the caller handles.
+    """
+    template = tmp_path / ".env.fa.template"
+    template.write_text(
+        "# non-secret controls\n# FA_AUTO_RUN=0\n# FA_ROLE=coder\n",
+        encoding="utf-8",
+    )
+    script = _SCRIPTS / "fa-update.sh"
+    # Source only the function out of the script and invoke it the same way the
+    # script does (inside a command substitution) under the same shell options.
+    snippet = (
+        "set -Eeuo pipefail\n"
+        "trap 'exit 42' ERR\n"
+        f"source <(sed -n '/^extract_active_fa_vars()/,/^}}/p' {script!s})\n"
+        f'out=$(extract_active_fa_vars "{template!s}")\n'
+        'printf "RESULT=[%s]\\n" "$out"\n'
+    )
+    proc = subprocess.run(
+        ["bash", "-c", snippet], capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == 0, (
+        f"extract_active_fa_vars aborted under pipefail (rc={proc.returncode}); "
+        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    assert "RESULT=[]" in proc.stdout, proc.stdout
