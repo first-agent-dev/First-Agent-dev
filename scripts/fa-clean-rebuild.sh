@@ -79,6 +79,9 @@ ENV_FA="${REPO_DIR}/.env.fa"
 SECRETS_ENV="${FA_DIR}/secrets/fa.env"
 ROUTING_DIR="${FA_DIR}/routing"
 ROUTING_MODELS_FILE="${ROUTING_DIR}/models.yaml"
+# SUNSET (remove after 2026-12-01, once all hosts run the unified routing file):
+# one-time migration inputs from the pre-unification layouts. They are only read
+# when routing/models.yaml does not yet exist; after migration they are ignored.
 LEGACY_STATE_MODELS="${FA_DIR}/state/models.yaml"
 LEGACY_PROXY_MODELS="${FA_DIR}/proxy/models.yaml"
 
