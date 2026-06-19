@@ -1466,6 +1466,60 @@
 - **Unblock-trigger:** (a) is ready now; (b)/(c) when remote sandboxes,
   multi-tenant use, or a compromised-proxy threat model land.
 
+## I-25 — Externally configurable provider sampling parameters
+
+- **Status:** deferred from the Docker/config review (2026-06-19).
+- **Problem:** `~/.fa/models.yaml` configures ONLY routing — `provider`, `slug`,
+  `base_url`, `api_key_env` (+ optional `cooldown_seconds`, `httpx_retries`,
+  `timeout_seconds`, `extra_headers`). The chain-entry parser
+  (`src/fa/providers/chain.py` `chain_from_mapping`) reads no other keys, so any
+  sampling field an operator adds to a chain entry (`temperature`, `top_p`,
+  `top_k`, `min_p`, `max_tokens`, `presence_penalty`, `frequency_penalty`, …) is
+  **silently ignored** — no error, no warning. The request body is built in
+  `src/fa/inner_loop/coder_loop.py` and only ever sends `model`, `messages`,
+  `temperature`, `max_tokens`, `tools`. Defaults are **hardcoded** in code:
+  `DEFAULT_TEMPERATURE`, `DEFAULT_MAX_TOKENS` (coder loop) and a separate
+  Anthropic-adapter `max_tokens` fallback. An operator cannot tune sampling per
+  role/model from config — only by editing source.
+- **Idea (three parts):**
+  1. **Investigate main providers' HTTP API payloads.** Catalogue the chat/
+     completions request schema for each registered provider
+     (`src/fa/providers/registry.py`: openrouter, fireworks, nvidia_build, groq,
+     github_models, modal, together_ai, lambda_labs, cerebras, perplexity, xai,
+     anthropic). Note which sampling params each accepts, their ranges/defaults,
+     and OpenAI-compat vs Anthropic shape differences (e.g. Anthropic requires
+     `max_tokens`; `top_k`/`min_p` are non-OpenAI extensions).
+  2. **Make all sampling params externally configurable, not hardcoded** —
+     requires a code audit of every hardcoded default. Plumb a per-role (and/or
+     per-chain-entry) `sampling:` block from `models.yaml` → `ChainEntry` /
+     `ChainConfig` → `RequestInfo` → the adapter request body. Decide precedence
+     (per-entry overrides per-role overrides code default) and where unknown/
+     unsupported-for-provider keys are validated vs passed through `extras`.
+  3. **Stop silently ignoring sampling keys.** Until full plumbing lands, the
+     loader should at minimum WARN when a chain entry carries a key it does not
+     consume, so a mis-set `temperature:` in `models.yaml` is visible instead of
+     a silent no-op.
+- **Blocked-on:** the provider-payload catalogue from part (1) — without it the
+  schema for a `sampling:` block (which keys are universal vs provider-specific)
+  cannot be designed.
+- **Unblock-trigger:** a request-shape audit note lands enumerating, per
+  provider, the accepted sampling params and their validation rules.
+- **First concrete step once unblocked:** add an optional per-entry `sampling:`
+  mapping to `chain_from_mapping` (passed through to `RequestInfo.extras` for
+  OpenAI-compat providers), plus the loader WARN for unknown keys (part 3), with
+  tests proving a configured `temperature`/`max_tokens` reaches the request body.
+- **Why this satisfies minimalism-first.** It removes a silent-failure footgun
+  (config keys that do nothing) and replaces three scattered hardcoded constants
+  with one declared, auditable surface; no new dependency.
+- **References:**
+  - `src/fa/providers/chain.py` `chain_from_mapping` / `ChainEntry` — the keys
+    actually parsed today.
+  - `src/fa/inner_loop/coder_loop.py` `DEFAULT_TEMPERATURE` / `DEFAULT_MAX_TOKENS`
+    + `RequestInfo(...)` construction — the hardcoded request body.
+  - `src/fa/providers/openai_compat.py` / `src/fa/providers/anthropic.py` — the
+    two request-body builders (note the separate Anthropic `max_tokens` default).
+  - `knowledge/examples/models.yaml.example` — documents the routing-only shape.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring
