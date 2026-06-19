@@ -24,7 +24,12 @@ from fa.inner_loop import (
     load_runtime_limits_from_path,
     run_session,
 )
-from fa.inner_loop.coder_loop import DEFAULT_MAX_TURNS, drive_session
+from fa.inner_loop.coder_loop import (
+    DEFAULT_CODER_TEMPERATURE,
+    DEFAULT_MAX_TURNS,
+    DEFAULT_TEMPERATURE,
+    drive_session,
+)
 from fa.inner_loop.hooks import (
     AuditHook,
     AuthExpiredBlocker,
@@ -611,6 +616,13 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     # Role-aware registry: planner/eval get read-only tools, coder gets
     # the full baseline (read + write + bash).
     role = args.role
+    # Per-role first-attempt sampling temperature. The coder gets a small amount
+    # of sampling (0.2) for non-degenerate edits; planner/eval stay at 0.0 for
+    # stable, reproducible planning/judgement. (ADR-7's T=1.0-on-retry is a
+    # separate retry-policy concern handled by the FailureClassifierObserver.)
+    session_temperature = (
+        DEFAULT_CODER_TEMPERATURE if role == "coder" else DEFAULT_TEMPERATURE
+    )
     if role == "planner":
         registry = build_planner_registry(
             workspace,
@@ -730,6 +742,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         limits=limits,
         max_turns=args.max_turns,
         system_prompt_extra=resume_draft_text,
+        temperature=session_temperature,
         redactor=redactor,
     )
     status = "OK" if outcome.exit_code == 0 else "ERROR"
