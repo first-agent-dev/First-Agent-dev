@@ -22,6 +22,10 @@ SECRETS_ENV="/srv/first-agent/secrets/fa.env"   # LLM API keys (consumed by the 
 BACKUP_ENV="/srv/first-agent/secrets/backup.env"
 SERVICE_FILE="$HOME/.config/systemd/user/fa.service"
 TEST_BRANCH="agent/test-bootstrap"
+# Per-container health-wait budget. Matches fa-clean-rebuild.sh's default so the
+# slowest paths (first build/boot) are not given the shortest timeout. Override
+# via the environment if a host needs longer.
+HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
 
 # ---------------------------------------------------------------------------
 # Pre-flight checks
@@ -89,6 +93,9 @@ fi
 # only; they are not mounted after ADR-12 Option C/B unified routing.
 ROUTING_DIR="/srv/first-agent/routing"
 ROUTING_MODELS_FILE="$ROUTING_DIR/models.yaml"
+# SUNSET (remove after 2026-12-01, once all hosts run the unified routing file):
+# one-time migration inputs from the pre-unification layouts. They are only read
+# when routing/models.yaml does not yet exist; after migration they are ignored.
 LEGACY_STATE_MODELS="/srv/first-agent/state/models.yaml"
 LEGACY_PROXY_MODELS="/srv/first-agent/proxy/models.yaml"
 EXAMPLE_MODELS="$REPO_DIR/knowledge/examples/models.yaml.example"
@@ -182,7 +189,8 @@ docker compose -f docker-compose.fa.yml up -d
 wait_for_container() {
     # $1 = container name, $2 = require "healthy" (1) or just "running" (0)
     local name="$1" need_health="$2" status health
-    for _ in {1..60}; do
+    local deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
         status=$(docker inspect --format='{{.State.Status}}' "$name" 2>/dev/null || echo "missing")
         health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$name" 2>/dev/null || echo "none")
         if [[ "$need_health" -eq 1 ]]; then
@@ -201,7 +209,7 @@ wait_for_container() {
 
 log_info "Waiting for egress proxy 'fa-egress-proxy' to become healthy..."
 if ! wait_for_container "fa-egress-proxy" 1; then
-    log_error "Egress proxy did not become healthy within 60s."
+    log_error "Egress proxy did not become healthy within ${HEALTH_TIMEOUT_SECONDS}s."
     log_error "The agent will NOT start until the proxy is healthy (depends_on)."
     log_error "Common causes: missing/empty proxy token or routing config. Check:"
     log_error "  ls -l /srv/first-agent/secrets/fa_proxy_token /srv/first-agent/routing/models.yaml"
@@ -211,7 +219,7 @@ fi
 
 log_info "Waiting for agent 'first-agent' to start..."
 if ! wait_for_container "first-agent" 0; then
-    log_error "Agent container did not start within 60s. Check logs:"
+    log_error "Agent container did not start within ${HEALTH_TIMEOUT_SECONDS}s. Check logs:"
     log_error "  docker compose -f docker-compose.fa.yml logs"
     exit 1
 fi
@@ -305,6 +313,17 @@ else
     log_warn "  Agent could NOT reach the proxy at http://fa-egress-proxy:8080/healthz."
     log_warn "  'fa run' will fail (chain_exhausted) until this is fixed. Check:"
     log_warn "    docker compose -f docker-compose.fa.yml logs fa-egress-proxy"
+fi
+
+# Deeper diagnostic (warn-only): `fa selfcheck` validates that the proxy's route
+# table matches the agent's models.yaml AND that a provider key is present for
+# every route — the real causes of "both healthy but chain_exhausted". The
+# /healthz probe above only proves reachability. Never blocks the deploy.
+log_info "Running fa selfcheck (route/key drift)..."
+if docker exec first-agent fa selfcheck; then
+    log_info "  OK: fa selfcheck passed."
+else
+    log_warn "  fa selfcheck reported a problem (see above); fix it before 'fa run'."
 fi
 
 # ---------------------------------------------------------------------------

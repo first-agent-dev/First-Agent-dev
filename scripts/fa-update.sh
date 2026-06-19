@@ -30,6 +30,9 @@ SECRETS_ENV="${SECRETS_ENV:-/srv/first-agent/secrets/fa.env}"
 PROXY_TOKEN_FILE="${PROXY_TOKEN_FILE:-/srv/first-agent/secrets/fa_proxy_token}"
 MODELS_YAML_FILE="${MODELS_YAML_FILE:-/srv/first-agent/routing/models.yaml}"
 ROUTING_DIR="${ROUTING_DIR:-$(dirname "${MODELS_YAML_FILE}")}"
+# SUNSET (remove after 2026-12-01, once all hosts run the unified routing file):
+# one-time migration inputs from the pre-unification layouts. They are only read
+# when routing/models.yaml does not yet exist; after migration they are ignored.
 LEGACY_STATE_MODELS="${LEGACY_STATE_MODELS:-/srv/first-agent/state/models.yaml}"
 LEGACY_PROXY_MODELS="${LEGACY_PROXY_MODELS:-/srv/first-agent/proxy/models.yaml}"
 
@@ -42,7 +45,7 @@ AUTO_STASH="${AUTO_STASH:-0}"
 SKIP_TESTS="${SKIP_TESTS:-0}"
 SKIP_UV_SYNC="${SKIP_UV_SYNC:-0}"
 
-HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-60}"
+HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
 
 PRUNE="${PRUNE:-1}"
 PRUNE_UNTIL="${PRUNE_UNTIL:-72h}"
@@ -525,6 +528,18 @@ check_proxy_path() {
   else
     echo "  ⚠ Agent could NOT reach the proxy. 'fa run' will fail (chain_exhausted)."
     echo "    Logs: docker compose -f ${COMPOSE_FILE} logs fa-egress-proxy"
+  fi
+
+  # Deeper diagnostic (warn-only): `fa selfcheck` validates that the proxy's
+  # route table matches the agent's models.yaml AND that a provider key is
+  # present for every route — the real causes of "both healthy but
+  # chain_exhausted". /healthz above only proves reachability. Never fails the
+  # update: the agent may be fine and any finding is operator-fixable.
+  echo "  → Running fa selfcheck (route/key drift)..."
+  if docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" fa selfcheck; then
+    echo "  ✓ fa selfcheck passed."
+  else
+    echo "  ⚠ fa selfcheck reported a problem (see above); fix it before 'fa run'."
   fi
 }
 

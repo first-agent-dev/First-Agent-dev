@@ -364,3 +364,54 @@ def test_normalize_env_provider_placeholder_append_is_idempotent(tmp_path: Path)
 def test_post_setup_normalizes_env_before_validating_keys() -> None:
     text = (_SCRIPTS / "fa-post-setup.sh").read_text(encoding="utf-8")
     assert text.index("fa-normalize-env.sh") < text.index("Validate the LLM API keys")
+
+
+def test_deploy_scripts_run_fa_selfcheck() -> None:
+    """D-1: post-setup and update must run `fa selfcheck` (route/key drift).
+
+    /healthz reachability alone cannot catch routing/key drift — the real cause
+    of "both healthy but chain_exhausted". `fa selfcheck` validates the proxy's
+    route table against the agent's models.yaml and key presence. Warn-only.
+    """
+    for name in ("fa-post-setup.sh", "fa-update.sh"):
+        text = (_SCRIPTS / name).read_text(encoding="utf-8")
+        assert "fa selfcheck" in text, f"{name} must run `fa selfcheck`"
+        # The cheaper reachability probe stays as a first-line check.
+        assert "/healthz" in text, f"{name} must keep the /healthz probe"
+
+
+def test_post_setup_health_wait_is_configurable() -> None:
+    """D-3: fa-post-setup must honor HEALTH_TIMEOUT_SECONDS, not a fixed 60."""
+    text = (_SCRIPTS / "fa-post-setup.sh").read_text(encoding="utf-8")
+    assert "HEALTH_TIMEOUT_SECONDS" in text
+    assert "for _ in {1..60}" not in text, (
+        "hard-coded {1..60} loop must use HEALTH_TIMEOUT_SECONDS"
+    )
+
+
+def test_health_timeout_default_is_consistent() -> None:
+    """D-4: the three deploy scripts default HEALTH_TIMEOUT_SECONDS to 90."""
+    for name in ("fa-post-setup.sh", "fa-update.sh", "fa-clean-rebuild.sh"):
+        text = (_SCRIPTS / name).read_text(encoding="utf-8")
+        assert 'HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"' in text, (
+            f"{name} should default HEALTH_TIMEOUT_SECONDS to 90"
+        )
+
+
+def test_env_template_does_not_hardcode_fa_config_models_path() -> None:
+    """D-5: drop the stale FA_CONFIG=...models.yaml hint (now a read-only mount)."""
+    text = (_SCRIPTS.parent / ".env.fa.template").read_text(encoding="utf-8")
+    assert "# FA_CONFIG=/home/fa/.fa/models.yaml" not in text
+
+
+def test_legacy_routing_migration_blocks_have_sunset_notes() -> None:
+    """D-6: every legacy routing-migration block carries a dated sunset note."""
+    for name in (
+        "setup-fa-desktop.sh",
+        "fa-post-setup.sh",
+        "fa-update.sh",
+        "fa-clean-rebuild.sh",
+    ):
+        text = (_SCRIPTS / name).read_text(encoding="utf-8")
+        assert "LEGACY_STATE_MODELS" in text  # block still present
+        assert "SUNSET (remove after" in text, f"{name} needs a sunset note"
