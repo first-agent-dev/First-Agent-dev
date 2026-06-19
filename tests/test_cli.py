@@ -19,6 +19,22 @@ from fa.providers.base import TransportResponse
 _TEST_SECRETS = SecretStore({"TEST_FA_RUN_KEY": "sk-test-x"})
 
 
+@pytest.fixture(autouse=True)
+def _clear_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate these tests from ambient egress-proxy env (ADR-12).
+
+    The whole file exercises the legacy (non-proxy) ``_cmd_run`` path. When the
+    suite runs INSIDE the agent container, ``FA_EGRESS_PROXY_URL`` /
+    ``FA_PROXY_TOKEN_FILE`` are set in the environment, which would silently flip
+    ``_cmd_run`` into proxy mode and break expectations such as the legacy
+    "configuration error" message. Clear them so the test outcome does not depend
+    on where the suite runs. Proxy-mode behaviour is covered by
+    ``tests/test_proxy_wiring_cli.py`` / ``tests/test_secret_isolation_cli.py``.
+    """
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+
+
 def test_cli_help_contains_project_name() -> None:
     help_text = build_parser().format_help()
 

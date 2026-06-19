@@ -23,6 +23,11 @@ def _base_env(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
             "FA_STATUS_FILE": str(status),
             "PATH": f"{bin_dir}:{env.get('PATH', '')}",
             "PYTHONPATH": "",
+            # Disable the image-venv PATH prepend so the test's `fa` stub in
+            # bin_dir wins. Without this, when the suite runs INSIDE the agent
+            # container the real /opt/fa-venv/bin/fa shadows the stub and the
+            # auto-run assertions never see the stub's call log.
+            "FA_VENV_BIN": "",
         }
     )
     return env, status, bin_dir

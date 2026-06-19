@@ -151,8 +151,14 @@ _on_term() {
 if [[ -f "${WORKSPACE%/}/src/fa/__init__.py" ]]; then
   export PYTHONPATH="${WORKSPACE%/}/src${PYTHONPATH:+:$PYTHONPATH}"
 fi
-if [[ -d /opt/fa-venv/bin ]]; then
-  export PATH="/opt/fa-venv/bin:$PATH"
+# Prepend the image-owned venv so `fa` resolves to the installed console script.
+# The directory is overridable via FA_VENV_BIN (default /opt/fa-venv/bin) so the
+# entrypoint is testable outside the image (a test can point it at a stub dir, or
+# set it empty to skip the prepend); production leaves it unset and gets the
+# image venv. An empty/absent dir is never prepended.
+FA_VENV_BIN="${FA_VENV_BIN:-/opt/fa-venv/bin}"
+if [[ -n "$FA_VENV_BIN" && -d "$FA_VENV_BIN" ]]; then
+  export PATH="${FA_VENV_BIN}:$PATH"
 fi
 log "PYTHONPATH=${PYTHONPATH:-<image-default>}"
 
