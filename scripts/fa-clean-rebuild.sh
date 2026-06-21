@@ -439,7 +439,17 @@ else
 fi
 
 # ───────────────────────────────────────────────────────────────
-# 9. Summary
+# 9. Install host-side `fa` CLI wrapper
+# ───────────────────────────────────────────────────────────────
+FA_WRAPPER="${REPO_DIR}/scripts/fa"
+if [[ -x "${FA_WRAPPER}" ]]; then
+    sudo ln -sf "${FA_WRAPPER}" /usr/local/bin/fa 2>/dev/null \
+        && log_info "Host CLI wrapper installed: fa → ${FA_WRAPPER}" \
+        || log_warn "Could not symlink ${FA_WRAPPER} → /usr/local/bin/fa (sudo required)."
+fi
+
+# ───────────────────────────────────────────────────────────────
+# 10. Summary
 # ───────────────────────────────────────────────────────────────
 log_info "====================================="
 log_info "Clean rebuild complete."
