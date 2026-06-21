@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# scripts/fa — host-side convenience wrapper for the `fa` CLI inside Docker.
+#
+# Instead of typing:
+#   docker compose -f docker-compose.fa.yml exec -T first-agent fa selfcheck --role planner
+# Type:
+#   scripts/fa selfcheck --role planner
+#
+# Requires: Docker running, containers up. Respects FA_COMPOSE_FILE override.
+
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+COMPOSE_FILE="${FA_COMPOSE_FILE:-docker-compose.fa.yml}"
+
+if [ $# -eq 0 ]; then
+  echo "Usage: scripts/fa <subcommand> [args...]"
+  echo ""
+  echo "Delegates to 'fa' CLI inside the first-agent Docker container."
+  echo ""
+  echo "Examples:"
+  echo "  scripts/fa --version"
+  echo "  scripts/fa selfcheck --role planner"
+  echo "  scripts/fa probe --role planner"
+  echo "  scripts/fa probe --all-roles"
+  echo "  scripts/fa run --role coder --workspace /workspace --task \"...\" --run-id work-1"
+  echo ""
+  echo "Environment:"
+  echo "  FA_COMPOSE_FILE  Compose file name (default: docker-compose.fa.yml)"
+  exit 0
+fi
+
+exec docker compose -f "$REPO_DIR/$COMPOSE_FILE" exec -T first-agent fa "$@"
