@@ -10,7 +10,7 @@ from _pytest.capture import CaptureFixture
 from _pytest.monkeypatch import MonkeyPatch
 
 from fa.cli import build_parser
-from fa.providers.base import RequestInfo, ResponseInfo, Transport, TransportResponse
+from fa.providers.base import ResponseInfo, Transport, TransportResponse
 
 _TOKEN = "fa-proxy-probe-token"  # noqa: S105
 
