@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 from _pytest.capture import CaptureFixture
 from _pytest.monkeypatch import MonkeyPatch
@@ -46,6 +46,7 @@ class _FakeTransport(Transport):
         self._status = status
         self._body = body
 
+    @override
     def post(
         self,
         url: str,
