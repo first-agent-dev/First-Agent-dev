@@ -1530,6 +1530,16 @@ with per-entry reporting.
 
 ## I-27 — `fa help` progressive disclosure
 
+## I-28 — Coverage ratchet: restore fail_under=90
+
+`fail_under` temporarily lowered from 90 → 89 (2026-06-21) because
+`cli.py` is 78% covered — the runtime paths in `_cmd_run`,
+`_cmd_egress_proxy`, and `_cmd_selfcheck` lack unit tests (they require
+a running proxy or complex mocking). Current total: 89.72%. Need ~16
+more covered lines in `cli.py` to restore 90. Candidate: test the
+`_cmd_probe` proxy-mode success path with a fake proxy server (same
+pattern as `test_selfcheck_cli.py`'s `_proxy_server` context manager).
+
 Project-centric help surface. `fa help` shows available subcommands with
 one-line descriptions and usage examples tailored to the FA project.
 Optionally: `fa help <subcommand>` shows detailed help with common patterns.

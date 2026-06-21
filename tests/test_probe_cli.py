@@ -209,3 +209,63 @@ def test_probe_request_shape_error(
     out = capsys.readouterr().out
     assert exit_code == 1
     assert "FAIL" in out
+
+
+def test_probe_config_error(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "models.yaml"
+    # Invalid YAML: role value is a string, not a mapping.
+    config_path.write_text("planner: not-a-mapping\n", encoding="utf-8")
+    transport = _FakeTransport(status=200)
+
+    exit_code = _run_probe(
+        tmp_path, monkeypatch, config_path, transport, extra_args=["--role", "planner"]
+    )
+
+    err = capsys.readouterr().err
+    assert exit_code == 2
+    assert "configuration error" in err
+
+
+def test_probe_empty_config(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text("", encoding="utf-8")
+    transport = _FakeTransport(status=200)
+
+    exit_code = _run_probe(tmp_path, monkeypatch, config_path, transport)
+
+    err = capsys.readouterr().err
+    assert exit_code == 2
+    assert "no roles found" in err
+
+
+def test_probe_proxy_mode_missing_token(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    """In proxy mode, a missing proxy token should fail gracefully."""
+    config_path = tmp_path / "models.yaml"
+    _write_models(config_path)
+    transport = _FakeTransport(status=200)
+
+    # Enable proxy mode but with no token file.
+    monkeypatch.setenv("FA_EGRESS_PROXY_URL", "http://127.0.0.1:8080")
+    monkeypatch.setenv("FA_PROXY_TOKEN_FILE", str(tmp_path / "nonexistent"))
+    monkeypatch.setattr("fa.cli.UrllibTransport", lambda: transport)
+
+    parser = build_parser()
+    args = parser.parse_args(["probe", "--config", str(config_path), "--role", "coder"])
+    result: int = args.func(args)
+
+    output = capsys.readouterr()
+    # Missing token → proxy rewrite fails → any_failure=True → exit 1.
+    assert result != 0
+    assert "proxy" in output.err.lower() or "token" in output.err.lower()
