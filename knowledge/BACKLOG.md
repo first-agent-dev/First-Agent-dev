@@ -1520,6 +1520,21 @@
     two request-body builders (note the separate Anthropic `max_tokens` default).
   - `knowledge/examples/models.yaml.example` — documents the routing-only shape.
 
+## I-26 — `fa probe --all-entries` (full chain walk)
+
+`fa probe` stops at the first successful chain entry (matching production
+behaviour). `--all-entries` would test every entry even after one succeeds —
+useful for pre-deployment validation ("are all my fallbacks alive?").
+One-day scope: bypass `ProviderChain.request()` and walk entries directly
+with per-entry reporting.
+
+## I-27 — `fa help` progressive disclosure
+
+Project-centric help surface. `fa help` shows available subcommands with
+one-line descriptions and usage examples tailored to the FA project.
+Optionally: `fa help <subcommand>` shows detailed help with common patterns.
+Low priority — argparse `--help` works today; this is UX polish.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

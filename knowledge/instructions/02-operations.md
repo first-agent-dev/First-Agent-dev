@@ -757,7 +757,16 @@ docker compose -f docker-compose.fa.yml exec -T first-agent fa selfcheck
 ```
 
 Если `fa selfcheck` показывает missing route или `has_key=false` — чините
-проблему из его сообщения. Если `fa selfcheck` OK, но `fa run` всё равно падает
+проблему из его сообщения. Если `fa selfcheck` OK, запустите `fa probe`:
+
+```bash
+fa probe --role planner
+```
+
+Probe делает реальный API-вызов (~10 токенов) и покажет точную ошибку от
+провайдера (404 модель не найдена, 401 ключ невалиден, timeout и т.д.).
+
+Если probe OK, но `fa run` всё равно падает
 с `chain_exhausted`, посмотрите логи прокси:
 
 ```bash
@@ -878,16 +887,66 @@ systemctl --user status  fa.service
 systemctl --user restart fa.service
 ```
 
+### Удобный запуск из консоли хоста
+
+Вместо длинного `docker compose -f docker-compose.fa.yml exec -T first-agent fa ...`
+можно использовать wrapper-скрипт `scripts/fa`:
+
+```bash
+# Установка (одноразово):
+sudo ln -sf /srv/first-agent/repo/First-Agent-dev/scripts/fa /usr/local/bin/fa
+
+# После этого:
+fa selfcheck --role planner     # вместо docker compose exec ... fa selfcheck ...
+fa probe --role planner          # liveness-тест (~10 токенов)
+fa run --role coder --workspace /workspace --task "..."
+fa logs -f --tail=50             # логи agent-контейнера
+fa proxy-logs -f                 # логи прокси
+fa status                        # docker compose ps
+fa restart                       # restart обоих контейнеров
+fa rebuild                       # пересборка образов
+fa shell                         # bash внутри контейнера
+```
+
+Все команды `fa`, которые не являются инфраструктурными (logs, status, up,
+down, restart, rebuild, shell), автоматически передаются внутрь контейнера.
+Новые Python-подкоманды (добавленные в `src/fa/cli.py`) работают через
+wrapper без его изменения.
+
+### Проверка доступности провайдера (liveness probe)
+
+`fa selfcheck` проверяет конфигурацию и роутинг, но **не делает реальный
+API-вызов**. Если модель временно недоступна (404 от Fireworks), selfcheck
+покажет OK, а `fa run` упадёт с `chain_exhausted`.
+
+Для проверки доступности используйте `fa probe`:
+
+```bash
+fa probe --role planner        # тест одной роли
+fa probe --all-roles           # тест всех ролей из models.yaml
+fa probe --role planner --timeout 60  # с увеличенным таймаутом
+```
+
+Probe делает минимальный API-вызов (~10 токенов) и показывает результат:
+- ✅ — модель доступна, ключ валиден, с таймингом и токенами
+- ❌ — с HTTP-статусом и ошибкой для каждого entry в chain
+
+**Порядок диагностики:** `fa selfcheck` (бесплатно) → `fa probe`
+(~10 токенов) → `fa run`.
+
 ### Логи и вход внутрь
 
 ```bash
-docker compose -f docker-compose.fa.yml logs -f
-docker exec -it first-agent bash
+fa logs -f                       # или: docker compose ... logs -f first-agent
+fa proxy-logs -f                 # или: docker compose ... logs -f fa-egress-proxy
+fa shell                         # или: docker exec -it first-agent bash
 ```
 
 ### Запуск задачи
 
 ```bash
+fa run --role coder --workspace /workspace --task "..."
+# или полная форма:
 docker compose -f docker-compose.fa.yml exec -T first-agent \
     fa run --role coder --workspace /workspace --task "..."
 ```

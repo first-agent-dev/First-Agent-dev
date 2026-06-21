@@ -532,6 +532,16 @@ else
     exit 1
 fi
 
+# Install host-side fa CLI wrapper (unified operator interface).
+FA_WRAPPER="$FA_DIR/repo/First-Agent-dev/scripts/fa"
+if [[ -f "$FA_WRAPPER" ]]; then
+    chmod +x "$FA_WRAPPER"
+    sudo ln -sf "$FA_WRAPPER" /usr/local/bin/fa
+    log_info "fa CLI wrapper installed: fa → $FA_WRAPPER"
+else
+    log_warn "scripts/fa not found — host shortcut not installed (will be available after fa-post-setup.sh)."
+fi
+
 BACKUP_ENV="$FA_DIR/secrets/backup.env"
 if [[ ! -f "$BACKUP_ENV" ]]; then
     cat > "$BACKUP_ENV" <<'EOF'

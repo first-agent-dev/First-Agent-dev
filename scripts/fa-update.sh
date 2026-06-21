@@ -461,6 +461,14 @@ build_and_deploy() {
   # Ensure host-side scripts are executable after checkout/update.
   if [[ -d "scripts" ]]; then
     find scripts/ -name '*.sh' -type f -exec chmod +x {} + || true
+    # scripts/fa (no .sh extension) is the host-side unified CLI wrapper.
+    [[ -f "scripts/fa" ]] && chmod +x "scripts/fa" || true
+  fi
+
+  # Ensure the host-side `fa` CLI wrapper is symlinked into PATH.
+  # Idempotent: ln -sf overwrites an existing symlink silently.
+  if [[ -x "${REPO_DIR}/scripts/fa" ]]; then
+    sudo ln -sf "${REPO_DIR}/scripts/fa" /usr/local/bin/fa 2>/dev/null || true
   fi
 }
 
