@@ -24,7 +24,8 @@ _UPDATE = _ROOT / "scripts" / "fa-update.sh"
 
 
 def _compose() -> dict[str, Any]:
-    return yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))
+    result: dict[str, Any] = yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))
+    return result
 
 
 # --- Dockerfile -----------------------------------------------------------

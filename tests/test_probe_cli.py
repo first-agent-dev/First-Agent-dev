@@ -87,7 +87,7 @@ def _run_probe(
     extra_args: list[str] | None = None,
 ) -> int:
     """Run `fa probe` with a fake transport (no network)."""
-    from fa.cli import SecretStore
+    from fa.providers import SecretStore
 
     # Disable proxy mode — probe runs with direct secret store.
     monkeypatch.setenv("FA_EGRESS_PROXY_URL", "")
@@ -105,7 +105,8 @@ def _run_probe(
     if extra_args:
         args_list.extend(extra_args)
     args = parser.parse_args(args_list)
-    return args.func(args)
+    result: int = args.func(args)
+    return result
 
 
 def test_probe_ok(

@@ -81,7 +81,7 @@ from fa.inner_loop.runtime_limits import RuntimeLimits
 from fa.inner_loop.state import SessionState
 from fa.observability.redaction import SecretRedactor
 from fa.providers.base import RequestInfo, ResponseInfo
-from fa.providers.chain import ChainAttemptRecord, ProviderChain
+from fa.providers.chain import ProviderChain
 from fa.providers.errors import (
     ProviderChainExhaustedError,
     ProviderRequestShapeError,
@@ -460,19 +460,18 @@ def drive_session(  # noqa: C901
             # operator saw only "all N chain entries failed" with no
             # detail on which entry returned which HTTP status.
             for attempt in exc.attempts:
-                if isinstance(attempt, ChainAttemptRecord):
-                    state.log.append(
-                        actor="provider",
-                        kind="provider_attempt",
-                        content={
-                            "provider": attempt.provider,
-                            "slug": attempt.slug,
-                            "status": attempt.status,
-                            "ms": attempt.ms,
-                            "error": attempt.error,
-                            "logical_call_id": exc.logical_call_id,
-                        },
-                    )
+                state.log.append(
+                    actor="provider",
+                    kind="provider_attempt",
+                    content={
+                        "provider": attempt.provider,
+                        "slug": attempt.slug,
+                        "status": attempt.status,
+                        "ms": attempt.ms,
+                        "error": attempt.error,
+                        "logical_call_id": exc.logical_call_id,
+                    },
+                )
             state.log.append(
                 actor="runtime",
                 kind="run_stopped",

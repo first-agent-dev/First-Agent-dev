@@ -106,6 +106,6 @@ def test_run_bash_still_has_path(tmp_path: Path) -> None:
     """Sanity: the tool still works (PATH present, commands run)."""
     tool = build_run_bash_tool(tmp_path)
     res = _run(tool, 'echo OK && test -n "$PATH" && echo HASPATH')
-    assert res.ok
+    assert res.error is None
     assert "OK" in _stdout(res)
     assert "HASPATH" in _stdout(res)

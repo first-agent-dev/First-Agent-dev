@@ -18,6 +18,7 @@ from fa.providers.errors import (
     ProviderTransientError,
     ReservedProviderError,
 )
+from fa.providers.types import ChainAttemptRecord
 
 
 def test_reserved_provider_error_is_configuration_error() -> None:
@@ -66,9 +67,16 @@ def test_provider_request_shape_error_carries_logical_call_id() -> None:
 
 
 def test_provider_chain_exhausted_carries_attempts() -> None:
-    attempts: list[object] = ["row-a", "row-b"]
-    exc = ProviderChainExhaustedError("chain exhausted", attempts=attempts)
-    assert exc.attempts == ["row-a", "row-b"]
+    records = [
+        ChainAttemptRecord(provider="fw", slug="m1", status=429, ms=100, error="rate_limited"),
+        ChainAttemptRecord(
+            provider="or", slug="m2", status=503, ms=50, error="service_unavailable"
+        ),
+    ]
+    exc = ProviderChainExhaustedError("chain exhausted", attempts=records)
+    assert len(exc.attempts) == 2
+    assert exc.attempts[0].provider == "fw"
+    assert exc.attempts[1].status == 503
 
 
 def test_provider_chain_exhausted_carries_logical_call_id() -> None:

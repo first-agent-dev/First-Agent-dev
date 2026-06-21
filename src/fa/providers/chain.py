@@ -46,6 +46,7 @@ from fa.providers.errors import (
     ReservedProviderError,
 )
 from fa.providers.registry import PROVIDERS
+from fa.providers.types import ChainAttemptRecord
 from fa.roles import FamilyExtractionError, extract_family
 
 DEFAULT_COOLDOWN_SECONDS = 300
@@ -185,17 +186,6 @@ class CooldownRow:
     trigger_status: int
     trigger_error: str
     retry_after_hint_ms: int
-
-
-@dataclass(frozen=True)
-class ChainAttemptRecord:
-    """Per-attempt trace row consumed by the Tier-1 / Tier-2 observability surface."""
-
-    provider: str
-    slug: str
-    status: int
-    ms: int
-    error: str | None
 
 
 class ProviderChain:

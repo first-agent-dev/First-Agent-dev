@@ -70,7 +70,8 @@ def _run_selfcheck(
     monkeypatch.setenv("FA_PROXY_TOKEN_FILE", str(token_file))
     parser = build_parser()
     args = parser.parse_args(["selfcheck", "--config", str(config_path), "--role", "coder"])
-    return args.func(args)
+    result: int = args.func(args)
+    return result
 
 
 def test_selfcheck_ok_when_routes_match_and_keys_present(

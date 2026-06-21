@@ -41,6 +41,8 @@ References:
 
 from __future__ import annotations
 
+from fa.providers.types import ChainAttemptRecord
+
 
 class ConfigurationError(Exception):
     """Chain config rejected at load time (ADR-9 §1)."""
@@ -125,7 +127,7 @@ class ProviderChainExhaustedError(Exception):
         self,
         message: str,
         *,
-        attempts: list[object],
+        attempts: list[ChainAttemptRecord],
         logical_call_id: str = "",
     ) -> None:
         super().__init__(message)

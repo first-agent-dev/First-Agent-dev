@@ -64,7 +64,6 @@ from fa.providers import (
     load_models_config_from_path,
 )
 from fa.providers.base import Provider, RequestInfo, Transport
-from fa.providers.chain import ChainAttemptRecord
 from fa.providers.errors import (
     ConfigurationError,
     ProviderChainExhaustedError,
@@ -1007,11 +1006,11 @@ def _cmd_probe(args: argparse.Namespace) -> int:
         except ProviderChainExhaustedError as exc:
             elapsed_ms = int((time.monotonic() - start) * 1000)
             for index, attempt in enumerate(exc.attempts):
-                if isinstance(attempt, ChainAttemptRecord):
-                    print(
-                        f"  chain[{index}] {attempt.provider}/{attempt.slug}"
-                        f" ❌ {attempt.status} {attempt.error or 'unknown'} ({attempt.ms}ms)"
-                    )
+                print(
+                    f"  chain[{index}] {attempt.provider}/{attempt.slug}"
+                    f" ❌ {attempt.status}"
+                    f" {attempt.error or 'unknown'} ({attempt.ms}ms)"
+                )
             n_entries = len(chain_config.chain)
             print(f"\nfa probe: FAIL — all {n_entries} entries failed ({elapsed_ms}ms)")
             any_failure = True
