@@ -49,6 +49,9 @@ HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
 
 PRUNE="${PRUNE:-1}"
 PRUNE_UNTIL="${PRUNE_UNTIL:-72h}"
+# FORCE=1: skip change detection, always build+deploy. Use after a manual
+# `git pull` or when the script's "no changes detected" is wrong.
+FORCE="${FORCE:-0}"
 
 # Derived
 LOCK_FILE="${LOCK_FILE:-/tmp/fa-update.lock}"
@@ -380,8 +383,15 @@ evaluate_changes() {
 
   echo "  Summary: NEEDS_BUILD=${NEEDS_BUILD}  NEEDS_RESTART=${NEEDS_RESTART}"
 
+  if [[ "${FORCE}" == "1" ]]; then
+    echo "  → FORCE=1: overriding change detection → build + deploy."
+    NEEDS_BUILD=1
+    NEEDS_RESTART=1
+  fi
+
   if [[ "${NEEDS_BUILD}" == "0" && "${NEEDS_RESTART}" == "0" ]]; then
     echo "  ✓ No changes detected. Skipping build/deploy."
+    echo "  Hint: use FORCE=1 or --force after a manual git pull."
     echo "--- Update completed at $(date -Is) (no-op) ---"
     exit 0
   fi
@@ -714,7 +724,7 @@ main() {
     echo "  → Re-executing updated fa-update.sh so deploy uses the new script logic..."
     export _FA_UPDATE_REEXEC=1
     export _FA_UPDATE_REEXEC_HEAD_CHANGED=1
-    export REPO_DIR COMPOSE_FILE ENV_TEMPLATE ENV_FA ENV_HASH_FILE SECRETS_ENV       PROXY_TOKEN_FILE MODELS_YAML_FILE ROUTING_DIR LEGACY_STATE_MODELS       LEGACY_PROXY_MODELS SERVICE_NAME_OVERRIDE NO_CACHE COMPOSE_BUILD_PULL       AUTO_STASH SKIP_TESTS SKIP_UV_SYNC HEALTH_TIMEOUT_SECONDS PRUNE PRUNE_UNTIL
+    export REPO_DIR COMPOSE_FILE ENV_TEMPLATE ENV_FA ENV_HASH_FILE SECRETS_ENV       PROXY_TOKEN_FILE MODELS_YAML_FILE ROUTING_DIR LEGACY_STATE_MODELS       LEGACY_PROXY_MODELS SERVICE_NAME_OVERRIDE NO_CACHE COMPOSE_BUILD_PULL       AUTO_STASH SKIP_TESTS SKIP_UV_SYNC HEALTH_TIMEOUT_SECONDS PRUNE PRUNE_UNTIL FORCE
     # Release the flock before re-exec: the new process takes its own lock.
     # Without this, the inherited fd 9 races with the tee subshell.
     exec 9>&-
@@ -755,5 +765,12 @@ main() {
 
   exit "${TEST_RC}"
 }
+
+# Parse --force from argv (convert to env var before main runs).
+for _arg in "$@"; do
+  case "$_arg" in
+    --force) FORCE=1 ;;
+  esac
+done
 
 main "$@"

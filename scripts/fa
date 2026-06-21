@@ -13,7 +13,10 @@
 
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve symlink: when installed as /usr/local/bin/fa → scripts/fa,
+# $0 is the symlink path, not the target. readlink -f follows the chain.
+_SELF="$(readlink -f "$0")"
+REPO_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
 COMPOSE_FILE="${FA_COMPOSE_FILE:-docker-compose.fa.yml}"
 COMPOSE="docker compose -f $REPO_DIR/$COMPOSE_FILE"
 
