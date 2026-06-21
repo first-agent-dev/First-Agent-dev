@@ -458,18 +458,6 @@ build_and_deploy() {
     echo "${ENV_HASH_VALUE}" >"${ENV_HASH_FILE}"
   fi
 
-  # Ensure host-side scripts are executable after checkout/update.
-  if [[ -d "scripts" ]]; then
-    find scripts/ -name '*.sh' -type f -exec chmod +x {} + || true
-    # scripts/fa (no .sh extension) is the host-side unified CLI wrapper.
-    [[ -f "scripts/fa" ]] && chmod +x "scripts/fa" || true
-  fi
-
-  # Ensure the host-side `fa` CLI wrapper is symlinked into PATH.
-  # Idempotent: ln -sf overwrites an existing symlink silently.
-  if [[ -x "${REPO_DIR}/scripts/fa" ]]; then
-    sudo ln -sf "${REPO_DIR}/scripts/fa" /usr/local/bin/fa 2>/dev/null || true
-  fi
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -697,6 +685,21 @@ cleanup_images() {
 #  Main
 # ═══════════════════════════════════════════════════════════════
 
+ensure_host_scripts() {
+  # Ensure host-side scripts are executable after checkout/update.
+  if [[ -d "scripts" ]]; then
+    find scripts/ -name '*.sh' -type f -exec chmod +x {} + || true
+    # scripts/fa (no .sh extension) is the host-side unified CLI wrapper.
+    [[ -f "scripts/fa" ]] && chmod +x "scripts/fa" || true
+  fi
+
+  # Ensure the host-side `fa` CLI wrapper is symlinked into PATH.
+  # Idempotent: ln -sf overwrites an existing symlink silently.
+  if [[ -x "${REPO_DIR}/scripts/fa" ]]; then
+    sudo ln -sf "${REPO_DIR}/scripts/fa" /usr/local/bin/fa 2>/dev/null || true
+  fi
+}
+
 main() {
   echo "============================================================"
   echo "🟢 fa-update started at $(date -Is)"
@@ -712,12 +715,19 @@ main() {
     export _FA_UPDATE_REEXEC=1
     export _FA_UPDATE_REEXEC_HEAD_CHANGED=1
     export REPO_DIR COMPOSE_FILE ENV_TEMPLATE ENV_FA ENV_HASH_FILE SECRETS_ENV       PROXY_TOKEN_FILE MODELS_YAML_FILE ROUTING_DIR LEGACY_STATE_MODELS       LEGACY_PROXY_MODELS SERVICE_NAME_OVERRIDE NO_CACHE COMPOSE_BUILD_PULL       AUTO_STASH SKIP_TESTS SKIP_UV_SYNC HEALTH_TIMEOUT_SECONDS PRUNE PRUNE_UNTIL
+    # Release the flock before re-exec: the new process takes its own lock.
+    # Without this, the inherited fd 9 races with the tee subshell.
+    exec 9>&-
     exec bash "${REPO_DIR}/scripts/fa-update.sh" "$@"
   fi
   if [[ "${_FA_UPDATE_REEXEC_HEAD_CHANGED}" == "1" ]]; then
     HEAD_CHANGED=1
     echo "  → Continuing after re-exec; preserving HEAD_CHANGED=1 for build/deploy."
   fi
+
+  # Always ensure scripts are executable and symlink is current after git pull,
+  # regardless of whether build/deploy is needed.
+  ensure_host_scripts
 
   SERVICE_NAME=$(get_service_name)
   echo "  → Service: ${SERVICE_NAME}"
