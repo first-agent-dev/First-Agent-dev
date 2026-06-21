@@ -10,9 +10,7 @@ from _pytest.capture import CaptureFixture
 from _pytest.monkeypatch import MonkeyPatch
 
 from fa.cli import build_parser
-from fa.providers.base import ResponseInfo, Transport, TransportResponse
-
-_TOKEN = "fa-proxy-probe-token"  # noqa: S105
+from fa.providers.base import Transport, TransportResponse
 
 
 def _write_models(path: Path, *, roles: dict[str, dict[str, str]] | None = None) -> None:
@@ -29,11 +27,11 @@ def _write_models(path: Path, *, roles: dict[str, dict[str, str]] | None = None)
     for role_name, cfg in roles.items():
         sections.append(
             f"""{role_name}:
-  model: "{cfg['model']}"
-  family: "{cfg['family']}"
+  model: "{cfg["model"]}"
+  family: "{cfg["family"]}"
   chain:
     - provider: openrouter
-      slug: "{cfg['slug']}"
+      slug: "{cfg["slug"]}"
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: OPENROUTER_API_KEY
 """
@@ -88,19 +86,18 @@ def _run_probe(
     extra_args: list[str] | None = None,
 ) -> int:
     """Run `fa probe` with a fake transport (no network)."""
-    import fa.cli as cli_mod
+    from fa.cli import SecretStore
 
     # Disable proxy mode — probe runs with direct secret store.
     monkeypatch.setenv("FA_EGRESS_PROXY_URL", "")
     # Provide a fake secret store with the key present.
     monkeypatch.setattr(
-        cli_mod,
-        "_load_secret_store",
-        lambda: cli_mod.SecretStore({"OPENROUTER_API_KEY": "sk-test-key"}),
+        "fa.cli._load_secret_store",
+        lambda: SecretStore({"OPENROUTER_API_KEY": "sk-test-key"}),
     )
 
     # Inject the fake transport by patching UrllibTransport construction.
-    monkeypatch.setattr(cli_mod, "UrllibTransport", lambda: transport)
+    monkeypatch.setattr("fa.cli.UrllibTransport", lambda: transport)
 
     parser = build_parser()
     args_list = ["probe", "--config", str(config_path)]

@@ -63,8 +63,8 @@ from fa.providers import (
     build_provider,
     load_models_config_from_path,
 )
-from fa.providers.chain import ChainAttemptRecord
 from fa.providers.base import Provider, RequestInfo, Transport
+from fa.providers.chain import ChainAttemptRecord
 from fa.providers.errors import (
     ConfigurationError,
     ProviderChainExhaustedError,
@@ -146,9 +146,7 @@ def _resolve_proxy_token() -> str:
         return ""
 
 
-def _proxy_rewrite_chain(
-    chain_config: ChainConfig, proxy_url: str
-) -> tuple[ChainConfig, str]:
+def _proxy_rewrite_chain(chain_config: ChainConfig, proxy_url: str) -> tuple[ChainConfig, str]:
     """Resolve the proxy token and rewrite the chain, or return an error string.
 
     Extracted from ``_cmd_run`` to keep that function's complexity bounded.
@@ -662,9 +660,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     # of sampling (0.2) for non-degenerate edits; planner/eval stay at 0.0 for
     # stable, reproducible planning/judgement. (ADR-7's T=1.0-on-retry is a
     # separate retry-policy concern handled by the FailureClassifierObserver.)
-    session_temperature = (
-        DEFAULT_CODER_TEMPERATURE if role == "coder" else DEFAULT_TEMPERATURE
-    )
+    session_temperature = DEFAULT_CODER_TEMPERATURE if role == "coder" else DEFAULT_TEMPERATURE
     if role == "planner":
         registry = build_planner_registry(
             workspace,
@@ -806,13 +802,8 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
     print(f"- role: {role_name}")
 
     if not proxy_url:
-        print(
-            "ERROR: FA_EGRESS_PROXY_URL is not set; the agent is not in proxy mode."
-        )
-        print(
-            "Hint: in Docker deployment it should point to "
-            "http://fa-egress-proxy:8080."
-        )
+        print("ERROR: FA_EGRESS_PROXY_URL is not set; the agent is not in proxy mode.")
+        print("Hint: in Docker deployment it should point to http://fa-egress-proxy:8080.")
         return 2
 
     proxy_url_error = _validate_proxy_url(proxy_url)
@@ -879,8 +870,7 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
     chain_config = models.roles.get(role_name)
     if chain_config is None:
         print(
-            f"ERROR: role {role_name!r} not found in {config_path}; "
-            f"known: {sorted(models.roles)}"
+            f"ERROR: role {role_name!r} not found in {config_path}; known: {sorted(models.roles)}"
         )
         return 2
 
@@ -922,7 +912,7 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
     return 0
 
 
-def _cmd_probe(args: argparse.Namespace) -> int:  # noqa: C901 - top-level probe orchestration
+def _cmd_probe(args: argparse.Namespace) -> int:
     """Liveness-test the LLM provider chain with a minimal real API call.
 
     Sends ``{"messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}``
@@ -978,14 +968,16 @@ def _cmd_probe(args: argparse.Namespace) -> int:  # noqa: C901 - top-level probe
 
         # Override timeout_seconds on every chain entry for the probe.
         probed_entries = tuple(
-            replace(entry, timeout_seconds=probe_timeout)
-            for entry in chain_config.chain
+            replace(entry, timeout_seconds=probe_timeout) for entry in chain_config.chain
         )
         chain_config = replace(chain_config, chain=probed_entries)
 
         chain = _build_provider_chain(chain_config, transport=transport, secrets=secrets)
 
-        print(f"\nfa probe: role={role_name} (model={chain_config.model}, family={chain_config.family})")
+        print(
+            f"\nfa probe: role={role_name}"
+            f" (model={chain_config.model}, family={chain_config.family})"
+        )
 
         request = RequestInfo(
             model_slug=chain_config.model,
@@ -1020,7 +1012,8 @@ def _cmd_probe(args: argparse.Namespace) -> int:  # noqa: C901 - top-level probe
                         f"  chain[{index}] {attempt.provider}/{attempt.slug}"
                         f" ❌ {attempt.status} {attempt.error or 'unknown'} ({attempt.ms}ms)"
                     )
-            print(f"\nfa probe: FAIL — all {len(chain_config.chain)} entries failed ({elapsed_ms}ms)")
+            n_entries = len(chain_config.chain)
+            print(f"\nfa probe: FAIL — all {n_entries} entries failed ({elapsed_ms}ms)")
             any_failure = True
         except ProviderRequestShapeError as exc:
             elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -1191,9 +1184,7 @@ def _read_deploy_key_material() -> str:
         except OSError:
             continue
         body = "".join(
-            line.strip()
-            for line in text.splitlines()
-            if line and not line.startswith("-----")
+            line.strip() for line in text.splitlines() if line and not line.startswith("-----")
         )
         if len(body) >= 16:
             return body
