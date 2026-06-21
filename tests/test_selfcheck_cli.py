@@ -70,7 +70,8 @@ def _run_selfcheck(
     monkeypatch.setenv("FA_PROXY_TOKEN_FILE", str(token_file))
     parser = build_parser()
     args = parser.parse_args(["selfcheck", "--config", str(config_path), "--role", "coder"])
-    return args.func(args)
+    result: int = args.func(args)
+    return result
 
 
 def test_selfcheck_ok_when_routes_match_and_keys_present(
@@ -135,6 +136,7 @@ def test_selfcheck_reports_missing_proxy_key(
     assert "key for OPENROUTER_API_KEY is absent" in out
     assert "/srv/first-agent/secrets/fa.env" in out
 
+
 def test_selfcheck_rejects_non_http_proxy_url(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -159,6 +161,7 @@ def test_selfcheck_rejects_routes_payload_extra_fields() -> None:
 
     assert routes == {}
     assert "must contain only name and has_key" in error
+
 
 def test_selfcheck_reports_unreachable_proxy(
     tmp_path: Path,
@@ -250,4 +253,3 @@ def test_selfcheck_rejects_non_list_routes_payload(
     assert exit_code == 1
     assert "unsafe or malformed proxy /routes payload" in out
     assert "expected a JSON list" in out
-

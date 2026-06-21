@@ -65,16 +65,34 @@ def test_checker_detects_broken_link_with_title(tmp_path: Path) -> None:
     assert "nope-missing.md" in result.stderr
 
 
-def test_explicit_legacy_file_is_skipped_unless_all() -> None:
+def test_explicit_legacy_file_is_skipped_unless_all(tmp_path: Path) -> None:
     """The pre-commit hook passes filenames; touching a known-debt doc must not
-    block the commit on pre-existing breakage. ``--all`` overrides."""
-    legacy = _REPO_ROOT / "knowledge" / "trace" / "exploration_log.md"
-    if not legacy.exists():  # pragma: no cover - repo layout guard
-        return
-    skipped = _run(str(legacy))
-    assert skipped.returncode == 0, skipped.stdout + skipped.stderr
-    forced = _run("--all", str(legacy))
-    assert forced.returncode == 1
+    block the commit on pre-existing breakage. ``--all`` overrides.
+
+    Creates a file with a broken link and verifies the legacy-skip mechanism:
+    without --all the checker skips it (exit 0); with --all it checks and
+    finds the broken link (exit 1). Uses a real _LEGACY_SKIP path so the
+    checker's path-matching logic is exercised end-to-end.
+    """
+    # Place a file with a known broken link inside a _LEGACY_SKIP tree.
+    legacy_dir = _REPO_ROOT / "knowledge" / "trace"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    probe = legacy_dir / "_test_legacy_skip_probe.md"
+    probe.write_text("[broken](./this-target-does-not-exist.md)\n", encoding="utf-8")
+    try:
+        # Without --all: legacy file is skipped → exit 0.
+        skipped = _run(str(probe))
+        assert skipped.returncode == 0, skipped.stdout + skipped.stderr
+
+        # With --all: legacy skip is overridden → broken link detected → exit 1.
+        forced = _run("--all", str(probe))
+        assert forced.returncode == 1, (
+            f"expected exit 1 (broken link with --all); "
+            f"got {forced.returncode}: {forced.stdout + forced.stderr}"
+        )
+        assert "this-target-does-not-exist.md" in forced.stderr
+    finally:
+        probe.unlink(missing_ok=True)
 
 
 def test_link_syntax_inside_inline_code_is_ignored(tmp_path: Path) -> None:

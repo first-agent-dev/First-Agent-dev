@@ -59,9 +59,7 @@ def test_build_scrubbed_env_drops_secrets_keeps_allowlisted() -> None:
 def test_extra_allow_cannot_re_expose_a_secret_name() -> None:
     """Fail-closed: an operator override of a credential name is still dropped."""
     source = {"FIREWORKS_API_KEY": "fw-secret", "MY_TOOL_HOME": "/x"}
-    scrubbed = build_scrubbed_env(
-        source, extra_allow={"FIREWORKS_API_KEY", "MY_TOOL_HOME"}
-    )
+    scrubbed = build_scrubbed_env(source, extra_allow={"FIREWORKS_API_KEY", "MY_TOOL_HOME"})
     assert "FIREWORKS_API_KEY" not in scrubbed  # secret filter wins over allowlist
     assert scrubbed["MY_TOOL_HOME"] == "/x"  # non-secret extra is allowed
 
@@ -94,9 +92,7 @@ def test_run_bash_proc_self_environ_no_secret(
     assert "ak-LEAK-77" not in _stdout(res)
 
 
-def test_run_bash_python_environ_no_secret(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_bash_python_environ_no_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FIREWORKS_API_KEY", "fw-LEAK-py")
     tool = build_run_bash_tool(tmp_path)
     res = _run(
@@ -109,7 +105,7 @@ def test_run_bash_python_environ_no_secret(
 def test_run_bash_still_has_path(tmp_path: Path) -> None:
     """Sanity: the tool still works (PATH present, commands run)."""
     tool = build_run_bash_tool(tmp_path)
-    res = _run(tool, "echo OK && test -n \"$PATH\" && echo HASPATH")
-    assert res.ok
+    res = _run(tool, 'echo OK && test -n "$PATH" && echo HASPATH')
+    assert res.error is None
     assert "OK" in _stdout(res)
     assert "HASPATH" in _stdout(res)

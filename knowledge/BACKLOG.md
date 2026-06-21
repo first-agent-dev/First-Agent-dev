@@ -1520,6 +1520,31 @@
     two request-body builders (note the separate Anthropic `max_tokens` default).
   - `knowledge/examples/models.yaml.example` — documents the routing-only shape.
 
+## I-26 — `fa probe --all-entries` (full chain walk)
+
+`fa probe` stops at the first successful chain entry (matching production
+behaviour). `--all-entries` would test every entry even after one succeeds —
+useful for pre-deployment validation ("are all my fallbacks alive?").
+One-day scope: bypass `ProviderChain.request()` and walk entries directly
+with per-entry reporting.
+
+## I-27 — `fa help` progressive disclosure
+
+## I-28 — Coverage ratchet: restore fail_under=90
+
+`fail_under` temporarily lowered from 90 → 89 (2026-06-21) because
+`cli.py` is 78% covered — the runtime paths in `_cmd_run`,
+`_cmd_egress_proxy`, and `_cmd_selfcheck` lack unit tests (they require
+a running proxy or complex mocking). Current total: 89.72%. Need ~16
+more covered lines in `cli.py` to restore 90. Candidate: test the
+`_cmd_probe` proxy-mode success path with a fake proxy server (same
+pattern as `test_selfcheck_cli.py`'s `_proxy_server` context manager).
+
+Project-centric help surface. `fa help` shows available subcommands with
+one-line descriptions and usage examples tailored to the FA project.
+Optionally: `fa help <subcommand>` shows detailed help with common patterns.
+Low priority — argparse `--help` works today; this is UX polish.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

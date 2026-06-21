@@ -151,7 +151,6 @@ def test_fa_update_probes_the_llm_path() -> None:
     assert "check_proxy_path" in text
 
 
-
 def test_compose_up_scripts_validate_file_mount_sources() -> None:
     for name in ("fa-update.sh", "fa-post-setup.sh", "fa-clean-rebuild.sh"):
         text = (_SCRIPTS / name).read_text(encoding="utf-8")
@@ -181,13 +180,10 @@ def test_post_setup_does_not_interpolate_remote_or_branch_inside_docker_exec_she
     assert "-e TEST_BRANCH=" in text
 
 
-
 def _write_env_templates(repo: Path) -> None:
     (repo / "secrets").mkdir(parents=True)
     (repo / ".env.fa.template").write_text(
-        "# First-Agent NON-SECRET runtime controls.\n"
-        "# API KEYS DO NOT GO HERE.\n"
-        "# FA_AUTO_RUN=0\n",
+        "# First-Agent NON-SECRET runtime controls.\n# API KEYS DO NOT GO HERE.\n# FA_AUTO_RUN=0\n",
         encoding="utf-8",
     )
     (repo / "secrets" / "fa.env.template").write_text(
@@ -249,8 +245,7 @@ def test_normalize_env_migrates_active_secret_lines_out_of_env_fa(tmp_path: Path
     _write_env_templates(repo)
     env_fa = repo / ".env.fa"
     env_fa.write_text(
-        "OPENROUTER_API_KEY=sk-real\n"
-        "FA_ROLE=coder\n",
+        "OPENROUTER_API_KEY=sk-real\nFA_ROLE=coder\n",
         encoding="utf-8",
     )
     secrets_env = tmp_path / "secrets" / "fa.env"
@@ -318,9 +313,7 @@ def test_normalize_env_combined_secret_and_legacy_comments_keeps_original_backup
     _write_env_templates(repo)
     env_fa = repo / ".env.fa"
     env_fa.write_text(
-        "# LLM API keys -> .env.fa\n"
-        "OPENROUTER_API_KEY=sk-real\n"
-        "FA_ROLE=coder\n",
+        "# LLM API keys -> .env.fa\nOPENROUTER_API_KEY=sk-real\nFA_ROLE=coder\n",
         encoding="utf-8",
     )
     secrets_env = tmp_path / "secrets" / "fa.env"
@@ -384,9 +377,7 @@ def test_post_setup_health_wait_is_configurable() -> None:
     """D-3: fa-post-setup must honor HEALTH_TIMEOUT_SECONDS, not a fixed 60."""
     text = (_SCRIPTS / "fa-post-setup.sh").read_text(encoding="utf-8")
     assert "HEALTH_TIMEOUT_SECONDS" in text
-    assert "for _ in {1..60}" not in text, (
-        "hard-coded {1..60} loop must use HEALTH_TIMEOUT_SECONDS"
-    )
+    assert "for _ in {1..60}" not in text, "hard-coded {1..60} loop must use HEALTH_TIMEOUT_SECONDS"
 
 
 def test_health_timeout_default_is_consistent() -> None:
@@ -443,9 +434,7 @@ def test_fa_update_extract_active_fa_vars_survives_commented_only_template(
         f'out=$(extract_active_fa_vars "{template!s}")\n'
         'printf "RESULT=[%s]\\n" "$out"\n'
     )
-    proc = subprocess.run(
-        ["bash", "-c", snippet], capture_output=True, text=True, check=False
-    )
+    proc = subprocess.run(["bash", "-c", snippet], capture_output=True, text=True, check=False)
     assert proc.returncode == 0, (
         f"extract_active_fa_vars aborted under pipefail (rc={proc.returncode}); "
         f"stdout={proc.stdout!r} stderr={proc.stderr!r}"

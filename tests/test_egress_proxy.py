@@ -100,9 +100,7 @@ def _make_server() -> tuple[ThreadingHTTPServer, list[dict[str, Any]]]:
         captured.append({"url": url, "headers": headers, "body": body})
         return 200, {"Content-Type": "application/json"}, json.dumps({"ok": True}).encode()
 
-    table = build_route_table(
-        [("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY")]
-    )
+    table = build_route_table([("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY")])
     handler = build_handler_class(
         route_table=table,
         secrets={"OPENROUTER_API_KEY": _KEY},
@@ -199,9 +197,7 @@ def test_routes_returns_only_safe_fields_and_has_key() -> None:
 
 
 def test_routes_treats_whitespace_secret_as_missing() -> None:
-    table = build_route_table(
-        [("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY")]
-    )
+    table = build_route_table([("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY")])
     handler = build_handler_class(
         route_table=table,
         secrets={"OPENROUTER_API_KEY": "   "},
@@ -212,14 +208,10 @@ def test_routes_treats_whitespace_secret_as_missing() -> None:
     port = httpd.server_address[1]
     _run(httpd)
 
-    status, data = _request(
-        port, "GET", "/routes", headers={"X-FA-Proxy-Token": _TOKEN}
-    )
+    status, data = _request(port, "GET", "/routes", headers={"X-FA-Proxy-Token": _TOKEN})
 
     assert status == 200
-    assert json.loads(data.decode("utf-8")) == [
-        {"has_key": False, "name": "openrouter-s"}
-    ]
+    assert json.loads(data.decode("utf-8")) == [{"has_key": False, "name": "openrouter-s"}]
 
 
 def test_post_injects_key_and_strips_caller_auth() -> None:
@@ -311,9 +303,7 @@ def _make_server_capturing_timeout() -> tuple[ThreadingHTTPServer, list[dict[str
         captured.append({"url": url, "headers": headers, "timeout": timeout})
         return 200, {"Content-Type": "application/json"}, b"{}"
 
-    table = build_route_table(
-        [("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY")]
-    )
+    table = build_route_table([("openrouter", "s", "https://up.example/v1", "OPENROUTER_API_KEY")])
     handler = build_handler_class(
         route_table=table,
         secrets={"OPENROUTER_API_KEY": _KEY},

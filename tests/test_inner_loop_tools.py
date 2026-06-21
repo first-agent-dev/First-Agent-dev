@@ -138,3 +138,25 @@ def test_run_bash_tool_preserves_failure_diagnostics(tmp_path: Path) -> None:
     assert "bash exited 7" in result.error.message
     assert "visible stderr" in result.error.message
     assert "visible stdout" in result.error.message
+
+
+def test_build_planner_registry_has_read_and_bash(tmp_path: Path) -> None:
+    """Planner registry: read-only reconnaissance (read_file + run_bash, no write_file)."""
+    from fa.inner_loop.tools import build_planner_registry
+
+    registry = build_planner_registry(tmp_path)
+    names = {spec.name for spec in registry.specs()}
+    assert "fs.read_file" in names
+    assert "fs.run_bash" in names
+    assert "fs.write_file" not in names
+
+
+def test_build_eval_registry_has_read_and_bash(tmp_path: Path) -> None:
+    """Eval registry: read-only verification (read_file + run_bash, no write_file)."""
+    from fa.inner_loop.tools import build_eval_registry
+
+    registry = build_eval_registry(tmp_path)
+    names = {spec.name for spec in registry.specs()}
+    assert "fs.read_file" in names
+    assert "fs.run_bash" in names
+    assert "fs.write_file" not in names

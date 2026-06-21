@@ -376,19 +376,40 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Summary
+# 8. Install host-side `fa` CLI wrapper
+# ---------------------------------------------------------------------------
+log_info "Installing host-side fa CLI wrapper..."
+FA_WRAPPER="$REPO_DIR/scripts/fa"
+if [[ -f "$FA_WRAPPER" ]]; then
+    chmod +x "$FA_WRAPPER"
+    sudo ln -sf "$FA_WRAPPER" /usr/local/bin/fa
+    log_info "fa CLI wrapper installed: fa → $FA_WRAPPER"
+else
+    log_warn "scripts/fa not found — host shortcut not installed."
+fi
+
+# ---------------------------------------------------------------------------
+# 9. Summary
 # ---------------------------------------------------------------------------
 log_info "====================================="
 log_info "Post-setup complete!"
 log_info "====================================="
 echo ""
-echo "Containers:   docker compose -f docker-compose.fa.yml ps   (expect first-agent + fa-egress-proxy)"
-echo "Logs:         docker compose -f docker-compose.fa.yml logs -f"
-echo "Proxy logs:   docker compose -f docker-compose.fa.yml logs -f fa-egress-proxy"
-echo "Run a task:   docker compose -f docker-compose.fa.yml exec first-agent fa run --role coder --workspace /workspace --task \"...\""
-echo "Backup:       /srv/first-agent/scripts/backup-fa.sh"
+echo "Quick commands (via host wrapper):"
+echo "  fa status                    Show container status"
+echo "  fa selfcheck --role planner  Validate config + routing (free)"
+echo "  fa probe --role planner      Liveness test (~10 tokens)"
+echo "  fa run --role coder --workspace /workspace --task \"...\""
+echo "  fa logs -f                   Agent logs"
+echo "  fa proxy-logs -f             Proxy logs"
+echo "  fa shell                     Bash inside agent container"
+echo "  fa restart                   Restart both containers"
+echo "  fa rebuild                   Rebuild images and restart"
 echo ""
-echo "Primary control (always works):"
-echo "  Up/refresh: docker compose -f docker-compose.fa.yml up -d"
-echo "  Stop:       docker compose -f docker-compose.fa.yml down"
-echo "Reboot autostart (systemd, once configured): systemctl --user {status,restart} fa.service"
+echo "Full form (always works without wrapper):"
+echo "  docker compose -f docker-compose.fa.yml ps"
+echo "  docker compose -f docker-compose.fa.yml up -d"
+echo "  docker compose -f docker-compose.fa.yml down"
+echo ""
+echo "Backup: /srv/first-agent/scripts/backup-fa.sh"
+echo "Reboot autostart: systemctl --user {status,restart} fa.service"

@@ -126,9 +126,7 @@ class SecretRedactor:
         def _b64(match: re.Match[str]) -> str:
             token = match.group(0)
             try:
-                decoded = base64.b64decode(token, validate=True).decode(
-                    "utf-8", errors="replace"
-                )
+                decoded = base64.b64decode(token, validate=True).decode("utf-8", errors="replace")
             except (ValueError, binascii.Error):
                 return token
             return self._MASK if any(s in decoded for s in self._secrets) else token

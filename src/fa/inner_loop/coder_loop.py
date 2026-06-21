@@ -454,6 +454,24 @@ def drive_session(  # noqa: C901
                 )
             )
         except ProviderChainExhaustedError as exc:
+            # Log individual attempt records so events.jsonl contains
+            # per-entry diagnostics (status, ms, error) even on chain
+            # exhaustion — closes the observability gap where the
+            # operator saw only "all N chain entries failed" with no
+            # detail on which entry returned which HTTP status.
+            for attempt in exc.attempts:
+                state.log.append(
+                    actor="provider",
+                    kind="provider_attempt",
+                    content={
+                        "provider": attempt.provider,
+                        "slug": attempt.slug,
+                        "status": attempt.status,
+                        "ms": attempt.ms,
+                        "error": attempt.error,
+                        "logical_call_id": exc.logical_call_id,
+                    },
+                )
             state.log.append(
                 actor="runtime",
                 kind="run_stopped",

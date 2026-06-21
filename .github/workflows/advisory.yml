@@ -29,7 +29,16 @@ jobs:
 
       - name: Install just
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          # Primary: apt (pre-installed on ubuntu-latest since 24.04).
+          # Fallback: just.systems installer (flaky — 403s on CDN outages).
+          if command -v just &>/dev/null; then
+            echo "just already available: $(just --version)"
+          elif sudo apt-get install -y just 2>/dev/null; then
+            echo "just installed via apt: $(just --version)"
+          else
+            curl --proto '=https' --tlsv1.2 -sSf --retry 3 --retry-delay 5 \
+              https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          fi
 
       - name: Verify uv.lock is up-to-date
         # Fails if pyproject.toml was edited but uv.lock was not regenerated

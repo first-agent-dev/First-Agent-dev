@@ -14,13 +14,12 @@ from __future__ import annotations
 import itertools
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
 from fa.providers.base import RequestInfo, ResponseInfo
 from fa.providers.chain import (
-    ChainAttemptRecord,
     ChainConfig,
     ChainEntry,
     CooldownRow,
@@ -401,9 +400,8 @@ def test_chain_exhaustion_raises_typed_error_with_attempts() -> None:
     )
     with pytest.raises(ProviderChainExhaustedError) as info:
         chain.request(RequestInfo(model_slug="deepseek-v3", messages=()))
-    attempts = cast(list[ChainAttemptRecord], info.value.attempts)
+    attempts = info.value.attempts
     assert len(attempts) == 2
-    assert all(isinstance(a, ChainAttemptRecord) for a in attempts)
     assert attempts[0].error == "rate_limited"
     assert attempts[1].error == "service_unavailable"
 

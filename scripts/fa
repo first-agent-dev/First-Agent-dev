@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# scripts/fa — unified FA operator interface (host-side).
+#
+# Two layers behind one command:
+#   1. Infrastructure verbs (logs, restart, up, down, rebuild, status, shell)
+#      run on the HOST via docker compose — closed set, docker compose API.
+#   2. Everything else delegates to `fa` CLI INSIDE the agent container
+#      (selfcheck, probe, run, chunk, authoring-check, --version, …).
+#      New Python subcommands work automatically — no wrapper change needed.
+#
+# Install:  sudo ln -sf /srv/first-agent/repo/First-Agent-dev/scripts/fa /usr/local/bin/fa
+# Override: FA_COMPOSE_FILE=docker-compose.custom.yml fa status
+
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+COMPOSE_FILE="${FA_COMPOSE_FILE:-docker-compose.fa.yml}"
+COMPOSE="docker compose -f $REPO_DIR/$COMPOSE_FILE"
+
+# TTY detection: pass -T (disable TTY) when stdin is not a terminal
+# (pipes, scripts, cron). Keep TTY for interactive use (fa shell).
+TTY_FLAG="-T"
+if [ -t 0 ] && [ -t 1 ]; then
+    TTY_FLAG=""
+fi
+
+case "${1:-}" in
+    # ── Infrastructure verbs (host-side, docker compose level) ──────────
+    logs)
+        shift
+        exec $COMPOSE logs "$@" first-agent
+        ;;
+    proxy-logs)
+        shift
+        exec $COMPOSE logs "$@" fa-egress-proxy
+        ;;
+    status)
+        exec $COMPOSE ps
+        ;;
+    up)
+        exec $COMPOSE up -d
+        ;;
+    down)
+        exec $COMPOSE down
+        ;;
+    restart)
+        exec $COMPOSE restart first-agent fa-egress-proxy
+        ;;
+    rebuild)
+        exec $COMPOSE up -d --build
+        ;;
+    shell)
+        exec $COMPOSE exec first-agent bash
+        ;;
+
+    # ── Help ────────────────────────────────────────────────────────────
+    ""|--help|-h)
+        cat <<'EOF'
+Usage: fa <command> [args...]
+
+Infrastructure (host-side, docker compose):
+  logs [flags]       Agent container logs       (e.g. fa logs -f --tail=50)
+  proxy-logs [flags] Proxy container logs
+  status             Show container status
+  up                 Start containers
+  down               Stop containers
+  restart            Restart both containers
+  rebuild            Rebuild images and restart
+  shell              Open bash inside agent container
+
+Agent CLI (inside container):
+  selfcheck          Validate config + proxy routing (free)
+  probe              Liveness test — real API call (~10 tokens)
+  run                Drive an LLM session
+  chunk              Run the deterministic chunker
+  authoring-check    Run ADR-11 authoring guardrails
+  --version          Show fa version
+
+All unrecognised commands pass through to `fa` inside the container.
+Add new Python subcommands in src/fa/cli.py — they work here automatically.
+EOF
+        exit 0
+        ;;
+
+    # ── Default: delegate to fa CLI inside the agent container ──────────
+    *)
+        exec $COMPOSE exec $TTY_FLAG first-agent fa "$@"
+        ;;
+esac

@@ -211,9 +211,7 @@ def serve(
     host: str,
     port: int,
 ) -> None:  # pragma: no cover - exercised via integration, not unit tests
-    handler = build_handler_class(
-        route_table=route_table, secrets=secrets, proxy_token=proxy_token
-    )
+    handler = build_handler_class(route_table=route_table, secrets=secrets, proxy_token=proxy_token)
     httpd = ThreadingHTTPServer((host, port), handler)
     print(
         f"egress-proxy listening on {host}:{port} routes={len(route_table)}",

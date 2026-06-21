@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -62,8 +63,12 @@ from fa.providers import (
     build_provider,
     load_models_config_from_path,
 )
-from fa.providers.base import Provider, Transport
-from fa.providers.errors import ConfigurationError
+from fa.providers.base import Provider, RequestInfo, Transport
+from fa.providers.errors import (
+    ConfigurationError,
+    ProviderChainExhaustedError,
+    ProviderRequestShapeError,
+)
 from fa.roles import EvalFamilyConflictError
 from fa.verifier import load_contracts_from_dir
 
@@ -140,9 +145,7 @@ def _resolve_proxy_token() -> str:
         return ""
 
 
-def _proxy_rewrite_chain(
-    chain_config: ChainConfig, proxy_url: str
-) -> tuple[ChainConfig, str]:
+def _proxy_rewrite_chain(chain_config: ChainConfig, proxy_url: str) -> tuple[ChainConfig, str]:
     """Resolve the proxy token and rewrite the chain, or return an error string.
 
     Extracted from ``_cmd_run`` to keep that function's complexity bounded.
@@ -332,6 +335,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     selfcheck_parser.set_defaults(func=_cmd_selfcheck)
 
+    probe_parser = subparsers.add_parser(
+        "probe",
+        help="Liveness-test the LLM provider chain with a minimal API call.",
+        description=(
+            "Send a minimal LLM request (~10 tokens) through the full "
+            "agent→proxy→provider path for the selected role (or all roles). "
+            "Unlike `fa selfcheck` (which validates config and routing without "
+            "touching a provider), `fa probe` makes a real API call and reports "
+            "per-chain-entry results. Use it to verify that API keys are valid, "
+            "models are available, and the network path works end-to-end."
+        ),
+    )
+    probe_parser.add_argument(
+        "--role",
+        default="coder",
+        help="Role to probe (matches a top-level key in ~/.fa/models.yaml).",
+    )
+    probe_parser.add_argument(
+        "--all-roles",
+        action="store_true",
+        help="Probe every role declared in ~/.fa/models.yaml.",
+    )
+    probe_parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_MODELS_YAML_PATH,
+        help="Path to the per-role chain config (default: ~/.fa/models.yaml).",
+    )
+    probe_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="Per-entry timeout in seconds (default: 30).",
+    )
+    probe_parser.set_defaults(func=_cmd_probe)
+
     authoring_parser = subparsers.add_parser(
         "authoring-check",
         help="Run the Level-0 authoring-guardrail kernel (ADR-11 two-tier TCB).",
@@ -444,7 +483,7 @@ def _chunk_to_dict(chunk: Chunk) -> dict[str, object]:
     data = asdict(chunk)
     # ``asdict`` converts the breadcrumb tuple to a list, which is the
     # right shape for JSON output.
-    return data
+    return data  # pyrefly: ignore[bad-return] — asdict() erases to Any; mypy strict accepts
 
 
 def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
@@ -620,9 +659,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     # of sampling (0.2) for non-degenerate edits; planner/eval stay at 0.0 for
     # stable, reproducible planning/judgement. (ADR-7's T=1.0-on-retry is a
     # separate retry-policy concern handled by the FailureClassifierObserver.)
-    session_temperature = (
-        DEFAULT_CODER_TEMPERATURE if role == "coder" else DEFAULT_TEMPERATURE
-    )
+    session_temperature = DEFAULT_CODER_TEMPERATURE if role == "coder" else DEFAULT_TEMPERATURE
     if role == "planner":
         registry = build_planner_registry(
             workspace,
@@ -764,13 +801,8 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
     print(f"- role: {role_name}")
 
     if not proxy_url:
-        print(
-            "ERROR: FA_EGRESS_PROXY_URL is not set; the agent is not in proxy mode."
-        )
-        print(
-            "Hint: in Docker deployment it should point to "
-            "http://fa-egress-proxy:8080."
-        )
+        print("ERROR: FA_EGRESS_PROXY_URL is not set; the agent is not in proxy mode.")
+        print("Hint: in Docker deployment it should point to http://fa-egress-proxy:8080.")
         return 2
 
     proxy_url_error = _validate_proxy_url(proxy_url)
@@ -837,8 +869,7 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
     chain_config = models.roles.get(role_name)
     if chain_config is None:
         print(
-            f"ERROR: role {role_name!r} not found in {config_path}; "
-            f"known: {sorted(models.roles)}"
+            f"ERROR: role {role_name!r} not found in {config_path}; known: {sorted(models.roles)}"
         )
         return 2
 
@@ -878,6 +909,118 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
     print("fa selfcheck: OK")
     print(f"- checked role routes: {len(expected_routes)}")
     return 0
+
+
+def _cmd_probe(args: argparse.Namespace) -> int:
+    """Liveness-test the LLM provider chain with a minimal real API call.
+
+    Sends ``{"messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}``
+    through the full agent→proxy→provider path. No system prompt, no tools, no
+    inner loop — pure provider connectivity and key-validity test.
+
+    Cost: ~10 input tokens + 1 output token per chain entry probed.
+    """
+    config_path = args.config.expanduser().resolve()
+    probe_timeout = int(args.timeout)
+
+    proxy_url = _resolve_proxy_url()
+    proxy_mode = bool(proxy_url)
+    secrets: Mapping[str, str] = SecretStore({}) if proxy_mode else _load_secret_store()
+
+    try:
+        models = load_models_config_from_path(
+            config_path, env=secrets, require_api_keys=not proxy_mode
+        )
+    except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
+        print(f"fa probe: configuration error: {exc}", file=sys.stderr)
+        return 2
+
+    if not models.roles:
+        print(f"fa probe: no roles found in {config_path}", file=sys.stderr)
+        return 2
+
+    if args.all_roles:
+        role_names = sorted(models.roles)
+    else:
+        role_names = [args.role]
+
+    transport: Transport = UrllibTransport()
+    any_failure = False
+
+    for role_name in role_names:
+        chain_config = models.roles.get(role_name)
+        if chain_config is None:
+            print(
+                f"fa probe: role {role_name!r} not found in {config_path}; "
+                f"known: {sorted(models.roles)}"
+            )
+            any_failure = True
+            continue
+
+        if proxy_mode:
+            rewritten, proxy_err = _proxy_rewrite_chain(chain_config, proxy_url)
+            if proxy_err:
+                print(f"fa probe: {proxy_err}", file=sys.stderr)
+                any_failure = True
+                continue
+            chain_config = rewritten
+
+        # Override timeout_seconds on every chain entry for the probe.
+        probed_entries = tuple(
+            replace(entry, timeout_seconds=probe_timeout) for entry in chain_config.chain
+        )
+        chain_config = replace(chain_config, chain=probed_entries)
+
+        chain = _build_provider_chain(chain_config, transport=transport, secrets=secrets)
+
+        print(
+            f"\nfa probe: role={role_name}"
+            f" (model={chain_config.model}, family={chain_config.family})"
+        )
+
+        request = RequestInfo(
+            model_slug=chain_config.model,
+            messages=({"role": "user", "content": "hi"},),
+            temperature=0.0,
+            max_tokens=1,
+            tools=(),
+        )
+
+        start = time.monotonic()
+        try:
+            response, _call_id, attempts = chain.request(request)
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            for attempt in attempts:
+                status_icon = "✅" if attempt.error is None else "⚠️"
+                error_text = f" {attempt.error}" if attempt.error else ""
+                print(
+                    f"  chain[{attempts.index(attempt)}] {attempt.provider}/{attempt.slug}"
+                    f" {status_icon} {attempt.status}{error_text} ({attempt.ms}ms)"
+                )
+            tokens_text = f"in={response.in_tokens} out={response.out_tokens}"
+            reply_preview = (response.text or "")[:60].replace("\n", " ")
+            print(
+                f"\nfa probe: OK ({elapsed_ms}ms, {tokens_text})"
+                + (f' reply="{reply_preview}"' if reply_preview else "")
+            )
+        except ProviderChainExhaustedError as exc:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            for index, attempt in enumerate(exc.attempts):
+                print(
+                    f"  chain[{index}] {attempt.provider}/{attempt.slug}"
+                    f" ❌ {attempt.status}"
+                    f" {attempt.error or 'unknown'} ({attempt.ms}ms)"
+                )
+            n_entries = len(chain_config.chain)
+            print(f"\nfa probe: FAIL — all {n_entries} entries failed ({elapsed_ms}ms)")
+            any_failure = True
+        except ProviderRequestShapeError as exc:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            print(f"  ❌ request shape error: {exc} ({elapsed_ms}ms)")
+            print(f"\nfa probe: FAIL — request rejected ({elapsed_ms}ms)")
+            any_failure = True
+
+    return 1 if any_failure else 0
 
 
 def _proxy_endpoint(proxy_url: str, path: str) -> str:
@@ -1040,9 +1183,7 @@ def _read_deploy_key_material() -> str:
         except OSError:
             continue
         body = "".join(
-            line.strip()
-            for line in text.splitlines()
-            if line and not line.startswith("-----")
+            line.strip() for line in text.splitlines() if line and not line.startswith("-----")
         )
         if len(body) >= 16:
             return body

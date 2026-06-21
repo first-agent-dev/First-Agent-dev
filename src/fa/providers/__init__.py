@@ -26,7 +26,6 @@ from fa.providers.base import (
     TransportResponse,
 )
 from fa.providers.chain import (
-    ChainAttemptRecord,
     ChainConfig,
     ChainEntry,
     CooldownRow,
@@ -50,6 +49,7 @@ from fa.providers.errors import (
 from fa.providers.registry import PROVIDERS, ProviderSpec, build_provider
 from fa.providers.secret_store import SecretStore
 from fa.providers.transport import DEFAULT_USER_AGENT, UrllibTransport
+from fa.providers.types import ChainAttemptRecord
 
 __all__ = [
     "DEFAULT_MODELS_YAML_PATH",

@@ -157,9 +157,7 @@ def inject_headers(
         "host",
         "content-length",
     }
-    out: dict[str, str] = {
-        k: v for k, v in inbound_headers.items() if k.lower() not in drop
-    }
+    out: dict[str, str] = {k: v for k, v in inbound_headers.items() if k.lower() not in drop}
     if route.provider in _XAPIKEY_PROVIDERS:
         out["x-api-key"] = api_key
         out.setdefault("anthropic-version", ANTHROPIC_API_VERSION)

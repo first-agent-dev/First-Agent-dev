@@ -50,9 +50,7 @@ def default_secret_prefixes() -> frozenset[str]:
 # Snapshot for callers that want the static container locations without home
 # expansion side effects. ``command_reads_secret_path`` always recomputes the
 # home-expanded set so this constant is a convenience, not the source of truth.
-SECRET_PATH_PREFIXES: frozenset[str] = frozenset(
-    {"/run/secrets", "/srv/first-agent/secrets"}
-)
+SECRET_PATH_PREFIXES: frozenset[str] = frozenset({"/run/secrets", "/srv/first-agent/secrets"})
 
 
 def _normalize(token: str) -> str:
@@ -70,7 +68,7 @@ def _normalize(token: str) -> str:
     # reached through the proc root view is still caught.
     for marker in ("/proc/self/root", "/proc/1/root"):
         if t.startswith(marker):
-            t = t[len(marker):] or "/"
+            t = t[len(marker) :] or "/"
     if t.startswith("~"):
         t = str(Path(t).expanduser())
     # Lexical absolute-ization + collapse of ``..`` / ``.`` without touching FS.

@@ -45,9 +45,7 @@ def test_compose_proxy_service_holds_the_keys_and_no_workspace() -> None:
     doc = yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))
     assert "fa-egress-proxy" in doc["services"], "proxy service must exist"
     proxy = doc["services"]["fa-egress-proxy"]
-    targets = {
-        v.get("target"): v for v in proxy.get("volumes", []) if isinstance(v, dict)
-    }
+    targets = {v.get("target"): v for v in proxy.get("volumes", []) if isinstance(v, dict)}
     assert "/run/secrets/fa.env" in targets, "proxy must mount the LLM keys"
     assert targets["/run/secrets/fa.env"].get("read_only") is True
     # R2-1: the proxy must NOT mount /workspace at all. Even read-only, the host
@@ -68,9 +66,10 @@ def test_compose_proxy_service_holds_the_keys_and_no_workspace() -> None:
         "proxy must not read models.yaml from the agent-writable state dir (R2-2)"
     )
     # The agent depends on the proxy being healthy.
-    assert doc["services"]["first-agent"]["depends_on"]["fa-egress-proxy"][
-        "condition"
-    ] == "service_healthy"
+    assert (
+        doc["services"]["first-agent"]["depends_on"]["fa-egress-proxy"]["condition"]
+        == "service_healthy"
+    )
 
 
 def test_run_bash_passes_scrubbed_env() -> None:
