@@ -484,7 +484,7 @@ def _chunk_to_dict(chunk: Chunk) -> dict[str, object]:
     data = asdict(chunk)
     # ``asdict`` converts the breadcrumb tuple to a list, which is the
     # right shape for JSON output.
-    return data
+    return data  # pyrefly: ignore[bad-return] — asdict() erases to Any; mypy strict accepts
 
 
 def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:

@@ -116,7 +116,7 @@ def record_discovery(
     )
 
     existing = _load_existing(target)
-    existing[key] = asdict(stamped_entry)
+    existing[key] = asdict(stamped_entry)  # pyrefly: ignore[unsupported-operation]
 
     serialised = json.dumps(
         existing,
