@@ -951,6 +951,33 @@ docker compose -f docker-compose.fa.yml exec -T first-agent \
     fa run --role coder --workspace /workspace --task "..."
 ```
 
+### Уровни детализации вывода
+
+`fa run` показывает прогресс в реальном времени на stderr:
+
+```bash
+# Стандартный вывод (по умолчанию):
+fa run --role coder --task "..."
+
+# Минимальный (только заголовки и итог):
+fa run --role coder --task "..." --detail minimal
+
+# Подробный (+ тайминги, токены, параметры инструментов):
+fa run --role coder --task "..." --detail verbose
+
+# Отладочный (+ текст модели):
+fa run --role coder --task "..." --detail debug
+
+# Без цвета (для логирования):
+fa run --role coder --task "..." --no-color
+
+# Тихий режим (только финальный ответ):
+fa run --role coder --task "..." --output-mode quiet
+```
+
+Прогресс идёт в stderr — `fa run --task "..." > result.txt` сохраняет
+только финальный ответ.
+
 ### Бэкап
 
 ```bash

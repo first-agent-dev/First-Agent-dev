@@ -64,6 +64,7 @@ References:
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -80,6 +81,7 @@ from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import RuntimeLimits
 from fa.inner_loop.state import SessionState
 from fa.observability.redaction import SecretRedactor
+from fa.output import EventBus, OutputEvent
 from fa.providers.base import RequestInfo, ResponseInfo
 from fa.providers.chain import ProviderChain
 from fa.providers.errors import (
@@ -287,6 +289,7 @@ def drive_session(  # noqa: C901
     temperature: float = DEFAULT_TEMPERATURE,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     redactor: SecretRedactor | None = None,
+    output: EventBus | None = None,
 ) -> SessionOutcome:
     """Drive an LLM-driven coder session to terminal state.
 
@@ -361,6 +364,18 @@ def drive_session(  # noqa: C901
         content={"role": role, "max_turns": max_turns, "temperature": temperature},
     )
 
+    _session_start_mono = time.monotonic()
+
+    # ── Output: session_start ──────────────────────────────────────────────
+    if output is not None:
+        output.emit(
+            OutputEvent(
+                type="session_start",
+                max_turns=max_turns,
+                data={"model": provider_chain.config.model, "role": role, "family": acting_family},
+            )
+        )
+
     collected_results: list[ToolResult] = []
     turn = 0
 
@@ -379,16 +394,45 @@ def drive_session(  # noqa: C901
         # Waiver: internal invariant (log attached before loop starts).
         assert state.log is not None  # noqa: S101
         if not summary_written:
+            summary = _session_summary_content(usage_totals, usage_turns)
             state.log.append(
                 actor="runtime",
                 kind="session_summary",
-                content=_session_summary_content(usage_totals, usage_turns),
+                content=summary,
             )
             summary_written = True
+            # ── Output: session_end ────────────────────────────────────────
+            if output is not None:
+                output.emit(
+                    OutputEvent(
+                        type="session_end",
+                        turn=outcome.turns,
+                        max_turns=max_turns,
+                        data={
+                            "stop_reason": outcome.stop_reason,
+                            "ok": outcome.exit_code == 0,
+                            "turns": outcome.turns,
+                            "wall_s": time.monotonic() - _session_start_mono,
+                            "total_in": usage_totals.get("input_tokens", 0),
+                            "total_out": usage_totals.get("output_tokens", 0),
+                            "cache_hit_ratio": summary.get("cache_hit_ratio", 0.0),
+                            "context_used_pct": None,
+                        },
+                    )
+                )
         return outcome
 
     while turn < max_turns:
         turn += 1
+        # ── Output: turn_start ─────────────────────────────────────────────
+        if output is not None:
+            output.emit(
+                OutputEvent(
+                    type="turn_start",
+                    turn=turn,
+                    max_turns=max_turns,
+                )
+            )
         try:
             hooks.dispatch(
                 LifecyclePoint.BEFORE_LLM_CALL,
@@ -403,6 +447,16 @@ def drive_session(  # noqa: C901
                     "detail": str(exc),
                 },
             )
+            # ── Output: hook_deny ──────────────────────────────────────────
+            if output is not None:
+                output.emit(
+                    OutputEvent(
+                        type="hook_deny",
+                        turn=turn,
+                        max_turns=max_turns,
+                        data={"hook": "BEFORE_LLM_CALL", "reason": str(exc)},
+                    )
+                )
             return finish(
                 SessionOutcome(
                     exit_code=1,
@@ -438,6 +492,25 @@ def drive_session(  # noqa: C901
                         },
                     )
             record_usage(response)
+            # ── Output: llm_response ───────────────────────────────────────
+            if output is not None:
+                _elapsed = int(_attempts[-1].ms if _attempts else 0)
+                output.emit(
+                    OutputEvent(
+                        type="llm_response",
+                        turn=turn,
+                        max_turns=max_turns,
+                        data={
+                            "ms": _elapsed,
+                            "in_tokens": response.in_tokens,
+                            "out_tokens": response.out_tokens,
+                            "cache_read": response.cache_read_input_tokens,
+                            "cache_creation": response.cache_creation_input_tokens,
+                            "tool_call_count": len(response.tool_calls),
+                            "text": response.text if response.text else None,
+                        },
+                    )
+                )
         except KeyboardInterrupt:
             state.log.append(
                 actor="runtime",
@@ -477,6 +550,22 @@ def drive_session(  # noqa: C901
                 kind="run_stopped",
                 content={"reason": "chain_exhausted", "detail": str(exc)},
             )
+            # ── Output: api_retry (all entries failed) ─────────────────────
+            if output is not None:
+                for _att in exc.attempts:
+                    output.emit(
+                        OutputEvent(
+                            type="api_retry",
+                            turn=turn,
+                            max_turns=max_turns,
+                            data={
+                                "provider": _att.provider,
+                                "status": _att.status,
+                                "retry_after_s": 0,
+                                "reason": _att.error or "unknown",
+                            },
+                        )
+                    )
             return finish(
                 SessionOutcome(
                     exit_code=2,
@@ -633,6 +722,22 @@ def drive_session(  # noqa: C901
                 state.record_tool_result(call, result)
         collected_results.extend(turn_results)
         for call, result in zip(tool_calls, turn_results, strict=True):
+            # ── Output: tool_call ──────────────────────────────────────────
+            if output is not None:
+                output.emit(
+                    OutputEvent(
+                        type="tool_call",
+                        turn=turn,
+                        max_turns=max_turns,
+                        data={
+                            "tool": call.name,
+                            "params": dict(call.params),
+                            "summary": result.summary,
+                            "ok": result.error is None,
+                            "error": result.error.message if result.error else None,
+                        },
+                    )
+                )
             spec = _projection_spec_for_call(registry, call)
             messages.append(
                 {

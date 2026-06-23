@@ -309,6 +309,24 @@ def build_parser() -> argparse.ArgumentParser:
             "then update it with fresh progress."
         ),
     )
+    run_parser.add_argument(
+        "--output-mode",
+        choices=("console", "quiet"),
+        default="console",
+        help="Output mode: console (per-turn progress to stderr) or quiet (final only).",
+    )
+    run_parser.add_argument(
+        "--detail",
+        choices=("minimal", "standard", "verbose", "debug"),
+        default="standard",
+        help="Console detail level (default: standard).",
+    )
+    run_parser.add_argument(
+        "--no-color",
+        action="store_true",
+        default=False,
+        help="Disable color output (sets NO_COLOR=1).",
+    )
     run_parser.set_defaults(func=_cmd_run)
 
     selfcheck_parser = subparsers.add_parser(
@@ -600,6 +618,8 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     the resolved secrets file (strict, file-only — never ``os.environ``);
     tests inject a :class:`SecretStore`/mapping directly.
     """
+    if getattr(args, "no_color", False):
+        os.environ["NO_COLOR"] = "1"
     if not str(args.task).strip():
         print("fa run: --task must be non-empty", file=sys.stderr)
         return 2
@@ -768,6 +788,21 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         hooks.register(VerifierObserver(contracts=contracts, event_log=log))
     state = SessionState(workspace_root=workspace, run_id=run_id, log=log)
 
+    # ── Live output ─────────────────────────────────────────────────────────
+    from fa.output import ConsoleRenderer, EventBus, QuietRenderer
+
+    output_bus = EventBus()
+    output_mode = getattr(args, "output_mode", None) or "console"
+    if output_mode == "console":
+        output_bus.add(
+            ConsoleRenderer(
+                detail=getattr(args, "detail", "standard") or "standard",
+            )
+        )
+    elif output_mode == "quiet":
+        output_bus.add(QuietRenderer())
+    # json mode: Phase 2
+
     outcome = drive_session(
         args.task,
         provider_chain=chain,
@@ -781,6 +816,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         system_prompt_extra=resume_draft_text,
         temperature=session_temperature,
         redactor=redactor,
+        output=output_bus,
     )
     status = "OK" if outcome.exit_code == 0 else "ERROR"
     print(f"{status}: {outcome.stop_reason} (turns={outcome.turns})")
