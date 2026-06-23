@@ -1545,6 +1545,27 @@ one-line descriptions and usage examples tailored to the FA project.
 Optionally: `fa help <subcommand>` shows detailed help with common patterns.
 Low priority — argparse `--help` works today; this is UX polish.
 
+## I-29 — Live output Phase 2: JsonLineWriter + config.yaml
+
+Add `JsonLineWriter` listener (NDJSON to stdout for WebUI/pipes).
+Add `output:` section to `~/.fa/config.yaml` (mode, detail, color,
+show_cost, show_context_pct, show_reasoning). WebUI buttons control
+these settings. Foundation already landed in I-29-prerequisite
+(EventBus + ConsoleRenderer).
+
+## I-30 — `fa replay` command
+
+Re-render a past session from `~/.fa/runs/<run_id>/events.jsonl`
+through ConsoleRenderer. Read JSONL → emit as OutputEvent → render.
+Prerequisite: I-29 (JsonLineWriter) or direct JSONL→OutputEvent
+adapter.
+
+## I-31 — `fa stats` aggregate dashboard
+
+Read all `~/.fa/runs/*/events.jsonl`, aggregate: total cost,
+tokens, cache hit ratio, model distribution, p50/p95 latency.
+`fa stats --since 7d`.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring
