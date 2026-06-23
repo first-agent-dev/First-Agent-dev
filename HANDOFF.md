@@ -13,6 +13,21 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
+**As of:** 2026-06-21 — Live per-turn console output (branch
+`live-output`): EventBus architecture emits OutputEvent at 8 call sites
+in `drive_session` alongside existing EventLog writes. ConsoleRenderer
+shows per-turn progress on stderr (model timing, tokens, cache hit ratio,
+tool actions with Devin-style verbs). 4 detail levels: minimal/standard/
+verbose/debug. Respects NO_COLOR + TERM=dumb. QuietRenderer suppresses all
+progress. CLI: `--output-mode`, `--detail`, `--no-color`. Foundation for
+Phase 2 JsonLineWriter (WebUI NDJSON), config.yaml output section,
+`fa replay`. 0 new runtime deps. 10 new tests + 66 related pass.
+Prior: 2026-06-21 — deploy script fixes.
+
+**As of:** 2026-06-20 — Hot tests with live api key concluded. Loop works,
+agent writes to the file in workspace folder per session. Intested: does the
+rest of the harness work as intended, does agent read the repo before execution?
+
 **As of:** 2026-06-16 — API-key isolation hardened to an egress-injection proxy
 ([ADR-12](./knowledge/adr/ADR-12-secret-isolation.md), Option C in v0.1). A
 blocking review found Option B leaked: `fs.run_bash` READ_ONLY commands bypassed
