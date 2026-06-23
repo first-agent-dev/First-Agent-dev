@@ -29,6 +29,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from fa.formatting import fmt_tokens as _fmt_tokens
+
 __all__ = [
     "ConsoleRenderer",
     "EventBus",
@@ -96,14 +98,6 @@ _ACTION_VERBS: dict[str, str] = {
     "fs.run_bash": "Bash",
     "pr.prepare": "Draft",
 }
-
-
-def _fmt_tokens(n: int) -> str:
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f}M"
-    if n >= 1_000:
-        return f"{n / 1_000:.1f}k"
-    return str(n)
 
 
 # ── ConsoleRenderer ───────────────────────────────────────────────────────

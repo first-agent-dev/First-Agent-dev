@@ -75,6 +75,7 @@ Agent CLI (inside container):
   selfcheck          Validate config + proxy routing (free)
   probe              Liveness test — real API call (~10 tokens)
   run                Drive an LLM session
+  stats              Session analytics (tool usage, tokens, efficiency)
   chunk              Run the deterministic chunker
   authoring-check    Run ADR-11 authoring guardrails
   --version          Show fa version
