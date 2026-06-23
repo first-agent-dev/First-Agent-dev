@@ -13,7 +13,7 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
-**As of:** 2026-06-21 — Live per-turn console output (branch
+**As of:** 2026-06-22 — Live per-turn console output (branch
 `live-output`): EventBus architecture emits OutputEvent at 8 call sites
 in `drive_session` alongside existing EventLog writes. ConsoleRenderer
 shows per-turn progress on stderr (model timing, tokens, cache hit ratio,
