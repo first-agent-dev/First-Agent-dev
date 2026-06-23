@@ -76,13 +76,15 @@ def test_console_llm_response() -> None:
     buf = StringIO()
     r = ConsoleRenderer(detail="standard")
     with patch.object(r, "_write", side_effect=lambda t: buf.write(t + "\n")):
-        r.on_event(_event(
-            "llm_response",
-            ms=1847,
-            in_tokens=2100,
-            out_tokens=312,
-            cache_read=1830,
-        ))
+        r.on_event(
+            _event(
+                "llm_response",
+                ms=1847,
+                in_tokens=2100,
+                out_tokens=312,
+                cache_read=1830,
+            )
+        )
     out = buf.getvalue()
     assert "1847ms" in out
     assert "2.1k" in out
@@ -93,13 +95,15 @@ def test_console_tool_call_success() -> None:
     buf = StringIO()
     r = ConsoleRenderer(detail="standard")
     with patch.object(r, "_write", side_effect=lambda t: buf.write(t + "\n")):
-        r.on_event(_event(
-            "tool_call",
-            tool="fs.read_file",
-            params={"path": "src/fa/cli.py"},
-            summary="505 lines",
-            ok=True,
-        ))
+        r.on_event(
+            _event(
+                "tool_call",
+                tool="fs.read_file",
+                params={"path": "src/fa/cli.py"},
+                summary="505 lines",
+                ok=True,
+            )
+        )
     out = buf.getvalue()
     assert "Read" in out
     assert "cli.py" in out
@@ -110,14 +114,16 @@ def test_console_tool_call_failure() -> None:
     buf = StringIO()
     r = ConsoleRenderer(detail="standard")
     with patch.object(r, "_write", side_effect=lambda t: buf.write(t + "\n")):
-        r.on_event(_event(
-            "tool_call",
-            tool="fs.run_bash",
-            params={"command": "sudo rm -rf /"},
-            summary="",
-            ok=False,
-            error="bash command blocked",
-        ))
+        r.on_event(
+            _event(
+                "tool_call",
+                tool="fs.run_bash",
+                params={"command": "sudo rm -rf /"},
+                summary="",
+                ok=False,
+                error="bash command blocked",
+            )
+        )
     out = buf.getvalue()
     assert "blocked" in out
 
@@ -134,16 +140,18 @@ def test_console_session_end() -> None:
     buf = StringIO()
     r = ConsoleRenderer(detail="standard")
     with patch.object(r, "_write", side_effect=lambda t: buf.write(t + "\n")):
-        r.on_event(_event(
-            "session_end",
-            ok=True,
-            stop_reason="stopped_by_llm",
-            turns=3,
-            wall_s=5.2,
-            total_in=6900,
-            total_out=1200,
-            cache_hit_ratio=0.89,
-        ))
+        r.on_event(
+            _event(
+                "session_end",
+                ok=True,
+                stop_reason="stopped_by_llm",
+                turns=3,
+                wall_s=5.2,
+                total_in=6900,
+                total_out=1200,
+                cache_hit_ratio=0.89,
+            )
+        )
     out = buf.getvalue()
     assert "stopped_by_llm" in out
     assert "turns=3" in out

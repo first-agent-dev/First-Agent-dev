@@ -32,6 +32,7 @@ from typing import Any, Literal
 __all__ = [
     "ConsoleRenderer",
     "EventBus",
+    "EventType",
     "OutputEvent",
     "QuietRenderer",
 ]

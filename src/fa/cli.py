@@ -794,9 +794,11 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     output_bus = EventBus()
     output_mode = getattr(args, "output_mode", None) or "console"
     if output_mode == "console":
-        output_bus.add(ConsoleRenderer(
-            detail=getattr(args, "detail", "standard") or "standard",
-        ))
+        output_bus.add(
+            ConsoleRenderer(
+                detail=getattr(args, "detail", "standard") or "standard",
+            )
+        )
     elif output_mode == "quiet":
         output_bus.add(QuietRenderer())
     # json mode: Phase 2
