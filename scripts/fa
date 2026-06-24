@@ -55,9 +55,21 @@ case "${1:-}" in
     shell)
         exec $COMPOSE exec first-agent bash
         ;;
+    update)
+        shift
+        exec "$REPO_DIR/scripts/fa-update.sh" "$@"
+        ;;
+    commit-traces)
+        cd "$REPO_DIR"
+        git add knowledge/trace/codebase_map.json knowledge/trace/gotchas.md 2>/dev/null
+        git diff --cached --quiet && { echo "fa: no trace changes to commit"; exit 0; }
+        git commit -m "chore: update session trace artifacts"
+        echo "fa: trace artifacts committed"
+        exit 0
+        ;;
 
     # ── Help ────────────────────────────────────────────────────────────
-    ""|--help|-h)
+    ""|--help|-h|help)
         cat <<'EOF'
 Usage: fa <command> [args...]
 
@@ -70,6 +82,8 @@ Infrastructure (host-side, docker compose):
   restart            Restart both containers
   rebuild            Rebuild images and restart
   shell              Open bash inside agent container
+  update [flags]     Pull latest + rebuild (runs fa-update.sh)
+  commit-traces      Commit session trace artifacts to git
 
 Agent CLI (inside container):
   selfcheck          Validate config + proxy routing (free)

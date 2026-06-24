@@ -94,6 +94,14 @@ ADR-9 implementation. Per-role explicit provider chain with cooldown in `~/.fa/m
 - `src/fa/observability/cost_guardian.py` — R-45 `CostGuardian` `GuardMiddleware`; tri-mode cost budget (unbounded / observe-only / hard cap).
 - `src/fa/observability/cost_table.py` — model+provider price lookup; pricing-miss → `cost_usd: null` + warning.
 
+### Output + Analytics (`src/fa/output.py`, `src/fa/stats.py`, `src/fa/formatting.py`)
+
+Three-layer observability: EventLog (JSONL audit) → EventBus+ConsoleRenderer (live stderr) → fa stats (post-hoc analytics).
+
+- `src/fa/output.py` — `EventBus` + `ConsoleRenderer` / `QuietRenderer`; live per-turn progress on stderr during `fa run`. 7 `OutputEvent` types emitted from `drive_session`.
+- `src/fa/stats.py` — `fa stats` post-hoc session analytics from `events.jsonl`; typed dataclasses (`SessionAnalytics`, `TurnTokens`, `ToolUsage`, `FileAccess`, `ProviderHealth`, `GuardActivity`); renders to console or JSON.
+- `src/fa/formatting.py` — shared `fmt_tokens()` display helper (used by output.py + stats.py).
+
 ### Sandbox (`src/fa/sandbox/`)
 
 ADR-6 bash sandbox gate (Wave-1). Three-layer pipeline: pattern classifier → per-command validators → path containment.
@@ -241,5 +249,7 @@ Quality gates run in CI. `just check` (ruff + deptry + pylint-gap + mypy + autho
 - [knowledge/instructions/01-install.md](./knowledge/instructions/01-install.md): one-time bootstrap guide (RU) for deploying FA on a dedicated AIO — BIOS → OS → host hardening → Docker → Tailscale → deploy key → first container start. Recurring ops live in 02-operations.md.
 - [knowledge/instructions/02-operations.md](./knowledge/instructions/02-operations.md): day-to-day operations manual (RU) — see Tooling & CI section above.
 - [knowledge/codemaps/inner-loop-hooks-runtime-pipeline.md](./knowledge/codemaps/inner-loop-hooks-runtime-pipeline.md): generated codemap of the inner-loop hook/middleware pipeline (lifecycle points, HookRegistry dispatch, SandboxHook, LoopGuard, blockers).
+- [knowledge/codemaps/observability-logging-analytics-pipeline.md](./knowledge/codemaps/observability-logging-analytics-pipeline.md): codemap of the 3-layer observability pipeline: EventLog write/read paths, EventBus live output, fa stats post-hoc analytics, CostGuardian, SecretRedactor integration points. 6 traces, 18 components, 15 event kinds.
+- [knowledge/research/workspace-isolation-research.md](./knowledge/research/workspace-isolation-research.md): [goal: Production workspace isolation patterns for agent sessions. 5 patterns surveyed (Open SWE/Stripe/Coinbase, Docker AI Sandbox RO+clone, git worktree, SWE-Next copy-on-start, Arcjet VM). Recommends Pattern 2 (RO mount + private clone).]
 - [knowledge/pr-notes/README.md](./knowledge/pr-notes/README.md): index of archived PR notes/bodies (point-in-time PR artifacts kept for history).
 - [scripts/ssh-tailscale/README.md](./scripts/ssh-tailscale/README.md): [goal: Idempotent SSH-over-Tailscale host-hardening runbook (failsafe/diagnose/harden/verify + ACL). UFW IPv6, sshd Match Address CGNAT, fail2ban systemd. SSOT Steps 0-6.]

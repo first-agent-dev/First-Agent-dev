@@ -186,7 +186,15 @@ review fixes (tracks `Dockerfile.fa`, ignores commented optional `FA_*` env rows
 
 Priority-ordered. Completed items deleted, not struck through.
 
-1. **First real `fa run --task` smoke against OpenRouter / Fireworks.**
+1. **Workspace isolation: RO mount + per-session clone.**
+   Research complete (`knowledge/research/workspace-isolation-research.md`).
+   Implement Pattern 2 (Docker AI Sandbox model): host repo mounted
+   read-only at `/repo`, entrypoint creates `git clone --local` into
+   `/sessions/<run-id>`, agent works in isolated clone, pushes branch,
+   main checkout stays pristine. Changes: `docker-compose.fa.yml`
+   (volume mounts), `fa-entrypoint.sh` (clone-on-start), `scripts/fa`
+   (sessions verb). Estimated ~50-70 lines. Needs ADR.
+2. **First real `fa run --task` smoke against OpenRouter / Fireworks.**
    The driver shipped in PR D + the `pr.prepare` producer landing
    in PR E together close the contract loop, but adapter
    response-shape coverage stays theoretical until this runs
