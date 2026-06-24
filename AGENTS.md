@@ -79,10 +79,9 @@ questions verbatim in your analysis:
   or repo path; or "none found in 5-min search">
 ```
 
-If the third answer is "none found", default to NOT adding. Rationale:
+If the third answer is "none found", keep the existing code as-is —
+the burden of proof is on adding, per
 [`knowledge/project-overview.md` §1.2](./knowledge/project-overview.md#12-enforceable-principle--minimalism-first)
-makes minimalism-first enforceable; the three questions force the proof
-on adding rather than on removing.
 
 **Step 5 — Goal-lens declaration.** State in your analysis openly, every session:
 
@@ -107,7 +106,7 @@ Four named slots. Pattern-match the template exactly; respect four-pillar goal s
 - **Session bootstrap.** Read [`HANDOFF.md`](./HANDOFF.md) § 60-second
   bootstrap — it points to `knowledge/llms.txt` §MUST READ FIRST
   (five files, in order). If HANDOFF and llms.txt disagree, llms.txt
-  wins. Do not crawl the repo before completing the bootstrap.
+  wins. Complete the bootstrap first, then navigate as needed.
   
 - All documentation is Markdown. ATX headings (`#`, `##`), short lines ~150 chars.
 - Fenced code blocks
@@ -123,24 +122,10 @@ Four named slots. Pattern-match the template exactly; respect four-pillar goal s
   and direct quotes in their source language.
 - readability > size
 - Architectural decisions → ADR from [`knowledge/adr/ADR-template.md`](./knowledge/adr/ADR-template.md).
-- **Workspace resolution (no walk-up).** Tools / scripts that need
-  to locate the FA repository root MUST anchor on an explicit marker
-  at the current working directory — never walk **up** the
-  filesystem looking for a parent that happens to contain
-  `AGENTS.md` or `knowledge/`. The marker is
-  [`knowledge/llms.txt`](./knowledge/llms.txt) (already canonical
-  per the §Session bootstrap rule above). Resolution algorithm:
-  if `./knowledge/llms.txt` exists → FA root is `.`; otherwise
-  abort with «`fa: not a First-Agent workspace (no
-  knowledge/llms.txt at cwd)`». No walk-up is permitted even
-  for «convenience» discovery. Rationale: walk-up resolution
-  silently bridges nested checkouts, monorepo submodules, or a
-  cloned repo inside `~/repos/First-Agent-debloat/external/` and
-  drags wrong-project AGENTS.md / ADR slate into the agent's
-  context — the exact «cross-workspace contamination» bug Gortex
-  documented in `internal/workspace/workspace.go`. The
-  marker rule is the single fence; the marker file is what FA
-  already uses for LLM routing, so no new artefact is introduced.
+- **Workspace resolution.** Locate the repo root by checking for
+  `./AGENTS.md` in the current directory. If present →
+  FA root is `.`; otherwise abort with «`fa: not a First-Agent
+  workspace`». Always anchor on the current directory.
 
 ## Context-budget discipline
 
@@ -166,22 +151,24 @@ d. **Explicit elite-tier escalation** — route the call to Debug tier. Last res
 The universal context-budget discipline above applies to **every
 session**, not only to PR creation.
 
-## Cross-project anti-patterns - learnt from precedents
+## Industry-proven rules (from prior art in OSS agent stacks)
 
-These four citations from neighbouring open-source agent stacks (DPC, Aperant, Gortex, soviet-code)
-serve as empirical anchors for our minimalism-first principle. 
+Following rules are standard practice across multiple open-source
+agent projects. Violations of any of these caused reverts in production.
 
-1. **Do not build self-improving subsystems early.** 
-   *Rule:* Do not write subsystems whose value depends on a mature host system. Keep the system human-curated.
+1. **Keep the system human-curated.** Self-improving subsystems
+   are a known anti-pattern — write them only when the host
+   system is mature enough to validate their output.
 
-2. **Estimate tasks by scale (files touched).**
-   *Rule:* Measure tasks by files touched or eval-pass count. Agents must use scope-only metrics.
+2. **Estimate tasks by scale (files touched).** Measure scope
+   by files touched or eval-pass count. Use scope-only metrics.
 
-3. **Every write target must have an active consumer.**
-   *Rule:* Every new write target (file, table, metric, event-channel) MUST land with a named automated or human consumer. 
+3. **Every write target must have an active consumer.** Every new
+   file, table, metric, or event-channel lands with a named
+   automated or human consumer in the same PR.
 
-4. **Every new ADR requires a §Prior Art section.**
-   *Rule:* Every new ADR must document existing tools, papers, or projects to prove we are not reinventing the wheel. This prevents NIH (Not-Invented-Here) drift.
+4. **Every new ADR requires a §Prior Art section.** Document
+   existing tools, papers, or projects that solve the same problem.
 
 ## Loadable skills
 
@@ -201,30 +188,43 @@ New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this t
 
 - Branch: `devin/<timestamp>-<slug>` from `main`.
 - All changes via Pull Request.
-- **Lint is autofix-first.** After editing code run `just fix`
-  (ruff autofix + format) — it mechanically resolves all style findings
-  (import order, `__all__` sorting, quoting, line wrapping). Never hand-fix
-  or memorise style rules; they are not part of your job. Gate before push:
+- **Lint is autofix-first.** Run `just fix` after editing code — it
+  handles formatting (import order, `__all__` sorting, quoting, line
+  wrapping). Let the tool do style; focus on logic. Gate before push:
   `just check`.
-- **Judgment rules (not autofixable).** `S` (security), `BLE001`
-  (blind except), `C901` (complexity > 15), and pylint `duplicate-code`
-  findings mean: fix the design, not the lint line. A waiver
-  (`# noqa: <code> — <one-line reason>`) is allowed ONLY when the
-  flagged pattern is the intended design (e.g. a fail-closed boundary,
-  a sandboxed `shell=True`); never waive to silence a finding you do
-  not understand.
+- **Judgment rules** (`S`, `BLE001`, `C901`, pylint `duplicate-code`):
+  these signal a design problem — fix the design that caused the
+  finding. Waive with `# noqa: <code> — <reason>` only when you can
+  explain why the flagged pattern is intentional (e.g. a fail-closed
+  boundary, a sandboxed `shell=True`).
+- **Type-checker errors** (mypy strict, pyrefly): fix by writing
+  code that validates data at the boundary — the type checker error
+  disappears because the logic is genuinely correct, not silenced.
+  Pattern from `src/fa/inner_loop/tools/base.py`:
+
+  ```python
+  def require_string(params: Mapping[str, object], key: str) -> str:
+      value = params.get(key)
+      if not isinstance(value, str):
+          raise ValueError(f"{key} must be a string")
+      return value  # type checker knows this is str
+  ```
+
+  The `isinstance` check serves two purposes: it validates untrusted
+  input at runtime AND narrows the type for the checker. Both the
+  code and the types are correct — no annotation shortcuts needed.
 - **Existing tests are protected.** Deleting/renaming any `tests/**`
   file is blocked at the hook and harness seats; modifying one during a
   FIX-shaped diff requires a `TEST-EDITS:` declaration in the PR draft
   (see [`pr-creation` skill §Test-edit declaration](./knowledge/skills/pr-creation/SKILL.md#test-edit-declaration)).
-  Fix the code, not the test.
+  Fix the code to pass the test, keep the test as spec.
 - Commit messages: descriptive, English, present tense (`docs: add architecture note`).
-- Never push directly to `main`.
+- Push to your branch; merge to `main` only via Pull Request.
 - **`AI-Session:` git trailer** rule (per-commit; example included) lives in the [`pr-creation` skill §AI-Session trailer](./knowledge/skills/pr-creation/SKILL.md#ai-session-trailer)
 
 ## Query Routing
 
-Route questions to the right folder. Do not load everything into context.
+Route questions to the right folder. Load only what the task needs.
 
 | Question type | Look first | Verify with |
 |---|---|---|

@@ -181,7 +181,10 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 โ
 
     for event in events:
         kind = event.kind
-        content = dict(event.content) if event.content else {}
+        # TraceEvent.content is Mapping[str, object] (open schema per ADR-7 ยง7).
+        # Values are always JSON primitives (int/float/str) after json.loads
+        # round-trip; annotate as Any so int()/float() satisfy strict checkers.
+        content: dict[str, Any] = dict(event.content) if event.content else {}
 
         if kind == "run_started":
             role = str(content.get("role", ""))
