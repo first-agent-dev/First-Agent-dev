@@ -157,6 +157,7 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 â
     start_ts = events[0].ts if events else ""
     stop_reason = "unknown"
     ok = True
+    has_session_summary = False
 
     # Tool counts
     tool_counter: Counter[str] = Counter()
@@ -220,7 +221,7 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 â
             )
 
         elif kind == "hook_decision":
-            hook_name = str(content.get("hook", "unknown"))
+            hook_name = str(content.get("middleware", "unknown"))
             decision = str(content.get("decision", ""))
             if "allow" in decision.lower():
                 guard_data[hook_name]["allow"] += 1
@@ -235,12 +236,19 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 â
             total_out = int(content.get("output_tokens", 0))
             cache_hit_ratio = float(content.get("cache_hit_ratio", 0.0))
             n_turns = int(content.get("n_turns", 0))
+            has_session_summary = True
 
         elif kind == "run_stopped":
             reason = str(content.get("reason", ""))
             if reason:
                 stop_reason = reason
-                ok = reason == "stopped_by_llm" or stop_reason.startswith("stopped")
+                ok = False  # any run_stopped event is abnormal
+
+    # Infer clean stop: session_summary present + no run_stopped event
+    # means drive_session exited via finish() with stop_reason="stopped_by_llm".
+    if has_session_summary and stop_reason == "unknown":
+        stop_reason = "stopped_by_llm"
+        ok = True
 
     # Build typed results
     tool_usage = sorted(

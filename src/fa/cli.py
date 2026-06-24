@@ -412,8 +412,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path.cwd(),
         help="Workspace root (default: cwd).",
     )
-    stats_parser.add_argument("--files", action="store_true", help="File access report only.")
-    stats_parser.add_argument("--tokens", action="store_true", help="Token timeline only.")
     stats_parser.add_argument("--dead-zones", action="store_true", help="Files never accessed.")
     stats_parser.set_defaults(func=_cmd_stats)
 
@@ -1187,7 +1185,7 @@ def _parse_since(value: str) -> float | None:
         if value.endswith("m"):
             return float(value[:-1]) * 60
     except ValueError:
-        pass
+        return None
     return None
 
 

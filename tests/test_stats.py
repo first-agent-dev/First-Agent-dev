@@ -136,7 +136,9 @@ def _minimal_session_events() -> list[dict[str, object]]:
                 "cache_hit_ratio": 0.36,
             },
         },
-        {"kind": "run_stopped", "content": {"reason": "stopped_by_llm"}},
+        # No run_stopped event for clean sessions — drive_session exits
+        # via finish() which writes session_summary but NOT run_stopped.
+        # stop_reason is inferred as "stopped_by_llm" by parse_session.
     ]
 
 
