@@ -19,7 +19,6 @@ the work lives in the recovery module.
 
 from __future__ import annotations
 
-import logging
 from typing import Any, override
 
 from fa.inner_loop.hooks.base import (
@@ -33,8 +32,6 @@ from fa.inner_loop.recovery.attempt_history import (
 )
 from fa.inner_loop.recovery.classify import RecoveryAction, classify_result
 from fa.inner_loop.state import EventLog
-
-LOGGER = logging.getLogger(__name__)
 
 
 class FailureClassifierObserver(ObserverMiddleware):

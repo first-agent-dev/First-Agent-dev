@@ -389,6 +389,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     probe_parser.set_defaults(func=_cmd_probe)
 
+    stats_parser = subparsers.add_parser(
+        "stats",
+        help="Analyze session logs — tool usage, file access, tokens, efficiency.",
+        description=(
+            "Parse events.jsonl files from past fa run sessions and render "
+            "analytics: tool usage, file access patterns, token timelines, "
+            "provider health, guard activity, dead zones, efficiency warnings."
+        ),
+    )
+    stats_parser.add_argument("--run-id", default=None, help="Analyze specific session.")
+    stats_parser.add_argument("--since", default=None, help="Filter by age (e.g. 7d, 24h, 1h).")
+    stats_parser.add_argument(
+        "--output",
+        choices=("console", "json"),
+        default="console",
+        help="Output format.",
+    )
+    stats_parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=Path.cwd(),
+        help="Workspace root (default: cwd).",
+    )
+    stats_parser.add_argument("--dead-zones", action="store_true", help="Files never accessed.")
+    stats_parser.set_defaults(func=_cmd_stats)
+
     authoring_parser = subparsers.add_parser(
         "authoring-check",
         help="Run the Level-0 authoring-guardrail kernel (ADR-11 two-tier TCB).",
@@ -1057,6 +1083,110 @@ def _cmd_probe(args: argparse.Namespace) -> int:
             any_failure = True
 
     return 1 if any_failure else 0
+
+
+def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
+    """Analyze session logs — tool usage, file access, tokens, efficiency."""
+    import time as _time
+
+    from fa.stats import (
+        aggregate_sessions,
+        find_dead_zones,
+        parse_session,
+        render_aggregate,
+        render_session,
+        render_session_json,
+    )
+
+    workspace = args.workspace.resolve()
+    runs_dir = workspace / ".fa" / "runs"
+
+    if not runs_dir.exists():
+        print(f"fa stats: no runs found at {runs_dir}", file=sys.stderr)
+        return 1
+
+    # Discover sessions
+    session_dirs: list[Path] = []
+    if args.run_id:
+        target = runs_dir / args.run_id
+        if not target.exists():
+            print(f"fa stats: run {args.run_id!r} not found at {target}", file=sys.stderr)
+            return 1
+        session_dirs = [target]
+    else:
+        session_dirs = sorted(
+            [d for d in runs_dir.iterdir() if d.is_dir() and (d / "events.jsonl").exists()],
+            key=lambda d: d.stat().st_mtime,
+            reverse=True,
+        )
+
+    # Filter by --since (uses file mtime)
+    if args.since and not args.run_id:
+        since_s = _parse_since(args.since)
+        if since_s is not None:
+            cutoff = _time.time() - since_s
+            session_dirs = [d for d in session_dirs if d.stat().st_mtime >= cutoff]
+
+    if not session_dirs:
+        print("fa stats: no matching sessions found", file=sys.stderr)
+        return 1
+
+    # Parse sessions
+    sessions = []
+    for d in session_dirs:
+        result = parse_session(d / "events.jsonl")
+        if result is not None:
+            sessions.append(result)
+
+    if not sessions:
+        print("fa stats: no parseable sessions found", file=sys.stderr)
+        return 1
+
+    # Render
+    if args.output == "json":
+        import json as _json
+
+        if args.run_id and len(sessions) == 1:
+            print(_json.dumps(render_session_json(sessions[0]), indent=2, default=str))
+        else:
+            agg = aggregate_sessions(sessions)
+            agg["sessions_detail"] = [render_session_json(s) for s in sessions]
+            print(_json.dumps(agg, indent=2, default=str))
+        return 0
+
+    # Console
+    if args.run_id and len(sessions) == 1:
+        render_session(sessions[0])
+    else:
+        render_aggregate(sessions)
+
+    # Dead zones
+    if getattr(args, "dead_zones", False):
+        dead = find_dead_zones(workspace, sessions)
+        if dead:
+            sys.stderr.write(f"\n🔍 Dead zones ({len(dead)} src/ files never accessed):\n")
+            for p in dead[:15]:
+                sys.stderr.write(f"   {p}\n")
+            if len(dead) > 15:
+                sys.stderr.write(f"   ... and {len(dead) - 15} more\n")
+            sys.stderr.flush()
+
+    return 0
+
+
+def _parse_since(value: str) -> float | None:
+    """Parse '7d', '24h', '1h' into seconds."""
+    value = value.strip().lower()
+    try:
+        if value.endswith("d"):
+            return float(value[:-1]) * 86400
+        if value.endswith("h"):
+            return float(value[:-1]) * 3600
+        if value.endswith("m"):
+            return float(value[:-1]) * 60
+    except ValueError:
+        return None
+    return None
 
 
 def _proxy_endpoint(proxy_url: str, path: str) -> str:
