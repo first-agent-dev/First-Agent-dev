@@ -266,6 +266,15 @@ git_update() {
 
   STASHED=0
 
+  # Auto-commit session trace artifacts (knowledge/trace/) before the
+  # dirty-tree check. LearningObserver writes gotchas.md + codebase_map.json
+  # during fa run; these are valuable cross-session memory but must not block
+  # updates. One "chore(auto)" commit per update keeps history clean.
+  if git add knowledge/trace/ 2>/dev/null && ! git diff --cached --quiet; then
+    git commit -m "chore(auto): update session trace artifacts"
+    echo "  ✓ Auto-committed trace artifacts"
+  fi
+
   if [[ -n "$(git status --porcelain)" ]]; then
     echo "  ⚠ Dirty working tree detected."
     git status --short || true

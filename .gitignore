@@ -42,3 +42,7 @@ htmlcov/
 .mutmut-cache
 .gremlins-cache/
 gremlin-report.html
+# Session trace artifacts (written by LearningObserver during fa run).
+# Committed periodically via `fa commit-traces`, not on every session.
+knowledge/trace/gotchas.md
+knowledge/trace/codebase_map.json
