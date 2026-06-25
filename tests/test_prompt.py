@@ -46,8 +46,7 @@ def test_build_system_message_appends_extra_after_blank_line() -> None:
 
 def test_build_system_message_with_role_uses_role_prompt() -> None:
     message = build_system_message(role="planner")
-    assert "You are the First-Agent planner" in message
-    assert message.startswith("You are the First-Agent planner")
+    assert "Architect for First-Agent" in message
 
     message = build_system_message(role="eval")
     assert "You are the First-Agent evaluator" in message
@@ -61,7 +60,7 @@ def test_build_system_message_unknown_role_falls_back_to_coder() -> None:
 
 def test_build_system_message_from_role_alias_preserves_role_and_extra() -> None:
     message = build_system_message_from_role("planner", extra="prior plan")
-    assert message.startswith("You are the First-Agent planner")
+    assert "Architect for First-Agent" in message
     assert message.endswith("prior plan")
 
 
