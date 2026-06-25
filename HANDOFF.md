@@ -13,6 +13,8 @@
 
 Overwritten each session! Details live at the pointer, not here.
 
+**As of:** 2026-06-25 — Workspace Isolation (ADR-13) implemented. The agent container now mounts the host git checkout as a read-only `/repo` and writable per-session clones inside `/sessions`. The entrypoint creates a `git clone --local` per session, completely isolating agent writes from the host worktree. `docker-compose.fa.yml` and `fa-entrypoint.sh` updated. `scripts/fa` host-wrapper handles dynamic execution paths. Tests verify clone creation, `fa` execution, and path invariants.
+
 **As of:** 2026-06-22 — Live per-turn console output (branch
 `live-output`): EventBus architecture emits OutputEvent at 8 call sites
 in `drive_session` alongside existing EventLog writes. ConsoleRenderer
@@ -166,6 +168,8 @@ review fixes (tracks `Dockerfile.fa`, ignores commented optional `FA_*` env rows
 | PR C landed: `IntentGuard(GuardMiddleware)` on `BEFORE_TOOL_EXEC` reuses M-6's classifier + validator; closes M-7 (ADR-10 I-1: one validator, two consumers) | 2026-05-27 | [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py), [`tests/test_intent_guard.py`](./tests/test_intent_guard.py) |
 | PR B landed: `src/fa/hygiene/pr_intent.py` classifier + `prepare-commit-msg` / `commit-msg` hooks; snapshot test pins hook constants to skill §Output format (closes M-6) | 2026-05-27 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`hooks/`](./src/fa/hygiene/hooks/), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
 
+**Trade-off Noted:** After workspace isolation (ADR-13), `fa stats` scans `.fa/runs/` in the *current* session's workspace only. Prior cross-session views require explicit operator pathing until aggregation (Next #3) is implemented.
+
 ### Gotchas (delete when resolved)
 
 | Gotcha | Pointer |
@@ -186,15 +190,7 @@ review fixes (tracks `Dockerfile.fa`, ignores commented optional `FA_*` env rows
 
 Priority-ordered. Completed items deleted, not struck through.
 
-1. **Workspace isolation: RO mount + per-session clone.**
-   Research complete (`knowledge/research/workspace-isolation-research.md`).
-   Implement Pattern 2 (Docker AI Sandbox model): host repo mounted
-   read-only at `/repo`, entrypoint creates `git clone --local` into
-   `/sessions/<run-id>`, agent works in isolated clone, pushes branch,
-   main checkout stays pristine. Changes: `docker-compose.fa.yml`
-   (volume mounts), `fa-entrypoint.sh` (clone-on-start), `scripts/fa`
-   (sessions verb). Estimated ~50-70 lines. Needs ADR.
-2. **First real `fa run --task` smoke against OpenRouter / Fireworks.**
+1. **First real `fa run --task` smoke against OpenRouter / Fireworks.**
    The driver shipped in PR D + the `pr.prepare` producer landing
    in PR E together close the contract loop, but adapter
    response-shape coverage stays theoretical until this runs

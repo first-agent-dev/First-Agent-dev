@@ -143,6 +143,35 @@ _on_term() {
   exit 143
 }
 
+# Session workspace setup — runs once on container start.
+# Creates a git clone from /repo into /sessions/<id>.
+if [[ -d "/repo/.git" ]]; then
+    SESSION_ID="${FA_RUN_ID:-session-$(date -u +%Y%m%dT%H%M%S)-$$}"
+    export FA_RUN_ID="$SESSION_ID"
+    SESSION_DIR="/sessions/${SESSION_ID}"
+
+    if [[ ! -d "$SESSION_DIR/.git" ]]; then
+        git config --global --add safe.directory /repo || true
+        git clone --local /repo "$SESSION_DIR"
+
+        cd "$SESSION_DIR"
+        git checkout -b "devin/${SESSION_ID}"
+        log "Created session workspace: $SESSION_DIR"
+    else
+        cd "$SESSION_DIR"
+        log "Resumed session workspace: $SESSION_DIR"
+    fi
+
+    # Publish active session path (read by host wrapper via bind mount)
+    echo "$SESSION_DIR" > "/sessions/.active.tmp.$$"
+    mv "/sessions/.active.tmp.$$" "/sessions/.active"
+
+    WORKSPACE="$SESSION_DIR"
+    if [[ -z "${FA_STATUS_FILE:-}" ]]; then
+        STATUS_FILE="${WORKSPACE}/.fa/entrypoint-status.txt"
+    fi
+fi
+
 # Live bind-mounted source wins over the image copy — but ONLY when /workspace
 # actually holds the source (the agent container). The egress-proxy container
 # deliberately has NO /workspace mount so it runs the IMMUTABLE image code from

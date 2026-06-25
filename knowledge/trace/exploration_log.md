@@ -1860,3 +1860,11 @@
 - **Coupling:** Q-17 (superseded boundary); Q-6 (path-containment — the gap that
   motivated the proxy); AP-003 (shallow-fix — the denylist-as-boundary trap).
 - **Source:** [ADR-12 §Decision update](../adr/ADR-12-secret-isolation.md).
+
+## Q-19 — Why Docker read-only mount + per-session clone instead of parallel git worktrees? (2026-06-25)
+
+- **Decision:** Read-only mount of the host repo + `git clone --local` in a per-session directory.
+- **Trigger:** The single read-write checkout bound to `/workspace` dirtied the host worktree, preventing `fa update` via `git pull --ff-only`.
+- **Alternatives Rejected:** (A) **Git Worktrees per agent:** Shared `.git` objects risk corruption from concurrent git operations, and lack runtime isolation without separate containers. (B) **Clone-in-Sandbox (Open SWE):** Re-cloning via network per task has high latency and larger disk footprint compared to local hardlinks. (C) **SWE-Next Copy-on-Start:** Lacks `.git` history, preventing the agent from committing or creating PR branches natively.
+- **Lesson:** `git clone --local` is near-zero overhead because it uses hardlinks for objects on the same filesystem. When paired with Docker volume mounts from the same host parent path (`/srv/first-agent/`), we get the speed/size of a worktree with the strict immutability and concurrency-safety of a full clone.
+- **Coupling:** ADR-13.

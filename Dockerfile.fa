@@ -97,6 +97,11 @@ RUN mkdir -p /run/secrets && chmod 755 /run/secrets
 RUN mkdir -p /workspace /config \
     && chown -R fa:fa /workspace /config /home/fa /run/secrets
 
+RUN mkdir -p /repo /sessions \
+    && chown fa:fa /sessions
+# Keep WORKDIR /workspace for backward compatibility during transition,
+# but the entrypoint will cd to the session dir.
+
 # SSH client is installed above; Git auth is configured via GIT_SSH_COMMAND env var
 # in docker-compose.fa.yml (points to /run/secrets/git_key + known_hosts)
 
