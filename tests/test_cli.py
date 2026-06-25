@@ -854,4 +854,4 @@ def test_fa_run_system_prompt_mentions_pr_prepare_before_mutation(
     assert exit_code == 0
     system_message = transport.calls[0]["messages"][0]["content"]
     assert "pr.prepare" in system_message
-    assert "Before mutating files or staging/committing changes" in system_message
+    assert "Before your first mutation" in system_message
