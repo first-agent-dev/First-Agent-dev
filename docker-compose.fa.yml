@@ -72,10 +72,15 @@ services:
 
     # Volumes
     volumes:
-      # Source code (bind-mount from host)
+      # Source repo (read-only — agent reads, host stays clean)
       - type: bind
         source: /srv/first-agent/repo/First-Agent-dev
-        target: /workspace
+        target: /repo
+        read_only: true
+      # Per-session workspaces (writable)
+      - type: bind
+        source: /srv/first-agent/sessions
+        target: /sessions
         read_only: false
       # FA state (persistent) — ~/.fa for config.yaml, runs, drafts, history.
       # Routing is mounted as a separate read-only file below so the agent can

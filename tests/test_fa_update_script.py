@@ -31,9 +31,15 @@ def test_fa_update_env_validation_ignores_commented_optional_fa_vars() -> None:
     assert "optional commented controls ignored" in text
 
 
-def test_fa_update_runs_dev_sync_in_writable_workspace_not_image_snapshot() -> None:
+def test_fa_update_runs_dev_sync_in_session_clone_not_image_snapshot() -> None:
+    """Verify that smoke tests run against the newly-pulled repository code.
+
+    By executing through fa-entrypoint.sh, the deploy script ensures a fresh
+    session clone of /repo is created. It must NOT test the immutable image
+    snapshot (/opt/first-agent), as that would mask update failures.
+    """
     text = _UPDATE_SCRIPT.read_text(encoding="utf-8")
 
-    assert "cd /workspace && uv sync --frozen --extra dev" in text
+    assert "/usr/local/bin/fa-entrypoint.sh bash -lc 'uv sync --frozen --extra dev'" in text
     assert "--directory /opt/first-agent" not in text
     assert "uv run python -m pytest" in text
