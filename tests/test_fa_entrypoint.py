@@ -185,14 +185,15 @@ def test_entrypoint_task_file_must_stay_inside_workspace(tmp_path: Path) -> None
 
 def test_entrypoint_creates_session_clone(tmp_path: Path) -> None:
     env, status, bin_dir = _base_env(tmp_path)
-    
+
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
+    import subprocess
     subprocess.run(["git", "init"], cwd=repo_dir, check=True)
     (repo_dir / "src" / "fa").mkdir(parents=True)
     (repo_dir / "src" / "fa" / "__init__.py").write_text("", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=repo_dir, check=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=repo_dir, check=True, env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "dummy@first-agent.local", "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "dummy@first-agent.local"})
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo_dir, check=True, env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com", "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com"})
 
     sessions_dir = tmp_path / "sessions"
     sessions_dir.mkdir()
@@ -210,37 +211,38 @@ def test_entrypoint_creates_session_clone(tmp_path: Path) -> None:
         "FA_RUN_ID": "test-session-123",
         "FA_AUTO_RUN": "0"
     })
-    
+
     proc = subprocess.Popen(["bash", str(test_entrypoint)], env=env, text=True)
     try:
         text = _wait_for_status(status, "status=STANDBY", proc)
     finally:
         _terminate(proc)
-        
+
     session_workspace = sessions_dir / "test-session-123"
     assert session_workspace.exists()
     assert (session_workspace / ".git").exists()
-    
+
     active_file = sessions_dir / ".active"
     assert active_file.exists()
     assert active_file.read_text(encoding="utf-8").strip() == str(session_workspace)
 
 def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
     env, status, bin_dir = _base_env(tmp_path)
-    
+
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
+    import subprocess
     subprocess.run(["git", "init"], cwd=repo_dir, check=True)
     (repo_dir / "test.txt").write_text("hello", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=repo_dir, check=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=repo_dir, check=True, env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "dummy@first-agent.local", "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "dummy@first-agent.local"})
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo_dir, check=True, env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com", "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com"})
 
     sessions_dir = tmp_path / "sessions"
     sessions_dir.mkdir()
-    
+
     session_workspace = sessions_dir / "test-session-existing"
     subprocess.run(["git", "clone", str(repo_dir), str(session_workspace)], check=True)
-    
+
     test_entrypoint = tmp_path / "fa-entrypoint-test.sh"
     original = _ENTRYPOINT.read_text(encoding="utf-8")
     modified = original.replace('"/repo/.git"', f'"{repo_dir}/.git"')
@@ -254,31 +256,32 @@ def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
         "FA_RUN_ID": "test-session-existing",
         "FA_AUTO_RUN": "0"
     })
-    
+
     proc = subprocess.Popen(["bash", str(test_entrypoint)], env=env, text=True)
     try:
         text = _wait_for_status(status, "status=STANDBY", proc)
     finally:
         _terminate(proc)
-        
+
     active_file = sessions_dir / ".active"
     assert active_file.exists()
     assert active_file.read_text(encoding="utf-8").strip() == str(session_workspace)
 
 def test_entrypoint_command_override_executes_inside_session_clone(tmp_path: Path) -> None:
     env, status, bin_dir = _base_env(tmp_path)
-    
+
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
+    import subprocess
     subprocess.run(["git", "init"], cwd=repo_dir, check=True)
     (repo_dir / "src" / "fa").mkdir(parents=True)
     (repo_dir / "src" / "fa" / "__init__.py").write_text("", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=repo_dir, check=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=repo_dir, check=True, env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "dummy@first-agent.local", "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "dummy@first-agent.local"})
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo_dir, check=True, env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com", "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com"})
 
     sessions_dir = tmp_path / "sessions"
     sessions_dir.mkdir()
-    
+
     test_entrypoint = tmp_path / "fa-entrypoint-test.sh"
     original = _ENTRYPOINT.read_text(encoding="utf-8")
     modified = original.replace('"/repo/.git"', f'"{repo_dir}/.git"')
@@ -291,7 +294,7 @@ def test_entrypoint_command_override_executes_inside_session_clone(tmp_path: Pat
     env.update({
         "FA_RUN_ID": "test-override",
     })
-    
+
     # Run with command override to print the working directory
     proc = subprocess.Popen(
         ["bash", str(test_entrypoint), "bash", "-c", "pwd"],
@@ -299,13 +302,13 @@ def test_entrypoint_command_override_executes_inside_session_clone(tmp_path: Pat
         stdout=subprocess.PIPE,
         text=True
     )
-    
+
     stdout, _ = proc.communicate(timeout=5)
     assert proc.returncode == 0
-    
+
     session_workspace = sessions_dir / "test-override"
     assert session_workspace.exists()
-    
+
     # stdout should contain the session directory because it executes there
     assert str(session_workspace) in stdout
 
