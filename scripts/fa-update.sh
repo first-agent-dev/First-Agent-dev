@@ -73,13 +73,21 @@ _FA_UPDATE_REEXEC_HEAD_CHANGED="${_FA_UPDATE_REEXEC_HEAD_CHANGED:-0}"
 #  Logging / Locking / Error handling
 # ═══════════════════════════════════════════════════════════════
 
+# Start tee BEFORE opening the lock fd. Process substitution forks a subshell
+# that inherits all open fds from the parent. If fd 9 (the flock fd) is already
+# open when tee starts, the tee subshell holds the lock even after the parent
+# closes fd 9 at re-exec time — blocking the re-exec'd child's flock. By
+# starting tee first, the subshell never inherits fd 9.
+if [[ "${_FA_UPDATE_REEXEC}" != "1" ]]; then
+  exec > >(tee -a "${LOG_FILE}") 2>&1
+fi
+
 exec 9>"${LOCK_FILE}"
-flock -n 9 || {
-  echo "Update already running (lock: ${LOCK_FILE}). Exiting."
+flock -w 600 9 || {
+  echo "Update already running or lock unavailable after 600s (lock: ${LOCK_FILE}). Exiting."
   exit 1
 }
 
-exec > >(tee -a "${LOG_FILE}") 2>&1
 # shellcheck disable=SC2154  # rc IS assigned (rc=$?) inside this same trap string.
 trap 'rc=$?; echo "❌ ERROR at line ${LINENO}: ${BASH_COMMAND}"; exit "${rc}"' ERR
 
@@ -243,8 +251,9 @@ preflight_checks() {
   }
 
   local disk_usage
-  disk_usage=$(df -h /var/lib/docker 2>/dev/null | awk 'NR==2 {print $5}' | tr -d '%')
-  if [[ -n "${disk_usage}" ]] && ((disk_usage > 90)); then
+  # df -P: POSIX output (no line-wrapping for long filesystem paths).
+  disk_usage=$(df -P /var/lib/docker 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print $5}')
+  if [[ -n "${disk_usage}" && "${disk_usage}" =~ ^[0-9]+$ ]] && ((disk_usage > 90)); then
     echo "  ✗ Disk usage at ${disk_usage}% (>90%). Aborting."
     exit 1
   fi
@@ -270,8 +279,11 @@ git_update() {
   # dirty-tree check. LearningObserver writes gotchas.md + codebase_map.json
   # during fa run; these are valuable cross-session memory but must not block
   # updates. One "chore(auto)" commit per update keeps history clean.
-  if git add knowledge/trace/ 2>/dev/null && ! git diff --cached --quiet; then
-    git commit -m "chore(auto): update session trace artifacts"
+  # Scope to specific trace files to avoid sweeping pre-existing staged changes
+  # into the auto-commit. Only the two LearningObserver outputs are auto-committed.
+  git add knowledge/trace/codebase_map.json knowledge/trace/gotchas.md 2>/dev/null || true
+  if ! git diff --cached --quiet -- knowledge/trace/ 2>/dev/null; then
+    git commit -m "chore(auto): update session trace artifacts" -- knowledge/trace/
     echo "  ✓ Auto-committed trace artifacts"
   fi
 
@@ -340,33 +352,63 @@ evaluate_changes() {
   ENV_HASH_PENDING=0
   ENV_HASH_VALUE=""
 
+  # Anchor 1: compare working-tree HEAD to what's actually running in the
+  # container. If a previous build failed, the container still runs the old
+  # image and this check triggers a rebuild — closing the "state amnesia" gap
+  # where the script would otherwise say "no changes" after a failed build.
+  local current_head running_sha
+  current_head=$(git -C "${REPO_DIR}" rev-parse HEAD 2>/dev/null || echo "")
+  running_sha=""
+  local _cid
+  _cid=$(compose_container_id "${SERVICE_NAME}")
+  if [[ -n "${_cid}" ]]; then
+    running_sha=$(docker inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+      "${_cid}" 2>/dev/null || echo "")
+  fi
+
+  if [[ -z "${running_sha}" || "${running_sha}" == "unknown" || "${running_sha}" == "<no value>" ]]; then
+    echo "  → No image-revision label on running container → build needed."
+    NEEDS_BUILD=1
+    NEEDS_RESTART=1
+  elif [[ -n "${current_head}" && "${current_head}" != "${running_sha}" ]]; then
+    echo "  → Running image (${running_sha:0:8}) differs from HEAD (${current_head:0:8}) → build needed."
+    NEEDS_BUILD=1
+    NEEDS_RESTART=1
+  else
+    echo "  ✓ Running image matches HEAD (${current_head:0:8})."
+  fi
+
+  # Legacy: HEAD_CHANGED still triggers build for backward compat (first run
+  # after this change ships — container has no label yet).
   if [[ "${HEAD_CHANGED}" == "1" ]]; then
     NEEDS_BUILD=1
     NEEDS_RESTART=1
   fi
 
-  # Detect changes to any input the running containers read at startup (require
-  # restart, not rebuild): non-secret controls (.env.fa), the LLM keys file +
-  # fa->proxy token + routing (all consumed by the egress-proxy /
-  # agent at boot). Persist the new hash only after deploy succeeds; otherwise a
-  # failed deploy could hide a change on the next run.
-  if [[ -f "${ENV_FA}" || -f "${SECRETS_ENV}" || -f "${PROXY_TOKEN_FILE}" || -f "${MODELS_YAML_FILE}" ]]; then
-    local current_hash prev_hash
-    current_hash=$(cat "${ENV_FA}" "${SECRETS_ENV}" "${PROXY_TOKEN_FILE}" "${MODELS_YAML_FILE}" 2>/dev/null | sha256sum | awk '{print $1}')
-    ENV_HASH_VALUE="${current_hash}"
-    ENV_HASH_PENDING=1
-    if [[ -f "${ENV_HASH_FILE}" ]]; then
-      prev_hash=$(cat "${ENV_HASH_FILE}" || true)
-      if [[ "${current_hash}" != "${prev_hash}" ]]; then
-        NEEDS_RESTART=1
-        echo "  → env/secrets/proxy-token/routing changed (hash mismatch) → restart needed."
-      fi
-    else
-      NEEDS_RESTART=1
-      echo "  → First run with hash tracking → restart needed."
-    fi
-  else
-    echo "  ⚠ No env/secrets/proxy inputs found. Containers will use defaults."
+  # Anchor 2: per-service input hashes. Agent and proxy consume different files;
+  # lumping them into one hash causes unnecessary restarts (e.g. editing .env.fa
+  # agent controls restarts the proxy, dropping in-flight LLM streams).
+  local agent_hash proxy_hash prev_agent_hash="" prev_proxy_hash=""
+  agent_hash=$(cat "${ENV_FA}" "${MODELS_YAML_FILE}" 2>/dev/null | sha256sum | awk '{print $1}')
+  proxy_hash=$(cat "${SECRETS_ENV}" "${PROXY_TOKEN_FILE}" "${MODELS_YAML_FILE}" 2>/dev/null | sha256sum | awk '{print $1}')
+  ENV_HASH_VALUE="${agent_hash}:${proxy_hash}"
+  ENV_HASH_PENDING=1
+
+  if [[ -f "${ENV_HASH_FILE}" ]]; then
+    prev_agent_hash=$(awk -F: '{print $1}' "${ENV_HASH_FILE}" 2>/dev/null || echo "")
+    prev_proxy_hash=$(awk -F: '{print $2}' "${ENV_HASH_FILE}" 2>/dev/null || echo "")
+  fi
+
+  if [[ "${agent_hash}" != "${prev_agent_hash}" ]]; then
+    echo "  → Agent inputs changed → agent restart needed."
+    NEEDS_RESTART=1
+  fi
+  if [[ "${proxy_hash}" != "${prev_proxy_hash}" ]]; then
+    echo "  → Proxy inputs changed → proxy restart needed."
+    NEEDS_RESTART=1
+  fi
+  if [[ -z "${prev_agent_hash}" && -z "${prev_proxy_hash}" ]]; then
+    echo "  → First run with hash tracking → restart needed."
     NEEDS_RESTART=1
   fi
 
@@ -459,7 +501,10 @@ build_and_deploy() {
 
   if [[ "${NEEDS_BUILD}" == "1" ]]; then
     echo "  → Building images..."
-    local build_cmd=(docker compose -f "${COMPOSE_FILE}" build)
+    local build_sha
+    build_sha=$(git -C "${REPO_DIR}" rev-parse HEAD 2>/dev/null || echo "unknown")
+    local build_cmd=(docker compose -f "${COMPOSE_FILE}" build
+                     --build-arg "FA_BUILD_SHA=${build_sha}")
     [[ "${COMPOSE_BUILD_PULL}" == "1" ]] && build_cmd+=(--pull)
     [[ "${NO_CACHE}" == "1" ]] && build_cmd+=(--no-cache)
     "${build_cmd[@]}"
@@ -467,9 +512,8 @@ build_and_deploy() {
 
   if [[ "${NEEDS_RESTART}" == "1" ]]; then
     echo "  → Deploying containers..."
-    local up_cmd=(docker compose -f "${COMPOSE_FILE}" up -d --remove-orphans)
-    # Force recreate when env changed but no rebuild (picks up new env vars).
-    [[ "${NEEDS_BUILD}" == "0" ]] && up_cmd+=(--force-recreate)
+    local up_cmd=(docker compose -f "${COMPOSE_FILE}" up -d --remove-orphans
+                  --force-recreate)
     "${up_cmd[@]}"
   fi
 
@@ -716,6 +760,11 @@ ensure_host_scripts() {
 }
 
 main() {
+  # Ensure cwd is always the repo root, regardless of how the script was
+  # invoked (re-exec, cron, manual). Required by relative paths in
+  # ensure_host_scripts, evaluate_changes, and docker compose -f.
+  cd "${REPO_DIR}"
+
   echo "============================================================"
   echo "🟢 fa-update started at $(date -Is)"
   echo "  Repo:    ${REPO_DIR}"
@@ -724,20 +773,29 @@ main() {
   echo "============================================================"
 
   preflight_checks
-  git_update
+
+  # Only the first invocation does git pull. The re-exec'd child already has
+  # the updated working tree; re-pulling is wasteful and theoretically unsafe
+  # on force-push between calls.
+  if [[ "${_FA_UPDATE_REEXEC}" != "1" ]]; then
+    git_update
+  else
+    HEAD_CHANGED="${_FA_UPDATE_REEXEC_HEAD_CHANGED}"
+    echo "  → Continuing after re-exec; HEAD_CHANGED=${HEAD_CHANGED}."
+  fi
+
   if [[ "${HEAD_CHANGED}" == "1" && "${_FA_UPDATE_REEXEC}" != "1" && "${STASHED}" != "1" ]]; then
     echo "  → Re-executing updated fa-update.sh so deploy uses the new script logic..."
     export _FA_UPDATE_REEXEC=1
     export _FA_UPDATE_REEXEC_HEAD_CHANGED=1
-    export REPO_DIR COMPOSE_FILE ENV_TEMPLATE ENV_FA ENV_HASH_FILE SECRETS_ENV       PROXY_TOKEN_FILE MODELS_YAML_FILE ROUTING_DIR LEGACY_STATE_MODELS       LEGACY_PROXY_MODELS SERVICE_NAME_OVERRIDE NO_CACHE COMPOSE_BUILD_PULL       AUTO_STASH SKIP_TESTS SKIP_UV_SYNC HEALTH_TIMEOUT_SECONDS PRUNE PRUNE_UNTIL FORCE
-    # Release the flock before re-exec: the new process takes its own lock.
-    # Without this, the inherited fd 9 races with the tee subshell.
+    export REPO_DIR COMPOSE_FILE ENV_TEMPLATE ENV_FA ENV_HASH_FILE SECRETS_ENV \
+           PROXY_TOKEN_FILE MODELS_YAML_FILE ROUTING_DIR LEGACY_STATE_MODELS \
+           LEGACY_PROXY_MODELS SERVICE_NAME_OVERRIDE NO_CACHE COMPOSE_BUILD_PULL \
+           AUTO_STASH SKIP_TESTS SKIP_UV_SYNC HEALTH_TIMEOUT_SECONDS PRUNE PRUNE_UNTIL FORCE
+    # Release the flock before re-exec. The new process takes its own lock.
+    # Tee subshell does NOT hold fd 9 (started before fd 9 was opened).
     exec 9>&-
     exec bash "${REPO_DIR}/scripts/fa-update.sh" "$@"
-  fi
-  if [[ "${_FA_UPDATE_REEXEC_HEAD_CHANGED}" == "1" ]]; then
-    HEAD_CHANGED=1
-    echo "  → Continuing after re-exec; preserving HEAD_CHANGED=1 for build/deploy."
   fi
 
   # Always ensure scripts are executable and symlink is current after git pull,
