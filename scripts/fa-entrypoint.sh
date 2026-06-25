@@ -151,7 +151,9 @@ if [[ -d "/repo/.git" ]]; then
     SESSION_DIR="/sessions/${SESSION_ID}"
 
     if [[ ! -d "$SESSION_DIR/.git" ]]; then
+        git config --global --add safe.directory /repo || true
         git clone --local /repo "$SESSION_DIR"
+
         cd "$SESSION_DIR"
         git checkout -b "devin/${SESSION_ID}"
         log "Created session workspace: $SESSION_DIR"
@@ -165,6 +167,9 @@ if [[ -d "/repo/.git" ]]; then
     mv "/sessions/.active.tmp.$$" "/sessions/.active"
 
     WORKSPACE="$SESSION_DIR"
+    if [[ -z "${FA_STATUS_FILE:-}" ]]; then
+        STATUS_FILE="${WORKSPACE}/.fa/entrypoint-status.txt"
+    fi
 fi
 
 # Live bind-mounted source wins over the image copy — but ONLY when /workspace

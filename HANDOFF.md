@@ -6,8 +6,8 @@
 
 ## 60-second bootstrap
 
-0. Follow [`knowledge/llms.txt`](./knowledge/llms.txt) §MUST READ FIRST (5 files, in order).
-1. Return here — read **§Current state**, then **§Next**.
+1. Follow [`knowledge/llms.txt`](./knowledge/llms.txt) §MUST READ FIRST (5 files, in order).
+2. Return here — read **§Current state**, then **§Next**.
 
 ## §Current state
 
@@ -168,6 +168,8 @@ review fixes (tracks `Dockerfile.fa`, ignores commented optional `FA_*` env rows
 | PR C landed: `IntentGuard(GuardMiddleware)` on `BEFORE_TOOL_EXEC` reuses M-6's classifier + validator; closes M-7 (ADR-10 I-1: one validator, two consumers) | 2026-05-27 | [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py), [`tests/test_intent_guard.py`](./tests/test_intent_guard.py) |
 | PR B landed: `src/fa/hygiene/pr_intent.py` classifier + `prepare-commit-msg` / `commit-msg` hooks; snapshot test pins hook constants to skill §Output format (closes M-6) | 2026-05-27 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`hooks/`](./src/fa/hygiene/hooks/), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
 
+**Trade-off Noted:** After workspace isolation (ADR-13), `fa stats` scans `.fa/runs/` in the *current* session's workspace only. Prior cross-session views require explicit operator pathing until aggregation (Next #3) is implemented.
+
 ### Gotchas (delete when resolved)
 
 | Gotcha | Pointer |
@@ -195,18 +197,18 @@ Priority-ordered. Completed items deleted, not struck through.
    end-to-end against a live provider. Yellow→green conversion
    item; provider-specific adapter fixes likely (e.g., a vendor
    that returns `tool_calls` under a non-canonical key).
-1. **Cross-session aggregation of `attempt_history.json` (R-10 /
+2. **Cross-session aggregation of `attempt_history.json` (R-10 /
    R-12).** Per-run history is already written under
    `<workspace>/.fa/runs/<run_id>/`; the missing piece is the
    roll-up surface that Pillar-3 measurement depends on (lessons
    moving across sessions instead of being re-discovered).
-2. **Orphan cross-ref sweep — ≈26 files** from PR A' extraction.
+3. **Orphan cross-ref sweep — ≈26 files** from PR A' extraction.
    Top-10: `llms.txt` (9), `MAINTENANCE.md` (7), `ADR-10` (6),
    `DIGEST.md` (4), `ADR-7` (4). Retarget «AGENTS.md PR Checklist
    rule #N» → [`pr-creation/SKILL.md` §PR Checklist](./knowledge/skills/pr-creation/SKILL.md).
-3. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
+4. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
    number» audit; `[CODE]` namespace + A23 lint.
-4. **ADR-11 rollout PR 3 — parity + docs rules.** PR-2 landed
+5. **ADR-11 rollout PR 3 — parity + docs rules.** PR-2 landed
    2026-06-06 (V2 exports / V4 test-decay / V11 placeholder-asserts).
    Next: `src/fa/authoring_rules/parity.py` (V3 — `SQUASH_MSG`
    Python↔Bash drift, F-3) + `src/fa/authoring_rules/docs.py` (V5 —
@@ -214,12 +216,12 @@ Priority-ordered. Completed items deleted, not struck through.
    (`seam.py` V6 + `catch-corpus/` + `fp-corpus/` consumers) →
    PR 5 (`messages.py` V12 + advisory tuning). V10 stays deferred
    indefinitely per [`I-14`](./knowledge/BACKLOG.md#i-14--adr-11-pr-3-rule-packs-v3-v5-v7-v10-v12-v14).
-5. **Authoring-rules scope coverage** ([`I-12`](./knowledge/BACKLOG.md#i-12--authoring-rules-scope-coverage-gap-scripts-verifiers)).
+6. **Authoring-rules scope coverage** ([`I-12`](./knowledge/BACKLOG.md#i-12--authoring-rules-scope-coverage-gap-scripts-verifiers)).
    PR-2 V2 scopes only to `src/`; V4/V11 to `tests/`. Extend to
    `scripts/` and `verifiers/` once either tree grows beyond its
    current single-file footprint, OR a V2-class regression is
    detected manually there.
-6. **V4 import-alias bypass** ([`I-13`](./knowledge/BACKLOG.md#i-13--v4-import-alias-bypass-from-pytest-import-skip)).
+7. **V4 import-alias bypass** ([`I-13`](./knowledge/BACKLOG.md#i-13--v4-import-alias-bypass-from-pytest-import-skip)).
    `from pytest import skip; skip(...)` slips past `TEST_SEMANTIC_DECAY`
    today. Half-day fix (add an `ast` import-walker); land when an
    `fp-corpus` measurement (PR-4) shows a real bypass, or sooner if
@@ -229,15 +231,15 @@ Priority-ordered. Completed items deleted, not struck through.
 
 **Rules for updating this file.** Apply at session close.
 
-0. **§Current state is overwritten.** Replace tables with current
+1. **§Current state is overwritten.** Replace tables with current
    truth. Delete resolved gotchas. Delete landed backlog rows.
    Sync remaining backlog rows with `BACKLOG.md`.
-1. **§Next is rewritten.** Completed items deleted. New priorities
+2. **§Next is rewritten.** Completed items deleted. New priorities
    inserted at correct rank. Sources: `BACKLOG.md` + session work.
-2. **Landmarks capped at 10 rows.** When adding a row would exceed
+3. **Landmarks capped at 10 rows.** When adding a row would exceed
    10 drop the oldest. Dropped content is already canonical in
    `DIGEST.md` + `exploration_log.md` + `git log`.
-3. **Update the `As of:` line** with current date and commit hash
+4. **Update the `As of:` line** with current date and commit hash
    or session ID.
-4. **Hard cap: <200 lines.** Over cap → drop Landmarks rows first,
+5. **Hard cap: <200 lines.** Over cap → drop Landmarks rows first,
    then compress Gotcha descriptions. KEEP §Next items.

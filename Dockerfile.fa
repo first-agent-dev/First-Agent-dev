@@ -97,7 +97,8 @@ RUN mkdir -p /run/secrets && chmod 755 /run/secrets
 RUN mkdir -p /workspace /config \
     && chown -R fa:fa /workspace /config /home/fa /run/secrets
 
-RUN mkdir -p /repo /sessions
+RUN mkdir -p /repo /sessions \
+    && chown fa:fa /sessions
 # Keep WORKDIR /workspace for backward compatibility during transition,
 # but the entrypoint will cd to the session dir.
 

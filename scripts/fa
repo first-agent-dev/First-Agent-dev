@@ -29,8 +29,9 @@ fi
 
 # Resolve active session workspace for docker exec commands
 _SESSION_WORKSPACE=""
-if [[ -f "$REPO_DIR/../../sessions/.active" ]]; then
-    _SESSION_WORKSPACE="$(cat "$REPO_DIR/../../sessions/.active")"
+_FA_ROOT="$(dirname "$(dirname "$REPO_DIR")")"
+if [[ -f "$_FA_ROOT/sessions/.active" ]]; then
+    _SESSION_WORKSPACE="$(cat "$_FA_ROOT/sessions/.active")"
 fi
 
 _W_FLAG=""
@@ -85,7 +86,7 @@ case "${1:-}" in
         ;;
 
     sessions)
-        ls -lt "$REPO_DIR/../../sessions/" | grep -v "^total\|\.active"
+        ls -lt "$_FA_ROOT/sessions/" | grep -v "^total\|\.active"
         ;;
 
     # ── Help ────────────────────────────────────────────────────────────
