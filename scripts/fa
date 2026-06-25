@@ -27,6 +27,17 @@ if [ -t 0 ] && [ -t 1 ]; then
     TTY_FLAG=""
 fi
 
+# Resolve active session workspace for docker exec commands
+_SESSION_WORKSPACE=""
+if [[ -f "$REPO_DIR/../../sessions/.active" ]]; then
+    _SESSION_WORKSPACE="$(cat "$REPO_DIR/../../sessions/.active")"
+fi
+
+_W_FLAG=""
+if [[ -n "$_SESSION_WORKSPACE" ]]; then
+    _W_FLAG="-w $_SESSION_WORKSPACE"
+fi
+
 case "${1:-}" in
     # ── Infrastructure verbs (host-side, docker compose level) ──────────
     logs)
@@ -53,7 +64,12 @@ case "${1:-}" in
         exec $COMPOSE up -d --build
         ;;
     shell)
-        exec $COMPOSE exec first-agent bash
+        shift
+        if [[ -n "$_W_FLAG" ]]; then
+            exec $COMPOSE exec -w "$_SESSION_WORKSPACE" first-agent bash "$@"
+        else
+            exec $COMPOSE exec first-agent bash "$@"
+        fi
         ;;
     update)
         shift
@@ -66,6 +82,10 @@ case "${1:-}" in
         git commit -m "chore: update session trace artifacts"
         echo "fa: trace artifacts committed"
         exit 0
+        ;;
+
+    sessions)
+        ls -lt "$REPO_DIR/../../sessions/" | grep -v "^total\|\.active"
         ;;
 
     # ── Help ────────────────────────────────────────────────────────────
@@ -102,6 +122,10 @@ EOF
 
     # ── Default: delegate to fa CLI inside the agent container ──────────
     *)
-        exec $COMPOSE exec $TTY_FLAG first-agent fa "$@"
+        if [[ -n "$_W_FLAG" ]]; then
+            exec $COMPOSE exec $TTY_FLAG -w "$_SESSION_WORKSPACE" first-agent fa "$@"
+        else
+            exec $COMPOSE exec $TTY_FLAG first-agent fa "$@"
+        fi
         ;;
 esac

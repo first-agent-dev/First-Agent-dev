@@ -706,3 +706,9 @@ Residual (deploy-key exotic-encoding) + proxy egress allowlist → BACKLOG I-24.
 - [`README.md`](./README.md) — ADR process and ordered index.
 - [`../trace/exploration_log.md`](../trace/exploration_log.md) — alternatives that were rejected at decision time + lessons (per ADR).
 - [`../project-overview.md` §1.1](../project-overview.md#11-четыре-столпа-цели-project-goal--four-pillars) — four-pillar project goal that all ADR decisions advance.
+
+## ADR-13 — Workspace Isolation (accepted 2026-06-25)
+
+**Decision.** Isolate agent writes from the host worktree using a read-only bind mount (`/repo`) and per-session writable `git clone --local` directories (`/sessions/<run-id>`). The agent works in the clone (with full git capabilities), leaving the host checkout pristine for `fa update`. Container lifecycle corresponds to one session.
+
+**Source:** [`ADR-13`](./ADR-13-workspace-isolation.md).

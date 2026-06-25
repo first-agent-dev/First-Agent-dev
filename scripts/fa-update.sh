@@ -595,7 +595,7 @@ print("  ✓ Core Python imports OK.")
 PYEOF
 
   docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" bash -lc \
-    "cat /workspace/.fa/entrypoint-status.txt 2>/dev/null || echo '  (no entrypoint status file — expected on first run)'" || true
+    "if [[ -f /sessions/.active ]]; then ACTIVE_DIR=\$(cat /sessions/.active); cat \$ACTIVE_DIR/.fa/entrypoint-status.txt 2>/dev/null || echo '  (no entrypoint status file — expected on first run)'; else echo '  (no active session)'; fi" || true
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -616,9 +616,9 @@ run_tests() {
   fi
 
   if [[ "${SKIP_UV_SYNC}" == "0" ]]; then
-    if docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" \
-      bash -lc 'cd /workspace && uv sync --frozen --extra dev' >/dev/null 2>&1; then
-      echo "  ✓ Dev dependencies synced in /workspace."
+    if docker compose -f "${COMPOSE_FILE}" exec -T -e FA_RUN_ID="deploy-smoke-test" "${SERVICE_NAME}" \
+      /usr/local/bin/fa-entrypoint.sh bash -lc 'uv sync --frozen --extra dev' >/dev/null 2>&1; then
+      echo "  ✓ Dev dependencies synced."
     else
       echo "  ⚠ Failed to sync dev dependencies."
     fi
@@ -632,8 +632,8 @@ run_tests() {
   # restore it afterwards so a red pytest is recorded in TEST_RC, not fatal.
   set +e
   trap - ERR
-  docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" \
-    bash -lc 'cd /workspace && if command -v uv >/dev/null 2>&1; then uv run python -m pytest -v --tb=short; else python -m pytest -v --tb=short; fi'
+  docker compose -f "${COMPOSE_FILE}" exec -T -e FA_RUN_ID="deploy-smoke-test" "${SERVICE_NAME}" \
+    /usr/local/bin/fa-entrypoint.sh bash -lc 'if command -v uv >/dev/null 2>&1; then uv run python -m pytest -v --tb=short; else python -m pytest -v --tb=short; fi'
   TEST_RC=$?
   trap 'rc=$?; echo "❌ ERROR at line ${LINENO}: ${BASH_COMMAND}"; exit "${rc}"' ERR
   set -e
@@ -660,16 +660,13 @@ print_usage_info() {
   Multi-role workflow (run individually, each calls an LLM):
 
     # Planner
-    docker compose -f ${COMPOSE_FILE} exec -T ${SERVICE_NAME} fa run \
-      --role planner --workspace /workspace --task "Build JWT auth" --run-id "workflow-1"
+    scripts/fa run --role planner --task "Build JWT auth" --run-id "workflow-1"
 
     # Coder (resumes planner's draft)
-    docker compose -f ${COMPOSE_FILE} exec -T ${SERVICE_NAME} fa run \
-      --role coder --workspace /workspace --task "Execute S1" --run-id "workflow-1" --resume
+    scripts/fa run --role coder --task "Execute S1" --run-id "workflow-1" --resume
 
     # Evaluator (verifies coder's work)
-    docker compose -f ${COMPOSE_FILE} exec -T ${SERVICE_NAME} fa run \
-      --role eval --workspace /workspace --task "Verify S1" --run-id "workflow-1" --resume
+    scripts/fa run --role eval --task "Verify S1" --run-id "workflow-1" --resume
 
   Auto-run mode (on next container start):
 
@@ -683,8 +680,7 @@ print_usage_info() {
       docker compose -f ${COMPOSE_FILE} restart
 
     Check result:
-      docker compose -f ${COMPOSE_FILE} exec -T ${SERVICE_NAME} \
-        cat /workspace/.fa/entrypoint-status.txt
+      scripts/fa shell -c 'cat .fa/entrypoint-status.txt'
 
 USAGE
 }
