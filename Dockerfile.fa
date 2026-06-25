@@ -118,3 +118,9 @@ WORKDIR /workspace
 # Default: entrypoint enters stand-by mode. Passing a docker command
 # override (e.g. `bash`) execs that command instead.
 ENTRYPOINT ["/usr/local/bin/fa-entrypoint.sh"]
+
+# Build-time metadata — MUST be last to avoid cache busting.
+# FA_BUILD_SHA changes every commit; placing ARG earlier would invalidate
+# all layers below it. Here only the label metadata layer (~0 bytes) rebuilds.
+ARG FA_BUILD_SHA=unknown
+LABEL org.opencontainers.image.revision=${FA_BUILD_SHA}

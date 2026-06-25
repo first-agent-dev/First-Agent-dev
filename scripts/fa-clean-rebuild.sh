@@ -89,8 +89,8 @@ log_info()  { echo -e "\033[0;32m[INFO]\033[0m  $*"; }
 log_warn()  { echo -e "\033[0;33m[WARN]\033[0m  $*"; }
 log_error() { echo -e "\033[0;31m[ERROR]\033[0m $*" >&2; }
 
-on_error() { log_error "Failed at line $1. The stack may be partially rebuilt; re-run after fixing."; }
-trap 'on_error $LINENO' ERR
+# shellcheck disable=SC2154  # rc IS assigned (rc=$?) inside this same trap string.
+trap 'rc=$?; log_error "Failed at line ${LINENO} (rc=${rc}): ${BASH_COMMAND}. The stack may be partially rebuilt; re-run after fixing."; exit "${rc}"' ERR
 
 assert_safe_fa_dir() {
     # This script performs recursive deletes/chowns. In production the managed
@@ -371,7 +371,9 @@ done
 # 7. Rebuild clean + bring up the two containers
 # ───────────────────────────────────────────────────────────────
 log_info "Building images (NO_CACHE=${NO_CACHE}, COMPOSE_BUILD_PULL=${COMPOSE_BUILD_PULL}, BUILD_PROGRESS=${BUILD_PROGRESS})..."
-build_cmd=(docker compose -f "${COMPOSE_FILE}" build)
+_build_sha=$(git -C "${REPO_DIR}" rev-parse HEAD 2>/dev/null || echo "unknown")
+build_cmd=(docker compose -f "${COMPOSE_FILE}" build
+           --build-arg "FA_BUILD_SHA=${_build_sha}")
 [[ "${COMPOSE_BUILD_PULL}" == "1" ]] && build_cmd+=(--pull)
 [[ "${NO_CACHE}" == "1" ]] && build_cmd+=(--no-cache)
 [[ "${BUILD_PROGRESS}" != "auto" ]] && build_cmd+=(--progress "${BUILD_PROGRESS}")
