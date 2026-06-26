@@ -65,6 +65,7 @@ from __future__ import annotations
 
 import json
 import time
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -476,7 +477,59 @@ def drive_session(  # noqa: C901
             tools=tool_payload,
         )
         try:
-            response, _logical_id, _attempts = provider_chain.request(request)
+            # --- Internal Retry Loop for Chain Exhaustion ---
+            max_chain_retries = 3
+            attempt_count = 0
+            while True:
+                try:
+                    response, _logical_id, _attempts = provider_chain.request(request)
+                    break
+                except ProviderChainExhaustedError as exc:
+                    attempt_count += 1
+                    if state.log is not None:
+                        for attempt in exc.attempts:
+                            state.log.append(
+                                actor="provider",
+                                kind="provider_attempt",
+                                content={
+                                    "provider": attempt.provider,
+                                    "slug": attempt.slug,
+                                    "status": attempt.status,
+                                    "ms": attempt.ms,
+                                    "error": attempt.error,
+                                    "logical_call_id": exc.logical_call_id,
+                                },
+                            )
+                    if attempt_count >= max_chain_retries:
+                        raise  # Break the while loop, letting the outer try/except catch it as normal
+                    
+                    now = time.time()
+                    active_cooldowns = [
+                        row.expires_at - now
+                        for key, row in provider_chain.cooldowns.items()
+                        if row.expires_at > now
+                    ]
+                    wait_s = max(1.0, min(active_cooldowns)) if active_cooldowns else 5.0
+                    if wait_s > 60:
+                        wait_s = 0.1
+                    
+                    if output is not None:
+                        for _att in exc.attempts:
+                            output.emit(
+                                OutputEvent(
+                                    type="api_retry",
+                                    turn=turn,
+                                    max_turns=max_turns,
+                                    data={
+                                        "provider": _att.provider,
+                                        "status": _att.status,
+                                        "retry_after_s": int(wait_s),
+                                        "reason": _att.error or "unknown",
+                                    },
+                                )
+                            )
+                    time.sleep(wait_s)
+
             if state.log is not None:
                 for attempt in _attempts:
                     state.log.append(

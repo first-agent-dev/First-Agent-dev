@@ -125,6 +125,7 @@ _GIT_WRITE_SUBCOMMANDS: frozenset[str] = frozenset(
     {
         "add",
         "commit",
+        "remote",
         "push",
         "checkout",
         "switch",
