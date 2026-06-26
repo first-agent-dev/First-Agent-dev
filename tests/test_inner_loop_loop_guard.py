@@ -131,7 +131,7 @@ def test_loop_guard_detects_same_path_thrash_across_distinct_attempts() -> None:
 
 
 def test_loop_guard_path_thrash_fires_for_non_dict_mapping_params() -> None:
-    """Devin-Review BUG-0005 regression: ``ToolCall.params`` is typed
+    """Agent-Review BUG-0005 regression: ``ToolCall.params`` is typed
     ``Mapping[str, object]``, not ``dict``. An earlier
     ``isinstance(params, dict)`` guard in ``LoopGuard._record`` silently
     set ``path_hint=""`` for any non-dict ``Mapping`` (e.g.

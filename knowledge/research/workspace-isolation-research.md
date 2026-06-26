@@ -114,7 +114,7 @@ Container:
 Entrypoint:
   git clone --local /repo /sessions/$RUN_ID
   cd /sessions/$RUN_ID
-  git checkout -b devin/$RUN_ID
+  git checkout -b agent/$RUN_ID
   export PYTHONPATH=/sessions/$RUN_ID/src
 ```
 

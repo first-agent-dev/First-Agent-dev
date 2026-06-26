@@ -102,7 +102,7 @@ def test_validate_chmod_denies_666(tmp_path: Path) -> None:
     "mode",
     [
         # Compound symbolic modes that the original substring-match
-        # implementation missed — Devin Review finding 2026-05-20.
+        # implementation missed — Agent Review finding 2026-05-20.
         "a+rw",
         "o+rw",
         "ugo+rw",

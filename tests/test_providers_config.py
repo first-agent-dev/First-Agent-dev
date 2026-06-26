@@ -340,7 +340,7 @@ def test_load_models_config_rejects_eval_family_matching_coder() -> None:
 
 
 def test_load_models_config_normalises_family_case_for_disjoint_check() -> None:
-    # Regression test for the Devin Review finding on PR #52: a YAML
+    # Regression test for the Agent Review finding on PR #52: a YAML
     # ``family: "DeepSeek"`` (mixed case) on planner and
     # ``family: "deepseek"`` (lowercase) on eval would silently bypass
     # ``check_eval_disjoint`` because ``ChainConfig.family`` stores the

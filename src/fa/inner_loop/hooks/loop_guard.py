@@ -112,7 +112,7 @@ class LoopGuard(GuardMiddleware):
         # caller in the package (builtin.py, tools/base.py) does the same.
         # An earlier ``isinstance(params, dict)`` guard here silently
         # disabled Detector 2 for non-dict ``Mapping`` payloads
-        # (Devin-Review BUG-0005).
+        # (Agent-Review BUG-0005).
         params = payload.tool_call.params
         path_hint = str(params.get("path", ""))
         observation = _Observation(

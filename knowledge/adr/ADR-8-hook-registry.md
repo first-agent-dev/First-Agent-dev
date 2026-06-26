@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-05-20
-- **Deciders:** project owner (`0oi9z7m1z8`), Devin (drafting)
+- **Deciders:** project owner (`0oi9z7m1z8`), Agent (drafting)
 
 ## Context
 
@@ -372,8 +372,8 @@ of each iteration in the ASCII diagram and notes «runs at the top of
 every loop iteration», but neither the §1 enum nor the §3 dispatch
 rules pinned down whether the first iteration counts as a "between
 rounds" tick. The name reads as if it should only fire from
-iteration 2 onward. Devin-Review surfaced the question on PR #24
-(devin-ai-integration `loop.py:66-72`) — the implementation does
+iteration 2 onward. Agent-Review surfaced the question on PR #24
+(agent-ai-integration `loop.py:66-72`) — the implementation does
 fire on iteration 1 today; this amendment codifies that semantics
 so future agents and middlewares do not have to re-derive it.
 

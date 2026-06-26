@@ -35,7 +35,7 @@ superseded_by: "knowledge/research/llm-wiki-critique.md"
 
 ## Body trimmed — pointer only
 
-The full pre-trim body lives in git history. It is not reproduced here because earlier abstract-style trims of this file introduced factual drift (see PR-13 Devin Review). To read the original verbatim:
+The full pre-trim body lives in git history. It is not reproduced here because earlier abstract-style trims of this file introduced factual drift (see PR-13 Agent Review). To read the original verbatim:
 
 ```bash
 git show cf7db4d:knowledge/research/llm-wiki-critique-sources.md

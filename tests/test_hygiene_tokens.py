@@ -28,7 +28,7 @@ def test_shell_verb_hard_skip() -> None:
 def test_shell_verb_hard_skip_is_case_insensitive() -> None:
     """Capitalised shell verbs MUST also be skipped.
 
-    Devin Review finding 2026-05-20 on PR #18 — module docstring says
+    Agent Review finding 2026-05-20 on PR #18 — module docstring says
     "Never treated as identifiers even when uppercased" but the lookup
     was case-sensitive, so `Git` / `GREP` / `Ls` fell through to the
     uppercase-letter heuristic and were misclassified as IDENTIFIER.

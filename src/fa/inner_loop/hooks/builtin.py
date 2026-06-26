@@ -75,7 +75,7 @@ class CapabilityGuard(GuardMiddleware):
             if isinstance(command, str):
                 # Cache the split once \u2014 the prior code called
                 # ``command.split(maxsplit=1)`` twice per dispatch
-                # (Devin-Review nit on PR #24). ``maxsplit=1`` keeps
+                # (Agent-Review nit on PR #24). ``maxsplit=1`` keeps
                 # the cost O(prefix-length) regardless of command size.
                 head_tokens = command.split(maxsplit=1)
                 if (

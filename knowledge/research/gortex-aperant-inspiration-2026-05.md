@@ -242,7 +242,7 @@ The most FA-relevant piece is **not** the Electron shell. It's:
 
 8. **`apps/desktop/src/main/ai/runners/github/bot-detector.ts`** *(309 LOC)*
    Prevents infinite loops in agent-driven GitHub automation: tracks `reviewed_commits`, `last_review_times`, `in_progress_reviews` in a JSON state file. Cool-off period (1 minute) between re-reviews. Stale-in-progress timeout (30 minutes). Skips PRs authored by the bot.
-   → **FA application**: As soon as FA starts driving its own PRs/comments on `Bupitsa-ai/First-Agent-debloat`, you'll need this. Five-minute port of the state-file pattern saves you from a "Devin reviews itself reviewing itself" disaster.
+   → **FA application**: As soon as FA starts driving its own PRs/comments on `Bupitsa-ai/First-Agent-debloat`, you'll need this. Five-minute port of the state-file pattern saves you from a "Agent reviews itself reviewing itself" disaster.
 
 9. **`apps/desktop/prompts/planner.md`** *(901 LOC)* + **`coder.md`** *(1147 LOC)* + **`qa_reviewer.md`** *(652 LOC)* + **`qa_fixer.md`**
    The canonical planner/coder/qa role-routing prompt set. Each has a `## YOUR ROLE` header, a `## YOUR CONTRACT` (inputs/outputs), explicit phases (Phase 0 → … → Phase N), and a `MANDATORY` rule that the agent must `Write()` a specific output file or the phase fails.
@@ -262,7 +262,7 @@ The most FA-relevant piece is **not** the Electron shell. It's:
 
 11. **`apps/desktop/src/main/ai/orchestration/qa-loop.ts`** *(630 LOC)*
     QA review → fix iteration with `MAX_QA_ITERATIONS = 50`, `MAX_CONSECUTIVE_ERRORS = 3`, `RECURRING_ISSUE_THRESHOLD = 3` (escalate to human after the same issue recurs 3 times). Reads `QA_FIX_REQUEST.md` for human feedback injection.
-    → **FA application**: FA's QA loop needs the same circuit breakers. The "recurring-issue threshold ⇒ escalate" pattern is what stops a Devin/agent from spinning forever on a flaky test.
+    → **FA application**: FA's QA loop needs the same circuit breakers. The "recurring-issue threshold ⇒ escalate" pattern is what stops a Agent/agent from spinning forever on a flaky test.
 
 12. **`apps/desktop/src/main/ai/orchestration/parallel-executor.ts`** *(273 LOC)*
     `Promise.allSettled()` over concurrent `runAgentSession()` calls. Rate-limit detection with exponential back-off (`RATE_LIMIT_BASE_DELAY_MS = 30_000`, max 300_000). 1-second stagger between concurrent launches. Per-call failure isolation.

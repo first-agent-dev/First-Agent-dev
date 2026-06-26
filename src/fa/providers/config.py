@@ -118,7 +118,7 @@ def _partial_disjoint_warning(role_names: frozenset[str]) -> str | None:
     - ``eval`` is declared *alone* (no declared actor to be disjoint
       from — vacuously satisfied).
 
-    Rationale: this is a Devin Review PR-#13 follow-up («F1» —
+    Rationale: this is a Agent Review PR-#13 follow-up («F1» —
     partial-config bypass). The fix shape is option B (WARNING,
     keep current «caller decides» behaviour) rather than option A
     (hard pairwise enforcement) because option A would change a

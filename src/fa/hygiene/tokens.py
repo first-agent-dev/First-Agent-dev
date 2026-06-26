@@ -103,7 +103,7 @@ def classify_token(token: str) -> TokenKind:
         return TokenKind.PROSE
     # Case-folded lookup so capitalised variants (`Git`, `GREP`, `Ls`)
     # are also skipped — the docstring promises "Never treated as
-    # identifiers even when uppercased". Devin Review finding
+    # identifiers even when uppercased". Agent Review finding
     # 2026-05-20 on PR #18.
     if candidate.lower() in _HARD_SKIP_SHELL_VERBS:
         return TokenKind.SHELL_VERB

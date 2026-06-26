@@ -172,7 +172,7 @@ Three layers, same shape as
 
 ## Evidence
 
-- Commits on the M2 branch `devin/1779458329-wave3-llms-txt-size-buckets`
+- Commits on the M2 branch `agent/1779458329-wave3-llms-txt-size-buckets`
   (this PR): sweep of all 58 rows + format amendment +
   [`anti-patterns/AP-002-stale-routing-index-counts.md`](./AP-002-stale-routing-index-counts.md)
   (this file) + Q-12 in

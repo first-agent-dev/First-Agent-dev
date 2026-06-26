@@ -142,7 +142,7 @@ def test_run_session_records_hook_denial(tmp_path: Path) -> None:
 
 
 def test_run_session_handles_pause_guard_denial_cleanly(tmp_path: Path) -> None:
-    """Devin-Review BUG-0001: when a guard at ``BETWEEN_ROUNDS`` denies
+    """Agent-Review BUG-0001: when a guard at ``BETWEEN_ROUNDS`` denies
     (``PauseGuard`` is the canonical case), ``run_session`` MUST stop
     cleanly instead of propagating ``PermissionError`` out of the loop.
 
@@ -211,7 +211,7 @@ class _AfterExecDenyGuard(GuardMiddleware):
 
 
 def test_run_session_handles_after_tool_exec_denial_cleanly(tmp_path: Path) -> None:
-    """Devin-Review BUG-0003 (symmetric to BUG-0001): when a guard at
+    """Agent-Review BUG-0003 (symmetric to BUG-0001): when a guard at
     ``AFTER_TOOL_EXEC`` denies after the tool has already executed, the
     runtime MUST still persist the tool's actual result (ADR-7 \u00a710
     Acceptance criterion 8 \u2014 paired ``tool_call`` / ``tool_result``

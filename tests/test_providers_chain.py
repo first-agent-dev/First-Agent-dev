@@ -775,7 +775,7 @@ def test_chain_from_mapping_preserves_string_family() -> None:
 
 
 def test_chain_from_mapping_normalises_family_to_lowercase() -> None:
-    # Regression test for the Devin Review finding on PR #52: a YAML
+    # Regression test for the Agent Review finding on PR #52: a YAML
     # ``family: "DeepSeek"`` (mixed case) stored verbatim into
     # ``ChainConfig.family`` would bypass ``check_eval_disjoint``'s
     # case-sensitive ``==`` comparison when matched against a

@@ -167,7 +167,7 @@ def load_capabilities(text: str) -> CapabilityLoadResult:
         key, _, value = stripped.partition(":")
         key = key.strip()
         # YAML inline comments (`true  # enable`) must not pollute the
-        # value — see fa._yaml_subset.strip_inline_comment + Devin Review
+        # value — see fa._yaml_subset.strip_inline_comment + Agent Review
         # finding 2026-05-20 on PR #19.
         value = strip_inline_comment(value).strip().lower()
 

@@ -128,7 +128,7 @@ capabilities:
 def test_inline_comment_does_not_pollute_boolean_value() -> None:
     """YAML inline `# comment` MUST be stripped before boolean check.
 
-    Devin Review finding 2026-05-20 on PR #19 — without the strip, a
+    Agent Review finding 2026-05-20 on PR #19 — without the strip, a
     user writing `ENABLE_DYNAMIC_TOOLS: true  # needed for testing`
     would silently get `False` plus a non-boolean warning. Since
     ADR-6 calls this file "the single most security-sensitive

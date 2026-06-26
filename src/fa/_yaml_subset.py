@@ -10,7 +10,7 @@ The helpers exist as a single source of truth so a subtle YAML-parsing
 edge case fixed in one parser cannot drift away from the other. When
 M-1 ships the real loader, this module is deleted.
 
-Devin Review finding 2026-05-20 on PR #19 surfaced that the ad-hoc
+Agent Review finding 2026-05-20 on PR #19 surfaced that the ad-hoc
 parsers stripped neither inline ``# comment`` from values nor from
 list items — security-sensitive capability flags silently flipped to
 ``False`` on a normal YAML inline comment, and verifier contracts
@@ -57,7 +57,7 @@ def strip_inline_comment(value: str) -> str:
     # BOTH candidate positions and pick the earlier one — otherwise a
     # tab-then-``#`` value with a later space-then-``#`` (e.g.
     # ``"true\t# enable # more"``) would silently strip from the wrong
-    # comment start. Devin Review finding 2026-05-20 on PR #19.
+    # comment start. Agent Review finding 2026-05-20 on PR #19.
     space_idx = value.find(" #")
     tab_idx = value.find("\t#")
     if space_idx == -1 and tab_idx == -1:

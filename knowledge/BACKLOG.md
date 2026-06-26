@@ -1,7 +1,7 @@
 # Backlog — deferred ideas with unblock triggers
 
 > **Purpose.** Single canonical list of architectural ideas
-> deferred from Stage 1 (Devin-driven, per
+> deferred from Stage 1 (Agent-driven, per
 > [`project-overview.md` §1.3](./project-overview.md#13-three-stage-project-evolution)).
 > Without this, deferred ideas get lost between sessions. Each
 > entry has an **unblock-trigger** — the concrete artefact whose
@@ -148,9 +148,9 @@
   mid-tier Stage-2 LLM would apply EXEMPT inconsistently and
   either over-claim (skipping subtraction proof on real additions)
   or under-claim (writing 3-question proof for a typo fix).
-- **Blocked-on:** Stage 1 is Devin-driven; Devin decides EXEMPT
+- **Blocked-on:** agents decide EXEMPT
   per PR with full diff context. The ambiguity becomes a runtime
-  LLM problem only when a non-Devin agent opens PRs.
+  LLM problem only when the agent opens PRs.
 - **Unblock-trigger:** First Stage-2 session opens a PR
   autonomously and needs to apply EXEMPT.
 - **First concrete step once unblocked:** Enumerate EXEMPT
@@ -159,7 +159,7 @@
   (d) translation, no semantic change; (e) new section under
   existing artefact = NOT EXEMPT». Add a `docs/glossary.md` row
   for «EXEMPT (documentation-only PR)».
-- **Why this is LOW ROI for Stage 1.** Devin reads full PR diff
+- **Why this is LOW ROI for Stage 1.** Agent reads full PR diff
   before deciding; mid-tier LLMs do not. Per
   `repo-audit-2026-05-10-revised.md` §3.6 — process-coordination
   concern, not runtime LLM performance.
@@ -172,7 +172,7 @@
   intent table routes T2-T5 (planner, coder, debug, eval) to
   template **sections** inside
   [`knowledge/prompts/prompting.md`](./prompts/prompting.md)
-  rather than standalone files. A non-Devin agent following the
+  rather than standalone files. A non-Agent agent following the
   intent table reaches the §T2-T5 anchors but the templates are
   inline, not split into per-role files.
 - **Partial progress (2026-05-29):** `prompting.md` moved from
@@ -182,7 +182,7 @@
   «no file yet» fallback is gone). Item stays open: the templates
   are still inline sections, not the standalone per-role files of
   option (a).
-- **Blocked-on:** First non-Devin session attempts a planner /
+- **Blocked-on:** First autonomous session attempts a planner /
   coder / debug / eval task from a template path.
 - **Unblock-trigger:** Either (a) extract T2-T5 templates to
   standalone files (`knowledge/prompts/planner-fa.md`,
@@ -194,7 +194,7 @@
   [`architect-fa-compact.md`](./prompts/architect-fa-compact.md)
   split, but multiplies file count by 4. Option (b) is lower-
   touch (anchor-only change in RESOLVER.md).
-- **Why this is LOW ROI for Stage 1.** Devin picks the template
+- **Why this is LOW ROI for Stage 1.** The agent picks the template
   manually at session start with full context. Per
   `repo-audit-2026-05-10-revised.md` §3.22.
 
@@ -246,7 +246,7 @@
   follow-up to PR #5 baseline).
 - **Idea:** Move bootstrap-cost from a one-off measurement
   (current [`research/bootstrap-cost-baseline-2026-05.md`](./research/bootstrap-cost-baseline-2026-05.md))
-  to a continuously-tracked KPI. Each Devin (or First-Agent OWN
+  to a continuously-tracked KPI. Each Agent (or First-Agent OWN
   harness) session emits its bootstrap metrics — calls, files,
   context tokens, file-list — at session end; an aggregator
   produces medians, p90, and threshold alerts (e.g. median
@@ -283,7 +283,7 @@
 
 - **Status:** deferred from Stage 1 (proposed 2026-05-12 chat,
   post Arena.ai F / G / H sessions added to PR #5 baseline).
-- **Idea:** PR #5 + this extension's 6-session baseline (3 Devin
+- **Idea:** PR #5 + this extension's 6-session baseline (3 Agent
   + 3 Arena.ai) validates that the routing surface works **across
   external harnesses**. It does **not** validate that the routing
   surface works **on First-Agent's own future mid-tier harness**
@@ -340,7 +340,7 @@
 - **Why this is LOW ROI until Phase M lands.** Without the OWN
   harness existing, the measurement is non-executable; there is
   no good substitute (Arena = different harness; manual
-  cross-fork sessions = still Devin's harness underneath).
+  cross-fork sessions = still external harness underneath).
 - **Prior-art enforcement (DPC ADR-015, added 2026-05-13):**
   Same constraint as I-7 above. Until I-8 re-test succeeds on
   FA's own harness, no autonomous self-improvement loop (skill
@@ -377,11 +377,11 @@
   as the **second** skill in the directory, so the convention
   has two consumers from day one (subtraction-check passes for
   the directory: two non-trivial loaders, not one).
-- **Path (a) `.agents/skills/<name>/SKILL.md`** (Devin auto-load
+- **Path (a) `.agents/skills/<name>/SKILL.md`** (Agent auto-load
   convention) **deferred** per minimalism-first: a second
   filesystem surface for the same content is not justified
   while only two skills exist. Re-evaluate once ≥ 3 skills
-  exist or once a session demonstrates the Devin auto-load
+  exist or once a session demonstrates the auto-load
   surface produces materially better behaviour than the
   AGENTS.md PR Checklist rule #12 load-directive (the OSS-LLM
   audience already loads via the explicit rule).
@@ -442,7 +442,7 @@
 - **Unblock-trigger:** all three Wave-0/Wave-1 PRs merged AND the
   matching session opens a fresh branch for `src/fa/inner_loop/`.
   No earlier start — landing M-1 before the doc PRs merge guarantees
-  rework on every ADR amendment surfaced by Devin Review.
+  rework on every ADR amendment surfaced by Agent Review.
 - **First concrete step once unblocked:** create
   `src/fa/inner_loop/__init__.py` + `registry.py` skeleton; port
   the ADR-7 §2 `ToolSpec` / `ToolResult` dataclasses verbatim from
@@ -564,7 +564,7 @@
 ## M-4 — T-2 LLM provider client implementation (driver per ADR-9)
 
 - **Status:** closed 2026-05-22 — landed in T-2 implementation PR
-  (`devin/1779480362-t2-llm-provider-client`). Seven modules under
+  (`agent/1779480362-t2-llm-provider-client`). Seven modules under
   `src/fa/providers/` + `src/fa/observability/cost_table.py`,
   ~1080 LOC including docstrings, plus six offline-only test
   modules (55 tests) covering the contract surface listed below.
@@ -645,7 +645,7 @@
 ## M-5 — T-4 `~/.fa/models.yaml` loader (closes M3 of release roadmap)
 
 - **Status:** closed 2026-05-22 — landed in T-4 implementation PR
-  (`devin/1779515293-t4-models-yaml-loader`). One module
+  (`agent/1779515293-t4-models-yaml-loader`). One module
   `src/fa/providers/config.py` (~150 LOC) + 23 new offline tests
   in `tests/test_providers_config.py`; 584 total pytest pass.
   All gates pass: ruff check, ruff format --check,

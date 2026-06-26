@@ -156,7 +156,7 @@ def _grants_world_write(mode: str) -> bool:
 
     The previous implementation only matched the literal substrings
     ``+w`` / ``=w`` and so missed ``a+rw``, ``o+rw``, ``ugo+rw``,
-    ``a=rwx`` (Devin Review finding 2026-05-20 on PR #20).
+    ``a=rwx`` (Agent Review finding 2026-05-20 on PR #20).
     """
     if not mode:
         return True

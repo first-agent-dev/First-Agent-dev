@@ -28,7 +28,7 @@ that task, it belongs here.
 
 - One skill = one subdirectory. Filename inside is always
   `SKILL.md` (uppercase, no exceptions). Matches KAOS /
-  Anthropic / Devin `.agents/skills/<name>/SKILL.md` shape so a
+  Anthropic / Agent `.agents/skills/<name>/SKILL.md` shape so a
   future symlink (or auto-load mechanism per R-24) plugs in
   without renaming.
 - Optional sibling files (`references/`, worked examples) live

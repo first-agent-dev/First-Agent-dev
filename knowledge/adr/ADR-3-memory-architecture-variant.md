@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-04-27
-- **Deciders:** project owner (`0oi9z7m1z8`), Devin (drafting)
+- **Deciders:** project owner (`0oi9z7m1z8`), Agent (drafting)
 
 ## Context
 

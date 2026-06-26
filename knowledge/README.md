@@ -9,9 +9,9 @@
 Durable project knowledge for First-Agent. Everything here is:
 
 1. **Committed** to the repo so it is versioned and reviewable.
-2. **Cross-referenced** from Devin Knowledge notes where useful.
-   (The Devin-era `docs/` folder — including the former
-   `devin-reference.md` — was retired 2026-05-29 as stale early
+2. **Cross-referenced** from Agent Knowledge notes where useful.
+   (The legacy `docs/` folder — including the former
+   `agent-reference.md` — was retired 2026-05-29 as stale early
    scaffolding; live references now live under `knowledge/`.)
 
 ## Layout

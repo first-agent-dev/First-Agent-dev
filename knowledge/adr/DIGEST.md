@@ -223,7 +223,7 @@ concrete carriers; single source of truth for every tool PR.
   [`research/bootstrap-cost-baseline-2026-05.md`](../research/bootstrap-cost-baseline-2026-05.md):
   §6 empirical-backing for tier-3 lazy hydration (6-file irreducible
   core), §7 future-KPI-consumption (BACKLOG I-7), §9 empirical
-  context-budget evidence (~80–95 K Devin / 70–95 K Arena),
+  context-budget evidence (~80–95 K baseline / 70–95 K Arena),
   §11 R-9 motivation (agent self-report unreliable → `harness_id`),
   §Consequences re-evaluation trigger 5 (FA's own mid-tier harness
   ships = BACKLOG I-8), §Consequences follow-up work (BACKLOG I-1 /
@@ -467,7 +467,7 @@ rejected). **Revision 2026-05-22 (pre-PR critical pass).** §1,
 critique against 7 P0 logic-bug findings + 6 P1 design-gap
 findings; §Decision direction unchanged. **Amendment 2026-05-22
 (T-2 driver landed).** Implementation merged in
-`devin/1779480362-t2-llm-provider-client` — `src/fa/providers/`
+`agent/1779480362-t2-llm-provider-client` — `src/fa/providers/`
 (7 modules: `base.py`, `chain.py`, `openai_compat.py`,
 `anthropic.py`, `registry.py`, `errors.py`, `__init__.py`) +
 `src/fa/observability/cost_table.py`, plus six offline-only
@@ -494,7 +494,7 @@ and `family` to the empty string (the prior `str(raw.get(key, ""))`
 returned the literal string `"None"` when the YAML key existed with
 a null value). **Implementation landing 2026-05-22 — T-4 loader.**
 `~/.fa/models.yaml` loader merged in
-`devin/1779515293-t4-models-yaml-loader` — `src/fa/providers/config.py`
+`agent/1779515293-t4-models-yaml-loader` — `src/fa/providers/config.py`
 (~150 LOC) exports `ModelsConfig` + `load_models_config(text, *,
 env=None)` + `load_models_config_from_path(path=DEFAULT_MODELS_YAML_PATH,
 *, env=None)`. The loader walks the §1 schema via `yaml.safe_load`,
@@ -514,7 +514,7 @@ all three family-disjoint paths (eval=planner / eval=coder / planner=coder
 allowed / eval-missing skip / planner-missing skip), four-role
 (planner+coder+eval+debug) shape, path-based variant including the
 missing-file branch. **Implementation fix-up 2026-05-22 — T-4 review.**
-Devin Review surfaced a case-sensitive-bypass bug on the safety-critical
+Agent Review surfaced a case-sensitive-bypass bug on the safety-critical
 eval-vs-actor family-disjoint check — a YAML `family: "DeepSeek"`
 (mixed case) on planner vs `family: "deepseek"` (lowercase) on eval
 would silently pass `check_eval_disjoint`'s case-sensitive `==`

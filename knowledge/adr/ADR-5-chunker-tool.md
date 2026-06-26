@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-04-28
-- **Deciders:** 0oi9z7m1z8 (project lead) + Devin session 2f45f66e
+- **Deciders:** 0oi9z7m1z8 (project lead) + Agent session 2f45f66e
 
 ## Context
 

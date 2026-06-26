@@ -11,7 +11,7 @@ agent** for a single power-user with deterministically bound harness.
 
 It exists because:
 
-- Hosted coding agents (Devin, Cursor, Copilot Workspace) are great
+- Hosted coding agents (Agent, Cursor, Copilot Workspace) are great
   but expensive at scale and constrained to their own context-/memory-
   models. We need a setup where **planner / coder / debug roles can
   use different LLM tiers** (top-tier OSS / mid-tier OSS / Anthropic
@@ -68,7 +68,7 @@ baseline-run. До baseline KPI-numbers стоят как `TBD` и не
 итерациями. **База в v0.1:** способность агента писать собственные
 skills (`SKILL.md`-файлы под `~/.fa/skills/` или
 `knowledge/skills/`) по итогам решённых задач и найденных улучшений.
-Pattern взят из Anthropic Claude Skills + Devin `.devin/skills/`,
+Pattern взят из Anthropic Claude Skills,
 адаптирован под Mechanical Wiki shape (frontmatter + FTS5-индекс
 по ADR-3 / ADR-4). Skill-writing capability требует **ADR-8 (TBD)**;
 здесь фиксируется как v0.1 commitment, конкретный design — в
@@ -257,87 +257,6 @@ benchmark slot — until then, the invariants in
 [`ADR-10`](./adr/ADR-10-deterministic-harness-invariants.md) are
 the construction-discipline carriers.
 
-## 1.3. Three-stage project evolution
-
-### Stage 1 — Documentation + agent development через Devin (текущий)
-
-Devin.ai — основной builder agent. Devin читает external research
-(papers, repos, posts, benchmarks), пишет ADR-ы, research notes,
-specs и код под `src/fa/`. GitHub-репозиторий — workspace и
-long-term memory; всё, что Devin производит, фиксируется как
-filesystem-canonical Markdown + Python.
-
-**Где мы сейчас (2026-05-29):** inner-loop harness материализован и
-LLM-управляем end-to-end — M-1..M-8 закрыты. `fa run --task` поднимает
-`ProviderChain` + `ToolRegistry` + `HookRegistry` и гоняет coder-цикл
-(M-8, PR #23). PR-intent enforcement loop замкнут на обоих seat'ах:
-git-хук `prepare-commit-msg`/`commit-msg` (M-6, PR #20) и harness-side
-`IntentGuard` (M-7, PR #22), оба переиспользуют один classifier+validator
-из `fa.hygiene.pr_intent` (ADR-10 I-1). Producer драфта — `pr.prepare`
-tool (PR #24); `fs.run_bash` теперь тоже под draft-first контрактом через
-AST-анализатор `bash_intent.py`, а `pr_draft.py` доверяет только
-current-session драфтам. ADR-9 (provider routing) и ADR-10 (determinism
-invariants) — landed.
-
-**Следующий шаг:** первый живой `fa run --task` smoke против реального
-провайдера (OpenRouter / Fireworks) — превратить yellow adapter-coverage
-в green. Остаток not-implemented списка — см. `HANDOFF.md` §Next +
-`fa-0.1-release-gap`.
-
-**Конец Stage 1:** работающий первый release **First-Agent 0.1**,
-ready для локального запуска под UC1 (coding+PR) + UC3 (docs-to-wiki).
-
-### Stage 2 — First-Agent 0.1 локально + iteration через Devin
-
-First-Agent 0.1 запускается на single workstation владельца проекта;
-прогоны под UC1 / UC3 / UC5 baseline.
-
-Devin продолжает быть основным builder'ом, но теперь работает в
-тандеме с реальным первым агентом: пишет новую документацию по
-результатам прогонов first-agent'а, оптимизирует harness, готовит
-v0.2 ADR-ы.
-
-**Конец Stage 2:** First-Agent самодостаточен достаточно, чтобы
-читать репо без Devin'овской помощи (включая HANDOFF.md, llms.txt,
-ADR-DIGEST, exploration_log.md) и предлагать собственные ADR-ы.
-
-### Stage 3 — First-Agent self-improves; Devin — внешний советник
-
-First-Agent работает самостоятельно: читает собственный репо как
-long-term memory, предлагает improvements в Knowledge layer
-(ADR-amendments, новые research notes), реализует изменения в
-Implementation layer (`src/fa/`, тесты, CI).
-
-Devin отдельно запускается **по обращению владельца** для исследований,
-которые first-agent сам не может закрыть (новые external papers,
-upstream-research, cross-stack benchmarks). Devin превращается из
-основного builder'а в **внешнего авторитетного советника**.
-
-### Связи слоёв и агентов
-
-```mermaid
-flowchart LR
-    EXT[External research]
-    DEVIN[Devin<br/>Stage 1 builder]
-    FA[First-Agent<br/>Stage 2-3 self-improver]
-    subgraph REPO[GitHub repo · long-term memory]
-        KNOW[Knowledge<br/>research, ADRs, specs]
-        CODE[Implementation<br/>src/fa, tests, CI]
-    end
-    EXT --> DEVIN
-    DEVIN -->|writes| REPO
-    KNOW -->|constrains| CODE
-    CODE -->|feedback| KNOW
-    REPO -. read .-> FA
-    FA -. propose / write .-> REPO
-```
-Сплошные стрелки — Stage 1 потоки: Devin читает external research и
-пишет в repo; внутри repo Knowledge layer constrains Implementation
-layer, тесты и прогоны возвращают feedback обратно в Knowledge.
-Пунктирные — Stage 2-3, когда First-Agent читает собственный repo
-и пишет туда improvements. Координация Devin ↔ FA — всегда через
-filesystem-canonical артефакты, никогда message-passing.
-
 
 ## 2. Users
 
@@ -347,8 +266,7 @@ filesystem-canonical артефакты, никогда message-passing.
 - **Future users (post-v0.2):** the same user inside a Telegram
   group of ~10 people, where FA needs per-user memory namespacing.
   This shapes the architecture but is **not implemented in v0.1**.
-- **Audience for documentation:** other LLM agents (Devin, Codex,
-  Claude Code) navigating the repo. Hence routing-by-folder in
+- **Audience for documentation:** other LLM agents navigating the repo. Hence routing-by-folder in
   [`AGENTS.md`](../AGENTS.md) and provenance-frontmatter in
   [`knowledge/README.md`](./README.md).
 

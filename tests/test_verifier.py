@@ -124,7 +124,7 @@ def test_load_contract_rejects_empty_required_and_failure_lists() -> None:
 def test_load_contract_strips_inline_comments_in_scalars_and_lists() -> None:
     """YAML inline comments must not pollute scalar values or list items.
 
-    Devin Review finding 2026-05-20 on PR #19 — the original parser
+    Agent Review finding 2026-05-20 on PR #19 — the original parser
     embedded ``# the edit tool`` and ``# important`` into the parsed
     values, which would cause every verifier call to fail with
     ``missing_required_event`` reasons even when the trace was correct.

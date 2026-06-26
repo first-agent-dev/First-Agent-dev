@@ -112,7 +112,7 @@ def test_load_runtime_limits_accepts_zero_for_suppression_keys() -> None:
     warning, while still rejecting negative values and rejecting
     ``0`` for every other key.
 
-    Regression test for Devin-Review BUG flagged on PR #26: prior to
+    Regression test for Agent-Review BUG flagged on PR #26: prior to
     the fix, ``rate_limit_suppression_seconds: 0`` got a spurious
     «value must be positive» warning and was silently dropped, so
     the user could not opt the rate-limit / lockfile blockers into
@@ -271,7 +271,7 @@ def test_load_runtime_limits_rejects_nan_and_inf_cost_budget_usd() -> None:
     always allow. Reject both at the parse layer rather than relying
     on :class:`CostGuardian.__init__` to catch it later.
 
-    Regression guard for Devin-Review BUG #27 run 3 sibling-NaN
+    Regression guard for Agent-Review BUG #27 run 3 sibling-NaN
     finding on the float parser.
     """
 

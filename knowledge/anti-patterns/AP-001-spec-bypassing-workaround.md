@@ -27,7 +27,7 @@ production path that other modules read from is still P, not P'.
 
 **Live evidence.** Commit
 [`5c1db0f`](https://github.com/GITcrassuskey-shop/First-Agent/commit/5c1db0f)
-on branch `devin/1779363347-wave3-r8-learning-observer` (PR #47).
+on branch `agent/1779363347-wave3-r8-learning-observer` (PR #47).
 The smoke CLI's R-8 `LearningObserver` was changed from:
 
 ```python
@@ -155,7 +155,7 @@ Three layers, ranked by leverage-per-token. Implemented incrementally
    (when an ADR amendment touches an invariant), not as a campaign.
 
 3. **Review-time prompt (Layer 3).** Single question in the PR
-   review carrier (Devin Review prompt, PR template,
+   review carrier (Agent Review prompt, PR template,
    self-review checklist):
 
    > «Does this PR change *what the module does*

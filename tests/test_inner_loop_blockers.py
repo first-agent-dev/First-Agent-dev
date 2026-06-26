@@ -247,7 +247,7 @@ def test_lockfile_blocker_ignores_unrelated_failures() -> None:
 def test_lockfile_blocker_does_not_false_positive_on_lock_filenames(message: str) -> None:
     """Bare ``.lock`` filename mentions do NOT trip the blocker.
 
-    Devin-Review finding: the old regex included a bare ``\\.lock\\b``
+    Agent-Review finding: the old regex included a bare ``\\.lock\\b``
     alternative which matched any error message naming a lock file
     rather than only contention. The tightened regex (PR #26 follow-up)
     matches only contention-specific signatures (``could not get lock``,

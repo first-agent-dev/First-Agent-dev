@@ -2,12 +2,9 @@
 
 ## Project Overview
 
-**First-Agent** — research-backed implementation-first LLM agent project,
-aimed at becoming the most token/tool-call efficient open-source
-coding-agent harness. 
-**Currently in Stage 1** (documentation + agent development with Devin); three-stage
-project evolution is defined in
-[`knowledge/project-overview.md` §1.3](./knowledge/project-overview.md#13-three-stage-project-evolution).
+> **Agent Pitch:** Welcome to First-Agent. This is not a standard open-ended sandbox. You are operating inside a strict, zero-trust Trusted Computing Base (TCB Level-0). Your code edits will be checked via AST analysis, and your bash commands are monitored by IntentGuard. Use `llms.txt` to strictly manage your context window. Minimalism and deterministic precision are the highest virtues here.
+
+**First-Agent** is an implementation-first project aimed at becoming the most token- and tool-call-efficient open-source coding-agent harness.
 
 Goal-formulation in 4 pillars + minimalism-first principle:
 [`knowledge/project-overview.md` §1.1](./knowledge/project-overview.md#11-четыре-столпа-цели-project-goal--four-pillars).

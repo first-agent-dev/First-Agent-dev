@@ -9,9 +9,6 @@
 > project documentation in one fetch. Paths below are relative
 > to the repository root.
 >
-> **Project stage.** Currently in **Stage 1** (documentation +
-> agent development via Devin) of the three-stage evolution defined
-> in [knowledge/project-overview.md](./knowledge/project-overview.md).
 
 > **Tiered layout.** §MUST READ FIRST is the smallest path that
 > bootstraps a session (five files, in order). §TASK ROUTING
@@ -210,7 +207,7 @@ Quality gates run in CI. `just check` (ruff + deptry + pylint-gap + mypy + autho
 - [knowledge/prompts/architect-fa-compact.md](./knowledge/prompts/architect-fa-compact.md): Compact variant of architect-fa for mid-tier models.
 - [knowledge/prompts/coder-recovery.md](./knowledge/prompts/coder-recovery.md): Coder error-recovery prompt fragment, reads `attempt_history.json`.
 - [knowledge/prompts/handoff-summarizer.md](./knowledge/prompts/handoff-summarizer.md): Session-handoff / compaction prompt. Verbatim identifier preservation + 5-block structure. For inner-loop compaction and session-end notes, not for `HANDOFF.md`.
-- [knowledge/prompts/research-briefing.md](./knowledge/prompts/research-briefing.md): Research-briefing workflow prompt. Stage 1 goal_lens elicitation.
+- [knowledge/prompts/research-briefing.md](./knowledge/prompts/research-briefing.md): Research-briefing workflow prompt. goal_lens elicitation.
 - [knowledge/prompts/ci-qa-implementation-session-start.md](./knowledge/prompts/ci-qa-implementation-session-start.md): Session-start prompt for implementing CI/QA tooling TAKE recommendations (R-1..R-15) from research note. Concrete file edits, not research.
 
 ### Skills (`knowledge/skills/`)

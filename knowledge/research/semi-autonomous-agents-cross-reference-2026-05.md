@@ -185,7 +185,7 @@ claims_requiring_verification:
 - **Не предлагает имплементацию.** Тулы / loop / sandbox-runner —
   всё это будет в R-1 inner-loop ADR и в Phase M PR'ах, не здесь.
 - **Не выбирает provider'ов.** ADR-2 уже фиксирует 4-6 моделей,
-  vendoring обсуждается в HANDOFF и в Devin Knowledge note.
+  vendoring обсуждается в HANDOFF и в Agent Knowledge note.
 - **Не сравнивает goclaw с OpenHands / LangGraph / SWE-agent
   построчно.** Это сравнение есть в research_semi_autonomous §1-§2
   и не реплицируется здесь.
@@ -1259,7 +1259,7 @@ NOT в этом PR:
 
 - **HANDOFF.md** — отдельный PR после review этого (по
   user-выбору Question 4 «safer»).
-- **Devin Knowledge note** — обновится после отдельного PR.
+- **Agent Knowledge note** — обновится после отдельного PR.
 
 ---
 
@@ -1275,7 +1275,7 @@ NOT в этом PR:
 
 ### 10.2 Next session или future PR
 
-- [ ] Update `HANDOFF.md` + Devin Knowledge note after
+- [ ] Update `HANDOFF.md` + Agent Knowledge note after
       this PR review (separate PR per user choice).
 - [ ] R-1 inner-loop ADR (now будущий ADR-7): должен
       учесть input этой ноты (§7.1, §7.3, §8.4, §8.5,

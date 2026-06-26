@@ -87,7 +87,7 @@ def test_cost_observation_rejects_nan_and_inf_usd() -> None:
     boundary so the extractor's ``except ValueError`` branch catches
     them as observe-only-fail.
 
-    Regression guard for Devin-Review BUG #27 run 3.
+    Regression guard for Agent-Review BUG #27 run 3.
     """
 
     with pytest.raises(ValueError, match="finite"):
@@ -150,7 +150,7 @@ def test_default_extractor_skips_nan_and_inf_usd() -> None:
     these artifacts rather than constructing a poisoned observation
     that silently disables the gate.
 
-    Regression guard for Devin-Review BUG #27 run 3 (NaN bypass).
+    Regression guard for Agent-Review BUG #27 run 3 (NaN bypass).
     """
 
     poisoned = ToolResult.ok(
@@ -337,7 +337,7 @@ def test_guardian_rejects_negative_budget() -> None:
 def test_guardian_rejects_nan_and_inf_budget() -> None:
     """A NaN budget silently disables the gate (every comparison is
     ``False``); ``+Inf`` silently allows everything. Refuse both at
-    construction time. Regression guard for Devin-Review BUG #27 run 3
+    construction time. Regression guard for Agent-Review BUG #27 run 3
     sibling finding on the runtime-limits float parser.
     """
 

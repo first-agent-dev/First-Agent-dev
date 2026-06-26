@@ -123,7 +123,7 @@ claims_requiring_verification:
    Router → Maturity Tracker) **на границе сессии**, превращая
    conversational state в типизированные events с provenance
    (`user` / `ai-suggested` / `ai-executed` / `user-revised`). Mapping
-   на Devin Knowledge note + AI-Session trailer прозрачен, но требует
+   на Agent Knowledge note + AI-Session trailer прозрачен, но требует
    формализации. Это — кандидат на ADR-8 (после ADR-7 inner-loop).
 4. **Прямое заимствование 1:1 layout Ara (`/logic/`, `/src/`, `/trace/`,
    `/evidence/` на уровне репо) — некорректно для First-Agent.** Ara
@@ -133,7 +133,7 @@ claims_requiring_verification:
    уровне **knowledge/** (как структура research/ADR/HANDOFF), не
    репо-level. См. §7.
 5. **ARA Seal (Ara §5.2) — three-stage review pipeline (conceptual /
-   empirical / human) — частично уже реализован** через Devin Review +
+   empirical / human) — частично уже реализован** через Agent Review +
    AGENTS.md PR Checklist + CI lint. Не хватает формального **Level 1
    structural integrity check** для knowledge/research/* (валидация
    frontmatter v1/v2, наличия chain_of_custody, проверка что все
@@ -496,7 +496,7 @@ self-contained sub-projects, ситуация поменяется. Pre-v0.2 —
 
 ---
 
-## 4. Live Research Manager ↔ HANDOFF.md + Devin Knowledge note
+## 4. Live Research Manager ↔ HANDOFF.md + Agent Knowledge note
 
 Главный фокус для goal'а user'а («continuity между сессиями») — этот
 параграф.
@@ -506,7 +506,7 @@ self-contained sub-projects, ситуация поменяется. Pre-v0.2 —
 Cross-session continuity сейчас обеспечивают:
 
 - **HANDOFF.md** — manual Markdown, обновляется в среднем раз на 2–3 PR.
-- **Devin Knowledge note** «First-Agent — current state pointer» (mirror
+- **Agent Knowledge note** «First-Agent — current state pointer» (mirror
   of HANDOFF.md, canonical when they disagree).
 - **AI-Session trailer** в commit messages (`AI-Session: <session-id>`),
   pattern lifted from `codedna` (см. agentic-memory-supplement.md §3).
@@ -641,11 +641,11 @@ forensic graph поверх множества chunks из множества ф
 
 ---
 
-## 6. ARA Seal ↔ Devin Review + PR Checklist + CI
+## 6. ARA Seal ↔ Agent Review + PR Checklist + CI
 
 ### 6.1 Что уже есть в FA
 
-- **Conceptual review (Stage 1 в Ara terms)** — Devin Review (LLM-bot)
+- **Conceptual review (Stage 1 в Ara terms)** — Agent Review (LLM-bot)
   + AGENTS.md PR Checklist (7 rules). Ловит structural issues
   (broken refs, frontmatter, code-fence language tags, llms.txt
   drift).
@@ -693,7 +693,7 @@ warnings sначала), ATOMIC под отдельный PR. См. §9 R-3.
 
 Для FA mutation benchmark был бы тестом на качество AGENTS.md PR
 Checklist'а. Например: «mutate research-ноту, удалив `chain_of_custody:`
-и проверив, ловит ли Devin Review». Это полезный, но
+и проверив, ловит ли Agent Review». Это полезный, но
 non-blocking experiment — для v0.2.
 
 ### 6.5 Caveat из Ara
@@ -889,7 +889,7 @@ Ara protocol mapping». Кратко:
 
 - Mechanical Wiki (ADR-3) ≈ Ara Cognitive + Physical layers.
 - exploration_tree.yaml (R-1) ≈ Ara Exploration Graph.
-- HANDOFF.md + Devin Knowledge note ≈ Ara Live Research Manager
+- HANDOFF.md + Agent Knowledge note ≈ Ara Live Research Manager
   (artefact-as-memory).
 - AGENTS.md PR Checklist ≈ Ara Seal Level 1.
 
@@ -1119,7 +1119,7 @@ Q-5 — **soft-rule**, без жёстких numeric thresholds в первой 
 - arXiv:2604.24658v2 (Ara paper, full HTML extracted to local plain
   text, ~225 KB).
 - arXiv:2604.24658 abstract page (metadata).
-- Devin Knowledge note `note-eb4e6b4ae1d4464b89f5392ed52e757a` — «First-
+- Agent Knowledge note `note-eb4e6b4ae1d4464b89f5392ed52e757a` — «First-
   Agent — current state pointer».
 
 ### Setup / verification commands run

@@ -245,7 +245,7 @@ documentary and review-time.
    the structural level; semantic correctness is reviewer concern.
 
 3. **Review-time prompt (Layer 3, semantic catch).** Single question
-   in the PR review carrier (Devin Review prompt, PR template,
+   in the PR review carrier (Agent Review prompt, PR template,
    self-review checklist):
 
    > «Does `DETERMINISTIC MECHANISM:` cite the **producer site**

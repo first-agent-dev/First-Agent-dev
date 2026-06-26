@@ -159,7 +159,7 @@ if [[ -d "/repo/.git" ]] && [[ -z "${FA_WORKSPACE:-}" ]]; then
         # Still local (no network), just uses the transport layer over pipes.
         if git clone "file:///repo" "$SESSION_DIR"; then
             cd "$SESSION_DIR"
-            git checkout -b "devin/${SESSION_ID}"
+            git checkout -b "agent/${SESSION_ID}"
             log "Created session workspace: $SESSION_DIR"
         else
             # Clean up partial clone so it doesn't accumulate on restarts.

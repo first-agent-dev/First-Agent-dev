@@ -1,12 +1,12 @@
 # Архитектура агента — ориентир для проектирования
 
 > Справочный документ для research/design-фазы First-Agent. Описывает трёхслойную
-> архитектуру LLM-агента, базовые паттерны и «чему учит опыт Devin». Русская часть —
+> архитектуру LLM-агента, базовые паттерны и «чему учит опыт Agent». Русская часть —
 > комментарий; структурные блоки намеренно оставлены двуязычными, чтобы удобно
 > цитировать английские термины.
 
-Источники: [Coding Agents 101](https://devin.ai/agents101) и
-[docs.devin.ai](https://docs.devin.ai).
+Источники: [Coding Agents 101](https://agent.ai/agents101) и
+[docs.agent.ai](https://docs.agent.ai).
 
 ---
 
@@ -238,7 +238,7 @@ template frontmatter'а в [`llm-wiki-critique.md`](../knowledge/research/llm-wi
 
 ---
 
-## Чему учит экосистема Devin
+## Чему учит экосистема Agent
 
 ### Что работает
 

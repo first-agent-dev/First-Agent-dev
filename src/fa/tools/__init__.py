@@ -24,7 +24,7 @@ locking (``fcntl.flock`` on POSIX / lockfile shim on Windows) is
 deferred to BACKLOG M-1 when the HookRegistry runtime lands and
 multi-process FA invocation becomes a possibility worth proving.
 
-(Devin Review finding 2026-05-20 on PR #18 — original docstring
+(Agent Review finding 2026-05-20 on PR #18 — original docstring
 claimed parallel-process safety; corrected here.)
 
 Public surface (stable for Wave 0; `LearningObserver` wires these

@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-05-12
-- **Deciders:** project owner (`0oi9z7m1z8`), Devin (drafting)
+- **Deciders:** project owner (`0oi9z7m1z8`), Agent (drafting)
 
 ## Context
 
@@ -403,7 +403,7 @@ larger v0.2 catalog config-only rather than code-only.
 
 **Empirical backing for tier-3 lazy hydration** (added 2026-05-12 §Amendment).
 [`bootstrap-cost-baseline-2026-05.md`](../research/bootstrap-cost-baseline-2026-05.md)
-§3 records six independent ADR-7-prep sessions (3 Devin + 3 Arena.ai
+§3 records six independent ADR-7-prep sessions (3 Agent + 3 Arena.ai
 harnesses, ≥4 distinct model selections) that all reached
 «ready-to-draft» reading only **tier-1 + tier-2** material from the
 6-file irreducible core (`HANDOFF.md`, `knowledge/llms.txt`,
@@ -569,7 +569,7 @@ tasks (the threshold is set in the UC5 ADR, not here).
 
 **Empirical context-budget evidence** (added 2026-05-12 §Amendment).
 [`bootstrap-cost-baseline-2026-05.md`](../research/bootstrap-cost-baseline-2026-05.md)
-§5 shows Devin sessions converging to ~80–95 K total context at
+§5 shows Agent sessions converging to ~80–95 K total context at
 «feel-ready» across a 2.3× variance in files-count (Session A =
 16 files / ~95 K vs Session B = 7 files / ~95 K — same total context,
 different reading depth). Arena.ai sessions land in the 70–95 K
@@ -577,7 +577,7 @@ range. The static layered prefix shape above therefore lands within
 the [`AGENTS.md` §Context-budget discipline (rule #11)](../../AGENTS.md#context-budget-discipline)
 ≤100 K budget on every measured session — independent empirical
 validation that the prefix-cache invariant is achievable on both
-Devin and external harnesses.
+Agent and external harnesses.
 
 ### 10. Acceptance criteria & 4-question subtraction-first self-audit
 
@@ -688,8 +688,8 @@ shape is pinned so the migration is config-only:
   (added 2026-05-12 §Amendment):
   [`bootstrap-cost-baseline-2026-05.md`](../research/bootstrap-cost-baseline-2026-05.md)
   §1 `chain_of_custody` + §7 caveats show that agent self-report
-  of `session_model` is empirically unreliable (Devin returns
-  generic «Devin (Cognition AI)»; Arena.ai does not disclose
+  of `session_model` is empirically unreliable (Agent returns
+  generic «Agent (Cognition AI)»; Arena.ai does not disclose
   the underlying model identity to the agent runtime).
   `harness_id` is the stable identity carrier the auto-KPI
   pipeline
@@ -823,13 +823,13 @@ shape is pinned so the migration is config-only:
 
 **Source.** Measurement-evidence note
 [`research/bootstrap-cost-baseline-2026-05.md`](../research/bootstrap-cost-baseline-2026-05.md)
-landed on `main` in PR #5 (initial 4-session Devin baseline)
+landed on `main` in PR #5 (initial 4-session Agent baseline)
 and PR #7 (3-session Arena.ai extension + BACKLOG I-6/I-7/I-8)
 **after** this ADR's draft was written. The bootstrap-cost
 note is the readability-test measurement counterpart to this
 ADR's contract design — it ran the same single-message
 ADR-7-prep prompt across six independent sessions × two
-agent harnesses (3 Devin + 3 Arena.ai) × ≥4 distinct model
+agent harnesses (3 Agent + 3 Arena.ai) × ≥4 distinct model
 selections and recorded calls / files / context tokens per
 session. The original ADR-7 draft cited four research notes
 but **not** the bootstrap-cost baseline, leaving the inner
@@ -850,14 +850,14 @@ loop's three-tier disclosure (§6), static layered prompt
    (auto-collected bootstrap-cost KPI) as the downstream
    consumer once UC5 eval-harness lands.
 3. **§9 Loop invariant** — empirical context-budget paragraph
-   citing baseline §5 (Devin sessions converging to ~80–95 K
+   citing baseline §5 (Agent sessions converging to ~80–95 K
    total context, Arena.ai 70–95 K — all within the
    [`AGENTS.md` §Context-budget discipline (rule #11)](../../AGENTS.md#context-budget-discipline)
    ≤100 K envelope).
 4. **§11 R-9 cross-model harness transferability** — motivation
    block citing baseline §1 `chain_of_custody` + §7 caveats
    (agent self-report of `session_model` empirically
-   unreliable — Devin returns generic «Devin (Cognition AI)»;
+   unreliable — Agent returns generic «Agent (Cognition AI)»;
    Arena.ai does not disclose underlying model). `harness_id`
    is the stable identity carrier.
 5. **§Consequences re-evaluation triggers** — 5th trigger
@@ -1280,7 +1280,7 @@ to §7 «`events.jsonl`»: R-8 writes durable filesystem artifacts
 under a workspace-canon root, not new event rows.
 
 **Updated 2026-05-22** in the same PR (two follow-up commits on
-`devin/1779363347-wave3-r8-learning-observer`):
+`agent/1779363347-wave3-r8-learning-observer`):
 
 - **First follow-up (`5c1db0f`).** Relocated the smoke canon root
   to `<workspace>/.fa/knowledge/trace/` and switched the discovery

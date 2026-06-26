@@ -65,7 +65,7 @@ because they cut across all phases):
 
 1. **Plan for the weakest downstream agent.** The audit target is
    mid-tier OSS LLMs (DeepSeek 4, Kimi 2.6, ~100 k effective context).
-   What a Devin / Sonnet-class agent shrugs off, a mid-tier model
+   What a elite agent shrugs off, a mid-tier model
    stalls on.
 2. **Evidence > speculation.** A finding survives P6 only if it has
    empirical support — peer-reviewed paper, repo-internal research
@@ -102,7 +102,7 @@ Three reads, then stop:
 2. Read the entry-point trio: `AGENTS.md`, `knowledge/llms.txt`,
    `HANDOFF.md`. These are the «bootstrap sequence» for any agent.
 3. Read the user's brief twice. **Extract** four things:
-   - **Audience tier** (Devin? Sonnet? DeepSeek 4? Kimi 2.6?)
+   - **Audience tier** (Claude 3.7? Sonnet? DeepSeek? Kimi?)
    - **Effective context budget** (~100 k for OSS mid-tier; ~200 k for
      Sonnet-class).
    - **Success criterion** (the explicit one + the unstated one).
@@ -137,7 +137,7 @@ criterion (autonomous navigation; no meta-reasoning), out-of-scope
 - Starting to read research notes before the entry-point trio. Wastes
   context budget; you do not yet know what's load-bearing.
 - Assuming the brief == the actual scope. User's *unstated*
-  constraint in this session was «do not modify Devin-only artefacts»;
+  constraint in this session was «do not modify legacy artefacts»;
   surfaced in P3, not P1.
 
 ---
@@ -306,7 +306,7 @@ session:
   Example: «Archive convention — new `/archive/` directory OR
   in-place stubs?» User picked B.
 - «Confirm specific item» — when one finding has a load-bearing
-  detail you're unsure of. Example: «Confirm `devin-reference.md`
+  detail you're unsure of. Example: «Confirm `agent-reference.md`
   archive specifically?» User confirmed yes + asked for inbound
   link updates.
 
@@ -325,7 +325,7 @@ issues caught, (c) blocking questions. **Block on user response.**
 ### This-session anchor
 
 After user picked Option B (in-place stubs) + confirmed
-`devin-reference.md` archive: opened PR-A → PR-B → PR-C → PR-D as a
+`agent-reference.md` archive: opened PR-A → PR-B → PR-C → PR-D as a
 stack (since PR-B / PR-C / PR-D had concrete dependencies on each
 other's content).
 
@@ -370,7 +370,7 @@ PR-D pre-flight  ✏️        .          .          .           .
 #### P4.2 — Branch naming
 
 Follow the user's convention if specified. Default:
-`devin/$(date +%s)-{descriptive-slug}`. **One PR per finding.**
+`agent/$(date +%s)-{descriptive-slug}`. **One PR per finding.**
 
 #### P4.3 — Doc-only PRs first
 
@@ -485,7 +485,7 @@ LOW-ROI or deferred → enumerated in the assessment with the rationale.
 
 ### Decision gates
 
-- **Q1: Did any PR fail CI / get blocked on Devin Review?** Surface
+- **Q1: Did any PR fail CI / get blocked on Agent Review?** Surface
   to user explicitly; do not let it sit silent.
 - **Q2: Is there a CRITICAL finding still un-shipped?** Block on
   user; don't close the audit.
@@ -498,7 +498,7 @@ Artefact: <ref_file file="/home/ubuntu/preflight-pass-assessment.md" />
 ### Anti-patterns
 
 - Skipping P5 entirely. In this session, P5 was the only artefact
-  that documented «PR #2 Devin Review failed status is historical;
+  that documented «PR #2 Agent Review failed status is historical;
   resolved by commit 871a156 before merge». Without P5, that
   context is lost when the next session starts.
 
@@ -744,7 +744,7 @@ This session's compressions:
   errors») as an explicit named step, because P6 doing the work
   that P2.5 should have done is a recurring pattern worth naming.
 - Added P7.1.a («trim operations: preserve, don't paraphrase»)
-  after Devin Review caught 5 fabrication regressions on PR-M
+  after Agent Review caught 5 fabrication regressions on PR-M
   (#13). The original P7.1 was a one-liner («repeat P4»); it
   missed that trim operations have their own failure mode that
   P4 self-review does not catch. The new sub-step encodes the
@@ -828,7 +828,7 @@ they're work-product, not docs the agent should grep at runtime).
 **Critical-re-pass (P6 → P7):**
 
 - PR #11 PR-K — Stage-1 critical-re-pass KEEP findings (merged
-  2026-05-12; one fix-up commit `9c85e19` addressed Devin Review
+  2026-05-12; one fix-up commit `9c85e19` addressed Agent Review
   on the bootstrap canonicality wording).
 - PR #12 PR-N — glossary trim 8 duplicative rows (merged
   2026-05-12; one fix-up commit `7b59434` corrected the
@@ -853,18 +853,18 @@ P4 self-review, and P7.1.a.
 | Same finding triple-counted across audit sections | P2 of `repo-audit-2026-05-10.md` | P6 dedup | P2.5 |
 | Code-switching recommendation contradicting empirical literature | P2 finding §4.3 | P6.3 web-search | P2.4 / P6.3 |
 | Token-budget alarmism (28k bootstrap on 128k window framed as «risky») | P2 finding §1.6 | P6 four-part filter | P2.3 |
-| Trim PR rewrote frontmatter from memory | PR-M `28eb9a9` | Devin Review | P4 self-review (now P7.1.a) |
-| Trim PR fabricated source URLs in body | PR-M `28eb9a9` | Devin Review | P4 self-review (now P7.1.a) |
-| Trim PR contradicted technology stack (Rust → Python) | PR-M `28eb9a9` | Devin Review | P4 self-review (now P7.1.a) |
-| Trim PR claimed «portable mirror» where lists differed structurally | PR-K `5973278` | Devin Review | P4.4 «middleground» check |
-| Trim PR introduced canonicality contradiction across two files | PR-K `5973278` | Devin Review | P4 cross-file consistency check |
-| Trim PR misquoted authoritative source (extra grep path) | PR-N `7ed24f6` | Devin Review | P4 verification-against-source |
-| Trim PR copy-pasted boilerplate stub-text across files without per-file verification | PR-M `6622e66` | Devin Review | P7.1.a per-file check |
+| Trim PR rewrote frontmatter from memory | PR-M `28eb9a9` | Agent Review | P4 self-review (now P7.1.a) |
+| Trim PR fabricated source URLs in body | PR-M `28eb9a9` | Agent Review | P4 self-review (now P7.1.a) |
+| Trim PR contradicted technology stack (Rust → Python) | PR-M `28eb9a9` | Agent Review | P4 self-review (now P7.1.a) |
+| Trim PR claimed «portable mirror» where lists differed structurally | PR-K `5973278` | Agent Review | P4.4 «middleground» check |
+| Trim PR introduced canonicality contradiction across two files | PR-K `5973278` | Agent Review | P4 cross-file consistency check |
+| Trim PR misquoted authoritative source (extra grep path) | PR-N `7ed24f6` | Agent Review | P4 verification-against-source |
+| Trim PR copy-pasted boilerplate stub-text across files without per-file verification | PR-M `6622e66` | Agent Review | P7.1.a per-file check |
 
 Load-bearing observation: **all 10 failures fired in trim or
 restate-from-memory operations.** Net-add PRs (PR-F exploration_log,
 PR-G rule #11, PR-I MAINTENANCE+BACKLOG) had zero substantive
-Devin Review findings. The signal: when the operation is *delete +
+Agent Review findings. The signal: when the operation is *delete +
 restate*, double the verification budget; when it's *add new
 content*, single budget is fine.
 

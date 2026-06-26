@@ -76,7 +76,7 @@ def contains_unresolved_variable(path_str: str) -> bool:
     ``<base>/$UNDEFINED/escape`` (inside base, allowed); bash sees
     ``rm /escape`` (top-level system path, denied). The fix is to
     refuse the path entirely when expansion would leave residual
-    ``$`` markers. (Devin Review finding 2026-05-20 on PR #23 —
+    ``$`` markers. (Agent Review finding 2026-05-20 on PR #23 —
     same class as the tilde bypass.)
 
     :func:`os.path.expandvars` expands any variables present in the
@@ -99,7 +99,7 @@ def resolve_against(target: str | Path, base: Path) -> Path | None:
     :meth:`Path.expanduser` becomes a no-op). Without this, a tilde
     target would pass containment because ``<base>/~/secret`` IS inside
     ``<base>``, but bash would later expand the ``~`` at execution time
-    and write outside the workspace \u2014 Devin Review finding 2026-05-20
+    and write outside the workspace \u2014 Agent Review finding 2026-05-20
     on PR #23.
 
     Environment variables (``$HOME``, ``${HOME}``, ``$WORKSPACE_ROOT``)

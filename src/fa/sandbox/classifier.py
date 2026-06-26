@@ -110,7 +110,7 @@ _READ_ONLY_TOKENS: frozenset[str] = frozenset(
         # command. It falls through to GENERAL_WRITE where the gate can route
         # it through path-containment / validator checks. The earlier
         # "bare `tee` to /dev/null is read-effective" rationale is true but
-        # not enough to mark every `tee` invocation read-only — Devin Review
+        # not enough to mark every `tee` invocation read-only — Agent Review
         # finding 2026-05-20 on PR #20.
         "env",
         "type",
@@ -159,7 +159,7 @@ _PACKAGE_INSTALL_PROGRAMS: frozenset[str] = frozenset(
         "gem",
         "go",  # `go get`/`go install` — _INSTALL_SUBCOMMANDS already lists
         # `get` and `install`; the program name was missing.
-        # Devin Review finding 2026-05-20 on PR #20.
+        # Agent Review finding 2026-05-20 on PR #20.
         "uv",
     }
 )
@@ -266,7 +266,7 @@ def _package_install_subcommand(tokens: list[str]) -> str:
     install verb is two levels deep at ``install``. Taking only the first
     non-flag token misclassifies ``uv pip install ...`` as
     :attr:`BashCategory.READ_ONLY` and bypasses the package-install gate
-    — Devin Review finding 2026-05-20 on PR #23.
+    — Agent Review finding 2026-05-20 on PR #23.
 
     Non-install reads (``pip list``, ``npm ls``) still return their first
     non-flag token (``list`` / ``ls``), which is not in
@@ -295,7 +295,7 @@ def _package_install_subcommand(tokens: list[str]) -> str:
 # ``echo evil > /etc/passwd`` has head ``echo`` (READ_ONLY) but writes
 # to ``/etc/passwd``. The classifier demotes such commands to
 # :attr:`BashCategory.GENERAL_WRITE` (or higher if a danger marker is
-# present anywhere). Devin Review finding 2026-05-20 on PR #23.
+# present anywhere). Agent Review finding 2026-05-20 on PR #23.
 _SHELL_OPERATOR_TOKENS: frozenset[str] = frozenset(
     {";", "&&", "||", "|", ">", ">>", "<", "<<", "&"}
 )

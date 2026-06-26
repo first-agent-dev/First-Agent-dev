@@ -112,7 +112,7 @@ def test_is_contained_rejects_tilde_escape(tmp_path: Path) -> None:
     of the joined path) and containment would PASS — but bash would
     later expand the ``~`` to ``$HOME`` at execution time and write
     outside the workspace. The fix expands the raw target first.
-    (Devin Review finding 2026-05-20 on PR #23.)
+    (Agent Review finding 2026-05-20 on PR #23.)
     """
     result = is_contained("~/secret", tmp_path)
     assert result.contained is False
@@ -207,7 +207,7 @@ def test_is_contained_rejects_undefined_variable_expansion(
     undefined variable to the empty string at execution time → the
     actual command becomes ``rm /escape`` → escapes the workspace.
     Sibling class to the tilde bypass.
-    (Devin Review finding 2026-05-20 on PR #23.)
+    (Agent Review finding 2026-05-20 on PR #23.)
     """
     monkeypatch.delenv("FA_TEST_UNDEFINED_ESC", raising=False)
     result = is_contained("$FA_TEST_UNDEFINED_ESC/escape", tmp_path)

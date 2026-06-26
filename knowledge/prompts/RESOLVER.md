@@ -36,7 +36,7 @@ T1 first.
 ## Notes on the role-prompt rows
 
 The Architect / Planner files in this folder are **system prompts** —
-load them in the `system` slot of the API call, not as a Devin task.
+load them in the `system` slot of the API call, not as a Agent task.
 See [`prompts/README.md` §Note on system prompts vs. task prompts](./README.md#note-on-system-prompts-vs-task-prompts).
 
 ## When to add a row

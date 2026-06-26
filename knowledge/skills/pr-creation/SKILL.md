@@ -16,7 +16,7 @@ triggers:
   - "filling in INTENT / CLASS / INVARIANT header lines"
   - "verifying PR Checklist items 1-10 before opening"
   - "composing PR description body or review reply"
-  - "adding AI-Session trailer to a Devin-driven commit"
+  - "adding AI-Session trailer to a agent-driven commit"
 relocated_from: |
   AGENTS.md §PR Intent Classification (2026-05-26 — PR A'); AGENTS.md
   §PR Checklist rules 1-10 + §PR Description Style + AI-Session
@@ -466,7 +466,7 @@ path / line / suggestion code-block) in English.
 
 ## AI-Session trailer
 
-When a commit is driven by a Devin (or other LLM-agent) session,
+When a commit is driven by a LLM-agent session,
 add an `AI-Session: <session-id>` trailer to the commit message.
 This preserves the link from a squash-merged commit back to the
 originating session for audit and re-entry. Pattern lifted from

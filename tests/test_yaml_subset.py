@@ -36,7 +36,7 @@ from fa._yaml_subset import strip_inline_comment
         # Multiple whitespace + `#` only counts the first occurrence,
         # which is the correct behaviour for a YAML comment cut.
         ("foo  # first # second", "foo "),
-        # Devin Review finding 2026-05-20 on PR #19 — when BOTH a tab-
+        # Agent Review finding 2026-05-20 on PR #19 — when BOTH a tab-
         # then-`#` AND a space-then-`#` are present, the earlier one
         # wins. Without min() the helper used to pick the later space
         # candidate and leak the tab-comment into the returned value.

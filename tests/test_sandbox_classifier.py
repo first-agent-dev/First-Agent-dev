@@ -88,7 +88,7 @@ def test_classify_git_write_commands(command: str) -> None:
         # behind a sub-program name (`pip`). The classifier must scan all
         # non-flag tokens (not just the first) to catch this, otherwise
         # `uv pip install malware` bypasses the gate as READ_ONLY.
-        # (Devin Review finding 2026-05-20 on PR #23.)
+        # (Agent Review finding 2026-05-20 on PR #23.)
         "uv pip install requests",
         "uv pip install --upgrade requests",
     ],
@@ -143,11 +143,11 @@ def test_classify_dangerous_commands(command: str) -> None:
         "chmod 644 file.txt",  # non-recursive chmod
         # `tee` writes to a file even though it also writes to stdout —
         # falls through to GENERAL_WRITE so the gate can run path-containment
-        # / validator checks. (Devin Review finding 2026-05-20.)
+        # / validator checks. (Agent Review finding 2026-05-20.)
         "tee /etc/sudoers",
         "tee /tmp/log",
         # `go run`/`go build`/`go test` compile-and-execute, so they MUST
-        # NOT be classified as read-only. (Devin Review fallout 2026-05-20.)
+        # NOT be classified as read-only. (Agent Review fallout 2026-05-20.)
         "go run main.go",
         "go build ./...",
         "go test ./...",
@@ -216,7 +216,7 @@ def test_classify_shell_operator_demotes_read_only_to_general_write(
     ``<``, ``&`` as regular tokens; bash interprets them as compound
     operators / redirections. The classifier scans for these and demotes
     to :attr:`BashCategory.GENERAL_WRITE` so the head token is never
-    trusted blindly. (Devin Review finding 2026-05-20 on PR #23.)
+    trusted blindly. (Agent Review finding 2026-05-20 on PR #23.)
     """
     assert classify_command(command) is BashCategory.GENERAL_WRITE
 
@@ -247,7 +247,7 @@ def test_classify_compound_with_dangerous_tail_is_dangerous(command: str) -> Non
     Otherwise `ls && rm -rf /` would demote to GENERAL_WRITE and miss
     the catastrophic tail. The classifier scans the full token stream
     for danger markers when a shell operator is present.
-    (Devin Review finding 2026-05-20 on PR #23.)
+    (Agent Review finding 2026-05-20 on PR #23.)
     """
     assert classify_command(command) is BashCategory.DANGEROUS
 

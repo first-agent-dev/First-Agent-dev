@@ -77,7 +77,7 @@ def test_run_bash_tool_returns_timeout_error(tmp_path: Path, monkeypatch: Monkey
 
 
 def test_read_file_tolerates_unresolved_workspace_root(tmp_path: Path) -> None:
-    """Devin-Review BUG-0002: a workspace_root containing ``..`` MUST NOT
+    """Agent-Review BUG-0002: a workspace_root containing ``..`` MUST NOT
     cause ``relative_to`` to raise ``ValueError`` out of the handler.
 
     Before the fix, ``build_read_file_tool`` captured the *unresolved*
@@ -102,7 +102,7 @@ def test_read_file_tolerates_unresolved_workspace_root(tmp_path: Path) -> None:
 
 
 def test_write_file_tolerates_unresolved_workspace_root(tmp_path: Path) -> None:
-    """Devin-Review BUG-0002, write-side mirror of the read-side test
+    """Agent-Review BUG-0002, write-side mirror of the read-side test
     above. ``build_write_file_tool`` now resolves ``workspace_root``
     once at build time so the summary's ``relative_to`` is safe."""
 

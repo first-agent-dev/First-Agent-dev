@@ -76,4 +76,4 @@ Adding a new output sink = one file + `output_bus.add(new_listener)`:
 
 - **Removing what?** Nothing duplicated — EventLog = audit file, Output = user display
 - **Lost if omitted?** Operator waits 30-120s blind
-- **OSS precedent?** Claude Code, Kiro, Aider, Devin — all show per-turn progress
+- **OSS precedent?** Claude Code, Kiro, Aider, Agent — all show per-turn progress

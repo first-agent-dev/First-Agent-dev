@@ -895,7 +895,7 @@
   invariant), not a campaign — zero new actions for the LLM, the
   test either exists or it does not.
   (3) **Layer 3 — Review-time prompt** in the PR review carrier
-  (Devin Review prompt, PR template, self-review checklist): «Does
+  (Agent Review prompt, PR template, self-review checklist): «Does
   this PR change *what the module does* or *how reliably it does
   it*? If the former, link the ADR amendment.» Documentary in M1;
   catches whatever Layers 1+2 missed.
@@ -939,7 +939,7 @@
   exist → the R-32 «detector personas» layer (specific prompts
   that scan the codebase for each anti-pattern) becomes worth
   designing; (2) Layer-1 declarations get systematically omitted
-  by Devin / DeepSeek / Kimi at a rate ≥10% over a measured
+  by Agent / DeepSeek / Kimi at a rate ≥10% over a measured
   sample → escalate to the mechanised-detection branch; (3) A new
   ADR's invariant cannot be encoded as a single named test (e.g.
   the invariant is over multiple files' joint behaviour) → revise
@@ -1486,12 +1486,12 @@
     pre-dates this PR. Renaming to `playbooks/` would force a
     later rename when the full R-24 store lands. Lesson:
     re-opens only if industry convention shifts away from
-    `skills/` filesystem-canon (KAOS / Anthropic / Devin
+    `skills/` filesystem-canon (KAOS / Anthropic / Agent
     `.agents/skills/`) toward `playbooks/` — none of the three
     currently signal this.
   - **(iii) Co-locate the skill at `.agents/skills/pr-creation/SKILL.md`
-    (Devin-native auto-load).** Reason: `.agents/skills/` is
-    a Devin-specific convention; weaker OSS LLMs (DeepSeek 4 /
+    (Agent-native auto-load).** Reason: `.agents/skills/` is
+    a Agent-specific convention; weaker OSS LLMs (DeepSeek 4 /
     Kimi 2.6) lack the auto-load harness, so they need a
     `knowledge/` path the AGENTS.md rule explicitly points at.
     Lesson: re-opens once a second skill lands and the dual
@@ -1541,7 +1541,7 @@
     `{AGENTS.md, knowledge/project-overview.md,
     knowledge/anti-patterns/AP-003, knowledge/skills/**}`,
     and the documentation must not claim «unchanged» when
-    a path-shape was added — see Devin-Review comment on
+    a path-shape was added — see Agent-Review comment on
     `HANDOFF.md:289-291` at PR #17.
   - Q-11 (anti-pattern catalogue → AP-001 / AP-003) — AP-003's
     `applies_to:` and Linked-rule cross-references re-point from

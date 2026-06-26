@@ -87,7 +87,7 @@ def test_family_patterns_are_all_known_families() -> None:
     :func:`test_extract_family_recognises_known_slugs` checks the
     opposite direction (every :data:`KNOWN_FAMILIES` entry has a
     happy-path case) but does NOT verify the reverse mapping.
-    Regression guard for Devin-Review BUG on PR #27.
+    Regression guard for Agent-Review BUG on PR #27.
     """
 
     for pattern, family in _FAMILY_PATTERNS:
