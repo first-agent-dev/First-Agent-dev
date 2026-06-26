@@ -194,7 +194,7 @@ fi
 # entrypoint is testable outside the image (a test can point it at a stub dir, or
 # set it empty to skip the prepend); production leaves it unset and gets the
 # image venv. An empty/absent dir is never prepended.
-FA_VENV_BIN="${FA_VENV_BIN:-/opt/fa-venv/bin}"
+FA_VENV_BIN="${FA_VENV_BIN-/opt/fa-venv/bin}"
 if [[ -n "$FA_VENV_BIN" && -d "$FA_VENV_BIN" ]]; then
   export PATH="${FA_VENV_BIN}:$PATH"
 fi
