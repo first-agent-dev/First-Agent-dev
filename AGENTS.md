@@ -170,6 +170,10 @@ agent projects. Violations of any of these caused reverts in production.
 4. **Every new ADR requires a §Prior Art section.** Document
    existing tools, papers, or projects that solve the same problem.
 
+5. **Build the runtime model before fixing infrastructure errors.**
+   When failure occurs: state what implicit behaviors the tool has in that environment. Then read the tool's documentation. Focus on fixing the abstraction.
+   Use [Anti-patterns](./knowledge/anti-patterns/) for debugging.
+
 ## Loadable skills
 
 Per-task agent-loadable disciplines live in
