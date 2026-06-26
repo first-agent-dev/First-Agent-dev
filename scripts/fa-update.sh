@@ -663,6 +663,13 @@ run_tests() {
     return
   fi
 
+  # Save the operator's .active session path. The deploy-smoke-test session
+  # runs fa-entrypoint.sh which writes its own path to .active — without this
+  # save/restore the next 'fa run' via wrapper would land in the test session.
+  local _saved_active=""
+  _saved_active=$(docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" \
+    cat /sessions/.active 2>/dev/null || true)
+
   if [[ "${SKIP_UV_SYNC}" == "0" ]]; then
     if docker compose -f "${COMPOSE_FILE}" exec -T -e FA_RUN_ID="deploy-smoke-test" "${SERVICE_NAME}" \
       /usr/local/bin/fa-entrypoint.sh bash -lc 'uv sync --frozen --extra dev' >/dev/null 2>&1; then
@@ -685,6 +692,12 @@ run_tests() {
   TEST_RC=$?
   trap 'rc=$?; echo "❌ ERROR at line ${LINENO}: ${BASH_COMMAND}"; exit "${rc}"' ERR
   set -e
+
+  # Restore the operator's .active (clobbered by deploy-smoke-test entrypoint).
+  if [[ -n "${_saved_active}" ]]; then
+    docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" \
+      bash -c "echo '${_saved_active}' > /sessions/.active" 2>/dev/null || true
+  fi
 
   if [[ "${TEST_RC}" -ne 0 ]]; then
     echo "  ⚠ pytest failed (rc=${TEST_RC}). Container is still running."

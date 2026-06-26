@@ -151,13 +151,20 @@ if [[ -d "/repo/.git" ]]; then
     SESSION_DIR="/sessions/${SESSION_ID}"
 
     if [[ ! -d "$SESSION_DIR/.git" ]]; then
-        # Use -c safe.directory instead of git config --global: the container
-        # rootfs is read-only, so writing ~/.gitconfig would fail.
-        git -c safe.directory='*' clone --local /repo "$SESSION_DIR"
-
-        cd "$SESSION_DIR"
-        git checkout -b "devin/${SESSION_ID}"
-        log "Created session workspace: $SESSION_DIR"
+        # The container rootfs is read-only — git config --global would fail.
+        # GIT_CONFIG_COUNT sets safe.directory=* via environment, which applies
+        # to the source-repo ownership check during clone (git -c does not —
+        # the ownership check runs before -c flags take effect on git 2.36+).
+        if GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
+            git clone --local /repo "$SESSION_DIR"; then
+            cd "$SESSION_DIR"
+            git checkout -b "devin/${SESSION_ID}"
+            log "Created session workspace: $SESSION_DIR"
+        else
+            # Clean up partial clone so it doesn't accumulate on restarts.
+            rm -rf "$SESSION_DIR" 2>/dev/null || true
+            log "ERROR: git clone failed for $SESSION_DIR — cleaned up"
+        fi
     else
         cd "$SESSION_DIR"
         log "Resumed session workspace: $SESSION_DIR"
