@@ -151,9 +151,12 @@ if [[ -d "/repo/.git" ]]; then
     SESSION_DIR="/sessions/${SESSION_ID}"
 
     if [[ ! -d "$SESSION_DIR/.git" ]]; then
-        # safe.directory=* is baked into the image (git config --system in
-        # Dockerfile.fa) — no runtime config needed.
-        if git clone --local /repo "$SESSION_DIR"; then
+        # file:// protocol uses git's pack transport (not filesystem hardlinks).
+        # This avoids two classes of bugs that --local (the bare-path default) hits:
+        #   1. "dubious ownership" — safe.directory check on the source repo
+        #   2. "Invalid cross-device link" — hardlinks fail across mount boundaries
+        # Still local (no network), just uses the transport layer over pipes.
+        if git clone "file:///repo" "$SESSION_DIR"; then
             cd "$SESSION_DIR"
             git checkout -b "devin/${SESSION_ID}"
             log "Created session workspace: $SESSION_DIR"

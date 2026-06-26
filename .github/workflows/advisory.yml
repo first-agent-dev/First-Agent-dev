@@ -133,8 +133,7 @@ jobs:
           git commit --allow-empty -q -m "init"
           cd -
           sudo chown 1000:1000 /tmp/fa-ci-sessions /tmp/fa-ci-state
-          # safe.directory=* is baked into the image (git config --system
-          # in Dockerfile.fa) — no runtime env vars needed.
+          # file:// protocol avoids safe.directory + cross-device hardlink issues.
           docker run --rm --user 1000:1000 --read-only \
             --tmpfs /tmp --tmpfs /home/fa/.cache --tmpfs /home/fa/.local \
             -v /tmp/fa-ci-repo:/repo:ro \
@@ -143,7 +142,7 @@ jobs:
             -e FA_RUN_ID=ci-smoke \
             fa-image:ci bash -c '
               set -euo pipefail
-              git clone --local /repo /sessions/ci-smoke
+              git clone file:///repo /sessions/ci-smoke
               cd /sessions/ci-smoke
               git checkout -b devin/ci-smoke
               test -d /sessions/ci-smoke/.git
