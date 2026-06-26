@@ -140,6 +140,17 @@ EOF
   sudo chmod 640 "${MODELS_YAML_FILE}"
 }
 
+ensure_sessions_dir() {
+  # The /sessions bind mount source must exist and be writable by the container
+  # user (uid 1000). Docker bind mounts inherit host ownership — the Dockerfile's
+  # chown only applies to the image layer, which the bind mount replaces.
+  local sessions_dir="/srv/first-agent/sessions"
+  if [[ ! -d "${sessions_dir}" ]]; then
+    sudo mkdir -p "${sessions_dir}"
+  fi
+  sudo chown 1000:1000 "${sessions_dir}"
+}
+
 validate_file_mount_sources() {
   local required_files=(
     "${SECRETS_ENV}"
@@ -803,6 +814,7 @@ main() {
   evaluate_changes
   validate_env
   validate_file_mount_sources
+  ensure_sessions_dir
   build_and_deploy
   wait_for_health
   check_proxy_path

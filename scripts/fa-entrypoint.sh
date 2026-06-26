@@ -151,8 +151,9 @@ if [[ -d "/repo/.git" ]]; then
     SESSION_DIR="/sessions/${SESSION_ID}"
 
     if [[ ! -d "$SESSION_DIR/.git" ]]; then
-        git config --global --add safe.directory /repo || true
-        git clone --local /repo "$SESSION_DIR"
+        # Use -c safe.directory instead of git config --global: the container
+        # rootfs is read-only, so writing ~/.gitconfig would fail.
+        git -c safe.directory=/repo clone --local /repo "$SESSION_DIR"
 
         cd "$SESSION_DIR"
         git checkout -b "devin/${SESSION_ID}"

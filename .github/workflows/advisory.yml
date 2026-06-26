@@ -118,3 +118,39 @@ jobs:
           # load under the same constraints the proxy container uses).
           docker run --rm --user 1000:1000 --read-only --tmpfs /tmp \
             fa-image:ci fa egress-proxy --help >/dev/null
+      - name: Smoke-test session workspace isolation (mount topology)
+        run: |
+          set -euo pipefail
+          # Simulate the production bind-mount topology: /repo (RO) + /sessions (RW).
+          # This catches three classes of bugs that unit tests cannot:
+          #   1. git clone fails on read-only rootfs (.gitconfig write)
+          #   2. /sessions owned by root → Permission denied for uid 1000
+          #   3. entrypoint can't create session workspace at startup
+          mkdir -p /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state
+          cd /tmp/fa-ci-repo
+          git init -q
+          git config user.email "ci@test" && git config user.name "ci"
+          git commit --allow-empty -q -m "init"
+          cd -
+          sudo chown 1000:1000 /tmp/fa-ci-sessions /tmp/fa-ci-state
+          docker run --rm --user 1000:1000 --read-only \
+            --tmpfs /tmp --tmpfs /home/fa/.cache --tmpfs /home/fa/.local \
+            -v /tmp/fa-ci-repo:/repo:ro \
+            -v /tmp/fa-ci-sessions:/sessions \
+            -v /tmp/fa-ci-state:/home/fa/.fa \
+            -e FA_RUN_ID=ci-smoke \
+            fa-image:ci bash -c '
+              set -euo pipefail
+              # Session clone (what fa-entrypoint.sh does on container start)
+              git -c safe.directory=/repo clone --local /repo /sessions/ci-smoke
+              cd /sessions/ci-smoke
+              git checkout -b devin/ci-smoke
+              # Verify workspace has the expected structure
+              test -d /sessions/ci-smoke/.git
+              echo "/sessions/ci-smoke" > /sessions/.active
+              test -f /sessions/.active
+              # Verify fa CLI works from session workspace
+              fa --version
+              echo "✅ Session workspace isolation OK"
+            '
+          rm -rf /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state

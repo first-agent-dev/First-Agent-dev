@@ -314,6 +314,9 @@ fi
 # mount into both containers and is prepared by ensure_routing_models.
 sudo mkdir -p "${FA_DIR}/state"
 sudo chown -R 1000:1000 "${FA_DIR}/state" 2>/dev/null || true
+# Session workspace mount source (workspace isolation, ADR-13).
+sudo mkdir -p "${FA_DIR}/sessions"
+sudo chown 1000:1000 "${FA_DIR}/sessions"
 ensure_routing_models
 
 # ───────────────────────────────────────────────────────────────
