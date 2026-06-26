@@ -145,7 +145,8 @@ _on_term() {
 
 # Session workspace setup — runs once on container start.
 # Creates a git clone from /repo into /sessions/<id>.
-if [[ -d "/repo/.git" ]]; then
+# When FA_WORKSPACE is set the caller owns the workspace — skip session clone.
+if [[ -d "/repo/.git" ]] && [[ -z "${FA_WORKSPACE:-}" ]]; then
     SESSION_ID="${FA_RUN_ID:-session-$(date -u +%Y%m%dT%H%M%S)-$$}"
     export FA_RUN_ID="$SESSION_ID"
     SESSION_DIR="/sessions/${SESSION_ID}"

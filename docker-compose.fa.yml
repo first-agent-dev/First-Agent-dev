@@ -41,12 +41,14 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
       - UV_CACHE_DIR=/tmp/uv-cache
-      # PYTHONPATH is set by fa-entrypoint.sh (it prepends /workspace/src); do not
-      # also set it here or it ends up duplicated (/workspace/src:/workspace/src).
+      # PYTHONPATH is set by fa-entrypoint.sh (it prepends <workspace>/src); do not
+      # also set it here or it ends up duplicated.
       # Default is inspectable stand-by. For a deliberate one-shot
       # startup run, set FA_AUTO_RUN=1 plus FA_TASK or FA_TASK_FILE
       # in .env.fa (or pass them explicitly with docker compose run -e).
-      - FA_WORKSPACE=/workspace
+      # FA_WORKSPACE is intentionally absent: when unset, the entrypoint
+      # creates a per-session clone from /repo into /sessions/<id>.
+      # Set FA_WORKSPACE explicitly only to override this (e.g. dev/test).
       - FA_CONTAINER_NAME=first-agent
       # Use deploy key exclusively; ignore any other SSH keys in the container.
       # BatchMode=yes + StrictHostKeyChecking=accept-new prevent interactive

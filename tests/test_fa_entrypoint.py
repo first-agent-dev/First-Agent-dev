@@ -185,6 +185,9 @@ def test_entrypoint_task_file_must_stay_inside_workspace(tmp_path: Path) -> None
 
 def test_entrypoint_creates_session_clone(tmp_path: Path) -> None:
     env, status, _bin_dir = _base_env(tmp_path)
+    # Session-clone tests must NOT set FA_WORKSPACE — its absence is what
+    # triggers the session-clone path in the entrypoint.
+    env.pop("FA_WORKSPACE", None)
 
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
@@ -207,6 +210,7 @@ def test_entrypoint_creates_session_clone(tmp_path: Path) -> None:
     test_entrypoint = tmp_path / "fa-entrypoint-test.sh"
     original = _ENTRYPOINT.read_text(encoding="utf-8")
     modified = original.replace('"/repo/.git"', f'"{repo_dir}/.git"')
+    modified = modified.replace('file:///repo', f'file://{repo_dir}')
     modified = modified.replace('/repo ', f'{repo_dir} ')
     modified = modified.replace('"/repo"', f'"{repo_dir}"')
     modified = modified.replace('"/sessions/', f'"{sessions_dir}/')
@@ -234,6 +238,7 @@ def test_entrypoint_creates_session_clone(tmp_path: Path) -> None:
 
 def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
     env, status, _bin_dir = _base_env(tmp_path)
+    env.pop("FA_WORKSPACE", None)
 
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
@@ -258,6 +263,7 @@ def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
     test_entrypoint = tmp_path / "fa-entrypoint-test.sh"
     original = _ENTRYPOINT.read_text(encoding="utf-8")
     modified = original.replace('"/repo/.git"', f'"{repo_dir}/.git"')
+    modified = modified.replace('file:///repo', f'file://{repo_dir}')
     modified = modified.replace('/repo ', f'{repo_dir} ')
     modified = modified.replace('"/repo"', f'"{repo_dir}"')
     modified = modified.replace('"/sessions/', f'"{sessions_dir}/')
@@ -274,13 +280,14 @@ def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
         _wait_for_status(status, "status=STANDBY", proc)
     finally:
         _terminate(proc)
-        
+
     active_file = sessions_dir / ".active"
     assert active_file.exists()
     assert active_file.read_text(encoding="utf-8").strip() == str(session_workspace)
 
 def test_entrypoint_command_override_executes_inside_session_clone(tmp_path: Path) -> None:
     env, _status, _bin_dir = _base_env(tmp_path)
+    env.pop("FA_WORKSPACE", None)
 
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
@@ -303,6 +310,7 @@ def test_entrypoint_command_override_executes_inside_session_clone(tmp_path: Pat
     test_entrypoint = tmp_path / "fa-entrypoint-test.sh"
     original = _ENTRYPOINT.read_text(encoding="utf-8")
     modified = original.replace('"/repo/.git"', f'"{repo_dir}/.git"')
+    modified = modified.replace('file:///repo', f'file://{repo_dir}')
     modified = modified.replace('/repo ', f'{repo_dir} ')
     modified = modified.replace('"/repo"', f'"{repo_dir}"')
     modified = modified.replace('"/sessions/', f'"{sessions_dir}/')
