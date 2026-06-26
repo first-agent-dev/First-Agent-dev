@@ -148,4 +148,4 @@ jobs:
               fa --version
               echo "Session workspace isolation OK"
             '
-          rm -rf /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state
+          sudo rm -rf /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state
