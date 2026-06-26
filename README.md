@@ -1,10 +1,10 @@
 # First-Agent
 
-![Tests](https://img.shields.io/badge/tests-1200%2B-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-90%25%2B-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1300%2B-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-85%25%2B-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.13-blue)
-![Docker](https://img.shields.io/badge/docker-AIO_Ready-blue)
-![License](https://img.shields.io/badge/license-Proprietary-red)
+![Docker](https://img.shields.io/badge/docker-Ready-blue)
+
 
 > **Locally orchestrated, mixed-tier LLM coding agent for power-users.**  
 > Built on the principles of Unix-way, zero-trust LLM isolation, and minimalism-first.
