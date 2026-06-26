@@ -90,7 +90,36 @@ log_warn()  { echo -e "\033[0;33m[WARN]\033[0m  $*"; }
 log_error() { echo -e "\033[0;31m[ERROR]\033[0m $*" >&2; }
 
 # shellcheck disable=SC2154  # rc IS assigned (rc=$?) inside this same trap string.
-trap 'rc=$?; log_error "Failed at line ${LINENO} (rc=${rc}): ${BASH_COMMAND}. The stack may be partially rebuilt; re-run after fixing."; exit "${rc}"' ERR
+trap_err() {
+    local rc=$?
+    local lineno=$1
+    local cmd=$2
+    log_error "Failed at line ${lineno} (rc=${rc}): ${cmd}."
+    if [[ "${STASHED:-0}" == "1" ]]; then
+        log_warn "Recovering auto-stashed changes before exit..."
+        git -C "${REPO_DIR}" stash pop || log_error "Failed to restore stash."
+    fi
+    log_error "The stack may be partially rebuilt; re-run after fixing."
+    exit "${rc}"
+}
+trap 'trap_err ${LINENO} "${BASH_COMMAND}"' ERR
+
+retry() {
+    local n=1
+    local max=3
+    local delay=5
+    while true; do
+        if "$@"; then
+            return 0
+        fi
+        if (( n >= max )); then
+            return 1
+        fi
+        log_warn "Command failed: $* (attempt $n of $max). Retrying in ${delay}s..."
+        sleep "$delay"
+        ((n++))
+    done
+}
 
 assert_safe_fa_dir() {
     # This script performs recursive deletes/chowns. In production the managed
@@ -200,14 +229,14 @@ if [[ "${SKIP_UPDATE}" != "1" && "${_FA_REBUILD_REEXEC}" != "1" ]]; then
             fi
         fi
         log_info "Updating repo to origin/${GIT_BRANCH} (--ff-only)..."
-        git fetch origin --prune
+        retry git fetch origin --prune
         current_branch=$(git rev-parse --abbrev-ref HEAD)
         if [[ "${current_branch}" != "${GIT_BRANCH}" ]]; then
             log_info "Switching ${current_branch} → ${GIT_BRANCH}..."
             git switch "${GIT_BRANCH}" 2>/dev/null || git checkout "${GIT_BRANCH}"
         fi
         before=$(git rev-parse HEAD)
-        git pull --ff-only origin "${GIT_BRANCH}"
+        retry git pull --ff-only origin "${GIT_BRANCH}"
         after=$(git rev-parse HEAD)
         if [[ "${STASHED}" == "1" ]]; then
             log_info "Restoring stashed changes before continuing..."

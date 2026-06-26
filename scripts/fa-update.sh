@@ -89,7 +89,35 @@ flock -w 600 9 || {
 }
 
 # shellcheck disable=SC2154  # rc IS assigned (rc=$?) inside this same trap string.
-trap 'rc=$?; echo "❌ ERROR at line ${LINENO}: ${BASH_COMMAND}"; exit "${rc}"' ERR
+trap_err() {
+  local rc=$?
+  local lineno=$1
+  local cmd=$2
+  echo "❌ ERROR at line ${lineno}: ${cmd}"
+  if [[ "${STASHED:-0}" == "1" ]]; then
+    echo "  → Recovering auto-stashed changes before exit..."
+    git -C "${REPO_DIR}" stash pop || echo "  ✗ Failed to restore stash."
+  fi
+  exit "${rc}"
+}
+trap 'trap_err ${LINENO} "${BASH_COMMAND}"' ERR
+
+retry() {
+    local n=1
+    local max=3
+    local delay=5
+    while true; do
+        if "$@"; then
+            return 0
+        fi
+        if (( n >= max )); then
+            return 1
+        fi
+        echo "  ⚠ Command failed: $* (attempt $n of $max). Retrying in ${delay}s..."
+        sleep "$delay"
+        ((n++))
+    done
+}
 
 # ═══════════════════════════════════════════════════════════════
 #  Helpers
@@ -308,7 +336,7 @@ git_update() {
     fi
   fi
 
-  git fetch origin --prune
+  retry git fetch origin --prune
 
   local current_branch
   current_branch=$(git rev-parse --abbrev-ref HEAD)
@@ -319,7 +347,7 @@ git_update() {
 
   local before after
   before=$(git rev-parse HEAD)
-  git pull --ff-only origin main
+  retry git pull --ff-only origin main
   after=$(git rev-parse HEAD)
 
   if [[ "${STASHED}" == "1" ]]; then
@@ -694,7 +722,7 @@ run_tests() {
   docker compose -f "${COMPOSE_FILE}" exec -T -e FA_RUN_ID="deploy-smoke-test" "${SERVICE_NAME}" \
     /usr/local/bin/fa-entrypoint.sh bash -lc 'if command -v uv >/dev/null 2>&1; then uv run python -m pytest -v --tb=short; else python -m pytest -v --tb=short; fi'
   TEST_RC=$?
-  trap 'rc=$?; echo "❌ ERROR at line ${LINENO}: ${BASH_COMMAND}"; exit "${rc}"' ERR
+  trap 'trap_err ${LINENO} "${BASH_COMMAND}"' ERR
   set -e
 
   # Restore the operator's .active (clobbered by deploy-smoke-test entrypoint).
