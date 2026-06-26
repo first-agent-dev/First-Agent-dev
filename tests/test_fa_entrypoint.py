@@ -274,7 +274,7 @@ def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
         _wait_for_status(status, "status=STANDBY", proc)
     finally:
         _terminate(proc)
-        
+
     active_file = sessions_dir / ".active"
     assert active_file.exists()
     assert active_file.read_text(encoding="utf-8").strip() == str(session_workspace)
