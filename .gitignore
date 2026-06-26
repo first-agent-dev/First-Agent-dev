@@ -42,7 +42,11 @@ htmlcov/
 .mutmut-cache
 .gremlins-cache/
 gremlin-report.html
-# Session trace artifacts (written by LearningObserver during fa run).
-# Committed periodically via `fa commit-traces`, not on every session.
-knowledge/trace/gotchas.md
-knowledge/trace/codebase_map.json
+# Session trace artifacts (written by LearningObserver and agent sessions).
+# Ignore all agent-generated files; keep only the three tracked seed files
+# (codebase_map.json, exploration_log.md, exploration_tree.yaml).
+# Use `fa commit-traces` to commit trace updates on operator demand.
+knowledge/trace/*
+!knowledge/trace/codebase_map.json
+!knowledge/trace/exploration_log.md
+!knowledge/trace/exploration_tree.yaml
