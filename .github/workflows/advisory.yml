@@ -142,12 +142,9 @@ jobs:
             -e FA_RUN_ID=ci-smoke \
             fa-image:ci bash -c '
               set -euo pipefail
-              git clone file:///repo /sessions/ci-smoke
-              cd /sessions/ci-smoke
-              git checkout -b devin/ci-smoke
               test -d /sessions/ci-smoke/.git
-              echo "/sessions/ci-smoke" > /sessions/.active
               test -f /sessions/.active
+              test "$PWD" = "/sessions/ci-smoke"
               fa --version
               echo "Session workspace isolation OK"
             '

@@ -670,6 +670,10 @@ run_tests() {
   _saved_active=$(docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" \
     cat /sessions/.active 2>/dev/null || true)
 
+  # Clean up any stale smoke test session from a previous run to ensure a fresh clone
+  docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" \
+    bash -c "rm -rf /sessions/deploy-smoke-test" 2>/dev/null || true
+
   if [[ "${SKIP_UV_SYNC}" == "0" ]]; then
     if docker compose -f "${COMPOSE_FILE}" exec -T -e FA_RUN_ID="deploy-smoke-test" "${SERVICE_NAME}" \
       /usr/local/bin/fa-entrypoint.sh bash -lc 'uv sync --frozen --extra dev' >/dev/null 2>&1; then

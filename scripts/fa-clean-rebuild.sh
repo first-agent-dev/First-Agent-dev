@@ -242,7 +242,7 @@ normalize_env_files
 
 # Confirmation for destructive flags (skip with ASSUME_YES=1 or non-interactive).
 if [[ "${WIPE_STATE}" == "1" || "${PRUNE}" == "1" ]] && [[ "${ASSUME_YES}" != "1" ]]; then
-    [[ "${WIPE_STATE}" == "1" ]] && log_warn "WIPE_STATE=1 will DELETE ${FA_DIR}/state/* and reset ${ROUTING_MODELS_FILE} (keys are kept)."
+    [[ "${WIPE_STATE}" == "1" ]] && log_warn "WIPE_STATE=1 will DELETE ${FA_DIR}/state/*, ${FA_DIR}/sessions/* and reset ${ROUTING_MODELS_FILE} (keys are kept)."
     [[ "${PRUNE}" == "1" ]] && log_warn "PRUNE=1 will remove ALL unused Docker images + build cache on this host, not only First-Agent."
     if [[ -t 0 ]]; then
         read -r -p "Proceed? [y/N] " reply
@@ -300,8 +300,9 @@ if [[ -d "${FA_DIR}/state/runs" ]]; then
 fi
 
 if [[ "${WIPE_STATE}" == "1" ]]; then
-    log_warn "WIPE_STATE=1 — clearing ALL of ${FA_DIR}/state/* and resetting ${ROUTING_MODELS_FILE} (keys preserved)."
+    log_warn "WIPE_STATE=1 — clearing ALL of ${FA_DIR}/state/*, ${FA_DIR}/sessions/* and resetting ${ROUTING_MODELS_FILE} (keys preserved)."
     sudo rm -rf "${FA_DIR}/state/"* 2>/dev/null || true
+    sudo rm -rf "${FA_DIR}/sessions/"* 2>/dev/null || true
     sudo rm -f "${ROUTING_MODELS_FILE}" 2>/dev/null || true
     # WIPE_STATE historically reset models.yaml. Do not resurrect a stale
     # legacy proxy/state copy during this explicit reset; recreate from the
