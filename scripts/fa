@@ -78,7 +78,9 @@ case "${1:-}" in
         ;;
     commit-traces)
         cd "$REPO_DIR"
-        git add knowledge/trace/codebase_map.json knowledge/trace/gotchas.md 2>/dev/null
+        # -f: force-add gitignored trace files (they're ignored by default
+        # so fa-update.sh stays clean; commit-traces is the deliberate path).
+        git add -f knowledge/trace/codebase_map.json knowledge/trace/gotchas.md 2>/dev/null
         git diff --cached --quiet && { echo "fa: no trace changes to commit"; exit 0; }
         git commit -m "chore: update session trace artifacts"
         echo "fa: trace artifacts committed"
