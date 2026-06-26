@@ -1,75 +1,91 @@
 # First-Agent
-- For llm agents reading - **[AGENTS.md](./AGENTS.md)**
 
-📖 **Деплой / обновление / управление?** вам сюда:
-**[knowledge/instructions/README.md](./knowledge/instructions/README.md)**
+![Tests](https://img.shields.io/badge/tests-1200%2B-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-90%25%2B-brightgreen)
+![Python](https://img.shields.io/badge/python-3.13-blue)
+![Docker](https://img.shields.io/badge/docker-AIO_Ready-blue)
+![License](https://img.shields.io/badge/license-Proprietary-red)
+
+> **Locally orchestrated, mixed-tier LLM coding agent for power-users.**  
+> Built on the principles of Unix-way, zero-trust LLM isolation, and minimalism-first.
+
+⭐ **Краткий обзор фичей и архитектуры (PITCH): [FEATURES.md](./FEATURES.md)**  
+📖 **Деплой / обновление / управление (AIO Server):** [knowledge/instructions/README.md](./knowledge/instructions/README.md)  
+🤖 **Для LLM-агентов (Start Here):** [AGENTS.md](./AGENTS.md)
 
 ---
 
+## 🏗 Архитектура безопасности (By-Design)
+
+Мы не доверяем LLM слепо. First-Agent заперт в детерминированной песочнице: ключи изолированы в отдельном контейнере, а работа над кодом ведется только во временных Git-клонах.
+
+```mermaid
+graph TD
+    User([👨‍💻 Operator]) -->|fa run| HostWrapper[scripts/fa]
+    HostWrapper -->|docker exec| AgentContainer
+    
+    subgraph AIO Server [AIO Host Server]
+        Repo[(/repo \n Read-Only Host Repo)]
+        
+        subgraph Docker Compose
+            ProxyContainer[fa-egress-proxy]
+            AgentContainer[first-agent]
+        end
+        
+        AgentContainer -- HTTP (no keys) --> ProxyContainer
+        ProxyContainer -- HTTP + Injected Keys --> LLM[LLM Providers]
+        
+        Repo -.->|RO Mount| AgentContainer
+        AgentContainer -->|git clone --local| Sessions[(/sessions \n Isolated RW Workspaces)]
+    end
+```
+
+<details>
+<summary><b>Развернуть полное описание Scope и Зачем это нужно</b></summary>
+
 ## 1. Зачем это
 
-**First-Agent-dev** - репозиторий, в котором я собираю **собственного LLM-агента**.
-
 **First-Agent** — research-backed implementation-first проект, стремящийся
-стать open-source reference implementation для locally orchestrated coding
-agents. Помимо самого факта построения работающего harness, проект ставит
-4 явных цели (полная формулировка —
-[`knowledge/project-overview.md` §1.1](./knowledge/project-overview.md#11-четыре-столпа-цели-project-goal--four-pillars)):
+стать open-source reference implementation для locally orchestrated coding agents. 
+Помимо самого факта построения работающего harness, проект ставит 4 явных цели:
 
 1. Пройти весь путь от формулировки до working prototype, документируя
-   каждое архитектурное решение через ADR + research note. Ригор делает
-   репо одновременно учебным инструментом и forkable reference.
+   каждое архитектурное решение через ADR + research note.
 2. Выпустить v0.1 как pragmatic single-user product под UC1 (coding+PR) +
    UC3 (local-docs-to-wiki) с hybrid-shape (filesystem-canon + lazy
    search-side scaling).
 3. Построить **наиболее token- и tool-call-efficient harness** среди
-   известных open-source / open-design агент-стэков под целевые UC1+UC3
-   при single-user single-workstation use. KPI-числа фиксируются после
-   landing UC5 (eval-harness) и первого baseline-run; до того стоят
-   как `TBD`.
+   известных open-source / open-design агент-стэков.
 4. **Iteration via measurement.** База в v0.1 — способность агента писать
-   собственные skills (`SKILL.md`-файлы) по итогам решённых задач и
-   найденных улучшений. UC5 (post-v0.1) расширяется до eval-driven
-   harness iteration.
+   собственные skills (`SKILL.md`-файлы) по итогам решённых задач.
 
 **Принцип построения — minimalism-first.** Не «вырезать лишнее потом», а
-не добавлять без research-evidence или измеренного KPI-impact. Подробнее:
-[`knowledge/project-overview.md` §1.2](./knowledge/project-overview.md#12-enforceable-principle--minimalism-first).
+не добавлять без research-evidence или измеренного KPI-impact.
 
-Опора — research papers (Tsinghua module-ablation `arXiv:2603.25723`,
-Stanford / Khattab Meta-Harness `arXiv:2603.28052v1`, Anthropic engineering
-posts), MCP-экосистема, и Devin / Claude Code / OSS repo's как reference-агенты.
-
----
+Опора — research papers (Tsinghua module-ablation,
+Stanford / Khattab Meta-Harness, Anthropic engineering posts), MCP-экосистема.
 
 ## 2. Scope — что входит и что не входит
 
-Полная версия — в
-[`knowledge/project-overview.md`](./knowledge/project-overview.md) §4–§5.
-Краткая выжимка:
-
 ### В scope (v0.1)
 
-- **UC1** — coding + PR-write end-to-end (FA + 1–2 controlled-list
-  репозитория пользователя).
-- **UC3** — local-docs-to-wiki (`fa ingest <path-or-url>`,
-  chunk-aware retrieval, Q&A).
+- **UC1** — coding + PR-write end-to-end.
+- **UC3** — local-docs-to-wiki (`fa ingest`, chunk-aware retrieval, Q&A).
 - Static role-routing LLM tiering (Planner / Coder / Debug),
-  mechanical-wiki memory (no embeddings/graph в v0.1), SQLite FTS5
-  индекс, sandbox + path allow-list для тулов.
+  mechanical-wiki memory (SQLite FTS5), sandbox + path allow-list для тулов.
 
 ### Вне scope (v0.1)
 
 - **UC2** continuous multi-source research — best-effort.
 - **UC4** multi-user Telegram chat — deferred.
-- **UC5** semi-autonomous multi-LLM research/experiment — deferred
-  (см. [ADR-1 Amendment 2026-05-01](./knowledge/adr/ADR-1-v01-use-case-scope.md)).
-- Production-деплой, мульти-тенантность, биллинг, собственный веб-UI,
-  обучение/дообучение моделей, агент-общего-назначения «на всё».
+- **UC5** semi-autonomous multi-LLM research/experiment — deferred.
+- Production-деплой, мульти-тенантность, биллинг, собственный веб-UI.
+
+</details>
 
 ---
 
-## 3. Как работать с этим репо
+## 🧭 Как работать с этим репо
 
 Полный inventory всех документов — в
 [`knowledge/llms.txt`](./knowledge/llms.txt) (one-fetch индекс,
@@ -81,11 +97,9 @@ posts), MCP-экосистема, и Devin / Claude Code / OSS repo's как ref
 1. Прочитать [`AGENTS.md`](./AGENTS.md) — repo conventions, query routing.
 2. Прочитать [`knowledge/llms.txt`](./knowledge/llms.txt) — карта
    репо в одном fetch'е.
-3. Просмотреть [`knowledge/project-overview.md`](./knowledge/project-overview.md)
-   — что v0.1 ships и что non-goal.
-4. Просмотреть индекс ADR — [`knowledge/adr/README.md`](./knowledge/adr/README.md).
-5. Проверить [`HANDOFF.md`](./HANDOFF.md) — текущий snapshot
+3. Проверить [`HANDOFF.md`](./HANDOFF.md) — текущий snapshot
    состояния репо для cross-LLM сессий.
+4. Просмотреть индекс ADR — [`knowledge/adr/README.md`](./knowledge/adr/README.md).
 
 Дальше — по необходимости (ADR / research-нота / промпт). Не нужно
 загружать всё в контекст сразу; routing-table в
@@ -93,17 +107,17 @@ posts), MCP-экосистема, и Devin / Claude Code / OSS repo's как ref
 
 ---
 
-## 4. Основные файлы
+## 📂 Основные папки и файлы
 
+- [`FEATURES.md`](./FEATURES.md) — обзор фичей и киллер-фич продукта.
 - [`AGENTS.md`](./AGENTS.md) — конвенции и инструкции для AI-агентов.
 - [`HANDOFF.md`](./HANDOFF.md) — snapshot состояния для cross-LLM сессий.
 - [`knowledge/README.md`](./knowledge/README.md) — как устроена память
-  проекта (frontmatter schema, конвенции, supersession-rule).
-- [`knowledge/llms.txt`](./knowledge/llms.txt) — one-fetch индекс
-  всех документов.
+  проекта (frontmatter schema, конвенции).
+- [`knowledge/llms.txt`](./knowledge/llms.txt) — one-fetch индекс всех документов.
 - [`knowledge/instructions/`](./knowledge/instructions/README.md) —
   инструкции по развёртыванию и эксплуатации (install + operations).
-- [`knowledge/adr/README.md`](./knowledge/adr/README.md) — индекс ADR.
+- [`knowledge/adr/README.md`](./knowledge/adr/README.md) — индекс архитектурных решений (ADR).
 - [`knowledge/pr-notes/`](./knowledge/pr-notes/README.md) — архив PR-заметок.
 
 ---

@@ -1,5 +1,11 @@
 # Knowledge
 
+
+> **Note on Dogfooding:** First-Agent is actively developed by itself. 
+> The agent lives in a containerized AIO host, reads this immutable knowledge base, 
+> works in an isolated `Workspace Clone` (ADR-13), and issues PRs to its own repository.
+> The architectural decisions below aren't just theory—they are mechanically enforced by the agent.
+
 Durable project knowledge for First-Agent. Everything here is:
 
 1. **Committed** to the repo so it is versioned and reviewable.
