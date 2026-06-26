@@ -153,7 +153,7 @@ if [[ -d "/repo/.git" ]]; then
     if [[ ! -d "$SESSION_DIR/.git" ]]; then
         # Use -c safe.directory instead of git config --global: the container
         # rootfs is read-only, so writing ~/.gitconfig would fail.
-        git -c safe.directory=/repo clone --local /repo "$SESSION_DIR"
+        git -c safe.directory='*' clone --local /repo "$SESSION_DIR"
 
         cd "$SESSION_DIR"
         git checkout -b "devin/${SESSION_ID}"

@@ -142,7 +142,7 @@ jobs:
             fa-image:ci bash -c '
               set -euo pipefail
               # Session clone (what fa-entrypoint.sh does on container start)
-              git -c safe.directory=/repo clone --local /repo /sessions/ci-smoke
+              git -c safe.directory='*' clone --local /repo /sessions/ci-smoke
               cd /sessions/ci-smoke
               git checkout -b devin/ci-smoke
               # Verify workspace has the expected structure
