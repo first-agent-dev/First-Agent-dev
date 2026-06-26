@@ -1,0 +1,102 @@
+diff --git a/tests/test_fa_entrypoint.py b/tests/test_fa_entrypoint.py
+index 1c38f6d..1d64f5a 100644
+--- a/tests/test_fa_entrypoint.py
++++ b/tests/test_fa_entrypoint.py
+@@ -33,20 +33,50 @@ def _base_env(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
+     return env, status, bin_dir
+ 
+ 
+-def _write_fa_stub(bin_dir: Path, exit_code: int = 0) -> Path:
++
++def _write_fa_stub(
++    bin_dir: Path, env: dict[str, str], exit_code: int = 0
++) -> Path:
++    """Create a stub ``fa`` that logs calls and exits with *exit_code*.
++
++    Two mechanisms ensure the stub wins in every environment:
++
++    1. **File stub** in *bin_dir* (prepended to ``$PATH`` by ``_base_env``).
++       Works outside Docker where ``/tmp`` allows ``exec()``.
++
++    2. **Bash-function export** via ``BASH_FUNC_fa%%`` in *env*.
++       Inside the Docker container ``/tmp`` is a ``noexec`` tmpfs — the kernel
++       blocks ``exec()`` on scripts there and bash silently falls through to
++       the real ``fa`` in the image venv.  An exported bash function is
++       resolved *before* any ``$PATH`` lookup and never calls ``exec()``,
++       so it works regardless of mount flags.
++    """
+     calls = bin_dir / "fa-calls.txt"
++
++    # — mechanism 1: file on disk (PATH-based) —
+     stub = bin_dir / "fa"
+     stub.write_text(
+         "#!/usr/bin/env bash\n"
+         'printf \'%q \' "$@" >> "$FA_STUB_CALLS"\n'
+-        "printf '\\n' >> \"$FA_STUB_CALLS\"\n"
++        "printf '\\\\n' >> \"$FA_STUB_CALLS\"\n"
+         f"exit {exit_code}\n",
+         encoding="utf-8",
+     )
+     stub.chmod(0o755)
++
++    # — mechanism 2: exported bash function (noexec-safe) —
++    env["BASH_FUNC_fa%%"] = (
++        "() { "
++        'printf \'%q \' "$@" >> "$FA_STUB_CALLS"; '
++        "printf '\\n' >> \"$FA_STUB_CALLS\"; "
++        f"exit {exit_code};"
++        " }"
++    )
++
+     return calls
+ 
+ 
++
+ def _wait_for_status(status: Path, expected: str, proc: subprocess.Popen[str]) -> str:
+     deadline = time.monotonic() + 5
+     while time.monotonic() < deadline:
+@@ -74,7 +104,7 @@ def _terminate(proc: subprocess.Popen[str]) -> None:
+ 
+ def test_entrypoint_standby_does_not_autorun_when_only_task_is_set(tmp_path: Path) -> None:
+     env, status, bin_dir = _base_env(tmp_path)
+-    calls = _write_fa_stub(bin_dir)
++    calls = _write_fa_stub(bin_dir, env)
+     env.update({"FA_TASK": "do work", "FA_STUB_CALLS": str(calls)})
+ 
+     proc = subprocess.Popen(["bash", str(_ENTRYPOINT)], env=env, text=True)
+@@ -89,7 +119,7 @@ def test_entrypoint_standby_does_not_autorun_when_only_task_is_set(tmp_path: Pat
+ 
+ def test_entrypoint_autorun_runs_child_once_and_writes_success(tmp_path: Path) -> None:
+     env, status, bin_dir = _base_env(tmp_path)
+-    calls = _write_fa_stub(bin_dir, exit_code=0)
++    calls = _write_fa_stub(bin_dir, env, exit_code=0)
+     env.update(
+         {
+             "FA_AUTO_RUN": "1",
+@@ -122,7 +152,7 @@ def test_entrypoint_autorun_runs_child_once_and_writes_success(tmp_path: Path) -
+ 
+ def test_entrypoint_invalid_blank_task_writes_status_without_child(tmp_path: Path) -> None:
+     env, status, bin_dir = _base_env(tmp_path)
+-    calls = _write_fa_stub(bin_dir)
++    calls = _write_fa_stub(bin_dir, env)
+     env.update({"FA_AUTO_RUN": "1", "FA_TASK": " \n\t", "FA_STUB_CALLS": str(calls)})
+ 
+     proc = subprocess.Popen(["bash", str(_ENTRYPOINT)], env=env, text=True)
+@@ -137,7 +167,7 @@ def test_entrypoint_invalid_blank_task_writes_status_without_child(tmp_path: Pat
+ 
+ def test_entrypoint_autorun_accepts_task_file_inside_workspace(tmp_path: Path) -> None:
+     env, status, bin_dir = _base_env(tmp_path)
+-    calls = _write_fa_stub(bin_dir, exit_code=0)
++    calls = _write_fa_stub(bin_dir, env, exit_code=0)
+     task_file = tmp_path / "workspace" / "tasks" / "plan.md"
+     task_file.parent.mkdir()
+     task_file.write_text("S1. inspect\nS2. implement\n", encoding="utf-8")
+@@ -163,7 +193,7 @@ def test_entrypoint_autorun_accepts_task_file_inside_workspace(tmp_path: Path) -
+ 
+ def test_entrypoint_task_file_must_stay_inside_workspace(tmp_path: Path) -> None:
+     env, status, bin_dir = _base_env(tmp_path)
+-    calls = _write_fa_stub(bin_dir)
++    calls = _write_fa_stub(bin_dir, env)
+     outside = tmp_path / "outside-task.md"
+     outside.write_text("do work\n", encoding="utf-8")
+     env.update(

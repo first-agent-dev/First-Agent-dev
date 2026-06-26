@@ -33,10 +33,7 @@ def _base_env(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     return env, status, bin_dir
 
 
-
-def _write_fa_stub(
-    bin_dir: Path, env: dict[str, str], exit_code: int = 0
-) -> Path:
+def _write_fa_stub(bin_dir: Path, env: dict[str, str], exit_code: int = 0) -> Path:
     """Create a stub ``fa`` that logs calls and exits with *exit_code*.
 
     Two mechanisms ensure the stub wins in every environment:
@@ -74,7 +71,6 @@ def _write_fa_stub(
     )
 
     return calls
-
 
 
 def _wait_for_status(status: Path, expected: str, proc: subprocess.Popen[str]) -> str:
