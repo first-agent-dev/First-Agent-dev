@@ -539,7 +539,7 @@ build_and_deploy() {
                      --build-arg "FA_BUILD_SHA=${build_sha}")
     [[ "${COMPOSE_BUILD_PULL}" == "1" ]] && build_cmd+=(--pull)
     [[ "${NO_CACHE}" == "1" ]] && build_cmd+=(--no-cache)
-    "${build_cmd[@]}"
+    retry "${build_cmd[@]}"
   fi
 
   if [[ "${NEEDS_RESTART}" == "1" ]]; then

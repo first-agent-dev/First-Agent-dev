@@ -175,7 +175,7 @@ REPO_SSH_URL=$(git remote get-url origin 2>/dev/null | sed 's|https://github.com
 # 1. Build + start the stack (two services: fa-egress-proxy + first-agent)
 # ---------------------------------------------------------------------------
 log_info "Building FA images..."
-docker compose -f docker-compose.fa.yml build
+retry docker compose -f docker-compose.fa.yml build
 
 log_info "Starting FA stack (egress-proxy then agent via depends_on)..."
 docker compose -f docker-compose.fa.yml up -d

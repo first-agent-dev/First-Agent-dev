@@ -71,7 +71,6 @@ def test_extra_prefix_is_honored() -> None:
     )
     assert not command_reads_secret_path("cat /custom/secret/place/x")
 
-
 def test_raw_substring_fallback_prevents_interpreter_bypass() -> None:
     # A clever agent might pass a secret path as a string to another interpreter
     # where the tokenizer sees `python3 -c "import os..."` as a single token

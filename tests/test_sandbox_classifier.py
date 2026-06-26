@@ -277,7 +277,6 @@ def test_first_token_returns_head() -> None:
     assert first_token("ls -la") == "ls"
     assert first_token("git commit -m foo") == "git"
 
-
 def test_classify_proc_sys_access_is_dangerous() -> None:
     assert classify_command("cat /proc/1/cmdline") is BashCategory.DANGEROUS
     assert classify_command("find /sys -name foo") is BashCategory.DANGEROUS

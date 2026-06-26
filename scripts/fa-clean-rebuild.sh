@@ -410,7 +410,7 @@ build_cmd=(docker compose -f "${COMPOSE_FILE}" build
 [[ "${COMPOSE_BUILD_PULL}" == "1" ]] && build_cmd+=(--pull)
 [[ "${NO_CACHE}" == "1" ]] && build_cmd+=(--no-cache)
 [[ "${BUILD_PROGRESS}" != "auto" ]] && build_cmd+=(--progress "${BUILD_PROGRESS}")
-"${build_cmd[@]}"
+retry "${build_cmd[@]}"
 
 log_info "Starting stack (docker compose up -d — authoritative)..."
 # Compose is the authoritative bring-up: idempotent and independent of the user
