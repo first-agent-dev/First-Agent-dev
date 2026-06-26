@@ -34,6 +34,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && just --version \
     && rm -rf /var/lib/apt/lists/*
 
+# Trust all git directories regardless of ownership. The container runs as
+# uid 1000 but bind-mounted repos (/repo) are owned by the host operator's uid.
+# Baked into the image so it works on read-only rootfs without runtime config.
+# Standard practice for Docker-hosted git (cf. GitLab CI runners).
+RUN git config --system --add safe.directory '*'
+
 # Create non-root user matching host UID (1000).
 # Ubuntu 24.04 cloud images may include a default user at UID 1000;
 # remove it first so we can create 'fa' with the same UID.

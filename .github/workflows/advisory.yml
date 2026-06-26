@@ -133,18 +133,14 @@ jobs:
           git commit --allow-empty -q -m "init"
           cd -
           sudo chown 1000:1000 /tmp/fa-ci-sessions /tmp/fa-ci-state
-          # GIT_CONFIG vars via -e flags: safe.directory=* bypasses ownership
-          # checks (host uid != container uid 1000). Must be -e, not inline
-          # in bash -c — single-quote nesting breaks shell quoting.
+          # safe.directory=* is baked into the image (git config --system
+          # in Dockerfile.fa) — no runtime env vars needed.
           docker run --rm --user 1000:1000 --read-only \
             --tmpfs /tmp --tmpfs /home/fa/.cache --tmpfs /home/fa/.local \
             -v /tmp/fa-ci-repo:/repo:ro \
             -v /tmp/fa-ci-sessions:/sessions \
             -v /tmp/fa-ci-state:/home/fa/.fa \
             -e FA_RUN_ID=ci-smoke \
-            -e GIT_CONFIG_COUNT=1 \
-            -e GIT_CONFIG_KEY_0=safe.directory \
-            -e 'GIT_CONFIG_VALUE_0=*' \
             fa-image:ci bash -c '
               set -euo pipefail
               git clone --local /repo /sessions/ci-smoke
