@@ -183,6 +183,7 @@ def test_entrypoint_task_file_must_stay_inside_workspace(tmp_path: Path) -> None
     assert "inside workspace" in text
     assert not calls.exists()
 
+
 def test_entrypoint_creates_session_clone(tmp_path: Path) -> None:
     env, status, _bin_dir = _base_env(tmp_path)
     # Session-clone tests must NOT set FA_WORKSPACE — its absence is what
@@ -210,17 +211,14 @@ def test_entrypoint_creates_session_clone(tmp_path: Path) -> None:
     test_entrypoint = tmp_path / "fa-entrypoint-test.sh"
     original = _ENTRYPOINT.read_text(encoding="utf-8")
     modified = original.replace('"/repo/.git"', f'"{repo_dir}/.git"')
-    modified = modified.replace('file:///repo', f'file://{repo_dir}')
-    modified = modified.replace('/repo ', f'{repo_dir} ')
+    modified = modified.replace("file:///repo", f"file://{repo_dir}")
+    modified = modified.replace("/repo ", f"{repo_dir} ")
     modified = modified.replace('"/repo"', f'"{repo_dir}"')
     modified = modified.replace('"/sessions/', f'"{sessions_dir}/')
     test_entrypoint.write_text(modified, encoding="utf-8")
     test_entrypoint.chmod(0o755)
 
-    env.update({
-        "FA_RUN_ID": "test-session-123",
-        "FA_AUTO_RUN": "0"
-    })
+    env.update({"FA_RUN_ID": "test-session-123", "FA_AUTO_RUN": "0"})
 
     proc = subprocess.Popen(["bash", str(test_entrypoint)], env=env, text=True)
     try:
@@ -235,6 +233,7 @@ def test_entrypoint_creates_session_clone(tmp_path: Path) -> None:
     active_file = sessions_dir / ".active"
     assert active_file.exists()
     assert active_file.read_text(encoding="utf-8").strip() == str(session_workspace)
+
 
 def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
     env, status, _bin_dir = _base_env(tmp_path)
@@ -263,17 +262,14 @@ def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
     test_entrypoint = tmp_path / "fa-entrypoint-test.sh"
     original = _ENTRYPOINT.read_text(encoding="utf-8")
     modified = original.replace('"/repo/.git"', f'"{repo_dir}/.git"')
-    modified = modified.replace('file:///repo', f'file://{repo_dir}')
-    modified = modified.replace('/repo ', f'{repo_dir} ')
+    modified = modified.replace("file:///repo", f"file://{repo_dir}")
+    modified = modified.replace("/repo ", f"{repo_dir} ")
     modified = modified.replace('"/repo"', f'"{repo_dir}"')
     modified = modified.replace('"/sessions/', f'"{sessions_dir}/')
     test_entrypoint.write_text(modified, encoding="utf-8")
     test_entrypoint.chmod(0o755)
 
-    env.update({
-        "FA_RUN_ID": "test-session-existing",
-        "FA_AUTO_RUN": "0"
-    })
+    env.update({"FA_RUN_ID": "test-session-existing", "FA_AUTO_RUN": "0"})
 
     proc = subprocess.Popen(["bash", str(test_entrypoint)], env=env, text=True)
     try:
@@ -284,6 +280,7 @@ def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
     active_file = sessions_dir / ".active"
     assert active_file.exists()
     assert active_file.read_text(encoding="utf-8").strip() == str(session_workspace)
+
 
 def test_entrypoint_command_override_executes_inside_session_clone(tmp_path: Path) -> None:
     env, _status, _bin_dir = _base_env(tmp_path)
@@ -310,23 +307,25 @@ def test_entrypoint_command_override_executes_inside_session_clone(tmp_path: Pat
     test_entrypoint = tmp_path / "fa-entrypoint-test.sh"
     original = _ENTRYPOINT.read_text(encoding="utf-8")
     modified = original.replace('"/repo/.git"', f'"{repo_dir}/.git"')
-    modified = modified.replace('file:///repo', f'file://{repo_dir}')
-    modified = modified.replace('/repo ', f'{repo_dir} ')
+    modified = modified.replace("file:///repo", f"file://{repo_dir}")
+    modified = modified.replace("/repo ", f"{repo_dir} ")
     modified = modified.replace('"/repo"', f'"{repo_dir}"')
     modified = modified.replace('"/sessions/', f'"{sessions_dir}/')
     test_entrypoint.write_text(modified, encoding="utf-8")
     test_entrypoint.chmod(0o755)
 
-    env.update({
-        "FA_RUN_ID": "test-override",
-    })
+    env.update(
+        {
+            "FA_RUN_ID": "test-override",
+        }
+    )
 
     # Run with command override to print the working directory
     proc = subprocess.Popen(
         ["bash", str(test_entrypoint), "bash", "-c", "pwd"],
         env=env,
         stdout=subprocess.PIPE,
-        text=True
+        text=True,
     )
 
     stdout, _ = proc.communicate(timeout=5)
@@ -337,4 +336,3 @@ def test_entrypoint_command_override_executes_inside_session_clone(tmp_path: Pat
 
     # stdout should contain the session directory because it executes there
     assert str(session_workspace) in stdout
-
