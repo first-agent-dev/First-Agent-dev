@@ -130,6 +130,15 @@ def command_reads_secret_path(
         # Unparseable: fail closed if the command text references a secret dir.
         return any(prefix in command for prefix in prefixes)
 
+    # Defense-in-depth: raw substring check even if tokenization succeeds.
+    # This prevents bypasses where a secret path is embedded inside a string
+    # evaluated by another interpreter (e.g. `python -c "open('/run/secrets/...')"`).
+    # Since there's no legitimate reason for an agent to mention a secret path
+    # anywhere in a command string, we fail-closed if it's found at all.
+    for pref in prefixes:
+        if pref in command:
+            return True
+
     for tok in tokens:
         for candidate in _path_candidates(tok):
             norm = _normalize(candidate)

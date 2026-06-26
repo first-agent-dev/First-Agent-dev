@@ -188,6 +188,18 @@ _DANGEROUS_TOKENS: frozenset[str] = frozenset(
         "mysql",
         "mongo",
         "redis-cli",
+        "docker",
+        "systemctl",
+        "iptables",
+        "ifconfig",
+        "ip",
+        "mount",
+        "umount",
+        "crontab",
+        "nohup",
+        "nc",
+        "netcat",
+        "ncat",
     }
 )
 
@@ -337,12 +349,18 @@ def classify_command(command: str) -> BashCategory:  # noqa: C901
     command is empty or unparseable, returns ``GENERAL_WRITE`` (the
     safe default — anything we cannot classify is treated as opaque).
     """
+
     if _has_dangerous_shell_pattern(command):
         return BashCategory.DANGEROUS
 
     tokens = tokenize(command)
     if not tokens:
         return BashCategory.GENERAL_WRITE
+
+    # Security tripwire: Deny reads of sensitive kernel/process interfaces.
+    # /proc and /sys expose host mounts, cmdlines, and container namespaces.
+    if any(t.startswith("/proc") or t.startswith("/sys") for t in tokens):
+        return BashCategory.DANGEROUS
 
     # Compound / redirection / pipe — head token is no longer sufficient.
     # Scan the full token stream for danger markers first; otherwise
