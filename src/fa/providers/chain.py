@@ -50,7 +50,7 @@ from fa.providers.types import ChainAttemptRecord
 from fa.roles import FamilyExtractionError, extract_family
 
 DEFAULT_COOLDOWN_SECONDS = 90
-DEFAULT_HTTPX_RETRIES = 1
+DEFAULT_TRANSPORT_RETRIES = 1
 DEFAULT_TIMEOUT_SECONDS = 15
 # Waiver: allowlist for DETECTING local endpoints, not a bind address.
 LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0"})  # noqa: S104
@@ -63,13 +63,12 @@ RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset(
 class ChainEntry:
     """One row of a role's ``chain:`` config (ADR-9 §1).
 
-    ``httpx_retries`` is a reserved transport-layer retry knob from ADR-9.
-    The current production transport is :class:`fa.providers.transport.UrllibTransport`,
-    which does not yet consume this field directly; the dispatcher keeps the
-    field in the schema so a future transport retry implementation can use it
-    without changing the ``models.yaml`` contract. The dispatcher itself never
-    retries in-place per entry; it only sees the final outcome after the
-    transport returns or raises.
+    ``transport_retries`` is the per-entry low-level transport retry budget.
+    It is consumed by the production transport before the provider chain sees
+    the final outcome. This knob is intentionally narrower than the chain-level
+    fallback/cooldown logic: it applies only to transport/network failures, not
+    to HTTP transient status responses such as 429/5xx, which remain owned by
+    :class:`ProviderChain`.
     """
 
     provider: str
@@ -77,7 +76,7 @@ class ChainEntry:
     base_url: str
     api_key_env: str
     cooldown_seconds: int = DEFAULT_COOLDOWN_SECONDS
-    httpx_retries: int = DEFAULT_HTTPX_RETRIES
+    transport_retries: int = DEFAULT_TRANSPORT_RETRIES
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     extra_headers: Mapping[str, str] = field(default_factory=dict)
 
@@ -275,6 +274,7 @@ class ProviderChain:
                     base_url=entry.base_url,
                     api_key=api_key,
                     timeout_seconds=float(entry.timeout_seconds),
+                    transport_retries=int(entry.transport_retries),
                     extra_headers=entry.extra_headers,
                 )
             except ProviderRequestShapeError as exc:
@@ -408,10 +408,10 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
                 if row.get("cooldown_seconds") is not None
                 else DEFAULT_COOLDOWN_SECONDS
             ),
-            httpx_retries=int(
-                row["httpx_retries"]
-                if row.get("httpx_retries") is not None
-                else DEFAULT_HTTPX_RETRIES
+            transport_retries=int(
+                row["transport_retries"]
+                if row.get("transport_retries") is not None
+                else DEFAULT_TRANSPORT_RETRIES
             ),
             timeout_seconds=int(
                 row["timeout_seconds"]

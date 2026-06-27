@@ -30,6 +30,7 @@ class FakeTransport:
     last_url: str = ""
     last_headers: dict[str, str] = field(default_factory=dict)
     last_body: dict[str, Any] = field(default_factory=dict)
+    last_transport_retries: int = -1
 
     def post(
         self,
@@ -38,10 +39,12 @@ class FakeTransport:
         headers: Mapping[str, str],
         json_body: Mapping[str, Any],
         timeout_seconds: float,
+        transport_retries: int,
     ) -> TransportResponse:
         self.last_url = url
         self.last_headers = dict(headers)
         self.last_body = dict(json_body)
+        self.last_transport_retries = transport_retries
         return self.response
 
 
@@ -83,12 +86,14 @@ def test_request_hoists_system_row_into_top_level_field() -> None:
         base_url="https://api.anthropic.com",
         api_key="sk-ant-x",
         timeout_seconds=60.0,
+        transport_retries=0,
         extra_headers={},
     )
     assert transport.last_url == "https://api.anthropic.com/v1/messages"
     assert transport.last_headers["x-api-key"] == "sk-ant-x"
     assert transport.last_headers["anthropic-version"]
     assert transport.last_body["system"] == "You are helpful."
+    assert transport.last_transport_retries == 0
     # The system row is removed from the messages list:
     assert transport.last_body["messages"] == [{"role": "user", "content": "hi"}]
     # max_tokens is mandatory:
@@ -113,6 +118,7 @@ def test_request_supplies_default_max_tokens_when_absent() -> None:
         base_url="https://api.anthropic.com",
         api_key="k",
         timeout_seconds=60.0,
+        transport_retries=0,
         extra_headers={},
     )
     assert transport.last_body["max_tokens"] == 64000
@@ -149,6 +155,7 @@ def test_response_translates_tool_use_blocks_to_openai_tool_calls() -> None:
         base_url="https://api.anthropic.com",
         api_key="k",
         timeout_seconds=60.0,
+        transport_retries=0,
         extra_headers={},
     )
     assert response.text == "let me search"
@@ -188,6 +195,7 @@ def test_stop_reason_mapping(raw_stop: str, expected: str) -> None:
         base_url="https://api.anthropic.com",
         api_key="k",
         timeout_seconds=60.0,
+        transport_retries=0,
         extra_headers={},
     )
     assert response.finish_reason == expected
@@ -213,5 +221,6 @@ def test_status_split_matches_adr9(status: int, exc: type[BaseException]) -> Non
             base_url="https://api.anthropic.com",
             api_key="k",
             timeout_seconds=60.0,
+            transport_retries=0,
             extra_headers={},
         )

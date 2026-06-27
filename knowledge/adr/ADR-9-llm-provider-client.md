@@ -236,7 +236,7 @@ verbatim), `api_key_env` (environment variable name carrying the
 API key for that provider).
 
 **Optional fields per chain entry:** `cooldown_seconds` (integer,
-default 300), `httpx_retries` (integer, default 1 — see Q-2 in
+default 300), `transport_retries` (integer, default 1 — see Q-2 in
 the survey), `timeout_seconds` (integer, default 60 — per-request
 httpx timeout covering connect + read; raise for queued free-tier
 endpoints e.g. 300), `extra_headers` (dict<str, str> for provider-
@@ -301,7 +301,7 @@ at first request) for each of:
    c. POST to <base_url> + <adapter endpoint>; receive HTTP status
       and headers. Adapter endpoint is per-adapter:
       OpenAICompatProvider → "/chat/completions";
-      AnthropicProvider → "/v1/messages". httpx_retries
+      AnthropicProvider → "/v1/messages". transport_retries
       (default 1) are exhausted in-place BEFORE the chain
       progresses; only after all per-entry retries fail do the
       progression rules below apply.

@@ -14,7 +14,11 @@
 # add to a chain entry below is currently IGNORED by the loader (see BACKLOG
 # I-25). Only these fields are read:
 #   provider, slug, base_url, api_key_env  (required)
-#   timeout_seconds, cooldown_seconds, httpx_retries, extra_headers  (optional)
+#   timeout_seconds, cooldown_seconds, transport_retries, extra_headers  (optional)
+#     timeout_seconds: per-request HTTP timeout in seconds
+#     cooldown_seconds: local cooldown floor after transient provider failure
+#     transport_retries: extra transport-level retries for low-level network failures
+#     extra_headers: additional HTTP headers for this route
 #
 # NEVER paste real API keys into this file. `api_key_env` is the NAME of the key;
 # the real value lives ONLY in /srv/first-agent/secrets/fa.env (proxy-only):
@@ -43,8 +47,9 @@ planner:
       slug: "accounts/fireworks/models/glm-5p2"
       base_url: "https://api.fireworks.ai/inference/v1"
       api_key_env: FIREWORKS_API_KEY
-      # GLM 5.2 is a 1M-context reasoning model; give slow turns room.
-      timeout_seconds: 120
+      timeout_seconds: 15
+      cooldown_seconds: 3
+      transport_retries: 1
 
 coder:
   model: "minimax-m3"
@@ -54,8 +59,9 @@ coder:
       slug: "accounts/fireworks/models/minimax-m3"
       base_url: "https://api.fireworks.ai/inference/v1"
       api_key_env: FIREWORKS_API_KEY
-      # MiniMax M3 is a 512k-context reasoning model.
-      timeout_seconds: 120
+      timeout_seconds: 15
+      cooldown_seconds: 3
+      transport_retries: 1
 
 eval:
   model: "nemotron-3-ultra-nvfp4"
@@ -65,7 +71,9 @@ eval:
       slug: "accounts/fireworks/models/nemotron-3-ultra-nvfp4"
       base_url: "https://api.fireworks.ai/inference/v1"
       api_key_env: FIREWORKS_API_KEY
-      timeout_seconds: 120
+      timeout_seconds: 15
+      cooldown_seconds: 3
+      transport_retries: 1
 
 # ───────────────────────────────────────────────────────────────────────────
 # Notes

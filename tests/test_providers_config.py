@@ -102,7 +102,7 @@ def test_load_models_config_preserves_chain_entry_optional_fields() -> None:
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
               cooldown_seconds: 120
-              httpx_retries: 2
+              transport_retries: 2
               timeout_seconds: 30
               extra_headers:
                 HTTP-Referer: "https://example.com"
@@ -113,7 +113,7 @@ def test_load_models_config_preserves_chain_entry_optional_fields() -> None:
     config = load_models_config(text, env=env)
     entry = config.roles["coder"].chain[0]
     assert entry.cooldown_seconds == 120
-    assert entry.httpx_retries == 2
+    assert entry.transport_retries == 2
     assert entry.timeout_seconds == 30
     assert dict(entry.extra_headers) == {
         "HTTP-Referer": "https://example.com",

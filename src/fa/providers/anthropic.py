@@ -62,6 +62,7 @@ class AnthropicProvider:
         base_url: str,
         api_key: str,
         timeout_seconds: float,
+        transport_retries: int,
         extra_headers: Mapping[str, str],
     ) -> ResponseInfo:
         url = base_url.rstrip("/") + "/v1/messages"
@@ -76,7 +77,11 @@ class AnthropicProvider:
             headers[key] = value
 
         response = self._transport.post(
-            url, headers=headers, json_body=body, timeout_seconds=timeout_seconds
+            url,
+            headers=headers,
+            json_body=body,
+            timeout_seconds=timeout_seconds,
+            transport_retries=transport_retries,
         )
         return _parse_response(response)
 

@@ -619,7 +619,7 @@
   becomes its own future BACKLOG row when a re-evaluation
   trigger fires per ADR-9 §10):
   - Q-1 persistent cooldown across sessions.
-  - Q-2 per-entry `httpx_retries` + `tiktoken` pre-call estimate.
+  - Q-2 per-entry `transport_retries` + `tiktoken` pre-call estimate.
   - Q-3 named chains / round-robin support.
   - Q-4 provider-wide cooldown when N≥2 slugs cool concurrently.
   - Q-5 Anthropic prompt-cache preservation on fallback.
@@ -703,7 +703,7 @@
   - Happy-path parse — ADR-9 §1 three-role example verbatim
     (coder + planner + eval; verifies model / family / chain
     surfaces); preservation of all four optional chain-entry
-    fields (cooldown_seconds, httpx_retries, timeout_seconds,
+    fields (cooldown_seconds, transport_retries, timeout_seconds,
     extra_headers).
   - Empty / null / scalar root — empty text, whitespace-only,
     `~` (YAML null), list root rejected, scalar root rejected.
@@ -1470,7 +1470,7 @@
 
 - **Status:** deferred from the Docker/config review (2026-06-19).
 - **Problem:** `~/.fa/models.yaml` configures ONLY routing — `provider`, `slug`,
-  `base_url`, `api_key_env` (+ optional `cooldown_seconds`, `httpx_retries`,
+  `base_url`, `api_key_env` (+ optional `cooldown_seconds`, `transport_retries`,
   `timeout_seconds`, `extra_headers`). The chain-entry parser
   (`src/fa/providers/chain.py` `chain_from_mapping`) reads no other keys, so any
   sampling field an operator adds to a chain entry (`temperature`, `top_p`,

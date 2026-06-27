@@ -5,7 +5,7 @@ of the :class:`fa.providers.base.Transport` Protocol. It uses
 ``urllib.request`` from the standard library so the chain has a real
 HTTP client without adding a new third-party dependency to FA's
 runtime surface (deferred decision: ``httpx`` migration is tracked
-under ADR-9 §1's ``httpx_retries`` field — see BACKLOG row when the
+under ADR-9 §1's ``transport_retries`` field — see BACKLOG row when the
 need for HTTP/2 or pooled connections forces the dep).
 
 Scope is intentionally narrow:
@@ -36,9 +36,11 @@ References:
 from __future__ import annotations
 
 import json
+import random
+import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, override
 
 from fa.providers.base import Transport, TransportResponse
@@ -55,10 +57,20 @@ class UrllibTransport(Transport):
             the agent (GitHub Models, some Anthropic endpoints) treat
             unmarked clients with stricter rate limits; surfacing a
             recognisable UA reduces unnecessary 429 noise.
+        sleep_fn: Injectable sleep function for deterministic tests.
+        random_fn: Injectable RNG returning a float in ``[0.0, 1.0)`` for jitter.
     """
 
-    def __init__(self, *, user_agent: str = DEFAULT_USER_AGENT) -> None:
+    def __init__(
+        self,
+        *,
+        user_agent: str = DEFAULT_USER_AGENT,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        random_fn: Callable[[], float] = random.random,
+    ) -> None:
         self._user_agent = user_agent
+        self._sleep = sleep_fn
+        self._random = random_fn
 
     @override
     def post(
@@ -68,6 +80,7 @@ class UrllibTransport(Transport):
         headers: Mapping[str, str],
         json_body: Mapping[str, Any],
         timeout_seconds: float,
+        transport_retries: int,
     ) -> TransportResponse:
         body_bytes = json.dumps(json_body).encode("utf-8")
         # Waiver: scheme constrained to https/http by provider-config
@@ -85,31 +98,58 @@ class UrllibTransport(Transport):
         for key, value in headers.items():
             if key.lower() != "user-agent":
                 request.add_header(key, value)
-        try:
-            # Waiver: scheme constrained to https/http by provider-config
-            # validation upstream.
-            with urllib.request.urlopen(  # noqa: S310
-                request, timeout=timeout_seconds
-            ) as response:
-                status = int(response.status)
-                raw = response.read()
-                retry_after = _parse_retry_after(response.headers.get("Retry-After"))
-        except urllib.error.HTTPError as exc:
-            status = int(exc.code)
-            raw = exc.read()
-            retry_after = _parse_retry_after(exc.headers.get("Retry-After"))
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            return TransportResponse(
-                status=0,
-                body={},
-                retry_after_seconds=None,
-                network_error=str(exc),
-            )
+        max_attempts = 1 + max(transport_retries, 0)
+        for attempt in range(max_attempts):
+            try:
+                # Waiver: scheme constrained to https/http by provider-config
+                # validation upstream.
+                with urllib.request.urlopen(  # noqa: S310
+                    request, timeout=timeout_seconds
+                ) as response:
+                    status = int(response.status)
+                    raw = response.read()
+                    retry_after = _parse_retry_after(response.headers.get("Retry-After"))
+                    return TransportResponse(
+                        status=status,
+                        body=_decode_body(raw),
+                        retry_after_seconds=retry_after,
+                    )
+            except urllib.error.HTTPError as exc:
+                status = int(exc.code)
+                raw = exc.read()
+                retry_after = _parse_retry_after(exc.headers.get("Retry-After"))
+                return TransportResponse(
+                    status=status,
+                    body=_decode_body(raw),
+                    retry_after_seconds=retry_after,
+                )
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+                if attempt >= max_attempts - 1:
+                    return TransportResponse(
+                        status=0,
+                        body={},
+                        retry_after_seconds=None,
+                        network_error=str(exc),
+                    )
+                self._sleep(_transport_retry_delay_s(attempt, random_fn=self._random))
         return TransportResponse(
-            status=status,
-            body=_decode_body(raw),
-            retry_after_seconds=retry_after,
+            status=0,
+            body={},
+            retry_after_seconds=None,
+            network_error="unreachable",
         )
+
+
+def _transport_retry_delay_s(
+    attempt_index: int,
+    *,
+    base_seconds: float = 0.25,
+    cap_seconds: float = 2.0,
+    random_fn: Callable[[], float] = random.random,
+) -> float:
+    """Return capped exponential backoff with full jitter for transport retries."""
+    window = min(cap_seconds, base_seconds * (2**attempt_index))
+    return max(0.0, random_fn() * window)
 
 
 def _decode_body(raw: bytes) -> Mapping[str, Any]:

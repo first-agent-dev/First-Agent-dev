@@ -37,13 +37,13 @@ This is the stage where `models.yaml` becomes typed runtime state. No network ca
 
 The required chain-entry fields are `provider`, `slug`, `base_url`, and `api_key_env`. In addition, the loader already supports optional knobs even if an older example template omitted them.
 
-The optional knobs currently supported by `chain_from_mapping()` are `cooldown_seconds`, `timeout_seconds`, `httpx_retries`, and `extra_headers`.
+The optional knobs currently supported by `chain_from_mapping()` are `cooldown_seconds`, `timeout_seconds`, `transport_retries`, and `extra_headers`.
 
 The defaults are defined in `src/fa/providers/chain.py`:
 
 ```python
 DEFAULT_COOLDOWN_SECONDS = 90
-DEFAULT_HTTPX_RETRIES = 1
+DEFAULT_TRANSPORT_RETRIES = 1
 DEFAULT_TIMEOUT_SECONDS = 15
 ```
 
@@ -55,10 +55,10 @@ cooldown_seconds=int(
     if row.get("cooldown_seconds") is not None
     else DEFAULT_COOLDOWN_SECONDS
 )
-httpx_retries=int(
-    row["httpx_retries"]
-    if row.get("httpx_retries") is not None
-    else DEFAULT_HTTPX_RETRIES
+transport_retries=int(
+    row["transport_retries"]
+    if row.get("transport_retries") is not None
+    else DEFAULT_TRANSPORT_RETRIES
 )
 timeout_seconds=int(
     row["timeout_seconds"]
@@ -78,7 +78,7 @@ That means the YAML contract already accepts these fields today.
 
 `timeout_seconds` is the per-request HTTP timeout passed to the provider adapter and then to the transport.
 
-`httpx_retries` is a reserved transport-layer retry knob from ADR-9. The current production transport is `UrllibTransport`, not `httpx`, and the current stdlib transport does not yet consume this field directly. The field remains in the schema so a future transport retry implementation can use it without changing `models.yaml`.
+`transport_retries` is a reserved transport-layer retry knob from ADR-9. The current production transport is `UrllibTransport`, not `httpx`, and the current stdlib transport does not yet consume this field directly. The field remains in the schema so a future transport retry implementation can use it without changing `models.yaml`.
 
 `extra_headers` is a mapping of additional HTTP headers to send for that chain entry.
 
@@ -165,11 +165,11 @@ After the bugfix, the runtime loop respects the real cooldown ledger in producti
 
 ---
 
-## Trace 8: What `httpx_retries` means today
+## Trace 8: What `transport_retries` means today
 
 The name is historical. It came from ADR-9’s transport design, where per-entry transport retries were expected to be a transport concern and to happen before the chain falls through to the next provider.
 
-Today, the production transport is `UrllibTransport`, which does not yet implement a retry loop keyed off `httpx_retries`. So this field is best understood as part of the accepted config schema and future transport contract, not as an actively consumed runtime knob in the current stdlib transport.
+Today, the production transport is `UrllibTransport`, which does not yet implement a retry loop keyed off `transport_retries`. So this field is best understood as part of the accepted config schema and future transport contract, not as an actively consumed runtime knob in the current stdlib transport.
 
 This is a documentation and naming debt worth cleaning up later. The highest-ROI cleanup would be either renaming the field to a transport-neutral name like `transport_retries`, or implementing the missing transport retry behavior and keeping a backward-compatible alias.
 
@@ -192,7 +192,7 @@ planner:
       api_key_env: FIREWORKS_API_KEY
       cooldown_seconds: 3
       timeout_seconds: 15
-      httpx_retries: 1
+      transport_retries: 1
 ```
 
 With that config, if Fireworks returns a transient `502` and does not supply a longer `Retry-After`, the provider entry cools down for about three seconds, and the runtime loop can retry the same logical turn after that short delay.
@@ -201,7 +201,7 @@ With that config, if Fireworks returns a transient `502` and does not supply a l
 
 ## High-ROI follow-up improvements
 
-The biggest documentation debt in this module is the name `httpx_retries`. It suggests a behavior that the current stdlib transport does not visibly implement. That makes debugging harder and can mislead operators into believing the production transport already performs per-entry HTTP retries.
+The biggest documentation debt in this module is the name `transport_retries`. It suggests a behavior that the current stdlib transport does not visibly implement. That makes debugging harder and can mislead operators into believing the production transport already performs per-entry HTTP retries.
 
 The biggest observability improvement would be to surface `retry_after_hint_ms` more explicitly in provider-attempt or live-output rows, so an operator can tell whether a wait came from local config or a provider-supplied header.
 
@@ -211,4 +211,4 @@ Another high-ROI improvement would be to add a first-party template or comments 
 
 ## One-line summary
 
-The provider stack already supports configurable cooldown floors, already ingests `Retry-After` from live HTTP responses, and the practical knob that matters for your current single-provider Fireworks retry behavior is `cooldown_seconds`, not `httpx_retries`.
+The provider stack already supports configurable cooldown floors, already ingests `Retry-After` from live HTTP responses, and the practical knob that matters for your current single-provider Fireworks retry behavior is `cooldown_seconds`, not `transport_retries`.

@@ -51,6 +51,7 @@ class StubProvider:
         base_url: str,
         api_key: str,
         timeout_seconds: float,
+        transport_retries: int,
         extra_headers: Mapping[str, str],
     ) -> ResponseInfo:
         outcome = self.outcomes.pop(0)
@@ -669,7 +670,7 @@ def test_chain_from_mapping_coalesces_yaml_null_chain_field_to_empty_tuple() -> 
 
 
 def test_chain_from_mapping_coalesces_yaml_null_on_chain_entry_numeric_fields() -> None:
-    # YAML ``cooldown_seconds: null`` / ``httpx_retries: null`` /
+    # YAML ``cooldown_seconds: null`` / ``transport_retries: null`` /
     # ``timeout_seconds: null`` parses to Python ``None``, which then
     # crashes ``int(...)`` with TypeError. ``row.get(k, DEFAULT)``
     # returns ``None`` when the key exists with a null value (the
@@ -686,7 +687,7 @@ def test_chain_from_mapping_coalesces_yaml_null_on_chain_entry_numeric_fields() 
                 "base_url": "https://openrouter.ai/api/v1",
                 "api_key_env": "OPENROUTER_API_KEY",
                 "cooldown_seconds": None,
-                "httpx_retries": None,
+                "transport_retries": None,
                 "timeout_seconds": None,
                 "extra_headers": None,
             }
@@ -695,9 +696,9 @@ def test_chain_from_mapping_coalesces_yaml_null_on_chain_entry_numeric_fields() 
     # Must not raise TypeError("int() argument must be ...").
     config = chain_from_mapping("coder", raw)
     entry = config.chain[0]
-    assert entry.cooldown_seconds == 300  # DEFAULT_COOLDOWN_SECONDS
-    assert entry.httpx_retries == 1  # DEFAULT_HTTPX_RETRIES
-    assert entry.timeout_seconds == 60  # DEFAULT_TIMEOUT_SECONDS
+    assert entry.cooldown_seconds == 90  # DEFAULT_COOLDOWN_SECONDS
+    assert entry.transport_retries == 1  # DEFAULT_TRANSPORT_RETRIES
+    assert entry.timeout_seconds == 15  # DEFAULT_TIMEOUT_SECONDS
     assert entry.extra_headers == {}
 
 
@@ -718,7 +719,7 @@ def test_chain_from_mapping_preserves_explicit_zero_on_numeric_fields() -> None:
                 "base_url": "http://localhost:8080/v1",
                 "api_key_env": "OPENROUTER_API_KEY",
                 "cooldown_seconds": 0,
-                "httpx_retries": 0,
+                "transport_retries": 0,
                 "timeout_seconds": 0,
             }
         ],
@@ -726,7 +727,7 @@ def test_chain_from_mapping_preserves_explicit_zero_on_numeric_fields() -> None:
     config = chain_from_mapping("coder", raw)
     entry = config.chain[0]
     assert entry.cooldown_seconds == 0
-    assert entry.httpx_retries == 0
+    assert entry.transport_retries == 0
     assert entry.timeout_seconds == 0
 
 
@@ -748,9 +749,9 @@ def test_chain_from_mapping_omitted_optional_fields_use_defaults() -> None:
     }
     config = chain_from_mapping("coder", raw)
     entry = config.chain[0]
-    assert entry.cooldown_seconds == 300
-    assert entry.httpx_retries == 1
-    assert entry.timeout_seconds == 60
+    assert entry.cooldown_seconds == 90
+    assert entry.transport_retries == 1
+    assert entry.timeout_seconds == 15
     assert entry.extra_headers == {}
 
 

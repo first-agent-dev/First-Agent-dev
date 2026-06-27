@@ -763,7 +763,7 @@ entry before cooling down»)?
 healthy on retry (transient TLS issues, DNS hiccups); a single
 httpx retry per entry would reduce false-positive cooldowns.
 
-**Resolution:** Pick `httpx_retries: 1` (one retry per chain entry,
+**Resolution:** Pick `transport_retries: 1` (one retry per chain entry,
 ~100ms backoff) as the ADR-9 default; revisit if telemetry shows
 >5% of cooldowns are transient single-retry-fixable noise.
 

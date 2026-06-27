@@ -94,6 +94,7 @@ class Transport(Protocol):
         headers: Mapping[str, str],
         json_body: Mapping[str, Any],
         timeout_seconds: float,
+        transport_retries: int,
     ) -> TransportResponse: ...
 
 
@@ -155,5 +156,6 @@ class Provider(Protocol):
         base_url: str,
         api_key: str,
         timeout_seconds: float,
+        transport_retries: int,
         extra_headers: Mapping[str, str],
     ) -> ResponseInfo: ...

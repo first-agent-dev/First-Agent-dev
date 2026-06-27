@@ -372,7 +372,7 @@ shares this exact substrate. Source:
 **Decision.** **Option D + α** — per-role explicit provider chain
 with cooldown. Each role in `~/.fa/models.yaml` declares `model:`
 + `family:` + `chain: [{provider, slug, base_url, api_key_env,
-cooldown_seconds?, httpx_retries?, timeout_seconds?,
+cooldown_seconds?, transport_retries?, timeout_seconds?,
 extra_headers?}, ...]` ordered transport fallback. On transient
 failure (429 / 5xx / network), failed `(provider, slug)` tuple
 cools down 5 min default and the chain falls through to the next

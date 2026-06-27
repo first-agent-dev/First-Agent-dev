@@ -22,7 +22,7 @@ Loader contract (ADR-9 §1 schema, verbatim):
           api_key_env: OPENROUTER_API_KEY
           cooldown_seconds: 3   # optional: local cooldown floor after transient failure
           timeout_seconds: 15   # optional: per-request HTTP timeout
-          httpx_retries: 1      # optional: reserved transport retry knob (future transport use)
+          transport_retries: 1      # optional: extra transport-level retries for network failures
           extra_headers:        # optional: extra HTTP headers for this route
             HTTP-Referer: "https://example.invalid"
         - provider: fireworks
