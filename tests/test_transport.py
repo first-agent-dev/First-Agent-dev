@@ -101,6 +101,7 @@ def test_post_returns_decoded_body_on_200(monkeypatch: pytest.MonkeyPatch) -> No
         headers={"Authorization": "Bearer key", "X-Custom": "1"},
         json_body={"model": "x"},
         timeout_seconds=10.0,
+        transport_retries=0,
     )
 
     assert response.status == 200
@@ -131,6 +132,7 @@ def test_post_returns_status_and_retry_after_on_429(monkeypatch: pytest.MonkeyPa
         headers={},
         json_body={},
         timeout_seconds=5.0,
+        transport_retries=0,
     )
 
     assert response.status == 429
@@ -150,6 +152,7 @@ def test_post_captures_network_error_on_urlerror(monkeypatch: pytest.MonkeyPatch
         headers={},
         json_body={},
         timeout_seconds=1.0,
+        transport_retries=0,
     )
 
     assert response.status == 0
@@ -169,6 +172,7 @@ def test_post_captures_network_error_on_timeout(monkeypatch: pytest.MonkeyPatch)
         headers={},
         json_body={},
         timeout_seconds=0.1,
+        transport_retries=0,
     )
 
     assert response.status == 0
@@ -187,8 +191,8 @@ def test_post_serialises_json_body_consistently(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     transport = UrllibTransport()
     payload = {"messages": [{"role": "user", "content": "x"}], "model": "y"}
-    transport.post("https://x.invalid", headers={}, json_body=payload, timeout_seconds=1.0)
-    transport.post("https://x.invalid", headers={}, json_body=payload, timeout_seconds=1.0)
+    transport.post("https://x.invalid", headers={}, json_body=payload, timeout_seconds=1.0, transport_retries=0)
+    transport.post("https://x.invalid", headers={}, json_body=payload, timeout_seconds=1.0, transport_retries=0)
 
     assert captured_bodies[0] == captured_bodies[1]
     decoded = json.loads(captured_bodies[0])
@@ -214,6 +218,7 @@ def test_post_injects_content_type_when_missing(monkeypatch: pytest.MonkeyPatch)
         headers={"Authorization": "Bearer k"},
         json_body={"x": 1},
         timeout_seconds=1.0,
+        transport_retries=0,
     )
 
     assert captured_headers.get("Content-type") == "application/json"
@@ -235,6 +240,7 @@ def test_post_does_not_duplicate_content_type_from_caller(monkeypatch: pytest.Mo
         headers={"Content-Type": "application/json"},
         json_body={"x": 1},
         timeout_seconds=1.0,
+        transport_retries=0,
     )
 
     assert captured_values.count("application/json") == 1
@@ -254,6 +260,7 @@ def test_post_does_not_duplicate_user_agent(monkeypatch: pytest.MonkeyPatch) -> 
         headers={"User-Agent": "custom/1.0"},
         json_body={},
         timeout_seconds=1.0,
+        transport_retries=0,
     )
 
     # Only the transport-level UA should appear; caller UA is skipped

@@ -12,7 +12,9 @@ from __future__ import annotations
 import urllib.error
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from email.message import Message
+from types import TracebackType
+from typing import Any, ClassVar
 
 import pytest
 
@@ -235,13 +237,15 @@ def test_transport_retry_delay_is_bounded() -> None:
     assert delay == 2.0
 
 
-def test_urllib_transport_retries_network_errors_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_urllib_transport_retries_network_errors_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[int] = []
     sleeps: list[float] = []
 
     class _Resp:
         status = 200
-        headers: dict[str, str] = {}
+        headers: ClassVar[dict[str, str]] = {}
 
         def read(self) -> bytes:
             return b'{"ok": true}'
@@ -249,21 +253,27 @@ def test_urllib_transport_retries_network_errors_then_succeeds(monkeypatch: pyte
         def __enter__(self):
             return self
 
-        def __exit__(self, exc_type, exc, tb):
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: TracebackType | None,
+        ) -> bool:
+            del exc_type, exc, tb
             return False
 
     def _fake_urlopen(request: object, timeout: float) -> _Resp:
         calls.append(1)
         if len(calls) == 1:
-            raise urllib.error.URLError('temporary dns')
+            raise urllib.error.URLError("temporary dns")
         return _Resp()
 
-    monkeypatch.setattr('urllib.request.urlopen', _fake_urlopen)
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     transport = UrllibTransport(sleep_fn=sleeps.append, random_fn=lambda: 1.0)
     resp = transport.post(
-        'https://example.invalid/v1/chat/completions',
-        headers={'Authorization': 'Bearer k'},
-        json_body={'x': 1},
+        "https://example.invalid/v1/chat/completions",
+        headers={"Authorization": "Bearer k"},
+        json_body={"x": 1},
         timeout_seconds=5.0,
         transport_retries=1,
     )
@@ -278,21 +288,28 @@ def test_urllib_transport_does_not_retry_http_status(monkeypatch: pytest.MonkeyP
 
     class _HttpErr(urllib.error.HTTPError):
         def __init__(self) -> None:
-            super().__init__('https://x.invalid', 503, 'svc unavailable', hdrs={}, fp=None)
+            super().__init__(
+                "https://x.invalid",
+                503,
+                "svc unavailable",
+                hdrs=Message(),
+                fp=None,
+            )
 
-        def read(self) -> bytes:
-            return b'{}'
+        def read(self, n: int = -1) -> bytes:
+            del n
+            return b"{}"
 
     def _fake_urlopen(request: object, timeout: float) -> object:
         calls.append(1)
         raise _HttpErr()
 
-    monkeypatch.setattr('urllib.request.urlopen', _fake_urlopen)
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     transport = UrllibTransport(sleep_fn=lambda s: None, random_fn=lambda: 1.0)
     resp = transport.post(
-        'https://example.invalid/v1/chat/completions',
-        headers={'Authorization': 'Bearer k'},
-        json_body={'x': 1},
+        "https://example.invalid/v1/chat/completions",
+        headers={"Authorization": "Bearer k"},
+        json_body={"x": 1},
         timeout_seconds=5.0,
         transport_retries=3,
     )

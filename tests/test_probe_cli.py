@@ -54,7 +54,9 @@ class _FakeTransport(Transport):
         headers: Mapping[str, str],
         json_body: Mapping[str, Any],
         timeout_seconds: float,
+        transport_retries: int,
     ) -> TransportResponse:
+        del url, headers, json_body, timeout_seconds, transport_retries
         if self._status == 200:
             default_body: dict[str, Any] = {
                 "choices": [

@@ -22,7 +22,9 @@ class _NullTransport:
         headers: Mapping[str, str],
         json_body: Mapping[str, Any],
         timeout_seconds: float,
+        transport_retries: int,
     ) -> TransportResponse:
+        del url, headers, json_body, timeout_seconds, transport_retries
         return TransportResponse(status=200, body={})
 
 

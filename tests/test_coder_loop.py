@@ -69,8 +69,10 @@ class FakeProvider:
         base_url: str,
         api_key: str,
         timeout_seconds: float,
+        transport_retries: int,
         extra_headers: Mapping[str, str],
     ) -> ResponseInfo:
+        del base_url, api_key, timeout_seconds, transport_retries, extra_headers
         self.calls.append(request)
         if not self._script:
             raise ProviderTransientError(
@@ -755,8 +757,10 @@ def test_drive_session_keyboard_interrupt_returns_outcome(
             base_url: str,
             api_key: str,
             timeout_seconds: float,
+            transport_retries: int,
             extra_headers: Mapping[str, str],
         ) -> ResponseInfo:
+            del request, base_url, api_key, timeout_seconds, transport_retries, extra_headers
             raise KeyboardInterrupt()
 
     entry = ChainEntry(

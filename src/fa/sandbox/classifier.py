@@ -139,7 +139,6 @@ _GIT_WRITE_SUBCOMMANDS: frozenset[str] = frozenset(
         "fetch",
         "pull",
         "config",
-        "remote",  # `remote -v` is read but `remote add` writes
         "init",
         "clean",
         "restore",

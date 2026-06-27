@@ -310,7 +310,9 @@ class _ScriptedTransport:
         headers: Mapping[str, str],
         json_body: Mapping[str, Any],
         timeout_seconds: float,
+        transport_retries: int,
     ) -> TransportResponse:
+        del url, headers, timeout_seconds, transport_retries
         self.calls.append(json_body)
         if not self._bodies:
             return TransportResponse(status=503, body={})
