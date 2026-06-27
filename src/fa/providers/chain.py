@@ -49,9 +49,9 @@ from fa.providers.registry import PROVIDERS
 from fa.providers.types import ChainAttemptRecord
 from fa.roles import FamilyExtractionError, extract_family
 
-DEFAULT_COOLDOWN_SECONDS = 300
+DEFAULT_COOLDOWN_SECONDS = 90
 DEFAULT_HTTPX_RETRIES = 1
-DEFAULT_TIMEOUT_SECONDS = 60
+DEFAULT_TIMEOUT_SECONDS = 15
 # Waiver: allowlist for DETECTING local endpoints, not a bind address.
 LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0"})  # noqa: S104
 RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset(
@@ -63,12 +63,13 @@ RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset(
 class ChainEntry:
     """One row of a role's ``chain:`` config (ADR-9 §1).
 
-    ``httpx_retries`` is consumed at :class:`fa.providers.base.Transport`
-    construction time by the production transport, NOT by the dispatcher:
-    per ADR-9 §2 step 2c «httpx_retries (default 1) are exhausted
-    in-place BEFORE the chain progresses», so retries are a transport-
-    layer concern. The dispatcher only sees the final outcome after
-    transport-level retries have been exhausted.
+    ``httpx_retries`` is a reserved transport-layer retry knob from ADR-9.
+    The current production transport is :class:`fa.providers.transport.UrllibTransport`,
+    which does not yet consume this field directly; the dispatcher keeps the
+    field in the schema so a future transport retry implementation can use it
+    without changing the ``models.yaml`` contract. The dispatcher itself never
+    retries in-place per entry; it only sees the final outcome after the
+    transport returns or raises.
     """
 
     provider: str

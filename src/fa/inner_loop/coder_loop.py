@@ -511,9 +511,12 @@ def drive_session(  # noqa: C901
 
                     wait_s = max(1.0, min(active_cooldowns)) if active_cooldowns else 5.0
 
-                    # Protect tests from hanging
+                    # Protect tests from hanging without changing production
+                    # cooldown semantics. The runtime must honor the provider
+                    # chain's cooldown ledger on the AIO host; only pytest gets
+                    # the near-zero sleep shim so unit tests stay fast.
                     import os
-                    if wait_s > 60 or "PYTEST_CURRENT_TEST" in os.environ:
+                    if "PYTEST_CURRENT_TEST" in os.environ:
                         wait_s = 0.01
 
                     if output is not None:

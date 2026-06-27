@@ -284,6 +284,68 @@ def test_drive_session_chain_exhausted_returns_exit_two(tmp_path: Path) -> None:
     assert outcome.turns == 1
 
 
+def test_drive_session_chain_retry_sleep_uses_real_cooldown_outside_pytest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = FakeProvider([ProviderTransientError("502", status=502, kind="bad_gateway")])
+    chain = _make_chain(provider)
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    state = _make_state(tmp_path)
+
+    sleep_calls: list[float] = []
+
+    def _fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("time.sleep", _fake_sleep)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    outcome = drive_session(
+        "boom",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert outcome.exit_code == 2
+    assert sleep_calls
+    assert sleep_calls[0] >= 299.0
+
+
+def test_drive_session_chain_retry_sleep_is_shimmed_inside_pytest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = FakeProvider([ProviderTransientError("502", status=502, kind="bad_gateway")])
+    chain = _make_chain(provider)
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    state = _make_state(tmp_path)
+
+    sleep_calls: list[float] = []
+
+    def _fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("time.sleep", _fake_sleep)
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_coder_loop.py::x (call)")
+
+    outcome = drive_session(
+        "boom",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert outcome.exit_code == 2
+    assert sleep_calls
+    assert sleep_calls[0] == 0.01
+
+
 def test_drive_session_request_shape_error_returns_exit_two(tmp_path: Path) -> None:
     provider = FakeProvider([ProviderRequestShapeError("bad body", status=400)])
     chain = _make_chain(provider)

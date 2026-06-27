@@ -20,15 +20,25 @@ Loader contract (ADR-9 §1 schema, verbatim):
           slug:     "deepseek/deepseek-chat-v3"
           base_url: "https://openrouter.ai/api/v1"
           api_key_env: OPENROUTER_API_KEY
+          cooldown_seconds: 3   # optional: local cooldown floor after transient failure
+          timeout_seconds: 15   # optional: per-request HTTP timeout
+          httpx_retries: 1      # optional: reserved transport retry knob (future transport use)
+          extra_headers:        # optional: extra HTTP headers for this route
+            HTTP-Referer: "https://example.invalid"
         - provider: fireworks
           slug:     "accounts/fireworks/models/deepseek-v3"
           base_url: "https://api.fireworks.ai/inference/v1"
           api_key_env: FIREWORKS_API_KEY
 
     planner:
-      model:  "kimi-k2"
-      family: "kimi"
-      chain: [...]
+      model:  "glm-5p2"
+      family: "glm"
+      chain:
+        - provider: fireworks
+          slug: "accounts/fireworks/models/glm-5p2"
+          base_url: "https://api.fireworks.ai/inference/v1"
+          api_key_env: FIREWORKS_API_KEY
+          cooldown_seconds: 3
 
     eval:
       model:  "qwen-3-32b"
