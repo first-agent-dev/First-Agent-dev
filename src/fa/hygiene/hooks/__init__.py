@@ -22,23 +22,25 @@ the target module and trigger ``RuntimeWarning``.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fa.hygiene.hooks._util import HOOK_NAMES
 
 
-def install_hooks(*args, **kwargs):
+def install_hooks(repo_root: Path | None = None, *, force: bool = False) -> list[Path]:
     """Lazy wrapper to avoid RuntimeWarning on ``-m`` invocation."""
 
     from fa.hygiene.hooks.install import install_hooks as _install_hooks
 
-    return _install_hooks(*args, **kwargs)
+    return _install_hooks(repo_root=repo_root, force=force)
 
 
-def check_hooks(*args, **kwargs):
+def check_hooks(repo_root: Path | None = None) -> int:
     """Lazy wrapper to avoid RuntimeWarning on ``-m`` invocation."""
 
     from fa.hygiene.hooks.status import check_hooks as _check_hooks
 
-    return _check_hooks(*args, **kwargs)
+    return _check_hooks(repo_root=repo_root)
 
 
 __all__ = ["HOOK_NAMES", "check_hooks", "install_hooks"]

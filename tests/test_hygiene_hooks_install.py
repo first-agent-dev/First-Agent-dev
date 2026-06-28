@@ -544,12 +544,21 @@ def test_pre_commit_preserves_first_failure_exit_code_when_no_files_changed(tmp_
 
     _write_executable(
         fakebin / "uv",
-        f"#!/usr/bin/env bash\nprintf 'uv %s\\n' \"$*\" >> \"{log_path}\"\nexit 7\n",
+        f'#!/usr/bin/env bash\nprintf \'uv %s\\n\' "$*" >> "{log_path}"\nexit 7\n',
     )
-    _write_executable(
-        fakebin / "git",
-        f"#!/usr/bin/env bash\nprintf 'git %s\\n' \"$*\" >> \"{log_path}\"\nif [[ \"$1\" == diff && \"$2\" == --cached && \"$3\" == --name-only && \"$4\" == -z ]]; then\n  printf 'tracked.py\\0'\n  exit 0\nfi\nif [[ \"$1\" == diff && \"$2\" == --quiet && \"$3\" == -- && \"$4\" == tracked.py ]]; then\n  exit 0\nfi\nexit 0\n",
+    git_script = (
+        f"#!/usr/bin/env bash\n"
+        f'printf \'git %s\\n\' "$*" >> "{log_path}"\n'
+        'if [[ "$1" == diff && "$2" == --cached && "$3" == --name-only && "$4" == -z ]]; then\n'
+        "  printf 'tracked.py\\0'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "$1" == diff && "$2" == --quiet && "$3" == -- && "$4" == tracked.py ]]; then\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n"
     )
+    _write_executable(fakebin / "git", git_script)
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
