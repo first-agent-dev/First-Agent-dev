@@ -84,6 +84,8 @@ def _install_one(
             current_mode = path.stat().st_mode
             path.chmod(current_mode | 0o111)
         except OSError:
+            # Best-effort only: some filesystems/platforms may reject chmod.
+            # Keep installation successful even if executability cannot be enforced here.
             pass
 
     return target
