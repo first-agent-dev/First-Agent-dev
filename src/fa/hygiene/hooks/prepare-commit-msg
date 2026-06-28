@@ -7,19 +7,31 @@
 # and renders the placeholder block via fa.hygiene.pr_intent. See
 # `python -m fa.hygiene prepare` for the implementation;
 # the rule contract is the skill, single source of truth.
+#
+# Uses ``uv run`` to ensure the project environment (with the latest
+# source) is used, avoiding stale bytecode or PATH issues on Windows.
 
 set -euo pipefail
 
 COMMIT_MSG_FILE="${1:-}"
 COMMIT_SOURCE="${2:-}"
 
-# Skip the auto-fill when git already supplies a message body
-# (merge / squash / amend / template / message-via-`-m`). The
-# commit-msg validator applies a matching skip for these same sources
-# (detected via .git/MERGE_HEAD, CHERRY_PICK_HEAD, REVERT_HEAD, and
-# GIT_REFLOG_ACTION) so that standard git operations are never blocked.
+# Skip the auto-fill when git already supplies a message body.
+# The commit-msg validator applies a matching skip for these same
+# sources: for merge/cherry-pick/revert/amend it detects state files
+# or GIT_REFLOG_ACTION; for ordinary manual commits with no PR-intent
+# metadata headers it allows the message through without requiring the
+# rich PR-intent format.
+#
+# IMPORTANT: when COMMIT_SOURCE is empty (VS Code Git extension uses
+# ``git commit --file -`` to pass the message via stdin), the user
+# has already written their commit message and the template must NOT
+# be injected.  Earlier versions only skipped "message" (the -m flag)
+# but missed the empty-source case, causing the validator to reject
+# VS Code commits that had the INTENT template injected but INVARIANT
+# left as <fill me>.
 case "${COMMIT_SOURCE}" in
-  message|template|squash|merge|commit)
+  message|template|squash|merge|commit|"")
     exit 0
     ;;
 esac
@@ -29,4 +41,4 @@ if [[ -z "${COMMIT_MSG_FILE}" ]]; then
   exit 1
 fi
 
-exec python -m fa.hygiene prepare "${COMMIT_MSG_FILE}"
+exec uv run python -m fa.hygiene prepare "${COMMIT_MSG_FILE}"

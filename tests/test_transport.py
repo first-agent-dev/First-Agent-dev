@@ -191,8 +191,12 @@ def test_post_serialises_json_body_consistently(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     transport = UrllibTransport()
     payload = {"messages": [{"role": "user", "content": "x"}], "model": "y"}
-    transport.post("https://x.invalid", headers={}, json_body=payload, timeout_seconds=1.0, transport_retries=0)
-    transport.post("https://x.invalid", headers={}, json_body=payload, timeout_seconds=1.0, transport_retries=0)
+    transport.post(
+        "https://x.invalid", headers={}, json_body=payload, timeout_seconds=1.0, transport_retries=0
+    )
+    transport.post(
+        "https://x.invalid", headers={}, json_body=payload, timeout_seconds=1.0, transport_retries=0
+    )
 
     assert captured_bodies[0] == captured_bodies[1]
     decoded = json.loads(captured_bodies[0])

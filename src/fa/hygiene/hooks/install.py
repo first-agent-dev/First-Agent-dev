@@ -1,49 +1,92 @@
-"""Install the PR-intent git hooks into ``.git/hooks/``.
+"""Install the local commit hooks into ``.git/hooks/``.
 
-The repository's ``.pre-commit-config.yaml`` covers the
-``pre-commit`` stage (ruff, markdownlint, …) but does not install
-``prepare-commit-msg`` or ``commit-msg`` hook types by default. This
-installer fills that gap by symlinking the two shell scripts
-shipped under :mod:`fa.hygiene.hooks` into the repo's
-``.git/hooks/`` directory.
+The repository's ``.pre-commit-config.yaml`` defines which checks run
+at commit time (ruff, gitleaks, markdownlint, uv-lock, etc.), and the
+``pre-commit`` framework executes them.  This installer puts all three
+hook seats into ``.git/hooks/`` — including the ``pre-commit`` hook
+itself, which invokes the framework via ``uv run`` so it works
+reliably on Windows/PowerShell where the framework's own generated
+hook script cannot find the ``pre-commit`` executable in PATH.
 
-Bare symlinks (rather than ``pre-commit install --hook-type
-prepare-commit-msg ...``) keep the PR-B diff strictly inside
-``src/fa/hygiene/**`` per the M-6 BACKLOG row's scope-fence,
-without modifying ``.pre-commit-config.yaml``. The deferred
-decision in BACKLOG.md §M-6 (pre-commit framework vs. bare
-symlinks) is resolved in favour of bare symlinks for that
-reason; switching to the framework remains a future CHORE PR
-when the repo's hook-discipline conventions evolve.
+The installer prefers symlinks (so the hook always reflects the
+current source after a ``git pull``), but falls back to copying
+on platforms where symlinks require elevated privileges (Windows
+without Developer Mode).  This fallback ensures ``just install``
+works reliably across all contributor environments.
 
 Invoke via ``python -m fa.hygiene.hooks.install`` or programmatically
-via :func:`install_hooks`.
+via :func:`install_hooks`.  The ``just install-hooks`` recipe
+delegates here, so ``just`` and direct invocation share one code path.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 
-HOOK_NAMES: tuple[str, ...] = ("prepare-commit-msg", "commit-msg")
+from fa.hygiene.hooks._util import HOOK_NAMES, resolve_hooks_dir, resolve_repo_root, scripts_dir
 
 
-def _scripts_dir() -> Path:
-    """Return the directory holding the bash hook scripts."""
+def _install_one(
+    source: Path,
+    target: Path,
+    *,
+    force: bool = False,
+) -> Path:
+    """Link or copy a single hook script into ``.git/hooks/``.
 
-    return Path(__file__).resolve().parent
+    Prefers a symlink so the installed hook always reflects the
+    current source (important after ``git pull``).  Falls back to a
+    plain copy when symlinks are unavailable (Windows without
+    Developer Mode).
 
+    When ``force=True``, any existing file or symlink at *target*
+    is replaced; otherwise an existing real (non-symlink) file is
+    preserved and :class:`FileExistsError` is raised.
+    """
 
-def _resolve_repo_root(start: Path) -> Path:
-    """Anchor-on-cwd workspace resolution per AGENTS.md (no walk-up)."""
+    if target.exists() or target.is_symlink():
+        if not force and not target.is_symlink():
+            raise FileExistsError(
+                f"{target} exists and is not a symlink; pass force=True to overwrite."
+            )
+        target.unlink()
 
-    if (start / "knowledge" / "llms.txt").is_file():
-        return start
-    raise SystemExit(
-        "fa.hygiene.hooks.install: not a First-Agent workspace (no knowledge/llms.txt at cwd)"
-    )
+    # On Windows, symlinks in .git/hooks/ may not be followed by
+    # Git for Windows at hook-execution time (even though they
+    # resolve correctly for reads).  Force copies on Windows to
+    # ensure the hook script content is directly in .git/hooks/.
+    if sys.platform == "win32":
+        shutil.copy2(source, target)
+    else:
+        try:
+            os.symlink(source, target)
+        except OSError:
+            # Symlink failed (unlikely on non-Windows, but possible
+            # on unusual filesystems).  Fall back to a plain copy.
+            shutil.copy2(source, target)
+
+    # Ensure both the source script AND the installed target are
+    # executable.  Symlink permissions come from the source file,
+    # so chmod-ing the source is sufficient for symlink installs.
+    # For copy fallback, copy2 preserves the source's permission
+    # bits — so the target also needs chmod when the source was
+    # checked out without the execute bit (common on Windows where
+    # core.fileMode=false).  Without this, git silently skips the
+    # hook because it checks executability before running any hook.
+    for path in (source, target):
+        try:
+            current_mode = path.stat().st_mode
+            path.chmod(current_mode | 0o111)
+        except OSError:
+            # Best-effort only: some filesystems/platforms may reject chmod.
+            # Keep installation successful even if executability cannot be enforced here.
+            pass
+
+    return target
 
 
 def install_hooks(
@@ -51,7 +94,7 @@ def install_hooks(
     *,
     force: bool = False,
 ) -> list[Path]:
-    """Symlink the PR-intent hooks into ``<repo_root>/.git/hooks/``.
+    """Install the PR-intent hooks into ``<repo_root>/.git/hooks/``.
 
     Returns the list of installed hook paths. When ``force=True``,
     any existing file or symlink at the target path is replaced;
@@ -59,35 +102,20 @@ def install_hooks(
     function raises :class:`FileExistsError`.
     """
 
-    root = _resolve_repo_root(repo_root or Path.cwd())
-    hooks_dir = root / ".git" / "hooks"
+    root = resolve_repo_root(repo_root or Path.cwd())
+    hooks_dir = resolve_hooks_dir(root)
     if not hooks_dir.is_dir():
         raise SystemExit(
             f"fa.hygiene.hooks.install: {hooks_dir} does not exist; is this a git checkout?"
         )
 
-    src_dir = _scripts_dir()
+    src_dir = scripts_dir()
     installed: list[Path] = []
     for name in HOOK_NAMES:
         source = src_dir / name
         if not source.is_file():
             raise SystemExit(f"fa.hygiene.hooks.install: missing hook script {source}")
-        target = hooks_dir / name
-        if target.exists() or target.is_symlink():
-            if not force and not target.is_symlink():
-                raise FileExistsError(
-                    f"{target} exists and is not a symlink; pass force=True to overwrite."
-                )
-            target.unlink()
-        os.symlink(source, target)
-        # Ensure the script is executable (symlink target permissions
-        # come from the source file, but a freshly-checked-out source
-        # may not have the bit set on every platform / git mode).
-        try:
-            current_mode = source.stat().st_mode
-            source.chmod(current_mode | 0o111)
-        except OSError:
-            pass
+        target = _install_one(source, hooks_dir / name, force=force)
         installed.append(target)
     return installed
 
@@ -96,7 +124,7 @@ def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m fa.hygiene.hooks.install",
         description=(
-            "Symlink the PR-intent hooks (prepare-commit-msg, commit-msg) into .git/hooks/."
+            "Install the PR-intent hooks (prepare-commit-msg, commit-msg) into .git/hooks/."
         ),
     )
     parser.add_argument(
@@ -108,7 +136,8 @@ def _main(argv: list[str] | None = None) -> int:
 
     installed = install_hooks(force=args.force)
     for path in installed:
-        sys.stdout.write(f"installed: {path}\n")
+        method = "symlink" if path.is_symlink() else "copy"
+        sys.stdout.write(f"installed ({method}): {path}\n")
     return 0
 
 

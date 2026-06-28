@@ -42,6 +42,7 @@ from fa.hygiene.pr_intent import (
     classify_intent,
     derive_required_fields,
     detect_multi_intent,
+    has_pr_intent_headers,
     is_mirror_only,
     parse_name_status,
     render_prepare_buffer,
@@ -750,11 +751,11 @@ def test_cli_validate_skips_merge_commit(tmp_path: Path) -> None:
     assert rc == 0, "merge commit must not be blocked by commit-msg validator"
 
 
-def test_cli_validate_blocks_headerless_normal_commit(
+def test_cli_validate_allows_headerless_normal_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_cli_validate returns 1 for a normal commit without INTENT header."""
+    """_cli_validate returns 0 for a normal manual commit with no PR-intent headers."""
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
     monkeypatch.delenv("GIT_REFLOG_ACTION", raising=False)
@@ -762,7 +763,33 @@ def test_cli_validate_blocks_headerless_normal_commit(
     msg_file = tmp_path / "COMMIT_EDITMSG"
     msg_file.write_text("docs: quick fix typo\n", encoding="utf-8")
 
+
     with mock.patch("fa.hygiene.pr_intent._run_git", return_value=""):
         rc = _cli_validate(msg_file, tmp_path)
 
-    assert rc == 1, "headerless normal commit must be blocked"
+    assert rc == 0, "headerless normal commit should follow the manual-commit path"
+
+
+def test_has_pr_intent_headers_detects_partial_metadata_block() -> None:
+    assert has_pr_intent_headers("INVARIANT: n/a\nBody\n") is True
+
+
+
+
+def test_cli_validate_blocks_partial_metadata_without_intent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A partial metadata block must not silently pass as a manual commit."""
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    monkeypatch.delenv("GIT_REFLOG_ACTION", raising=False)
+
+    msg_file = tmp_path / "COMMIT_EDITMSG"
+    msg_file.write_text("INVARIANT: n/a\n", encoding="utf-8")
+
+
+    with mock.patch("fa.hygiene.pr_intent._run_git", return_value=""):
+        rc = _cli_validate(msg_file, tmp_path)
+
+    assert rc == 1

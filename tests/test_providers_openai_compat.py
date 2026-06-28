@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from email.message import Message
 from types import TracebackType
-from typing import Any, ClassVar
+from typing import Any, ClassVar, override
 
 import pytest
 
@@ -296,6 +296,7 @@ def test_urllib_transport_does_not_retry_http_status(monkeypatch: pytest.MonkeyP
                 fp=None,
             )
 
+        @override
         def read(self, n: int = -1) -> bytes:
             del n
             return b"{}"

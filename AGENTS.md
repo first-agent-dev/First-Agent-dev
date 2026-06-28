@@ -60,7 +60,7 @@ grep -ril "<key-term>" knowledge/research/
 
 Expect 1..N file paths. Open every file in the output!
 Cite from the most recent (`compiled:` date in frontmatter)
-unless explicitly superseded. 
+unless explicitly superseded.
 Reading every match is cheaper than missing one.
 
 **Step 4 — Subtraction-check.** Before adding any artefact (file,
@@ -104,7 +104,7 @@ Four named slots. Pattern-match the template exactly; respect four-pillar goal s
   bootstrap — it points to `knowledge/llms.txt` §MUST READ FIRST
   (five files, in order). If HANDOFF and llms.txt disagree, llms.txt
   wins. Complete the bootstrap first, then navigate as needed.
-  
+
 - All documentation is Markdown. ATX headings (`#`, `##`), short lines ~150 chars.
 - Fenced code blocks
   - ALWAYS open with a language tag:
@@ -132,17 +132,17 @@ Use [`knowledge/llms.txt`](./knowledge/llms.txt) as the routing surface and [`HA
 Use §-anchors and grep-windows! Goal - keep the agent's working prompt focused on the task
 and to leave headroom for the actual edits, traces, and tool-output.
 
-**Design invariant** 
+**Design invariant**
 Any single LLM call's total input — system prompt + role prompt + tool definitions + retrieved chunks + scrollback + in-line memory
 — must stay below ~100 k tokens for ≥ 9 out of 10 invocations in the expected workload.
 When designing or amending a harness component, adopt **at least one** mitigation before merge:
 
 a. **Sub-agent split** — delegate the big-context work to a sub-agent so the parent context stays bounded.
-   
+
 b. **Lazy-load** — load skills / tool-specs / repo chunks on demand instead of injecting upfront (dispatcher pattern).
-   
+
 c. **Step-as-function** — replace the LLM call with a deterministic Python function where the step does not need model judgement.
-   
+
 d. **Explicit elite-tier escalation** — route the call to Debug tier. Last resort.
 
 The universal context-budget discipline above applies to **every
@@ -175,7 +175,7 @@ agent projects. Violations of any of these caused reverts in production.
 
 Per-task agent-loadable disciplines live in
 [`knowledge/skills/`](./knowledge/skills/) — directory-per-skill,
-shapes - `.agents/skills/<name>/SKILL.md` 
+shapes - `.agents/skills/<name>/SKILL.md`
 Skills are loaded on the trigger condition:
 
 | Skill | Trigger and scope |
@@ -189,10 +189,22 @@ New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this t
 
 - Branch: `devin/<timestamp>-<slug>` from `main`.
 - All changes via Pull Request.
+- **After cloning, run `just install`.** This single command syncs the
+  Python environment (including dev extras), installs the pre-commit
+  hook, and installs the custom `prepare-commit-msg` / `commit-msg`
+  hooks. Without it, local commit hooks are not active — VS Code
+  commits and manual git commits will bypass local autofix and
+  validation, even though CI will still check the PR. Verify at any
+  time with `just hooks-status`.
 - **Lint is autofix-first.** Run `just fix` after editing code — it
   handles formatting (import order, `__all__` sorting, quoting, line
   wrapping). Let the tool do style; focus on logic. Gate before push:
   `just check`.
+- **Before opening a PR for review**, run `just check` — this is the
+  PR-readiness gate. Commit hooks provide fast local hygiene on every
+  commit; `just check` provides the full gate that ensures the PR is
+  review-ready. These are two separate seats: commit-time is fast and
+  bypassable, PR-handoff is authoritative.
 - **Judgment rules** (`S`, `BLE001`, `C901`, pylint `duplicate-code`):
   these signal a design problem — fix the design that caused the
   finding. Waive with `# noqa: <code> — <reason>` only when you can

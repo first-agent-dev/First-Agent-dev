@@ -516,11 +516,11 @@ def drive_session(  # noqa: C901
                     # chain's cooldown ledger on the AIO host; only pytest gets
                     # the near-zero sleep shim so unit tests stay fast.
                     import os
+
                     if "PYTEST_CURRENT_TEST" in os.environ:
                         wait_s = 0.01
 
                     if output is not None:
-
                         for _att in exc.attempts:
                             output.emit(
                                 OutputEvent(

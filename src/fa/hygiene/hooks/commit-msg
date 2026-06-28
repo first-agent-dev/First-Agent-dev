@@ -11,14 +11,14 @@
 # validator. The prepare-commit-msg hook already skips injection for
 # these sources; this hook must match that logic.
 #
-# Detection strategy (commit-msg receives only $1 = msg-file):
-#   - .git/MERGE_HEAD      exists → merge commit (git merge / git pull)
-#   - .git/CHERRY_PICK_HEAD exists → cherry-pick
-#   - .git/REVERT_HEAD     exists → revert
-#   - GIT_REFLOG_ACTION    contains "merge" or "amend" → merge / amend
-# The Python validator (_is_non_validating_commit_source) implements
-# the same logic; the bash pre-check here avoids the Python startup
-# cost when the skip is obvious from a state file.
+# Message-source commits (git commit -m "...", VS Code Git extension)
+# are also handled: when the message contains no PR-intent metadata
+# headers at all, the Python validator treats it as an ordinary manual
+# commit and does not require the rich PR-intent format. Explicit
+# metadata blocks remain strictly validated.
+#
+# Uses ``uv run`` to ensure the project environment (with the latest
+# source) is used, avoiding stale bytecode or PATH issues on Windows.
 
 set -euo pipefail
 
@@ -46,4 +46,7 @@ if [[ "${reflog_action,,}" == *"merge"* || "${reflog_action,,}" == *"amend"* ]];
   exit 0
 fi
 
-exec python -m fa.hygiene validate "${COMMIT_MSG_FILE}"
+# Delegate to the Python validator, which handles both:
+# - explicit PR-intent metadata blocks (strict validation)
+# - ordinary manual commits with no PR-intent headers (allowed)
+exec uv run python -m fa.hygiene validate "${COMMIT_MSG_FILE}"

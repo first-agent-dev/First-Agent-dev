@@ -1,21 +1,46 @@
-"""Git-hook shell scripts + installer for the PR-intent gate (PR B — M-6).
+"""Git-hook shell scripts + installer for all local commit hooks.
 
-The two bash scripts in this directory (``prepare-commit-msg`` and
-``commit-msg``) are thin wrappers that invoke
-``python -m fa.hygiene.pr_intent {prepare,validate} <commit-msg-file>``.
-The Python module owns every classifier / validator decision so the
-git-hook seat and the future :class:`fa.inner_loop.hooks.intent_guard.IntentGuard`
-harness-side middleware (PR C — M-7) share the same source of truth.
+The three scripts in this directory (``pre-commit``, ``prepare-commit-msg``
+and ``commit-msg``) are thin wrappers installed into the repo's effective
+hooks dir by the installer. All three invoke their respective commands
+through ``uv run``, ensuring they work reliably in uv-managed environments
+(including Windows/PowerShell) where bare PATH lookups fail.
 
-:func:`install_hooks` symlinks the scripts into ``.git/hooks/``;
-the repository's existing ``pre-commit`` framework already covers
-the ``pre-commit`` stage, so this installer adds only the
-``prepare-commit-msg`` / ``commit-msg`` stages that pre-commit
-does not register by default.
+The ``pre-commit`` hook runs ``uv run pre-commit run``, which executes
+the checks defined in ``.pre-commit-config.yaml``. The
+``prepare-commit-msg`` and ``commit-msg`` hooks invoke
+``python -m fa.hygiene {prepare|validate}`` for the PR-intent gate.
+
+:func:`install_hooks` installs the scripts into the effective hooks dir;
+:func:`check_hooks` provides a deterministic status probe that
+verifies all three local hook seats are installed and current.
+
+Lazy imports are used for the callable exports so running
+``python -m fa.hygiene.hooks.{install,status}`` does not pre-import
+the target module and trigger ``RuntimeWarning``.
 """
 
 from __future__ import annotations
 
-from fa.hygiene.hooks.install import HOOK_NAMES, install_hooks
+from pathlib import Path
 
-__all__ = ["HOOK_NAMES", "install_hooks"]
+from fa.hygiene.hooks._util import HOOK_NAMES
+
+
+def install_hooks(repo_root: Path | None = None, *, force: bool = False) -> list[Path]:
+    """Lazy wrapper to avoid RuntimeWarning on ``-m`` invocation."""
+
+    from fa.hygiene.hooks.install import install_hooks as _install_hooks
+
+    return _install_hooks(repo_root=repo_root, force=force)
+
+
+def check_hooks(repo_root: Path | None = None) -> int:
+    """Lazy wrapper to avoid RuntimeWarning on ``-m`` invocation."""
+
+    from fa.hygiene.hooks.status import check_hooks as _check_hooks
+
+    return _check_hooks(repo_root=repo_root)
+
+
+__all__ = ["HOOK_NAMES", "check_hooks", "install_hooks"]
