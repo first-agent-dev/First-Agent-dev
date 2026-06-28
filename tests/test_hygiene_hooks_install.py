@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from fa.hygiene.hooks import install as install_mod
+import fa.hygiene.hooks as hooks_pkg
 from fa.hygiene.hooks.install import HOOK_NAMES, install_hooks
 from fa.hygiene.hooks.status import check_hooks
 
@@ -46,7 +46,7 @@ def test_install_hooks_happy_path(tmp_path: Path) -> None:
         # The installer prefers symlinks but may fall back to copies.
         assert path.exists()
         # Content must match the shipped script next to the installer.
-        source = Path(install_mod.__file__).resolve().parent / path.name
+        source = Path(hooks_pkg.install.__file__).resolve().parent / path.name
         assert path.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
 
 
@@ -202,7 +202,7 @@ def test_install_one_copy_fallback_target_is_executable(
     """Copy-fallback target must have the execute bit set (git requirement)."""
 
     root = _make_workspace(tmp_path)
-    src_dir = Path(install_mod.__file__).resolve().parent
+    src_dir = Path(hooks_pkg.install.__file__).resolve().parent
     source = src_dir / HOOK_NAMES[0]
     target = root / ".git" / "hooks" / HOOK_NAMES[0]
 
@@ -211,20 +211,20 @@ def test_install_one_copy_fallback_target_is_executable(
     source.chmod(source.stat().st_mode & ~0o111)
 
     # Force symlink failure.
-    original_symlink = install_mod.os.symlink
+    original_symlink = hooks_pkg.install.os.symlink
     monkeypatch.setattr(
-        install_mod.os,
+        hooks_pkg.install.os,
         "symlink",
         staticmethod(lambda *_args, **_kw: (_ for _ in ()).throw(OSError("no symlink"))),
     )
 
-    install_mod._install_one(source, target, force=True)
+    hooks_pkg.install._install_one(source, target, force=True)
 
     # Target must be executable — git skips hooks without the bit.
     assert target.stat().st_mode & 0o111, "copy-fallback target must be executable"
 
     # Restore.
-    monkeypatch.setattr(install_mod.os, "symlink", original_symlink)
+    monkeypatch.setattr(hooks_pkg.install.os, "symlink", original_symlink)
     source.chmod(source.stat().st_mode | 0o111)  # restore source too
 
 
@@ -236,15 +236,11 @@ def test_install_one_copy_fallback_target_is_executable(
 def test_lazy_import_hook_names() -> None:
     """HOOK_NAMES is accessible through the lazy __getattr__."""
 
-    import fa.hygiene.hooks as hooks_pkg
-
     assert hooks_pkg.HOOK_NAMES == ("pre-commit", "prepare-commit-msg", "commit-msg")
 
 
 def test_lazy_import_install_hooks() -> None:
     """install_hooks is accessible through the lazy __getattr__."""
-
-    import fa.hygiene.hooks as hooks_pkg
 
     assert callable(hooks_pkg.install_hooks)
 
@@ -252,15 +248,11 @@ def test_lazy_import_install_hooks() -> None:
 def test_lazy_import_check_hooks() -> None:
     """check_hooks is accessible through the lazy __getattr__."""
 
-    import fa.hygiene.hooks as hooks_pkg
-
     assert callable(hooks_pkg.check_hooks)
 
 
 def test_lazy_import_unknown_attribute_raises() -> None:
     """Accessing an undefined attribute raises AttributeError."""
-
-    import fa.hygiene.hooks as hooks_pkg
 
     with pytest.raises(AttributeError, match="has no attribute"):
         _ = hooks_pkg.nonexistent_thing  # type: ignore[attr-defined]
