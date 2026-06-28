@@ -22,14 +22,12 @@ while the package's ``__init__`` has already imported it.
 
 from __future__ import annotations
 
+from fa.hygiene.hooks.install import HOOK_NAMES
+
 
 def __getattr__(name: str) -> object:
     """Lazy import to avoid RuntimeWarning on ``-m`` invocation."""
 
-    if name == "HOOK_NAMES":
-        from fa.hygiene.hooks.install import HOOK_NAMES
-
-        return HOOK_NAMES
     if name == "install_hooks":
         from fa.hygiene.hooks.install import install_hooks
 
