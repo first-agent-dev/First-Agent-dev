@@ -24,12 +24,10 @@
 # Auto-retry: if a hook modifies files (trailing-whitespace,
 # end-of-file-fixer, ruff --fix), those changes are left in the
 # working tree but NOT re-staged, and the commit fails with exit 1.
-# This requires the contributor to manually ``git add -u`` and
-# re-commit — friction that defeats the purpose of autofix hooks.
-# Instead, we detect that hooks made changes, re-stage them, and
-# retry once.  If the retry passes, the commit proceeds.  If it
-# still fails, the commit is blocked as expected (real error, not
-# just an unstaged fix).
+# This requires the contributor to manually re-stage and re-commit.
+# Instead, we snapshot the staged path set, detect which of those
+# already-staged files were modified by the hook, re-stage ONLY that
+# subset, and retry once. Unrelated unstaged changes remain untouched.
 
 set -euo pipefail
 
@@ -38,19 +36,31 @@ set -euo pipefail
 # change system or VS Code proxy settings.
 export NO_PROXY="*"
 
-uv run pre-commit run "$@"
-rc=$?
+mapfile -d '' staged_paths < <(git diff --cached --name-only -z 2>/dev/null || true)
 
-if [ $rc -ne 0 ]; then
-    # Check whether hooks modified (but did not stage) any files.
-    changed=$(git diff --name-only --diff-filter=M 2>/dev/null || true)
-    if [ -n "$changed" ]; then
-        echo "pre-commit: re-staging auto-fixed files and retrying:" >&2
-        echo "$changed" | sed 's/^/  /' >&2
-        git add -u
-        uv run pre-commit run "$@"
-        rc=$?
-    fi
+if uv run pre-commit run "$@"; then
+    exit 0
 fi
 
-exit $rc
+modified_paths=()
+for path in "${staged_paths[@]}"; do
+    [[ -n "$path" ]] || continue
+    if ! git diff --quiet -- "$path" 2>/dev/null; then
+        modified_paths+=("$path")
+    fi
+done
+
+if [ ${#modified_paths[@]} -eq 0 ]; then
+    exit 1
+fi
+
+echo "pre-commit: re-staging auto-fixed files and retrying:" >&2
+printf '  %s
+' "${modified_paths[@]}" >&2
+git add -- "${modified_paths[@]}"
+
+if uv run pre-commit run "$@"; then
+    exit 0
+fi
+
+exit 1

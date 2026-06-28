@@ -345,6 +345,20 @@ HEADER_DET_MECHANISM = "DETERMINISTIC MECHANISM:"
 # Consumed by :func:`validate_test_edits`; see that function for the rule.
 HEADER_TEST_EDITS = "TEST-EDITS:"
 
+# Any of these headers means the author is attempting to use the rich
+# PR-intent metadata format. The hook-seat adapter treats the *absence*
+# of all of them as an ordinary manual commit path; the *presence* of
+# any one means the message should be validated strictly rather than
+# silently accepted as a manual commit.
+_PR_INTENT_HEADERS: tuple[str, ...] = (
+    HEADER_INTENT,
+    HEADER_CLASS,
+    HEADER_INVARIANT,
+    HEADER_DOF_CLOSED,
+    HEADER_DET_MECHANISM,
+    HEADER_TEST_EDITS,
+)
+
 # Citation must end with `path/file.ext:line`. The path component
 # must contain a dot (skill §D-4: «repo/file.ext:line»). The regex
 # intentionally does NOT require a path separator so that flat-repo
@@ -395,6 +409,24 @@ def parse_field(text: str, header: str) -> str | None:
     if match is None:
         return None
     return match.group("value").strip()
+
+
+def has_pr_intent_headers(text: str) -> bool:
+    """True when *text* contains any PR-intent metadata header.
+
+    This is intentionally broader than checking only ``INTENT:``:
+    partial malformed metadata blocks such as a lone ``INVARIANT:`` or
+    ``TEST-EDITS:`` line must still route through strict validation
+    rather than silently being treated as an ordinary manual commit.
+    Leading indentation is ignored for detection only; the validator
+    itself still enforces the exact header shape.
+    """
+
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if any(stripped.startswith(header) for header in _PR_INTENT_HEADERS):
+            return True
+    return False
 
 
 def parse_test_edits(text: str) -> dict[str, str]:
@@ -917,28 +949,12 @@ def _cli_validate(commit_msg_file: Path, repo_root: Path) -> int:
 
     text = commit_msg_file.read_text(encoding="utf-8")
 
-    # Message-source commits (git commit -m "...", VS Code Git extension):
-    # the prepare-commit-msg hook does NOT inject the INTENT/INVARIANT
-    # template for these sources (COMMIT_SOURCE=message), so the
-    # commit-msg validator must not require it.  Detect by checking if
-    # the message body contains an INTENT: header line.  If it doesn't,
-    # the template was never injected — validate only that the subject
-    # line carries a recognized conventional commit prefix.  This is the
-    # lightweight commit-phase check; the full INTENT/INVARIANT format
-    # is enforced for editor-buffer commits where the template IS
-    # injected.
-    has_intent_line = any(line.startswith("INTENT:") for line in text.splitlines())
-    if not has_intent_line:
-        subject = text.splitlines()[0].strip() if text.splitlines() else ""
-        conventional_prefixes = (
-            "RESEARCH:",
-            "ADR-RULE:",
-            "IMPLEMENT:",
-            "FIX:",
-            "CHORE:",
-        )
-        if any(subject.startswith(p) for p in conventional_prefixes):
-            return 0
+    # Ordinary human/manual commits are allowed through the hook seat when
+    # they contain no PR-intent metadata at all. The rich PR-intent contract
+    # is enforced when a metadata block is explicitly present and in the
+    # agent runtime via `pr.prepare` + `IntentGuard`.
+    if not has_pr_intent_headers(text):
+        return 0
     name_status = _run_git(["diff", "--cached", "--name-status"], cwd=repo_root)
     staged = parse_name_status(name_status)
     classifier_intent = classify_intent(staged)

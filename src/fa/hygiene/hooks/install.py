@@ -27,9 +27,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from fa.hygiene.hooks._util import resolve_repo_root, scripts_dir
-
-HOOK_NAMES: tuple[str, ...] = ("pre-commit", "prepare-commit-msg", "commit-msg")
+from fa.hygiene.hooks._util import HOOK_NAMES, resolve_hooks_dir, resolve_repo_root, scripts_dir
 
 
 def _install_one(
@@ -105,7 +103,7 @@ def install_hooks(
     """
 
     root = resolve_repo_root(repo_root or Path.cwd())
-    hooks_dir = root / ".git" / "hooks"
+    hooks_dir = resolve_hooks_dir(root)
     if not hooks_dir.is_dir():
         raise SystemExit(
             f"fa.hygiene.hooks.install: {hooks_dir} does not exist; is this a git checkout?"

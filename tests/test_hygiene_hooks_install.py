@@ -12,13 +12,20 @@ path that both humans and agents use to confirm the local hook chain is active.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 import fa.hygiene.hooks as hooks_pkg
-from fa.hygiene.hooks.install import HOOK_NAMES, install_hooks
-from fa.hygiene.hooks.status import check_hooks
+import fa.hygiene.hooks.install as install_mod
+import fa.hygiene.hooks.status as status_mod
+
+HOOK_NAMES = install_mod.HOOK_NAMES
+install_hooks = install_mod.install_hooks
+check_hooks = status_mod.check_hooks
 
 
 def _make_workspace(tmp_path: Path, *, with_git: bool = True) -> Path:
@@ -29,6 +36,21 @@ def _make_workspace(tmp_path: Path, *, with_git: bool = True) -> Path:
     if with_git:
         (tmp_path / ".git" / "hooks").mkdir(parents=True)
     return tmp_path
+
+
+def _make_worktree_workspace(tmp_path: Path) -> tuple[Path, Path]:
+    """Build a minimal First-Agent workspace using a git-worktree .git file."""
+
+    root = _make_workspace(tmp_path, with_git=False)
+    gitdir = root / ".git-worktree"
+    (gitdir / "hooks").mkdir(parents=True)
+    (root / ".git").write_text("gitdir: .git-worktree\n", encoding="utf-8")
+    return root, gitdir
+
+
+def _write_executable(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+    path.chmod(path.stat().st_mode | 0o755)
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +68,7 @@ def test_install_hooks_happy_path(tmp_path: Path) -> None:
         # The installer prefers symlinks but may fall back to copies.
         assert path.exists()
         # Content must match the shipped script next to the installer.
-        source = Path(hooks_pkg.install.__file__).resolve().parent / path.name
+        source = Path(install_mod.__file__).resolve().parent / path.name
         assert path.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
 
 
@@ -68,32 +90,24 @@ def test_install_hooks_is_idempotent_replacing_own_copies(tmp_path: Path) -> Non
     root = _make_workspace(tmp_path)
     first = install_hooks(repo_root=root)
 
-    # If the first install was via symlink, force the target to be a
-    # regular file to simulate the copy fallback, then re-install.
     for path in first:
         if path.is_symlink():
             content = path.read_text(encoding="utf-8")
             path.unlink()
             path.write_text(content, encoding="utf-8")
 
-    # Re-install with force replaces the copies (this is how the
-    # justfile calls it: ``uv run python -m fa.hygiene.hooks.install --force``).
     second = install_hooks(repo_root=root, force=True)
     assert [p.name for p in second] == list(HOOK_NAMES)
 
 
-def test_install_hooks_refuses_to_clobber_real_file_without_force(
-    tmp_path: Path,
-) -> None:
+def test_install_hooks_refuses_to_clobber_real_file_without_force(tmp_path: Path) -> None:
     root = _make_workspace(tmp_path)
-    # A pre-existing *real* hook file (not a symlink) must be protected.
     existing = root / ".git" / "hooks" / HOOK_NAMES[0]
     existing.write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
 
     with pytest.raises(FileExistsError):
         install_hooks(repo_root=root)
 
-    # The user's file is untouched.
     assert existing.read_text(encoding="utf-8") == "#!/bin/sh\necho mine\n"
 
 
@@ -109,7 +123,6 @@ def test_install_hooks_force_overwrites_real_file(tmp_path: Path) -> None:
 
 
 def test_install_hooks_rejects_non_workspace(tmp_path: Path) -> None:
-    # No knowledge/llms.txt marker => not a First-Agent workspace.
     (tmp_path / ".git" / "hooks").mkdir(parents=True)
 
     with pytest.raises(SystemExit) as exc:
@@ -129,7 +142,6 @@ def test_install_hooks_errors_when_script_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _make_workspace(tmp_path)
-    # Point the installer at an empty scripts dir so the source scripts are gone.
     empty = tmp_path / "empty_scripts"
     empty.mkdir()
     monkeypatch.setattr(install_mod, "scripts_dir", lambda: empty)
@@ -176,7 +188,6 @@ def test_install_one_symlink_fallback_to_copy(
     source = src_dir / HOOK_NAMES[0]
     target = root / ".git" / "hooks" / HOOK_NAMES[0]
 
-    # Monkey-patch os.symlink to always fail.
     original_symlink = install_mod.os.symlink
     monkeypatch.setattr(
         install_mod.os,
@@ -189,10 +200,8 @@ def test_install_one_symlink_fallback_to_copy(
     assert result == target
     assert target.exists()
     assert not target.is_symlink()
-    # Content matches the source.
     assert target.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
 
-    # Restore so subsequent tests are not affected.
     monkeypatch.setattr(install_mod.os, "symlink", original_symlink)
 
 
@@ -202,58 +211,55 @@ def test_install_one_copy_fallback_target_is_executable(
     """Copy-fallback target must have the execute bit set (git requirement)."""
 
     root = _make_workspace(tmp_path)
-    src_dir = Path(hooks_pkg.install.__file__).resolve().parent
+    src_dir = Path(install_mod.__file__).resolve().parent
     source = src_dir / HOOK_NAMES[0]
     target = root / ".git" / "hooks" / HOOK_NAMES[0]
 
-    # Force the source to have NO execute bit (simulates Windows
-    # checkout with core.fileMode=false).
     source.chmod(source.stat().st_mode & ~0o111)
 
-    # Force symlink failure.
-    original_symlink = hooks_pkg.install.os.symlink
+    original_symlink = install_mod.os.symlink
     monkeypatch.setattr(
-        hooks_pkg.install.os,
+        install_mod.os,
         "symlink",
         staticmethod(lambda *_args, **_kw: (_ for _ in ()).throw(OSError("no symlink"))),
     )
 
-    hooks_pkg.install._install_one(source, target, force=True)
+    install_mod._install_one(source, target, force=True)
 
-    # Target must be executable — git skips hooks without the bit.
     assert target.stat().st_mode & 0o111, "copy-fallback target must be executable"
 
-    # Restore.
-    monkeypatch.setattr(hooks_pkg.install.os, "symlink", original_symlink)
-    source.chmod(source.stat().st_mode | 0o111)  # restore source too
+    monkeypatch.setattr(install_mod.os, "symlink", original_symlink)
+    source.chmod(source.stat().st_mode | 0o111)
+
+
+def test_install_hooks_uses_worktree_gitdir(tmp_path: Path) -> None:
+    """Installer resolves hooks dir through a .git file in worktree layouts."""
+
+    root, gitdir = _make_worktree_workspace(tmp_path)
+    installed = install_hooks(repo_root=root)
+
+    assert [p.parent for p in installed] == [gitdir / "hooks"] * len(HOOK_NAMES)
+    assert [p.name for p in installed] == list(HOOK_NAMES)
 
 
 # ---------------------------------------------------------------------------
-# Lazy import (package __init__.py) tests
+# Package export tests
 # ---------------------------------------------------------------------------
 
 
 def test_lazy_import_hook_names() -> None:
-    """HOOK_NAMES is accessible through the lazy __getattr__."""
-
     assert hooks_pkg.HOOK_NAMES == ("pre-commit", "prepare-commit-msg", "commit-msg")
 
 
 def test_lazy_import_install_hooks() -> None:
-    """install_hooks is accessible through the lazy __getattr__."""
-
     assert callable(hooks_pkg.install_hooks)
 
 
 def test_lazy_import_check_hooks() -> None:
-    """check_hooks is accessible through the lazy __getattr__."""
-
     assert callable(hooks_pkg.check_hooks)
 
 
 def test_lazy_import_unknown_attribute_raises() -> None:
-    """Accessing an undefined attribute raises AttributeError."""
-
     with pytest.raises(AttributeError, match="has no attribute"):
         _ = hooks_pkg.nonexistent_thing  # type: ignore[attr-defined]
 
@@ -264,10 +270,7 @@ def test_lazy_import_unknown_attribute_raises() -> None:
 
 
 def test_check_hooks_all_installed(tmp_path: Path) -> None:
-    """When all hooks are present and current, check_hooks returns 0."""
-
     root = _make_workspace(tmp_path)
-    # Install all hooks (including pre-commit, now managed by our installer).
     install_hooks(repo_root=root)
 
     rc = check_hooks(repo_root=root)
@@ -276,10 +279,7 @@ def test_check_hooks_all_installed(tmp_path: Path) -> None:
 
 
 def test_check_hooks_missing_pre_commit(tmp_path: Path) -> None:
-    """When the pre-commit hook is missing, check_hooks returns 1."""
-
     root = _make_workspace(tmp_path)
-    # Install only the commit-msg hooks, delete the pre-commit hook.
     install_hooks(repo_root=root)
     (root / ".git" / "hooks" / "pre-commit").unlink()
 
@@ -289,10 +289,7 @@ def test_check_hooks_missing_pre_commit(tmp_path: Path) -> None:
 
 
 def test_check_hooks_missing_custom_hook(tmp_path: Path) -> None:
-    """When a custom hook is missing, check_hooks returns 1."""
-
     root = _make_workspace(tmp_path)
-    # Install all hooks, then delete one custom hook.
     install_hooks(repo_root=root)
     (root / ".git" / "hooks" / HOOK_NAMES[1]).unlink()
 
@@ -302,14 +299,10 @@ def test_check_hooks_missing_custom_hook(tmp_path: Path) -> None:
 
 
 def test_check_hooks_stale_copy(tmp_path: Path) -> None:
-    """When a copied hook differs from source, check_hooks flags it stale."""
-
     root = _make_workspace(tmp_path)
     install_hooks(repo_root=root)
 
-    # Simulate a stale copy by overwriting the installed hook with
-    # different content.
-    hook = root / ".git" / "hooks" / HOOK_NAMES[1]  # prepare-commit-msg
+    hook = root / ".git" / "hooks" / HOOK_NAMES[1]
     if hook.is_symlink():
         content = hook.read_text(encoding="utf-8")
         hook.unlink()
@@ -322,9 +315,24 @@ def test_check_hooks_stale_copy(tmp_path: Path) -> None:
     assert rc == 1
 
 
-def test_check_hooks_no_git_dir(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """When .git/hooks is missing, check_hooks prints error and returns 1."""
+@pytest.mark.skipif(os.name == "nt", reason="POSIX execute-bit semantics only")
+def test_check_hooks_non_executable_copy_is_unhealthy(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path)
+    install_hooks(repo_root=root)
 
+    hook = root / ".git" / "hooks" / HOOK_NAMES[0]
+    if hook.is_symlink():
+        content = hook.read_text(encoding="utf-8")
+        hook.unlink()
+        hook.write_text(content, encoding="utf-8")
+    hook.chmod(hook.stat().st_mode & ~0o111)
+
+    rc = check_hooks(repo_root=root)
+
+    assert rc == 1
+
+
+def test_check_hooks_no_git_dir(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     root = _make_workspace(tmp_path, with_git=False)
 
     rc = check_hooks(repo_root=root)
@@ -335,10 +343,169 @@ def test_check_hooks_no_git_dir(tmp_path: Path, capsys: pytest.CaptureFixture[st
 
 
 def test_check_hooks_rejects_non_workspace(tmp_path: Path) -> None:
-    """When not in a First-Agent workspace, check_hooks raises SystemExit."""
-
     (tmp_path / ".git" / "hooks").mkdir(parents=True)
 
     with pytest.raises(SystemExit) as exc:
         check_hooks(repo_root=tmp_path)
     assert "not a First-Agent workspace" in str(exc.value)
+
+
+def test_check_hooks_uses_worktree_gitdir(tmp_path: Path) -> None:
+    root, _gitdir = _make_worktree_workspace(tmp_path)
+    install_hooks(repo_root=root)
+
+    rc = check_hooks(repo_root=root)
+
+    assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# Runtime warning and shell-hook behavior
+# ---------------------------------------------------------------------------
+
+
+def test_module_entrypoints_emit_no_runtime_warning(tmp_path: Path) -> None:
+    """Running install/status as modules must not emit runpy RuntimeWarning."""
+
+    root = _make_workspace(tmp_path)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent / "src")
+
+    install_result = subprocess.run(
+        [sys.executable, "-Wdefault", "-m", "fa.hygiene.hooks.install", "--help"],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    status_result = subprocess.run(
+        [sys.executable, "-Wdefault", "-m", "fa.hygiene.hooks.status"],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert "RuntimeWarning" not in install_result.stderr
+    assert "RuntimeWarning" not in status_result.stderr
+
+
+def test_pre_commit_restages_only_modified_staged_files(tmp_path: Path) -> None:
+    """Retry path must re-stage only previously staged files that hooks changed."""
+
+    root = _make_workspace(tmp_path)
+    hook = Path(install_mod.__file__).resolve().parent / "pre-commit"
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    log_path = tmp_path / "hook.log"
+    count_path = tmp_path / "uv.count"
+
+    uv_script = f'''#!/usr/bin/env bash
+count=0
+if [[ -f "{count_path}" ]]; then
+  count=$(cat "{count_path}")
+fi
+count=$((count+1))
+printf '%s' "$count" > "{count_path}"
+printf 'uv %s\\n' "$*" >> "{log_path}"
+if [[ "$count" -eq 1 ]]; then
+  exit 1
+fi
+exit 0
+'''
+    git_script = f'''#!/usr/bin/env bash
+printf 'git %s\\n' "$*" >> "{log_path}"
+if [[ "$1" == diff && "$2" == --cached && "$3" == --name-only && "$4" == -z ]]; then
+  printf 'tracked.py\\0'
+  exit 0
+fi
+if [[ "$1" == diff && "$2" == --quiet && "$3" == -- && "$4" == tracked.py ]]; then
+  exit 1
+fi
+if [[ "$1" == add ]]; then
+  exit 0
+fi
+exit 0
+'''
+    _write_executable(fakebin / "uv", uv_script)
+    _write_executable(fakebin / "git", git_script)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+
+    result = subprocess.run(
+        ["bash", str(hook)],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    log = log_path.read_text(encoding="utf-8")
+    assert result.returncode == 0
+    assert "git add -- tracked.py" in log
+    assert "git add -u" not in log
+
+
+def test_pre_commit_does_not_stage_unrelated_unstaged_files(tmp_path: Path) -> None:
+    """Retry path must not stage unrelated tracked files outside staged snapshot."""
+
+    root = _make_workspace(tmp_path)
+    hook = Path(install_mod.__file__).resolve().parent / "pre-commit"
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    log_path = tmp_path / "hook.log"
+    count_path = tmp_path / "uv.count"
+
+    uv_script = f'''#!/usr/bin/env bash
+count=0
+if [[ -f "{count_path}" ]]; then
+  count=$(cat "{count_path}")
+fi
+count=$((count+1))
+printf '%s' "$count" > "{count_path}"
+printf 'uv %s\\n' "$*" >> "{log_path}"
+if [[ "$count" -eq 1 ]]; then
+  exit 1
+fi
+exit 0
+'''
+    git_script = f'''#!/usr/bin/env bash
+printf 'git %s\\n' "$*" >> "{log_path}"
+if [[ "$1" == diff && "$2" == --cached && "$3" == --name-only && "$4" == -z ]]; then
+  printf 'tracked.py\\0'
+  exit 0
+fi
+if [[ "$1" == diff && "$2" == --quiet && "$3" == -- && "$4" == tracked.py ]]; then
+  exit 1
+fi
+if [[ "$1" == diff && "$2" == --quiet && "$3" == -- && "$4" == unrelated.py ]]; then
+  exit 1
+fi
+if [[ "$1" == add ]]; then
+  exit 0
+fi
+exit 0
+'''
+    _write_executable(fakebin / "uv", uv_script)
+    _write_executable(fakebin / "git", git_script)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+
+    result = subprocess.run(
+        ["bash", str(hook)],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    log = log_path.read_text(encoding="utf-8")
+    assert result.returncode == 0
+    assert "git add -- tracked.py" in log
+    assert "git add -- unrelated.py" not in log

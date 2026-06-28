@@ -1,106 +1,161 @@
-# PR Note: Hook workflow closure — bootstrap reliability and visibility
+# PR Note: Hook workflow closure — bootstrap reliability, seat boundaries, and model-freedom control
 
-**Intent:** CHORE
-**Date:** 2026-06-28
-**Scope:** `justfile`, `src/fa/hygiene/hooks/`, `tests/test_hygiene_hooks_install.py`, `knowledge/`
+**Intent:** CHORE  
+**Date:** 2026-06-28  
+**Scope:** `justfile`, `src/fa/hygiene/hooks/`, `src/fa/hygiene/pr_intent.py`, `tests/`, `knowledge/`
 
 ## Problem
 
-The local hook system was not reliably installed or visible after a fresh clone. Three concrete failure modes were observed and confirmed from the reviewed implementation plan.
+The original hook-workflow patch fixed the first-order bootstrap problem, but deeper review against the live branch exposed three additional issues that blocked this topic from being production-ready.
 
-First, `just install` ran `uv sync` (without `--extra dev`) followed by a bare `pre-commit install` shell command. Because `pre-commit` is declared in `[project.optional-dependencies] dev`, plain `uv sync` did not install it, and the subsequent `pre-commit install` failed with "command not found" on Windows/PowerShell — the user's actual working environment. This was the highest-ROI bug in the entire hook topic.
+First, the new `pre-commit` hook claimed it would auto-restage hook-made autofixes and retry once, but the implementation placed `uv run pre-commit run "$@"` under `set -e` without wrapping it in a conditional. A non-zero exit terminated the script before the retry branch could run, so the flagship UX improvement was dead code.
 
-Second, there was no deterministic way to verify whether hooks were installed in a given clone. A contributor could reasonably believe hooks were active while they were not, creating false confidence that local commits were guarded.
+Second, the M-6 PR-intent hook seat still applied the rich `INTENT / INVARIANT / FIX-only` metadata discipline too broadly. The semantic core itself is correct and valuable — the same validator powers `pr.prepare` and `IntentGuard`, which is exactly the seat where the model's degrees of freedom should be closed. But the `commit-msg` adapter still blocked ordinary human manual commits unless they used project-specific uppercase prefixes. That was the wrong boundary: hook seat should be fast local feedback, while the strict anti-cheap-workaround contract belongs primarily to `pr.prepare` + `PrDraftStore` + `IntentGuard` at runtime.
 
-Third, the `install-hooks` justfile recipe used raw `cp -f` and `chmod +x` shell commands that are fragile on PowerShell (where `chmod` does not exist), while a tested Python installer (`fa.hygiene.hooks.install`) already existed with proper idempotency, force flags, and workspace resolution — but was not wired into the justfile.
+Third, the operational layer around the hooks was not yet trustworthy enough. The accepted bot fixes reintroduced a `RuntimeWarning` on `python -m fa.hygiene.hooks.install`, left real test failures behind, `hooks-status` could report success even for non-executable hooks on POSIX, and installer/status were not git-worktree-safe because they assumed `.git/` was always a directory rather than a file pointing at a worktree gitdir.
 
-A subsequent code review found one additional critical bug: when the installer fell back from symlink to copy (Windows without Developer Mode), it chmod'd the *source* file but not the *target* copy, producing a non-executable hook that git silently skips — exactly on the platform where the fallback fires.
+This PR closes those gaps while preserving the strong semantic core of the model-freedom-control system.
 
 ## Changes
 
-### `justfile`
+### `src/fa/hygiene/pr_intent.py`
 
-- `install` recipe now uses `uv sync --extra dev` (matching CI's dependency surface) and `uv run pre-commit install` (invoking through the project environment instead of relying on PATH). Prints a success summary at the end.
-- `install-hooks` recipe now delegates to `uv run python -m fa.hygiene.hooks.install --force` instead of raw `cp -f` / `chmod +x`, so the justfile and direct Python invocation share one tested code path.
-- New `hooks-status` recipe runs `uv run python -m fa.hygiene.hooks.status` for deterministic install verification.
-- **Removed `git config core.hooksPath .git/hooks`** from `install-hooks` recipe. The setting was a no-op (`.git/hooks` is already the default), and `pre-commit install` explicitly refuses to work when `core.hooksPath` is set — even to the default — causing "Cowardly refusing to install hooks" errors. The comment in the justfile explains why this line must not be re-added.
+- **Preserved the strict semantic core** — `validate_commit_msg(...)`, `validate_test_edits(...)`, FIX-only fields, citation resolution, and anti-tautology checks were deliberately **not** weakened globally because they are reused by `pr.prepare` and `IntentGuard`, the real anti-cheap-workaround runtime seat.
+- Added `has_pr_intent_headers()` — a detector for **any** PR-intent metadata header (`INTENT:`, `CLASS:`, `INVARIANT:`, `TEST-EDITS:`, `DEGREE-OF-FREEDOM CLOSED:`, `DETERMINISTIC MECHANISM:`). This closes the subtle hole where a partial malformed metadata block (for example a lone `INVARIANT:` line) could otherwise be treated as an ordinary manual commit.
+- Narrowed `_cli_validate()` only at the **hook adapter layer**: if a commit message contains **no PR-intent metadata headers at all**, it is treated as an ordinary human/manual commit and allowed through. If **any** metadata header is present, the full strict validator runs. This keeps the semantic core strong while fixing the seat boundary.
+- Kept the existing git-generated-message skips (`merge`, `cherry-pick`, `revert`, `amend`) unchanged.
 
-### `src/fa/hygiene/hooks/_util.py` (new)
+### `src/fa/hygiene/hooks/pre-commit`
 
-- Shared `resolve_repo_root()` and `scripts_dir()` helpers extracted from the duplicated copies in `install.py` and `status.py`. Single place to update if the workspace marker or script layout changes.
+- Rewrote the control flow so retry actually runs under `set -e`. The first `uv run pre-commit run` now executes in an explicit conditional instead of a straight-line command that aborts the shell before `rc=$?` / retry logic.
+- **Critical safety change:** the retry path no longer uses dangerous global `git add -u`. Instead, it snapshots the staged path set before the first run, detects which of those already-staged paths were modified by hook autofix, and re-stages **only that subset** before retrying once. This avoids accidentally staging unrelated user changes.
+- The script still sets `NO_PROXY="*"` for the isolated pre-commit env path and still uses `uv run` so Windows/PowerShell uv-managed environments work.
+- The tracked file mode for `src/fa/hygiene/hooks/pre-commit` is corrected to executable (`100755`) in the patch, removing the need for installer-induced source-mode repair in a clean checkout.
 
-### `src/fa/hygiene/hooks/install.py`
+### `src/fa/hygiene/hooks/_util.py`
 
-- Extracted hook installation into `_install_one()` for clarity.
-- Added symlink-to-copy fallback: when `os.symlink` raises `OSError` (Windows without Developer Mode), the installer falls back to `shutil.copy2`. This ensures `just install` works across all contributor environments while still preferring symlinks (so hooks stay current after `git pull`).
-- **Critical fix:** After the copy fallback, chmod *both* the source and the target file to add the execute bit. Without this, the copied hook lands without execute permission on Windows and git silently skips it.
-- Output now indicates installation method (`symlink` or `copy`) per hook.
-- Now imports `resolve_repo_root` and `scripts_dir` from `_util.py` instead of defining them locally.
-
-### `src/fa/hygiene/hooks/status.py` (new)
-
-- `check_hooks()` verifies all three local hook seats: `pre-commit`, `prepare-commit-msg`, `commit-msg`.
-- For custom hooks installed as copies, compares content against the shipped source to detect stale hooks (e.g., after a `git pull` that changed the hook scripts without re-running `just install-hooks`).
-- Returns exit code 0 if all hooks are active, 1 if any are missing or stale.
-- Invoked by `just hooks-status` and by `python -m fa.hygiene.hooks.status`.
-- Now imports `resolve_repo_root` and `scripts_dir` from `_util.py` instead of defining them locally.
+- Expanded from “workspace + scripts dir” helpers into the shared operational substrate for hook infrastructure.
+- Added canonical `HOOK_NAMES` here so `hooks/__init__.py` no longer needs to import `install.py` at package import time.
+- Added `resolve_git_dir()` with support for:
+  - normal checkouts (`.git/` directory),
+  - hook-time `GIT_DIR` env var,
+  - git worktrees (`.git` file with `gitdir: ...`).
+- Added `resolve_hooks_dir()` that resolves to the **effective hooks directory**. In worktrees this means following `commondir` and landing in the common hooks dir Git actually uses.
 
 ### `src/fa/hygiene/hooks/__init__.py`
 
-- Replaced eager imports with `__getattr__`-based lazy imports to eliminate the `RuntimeWarning` that fired when running submodules via `python -m fa.hygiene.hooks.{install,status}`.
-- Added `check_hooks` to the package's public API.
+- Reworked the package export path so it keeps explicit `__all__` exports **without** reintroducing `RuntimeWarning` on `python -m fa.hygiene.hooks.install` / `status`.
+- `HOOK_NAMES` now comes from `_util.py`, while `install_hooks` and `check_hooks` remain lazy wrappers to avoid importing the target execution module too early.
+
+### `src/fa/hygiene/hooks/install.py`
+
+- Switched from local `HOOK_NAMES` / direct `.git/hooks` assumption to the shared `_util.py` helpers.
+- Installer now resolves the **real hooks dir** via `resolve_hooks_dir()`, making install work in both normal clones and git worktrees.
+- Kept the symlink-preferred / copy-fallback behavior and the best-effort executability repair on source + target.
+
+### `src/fa/hygiene/hooks/status.py`
+
+- Switched to the shared `HOOK_NAMES` and `resolve_hooks_dir()` helpers, making the status probe work in both normal clones and git worktrees.
+- Status now verifies not just presence/content freshness, but also **executability** on POSIX. A hook that exists and matches source but lacks execute bits is now reported as unhealthy instead of incorrectly “active”.
+- Status messages now distinguish missing, stale, and non-executable cases.
+
+### `justfile`
+
+- `install` still performs `uv sync --extra dev` and `install-hooks`, but now also runs **`just hooks-status` before printing success**. This makes bootstrap fail-fast instead of optimistically reporting “all hooks active” after a partial install.
+- The success banner remains, but now reflects a verified state rather than a best-effort assumption.
 
 ### `tests/test_hygiene_hooks_install.py`
 
-- Added `test_install_hooks_is_idempotent_replacing_own_copies` — verifies re-install works when the first install produced copies (force=True path).
-- Added `test_install_one_symlink_fallback_to_copy` — verifies the OSError fallback.
-- Added `test_install_one_copy_fallback_target_is_executable` — verifies the chmod fix: copy-fallback target must have the execute bit set (git requirement).
-- Added six `check_hooks` tests: all installed, missing pre-commit, missing custom hook, stale copy, no .git/hooks, non-workspace rejection.
-- Added four lazy-import tests for `__init__.py`: `HOOK_NAMES`, `install_hooks`, `check_hooks`, and unknown-attribute error.
-- Existing tests preserved and passing (22 total, all green, 91.57% coverage on hooks package).
+- Repaired the broken import refactor from the accepted bot patch (`install_mod` NameErrors).
+- Added tests for **worktree hook-dir resolution** in both installer and status paths.
+- Added a test proving that non-executable installed hooks are unhealthy on POSIX.
+- Added regression tests for `python -m fa.hygiene.hooks.install` / `status` to ensure no `RuntimeWarning` is emitted.
+- Added shell-level regression tests for the new `pre-commit` retry path:
+  - hook-modified staged file is re-staged and retried,
+  - unrelated unstaged files are **not** staged by the retry logic.
+
+### `tests/test_pr_intent_snapshot.py`
+
+- Replaced the old expectation that “headerless normal commit must be blocked”. The hook-seat contract now explicitly allows ordinary manual commits with no PR-intent headers.
+- Added tests for `has_pr_intent_headers()` and for the partial malformed metadata case (`INVARIANT:` without `INTENT:`) to ensure that such commits still route through strict validation and fail, rather than silently passing as ordinary manual commits.
+- Kept all strict semantic-core tests intact: enum shape, invariant prefixes, FIX clauses, citation resolution, tautology checks, and `TEST-EDITS` logic.
 
 ### `knowledge/ci-guardrails-reference.md`
 
-- Layer 0 section now includes the PR-handoff rule: `just check` must pass before a PR is opened for human review.
-- Layer 3 section updated to reflect new `just install` bootstrap path and `just hooks-status` verification. Explicitly states that CI does not install hooks in the contributor's local clone.
-- Layer 5 pre-commit entry now mentions `just hooks-status`.
-- Date updated to 2026-06-28.
+- Layer 3 (“git-hook seat”) rewritten to describe the **actual seat boundary** after the fix:
+  - ordinary manual commits with **no** PR-intent headers are allowed,
+  - any explicit metadata block is still strictly validated,
+  - `pre-commit` now re-stages only the modified staged subset and retries once,
+  - `hooks-status` now checks for non-executable hooks too.
+- This keeps the human-facing guardrail documentation coherent with the runtime semantics now in code.
 
-### `AGENTS.md`
+### `knowledge/codemaps/model-freedom-control-runtime-pipeline.md` (new)
 
-- Development Workflow section now explicitly states: "After cloning, run `just install`." Without it, local commit hooks are not active — VS Code commits and manual git commits will bypass local autofix and validation, even though CI will still check the PR.
-- Added PR-readiness gate: "Before opening a PR for review, run `just check` — this is the PR-readiness gate. Commit hooks provide fast local hygiene; `just check` provides the full gate that ensures the PR is review-ready."
-- Mentions `just hooks-status` for verification.
+- Added a production-grade codemap for the whole “система управления степенью свободы модели” surface.
+- Covers:
+  - component inventory,
+  - seat separation,
+  - catalog of freedom-closing mechanisms,
+  - traces for contract → semantic core, human hook seat, `pr.prepare`, `PrDraftStore`, `IntentGuard`, `bash_intent`, and hook bootstrap infrastructure,
+  - data-flow diagram,
+  - freedom-closure matrix,
+  - important asymmetries,
+  - known limitations and high-ROI follow-up improvements.
+- The codemap was reviewed once more against the real code after landing these changes and updated for coherence (for example, clarifying that `prepare-commit-msg` is a narrow/non-skipped prefill seat rather than a universal prefill layer).
 
-### `knowledge/llms.txt`
+## What this PR intentionally preserves
 
-- Updated hook installer entry to describe symlink-with-copy-fallback and the new `status.py` and `_util.py` modules.
-- Updated justfile entry to mention `install` (mandatory after clone), `install-hooks`, and `hooks-status`.
+This PR **does not** flatten the whole design into a soft human-only workflow.
 
-## What this PR does NOT do
+It intentionally preserves:
 
-Per the reviewed plan's explicit recommendations, this PR does not:
+- `validate_commit_msg(...)` as a strict shared semantic core;
+- `validate_test_edits(...)` as the same anti-test-gaming rule at hook and runtime seats;
+- `pr.prepare` as the explicit producer of intent/invariant/work-log state;
+- `PrDraftStore` as the current-session trust boundary;
+- `IntentGuard` as the primary runtime mutation gate.
 
-- Replace `.pre-commit-config.yaml` hook logic with `just fix` (deferred — see separate implementation plan).
-- Add `just check` or `just fix` to the pre-commit hook chain (deferred — see separate implementation plan).
-- Consolidate hook types under the pre-commit framework (deferred decision per BACKLOG M-6 — see separate implementation plan).
-- Modify deployment/container scripts (hook installation is a contributor concern, not a container runtime concern — see discussion in the implementation plan).
+In other words: the **runtime seat stays strict**; only the human hook seat becomes narrow enough not to punish ordinary manual commits.
 
-These are deliberate deferrals, not omissions. The reviewed plan concluded that bootstrap reliability and visibility must be fixed first; policy changes should follow only after the hook system is provably installed everywhere.
+## What this PR still does NOT do
+
+Per scope discipline, this PR still does **not**:
+
+- block `git commit --no-verify` for the agent path — this remains a backlog / future hardening topic, to be handled at runtime / sandbox / CI level if real misuse is observed;
+- introduce a dedicated first-party agent commit tool (`git.commit_prepared` or similar) — that remains a high-ROI follow-up, not a prerequisite to fixing this PR;
+- make `prepare-commit-msg` explicit opt-in by env flag. The current narrower skip logic is sufficient for this iteration; an explicit opt-in prefill policy is a future refinement if wanted.
 
 ## Acceptance criteria
 
-1. In a fresh clone, `just install` activates all local commit hooks in one command.
-2. That command works in Windows PowerShell with uv-managed environments (copy fallback produces executable hooks).
-3. `just hooks-status` deterministically confirms or denies hook activation.
-4. `just install-hooks` delegates to the tested Python installer (one code path).
-5. All 22 tests pass (91.57% coverage on hooks package).
-6. Docs explicitly state `just install` is required after clone, and state the failure mode if skipped.
-7. Docs explicitly state the PR-handoff rule: `just check` before review.
-8. No RuntimeWarning on `python -m fa.hygiene.hooks.{install,status}`.
+1. Hook bootstrap is deterministic and verified: `just install` succeeds only when all hook seats are actually healthy.
+2. `pre-commit` auto-restage/retry path works under `set -e` and does **not** stage unrelated changes.
+3. Ordinary manual commits with **no** PR-intent metadata headers are not blocked by the hook seat.
+4. Partial malformed metadata blocks do **not** silently pass — they still trigger strict validation.
+5. `pr.prepare` + `PrDraftStore` + `IntentGuard` remain the primary anti-cheap-workaround runtime seat.
+6. Hook installer/status work in both normal clones and git worktrees.
+7. `hooks-status` detects missing, stale, and non-executable hooks correctly.
+8. No `RuntimeWarning` on `python -m fa.hygiene.hooks.install` or `status`.
+9. The touched test surface is green.
+10. The new codemap accurately reflects the implementation after a follow-up code review.
+
+## Verification results on the reviewed branch state
+
+Verified against branch head `92dabcb5e16fa2916dee86b2ad411a2cdef95d6f` plus the changes in this patch:
+
+- `uv run pytest -q tests/test_hygiene_hooks_install.py tests/test_pr_intent_snapshot.py tests/test_prepare_pr.py tests/test_intent_guard.py tests/test_cli.py tests/test_test_edit_protection.py` → **191 passed**
+- `uv run python -Wdefault -m fa.hygiene.hooks.install --help` → **no RuntimeWarning**
+- `uv run python -Wdefault -m fa.hygiene.hooks.status` → **no RuntimeWarning**
+- manual checks confirmed:
+  - no-header manual commit path allowed,
+  - partial metadata block still denied,
+  - worktree install/status path works,
+  - hooks-status rejects non-executable hooks on POSIX,
+  - installer/status succeed on a git worktree by resolving the common hooks dir.
 
 ## Refs
 
-- Reviewed plan: `hook-workflow-implementation-plan-reviewed.md` (§4 Workstream A, §8 PR-1)
-- ADR-11-I6: bypassable-by-design hook seat, CI is authority
+- Rigorous branch analysis: `pr46-rigorous-code-analysis-2026-06-28.md`
+- Updated implementation plan: `pr46-updated-plan-ready-for-implementation-2026-06-28.md`
+- ADR-11-I6: hook seat is bypassable, CI is authority
 - ADR-10 I-1: single validator across git hook / middleware / `pr.prepare`
+- Codemap: `knowledge/codemaps/model-freedom-control-runtime-pipeline.md`

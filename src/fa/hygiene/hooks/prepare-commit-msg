@@ -19,9 +19,9 @@ COMMIT_SOURCE="${2:-}"
 # Skip the auto-fill when git already supplies a message body.
 # The commit-msg validator applies a matching skip for these same
 # sources: for merge/cherry-pick/revert/amend it detects state files
-# or GIT_REFLOG_ACTION; for message-source commits it detects the
-# absence of an INTENT: line and verifies the subject has a valid
-# conventional commit prefix instead of requiring the full PR format.
+# or GIT_REFLOG_ACTION; for ordinary manual commits with no PR-intent
+# metadata headers it allows the message through without requiring the
+# rich PR-intent format.
 #
 # IMPORTANT: when COMMIT_SOURCE is empty (VS Code Git extension uses
 # ``git commit --file -`` to pass the message via stdin), the user

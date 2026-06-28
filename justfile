@@ -10,6 +10,7 @@ _default:
 install:
     uv sync --extra dev
     just install-hooks
+    just hooks-status
     @echo ""
     @echo "Bootstrap complete:"
     @echo "  - Python env synced (with dev extras)"

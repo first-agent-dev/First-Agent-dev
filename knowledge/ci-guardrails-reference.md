@@ -73,24 +73,30 @@ enforces **existing-test protection** (R-6, ImpossibleBench counter):
 `prepare-commit-msg` / `commit-msg` invoke the SAME
 `fa.hygiene.pr_intent` functions as IntentGuard (ADR-10 I-1: one
 classifier + one validator + one test-protection rule, multiple seats).
-Validates INTENT/CLASS/INVARIANT shape, FIX anti-shallow-fix clauses
-(DOF/MECHANISM + resolving citation), and `validate_test_edits`.
-Installed by `just install` (→ `uv sync --extra dev` + `install-hooks`);
+This seat is intentionally **narrower** than the runtime seat: ordinary
+manual commits with **no PR-intent metadata headers at all** are allowed
+through, while any explicit metadata block (`INTENT:`, `INVARIANT:`,
+`CLASS:`, `TEST-EDITS:`, FIX-only clauses) is validated strictly.
+When strict validation applies, it checks INTENT/CLASS/INVARIANT shape,
+FIX anti-shallow-fix clauses (DOF/MECHANISM + resolving citation), and
+`validate_test_edits`. Installed by `just install`
+(→ `uv sync --extra dev` + `install-hooks` + `hooks-status`);
 all three hooks are scripts from `src/fa/hygiene/hooks/` installed via
-our tested Python installer.  The `pre-commit` hook invokes
+our tested Python installer. The `pre-commit` hook invokes
 `uv run pre-commit run` so it works on Windows/PowerShell where the
-framework's own generated hook cannot find the executable.  Snapshot
-tests pin hook
-constants to the skill §Output format / §Test-edit declaration so the two
-views cannot drift. **Bypassable locally** (`--no-verify`, by design per
-ADR-11-I6) — CI is the authority, this seat is fast feedback.
+framework's own generated hook cannot find the executable, and if hooks
+auto-fix already-staged files it re-stages only that staged subset and
+retries once. Snapshot tests pin hook constants to the skill
+§Output format / §Test-edit declaration so the two views cannot drift.
+**Bypassable locally** (`--no-verify`, by design per ADR-11-I6) — CI is
+the authority, this seat is fast feedback.
 
 Hook activation can be verified at any time with `just hooks-status`,
 which checks all three seats (pre-commit, prepare-commit-msg, commit-msg)
-and flags missing or stale hooks. Without running `just install` in a
-fresh clone, local commit hooks are not active; CI does not install
-hooks in the contributor's local clone — it only re-runs checks on
-the PR branch.
+and flags missing, stale, or non-executable hooks. Without running
+`just install` in a fresh clone, local commit hooks are not active; CI
+does not install hooks in the contributor's local clone — it only
+re-runs checks on the PR branch.
 
 ## Layer 4 — GitHub CI (PR branch; agent is NOT a codeowner)
 

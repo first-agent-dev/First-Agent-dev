@@ -12,12 +12,10 @@
 # these sources; this hook must match that logic.
 #
 # Message-source commits (git commit -m "...", VS Code Git extension)
-# are also handled: the Python validator detects that the INTENT:
-# template was never injected and accepts a conventional commit
-# prefix (RESEARCH:/ADR-RULE:/IMPLEMENT:/FIX:/CHORE:) as sufficient
-# validation for the commit phase.  The full INTENT/INVARIANT format
-# is enforced for editor-buffer commits where the template IS
-# injected.
+# are also handled: when the message contains no PR-intent metadata
+# headers at all, the Python validator treats it as an ordinary manual
+# commit and does not require the rich PR-intent format. Explicit
+# metadata blocks remain strictly validated.
 #
 # Uses ``uv run`` to ensure the project environment (with the latest
 # source) is used, avoiding stale bytecode or PATH issues on Windows.
@@ -49,6 +47,6 @@ if [[ "${reflog_action,,}" == *"merge"* || "${reflog_action,,}" == *"amend"* ]];
 fi
 
 # Delegate to the Python validator, which handles both:
-# - editor-buffer commits (full INTENT/INVARIANT validation)
-# - message-source commits (lightweight prefix check, no template)
+# - explicit PR-intent metadata blocks (strict validation)
+# - ordinary manual commits with no PR-intent headers (allowed)
 exec uv run python -m fa.hygiene validate "${COMMIT_MSG_FILE}"
