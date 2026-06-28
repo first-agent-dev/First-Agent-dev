@@ -25,18 +25,20 @@ from __future__ import annotations
 from fa.hygiene.hooks.install import HOOK_NAMES
 
 
-def __getattr__(name: str) -> object:
-    """Lazy import to avoid RuntimeWarning on ``-m`` invocation."""
+def install_hooks(*args, **kwargs):
+    """Lazy wrapper to avoid RuntimeWarning on ``-m`` invocation."""
 
-    if name == "install_hooks":
-        from fa.hygiene.hooks.install import install_hooks
+    from fa.hygiene.hooks.install import install_hooks as _install_hooks
 
-        return install_hooks
-    if name == "check_hooks":
-        from fa.hygiene.hooks.status import check_hooks
+    return _install_hooks(*args, **kwargs)
 
-        return check_hooks
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+def check_hooks(*args, **kwargs):
+    """Lazy wrapper to avoid RuntimeWarning on ``-m`` invocation."""
+
+    from fa.hygiene.hooks.status import check_hooks as _check_hooks
+
+    return _check_hooks(*args, **kwargs)
 
 
 __all__ = ["HOOK_NAMES", "check_hooks", "install_hooks"]
