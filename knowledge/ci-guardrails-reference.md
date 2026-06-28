@@ -1,4 +1,4 @@
-# CI & guardrail mechanisms — reference (as of 2026-06-12)
+# CI & guardrail mechanisms — reference (as of 2026-06-28)
 
 > **Purpose.** One-page inventory of every quality / safety mechanism in the
 > repo, with its seat (where it runs), gate class (blocking / advisory /
@@ -18,6 +18,9 @@
 ## Layer 0 — deterministic local gates (`just check`)
 
 Authoritative per local-first architecture; CI re-runs the same commands.
+**PR-handoff rule:** `just check` must pass before a PR is opened for
+human review. This is distinct from commit-time hygiene (which is fast
+and bypassable per ADR-11-I6) — it is the authoritative local gate.
 
 | Mechanism | Command seat | What it catches | Gate |
 | :--- | :--- | :--- | :--- |
@@ -72,10 +75,22 @@ enforces **existing-test protection** (R-6, ImpossibleBench counter):
 classifier + one validator + one test-protection rule, multiple seats).
 Validates INTENT/CLASS/INVARIANT shape, FIX anti-shallow-fix clauses
 (DOF/MECHANISM + resolving citation), and `validate_test_edits`.
-Installed by `just install` (→ `install-hooks`); snapshot tests pin hook
+Installed by `just install` (→ `uv sync --extra dev` + `install-hooks`);
+all three hooks are scripts from `src/fa/hygiene/hooks/` installed via
+our tested Python installer.  The `pre-commit` hook invokes
+`uv run pre-commit run` so it works on Windows/PowerShell where the
+framework's own generated hook cannot find the executable.  Snapshot
+tests pin hook
 constants to the skill §Output format / §Test-edit declaration so the two
 views cannot drift. **Bypassable locally** (`--no-verify`, by design per
 ADR-11-I6) — CI is the authority, this seat is fast feedback.
+
+Hook activation can be verified at any time with `just hooks-status`,
+which checks all three seats (pre-commit, prepare-commit-msg, commit-msg)
+and flags missing or stale hooks. Without running `just install` in a
+fresh clone, local commit hooks are not active; CI does not install
+hooks in the contributor's local clone — it only re-runs checks on
+the PR branch.
 
 ## Layer 4 — GitHub CI (PR branch; agent is NOT a codeowner)
 
@@ -114,7 +129,9 @@ ADR-11-I6) — CI is the authority, this seat is fast feedback.
   for intended-design patterns, rationale comment above, surfaced by the
   suppression tier.
 - **pre-commit hooks** (ruff, gitleaks, hygiene basics, uv-lock) —
-  convenience seat, bypassable, never the authority.
+  convenience seat, bypassable, never the authority. Installed by
+  `just install` as a script that calls `uv run pre-commit run`;
+  verify with `just hooks-status`.
 
 ## Known residual gaps (accepted, tracked)
 

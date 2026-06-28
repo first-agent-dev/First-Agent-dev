@@ -1,3 +1,11 @@
+# Pin Python version for all hook environments.  Without this,
+# pre-commit auto-detects the newest Python on PATH, which can be
+# 3.14 on contributor machines where pre-commit hook packages
+# don't yet have binary wheels.  The project requires >=3.13;
+# pinning to 3.13 keeps hook envs consistent with CI.
+default_language_version:
+  python: python3.13
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0

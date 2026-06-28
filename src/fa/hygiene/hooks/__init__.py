@@ -1,21 +1,44 @@
-"""Git-hook shell scripts + installer for the PR-intent gate (PR B — M-6).
+"""Git-hook shell scripts + installer for all local commit hooks.
 
-The two bash scripts in this directory (``prepare-commit-msg`` and
-``commit-msg``) are thin wrappers that invoke
-``python -m fa.hygiene.pr_intent {prepare,validate} <commit-msg-file>``.
-The Python module owns every classifier / validator decision so the
-git-hook seat and the future :class:`fa.inner_loop.hooks.intent_guard.IntentGuard`
-harness-side middleware (PR C — M-7) share the same source of truth.
+The three scripts in this directory (``pre-commit``, ``prepare-commit-msg``
+and ``commit-msg``) are thin wrappers installed into ``.git/hooks/`` by
+the installer.  All three invoke their respective commands through
+``uv run``, ensuring they work reliably in uv-managed environments
+(including Windows/PowerShell) where bare PATH lookups fail.
 
-:func:`install_hooks` symlinks the scripts into ``.git/hooks/``;
-the repository's existing ``pre-commit`` framework already covers
-the ``pre-commit`` stage, so this installer adds only the
-``prepare-commit-msg`` / ``commit-msg`` stages that pre-commit
-does not register by default.
+The ``pre-commit`` hook runs ``uv run pre-commit run``, which executes
+the checks defined in ``.pre-commit-config.yaml``.  The
+``prepare-commit-msg`` and ``commit-msg`` hooks invoke
+``python -m fa.hygiene {prepare|validate}`` for the PR-intent gate.
+
+:func:`install_hooks` installs the scripts into ``.git/hooks/``;
+:func:`check_hooks` provides a deterministic status probe that
+verifies all three local hook seats are installed and current.
+
+Lazy imports are used to avoid the ``RuntimeWarning`` that fires
+when running a submodule via ``python -m fa.hygiene.hooks.{install,status}``
+while the package's ``__init__`` has already imported it.
 """
 
 from __future__ import annotations
 
-from fa.hygiene.hooks.install import HOOK_NAMES, install_hooks
 
-__all__ = ["HOOK_NAMES", "install_hooks"]
+def __getattr__(name: str) -> object:
+    """Lazy import to avoid RuntimeWarning on ``-m`` invocation."""
+
+    if name == "HOOK_NAMES":
+        from fa.hygiene.hooks.install import HOOK_NAMES
+
+        return HOOK_NAMES
+    if name == "install_hooks":
+        from fa.hygiene.hooks.install import install_hooks
+
+        return install_hooks
+    if name == "check_hooks":
+        from fa.hygiene.hooks.status import check_hooks
+
+        return check_hooks
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = ["HOOK_NAMES", "check_hooks", "install_hooks"]

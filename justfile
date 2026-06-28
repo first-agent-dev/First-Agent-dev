@@ -8,19 +8,38 @@ _default:
     just --list
 
 install:
-    uv sync
-    pre-commit install
+    uv sync --extra dev
     just install-hooks
+    @echo ""
+    @echo "Bootstrap complete:"
+    @echo "  - Python env synced (with dev extras)"
+    @echo "  - pre-commit hook installed"
+    @echo "  - prepare-commit-msg / commit-msg hooks installed"
+    @echo "  - Local commits are now guarded by hook chain"
+    @echo "  - Run 'just hooks-status' to verify at any time"
 
-# Symlink the M-6 commit-message hooks (prepare-commit-msg / commit-msg)
-# into .git/hooks. Without this the git-hook seat of pr_intent +
-# validate_test_edits is INERT — pre-commit does not manage the
-# commit-msg stage in this repo. Idempotent (force-overwrites).
+# Install the M-6 commit-message hooks (prepare-commit-msg / commit-msg)
+# into .git/hooks via the tested Python installer. Without this the
+# git-hook seat of pr_intent + validate_test_edits is INERT —
+# pre-commit does not manage the commit-msg stage in this repo.
+# Idempotent (force-overwrites).  Delegates to the same installer
+# that ``python -m fa.hygiene.hooks.install`` uses, so just and
+# direct invocation share one code path.
+#
+# NOTE: do NOT set core.hooksPath here.  The default (.git/hooks)
+# is already correct, and pre-commit install explicitly refuses to
+# work when core.hooksPath is set (even to the default).  The old
+# `git config core.hooksPath .git/hooks` line from the previous
+# justfile caused "Cowardly refusing to install hooks" errors.
 install-hooks:
-    git config core.hooksPath .git/hooks
-    cp -f src/fa/hygiene/hooks/prepare-commit-msg .git/hooks/prepare-commit-msg
-    cp -f src/fa/hygiene/hooks/commit-msg .git/hooks/commit-msg
-    chmod +x .git/hooks/prepare-commit-msg .git/hooks/commit-msg
+    uv run python -m fa.hygiene.hooks.install --force
+
+# Verify that local commit hooks are installed and active.
+# Deterministic, zero-API-call status probe for all three hook seats
+# (pre-commit, prepare-commit-msg, commit-msg).  Run after
+# ``just install`` or at any time to confirm the local hook chain.
+hooks-status:
+    uv run python -m fa.hygiene.hooks.status
 
 lint:
     ruff check .

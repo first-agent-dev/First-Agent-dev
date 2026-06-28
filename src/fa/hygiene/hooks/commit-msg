@@ -11,14 +11,16 @@
 # validator. The prepare-commit-msg hook already skips injection for
 # these sources; this hook must match that logic.
 #
-# Detection strategy (commit-msg receives only $1 = msg-file):
-#   - .git/MERGE_HEAD      exists → merge commit (git merge / git pull)
-#   - .git/CHERRY_PICK_HEAD exists → cherry-pick
-#   - .git/REVERT_HEAD     exists → revert
-#   - GIT_REFLOG_ACTION    contains "merge" or "amend" → merge / amend
-# The Python validator (_is_non_validating_commit_source) implements
-# the same logic; the bash pre-check here avoids the Python startup
-# cost when the skip is obvious from a state file.
+# Message-source commits (git commit -m "...", VS Code Git extension)
+# are also handled: the Python validator detects that the INTENT:
+# template was never injected and accepts a conventional commit
+# prefix (RESEARCH:/ADR-RULE:/IMPLEMENT:/FIX:/CHORE:) as sufficient
+# validation for the commit phase.  The full INTENT/INVARIANT format
+# is enforced for editor-buffer commits where the template IS
+# injected.
+#
+# Uses ``uv run`` to ensure the project environment (with the latest
+# source) is used, avoiding stale bytecode or PATH issues on Windows.
 
 set -euo pipefail
 
@@ -46,4 +48,7 @@ if [[ "${reflog_action,,}" == *"merge"* || "${reflog_action,,}" == *"amend"* ]];
   exit 0
 fi
 
-exec python -m fa.hygiene validate "${COMMIT_MSG_FILE}"
+# Delegate to the Python validator, which handles both:
+# - editor-buffer commits (full INTENT/INVARIANT validation)
+# - message-source commits (lightweight prefix check, no template)
+exec uv run python -m fa.hygiene validate "${COMMIT_MSG_FILE}"

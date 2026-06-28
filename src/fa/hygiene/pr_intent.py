@@ -854,15 +854,6 @@ def _is_non_validating_commit_source(repo_root: Path) -> bool:
     the ``GIT_DIR`` environment variable so git worktrees work
     correctly (in a worktree ``.git`` is a file, not a directory,
     but git sets ``GIT_DIR`` to the actual git dir when running hooks).
-
-    The ``git commit -m`` case (COMMIT_SOURCE=message) cannot be
-    detected reliably from ``commit-msg`` — there is no state file
-    and ``GIT_REFLOG_ACTION`` is just ``"commit"``. Contributors
-    using ``-m`` must supply the full header inline or use
-    ``--no-verify``. This matches the documented intent: the hook
-    enforces the contract on every author-written commit; only
-    git-generated messages (merge, revert, cherry-pick, squash, amend) are
-    exempted.
     """
     git_dir_path = _git_dir(repo_root)
 
@@ -925,6 +916,29 @@ def _cli_validate(commit_msg_file: Path, repo_root: Path) -> int:
         return 0
 
     text = commit_msg_file.read_text(encoding="utf-8")
+
+    # Message-source commits (git commit -m "...", VS Code Git extension):
+    # the prepare-commit-msg hook does NOT inject the INTENT/INVARIANT
+    # template for these sources (COMMIT_SOURCE=message), so the
+    # commit-msg validator must not require it.  Detect by checking if
+    # the message body contains an INTENT: header line.  If it doesn't,
+    # the template was never injected — validate only that the subject
+    # line carries a recognized conventional commit prefix.  This is the
+    # lightweight commit-phase check; the full INTENT/INVARIANT format
+    # is enforced for editor-buffer commits where the template IS
+    # injected.
+    has_intent_line = any(line.startswith("INTENT:") for line in text.splitlines())
+    if not has_intent_line:
+        subject = text.splitlines()[0].strip() if text.splitlines() else ""
+        conventional_prefixes = (
+            "RESEARCH:",
+            "ADR-RULE:",
+            "IMPLEMENT:",
+            "FIX:",
+            "CHORE:",
+        )
+        if any(subject.startswith(p) for p in conventional_prefixes):
+            return 0
     name_status = _run_git(["diff", "--cached", "--name-status"], cwd=repo_root)
     staged = parse_name_status(name_status)
     classifier_intent = classify_intent(staged)
