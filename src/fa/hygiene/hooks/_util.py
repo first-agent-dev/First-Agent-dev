@@ -9,6 +9,7 @@ place to update if the workspace marker or hook-seat layout changes.
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 HOOK_NAMES: tuple[str, ...] = (
@@ -71,11 +72,31 @@ def resolve_git_dir(repo_root: Path) -> Path:
 def resolve_hooks_dir(repo_root: Path) -> Path:
     """Return the effective hooks directory for *repo_root*.
 
-    For a normal checkout, this is ``<repo>/.git/hooks``. For a git
-    worktree, hooks live in the *common* git dir recorded by the
-    worktree gitdir's ``commondir`` file, not under the worktree-specific
-    gitdir itself.
+    First asks git itself via ``git rev-parse --git-path hooks`` so
+    ``core.hooksPath`` (when set) and worktree/common-dir rules are
+    honored exactly the way Git will honor them at runtime. If git is
+    unavailable or the command fails, falls back to pure-Python
+    resolution via ``resolve_git_dir()`` and an optional ``commondir``
+    file for worktree layouts.
     """
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-path", "hooks"],  # noqa: S607
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        result = None
+    if result is not None:
+        raw = result.stdout.strip()
+        if raw:
+            hooks = Path(raw)
+            if not hooks.is_absolute():
+                hooks = (repo_root / hooks).resolve()
+            return hooks
 
     git_dir = resolve_git_dir(repo_root)
     commondir = git_dir / "commondir"

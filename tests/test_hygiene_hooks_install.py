@@ -13,6 +13,7 @@ path that both humans and agents use to confirm the local hook chain is active.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -509,3 +510,49 @@ exit 0
     assert result.returncode == 0
     assert "git add -- tracked.py" in log
     assert "git add -- unrelated.py" not in log
+
+
+def test_resolve_hooks_dir_respects_core_hookspath(tmp_path: Path) -> None:
+    """Git-configured core.hooksPath wins over the default hooks directory."""
+
+    repo = tmp_path
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    (repo / "knowledge").mkdir()
+    (repo / "knowledge" / "llms.txt").write_text("marker\n", encoding="utf-8")
+    custom_hooks = repo / ".custom-hooks"
+    custom_hooks.mkdir()
+    subprocess.run(["git", "config", "core.hooksPath", str(custom_hooks)], cwd=repo, check=True)
+
+    installed = install_hooks(repo_root=repo)
+
+    assert [p.parent for p in installed] == [custom_hooks] * len(HOOK_NAMES)
+    rc = check_hooks(repo_root=repo)
+    assert rc == 0
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_pre_commit_preserves_first_failure_exit_code_when_no_files_changed(tmp_path: Path) -> None:
+    """If no staged files were modified, the original failing exit code is preserved."""
+
+    root = _make_workspace(tmp_path)
+    hook = Path(install_mod.__file__).resolve().parent / "pre-commit"
+    fakebin = tmp_path / "fakebin_rc"
+    fakebin.mkdir()
+    log_path = tmp_path / "hook.log"
+
+    _write_executable(
+        fakebin / "uv",
+        f"#!/usr/bin/env bash\nprintf 'uv %s\\n' \"$*\" >> \"{log_path}\"\nexit 7\n",
+    )
+    _write_executable(
+        fakebin / "git",
+        f"#!/usr/bin/env bash\nprintf 'git %s\\n' \"$*\" >> \"{log_path}\"\nif [[ \"$1\" == diff && \"$2\" == --cached && \"$3\" == --name-only && \"$4\" == -z ]]; then\n  printf 'tracked.py\\0'\n  exit 0\nfi\nif [[ \"$1\" == diff && \"$2\" == --quiet && \"$3\" == -- && \"$4\" == tracked.py ]]; then\n  exit 0\nfi\nexit 0\n",
+    )
+
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+
+    assert result.returncode == 7

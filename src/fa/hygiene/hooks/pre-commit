@@ -40,6 +40,8 @@ mapfile -d '' staged_paths < <(git diff --cached --name-only -z 2>/dev/null || t
 
 if uv run pre-commit run "$@"; then
     exit 0
+else
+    first_rc=$?
 fi
 
 modified_paths=()
@@ -51,7 +53,7 @@ for path in "${staged_paths[@]}"; do
 done
 
 if [ ${#modified_paths[@]} -eq 0 ]; then
-    exit 1
+    exit "$first_rc"
 fi
 
 echo "pre-commit: re-staging auto-fixed files and retrying:" >&2
@@ -61,6 +63,8 @@ git add -- "${modified_paths[@]}"
 
 if uv run pre-commit run "$@"; then
     exit 0
+else
+    retry_rc=$?
 fi
 
-exit 1
+exit "$retry_rc"

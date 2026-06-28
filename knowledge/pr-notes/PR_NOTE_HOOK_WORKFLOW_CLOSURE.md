@@ -6,13 +6,13 @@
 
 ## Problem
 
-The original hook-workflow patch fixed the first-order bootstrap problem, but deeper review against the live branch exposed three additional issues that blocked this topic from being production-ready.
+The original hook-workflow patch fixed the first-order bootstrap problem, but deeper review against the live branch exposed several additional issues that blocked this topic from being production-ready.
 
 First, the new `pre-commit` hook claimed it would auto-restage hook-made autofixes and retry once, but the implementation placed `uv run pre-commit run "$@"` under `set -e` without wrapping it in a conditional. A non-zero exit terminated the script before the retry branch could run, so the flagship UX improvement was dead code.
 
 Second, the M-6 PR-intent hook seat still applied the rich `INTENT / INVARIANT / FIX-only` metadata discipline too broadly. The semantic core itself is correct and valuable — the same validator powers `pr.prepare` and `IntentGuard`, which is exactly the seat where the model's degrees of freedom should be closed. But the `commit-msg` adapter still blocked ordinary human manual commits unless they used project-specific uppercase prefixes. That was the wrong boundary: hook seat should be fast local feedback, while the strict anti-cheap-workaround contract belongs primarily to `pr.prepare` + `PrDraftStore` + `IntentGuard` at runtime.
 
-Third, the operational layer around the hooks was not yet trustworthy enough. The accepted bot fixes reintroduced a `RuntimeWarning` on `python -m fa.hygiene.hooks.install`, left real test failures behind, `hooks-status` could report success even for non-executable hooks on POSIX, and installer/status were not git-worktree-safe because they assumed `.git/` was always a directory rather than a file pointing at a worktree gitdir.
+Third, the operational layer around the hooks was not yet trustworthy enough. The accepted bot fixes reintroduced a `RuntimeWarning` on `python -m fa.hygiene.hooks.install`, left real test failures behind, `hooks-status` could report success even for non-executable hooks on POSIX, and installer/status were not git-worktree-safe because they assumed `.git/` was always a directory rather than a file pointing at a worktree gitdir. A follow-up review also found two correctness gaps: the new `pre-commit` retry path discarded non-1 exit codes (`127`, `130`, etc.), and the pure-Python hook-dir resolver ignored `core.hooksPath` even though Git itself resolves hooks through that configuration via `git rev-parse --git-path hooks`.
 
 This PR closes those gaps while preserving the strong semantic core of the model-freedom-control system.
 
@@ -29,6 +29,7 @@ This PR closes those gaps while preserving the strong semantic core of the model
 
 - Rewrote the control flow so retry actually runs under `set -e`. The first `uv run pre-commit run` now executes in an explicit conditional instead of a straight-line command that aborts the shell before `rc=$?` / retry logic.
 - **Critical safety change:** the retry path no longer uses dangerous global `git add -u`. Instead, it snapshots the staged path set before the first run, detects which of those already-staged paths were modified by hook autofix, and re-stages **only that subset** before retrying once. This avoids accidentally staging unrelated user changes.
+- Follow-up correctness fix: the hook now preserves the **real failing exit code** when no retry happens, and the retry failure code when the second run still fails, instead of flattening everything to `1`.
 - The script still sets `NO_PROXY="*"` for the isolated pre-commit env path and still uses `uv run` so Windows/PowerShell uv-managed environments work.
 - The tracked file mode for `src/fa/hygiene/hooks/pre-commit` is corrected to executable (`100755`) in the patch, removing the need for installer-induced source-mode repair in a clean checkout.
 
@@ -50,12 +51,12 @@ This PR closes those gaps while preserving the strong semantic core of the model
 ### `src/fa/hygiene/hooks/install.py`
 
 - Switched from local `HOOK_NAMES` / direct `.git/hooks` assumption to the shared `_util.py` helpers.
-- Installer now resolves the **real hooks dir** via `resolve_hooks_dir()`, making install work in both normal clones and git worktrees.
+- Installer now resolves the **real hooks dir** via `resolve_hooks_dir()`, asking Git first through `git rev-parse --git-path hooks`. This makes install work in normal clones, git worktrees, and local `core.hooksPath` setups instead of assuming a hard-coded `.git/hooks`.
 - Kept the symlink-preferred / copy-fallback behavior and the best-effort executability repair on source + target.
 
 ### `src/fa/hygiene/hooks/status.py`
 
-- Switched to the shared `HOOK_NAMES` and `resolve_hooks_dir()` helpers, making the status probe work in both normal clones and git worktrees.
+- Switched to the shared `HOOK_NAMES` and `resolve_hooks_dir()` helpers, making the status probe work in both normal clones and git worktrees while respecting `core.hooksPath` the same way Git itself does.
 - Status now verifies not just presence/content freshness, but also **executability** on POSIX. A hook that exists and matches source but lacks execute bits is now reported as unhealthy instead of incorrectly “active”.
 - Status messages now distinguish missing, stale, and non-executable cases.
 
@@ -136,7 +137,9 @@ Per scope discipline, this PR still does **not**:
 7. `hooks-status` detects missing, stale, and non-executable hooks correctly.
 8. No `RuntimeWarning` on `python -m fa.hygiene.hooks.install` or `status`.
 9. The touched test surface is green.
-10. The new codemap accurately reflects the implementation after a follow-up code review.
+10. `pre-commit` preserves operator-relevant non-1 exit codes instead of masking them.
+11. Installer/status honor `core.hooksPath` and git-worktree hook resolution.
+12. The new codemap accurately reflects the implementation after a follow-up code review.
 
 ## Verification results on the reviewed branch state
 
