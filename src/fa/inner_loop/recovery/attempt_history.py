@@ -2,7 +2,7 @@
 
 Aperant ``recovery-manager.ts`` keeps a per-subtask retry history under
 ``<specDir>/memory/attempt_history.json``. We port the writer side to
-``~/.fa/runs/<run_id>/attempt_history.json`` so the per-session anchor
+``~/.fa/session-log/<run_id>/attempt_history.json`` so the per-session anchor
 matches the events.jsonl pattern in ADR-7 §7. Cross-session aggregation
 (the «commit `knowledge/trace/attempt_history.json` into the repo» path
 in the source spec) is intentionally deferred: it adds PR-noise and the

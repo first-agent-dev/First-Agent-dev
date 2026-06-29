@@ -141,7 +141,7 @@ def test_no_duplicate_pythonpath_on_agent() -> None:
 def test_setup_seeds_provider_secrets_from_fa_env_template() -> None:
     """secrets/fa.env must be seeded from the provider-key template, not .env.fa."""
     text = _SETUP.read_text(encoding="utf-8")
-    assert "secrets/fa.env.template" in text
+    assert "knowledge/templates/fa.env.template" in text
     assert not re.search(
         r"^\s*TEMPLATE=\"\$FA_DIR/repo/First-Agent-dev/\.env\.fa\.template\"",
         text,

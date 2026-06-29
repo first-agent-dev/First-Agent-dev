@@ -1,7 +1,7 @@
 ---
 purpose: System-prompt fragment injected before each coder-role retry. Forces the model to read the per-run attempt_history.json first and articulate a different approach when prior attempts on the same (tool, params) signature exist.
 inputs:
-  - attempt_history.json — JSON list produced by `fa.inner_loop.recovery.AttemptHistory` (writer = `AttemptHistoryObserver` at AFTER_TOOL_EXEC). Path resolved by the harness, typically `~/.fa/state/runs/<run_id>/attempt_history.json`.
+  - attempt_history.json — JSON list produced by `fa.inner_loop.recovery.AttemptHistory` (writer = `AttemptHistoryObserver` at AFTER_TOOL_EXEC). Path resolved by the harness, typically `~/.fa/session-log/<run_id>/attempt_history.json`.
   - recovery_action — the latest `RecoveryAction` row from events.jsonl (`kind="recovery_action"`), emitted by `FailureClassifierObserver`.
 compiled: "2026-05-20"
 last-reviewed: "2026-05-20"

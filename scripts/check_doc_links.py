@@ -55,7 +55,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 # scan so the gate is green today while still catching NEW breakage in the
 # actively-maintained docs. Shrinking this set is good follow-up hygiene.
 _LEGACY_SKIP = (
-    "For cross-reference with ADR's/",
+    "knowledge/research/adr-cross-reference/",
     "knowledge/trace/",
     "knowledge/research/",
     "knowledge/prompts/prompting.md",

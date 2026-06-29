@@ -12,7 +12,7 @@ REPO_DIR="${REPO_DIR:-/srv/first-agent/repo/First-Agent-dev}"
 ENV_FA="${ENV_FA:-${REPO_DIR}/.env.fa}"
 ENV_TEMPLATE="${ENV_TEMPLATE:-${REPO_DIR}/.env.fa.template}"
 SECRETS_ENV="${SECRETS_ENV:-/srv/first-agent/secrets/fa.env}"
-SECRETS_TEMPLATE="${SECRETS_TEMPLATE:-${REPO_DIR}/secrets/fa.env.template}"
+SECRETS_TEMPLATE="${SECRETS_TEMPLATE:-${REPO_DIR}/knowledge/templates/fa.env.template}"
 BACKUP_DIR="${BACKUP_DIR:-/srv/first-agent/secrets}"
 
 if [[ "${FA_NORMALIZE_USE_SUDO:-1}" == "0" ]]; then
@@ -25,7 +25,7 @@ _SECRET_LINE_RE='^[[:space:]]*([A-Z0-9_]+(API_KEY|_TOKEN|_SECRET))[[:space:]]*='
 _ACTIVE_ASSIGN_RE='^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*='
 _ACTIVE_FA_RE='^[[:space:]]*FA_[A-Z0-9_]+[[:space:]]*='
 _LEGACY_ENV_HINT_RE='LLM API keys[[:space:]]*->[[:space:]]*.env.fa|Uncomment and fill in the keys|^[[:space:]]*#[[:space:]]*[A-Z0-9_]+(API_KEY|_TOKEN|_SECRET)[[:space:]]*='
-_PROVIDER_PLACEHOLDERS_MARKER='Provider placeholders from secrets/fa.env.template'
+_PROVIDER_PLACEHOLDERS_MARKER='Provider placeholders from knowledge/templates/fa.env.template'
 
 ENV_FA_BACKED_UP=0
 SECRETS_ENV_BACKED_UP=0

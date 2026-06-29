@@ -45,7 +45,7 @@ shutdown to avoid the cold rebuild cost.
 
 Use the `FTS5` extension shipped with the standard `sqlite3`
 module. Store one row per chunk; `MATCH` queries return BM25-ranked
-results out of the box. Index file is `~/.fa/index.sqlite` (or
+results out of the box. Index file is `~/.fa/state/index.sqlite` (or
 similar).
 
 - Pros:

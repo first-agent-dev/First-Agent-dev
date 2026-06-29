@@ -14,7 +14,7 @@ Comprehensive secrets-handling hardening closing gaps A–Q (original audit) and
 
 - `.dockerignore` — excludes `.env*` from build context, except `.env.fa.template`
 - `docker-compose.fa.yml` — bind-mounts `/srv/first-agent/state` → `/home/fa/.fa` for persistent `models.yaml`, `config.yaml`, `pr_draft.md`; removes dead `FA_CONFIG` / `FA_WORKSPACE` env vars
-- `knowledge/examples/models.yaml.example` — safe reference template using `api_key_env` (never inline keys)
+- `knowledge/templates/models.yaml.example` — safe reference template using `api_key_env` (never inline keys)
 - `.env.fa.template` — LLM API key template with clear separation note: B2 backup credentials belong in `/srv/first-agent/secrets/backup.env`, NOT here
 
 ### Host scripts (Steps 5–6)

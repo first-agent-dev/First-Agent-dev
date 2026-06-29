@@ -243,7 +243,7 @@ log_warn "Then authenticate with your Tailscale account."
 # 8. FA workspace directories
 # ---------------------------------------------------------------------------
 log_info "Creating FA workspace at $FA_DIR..."
-sudo mkdir -p "$FA_DIR"/{repo,state,secrets,backup,scripts,routing}
+sudo mkdir -p "$FA_DIR"/{repo,state,secrets,backup,routing}
 # Ownership MUST match the container's runtime uid:gid. The container runs as the
 # hardcoded numeric 1000:1000 (Dockerfile `useradd -u 1000 fa` +
 # docker-compose `user: "1000:1000"`). Chowning to the host *username* only works
@@ -283,7 +283,7 @@ ENV_FA="$FA_DIR/repo/First-Agent-dev/.env.fa"
 
 # Seed the secrets file from template if still absent.
 if [[ ! -f "$SECRETS_ENV" ]]; then
-    TEMPLATE="$FA_DIR/repo/First-Agent-dev/secrets/fa.env.template"
+    TEMPLATE="$FA_DIR/repo/First-Agent-dev/knowledge/templates/fa.env.template"
     if [[ -f "$TEMPLATE" ]]; then
         cp "$TEMPLATE" "$SECRETS_ENV"
     fi
@@ -348,7 +348,7 @@ ROUTING_MODELS_FILE="$ROUTING_DIR/models.yaml"
 # when routing/models.yaml does not yet exist; after migration they are ignored.
 LEGACY_STATE_MODELS="$FA_DIR/state/models.yaml"
 LEGACY_PROXY_MODELS="$FA_DIR/proxy/models.yaml"
-EXAMPLE_MODELS="$FA_DIR/repo/First-Agent-dev/knowledge/examples/models.yaml.example"
+EXAMPLE_MODELS="$FA_DIR/repo/First-Agent-dev/knowledge/templates/models.yaml.example"
 
 ensure_routing_models() {
     sudo mkdir -p "$ROUTING_DIR"
@@ -515,22 +515,20 @@ sudo loginctl enable-linger "$FA_USER" 2>/dev/null || true
 log_info "Service installed. Enable with: systemctl --user enable fa.service"
 
 # ---------------------------------------------------------------------------
-# 16. Backup script + credentials template
+# 16. Backup credentials template + host CLI wrapper
 # ---------------------------------------------------------------------------
-log_info "Installing backup script..."
+log_info "Preparing backup credentials template..."
 
-# Install the version-controlled backup script from the repo (single source of
-# truth — no inline duplicate to drift out of sync). The repo is guaranteed
-# present at this point because step 9 cloned it above.
+# The repo copy is the single source of truth for the backup script:
+#   $FA_DIR/repo/First-Agent-dev/scripts/backup-fa.sh
+# Do NOT create a second host-side copy under /srv/first-agent/scripts/.
 BACKUP_SRC="$FA_DIR/repo/First-Agent-dev/scripts/backup-fa.sh"
-if [[ -f "$BACKUP_SRC" ]]; then
-    cp "$BACKUP_SRC" "$FA_DIR/scripts/backup-fa.sh"
-    chmod +x "$FA_DIR/scripts/backup-fa.sh"
-else
+if [[ ! -f "$BACKUP_SRC" ]]; then
     log_error "Backup script not found in repo: $BACKUP_SRC"
     log_error "Repo clone may have failed — re-run after fixing the clone."
     exit 1
 fi
+chmod +x "$BACKUP_SRC"
 
 # Install host-side fa CLI wrapper (unified operator interface).
 FA_WRAPPER="$FA_DIR/repo/First-Agent-dev/scripts/fa"
@@ -573,5 +571,5 @@ echo "FA workspace:   $FA_DIR/repo/First-Agent-dev"
 echo "FA state:       $FA_DIR/state"
 echo "FA routing:     $FA_DIR/routing/models.yaml"
 echo "FA secrets:     $FA_DIR/secrets"
-echo "FA backup:      $FA_DIR/scripts/backup-fa.sh"
+echo "FA backup:      $FA_DIR/repo/First-Agent-dev/scripts/backup-fa.sh"
 echo "FA service:     $FA_USER_HOME/.config/systemd/user/fa.service"

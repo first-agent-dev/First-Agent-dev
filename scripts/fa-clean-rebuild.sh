@@ -11,7 +11,7 @@
 #      to skip. (A truly clean install should run the latest main.)
 #   3. Back up /srv/first-agent/{state,routing,secrets} to a timestamped 0700 dir.
 #   4. Stop the systemd service + `docker compose down --remove-orphans`.
-#   5. Reset run history (/srv/first-agent/state/runs/*); with WIPE_STATE=1,
+#   5. Reset run history (/srv/first-agent/state/session-log/*); with WIPE_STATE=1,
 #      clear state and reset routing/models.yaml for backward compatibility.
 #   6. KEEP secrets/ untouched (LLM keys, deploy key, fa_proxy_token); generate
 #      the fa->proxy token if it is missing. NEVER deletes secrets.
@@ -74,7 +74,7 @@ STASHED=0
 # Internal: set to 1 after we re-exec the post-pull version of this script,
 # so the updated copy does not try to update the repo again (loop guard).
 _FA_REBUILD_REEXEC="${_FA_REBUILD_REEXEC:-0}"
-EXAMPLE_MODELS="${REPO_DIR}/knowledge/examples/models.yaml.example"
+EXAMPLE_MODELS="${REPO_DIR}/knowledge/templates/models.yaml.example"
 ENV_FA="${REPO_DIR}/.env.fa"
 SECRETS_ENV="${FA_DIR}/secrets/fa.env"
 ROUTING_DIR="${FA_DIR}/routing"
@@ -323,9 +323,9 @@ fi
 # 5. Reset state (keys are NEVER touched here)
 # ───────────────────────────────────────────────────────────────
 # Always clear run history (safe; pure runtime artifacts).
-if [[ -d "${FA_DIR}/state/runs" ]]; then
-    log_info "Clearing run history (${FA_DIR}/state/runs/*)..."
-    sudo rm -rf "${FA_DIR}/state/runs/"* 2>/dev/null || true
+if [[ -d "${FA_DIR}/state/session-log" ]]; then
+    log_info "Clearing run history (${FA_DIR}/state/session-log/*)..."
+    sudo rm -rf "${FA_DIR}/state/session-log/"* 2>/dev/null || true
 fi
 
 if [[ "${WIPE_STATE}" == "1" ]]; then

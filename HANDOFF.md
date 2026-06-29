@@ -168,7 +168,7 @@ review fixes (tracks `Dockerfile.fa`, ignores commented optional `FA_*` env rows
 | PR C landed: `IntentGuard(GuardMiddleware)` on `BEFORE_TOOL_EXEC` reuses M-6's classifier + validator; closes M-7 (ADR-10 I-1: one validator, two consumers) | 2026-05-27 | [`intent_guard.py`](./src/fa/inner_loop/hooks/intent_guard.py), [`tests/test_intent_guard.py`](./tests/test_intent_guard.py) |
 | PR B landed: `src/fa/hygiene/pr_intent.py` classifier + `prepare-commit-msg` / `commit-msg` hooks; snapshot test pins hook constants to skill §Output format (closes M-6) | 2026-05-27 | [`pr_intent.py`](./src/fa/hygiene/pr_intent.py), [`hooks/`](./src/fa/hygiene/hooks/), [`tests/test_pr_intent_snapshot.py`](./tests/test_pr_intent_snapshot.py) |
 
-**Trade-off Noted:** After workspace isolation (ADR-13), `fa stats` scans `.fa/runs/` in the *current* session's workspace only. Prior cross-session views require explicit operator pathing until aggregation (Next #3) is implemented.
+**Trade-off Noted:** Per-run artifacts (events.jsonl, pr_draft.md, attempt_history.json) now live under the persistent host root `~/.fa/session-log/<run_id>/`, not in the ephemeral per-session workspace clone (ADR-13 prunes those). `fa stats` therefore discovers sessions globally under `~/.fa/session-log/`; the `--workspace` flag now only scopes the dead-zone (`src/` reachability) scan, not session discovery. Cross-session aggregation roll-up is still pending (Next #3).
 
 ### Gotchas (delete when resolved)
 
@@ -199,7 +199,7 @@ Priority-ordered. Completed items deleted, not struck through.
    that returns `tool_calls` under a non-canonical key).
 2. **Cross-session aggregation of `attempt_history.json` (R-10 /
    R-12).** Per-run history is already written under
-   `<workspace>/.fa/runs/<run_id>/`; the missing piece is the
+   `~/.fa/session-log/<run_id>/`; the missing piece is the
    roll-up surface that Pillar-3 measurement depends on (lessons
    moving across sessions instead of being re-discovered).
 3. **Orphan cross-ref sweep — ≈26 files** from PR A' extraction.

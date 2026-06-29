@@ -9,7 +9,7 @@
 > **Locally orchestrated, mixed-tier LLM coding agent for power-users.**  
 > Built on the principles of Unix-way, zero-trust LLM isolation, and minimalism-first.
 
-⭐ **Краткий обзор фичей и архитектуры (PITCH): [FEATURES.md](./FEATURES.md)**  
+⭐ **Краткий обзор фичей и архитектуры (PITCH): [knowledge/overview/FEATURES.md](./knowledge/overview/FEATURES.md)**  
 📖 **Деплой / обновление / управление (AIO Server):** [knowledge/instructions/README.md](./knowledge/instructions/README.md)  
 🤖 **Для LLM-агентов (Start Here):** [AGENTS.md](./AGENTS.md)
 
@@ -109,7 +109,7 @@ Stanford / Khattab Meta-Harness, Anthropic engineering posts), MCP-экосис�
 
 ## 📂 Основные папки и файлы
 
-- [`FEATURES.md`](./FEATURES.md) — обзор фичей и киллер-фич продукта.
+- [`knowledge/overview/FEATURES.md`](./knowledge/overview/FEATURES.md) — обзор фичей и киллер-фич продукта.
 - [`AGENTS.md`](./AGENTS.md) — конвенции и инструкции для AI-агентов.
 - [`HANDOFF.md`](./HANDOFF.md) — snapshot состояния для cross-LLM сессий.
 - [`knowledge/README.md`](./knowledge/README.md) — как устроена память

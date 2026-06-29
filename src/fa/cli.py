@@ -727,7 +727,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     # IntentGuard read seam. The shared ``PrDraftStore`` binds the
     # stable on-disk path to current-session provenance so stale or
     # externally-fabricated drafts are not trusted by the guard.
-    draft_path = Path.home() / ".fa" / "state" / "runs" / run_id / "pr_draft.md"
+    draft_path = Path.home() / ".fa" / "session-log" / run_id / "pr_draft.md"
     draft_store = PrDraftStore(draft_path)
 
     # --resume preserves the on-disk draft for the next role to read;
@@ -740,7 +740,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     # When resuming, inject the previous session's draft content as
     # system-prompt extra so the LLM sees the existing plan/work-log
     # from turn 1. This bridges the cross-session continuity gap:
-    # the draft lives under ~/.fa/state/ (not /workspace) so
+    # the draft lives under ~/.fa/session-log/ (not /workspace) so
     # fs.read_file cannot reach it, but the system prompt can.
     resume_draft_text: str = ""
     if resume and draft_path.is_file():
@@ -761,7 +761,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         )
         return 2
     registry.register(build_prepare_pr_tool(draft_store))
-    log_path = workspace / ".fa" / "runs" / run_id / "events.jsonl"
+    log_path = Path.home() / ".fa" / "session-log" / run_id / "events.jsonl"
     # In proxy mode the provider keys are absent here (they live in the proxy),
     # so the redactor is seeded from the secrets the agent process DOES hold:
     # the fa→proxy token and the deploy key (read value-only, never logged).
@@ -789,7 +789,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     hooks.register(LockfileBlocker(suppression_seconds=limits.lockfile_suppression_seconds))
     hooks.register(AuthExpiredBlocker(suppression_seconds=limits.auth_expired_suppression_seconds))
     # M-7 IntentGuard: reads the per-session PR draft at
-    # ~/.fa/state/runs/<run_id>/pr_draft.md (populated by the M-7 §Q-N
+    # ~/.fa/session-log/<run_id>/pr_draft.md (populated by the M-7 §Q-N
     # ``pr.prepare`` tool registered above) and enforces the same
     # classify_intent + validate_commit_msg rules as the M-6 git hooks.
     # Placed after SandboxHook so only workspace-contained paths reach
@@ -1099,7 +1099,7 @@ def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
     )
 
     workspace = args.workspace.resolve()
-    runs_dir = workspace / ".fa" / "runs"
+    runs_dir = Path.home() / ".fa" / "session-log"
 
     if not runs_dir.exists():
         print(f"fa stats: no runs found at {runs_dir}", file=sys.stderr)

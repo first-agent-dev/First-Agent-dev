@@ -1,6 +1,6 @@
 """Per-session PR-draft store shared by ``pr.prepare`` and ``IntentGuard``.
 
-The initial M-7 implementation treated ``~/.fa/state/runs/<run_id>/pr_draft.md``
+The initial M-7 implementation treated ``~/.fa/session-log/<run_id>/pr_draft.md``
 as the entire trust boundary: if the file existed, :class:`IntentGuard`
 trusted it. That left three gaps:
 

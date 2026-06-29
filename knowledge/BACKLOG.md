@@ -487,7 +487,7 @@
     rows to `events.jsonl`.
   - **R-6 attempt_history.json** —
     [`src/fa/inner_loop/recovery/attempt_history.py`](../src/fa/inner_loop/recovery/attempt_history.py)
-    writer (per-run, `~/.fa/state/runs/<run_id>/attempt_history.json`,
+    writer (per-run, `~/.fa/session-log/<run_id>/attempt_history.json`,
     sliding window + cap from `RuntimeLimits`) +
     [`knowledge/prompts/coder-recovery.md`](./prompts/coder-recovery.md)
     reader-prompt fragment. Cross-session aggregation deferred to
@@ -931,7 +931,7 @@
   - Synthetic-PR-description state tracking — the middleware
     needs visibility into the current session's draft PR
     description to validate field-presence. Decision: read from
-    a known location under `~/.fa/state/runs/<run_id>/pr_draft.md`
+    a known location under `~/.fa/session-log/<run_id>/pr_draft.md`
     populated by the agent itself; agent populates it on
     session start via a new `prepare-pr` tool or sub-agent.
     **Closed by PR E (2026-05-28):** `pr.prepare` tool ships in
@@ -1518,7 +1518,7 @@
     + `RequestInfo(...)` construction — the hardcoded request body.
   - `src/fa/providers/openai_compat.py` / `src/fa/providers/anthropic.py` — the
     two request-body builders (note the separate Anthropic `max_tokens` default).
-  - `knowledge/examples/models.yaml.example` — documents the routing-only shape.
+  - `knowledge/templates/models.yaml.example` — documents the routing-only shape.
 
 ## I-26 — `fa probe --all-entries` (full chain walk)
 
@@ -1555,14 +1555,14 @@ these settings. Foundation already landed in I-29-prerequisite
 
 ## I-30 — `fa replay` command
 
-Re-render a past session from `~/.fa/runs/<run_id>/events.jsonl`
+Re-render a past session from `~/.fa/session-log/<run_id>/events.jsonl`
 through ConsoleRenderer. Read JSONL → emit as OutputEvent → render.
 Prerequisite: I-29 (JsonLineWriter) or direct JSONL→OutputEvent
 adapter.
 
 ## I-31 — `fa stats` aggregate dashboard
 
-Read all `~/.fa/runs/*/events.jsonl`, aggregate: total cost,
+Read all `~/.fa/session-log/*/events.jsonl`, aggregate: total cost,
 tokens, cache hit ratio, model distribution, p50/p95 latency.
 `fa stats --since 7d`.
 

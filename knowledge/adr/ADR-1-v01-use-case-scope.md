@@ -164,7 +164,7 @@ UC5 v0.2 expanded scope:
    `task_id`, `scoring_kind: exact | edit_distance | llm_judge | hybrid`,
    `expected:` блок).
 2. **(5b) Trace consumption.** Eval reads
-   `~/.fa/state/runs/<run_id>/events.jsonl` (per ADR-7 trace-shape) и
+   `~/.fa/session-log/<run_id>/events.jsonl` (per ADR-7 trace-shape) и
    produces structured eval report (`eval/reports/<run_id>.md`)
    с per-task verdict + aggregate metrics: tokens/task, tool-calls/task,
    tools-in-context, API cost/task, success-rate.

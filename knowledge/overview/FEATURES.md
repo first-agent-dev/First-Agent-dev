@@ -33,7 +33,7 @@ fa run --role coder --task "Implement Workspace Isolation (ADR-13)" --detail ver
 [fa] ⚡ LLM Turn 2    | ⏱ 6.1s | In: 14.1k (Cache hit: 99.0%) | Out: 815 | Cost: $0.004
 [fa] ✅ Session end   | Total time: 10.3s | Turns: 2 | Total Cost: $0.007
 ```
-*Вся телеметрия параллельно пишется в JSONL-логи (`.fa/runs/<id>/events.jsonl`) для аналитики через команду `fa stats`.*
+*Вся телеметрия параллельно пишется в JSONL-логи (`~/.fa/session-log/<id>/events.jsonl`) для аналитики через команду `fa stats`.*
 
 ---
 
@@ -64,7 +64,7 @@ First-Agent спроектирован для автономной работы 
 *   Прокси проверяет, что запрос пришел от агента (через внутренний токен), **очищает** заголовки и **инжектит** реальный API-ключ уже за пределами досягаемости агента.
 *   **Итог:** Агент может *использовать* ключи для работы, но физически не может их *прочитать* или украсть (разные mount/PID неймспейсы Docker). 
 
-*Подробнее:* [`knowledge/adr/ADR-12-secret-isolation.md`](./knowledge/adr/ADR-12-secret-isolation.md)
+*Подробнее:* [`ADR-12-secret-isolation.md`](../adr/ADR-12-secret-isolation.md)
 
 ---
 

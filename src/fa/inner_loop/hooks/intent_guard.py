@@ -32,7 +32,7 @@ The middleware:
 
 - Trusts the session's working PR-description draft only when it was
   produced by ``pr.prepare`` in the current process. The stable file
-  path remains ``~/.fa/state/runs/<run_id>/pr_draft.md``, but the
+  path remains ``~/.fa/session-log/<run_id>/pr_draft.md``, but the
   shared :class:`fa.inner_loop.pr_draft.PrDraftStore` rejects stale or
   externally fabricated files.
 - Respects skill §D-5: a user-typed ``INTENT:`` value in the draft
@@ -232,7 +232,7 @@ class IntentGuard(GuardMiddleware):
     - ``repo_root`` — the First-Agent workspace root (used for
       :func:`resolve_citation` and the subprocess fallback ``cwd``).
     - ``draft_store`` — session-local trust wrapper around the stable
-      ``~/.fa/state/runs/<run_id>/pr_draft.md`` path. Only text written
+      ``~/.fa/session-log/<run_id>/pr_draft.md`` path. Only text written
       via ``pr.prepare`` in the current process is trusted.
     - ``git_runner`` — optional injection point for the
       ``git diff --cached --name-status`` invocation. Defaults to

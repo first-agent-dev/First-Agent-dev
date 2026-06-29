@@ -73,7 +73,7 @@ from fa.inner_loop.registry import ToolCall, ToolResult
 if TYPE_CHECKING:
     from fa.observability.redaction import SecretRedactor
 
-DEFAULT_STATE_ROOT = Path.home() / ".fa" / "state" / "runs"
+DEFAULT_STATE_ROOT = Path.home() / ".fa" / "session-log"
 HARNESS_ID = "fa-inner-loop@0.1.0"
 
 
@@ -94,7 +94,7 @@ def _json_safe(value: object) -> object:
 
 @dataclass(frozen=True)
 class TraceEvent:
-    """One row written to ``~/.fa/state/runs/<run_id>/events.jsonl``.
+    """One row written to ``~/.fa/session-log/<run_id>/events.jsonl``.
 
     Field names track ADR-7 §7 exactly: ``ts`` (not ``timestamp``),
     ``run_id`` stamped on every row, ``harness_id`` for cross-version

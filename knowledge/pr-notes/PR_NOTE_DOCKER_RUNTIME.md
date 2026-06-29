@@ -169,7 +169,7 @@ status=FAILED
 exit_code=<child exit code>
 ```
 
-Docker logs retain stdout/stderr, `events.jsonl` remains under `/workspace/.fa/runs/<run_id>/`, and the container stays alive.
+Docker logs retain stdout/stderr, `events.jsonl` remains under `~/.fa/session-log/<run_id>/`, and the container stays alive.
 
 ### Invalid `FA_TASK` inputs
 
@@ -188,7 +188,7 @@ If the agent hits iteration cap, provider-chain exhaustion, request-shape errors
 
 ```bash
 cat /workspace/.fa/entrypoint-status.txt
-ls -la /workspace/.fa/runs/<run_id>/
+ls -la ~/.fa/session-log/<run_id>/
 docker compose -f docker-compose.fa.yml logs --tail=200 first-agent
 ```
 

@@ -189,8 +189,8 @@ observation → next thought) with no Critic / Reflector role
    exception. Hook re-entry is bounded (one re-validate per
    call); a second mutation by the same chain is a hard error.
 6. Append one JSONL event per state transition to
-   `~/.fa/state/runs/<run_id>/events.jsonl`; large payloads
-   land under `~/.fa/state/runs/<run_id>/artifacts/` (§7).
+   `~/.fa/session-log/<run_id>/events.jsonl`; large payloads
+   land under `~/.fa/session-log/<run_id>/artifacts/` (§7).
 7. Return the `ToolResult.summary` + `artifacts[]` paths back
    to the model; the full payload stays on disk (R-2
    trace-separation invariant).
@@ -260,7 +260,7 @@ class ToolResult:
                                        # where JSON-RPC results can be list / str / number / bool); when
                                        # `ToolSpec.output_schema` is set, the dispatcher validates against it.
     error: ToolError | None = None     # present iff the call failed; mutually exclusive with `result`
-    artifacts: tuple[str, ...] = ()    # paths to large outputs under ~/.fa/state/runs/<run_id>/artifacts/
+    artifacts: tuple[str, ...] = ()    # paths to large outputs under ~/.fa/session-log/<run_id>/artifacts/
 ```
 
 The model sees `summary` + `artifacts[]` paths back from the loop
@@ -422,9 +422,9 @@ artefacts; the runtime loop writes to both, but only
 self-evolution.
 
 ```text
-~/.fa/state/runs/<run_id>/events.jsonl     # append-only, JSONL, raw
-~/.fa/state/runs/<run_id>/artifacts/<...>  # large tool outputs (diffs, file dumps)
-~/.fa/state/runs/<run_id>/hot.md           # LLM/human-readable summary; overwritable
+~/.fa/session-log/<run_id>/events.jsonl     # append-only, JSONL, raw
+~/.fa/session-log/<run_id>/artifacts/<...>  # large tool outputs (diffs, file dumps)
+~/.fa/session-log/<run_id>/hot.md           # LLM/human-readable summary; overwritable
 ```
 
 Every state transition emits one event; the schema is:

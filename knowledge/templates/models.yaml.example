@@ -1,0 +1,105 @@
+# First-Agent models.yaml — пример шаблона
+#
+# КАНОНИЧЕСКИЙ ПУТЬ В DEPLOY (AIO / Docker): /srv/first-agent/routing/models.yaml
+#   Оператор редактирует ОДИН этот файл на хосте.
+#   Он монтируется READ-ONLY в ОБА контейнера:
+#   - агент: ~/.fa/models.yaml
+#   - egress proxy: /etc/fa/models.yaml
+#   После изменения пересоздайте стек, чтобы прокси перечитал маршруты, например:
+#     scripts/fa-update.sh
+#   (или: docker compose -f docker-compose.fa.yml up -d --force-recreate)
+# ЛОКАЛЬНАЯ РАЗРАБОТКА (без Docker): ~/.fa/models.yaml
+#
+# Этот файл описывает ТОЛЬКО МАРШРУТИЗАЦИЮ:
+# - какую модель использовать,
+# - по какому URL ходить,
+# - какое ИМЯ переменной с API-ключом ожидать.
+#
+# Здесь пока НЕ задаются sampling-параметры (temperature / top_p / top_k /
+# max_tokens / penalties) — их задаёт сам агентный цикл.
+#
+# Любые лишние поля в chain entry сейчас ИГНОРИРУЮТСЯ loader'ом.
+# Читаются только эти поля:
+#   provider, slug, base_url, api_key_env  (обязательные)
+#   timeout_seconds, cooldown_seconds, transport_retries, extra_headers  (необязательные)
+#
+# Значение необязательных полей:
+#   timeout_seconds: HTTP-таймаут одного запроса в секундах
+#   cooldown_seconds: локальная пауза после временного сбоя провайдера
+#   transport_retries: дополнительные retry на сетевом/транспортном уровне
+#   extra_headers: дополнительные HTTP-заголовки для этого маршрута
+#
+# НИКОГДА не вставляйте сюда реальные API-ключи.
+# api_key_env — это ИМЯ переменной, а реальное значение хранится ТОЛЬКО в:
+#   /srv/first-agent/secrets/fa.env
+# Например:
+#   FIREWORKS_API_KEY=fw-...
+#
+# Поддерживаемые роли: planner, coder, debug, eval.
+# Конфиг с одной ролью тоже допустим.
+#
+# ⚠️ Правило eval-family (ADR-2 §Amendment 2026-05-20):
+# если одновременно объявлены planner, coder и eval,
+# то family у eval ОБЯЗАН отличаться и от planner, и от coder,
+# иначе конфиг НЕ ЗАГРУЗИТСЯ (EvalFamilyConflictError).
+# planner и coder могут делить одну family; только eval должен быть отдельным.
+
+# ───────────────────────────────────────────────────────────────────────────
+# Базовая конфигурация из трёх ролей (все через Fireworks; OpenAI-compatible adapter).
+# planner = GLM 5.2, coder = MiniMax M3, eval = Nemotron 3 Ultra.
+# family glm / minimax / nemotron все различны → правило ADR-2 соблюдено.
+# ───────────────────────────────────────────────────────────────────────────
+
+planner:
+  model: "glm-5p2"
+  family: "glm"            # свободная текстовая метка; важна для eval-disjoint проверки
+  chain:
+    - provider: fireworks
+      slug: "accounts/fireworks/models/glm-5p2"
+      base_url: "https://api.fireworks.ai/inference/v1"
+      api_key_env: FIREWORKS_API_KEY
+      timeout_seconds: 15
+      cooldown_seconds: 3
+      transport_retries: 1
+
+coder:
+  model: "minimax-m3"
+  family: "minimax"
+  chain:
+    - provider: fireworks
+      slug: "accounts/fireworks/models/minimax-m3"
+      base_url: "https://api.fireworks.ai/inference/v1"
+      api_key_env: FIREWORKS_API_KEY
+      timeout_seconds: 15
+      cooldown_seconds: 3
+      transport_retries: 1
+
+eval:
+  model: "nemotron-3-ultra-nvfp4"
+  family: "nemotron"       # отличается от glm + minimax → ADR-2 OK
+  chain:
+    - provider: fireworks
+      slug: "accounts/fireworks/models/nemotron-3-ultra-nvfp4"
+      base_url: "https://api.fireworks.ai/inference/v1"
+      api_key_env: FIREWORKS_API_KEY
+      timeout_seconds: 15
+      cooldown_seconds: 3
+      transport_retries: 1
+
+# ───────────────────────────────────────────────────────────────────────────
+# Примечания
+# ───────────────────────────────────────────────────────────────────────────
+# - Одна модель на ВСЕ роли (быстрый тест): объявляйте только те роли, которые
+#   реально вызываете (например, только `coder`), либо не объявляйте `eval`.
+#   Конфиг planner+coder+eval с ОДНОЙ И ТОЙ ЖЕ family будет отклонён правилом ADR-2.
+# - В chain может быть несколько entry; агент пойдёт по ним сверху вниз при сбое.
+#   Пример fallback для одной роли:
+#     chain:
+#       - provider: fireworks
+#         slug: "accounts/fireworks/models/minimax-m3"
+#         base_url: "https://api.fireworks.ai/inference/v1"
+#         api_key_env: FIREWORKS_API_KEY
+#       - provider: openrouter
+#         slug: "minimax/minimax-m3"
+#         base_url: "https://openrouter.ai/api/v1"
+#         api_key_env: OPENROUTER_API_KEY

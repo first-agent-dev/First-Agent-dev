@@ -248,7 +248,7 @@ efficiency_warnings(analytics) <-- stats.py:507
 
 | Location | Title | Description | File:Line |
 |:---------|:------|:------------|:----------|
-| `4a` | Session discovery | Scan `workspace/.fa/runs/*/events.jsonl` | `cli.py:1107` |
+| `4a` | Session discovery | Scan `~/.fa/session-log/*/events.jsonl` | `cli.py:1107` |
 | `4b` | Age filter | `--since 7d` → compare dir `mtime` vs `time.time()` | `cli.py:1128` |
 | `4c` | Session parsing | Single-pass event loop over `TraceEvent` rows | `stats.py:137` |
 | `4c6` | Guard activity | ⚠ Reads `content["middleware"]` for hook name | `stats.py:222` |

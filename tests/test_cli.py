@@ -472,13 +472,16 @@ def test_fa_run_writes_events_jsonl(
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
     monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     transport = _ScriptedTransport([_stop_body("ok")])
     args = _make_run_args(workspace=tmp_path, config=config, run_id="audit-run")
 
     exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
-    events = tmp_path / ".fa" / "runs" / "audit-run" / "events.jsonl"
+    events = home / ".fa" / "session-log" / "audit-run" / "events.jsonl"
     assert events.exists()
     kinds = [
         json.loads(line)["kind"]
@@ -578,11 +581,11 @@ def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
 
     assert exit_code == 0
     assert not (tmp_path / "src" / "fa" / "x.py").exists()
-    draft_path = home / ".fa" / "state" / "runs" / "test-run" / "pr_draft.md"
+    draft_path = home / ".fa" / "session-log" / "test-run" / "pr_draft.md"
     assert draft_path.read_text(encoding="utf-8") == "INTENT: CHORE\nINVARIANT: n/a\n"
     events = [
         json.loads(line)
-        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        for line in (home / ".fa" / "session-log" / "test-run" / "events.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
         if line.strip()
@@ -606,7 +609,7 @@ def test_fa_run_clears_stale_pr_draft_on_startup(
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
-    stale = home / ".fa" / "state" / "runs" / "reuse-run" / "pr_draft.md"
+    stale = home / ".fa" / "session-log" / "reuse-run" / "pr_draft.md"
     stale.parent.mkdir(parents=True, exist_ok=True)
     stale.write_text("INTENT: FIX\nCLASS: REPAIR\nINVARIANT: Affects: stale\n", encoding="utf-8")
     transport = _ScriptedTransport([_stop_body("ok")])
@@ -626,6 +629,9 @@ def test_fa_run_verify_only_bash_allowed_before_pr_prepare(
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
     monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
@@ -645,7 +651,7 @@ def test_fa_run_verify_only_bash_allowed_before_pr_prepare(
     assert exit_code == 0
     events = [
         json.loads(line)
-        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        for line in (home / ".fa" / "session-log" / "test-run" / "events.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
         if line.strip()
@@ -666,6 +672,9 @@ def test_fa_run_repo_write_bash_requires_pr_prepare(
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
     monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
@@ -686,7 +695,7 @@ def test_fa_run_repo_write_bash_requires_pr_prepare(
     assert not (tmp_path / "src" / "fa" / "x.py").exists()
     events = [
         json.loads(line)
-        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        for line in (home / ".fa" / "session-log" / "test-run" / "events.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
         if line.strip()
@@ -708,6 +717,9 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
     monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     command = 'python -c "import pathlib; pathlib.Path("src/fa/x.py").write_text("x")"'
     transport = _ScriptedTransport(
         [
@@ -725,7 +737,7 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
     assert not (tmp_path / "src" / "fa" / "x.py").exists()
     events = [
         json.loads(line)
-        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        for line in (home / ".fa" / "session-log" / "test-run" / "events.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
         if line.strip()
@@ -769,11 +781,11 @@ def test_fa_run_opaque_exec_bash_allowed_after_pr_prepare(
     exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
-    draft_path = home / ".fa" / "state" / "runs" / "test-run" / "pr_draft.md"
+    draft_path = home / ".fa" / "session-log" / "test-run" / "pr_draft.md"
     assert draft_path.read_text(encoding="utf-8") == "INTENT: CHORE\nINVARIANT: n/a\n"
     events = [
         json.loads(line)
-        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        for line in (home / ".fa" / "session-log" / "test-run" / "events.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
         if line.strip()
@@ -821,14 +833,14 @@ def test_fa_run_repo_write_bash_allowed_after_pr_prepare(
 
     assert exit_code == 0
     assert (tmp_path / "src" / "fa" / "x.py").read_text(encoding="utf-8") == "x\n"
-    draft_path = home / ".fa" / "state" / "runs" / "test-run" / "pr_draft.md"
+    draft_path = home / ".fa" / "session-log" / "test-run" / "pr_draft.md"
     assert (
         draft_path.read_text(encoding="utf-8")
         == "INTENT: IMPLEMENT\nINVARIANT: Implements: src/fa/x.py\n"
     )
     events = [
         json.loads(line)
-        for line in (tmp_path / ".fa" / "runs" / "test-run" / "events.jsonl")
+        for line in (home / ".fa" / "session-log" / "test-run" / "events.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
         if line.strip()

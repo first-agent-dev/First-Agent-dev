@@ -98,7 +98,7 @@ ROUTING_MODELS_FILE="$ROUTING_DIR/models.yaml"
 # when routing/models.yaml does not yet exist; after migration they are ignored.
 LEGACY_STATE_MODELS="/srv/first-agent/state/models.yaml"
 LEGACY_PROXY_MODELS="/srv/first-agent/proxy/models.yaml"
-EXAMPLE_MODELS="$REPO_DIR/knowledge/examples/models.yaml.example"
+EXAMPLE_MODELS="$REPO_DIR/knowledge/templates/models.yaml.example"
 
 ensure_routing_models() {
     sudo mkdir -p "$ROUTING_DIR"
@@ -364,7 +364,7 @@ fi
 # ---------------------------------------------------------------------------
 if [[ -f "$BACKUP_ENV" ]] && ! grep -qiE '^\s*B2_KEY_ID\s*=\s*CHANGEME' "$BACKUP_ENV"; then
     log_info "Backup credentials found. Adding nightly cron job..."
-    CRON_LINE='0 3 * * * /srv/first-agent/scripts/backup-fa.sh >> /srv/first-agent/backup/backup.log 2>&1'
+    CRON_LINE='0 3 * * * /srv/first-agent/repo/First-Agent-dev/scripts/backup-fa.sh >> /srv/first-agent/backup/backup.log 2>&1'
     if ! (crontab -l 2>/dev/null || true) | grep -qF "$CRON_LINE"; then
         (crontab -l 2>/dev/null || true; echo "$CRON_LINE") | crontab -
     fi
@@ -372,7 +372,7 @@ if [[ -f "$BACKUP_ENV" ]] && ! grep -qiE '^\s*B2_KEY_ID\s*=\s*CHANGEME' "$BACKUP
 else
     log_warn "Backup not configured yet. Edit: $BACKUP_ENV"
     log_warn "Then run: crontab -e and add:"
-    log_warn '  0 3 * * * /srv/first-agent/scripts/backup-fa.sh >> /srv/first-agent/backup/backup.log 2>&1'
+    log_warn '  0 3 * * * /srv/first-agent/repo/First-Agent-dev/scripts/backup-fa.sh >> /srv/first-agent/backup/backup.log 2>&1'
 fi
 
 # ---------------------------------------------------------------------------
@@ -411,5 +411,5 @@ echo "  docker compose -f docker-compose.fa.yml ps"
 echo "  docker compose -f docker-compose.fa.yml up -d"
 echo "  docker compose -f docker-compose.fa.yml down"
 echo ""
-echo "Backup: /srv/first-agent/scripts/backup-fa.sh"
+echo "Backup: /srv/first-agent/repo/First-Agent-dev/scripts/backup-fa.sh"
 echo "Reboot autostart: systemctl --user {status,restart} fa.service"

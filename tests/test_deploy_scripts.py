@@ -104,8 +104,9 @@ def test_setup_script_has_no_inline_duplicates() -> None:
     assert text.count("restic -r") == 0
     # No inline systemd unit heredoc (installed from scripts/fa.service instead).
     assert "[Unit]\nDescription=First-Agent" not in text
-    # backup-fa.sh is copied from the cloned repo, not regenerated inline.
+    # backup-fa.sh stays in the repo as the single source of truth.
     assert "repo/First-Agent-dev/scripts/backup-fa.sh" in text
+    assert 'cp "$BACKUP_SRC" "$FA_DIR/scripts/backup-fa.sh"' not in text
 
 
 def test_fa_service_is_a_valid_user_unit() -> None:
@@ -181,12 +182,12 @@ def test_post_setup_does_not_interpolate_remote_or_branch_inside_docker_exec_she
 
 
 def _write_env_templates(repo: Path) -> None:
-    (repo / "secrets").mkdir(parents=True)
+    (repo / "knowledge" / "templates").mkdir(parents=True)
     (repo / ".env.fa.template").write_text(
         "# First-Agent NON-SECRET runtime controls.\n# API KEYS DO NOT GO HERE.\n# FA_AUTO_RUN=0\n",
         encoding="utf-8",
     )
-    (repo / "secrets" / "fa.env.template").write_text(
+    (repo / "knowledge" / "templates" / "fa.env.template").write_text(
         "# First-Agent LLM API KEYS — consumed ONLY by the fa-egress-proxy container.\n"
         "# OPENROUTER_API_KEY=sk-or-v1-CHANGEME\n"
         "# FIREWORKS_API_KEY=fw-CHANGEME\n",
@@ -351,7 +352,7 @@ def test_normalize_env_provider_placeholder_append_is_idempotent(tmp_path: Path)
     assert first.returncode == 0, first.stdout + first.stderr
     assert second.returncode == 0, second.stdout + second.stderr
     secret_text = secrets_env.read_text(encoding="utf-8")
-    assert secret_text.count("Provider placeholders from secrets/fa.env.template") == 1
+    assert secret_text.count("Provider placeholders from knowledge/templates/fa.env.template") == 1
 
 
 def test_post_setup_normalizes_env_before_validating_keys() -> None:

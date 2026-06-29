@@ -134,7 +134,7 @@ ensure_routing_models() {
   # Migration/idempotency: both containers now mount the SAME routing file
   # read-only. Legacy state/proxy copies are inputs only; no proxy copy is
   # maintained after this point.
-  local example_models="${REPO_DIR}/knowledge/examples/models.yaml.example"
+  local example_models="${REPO_DIR}/knowledge/templates/models.yaml.example"
   sudo mkdir -p "${ROUTING_DIR}"
   sudo chown 1000:1000 "${ROUTING_DIR}"
   sudo chmod 750 "${ROUTING_DIR}"

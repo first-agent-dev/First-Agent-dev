@@ -28,6 +28,12 @@ knowledge/
 ├── anti-patterns/            # named anti-pattern catalog (AP-NNN-<slug>.md)
 │   ├── README.md             # entry schema + Layer-1/2/3 detection model
 │   └── AP-001-…              # worked example: spec-bypassing workaround
+├── overview/                 # product-pitch / feature overviews
+│   └── FEATURES.md           # killer-feature + architecture pitch
+├── templates/                # operator-facing config/secret templates
+│   ├── fa.env.template       # LLM API-key template (host secrets/fa.env)
+│   ├── config.yaml.example   # FA config example
+│   └── models.yaml.example   # routing models.yaml example
 ├── prompts/                  # reusable prompts
 │   ├── README.md
 │   ├── RESOLVER.md           # intent-to-template dispatcher

@@ -3,7 +3,7 @@
 Producer side of the
 :class:`fa.inner_loop.hooks.intent_guard.IntentGuard` read seam landed in
 PR #22. The middleware reads the draft from
-``~/.fa/state/runs/<run_id>/pr_draft.md``; without a producer the
+``~/.fa/session-log/<run_id>/pr_draft.md``; without a producer the
 ``allow-on-no-draft`` branch fired on every mutating tool call and the
 guard never actually denied. This tool is the producer: the LLM
 composes the header fields per
@@ -29,7 +29,7 @@ Design notes:
   current run, not stale or externally fabricated files.
 * Permission tier is ``"workspace"`` because the tool writes to disk.
   The ``read`` / ``workspace`` enum is the only choice the registry
-  exposes today; the actual write target is under ``~/.fa/state/``,
+  exposes today; the actual write target is under ``~/.fa/session-log/``,
   but the LLM-observable invariant is «this tool mutates persistent
   state», which is what the ``workspace`` tier signals.
 * Validation runs in two layers: (1) explicit per-field checks for
@@ -258,7 +258,7 @@ def build_prepare_pr_tool(draft_store: PrDraftStore) -> ToolSpec:
         name="pr.prepare",
         description=(
             "Write the per-session PR-description draft to "
-            "~/.fa/state/runs/<run_id>/pr_draft.md so the IntentGuard "
+            "~/.fa/session-log/<run_id>/pr_draft.md so the IntentGuard "
             "middleware (M-7) can validate subsequent mutating tool "
             "calls against the declared INTENT / INVARIANT (and the "
             "FIX-only CLASS / DEGREE-OF-FREEDOM CLOSED / "

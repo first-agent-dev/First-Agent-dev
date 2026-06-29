@@ -39,7 +39,7 @@ from fa.inner_loop.tools import build_prepare_pr_tool
 
 @pytest.fixture()
 def draft_path(tmp_path: Path) -> Path:
-    return tmp_path / ".fa" / "state" / "runs" / "test-run" / "pr_draft.md"
+    return tmp_path / ".fa" / "session-log" / "test-run" / "pr_draft.md"
 
 
 @pytest.fixture()

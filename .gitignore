@@ -17,10 +17,12 @@ build/
 # Explicit secret markers (already covered by .env* above, but explicit for operators)
 .env.fa
 
-# Secret material directory (ADR-12). Block everything except templates so a
-# real fa.env / proxy token can never be committed.
-secrets/*
-!secrets/*.template
+# Secret material (ADR-12). The repo ships no secrets/ directory — real key
+# material lives only on the host at /srv/first-agent/secrets/fa.env. The
+# operator template now lives at knowledge/templates/fa.env.template. These
+# guards block any stray fa.env / proxy token that lands in the repo tree.
+**/fa.env
+**/fa_proxy_token
 
 # Prevent accidental copies of FA config files into repo
 models.yaml

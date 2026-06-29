@@ -22,7 +22,7 @@
 #   5. Add to cron or systemd timer for nightly execution
 #
 # Schedule example (cron):
-#   0 3 * * * /srv/first-agent/scripts/backup-fa.sh >> /srv/first-agent/backup/backup.log 2>&1
+#   0 3 * * * /srv/first-agent/repo/First-Agent-dev/scripts/backup-fa.sh >> /srv/first-agent/backup/backup.log 2>&1
 #
 # Test restore quarterly:
 #   restic -r "$RESTIC_REPO" restore latest --target /tmp/restore-test
@@ -59,7 +59,6 @@ restic -r "$RESTIC_REPO" backup \
     /srv/first-agent/state \
     /srv/first-agent/routing \
     /srv/first-agent/secrets \
-    /srv/first-agent/scripts \
     /srv/first-agent/repo/First-Agent-dev/docker-compose.fa.yml \
     /srv/first-agent/repo/First-Agent-dev/.env.fa \
     /etc/ssh/sshd_config.d/99-fa-hardening.conf \
