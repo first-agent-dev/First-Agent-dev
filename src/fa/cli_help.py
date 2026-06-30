@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """Bilingual (ru/en) command-help registry — single source of truth.
 
 This module is the one place that describes every ``fa`` command and its
