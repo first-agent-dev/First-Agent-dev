@@ -97,28 +97,25 @@ case "${1:-}" in
 Usage: fa <command> [args...]
 
 Infrastructure (host-side, docker compose):
-  logs [flags]         Agent container logs       (e.g. fa logs -f --tail=50)
-  proxy-logs [flags]   Proxy container logs
-  status               Show container status
-  up                   Start containers
-  down                 Stop containers
-  restart              Restart both containers
-  rebuild              Rebuild images and restart
-  shell                Open bash inside the active agent workspace
-  update [flags]       Pull latest + rebuild (runs fa-update.sh)
-  clean-rebuild [env]  Tear down + rebuild clean (runs fa-clean-rebuild.sh)
-  commit-traces        Commit session trace artifacts to git
+  logs [flags]       Agent container logs       (e.g. fa logs -f --tail=50)
+  proxy-logs [flags] Proxy container logs
+  status             Show container status
+  up                 Start containers
+  down               Stop containers
+  restart            Restart both containers
+  rebuild            Rebuild images and restart
+  shell              Open bash inside agent container
+  update [flags]     Pull latest + rebuild (runs fa-update.sh)
+  commit-traces      Commit session trace artifacts to git
 
 Agent CLI (inside container):
-  help [topic]         Russian help + JSON help registry for future WebUI
-  selfcheck            Validate config + proxy routing (free)
-  probe                Liveness test — real API call (~10 tokens)
-  run                  Drive one role; positional task works: fa run -r coder "task"
-  workflow             Multi-role pipeline: fa workflow planner,coder,eval "task"
-  stats                Session analytics (tool usage, tokens, efficiency)
-  chunk                Run the deterministic chunker
-  authoring-check      Run ADR-11 authoring guardrails
-  --version            Show fa version
+  selfcheck          Validate config + proxy routing (free)
+  probe              Liveness test — real API call (~10 tokens)
+  run                Drive an LLM session
+  stats              Session analytics (tool usage, tokens, efficiency)
+  chunk              Run the deterministic chunker
+  authoring-check    Run ADR-11 authoring guardrails
+  --version          Show fa version
 
 All unrecognised commands pass through to `fa` inside the container.
 Add new Python subcommands in src/fa/cli.py — they work here automatically.

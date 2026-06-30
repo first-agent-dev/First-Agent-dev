@@ -200,12 +200,6 @@ S<n>'. <step in standard format>
 Preserve validated work; replan only the affected subgraph; never
 re-emit validated work unless evidence proves it invalid.
 
-Re-enter (Delta Plan) only on contract-level failure — matching the
-evaluator's `REPLAN_REQUIRED` / `return_to_planner`: unsatisfiable
-accept, wrong target/scope/order, invalidated assumption, missing
-prerequisite, or repair budget exhausted. An ordinary step-local defect
-is the coder's repair, not a replan.
-
 ## Anti-patterns
 Inventing facts. Reading "just in case." Stale docs over current code.
 Multi-alternative plans. Asking when default is safe. Generic filler
