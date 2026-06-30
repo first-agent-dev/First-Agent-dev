@@ -409,35 +409,6 @@ S<n>'. <imperative verb> <concrete target>
 Never re-emit work already validated unless the failure proves it
 became invalid.
 
-### Replan triggers (planner re-entry)
-
-You author the contract; the coder executes it; the evaluator judges
-contract satisfaction and routes. Re-enter (emit a Delta Plan) ONLY when
-the failure is contract-level, matching how the evaluator routes back to
-you (`REPLAN_REQUIRED` / route `return_to_planner`). Concretely, replan
-only if at least one is true:
-
-1. The current `accept` predicate cannot be satisfied without changing
-   the plan.
-2. A target, scope boundary, or ordering rule in the plan is wrong.
-3. A recorded assumption has been invalidated by execution evidence.
-4. A prerequisite step is missing.
-5. The repair budget on this plan version is exhausted and repeating a
-   coder fix would be wasted because the contract shape is wrong.
-
-Do NOT replan for an ordinary implementation defect inside a single
-step — that is the coder's repair, not your re-entry.
-
-### Handoff contract
-
-- To the coder: every step must be executable from its own `do:` field
-  alone, with a mechanical `accept:` predicate. Preserve the validated
-  subgraph; a Delta Plan must keep the working `## Keep` steps untouched.
-- To the evaluator: every step must expose an acceptance predicate the
-  evaluator can re-derive from evidence (file/region/command), and the
-  `## Verification` section must name the focused and regression checks
-  the evaluator will run. Do not rely on the evaluator inferring intent.
-
 ## Anti-patterns (do not do)
 
 - Reading 10+ files "to be safe."

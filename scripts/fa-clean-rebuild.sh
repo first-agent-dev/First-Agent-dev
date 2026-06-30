@@ -49,49 +49,6 @@
 #   ALLOW_NONSTANDARD_FA_DIR=1  allow destructive ops outside /srv/first-agent
 #                    (only for disposable test installs).
 
-usage_ru() {
-  cat <<'EOF'
-Использование:
-  fa-clean-rebuild.sh [-h|--help]
-
-Назначение:
-  Полностью снести и заново пересобрать docker-стек First-Agent на хосте,
-  сохранив secrets/. По умолчанию скрипт обновляет checkout до origin/main,
-  делает бэкап state/routing/secrets, пересобирает образы и поднимает оба
-  контейнера заново.
-
-Переменные окружения:
-  WIPE_STATE=1             Очистить весь state/ и sessions/, сбросить routing/models.yaml.
-  PRUNE=1                  Выполнить docker system prune -af после teardown.
-  NO_CACHE=0               Разрешить Docker cache при build (по умолчанию build без cache).
-  COMPOSE_BUILD_PULL=0     Не передавать --pull в docker compose build.
-  BUILD_PROGRESS=plain     Включить подробный BuildKit progress-вывод.
-  NO_BACKUP=1              Пропустить бэкап state/routing/secrets.
-  ASSUME_YES=1             Не спрашивать подтверждение для destructive-флагов.
-  SKIP_UPDATE=1            Не делать git pull; использовать checkout как есть.
-  AUTO_STASH=1             Автоматически stash'ить грязное рабочее дерево перед pull.
-  GIT_BRANCH=main          Ветка, до которой делать fast-forward.
-  HEALTH_TIMEOUT_SECONDS=N Сколько секунд ждать healthy-статус каждого контейнера.
-  ALLOW_NONSTANDARD_FA_DIR=1
-                           Разрешить destructive-операции вне /srv/first-agent
-                           (только для disposable test install).
-
-Примеры:
-  /srv/first-agent/repo/First-Agent-dev/scripts/fa-clean-rebuild.sh
-  WIPE_STATE=1 ASSUME_YES=1 /srv/first-agent/repo/First-Agent-dev/scripts/fa-clean-rebuild.sh
-  SKIP_UPDATE=1 NO_BACKUP=1 BUILD_PROGRESS=plain /srv/first-agent/repo/First-Agent-dev/scripts/fa-clean-rebuild.sh
-EOF
-}
-
-for _arg in "$@"; do
-  case "$_arg" in
-    -h|--help|help)
-      usage_ru
-      exit 0
-      ;;
-  esac
-done
-
 set -Eeuo pipefail
 
 # ═══════════════════════════════════════════════════════════════

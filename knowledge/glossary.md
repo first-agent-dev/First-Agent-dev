@@ -76,11 +76,3 @@ Short definitions of terms used in First-Agent and this wiki.
 | **Two-tier TCB** | The authoring-guardrail Trusted Computing Base: a frozen *Level 0 kernel* + allowlisted *Level 1 rules*, CI-enforced and protected-path-governed, delivering untamperable authoring-time admission control (ADR-11). See [ADR-11 §Decision](../knowledge/adr/ADR-11-authoring-guardrails.md#decision). |
 | **UC1 — UC5** | Use case labels from [`project-overview.md` §4](../knowledge/project-overview.md#4-scope) + [ADR-1](../knowledge/adr/ADR-1-v01-use-case-scope.md): UC1 coding + PR; UC2 multi-source research (best effort in v0.1); UC3 local-docs-to-wiki; UC4 Telegram multi-user (deferred to v0.2); UC5 eval-driven harness iteration (deferred to v0.2; expanded in [ADR-1 amendment 2026-05-06](../knowledge/adr/ADR-1-v01-use-case-scope.md#amendment-2026-05-06--uc5-expanded-to-eval-driven-harness-iteration)). |
 | **Vector DB** | Database for similarity search over embeddings (Qdrant, pgvector, Pinecone etc). |
-
-## FlowState
-
-Machine-readable workflow controller state persisted to `flow_state.json`. It records the
-current orchestration status (`PLANNING`, `CODING`, `EVALUATING`, `REPAIR_REQUIRED`,
-`REPLAN_REQUIRED`, `DONE`, etc.), the active role, plan version, repair/replan counters, and
-transition reason. `FlowState` is controller truth for workflow progression; the narrative
-`pr_draft.md` remains human-facing only.

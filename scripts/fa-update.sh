@@ -9,46 +9,6 @@
 # inputs changed, waits for container health, runs smoke checks, optionally
 # runs tests, and leaves the container running for inspection.
 
-usage_ru() {
-  cat <<'EOF'
-Использование:
-  fa-update.sh [--force] [-h|--help]
-
-Назначение:
-  Безопасно обновить локальный checkout до origin/main, при необходимости
-  пересобрать/перезапустить стек First-Agent, дождаться health-check, выполнить
-  smoke-проверки и, опционально, pytest.
-
-Опции:
-  --force     Игнорировать детектор изменений и принудительно выполнить build+deploy.
-  -h, --help  Показать эту справку и выйти.
-
-Переменные окружения:
-  AUTO_STASH=1             Автоматически stash'ить грязное рабочее дерево перед git pull.
-  SKIP_TESTS=1             Пропустить pytest на шаге 7.
-  SKIP_UV_SYNC=1           Не делать uv sync перед pytest.
-  NO_CACHE=1               Собирать образы без Docker cache.
-  PRUNE=0                  Не выполнять docker image prune в конце (по умолчанию prune включён).
-  HEALTH_TIMEOUT_SECONDS=N Сколько секунд ждать healthy-статус контейнера.
-  COMPOSE_BUILD_PULL=0     Не передавать --pull в docker compose build.
-  FORCE=1                  Эквивалент флагу --force.
-
-Примеры:
-  /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
-  SKIP_TESTS=1 AUTO_STASH=1 /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh
-  NO_CACHE=1 HEALTH_TIMEOUT_SECONDS=120 /srv/first-agent/repo/First-Agent-dev/scripts/fa-update.sh --force
-EOF
-}
-
-for _arg in "$@"; do
-  case "$_arg" in
-    -h|--help|help)
-      usage_ru
-      exit 0
-      ;;
-  esac
-done
-
 set -Eeuo pipefail
 
 # ═══════════════════════════════════════════════════════════════

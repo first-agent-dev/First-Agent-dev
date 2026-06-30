@@ -11,14 +11,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from fa import __version__
 from fa.authoring_rules import RULE_ALLOWLIST
 from fa.authoring_tcb import render_json, render_text, run_all
 from fa.chunker import CHUNKER_VERSION, Chunk, default_chunker
-from fa.cli_help import help_as_json, render_command_help_ru, render_top_level_ru
 from fa.inner_loop import (
     EventLog,
     SessionState,
@@ -30,7 +29,6 @@ from fa.inner_loop.coder_loop import (
     DEFAULT_CODER_TEMPERATURE,
     DEFAULT_MAX_TURNS,
     DEFAULT_TEMPERATURE,
-    SessionOutcome,
     drive_session,
 )
 from fa.inner_loop.hooks import (
@@ -52,14 +50,6 @@ from fa.inner_loop.tools import (
     build_eval_registry,
     build_planner_registry,
     build_prepare_pr_tool,
-)
-from fa.inner_loop.workflow_artifacts import (
-    EvalReport,
-    FlowState,
-    FlowStatus,
-    parse_eval_report,
-    write_eval_report,
-    write_flow_state,
 )
 from fa.observability import CostGuardian
 from fa.observability.redaction import SecretRedactor, SecretRedactorError
@@ -87,22 +77,6 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
 def _valid_run_id(value: str) -> bool:
     return bool(_RUN_ID_RE.fullmatch(value))
-
-
-def _resolve_task(positional: str | None, flag: str | None) -> str | None:
-    """Resolve the effective task from positional arg, --task flag, or stdin.
-
-    Precedence: an explicit --task wins over the positional (so the flag form
-    stays authoritative for back-compat). A value of ``-`` (in either slot)
-    means "read the task from stdin" (pipe-friendly, llm/claude pattern).
-    Returns ``None`` when no task source was supplied at all.
-    """
-    chosen = flag if flag is not None else positional
-    if chosen is None:
-        return None
-    if chosen == "-":
-        return sys.stdin.read().strip()
-    return chosen
 
 
 def _resolve_secrets_path() -> Path:
@@ -227,9 +201,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fa",
         description="First-Agent command-line entrypoint.",
-        epilog=render_top_level_ru()
-        + "\n\nПодсказка: `fa help <команда>` — подробная справка на русском.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
@@ -294,54 +265,37 @@ def build_parser() -> argparse.ArgumentParser:
             "until the LLM signals done, the turn cap fires, or the provider "
             "chain is exhausted."
         ),
-        epilog=render_command_help_ru("run"),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    run_parser.add_argument(
-        "task_pos",
-        metavar="task",
-        nargs="?",
-        default=None,
-        help=(
-            "Task text (positional, quoted). Use '-' to read the task from stdin. "
-            "Equivalent to --task; one of the two must be provided."
-        ),
     )
     run_parser.add_argument(
         "--task",
-        default=None,
-        help="Task description injected as the first user message (alias of the positional task).",
+        required=True,
+        help="Task description injected as the first user message.",
     )
     run_parser.add_argument(
         "--role",
-        "-r",
         default="coder",
         help="Acting role (matches a top-level key in ~/.fa/models.yaml).",
     )
     run_parser.add_argument(
         "--config",
-        "-c",
         type=Path,
         default=DEFAULT_MODELS_YAML_PATH,
         help="Path to the per-role chain config (default: ~/.fa/models.yaml).",
     )
     run_parser.add_argument(
         "--workspace",
-        "-w",
         type=Path,
         default=Path.cwd(),
         help="Workspace root. Paths inside tools are resolved relative to this directory.",
     )
     run_parser.add_argument(
         "--max-turns",
-        "-n",
         type=int,
         default=DEFAULT_MAX_TURNS,
         help=f"LLM-turn cap (default: {DEFAULT_MAX_TURNS}).",
     )
     run_parser.add_argument(
         "--run-id",
-        "-i",
         default="",
         help="Override the run_id (default: derived from PID).",
     )
@@ -375,118 +329,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.set_defaults(func=_cmd_run)
 
-    workflow_parser = subparsers.add_parser(
-        "workflow",
-        help="Run a multi-role pipeline (planner→coder→eval) in one command.",
-        description=(
-            "Drive several roles in sequence over a single shared run-id and "
-            "workspace. The first role starts fresh; every later role gets "
-            "--resume automatically so it reads the previous role's PR draft. "
-            "Stops on the first non-zero stage exit (fail-fast). With "
-            "--mode repair, adds bounded coder→eval repair rounds driven by the "
-            "machine-readable eval route (return_to_coder)."
-        ),
-        epilog=render_command_help_ru("workflow"),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    workflow_parser.add_argument(
-        "roles",
-        help="Comma-separated roles in execution order, e.g. planner,coder,eval.",
-    )
-    workflow_parser.add_argument(
-        "task",
-        nargs="?",
-        default=None,
-        help="Task text (quoted). Passed to every role unless --task-<role> overrides it.",
-    )
-    workflow_parser.add_argument(
-        "--workspace",
-        "-w",
-        type=Path,
-        default=Path.cwd(),
-        help="Shared workspace root for every role.",
-    )
-    workflow_parser.add_argument(
-        "--run-id",
-        "-i",
-        default="",
-        help="Shared run_id (default: generated from timestamp + task slug).",
-    )
-    workflow_parser.add_argument(
-        "--config",
-        "-c",
-        type=Path,
-        default=DEFAULT_MODELS_YAML_PATH,
-        help="Path to the per-role chain config (default: ~/.fa/models.yaml).",
-    )
-    workflow_parser.add_argument(
-        "--max-turns",
-        "-n",
-        type=int,
-        default=DEFAULT_MAX_TURNS,
-        help=f"LLM-turn cap applied to each role (default: {DEFAULT_MAX_TURNS}).",
-    )
-    workflow_parser.add_argument(
-        "--mode",
-        "-m",
-        choices=_WORKFLOW_MODES,
-        default="linear",
-        help=(
-            "Routing strategy: 'linear' runs each role once; 'repair' adds "
-            "bounded coder→eval repair rounds driven by the eval route "
-            "(default: linear)."
-        ),
-    )
-    workflow_parser.add_argument(
-        "--max-repairs",
-        type=int,
-        default=DEFAULT_MAX_REPAIRS,
-        help=(
-            f"Max coder→eval repair rounds in --mode repair/adaptive "
-            f"(default: {DEFAULT_MAX_REPAIRS}, hard ceiling {MAX_REPAIRS_CEILING})."
-        ),
-    )
-    workflow_parser.add_argument(
-        "--max-replans",
-        type=int,
-        default=DEFAULT_MAX_REPLANS,
-        help=(
-            f"Max planner re-entry rounds in --mode adaptive "
-            f"(default: {DEFAULT_MAX_REPLANS}, hard ceiling {MAX_REPLANS_CEILING})."
-        ),
-    )
-    # Per-role task overrides: --task-planner / --task-coder / --task-eval.
-    for _role in ("planner", "coder", "eval"):
-        workflow_parser.add_argument(
-            f"--task-{_role}",
-            default=None,
-            help=f"Override the task text for the {_role} stage.",
-        )
-    workflow_parser.set_defaults(func=_cmd_workflow)
-
-    help_parser = subparsers.add_parser(
-        "help",
-        help="Show bilingual (RU/EN) command help; --json for the WebUI contract.",
-        description=(
-            "Print the Russian command/argument help from the shared cli_help "
-            "registry. With --json, emit the full bilingual registry that a "
-            "WebUI consumes for per-command help buttons."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    help_parser.add_argument(
-        "topic",
-        nargs="?",
-        default=None,
-        help="Command to explain (e.g. run, workflow). Omit for the command list.",
-    )
-    help_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Emit the full bilingual help registry as JSON (WebUI contract).",
-    )
-    help_parser.set_defaults(func=_cmd_help)
-
     selfcheck_parser = subparsers.add_parser(
         "selfcheck",
         help="Diagnose the ADR-12 egress-proxy LLM path.",
@@ -497,18 +339,14 @@ def build_parser() -> argparse.ArgumentParser:
             "agent never reads provider key values; it only consumes the "
             "proxy's safe name/has_key diagnostics."
         ),
-        epilog=render_command_help_ru("selfcheck"),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     selfcheck_parser.add_argument(
         "--role",
-        "-r",
         default="coder",
         help="Role to check (matches a top-level key in ~/.fa/models.yaml).",
     )
     selfcheck_parser.add_argument(
         "--config",
-        "-c",
         type=Path,
         default=DEFAULT_MODELS_YAML_PATH,
         help="Path to the per-role chain config (default: ~/.fa/models.yaml).",
@@ -526,12 +364,9 @@ def build_parser() -> argparse.ArgumentParser:
             "per-chain-entry results. Use it to verify that API keys are valid, "
             "models are available, and the network path works end-to-end."
         ),
-        epilog=render_command_help_ru("probe"),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     probe_parser.add_argument(
         "--role",
-        "-r",
         default="coder",
         help="Role to probe (matches a top-level key in ~/.fa/models.yaml).",
     )
@@ -542,7 +377,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     probe_parser.add_argument(
         "--config",
-        "-c",
         type=Path,
         default=DEFAULT_MODELS_YAML_PATH,
         help="Path to the per-role chain config (default: ~/.fa/models.yaml).",
@@ -563,10 +397,8 @@ def build_parser() -> argparse.ArgumentParser:
             "analytics: tool usage, file access patterns, token timelines, "
             "provider health, guard activity, dead zones, efficiency warnings."
         ),
-        epilog=render_command_help_ru("stats"),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    stats_parser.add_argument("--run-id", "-i", default=None, help="Analyze specific session.")
+    stats_parser.add_argument("--run-id", default=None, help="Analyze specific session.")
     stats_parser.add_argument("--since", default=None, help="Filter by age (e.g. 7d, 24h, 1h).")
     stats_parser.add_argument(
         "--output",
@@ -576,7 +408,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     stats_parser.add_argument(
         "--workspace",
-        "-w",
         type=Path,
         default=Path.cwd(),
         help="Workspace root (default: cwd).",
@@ -796,745 +627,11 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     return 1 if any(result.error is not None for result in results) else 0
 
 
-def _slugify_task(task: str, *, limit: int = 24) -> str:
-    """Derive a short, run-id-safe slug from a task string."""
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", task.strip().lower()).strip("-")
-    return slug[:limit] or "task"
-
-
-@dataclass(frozen=True)
-class _WorkflowArtifactPaths:
-    base_dir: Path
-    eval_report: Path
-    flow_state: Path
-
-
-def _workflow_artifact_paths(run_id: str) -> _WorkflowArtifactPaths:
-    """Return canonical workflow artifact paths under ``~/.fa/session-log``.
-
-    Temporary physical model (workflow implementation plan 2026-06-29):
-    human-readable draft remains ``pr_draft.md``; controller truth lives in
-    separate JSON artifacts for eval verdicts and workflow state.
-    """
-    base_dir = Path.home() / ".fa" / "session-log" / run_id
-    return _WorkflowArtifactPaths(
-        base_dir=base_dir,
-        eval_report=base_dir / "eval_report.json",
-        flow_state=base_dir / "flow_state.json",
-    )
-
-
-def _cmd_help(args: argparse.Namespace) -> int:
-    """Render bilingual command help; --json emits the WebUI contract."""
-    if getattr(args, "json", False):
-        print(help_as_json())
-        return 0
-    topic = getattr(args, "topic", None)
-    if topic:
-        rendered = render_command_help_ru(topic)
-        if not rendered:
-            print(f"fa help: неизвестная команда {topic!r}", file=sys.stderr)
-            print(render_top_level_ru(), file=sys.stderr)
-            return 2
-        print(rendered)
-        return 0
-    print(render_top_level_ru())
-    print("\nПодсказка: `fa help <команда>` — подробная справка по команде.")
-    return 0
-
-
-# ── Workflow controller (linear + bounded repair) ──────────────────────────
-#
-# Map the evaluator's verdict to a terminal FlowState status. The controller
-# branches on the eval *route* (machine-readable), but records the verdict as
-# the human-facing terminal status. Repair routing (return_to_coder) is handled
-# by the repair loop; planner re-entry (return_to_planner) is NOT yet acted on
-# and remains a recorded, non-looping outcome until the adaptive controller.
-_EVAL_VERDICT_TO_TERMINAL_STATUS: dict[str, FlowStatus] = {
-    "PASS": "DONE",
-    "REPAIR_REQUIRED": "REPAIR_REQUIRED",
-    "REPLAN_REQUIRED": "REPLAN_REQUIRED",
-    "BLOCKED": "FAILED",
-}
-
-# Repair-loop budget defaults (workflow plan §4.6: 2 rounds, hard max 3).
-DEFAULT_MAX_REPAIRS = 2
-MAX_REPAIRS_CEILING = 3
-DEFAULT_MAX_REPLANS = 1
-MAX_REPLANS_CEILING = 2
-
-_WORKFLOW_MODES = ("linear", "repair", "adaptive")
-
-
-def _emit_eval_report(
-    *,
-    report_path: Path,
-    final_text: str,
-    run_id: str,
-    plan_id: str,
-    plan_version: int,
-) -> EvalReport:
-    """Parse the eval role's final message and persist ``eval_report.json``.
-
-    The narrative draft (``pr_draft.md``) stays human-readable; this JSON is
-    the controller's machine-readable source of truth for the eval verdict and
-    route decision.
-    """
-    report = parse_eval_report(
-        final_text,
-        run_id=run_id,
-        plan_id=plan_id,
-        evaluation_id=f"{run_id}-eval",
-        plan_version=plan_version,
-    )
-    write_eval_report(report_path, report)
-    return report
-
-
-@dataclass(frozen=True)
-class _WorkflowContext:
-    """Invariant per-run configuration shared by every workflow stage."""
-
-    args: argparse.Namespace
-    run_id: str
-    base_task: str | None
-    per_role_task: Mapping[str, str | None]
-    artifact_paths: _WorkflowArtifactPaths
-    transport: Transport | None
-    secrets: Mapping[str, str] | None
-
-    def task_for(self, role: str) -> str | None:
-        return self.per_role_task.get(role) or self.base_task
-
-
-@dataclass(frozen=True)
-class _WorkflowProgress:
-    """Mutable controller counters threaded through a workflow run."""
-
-    plan_version: int = 1
-    repair_round: int = 0
-    replan_round: int = 0
-
-
-@dataclass(frozen=True)
-class _StageResult:
-    """Outcome of dispatching one role stage."""
-
-    role: str
-    exit_code: int
-    eval_report: EvalReport | None = None
-
-
-def _status_for_role(role: str) -> FlowStatus:
-    if role == "planner":
-        return "PLANNING"
-    if role == "coder":
-        return "CODING"
-    if role == "eval":
-        return "EVALUATING"
-    return "CODING"
-
-
-def _run_stage(
-    ctx: _WorkflowContext,
-    role: str,
-    *,
-    fresh: bool,
-    progress: _WorkflowProgress,
-    transition_reason: str,
-) -> _StageResult:
-    """Dispatch one role session and, for ``eval``, persist its report.
-
-    Writes a pre-dispatch FlowState mirror so the active role / repair round is
-    inspectable even mid-run, then runs the role through :func:`_cmd_run`. For
-    the ``eval`` role the terminal outcome is captured and translated into
-    ``eval_report.json``.
-    """
-    write_flow_state(
-        ctx.artifact_paths.flow_state,
-        FlowState(
-            run_id=ctx.run_id,
-            task=str(ctx.base_task or ""),
-            status=_status_for_role(role),
-            active_role=role,
-            active_plan_id=ctx.run_id,
-            active_plan_version=progress.plan_version,
-            repair_round=progress.repair_round,
-            replan_round=progress.replan_round,
-            last_actor="workflow",
-            last_transition_reason=transition_reason,
-        ),
-    )
-    stage_args = argparse.Namespace(
-        task_pos=None,
-        task=ctx.task_for(role),
-        role=role,
-        config=ctx.args.config,
-        workspace=ctx.args.workspace,
-        max_turns=ctx.args.max_turns,
-        run_id=ctx.run_id,
-        resume=not fresh,
-        output_mode="console",
-        detail="standard",
-        no_color=False,
-    )
-    sink: list[SessionOutcome] = []
-    code = _cmd_run(
-        stage_args,
-        transport=ctx.transport,
-        secrets=ctx.secrets,
-        outcome_sink=sink if role == "eval" else None,
-    )
-    report: EvalReport | None = None
-    if role == "eval" and code == 0 and sink:
-        report = _emit_eval_report(
-            report_path=ctx.artifact_paths.eval_report,
-            final_text=sink[-1].final_text,
-            run_id=ctx.run_id,
-            plan_id=ctx.run_id,
-            plan_version=progress.plan_version,
-        )
-        print(
-            f"fa workflow: eval verdict={report.verdict} "
-            f"route={report.route_decision} → {ctx.artifact_paths.eval_report}",
-            file=sys.stderr,
-        )
-    return _StageResult(role=role, exit_code=code, eval_report=report)
-
-
-def _write_stage_failure_state(
-    ctx: _WorkflowContext,
-    role: str,
-    code: int,
-    *,
-    progress: _WorkflowProgress,
-) -> None:
-    write_flow_state(
-        ctx.artifact_paths.flow_state,
-        FlowState(
-            run_id=ctx.run_id,
-            task=str(ctx.base_task or ""),
-            status="FAILED",
-            active_role=role,
-            active_plan_id=ctx.run_id,
-            active_plan_version=progress.plan_version,
-            repair_round=progress.repair_round,
-            replan_round=progress.replan_round,
-            last_actor=role,
-            last_transition_reason=f"stage exited {code}",
-            blocked_reason=f"stage {role!r} exited {code}",
-        ),
-    )
-    print(
-        f"fa workflow: stage {role!r} exited {code} — pipeline stopped (fail-fast).",
-        file=sys.stderr,
-    )
-
-
-def _write_terminal_state(
-    ctx: _WorkflowContext,
-    *,
-    last_role: str,
-    eval_report: EvalReport | None,
-    progress: _WorkflowProgress,
-    reason: str,
-) -> None:
-    status: FlowStatus
-    route: str
-    if eval_report is not None:
-        status = _EVAL_VERDICT_TO_TERMINAL_STATUS.get(eval_report.verdict, "FAILED")
-        route = eval_report.route_decision
-        blocked = eval_report.summary if eval_report.verdict == "BLOCKED" else ""
-    else:
-        status = "DONE"
-        route = ""
-        blocked = ""
-    write_flow_state(
-        ctx.artifact_paths.flow_state,
-        FlowState(
-            run_id=ctx.run_id,
-            task=str(ctx.base_task or ""),
-            status=status,
-            active_role=last_role,
-            active_plan_id=ctx.run_id,
-            active_plan_version=progress.plan_version,
-            repair_round=progress.repair_round,
-            replan_round=progress.replan_round,
-            last_actor=last_role,
-            last_transition_reason=reason,
-            last_route_decision=route,
-            blocked_reason=blocked,
-        ),
-    )
-
-
-def _print_terminal_summary(
-    ctx: _WorkflowContext,
-    *,
-    n_stages: int,
-    eval_report: EvalReport | None,
-    repair_rounds_used: int,
-) -> None:
-    if eval_report is not None and eval_report.verdict == "PASS":
-        suffix = f" after {repair_rounds_used} repair round(s)" if repair_rounds_used else ""
-        print(
-            f"\nfa workflow: accepted (verdict=PASS){suffix} — run_id={ctx.run_id}",
-            file=sys.stderr,
-        )
-        return
-    if eval_report is not None:
-        tail = f" (repair budget {repair_rounds_used} exhausted)" if repair_rounds_used else ""
-        print(
-            f"\nfa workflow: {n_stages} stage(s) ran (run_id={ctx.run_id}); "
-            f"eval verdict={eval_report.verdict} route={eval_report.route_decision} "
-            f"— not accepted{tail}.",
-            file=sys.stderr,
-        )
-        return
-    print(
-        f"\nfa workflow: all {n_stages} stage(s) completed OK (run_id={ctx.run_id})",
-        file=sys.stderr,
-    )
-
-
-def _resolve_max_repairs(args: argparse.Namespace) -> int:
-    raw = getattr(args, "max_repairs", None)
-    value = DEFAULT_MAX_REPAIRS if raw is None else int(raw)
-    if value < 0:
-        value = 0
-    return min(value, MAX_REPAIRS_CEILING)
-
-
-def _resolve_max_replans(args: argparse.Namespace) -> int:
-    raw = getattr(args, "max_replans", None)
-    value = DEFAULT_MAX_REPLANS if raw is None else int(raw)
-    if value < 0:
-        value = 0
-    return min(value, MAX_REPLANS_CEILING)
-
-
-def _render_mode_label(mode: str, *, max_repairs: int, max_replans: int) -> str:
-    if mode == "repair":
-        return f"repair (max repairs {max_repairs})"
-    if mode == "adaptive":
-        return f"adaptive (max repairs {max_repairs}, max replans {max_replans})"
-    return mode
-
-
-def _canonical_loop_roles(roles: list[str], *, include_planner: bool) -> tuple[str, ...]:
-    canonical = ["planner", "coder", "eval"] if include_planner else ["coder", "eval"]
-    return tuple(role for role in canonical if role in roles)
-
-
-def _run_initial_roles(
-    ctx: _WorkflowContext, roles: list[str]
-) -> tuple[int, int, EvalReport | None]:
-    progress = _WorkflowProgress()
-    eval_report: EvalReport | None = None
-    n_stages = 0
-    for index, role in enumerate(roles):
-        n_stages += 1
-        print(f"\nfa workflow ─ stage {index + 1}/{len(roles)}: {role}", file=sys.stderr)
-        result = _run_stage(
-            ctx,
-            role,
-            fresh=index == 0,
-            progress=progress,
-            transition_reason=f"dispatching stage {index + 1}/{len(roles)}",
-        )
-        if result.exit_code != 0:
-            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-            return result.exit_code, n_stages, eval_report
-        if result.eval_report is not None:
-            eval_report = result.eval_report
-    return 0, n_stages, eval_report
-
-
-def _run_adaptive(
-    ctx: _WorkflowContext,
-    roles: list[str],
-    max_repairs: int,
-    max_replans: int,
-) -> int:
-    """Run the initial role list, then normalize loops to canonical routes.
-
-    After the first pass the controller no longer follows arbitrary role-list
-    ordering. Repair transitions always run canonical ``coder -> eval``; planner
-    re-entry always runs canonical ``planner -> coder -> eval``. This keeps the
-    user-facing entry flexible enough for the initial pass while making the
-    adaptive control surface deterministic and testable.
-    """
-    code, n_stages, eval_report = _run_initial_roles(ctx, roles)
-    if code != 0:
-        return code
-
-    progress = _WorkflowProgress()
-    if eval_report is None:
-        _write_terminal_state(
-            ctx,
-            last_role=roles[-1],
-            eval_report=None,
-            progress=progress,
-            reason="adaptive workflow completed without eval stage",
-        )
-        _print_terminal_summary(ctx, n_stages=n_stages, eval_report=None, repair_rounds_used=0)
-        return 0
-
-    while True:
-        if eval_report.route_decision == "return_to_coder":
-            if progress.repair_round >= max_repairs:
-                reason = (
-                    f"repair budget exhausted ({progress.repair_round}/{max_repairs}); "
-                    "last route return_to_coder"
-                )
-                _write_terminal_state(
-                    ctx,
-                    last_role="eval",
-                    eval_report=eval_report,
-                    progress=progress,
-                    reason=reason,
-                )
-                _print_terminal_summary(
-                    ctx,
-                    n_stages=n_stages,
-                    eval_report=eval_report,
-                    repair_rounds_used=progress.repair_round,
-                )
-                return 0
-            progress = _WorkflowProgress(
-                plan_version=progress.plan_version,
-                repair_round=progress.repair_round + 1,
-                replan_round=progress.replan_round,
-            )
-            print(
-                f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} "
-                "(adaptive route return_to_coder)",
-                file=sys.stderr,
-            )
-            for role in _canonical_loop_roles(roles, include_planner=False):
-                result = _run_stage(
-                    ctx,
-                    role,
-                    fresh=False,
-                    progress=progress,
-                    transition_reason=(
-                        f"repair round {progress.repair_round}: canonical {role} "
-                        "after return_to_coder"
-                    ),
-                )
-                n_stages += 1
-                if result.exit_code != 0:
-                    _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-                    return result.exit_code
-                if result.eval_report is not None:
-                    eval_report = result.eval_report
-            continue
-
-        if eval_report.route_decision == "return_to_planner":
-            if progress.replan_round >= max_replans:
-                reason = (
-                    f"replan budget exhausted ({progress.replan_round}/{max_replans}); "
-                    "last route return_to_planner"
-                )
-                _write_terminal_state(
-                    ctx,
-                    last_role="eval",
-                    eval_report=eval_report,
-                    progress=progress,
-                    reason=reason,
-                )
-                _print_terminal_summary(
-                    ctx,
-                    n_stages=n_stages,
-                    eval_report=eval_report,
-                    repair_rounds_used=progress.repair_round,
-                )
-                return 0
-            progress = _WorkflowProgress(
-                plan_version=progress.plan_version + 1,
-                repair_round=progress.repair_round,
-                replan_round=progress.replan_round + 1,
-            )
-            print(
-                f"\nfa workflow ─ replan round {progress.replan_round}/{max_replans} "
-                f"(plan version {progress.plan_version})",
-                file=sys.stderr,
-            )
-            for role in _canonical_loop_roles(roles, include_planner=True):
-                result = _run_stage(
-                    ctx,
-                    role,
-                    fresh=False,
-                    progress=progress,
-                    transition_reason=(
-                        f"replan round {progress.replan_round}: canonical {role} "
-                        "after return_to_planner"
-                    ),
-                )
-                n_stages += 1
-                if result.exit_code != 0:
-                    _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-                    return result.exit_code
-                if result.eval_report is not None:
-                    eval_report = result.eval_report
-            continue
-
-        reason = (
-            f"eval verdict {eval_report.verdict} after {progress.repair_round} repair round(s) "
-            f"and {progress.replan_round} replan round(s)"
-        )
-        _write_terminal_state(
-            ctx,
-            last_role="eval",
-            eval_report=eval_report,
-            progress=progress,
-            reason=reason,
-        )
-        _print_terminal_summary(
-            ctx,
-            n_stages=n_stages,
-            eval_report=eval_report,
-            repair_rounds_used=progress.repair_round,
-        )
-        return 0
-
-
-def _run_linear(ctx: _WorkflowContext, roles: list[str]) -> int:
-    """Run every role once, in order. Fail-fast on any non-zero stage exit."""
-    eval_report: EvalReport | None = None
-    progress = _WorkflowProgress()
-    for index, role in enumerate(roles):
-        print(f"\nfa workflow ─ stage {index + 1}/{len(roles)}: {role}", file=sys.stderr)
-        result = _run_stage(
-            ctx,
-            role,
-            fresh=index == 0,
-            progress=progress,
-            transition_reason=f"dispatching stage {index + 1}/{len(roles)}",
-        )
-        if result.exit_code != 0:
-            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-            return result.exit_code
-        if result.eval_report is not None:
-            eval_report = result.eval_report
-    _write_terminal_state(
-        ctx,
-        last_role=roles[-1],
-        eval_report=eval_report,
-        progress=progress,
-        reason=(
-            f"eval verdict {eval_report.verdict} (linear; no repair loop)"
-            if eval_report is not None
-            else "linear workflow completed"
-        ),
-    )
-    _print_terminal_summary(ctx, n_stages=len(roles), eval_report=eval_report, repair_rounds_used=0)
-    return 0
-
-
-def _run_repair(ctx: _WorkflowContext, roles: list[str], max_repairs: int) -> int:
-    """Run the role list once, then bounded ``coder -> eval`` repair rounds.
-
-    The repair loop is driven purely by the machine-readable eval route:
-    while the latest eval returns ``return_to_coder`` and the repair budget
-    remains, re-run the coder then the eval. Any other route (``complete``,
-    ``return_to_planner``, ``blocked``) stops the loop — planner re-entry is
-    intentionally NOT performed in this slice; such verdicts are recorded, not
-    acted on.
-    """
-    code, n_stages, eval_report = _run_initial_roles(ctx, roles)
-    if code != 0:
-        return code
-
-    progress = _WorkflowProgress()
-    while (
-        eval_report is not None
-        and eval_report.route_decision == "return_to_coder"
-        and progress.repair_round < max_repairs
-    ):
-        progress = _WorkflowProgress(
-            plan_version=progress.plan_version,
-            repair_round=progress.repair_round + 1,
-            replan_round=progress.replan_round,
-        )
-        print(
-            f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} "
-            f"(eval routed return_to_coder)",
-            file=sys.stderr,
-        )
-        coder_result = _run_stage(
-            ctx,
-            "coder",
-            fresh=False,
-            progress=progress,
-            transition_reason=f"repair round {progress.repair_round}: return_to_coder",
-        )
-        n_stages += 1
-        if coder_result.exit_code != 0:
-            _write_stage_failure_state(ctx, "coder", coder_result.exit_code, progress=progress)
-            return coder_result.exit_code
-        eval_result = _run_stage(
-            ctx,
-            "eval",
-            fresh=False,
-            progress=progress,
-            transition_reason=f"repair round {progress.repair_round}: re-evaluating",
-        )
-        n_stages += 1
-        if eval_result.exit_code != 0:
-            _write_stage_failure_state(ctx, "eval", eval_result.exit_code, progress=progress)
-            return eval_result.exit_code
-        eval_report = eval_result.eval_report
-
-    budget_exhausted = (
-        eval_report is not None
-        and eval_report.route_decision == "return_to_coder"
-        and progress.repair_round >= max_repairs
-    )
-    if eval_report is None:
-        reason = "repair workflow completed"
-    elif budget_exhausted:
-        reason = (
-            f"repair budget exhausted ({progress.repair_round}/{max_repairs}); "
-            "last route return_to_coder"
-        )
-    else:
-        reason = (
-            f"eval verdict {eval_report.verdict} after {progress.repair_round} repair round(s)"
-        )
-    _write_terminal_state(
-        ctx,
-        last_role="eval" if eval_report is not None else roles[-1],
-        eval_report=eval_report,
-        progress=progress,
-        reason=reason,
-    )
-    _print_terminal_summary(
-        ctx,
-        n_stages=n_stages,
-        eval_report=eval_report,
-        repair_rounds_used=progress.repair_round,
-    )
-    return 0
-
-
-def _cmd_workflow(
-    args: argparse.Namespace,
-    *,
-    transport: Transport | None = None,
-    secrets: Mapping[str, str] | None = None,
-) -> int:
-    """Advance a task through the FA role protocol over one shared run-id.
-
-    Modes (``--mode``):
-
-    - ``linear`` (default): run every named role once, in order, fail-fast.
-    - ``repair``: run the role list once, then bounded ``coder -> eval`` repair
-      rounds driven by the machine-readable eval route (``return_to_coder``),
-      up to ``--max-repairs`` (hard ceiling 3). Planner re-entry is not yet
-      performed; non-repair routes are recorded, not acted on.
-    - ``adaptive``: run the initial role list once, then normalize loop
-      transitions to canonical ``coder -> eval`` / ``planner -> coder -> eval``
-      routes based on the eval report's machine-readable route decisions.
-
-    ``transport``/``secrets`` are forwarded to every stage so tests can inject
-    deterministic seams.
-    """
-    roles = [r.strip() for r in str(args.roles).split(",") if r.strip()]
-    if not roles:
-        print("fa workflow: provide at least one role, e.g. planner,coder,eval", file=sys.stderr)
-        return 2
-
-    mode = getattr(args, "mode", None) or "linear"
-    if mode not in _WORKFLOW_MODES:
-        print(
-            f"fa workflow: --mode must be one of {', '.join(_WORKFLOW_MODES)} (got {mode!r})",
-            file=sys.stderr,
-        )
-        return 2
-
-    run_id = args.run_id
-    if run_id and not _valid_run_id(run_id):
-        print("fa workflow: --run-id must match [A-Za-z0-9_.-]{1,128}", file=sys.stderr)
-        return 2
-    base_task = getattr(args, "task", None)
-    if not run_id:
-        seed = base_task or roles[0]
-        run_id = f"wf-{int(time.time())}-{_slugify_task(seed)}"
-
-    per_role_task = {
-        role: getattr(args, f"task_{role}", None) for role in ("planner", "coder", "eval")
-    }
-    for role in roles:
-        if not (per_role_task.get(role) or base_task):
-            print(
-                f"fa workflow: no task for role {role!r} — pass a shared task "
-                f'or --task-{role} "..."',
-                file=sys.stderr,
-            )
-            return 2
-
-    max_repairs = _resolve_max_repairs(args)
-    max_replans = _resolve_max_replans(args)
-    if mode == "repair":
-        missing = [r for r in ("coder", "eval") if r not in roles]
-        if missing:
-            print(
-                f"fa workflow: --mode repair requires roles to include "
-                f"{' and '.join(missing)} (got {','.join(roles)})",
-                file=sys.stderr,
-            )
-            return 2
-    if mode == "adaptive":
-        missing = [r for r in ("planner", "coder", "eval") if r not in roles]
-        if missing:
-            print(
-                f"fa workflow: --mode adaptive requires roles to include "
-                f"{' and '.join(missing)} (got {','.join(roles)})",
-                file=sys.stderr,
-            )
-            return 2
-
-    artifact_paths = _workflow_artifact_paths(run_id)
-    artifact_paths.base_dir.mkdir(parents=True, exist_ok=True)
-    write_flow_state(
-        artifact_paths.flow_state,
-        FlowState(
-            run_id=run_id,
-            task=str(base_task or ""),
-            status="PLANNING" if roles[0] == "planner" else "PLAN_READY",
-            active_role=roles[0],
-            active_plan_id=run_id,
-            active_plan_version=1,
-            last_actor="workflow",
-            last_transition_reason=f"workflow initialized (mode={mode})",
-        ),
-    )
-
-    ctx = _WorkflowContext(
-        args=args,
-        run_id=run_id,
-        base_task=base_task,
-        per_role_task=per_role_task,
-        artifact_paths=artifact_paths,
-        transport=transport,
-        secrets=secrets,
-    )
-    label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
-    print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)
-    if mode == "repair":
-        return _run_repair(ctx, roles, max_repairs)
-    if mode == "adaptive":
-        return _run_adaptive(ctx, roles, max_repairs, max_replans)
-    return _run_linear(ctx, roles)
-
-
 def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→proxy→loop)
     args: argparse.Namespace,
     *,
     transport: Transport | None = None,
     secrets: Mapping[str, str] | None = None,
-    outcome_sink: list[SessionOutcome] | None = None,
 ) -> int:
     """Drive an LLM-driven coder session.
 
@@ -1549,16 +646,8 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     """
     if getattr(args, "no_color", False):
         os.environ["NO_COLOR"] = "1"
-    resolved = _resolve_task(getattr(args, "task_pos", None), getattr(args, "task", None))
-    if resolved is None:
-        print(
-            "fa run: provide a task — positional (fa run \"...\"), --task, or '-' for stdin",
-            file=sys.stderr,
-        )
-        return 2
-    args.task = resolved
     if not str(args.task).strip():
-        print("fa run: task must be non-empty", file=sys.stderr)
+        print("fa run: --task must be non-empty", file=sys.stderr)
         return 2
     if args.max_turns < 1:
         print("fa run: --max-turns must be a positive integer", file=sys.stderr)
@@ -1755,11 +844,6 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         redactor=redactor,
         output=output_bus,
     )
-    # Workflow seam: let an orchestrating caller capture the terminal outcome
-    # (e.g. to parse the eval role's final message into ``eval_report.json``)
-    # without changing this function's int return contract.
-    if outcome_sink is not None:
-        outcome_sink.append(outcome)
     status = "OK" if outcome.exit_code == 0 else "ERROR"
     print(f"{status}: {outcome.stop_reason} (turns={outcome.turns})")
     if outcome.final_text:

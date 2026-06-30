@@ -369,7 +369,6 @@ def _make_run_args(
     run_id: str = "test-run",
 ) -> argparse.Namespace:
     return argparse.Namespace(
-        task_pos=None,
         task=task,
         role=role,
         config=config,
@@ -417,7 +416,7 @@ def test_fa_run_rejects_empty_task(
     exit_code = _cmd_run(args, transport=_ScriptedTransport([]))
 
     assert exit_code == 2
-    assert "task must be non-empty" in capsys.readouterr().err
+    assert "--task must be non-empty" in capsys.readouterr().err
 
 
 def test_fa_run_rejects_unsafe_run_id(
