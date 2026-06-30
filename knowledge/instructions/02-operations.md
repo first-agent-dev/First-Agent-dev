@@ -574,7 +574,15 @@ docker compose -f docker-compose.fa.yml exec first-agent \
 
 ### 7.2. Workflow из трёх ролей (planner → coder → eval)
 
-Каждая команда — это отдельный вызов LLM. Связываются через общий `--run-id`.
+Теперь базовый сценарий можно запускать одной командой: общий `run-id`,
+`workspace` и `resume` между ролями прокидываются автоматически.
+
+```bash
+cd /srv/first-agent/repo/First-Agent-dev
+fa workflow planner,coder,eval "Спланируй, реализуй и проверь X"
+```
+
+Если нужен полный контроль, workflow всё ещё можно развернуть в три явных шага:
 
 ```bash
 cd /srv/first-agent/repo/First-Agent-dev
@@ -582,16 +590,68 @@ CF="docker-compose.fa.yml"
 
 # Планировщик
 docker compose -f $CF exec -T first-agent \
-    fa run --role planner --workspace /workspace --run-id work-1 --task "Спланируй X"
+    fa run -r planner -w /workspace -i work-1 "Спланируй X"
 
 # Кодер (продолжает черновик планировщика)
 docker compose -f $CF exec -T first-agent \
-    fa run --role coder --workspace /workspace --run-id work-1 --resume --task "Реализуй X"
+    fa run -r coder -w /workspace -i work-1 --resume "Реализуй X"
 
 # Проверяющий (верифицирует работу кодера)
 docker compose -f $CF exec -T first-agent \
-    fa run --role eval --workspace /workspace --run-id work-1 --resume --task "Проверь X"
+    fa run -r eval -w /workspace -i work-1 --resume "Проверь X"
 ```
+
+Для разных инструкций на этапах используйте per-role overrides:
+
+```bash
+fa workflow planner,coder,eval \
+  --task-planner "Составь план" \
+  --task-coder "Реализуй план" \
+  --task-eval "Проверь результат" \
+  "Общая тема задачи"
+```
+
+#### Режим repair (ограниченный цикл coder→eval)
+#### Режим adaptive (ограниченный planner re-entry)
+
+- `fa workflow --mode adaptive` выполняет **первый проход по списку ролей как задано**, но затем
+  нормализует циклы к каноническим маршрутам:
+  - `return_to_coder` → `coder → eval`
+  - `return_to_planner` → `planner → coder → eval`
+- Это сознательная политика: входной список ролей остаётся удобным, но сами adaptive-переходы
+  становятся детерминированными и тестируемыми.
+- `--max-repairs` ограничивает repair-раунды `coder→eval` (по умолчанию 2, потолок 3).
+- `--max-replans` ограничивает planner re-entry раунды (по умолчанию 1, потолок 2).
+- В adaptive-режиме workflow **требует**, чтобы в `roles` присутствовали `planner`, `coder`, `eval`;
+  иначе команда завершается с `exit 2` как ошибка конфигурации.
+- `flow_state.json` и `eval_report.json` остаются controller truth: финальный `active_plan_version`
+  повышается после каждого planner re-entry, `replan_round` и `repair_round` сохраняются в state.
+- Двумерная модель режимов остаётся прежней:
+  - ось A (реализовано сейчас): `linear` / `repair` / `adaptive`;
+  - ось B (ещё не реализована): `phase-gated` / `step-gated`.
+
+
+По умолчанию `fa workflow` работает в режиме `linear` — каждая роль выполняется
+один раз. Режим `repair` добавляет ограниченный цикл починки: после первого
+прохода контроллер читает машиночитаемый маршрут из `eval_report.json` и, пока
+`eval` возвращает `return_to_coder` и не исчерпан бюджет, повторяет
+`coder → eval`. Маршрут — это источник истины контроллера, а не текст в
+`pr_draft.md`.
+
+```bash
+# До 2 раундов починки (жёсткий потолок — 3)
+fa workflow coder,eval "Доведи src/fa/y.py до зелёного" --mode repair --max-repairs 2
+```
+
+Границы текущего среза (важно):
+
+- Возврат к планировщику (`return_to_planner`) и `blocked` **не** запускают
+  повторное планирование — вердикт записывается в `flow_state.json`, но цикл
+  останавливается. Адаптивный режим с re-entry планировщика — следующий этап.
+- Режим `repair` требует, чтобы список ролей включал и `coder`, и `eval`.
+- Финальный `flow_state.json` отражает вердикт последнего `eval`
+  (`PASS → DONE`, иначе `REPAIR_REQUIRED` / `REPLAN_REQUIRED` / `FAILED`) и
+  число использованных раундов починки (`repair_round`).
 
 ### 7.3. Авто-запуск одной задачи при старте контейнера
 
