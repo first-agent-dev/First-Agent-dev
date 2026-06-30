@@ -228,7 +228,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="fa",
         description="First-Agent command-line entrypoint.",
         epilog=render_top_level_ru()
-        + "\n\nПодсказка: `fa help <команда>` — подробная справка на русском.",
+        + "\n\nHint: `fa help <команда>` — можно проверить подробную справку.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -839,7 +839,7 @@ def _cmd_help(args: argparse.Namespace) -> int:
         print(rendered)
         return 0
     print(render_top_level_ru())
-    print("\nПодсказка: `fa help <команда>` — подробная справка по команде.")
+    print("\nHint: `fa help <команда>` — можно проверить подробную справку.")
     return 0
 
 
