@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +56,15 @@ class _ScriptedTransport:
         self._stop_text = stop_text
         self.calls: list[dict[str, Any]] = []
 
-    def post(self, url, *, headers, json_body, timeout_seconds, transport_retries):
+    def post(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        json_body: Mapping[str, Any],
+        timeout_seconds: float,
+        transport_retries: int,
+    ) -> TransportResponse:
         del url, headers, timeout_seconds, transport_retries
         self.calls.append(dict(json_body))
         body = {
@@ -94,7 +103,15 @@ class _RoleAwareTransport:
         self.planner_calls = 0
         self.calls: list[dict[str, Any]] = []
 
-    def post(self, url, *, headers, json_body, timeout_seconds, transport_retries):
+    def post(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        json_body: Mapping[str, Any],
+        timeout_seconds: float,
+        transport_retries: int,
+    ) -> TransportResponse:
         del url, headers, timeout_seconds, transport_retries
         self.calls.append(dict(json_body))
         messages = json_body.get("messages", [])
@@ -427,12 +444,12 @@ def test_help_command_unknown_topic(capsys: CaptureFixture[str]) -> None:
 def test_help_registry_covers_real_commands() -> None:
     # Every registry command must be a real subcommand (no drift).
     parser = build_parser()
-    sub = next(
-        a
-        for a in parser._subparsers._group_actions
-        if hasattr(a, "choices")  # type: ignore[union-attr]
-    )
-    real = set(sub.choices)  # type: ignore[attr-defined]
+    subparsers = parser._subparsers
+    assert subparsers is not None
+    sub = next(a for a in subparsers._group_actions if hasattr(a, "choices"))
+    choices = getattr(sub, "choices", None)
+    assert choices is not None
+    real = set(choices)
     assert set(COMMANDS) <= real, (
         f"help registry references unknown commands: {set(COMMANDS) - real}"
     )

@@ -24,9 +24,15 @@ from typing import Literal
 __all__ = [
     "EvalFinding",
     "EvalReport",
+    "EvalVerdict",
+    "FindingClass",
+    "FindingRoute",
+    "FindingSeverity",
     "FlowState",
     "FlowStatus",
+    "RouteDecision",
     "StepResult",
+    "StepVerdict",
     "default_route_for_verdict",
     "load_eval_report",
     "load_flow_state",
@@ -462,7 +468,11 @@ def parse_eval_report(
 
     default_route = default_route_for_verdict(verdict)
     parsed_route = _scan_route(text)
-    route = parsed_route if parsed_route == default_route else default_route
+    route: RouteDecision
+    if parsed_route is not None and parsed_route == default_route:
+        route = parsed_route
+    else:
+        route = default_route
 
     return EvalReport(
         run_id=run_id,
