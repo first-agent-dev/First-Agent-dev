@@ -14,6 +14,7 @@ from pathlib import Path
 
 HOOK_NAMES: tuple[str, ...] = (
     "pre-commit",
+    "pre-push",
     "prepare-commit-msg",
     "commit-msg",
 )
@@ -62,7 +63,7 @@ def resolve_git_dir(repo_root: Path) -> Path:
             raise SystemExit(
                 f"fa.hygiene.hooks: unsupported {dotgit} format; expected 'gitdir: <path>'"
             )
-        gitdir = Path(raw[len(prefix):].strip())
+        gitdir = Path(raw[len(prefix) :].strip())
         if not gitdir.is_absolute():
             gitdir = (dotgit.parent / gitdir).resolve()
         return gitdir

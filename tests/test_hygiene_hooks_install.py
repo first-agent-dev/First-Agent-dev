@@ -249,7 +249,7 @@ def test_install_hooks_uses_worktree_gitdir(tmp_path: Path) -> None:
 
 
 def test_lazy_import_hook_names() -> None:
-    assert hooks_pkg.HOOK_NAMES == ("pre-commit", "prepare-commit-msg", "commit-msg")
+    assert hooks_pkg.HOOK_NAMES == ("pre-commit", "pre-push", "prepare-commit-msg", "commit-msg")
 
 
 def test_lazy_import_install_hooks() -> None:
@@ -423,7 +423,10 @@ if [[ "$1" == diff && "$2" == --cached && "$3" == --name-only && "$4" == -z ]]; 
   exit 0
 fi
 if [[ "$1" == diff && "$2" == --quiet && "$3" == -- && "$4" == tracked.py ]]; then
-  exit 1
+  if [[ -f "{count_path}" ]]; then
+    exit 1
+  fi
+  exit 0
 fi
 if [[ "$1" == add ]]; then
   exit 0
@@ -481,7 +484,10 @@ if [[ "$1" == diff && "$2" == --cached && "$3" == --name-only && "$4" == -z ]]; 
   exit 0
 fi
 if [[ "$1" == diff && "$2" == --quiet && "$3" == -- && "$4" == tracked.py ]]; then
-  exit 1
+  if [[ -f "{count_path}" ]]; then
+    exit 1
+  fi
+  exit 0
 fi
 if [[ "$1" == diff && "$2" == --quiet && "$3" == -- && "$4" == unrelated.py ]]; then
   exit 1
@@ -565,3 +571,248 @@ def test_pre_commit_preserves_first_failure_exit_code_when_no_files_changed(tmp_
     result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
 
     assert result.returncode == 7
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_pre_commit_refuses_to_autostage_partially_staged_file(tmp_path: Path) -> None:
+    """Partial staging is the safety boundary for the auto-restage retry."""
+
+    root = _make_workspace(tmp_path)
+    hook = Path(install_mod.__file__).resolve().parent / "pre-commit"
+    fakebin = tmp_path / "fakebin_partial"
+    fakebin.mkdir()
+    log_path = tmp_path / "hook.log"
+
+    _write_executable(
+        fakebin / "uv",
+        f'#!/usr/bin/env bash\nprintf \'uv %s\\n\' "$*" >> "{log_path}"\nexit 9\n',
+    )
+    git_script = f'''#!/usr/bin/env bash
+printf 'git %s\\n' "$*" >> "{log_path}"
+if [[ "$1" == diff && "$2" == --cached && "$3" == --name-only && "$4" == -z ]]; then
+  printf 'partial.py\\0'
+  exit 0
+fi
+if [[ "$1" == diff && "$2" == --quiet && "$3" == -- && "$4" == partial.py ]]; then
+  exit 1
+fi
+if [[ "$1" == hash-object ]]; then
+  if [[ -f "{log_path}" ]] && grep -q '^uv ' "{log_path}"; then
+    printf 'after-hooks\n'
+  else
+    printf 'before-hooks\n'
+  fi
+  exit 0
+fi
+if [[ "$1" == add ]]; then
+  exit 0
+fi
+exit 0
+'''
+    _write_executable(fakebin / "git", git_script)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+
+    log = log_path.read_text(encoding="utf-8")
+    assert result.returncode == 9
+    assert "git add -- partial.py" not in log
+    assert "partial staging" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_pre_commit_full_check_env_runs_after_success(tmp_path: Path) -> None:
+    """FA_HOOK_FULL_CHECK=1 promotes commit-time hooks to the full just gate."""
+
+    root = _make_workspace(tmp_path)
+    hook = Path(install_mod.__file__).resolve().parent / "pre-commit"
+    fakebin = tmp_path / "fakebin_full"
+    fakebin.mkdir()
+    log_path = tmp_path / "hook.log"
+
+    _write_executable(
+        fakebin / "uv",
+        f'#!/usr/bin/env bash\nprintf \'uv %s\\n\' "$*" >> "{log_path}"\nexit 0\n',
+    )
+    _write_executable(
+        fakebin / "git",
+        f'''#!/usr/bin/env bash
+printf 'git %s\\n' "$*" >> "{log_path}"
+if [[ "$1" == diff && "$2" == --cached && "$3" == --name-only && "$4" == -z ]]; then
+  exit 0
+fi
+exit 0
+''',
+    )
+
+    env = dict(os.environ)
+    env["FA_HOOK_FULL_CHECK"] = "1"
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0
+    log = log_path.read_text(encoding="utf-8")
+    assert "uv run pre-commit run --hook-stage pre-commit" in log
+    assert "uv run just check" in log
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_pre_commit_autostages_uv_lock_when_pyproject_changed(tmp_path: Path) -> None:
+    """uv-lock may update uv.lock even when only pyproject.toml was staged."""
+
+    root = _make_workspace(tmp_path)
+    hook = Path(install_mod.__file__).resolve().parent / "pre-commit"
+    fakebin = tmp_path / "fakebin_uv_lock"
+    fakebin.mkdir()
+    log_path = tmp_path / "hook.log"
+    count_path = tmp_path / "uv.count"
+
+    uv_script = f'''#!/usr/bin/env bash
+count=0
+if [[ -f "{count_path}" ]]; then
+  count=$(cat "{count_path}")
+fi
+count=$((count+1))
+printf '%s' "$count" > "{count_path}"
+printf 'uv %s\\n' "$*" >> "{log_path}"
+if [[ "$count" -eq 1 ]]; then
+  exit 1
+fi
+exit 0
+'''
+    git_script = f'''#!/usr/bin/env bash
+printf 'git %s\\n' "$*" >> "{log_path}"
+if [[ "$1" == diff && "$2" == --cached && "$3" == --name-only && "$4" == -z ]]; then
+  printf 'pyproject.toml\\0'
+  exit 0
+fi
+if [[ "$1" == diff && "$2" == --quiet && "$3" == -- && "$4" == pyproject.toml ]]; then
+  exit 0
+fi
+if [[ "$1" == diff && "$2" == --quiet && "$3" == -- && "$4" == uv.lock ]]; then
+  if [[ -f "{count_path}" ]]; then
+    exit 1
+  fi
+  exit 0
+fi
+if [[ "$1" == add ]]; then
+  exit 0
+fi
+exit 0
+'''
+    _write_executable(fakebin / "uv", uv_script)
+    _write_executable(fakebin / "git", git_script)
+    (root / "uv.lock").write_text("lock\n", encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+
+    log = log_path.read_text(encoding="utf-8")
+    assert result.returncode == 0
+    assert "git add -- uv.lock" in log
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_pre_commit_does_not_autostage_uv_lock_for_partial_pyproject(tmp_path: Path) -> None:
+    """pyproject partial staging makes uv.lock auto-restage unsafe."""
+
+    root = _make_workspace(tmp_path)
+    hook = Path(install_mod.__file__).resolve().parent / "pre-commit"
+    fakebin = tmp_path / "fakebin_uv_lock_partial"
+    fakebin.mkdir()
+    log_path = tmp_path / "hook.log"
+    count_path = tmp_path / "uv.count"
+
+    uv_script = f'''#!/usr/bin/env bash
+count=0
+if [[ -f "{count_path}" ]]; then
+  count=$(cat "{count_path}")
+fi
+count=$((count+1))
+printf '%s' "$count" > "{count_path}"
+printf 'uv %s\\n' "$*" >> "{log_path}"
+exit 8
+'''
+    git_script = f'''#!/usr/bin/env bash
+printf 'git %s\\n' "$*" >> "{log_path}"
+if [[ "$1" == diff && "$2" == --cached && "$3" == --name-only && "$4" == -z ]]; then
+  printf 'pyproject.toml\\0'
+  exit 0
+fi
+if [[ "$1" == diff && "$2" == --quiet && "$3" == -- && "$4" == pyproject.toml ]]; then
+  exit 1
+fi
+if [[ "$1" == diff && "$2" == --quiet && "$3" == -- && "$4" == uv.lock ]]; then
+  if [[ -f "{count_path}" ]]; then
+    exit 1
+  fi
+  exit 0
+fi
+if [[ "$1" == hash-object ]]; then
+  printf 'same-pyproject-diff\\n'
+  exit 0
+fi
+if [[ "$1" == add ]]; then
+  exit 0
+fi
+exit 0
+'''
+    _write_executable(fakebin / "uv", uv_script)
+    _write_executable(fakebin / "git", git_script)
+    (root / "uv.lock").write_text("lock\n", encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+
+    log = log_path.read_text(encoding="utf-8")
+    assert result.returncode == 8
+    assert "git add -- uv.lock" not in log
+    assert "uv.lock" in result.stderr
+    assert "partial staging" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_pre_push_runs_full_check_by_default(tmp_path: Path) -> None:
+    hook = Path(install_mod.__file__).resolve().parent / "pre-push"
+    fakebin = tmp_path / "fakebin_push"
+    fakebin.mkdir()
+    log_path = tmp_path / "pre-push.log"
+
+    _write_executable(
+        fakebin / "uv",
+        f'#!/usr/bin/env bash\nprintf \'uv %s\\n\' "$*" >> "{log_path}"\nexit 0\n',
+    )
+    _write_executable(fakebin / "just", "#!/usr/bin/env bash\nexit 0\n")
+
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    result = subprocess.run(["bash", str(hook)], env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0
+    assert "uv run just check" in log_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_pre_push_skip_env_bypasses_full_check(tmp_path: Path) -> None:
+    hook = Path(install_mod.__file__).resolve().parent / "pre-push"
+    fakebin = tmp_path / "fakebin_push_skip"
+    fakebin.mkdir()
+    log_path = tmp_path / "pre-push.log"
+
+    _write_executable(
+        fakebin / "uv",
+        f'#!/usr/bin/env bash\nprintf \'uv %s\\n\' "$*" >> "{log_path}"\nexit 99\n',
+    )
+    _write_executable(fakebin / "just", "#!/usr/bin/env bash\nexit 99\n")
+
+    env = dict(os.environ)
+    env["FA_HOOK_SKIP_FULL_CHECK"] = "1"
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    result = subprocess.run(["bash", str(hook)], env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0
+    assert "skipping uv run just check" in result.stderr
+    assert not log_path.exists()

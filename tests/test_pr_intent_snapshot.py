@@ -763,7 +763,6 @@ def test_cli_validate_allows_headerless_normal_commit(
     msg_file = tmp_path / "COMMIT_EDITMSG"
     msg_file.write_text("docs: quick fix typo\n", encoding="utf-8")
 
-
     with mock.patch("fa.hygiene.pr_intent._run_git", return_value=""):
         rc = _cli_validate(msg_file, tmp_path)
 
@@ -772,8 +771,6 @@ def test_cli_validate_allows_headerless_normal_commit(
 
 def test_has_pr_intent_headers_detects_partial_metadata_block() -> None:
     assert has_pr_intent_headers("INVARIANT: n/a\nBody\n") is True
-
-
 
 
 def test_cli_validate_blocks_partial_metadata_without_intent(
@@ -787,7 +784,6 @@ def test_cli_validate_blocks_partial_metadata_without_intent(
 
     msg_file = tmp_path / "COMMIT_EDITMSG"
     msg_file.write_text("INVARIANT: n/a\n", encoding="utf-8")
-
 
     with mock.patch("fa.hygiene.pr_intent._run_git", return_value=""):
         rc = _cli_validate(msg_file, tmp_path)

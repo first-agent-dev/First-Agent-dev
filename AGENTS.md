@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-> **Agent Pitch:** Welcome to First-Agent. This is not a standard open-ended sandbox. You are operating inside a strict, zero-trust Trusted Computing Base (TCB Level-0). Your code edits will be checked via AST analysis, and your bash commands are monitored by IntentGuard. Use `llms.txt` to strictly manage your context window. Minimalism and deterministic precision are the highest virtues here.
+> **Agent Pitch:** You are operating inside a strict, zero-trust TCB. Your code edits are checked via AST analysis, bash commands are monitored by IntentGuard. Use `llms.txt` to strictly manage your context window. Minimalism and deterministic precision are the highest virtues here.
 
 **First-Agent** is an implementation-first project aimed at becoming the most token- and tool-call-efficient open-source coding-agent harness.
 
@@ -11,12 +11,13 @@ Goal-formulation in 4 pillars + minimalism-first principle:
 
 ## Repository Structure
 
-- [`README.md`](./README.md) — project overview.
-- [`AGENTS.md`](./AGENTS.md) — this file.
-- [`knowledge/`](./knowledge/README.md) — durable memory (project-overview, ADR, prompts, research).
-- [`knowledge/instructions/`](./knowledge/instructions/README.md) — deploy + operate the AIO (install / operations).
-- [`knowledge/pr-notes/`](./knowledge/pr-notes/README.md) — archived PR notes/bodies (point-in-time artifacts).
-
+- [`AGENTS.md`](./AGENTS.md) — main conventios.
+- [`HANDOFF.md`](./HANDOFF.md) — worklog snapshot for cross-session work.
+- [`knowledge/llms.txt`](./knowledge/llms.txt) — one-fetch file index.
+- [`knowledge/README.md`](./knowledge/README.md) — memory system overwiew.
+- [`knowledge/`](./knowledge) — durable memory for /skills, /codemaps, /ADR, /research, /prompts, /pr-notes, etc.
+- [`knowledge/instructions/`](./knowledge/instructions/README.md) — deploy and operating docs for human.
+- [`knowledge/adr/README.md`](./knowledge/adr/README.md) — index of ADR's.
 ## Pre-flight checklist
 
 Run BEFORE making any edits, opening a branch, or writing analysis on
@@ -189,22 +190,20 @@ New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this t
 
 - Branch: `devin/<timestamp>-<slug>` from `main`.
 - All changes via Pull Request.
+- You focus on logic implementation. Harness tool does styling.
 - **After cloning, run `just install`.** This single command syncs the
-  Python environment (including dev extras), installs the pre-commit
-  hook, and installs the custom `prepare-commit-msg` / `commit-msg`
-  hooks. Without it, local commit hooks are not active — VS Code
-  commits and manual git commits will bypass local autofix and
-  validation, even though CI will still check the PR. Verify at any
-  time with `just hooks-status`.
+  Python environment (including dev extras), installs the autofix-first
+  `pre-commit` hook, installs the `pre-push` `uv run just check` gate,
+  and installs the custom `prepare-commit-msg` / `commit-msg` hooks.
+  Verify it with `just hooks-status`. CI will still checks the PR.
 - **Lint is autofix-first.** Run `just fix` after editing code — it
   handles formatting (import order, `__all__` sorting, quoting, line
-  wrapping). Let the tool do style; focus on logic. Gate before push:
-  `just check`.
-- **Before opening a PR for review**, run `just check` — this is the
-  PR-readiness gate. Commit hooks provide fast local hygiene on every
-  commit; `just check` provides the full gate that ensures the PR is
-  review-ready. These are two separate seats: commit-time is fast and
-  bypassable, PR-handoff is authoritative.
+  wrapping). The installed `pre-commit` hook does safe mechanical cleanup.
+- **Before opening a PR for review**, run `just check` — PR-readiness gate.
+  The installed `pre-push` hook also runs `uv run just check` before publishing a branch.
+  Use `FA_HOOK_FULL_CHECK=1` to run the full gate at commit time too.
+  For an intentional operator bypass only - `FA_HOOK_SKIP_FULL_CHECK=1 git push`.
+  Commit-time is fast and bypassable; CI is authoritative.
 - **Judgment rules** (`S`, `BLE001`, `C901`, pylint `duplicate-code`):
   these signal a design problem — fix the design that caused the
   finding. Waive with `# noqa: <code> — <reason>` only when you can

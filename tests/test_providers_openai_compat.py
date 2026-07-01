@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from email.message import Message
 from types import TracebackType
-from typing import Any, ClassVar, override
+from typing import Any, ClassVar, Literal, Self, override
 
 import pytest
 
@@ -250,7 +250,7 @@ def test_urllib_transport_retries_network_errors_then_succeeds(
         def read(self) -> bytes:
             return b'{"ok": true}'
 
-        def __enter__(self):
+        def __enter__(self) -> Self:
             return self
 
         def __exit__(
@@ -258,7 +258,7 @@ def test_urllib_transport_retries_network_errors_then_succeeds(
             exc_type: type[BaseException] | None,
             exc: BaseException | None,
             tb: TracebackType | None,
-        ) -> bool:
+        ) -> Literal[False]:
             del exc_type, exc, tb
             return False
 

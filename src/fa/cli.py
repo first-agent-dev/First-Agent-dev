@@ -1399,9 +1399,7 @@ def _run_repair(ctx: _WorkflowContext, roles: list[str], max_repairs: int) -> in
             "last route return_to_coder"
         )
     else:
-        reason = (
-            f"eval verdict {eval_report.verdict} after {progress.repair_round} repair round(s)"
-        )
+        reason = f"eval verdict {eval_report.verdict} after {progress.repair_round} repair round(s)"
     _write_terminal_state(
         ctx,
         last_role="eval" if eval_report is not None else roles[-1],

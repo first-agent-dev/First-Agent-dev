@@ -39,33 +39,82 @@ if [[ -n "$_SESSION_WORKSPACE" ]]; then
     _W_FLAG="-w $_SESSION_WORKSPACE"
 fi
 
+_is_help_arg() {
+    case "${1:-}" in
+        -h|--help|-help|help) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_help_python() {
+    PYTHONPATH="$REPO_DIR/src${PYTHONPATH:+:$PYTHONPATH}" "${PYTHON:-python3}" -m fa.cli_help "$@"
+}
+
+_print_usage() {
+    _help_python --wrapper-usage
+}
+
+_print_host_topic_help() {
+    _help_python --host-topic "${1:-}"
+}
+_delegate_to_agent() {
+    if [[ -n "$_W_FLAG" ]]; then
+        exec $COMPOSE exec $TTY_FLAG -w "$_SESSION_WORKSPACE" first-agent fa "$@"
+    else
+        exec $COMPOSE exec $TTY_FLAG first-agent fa "$@"
+    fi
+}
+
+_delegate_agent_help() {
+    local topic="$1"
+    shift || true
+    if [[ "$topic" == "help" ]]; then
+        _delegate_to_agent help "$@"
+    else
+        _delegate_to_agent "$topic" "$@"
+    fi
+}
+
 case "${1:-}" in
     # ── Infrastructure verbs (host-side, docker compose level) ──────────
     logs)
         shift
+        if _is_help_arg "${1:-}"; then _print_host_topic_help logs; exit 0; fi
         exec $COMPOSE logs "$@" first-agent
         ;;
     proxy-logs)
         shift
+        if _is_help_arg "${1:-}"; then _print_host_topic_help proxy-logs; exit 0; fi
         exec $COMPOSE logs "$@" fa-egress-proxy
         ;;
     status)
+        shift
+        if _is_help_arg "${1:-}"; then _print_host_topic_help status; exit 0; fi
         exec $COMPOSE ps
         ;;
     up)
+        shift
+        if _is_help_arg "${1:-}"; then _print_host_topic_help up; exit 0; fi
         exec $COMPOSE up -d
         ;;
     down)
+        shift
+        if _is_help_arg "${1:-}"; then _print_host_topic_help down; exit 0; fi
         exec $COMPOSE down
         ;;
     restart)
+        shift
+        if _is_help_arg "${1:-}"; then _print_host_topic_help restart; exit 0; fi
         exec $COMPOSE restart first-agent fa-egress-proxy
         ;;
     rebuild)
+        shift
+        if _is_help_arg "${1:-}"; then _print_host_topic_help rebuild; exit 0; fi
         exec $COMPOSE up -d --build
         ;;
     shell)
         shift
+        if _is_help_arg "${1:-}"; then _print_host_topic_help shell; exit 0; fi
         if [[ -n "$_W_FLAG" ]]; then
             exec $COMPOSE exec -w "$_SESSION_WORKSPACE" first-agent bash "$@"
         else
@@ -74,9 +123,24 @@ case "${1:-}" in
         ;;
     update)
         shift
+        if _is_help_arg "${1:-}"; then _print_host_topic_help update; exit 0; fi
         exec "$REPO_DIR/scripts/fa-update.sh" "$@"
         ;;
+    clean-rebuild)
+        shift
+        if _is_help_arg "${1:-}"; then _print_host_topic_help clean-rebuild; exit 0; fi
+        exec "$REPO_DIR/scripts/fa-clean-rebuild.sh" "$@"
+        ;;
+    clean)
+        if [[ "${2:-}" == "rebuild" || "${2:-}" == "clean-rebuild" ]]; then
+            echo "fa: use 'fa clean-rebuild' (hyphen), not 'fa clean rebuild'" >&2
+            exit 2
+        fi
+        _delegate_to_agent "$@"
+        ;;
     commit-traces)
+        shift
+        if _is_help_arg "${1:-}"; then _print_host_topic_help commit-traces; exit 0; fi
         cd "$REPO_DIR"
         # -f: force-add gitignored trace files (they're ignored by default
         # so fa-update.sh stays clean; commit-traces is the deliberate path).
@@ -86,52 +150,42 @@ case "${1:-}" in
         echo "fa: trace artifacts committed"
         exit 0
         ;;
-
     sessions)
+        shift
+        if _is_help_arg "${1:-}"; then _print_host_topic_help sessions; exit 0; fi
         ls -lt "$_FA_ROOT/sessions/" | grep -v "^total\|\.active"
         ;;
 
     # ── Help ────────────────────────────────────────────────────────────
-    ""|--help|-h|help)
-        cat <<'EOF'
-Usage: fa <command> [args...]
-
-Infrastructure (host-side, docker compose):
-  logs [flags]         Agent container logs       (e.g. fa logs -f --tail=50)
-  proxy-logs [flags]   Proxy container logs
-  status               Show container status
-  up                   Start containers
-  down                 Stop containers
-  restart              Restart both containers
-  rebuild              Rebuild images and restart
-  shell                Open bash inside the active agent workspace
-  update [flags]       Pull latest + rebuild (runs fa-update.sh)
-  clean-rebuild [env]  Tear down + rebuild clean (runs fa-clean-rebuild.sh)
-  commit-traces        Commit session trace artifacts to git
-
-Agent CLI (inside container):
-  help [topic]         Russian help + JSON help registry for future WebUI
-  selfcheck            Validate config + proxy routing (free)
-  probe                Liveness test — real API call (~10 tokens)
-  run                  Drive one role; positional task works: fa run -r coder "task"
-  workflow             Multi-role pipeline: fa workflow planner,coder,eval "task"
-  stats                Session analytics (tool usage, tokens, efficiency)
-  chunk                Run the deterministic chunker
-  authoring-check      Run ADR-11 authoring guardrails
-  --version            Show fa version
-
-All unrecognised commands pass through to `fa` inside the container.
-Add new Python subcommands in src/fa/cli.py — they work here automatically.
-EOF
+    ""|--help|-h|-help)
+        if [[ $# -ge 2 ]] && _print_host_topic_help "$2"; then
+            exit 0
+        fi
+        if [[ $# -ge 2 ]]; then
+            # Agent command global form: `fa --help run` / `fa -h run`.
+            _delegate_agent_help "$2" --help "${@:3}"
+        fi
+        _print_usage
         exit 0
+        ;;
+    help)
+        shift
+        if [[ $# -eq 0 ]]; then
+            _print_usage
+            exit 0
+        fi
+        if _print_host_topic_help "$1"; then
+            exit 0
+        fi
+        _delegate_to_agent help "$@"
         ;;
 
     # ── Default: delegate to fa CLI inside the agent container ──────────
     *)
-        if [[ -n "$_W_FLAG" ]]; then
-            exec $COMPOSE exec $TTY_FLAG -w "$_SESSION_WORKSPACE" first-agent fa "$@"
-        else
-            exec $COMPOSE exec $TTY_FLAG first-agent fa "$@"
+        if [[ "${2:-}" == "-help" ]]; then
+            # Compatibility for operators who type `fa run -help`.
+            set -- "$1" --help "${@:3}"
         fi
+        _delegate_to_agent "$@"
         ;;
 esac

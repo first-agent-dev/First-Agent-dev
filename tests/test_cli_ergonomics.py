@@ -455,9 +455,7 @@ def test_help_registry_covers_real_commands() -> None:
     )
 
 
-def test_adaptive_mode_replans_until_pass(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_adaptive_mode_replans_until_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fa.inner_loop.workflow_artifacts import load_eval_report, load_flow_state
 
     config, session_dir = _repair_env(tmp_path, monkeypatch)
@@ -536,7 +534,7 @@ def test_adaptive_mode_can_mix_repair_then_replan(
 
 
 def test_adaptive_mode_requires_planner_coder_eval_roles() -> None:
-    args = _workflow_args(Path('.'), Path('models.yaml'), roles="coder,eval", mode="adaptive")
+    args = _workflow_args(Path("."), Path("models.yaml"), roles="coder,eval", mode="adaptive")
     assert _cmd_workflow(args, transport=_ScriptedTransport(), secrets=_TEST_SECRETS) == 2
 
 

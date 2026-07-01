@@ -1,12 +1,15 @@
-"""Install the local commit hooks into ``.git/hooks/``.
+"""Install the local git hooks into ``.git/hooks/``.
 
-The repository's ``.pre-commit-config.yaml`` defines which checks run
-at commit time (ruff, gitleaks, markdownlint, uv-lock, etc.), and the
-``pre-commit`` framework executes them.  This installer puts all three
-hook seats into ``.git/hooks/`` — including the ``pre-commit`` hook
-itself, which invokes the framework via ``uv run`` so it works
-reliably on Windows/PowerShell where the framework's own generated
-hook script cannot find the ``pre-commit`` executable in PATH.
+The repository's ``.pre-commit-config.yaml`` defines fast commit-time
+checks (ruff autofix/format, gitleaks, markdownlint, uv-lock, etc.), and
+the ``pre-commit`` framework executes them. This installer puts all four
+hook seats into ``.git/hooks/``: ``pre-commit`` (safe autofix + targeted
+restage), ``pre-push`` (``uv run just check`` local CI parity),
+``prepare-commit-msg``, and ``commit-msg``.
+
+The custom shell hooks invoke tools via ``uv run`` so they work reliably
+on Windows/PowerShell where generated hook scripts often cannot find the
+project-managed executables in PATH.
 
 The installer prefers symlinks (so the hook always reflects the
 current source after a ``git pull``), but falls back to copying
@@ -94,7 +97,7 @@ def install_hooks(
     *,
     force: bool = False,
 ) -> list[Path]:
-    """Install the PR-intent hooks into ``<repo_root>/.git/hooks/``.
+    """Install the local FA hooks into ``<repo_root>/.git/hooks/``.
 
     Returns the list of installed hook paths. When ``force=True``,
     any existing file or symlink at the target path is replaced;
@@ -124,7 +127,8 @@ def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m fa.hygiene.hooks.install",
         description=(
-            "Install the PR-intent hooks (prepare-commit-msg, commit-msg) into .git/hooks/."
+            "Install FA local hooks (pre-commit, pre-push, prepare-commit-msg, "
+            "commit-msg) into .git/hooks/."
         ),
     )
     parser.add_argument(
@@ -143,3 +147,6 @@ def _main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - exercised via subprocess in tests.
     raise SystemExit(_main())
+
+
+__all__ = ["HOOK_NAMES", "install_hooks", "os"]

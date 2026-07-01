@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Atomic-write cleanup mirrors workflow_artifacts intentionally.
 """Per-session PR-draft store shared by ``pr.prepare`` and ``IntentGuard``.
 
 The initial M-7 implementation treated ``~/.fa/session-log/<run_id>/pr_draft.md``

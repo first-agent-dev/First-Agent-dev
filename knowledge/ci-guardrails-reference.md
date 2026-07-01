@@ -1,4 +1,4 @@
-# CI & guardrail mechanisms — reference (as of 2026-06-28)
+# CI & guardrail mechanisms — reference (as of 2026-07-01)
 
 > **Purpose.** One-page inventory of every quality / safety mechanism in the
 > repo, with its seat (where it runs), gate class (blocking / advisory /
@@ -81,22 +81,30 @@ When strict validation applies, it checks INTENT/CLASS/INVARIANT shape,
 FIX anti-shallow-fix clauses (DOF/MECHANISM + resolving citation), and
 `validate_test_edits`. Installed by `just install`
 (→ `uv sync --extra dev` + `install-hooks` + `hooks-status`);
-all three hooks are scripts from `src/fa/hygiene/hooks/` installed via
+all four hooks are scripts from `src/fa/hygiene/hooks/` installed via
 our tested Python installer. The `pre-commit` hook invokes
-`uv run pre-commit run` so it works on Windows/PowerShell where the
-framework's own generated hook cannot find the executable, and if hooks
-auto-fix already-staged files it re-stages only that staged subset and
-retries once. Snapshot tests pin hook constants to the skill
-§Output format / §Test-edit declaration so the two views cannot drift.
-**Bypassable locally** (`--no-verify`, by design per ADR-11-I6) — CI is
-the authority, this seat is fast feedback.
+`uv run pre-commit run --hook-stage pre-commit` so it works on
+Windows/PowerShell where the framework's own generated hook cannot find the
+executable. If hooks auto-fix already-staged files, it re-stages only that
+staged subset and retries once; if a file was partially staged before the
+hook ran, it refuses to auto-stage to avoid pulling unrelated unstaged hunks
+into the commit. `FA_HOOK_FULL_CHECK=1` runs `uv run just check` at commit
+stage for agent sessions that want local CI parity before the commit object is
+created.
 
-Hook activation can be verified at any time with `just hooks-status`,
-which checks all three seats (pre-commit, prepare-commit-msg, commit-msg)
+The `pre-push` hook runs `uv run just check` before branch publication; use
+`FA_HOOK_SKIP_FULL_CHECK=1 git push` only for an intentional operator bypass.
+Snapshot tests pin hook constants to the skill §Output format / §Test-edit
+declaration so the two views cannot drift. **Bypassable locally**
+(`--no-verify`, by design per ADR-11-I6) — CI is the authority, this seat is
+fast feedback.
+
+Hook activation can be verified at any time with `just hooks-status`, which
+checks all four seats (pre-commit, pre-push, prepare-commit-msg, commit-msg)
 and flags missing, stale, or non-executable hooks. Without running
-`just install` in a fresh clone, local commit hooks are not active; CI
-does not install hooks in the contributor's local clone — it only
-re-runs checks on the PR branch.
+`just install` in a fresh clone, local hooks are not active; CI does not
+install hooks in the contributor's local clone — it only re-runs checks on the
+PR branch.
 
 ## Layer 4 — GitHub CI (PR branch; agent is NOT a codeowner)
 

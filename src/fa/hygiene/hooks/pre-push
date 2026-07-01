@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# pre-push — run the repo-native CI gate before an agent pushes a branch.
+#
+# The pre-commit hook is intentionally optimized for fast, safe mechanical
+# cleanup (ruff --fix, ruff format, whitespace, uv-lock).  This pre-push hook is
+# the local CI parity gate: it runs `uv run just check` after commits are formed
+# but before an LLM agent publishes the branch/PR.  GitHub CI remains the final
+# authority; this hook is a convenience net for honest mistakes.
+#
+# Escape hatch for exceptional operator cases:
+#   FA_HOOK_SKIP_FULL_CHECK=1 git push
+#
+# Do not use the escape hatch in normal agent runs.  If this hook fails, fix the
+# code or push only when you intentionally want CI/review to surface the failure.
+
+set -euo pipefail
+
+if [[ "${FA_HOOK_SKIP_FULL_CHECK:-0}" == "1" ]]; then
+    echo "pre-push: skipping uv run just check (FA_HOOK_SKIP_FULL_CHECK=1)" >&2
+    exit 0
+fi
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "pre-push: uv not found on PATH; install uv or set FA_HOOK_SKIP_FULL_CHECK=1" >&2
+    exit 127
+fi
+
+if ! command -v just >/dev/null 2>&1; then
+    echo "pre-push: just not found on PATH; install just or set FA_HOOK_SKIP_FULL_CHECK=1" >&2
+    exit 127
+fi
+
+echo "pre-push: running uv run just check" >&2
+uv run just check

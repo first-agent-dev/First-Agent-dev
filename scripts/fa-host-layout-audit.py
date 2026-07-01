@@ -156,9 +156,7 @@ def main(argv: list[str]) -> int:
         _print_status("optional routing keys", "OK")
 
     if routing_text == example_text:
-        _print_status(
-            "template drift", "OK", "deployed routing matches checked-in example exactly"
-        )
+        _print_status("template drift", "OK", "deployed routing matches checked-in example exactly")
     else:
         _print_status(
             "template drift",

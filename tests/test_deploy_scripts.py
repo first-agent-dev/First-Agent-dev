@@ -23,6 +23,7 @@ _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 # Host-side shell scripts that operators run directly or that ship in the image.
 _SHELL_SCRIPTS = [
+    _SCRIPTS / "fa",
     _SCRIPTS / "setup-fa-desktop.sh",
     _SCRIPTS / "fa-post-setup.sh",
     _SCRIPTS / "fa-update.sh",
@@ -60,6 +61,7 @@ def test_shell_script_passes_shellcheck(script: Path) -> None:
 def test_executable_script_modes_are_pinned() -> None:
     """Scripts invoked directly by operators/git must keep executable mode."""
     expected_exec = [
+        _SCRIPTS / "fa",
         _SCRIPTS / "fa-update.sh",
         _SCRIPTS / "fa-clean-rebuild.sh",
         _SCRIPTS / "fa-post-setup.sh",
@@ -68,10 +70,104 @@ def test_executable_script_modes_are_pinned() -> None:
         _SCRIPTS / "ssh-tailscale" / "20-harden.sh",
         _SCRIPTS / "ssh-tailscale" / "30-verify.sh",
         _SCRIPTS.parent / "src" / "fa" / "hygiene" / "hooks" / "commit-msg",
+        _SCRIPTS.parent / "src" / "fa" / "hygiene" / "hooks" / "pre-commit",
+        _SCRIPTS.parent / "src" / "fa" / "hygiene" / "hooks" / "pre-push",
         _SCRIPTS.parent / "src" / "fa" / "hygiene" / "hooks" / "prepare-commit-msg",
     ]
     for path in expected_exec:
         assert path.stat().st_mode & stat.S_IXUSR, f"missing executable bit: {path}"
+
+
+def _run_fa_wrapper(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(_SCRIPTS / "fa"), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_fa_wrapper_host_topic_help_is_russian_and_detailed() -> None:
+    result = _run_fa_wrapper("help", "clean-rebuild")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "fa clean-rebuild [env]" in result.stdout
+    assert "Переменные окружения" in result.stdout
+    assert "WIPE_STATE=1" in result.stdout
+    assert "ASSUME_YES=1" in result.stdout
+
+
+def test_fa_wrapper_command_help_form_for_update() -> None:
+    result = _run_fa_wrapper("update", "--help")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "fa update [env]" in result.stdout
+    assert "AUTO_STASH=1" in result.stdout
+    assert "--force" in result.stdout
+
+
+def test_fa_wrapper_global_help_topic_form_for_update() -> None:
+    result = _run_fa_wrapper("--help", "update")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "fa update [env]" in result.stdout
+    assert "SKIP_TESTS=1" in result.stdout
+
+
+def test_fa_wrapper_has_real_clean_rebuild_dispatch_case() -> None:
+    text = (_SCRIPTS / "fa").read_text(encoding="utf-8")
+
+    assert "clean-rebuild)" in text
+    assert 'exec "$REPO_DIR/scripts/fa-clean-rebuild.sh" "$@"' in text
+
+
+def test_fa_wrapper_dispatches_every_documented_host_topic() -> None:
+    from fa.cli_help import HOST_COMMANDS
+
+    text = (_SCRIPTS / "fa").read_text(encoding="utf-8")
+    for command in HOST_COMMANDS:
+        assert f"    {command})" in text, f"missing host dispatch case for {command}"
+
+
+def test_fa_wrapper_rejects_clean_rebuild_typo_before_delegation() -> None:
+    result = _run_fa_wrapper("clean", "rebuild")
+
+    assert result.returncode == 2
+    assert "fa clean-rebuild" in result.stderr
+
+
+def test_fa_wrapper_unknown_help_topic_delegates_to_container() -> None:
+    result = _run_fa_wrapper("help", "run")
+
+    # Docker is intentionally unavailable in the unit test environment; the
+    # important contract is that wrapper did NOT swallow `help run` as host help.
+    assert result.returncode != 0
+    assert "exec: docker" in result.stderr or "docker:" in result.stderr
+
+
+def test_fa_wrapper_uses_cli_help_as_single_source_of_truth() -> None:
+    text = (_SCRIPTS / "fa").read_text(encoding="utf-8")
+
+    assert "-m fa.cli_help" in text
+    assert "--host-topic" in text
+    assert "--wrapper-usage" in text
+    # Detailed operator help belongs in src/fa/cli_help.py, not duplicated in bash heredocs.
+    assert "WIPE_STATE=1" not in text
+    assert "AUTO_STASH=1" not in text
+
+
+def test_cli_help_contains_host_wrapper_topics() -> None:
+    from fa.cli_help import HOST_COMMANDS, render_host_command_help_ru, render_wrapper_usage_ru
+
+    assert "clean-rebuild" in HOST_COMMANDS
+    assert "update" in HOST_COMMANDS
+    clean_help = render_host_command_help_ru("clean-rebuild")
+    assert "WIPE_STATE=1" in clean_help
+    assert "ASSUME_YES=1" in clean_help
+    assert "fa clean-rebuild [env]" in clean_help
+    usage = render_wrapper_usage_ru()
+    assert "Инфраструктура на хосте" in usage
+    assert "Agent CLI внутри контейнера" in usage
 
 
 def test_bootstrap_script_is_self_contained() -> None:

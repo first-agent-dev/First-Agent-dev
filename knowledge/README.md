@@ -1,10 +1,10 @@
 # Knowledge
 
 
-> **Note on Dogfooding:** First-Agent is actively developed by itself. 
+> **State:** First-Agent is actively developed by itself. 
 > The agent lives in a containerized AIO host, reads this immutable knowledge base, 
-> works in an isolated `Workspace Clone` (ADR-13), and issues PRs to its own repository.
-> The architectural decisions below aren't just theory—they are mechanically enforced by the agent.
+> works in an isolated `Workspace Clone` and issues PRs to its own repository.
+> The architectural decisions below are mechanically enforced by the agent.
 
 Durable project knowledge for First-Agent. Everything here is:
 
@@ -66,18 +66,14 @@ knowledge/
   recommendations so the human review path stays natural; keep exact
   protocol/API names, code, frontmatter keys, and direct quotes in the
   original language when precision matters.
-- **Prune deliberately; never leave a dangling link.** Deleting or
-  replacing a superseded file is allowed — pruning is part of keeping the
+- **Prune deliberately, keep links in check.** Pruning is part of keeping the
   repo navigable, and PRs are human-reviewed. The binding rule is **link
-  integrity, not file permanence**: in the *same PR* that removes, renames,
+  integrity**: in the *same PR* that removes, renames,
   or replaces a file, update or delete **every** reference to it. Find them
   with `grep -rn <old-path>` and fix `llms.txt`, `HANDOFF.md`, ADR
   [`DIGEST.md`](./adr/DIGEST.md), [`glossary.md`](./glossary.md), any in-doc
-  links, and code comments. Keep a `> **Status:** superseded by <link>` /
-  `> **Status:** moved to <link>` stub **only** when an external entry point
-  or an inbound link you cannot edit may still target the old path. Working
-  links are the priority, not retaining every file indefinitely. Full
-  checklist: [`MAINTENANCE.md` §When moving or pruning a doc](./MAINTENANCE.md).
+  links, and code comments.
+  Checklist: [`MAINTENANCE.md` §When moving or pruning a doc](./MAINTENANCE.md).
   Rationale: [`research/llm-wiki-critique.md`](./research/llm-wiki-critique.md).
 
 ### Provenance-frontmatter (for `research/` and any summary notes)
