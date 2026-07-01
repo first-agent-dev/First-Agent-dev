@@ -41,7 +41,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
-from typing import Any, override
+from typing import Any, cast, override
 
 from fa.providers.base import Transport, TransportResponse
 
@@ -149,7 +149,7 @@ def _transport_retry_delay_s(
 ) -> float:
     """Return capped exponential backoff with full jitter for transport retries."""
     window = min(cap_seconds, base_seconds * (2**attempt_index))
-    return max(0.0, random_fn() * window)
+    return max(0.0, cast(float, random_fn() * window))
 
 
 def _decode_body(raw: bytes) -> Mapping[str, Any]:

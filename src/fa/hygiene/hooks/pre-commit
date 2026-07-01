@@ -22,12 +22,19 @@
 # execution path — nothing else on the system.
 #
 # Auto-retry: if a hook modifies files (trailing-whitespace,
-# end-of-file-fixer, ruff --fix), those changes are left in the
-# working tree but NOT re-staged, and the commit fails with exit 1.
-# This requires the contributor to manually re-stage and re-commit.
-# Instead, we snapshot the staged path set, detect which of those
-# already-staged files were modified by the hook, re-stage ONLY that
-# subset, and retry once. Unrelated unstaged changes remain untouched.
+# end-of-file-fixer, ruff --fix / ruff-format), those changes are left in the
+# working tree but NOT re-staged, and the commit fails with exit 1.  That is
+# noisy for LLM-agent workflows that intentionally land a few larger commits.
+# Instead, we snapshot the staged path set, detect which already-staged files
+# were modified by the hook, re-stage ONLY that subset, and retry once.
+#
+# Safety boundary: if a staged file already had unstaged edits before hooks ran
+# (partial staging), we do NOT auto-restage it. `git add <path>` would stage the
+# human/agent's unrelated unstaged hunks too.  The hook then fails with an
+# explicit message so the operator can resolve the partial-staging case by hand.
+#
+# Optional local CI parity: set FA_HOOK_FULL_CHECK=1 to run `uv run just check`
+# after the fast autofix pass. The default full gate lives in pre-push.
 
 set -euo pipefail
 
@@ -38,19 +45,114 @@ export NO_PROXY="*"
 
 mapfile -d '' staged_paths < <(git diff --cached --name-only -z 2>/dev/null || true)
 
-if uv run pre-commit run "$@"; then
+partial_paths=()
+partial_diff_hashes=()
+
+_partial_diff_hash() {
+    git diff --binary -- "$1" 2>/dev/null | git hash-object --stdin 2>/dev/null || printf '__unknown__'
+}
+
+_partial_path_index() {
+    local needle="$1"
+    local index
+    for index in "${!partial_paths[@]}"; do
+        if [[ "${partial_paths[$index]}" == "$needle" ]]; then
+            printf '%s' "$index"
+            return 0
+        fi
+    done
+    return 1
+}
+
+_is_staged_path() {
+    local needle="$1"
+    local path
+    for path in "${staged_paths[@]}"; do
+        if [[ "$path" == "$needle" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+uv_lock_dirty_before=0
+uv_lock_diff_hash_before=""
+if [[ -f uv.lock ]] && ! git diff --quiet -- uv.lock 2>/dev/null; then
+    uv_lock_dirty_before=1
+    uv_lock_diff_hash_before="$(_partial_diff_hash uv.lock)"
+fi
+
+for path in "${staged_paths[@]}"; do
+    [[ -n "$path" ]] || continue
+    if ! git diff --quiet -- "$path" 2>/dev/null; then
+        partial_paths+=("$path")
+        partial_diff_hashes+=("$(_partial_diff_hash "$path")")
+    fi
+done
+
+_run_fast_hooks() {
+    uv run pre-commit run --hook-stage pre-commit "$@"
+}
+
+_run_optional_full_check() {
+    if [[ "${FA_HOOK_FULL_CHECK:-0}" == "1" ]]; then
+        echo "pre-commit: FA_HOOK_FULL_CHECK=1 — running uv run just check" >&2
+        uv run just check
+    fi
+}
+
+if _run_fast_hooks "$@"; then
+    _run_optional_full_check
     exit 0
 else
     first_rc=$?
 fi
 
 modified_paths=()
+skipped_partial_paths=()
 for path in "${staged_paths[@]}"; do
     [[ -n "$path" ]] || continue
     if ! git diff --quiet -- "$path" 2>/dev/null; then
-        modified_paths+=("$path")
+        if partial_index="$(_partial_path_index "$path")"; then
+            # The file was already partially staged before hooks ran. Only call
+            # it hook-modified if the unstaged diff changed; otherwise preserve
+            # the original hook failure without a misleading auto-stage warning.
+            if [[ "$(_partial_diff_hash "$path")" != "${partial_diff_hashes[$partial_index]}" ]]; then
+                skipped_partial_paths+=("$path")
+            fi
+        else
+            modified_paths+=("$path")
+        fi
     fi
 done
+
+# uv-lock is a whole-repo hook: changing pyproject.toml can update uv.lock even
+# when uv.lock was not part of the initial staged path set. Auto-stage that lock
+# refresh only when uv.lock was clean before hooks ran; otherwise avoid pulling
+# unrelated pre-existing lockfile edits into the commit.
+if [[ -f uv.lock ]] && ! _is_staged_path uv.lock && _is_staged_path pyproject.toml; then
+    if ! git diff --quiet -- uv.lock 2>/dev/null; then
+        if _partial_path_index pyproject.toml >/dev/null; then
+            # uv-lock reads the working-tree pyproject.toml. If pyproject.toml
+            # is partially staged, the generated uv.lock may reflect unstaged
+            # dependency edits that are not part of the commit. Leave it to the
+            # operator instead of auto-staging a mismatched lockfile.
+            skipped_partial_paths+=("uv.lock")
+        elif [[ "$uv_lock_dirty_before" == "0" ]]; then
+            modified_paths+=("uv.lock")
+        elif [[ "$(_partial_diff_hash uv.lock)" != "$uv_lock_diff_hash_before" ]]; then
+            skipped_partial_paths+=("uv.lock")
+        fi
+    fi
+fi
+
+if [ ${#skipped_partial_paths[@]} -ne 0 ]; then
+    echo "pre-commit: hooks modified files with pre-existing unstaged edits / partial staging; refusing to auto-stage:" >&2
+    printf '  %s
+' "${skipped_partial_paths[@]}" >&2
+    echo "pre-commit: stage or unstage those files explicitly, then commit again." >&2
+    exit "$first_rc"
+fi
 
 if [ ${#modified_paths[@]} -eq 0 ]; then
     exit "$first_rc"
@@ -61,7 +163,8 @@ printf '  %s
 ' "${modified_paths[@]}" >&2
 git add -- "${modified_paths[@]}"
 
-if uv run pre-commit run "$@"; then
+if _run_fast_hooks "$@"; then
+    _run_optional_full_check
     exit 0
 else
     retry_rc=$?

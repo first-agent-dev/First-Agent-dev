@@ -1,7 +1,4 @@
-# Pin Python version for all hook environments.  Without this,
-# pre-commit auto-detects the newest Python on PATH, which can be
-# 3.14 on contributor machines where pre-commit hook packages
-# don't yet have binary wheels.  The project requires >=3.13;
+# Pin Python version for all hook environments. The project requires >=3.13;
 # pinning to 3.13 keeps hook envs consistent with CI.
 default_language_version:
   python: python3.13
@@ -16,6 +13,10 @@ repos:
       - id: check-yaml
       - id: end-of-file-fixer
       - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.18

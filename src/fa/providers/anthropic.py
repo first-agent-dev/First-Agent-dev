@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code  # Anthropic/OpenAI adapters intentionally share transport-call scaffolding.
 """Anthropic ``/v1/messages`` adapter (ADR-9 §5 Category 2).
 
 Translates between FA's canonical OpenAI-shaped

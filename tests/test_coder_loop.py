@@ -92,6 +92,7 @@ def _make_chain(provider: FakeProvider) -> ProviderChain:
         slug="test/model",
         base_url="https://example.invalid/v1",
         api_key_env="TEST_KEY",
+        cooldown_seconds=300,
     )
     config = ChainConfig(role="coder", model="test-model", family="", chain=(entry,))
     return ProviderChain(
@@ -768,6 +769,7 @@ def test_drive_session_keyboard_interrupt_returns_outcome(
         slug="test/model",
         base_url="https://example.invalid/v1",
         api_key_env="TEST_KEY",
+        cooldown_seconds=300,
     )
     config = ChainConfig(role="coder", model="test-model", family="", chain=(entry,))
     chain = ProviderChain(

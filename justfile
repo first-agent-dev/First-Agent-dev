@@ -14,7 +14,7 @@ install:
     @echo ""
     @echo "Bootstrap complete:"
     @echo "  - Python env synced (with dev extras)"
-    @echo "  - pre-commit hook installed"
+    @echo "  - pre-commit / pre-push hooks installed"
     @echo "  - prepare-commit-msg / commit-msg hooks installed"
     @echo "  - Local commits are now guarded by hook chain"
     @echo "  - Run 'just hooks-status' to verify at any time"
@@ -36,8 +36,8 @@ install-hooks:
     uv run python -m fa.hygiene.hooks.install --force
 
 # Verify that local commit hooks are installed and active.
-# Deterministic, zero-API-call status probe for all three hook seats
-# (pre-commit, prepare-commit-msg, commit-msg).  Run after
+# Deterministic, zero-API-call status probe for all four hook seats
+# (pre-commit, pre-push, prepare-commit-msg, commit-msg).  Run after
 # ``just install`` or at any time to confirm the local hook chain.
 hooks-status:
     uv run python -m fa.hygiene.hooks.status

@@ -6,8 +6,8 @@ install`` or at any time to confirm the local hook chain is
 active. Invoke via ``python -m fa.hygiene.hooks.status`` or
 ``just hooks-status``.
 
-All three hooks — ``pre-commit``, ``prepare-commit-msg``,
-``commit-msg`` — are installed by our custom installer
+All four hooks — ``pre-commit``, ``pre-push``, ``prepare-commit-msg``,
+and ``commit-msg`` — are installed by our custom installer
 (``fa.hygiene.hooks.install``). For each hook, the checker
 verifies that the installed file content matches the shipped
 source, and on POSIX that the installed hook is executable.
@@ -102,7 +102,7 @@ def check_hooks(repo_root: Path | None = None) -> int:
 
     sys.stdout.write("\n")
     if all_ok:
-        sys.stdout.write("All commit hooks active — local commits are guarded.\n")
+        sys.stdout.write("All FA git hooks active — local commits and pushes are guarded.\n")
     else:
         sys.stdout.write(
             "Some hooks missing, stale, or non-executable — run `just install` to fix.\n"
