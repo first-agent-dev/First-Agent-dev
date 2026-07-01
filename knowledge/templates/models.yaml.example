@@ -51,7 +51,7 @@
 # ───────────────────────────────────────────────────────────────────────────
 
 planner:
-  model: "glm-5p2"
+  model: "accounts/fireworks/models/glm-5p2"
   family: "glm"            # свободная текстовая метка; важна для eval-disjoint проверки
   chain:
     - provider: fireworks
@@ -63,7 +63,7 @@ planner:
       transport_retries: 1
 
 coder:
-  model: "minimax-m3"
+  model: "accounts/fireworks/models/minimax-m3"
   family: "minimax"
   chain:
     - provider: fireworks
@@ -75,7 +75,7 @@ coder:
       transport_retries: 1
 
 eval:
-  model: "nemotron-3-ultra-nvfp4"
+  model: "accounts/fireworks/models/nemotron-3-ultra-nvfp4"
   family: "nemotron"       # отличается от glm + minimax → ADR-2 OK
   chain:
     - provider: fireworks
