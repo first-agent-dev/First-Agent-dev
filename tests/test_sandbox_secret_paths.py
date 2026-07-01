@@ -58,6 +58,8 @@ def test_legitimate_reads_allowed(command: str) -> None:
 def test_unparseable_command_with_secret_prefix_fails_closed() -> None:
     # Unterminated quote → shlex fails; raw text references a secret dir → deny.
     assert command_reads_secret_path('cat "/run/secrets/fa.env')
+    # Unterminated quote without secret prefix → allow (False).
+    assert command_reads_secret_path('cat "/etc/hostname') is False
 
 
 def test_home_fa_env_denied() -> None:
@@ -78,3 +80,57 @@ def test_raw_substring_fallback_prevents_interpreter_bypass() -> None:
     # that does not START with the secret path. The raw substring fallback catches it.
     command = "python3 -c \"print(open('/run/secrets/fa.env').read())\""
     assert command_reads_secret_path(command) is True
+
+
+def test_safe_tokens_posix_and_error_handling() -> None:
+    from fa.sandbox.secret_paths import _safe_tokens
+    assert _safe_tokens("cat foo") == ["cat", "foo"]
+    assert _safe_tokens('cat "foo bar"') == ["cat", "foo bar"]
+    assert _safe_tokens('cat "unterminated') is None
+
+
+def test_path_candidates_splitting() -> None:
+    from fa.sandbox.secret_paths import _path_candidates
+    assert _path_candidates("simple") == ["simple"]
+    assert _path_candidates("if=/path/to/secret") == ["if=/path/to/secret", "/path/to/secret"]
+    assert _path_candidates("a=b=c") == ["a=b=c", "b=c"]
+
+
+def test_within_prefix_matching() -> None:
+    from fa.sandbox.secret_paths import _within
+    assert _within("", "/prefix") is False
+    assert _within("/run/secrets", "/run/secrets/") is True
+    assert _within("/run/secrets/", "/run/secrets") is True
+    assert _within("/run/secrets/fa.env", "/run/secrets") is True
+    assert _within("/run/secrets_other", "/run/secrets") is False
+    assert _within("/run/sec", "/run/secrets") is False
+
+
+def test_lexical_abs_path_collapsing() -> None:
+    from pathlib import Path
+
+    from fa.sandbox.secret_paths import _lexical_abs
+    assert _lexical_abs(Path("/")) == "/"
+    assert _lexical_abs(Path("/a/b/../c/./d")) == "/a/c/d"
+    assert _lexical_abs(Path("/../a")) == "/a"
+
+
+def test_normalize_proc_and_relative() -> None:
+    from fa.sandbox.secret_paths import _normalize
+    assert _normalize("") == ""
+    assert _normalize("   ") == ""
+    assert _normalize("/proc/self/root") == "/"
+    assert _normalize("/proc/self/root/etc/passwd") == "/etc/passwd"
+    assert _normalize("/proc/1/root") == "/"
+    assert _normalize("/proc/1/root/etc/passwd") == "/etc/passwd"
+    assert _normalize("relative/path") == "relative/path"
+    assert _normalize("/abs/./path/../file") == "/abs/file"
+    assert _normalize("~/secret") == str(Path("~/secret").expanduser())
+
+
+def test_command_reads_secret_path_normalized_traversal() -> None:
+    assert command_reads_secret_path("cat /run/secret_dir/../secrets/fa.env") is True
+    assert command_reads_secret_path('cat "/run/secret_dir/../secrets/fa.env"') is True
+    assert command_reads_secret_path("dd if=/run/secret_dir/../secrets/fa.env") is True
+    assert command_reads_secret_path("cd /run/secret_dir/../secrets && cat fa.env") is True
+    assert command_reads_secret_path("ls /run") is False

@@ -150,6 +150,7 @@ def evaluate_bash(
         )
 
     if category is BashCategory.GIT_WRITE:
+        # pragma: no mutate start
         if validator_result is None:
             # `git` always matches the validator; this branch is a
             # defensive fall-through, never triggered in practice.
@@ -158,6 +159,7 @@ def evaluate_bash(
                 category=category,
                 reason="git-write command but no git validator output",
             )
+        # pragma: no mutate end
         return BashGateDecision(
             allow=validator_result.allow,
             category=category,

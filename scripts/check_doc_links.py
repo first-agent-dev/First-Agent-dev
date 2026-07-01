@@ -146,7 +146,8 @@ def _is_legacy(path: Path) -> bool:
 
 
 def _discover(include_legacy: bool) -> list[Path]:
-    skip_dirs = {".git", "node_modules", ".venv", "__pycache__"}
+    skip_dirs = {".git", "node_modules", ".venv", "__pycache__", ".local", ".cache", "mutants",
+                 "build", "dist"}
     out: list[Path] = []
     for p in _REPO_ROOT.rglob("*.md"):
         if any(part in skip_dirs for part in p.relative_to(_REPO_ROOT).parts):

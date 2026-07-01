@@ -183,6 +183,7 @@ Skills are loaded on the trigger condition:
 | :--- | :--- |
 | [`pr-creation`](./knowledge/skills/pr-creation/SKILL.md) | **Trigger:** Before opening any PR (including pure-doc PRs).<br><br>Canonical PR-creation rulebook. Carries the 5-intent classifier (`RESEARCH / ADR-RULE / IMPLEMENT / FIX / CHORE`). The PR description AND the first commit message body MUST open with the header lines specified by the skill's §Output format. The planned `prepare-commit-msg` / `commit-msg` reads the skill's §Reference tables as the single source of truth. Applies to every PR. |
 | [`repo-audit`](./knowledge/skills/repo-audit/SKILL.md)   | **Trigger:** When asked to perform a critical structure / doc / skill review.<br><br>Carries the 7-phase audit workflow (orientation → inventory → cross-reference → invariants → contradiction sweep → demotion ledger → final report). |
+| [`mutation-clearing`](./knowledge/skills/mutation-clearing/SKILL.md) | **Trigger:** When tasked with mutation testing fixes (`mutmut`) or mutant hunts.<br><br>Carries the 4-archetype triage taxonomy, spy isolation rules, and accepted equivalent mutants ledger criteria for zero-trust mutation clearing. |
 
 New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this table.
 

@@ -211,8 +211,16 @@ def test_is_contained_rejects_undefined_variable_expansion(
     """
     monkeypatch.delenv("FA_TEST_UNDEFINED_ESC", raising=False)
     result = is_contained("$FA_TEST_UNDEFINED_ESC/escape", tmp_path)
-    assert result.contained is False
-    assert "unresolved shell variable" in result.reason
+    assert result == ContainmentResult(
+        contained=False,
+        canonical_target=None,
+        reason=(
+            "path contains unresolved shell variable: "
+            "'$FA_TEST_UNDEFINED_ESC/escape' "
+            "(bash will expand `$VAR` at execution time, which can "
+            "escape the workspace if the variable is undefined)"
+        ),
+    )
 
 
 def test_is_contained_rejects_defined_variable_expanding_outside(
@@ -250,6 +258,75 @@ def test_is_contained_accepts_defined_variable_expanding_inside(
     assert result.contained is True
     assert result.canonical_target is not None
     assert result.canonical_target.is_relative_to(tmp_path.resolve())
+
+
+def test_resolution_uses_strict_false_for_nonexistent_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Containment must resolve nonexistent paths with ``strict=False``.
+
+    The sandbox intentionally allows not-yet-existing workspace paths because
+    the agent may be about to create them. Pinning the exact ``strict=False``
+    call prevents regressions to strict resolution for either the target or
+    canonical base.
+    """
+    original_resolve = Path.resolve
+    seen: list[tuple[Path, bool | None]] = []
+
+    def resolve_spy(self: Path, strict: bool | None = False) -> Path:
+        seen.append((self, strict))
+        return original_resolve(self, strict=bool(strict))
+
+    monkeypatch.setattr(Path, "resolve", resolve_spy)
+
+    missing_base = tmp_path / "missing-workspace"
+    result = is_contained("new/file.txt", missing_base)
+
+    expected_target = original_resolve(missing_base / "new" / "file.txt", strict=False)
+    assert result == ContainmentResult(
+        contained=True,
+        canonical_target=expected_target,
+        reason="ok",
+    )
+    relevant = [strict for p, strict in seen if str(missing_base) in str(p)]
+    assert len(relevant) >= 2
+    assert all(strict is False for strict in relevant)
+
+
+def test_is_contained_rejects_unresolvable_path_with_full_result(
+    tmp_path: Path,
+) -> None:
+    """If canonical resolution fails, the result must be an explicit denial."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    os.symlink(b, a)
+    os.symlink(a, b)
+
+    result = is_contained("a", tmp_path)
+
+    assert result == ContainmentResult(
+        contained=False,
+        canonical_target=None,
+        reason="could not resolve path: 'a'",
+    )
+
+
+def test_is_contained_outside_result_preserves_canonical_target(
+    tmp_path: Path,
+) -> None:
+    """Outside-workspace denials must retain the resolved target for audit logs."""
+    outside = tmp_path.parent / f"{tmp_path.name}-outside-target.txt"
+    canonical = outside.resolve(strict=False)
+    canonical_base = tmp_path.resolve(strict=False)
+
+    result = is_contained(str(outside), tmp_path)
+
+    assert result == ContainmentResult(
+        contained=False,
+        canonical_target=canonical,
+        reason=f"resolved path {canonical!s} is outside base {canonical_base!s}",
+    )
 
 
 def test_containment_result_is_frozen() -> None:
