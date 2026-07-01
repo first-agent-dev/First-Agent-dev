@@ -11,7 +11,41 @@
 
 ## §Current state
 
+**Work on hold:**
+1. knowledge/loop-improvement-workplan.md
+   Active cache/context loop optimization tracker.
+   Remaining: Tier 2.2, Tier 2.5, Tier 2.6, Tier 5, Tier 1.3, Tier 6, Tier 2.4, Tier 7.
+
+2. knowledge/mutation-survivors-workplan.md
+   Active mutation survivor clearing plan.
+   Cross-ref: knowledge/BACKLOG.md I-23.
+   Current: 163 survivors remain.
+
+3. knowledge/research/fa-workflow-loop-implementation-plan-2026-06-29.md
+   plus knowledge/research/fa-workflow-operator-maintainer-next-actions-memo-2026-06-30.md
+   plus knowledge/pr-notes/PR_NOTE_workflow_slices_A_to_H.md
+   Workflow R-1..R-5 / phase plan with deferred register.
+   Main sprint landed; follow-ups deferred.
+
+4. knowledge/BACKLOG.md I-12 / I-13 / I-14
+   plus knowledge/research/ADR-11-Authoring-Guardrails-Blueprint.md
+   ADR-11 authoring guardrails rollout PR3+.
+   Cross-ref: HANDOFF.md §Next #5-#7 and Gotchas.
+   Note: I-13 may already be stale relative to current code.
+
+5. knowledge/BACKLOG.md I-24
+   ADR-12 secret-isolation follow-ups.
+   v0.1 proxy shipped; constrained git interface and proxy egress allowlist remain.
+   
 Overwritten each session! Details live at the pointer, not here.
+
+**As of:** 2026-07-01 - PR landed Safe mechanical cleanup is automated locally; GitHub CI remains the final authority;
+Host wrapper help command expansion - ux improvement.
+
+**As of:** 2026-06-30 - PR lands the full current vertical workflow-orchestration sprint for the
+First-Agent runtime, moving fa workflow from a simple multi-role convenience
+wrapper toward a bounded, contract-driven controller with machine-readable
+artifacts and adaptive routing.
 
 **As of:** 2026-06-25 — Workspace Isolation (ADR-13) implemented. The agent container now mounts the host git checkout as a read-only `/repo` and writable per-session clones inside `/sessions`. The entrypoint creates a `git clone --local` per session, completely isolating agent writes from the host worktree. `docker-compose.fa.yml` and `fa-entrypoint.sh` updated. `scripts/fa` host-wrapper handles dynamic execution paths. Tests verify clone creation, `fa` execution, and path invariants.
 
