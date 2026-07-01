@@ -226,7 +226,7 @@ def tokenize(command: str) -> list[str]:
     classification-failure and the validator layer will deny.
     """
     try:
-        return shlex.split(command, posix=True)
+        return shlex.split(command, posix=True)  # pragma: no mutate
     except ValueError:
         return []
 

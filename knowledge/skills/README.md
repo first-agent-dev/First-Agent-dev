@@ -103,6 +103,7 @@ skill is forcing-against.>
 |------------------------------------------------------|--------|------------------------------------------------------------------------------------------------|
 | [`pr-creation/SKILL.md`](./pr-creation/SKILL.md)     | active | Before opening any PR — load to derive `INTENT:` / `[CLASS:]` / `INVARIANT:` header lines and (for FIX) `DEGREE-OF-FREEDOM CLOSED:` / `DETERMINISTIC MECHANISM:` clauses. |
 | [`repo-audit/SKILL.md`](./repo-audit/SKILL.md)       | active | When the user requests a repo-audit-style refactor or critical structural review. 7-phase workflow (P1 inventory → P7 capture-as-workflow). |
+| [`mutation-clearing/SKILL.md`](./mutation-clearing/SKILL.md) | active | When tasked with analyzing or clearing mutation testing survivors (`mutmut`), updating test selection in `pyproject.toml`, or running mutation fix loops. |
 
 ## Forward direction
 
