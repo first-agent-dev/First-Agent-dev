@@ -49,9 +49,12 @@ from fa.providers.registry import PROVIDERS
 from fa.providers.types import ChainAttemptRecord
 from fa.roles import FamilyExtractionError, extract_family
 
-DEFAULT_COOLDOWN_SECONDS = 90
-DEFAULT_TRANSPORT_RETRIES = 1
-DEFAULT_TIMEOUT_SECONDS = 15
+# Lockout period after a provider exhausts retries
+DEFAULT_COOLDOWN_SECONDS = 15
+# Number of retry attempts on network/timeout errors
+DEFAULT_TRANSPORT_RETRIES = 2
+#Waiting time for HTTP response
+DEFAULT_TIMEOUT_SECONDS = 300
 # Waiver: allowlist for DETECTING local endpoints, not a bind address.
 LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0"})  # noqa: S104
 RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset(
