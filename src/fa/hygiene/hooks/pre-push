@@ -31,4 +31,7 @@ if ! command -v just >/dev/null 2>&1; then
 fi
 
 echo "pre-push: running uv run just check" >&2
-uv run just check
+# Redirect stdout to stderr (1>&2) so that Git GUI clients (like VS Code)
+# reliably display the full lint/test output in their error dialogs,
+# rather than swallowing the stdout and only showing the justfile exit code.
+uv run just check 1>&2

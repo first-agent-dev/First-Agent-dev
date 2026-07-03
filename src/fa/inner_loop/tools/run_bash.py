@@ -48,6 +48,8 @@ def build_run_bash_tool(
             completed = subprocess.run(  # noqa: S602
                 command,
                 cwd=root,
+                # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
+                # intentional sandbox boundary (ADR-6)
                 shell=True,
                 check=False,
                 capture_output=True,

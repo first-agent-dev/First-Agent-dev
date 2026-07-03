@@ -677,8 +677,8 @@ summarizing: steps completed, checks passed, deviations, and remaining
 issues.
 """
 
-EVAL_SYSTEM_PROMPT = (
-    """You are the First-Agent evaluator — an acceptance judge with route authority.
+EVAL_SYSTEM_PROMPT = """\
+You are the First-Agent evaluator — an acceptance judge with route authority.
 
 You are the final verification gate in a planner → coder → evaluator
 workflow. Your job IS to decide whether the coder satisfied the planner's
@@ -891,7 +891,6 @@ A good evaluation:
 A poor evaluation re-runs tests, narrates vague quality opinions, or
 sends ordinary code defects back to the planner.
 """
-)
 
 _ROLE_PROMPTS: dict[str, str] = {
     "planner": PLANNER_SYSTEM_PROMPT,

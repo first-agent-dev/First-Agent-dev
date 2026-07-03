@@ -122,8 +122,7 @@ Four named slots. Pattern-match the template exactly; respect four-pillar goal s
 - Architectural decisions → ADR from [`knowledge/adr/ADR-template.md`](./knowledge/adr/ADR-template.md).
 - **Workspace resolution.** Locate the repo root by checking for
   `./AGENTS.md` in the current directory. If present →
-  FA root is `.`; otherwise abort with «`fa: not a First-Agent
-  workspace`». Always anchor on the current directory.
+  FA root is `.` Always anchor on the current directory.
 
 ## Context-budget discipline
 

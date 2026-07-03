@@ -58,6 +58,9 @@ def test_shell_script_passes_shellcheck(script: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.skipif(
+    not os.access(_SCRIPTS / "fa", os.X_OK), reason="Filesystem does not support executable bits"
+)
 def test_executable_script_modes_are_pinned() -> None:
     """Scripts invoked directly by operators/git must keep executable mode."""
     expected_exec = [
