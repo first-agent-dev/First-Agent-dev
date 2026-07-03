@@ -1,9 +1,5 @@
 # Project Overview — First-Agent
 
-> **Status:** updated 2026-05-29. Source for v0.1 scope decisions in
-> [ADR-1](./adr/ADR-1-v01-use-case-scope.md), `DIGEST.md`.
-> Add Refresh task after PR creation.
-
 ## 1. Problem statement
 
 First-Agent (FA) is a **locally orchestrated, mixed-tier LLM coding
@@ -27,8 +23,6 @@ It exists because:
 
 ## 1.1. Четыре столпа цели (project goal — four pillars)
 
-Goal проекта формулируется в 4 явных столпах:
-
 ### Pillar 1 — Research-backed implementation-first reference
 
 First-Agent — implementation-first проект с явной целью стать
@@ -42,14 +36,12 @@ Research notes used as reference for future deveopement.
 
 v0.1 ships как locally orchestrated, mixed-tier coding agent для
 single power-user под UC1 (coding+PR) + UC3 (local-docs-to-wiki).
-Hybrid-shape (filesystem-canon Markdown + lazy search-side scaling
-BM25 → vectors → graph) — sustained design choice, не временное
-решение. Архитектура зафиксирована в ADR-1..ADR-6.
+Hybrid-shape - filesystem-canon Markdown + lazy search-side scaling
+BM25 → vectors → graph.
 
 ### Pillar 3 — Most token/tool-call efficient harness (open-source scope)
 
-Один из главных проектных axes — построить **наиболее token- и
-tool-call-efficient harness** среди известных open-source /
+Main axes is to build **most token/tool-call-efficient harness** среди известных open-source /
 open-design агент-стэков под целевые UC1+UC3 при single-user
 single-workstation use. «Эффективный» означает измеримое:
 
@@ -146,17 +138,6 @@ principle, Tsinghua module-ablation `arXiv:2603.25723`).
 > are forbidden. When a deterministic check cannot fire (e.g.
 > partial config, missing role declaration), the harness emits a
 > WARNING surface, never a silent pass.
-
-**Decision provenance.** Placement chosen in
-[`research/fa-abc-synthesis-deep-dive-2026-05.md` §6b](./research/fa-abc-synthesis-deep-dive-2026-05.md#6b-125-placement-decision--compliance-by-construction)
-over Pillar-5 alternative: Pillars 1-4 declare what FA *is* (the
-product surface); §1.2 declares *how* FA is built (the
-construction discipline). Compliance-by-construction is a
-how-axis principle — it governs how harness components are
-built, not what the product *is* — so §1.2.5 keeps the
-categorical separation clean and sits next to the §1.2
-minimalism-first 4-question test that already governs related
-decisions.
 
 **Invariants.** The five named invariants instantiating this
 principle are

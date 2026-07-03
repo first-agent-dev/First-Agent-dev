@@ -162,6 +162,19 @@ def test_resolve_task_stdin_dash(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _resolve_task("-", None) == "piped task"
 
 
+def test_resolve_task_transparent_piping_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Under mock, sys.stdin.isatty() will return False, so transparent stdin is read
+    monkeypatch.setattr("sys.stdin", io.StringIO("  piped task only  "))
+    # Mock isatty to return False explicitly if needed, but StringIO already does.
+    assert _resolve_task(None, None) == "piped task only"
+
+
+def test_resolve_task_transparent_piping_concatenation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO("piped context data"))
+    expected = "explicit instruction\n\n<stdin>\npiped context data\n</stdin>"
+    assert _resolve_task("explicit instruction", None) == expected
+
+
 # ── parser: positional + short flags + back-compat ─────────────────────────
 
 

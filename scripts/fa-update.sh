@@ -790,23 +790,22 @@ print_usage_info() {
 
   cat <<USAGE
 
-  Multi-role workflow (run individually, each calls an LLM):
+  Multi-role workflow (one command runs planner → coder → eval):
 
-    # Planner
-    scripts/fa run --role planner --task "Build JWT auth" --run-id "workflow-1"
+    scripts/fa workflow planner,coder,eval "Build JWT auth" --run-id "workflow-1"
 
-    # Coder (resumes planner's draft)
-    scripts/fa run --role coder --task "Execute S1" --run-id "workflow-1" --resume
+  Advanced execution (resume an existing session with verbose output):
 
-    # Evaluator (verifies coder's work)
-    scripts/fa run --role eval --task "Verify S1" --run-id "workflow-1" --resume
+    scripts/fa run -r planner -i run-136 -w /sessions/session-20260701T142751-7 \
+      --resume -n 60 --output-mode console --detail verbose \
+      "Continue where we left off and finish the evaluation."
 
   Auto-run mode (on next container start):
 
     Edit ${ENV_FA}:
       FA_AUTO_RUN=1
       FA_TASK=Build JWT auth
-      FA_ROLE=planner
+      FA_ROLE=coder
       FA_RUN_ID=auth-workflow
 
     Then restart:

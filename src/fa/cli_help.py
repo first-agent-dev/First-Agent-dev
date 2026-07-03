@@ -85,6 +85,20 @@ COMMANDS: dict[str, CommandHelp] = {
                 "en": "Resume an existing session: preserve the on-disk PR draft so the "
                 "previous role's work log can be read.",
             },
+            "--output-mode": {
+                "ru": "Режим вывода: console (прогресс ходов на stderr) или quiet (только "
+                "итоговый результат).",
+                "en": "Output mode: console (per-turn progress to stderr) or quiet (final only).",
+            },
+            "--detail": {
+                "ru": "Уровень детализации консоли: minimal | standard | verbose | debug "
+                "(по умолчанию standard).",
+                "en": "Console detail level (default: standard).",
+            },
+            "--no-color": {
+                "ru": "Отключить цветной вывод (устанавливает NO_COLOR=1).",
+                "en": "Disable color output (sets NO_COLOR=1).",
+            },
         },
         "examples": [
             'fa run "Исправь баг в src/fa/x.py"',
@@ -242,7 +256,7 @@ COMMANDS: dict[str, CommandHelp] = {
         "summary_ru": "Запустить Level-0 ядро authoring-guardrails (ADR-11 two-tier TCB).",
         "summary_en": "Run the Level-0 authoring-guardrail kernel (ADR-11 two-tier TCB).",
         "args": {
-            "--workspace/-w": {
+            "--workspace": {
                 "ru": "Корень workspace (должен содержать knowledge/llms.txt).",
                 "en": "Workspace root (must contain knowledge/llms.txt).",
             },
@@ -253,6 +267,63 @@ COMMANDS: dict[str, CommandHelp] = {
             "--output": {"ru": "Формат: text | json.", "en": "Format: text | json."},
         },
         "examples": ["fa authoring-check", "fa authoring-check --output json"],
+    },
+    "inner-loop-smoke": {
+        "summary_ru": "Запуск тестов среды M-1 без обращения к LLM.",
+        "summary_en": "Exercise the M-1 registry + HookRegistry runtime without an LLM provider.",
+        "args": {
+            "--workspace": {
+                "ru": "Корень рабочего пространства.",
+                "en": "Workspace root. Paths are resolved relative to this directory.",
+            },
+            "--input": {
+                "ru": "Файл для чтения перед выполнением вызовов.",
+                "en": "File to read before the smoke write/bash calls.",
+            },
+            "--output": {
+                "ru": "Файл для записи результатов smoke test.",
+                "en": "Workspace-relative file written by the smoke run.",
+            },
+        },
+        "examples": ["fa inner-loop-smoke --read knowledge/llms.txt --write test.txt"],
+    },
+    "help": {
+        "summary_ru": "Показать двуязычную (RU/EN) справку по командам.",
+        "summary_en": "Show bilingual (RU/EN) command help; --json for the WebUI contract.",
+        "args": {
+            "topic": {
+                "ru": "Команда для объяснения (например, run, workflow).",
+                "en": "Command to explain (e.g. run, workflow). Omit for the command list.",
+            },
+            "--json": {
+                "ru": "Вывести справку в формате JSON.",
+                "en": "Emit the full bilingual help registry as JSON (WebUI contract).",
+            },
+        },
+        "examples": ["fa help", "fa help run", "fa help --json"],
+    },
+    "egress-proxy": {
+        "summary_ru": "Запустить egress-proxy для защиты секретов (ADR-12).",
+        "summary_en": "Run the egress-injection proxy (ADR-12 secret isolation).",
+        "args": {
+            "--models": {
+                "ru": "Путь к models.yaml (источник роутинга).",
+                "en": "Path to models.yaml (routing source; non-secret).",
+            },
+            "--secrets": {
+                "ru": "Путь к файлу ключей провайдеров.",
+                "en": "Path to the provider-keys file (mounted ro into the proxy only).",
+            },
+            "--token-file": {
+                "ru": "Путь к токену fa→proxy.",
+                "en": "Path to the fa→proxy bootstrap token file.",
+            },
+            "--listen": {
+                "ru": "host:port для прослушивания (по умолчанию 0.0.0.0:8080).",
+                "en": "host:port to bind (default 0.0.0.0:8080).",
+            },
+        },
+        "examples": ["fa egress-proxy"],
     },
 }
 
@@ -508,7 +579,11 @@ def render_command_help_ru(command: str) -> str:
     entry = COMMANDS.get(command)
     if entry is None:
         return ""
-    lines: list[str] = [entry["summary_ru"], ""]
+    lines: list[str] = [
+        "--- Справка на русском языке (Russian Quick-Reference) ---",
+        entry["summary_ru"],
+        "",
+    ]
     if entry["args"]:
         lines.append("Аргументы (RU):")
         width = max(len(name) for name in entry["args"])

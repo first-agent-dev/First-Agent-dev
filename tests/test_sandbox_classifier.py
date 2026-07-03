@@ -291,6 +291,7 @@ def test_has_dangerous_shell_pattern_no_spaces() -> None:
 
 def test_git_subcommand_direct_helpers() -> None:
     from fa.sandbox.classifier import _git_subcommand
+
     assert _git_subcommand(["git"]) == ""
     assert _git_subcommand(["ls", "commit"]) == ""
     assert _git_subcommand(["git", "-p", "commit"]) == "commit"
@@ -299,6 +300,7 @@ def test_git_subcommand_direct_helpers() -> None:
 
 def test_package_install_subcommand_direct_helpers() -> None:
     from fa.sandbox.classifier import _package_install_subcommand
+
     assert _package_install_subcommand(["pip"]) == ""
     assert _package_install_subcommand(["pip", "-v"]) == ""
     assert _package_install_subcommand(["pip", "install", "req"]) == "install"

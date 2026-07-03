@@ -696,9 +696,9 @@ def test_chain_from_mapping_coalesces_yaml_null_on_chain_entry_numeric_fields() 
     # Must not raise TypeError("int() argument must be ...").
     config = chain_from_mapping("coder", raw)
     entry = config.chain[0]
-    assert entry.cooldown_seconds == 90  # DEFAULT_COOLDOWN_SECONDS
-    assert entry.transport_retries == 1  # DEFAULT_TRANSPORT_RETRIES
-    assert entry.timeout_seconds == 15  # DEFAULT_TIMEOUT_SECONDS
+    assert entry.cooldown_seconds == 15  # DEFAULT_COOLDOWN_SECONDS
+    assert entry.transport_retries == 2  # DEFAULT_TRANSPORT_RETRIES
+    assert entry.timeout_seconds == 300  # DEFAULT_TIMEOUT_SECONDS
     assert entry.extra_headers == {}
 
 
@@ -749,9 +749,9 @@ def test_chain_from_mapping_omitted_optional_fields_use_defaults() -> None:
     }
     config = chain_from_mapping("coder", raw)
     entry = config.chain[0]
-    assert entry.cooldown_seconds == 90
-    assert entry.transport_retries == 1
-    assert entry.timeout_seconds == 15
+    assert entry.cooldown_seconds == 15
+    assert entry.transport_retries == 2
+    assert entry.timeout_seconds == 300
     assert entry.extra_headers == {}
 
 

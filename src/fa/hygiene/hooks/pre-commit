@@ -97,7 +97,7 @@ _run_fast_hooks() {
 _run_optional_full_check() {
     if [[ "${FA_HOOK_FULL_CHECK:-0}" == "1" ]]; then
         echo "pre-commit: FA_HOOK_FULL_CHECK=1 — running uv run just check" >&2
-        uv run just check
+        uv run just check 1>&2
     fi
 }
 

@@ -153,6 +153,7 @@ case "${1:-}" in
     sessions)
         shift
         if _is_help_arg "${1:-}"; then _print_host_topic_help sessions; exit 0; fi
+        # shellcheck disable=SC2010
         ls -lt "$_FA_ROOT/sessions/" | grep -v "^total\|\.active"
         ;;
 

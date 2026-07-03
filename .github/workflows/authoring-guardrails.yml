@@ -21,13 +21,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           # Full history so the protected-path diff-check can reach the
           # PR base ref's merge-base.
           fetch-depth: 0
  
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
  
       - name: Install package
         # Runtime deps only: the Level-0 kernel is stdlib-only, but the
@@ -40,4 +40,6 @@ jobs:
  
       - name: Surface protected-path edits (flag for human review)
         if: github.event_name == 'pull_request'
-        run: uv run python scripts/check_protected_paths.py --base "origin/${{ github.base_ref }}"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: uv run python scripts/check_protected_paths.py --base "origin/$BASE_REF"

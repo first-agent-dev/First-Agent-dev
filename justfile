@@ -77,8 +77,10 @@ authoring-check:
 test:
     pytest --cov=fa --cov-report=term-missing --cov-report=xml
 
+# Vulnerability scanning (Dependencies + SAST)
 audit:
     pip-audit
+    uvx semgrep --config=p/python --config=p/owasp-top-ten
 
 deadcode:
     -vulture src/ --min-confidence 90
