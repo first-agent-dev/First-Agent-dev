@@ -135,6 +135,7 @@ def _resolve_task(positional: str | None, flag: str | None) -> str | None:
             try:
                 piped_data = sys.stdin.read().strip()
             except (AttributeError, ValueError, OSError):
+                # Intentionally ignore unreadable/mock stdin on fallback; treat as empty.
                 pass
 
     if chosen == "-":
@@ -144,6 +145,7 @@ def _resolve_task(positional: str | None, flag: str | None) -> str | None:
             try:
                 piped_data = sys.stdin.read().strip()
             except (AttributeError, ValueError, OSError):
+                # Intentionally ignore unreadable/mock stdin; treat as no input.
                 pass
         return piped_data if piped_data else None
 
