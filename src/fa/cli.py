@@ -131,7 +131,11 @@ def _resolve_task(positional: str | None, flag: str | None) -> str | None:
             if select.select([sys.stdin], [], [], 0.0)[0]:
                 piped_data = sys.stdin.read().strip()
         except (AttributeError, ValueError, OSError):
-            pass
+            # Fallback for Windows and StringIO mock test environments
+            try:
+                piped_data = sys.stdin.read().strip()
+            except (AttributeError, ValueError, OSError):
+                pass
 
     if chosen == "-":
         # Explicit stdin read. If we already read it via isatty check, use it,
