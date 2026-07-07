@@ -679,6 +679,10 @@ def drive_session(  # noqa: C901
             "role": "assistant",
             "content": response.text or "",
         }
+        # Safely preserve custom API message attributes (like reasoning_details)
+        if "message_extras" in response.extras:
+            for k, v in response.extras["message_extras"].items():
+                assistant_message[k] = v
         if tool_calls:
             assistant_message["tool_calls"] = _tool_calls_for_message(
                 response.tool_calls, tool_calls

@@ -111,6 +111,12 @@ def _normalize_success(body: Mapping[str, Any]) -> ResponseInfo:
         if key in body:
             extras[key] = body[key]
 
+    message_extras = {
+        k: v for k, v in message.items() if k not in {"content", "role", "tool_calls"}
+    }
+    if message_extras:
+        extras["message_extras"] = message_extras
+
     return ResponseInfo(
         text=text,
         in_tokens=in_tokens,

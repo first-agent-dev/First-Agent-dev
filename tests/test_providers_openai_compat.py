@@ -159,6 +159,41 @@ def test_response_preserves_tool_calls_and_provider_extras() -> None:
     assert response.extras["provider"] == {"name": "openrouter"}
 
 
+def test_response_preserves_custom_message_extras() -> None:
+    transport = FakeTransport(
+        response=TransportResponse(
+            status=200,
+            body={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "A brave squirrel story...",
+                            "reasoning_details": "Preserved reasoning content here",
+                            "custom_field": 123,
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            },
+        ),
+    )
+    provider = OpenAICompatProvider(transport=transport)
+    response = provider.request(
+        _request(),
+        base_url="https://api.llm7.io/v1",
+        api_key="k",
+        timeout_seconds=60.0,
+        transport_retries=0,
+        extra_headers={},
+    )
+    assert response.text == "A brave squirrel story..."
+    assert response.extras["message_extras"] == {
+        "reasoning_details": "Preserved reasoning content here",
+        "custom_field": 123,
+    }
+
+
 @pytest.mark.parametrize("status", [400, 422])
 def test_4xx_request_shape_fail_fast(status: int) -> None:
     transport = FakeTransport(response=TransportResponse(status=status, body={"error": "bad"}))
