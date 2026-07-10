@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,21 @@ import pytest
 import fa.hygiene.hooks as hooks_pkg
 import fa.hygiene.hooks.install as install_mod
 import fa.hygiene.hooks.status as status_mod
+
+
+def _can_execute() -> bool:
+    try:
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.close()
+            os.chmod(f.name, 0o755)
+            res = os.access(f.name, os.X_OK)
+            os.unlink(f.name)
+            return res
+    except OSError:
+        return False
+
+
+_CAN_EXECUTE = _can_execute()
 
 HOOK_NAMES = install_mod.HOOK_NAMES
 install_hooks = install_mod.install_hooks
@@ -539,6 +555,7 @@ def test_resolve_hooks_dir_respects_core_hookspath(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@pytest.mark.skipif(not _CAN_EXECUTE, reason="Filesystem does not support executable bits")
 def test_pre_commit_preserves_first_failure_exit_code_when_no_files_changed(tmp_path: Path) -> None:
     """If no staged files were modified, the original failing exit code is preserved."""
 
@@ -775,6 +792,7 @@ exit 0
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@pytest.mark.skipif(not _CAN_EXECUTE, reason="Filesystem does not support executable bits")
 def test_pre_push_runs_full_check_by_default(tmp_path: Path) -> None:
     hook = Path(install_mod.__file__).resolve().parent / "pre-push"
     fakebin = tmp_path / "fakebin_push"

@@ -96,7 +96,7 @@ def canonical_params_hash(tool_name: str, params: Mapping[str, object]) -> str:
 
     canonical = json.dumps(dict(params), sort_keys=True, ensure_ascii=False)
     blob = f"{tool_name}|{canonical}".encode()
-    return hashlib.sha1(blob, usedforsecurity=False).hexdigest()[:12]
+    return hashlib.sha256(blob).hexdigest()[:12]
 
 
 @dataclass

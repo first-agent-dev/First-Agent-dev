@@ -605,6 +605,49 @@ def test_drive_session_cache_slo_against_recorded_transcript(tmp_path: Path) -> 
     assert cache_hit_ratio >= 0.7
 
 
+def test_drive_session_preserves_custom_message_extras(tmp_path: Path) -> None:
+    tool_call_emit = {
+        "id": "tc-1",
+        "type": "function",
+        "function": {"name": "echo", "arguments": '{"text": "hi"}'},
+    }
+    extras = {"message_extras": {"reasoning_details": "Preserved reasoning content here"}}
+    provider = FakeProvider(
+        [
+            ResponseInfo(
+                text="",
+                in_tokens=10,
+                out_tokens=5,
+                finish_reason="tool_calls",
+                tool_calls=(tool_call_emit,),
+                extras=extras,
+            ),
+            _make_response(text="done", finish_reason="stop"),
+        ]
+    )
+    chain = _make_chain(provider)
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    state = _make_state(tmp_path)
+
+    outcome = drive_session(
+        "task with custom reasoning",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert outcome.exit_code == 0
+    # In the second turn, the assistant message in the request sent to the provider
+    # must include the preserved reasoning_details.
+    follow_up = provider.calls[1]
+    assistant_messages = [m for m in follow_up.messages if m.get("role") == "assistant"]
+    assert len(assistant_messages) == 1
+    assert assistant_messages[0]["reasoning_details"] == "Preserved reasoning content here"
+
+
 def test_tool_pairing_invariant_accepts_complete_openai_pairs() -> None:
     _assert_tool_pairing_invariant(
         (

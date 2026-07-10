@@ -33,7 +33,8 @@ and bypassable per ADR-11-I6) — it is the authoritative local gate.
 | `uv lock --locked` | `just lock-check` | pyproject/lock drift; non-existent (hallucinated) packages cannot resolve | blocking |
 | `fa authoring-check` | `just authoring-check` | ADR-11 Level-0/1 rules (below) | blocking (HARD-BLOCK exits 1) |
 | vulture | `just deadcode` | dead code left by rewrite-instead-of-refactor | advisory (manual; high FP on dynamic dispatch) |
-| mutmut 3.x | `just mutation` | tests that execute code without verifying it (survivors = bugs the suite would miss); sandbox scope, baseline 163/633 | advisory until `knowledge/mutation-survivors-workplan.md` is deleted → then blocking at survivors=0 (BACKLOG I-23) |
+| `mutmut 3.x` | `just mutation` | tests that execute code without verifying it (survivors = bugs the suite would miss); sandbox scope, baseline 163/633 | advisory until `knowledge/mutation-survivors-workplan.md` is deleted → then blocking at survivors=0 (BACKLOG I-23) |
+| `pip-audit`, `semgrep` | `just audit` | vulnerable dependencies (CVEs) + OWASP/python SAST rules | advisory (run locally or weekly in CI; findings triaged manually) |
 
 ## Layer 1 — ADR-11 authoring kernel (`fa authoring-check`)
 

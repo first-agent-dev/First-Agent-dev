@@ -1,3 +1,11 @@
+# To hide internal ops commands from the public `--help` output without
+# removing them from the parser entirely, pass `help=argparse.SUPPRESS`
+# when defining the subparser. They will remain fully functional and
+# documented in `cli_help.py` (e.g. via `fa help ops`), but will not
+# clutter the default developer-facing CLI interface.
+# Example:
+#   smoke_parser = subparsers.add_parser("inner-loop-smoke", help=argparse.SUPPRESS)
+
 from __future__ import annotations
 
 import argparse
@@ -18,7 +26,7 @@ from fa import __version__
 from fa.authoring_rules import RULE_ALLOWLIST
 from fa.authoring_tcb import render_json, render_text, run_all
 from fa.chunker import CHUNKER_VERSION, Chunk, default_chunker
-from fa.cli_help import help_as_json, render_command_help_ru, render_top_level_ru
+from fa.cli_help import COMMANDS, help_as_json, render_command_help_ru, render_top_level_ru
 from fa.inner_loop import (
     EventLog,
     SessionState,
@@ -94,14 +102,60 @@ def _resolve_task(positional: str | None, flag: str | None) -> str | None:
 
     Precedence: an explicit --task wins over the positional (so the flag form
     stays authoritative for back-compat). A value of ``-`` (in either slot)
-    means "read the task from stdin" (pipe-friendly, llm/claude pattern).
+    means "read the task from stdin" (explicit pipe mode).
+
+    Transparent Stdin: If stdin is not a TTY (data is piped) and a text prompt
+    is also provided, they are concatenated (prompt first, piped data as context).
+    If only piped data is present, it becomes the task.
     Returns ``None`` when no task source was supplied at all.
     """
     chosen = flag if flag is not None else positional
-    if chosen is None:
-        return None
+
+    # Read piped data if sys.stdin is not interactive
+    piped_data = ""
+    # In pytest, sys.stdin is often mocked (e.g. io.StringIO) which doesn't
+    # have a real isatty() backing an FD, so we catch AttributeError/ValueError.
+    try:
+        # pytest replaces sys.stdin with a DontReadFromInput object
+        # which throws OSError when read() is called. We should safely
+        # handle isatty() returning False but read() failing.
+        is_interactive = sys.stdin.isatty()
+    except (AttributeError, ValueError, OSError):
+        is_interactive = True
+
+    if not is_interactive:
+        try:
+            import select
+
+            # Quick check if there is data to read without blocking
+            if select.select([sys.stdin], [], [], 0.0)[0]:
+                piped_data = sys.stdin.read().strip()
+        except (AttributeError, ValueError, OSError):
+            # Fallback for Windows and StringIO mock test environments
+            try:
+                piped_data = sys.stdin.read().strip()
+            except (AttributeError, ValueError, OSError):
+                # Intentionally ignore unreadable/mock stdin on fallback; treat as empty.
+                pass
+
     if chosen == "-":
-        return sys.stdin.read().strip()
+        # Explicit stdin read. If we already read it via isatty check, use it,
+        # otherwise read now (for the mocked sys.stdin tests).
+        if not piped_data:
+            try:
+                piped_data = sys.stdin.read().strip()
+            except (AttributeError, ValueError, OSError):
+                # Intentionally ignore unreadable/mock stdin; treat as no input.
+                pass
+        return piped_data if piped_data else None
+
+    if chosen is None:
+        return piped_data if piped_data else None
+
+    if piped_data:
+        # We have both an explicit instruction and piped context.
+        return f"{chosen}\n\n<stdin>\n{piped_data}\n</stdin>"
+
     return chosen
 
 
@@ -237,7 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     chunk_parser = subparsers.add_parser(
         "chunk",
-        help="Run the deterministic chunker on a single file (smoke / inspection).",
+        help=COMMANDS["chunk"]["summary_en"],
         description=(
             "Run the deterministic chunker on PATH and emit the produced "
             "chunks. Intended for manual inspection of the chunker output; "
@@ -245,21 +299,18 @@ def build_parser() -> argparse.ArgumentParser:
             "wired."
         ),
     )
-    chunk_parser.add_argument("path", type=Path, help="Path to the file to chunk.")
+    chunk_parser.add_argument("path", type=Path, help=COMMANDS["chunk"]["args"]["path"]["en"])
     chunk_parser.add_argument(
         "--output",
         choices=("text", "json"),
         default="text",
-        help=(
-            "Output format. 'text' prints a one-line-per-chunk summary; "
-            "'json' emits the full Chunk records on stdout."
-        ),
+        help=COMMANDS["chunk"]["args"]["--output"]["en"],
     )
     chunk_parser.set_defaults(func=_cmd_chunk)
 
     smoke_parser = subparsers.add_parser(
         "inner-loop-smoke",
-        help="Exercise the M-1 registry + HookRegistry runtime without an LLM provider.",
+        help=COMMANDS["inner-loop-smoke"]["summary_en"],
         description=(
             "Run a deterministic read_file → write_file → run_bash sequence through "
             "the inner-loop registry and HookRegistry. This is a Phase-M smoke entry "
@@ -270,23 +321,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--workspace",
         type=Path,
         default=Path.cwd(),
-        help="Workspace root. Paths are resolved relative to this directory.",
+        help=COMMANDS["inner-loop-smoke"]["args"]["--workspace"]["en"],
     )
     smoke_parser.add_argument(
         "--input",
         default="README.md",
-        help="File to read before the smoke write/bash calls.",
+        help=COMMANDS["inner-loop-smoke"]["args"]["--input"]["en"],
     )
     smoke_parser.add_argument(
         "--output",
         default=".fa/inner-loop-smoke.txt",
-        help="Workspace-relative file written by the smoke run.",
+        help=COMMANDS["inner-loop-smoke"]["args"]["--output"]["en"],
     )
     smoke_parser.set_defaults(func=_cmd_inner_loop_smoke)
 
     run_parser = subparsers.add_parser(
         "run",
-        help="Drive an LLM-driven coder session against ~/.fa/models.yaml.",
+        help=COMMANDS["run"]["summary_en"],
         description=(
             "Resolve the per-role provider chain from --config (defaults "
             "to ~/.fa/models.yaml), bootstrap a SessionState + HookRegistry, "
@@ -316,68 +367,64 @@ def build_parser() -> argparse.ArgumentParser:
         "--role",
         "-r",
         default="coder",
-        help="Acting role (matches a top-level key in ~/.fa/models.yaml).",
+        help=COMMANDS["run"]["args"]["--role/-r"]["en"],
     )
     run_parser.add_argument(
         "--config",
         "-c",
         type=Path,
         default=DEFAULT_MODELS_YAML_PATH,
-        help="Path to the per-role chain config (default: ~/.fa/models.yaml).",
+        help=COMMANDS["run"]["args"]["--config/-c"]["en"],
     )
     run_parser.add_argument(
         "--workspace",
         "-w",
         type=Path,
         default=Path.cwd(),
-        help="Workspace root. Paths inside tools are resolved relative to this directory.",
+        help=COMMANDS["run"]["args"]["--workspace/-w"]["en"],
     )
     run_parser.add_argument(
         "--max-turns",
         "-n",
         type=int,
         default=DEFAULT_MAX_TURNS,
-        help=f"LLM-turn cap (default: {DEFAULT_MAX_TURNS}).",
+        help=COMMANDS["run"]["args"]["--max-turns/-n"]["en"],
     )
     run_parser.add_argument(
         "--run-id",
         "-i",
         default="",
-        help="Override the run_id (default: derived from PID).",
+        help=COMMANDS["run"]["args"]["--run-id/-i"]["en"],
     )
     run_parser.add_argument(
         "--resume",
         action="store_true",
         default=False,
-        help=(
-            "Resume an existing workflow session. Preserves the PR draft file "
-            "on disk so this session can read the previous role's work log, "
-            "then update it with fresh progress."
-        ),
+        help=COMMANDS["run"]["args"]["--resume"]["en"],
     )
     run_parser.add_argument(
         "--output-mode",
         choices=("console", "quiet"),
         default="console",
-        help="Output mode: console (per-turn progress to stderr) or quiet (final only).",
+        help=COMMANDS["run"]["args"]["--output-mode"]["en"],
     )
     run_parser.add_argument(
         "--detail",
         choices=("minimal", "standard", "verbose", "debug"),
         default="standard",
-        help="Console detail level (default: standard).",
+        help=COMMANDS["run"]["args"]["--detail"]["en"],
     )
     run_parser.add_argument(
         "--no-color",
         action="store_true",
         default=False,
-        help="Disable color output (sets NO_COLOR=1).",
+        help=COMMANDS["run"]["args"]["--no-color"]["en"],
     )
     run_parser.set_defaults(func=_cmd_run)
 
     workflow_parser = subparsers.add_parser(
         "workflow",
-        help="Run a multi-role pipeline (planner→coder→eval) in one command.",
+        help=COMMANDS["workflow"]["summary_en"],
         description=(
             "Drive several roles in sequence over a single shared run-id and "
             "workspace. The first role starts fresh; every later role gets "
@@ -391,69 +438,59 @@ def build_parser() -> argparse.ArgumentParser:
     )
     workflow_parser.add_argument(
         "roles",
-        help="Comma-separated roles in execution order, e.g. planner,coder,eval.",
+        help=COMMANDS["workflow"]["args"]["roles"]["en"],
     )
     workflow_parser.add_argument(
         "task",
         nargs="?",
         default=None,
-        help="Task text (quoted). Passed to every role unless --task-<role> overrides it.",
+        help=COMMANDS["workflow"]["args"]["task"]["en"],
     )
     workflow_parser.add_argument(
         "--workspace",
         "-w",
         type=Path,
         default=Path.cwd(),
-        help="Shared workspace root for every role.",
+        help=COMMANDS["workflow"]["args"]["--workspace/-w"]["en"],
     )
     workflow_parser.add_argument(
         "--run-id",
         "-i",
         default="",
-        help="Shared run_id (default: generated from timestamp + task slug).",
+        help=COMMANDS["workflow"]["args"]["--run-id/-i"]["en"],
     )
     workflow_parser.add_argument(
         "--config",
         "-c",
         type=Path,
         default=DEFAULT_MODELS_YAML_PATH,
-        help="Path to the per-role chain config (default: ~/.fa/models.yaml).",
+        help=COMMANDS["workflow"]["args"]["--config/-c"]["en"],
     )
     workflow_parser.add_argument(
         "--max-turns",
         "-n",
         type=int,
         default=DEFAULT_MAX_TURNS,
-        help=f"LLM-turn cap applied to each role (default: {DEFAULT_MAX_TURNS}).",
+        help=COMMANDS["workflow"]["args"]["--max-turns/-n"]["en"],
     )
     workflow_parser.add_argument(
         "--mode",
         "-m",
         choices=_WORKFLOW_MODES,
         default="linear",
-        help=(
-            "Routing strategy: 'linear' runs each role once; 'repair' adds "
-            "bounded coder→eval repair rounds driven by the eval route "
-            "(default: linear)."
-        ),
+        help=COMMANDS["workflow"]["args"]["--mode/-m"]["en"],
     )
     workflow_parser.add_argument(
         "--max-repairs",
         type=int,
         default=DEFAULT_MAX_REPAIRS,
-        help=(
-            f"Max coder→eval repair rounds in --mode repair/adaptive "
-            f"(default: {DEFAULT_MAX_REPAIRS}, hard ceiling {MAX_REPAIRS_CEILING})."
-        ),
+        help=COMMANDS["workflow"]["args"]["--max-repairs"]["en"],
     )
     workflow_parser.add_argument(
         "--max-replans",
         type=int,
         default=DEFAULT_MAX_REPLANS,
-        help=(
-            f"Max planner re-entry rounds in --mode adaptive "
-            f"(default: {DEFAULT_MAX_REPLANS}, hard ceiling {MAX_REPLANS_CEILING})."
-        ),
+        help=COMMANDS["workflow"]["args"]["--max-replans"]["en"],
     )
     # Per-role task overrides: --task-planner / --task-coder / --task-eval.
     for _role in ("planner", "coder", "eval"):
@@ -466,7 +503,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     help_parser = subparsers.add_parser(
         "help",
-        help="Show bilingual (RU/EN) command help; --json for the WebUI contract.",
+        help=COMMANDS["help"]["summary_en"],
         description=(
             "Print the Russian command/argument help from the shared cli_help "
             "registry. With --json, emit the full bilingual registry that a "
@@ -478,18 +515,18 @@ def build_parser() -> argparse.ArgumentParser:
         "topic",
         nargs="?",
         default=None,
-        help="Command to explain (e.g. run, workflow). Omit for the command list.",
+        help=COMMANDS["help"]["args"]["topic"]["en"],
     )
     help_parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit the full bilingual help registry as JSON (WebUI contract).",
+        help=COMMANDS["help"]["args"]["--json"]["en"],
     )
     help_parser.set_defaults(func=_cmd_help)
 
     selfcheck_parser = subparsers.add_parser(
         "selfcheck",
-        help="Diagnose the ADR-12 egress-proxy LLM path.",
+        help=COMMANDS["selfcheck"]["summary_en"],
         description=(
             "Check that the agent can reach the egress proxy, that the proxy's "
             "route table matches the selected role in ~/.fa/models.yaml, and "
@@ -504,20 +541,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--role",
         "-r",
         default="coder",
-        help="Role to check (matches a top-level key in ~/.fa/models.yaml).",
+        help=COMMANDS["selfcheck"]["args"]["--role/-r"]["en"],
     )
     selfcheck_parser.add_argument(
         "--config",
         "-c",
         type=Path,
         default=DEFAULT_MODELS_YAML_PATH,
-        help="Path to the per-role chain config (default: ~/.fa/models.yaml).",
+        help=COMMANDS["selfcheck"]["args"]["--config/-c"]["en"],
     )
     selfcheck_parser.set_defaults(func=_cmd_selfcheck)
 
     probe_parser = subparsers.add_parser(
         "probe",
-        help="Liveness-test the LLM provider chain with a minimal API call.",
+        help=COMMANDS["probe"]["summary_en"],
         description=(
             "Send a minimal LLM request (~10 tokens) through the full "
             "agent→proxy→provider path for the selected role (or all roles). "
@@ -533,31 +570,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--role",
         "-r",
         default="coder",
-        help="Role to probe (matches a top-level key in ~/.fa/models.yaml).",
+        help=COMMANDS["probe"]["args"]["--role/-r"]["en"],
     )
     probe_parser.add_argument(
         "--all-roles",
         action="store_true",
-        help="Probe every role declared in ~/.fa/models.yaml.",
+        help=COMMANDS["probe"]["args"]["--all-roles"]["en"],
     )
     probe_parser.add_argument(
         "--config",
         "-c",
         type=Path,
         default=DEFAULT_MODELS_YAML_PATH,
-        help="Path to the per-role chain config (default: ~/.fa/models.yaml).",
+        help=COMMANDS["probe"]["args"]["--config/-c"]["en"],
     )
     probe_parser.add_argument(
         "--timeout",
         type=int,
         default=30,
-        help="Per-entry timeout in seconds (default: 30).",
+        help=COMMANDS["probe"]["args"]["--timeout"]["en"],
     )
     probe_parser.set_defaults(func=_cmd_probe)
 
     stats_parser = subparsers.add_parser(
         "stats",
-        help="Analyze session logs — tool usage, file access, tokens, efficiency.",
+        help=COMMANDS["stats"]["summary_en"],
         description=(
             "Parse events.jsonl files from past fa run sessions and render "
             "analytics: tool usage, file access patterns, token timelines, "
@@ -566,27 +603,40 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=render_command_help_ru("stats"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    stats_parser.add_argument("--run-id", "-i", default=None, help="Analyze specific session.")
-    stats_parser.add_argument("--since", default=None, help="Filter by age (e.g. 7d, 24h, 1h).")
+    stats_parser.add_argument(
+        "--run-id",
+        "-i",
+        default=None,
+        help=COMMANDS["stats"]["args"]["--run-id/-i"]["en"],
+    )
+    stats_parser.add_argument(
+        "--since",
+        default=None,
+        help=COMMANDS["stats"]["args"]["--since"]["en"],
+    )
     stats_parser.add_argument(
         "--output",
         choices=("console", "json"),
         default="console",
-        help="Output format.",
+        help=COMMANDS["stats"]["args"]["--output"]["en"],
     )
     stats_parser.add_argument(
         "--workspace",
         "-w",
         type=Path,
         default=Path.cwd(),
-        help="Workspace root (default: cwd).",
+        help=COMMANDS["stats"]["args"]["--workspace/-w"]["en"],
     )
-    stats_parser.add_argument("--dead-zones", action="store_true", help="Files never accessed.")
+    stats_parser.add_argument(
+        "--dead-zones",
+        action="store_true",
+        help=COMMANDS["stats"]["args"]["--dead-zones"]["en"],
+    )
     stats_parser.set_defaults(func=_cmd_stats)
 
     authoring_parser = subparsers.add_parser(
         "authoring-check",
-        help="Run the Level-0 authoring-guardrail kernel (ADR-11 two-tier TCB).",
+        help=COMMANDS["authoring-check"]["summary_en"],
         description=(
             "Run the frozen, stdlib-only Level-0 kernel over the workspace: "
             "parse the optional --manifest, enumerate + SHA-256 hash the "
@@ -600,31 +650,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--workspace",
         type=Path,
         default=Path.cwd(),
-        help=(
-            "First-Agent workspace root (must contain knowledge/llms.txt; "
-            "no walk-up). Defaults to the current directory."
-        ),
+        help=COMMANDS["authoring-check"]["args"]["--workspace"]["en"],
     )
     authoring_parser.add_argument(
         "--manifest",
         type=Path,
         default=None,
-        help=(
-            "Optional path to a .fa/session.toml manifest. When omitted, "
-            "session_hash is null and the seam is not bound."
-        ),
+        help=COMMANDS["authoring-check"]["args"]["--manifest"]["en"],
     )
     authoring_parser.add_argument(
         "--output",
         choices=("text", "json"),
         default="text",
-        help="Output format (default: text).",
+        help=COMMANDS["authoring-check"]["args"]["--output"]["en"],
     )
     authoring_parser.set_defaults(func=_cmd_authoring_check)
 
     proxy_parser = subparsers.add_parser(
         "egress-proxy",
-        help="Run the egress-injection proxy (ADR-12 secret isolation).",
+        help=COMMANDS["egress-proxy"]["summary_en"],
         description=(
             "Run the LLM-key egress-injection proxy. Reads provider keys from "
             "--secrets and routing from --models, then injects the real key at "
@@ -636,25 +680,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--models",
         type=Path,
         default=DEFAULT_MODELS_YAML_PATH,
-        help="Path to models.yaml (routing source; non-secret).",
+        help=COMMANDS["egress-proxy"]["args"]["--models"]["en"],
     )
     proxy_parser.add_argument(
         "--secrets",
         type=Path,
         default=Path("/run/secrets/fa.env"),
-        help="Path to the provider-keys file (mounted ro into the proxy only).",
+        help=COMMANDS["egress-proxy"]["args"]["--secrets"]["en"],
     )
     proxy_parser.add_argument(
         "--token-file",
         type=Path,
         default=Path("/run/secrets/fa_proxy_token"),
-        help="Path to the fa→proxy bootstrap token file.",
+        help=COMMANDS["egress-proxy"]["args"]["--token-file"]["en"],
     )
     proxy_parser.add_argument(
         "--listen",
         type=str,
         default="0.0.0.0:8080",
-        help="host:port to bind (default 0.0.0.0:8080).",
+        help=COMMANDS["egress-proxy"]["args"]["--listen"]["en"],
     )
     proxy_parser.set_defaults(func=_cmd_egress_proxy)
 

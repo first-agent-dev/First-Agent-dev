@@ -45,6 +45,10 @@ PROVIDERS: Mapping[str, ProviderSpec] = {
     "cerebras": _OPENAI_COMPAT,
     "perplexity": _OPENAI_COMPAT,
     "xai": _OPENAI_COMPAT,
+    "alistaitsacle": _OPENAI_COMPAT,
+    "apertis": _OPENAI_COMPAT,
+    "llm7": _OPENAI_COMPAT,
+    "openmodel": _ANTHROPIC,
     "anthropic": _ANTHROPIC,
 }
 
