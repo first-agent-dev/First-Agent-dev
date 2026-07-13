@@ -18,18 +18,11 @@ import shutil
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any, override
 
 
 def _sanitize_task_id(task_id: str, run_id: str = "") -> str:
-    """Elegant production-grade sanitize, deterministic, no leak.
-
-    - Replaces [^a-zA-Z0-9-_'] with '-', truncates 50, lower, strip '-'
-    - If result empty after strip: deterministic fallback task-{hash(original+run_id)[:8]}
-      * Same empty in same session (same run_id) → same path → cleanup works, no leak
-      * Different sessions (different run_id) → different hash → no global collision
-      * Not random uuid → testable, deterministic, no double-call mismatch
-    - Logs WARNING for empty, fail-fast friendly
-    """
+    """Elegant production-grade sanitize, deterministic, no leak."""
     original = task_id or ""
     sanitized = re.sub(r"[^a-zA-Z0-9-_]", "-", original)[:50]
     sanitized = sanitized.strip("-").lower()
@@ -37,7 +30,6 @@ def _sanitize_task_id(task_id: str, run_id: str = "") -> str:
     if sanitized:
         return sanitized
 
-    # Deterministic fallback: hash(original + run_id) for uniqueness across sessions
     if not original.strip():
         print(f"WARNING: task_id empty after sanitization, original='{original}', using deterministic fallback")
 
@@ -64,19 +56,16 @@ class SharedDirWorktreeManager(WorktreeManager):
         assert self.session_root.exists(), f"session_root {self.session_root} not exists"
         assert self.session_root.is_dir(), f"session_root {self.session_root} not dir"
 
+    @override
     def create_subagent_workspace(self, task_id: str, base_branch: str = "main") -> Path:
-        # SharedDir ignores task_id, returns session_root, 100% stable, 0 code
-        # But still sanitize for logging / blackboard consistency
-        clean_id = _sanitize_task_id(task_id, run_id=self.run_id)
-        # Log clean_id for observability, but return session_root
-        # print(f"SharedDir workspace for {task_id} -> {clean_id} -> {self.session_root}")
+        _sanitize_task_id(task_id, run_id=self.run_id)
         return self.session_root
 
+    @override
     def cleanup(self, path: Path) -> None:
         assert Path(path).resolve() == self.session_root, (
             f"cleanup called on non-session_root {path} in SharedDir mode"
         )
-        pass
 
 
 class IsolatedWorktreeManager(WorktreeManager):
@@ -93,12 +82,11 @@ class IsolatedWorktreeManager(WorktreeManager):
 
     def _is_branch_checked_out_elsewhere(self, branch: str) -> tuple[bool, str]:
         result = subprocess.run(
-            ["git", "worktree", "list", "--porcelain"],  # noqa: S607 - git binary
+            ["git", "worktree", "list", "--porcelain"],  # noqa: S607
             cwd=self.repo_root,
             capture_output=True,
             text=True,
         )
-        # Exact parsing: lines "branch refs/heads/<branch>" or "branch <branch>"
         for line in result.stdout.splitlines():
             if not line.startswith("branch "):
                 continue
@@ -119,8 +107,8 @@ class IsolatedWorktreeManager(WorktreeManager):
                 return candidate
         return base_branch
 
+    @override
     def create_subagent_workspace(self, task_id: str, base_branch: str = "main") -> Path:
-        # Elegant: call sanitize once, reuse for path and branch — no mismatch, no leak
         clean_id = _sanitize_task_id(task_id, run_id=self.run_id)
         worktree_path = self.worktrees_root / clean_id
         branch = f"agent/{clean_id}"
@@ -152,7 +140,6 @@ class IsolatedWorktreeManager(WorktreeManager):
         assert worktree_path.exists(), f"worktree_path {worktree_path} not exists after add"
         assert worktree_path.is_dir(), f"worktree_path {worktree_path} not dir after add"
 
-        # Exact porcelain parsing for worktree path, not substring false positive
         list_result = subprocess.run(
             ["git", "worktree", "list", "--porcelain"],  # noqa: S607
             cwd=self.repo_root,
@@ -170,6 +157,7 @@ class IsolatedWorktreeManager(WorktreeManager):
 
         return worktree_path
 
+    @override
     def cleanup(self, path: Path) -> None:
         path = Path(path).resolve()
         subprocess.run(
@@ -189,7 +177,7 @@ class WorktreeManagerFactory:
 
     @staticmethod
     def from_flags(
-        flags, session_root: Path, repo_root: Path, run_id: str = ""
+        flags: Any | None, session_root: Path, repo_root: Path, run_id: str = ""
     ) -> WorktreeManager:
         mode = getattr(flags, "worktree_mode", "shared") if flags else "shared"
         if mode == "isolated":

@@ -228,7 +228,7 @@ def build_diff_tool(workspace_root: Path) -> ToolSpec:
     )
 
 
-def build_send_ctrl_c_tool(pty_pool=None) -> ToolSpec:
+def build_send_ctrl_c_tool(pty_pool: object | None = None) -> ToolSpec:
     def handler(params: Mapping[str, object]) -> ToolResult:
         try:
             session_id = params.get("session_id", "main")

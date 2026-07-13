@@ -1,17 +1,16 @@
-"""Instant Grep tool — FTS5 trigram substring search, <50ms, token efficient — Stage 2
+"""Instant Grep tool — FTS5 trigram substring search, <50ms, token efficient.
 
-Fixes:
-- Gap: fallback rglob slow → use git ls-files for tracked files only (respects .gitignore, fast)
+Fixes: fallback rglob slow → use git ls-files for tracked files only.
 """
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Mapping
-import subprocess
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
-from fa.inner_loop.tools.base import require_string
+from fa.inner_loop.tools.base import optional_int, require_string
 
 
 def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
@@ -20,8 +19,11 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
 
     def handler(params: Mapping[str, object]) -> ToolResult:
         try:
-            query = require_string(dict(params), "query")
-            limit = int(params.get("limit", 10)) if "limit" in params else 10
+            data = dict(params)
+            query = require_string(data, "query")
+            limit = optional_int(data, "limit") or 10
+            if limit <= 0:
+                limit = 10
         except ValueError as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
@@ -46,27 +48,24 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
                 result={"paths": paths, "query": query, "limit": limit, "method": "fts5"},
             )
         except Exception as e:
-            # High ROI Improvement: use git ls-files for tracked files only (fast, respects .gitignore)
             try:
                 git_result = subprocess.run(
-                    ["git", "ls-files"],
+                    ["git", "ls-files"],  # noqa: S607
                     cwd=workspace_root,
                     capture_output=True,
                     text=True,
                 )
                 if git_result.returncode == 0:
                     files = git_result.stdout.splitlines()
-                    matched = []
+                    matched: list[str] = []
                     q_lower = query.lower()
                     for file_rel in files:
-                        # Skip large or binary? quick size check
                         fp = workspace_root / file_rel
                         try:
                             if not fp.is_file():
                                 continue
                             if fp.stat().st_size > 100_000:
                                 continue
-                            # Fast path: check filename contains query
                             if q_lower in file_rel.lower():
                                 matched.append(file_rel)
                                 if len(matched) >= limit:
@@ -90,26 +89,38 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
                             "fts_error": str(e),
                         },
                     )
-                # If git ls-files failed (not a git repo), fallback to rglob limited
                 matched = []
                 q_lower = query.lower()
-                # Use os.walk with pruning for speed
                 import os
 
-                exclude_dirs = {".fa", "node_modules", ".venv", "__pycache__", ".git", "sessions", ".gremlins_cache", "dist", "build", ".mypy_cache"}
+                exclude_dirs = {
+                    ".fa",
+                    "node_modules",
+                    ".venv",
+                    "__pycache__",
+                    ".git",
+                    "sessions",
+                    ".gremlins_cache",
+                    "dist",
+                    "build",
+                    ".mypy_cache",
+                }
                 for dirpath, dirnames, filenames in os.walk(workspace_root):
-                    # Prune excluded dirs in-place
                     dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
-                    # Avoid descending into hidden . dirs beyond root? allow but skip .git etc already
                     for fname in filenames:
-                        if not any(fname.endswith(ext) for ext in (".md", ".py", ".ts", ".js", ".json", ".yaml", ".yml", ".toml", ".txt")):
+                        if not any(
+                            fname.endswith(ext)
+                            for ext in (".md", ".py", ".ts", ".js", ".json", ".yaml", ".yml", ".toml", ".txt")
+                        ):
                             continue
                         fp = Path(dirpath) / fname
                         try:
                             if fp.stat().st_size > 100_000:
                                 continue
                             content = fp.read_text(encoding="utf-8", errors="ignore")
-                            if q_lower in content.lower() or q_lower in str(fp.relative_to(workspace_root)).lower():
+                            if q_lower in content.lower() or q_lower in str(
+                                fp.relative_to(workspace_root)
+                            ).lower():
                                 matched.append(str(fp.relative_to(workspace_root)))
                                 if len(matched) >= limit:
                                     break

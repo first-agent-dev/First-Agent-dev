@@ -72,7 +72,7 @@ def build_edit_file_tool(workspace_root: Path) -> ToolSpec:
                 from fa.blackboard.blackboard import BlackboardEntry
                 import uuid, subprocess, hashlib
 
-                def base_commit(r):
+                def base_commit(r: Path) -> str:
                     try:
                         res = subprocess.run(
                             ["git", "rev-parse", "HEAD"],

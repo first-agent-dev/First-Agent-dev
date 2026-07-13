@@ -2,8 +2,6 @@
 
 Phase 1 Foundation: researcher needs [glob,grep,read,instant_grep] 600 tokens vs full 3000.
 Implements fs.glob pattern matching, returns paths not content, <50ms via git ls-files.
-
-Prior art: Pi agent 4 tools, Cursor instant grep, OpenCode glob.
 """
 
 from __future__ import annotations
@@ -14,7 +12,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
-from fa.inner_loop.tools.base import require_string
+from fa.inner_loop.tools.base import optional_int, require_string
 
 
 def _git_ls_files(root: Path) -> list[str]:
@@ -34,7 +32,6 @@ def _git_ls_files(root: Path) -> list[str]:
 
 
 def _rglob_with_pruning(root: Path, exclude_dirs: set[str]) -> list[Path]:
-    # os.walk with pruning, faster than rglob for large repos
     import os
 
     files: list[Path] = []
@@ -42,7 +39,6 @@ def _rglob_with_pruning(root: Path, exclude_dirs: set[str]) -> list[Path]:
         dirnames[:] = [d for d in dirnames if d not in exclude_dirs and not d.startswith(".")]
         for fname in filenames:
             fp = Path(dirpath) / fname
-            # Skip large files
             try:
                 if fp.stat().st_size > 200_000:
                     continue
@@ -57,25 +53,24 @@ def build_glob_tool(workspace_root: Path) -> ToolSpec:
 
     def handler(params: Mapping[str, object]) -> ToolResult:
         try:
-            pattern = require_string(dict(params), "pattern")
-            limit = int(params.get("limit", 50)) if "limit" in params else 50
+            data = dict(params)
+            pattern = require_string(data, "pattern")
+            limit = optional_int(data, "limit") or 50
+            if limit <= 0:
+                limit = 50
         except ValueError as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
         try:
-            # Prefer git ls-files for speed and .gitignore respect
             tracked = _git_ls_files(root)
             matched: list[str] = []
 
             if tracked:
-                # fnmatch + Path.match for ** support
                 for rel in tracked:
-                    # Both fnmatch and Path.match for compatibility
                     if fnmatch.fnmatch(rel, pattern) or Path(rel).match(pattern):
                         matched.append(rel)
                         if len(matched) >= limit:
                             break
-                    # Also try matching basename if pattern doesn't contain /
                     if "/" not in pattern:
                         if fnmatch.fnmatch(Path(rel).name, pattern):
                             if rel not in matched:
@@ -83,8 +78,17 @@ def build_glob_tool(workspace_root: Path) -> ToolSpec:
                                 if len(matched) >= limit:
                                     break
             else:
-                # Fallback rglob with pruning
-                exclude = {".git", ".fa", "node_modules", ".venv", "__pycache__", "sessions", "dist", "build", ".mypy_cache"}
+                exclude = {
+                    ".git",
+                    ".fa",
+                    "node_modules",
+                    ".venv",
+                    "__pycache__",
+                    "sessions",
+                    "dist",
+                    "build",
+                    ".mypy_cache",
+                }
                 all_files = _rglob_with_pruning(root, exclude)
                 for fp in all_files:
                     rel = str(fp.relative_to(root))

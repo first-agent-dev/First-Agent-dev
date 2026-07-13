@@ -2,8 +2,6 @@
 
 Phase 1 Foundation: researcher needs grep, complement to instant_grep FTS5.
 Uses git grep if available, fallback to python search via git ls-files.
-
-Prior art: ripgrep, git grep, Cursor instant grep fallback.
 """
 
 from __future__ import annotations
@@ -13,11 +11,10 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
-from fa.inner_loop.tools.base import require_string
+from fa.inner_loop.tools.base import optional_int, require_string
 
 
 def _git_grep(root: Path, query: str, limit: int) -> list[str] | None:
-    # Try git grep -l for files containing query, respects .gitignore, fast
     try:
         res = subprocess.run(
             ["git", "grep", "-l", "--", query],  # noqa: S607
@@ -26,7 +23,6 @@ def _git_grep(root: Path, query: str, limit: int) -> list[str] | None:
             text=True,
             timeout=15,
         )
-        # git grep returns 0 if matches found, 1 if no matches
         if res.returncode in (0, 1):
             files = [line.strip() for line in res.stdout.splitlines() if line.strip()]
             return files[:limit]
@@ -36,7 +32,6 @@ def _git_grep(root: Path, query: str, limit: int) -> list[str] | None:
 
 
 def _rg_grep(root: Path, query: str, limit: int) -> list[str] | None:
-    # Try ripgrep if installed
     try:
         res = subprocess.run(
             ["rg", "-l", query],  # noqa: S607
@@ -49,7 +44,6 @@ def _rg_grep(root: Path, query: str, limit: int) -> list[str] | None:
             files = [line.strip() for line in res.stdout.splitlines() if line.strip()]
             return files[:limit]
     except FileNotFoundError:
-        # rg not installed, ok
         return None
     except Exception as exc:  # noqa: BLE001
         print(f"WARNING: rg failed: {exc}")
@@ -61,20 +55,21 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:
 
     def handler(params: Mapping[str, object]) -> ToolResult:
         try:
-            query = require_string(dict(params), "query")
-            limit = int(params.get("limit", 20)) if "limit" in params else 20
-            glob_filter = params.get("glob")
+            data = dict(params)
+            query = require_string(data, "query")
+            limit = optional_int(data, "limit") or 20
+            if limit <= 0:
+                limit = 20
+            glob_filter = data.get("glob")
             if glob_filter is not None and not isinstance(glob_filter, str):
                 glob_filter = None
         except ValueError as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
         try:
-            # Try fast paths: rg, git grep, then fallback python
             for method in (_rg_grep, _git_grep):
                 result = method(root, query, limit)
                 if result is not None:
-                    # Apply glob filter if provided
                     if glob_filter:
                         import fnmatch
 
@@ -83,10 +78,14 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:
                     summary = f"Grep found {len(result)} files containing '{query}' via {method.__name__} (limit {limit})"
                     return ToolResult.ok(
                         summary,
-                        result={"paths": result, "query": query, "limit": limit, "method": method.__name__},
+                        result={
+                            "paths": result,
+                            "query": query,
+                            "limit": limit,
+                            "method": method.__name__,
+                        },
                     )
 
-            # Fallback: python search via git ls-files
             try:
                 ls_res = subprocess.run(
                     ["git", "ls-files"],  # noqa: S607
@@ -100,7 +99,6 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:
                 tracked = []
 
             if not tracked:
-                # Last fallback: walk filesystem
                 import os
 
                 tracked = []
@@ -136,7 +134,8 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:
 
             summary = f"Grep found {len(matched)} files containing '{query}' via python fallback (limit {limit})"
             return ToolResult.ok(
-                summary, result={"paths": matched, "query": query, "limit": limit, "method": "python_fallback"}
+                summary,
+                result={"paths": matched, "query": query, "limit": limit, "method": "python_fallback"},
             )
 
         except Exception as exc:

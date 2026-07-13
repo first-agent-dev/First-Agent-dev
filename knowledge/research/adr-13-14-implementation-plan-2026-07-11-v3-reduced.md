@@ -1,8 +1,8 @@
 ---
-title: "ADR-13/14 Implementation Plan v3 — Reduced Surface, Pair over Autonomy, Formal Substrate"
+title: "ADR-14/15 Implementation Plan v3 — Reduced Surface, Pair over Autonomy, Formal Substrate"
 source:
-  - "knowledge/adr/ADR-13-stateful-bash-eventstream-runtime.md"
-  - "knowledge/adr/ADR-14-multitask-subagents-worktree-isolation.md"
+  - "knowledge/adr/ADR-14-stateful-bash-eventstream-runtime.md"
+  - "knowledge/adr/ADR-15-multitask-subagents-worktree-isolation.md"
   - "knowledge/research/substrate-formalization-and-reduction.md"
   - "knowledge/research/philosophy-subagents-cheap-deterministic.md"
   - "knowledge/project-overview.md §1.2.6 Substrate Formality, §1.2.7 Pair over Autonomy"

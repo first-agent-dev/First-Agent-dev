@@ -62,9 +62,9 @@ def build_prompt_parts_v2(
     agents_md_map: str,
     tool_defs: list[dict[str, Any]],
     role_id: str,
-    skills_all: list[dict[str, Any]] | None = None,  # all skills in repo for hashing
-    skills_always: list[dict[str, Any]] | None = None,  # alwaysApply=True subset for cacheable
-    skills_conditional: list[dict[str, Any]] | None = None,  # globs matched for non-cacheable
+    skills_all: list[dict[str, Any]] | None = None,
+    skills_always: list[dict[str, Any]] | None = None,
+    skills_conditional: list[dict[str, Any]] | None = None,
     memory_summary: str = "",
     task: str = "",
     observations: list[dict[str, Any]] | None = None,
@@ -85,12 +85,8 @@ def build_prompt_parts_v2(
     hash_map = _stable_hash(agents_md_map)
     hash_always = _hash_skills(skills_always)
 
-    # For backward compat, if skills_always empty but skills_all provided, use skills_all for hash
     if not skills_always and skills_all:
-        # In Phase 1 migration, hash all skills if always subset not separated yet
-        # But prefer always subset for stability
         hash_skills_effective = _hash_skills(skills_all)
-        # Use always hash if available else all
         if hash_always == "no-skills":
             hash_always = hash_skills_effective
 
@@ -123,7 +119,6 @@ def build_prompt_parts_v2(
     return PromptParts(cacheable=cacheable, non_cacheable=non_cacheable), cache_key
 
 
-# Backward compat: original signature without skills params
 def build_prompt_parts(
     base_system: str,
     agents_md_map: str,
@@ -148,24 +143,18 @@ def build_prompt_parts(
 
 
 def to_anthropic_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any]:
-    """Phase 1: single breakpoint on last cacheable, not 4+1 yet.
-
-    Checks FeatureFlags prompt.caching flag, if disabled returns without cache_control.
-    """
-    # Check flag
+    """Phase 1: single breakpoint on last cacheable, not 4+1 yet."""
     try:
         from fa.feature_flags import load_feature_flags_from_path
 
         flags = load_feature_flags_from_path().flags
         if not getattr(flags, "prompt_caching", True):
-            # No caching
             return {"messages": parts.cacheable + parts.non_cacheable, "_cache_key": cache_key}
     except Exception:
         pass
 
     messages: list[dict[str, Any]] = []
     for i, msg in enumerate(parts.cacheable):
-        # Single breakpoint on last cacheable for Phase 1 (Phase 2 will add 4+1)
         if i == len(parts.cacheable) - 1:
             msg = {**msg, "cache_control": {"type": "ephemeral"}}
         messages.append(msg)
@@ -173,7 +162,7 @@ def to_anthropic_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any
     return {"messages": messages, "_cache_key": cache_key}
 
 
-def to_anthropic_request(*args, **kwargs):
+def to_anthropic_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
     return to_anthropic_request_v2(*args, **kwargs)
 
 
@@ -185,5 +174,5 @@ def to_openai_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any]:
     }
 
 
-def to_openai_request(*args, **kwargs):
+def to_openai_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
     return to_openai_request_v2(*args, **kwargs)

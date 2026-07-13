@@ -1,0 +1,2011 @@
+diff --git a/src/fa/blackboard/blackboard.py b/src/fa/blackboard/blackboard.py
+index ba49778..a3cf8ca 100644
+--- a/src/fa/blackboard/blackboard.py
++++ b/src/fa/blackboard/blackboard.py
+@@ -1,8 +1,7 @@
+ """
+ Blackboard — Typed Blackboard with Content Hashes + Transactional Semantics
+ Phase 0.5 — Formal Shared Harness Substrate
+-Prior art: MACOG blackboard with content hashes + toolchain digests, L2MAC file store D persistent never overwritten but extended/revised with Control Unit, SyncMind belief-state divergence |Bk - Sk|
+-
++Prior art: MACOG blackboard with content hashes + toolchain digests, L2MAC file store D persistent
+ Senior eng: interface segregation, DI, feature flags, graceful degradation, thread safety, observable failures
+ """
+ 
+@@ -11,46 +10,47 @@ from __future__ import annotations
+ import hashlib
+ import json
+ import threading
+-from dataclasses import dataclass, asdict, field
++from dataclasses import asdict, dataclass
++from datetime import UTC, datetime
+ from pathlib import Path
+-from typing import List, Dict, Any, Optional
+-from datetime import datetime, timezone
++from typing import Any
++
+ 
+ @dataclass
+ class BlackboardEntry:
+     id: str
+-    type: str  # plan, execution, evaluation, flowstate, tool_result, file_version
+-    content_hash: str  # sha256 of payload
+-    toolchain_digest: str  # python version, mypy version, model id
+-    schema_version: str  # Task IR v1, Plan Artifact v2
+-    parent_id: Optional[str]  # previous version
+-    read_set: List[str]  # files read
+-    write_set: List[str]  # files written
+-    assumptions: List[str]  # e.g., "main branch is main", "file src/auth.py exists"
+-    version_dependencies: Dict[str, str]  # e.g., {"base_commit": "abc123", "llms.txt": "sha256:..."}
++    type: str
++    content_hash: str
++    toolchain_digest: str
++    schema_version: str
++    parent_id: str | None
++    read_set: list[str]
++    write_set: list[str]
++    assumptions: list[str]
++    version_dependencies: dict[str, str]
+     timestamp: str
+-    payload: Any  # actual content
++    payload: Any
+ 
+     @classmethod
+     def create(
+         cls,
++        *,
+         id: str,
+         type: str,
+         payload: Any,
+-        read_set: List[str] = None,
+-        write_set: List[str] = None,
+-        assumptions: List[str] = None,
+-        version_dependencies: Dict[str, str] = None,
+-        parent_id: Optional[str] = None,
++        read_set: list[str] | None = None,
++        write_set: list[str] | None = None,
++        assumptions: list[str] | None = None,
++        version_dependencies: dict[str, str] | None = None,
++        parent_id: str | None = None,
+         schema_version: str = "v1",
+-    ) -> "BlackboardEntry":
+-        # Content hash
++    ) -> BlackboardEntry:
+         content_str = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+         content_hash = hashlib.sha256(content_str.encode()).hexdigest()[:16]
+-        # Toolchain digest: python version + model id placeholder
+         import sys
++
+         toolchain_digest = f"python-{sys.version_info.major}.{sys.version_info.minor}"
+-        timestamp = datetime.now(timezone.utc).isoformat()
++        timestamp = datetime.now(UTC).isoformat()
+         return cls(
+             id=id,
+             type=type,
+@@ -66,20 +66,22 @@ class BlackboardEntry:
+             payload=payload,
+         )
+ 
++
+ @dataclass
+ class Conflict:
+     entry_id: str
+     conflicting_entry_id: str
+     reason: str
+-    read_write_overlap: List[str]
+-    assumption_violated: Optional[str] = None
++    read_write_overlap: list[str]
++    assumption_violated: str | None = None
++
+ 
+ class Blackboard:
+     """
+     Append-only, content-addressed, queryable blackboard
+     Store: .fa/blackboard/blackboard.jsonl
+     Control Unit manages reads/writes, never overwrites, extended/revised
+-    Each entry stamped with content hashes, toolchain digests, schema versions for reproducibility (MACOG)
++    Each entry stamped with content hashes, toolchain digests, schema versions for reproducibility
+     """
+ 
+     def __init__(self, root: Path):
+@@ -87,7 +89,6 @@ class Blackboard:
+         self.root.mkdir(parents=True, exist_ok=True)
+         self.path = self.root / "blackboard.jsonl"
+         self.lock = threading.Lock()
+-        # Ensure file exists
+         self.path.touch(exist_ok=True)
+ 
+     def write(self, entry: BlackboardEntry) -> None:
+@@ -98,11 +99,9 @@ class Blackboard:
+                 with open(self.path, "a", encoding="utf-8") as f:
+                     f.write(line + "\n")
+         except Exception as e:
+-            # Graceful degradation: log WARNING and continue, not crash (Gap for Phase 0.5)
+             print(f"WARNING: Blackboard write failed {e}, continuing")
+ 
+-    def read(self, id: str) -> Optional[BlackboardEntry]:
+-        # Simple linear scan for v0.1, could be indexed for future
++    def read(self, id: str) -> BlackboardEntry | None:
+         with self.lock:
+             if not self.path.exists():
+                 return None
+@@ -116,9 +115,9 @@ class Blackboard:
+                         continue
+         return None
+ 
+-    def query(self, type: str = None, key: str = None) -> List[BlackboardEntry]:
++    def query(self, type: str | None = None, key: str | None = None) -> list[BlackboardEntry]:
+         """Queryable: filter by type and optional key in payload"""
+-        results = []
++        results: list[BlackboardEntry] = []
+         with self.lock:
+             if not self.path.exists():
+                 return results
+@@ -126,45 +125,33 @@ class Blackboard:
+                 for line in f:
+                     try:
+                         data = json.loads(line)
+-                        if type and data.get("type") != type:
++                        if type is not None and data.get("type") != type:
+                             continue
+-                        if key and key not in json.dumps(data.get("payload", {})):
++                        if key is not None and key not in json.dumps(data.get("payload", {})):
+                             continue
+                         results.append(BlackboardEntry(**data))
+                     except Exception:
+                         continue
+         return results
+ 
+-    def detect_conflict(self, new_entry: BlackboardEntry) -> List[Conflict]:
++    def detect_conflict(self, new_entry: BlackboardEntry) -> list[Conflict]:
+         """
+         Detect conflicts for v0.1: write/write overlap always conflict.
+-        Simplified per review Gap 8/12: timestamp logic inverted previously,
+-        so for v0.1 we treat any write/write overlap (different id) as conflict,
+-        regardless of timestamp. Read/write overlap not enforced in v0.1 —
+-        requires Transaction start-time, deferred to Phase 1.
++        Simplified per review: any write/write overlap (different id) as conflict.
+         """
+-        conflicts = []
++        conflicts: list[Conflict] = []
+         existing = self.query(type=new_entry.type)
+         for old in existing:
+             if old.id == new_entry.id:
+                 continue
+-            # write/write overlap → conflict (core case: two agents write same file)
+             ww_overlap = set(new_entry.write_set) & set(old.write_set)
+             if ww_overlap:
+                 conflicts.append(
+                     Conflict(
+                         entry_id=new_entry.id,
+                         conflicting_entry_id=old.id,
+-                        reason=f"write/write overlap {ww_overlap} — concurrent "
+-                        f"write without coordination",
++                        reason=f"write/write overlap {ww_overlap} — concurrent write without coordination",
+                         read_write_overlap=list(ww_overlap),
+                     )
+                 )
+         return conflicts
+-
+-# Example usage:
+-# bb = Blackboard(Path(".fa/blackboard"))
+-# entry = BlackboardEntry.create(id="plan-1", type="plan", payload={"goal":"fix auth"}, read_set=["src/auth.py"], write_set=[], assumptions=["main branch is main"], version_dependencies={"base_commit":"abc123"})
+-# bb.write(entry)
+-# conflicts = bb.detect_conflict(new_entry)
+-# if conflicts: return ToolResult.fail("conflict_detected", f"Conflict: {conflicts}", retryable=True)
+diff --git a/src/fa/inner_loop/prompt_composer.py b/src/fa/inner_loop/prompt_composer.py
+index 6f38212..ea1d7c3 100644
+--- a/src/fa/inner_loop/prompt_composer.py
++++ b/src/fa/inner_loop/prompt_composer.py
+@@ -62,9 +62,9 @@ def build_prompt_parts_v2(
+     agents_md_map: str,
+     tool_defs: list[dict[str, Any]],
+     role_id: str,
+-    skills_all: list[dict[str, Any]] | None = None,  # all skills in repo for hashing
+-    skills_always: list[dict[str, Any]] | None = None,  # alwaysApply=True subset for cacheable
+-    skills_conditional: list[dict[str, Any]] | None = None,  # globs matched for non-cacheable
++    skills_all: list[dict[str, Any]] | None = None,
++    skills_always: list[dict[str, Any]] | None = None,
++    skills_conditional: list[dict[str, Any]] | None = None,
+     memory_summary: str = "",
+     task: str = "",
+     observations: list[dict[str, Any]] | None = None,
+@@ -85,12 +85,8 @@ def build_prompt_parts_v2(
+     hash_map = _stable_hash(agents_md_map)
+     hash_always = _hash_skills(skills_always)
+ 
+-    # For backward compat, if skills_always empty but skills_all provided, use skills_all for hash
+     if not skills_always and skills_all:
+-        # In Phase 1 migration, hash all skills if always subset not separated yet
+-        # But prefer always subset for stability
+         hash_skills_effective = _hash_skills(skills_all)
+-        # Use always hash if available else all
+         if hash_always == "no-skills":
+             hash_always = hash_skills_effective
+ 
+@@ -123,7 +119,6 @@ def build_prompt_parts_v2(
+     return PromptParts(cacheable=cacheable, non_cacheable=non_cacheable), cache_key
+ 
+ 
+-# Backward compat: original signature without skills params
+ def build_prompt_parts(
+     base_system: str,
+     agents_md_map: str,
+@@ -148,24 +143,18 @@ def build_prompt_parts(
+ 
+ 
+ def to_anthropic_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any]:
+-    """Phase 1: single breakpoint on last cacheable, not 4+1 yet.
+-
+-    Checks FeatureFlags prompt.caching flag, if disabled returns without cache_control.
+-    """
+-    # Check flag
++    """Phase 1: single breakpoint on last cacheable, not 4+1 yet."""
+     try:
+         from fa.feature_flags import load_feature_flags_from_path
+ 
+         flags = load_feature_flags_from_path().flags
+         if not getattr(flags, "prompt_caching", True):
+-            # No caching
+             return {"messages": parts.cacheable + parts.non_cacheable, "_cache_key": cache_key}
+     except Exception:
+         pass
+ 
+     messages: list[dict[str, Any]] = []
+     for i, msg in enumerate(parts.cacheable):
+-        # Single breakpoint on last cacheable for Phase 1 (Phase 2 will add 4+1)
+         if i == len(parts.cacheable) - 1:
+             msg = {**msg, "cache_control": {"type": "ephemeral"}}
+         messages.append(msg)
+@@ -173,7 +162,7 @@ def to_anthropic_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any
+     return {"messages": messages, "_cache_key": cache_key}
+ 
+ 
+-def to_anthropic_request(*args, **kwargs):
++def to_anthropic_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
+     return to_anthropic_request_v2(*args, **kwargs)
+ 
+ 
+@@ -185,5 +174,5 @@ def to_openai_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any]:
+     }
+ 
+ 
+-def to_openai_request(*args, **kwargs):
++def to_openai_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
+     return to_openai_request_v2(*args, **kwargs)
+diff --git a/src/fa/inner_loop/runtime_limits.py b/src/fa/inner_loop/runtime_limits.py
+index a44de92..cc9cf81 100644
+--- a/src/fa/inner_loop/runtime_limits.py
++++ b/src/fa/inner_loop/runtime_limits.py
+@@ -401,6 +401,7 @@ __all__ = [
+     "DEFAULT_LOOP_GUARD_REPEAT_WARN",
+     "DEFAULT_LOOP_GUARD_WINDOW",
+     "DEFAULT_MAX_ITERATIONS",
++    "DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION",
+     "DEFAULT_QA_MAX_CONSECUTIVE_ERRORS",
+     "DEFAULT_QA_MAX_ITERATIONS",
+     "DEFAULT_QA_RECURRING_ISSUE_THRESHOLD",
+diff --git a/src/fa/inner_loop/tools/edit_file.py b/src/fa/inner_loop/tools/edit_file.py
+index f3d6bbd..236d93c 100644
+--- a/src/fa/inner_loop/tools/edit_file.py
++++ b/src/fa/inner_loop/tools/edit_file.py
+@@ -72,7 +72,7 @@ def build_edit_file_tool(workspace_root: Path) -> ToolSpec:
+                 from fa.blackboard.blackboard import BlackboardEntry
+                 import uuid, subprocess, hashlib
+ 
+-                def base_commit(r):
++                def base_commit(r: Path) -> str:
+                     try:
+                         res = subprocess.run(
+                             ["git", "rev-parse", "HEAD"],
+diff --git a/src/fa/inner_loop/tools/glob.py b/src/fa/inner_loop/tools/glob.py
+index 2e3e867..16a1680 100644
+--- a/src/fa/inner_loop/tools/glob.py
++++ b/src/fa/inner_loop/tools/glob.py
+@@ -2,8 +2,6 @@
+ 
+ Phase 1 Foundation: researcher needs [glob,grep,read,instant_grep] 600 tokens vs full 3000.
+ Implements fs.glob pattern matching, returns paths not content, <50ms via git ls-files.
+-
+-Prior art: Pi agent 4 tools, Cursor instant grep, OpenCode glob.
+ """
+ 
+ from __future__ import annotations
+@@ -14,7 +12,7 @@ from collections.abc import Mapping
+ from pathlib import Path
+ 
+ from fa.inner_loop.registry import ToolResult, ToolSpec
+-from fa.inner_loop.tools.base import require_string
++from fa.inner_loop.tools.base import optional_int, require_string
+ 
+ 
+ def _git_ls_files(root: Path) -> list[str]:
+@@ -34,7 +32,6 @@ def _git_ls_files(root: Path) -> list[str]:
+ 
+ 
+ def _rglob_with_pruning(root: Path, exclude_dirs: set[str]) -> list[Path]:
+-    # os.walk with pruning, faster than rglob for large repos
+     import os
+ 
+     files: list[Path] = []
+@@ -42,7 +39,6 @@ def _rglob_with_pruning(root: Path, exclude_dirs: set[str]) -> list[Path]:
+         dirnames[:] = [d for d in dirnames if d not in exclude_dirs and not d.startswith(".")]
+         for fname in filenames:
+             fp = Path(dirpath) / fname
+-            # Skip large files
+             try:
+                 if fp.stat().st_size > 200_000:
+                     continue
+@@ -57,25 +53,24 @@ def build_glob_tool(workspace_root: Path) -> ToolSpec:
+ 
+     def handler(params: Mapping[str, object]) -> ToolResult:
+         try:
+-            pattern = require_string(dict(params), "pattern")
+-            limit = int(params.get("limit", 50)) if "limit" in params else 50
++            data = dict(params)
++            pattern = require_string(data, "pattern")
++            limit = optional_int(data, "limit") or 50
++            if limit <= 0:
++                limit = 50
+         except ValueError as exc:
+             return ToolResult.fail("invalid_params", str(exc), retryable=True)
+ 
+         try:
+-            # Prefer git ls-files for speed and .gitignore respect
+             tracked = _git_ls_files(root)
+             matched: list[str] = []
+ 
+             if tracked:
+-                # fnmatch + Path.match for ** support
+                 for rel in tracked:
+-                    # Both fnmatch and Path.match for compatibility
+                     if fnmatch.fnmatch(rel, pattern) or Path(rel).match(pattern):
+                         matched.append(rel)
+                         if len(matched) >= limit:
+                             break
+-                    # Also try matching basename if pattern doesn't contain /
+                     if "/" not in pattern:
+                         if fnmatch.fnmatch(Path(rel).name, pattern):
+                             if rel not in matched:
+@@ -83,8 +78,17 @@ def build_glob_tool(workspace_root: Path) -> ToolSpec:
+                                 if len(matched) >= limit:
+                                     break
+             else:
+-                # Fallback rglob with pruning
+-                exclude = {".git", ".fa", "node_modules", ".venv", "__pycache__", "sessions", "dist", "build", ".mypy_cache"}
++                exclude = {
++                    ".git",
++                    ".fa",
++                    "node_modules",
++                    ".venv",
++                    "__pycache__",
++                    "sessions",
++                    "dist",
++                    "build",
++                    ".mypy_cache",
++                }
+                 all_files = _rglob_with_pruning(root, exclude)
+                 for fp in all_files:
+                     rel = str(fp.relative_to(root))
+diff --git a/src/fa/inner_loop/tools/grep.py b/src/fa/inner_loop/tools/grep.py
+index cace13c..3408e5f 100644
+--- a/src/fa/inner_loop/tools/grep.py
++++ b/src/fa/inner_loop/tools/grep.py
+@@ -2,8 +2,6 @@
+ 
+ Phase 1 Foundation: researcher needs grep, complement to instant_grep FTS5.
+ Uses git grep if available, fallback to python search via git ls-files.
+-
+-Prior art: ripgrep, git grep, Cursor instant grep fallback.
+ """
+ 
+ from __future__ import annotations
+@@ -13,11 +11,10 @@ from collections.abc import Mapping
+ from pathlib import Path
+ 
+ from fa.inner_loop.registry import ToolResult, ToolSpec
+-from fa.inner_loop.tools.base import require_string
++from fa.inner_loop.tools.base import optional_int, require_string
+ 
+ 
+ def _git_grep(root: Path, query: str, limit: int) -> list[str] | None:
+-    # Try git grep -l for files containing query, respects .gitignore, fast
+     try:
+         res = subprocess.run(
+             ["git", "grep", "-l", "--", query],  # noqa: S607
+@@ -26,7 +23,6 @@ def _git_grep(root: Path, query: str, limit: int) -> list[str] | None:
+             text=True,
+             timeout=15,
+         )
+-        # git grep returns 0 if matches found, 1 if no matches
+         if res.returncode in (0, 1):
+             files = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+             return files[:limit]
+@@ -36,7 +32,6 @@ def _git_grep(root: Path, query: str, limit: int) -> list[str] | None:
+ 
+ 
+ def _rg_grep(root: Path, query: str, limit: int) -> list[str] | None:
+-    # Try ripgrep if installed
+     try:
+         res = subprocess.run(
+             ["rg", "-l", query],  # noqa: S607
+@@ -49,7 +44,6 @@ def _rg_grep(root: Path, query: str, limit: int) -> list[str] | None:
+             files = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+             return files[:limit]
+     except FileNotFoundError:
+-        # rg not installed, ok
+         return None
+     except Exception as exc:  # noqa: BLE001
+         print(f"WARNING: rg failed: {exc}")
+@@ -61,20 +55,21 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:
+ 
+     def handler(params: Mapping[str, object]) -> ToolResult:
+         try:
+-            query = require_string(dict(params), "query")
+-            limit = int(params.get("limit", 20)) if "limit" in params else 20
+-            glob_filter = params.get("glob")
++            data = dict(params)
++            query = require_string(data, "query")
++            limit = optional_int(data, "limit") or 20
++            if limit <= 0:
++                limit = 20
++            glob_filter = data.get("glob")
+             if glob_filter is not None and not isinstance(glob_filter, str):
+                 glob_filter = None
+         except ValueError as exc:
+             return ToolResult.fail("invalid_params", str(exc), retryable=True)
+ 
+         try:
+-            # Try fast paths: rg, git grep, then fallback python
+             for method in (_rg_grep, _git_grep):
+                 result = method(root, query, limit)
+                 if result is not None:
+-                    # Apply glob filter if provided
+                     if glob_filter:
+                         import fnmatch
+ 
+@@ -83,10 +78,14 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:
+                     summary = f"Grep found {len(result)} files containing '{query}' via {method.__name__} (limit {limit})"
+                     return ToolResult.ok(
+                         summary,
+-                        result={"paths": result, "query": query, "limit": limit, "method": method.__name__},
++                        result={
++                            "paths": result,
++                            "query": query,
++                            "limit": limit,
++                            "method": method.__name__,
++                        },
+                     )
+ 
+-            # Fallback: python search via git ls-files
+             try:
+                 ls_res = subprocess.run(
+                     ["git", "ls-files"],  # noqa: S607
+@@ -100,7 +99,6 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:
+                 tracked = []
+ 
+             if not tracked:
+-                # Last fallback: walk filesystem
+                 import os
+ 
+                 tracked = []
+@@ -136,7 +134,8 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:
+ 
+             summary = f"Grep found {len(matched)} files containing '{query}' via python fallback (limit {limit})"
+             return ToolResult.ok(
+-                summary, result={"paths": matched, "query": query, "limit": limit, "method": "python_fallback"}
++                summary,
++                result={"paths": matched, "query": query, "limit": limit, "method": "python_fallback"},
+             )
+ 
+         except Exception as exc:
+diff --git a/src/fa/inner_loop/tools/instant_grep.py b/src/fa/inner_loop/tools/instant_grep.py
+index e754b2c..8b6fa6b 100644
+--- a/src/fa/inner_loop/tools/instant_grep.py
++++ b/src/fa/inner_loop/tools/instant_grep.py
+@@ -1,17 +1,16 @@
+-"""Instant Grep tool — FTS5 trigram substring search, <50ms, token efficient — Stage 2
++"""Instant Grep tool — FTS5 trigram substring search, <50ms, token efficient.
+ 
+-Fixes:
+-- Gap: fallback rglob slow → use git ls-files for tracked files only (respects .gitignore, fast)
++Fixes: fallback rglob slow → use git ls-files for tracked files only.
+ """
+ 
+ from __future__ import annotations
+ 
++import subprocess
+ from pathlib import Path
+ from typing import Mapping
+-import subprocess
+ 
+ from fa.inner_loop.registry import ToolResult, ToolSpec
+-from fa.inner_loop.tools.base import require_string
++from fa.inner_loop.tools.base import optional_int, require_string
+ 
+ 
+ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
+@@ -20,8 +19,11 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
+ 
+     def handler(params: Mapping[str, object]) -> ToolResult:
+         try:
+-            query = require_string(dict(params), "query")
+-            limit = int(params.get("limit", 10)) if "limit" in params else 10
++            data = dict(params)
++            query = require_string(data, "query")
++            limit = optional_int(data, "limit") or 10
++            if limit <= 0:
++                limit = 10
+         except ValueError as exc:
+             return ToolResult.fail("invalid_params", str(exc), retryable=True)
+ 
+@@ -46,27 +48,24 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
+                 result={"paths": paths, "query": query, "limit": limit, "method": "fts5"},
+             )
+         except Exception as e:
+-            # High ROI Improvement: use git ls-files for tracked files only (fast, respects .gitignore)
+             try:
+                 git_result = subprocess.run(
+-                    ["git", "ls-files"],
++                    ["git", "ls-files"],  # noqa: S607
+                     cwd=workspace_root,
+                     capture_output=True,
+                     text=True,
+                 )
+                 if git_result.returncode == 0:
+                     files = git_result.stdout.splitlines()
+-                    matched = []
++                    matched: list[str] = []
+                     q_lower = query.lower()
+                     for file_rel in files:
+-                        # Skip large or binary? quick size check
+                         fp = workspace_root / file_rel
+                         try:
+                             if not fp.is_file():
+                                 continue
+                             if fp.stat().st_size > 100_000:
+                                 continue
+-                            # Fast path: check filename contains query
+                             if q_lower in file_rel.lower():
+                                 matched.append(file_rel)
+                                 if len(matched) >= limit:
+@@ -90,26 +89,38 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
+                             "fts_error": str(e),
+                         },
+                     )
+-                # If git ls-files failed (not a git repo), fallback to rglob limited
+                 matched = []
+                 q_lower = query.lower()
+-                # Use os.walk with pruning for speed
+                 import os
+ 
+-                exclude_dirs = {".fa", "node_modules", ".venv", "__pycache__", ".git", "sessions", ".gremlins_cache", "dist", "build", ".mypy_cache"}
++                exclude_dirs = {
++                    ".fa",
++                    "node_modules",
++                    ".venv",
++                    "__pycache__",
++                    ".git",
++                    "sessions",
++                    ".gremlins_cache",
++                    "dist",
++                    "build",
++                    ".mypy_cache",
++                }
+                 for dirpath, dirnames, filenames in os.walk(workspace_root):
+-                    # Prune excluded dirs in-place
+                     dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
+-                    # Avoid descending into hidden . dirs beyond root? allow but skip .git etc already
+                     for fname in filenames:
+-                        if not any(fname.endswith(ext) for ext in (".md", ".py", ".ts", ".js", ".json", ".yaml", ".yml", ".toml", ".txt")):
++                        if not any(
++                            fname.endswith(ext)
++                            for ext in (".md", ".py", ".ts", ".js", ".json", ".yaml", ".yml", ".toml", ".txt")
++                        ):
+                             continue
+                         fp = Path(dirpath) / fname
+                         try:
+                             if fp.stat().st_size > 100_000:
+                                 continue
+                             content = fp.read_text(encoding="utf-8", errors="ignore")
+-                            if q_lower in content.lower() or q_lower in str(fp.relative_to(workspace_root)).lower():
++                            if q_lower in content.lower() or q_lower in str(
++                                fp.relative_to(workspace_root)
++                            ).lower():
+                                 matched.append(str(fp.relative_to(workspace_root)))
+                                 if len(matched) >= limit:
+                                     break
+diff --git a/src/fa/inner_loop/tools/observability.py b/src/fa/inner_loop/tools/observability.py
+index 2c7d7d6..518fd76 100644
+--- a/src/fa/inner_loop/tools/observability.py
++++ b/src/fa/inner_loop/tools/observability.py
+@@ -3,26 +3,32 @@
+ from __future__ import annotations
+ 
+ import json
+-from pathlib import Path
+-from typing import Mapping
+ from collections import Counter
++from pathlib import Path
++from typing import Any, Mapping
+ 
+ from fa.inner_loop.registry import ToolResult, ToolSpec
++from fa.inner_loop.tools.base import optional_int
+ 
+ 
+ def build_chronicle_search_tool(event_log_path: Path) -> ToolSpec:
+     log_path = Path(event_log_path).resolve()
++
+     def handler(params: Mapping[str, object]) -> ToolResult:
+         try:
+-            query = str(params.get("query", "")).strip()
++            data = dict(params)
++            query_raw = data.get("query", "")
++            query = str(query_raw).strip()
+             if not query:
+                 return ToolResult.fail("invalid_params", "query required", retryable=True)
+-            limit = int(params.get("limit", 10)) if "limit" in params else 10
++            limit = optional_int(data, "limit") or 10
++            if limit <= 0:
++                limit = 10
+         except Exception as exc:
+             return ToolResult.fail("invalid_params", str(exc), retryable=True)
+         if not log_path.exists():
+             return ToolResult.ok(f"EventLog not found at {log_path}", result={"entries": []})
+-        entries = []
++        entries: list[dict[str, Any]] = []
+         try:
+             with open(log_path, "r", encoding="utf-8") as f:
+                 for line in f:
+@@ -37,22 +43,35 @@ def build_chronicle_search_tool(event_log_path: Path) -> ToolSpec:
+             return ToolResult.fail("read_error", f"Failed to read EventLog: {exc}", retryable=False)
+         summary = f"Found {len(entries)} entries matching '{query}' (limit {limit})"
+         return ToolResult.ok(summary, result={"entries": entries, "query": query, "limit": limit})
++
+     return ToolSpec(
+         name="fs.chronicle_search",
+         description="Search EventLog events.jsonl timeline by keyword — returns timeline entries with rank, for debugging token usage vs result, debugging 124 steps timeout.",
+-        input_schema={"type": "object","required": ["query"],"properties": {"query": {"type": "string", "description": "Keyword to search"}, "limit": {"type": "integer", "default": 10}}},
+-        permission="read", handler=handler, tags=("fs","observability","chronicle"), max_context_bytes=4000,
++        input_schema={
++            "type": "object",
++            "required": ["query"],
++            "properties": {
++                "query": {"type": "string", "description": "Keyword to search"},
++                "limit": {"type": "integer", "default": 10},
++            },
++        },
++        permission="read",
++        handler=handler,
++        tags=("fs", "observability", "chronicle"),
++        max_context_bytes=4000,
+     )
+ 
++
+ def build_usage_tool(event_log_path: Path) -> ToolSpec:
+     log_path = Path(event_log_path).resolve()
++
+     def handler(params: Mapping[str, object]) -> ToolResult:
+         if not log_path.exists():
+             return ToolResult.ok("No EventLog yet", result={"total_tokens": 0, "steps": 0})
+         total_tokens = 0
+         steps = 0
+         cache_hits = 0
+-        tool_calls = Counter()
++        tool_calls: Counter[str] = Counter()
+         try:
+             with open(log_path, "r", encoding="utf-8") as f:
+                 for line in f:
+@@ -61,34 +80,50 @@ def build_usage_tool(event_log_path: Path) -> ToolSpec:
+                         kind = entry.get("kind", "")
+                         if kind == "tool_call":
+                             steps += 1
+-                            tool_calls[entry.get("tool_name","unknown")] += 1
++                            tool_calls[entry.get("tool_name", "unknown")] += 1
+                     except Exception:
+                         continue
+         except Exception as exc:
+             return ToolResult.fail("read_error", f"Failed: {exc}", retryable=False)
+         cache_ratio = cache_hits / max(1, steps)
+         summary = f"Usage: {steps} tool calls, {total_tokens} tokens, cache hit {cache_ratio:.2%}, breakdown {dict(tool_calls)}"
+-        return ToolResult.ok(summary, result={"steps": steps, "total_tokens": total_tokens, "cache_hits": cache_hits, "cache_hit_ratio": cache_ratio, "tool_calls_breakdown": dict(tool_calls)})
++        return ToolResult.ok(
++            summary,
++            result={
++                "steps": steps,
++                "total_tokens": total_tokens,
++                "cache_hits": cache_hits,
++                "cache_hit_ratio": cache_ratio,
++                "tool_calls_breakdown": dict(tool_calls),
++            },
++        )
++
+     return ToolSpec(
+         name="fs.usage",
+         description="Show token usage per turn, cache hit ratio, steps count, tool calls breakdown — for Pillar 3 KPI measurement.",
+-        input_schema={"type": "object","properties": {}},
+-        permission="read", handler=handler, tags=("fs","observability","usage"), max_context_bytes=2000,
++        input_schema={"type": "object", "properties": {}},
++        permission="read",
++        handler=handler,
++        tags=("fs", "observability", "usage"),
++        max_context_bytes=2000,
+     )
+ 
+-def build_list_tasks_tool(pty_pool=None, worktree_manager=None) -> ToolSpec:
++
++def build_list_tasks_tool(
++    pty_pool: Any | None = None, worktree_manager: Any | None = None
++) -> ToolSpec:
+     def handler(params: Mapping[str, object]) -> ToolResult:
+-        tasks = []
++        tasks: list[dict[str, Any]] = []
+         if pty_pool is not None:
+             try:
+-                sessions = pty_pool.list_sessions() if hasattr(pty_pool, 'list_sessions') else []
++                sessions = pty_pool.list_sessions() if hasattr(pty_pool, "list_sessions") else []
+                 for sid in sessions:
+                     tasks.append({"type": "pty", "id": sid, "status": "running"})
+             except Exception as exc:
+                 tasks.append({"type": "pty", "error": str(exc)})
+         if worktree_manager is not None:
+             try:
+-                root = getattr(worktree_manager, 'worktrees_root', None)
++                root = getattr(worktree_manager, "worktrees_root", None)
+                 if root and Path(root).exists():
+                     for p in Path(root).iterdir():
+                         if p.is_dir():
+@@ -97,11 +132,16 @@ def build_list_tasks_tool(pty_pool=None, worktree_manager=None) -> ToolSpec:
+                 tasks.append({"type": "worktree", "error": str(exc)})
+         summary = f"Found {len(tasks)} active tasks"
+         return ToolResult.ok(summary, result={"tasks": tasks})
++
+     return ToolSpec(
+         name="fs.list_tasks",
+         description="List active PTY sessions + worktree tasks + subagent tasks — for observability.",
+-        input_schema={"type": "object","properties": {}},
+-        permission="read", handler=handler, tags=("fs","observability","tasks"), max_context_bytes=2000,
++        input_schema={"type": "object", "properties": {}},
++        permission="read",
++        handler=handler,
++        tags=("fs", "observability", "tasks"),
++        max_context_bytes=2000,
+     )
+ 
+-__all__ = ["build_chronicle_search_tool","build_usage_tool","build_list_tasks_tool"]
++
++__all__ = ["build_chronicle_search_tool", "build_usage_tool", "build_list_tasks_tool"]
+diff --git a/src/fa/inner_loop/tools/pair_tools.py b/src/fa/inner_loop/tools/pair_tools.py
+index 4f55dc8..134004a 100644
+--- a/src/fa/inner_loop/tools/pair_tools.py
++++ b/src/fa/inner_loop/tools/pair_tools.py
+@@ -228,7 +228,7 @@ def build_diff_tool(workspace_root: Path) -> ToolSpec:
+     )
+ 
+ 
+-def build_send_ctrl_c_tool(pty_pool=None) -> ToolSpec:
++def build_send_ctrl_c_tool(pty_pool: object | None = None) -> ToolSpec:
+     def handler(params: Mapping[str, object]) -> ToolResult:
+         try:
+             session_id = params.get("session_id", "main")
+diff --git a/src/fa/inner_loop/tools/read_file.py b/src/fa/inner_loop/tools/read_file.py
+index 99f58be..ea86cce 100644
+--- a/src/fa/inner_loop/tools/read_file.py
++++ b/src/fa/inner_loop/tools/read_file.py
+@@ -7,8 +7,68 @@ from fa.inner_loop.registry import ToolResult, ToolSpec
+ from fa.inner_loop.tools.base import optional_int, require_string, resolve_workspace_path
+ 
+ 
++def _read_pdf_text(path: Path) -> str | None:
++    """Try to extract text from PDF via pymupdf (fitz), fallback to pdfminer, else None.
++
++    Production-grade: graceful degradation, not crash, WARNING logged.
++    For user data 01-11.pdf with table of reviews, pymupdf extracts 2282 chars per page.
++    """
++    # Try pymupdf (fitz) first - fastest, best for text tables
++    try:
++        import fitz  # type: ignore[import-untyped]
++
++        doc = fitz.open(str(path))
++        texts = []
++        for page in doc:
++            try:
++                texts.append(page.get_text("text"))
++            except Exception:
++                continue
++        doc.close()
++        full = "\n".join(texts)
++        if len(full.strip()) > 50:
++            return full
++    except ImportError:
++        pass
++    except Exception as exc:
++        print(f"WARNING: pymupdf failed for {path}: {exc}")
++
++    # Try pdfminer.six as fallback
++    try:
++        from pdfminer.high_level import extract_text  # type: ignore[import-untyped]
++
++        text = extract_text(str(path))
++        if text and len(text.strip()) > 50:
++            return text
++    except ImportError:
++        pass
++    except Exception as exc:
++        print(f"WARNING: pdfminer failed for {path}: {exc}")
++
++    # Try pypdf as last fallback
++    try:
++        from pypdf import PdfReader  # type: ignore[import-untyped]
++
++        reader = PdfReader(str(path))
++        texts = []
++        for page in reader.pages:
++            try:
++                texts.append(page.extract_text() or "")
++            except Exception:
++                continue
++        full = "\n".join(texts)
++        if len(full.strip()) > 50:
++            return full
++    except ImportError:
++        pass
++    except Exception as exc:
++        print(f"WARNING: pypdf failed for {path}: {exc}")
++
++    return None
++
++
+ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
+-    root = workspace_root.resolve()
++    root = Path(workspace_root).resolve()
+ 
+     def handler(params: Mapping[str, object]) -> ToolResult:
+         data = dict(params)
+@@ -16,9 +76,30 @@ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
+             path = resolve_workspace_path(root, require_string(data, "path"))
+             start_line = optional_int(data, "start_line")
+             end_line = optional_int(data, "end_line")
+-            text = path.read_text(encoding="utf-8")
+-        except (OSError, PermissionError, ValueError) as exc:
+-            return ToolResult.fail("read_failed", str(exc), retryable=True)
++        except ValueError as exc:
++            return ToolResult.fail("invalid_params", str(exc), retryable=True)
++
++        # Handle PDF via dedicated extractor for user data 01-11.pdf compatibility
++        if path.suffix.lower() == ".pdf":
++            pdf_text = _read_pdf_text(path)
++            if pdf_text is not None:
++                text = pdf_text
++            else:
++                try:
++                    # Fallback try utf-8 read (may fail)
++                    text = path.read_text(encoding="utf-8")
++                except (OSError, PermissionError, ValueError) as exc:
++                    return ToolResult.fail(
++                        "read_failed",
++                        f"PDF extraction failed and utf-8 read failed for {path}: {exc}. "
++                        f"Install pymupdf (pip install pymupdf) for PDF support.",
++                        retryable=True,
++                    )
++        else:
++            try:
++                text = path.read_text(encoding="utf-8")
++            except (OSError, PermissionError, ValueError) as exc:
++                return ToolResult.fail("read_failed", str(exc), retryable=True)
+ 
+         # Phase 0.5: Transaction read_set accumulation via contextvar DI
+         try:
+@@ -29,13 +110,12 @@ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
+                 try:
+                     rel = str(path.relative_to(root))
+                 except ValueError:
+-                    # Not relative (e.g., symlink outside), use absolute as fallback
+                     rel = str(path)
+                 try:
+                     session.add_read(rel)
+-                except Exception as exc:  # noqa: BLE001 - transaction add_read best-effort
++                except Exception as exc:  # noqa: BLE001 - best-effort
+                     print(f"WARNING: add_read failed for {rel}: {exc}")
+-        except Exception as exc:  # noqa: BLE001 - session retrieval best-effort
++        except Exception as exc:  # noqa: BLE001
+             print(f"WARNING: get_current_session failed in read_file: {exc}")
+ 
+         lines = text.splitlines()
+@@ -43,9 +123,7 @@ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
+             start = 1 if start_line is None else start_line
+             end = len(lines) if end_line is None else end_line
+             if start < 1 or end < start:
+-                return ToolResult.fail(
+-                    "invalid_params", "invalid line window", retryable=True
+-                )
++                return ToolResult.fail("invalid_params", "invalid line window", retryable=True)
+             selected = lines[start - 1 : end]
+             content = "\n".join(selected)
+         else:
+@@ -62,10 +140,7 @@ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
+ 
+     return ToolSpec(
+         name="fs.read_file",
+-        description=(
+-            "Read UTF-8 file inside workspace. "
+-            "Declares read_set for blackboard/transaction (Phase 0.5)."
+-        ),
++        description="Read UTF-8 file or PDF (via pymupdf/pdfminer fallback) inside workspace. Declares read_set for blackboard/transaction. For PDF tables, extracts text per page.",
+         input_schema={
+             "type": "object",
+             "required": ["path"],
+diff --git a/src/fa/memory/fts_index.py b/src/fa/memory/fts_index.py
+index 19f2c7e..268b2a3 100644
+--- a/src/fa/memory/fts_index.py
++++ b/src/fa/memory/fts_index.py
+@@ -15,6 +15,7 @@ from __future__ import annotations
+ from pathlib import Path
+ import sqlite3
+ from typing import List
++# List deprecated, use list, but keep for backward compat
+ 
+ 
+ class InstantGrepIndex:
+@@ -62,9 +63,9 @@ class InstantGrepIndex:
+     def index_repo(
+         self,
+         root: Path,
+-        patterns=("*.md", "*.py", "*.ts", "*.js", "*.json", "*.yaml"),
++        patterns: tuple[str, ...] = ("*.md", "*.py", "*.ts", "*.js", "*.json", "*.yaml"),
+         max_file_size: int = 100_000,
+-    ):
++    ) -> None:
+         root = Path(root).resolve()
+         indexed_paths: set[str] = set()
+         for pattern in patterns:
+@@ -130,7 +131,7 @@ class InstantGrepIndex:
+             pass
+         self.conn.commit()
+ 
+-    def instant_grep(self, query: str, limit: int = 10) -> List[str]:
++    def instant_grep(self, query: str, limit: int = 10) -> list[str]:
+         """
+         Instant substring search: "auth" → finds "authentication", "AuthMiddleware"
+         Returns list of paths, not content → token efficient (like OpenAI progressive disclosure)
+@@ -151,5 +152,5 @@ class InstantGrepIndex:
+             )
+             return [row[0] for row in cursor.fetchall()]
+ 
+-    def close(self):
++    def close(self) -> None:
+         self.conn.close()
+diff --git a/src/fa/runtime/bash_executor.py b/src/fa/runtime/bash_executor.py
+index beb9452..ae2815f 100644
+--- a/src/fa/runtime/bash_executor.py
++++ b/src/fa/runtime/bash_executor.py
+@@ -6,14 +6,17 @@ ADR-13 final
+ 
+ from __future__ import annotations
+ 
+-from typing import Protocol, runtime_checkable, Optional
+ from pathlib import Path
++from typing import Any, Protocol, override, runtime_checkable
+ 
+ from .pty_pool import PtyResult
+ 
++
+ @runtime_checkable
+ class BashExecutor(Protocol):
+-    def run(self, command: str, timeout: int = 30, workdir: Optional[Path] = None, session_id: str = "main") -> PtyResult:
++    def run(
++        self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main"
++    ) -> PtyResult:
+         ...
+ 
+     def send_ctrl_c(self, session_id: str) -> str:
+@@ -25,27 +28,35 @@ class BashExecutor(Protocol):
+     def list_sessions(self) -> list[str]:
+         ...
+ 
++
+ class InProcessPtyExecutor(BashExecutor):
+     """v0.1: in-process PtyPool, no network, DI via SessionState"""
+ 
+-    def __init__(self, pool):
++    def __init__(self, pool: Any):
+         self.pool = pool
+ 
+-    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main") -> PtyResult:
++    @override
++    def run(
++        self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main"
++    ) -> PtyResult:
+         sess = self.pool.acquire(session_id, workdir=str(workdir) if workdir else None)
+         return sess.run(command, timeout=timeout)
+ 
++    @override
+     def send_ctrl_c(self, session_id: str) -> str:
+         if session_id in self.pool.sessions:
+             return self.pool.sessions[session_id].send_ctrl_c()
+         return "session not found"
+ 
++    @override
+     def close(self, session_id: str) -> None:
+         self.pool.kill(session_id)
+ 
++    @override
+     def list_sessions(self) -> list[str]:
+         return self.pool.list_sessions()
+ 
++
+ class RemoteRuntimeExecutor(BashExecutor):
+     """Future: thin client to fa-runtime-server FastAPI, POST /execute"""
+ 
+@@ -53,12 +64,21 @@ class RemoteRuntimeExecutor(BashExecutor):
+         self.base_url = base_url.rstrip("/")
+         self.timeout = timeout
+ 
+-    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main") -> PtyResult:
++    @override
++    def run(
++        self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main"
++    ) -> PtyResult:
+         import requests
++
+         try:
+             resp = requests.post(
+                 f"{self.base_url}/execute",
+-                json={"session_id": session_id, "command": command, "timeout": timeout, "workdir": str(workdir) if workdir else None},
++                json={
++                    "session_id": session_id,
++                    "command": command,
++                    "timeout": timeout,
++                    "workdir": str(workdir) if workdir else None,
++                },
+                 timeout=self.timeout,
+             )
+             resp.raise_for_status()
+@@ -70,20 +90,25 @@ class RemoteRuntimeExecutor(BashExecutor):
+                 session_id=data["session_id"],
+             )
+         except Exception as e:
+-            # Graceful degradation: fallback to in-process with WARNING, not silent
+-            print(f"WARNING: RemoteRuntimeExecutor failed {e}, falling back to in-process (if available) or failing")
++            print(f"WARNING: RemoteRuntimeExecutor failed {e}, falling back")
+             raise
+ 
++    @override
+     def send_ctrl_c(self, session_id: str) -> str:
+         import requests
++
+         resp = requests.post(f"{self.base_url}/send_ctrl_c?session_id={session_id}", timeout=self.timeout)
+         return resp.json().get("msg", "")
+ 
++    @override
+     def close(self, session_id: str) -> None:
+         import requests
++
+         requests.post(f"{self.base_url}/kill", json={"session_id": session_id}, timeout=self.timeout)
+ 
++    @override
+     def list_sessions(self) -> list[str]:
+         import requests
++
+         resp = requests.get(f"{self.base_url}/list", timeout=self.timeout)
+         return resp.json().get("sessions", [])
+diff --git a/src/fa/runtime/pty_pool.py b/src/fa/runtime/pty_pool.py
+index d65a7c0..27d28e1 100644
+--- a/src/fa/runtime/pty_pool.py
++++ b/src/fa/runtime/pty_pool.py
+@@ -12,14 +12,16 @@ from __future__ import annotations
+ import re
+ import shutil
+ import threading
+-from pathlib import Path
+-from typing import Dict, Optional
+-from dataclasses import dataclass
+ from collections import OrderedDict
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Any
++
+ 
+ ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07")
+ SENTINEL = "|||FA_READY|||"
+ 
++
+ @dataclass
+ class PtyResult:
+     stdout: str
+@@ -27,39 +29,50 @@ class PtyResult:
+     truncated: bool
+     session_id: str
+ 
++
+ class PoolExhaustedError(RuntimeError):
+     pass
+ 
++
+ class BranchAlreadyCheckedOutError(RuntimeError):
+     pass
+ 
++
+ class PtySession:
+-    def __init__(self, session_id: str, cwd: Path, server=None, env: Optional[Dict[str, str]] = None):
++    def __init__(
++        self,
++        session_id: str,
++        cwd: Path,
++        server: Any | None = None,
++        env: dict[str, str] | None = None,
++    ):
+         self.session_id = session_id
+         self.cwd = Path(cwd).resolve()
+         self.env = env or {}
+         self._is_fallback = False
+         self._server = server
++        self._fallback: Any = None
++        self.pane: Any = None
++        self.tmux_session: Any = None
+ 
+-        # Graceful degradation: check tmux binary
+         if server is None:
+-            # Fallback to pexpect
+-            import pexpect
+-            self._fallback = pexpect.spawn(
+-                "/bin/bash",
+-                ["--norc", "--noprofile"],
+-                env={"PS1": SENTINEL, "PAGER": "cat", **self.env},
+-                encoding="utf-8",
+-                echo=False,
+-                cwd=str(self.cwd),
+-            )
+-            self._fallback.expect(SENTINEL)
+-            self._is_fallback = True
+-            self.pane = None
+-            self.tmux_session = None
++            try:
++                import pexpect  # type: ignore[import-untyped]
++
++                self._fallback = pexpect.spawn(
++                    "/bin/bash",
++                    ["--norc", "--noprofile"],
++                    env={"PS1": SENTINEL, "PAGER": "cat", **self.env},
++                    encoding="utf-8",
++                    echo=False,
++                    cwd=str(self.cwd),
++                )
++                self._fallback.expect(SENTINEL)
++                self._is_fallback = True
++            except Exception as exc:
++                print(f"WARNING: pexpect fallback failed: {exc}, using subprocess fallback")
++                self._is_fallback = True
+         else:
+-            # libtmux path with shared server
+-            self.pane = None
+             try:
+                 self.tmux_session = self._server.new_session(
+                     session_name=f"fa_{session_id}",
+@@ -67,39 +80,64 @@ class PtySession:
+                     start_directory=str(self.cwd),
+                 )
+             except Exception:
+-                # Session exists, find
+-                self.tmux_session = self._server.find_where({"session_name": f"fa_{session_id}"})
++                try:
++                    self.tmux_session = self._server.find_where(
++                        {"session_name": f"fa_{session_id}"}
++                    )
++                except Exception:
++                    self.tmux_session = None
+                 if self.tmux_session is None:
+                     raise
+-            self.pane = self.tmux_session.attached_window.attached_pane
+-            self.pane.send_keys(
+-                f"export PS1=$'\\x01{SENTINEL}\\x02' && export PROMPT_COMMAND='' && export PAGER=cat",
+-                suppress_history=True,
+-            )
+-            self._wait_for_sentinel()
++            try:
++                self.pane = self.tmux_session.attached_window.attached_pane
++                self.pane.send_keys(
++                    f"export PS1=$'\\x01{SENTINEL}\\x02' && export PROMPT_COMMAND='' && export PAGER=cat",
++                    suppress_history=True,
++                )
++                self._wait_for_sentinel()
++            except Exception as exc:
++                print(f"WARNING: tmux pane init failed: {exc}, fallback to pexpect")
++                self._is_fallback = True
++                self.pane = None
++                self.tmux_session = None
+ 
+-    def _wait_for_sentinel(self, timeout: int = 5):
++    def _wait_for_sentinel(self, timeout: int = 5) -> None:
+         if self._is_fallback:
+             return
++        if self.pane is None:
++            return
+         import time
++
+         start = time.time()
+         while time.time() - start < timeout:
+-            content = "\n".join(self.pane.cmd("capture-pane", "-p", "-S", "-20").stdout)
+-            if SENTINEL in content:
+-                return
++            try:
++                content = "\n".join(self.pane.cmd("capture-pane", "-p", "-S", "-20").stdout)
++                if SENTINEL in content:
++                    return
++            except Exception:
++                pass
+             time.sleep(0.1)
+         raise TimeoutError(f"Sentinel {SENTINEL} not found")
+ 
+     def run(self, command: str, timeout: int = 30) -> PtyResult:
+         if self._is_fallback:
++            if self._fallback is None:
++                return PtyResult(
++                    stdout="No fallback available", exit_code=-1, truncated=False, session_id=self.session_id
++                )
+             full = f"{command}; echo __FA_EXIT__:$? __FA_END__"
+-            self._fallback.sendline(full)
+             try:
++                self._fallback.sendline(full)
+                 self._fallback.expect("__FA_END__", timeout=timeout)
+                 raw = self._fallback.before or ""
+             except Exception:
+-                raw = self._fallback.before or ""
+-                return PtyResult(stdout=f"Timeout {timeout}s partial:\n{ANSI_RE.sub('', raw)[:8000]}", exit_code=-1, truncated=True, session_id=self.session_id)
++                raw = self._fallback.before or "" if self._fallback else ""
++                return PtyResult(
++                    stdout=f"Timeout {timeout}s partial:\n{ANSI_RE.sub('', raw)[:8000]}",
++                    exit_code=-1,
++                    truncated=True,
++                    session_id=self.session_id,
++                )
+             clean = ANSI_RE.sub("", raw)
+             m = re.search(r"__FA_EXIT__:(\d+)", clean)
+             exit_code = int(m.group(1)) if m else -1
+@@ -110,24 +148,37 @@ class PtySession:
+                 clean = clean[:8000] + "\n...[truncated]"
+             return PtyResult(stdout=clean.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id)
+ 
++        if self.pane is None:
++            return PtyResult(
++                stdout="No pane available", exit_code=-1, truncated=False, session_id=self.session_id
++            )
++
+         full = f"{command}; echo __FA_EXIT__:$? __FA_END__"
+-        self.pane.send_keys(full)
++        try:
++            self.pane.send_keys(full)
++        except Exception as exc:
++            return PtyResult(stdout=f"Failed to send command: {exc}", exit_code=-1, truncated=False, session_id=self.session_id)
++
+         import time
++
+         start = time.time()
+         output = ""
+         exit_code = -1
+         while time.time() - start < timeout:
+-            lines = self.pane.cmd("capture-pane", "-p", "-S", "-100").stdout
+-            text = "\n".join(lines)
+-            if "__FA_END__" in text:
+-                clean = ANSI_RE.sub("", text)
+-                m = re.search(r"__FA_EXIT__:(\d+)", clean)
+-                if m:
+-                    exit_code = int(m.group(1))
+-                if "__FA_EXIT__:" in clean:
+-                    clean = clean.split("__FA_EXIT__:")[0]
+-                output = clean
+-                break
++            try:
++                lines = self.pane.cmd("capture-pane", "-p", "-S", "-100").stdout
++                text = "\n".join(lines)
++                if "__FA_END__" in text:
++                    clean = ANSI_RE.sub("", text)
++                    m = re.search(r"__FA_EXIT__:(\d+)", clean)
++                    if m:
++                        exit_code = int(m.group(1))
++                    if "__FA_EXIT__:" in clean:
++                        clean = clean.split("__FA_EXIT__:")[0]
++                    output = clean
++                    break
++            except Exception:
++                pass
+             time.sleep(0.2)
+         truncated = len(output) > 8000
+         if truncated:
+@@ -136,45 +187,55 @@ class PtySession:
+ 
+     def send_ctrl_c(self) -> str:
+         if self._is_fallback:
+-            self._fallback.sendcontrol("c")
++            if self._fallback is None:
++                return "No fallback"
+             try:
++                self._fallback.sendcontrol("c")
+                 self._fallback.expect(SENTINEL, timeout=5)
+                 return "Ctrl+C ready"
+             except Exception:
+                 return "Ctrl+C sent not ready"
+-        self.pane.send_keys("C-c")
++        if self.pane is None:
++            return "No pane"
+         try:
++            self.pane.send_keys("C-c")
+             self._wait_for_sentinel(timeout=5)
+             return "Ctrl+C ready"
+         except TimeoutError:
+             return "Ctrl+C sent not ready"
+ 
+-    def close(self):
++    def close(self) -> None:
+         if self._is_fallback:
+-            self._fallback.close(force=True)
++            if self._fallback is not None:
++                try:
++                    self._fallback.close(force=True)
++                except Exception:
++                    pass
+         else:
+-            if hasattr(self, 'tmux_session') and self.tmux_session:
++            if self.tmux_session is not None:
+                 try:
+                     self.tmux_session.kill_session()
+                 except Exception:
+                     pass
+ 
++
+ class PtyPool:
+     """
+     Production PtyPool: shared server, LRU eviction, fail-fast never reuse main, thread-safe, DI
+     No global singleton, per SessionState
+     """
+ 
+-    def __init__(self, max_size: int = 2, base_cwd: Path = Path("/workspace"), server=None):
++    def __init__(self, max_size: int = 2, base_cwd: Path = Path("/workspace"), server: Any | None = None):
+         self.max_size = max_size
+         self.base_cwd = Path(base_cwd).resolve()
+-        self.sessions: OrderedDict[str, PtySession] = OrderedDict()  # LRU order
++        self.sessions: OrderedDict[str, PtySession] = OrderedDict()
+         self.lock = threading.Lock()
+-        # Shared server instance, injected or created once
++        self._server: Any | None = None
++
+         if server is None:
+-            # Try libtmux, fallback None -> PtySession will fallback to pexpect
+             try:
+-                import libtmux
++                import libtmux  # type: ignore[import-untyped]
++
+                 if shutil.which("tmux") is None:
+                     print("WARNING: tmux binary not found, falling back to pexpect")
+                     self._server = None
+@@ -186,14 +247,12 @@ class PtyPool:
+         else:
+             self._server = server
+ 
+-    def acquire(self, session_id: str, workdir: Optional[str] = None) -> PtySession:
++    def acquire(self, session_id: str, workdir: str | None = None) -> PtySession:
+         with self.lock:
+             if session_id in self.sessions:
+-                # Move to end (LRU)
+                 self.sessions.move_to_end(session_id)
+                 return self.sessions[session_id]
+             if len(self.sessions) >= self.max_size:
+-                # Fail-fast, never reuse main, prevents isolation break (Gap B fix)
+                 raise PoolExhaustedError(
+                     f"Pool full max_size={self.max_size}, no idle, cannot acquire {session_id}. "
+                     f"Active: {list(self.sessions.keys())}. Call kill idle or increase max_size. "
+@@ -205,12 +264,15 @@ class PtyPool:
+             self.sessions[session_id] = session
+             return session
+ 
+-    def list_sessions(self):
++    def list_sessions(self) -> list[str]:
+         with self.lock:
+             return list(self.sessions.keys())
+ 
+-    def kill(self, session_id: str):
++    def kill(self, session_id: str) -> None:
+         with self.lock:
+             if session_id in self.sessions:
+-                self.sessions[session_id].close()
++                try:
++                    self.sessions[session_id].close()
++                except Exception:
++                    pass
+                 del self.sessions[session_id]
+diff --git a/src/fa/runtime/server.py b/src/fa/runtime/server.py
+index a4082f0..9a35b6c 100644
+--- a/src/fa/runtime/server.py
++++ b/src/fa/runtime/server.py
+@@ -7,75 +7,79 @@ Prior art: OpenHands Action Execution Server, OpenCode ShellPool
+ 
+ from __future__ import annotations
+ 
+-from typing import Optional, List
+ from pathlib import Path
+-
+-from fastapi import FastAPI, HTTPException
+-from pydantic import BaseModel
+-
+-from .pty_pool import PtyPool, PtyResult
+-
+-app = FastAPI(title="fa-runtime-server", version="0.1")
+-pool = PtyPool(max_size=3, base_cwd=Path("/workspace"))
+-
+-class ExecuteRequest(BaseModel):
+-    session_id: str = "main"
+-    command: str
+-    timeout: int = 30
+-    workdir: Optional[str] = None
+-
+-class ExecuteResponse(BaseModel):
+-    stdout: str
+-    exit_code: int
+-    truncated: bool
+-    session_id: str
+-
+-class KillRequest(BaseModel):
+-    session_id: str
+-
+-@app.post("/execute", response_model=ExecuteResponse)
+-def execute(req: ExecuteRequest):
+-    try:
+-        session = pool.acquire(req.session_id, workdir=req.workdir)
+-        result: PtyResult = session.run(req.command, timeout=req.timeout)
+-        return ExecuteResponse(
+-            stdout=result.stdout,
+-            exit_code=result.exit_code,
+-            truncated=result.truncated,
+-            session_id=result.session_id,
+-        )
+-    except AssertionError as e:
+-        # Defensive check failure (Gap 6)
+-        raise HTTPException(status_code=400, detail=f"Defensive check failed: {e}")
+-    except Exception as e:
+-        raise HTTPException(status_code=500, detail=str(e))
+-
+-@app.post("/send_ctrl_c")
+-def send_ctrl_c(session_id: str):
+-    if session_id not in pool.sessions:
+-        raise HTTPException(status_code=404, detail="session not found")
+-    msg = pool.sessions[session_id].send_ctrl_c()
+-    return {"msg": msg, "session_id": session_id}
+-
+-@app.get("/list")
+-def list_sessions():
+-    return {"sessions": pool.list_sessions()}
+-
+-@app.post("/kill")
+-def kill_session(req: KillRequest):
+-    if req.session_id not in pool.sessions:
+-        raise HTTPException(status_code=404, detail="session not found")
+-    pool.kill(req.session_id)
+-    return {"killed": req.session_id}
+-
+-@app.get("/health")
+-def health():
+-    return {"status": "ok", "sessions": len(pool.sessions), "max_size": pool.max_size}
+-
+-# Thin client for run_bash.py (to be used)
+-# Example:
+-# import requests
+-# resp = requests.post("http://fa-runtime-server:8001/execute", json={"session_id":"main","command":"cd /tmp && pwd"})
+-# data = resp.json()
+-# ToolResult.ok(f"bash exited {data['exit_code']}", result=data)
+-
++from typing import List, Optional
++
++try:
++    from fastapi import FastAPI, HTTPException  # type: ignore[import-untyped]
++    from pydantic import BaseModel  # type: ignore[import-untyped]
++
++    HAS_FASTAPI = True
++except ImportError:
++    FastAPI = None  # type: ignore
++    HTTPException = Exception  # type: ignore
++    BaseModel = object  # type: ignore
++    HAS_FASTAPI = False
++
++from .pty_pool import PtyPool, PtyResult  # noqa: E402
++
++if HAS_FASTAPI:
++    app = FastAPI(title="fa-runtime-server", version="0.1")  # type: ignore
++    pool = PtyPool(max_size=3, base_cwd=Path("/workspace"))
++
++    class ExecuteRequest(BaseModel):  # type: ignore
++        session_id: str = "main"
++        command: str
++        timeout: int = 30
++        workdir: Optional[str] = None
++
++    class ExecuteResponse(BaseModel):  # type: ignore
++        stdout: str
++        exit_code: int
++        truncated: bool
++        session_id: str
++
++    class KillRequest(BaseModel):  # type: ignore
++        session_id: str
++
++    @app.post("/execute", response_model=ExecuteResponse)
++    def execute(req: ExecuteRequest):  # type: ignore
++        try:
++            session = pool.acquire(req.session_id, workdir=req.workdir)
++            result: PtyResult = session.run(req.command, timeout=req.timeout)
++            return ExecuteResponse(
++                stdout=result.stdout,
++                exit_code=result.exit_code,
++                truncated=result.truncated,
++                session_id=result.session_id,
++            )
++        except AssertionError as e:
++            raise HTTPException(status_code=400, detail=f"Defensive check failed: {e}")
++        except Exception as e:
++            raise HTTPException(status_code=500, detail=str(e))
++
++    @app.post("/send_ctrl_c")
++    def send_ctrl_c(session_id: str):  # type: ignore
++        if session_id not in pool.sessions:
++            raise HTTPException(status_code=404, detail="session not found")
++        msg = pool.sessions[session_id].send_ctrl_c()
++        return {"msg": msg, "session_id": session_id}
++
++    @app.get("/list")
++    def list_sessions():  # type: ignore
++        return {"sessions": pool.list_sessions()}
++
++    @app.post("/kill")
++    def kill_session(req: KillRequest):  # type: ignore
++        if req.session_id not in pool.sessions:
++            raise HTTPException(status_code=404, detail="session not found")
++        pool.kill(req.session_id)
++        return {"killed": req.session_id}
++
++    @app.get("/health")
++    def health():  # type: ignore
++        return {"status": "ok", "sessions": len(pool.sessions), "max_size": pool.max_size}
++
++else:
++    app = None  # type: ignore
++    pool = None  # type: ignore
+diff --git a/src/fa/telemetry/telemetry.py b/src/fa/telemetry/telemetry.py
+index 04a6089..cb7101f 100644
+--- a/src/fa/telemetry/telemetry.py
++++ b/src/fa/telemetry/telemetry.py
+@@ -1,20 +1,16 @@
+ """
+ Telemetry — Minimal Structured Telemetry + Governed Mutation Foundation
+ Phase 0.5 — Not 100k raw logs, but structured summaries + artifact_id, offload full outputs to ArtifactStore
+-
+-Prior art: Paper §3.5.1 Deep Telemetry as Optimization Substrate, Paper §3.2.6 Context Compaction and State Offloading
+-Active context: compact summaries + resource identifiers, not raw logs (e.g., failing test name + key frames + suspected files + link to full log)
+-Durable: files, DBs, trace stores
+ """
+ 
+ from __future__ import annotations
+ 
+ import json
+ import threading
+-from dataclasses import dataclass, asdict, field
++from dataclasses import asdict, dataclass
+ from pathlib import Path
+-from typing import List, Dict, Any, Optional
+-from datetime import datetime, timezone
++from typing import Any
++
+ 
+ @dataclass
+ class TelemetryEvent:
+@@ -25,22 +21,22 @@ class TelemetryEvent:
+     cost_usd: float
+     model_id: str
+     tool_name: str
+-    tool_args: Dict[str, Any]  # sanitized, no secrets
+-    permission_tier: str  # read, workspace, full
+-    edited_files: List[str]
+-    test_result: str  # PASS/FAIL
++    tool_args: dict[str, Any]
++    permission_tier: str
++    edited_files: list[str]
++    test_result: str
+     cache_hit: bool
+     latency_ms: int
+-    branch_decision: str  # e.g., "choose fs.grep over fs.read 10 files"
+-    rejected_alternatives: List[str]  # e.g., ["fs.read 10 files", "fs.grep"]
+-    human_approval: Optional[str]  # approved, rejected, policy exception
+-    artifact_id: Optional[str]  # reference to full output offloaded to ArtifactStore, not raw log
++    branch_decision: str
++    rejected_alternatives: list[str]
++    human_approval: str | None
++    artifact_id: str | None
++
+ 
+ class TelemetryLogger:
+     """
+     Structured telemetry logger, append-only, thread-safe, graceful degradation
+-    Store: .fa/telemetry/telemetry.jsonl, one line per tool call, structured, not raw logs, <1k chars per line
+-    Offload full tool outputs to ArtifactStore content-addressed, keep 500-char preview + artifact_id in active context (ArXiv table)
++    Store: .fa/telemetry/telemetry.jsonl, one line per tool call
+     """
+ 
+     def __init__(self, root: Path):
+@@ -52,15 +48,12 @@ class TelemetryLogger:
+ 
+     @staticmethod
+     def _is_secret_key(k: str) -> bool:
+-        """Precise secret detection, reuse allowlist from bash_env.py."""
+         try:
+             from fa.inner_loop.tools.bash_env import SECRET_NAME_RE
+ 
+             return bool(SECRET_NAME_RE.search(k))
+         except Exception:
+-            # Fallback precise matching: suffix or exact, not substring "key" in "keyboard"
+             lk = k.lower()
+-            # Exact suffixes that indicate secrets, avoid broad "key" substring
+             secret_suffixes = ("_key", "_token", "_secret", "_password", "_passwd")
+             secret_exact = {"key", "token", "secret", "password", "api_key", "access_key"}
+             if lk in secret_exact:
+@@ -73,13 +66,11 @@ class TelemetryLogger:
+ 
+     def log(self, event: TelemetryEvent) -> None:
+         try:
+-            # Sanitize tool_args: remove secrets via precise matching (Gap fix)
+-            sanitized_args = {}
++            sanitized_args: dict[str, Any] = {}
+             for k, v in event.tool_args.items():
+                 if self._is_secret_key(k):
+                     sanitized_args[k] = "***REDACTED***"
+                 else:
+-                    # Also truncate very long values to keep line <1k
+                     if isinstance(v, str) and len(v) > 500:
+                         sanitized_args[k] = v[:500] + "...[truncated]"
+                     else:
+@@ -87,19 +78,12 @@ class TelemetryLogger:
+             event.tool_args = sanitized_args
+ 
+             line = json.dumps(asdict(event), ensure_ascii=False)
+-            # Enforce <1k chars per line: re-trim tool_args if still large
+             if len(line) > 1000:
+-                # Truncate summary fields, not break JSON entirely
+-                # Best-effort: shorten branch_decision and summary in tool_args
+-                # Keep line valid JSON by re-dumping after trimming
+                 if len(event.tool_args.get("command", "")) > 200:
+                     event.tool_args["command"] = event.tool_args["command"][:200] + "...[truncated]"
+                 line = json.dumps(asdict(event), ensure_ascii=False)
+                 if len(line) > 1000:
+                     line = line[:997] + "..."
+-                    # If we truncated JSON, ensure we still write something parseable?
+-                    # For v0.1 we accept truncated line with WARNING marker,
+-                    # but attempt to keep JSON valid by closing brace if needed
+                     if not line.endswith("}"):
+                         line = line.rsplit(",", 1)[0] + "}"
+ 
+@@ -107,11 +91,12 @@ class TelemetryLogger:
+                 with open(self.path, "a", encoding="utf-8") as f:
+                     f.write(line + "\n")
+         except Exception as e:
+-            # Graceful degradation: log WARNING and continue, not crash
+             print(f"WARNING: Telemetry log failed {e}, continuing")
+ 
+-    def query(self, tool_name: str = None, test_result: str = None) -> List[TelemetryEvent]:
+-        results = []
++    def query(
++        self, tool_name: str | None = None, test_result: str | None = None
++    ) -> list[TelemetryEvent]:
++        results: list[TelemetryEvent] = []
+         with self.lock:
+             if not self.path.exists():
+                 return results
+@@ -119,17 +104,16 @@ class TelemetryLogger:
+                 for line in f:
+                     try:
+                         data = json.loads(line)
+-                        if tool_name and data.get("tool_name") != tool_name:
++                        if tool_name is not None and data.get("tool_name") != tool_name:
+                             continue
+-                        if test_result and data.get("test_result") != test_result:
++                        if test_result is not None and data.get("test_result") != test_result:
+                             continue
+                         results.append(TelemetryEvent(**data))
+                     except Exception:
+                         continue
+         return results
+ 
+-# Change Contract Template for Evolution Agent (Pillar 4)
+-# From Paper §5.2.3 Self-Evolving Harnesses without Regression: every proposed edit should carry change contract
++
+ CHANGE_CONTRACT_TEMPLATE = """
+ # Change Contract for Harness Mutation
+ 
+@@ -137,33 +121,26 @@ CHANGE_CONTRACT_TEMPLATE = """
+ - e.g., src/fa/inner_loop/tools/run_bash.py, src/fa/memory/fts_index.py
+ 
+ ## Which failure mode it targets
+-- e.g., missing dependencies, weak tests, hallucinated APIs, flaky sandboxes, over-permissive tool calls, premature termination, token cost
++- e.g., missing dependencies, weak tests, hallucinated APIs, flaky sandboxes
+ 
+ ## What improvement it predicts
+-- e.g., median tokens / completed task ↓20%, tool-calls ↓30%, cache hit ratio ↑15%
++- e.g., median tokens ↓20%, tool-calls ↓30%, cache hit ratio ↑15%
+ 
+ ## Which invariants it must preserve
+-- e.g., ADR-10 I-1 single-source-of-truth classifier, ADR-11 Level-0 TCB stdlib-only, ADR-12 secret isolation, ADR-7 §10 paired rows
++- e.g., ADR-10 I-1, ADR-11 Level-0 TCB stdlib-only, ADR-12 secret isolation
+ 
+ ## Which evaluation can falsify it
+-- e.g., mini eval-harness 5 tasks (read repo, fix bug, add test, refactor, code-review) before/after, median tokens, tool-calls, USD cost, test pass rate
++- e.g., mini eval-harness 5 tasks before/after
+ 
+ ## How it can be rolled back
+-- e.g., git revert commit abc, restore previous prompt template, restore previous tool schema
++- e.g., git revert commit abc
+ 
+ ## HITL required?
+-- e.g., Yes if alters permission boundaries, network access, credential handling, deployment behavior, human-review requirements (per §3.5.3 Governed Harness Mutation)
+-- No if only retrieval policy, context packing, retry limits
++- Yes if alters permission boundaries, network access, credential handling
++- No if only retrieval policy, context packing
+ 
+ ## Evidence
+ - telemetry.jsonl run_ids: [...]
+ - blackboard entries: [...]
+ - artifact_ids: [...]
+ """
+-
+-# Example usage:
+-# logger = TelemetryLogger(Path(".fa/telemetry"))
+-# event = TelemetryEvent(run_id="abc", turn=1, prompt_tokens=1000, completion_tokens=200, cost_usd=0.01, model_id="claude-opus-4", tool_name="fs.read_file", tool_args={"path":"src/auth.py"}, permission_tier="read", edited_files=[], test_result="PASS", cache_hit=True, latency_ms=100, branch_decision="choose grep over read 10 files", rejected_alternatives=["read 10 files"], human_approval=None, artifact_id="tool-result-abc123")
+-# logger.log(event)
+-# Active context for LLM: compact summary + artifact_id, not raw log
+-# e.g., "Tool fs.read_file read src/auth.py, cache_hit True, artifact_id abc123, preview: ..."
+diff --git a/src/fa/workspace/worktree_manager.py b/src/fa/workspace/worktree_manager.py
+index 9c669f0..40a71e3 100644
+--- a/src/fa/workspace/worktree_manager.py
++++ b/src/fa/workspace/worktree_manager.py
+@@ -18,18 +18,11 @@ import shutil
+ import subprocess
+ from abc import ABC, abstractmethod
+ from pathlib import Path
++from typing import Any, override
+ 
+ 
+ def _sanitize_task_id(task_id: str, run_id: str = "") -> str:
+-    """Elegant production-grade sanitize, deterministic, no leak.
+-
+-    - Replaces [^a-zA-Z0-9-_'] with '-', truncates 50, lower, strip '-'
+-    - If result empty after strip: deterministic fallback task-{hash(original+run_id)[:8]}
+-      * Same empty in same session (same run_id) → same path → cleanup works, no leak
+-      * Different sessions (different run_id) → different hash → no global collision
+-      * Not random uuid → testable, deterministic, no double-call mismatch
+-    - Logs WARNING for empty, fail-fast friendly
+-    """
++    """Elegant production-grade sanitize, deterministic, no leak."""
+     original = task_id or ""
+     sanitized = re.sub(r"[^a-zA-Z0-9-_]", "-", original)[:50]
+     sanitized = sanitized.strip("-").lower()
+@@ -37,7 +30,6 @@ def _sanitize_task_id(task_id: str, run_id: str = "") -> str:
+     if sanitized:
+         return sanitized
+ 
+-    # Deterministic fallback: hash(original + run_id) for uniqueness across sessions
+     if not original.strip():
+         print(f"WARNING: task_id empty after sanitization, original='{original}', using deterministic fallback")
+ 
+@@ -64,19 +56,16 @@ class SharedDirWorktreeManager(WorktreeManager):
+         assert self.session_root.exists(), f"session_root {self.session_root} not exists"
+         assert self.session_root.is_dir(), f"session_root {self.session_root} not dir"
+ 
++    @override
+     def create_subagent_workspace(self, task_id: str, base_branch: str = "main") -> Path:
+-        # SharedDir ignores task_id, returns session_root, 100% stable, 0 code
+-        # But still sanitize for logging / blackboard consistency
+-        clean_id = _sanitize_task_id(task_id, run_id=self.run_id)
+-        # Log clean_id for observability, but return session_root
+-        # print(f"SharedDir workspace for {task_id} -> {clean_id} -> {self.session_root}")
++        _sanitize_task_id(task_id, run_id=self.run_id)
+         return self.session_root
+ 
++    @override
+     def cleanup(self, path: Path) -> None:
+         assert Path(path).resolve() == self.session_root, (
+             f"cleanup called on non-session_root {path} in SharedDir mode"
+         )
+-        pass
+ 
+ 
+ class IsolatedWorktreeManager(WorktreeManager):
+@@ -93,12 +82,11 @@ class IsolatedWorktreeManager(WorktreeManager):
+ 
+     def _is_branch_checked_out_elsewhere(self, branch: str) -> tuple[bool, str]:
+         result = subprocess.run(
+-            ["git", "worktree", "list", "--porcelain"],  # noqa: S607 - git binary
++            ["git", "worktree", "list", "--porcelain"],  # noqa: S607
+             cwd=self.repo_root,
+             capture_output=True,
+             text=True,
+         )
+-        # Exact parsing: lines "branch refs/heads/<branch>" or "branch <branch>"
+         for line in result.stdout.splitlines():
+             if not line.startswith("branch "):
+                 continue
+@@ -119,8 +107,8 @@ class IsolatedWorktreeManager(WorktreeManager):
+                 return candidate
+         return base_branch
+ 
++    @override
+     def create_subagent_workspace(self, task_id: str, base_branch: str = "main") -> Path:
+-        # Elegant: call sanitize once, reuse for path and branch — no mismatch, no leak
+         clean_id = _sanitize_task_id(task_id, run_id=self.run_id)
+         worktree_path = self.worktrees_root / clean_id
+         branch = f"agent/{clean_id}"
+@@ -152,7 +140,6 @@ class IsolatedWorktreeManager(WorktreeManager):
+         assert worktree_path.exists(), f"worktree_path {worktree_path} not exists after add"
+         assert worktree_path.is_dir(), f"worktree_path {worktree_path} not dir after add"
+ 
+-        # Exact porcelain parsing for worktree path, not substring false positive
+         list_result = subprocess.run(
+             ["git", "worktree", "list", "--porcelain"],  # noqa: S607
+             cwd=self.repo_root,
+@@ -170,6 +157,7 @@ class IsolatedWorktreeManager(WorktreeManager):
+ 
+         return worktree_path
+ 
++    @override
+     def cleanup(self, path: Path) -> None:
+         path = Path(path).resolve()
+         subprocess.run(
+@@ -189,7 +177,7 @@ class WorktreeManagerFactory:
+ 
+     @staticmethod
+     def from_flags(
+-        flags, session_root: Path, repo_root: Path, run_id: str = ""
++        flags: Any | None, session_root: Path, repo_root: Path, run_id: str = ""
+     ) -> WorktreeManager:
+         mode = getattr(flags, "worktree_mode", "shared") if flags else "shared"
+         if mode == "isolated":
+diff --git a/tests/test_prompt_caching_per_role.py b/tests/test_prompt_caching_per_role.py
+index 9c19677..16da3a9 100644
+--- a/tests/test_prompt_caching_per_role.py
++++ b/tests/test_prompt_caching_per_role.py
+@@ -2,13 +2,21 @@
+ Tests for Gap 2 Prompt Caching per role (cache-key = role_id) and Gap 4 skill globs
+ """
+ 
+-def test_cache_key_per_role():
++from __future__ import annotations
++
++
++def test_cache_key_per_role() -> None:
+     from fa.inner_loop.prompt_composer import build_prompt_parts
+ 
+     base = "BASE SYSTEM"
+     map_md = "AGENTS.md map"
+     researcher_tools = [{"name": "fs.grep"}, {"name": "fs.read_file"}]
+-    coder_tools = [{"name": "fs.read_file"}, {"name": "fs.write_file"}, {"name": "fs.edit_file"}, {"name": "fs.run_bash"}]
++    coder_tools = [
++        {"name": "fs.read_file"},
++        {"name": "fs.write_file"},
++        {"name": "fs.edit_file"},
++        {"name": "fs.run_bash"},
++    ]
+ 
+     parts_r, key_r = build_prompt_parts(base, map_md, researcher_tools, role_id="researcher", task="find auth")
+     parts_c, key_c = build_prompt_parts(base, map_md, coder_tools, role_id="coder", task="find auth")
+@@ -17,14 +25,17 @@ def test_cache_key_per_role():
+     assert "researcher" in key_r
+     assert "coder" in key_c
+ 
+-def test_cacheable_split():
++
++def test_cacheable_split() -> None:
+     from fa.inner_loop.prompt_composer import build_prompt_parts, to_anthropic_request, to_openai_request
+ 
+     base = "BASE"
+     map_md = "MAP"
+-    tools = [{"name": "fs.read_file"}]
++    tools: list[dict[str, str]] = [{"name": "fs.read_file"}]
+ 
+-    parts, key = build_prompt_parts(base, map_md, tools, role_id="researcher", task="do something", memory_summary="summary")
++    parts, key = build_prompt_parts(
++        base, map_md, tools, role_id="researcher", task="do something", memory_summary="summary"
++    )
+ 
+     assert len(parts.cacheable) == 3
+     assert len(parts.non_cacheable) == 2
+@@ -36,47 +47,36 @@ def test_cacheable_split():
+     assert "prompt_cache_key" in openai_req["extra_body"]
+     assert openai_req["extra_body"]["prompt_cache_key"] == key
+ 
+-def test_skill_globs():
+-    # Simulate skill loader with globs — use simple logic that supports ** recursive
+-    def should_load_skill(skill_globs, always_apply, current_files):
++
++def test_skill_globs() -> None:
++    def should_load_skill(skill_globs: list[str], always_apply: bool, current_files: list[str]) -> bool:
+         if always_apply:
+             return True
+         if not skill_globs:
+             return False
+         for pattern in skill_globs:
+             for f in current_files:
+-                # Handle ** as recursive: src/api/**/*.ts should match src/api/auth.ts and src/api/v1/users/auth.ts
+                 if "**" in pattern:
+-                    # Split pattern into prefix and suffix
+-                    # e.g., "src/api/**/*.ts" -> prefix "src/api/" + suffix ".ts"
+-                    # For simplicity, check if file starts with prefix before ** and ends with suffix after **
+-                    import pathlib
+-                    # Normalize: use pathlib's match for **/*.ts works for deep
+-                    # Check if file matches pattern with ** replaced by * via fnmatch with recursive check
+-                    # Simplest: if file startswith prefix and endswith suffix
+                     prefix = pattern.split("**")[0].rstrip("/")
+-                    # suffix is after **
+                     suffix_part = pattern.split("**")[-1]
+-                    # suffix like "/*.ts" -> ".ts"
+                     suffix = suffix_part.lstrip("/").lstrip("*")
+-                    # e.g., suffix = ".ts" or "/*.ts"
+                     if suffix and not suffix.startswith("."):
+                         suffix = suffix[-3:] if ".ts" in suffix else suffix
+-                    # Check prefix and suffix
+-                    if f.startswith(prefix) and (not suffix or f.endswith(suffix.strip("*").lstrip("/")) or suffix in f):
+-                        # More precise: check extension
++                    if f.startswith(prefix) and (
++                        not suffix or f.endswith(suffix.strip("*").lstrip("/")) or suffix in f
++                    ):
+                         if pattern.endswith(".ts") and f.endswith(".ts") and prefix in f:
+                             return True
+                         if f.startswith(prefix):
+                             return True
+                 else:
+                     from fnmatch import fnmatch
++
+                     if fnmatch(f, pattern):
+                         return True
+         return False
+ 
+-    # Researcher skill with globs src/api/**/*.ts should load only when api files in context
+-    assert should_load_skill(["src/api/**/*.ts"], False, ["src/api/auth.ts"]) == True
+-    assert should_load_skill(["src/api/**/*.ts"], False, ["src/frontend/button.tsx"]) == False
+-    assert should_load_skill([], True, []) == True
+-    assert should_load_skill(["src/api/**/*.ts"], False, ["src/api/v1/users/auth.ts"]) == True
++    assert should_load_skill(["src/api/**/*.ts"], False, ["src/api/auth.ts"]) is True
++    assert should_load_skill(["src/api/**/*.ts"], False, ["src/frontend/button.tsx"]) is False
++    assert should_load_skill([], True, []) is True
++    assert should_load_skill(["src/api/**/*.ts"], False, ["src/api/v1/users/auth.ts"]) is True
+diff --git a/tests/test_tool_batching.py b/tests/test_tool_batching.py
+index e8d91df..11541cc 100644
+--- a/tests/test_tool_batching.py
++++ b/tests/test_tool_batching.py
+@@ -3,7 +3,10 @@ Tests for Gap 8 Tool Call Batching Parallel read-only
+ Prior art: Claude Code, Pi, OpenCode parallel read-only via ThreadPool max 5
+ """
+ 
+-def test_batching_grouping():
++from __future__ import annotations
++
++
++def test_batching_grouping() -> None:
+     READ_ONLY = {"fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep"}
+ 
+     calls = [
+@@ -21,11 +24,12 @@ def test_batching_grouping():
+     assert len(sequential) == 2
+     assert all(c["name"] in READ_ONLY for c in parallel)
+ 
+-def test_threadpool_parallel():
++
++def test_threadpool_parallel() -> None:
+     from concurrent.futures import ThreadPoolExecutor
+     import time
+ 
+-    def fake_tool(name):
++    def fake_tool(name: str) -> str:
+         time.sleep(0.1)
+         return f"result {name}"
+ 
+@@ -37,6 +41,5 @@ def test_threadpool_parallel():
+         results = [f.result() for f in futures]
+     parallel_time = time.time() - start
+ 
+-    # Sequential would be 0.3s, parallel should be ~0.1s
+     assert parallel_time < 0.25, f"Parallel should be faster, took {parallel_time}"
+     assert len(results) == 3

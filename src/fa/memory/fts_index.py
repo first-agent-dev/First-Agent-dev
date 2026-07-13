@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 import sqlite3
 from typing import List
+# List deprecated, use list, but keep for backward compat
 
 
 class InstantGrepIndex:
@@ -62,9 +63,9 @@ class InstantGrepIndex:
     def index_repo(
         self,
         root: Path,
-        patterns=("*.md", "*.py", "*.ts", "*.js", "*.json", "*.yaml"),
+        patterns: tuple[str, ...] = ("*.md", "*.py", "*.ts", "*.js", "*.json", "*.yaml"),
         max_file_size: int = 100_000,
-    ):
+    ) -> None:
         root = Path(root).resolve()
         indexed_paths: set[str] = set()
         for pattern in patterns:
@@ -130,7 +131,7 @@ class InstantGrepIndex:
             pass
         self.conn.commit()
 
-    def instant_grep(self, query: str, limit: int = 10) -> List[str]:
+    def instant_grep(self, query: str, limit: int = 10) -> list[str]:
         """
         Instant substring search: "auth" → finds "authentication", "AuthMiddleware"
         Returns list of paths, not content → token efficient (like OpenAI progressive disclosure)
@@ -151,5 +152,5 @@ class InstantGrepIndex:
             )
             return [row[0] for row in cursor.fetchall()]
 
-    def close(self):
+    def close(self) -> None:
         self.conn.close()

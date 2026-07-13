@@ -3,7 +3,10 @@ Tests for Gap 8 Tool Call Batching Parallel read-only
 Prior art: Claude Code, Pi, OpenCode parallel read-only via ThreadPool max 5
 """
 
-def test_batching_grouping():
+from __future__ import annotations
+
+
+def test_batching_grouping() -> None:
     READ_ONLY = {"fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep"}
 
     calls = [
@@ -21,11 +24,12 @@ def test_batching_grouping():
     assert len(sequential) == 2
     assert all(c["name"] in READ_ONLY for c in parallel)
 
-def test_threadpool_parallel():
+
+def test_threadpool_parallel() -> None:
     from concurrent.futures import ThreadPoolExecutor
     import time
 
-    def fake_tool(name):
+    def fake_tool(name: str) -> str:
         time.sleep(0.1)
         return f"result {name}"
 
@@ -37,6 +41,5 @@ def test_threadpool_parallel():
         results = [f.result() for f in futures]
     parallel_time = time.time() - start
 
-    # Sequential would be 0.3s, parallel should be ~0.1s
     assert parallel_time < 0.25, f"Parallel should be faster, took {parallel_time}"
     assert len(results) == 3

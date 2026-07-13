@@ -1,8 +1,7 @@
 """
 Blackboard — Typed Blackboard with Content Hashes + Transactional Semantics
 Phase 0.5 — Formal Shared Harness Substrate
-Prior art: MACOG blackboard with content hashes + toolchain digests, L2MAC file store D persistent never overwritten but extended/revised with Control Unit, SyncMind belief-state divergence |Bk - Sk|
-
+Prior art: MACOG blackboard with content hashes + toolchain digests, L2MAC file store D persistent
 Senior eng: interface segregation, DI, feature flags, graceful degradation, thread safety, observable failures
 """
 
@@ -11,46 +10,47 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+from typing import Any
+
 
 @dataclass
 class BlackboardEntry:
     id: str
-    type: str  # plan, execution, evaluation, flowstate, tool_result, file_version
-    content_hash: str  # sha256 of payload
-    toolchain_digest: str  # python version, mypy version, model id
-    schema_version: str  # Task IR v1, Plan Artifact v2
-    parent_id: Optional[str]  # previous version
-    read_set: List[str]  # files read
-    write_set: List[str]  # files written
-    assumptions: List[str]  # e.g., "main branch is main", "file src/auth.py exists"
-    version_dependencies: Dict[str, str]  # e.g., {"base_commit": "abc123", "llms.txt": "sha256:..."}
+    type: str
+    content_hash: str
+    toolchain_digest: str
+    schema_version: str
+    parent_id: str | None
+    read_set: list[str]
+    write_set: list[str]
+    assumptions: list[str]
+    version_dependencies: dict[str, str]
     timestamp: str
-    payload: Any  # actual content
+    payload: Any
 
     @classmethod
     def create(
         cls,
+        *,
         id: str,
         type: str,
         payload: Any,
-        read_set: List[str] = None,
-        write_set: List[str] = None,
-        assumptions: List[str] = None,
-        version_dependencies: Dict[str, str] = None,
-        parent_id: Optional[str] = None,
+        read_set: list[str] | None = None,
+        write_set: list[str] | None = None,
+        assumptions: list[str] | None = None,
+        version_dependencies: dict[str, str] | None = None,
+        parent_id: str | None = None,
         schema_version: str = "v1",
-    ) -> "BlackboardEntry":
-        # Content hash
+    ) -> BlackboardEntry:
         content_str = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
         content_hash = hashlib.sha256(content_str.encode()).hexdigest()[:16]
-        # Toolchain digest: python version + model id placeholder
         import sys
+
         toolchain_digest = f"python-{sys.version_info.major}.{sys.version_info.minor}"
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         return cls(
             id=id,
             type=type,
@@ -66,20 +66,22 @@ class BlackboardEntry:
             payload=payload,
         )
 
+
 @dataclass
 class Conflict:
     entry_id: str
     conflicting_entry_id: str
     reason: str
-    read_write_overlap: List[str]
-    assumption_violated: Optional[str] = None
+    read_write_overlap: list[str]
+    assumption_violated: str | None = None
+
 
 class Blackboard:
     """
     Append-only, content-addressed, queryable blackboard
     Store: .fa/blackboard/blackboard.jsonl
     Control Unit manages reads/writes, never overwrites, extended/revised
-    Each entry stamped with content hashes, toolchain digests, schema versions for reproducibility (MACOG)
+    Each entry stamped with content hashes, toolchain digests, schema versions for reproducibility
     """
 
     def __init__(self, root: Path):
@@ -87,7 +89,6 @@ class Blackboard:
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "blackboard.jsonl"
         self.lock = threading.Lock()
-        # Ensure file exists
         self.path.touch(exist_ok=True)
 
     def write(self, entry: BlackboardEntry) -> None:
@@ -98,11 +99,9 @@ class Blackboard:
                 with open(self.path, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
         except Exception as e:
-            # Graceful degradation: log WARNING and continue, not crash (Gap for Phase 0.5)
             print(f"WARNING: Blackboard write failed {e}, continuing")
 
-    def read(self, id: str) -> Optional[BlackboardEntry]:
-        # Simple linear scan for v0.1, could be indexed for future
+    def read(self, id: str) -> BlackboardEntry | None:
         with self.lock:
             if not self.path.exists():
                 return None
@@ -116,9 +115,9 @@ class Blackboard:
                         continue
         return None
 
-    def query(self, type: str = None, key: str = None) -> List[BlackboardEntry]:
+    def query(self, type: str | None = None, key: str | None = None) -> list[BlackboardEntry]:
         """Queryable: filter by type and optional key in payload"""
-        results = []
+        results: list[BlackboardEntry] = []
         with self.lock:
             if not self.path.exists():
                 return results
@@ -126,45 +125,33 @@ class Blackboard:
                 for line in f:
                     try:
                         data = json.loads(line)
-                        if type and data.get("type") != type:
+                        if type is not None and data.get("type") != type:
                             continue
-                        if key and key not in json.dumps(data.get("payload", {})):
+                        if key is not None and key not in json.dumps(data.get("payload", {})):
                             continue
                         results.append(BlackboardEntry(**data))
                     except Exception:
                         continue
         return results
 
-    def detect_conflict(self, new_entry: BlackboardEntry) -> List[Conflict]:
+    def detect_conflict(self, new_entry: BlackboardEntry) -> list[Conflict]:
         """
         Detect conflicts for v0.1: write/write overlap always conflict.
-        Simplified per review Gap 8/12: timestamp logic inverted previously,
-        so for v0.1 we treat any write/write overlap (different id) as conflict,
-        regardless of timestamp. Read/write overlap not enforced in v0.1 —
-        requires Transaction start-time, deferred to Phase 1.
+        Simplified per review: any write/write overlap (different id) as conflict.
         """
-        conflicts = []
+        conflicts: list[Conflict] = []
         existing = self.query(type=new_entry.type)
         for old in existing:
             if old.id == new_entry.id:
                 continue
-            # write/write overlap → conflict (core case: two agents write same file)
             ww_overlap = set(new_entry.write_set) & set(old.write_set)
             if ww_overlap:
                 conflicts.append(
                     Conflict(
                         entry_id=new_entry.id,
                         conflicting_entry_id=old.id,
-                        reason=f"write/write overlap {ww_overlap} — concurrent "
-                        f"write without coordination",
+                        reason=f"write/write overlap {ww_overlap} — concurrent write without coordination",
                         read_write_overlap=list(ww_overlap),
                     )
                 )
         return conflicts
-
-# Example usage:
-# bb = Blackboard(Path(".fa/blackboard"))
-# entry = BlackboardEntry.create(id="plan-1", type="plan", payload={"goal":"fix auth"}, read_set=["src/auth.py"], write_set=[], assumptions=["main branch is main"], version_dependencies={"base_commit":"abc123"})
-# bb.write(entry)
-# conflicts = bb.detect_conflict(new_entry)
-# if conflicts: return ToolResult.fail("conflict_detected", f"Conflict: {conflicts}", retryable=True)
