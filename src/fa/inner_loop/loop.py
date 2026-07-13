@@ -1,18 +1,19 @@
-"""Deterministic inner-loop driver (ADR-7 \u00a71 + ADR-8 \u00a71).
+"""Deterministic inner-loop driver (ADR-7 §1 + ADR-8 §1).
 
 ``run_session`` executes one batch of :class:`ToolCall` instances through
 the registered hooks and tool registry. It reads its iteration cap from
-the supplied :class:`RuntimeLimits` (ADR-7 \u00a7Amendment 2026-05-20 rule 1
-\u00abcaps in ``~/.fa/config.yaml``, never in code constants\u00bb), wires every
-``hook_decision`` row through ``state.log`` (ADR-7 \u00a77), and emits both
-``tool_call`` and ``tool_result`` rows for every call \u2014 successful or
-denied \u2014 per ADR-7 \u00a710 Acceptance criterion 8.
+the supplied :class:`RuntimeLimits` (ADR-7 §Amendment 2026-05-20 rule 1
+«caps in ``~/.fa/config.yaml``, never in code constants»), wires every
+``hook_decision`` row through ``state.log`` (ADR-7 §7), and emits both
+``tool_call`` and ``tool_result`` rows for every call — successful or
+denied — per ADR-7 §10 Acceptance criterion 8.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
+from fa.inner_loop.context import reset_current_session, set_current_session
 from fa.inner_loop.hooks.base import (
     DispatchRecord,
     HookDecisionSink,
@@ -56,11 +57,10 @@ def run_session(
     limits: RuntimeLimits | None = None,
 ) -> tuple[ToolResult, ...]:
     effective_limits = limits if limits is not None else RuntimeLimits.anchored_defaults()
-    # ADR-7 \u00a77 hook_decision projection: every guard/observer step writes
-    # one row to ``events.jsonl`` so the audit trail is replay-complete.
-    # An explicit ValueError instead of ``assert`` because ``python -O``
-    # strips assertions and ``state.log`` is the durable replay surface;
-    # silently None-ing the event sink under -O would lose audit rows.
+    # Phase 0.5: set current session in contextvar so tool handlers can access
+    # transaction/blackboard via DI without signature change
+    token = set_current_session(state)
+
     if state.log is None:
         raise ValueError("SessionState.log must be set before run_session")
     hooks.set_event_sink(_make_hook_decision_sink(state.log))
@@ -76,13 +76,6 @@ def run_session(
                     HookPayload(role=role, acting_family=acting_family),
                 )
             except PermissionError as exc:
-                # ADR-7 §8 BETWEEN_ROUNDS is a session-level gate (e.g.
-                # ``PauseGuard``): a deny must stop the loop cleanly, not
-                # propagate the raw ``PermissionError`` out of the runtime.
-                # The audit trail still gets a ``hook_decision`` row from
-                # the registry, plus a ``run_stopped`` row here so an
-                # operator can tell «loop ended early» from «loop ran to
-                # completion» without replaying the chain.
                 state.log.append(
                     actor="runtime",
                     kind="run_stopped",
@@ -107,24 +100,12 @@ def run_session(
             if effective_call is None:
                 result = ToolResult.fail("invalid_payload", "hook payload lost tool call")
             else:
-                # ADR-7 \u00a75 \u00abRe-validation after pre_tool mutation\u00bb: when
-                # the chain mutated ``tool_call``, ``registry.dispatch`` re-
-                # runs JSON-Schema validation against the new params (the
-                # sandbox-re-check is handled inside HookRegistry.dispatch
-                # via ``revalidates_after_modify``).
                 result = registry.dispatch(effective_call)
 
             payload = payload.with_tool_result(result)
             try:
                 hooks.dispatch(LifecyclePoint.AFTER_TOOL_EXEC, payload)
             except PermissionError as exc:
-                # ADR-8 \u00a71 lets ``GuardMiddleware`` attach to
-                # AFTER_TOOL_EXEC. The tool already ran, so we MUST
-                # still persist its result (ADR-7 \u00a710 Acceptance
-                # criterion 8 \u2014 paired ``tool_call`` / ``tool_result``
-                # rows for every call) and then surface the deny via a
-                # ``run_stopped`` row + clean loop break so the audit
-                # trail records why the session ended after this call.
                 post_exec_denied = exc
             state.record_tool_result(effective_call if effective_call is not None else call, result)
             results.append(result)
@@ -141,6 +122,7 @@ def run_session(
                 break
     finally:
         hooks.set_event_sink(None)
+        reset_current_session(token)
     return tuple(results)
 
 

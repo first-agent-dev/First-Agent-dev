@@ -1,0 +1,189 @@
+"""
+PromptComposer v2.5 Production — Phase 1 Foundation, two-level caching
+
+Fixes:
+- Hash stable parts only: names + input_schema, exclude description with date
+- Cache-key = role_id + hash_names_schemas + hash_agents_map + hash_alwaysApply_skills
+- Two-level: alwaysApply skills in cacheable (stable), conditional globs skills in non-cacheable
+- Universal for Anthropic (cache_control ephemeral single breakpoint Phase 1), OpenAI (prompt_cache_key)
+- FeatureFlags prompt.caching flag disables cache_control
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass
+class PromptParts:
+    cacheable: list[dict[str, Any]]
+    non_cacheable: list[dict[str, Any]]
+
+
+def _stable_hash(obj: Any) -> str:
+    stable = json.dumps(obj, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(stable.encode()).hexdigest()[:8]
+
+
+def _hash_tool_defs_stable(tool_defs: list[dict[str, Any]]) -> str:
+    """Hash only name + input_schema, exclude description which may contain date."""
+    stable_parts = []
+    for td in sorted(tool_defs, key=lambda x: x.get("name", "")):
+        stable_parts.append(
+            {
+                "name": td.get("name"),
+                "input_schema": td.get("input_schema"),
+            }
+        )
+    return _stable_hash(stable_parts)
+
+
+def _hash_skills(skills: list[dict[str, Any]] | None) -> str:
+    """Hash skills stable: name + globs + alwaysApply, exclude content which may change."""
+    if not skills:
+        return "no-skills"
+    stable = []
+    for s in sorted(skills, key=lambda x: x.get("name", "")):
+        stable.append(
+            {
+                "name": s.get("name"),
+                "globs": s.get("globs", []),
+                "alwaysApply": s.get("alwaysApply", False),
+            }
+        )
+    return _stable_hash(stable)
+
+
+def build_prompt_parts_v2(
+    base_system: str,
+    agents_md_map: str,
+    tool_defs: list[dict[str, Any]],
+    role_id: str,
+    skills_all: list[dict[str, Any]] | None = None,  # all skills in repo for hashing
+    skills_always: list[dict[str, Any]] | None = None,  # alwaysApply=True subset for cacheable
+    skills_conditional: list[dict[str, Any]] | None = None,  # globs matched for non-cacheable
+    memory_summary: str = "",
+    task: str = "",
+    observations: list[dict[str, Any]] | None = None,
+) -> tuple[PromptParts, str]:
+    """Build prompt parts with two-level caching.
+
+    - cacheable: BASE system + AGENTS.md map + tool defs + alwaysApply skills (stable)
+    - non-cacheable: conditional skills + memory_summary + task + observations (varies)
+
+    Cache-key stable: role + hash_tools + hash_map + hash_always_skills (not conditional).
+    """
+    observations = observations or []
+    skills_all = skills_all or []
+    skills_always = skills_always or []
+    skills_conditional = skills_conditional or []
+
+    hash_tools = _hash_tool_defs_stable(tool_defs)
+    hash_map = _stable_hash(agents_md_map)
+    hash_always = _hash_skills(skills_always)
+
+    # For backward compat, if skills_always empty but skills_all provided, use skills_all for hash
+    if not skills_always and skills_all:
+        # In Phase 1 migration, hash all skills if always subset not separated yet
+        # But prefer always subset for stability
+        hash_skills_effective = _hash_skills(skills_all)
+        # Use always hash if available else all
+        if hash_always == "no-skills":
+            hash_always = hash_skills_effective
+
+    cache_key = f"fa-{role_id}-{hash_tools}-{hash_map}-{hash_always}"
+
+    cacheable = [
+        {"role": "system", "content": base_system},
+        {"role": "system", "content": f"AGENTS.md map:\n{agents_md_map}"},
+        {"role": "system", "content": f"Tools for role {role_id}:\n{json.dumps(tool_defs, indent=2)}"},
+    ]
+    if skills_always:
+        cacheable.append(
+            {"role": "system", "content": f"AlwaysSkills:\n{json.dumps(skills_always, indent=2)}"}
+        )
+
+    non_cacheable: list[dict[str, Any]] = []
+    if skills_conditional:
+        non_cacheable.append(
+            {
+                "role": "system",
+                "content": f"ConditionalSkills:\n{json.dumps(skills_conditional, indent=2)}",
+            }
+        )
+    if memory_summary:
+        non_cacheable.append({"role": "system", "content": f"Memory summary:\n{memory_summary}"})
+    if task:
+        non_cacheable.append({"role": "user", "content": f"Task: {task}"})
+    non_cacheable.extend(observations)
+
+    return PromptParts(cacheable=cacheable, non_cacheable=non_cacheable), cache_key
+
+
+# Backward compat: original signature without skills params
+def build_prompt_parts(
+    base_system: str,
+    agents_md_map: str,
+    tool_defs: list[dict[str, Any]],
+    role_id: str,
+    memory_summary: str = "",
+    task: str = "",
+    observations: list[dict[str, Any]] | None = None,
+) -> tuple[PromptParts, str]:
+    return build_prompt_parts_v2(
+        base_system,
+        agents_md_map,
+        tool_defs,
+        role_id,
+        skills_all=None,
+        skills_always=None,
+        skills_conditional=None,
+        memory_summary=memory_summary,
+        task=task,
+        observations=observations,
+    )
+
+
+def to_anthropic_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any]:
+    """Phase 1: single breakpoint on last cacheable, not 4+1 yet.
+
+    Checks FeatureFlags prompt.caching flag, if disabled returns without cache_control.
+    """
+    # Check flag
+    try:
+        from fa.feature_flags import load_feature_flags_from_path
+
+        flags = load_feature_flags_from_path().flags
+        if not getattr(flags, "prompt_caching", True):
+            # No caching
+            return {"messages": parts.cacheable + parts.non_cacheable, "_cache_key": cache_key}
+    except Exception:
+        pass
+
+    messages: list[dict[str, Any]] = []
+    for i, msg in enumerate(parts.cacheable):
+        # Single breakpoint on last cacheable for Phase 1 (Phase 2 will add 4+1)
+        if i == len(parts.cacheable) - 1:
+            msg = {**msg, "cache_control": {"type": "ephemeral"}}
+        messages.append(msg)
+    messages.extend(parts.non_cacheable)
+    return {"messages": messages, "_cache_key": cache_key}
+
+
+def to_anthropic_request(*args, **kwargs):
+    return to_anthropic_request_v2(*args, **kwargs)
+
+
+def to_openai_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any]:
+    all_messages = parts.cacheable + parts.non_cacheable
+    return {
+        "messages": all_messages,
+        "extra_body": {"prompt_cache_key": cache_key, "prompt_cache_retention": "1h"},
+    }
+
+
+def to_openai_request(*args, **kwargs):
+    return to_openai_request_v2(*args, **kwargs)

@@ -1,262 +1,81 @@
-# First-Agent
+# First-Agent — llms.txt v2 Proposal (Rewritten to Remove Excess BY-DEMAND INDEX)
 
-> Locally orchestrated, mixed-tier LLM coding agent for a single
-> power-user. Filesystem-canonical knowledge (Markdown + YAML
-> frontmatter); read-side scales lazily from grep to BM25.
-> Written in Python; target codebases the agent reads can be anything.
->
-> This file is an index for LLM agents that want to ingest the
-> project documentation in one fetch. Paths below are relative
-> to the repository root.
->
+> Locally orchestrated, mixed-tier LLM coding agent for single power-user. Filesystem-canonical knowledge (Markdown + YAML frontmatter); read-side scales lazily from grep to BM25. Written in Python; target codebases the agent reads can be anything.
 
-> **Tiered layout.** §MUST READ FIRST is the smallest path that
-> bootstraps a session (five files, in order). §TASK ROUTING
-> points task-types at the right primary entrypoint. §BY-DEMAND
-> INDEX below is the full per-folder file list — open only the
-> entries relevant to the task at hand.
+> This file is an index for LLM agents that want to ingest project documentation in one fetch. Paths relative to repo root.
+
+> Tiered layout. §MUST READ FIRST is smallest path that bootstraps session (5 files, in order). §TASK ROUTING points task-types at right primary entrypoint. §FORMAL SUBSTRATE (NEW) replaces §BY-DEMAND INDEX full file list — use Blackboard query + instant grep for artifact search.
 
 ## § MUST READ FIRST
 
 Five files cover ~90% of session-start context. Read in order:
 
-1. [AGENTS.md](./AGENTS.md) — universal session loadout: repo navigation, style, §Pre-flight checklist, §Context-budget discipline, cross-project anti-patterns, §Loadable skills, query routing.
-2. [knowledge/project-overview.md](./knowledge/project-overview.md) — §1.1 four-pillar goal; §1.2 minimalism-first principle; §1.2.5 compliance-by-construction.
-3. [HANDOFF.md](./HANDOFF.md) — current state tables (Landmarks / Gotchas / Backlog), §Next priority list, §Session Protocol.
-4. [knowledge/adr/DIGEST.md](./knowledge/adr/DIGEST.md) — one-paragraph cheat-sheet per ADR + amendments. Authoritative source remains the per-ADR files.
-5. [knowledge/glossary.md](./knowledge/glossary.md) — canonical definitions for project-specific terms (axis, lens, pillar, NLAH, ACI, harness, hook, UC1..UC5, MCP, subtraction-first, minimalism-first, R-S-M).
+1. AGENTS.md — universal session loadout: repo navigation, style, §Pre-flight checklist, §Context-budget discipline, cross-project anti-patterns, §Loadable skills, query routing, §Querying Artifacts — Use Blackboard and Instant Grep First
+2. knowledge/project-overview.md — §1.1 four-pillar goal; §1.2 minimalism-first; §1.2.5 compliance-by-construction; §1.2.6 Substrate Formality; §1.2.7 Pair over Autonomy
+3. HANDOFF.md — current state tables (Landmarks / Gotchas / Backlog), §Next priority list
+4. knowledge/adr/DIGEST.md — one-paragraph cheat-sheet per ADR
+5. knowledge/glossary.md — canonical definitions
 
 ## § TASK ROUTING
 
 Task type → primary entrypoint, then secondary:
 
-- **Inner-loop / tool-registry contract** → [knowledge/adr/ADR-7-inner-loop-tool-registry.md](./knowledge/adr/ADR-7-inner-loop-tool-registry.md) (canonical). Current loop optimization tracker: [knowledge/loop-improvement-workplan.md](./knowledge/loop-improvement-workplan.md). Background: [knowledge/research/efficient-llm-agent-harness-2026-05.md](./knowledge/research/efficient-llm-agent-harness-2026-05.md) §0.
-- **New ADR or amendment** → [knowledge/adr/ADR-template.md](./knowledge/adr/ADR-template.md) + [knowledge/skills/pr-creation/SKILL.md](./knowledge/skills/pr-creation/SKILL.md) (must update `exploration_log.md` + `DIGEST.md` in same PR).
-- **New module / Phase M PR** → [knowledge/research/memory-architecture-design-2026-04-26.md](./knowledge/research/memory-architecture-design-2026-04-26.md) §9 roadmap + [knowledge/adr/DIGEST.md](./knowledge/adr/DIGEST.md).
-- **Research-briefing note** → [knowledge/prompts/research-briefing.md](./knowledge/prompts/research-briefing.md), then [knowledge/research/_template.md](./knowledge/research/_template.md).
-- **Edit `exploration_log.md`** → schema in [knowledge/README.md](./knowledge/README.md) §`trace/`.
-- **Any PR** → [knowledge/skills/pr-creation/SKILL.md](./knowledge/skills/pr-creation/SKILL.md) (5-intent classifier + PR Checklist + anti-shallow-fix gate). Load via [AGENTS.md §Loadable skills](./AGENTS.md#loadable-skills).
-- **Relocate / rename a module?** → grep [knowledge/anti-patterns/README.md](./knowledge/anti-patterns/README.md) first; AP-001 is the canonical path-bypass trap.
-- **Deploy / operate / administer the AIO** → [knowledge/instructions/README.md](./knowledge/instructions/README.md) (human start-here index): one-time bootstrap = [01-install.md](./knowledge/instructions/01-install.md); day-to-day ops (update/backup/recovery, RU) = [02-operations.md](./knowledge/instructions/02-operations.md).
-- **Move / prune a doc?** → [knowledge/MAINTENANCE.md §When moving or pruning a doc](./knowledge/MAINTENANCE.md) (fix every reference in the same PR; no dangling links).
-- **Specific number / date / quote** → primary source from `source:` frontmatter, NOT a summary. Per [AGENTS.md §Query Routing](./AGENTS.md#query-routing).
+- Inner-loop / tool-registry contract → knowledge/adr/ADR-7-inner-loop-tool-registry.md
+- New ADR or amendment → knowledge/adr/ADR-template.md + knowledge/skills/pr-creation/SKILL.md
+- New module / Phase M PR → knowledge/research/memory-architecture-design-2026-04-26.md §9 roadmap + knowledge/adr/DIGEST.md
+- Research-briefing note → knowledge/prompts/research-briefing.md, then knowledge/research/_template.md
+- Edit exploration_log.md → schema in knowledge/README.md §trace/
+- Any PR → knowledge/skills/pr-creation/SKILL.md (5-intent classifier + PR Checklist)
+- Relocate / rename a module? → grep knowledge/anti-patterns/README.md first; AP-001 is canonical path-bypass trap
+- Deploy / operate / administer the AIO → knowledge/instructions/README.md (human start-here index)
+- Move / prune a doc? → knowledge/MAINTENANCE.md §When moving or pruning a doc (fix every reference in same PR; no dangling links)
+- Specific number / date / quote → primary source from `source:` frontmatter, NOT a summary. Per AGENTS.md §Query Routing
 
-# STOP HERE UNLESS SPECIFICALLY ROUTED.
----
+# STOP HERE UNLESS SPECIFICALLY ROUTED — For full file list, use formal substrate below.
 
-## § BY-DEMAND INDEX
+## § FORMAL SUBSTRATE — Blackboard + Instant Grep (Replaces BY-DEMAND INDEX)
 
-### Inner-loop runtime (`src/fa/inner_loop/`)
+**BY-DEMAND INDEX full file list is deprecated as of ADR-14/15 (2026-07-11). Use formal substrate for artifact search:**
 
-Materialised ADR-7 + ADR-8 runtime. Smoke: `fa inner-loop-smoke --workspace . --input README.md`. Tests: `tests/test_inner_loop_*.py` + `tests/test_hook_registry.py` + `tests/test_verifier.py` + `tests/test_cost_guardian.py` + `tests/test_roles.py`.
+- **For finding artifacts (skills, ADRs, research, files):** Use `blackboard.query(type="skill", key="api")` or `fs.instant_grep(query="auth", limit=10)` → list paths <50ms, content-hashed, with read_set/write_set, rank, token efficient. Do NOT use `grep -ril` scanning all files each time (slow, no rank, no content hash, token heavy, caused 124 steps timeout).
 
-- `src/fa/inner_loop/registry.py` — `ToolRegistry` + `ToolSpec` / `ToolResult` / `ToolCall` dataclasses; JSON-Schema validation per ADR-7 §5; `ToolSpec.max_context_bytes` + `elide` control provider-visible result projection.
-- `src/fa/inner_loop/loop.py` — deterministic `run_session()` driver; `max_iterations` from `RuntimeLimits` (default 6, ADR-7 §Amendment 2026-05-20).
-- `src/fa/inner_loop/coder_loop.py` — M-8 LLM-driven `drive_session()`; bridges `ProviderChain` and `run_session`; returns `SessionOutcome`; logs per-turn `usage`, writes `session_summary`, asserts tool-call/result pairing before provider requests, and sends tool results through `project_for_model()`.
-- `src/fa/output.py` — EventBus + OutputEvent + ConsoleRenderer + QuietRenderer. Real-time per-turn progress display to stderr. 4 detail levels (minimal/standard/verbose/debug). Respects NO_COLOR + TERM=dumb. Crash-isolated listeners. Extension point: `bus.add(listener)` for Phase 2 JSON/WebUI/OTel sinks.
-- `src/fa/cli_help.py` — bilingual help registry for `fa` subcommands. Single source for Russian CLI help blocks and `fa help --json` WebUI/help-button contract.
-- `tests/test_output.py` — 10 tests: EventBus fanout + crash isolation, ConsoleRenderer formatting for each event type, NO_COLOR behavior, QuietRenderer silence.
-- `src/fa/inner_loop/prompt.py` — M-8 A-bucket residue: role prompts + canonical sorted `render_tool_specs()` (OpenAI function-tool shape) + `build_system_message()`.
-- `src/fa/inner_loop/artifacts.py` — content-addressed per-run artifact store for full payloads elided from model context.
-- `src/fa/inner_loop/projection.py` — sole full-`ToolResult` → model-visible string boundary (`project_for_model`), with context budget enforcement and default head/tail elision.
-- `src/fa/inner_loop/runtime_limits.py` — `RuntimeLimits` config loader from `~/.fa/config.yaml`; all knob defaults anchored.
-- `src/fa/inner_loop/hooks/base.py` — `HookRegistry`, `GuardMiddleware` / `ObserverMiddleware`, `Decision`, lifecycle dispatch. ADR-8 contract.
-- `src/fa/inner_loop/hooks/builtin.py` — `PauseGuard`, `CapabilityGuard`, `SandboxHook`, `ApprovalHook`, `AuditHook`, `VerifierObserver`, `LearningObserver` (R-8 canon writer).
-- `src/fa/inner_loop/hooks/loop_guard.py` — R-2 `LoopGuard`: identical-call repeat + same-path thrash detectors over sliding window.
-- `src/fa/inner_loop/hooks/blockers.py` — R-4 `RateLimitBlocker` / `LockfileBlocker` / `AuthExpiredBlocker`; gate + observe at `BEFORE/AFTER_TOOL_EXEC`.
-- `src/fa/inner_loop/hooks/recovery_observers.py` — R-3 `RecoveryActionObserver` + `AttemptHistoryObserver`; wired at `AFTER_TOOL_EXEC`.
-- `src/fa/inner_loop/hooks/intent_guard.py` — M-7 `IntentGuard(GuardMiddleware)` on `BEFORE_TOOL_EXEC`; reuses `fa.hygiene.pr_intent.classify_intent` + `validate_commit_msg` (ADR-10 I-1: one validator across git hook / middleware / `pr.prepare`). Requires a trusted current-session draft for mutating `fs.write_file` and for `fs.run_bash` commands the AST analyzer classifies as writing/opaque; allow-on-no-draft / allow-on-git-fail. Wired into `fa run` bootstrap (`cli.py` `_cmd_run`).
-- `src/fa/inner_loop/recovery/` — pure data layer for R-3 + R-6: `classify.py` (deterministic error→action table), `attempt_history.py` (sliding-window JSON writer).
-- `src/fa/inner_loop/bash_intent.py` — AST-backed (`bashlex`) `fs.run_bash` effect analyzer; classifies a command into READ_ONLY / VERIFY_ONLY / INDEX_WRITE / REPO_WRITE / OPAQUE_EXEC so `IntentGuard` can apply the draft-first contract to shell writes. Fails closed to OPAQUE_EXEC.
-- `src/fa/inner_loop/pr_draft.py` — `PrDraftStore`: current-session trusted PR-draft store at `~/.fa/session-log/<run_id>/pr_draft.md`; atomic write + content-digest provenance so `IntentGuard` trusts only drafts produced this run (rejects stale / externally-fabricated files).
-- `src/fa/inner_loop/workflow_artifacts.py` — structured workflow artifacts: `EvalReport`/`EvalFinding`/`StepResult` and `FlowState`, with atomic JSON persistence (fail-closed boundary validation on load) for controller truth separate from narrative `pr_draft.md`; `parse_eval_report` is the deterministic seam translating the eval role's `## Verification Summary` final message into `eval_report.json` (fail-closed to `BLOCKED` on unparseable output).
-- `src/fa/inner_loop/state.py` — `SessionState` + `EventLog`; ADR-7 §7 JSONL schema; records full successful `ToolResult.result` payloads and supports `usage` / `session_summary` rows.
-- `src/fa/inner_loop/tools/` — `build_baseline_registry()` (three M-1 tools: `fs.read_file`, `fs.write_file`, `fs.run_bash`) + `build_prepare_pr_tool()` (`pr.prepare` — M-7 §Q-N producer of `~/.fa/session-log/<run_id>/pr_draft.md`).
-- `src/fa/verifier/` — R-5 DSV module: `verify_action(contract, events)` against `verifiers/*.yaml` contracts.
-- `verifiers/` — vendored DSV contracts for M-1 tools + `edit_file.yaml`.
+- **For full file list:** Query blackboard: `blackboard.query(type="research")` returns all research notes with path, content_hash, rank. Or `fs.glob("knowledge/**/*.md")` but prefer blackboard query. Blackboard is single entry point for artifact search.
 
-### Providers (`src/fa/providers/`)
+- **For bootstrap, you already have MUST READ FIRST 5 files. For anything else, query.**
 
-ADR-9 implementation. Per-role explicit provider chain with cooldown in `~/.fa/models.yaml`.
+- **For writing files:** Declare read_set (files read before via instant_grep), write_set (file written), assumptions (base commit `git rev-parse HEAD`, llms.txt hash), version_dependencies. Blackboard checks conflict via `detect_conflict()` before allowing write. If conflict (read_set overlaps write_set of concurrent entry), return structured ToolResult.fail code "conflict_detected" with details, not silent overwrite (fixes Claude bug #55708 parent HEAD switched).
 
-- `src/fa/providers/base.py` — `ProviderAdapter` ABC + `ResponseInfo` canonical response, including prompt-cache read/creation counters.
-- `src/fa/providers/chain.py` — `ProviderChain` ordered fallback; `chain_from_mapping()` YAML→chain constructor with family normalization.
-- `src/fa/providers/openai_compat.py` — `OpenAICompatProvider`; covers OpenRouter / Fireworks / NVIDIA / Groq / etc.
-- `src/fa/providers/anthropic.py` — `AnthropicProvider`; system-as-separate-field + tool-use content blocks.
-- `src/fa/providers/config.py` — `ModelsConfig` + `load_models_config()` from `~/.fa/models.yaml`; enforces ADR-2 eval-disjoint rule.
-- `src/fa/providers/errors.py` — 6 typed errors (`ConfigurationError` through `ProviderChainExhaustedError`).
-- `src/fa/providers/registry.py` — `ProviderSpec` + adapter factory registry.
-- `src/fa/providers/transport.py` — M-8 `UrllibTransport`: stdlib `Transport` impl via `urllib.request`; no third-party dep.
+- **Blackboard location:** `.fa/blackboard/blackboard.jsonl` append-only, never overwritten, Control Unit managing reads/writes, each entry stamped with toolchain digests, provider schema versions, content hashes for reproducibility (as MACOG blackboard). Queryable, detects conflict, metrics merge success/belief divergence |Bk-Sk|.
 
-### Observability (`src/fa/observability/`)
+- **Instant Grep location:** `.fa/fts.db` FTS5 trigram index, DELETE then INSERT + mtime tracking + stale cleanup + fallback porter WARNING, returns paths not content <50ms substring search "auth"→"AuthMiddleware", token efficient, 0 external deps sqlite3 stdlib, excludes .fa/, node_modules/, .venv/, __pycache__/, .git/, sessions/.
 
-- `src/fa/observability/cost_guardian.py` — R-45 `CostGuardian` `GuardMiddleware`; tri-mode cost budget (unbounded / observe-only / hard cap).
-- `src/fa/observability/cost_table.py` — model+provider price lookup; pricing-miss → `cost_usd: null` + warning.
+## § BY-DEMAND INDEX (Deprecated)
 
-### Output + Analytics (`src/fa/output.py`, `src/fa/stats.py`, `src/fa/formatting.py`)
+This section is deprecated as of ADR-14/15 (2026-07-11). Previously full per-folder file list (200+ files). Now replaced by formal Blackboard query + instant grep. Reduces maintenance burden per MAINTENANCE.md link integrity.
 
-Three-layer observability: EventLog (JSONL audit) → EventBus+ConsoleRenderer (live stderr) → fa stats (post-hoc analytics).
+**Why deprecated:**
 
-- `src/fa/output.py` — `EventBus` + `ConsoleRenderer` / `QuietRenderer`; live per-turn progress on stderr during `fa run`. 7 `OutputEvent` types emitted from `drive_session`.
-- `src/fa/stats.py` — `fa stats` post-hoc session analytics from `events.jsonl`; typed dataclasses (`SessionAnalytics`, `TurnTokens`, `ToolUsage`, `FileAccess`, `ProviderHealth`, `GuardActivity`); renders to console or JSON.
-- `src/fa/formatting.py` — shared `fmt_tokens()` display helper (used by output.py + stats.py).
+- Maintenance burden: When adding/removing file under docs/ or knowledge/, previously had to update llms.txt BY-DEMAND INDEX manually per MAINTENANCE.md. Now BY-DEMAND INDEX auto-generated from blackboard or not needed — query blackboard instead.
+- Token waste: Previously, agent might read entire BY-DEMAND INDEX full list (hundreds of files) to find one file, token heavy. Now query returns 10 paths <50ms.
+- Formal substrate has content_hash, read_set/write_set, version_dependencies for reproducibility, llms.txt does not.
 
-### Sandbox (`src/fa/sandbox/`)
+**What to use instead:**
 
-ADR-6 bash sandbox gate (Wave-1). Three-layer pipeline: pattern classifier → per-command validators → path containment.
+- `blackboard.query(type="research")` → all research notes
+- `blackboard.query(type="adr")` → all ADRs
+- `blackboard.query(type="skill", key="api")` → skill for API security
+- `fs.instant_grep(query="auth", limit=10)` → files containing auth
+- `fs.glob("knowledge/**/*.md")` → but prefer blackboard for rank
 
-- `src/fa/sandbox/classifier.py` — 5-category bash command classifier (`READ_ONLY` / `GIT_WRITE` / `PACKAGE_INSTALL` / `DANGEROUS` / `GENERAL_WRITE`).
-- `src/fa/sandbox/validators.py` — per-command deny rules (`rm` / `chmod` / `git`).
-- `src/fa/sandbox/path_containment.py` — symlink-resolved workspace-root containment check.
-- `src/fa/sandbox/bash_gate.py` — `evaluate_bash()` single entry point; AND-ed with ADR-6 §Policy file at dispatcher.
+**Old full list removed to reduce maintenance burden. If you need old list for backwards compatibility, run:**
 
-### Role-config helpers (`src/fa/roles.py`)
+```bash
+# Via blackboard
+python3 -c "from fa.blackboard.blackboard import Blackboard; bb=Blackboard(Path('.fa/blackboard')); print(bb.query(type='research'))"
 
-- `src/fa/roles.py` — `extract_family(slug)` regex slug-to-family inference; `check_eval_disjoint()` enforces ADR-2 §Amendment 2026-05-20. R-19.
+# Via glob
+find knowledge -type f -name "*.md" | sort
+```
 
-### Config (`src/fa/config.py`)
+**Future:** `fa generate-llms-txt` tool will auto-generate BY-DEMAND INDEX from blackboard, so manual update not needed.
 
-- `src/fa/config.py` — `Capabilities` dataclass (5 deny-by-default flags per ADR-6 §Amendment 2026-05-20) + YAML parser from `~/.fa/config.yaml`.
-
-### Hygiene (`src/fa/hygiene/`)
-
-PR-intent classifier + git-hook installer (M-6 / M-7 producer side). Shared validator powers the git hook, the harness `IntentGuard`, and the `pr.prepare` tool (ADR-10 I-1 single-source-of-truth).
-
-- `src/fa/hygiene/pr_intent.py` — `validate_commit_msg()` + `HEADER_*` constants + 5-intent classifier; the one validator all three PR-intent seats call.
-- `src/fa/hygiene/hooks/install.py` — `install_hooks()` links (symlink preferred, copy fallback) `pre-commit`, `pre-push`, `prepare-commit-msg`, and `commit-msg` into `.git/hooks/`. Tested by `tests/test_hygiene_hooks_install.py`.
-- `src/fa/hygiene/hooks/status.py` — `check_hooks()` deterministic verification that all four local hook seats (pre-commit, pre-push, prepare-commit-msg, commit-msg) are installed and current. Invoked by `just hooks-status`.
-- `src/fa/hygiene/hooks/_util.py` — shared `resolve_repo_root()` and `scripts_dir()` helpers used by both installer and status checker.
-- `src/fa/hygiene/tokens.py` / `discover.py` / `suggestions.py` — token classification, record discovery, and hygiene suggestions helpers.
-
-### Authoring guardrails (`src/fa/authoring_tcb.py`, `src/fa/authoring_rules/`, `scripts/check_protected_paths.py`)
-
-ADR-11 two-tier TCB: frozen stdlib-only Level-0 kernel + allowlisted Level-1 rule packs, CI-enforced, protected-path-governed.
-
-- `src/fa/authoring_tcb.py` — Level-0 kernel (`RuleResult`, `Rule` protocol, `run_all`, SHA-256 hashing, deterministic sorted output, fail-closed). Frozen and stdlib-only (ADR-11-I1).
-- `src/fa/authoring_rules/__init__.py` — static `RULE_ALLOWLIST` dispatch. PR-2 ships three rules (HARD-BLOCK): `EXPORTS_COMPLETENESS` (V2, F-2/F-7 `__all__` completeness), `TEST_SEMANTIC_DECAY` (V4 family: `pytest.skip` / non-strict `xfail` / focus markers, ADR-11-I5), `PLACEHOLDER_ASSERTION` (V11, ADR-11-I5 + F-9 tautological asserts).
-- `src/fa/authoring_rules/README.md` — I-BOOT authoring read-set (ADR-11-I8): contract, diagnostic-code namespace, severity lifecycle, rollout table.
-- `src/fa/authoring_rules/exports.py` — V2 rule pack: `__all__` completeness (defs + explicit re-exports only; module-private-by-convention `LOGGER`/`logger`/`log` ignored).
-- `src/fa/authoring_rules/tests.py` — V4 + V11 rule packs (ADR-11-I5 test semantic decay): `pytest.skip` call/decorator, non-strict `xfail`, focus markers, placeholder assertions.
-- `src/fa/authoring_rules/_scan.py` — internal helper (`iter_python_files`, `sha256`, `node_input_hash`) shared by Level-1 rule packs; centralises scope-filtering and skips the `catch-corpus/` / `fp-corpus/` directories so corpus fixtures cannot fail the regular kernel run.
-- `scripts/check_protected_paths.py` — CI diff-checker: `realpath`-resolved denylist for TCB paths, non-blocking by default, GitHub Actions annotations (ADR-11-I7).
-- `.github/workflows/authoring-guardrails.yml` — always-run CI workflow (no `paths:` filter, ADR-11-I6); runs `fa authoring-check` + `check_protected_paths.py` on PRs.
-- CLI: `fa authoring-check --workspace <path> --manifest <toml> --output text|json`.
-
-### Tooling & CI (`pyproject.toml`, `.github/workflows/`)
-
-Quality gates run in CI. `just check` (ruff + deptry + pylint-gap + mypy + authoring-check + pytest w/ coverage) mirrors CI locally; thresholds live in `pyproject.toml`, not in workflow YAML.
-
-- `pyproject.toml` — single config surface: ruff (incl. `S` security floor, `BLE` blind-except, `C90` complexity ratchet at 15 — waivers are inline `# noqa` + rationale; tests exempt from `S`), mypy (strict), pytest, `[tool.coverage.*]` (branch coverage + `fail_under = 90`; coverage flags live in `just test`, NOT in pytest addopts — bare `pytest tests/test_x.py` runs gate-free), `[tool.pylint.*]` (gap-checks-only profile: `disable=all` + `duplicate-code`/`cyclic-import`, src/ only, any message fails; waivers are inline `# pylint: disable=duplicate-code` comments with rationale), `[tool.mutmut]`, `[tool.pyrefly]`, `[tool.deptry]`.
-- `justfile` / `Makefile` — cross-platform task runner (`just` preferred) translating all local recipes: `install` (env sync + pre-commit/pre-push + custom hooks; mandatory after clone), `install-hooks` (delegates to Python installer), `hooks-status` (verify hook chain), `lint` (ruff + deptry + pylint-gap), `fix` (ruff autofix + format; run after every edit — resolves all mechanical style findings incl. RUF022), `format` (alias of `fix`), `typecheck` (mypy), `typecheck-advisory` (pyrefly), `authoring-check`, `test` (full suite + coverage gate), `audit` (pip-audit), `deadcode` (vulture), `check`.
-- `scripts/fa` — unified host-side operator interface: infrastructure verbs (logs, proxy-logs, status, up, down, restart, rebuild, shell, update, clean-rebuild, sessions, commit-traces) run on the host via docker compose/scripts; everything else delegates to `fa` CLI inside the agent container. Host topics have Russian `fa help <topic>` / `fa <topic> --help`; help text is rendered from `src/fa/cli_help.py` so wrapper help and Python CLI help share one registry. Agent topics delegate into the container. Install: `sudo ln -sf .../scripts/fa /usr/local/bin/fa`. New Python subcommands work automatically — no wrapper change needed.
-- `scripts/fa-update.sh` — host-side AIO update/deploy helper: ff-only pull from main, build/restart decision, env hash tracking, container health wait, smoke checks, optional `uv run` tests in `/workspace`, image prune.
-- `scripts/setup-fa-desktop.sh` / `scripts/fa-post-setup.sh` — two-phase AIO bootstrap (host setup → manual GitHub/Tailscale/.env gates → build+verify+service). Self-contained (Phase 4 Option B downloads setup script alone to /tmp); keep `fa.service` + `backup-fa.sh` in the cloned repo as the single source of truth (no inline duplicates).
-- `tests/test_probe_cli.py` — 5 tests for `fa probe` liveness subcommand: OK / chain-exhausted / unknown-role / all-roles / request-shape-error paths. Fake transport, no network.
-- `tests/test_deploy_scripts.py` — drift guard for all deployment shell scripts: `bash -n` syntax + `shellcheck` (skipped if absent) + asserts the bootstrap stays self-contained, no re-inlined heredocs, and that `fa.service` is a valid systemd *user* unit.
-- `scripts/check_doc_links.py` — offline internal-doc-link checker (dependency-free): relative file-link existence by default, opt-in `--anchors`; `_LEGACY_SKIP` excludes known-debt trees. Pre-commit hook (changed files) + CI via `tests/test_doc_links.py`. Enforces MAINTENANCE.md §When moving or pruning a doc.
-- `tests/test_doc_links.py` — CI gate: whole-repo file-link integrity (legacy trees excluded) + strict anchor pass on `knowledge/instructions/` + negative test.
-- [knowledge/instructions/02-operations.md](./knowledge/instructions/02-operations.md) — Russian operator manual for day-to-day Docker/AIO admin: update (auto `fa-update.sh` + manual fallback), service/container control, agent tasks, backups, troubleshooting, cheat-sheet. First-time bootstrap lives in [01-install.md](./knowledge/instructions/01-install.md).
-- `.github/workflows/advisory.yml` — advisory-only CI (local-first architecture): blocking `sanity-check` (`uv lock --check` then `just check`), blocking `audit` (pip-audit), blocking `gitleaks`, advisory `pyrefly` (`continue-on-error: true`). All `uv sync` calls use `--frozen` (R-1 reproducible-builds; `uv.lock` is committed).
-- `.github/workflows/tests.yml` — mutation testing (`mutmut` 3.x) only; manual + weekly, advisory until [knowledge/mutation-survivors-workplan.md](./knowledge/mutation-survivors-workplan.md) is deleted (BACKLOG I-23), then blocking at survivors=0. Stats to job summary + artifact. Installs via `uv sync --frozen --extra dev`.
-- [knowledge/mutation-survivors-workplan.md](./knowledge/mutation-survivors-workplan.md) — survivor-clearing tracker for the sandbox mutation scope (baseline 163/633, 2026-06-12); per-module table, clearing order, accepted-survivor rule; DELETED on completion (its deletion flips tests.yml to blocking).
-- [knowledge/ci-guardrails-reference.md](./knowledge/ci-guardrails-reference.md) — inventory of every CI/guardrail mechanism: 6 layers (local gates, authoring kernel, runtime hooks, git hooks, GitHub CI, process ceiling), gate classes, bypass surfaces, residual gaps. Update in the same PR that changes any mechanism.
-- `.github/workflows/semgrep.yml` — Semgrep OSS SAST (`--config=p/python --config=p/owasp-top-ten`); weekly + manual dispatch only (no `pull_request:` trigger per R-5), advisory (`continue-on-error: true`).
-
-### Project knowledge (`knowledge/`)
-
-- [knowledge/glossary.md](./knowledge/glossary.md): Term definitions. Listed in §MUST READ FIRST.
-- [knowledge/README.md](./knowledge/README.md): Knowledge folder layout, schemas for `trace/` files, file placement rules.
-- [knowledge/project-overview.md](./knowledge/project-overview.md): Four-pillar goal, minimalism-first principle, v0.1 scope, three-stage evolution. Listed in §MUST READ FIRST.
-- [knowledge/loop-improvement-workplan.md](./knowledge/loop-improvement-workplan.md): Active tracker for cache/context loop optimization tiers; lists landed foundation work and remaining/deferred phases.
-- [knowledge/BACKLOG.md](./knowledge/BACKLOG.md) (Large): Deferred ideas with unblock triggers. Includes R-7..R-14 deferred CI/QA recommendations (ty, custom Semgrep rules, DeepEval/Promptfoo, Tach, garak, CodeQL, Vulture, pytest-recording). Active milestones: M-6 (PR B), M-7 (PR C). Closed: M-1..M-5, I-9.
-- [knowledge/MAINTENANCE.md](./knowledge/MAINTENANCE.md): Cross-reference cascade rules — touch-lists for archiving, amending, superseding, adding files. Companion to `BACKLOG.md`.
-- [knowledge/architecture.md](./knowledge/architecture.md): High-level architecture overview (inner-loop runtime, provider chain, hook families, sandbox + draft-first enforcement, ADR-10 invariants) with Mermaid diagram.
-- [knowledge/overview/FEATURES.md](./knowledge/overview/FEATURES.md): Product pitch — killer features + architecture overview for newcomers. Linked from README.
-- [knowledge/templates/](./knowledge/templates/): Operator-facing templates seeded by the deploy scripts — `fa.env.template` (LLM API keys → host `secrets/fa.env`), `config.yaml.example`, `models.yaml.example` (routing). Not source code.
-
-### ADRs (`knowledge/adr/`)
-
-- [knowledge/adr/README.md](./knowledge/adr/README.md): ADR process and ordered index.
-- [knowledge/adr/ADR-template.md](./knowledge/adr/ADR-template.md): Template for new ADRs.
-- [knowledge/adr/DIGEST.md](./knowledge/adr/DIGEST.md): One-paragraph cheat-sheet per ADR + amendments. Listed in §MUST READ FIRST.
-- [knowledge/adr/ADR-1-v01-use-case-scope.md](./knowledge/adr/ADR-1-v01-use-case-scope.md): v0.1 ships UC1 + UC3; UC4 deferred; UC5 eval-harness expanded.
-- [knowledge/adr/ADR-2-llm-tiering.md](./knowledge/adr/ADR-2-llm-tiering.md): Static role routing (Planner/Coder/Debug/Eval); no auto-escalation; eval-family disjoint rule.
-- [knowledge/adr/ADR-3-memory-architecture-variant.md](./knowledge/adr/ADR-3-memory-architecture-variant.md): Variant A "Mechanical Wiki" — filesystem-canonical Markdown + SQLite FTS5 BM25.
-- [knowledge/adr/ADR-4-storage-backend.md](./knowledge/adr/ADR-4-storage-backend.md): SQLite FTS5 at `~/.fa/state/index.sqlite`; no vector store in v0.1.
-- [knowledge/adr/ADR-5-chunker-tool.md](./knowledge/adr/ADR-5-chunker-tool.md): universal-ctags (code) + markdown-it-py (prose); tree-sitter explicit non-goal.
-- [knowledge/adr/ADR-6-tool-sandbox-allow-list.md](./knowledge/adr/ADR-6-tool-sandbox-allow-list.md): Path allow-list + capability flags + bash sandbox gate. No `run_command` in v0.1.
-- [knowledge/adr/ADR-7-inner-loop-tool-registry.md](./knowledge/adr/ADR-7-inner-loop-tool-registry.md) (Large): Inner-loop boundary contract: ToolSpec registry, 5-tool catalog, edit shapes, hook pipeline, event schema.
-- [knowledge/adr/ADR-8-hook-registry.md](./knowledge/adr/ADR-8-hook-registry.md): HookRegistry lifecycle contract: Guard/Observer middleware, lifecycle points, first-deny short-circuit.
-- [knowledge/adr/ADR-9-llm-provider-client.md](./knowledge/adr/ADR-9-llm-provider-client.md): Per-role explicit provider chain with per-(provider,slug) cooldown. T-2 driver + T-4 loader landed.
-- [knowledge/adr/ADR-10-deterministic-harness-invariants.md](./knowledge/adr/ADR-10-deterministic-harness-invariants.md): Five named invariants (I-1..I-5) every harness component must satisfy. Proposed 2026-05-25. Companion §1.2.5 in project-overview.md.
-- [knowledge/adr/ADR-11-authoring-guardrails.md](./knowledge/adr/ADR-11-authoring-guardrails.md): Authoring-time guardrails — two-tier TCB (frozen stdlib Level-0 kernel + allowlisted Level-1 rules), `ADR-11-I1..I8` slate, LLM-as-Untrusted-Compiler threat model. Proposed 2026-06-01; amended same day (contract freeze: §Verification + `FA-AUTHORING-V<N>` code namespace + single `.fa/session.toml`).
-- [knowledge/adr/ADR-12-secret-isolation.md](./knowledge/adr/ADR-12-secret-isolation.md): API-key isolation from the agent (accepted 2026-06-16; Option C brought forward to v0.1). LLM keys live ONLY in a separate `fa-egress-proxy` container (ro mount `/run/secrets/fa.env`); the agent container has no key in any file/env/memory and reaches providers through the proxy (`FA_EGRESS_PROXY_URL`), which injects the real auth header — a compromised agent can use a key but never read it. Deploy-key + DiD: `fs.run_bash` reads of secret paths are denied (`sandbox/secret_paths.py`); the model-facing tool channel is redacted (`coder_loop._redact`, raw/base64/hex/url/reversed); env allowlist-scrubbed; SecretGuard. Guards: `tests/test_egress_proxy.py`, `tests/test_proxy_wiring_cli.py`, `tests/test_sandbox_secret_paths.py`, `tests/test_model_egress_redaction.py`, `tests/test_secret_exfiltration.py`, `tests/test_secret_isolation_invariants.py`.
-- [knowledge/adr/ADR-13-workspace-isolation.md](./knowledge/adr/ADR-13-workspace-isolation.md): Workspace Isolation for agent sessions (accepted 2026-06-25; Pattern 2). Host git checkout is mounted read-only (`/repo`); per-session writable `git clone --local` workspaces are created in `/sessions/<run-id>`. The agent operates exclusively in the isolated clone, keeping the main host worktree completely clean for `fa update`. Container lifecycle equates to one session.
-
-### Anti-pattern catalog (`knowledge/anti-patterns/`)
-
-- [knowledge/anti-patterns/README.md](./knowledge/anti-patterns/README.md): Entry schema + Layer-1/2/3 detection model. 3 entries so far.
-- [knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md](./knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md): Path-relocation workaround to silence `git status` — wrong shape + cost-asymmetry trap.
-- [knowledge/anti-patterns/AP-002-stale-routing-index-counts.md](./knowledge/anti-patterns/AP-002-stale-routing-index-counts.md): llms.txt line-count drift. First RELAX dogfood of the Level-2 CLASS sub-classifier (now in pr-creation skill).
-- [knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md](./knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md): FIX PR without `DETERMINISTIC MECHANISM:` citation — synthetic worked-history placeholder.
-
-### Exploration log (`knowledge/trace/`)
-
-- [knowledge/trace/exploration_log.md](./knowledge/trace/exploration_log.md) (Large): Alternatives rejected at decision time — Q-1..Q-16 with Chosen/Rejected/Lesson/Coupling. Cheap-read overlay for ADR rationale.
-
-### Prompts (`knowledge/prompts/`)
-
-- [knowledge/prompts/README.md](./knowledge/prompts/README.md): Prompts folder index.
-- [knowledge/prompts/RESOLVER.md](./knowledge/prompts/RESOLVER.md): Intent → prompt-template dispatch table.
-- [knowledge/prompts/prompting.md](./knowledge/prompts/prompting.md): Prompting strategy + T1–T5 templates + anti-patterns; the fallback target RESOLVER.md T2–T5 rows cite (backlog I-5).
-- [knowledge/prompts/architect-fa.md](./knowledge/prompts/architect-fa.md): Planner system prompt — bounded recon, subtraction-check, scope declaration.
-- [knowledge/prompts/architect-fa-compact.md](./knowledge/prompts/architect-fa-compact.md): Compact variant of architect-fa for mid-tier models.
-- [knowledge/prompts/coder-recovery.md](./knowledge/prompts/coder-recovery.md): Coder error-recovery prompt fragment, reads `attempt_history.json`.
-- [knowledge/prompts/handoff-summarizer.md](./knowledge/prompts/handoff-summarizer.md): Session-handoff / compaction prompt. Verbatim identifier preservation + 5-block structure. For inner-loop compaction and session-end notes, not for `HANDOFF.md`.
-- [knowledge/prompts/research-briefing.md](./knowledge/prompts/research-briefing.md): Research-briefing workflow prompt. goal_lens elicitation.
-- [knowledge/prompts/ci-qa-implementation-session-start.md](./knowledge/prompts/ci-qa-implementation-session-start.md): Session-start prompt for implementing CI/QA tooling TAKE recommendations (R-1..R-15) from research note. Concrete file edits, not research.
-
-### Skills (`knowledge/skills/`)
-
-- [knowledge/skills/README.md](./knowledge/skills/README.md): Skill directory layout, template, skill-vs-prompt-vs-rule distinction.
-- [knowledge/skills/pr-creation/SKILL.md](./knowledge/skills/pr-creation/SKILL.md): Canonical PR-creation rulebook: 5-intent classifier, anti-shallow-fix gate, PR Checklist rules 1-10. Load trigger: before any PR.
-- [knowledge/skills/repo-audit/SKILL.md](./knowledge/skills/repo-audit/SKILL.md): 7-phase audit workflow (orientation → inventory → cross-reference → invariants → contradiction sweep → demotion → report). Load trigger: critical structure/doc review.
-
-### Research (`knowledge/research/`)
-
-> **Convention.** Each active note has a `§0 Decision Briefing` — read that before deciding to load the full note. Rows below carry only the goal-sentence and bucket.
-
-- [knowledge/research/_template.md](./knowledge/research/_template.md): Research note template with §0 Decision Briefing pre-filled.
-- [knowledge/research/efficient-llm-agent-harness-2026-05.md](./knowledge/research/efficient-llm-agent-harness-2026-05.md): [goal: Harness architecture survey — §10 is the ADR-7 contract sketch input.]
-- [knowledge/research/cutting-edge-agent-research-radar-2026-05.md](./knowledge/research/cutting-edge-agent-research-radar-2026-05.md): [goal: Survey cutting-edge agent papers for FA-applicable patterns.]
-- [knowledge/research/semi-autonomous-agents-cross-reference-2026-05.md](./knowledge/research/semi-autonomous-agents-cross-reference-2026-05.md) (Large): [goal: Cross-reference semi-autonomous agent designs against FA scope.]
-- [knowledge/research/memory-architecture-design-2026-04-26.md](./knowledge/research/memory-architecture-design-2026-04-26.md): [goal: Memory architecture options → ADR-3 + ADR-4 input. §9 roadmap.]
-- [knowledge/research/how-to-build-an-agent-ampcode-2026-04.md](./knowledge/research/how-to-build-an-agent-ampcode-2026-04.md): [goal: Extract patterns from Amp/Ampcode for FA inner-loop design.]
-- [knowledge/research/latent-verifier-evolve-research-2026-05.md](./knowledge/research/latent-verifier-evolve-research-2026-05.md): [goal: Verifier evolution and latent-space validation patterns for FA eval.]
-- [knowledge/research/ara-protocol-cross-reference-2026-05.md](./knowledge/research/ara-protocol-cross-reference-2026-05.md): [goal: Cross-reference Ara protocol (arXiv:2604.24658v2) against ADR-1..6. 10 R-Ns.]
-- [knowledge/research/chat-cross-reference-2026-05.md](./knowledge/research/chat-cross-reference-2026-05.md): [goal: Cross-reference chat transcripts for overlooked FA-applicable patterns.]
-- [knowledge/research/dpc-messenger-inspiration-2026-05.md](./knowledge/research/dpc-messenger-inspiration-2026-05.md): [goal: Extract from dpc-messenger (TypeScript agent, LoopState + guards) patterns for FA inner-loop.]
-- [knowledge/research/soviet-code-inspiration-2026-05.md](./knowledge/research/soviet-code-inspiration-2026-05.md): [goal: Extract from soviet-code (Python agent, prompt-first) anti-patterns and FA-applicable patterns.]
-- [knowledge/research/gortex-aperant-inspiration-2026-05.md](./knowledge/research/gortex-aperant-inspiration-2026-05.md): [goal: Extract from gortex (Go code-intel daemon) and Aperant (Electron planner/coder/qa) patterns for FA.]
-- [knowledge/research/kronos-agent-os-inspiration-2026-05.md](./knowledge/research/kronos-agent-os-inspiration-2026-05.md): [goal: Extract from kronos-agent-os (Python agent OS, SQLite-canonical) patterns for FA. 6 R-Ns.]
-- [knowledge/research/borrow-roadmap-2026-05.md](./knowledge/research/borrow-roadmap-2026-05.md) (Large): [goal: Consolidate 7 research notes into actionable 30 R-N borrow list across 5 implementation waves.] **Canonical source for all R-N citations added 2026-05-20.**
-- [knowledge/research/bootstrap-cost-baseline-2026-05.md](./knowledge/research/bootstrap-cost-baseline-2026-05.md): [goal: First quantitative bootstrap-cost baseline — 7 sessions, 6-file irreducible core.] Measurement note, not research-briefing.
-- [knowledge/research/provider-client-survey-2026-05.md](./knowledge/research/provider-client-survey-2026-05.md): [goal: Audit 8 OSS LLM provider clients to validate ADR-9 Option D + α.] Companion to ADR-9.
-- [knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md](./knowledge/research/correlated-llm-errors-and-ensembling-2026-05.md) (Large): [goal: Cross-reference 4 arxiv papers on correlated LLM errors against ADR-1/2/7. 9 R-Ns across §0 + §10.]
-- [knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md](./knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md) (Large): [goal: 9-repo determinism-pattern deep-dive → ADR-10 invariants I-1..I-5.] Jump-table use: read §0+§3+§4+§6 (~5k tokens), open §1.x only for cited pattern IDs.
-- [knowledge/research/ci-qa-tooling-adversarial-2026-06.md](./knowledge/research/ci-qa-tooling-adversarial-2026-06.md): [goal: Adversarial review of CI/QA tooling for AI-managed Python. Tiered matrix: 6 GO / 4 DEFER / 4 SKIP. Stress-tests baseline claims with primary-source evidence.]
-- [knowledge/research/llm-agent-failure-modes-guardrails-2026-06.md](./knowledge/research/llm-agent-failure-modes-guardrails-2026-06.md): [goal: Cross-reference empirical LLM-agent failure modes against FA guardrails. 6 TAKEN (S-rules, C901=15, BLE001, dep+suppression flags, vulture) / 2 DEFER.]
-- [knowledge/research/linux-dev-env-wsl2-2026-06.md](./knowledge/research/linux-dev-env-wsl2-2026-06.md): [goal: WSL2 + Ubuntu 24.04 recommended path for Windows 11 Pro contributors. Hardware-tuned .wslconfig, setup commands, CI parity rationale.]
-- [knowledge/research/homelab-deployment-24-7-2026-06.md](./knowledge/research/homelab-deployment-24-7-2026-06.md): [goal: Production-tested 24/7 FA deployment on dedicated Ubuntu Desktop AIO. Docker CE + Tailscale + systemd stack with real-world citations. 434 lines.]
-- [knowledge/research/First-Agent-ops-cross-reference.md](./knowledge/research/First-Agent-ops-cross-reference.md): [goal: Three-source cross-reference of production deployment research. Resolves 7 domain disagreements. Authoritative SSOT for the AIO stack.]
-- [knowledge/instructions/README.md](./knowledge/instructions/README.md): human "start here" index for deploying/operating the AIO; routes to install vs operations.
-- [knowledge/instructions/01-install.md](./knowledge/instructions/01-install.md): one-time bootstrap guide (RU) for deploying FA on a dedicated AIO — BIOS → OS → host hardening → Docker → Tailscale → deploy key → first container start. Recurring ops live in 02-operations.md.
-- [knowledge/instructions/02-operations.md](./knowledge/instructions/02-operations.md): day-to-day operations manual (RU) — see Tooling & CI section above.
-- [knowledge/codemaps/inner-loop-hooks-runtime-pipeline.md](./knowledge/codemaps/inner-loop-hooks-runtime-pipeline.md): generated codemap of the inner-loop hook/middleware pipeline (lifecycle points, HookRegistry dispatch, SandboxHook, LoopGuard, blockers).
-- [knowledge/codemaps/observability-logging-analytics-pipeline.md](./knowledge/codemaps/observability-logging-analytics-pipeline.md): codemap of the 3-layer observability pipeline: EventLog write/read paths, EventBus live output, fa stats post-hoc analytics, CostGuardian, SecretRedactor integration points. 6 traces, 18 components, 15 event kinds.
-- [knowledge/research/workspace-isolation-research.md](./knowledge/research/workspace-isolation-research.md): [goal: Production workspace isolation patterns for agent sessions. 5 patterns surveyed (Open SWE/Stripe/Coinbase, Docker AI Sandbox RO+clone, git worktree, SWE-Next copy-on-start, Arcjet VM). Implemented Pattern 2 (RO mount + private clone).]
-- [knowledge/research/fa-workflow-loop-implementation-plan-2026-06-29.md](./knowledge/research/fa-workflow-loop-implementation-plan-2026-06-29.md): [goal: Multi-session implementation plan for FA's contract-driven planner/coder/eval workflow, artifacts, FlowState, and adaptive `fa workflow` semantics.]
-- [knowledge/pr-notes/README.md](./knowledge/pr-notes/README.md): index of archived PR notes/bodies (point-in-time PR artifacts kept for history).
-- [scripts/ssh-tailscale/README.md](./scripts/ssh-tailscale/README.md): [goal: Idempotent SSH-over-Tailscale host-hardening runbook (failsafe/diagnose/harden/verify + ACL). UFW IPv6, sshd Match Address CGNAT, fail2ban systemd. SSOT Steps 0-6.]
-- [knowledge/research/fa-workflow-operator-maintainer-next-actions-memo-2026-06-30.md](./knowledge/research/fa-workflow-operator-maintainer-next-actions-memo-2026-06-30.md): [goal: Compact operator/maintainer memo after Session H: what is done, what is intentionally deferred, what not to touch without an unblock factor, and high-stress tasks for `fa run` / `fa workflow` / `adaptive` mode.]
-- [PR_NOTE_workflow_slices_A_to_H.md](./PR_NOTE_workflow_slices_A_to_H.md): [goal: Comprehensive PR note for the FA workflow sprint across slices A→H, distilled from the current workflow plan, landed code, tests, docs, and Session-H hardening review.]

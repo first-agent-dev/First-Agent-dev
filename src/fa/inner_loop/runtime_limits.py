@@ -85,6 +85,9 @@ DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS = 0
 # baseline-USD is measured. See ``fa.observability.cost_guardian``
 # module docstring for the per-mode semantics.
 DEFAULT_COST_BUDGET_USD: float | None = None
+# ADR-15: subagent spawn limit for 1 subagent v0.1 to eliminate scope creep,
+# sequential single-shot, enforced via RuntimeLimits.
+DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION = 3
 
 
 @dataclass(frozen=True)
@@ -114,6 +117,8 @@ class RuntimeLimits:
     # Wave-3 R-45 cost guardian budget; see module-level
     # ``DEFAULT_COST_BUDGET_USD`` anchor for the tri-mode semantics.
     cost_budget_usd: float | None = DEFAULT_COST_BUDGET_USD
+    # ADR-15: subagent spawn limit
+    max_subagent_spawns_per_session: int = DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION
 
     @classmethod
     def anchored_defaults(cls) -> RuntimeLimits:
@@ -133,6 +138,7 @@ class RuntimeLimits:
             lockfile_suppression_seconds=DEFAULT_LOCKFILE_SUPPRESSION_SECONDS,
             auth_expired_suppression_seconds=DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS,
             cost_budget_usd=DEFAULT_COST_BUDGET_USD,
+            max_subagent_spawns_per_session=DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION,
         )
 
 
@@ -167,6 +173,7 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
         "lockfile_suppression_seconds",
         "auth_expired_suppression_seconds",
         "cost_budget_usd",
+        "max_subagent_spawns_per_session",
     }
 )
 
@@ -358,6 +365,9 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
             "auth_expired_suppression_seconds", DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS
         ),
         cost_budget_usd=found_float.get("cost_budget_usd", DEFAULT_COST_BUDGET_USD),
+        max_subagent_spawns_per_session=found.get(
+            "max_subagent_spawns_per_session", DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION
+        ),
     )
     return RuntimeLimitsLoadResult(limits=limits, warnings=tuple(warnings))
 

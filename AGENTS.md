@@ -254,3 +254,21 @@ Summaries in `knowledge/research/` are pointers, not authoritative sources.
   §Session Protocol (overwrite §Current state, rewrite §Next); update [`knowledge/llms.txt`](./knowledge/llms.txt) rows per
   [`MAINTENANCE.md`](./knowledge/MAINTENANCE.md) §When adding a
   new file (bucket, line count, ≤200 prose chars).
+
+## Querying Artifacts — Use Blackboard and Instant Grep First (ADR-14/15, 2026-07-11)
+
+- **For bootstrap:** Read AGENTS.md + llms.txt §MUST READ FIRST (5 files in order) + project-overview.md + HANDOFF.md as today. This is mandatory.
+
+- **For finding artifacts (skills, ADRs, research, files):** Use formal substrate first, not raw grep:
+  - `blackboard.query(type="skill", key="api")` → list of skill entries with path, content_hash, read_set/write_set, rank <50ms
+  - `fs.instant_grep(query="auth", limit=10)` → list paths <50ms substring search via FTS5 trigram, returns paths not content, token efficient
+  - Only if blackboard and instant_grep return empty, fallback to `grep -ril` as last resort.
+
+- **Why:** Blackboard is content-hashed, versioned, with read_set/write_set, assumptions, version_dependencies, queryable with rank, detects conflict (write_set overlap → conflict_detected). grep -ril scans all files each time, no rank, no content hash, no transactional semantics, slow, token heavy, caused 124 steps timeout.
+
+- **For full file list:** Do NOT read entire llms.txt BY-DEMAND INDEX full list (deprecated as of ADR-14/15). Query blackboard: `blackboard.query(type="research")` or `fs.glob("knowledge/**/*.md")` but prefer blackboard query.
+
+- **For writing files:** Declare read_set (files read before via instant_grep), write_set (file written), assumptions (base commit `git rev-parse HEAD`, llms.txt hash), version_dependencies. Blackboard checks conflict via `detect_conflict()` before allowing write. If conflict, return structured ToolResult.fail code "conflict_detected" with details, not silent overwrite (fixes Claude bug #55708 parent HEAD switched).
+
+- **Single entry point for artifacts:** Blackboard is single entry point for finding artifacts, but NOT single entry point for session bootstrap. Bootstrap remains AGENTS.md + llms.txt MUST READ FIRST.
+
