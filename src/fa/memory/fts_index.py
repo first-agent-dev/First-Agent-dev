@@ -6,16 +6,28 @@ Prior art: Cursor instant grep 3 months prod N-gram DB, Mechanical Wiki ADR-3/4 
 SQLite FTS5 tokenize='trigram' → substring search "auth" finds "authentication", "AuthMiddleware"
 0 external deps, sqlite3 stdlib, Python 3.13 has fts5 built-in
 Progressive disclosure: llms.txt map always injected (short summaries), full file on demand via read
-
-Design invariant: Must stay below 100k tokens per call (AGENTS.md context-budget discipline)
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
 import sqlite3
-from typing import List
-# List deprecated, use list, but keep for backward compat
+import time
+from pathlib import Path
+
+# Single source of truth for excluded dirs — used by glob, grep, instant_grep fallback, fts_index
+EXCLUDE_DIRS = {
+    ".git",
+    ".fa",
+    "node_modules",
+    ".venv",
+    "__pycache__",
+    ".gremlins_cache",
+    "sessions",
+    "dist",
+    "build",
+    ".mypy_cache",
+}
 
 
 class InstantGrepIndex:
@@ -29,9 +41,6 @@ class InstantGrepIndex:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.db_path)
-        # FTS5 trigram for substring search, same as Cursor
-        # Note: SQLite must be compiled with FTS5 + trigram tokenizer
-        # Python 3.13 default includes FTS5, trigram may need compile option; fallback to porter if not
         try:
             self.conn.execute(
                 """
@@ -40,14 +49,12 @@ class InstantGrepIndex:
             """
             )
         except sqlite3.OperationalError:
-            # Fallback if trigram not available: use porter
             self.conn.execute(
                 """
               CREATE VIRTUAL TABLE IF NOT EXISTS files_fts
               USING fts5(path, content, tokenize='porter')
             """
             )
-        # Meta table for mtime tracking + stale cleanup
         try:
             self.conn.execute(
                 """CREATE TABLE IF NOT EXISTS fts_meta(
@@ -60,53 +67,91 @@ class InstantGrepIndex:
             pass
         self.conn.commit()
 
+    def _should_full_reindex(self) -> bool:
+        """Check if DB older than 24h or empty — needs full reindex."""
+        try:
+            if not self.db_path.exists():
+                return True
+            mtime = self.db_path.stat().st_mtime
+            if time.time() - mtime > 86400:
+                print(f"WARNING: FTS DB older than 24h (mtime {mtime}), full reindex")
+                return True
+            # Also check if index empty
+            count = self.conn.execute("SELECT COUNT(*) FROM files_fts").fetchone()[0]
+            if count == 0:
+                return False  # Empty is not stale, but will be filled by incremental
+        except Exception as exc:
+            print(f"WARNING: Failed to check DB staleness: {exc}, full reindex as precaution")
+            return True
+        return False
+
     def index_repo(
         self,
         root: Path,
-        patterns: tuple[str, ...] = ("*.md", "*.py", "*.ts", "*.js", "*.json", "*.yaml"),
+        patterns: tuple[str, ...] = ("*.md", "*.py", "*.ts", ".js", ".json", ".yaml"),
         max_file_size: int = 100_000,
     ) -> None:
         root = Path(root).resolve()
+
+        # 24h reindex check — DELETE both tables if stale
+        if self._should_full_reindex():
+            try:
+                # Only full delete if older than 24h, not if just empty
+                # Check again mtime for 24h case
+                mtime = self.db_path.stat().st_mtime if self.db_path.exists() else 0
+                if time.time() - mtime > 86400:
+                    self.conn.execute("DELETE FROM files_fts")
+                    self.conn.execute("DELETE FROM fts_meta")
+                    self.conn.commit()
+                    print("WARNING: FTS DB older than 24h, cleared for full reindex")
+            except Exception as exc:
+                print(f"WARNING: Failed to clear stale DB: {exc}")
+
         indexed_paths: set[str] = set()
-        for pattern in patterns:
-            for file in root.rglob(pattern):
-                if not file.is_file():
+
+        # Single walk, not per-pattern rglob, to avoid double scanning
+        for dirpath, dirnames, filenames in os.walk(root):
+            # Prune excluded dirs in-place
+            dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
+            for fname in filenames:
+                fpath = Path(dirpath) / fname
+                # Quick pattern check: does fname match any of patterns? Use fnmatch
+                # For simplicity, check if file ends with pattern suffix or fnmatch
+                import fnmatch
+
+                matched_pattern = False
+                for pat in patterns:
+                    # pat like "*.md" or "*.py"
+                    if fnmatch.fnmatch(fname, pat) or fnmatch.fnmatch(str(fpath.relative_to(root)), pat):
+                        matched_pattern = True
+                        break
+                if not matched_pattern:
+                    continue
+
+                if not fpath.is_file():
                     continue
                 try:
-                    st = file.stat()
+                    st = fpath.stat()
                 except OSError:
                     continue
                 if st.st_size > max_file_size:
                     continue
-                # Skip .git, .fa, node_modules, .venv, __pycache__, sessions
-                if any(
-                    part
-                    in {
-                        ".git",
-                        ".fa",
-                        "node_modules",
-                        ".venv",
-                        "__pycache__",
-                        ".gremlins_cache",
-                        "sessions",
-                    }
-                    for part in file.parts
-                ):
+                # Extra safety: check parts still not in exclude (for nested)
+                if any(part in EXCLUDE_DIRS for part in fpath.parts):
                     continue
-                rel = str(file.relative_to(root))
+
+                rel = str(fpath.relative_to(root))
                 indexed_paths.add(rel)
-                # mtime check: skip if unchanged
+
                 try:
-                    cur = self.conn.execute(
-                        "SELECT mtime FROM fts_meta WHERE path=?", (rel,)
-                    ).fetchone()
+                    cur = self.conn.execute("SELECT mtime FROM fts_meta WHERE path=?", (rel,)).fetchone()
                     if cur and cur[0] == st.st_mtime:
                         continue
                 except Exception:
                     pass
+
                 try:
-                    content = file.read_text(encoding="utf-8", errors="ignore")[:10000]
-                    # Fix Gap: DELETE then INSERT for FTS5, not INSERT OR REPLACE
+                    content = fpath.read_text(encoding="utf-8", errors="ignore")[:10000]
                     self.conn.execute("DELETE FROM files_fts WHERE path=?", (rel,))
                     self.conn.execute(
                         "INSERT INTO files_fts(path, content) VALUES (?, ?)",
@@ -118,7 +163,8 @@ class InstantGrepIndex:
                     )
                 except Exception:
                     continue
-        # Stale cleanup: delete entries where file no longer exists
+
+        # Stale cleanup: delete entries where file not exists
         try:
             rows = self.conn.execute("SELECT path FROM fts_meta").fetchall()
             for (p,) in rows:
@@ -132,11 +178,6 @@ class InstantGrepIndex:
         self.conn.commit()
 
     def instant_grep(self, query: str, limit: int = 10) -> list[str]:
-        """
-        Instant substring search: "auth" → finds "authentication", "AuthMiddleware"
-        Returns list of paths, not content → token efficient (like OpenAI progressive disclosure)
-        <50ms even for 100k files, vs ripgrep scan each time
-        """
         escaped = query.replace('"', '""')
         try:
             cursor = self.conn.execute(
@@ -145,7 +186,6 @@ class InstantGrepIndex:
             )
             return [row[0] for row in cursor.fetchall()]
         except sqlite3.OperationalError:
-            # Fallback to LIKE if FTS fails
             cursor = self.conn.execute(
                 "SELECT path FROM files_fts WHERE content LIKE ? LIMIT ?",
                 (f"%{query}%", limit),
@@ -154,3 +194,6 @@ class InstantGrepIndex:
 
     def close(self) -> None:
         self.conn.close()
+
+
+__all__ = ["InstantGrepIndex", "EXCLUDE_DIRS"]

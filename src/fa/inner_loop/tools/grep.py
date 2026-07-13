@@ -102,7 +102,12 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:
                 import os
 
                 tracked = []
-                exclude_dirs = {".git", ".fa", "node_modules", ".venv", "__pycache__", "sessions"}
+                try:
+                    from fa.memory.fts_index import EXCLUDE_DIRS
+
+                    exclude_dirs = EXCLUDE_DIRS
+                except Exception:
+                    exclude_dirs = {".git", ".fa", "node_modules", ".venv", "__pycache__", "sessions"}
                 for dirpath, dirnames, filenames in os.walk(root):
                     dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
                     for fname in filenames:

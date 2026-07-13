@@ -93,18 +93,23 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
                 q_lower = query.lower()
                 import os
 
-                exclude_dirs = {
-                    ".fa",
-                    "node_modules",
-                    ".venv",
-                    "__pycache__",
-                    ".git",
-                    "sessions",
-                    ".gremlins_cache",
-                    "dist",
-                    "build",
-                    ".mypy_cache",
-                }
+                try:
+                    from fa.memory.fts_index import EXCLUDE_DIRS
+
+                    exclude_dirs = EXCLUDE_DIRS
+                except Exception:
+                    exclude_dirs = {
+                        ".fa",
+                        "node_modules",
+                        ".venv",
+                        "__pycache__",
+                        ".git",
+                        "sessions",
+                        ".gremlins_cache",
+                        "dist",
+                        "build",
+                        ".mypy_cache",
+                    }
                 for dirpath, dirnames, filenames in os.walk(workspace_root):
                     dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
                     for fname in filenames:

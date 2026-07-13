@@ -31,8 +31,27 @@ def _git_ls_files(root: Path) -> list[str]:
     return []
 
 
-def _rglob_with_pruning(root: Path, exclude_dirs: set[str]) -> list[Path]:
+def _rglob_with_pruning(root: Path, exclude_dirs: set[str] | None = None) -> list[Path]:
     import os
+
+    # Use single source of truth EXCLUDE_DIRS if not provided
+    if exclude_dirs is None:
+        try:
+            from fa.memory.fts_index import EXCLUDE_DIRS
+
+            exclude_dirs = EXCLUDE_DIRS
+        except Exception:
+            exclude_dirs = {
+                ".git",
+                ".fa",
+                "node_modules",
+                ".venv",
+                "__pycache__",
+                "sessions",
+                "dist",
+                "build",
+                ".mypy_cache",
+            }
 
     files: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
@@ -78,17 +97,22 @@ def build_glob_tool(workspace_root: Path) -> ToolSpec:
                                 if len(matched) >= limit:
                                     break
             else:
-                exclude = {
-                    ".git",
-                    ".fa",
-                    "node_modules",
-                    ".venv",
-                    "__pycache__",
-                    "sessions",
-                    "dist",
-                    "build",
-                    ".mypy_cache",
-                }
+                try:
+                    from fa.memory.fts_index import EXCLUDE_DIRS
+
+                    exclude = EXCLUDE_DIRS
+                except Exception:
+                    exclude = {
+                        ".git",
+                        ".fa",
+                        "node_modules",
+                        ".venv",
+                        "__pycache__",
+                        "sessions",
+                        "dist",
+                        "build",
+                        ".mypy_cache",
+                    }
                 all_files = _rglob_with_pruning(root, exclude)
                 for fp in all_files:
                     rel = str(fp.relative_to(root))
