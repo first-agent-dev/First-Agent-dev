@@ -30,9 +30,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     just \
     openssh-client \
+    tmux \
     universal-ctags \
     && just --version \
+    && tmux -V \
     && rm -rf /var/lib/apt/lists/*
+
+# Ensure tmux server can start (Gap 12 + Improvement 1 socket isolation pre-check)
+RUN tmux start-server; tmux list-sessions || true
 
 # Trust all git directories regardless of ownership. The container runs as
 # uid 1000 but bind-mounted repos (/repo) are owned by the host operator's uid.

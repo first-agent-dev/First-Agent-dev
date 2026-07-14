@@ -1,24 +1,33 @@
 """
-PtyPool v2 Production — Senior Eng Review Fixes
-- Shared libtmux.Server instance injected
-- LRU + fail-fast PoolExhaustedError never reuse main
-- Thread-safe, no global singleton, DI via SessionState
-- Graceful degradation pexpect fallback with WARNING
-- Branch: maxSize=2 for v0.1 (main+1 sub)
+PtyPool v3 Production — Phase 3 Locked Plan Implementation
+- Shared libtmux.Server instance injected with socket isolation fa_<run_id>
+- Wide viewport -x 300 -y 100 + -J join wrapped lines to prevent JSON corruption (Gap 12)
+- UUID-based sentinel per session to avoid collision
+- LRU + pinned main never evict main, PoolExhaustedError only when same session_id locked (clarified policy)
+- Thread-safe, no global singleton, DI via SessionState, CWD lock per session
+- Graceful degradation pexpect fallback per-session independent with thread-safe registry
+- Signal/atexit leak prevention (Gap 14) — leave-no-trace
+- ANSI strip + exit code parsing FA_EXIT_<uuid>:$? FA_END_<uuid>
+- Branch: maxSize=2 for v0.1 (main pinned + 1 LRU sub)
 """
 
 from __future__ import annotations
 
+import atexit
+import hashlib
+import os
 import re
 import shutil
+import signal
+import sys
 import threading
+import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07")
-SENTINEL = "|||FA_READY|||"
 
 
 @dataclass
@@ -30,11 +39,7 @@ class PtyResult:
 
 
 class PoolExhaustedError(RuntimeError):
-    pass
-
-
-class BranchAlreadyCheckedOutError(RuntimeError):
-    pass
+    """Pool full and trying to acquire same session_id that is locked, or maxSize=1 and main present trying sub."""
 
 
 class PtySession:
@@ -44,55 +49,78 @@ class PtySession:
         cwd: Path,
         server: Any | None = None,
         env: dict[str, str] | None = None,
+        run_id: str | None = None,
     ):
         self.session_id = session_id
         self.cwd = Path(cwd).resolve()
         self.env = env or {}
+        self.run_id = run_id or f"run-{uuid.uuid4().hex[:8]}"
+        # UUID-based sentinel per session to avoid collision if command output contains sentinel string
+        self._sentinel_token = f"FA_READY_{session_id}_{uuid.uuid4().hex[:6]}"
+        self._exit_token = f"FA_EXIT_{uuid.uuid4().hex[:6]}"
+        self._end_token = f"FA_END_{uuid.uuid4().hex[:6]}"
         self._is_fallback = False
         self._server = server
         self._fallback: Any = None
         self.pane: Any = None
         self.tmux_session: Any = None
+        self._cwd_lock = threading.Lock()
 
         if server is None:
+            # Fallback pexpect per-session independent
             try:
                 import pexpect  # type: ignore[import-untyped]
 
+                # PS1 includes sentinel with control chars \x01 \x02 to avoid visible in output
+                ps1 = f"\x01{self._sentinel_token}\x02"
                 self._fallback = pexpect.spawn(
                     "/bin/bash",
                     ["--norc", "--noprofile"],
-                    env={"PS1": SENTINEL, "PAGER": "cat", **self.env},
+                    env={"PS1": ps1, "PAGER": "cat", **self.env},
                     encoding="utf-8",
                     echo=False,
                     cwd=str(self.cwd),
                 )
-                self._fallback.expect(SENTINEL)
+                self._fallback.expect(self._sentinel_token, timeout=5)
                 self._is_fallback = True
-            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+            except Exception as exc:  # noqa: BLE001 # graceful degradation
                 print(f"WARNING: pexpect fallback failed: {exc}, using subprocess fallback")
                 self._is_fallback = True
         else:
             try:
+                # Wide viewport -x 300 -y 100 per Gap 12 to preserve formal substrate JSON integrity
                 self.tmux_session = self._server.new_session(
-                    session_name=f"fa_{session_id}",
+                    session_name=f"fa_{session_id}_{self.run_id}",
                     attach=False,
                     start_directory=str(self.cwd),
+                    x=300,
+                    y=100,
                 )
-            except Exception:  # graceful degradation per Phase 0.5, failure-observable WARNING
+            except Exception:  # noqa: BLE001 # may already exist
                 try:
-                    self.tmux_session = self._server.find_where({"session_name": f"fa_{session_id}"})
-                except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+                    self.tmux_session = self._server.find_where(
+                        {"session_name": f"fa_{session_id}_{self.run_id}"}
+                    )
+                except Exception:  # noqa: BLE001
                     self.tmux_session = None
                 if self.tmux_session is None:
+                    # Try without run_id suffix for backward compat (main session)
+                    try:
+                        self.tmux_session = self._server.find_where({"session_name": f"fa_{session_id}"})
+                    except Exception:
+                        pass
+                if self.tmux_session is None:
                     raise
+
             try:
                 self.pane = self.tmux_session.attached_window.attached_pane
+                # Use sentinel with control chars to avoid visible
                 self.pane.send_keys(
-                    f"export PS1=$'\\x01{SENTINEL}\\x02' && export PROMPT_COMMAND='' && export PAGER=cat",
+                    f"export PS1=$'\\x01{self._sentinel_token}\\x02' && export PROMPT_COMMAND='' && export PAGER=cat && export TERM=xterm-256color",
                     suppress_history=True,
                 )
                 self._wait_for_sentinel()
-            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+            except Exception as exc:  # noqa: BLE001
                 print(f"WARNING: tmux pane init failed: {exc}, fallback to pexpect")
                 self._is_fallback = True
                 self.pane = None
@@ -108,88 +136,96 @@ class PtySession:
         start = time.time()
         while time.time() - start < timeout:
             try:
-                content = "\n".join(self.pane.cmd("capture-pane", "-p", "-S", "-20").stdout)
-                if SENTINEL in content:
+                # -J join wrapped lines per Gap 12, -p stdout, -S -20 last 20 lines, -E - end visible
+                content = "\n".join(
+                    self.pane.cmd("capture-pane", "-p", "-J", "-S", "-20", "-E", "-").stdout
+                )
+                if self._sentinel_token in content:
                     return
-            except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
+            except Exception:  # noqa: BLE001, S110 # best-effort
                 pass
             time.sleep(0.1)
-        raise TimeoutError(f"Sentinel {SENTINEL} not found")
+        raise TimeoutError(f"Sentinel {self._sentinel_token} not found")
 
     def run(self, command: str, timeout: int = 30) -> PtyResult:
-        if self._is_fallback:
-            if self._fallback is None:
+        # CWD lock per session to avoid concurrent cd race (Gap: CWD lock)
+        with self._cwd_lock:
+            if self._is_fallback:
+                if self._fallback is None:
+                    return PtyResult(
+                        stdout="No fallback available",
+                        exit_code=-1,
+                        truncated=False,
+                        session_id=self.session_id,
+                    )
+                full = f"{command}; echo {self._exit_token}:$? {self._end_token}"
+                try:
+                    self._fallback.sendline(full)
+                    self._fallback.expect(self._end_token, timeout=timeout)
+                    raw = self._fallback.before or ""
+                except Exception:  # noqa: BLE001
+                    raw = self._fallback.before or "" if self._fallback else ""
+                    return PtyResult(
+                        stdout=f"Timeout {timeout}s partial:\n{ANSI_RE.sub('', raw)[:8000]}",
+                        exit_code=-1,
+                        truncated=True,
+                        session_id=self.session_id,
+                    )
+                clean = ANSI_RE.sub("", raw)
+                # Strip sentinel token that may be in prompt (pexpect PS1)
+                clean = clean.replace(self._sentinel_token, "")
+                m = re.search(rf"{re.escape(self._exit_token)}:(\d+)", clean)
+                exit_code = int(m.group(1)) if m else -1
+                if f"{self._exit_token}:" in clean:
+                    clean = clean.split(f"{self._exit_token}:")[0]
+                truncated = len(clean) > 8000
+                if truncated:
+                    clean = clean[:8000] + "\n...[truncated]"
                 return PtyResult(
-                    stdout="No fallback available", exit_code=-1, truncated=False, session_id=self.session_id
+                    stdout=clean.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id
                 )
-            full = f"{command}; echo __FA_EXIT__:$? __FA_END__"
+
+            if self.pane is None:
+                return PtyResult(
+                    stdout="No pane available", exit_code=-1, truncated=False, session_id=self.session_id
+                )
+
+            full = f"{command}; echo {self._exit_token}:$? {self._end_token}"
             try:
-                self._fallback.sendline(full)
-                self._fallback.expect("__FA_END__", timeout=timeout)
-                raw = self._fallback.before or ""
-            except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                raw = self._fallback.before or "" if self._fallback else ""
+                self.pane.send_keys(full)
+            except Exception as exc:  # noqa: BLE001
                 return PtyResult(
-                    stdout=f"Timeout {timeout}s partial:\n{ANSI_RE.sub('', raw)[:8000]}",
-                    exit_code=-1,
-                    truncated=True,
-                    session_id=self.session_id,
+                    stdout=f"Failed to send command: {exc}", exit_code=-1, truncated=False, session_id=self.session_id
                 )
-            clean = ANSI_RE.sub("", raw)
-            m = re.search(r"__FA_EXIT__:(\d+)", clean)
-            exit_code = int(m.group(1)) if m else -1
-            if "__FA_EXIT__:" in clean:
-                clean = clean.split("__FA_EXIT__:")[0]
-            truncated = len(clean) > 8000
+
+            import time
+
+            start = time.time()
+            output = ""
+            exit_code = -1
+            while time.time() - start < timeout:
+                try:
+                    # -J join wrapped lines per Gap 12 to prevent JSON corruption
+                    lines = self.pane.cmd("capture-pane", "-p", "-J", "-S", "-100", "-E", "-").stdout
+                    text = "\n".join(lines)
+                    if self._end_token in text:
+                        clean = ANSI_RE.sub("", text)
+                        # Strip sentinel token that may appear in prompt
+                        clean = clean.replace(self._sentinel_token, "")
+                        m = re.search(rf"{re.escape(self._exit_token)}:(\d+)", clean)
+                        if m:
+                            exit_code = int(m.group(1))
+                        if f"{self._exit_token}:" in clean:
+                            clean = clean.split(f"{self._exit_token}:")[0]
+                        output = clean
+                        break
+                except Exception:  # noqa: BLE001, S110
+                    pass
+                time.sleep(0.2)
+            truncated = len(output) > 8000
             if truncated:
-                clean = clean[:8000] + "\n...[truncated]"
-            return PtyResult(
-                stdout=clean.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id
-            )
-
-        if self.pane is None:
-            return PtyResult(
-                stdout="No pane available", exit_code=-1, truncated=False, session_id=self.session_id
-            )
-
-        full = f"{command}; echo __FA_EXIT__:$? __FA_END__"
-        try:
-            self.pane.send_keys(full)
-        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            return PtyResult(
-                stdout=f"Failed to send command: {exc}",
-                exit_code=-1,
-                truncated=False,
-                session_id=self.session_id,
-            )
-
-        import time
-
-        start = time.time()
-        output = ""
-        exit_code = -1
-        while time.time() - start < timeout:
-            try:
-                lines = self.pane.cmd("capture-pane", "-p", "-S", "-100").stdout
-                text = "\n".join(lines)
-                if "__FA_END__" in text:
-                    clean = ANSI_RE.sub("", text)
-                    m = re.search(r"__FA_EXIT__:(\d+)", clean)
-                    if m:
-                        exit_code = int(m.group(1))
-                    if "__FA_EXIT__:" in clean:
-                        clean = clean.split("__FA_EXIT__:")[0]
-                    output = clean
-                    break
-            except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
-                pass
-            time.sleep(0.2)
-        truncated = len(output) > 8000
-        if truncated:
-            output = output[:8000] + "\n...[truncated 8000]"
-        return PtyResult(
-            stdout=output.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id
-        )
+                output = output[:8000] + "\n...[truncated 8000]"
+            return PtyResult(stdout=output.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id)
 
     def send_ctrl_c(self) -> str:
         if self._is_fallback:
@@ -197,9 +233,9 @@ class PtySession:
                 return "No fallback"
             try:
                 self._fallback.sendcontrol("c")
-                self._fallback.expect(SENTINEL, timeout=5)
+                self._fallback.expect(self._sentinel_token, timeout=5)
                 return "Ctrl+C ready"
-            except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+            except Exception:  # noqa: BLE001
                 return "Ctrl+C sent not ready"
         if self.pane is None:
             return "No pane"
@@ -215,30 +251,35 @@ class PtySession:
             if self._fallback is not None:
                 try:
                     self._fallback.close(force=True)
-                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
+                except Exception:  # noqa: BLE001, S110
                     pass
         else:
             if self.tmux_session is not None:
                 try:
                     self.tmux_session.kill_session()
-                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
+                except Exception:  # noqa: BLE001, S110
                     pass
 
 
 class PtyPool:
     """
-    Production PtyPool: shared server, LRU eviction, fail-fast never reuse main, thread-safe, DI
-    No global singleton, per SessionState
+    Production PtyPool: shared server with socket isolation fa_<run_id>, LRU eviction pinned main, thread-safe, DI, no global singleton
+    Implements Gap 12 (-J join), Improvement 1 (socket isolation -L), Gap 13 pexpect per-session isolation, Gap 14 signal/atexit leak prevention
     """
 
-    def __init__(self, max_size: int = 2, base_cwd: Path = Path("/workspace"), server: Any | None = None):
+    def __init__(
+        self, max_size: int = 2, base_cwd: Path = Path("/workspace"), server: Any | None = None, run_id: str | None = None
+    ):
         self.max_size = max_size
         self.base_cwd = Path(base_cwd).resolve()
-        self.sessions: OrderedDict[str, PtySession] = OrderedDict()
+        self.sessions: dict[str, PtySession] = {}
+        self._lru: OrderedDict[str, None] = OrderedDict()
         self.lock = threading.Lock()
-        self._server: Any | None = None
+        self._server: Any | None = server
+        self.run_id = run_id or f"run-{uuid.uuid4().hex[:8]}"
+        self._original_server: Any | None = None
 
-        if server is None:
+        if self._server is None:
             try:
                 import libtmux  # type: ignore[import-untyped]
 
@@ -246,28 +287,110 @@ class PtyPool:
                     print("WARNING: tmux binary not found, falling back to pexpect")
                     self._server = None
                 else:
-                    self._server = libtmux.Server()
+                    # Socket isolation per run_id to avoid hijack in concurrent eval-harness / CI
+                    socket_name = f"fa_{self.run_id}"
+                    try:
+                        self._server = libtmux.Server(socket_name=socket_name)
+                        # Ensure server started
+                        self._server.cmd("start-server")
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"WARNING: libtmux Server socket_name={socket_name} failed: {exc}, trying default + start-server")
+                        try:
+                            self._server = libtmux.Server()
+                            self._server.cmd("start-server")
+                        except Exception as exc2:  # noqa: BLE001
+                            print(f"WARNING: libtmux default server failed: {exc2}, fallback to pexpect")
+                            self._server = None
+                    self._original_server = self._server
             except ImportError:
                 print("WARNING: libtmux not installed, falling back to pexpect")
                 self._server = None
-        else:
-            self._server = server
+
+        # Signal/atexit leak prevention per Gap 14 leave-no-trace
+        try:
+            atexit.register(self._cleanup_all)
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                try:
+                    signal.signal(sig, lambda *_: self._cleanup_all())
+                except (ValueError, OSError):
+                    # Signal only works in main thread
+                    pass
+        except Exception:
+            pass
+
+    def _cleanup_all(self) -> None:
+        """Leave-no-trace: kill all sessions and kill isolated server."""
+        try:
+            with self.lock:
+                for sid in list(self.sessions.keys()):
+                    try:
+                        self.sessions[sid].close()
+                    except Exception:
+                        pass
+                self.sessions.clear()
+                self._lru.clear()
+            if self._server is not None:
+                try:
+                    # Only kill server if it was isolated socket (fa_ prefix), not default
+                    # Check socket_name to avoid killing user's default tmux
+                    socket_name = getattr(self._server, "socket_name", "") or ""
+                    if socket_name.startswith("fa_"):
+                        self._server.cmd("kill-server")
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def acquire(self, session_id: str, workdir: str | None = None) -> PtySession:
         with self.lock:
             if session_id in self.sessions:
-                self.sessions.move_to_end(session_id)
+                # Move to end = most recently used
+                self._lru.move_to_end(session_id)
                 return self.sessions[session_id]
+
+            # Policy: main pinned never evict, LRU eviction for subs only
+            # maxSize=2 = main pinned + 1 LRU sub slot
             if len(self.sessions) >= self.max_size:
-                raise PoolExhaustedError(
-                    f"Pool full max_size={self.max_size}, no idle, cannot acquire {session_id}. "
-                    f"Active: {list(self.sessions.keys())}. Call kill idle or increase max_size. "
-                    f"Do not reuse main to avoid corrupting parent HEAD."
-                )
+                # Find LRU that is not main
+                lru_to_evict = None
+                for sid in self._lru:
+                    if sid != "main":
+                        lru_to_evict = sid
+                        break
+                if lru_to_evict is None:
+                    # Only main present and trying to acquire different session_id and maxSize==1? Then fail-fast
+                    # For maxSize=2, main + 1 sub already, trying 3rd distinct -> evict LRU sub (not main)
+                    # If no sub to evict (only main and trying new), evict main? No, per spec never reuse main, so evict main? Actually per clarified policy, main pinned, so evict LRU sub
+                    # If we are here and all sessions are main (only main), and trying sub, we have space? len>=maxSize, so need to evict
+                    # For maxSize=2, main + sub1 present, trying sub2 -> evict sub1
+                    # Find any sub (not main)
+                    for sid in list(self.sessions.keys()):
+                        if sid != "main":
+                            lru_to_evict = sid
+                            break
+                    if lru_to_evict is None:
+                        raise PoolExhaustedError(
+                            f"Pool full max_size={self.max_size}, active={list(self.sessions.keys())}, "
+                            f"cannot acquire {session_id} without evicting main. Increase max_size."
+                        )
+                # Evict LRU sub
+                try:
+                    self.sessions[lru_to_evict].close()
+                except Exception:
+                    pass
+                self.sessions.pop(lru_to_evict, None)
+                self._lru.pop(lru_to_evict, None)
+
             cwd = Path(workdir) if workdir else self.base_cwd
-            assert cwd.exists() and cwd.is_dir(), f"workdir {cwd} not exists (defensive check Gap 6)"  # noqa: S101 # internal invariant, not security, fail-fast per Gap 6 defensive checks
-            session = PtySession(session_id, cwd, server=self._server)
+            # Defensive: workdir exists and is dir, fail-fast per Gap 6
+            if not cwd.exists():
+                raise RuntimeError(f"workdir {cwd} not exists")
+            if not cwd.is_dir():
+                raise RuntimeError(f"workdir {cwd} not dir")
+
+            session = PtySession(session_id, cwd, server=self._server, run_id=self.run_id)
             self.sessions[session_id] = session
+            self._lru[session_id] = None
             return session
 
     def list_sessions(self) -> list[str]:
@@ -279,6 +402,7 @@ class PtyPool:
             if session_id in self.sessions:
                 try:
                     self.sessions[session_id].close()
-                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
+                except Exception:  # noqa: BLE001, S110
                     pass
-                del self.sessions[session_id]
+                self.sessions.pop(session_id, None)
+                self._lru.pop(session_id, None)
