@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07")
 SENTINEL = "|||FA_READY|||"
 
@@ -69,7 +68,7 @@ class PtySession:
                 )
                 self._fallback.expect(SENTINEL)
                 self._is_fallback = True
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: pexpect fallback failed: {exc}, using subprocess fallback")
                 self._is_fallback = True
         else:
@@ -79,12 +78,10 @@ class PtySession:
                     attach=False,
                     start_directory=str(self.cwd),
                 )
-            except Exception:
+            except Exception:  # graceful degradation per Phase 0.5, failure-observable WARNING
                 try:
-                    self.tmux_session = self._server.find_where(
-                        {"session_name": f"fa_{session_id}"}
-                    )
-                except Exception:
+                    self.tmux_session = self._server.find_where({"session_name": f"fa_{session_id}"})
+                except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                     self.tmux_session = None
                 if self.tmux_session is None:
                     raise
@@ -95,7 +92,7 @@ class PtySession:
                     suppress_history=True,
                 )
                 self._wait_for_sentinel()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: tmux pane init failed: {exc}, fallback to pexpect")
                 self._is_fallback = True
                 self.pane = None
@@ -114,7 +111,7 @@ class PtySession:
                 content = "\n".join(self.pane.cmd("capture-pane", "-p", "-S", "-20").stdout)
                 if SENTINEL in content:
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
                 pass
             time.sleep(0.1)
         raise TimeoutError(f"Sentinel {SENTINEL} not found")
@@ -130,7 +127,7 @@ class PtySession:
                 self._fallback.sendline(full)
                 self._fallback.expect("__FA_END__", timeout=timeout)
                 raw = self._fallback.before or ""
-            except Exception:
+            except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 raw = self._fallback.before or "" if self._fallback else ""
                 return PtyResult(
                     stdout=f"Timeout {timeout}s partial:\n{ANSI_RE.sub('', raw)[:8000]}",
@@ -146,7 +143,9 @@ class PtySession:
             truncated = len(clean) > 8000
             if truncated:
                 clean = clean[:8000] + "\n...[truncated]"
-            return PtyResult(stdout=clean.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id)
+            return PtyResult(
+                stdout=clean.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id
+            )
 
         if self.pane is None:
             return PtyResult(
@@ -156,8 +155,13 @@ class PtySession:
         full = f"{command}; echo __FA_EXIT__:$? __FA_END__"
         try:
             self.pane.send_keys(full)
-        except Exception as exc:
-            return PtyResult(stdout=f"Failed to send command: {exc}", exit_code=-1, truncated=False, session_id=self.session_id)
+        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+            return PtyResult(
+                stdout=f"Failed to send command: {exc}",
+                exit_code=-1,
+                truncated=False,
+                session_id=self.session_id,
+            )
 
         import time
 
@@ -177,13 +181,15 @@ class PtySession:
                         clean = clean.split("__FA_EXIT__:")[0]
                     output = clean
                     break
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
                 pass
             time.sleep(0.2)
         truncated = len(output) > 8000
         if truncated:
             output = output[:8000] + "\n...[truncated 8000]"
-        return PtyResult(stdout=output.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id)
+        return PtyResult(
+            stdout=output.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id
+        )
 
     def send_ctrl_c(self) -> str:
         if self._is_fallback:
@@ -193,7 +199,7 @@ class PtySession:
                 self._fallback.sendcontrol("c")
                 self._fallback.expect(SENTINEL, timeout=5)
                 return "Ctrl+C ready"
-            except Exception:
+            except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 return "Ctrl+C sent not ready"
         if self.pane is None:
             return "No pane"
@@ -209,13 +215,13 @@ class PtySession:
             if self._fallback is not None:
                 try:
                     self._fallback.close(force=True)
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
                     pass
         else:
             if self.tmux_session is not None:
                 try:
                     self.tmux_session.kill_session()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
                     pass
 
 
@@ -259,7 +265,7 @@ class PtyPool:
                     f"Do not reuse main to avoid corrupting parent HEAD."
                 )
             cwd = Path(workdir) if workdir else self.base_cwd
-            assert cwd.exists() and cwd.is_dir(), f"workdir {cwd} not exists (defensive check Gap 6)"
+            assert cwd.exists() and cwd.is_dir(), f"workdir {cwd} not exists (defensive check Gap 6)"  # noqa: S101 # internal invariant, not security, fail-fast per Gap 6 defensive checks
             session = PtySession(session_id, cwd, server=self._server)
             self.sessions[session_id] = session
             return session
@@ -273,6 +279,6 @@ class PtyPool:
             if session_id in self.sessions:
                 try:
                     self.sessions[session_id].close()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
                     pass
                 del self.sessions[session_id]

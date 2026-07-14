@@ -214,10 +214,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         paths = changed_paths(args.base, repo_root)
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-        msg = (
-            f"::warning::check_protected_paths: could not compute diff: {exc}"
-            " — manual review required"
-        )
+        msg = f"::warning::check_protected_paths: could not compute diff: {exc} — manual review required"
         print(msg, file=sys.stderr)
         return 0  # fail-open on diff errors: never block on missing git history
     _emit_dependency_flags(dependency_hits(paths))

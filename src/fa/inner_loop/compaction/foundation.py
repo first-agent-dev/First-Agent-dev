@@ -10,13 +10,14 @@ Observation masking 6/3 recent — Full-fidelity outputs at 80%/90%
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+
 
 @dataclass
 class CompactionAction:
     stage: str
     threshold: float
     message: str
+
 
 class CompactionManager:
     """
@@ -27,13 +28,21 @@ class CompactionManager:
     # From ArXiv 2603.05344 v2 Appendix I
     stages = [
         (0.70, "warning", "Context pressure 70%: consider pruning"),
-        (0.80, "observation_masking", "Mask older tool results with reference pointers to offloaded scratch files, keep 6 recent full-fidelity"),
+        (
+            0.80,
+            "observation_masking",
+            "Mask older tool results with reference pointers to offloaded scratch files, keep 6 recent full-fidelity",
+        ),
         (0.85, "fast_pruning", "Prune tool outputs beyond recent window, replace with [pruned] markers"),
         (0.90, "aggressive_masking", "Shrink preservation window to 3 recent full-fidelity"),
-        (0.99, "full_compaction", "Serialize entire history to scratch file + LLM summarizer compress middle, preserve recent verbatim"),
+        (
+            0.99,
+            "full_compaction",
+            "Serialize entire history to scratch file + LLM summarizer compress middle, preserve recent verbatim",
+        ),
     ]
 
-    def check(self, token_usage: int, context_limit: int) -> Optional[CompactionAction]:
+    def check(self, token_usage: int, context_limit: int) -> CompactionAction | None:
         if context_limit == 0:
             return None
         ratio = token_usage / context_limit
@@ -53,6 +62,7 @@ class CompactionManager:
 
     def should_offload(self, output: str, limit: int = 8000) -> bool:
         return len(output) > limit
+
 
 # Example usage in loop.py BETWEEN_ROUNDS:
 # manager = CompactionManager()

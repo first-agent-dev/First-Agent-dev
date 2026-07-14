@@ -286,8 +286,7 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 â
         )
 
     guard_list = [
-        GuardActivity(hook=h, allow=d["allow"], deny=d["deny"], warn=d["warn"])
-        for h, d in guard_data.items()
+        GuardActivity(hook=h, allow=d["allow"], deny=d["deny"], warn=d["warn"]) for h, d in guard_data.items()
     ]
 
     redundant = sum(c - 1 for c in reads.values() if c > 1)
@@ -499,9 +498,7 @@ def find_dead_zones(workspace: Path, sessions: list[SessionAnalytics]) -> list[s
     if not src_dir.exists():
         return []
 
-    all_py = {
-        str(p.relative_to(workspace)) for p in src_dir.rglob("*.py") if "__pycache__" not in str(p)
-    }
+    all_py = {str(p.relative_to(workspace)) for p in src_dir.rglob("*.py") if "__pycache__" not in str(p)}
 
     accessed: set[str] = set()
     for s in sessions:
@@ -520,14 +517,11 @@ def efficiency_warnings(analytics: SessionAnalytics) -> list[str]:
     warnings: list[str] = []
 
     if analytics.redundant_reads > 0:
-        warnings.append(
-            f"{analytics.redundant_reads} redundant file reads (same file read multiple times)"
-        )
+        warnings.append(f"{analytics.redundant_reads} redundant file reads (same file read multiple times)")
 
     if analytics.repeated_commands > 0:
         warnings.append(
-            f"{analytics.repeated_commands} repeated bash commands "
-            f"(same command run multiple times)"
+            f"{analytics.repeated_commands} repeated bash commands (same command run multiple times)"
         )
 
     # Cold start warning

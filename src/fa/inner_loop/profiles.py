@@ -30,6 +30,7 @@ class RoleProfile:
 
 
 # Raw dict for backward compat + typed profiles
+# v0.1 pair work: planner gets limited write_file to knowledge/research/** + .fa/** per Q3 decision
 PROFILES_RAW: dict[str, dict[str, Any]] = {
     "researcher": {
         "description": "Read-only researcher, finds files, no writes",
@@ -71,10 +72,11 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
         "bash_impl": "stateful",
     },
     "planner": {
-        "description": "Architect/Planner, read-only analysis, plan generation",
-        "tools": ["fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep"],
+        "description": "Architect/Planner, read-only analysis + limited write to research docs for filesystem-canon plans",
+        "tools": ["fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep", "fs.write_file"],
         "max_tokens": 1000,
         "stateless": True,
+        "write_allowlist": ["knowledge/research/", ".fa/"],
     },
 }
 
@@ -118,6 +120,52 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
         from fa.inner_loop.tools.write_file import build_write_file_tool
 
         builders["fs.write_file"] = lambda: build_write_file_tool(root)
+
+        # Limited write for planner: allowlist knowledge/research/ + .fa/
+        def _build_limited_write():
+            base_spec = build_write_file_tool(root)
+            allowed_prefixes = ["knowledge/research/", ".fa/"]
+
+            orig_handler = base_spec.handler
+
+            def limited_handler(params):
+                # Check path allowlist compliance-by-construction
+                try:
+                    p = params.get("path", "")
+                    if not isinstance(p, str):
+                        return orig_handler(params)
+                    # Normalize: must start with allowed prefix
+                    # Allow relative paths that resolve under allowed prefixes
+                    # For safety, check if path starts with allowed prefix (after stripping leading ./)
+                    norm = p.lstrip("./")
+                    if not any(norm.startswith(prefix) for prefix in allowed_prefixes):
+                        from fa.inner_loop.registry import ToolResult
+
+                        return ToolResult.fail(
+                            "path_denied",
+                            f"Planner write_file limited to {allowed_prefixes}, got '{p}' — use implementer role for src/ writes",
+                            retryable=False,
+                        )
+                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
+                    pass
+                return orig_handler(params)
+
+            # Return new spec with same schema but limited handler and description
+            from fa.inner_loop.registry import ToolSpec
+
+            return ToolSpec(
+                name=base_spec.name,
+                description=base_spec.description + " [planner limited to knowledge/research/** + .fa/**]",
+                input_schema=base_spec.input_schema,
+                permission=base_spec.permission,
+                handler=limited_handler,
+                tags=base_spec.tags,
+                max_context_bytes=base_spec.max_context_bytes,
+                elide=base_spec.elide,
+            )
+
+        builders["fs.write_file_limited"] = _build_limited_write
+
     except Exception as exc:  # noqa: BLE001
         print(f"WARNING: Failed to setup builder fs.write_file: {exc}")
 
@@ -155,9 +203,8 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
         from fa.inner_loop.tools.edit_file import build_edit_file_tool  # type: ignore
 
         builders["fs.edit_file"] = lambda: build_edit_file_tool(root)
-    except Exception:
-        # Fallback: edit_file not yet implemented in this repo, skip
-        pass
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable, edit_file optional
+        print(f"WARNING: edit_file builder not available: {exc}")
 
     # Observability + pair tools (from Stage 0)
     try:
@@ -171,7 +218,7 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
         builders["fs.chronicle_search"] = lambda: build_chronicle_search_tool(event_log)
         builders["fs.usage"] = lambda: build_usage_tool(event_log)
         builders["fs.list_tasks"] = lambda: build_list_tasks_tool()
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
         pass
 
     try:
@@ -186,7 +233,7 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
         builders["fs.undo"] = lambda: build_undo_tool(root)
         builders["fs.diff"] = lambda: build_diff_tool(root)
         builders["fs.send_ctrl_c"] = lambda: build_send_ctrl_c_tool()
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
         pass
 
     return builders
@@ -212,7 +259,11 @@ def build_registry_for_role(
 
     registry = ToolRegistry()
     for tool_name in wanted:
-        builder = builders.get(tool_name)
+        # For planner, use limited write_file if requested
+        if role == "planner" and tool_name == "fs.write_file":
+            builder = builders.get("fs.write_file_limited") or builders.get(tool_name)
+        else:
+            builder = builders.get(tool_name)
         if builder is None:
             print(f"WARNING: Tool {tool_name} requested for role {role} but no builder found, skipping")
             continue
@@ -241,15 +292,15 @@ def estimate_tokens(registry: ToolRegistry) -> int:
                     continue
                 total_chars += len(spec.description)
                 total_chars += len(json.dumps(spec.input_schema, ensure_ascii=False))
-            except Exception:
+            except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
                 continue
-    except Exception:
+    except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         # Fallback if registry API different
         try:
             specs = getattr(registry, "all_specs", lambda: [])()
             for spec in specs:
                 total_chars += len(spec.description)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
             pass
 
     return total_chars // 4

@@ -3,8 +3,9 @@ Tests for Formal Blackboard with Content-Hashed + Transactional Semantics
 Phase 0.5 — Formal Shared Harness Substrate
 """
 
-from pathlib import Path
 import tempfile
+from pathlib import Path
+
 
 def test_blackboard_write_read():
     from fa.blackboard.blackboard import Blackboard, BlackboardEntry
@@ -25,6 +26,7 @@ def test_blackboard_write_read():
         assert read_back is not None
         assert read_back.id == "plan-1"
         assert read_back.content_hash == entry.content_hash
+
 
 def test_blackboard_conflict_detection():
     from fa.blackboard.blackboard import Blackboard, BlackboardEntry
@@ -58,6 +60,7 @@ def test_blackboard_conflict_detection():
         conflicts = bb.detect_conflict(entry2)
         assert len(conflicts) > 0, "Should detect write/write conflict"
         assert any("src/auth.py" in c.read_write_overlap for c in conflicts)
+
 
 def test_blackboard_append_only():
     from fa.blackboard.blackboard import Blackboard, BlackboardEntry

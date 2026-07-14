@@ -204,8 +204,7 @@ def test_post_setup_does_not_teardown_to_hand_off_to_systemd() -> None:
     bring-up; systemd is only armed for reboot autostart."""
     text = _POST_SETUP.read_text(encoding="utf-8")
     assert "systemctl --user start fa.service" not in text, (
-        "post-setup must not START via systemd (no-ops without a user session); "
-        "use docker compose up -d"
+        "post-setup must not START via systemd (no-ops without a user session); use docker compose up -d"
     )
     assert "docker compose -f docker-compose.fa.yml up -d" in text, (
         "post-setup must bring the stack up via compose"
@@ -226,9 +225,7 @@ def test_clean_rebuild_brings_up_via_compose_not_systemd_start() -> None:
 # --- unified routing file (ADR-12 Option C / R2-2) ----------------------------
 def _volume_by_target(service: dict[str, Any], target: str) -> dict[str, Any]:
     return next(
-        vol
-        for vol in service.get("volumes", [])
-        if isinstance(vol, dict) and vol.get("target") == target
+        vol for vol in service.get("volumes", []) if isinstance(vol, dict) and vol.get("target") == target
     )
 
 
@@ -263,9 +260,7 @@ def test_agent_routing_file_mount_order() -> None:
     agent = _compose()["services"]["first-agent"]
     vols = agent.get("volumes", [])
     state_idx = next(
-        i
-        for i, vol in enumerate(vols)
-        if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa"
+        i for i, vol in enumerate(vols) if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa"
     )
     routing_idx = next(
         i

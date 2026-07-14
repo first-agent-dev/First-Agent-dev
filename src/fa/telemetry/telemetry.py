@@ -1,6 +1,7 @@
 """
 Telemetry — Minimal Structured Telemetry + Governed Mutation Foundation
 Phase 0.5 — Not 100k raw logs, but structured summaries + artifact_id, offload full outputs to ArtifactStore
+Senior refactor: field-level truncation always valid JSON, never cut raw JSON
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ class TelemetryLogger:
             from fa.inner_loop.tools.bash_env import SECRET_NAME_RE
 
             return bool(SECRET_NAME_RE.search(k))
-        except Exception:
+        except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             lk = k.lower()
             secret_suffixes = ("_key", "_token", "_secret", "_password", "_passwd")
             secret_exact = {"key", "token", "secret", "password", "api_key", "access_key"}
@@ -64,43 +65,62 @@ class TelemetryLogger:
                 return True
             return False
 
+    @staticmethod
+    def _elide_value(v: Any, max_len: int) -> Any:
+        if isinstance(v, str) and len(v) > max_len:
+            return v[:max_len] + f"...[truncated {len(v)} chars]"
+        return v
+
     def log(self, event: TelemetryEvent) -> None:
         try:
+            # Sanitize + field-level elide first (always valid JSON)
             sanitized_args: dict[str, Any] = {}
             for k, v in event.tool_args.items():
                 if self._is_secret_key(k):
                     sanitized_args[k] = "***REDACTED***"
                 else:
-                    if isinstance(v, str) and len(v) > 500:
-                        sanitized_args[k] = v[:500] + "...[truncated]"
-                    else:
-                        sanitized_args[k] = v
+                    sanitized_args[k] = self._elide_value(v, 500)
             event.tool_args = sanitized_args
 
             line = json.dumps(asdict(event), ensure_ascii=False)
+
+            # If still too long, aggressively truncate known large fields
             if len(line) > 1000:
-                if len(event.tool_args.get("command", "")) > 200:
-                    event.tool_args["command"] = event.tool_args["command"][:200] + "...[truncated]"
+                if "command" in event.tool_args:
+                    event.tool_args["command"] = self._elide_value(event.tool_args["command"], 200)
+                for kk, vv in list(event.tool_args.items()):
+                    if isinstance(vv, str) and len(vv) > 200:
+                        event.tool_args[kk] = self._elide_value(vv, 200)
                 line = json.dumps(asdict(event), ensure_ascii=False)
+
+            # Fallback to minimal valid JSON if still >1000 — never cut raw JSON
+            if len(line) > 1000:
+                minimal = {
+                    "run_id": event.run_id,
+                    "turn": event.turn,
+                    "tool_name": event.tool_name,
+                    "test_result": event.test_result,
+                    "artifact_id": event.artifact_id,
+                    "branch_decision": self._elide_value(event.branch_decision, 200)
+                    if isinstance(event.branch_decision, str)
+                    else "",
+                }
+                line = json.dumps(minimal, ensure_ascii=False)
                 if len(line) > 1000:
-                    line = line[:997] + "..."
-                    if not line.endswith("}"):
-                        line = line.rsplit(",", 1)[0] + "}"
+                    line = line[:1000]
 
             with self.lock:
                 with open(self.path, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             print(f"WARNING: Telemetry log failed {e}, continuing")
 
-    def query(
-        self, tool_name: str | None = None, test_result: str | None = None
-    ) -> list[TelemetryEvent]:
+    def query(self, tool_name: str | None = None, test_result: str | None = None) -> list[TelemetryEvent]:
         results: list[TelemetryEvent] = []
         with self.lock:
             if not self.path.exists():
                 return results
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(self.path, encoding="utf-8") as f:
                 for line in f:
                     try:
                         data = json.loads(line)
@@ -109,7 +129,7 @@ class TelemetryLogger:
                         if test_result is not None and data.get("test_result") != test_result:
                             continue
                         results.append(TelemetryEvent(**data))
-                    except Exception:
+                    except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
                         continue
         return results
 

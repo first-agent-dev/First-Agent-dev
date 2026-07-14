@@ -36,9 +36,7 @@ def _chain() -> ChainConfig:
 
 
 def test_proxy_rewrite_targets_proxy_and_carries_token() -> None:
-    rewritten = _apply_proxy_mode(
-        _chain(), proxy_url="http://fa-egress-proxy:8080", proxy_token=_TOKEN
-    )
+    rewritten = _apply_proxy_mode(_chain(), proxy_url="http://fa-egress-proxy:8080", proxy_token=_TOKEN)
     for entry in rewritten.chain:
         assert entry.base_url.startswith("http://fa-egress-proxy:8080/route/")
         assert entry.extra_headers[_PROXY_TOKEN_HEADER] == _TOKEN
@@ -48,17 +46,13 @@ def test_proxy_rewrite_advertises_per_route_timeout() -> None:
     """F-2: each rewritten entry tells the proxy its upstream timeout so a slow
     model's configured timeout_seconds is honored instead of a hardcoded cap."""
     chain = _chain()
-    rewritten = _apply_proxy_mode(
-        chain, proxy_url="http://fa-egress-proxy:8080", proxy_token=_TOKEN
-    )
+    rewritten = _apply_proxy_mode(chain, proxy_url="http://fa-egress-proxy:8080", proxy_token=_TOKEN)
     for original, entry in zip(chain.chain, rewritten.chain, strict=True):
         assert entry.extra_headers[_PROXY_TIMEOUT_HEADER] == str(original.timeout_seconds)
 
 
 def test_proxy_rewrite_places_no_provider_key_anywhere() -> None:
-    rewritten = _apply_proxy_mode(
-        _chain(), proxy_url="http://fa-egress-proxy:8080", proxy_token=_TOKEN
-    )
+    rewritten = _apply_proxy_mode(_chain(), proxy_url="http://fa-egress-proxy:8080", proxy_token=_TOKEN)
     # The fa side never sees a provider key value; only the api_key_env *name*
     # (used by the proxy for routing) and the proxy token are present.
     for entry in rewritten.chain:

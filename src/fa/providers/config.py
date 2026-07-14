@@ -240,8 +240,7 @@ def load_models_config(
         return ModelsConfig(roles={})
     if not isinstance(raw_root, Mapping):
         raise ConfigurationError(
-            f"models.yaml root must be a mapping of role names to role configs; "
-            f"got {type(raw_root).__name__}"
+            f"models.yaml root must be a mapping of role names to role configs; got {type(raw_root).__name__}"
         )
 
     environ: Mapping[str, str] = env if env is not None else os.environ
@@ -251,8 +250,7 @@ def load_models_config(
     for role_name, raw_role in raw_root.items():
         if not isinstance(role_name, str):
             raise ConfigurationError(
-                f"models.yaml role names must be strings; got "
-                f"{type(role_name).__name__} for {role_name!r}"
+                f"models.yaml role names must be strings; got {type(role_name).__name__} for {role_name!r}"
             )
         if raw_role is None:
             raise ConfigurationError(
@@ -261,8 +259,7 @@ def load_models_config(
             )
         if not isinstance(raw_role, Mapping):
             raise ConfigurationError(
-                f"models.yaml role {role_name!r}: role config must be a mapping; "
-                f"got {type(raw_role).__name__}"
+                f"models.yaml role {role_name!r}: role config must be a mapping; got {type(raw_role).__name__}"
             )
         chain_config = chain_from_mapping(role_name, raw_role)
         warnings.extend(chain_config.validate(environ, require_api_keys=require_api_keys))

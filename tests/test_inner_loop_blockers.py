@@ -266,9 +266,7 @@ def test_lockfile_blocker_does_not_false_positive_on_lock_filenames(message: str
         LifecyclePoint.BEFORE_TOOL_EXEC,
         HookPayload(tool_call=RegistryToolCall(name="fs.run_bash", params={}, call_id="tc-2")),
     )
-    assert decision.action == "allow", (
-        f"Lockfile blocker false-positive on non-contention message: {message!r}"
-    )
+    assert decision.action == "allow", f"Lockfile blocker false-positive on non-contention message: {message!r}"
 
 
 @pytest.mark.parametrize(
@@ -303,9 +301,7 @@ def test_lockfile_blocker_catches_contention_specific_signatures(message: str) -
         LifecyclePoint.BEFORE_TOOL_EXEC,
         HookPayload(tool_call=RegistryToolCall(name="fs.run_bash", params={}, call_id="tc-2")),
     )
-    assert decision.action == "deny", (
-        f"Lockfile blocker missed contention-specific signature: {message!r}"
-    )
+    assert decision.action == "deny", f"Lockfile blocker missed contention-specific signature: {message!r}"
     assert "lockfile" in decision.reason
 
 
@@ -492,9 +488,5 @@ def test_lockfile_blocker_denies_second_run_after_lockfile_failure(tmp_path: Pat
     assert "Could not get lock" in results[0].error.message
     assert results[1].error is not None and results[1].error.code == "hook_deny"
     assert "lockfile" in results[1].error.message
-    decisions = [
-        (r.middleware, r.decision)
-        for r in hooks.dispatch_trace
-        if r.middleware == "blocker:lockfile"
-    ]
+    decisions = [(r.middleware, r.decision) for r in hooks.dispatch_trace if r.middleware == "blocker:lockfile"]
     assert ("blocker:lockfile", "deny") in decisions, decisions

@@ -7,7 +7,7 @@ Graceful degradation: server.app may be None if FastAPI not installed.
 from .pty_pool import PtyPool, PtySession
 
 try:
-    from .server import app  # noqa: F401 - FastAPI may not be installed
+    from .server import app
 except ImportError as exc:
     # Graceful degradation per review Gap 1: tests requiring only PtyPool
     # must work without FastAPI. Log WARNING and continue.

@@ -196,9 +196,7 @@ def test_parse_eval_report_pass_routes_to_complete() -> None:
 
 
 def test_parse_eval_report_is_fail_closed_on_missing_verdict() -> None:
-    report = parse_eval_report(
-        "no recognizable verdict here", run_id="r", plan_id="r", evaluation_id="r-eval"
-    )
+    report = parse_eval_report("no recognizable verdict here", run_id="r", plan_id="r", evaluation_id="r-eval")
     assert report.verdict == "BLOCKED"
     assert report.route_decision == "blocked"
     assert report.confidence == "parsed:none"
@@ -214,9 +212,7 @@ def test_parse_eval_report_verdict_overrides_contradictory_route() -> None:
 
 
 def test_parse_eval_report_round_trips_through_persistence(tmp_path: Path) -> None:
-    report = parse_eval_report(
-        _EVAL_OUTPUT_REPAIR, run_id="wf-1", plan_id="wf-1", evaluation_id="wf-1-eval"
-    )
+    report = parse_eval_report(_EVAL_OUTPUT_REPAIR, run_id="wf-1", plan_id="wf-1", evaluation_id="wf-1-eval")
     path = tmp_path / "eval_report.json"
     write_eval_report(path, report)
     assert load_eval_report(path) == report

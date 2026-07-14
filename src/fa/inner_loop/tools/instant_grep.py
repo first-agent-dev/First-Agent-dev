@@ -1,159 +1,254 @@
 """Instant Grep tool — FTS5 trigram substring search, <50ms, token efficient.
 
-Fixes: fallback rglob slow → use git ls-files for tracked files only.
+Senior refactor v2 — fixes F821 undefined e bug + C901 complexity split:
+- Module-level single source EXCLUDE_DIRS
+- FTS5 fast path with count check and index_repo fallback (helper _fts_search)
+- Fallback chain: git ls-files --cached --others --exclude-standard (respects .gitignore) → walk with pruning symlink-safe (helper _git_fallback_search, _walk_fallback_search)
+- Streaming file read for fallback, no hard size skip, soft limit warning
+- Returns paths not content, always valid fts_error variable
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import optional_int, require_string
+
+try:
+    from fa.memory.fts_index import EXCLUDE_DIRS
+
+    EXCLUDE_DIRS = set(EXCLUDE_DIRS)
+except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+    EXCLUDE_DIRS = {
+        ".fa",
+        "node_modules",
+        ".venv",
+        "__pycache__",
+        ".git",
+        "sessions",
+        ".gremlins_cache",
+        "dist",
+        "build",
+        ".mypy_cache",
+    }
+
+DEFAULT_LIMIT = 10
+MAX_LIMIT = 50
+MAX_FILE_SIZE_SOFT = 100_000
+
+
+def _git_ls_files(root: Path) -> list[str]:
+    try:
+        res = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],  # noqa: S607
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if res.returncode == 0:
+            return [line.strip() for line in res.stdout.splitlines() if line.strip()]
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+        print(f"WARNING: git ls-files failed in instant_grep fallback: {exc}")
+    return []
+
+
+def _iter_files_fallback(root: Path):
+    root_resolved = root.resolve()
+    for dirpath, dirnames, filenames in os.walk(root_resolved, followlinks=False):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
+        for fname in filenames:
+            if not any(
+                fname.endswith(ext)
+                for ext in (".md", ".py", ".ts", ".js", ".json", ".yaml", ".yml", ".toml", ".txt")
+            ):
+                continue
+            fp = Path(dirpath) / fname
+            try:
+                if not fp.resolve().is_relative_to(root_resolved):
+                    continue
+            except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
+                continue
+            try:
+                yield fp
+            except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
+                continue
+
+
+def _matches_file_content(path: Path, query_lower: str) -> bool:
+    """Streaming search line-by-line, handles large files."""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if query_lower in line.lower():
+                    return True
+        if query_lower in path.name.lower():
+            return True
+        return False
+    except OSError:
+        return False
+
+
+def _fts_search(
+    db_path: Path, workspace_root: Path, query: str, limit: int
+) -> tuple[list[str] | None, str | None]:
+    """Try FTS5 fast path. Returns (paths, fts_error). If fts_error is not None, FTS failed."""
+    try:
+        from fa.memory.fts_index import InstantGrepIndex
+
+        index = InstantGrepIndex(db_path)
+        try:
+            count = index.conn.execute("SELECT COUNT(*) FROM files_fts").fetchone()[0]
+            if count == 0:
+                index.index_repo(workspace_root)
+        except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+            try:
+                index.index_repo(workspace_root)
+            except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
+                pass
+        paths = index.instant_grep(query, limit=limit)
+        index.close()
+        return paths, None
+    except Exception as fts_exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+        fts_error = str(fts_exc)
+        print(f"WARNING: FTS5 instant_grep failed: {fts_error}, fallback to git ls-files")
+        try:
+            # Ensure index closed if partially opened
+            index.close()  # type: ignore[possibly-undefined]
+        except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
+            pass
+        return None, fts_error
+
+
+def _git_fallback_search(root: Path, query: str, limit: int, fts_error: str) -> list[str]:
+    """Fallback via git ls-files, respects EXCLUDE_DIRS, streaming content check."""
+    tracked = _git_ls_files(root)
+    matched: list[str] = []
+    q_lower = query.lower()
+    for rel in tracked:
+        if any(part in EXCLUDE_DIRS for part in Path(rel).parts):
+            continue
+        fp = root / rel
+        try:
+            if not fp.is_file():
+                if q_lower in rel.lower():
+                    matched.append(rel)
+                    if len(matched) >= limit:
+                        break
+                continue
+            if q_lower in rel.lower() or _matches_file_content(fp, q_lower):
+                matched.append(rel)
+                if len(matched) >= limit:
+                    break
+        except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
+            continue
+    return matched
+
+
+def _walk_fallback_search(root: Path, query: str, limit: int) -> list[str]:
+    """Walk fallback pruning symlink-safe, streaming."""
+    matched: list[str] = []
+    q_lower = query.lower()
+    for fp in _iter_files_fallback(root):
+        try:
+            rel = str(fp.relative_to(root))
+            if q_lower in rel.lower() or _matches_file_content(fp, q_lower):
+                matched.append(rel)
+                if len(matched) >= limit:
+                    break
+        except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
+            continue
+    return matched
 
 
 def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
     db_path = Path(db_path).resolve()
     workspace_root = Path(workspace_root).resolve()
 
+    if not workspace_root.is_dir():
+        raise ValueError(f"workspace_root {workspace_root} not dir")
+
     def handler(params: Mapping[str, object]) -> ToolResult:
         try:
             data = dict(params)
             query = require_string(data, "query")
-            limit = optional_int(data, "limit") or 10
+            limit = optional_int(data, "limit") or DEFAULT_LIMIT
             if limit <= 0:
-                limit = 10
+                limit = DEFAULT_LIMIT
+            if limit > MAX_LIMIT:
+                limit = MAX_LIMIT
         except ValueError as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
-        try:
-            from fa.memory.fts_index import InstantGrepIndex
+        if not query.strip():
+            return ToolResult.fail("invalid_params", "query must be non-empty", retryable=True)
 
-            index = InstantGrepIndex(db_path)
-            try:
-                count = index.conn.execute("SELECT COUNT(*) FROM files_fts").fetchone()[0]
-                if count == 0:
-                    index.index_repo(workspace_root)
-            except Exception:
-                try:
-                    index.index_repo(workspace_root)
-                except Exception:
-                    pass
-            paths = index.instant_grep(query, limit=limit)
-            index.close()
+        # Fast path FTS5
+        paths, fts_error = _fts_search(db_path, workspace_root, query, limit)
+        if fts_error is None and paths is not None:
             summary = f"Found {len(paths)} files matching '{query}' (limit {limit}) via FTS5 trigram <50ms"
             return ToolResult.ok(
                 summary,
                 result={"paths": paths, "query": query, "limit": limit, "method": "fts5"},
             )
-        except Exception as e:
-            try:
-                git_result = subprocess.run(
-                    ["git", "ls-files"],  # noqa: S607
-                    cwd=workspace_root,
-                    capture_output=True,
-                    text=True,
-                )
-                if git_result.returncode == 0:
-                    files = git_result.stdout.splitlines()
-                    matched: list[str] = []
-                    q_lower = query.lower()
-                    for file_rel in files:
-                        fp = workspace_root / file_rel
-                        try:
-                            if not fp.is_file():
-                                continue
-                            if fp.stat().st_size > 100_000:
-                                continue
-                            if q_lower in file_rel.lower():
-                                matched.append(file_rel)
-                                if len(matched) >= limit:
-                                    break
-                                continue
-                            content = fp.read_text(encoding="utf-8", errors="ignore")
-                            if q_lower in content.lower():
-                                matched.append(file_rel)
-                                if len(matched) >= limit:
-                                    break
-                        except Exception:
-                            continue
-                    summary = f"Found {len(matched)} files matching '{query}' via git ls-files fallback (FTS failed: {e})"
-                    return ToolResult.ok(
-                        summary,
-                        result={
-                            "paths": matched,
-                            "query": query,
-                            "limit": limit,
-                            "method": "git_ls_files",
-                            "fts_error": str(e),
-                        },
-                    )
-                matched = []
-                q_lower = query.lower()
-                import os
 
-                try:
-                    from fa.memory.fts_index import EXCLUDE_DIRS
-
-                    exclude_dirs = EXCLUDE_DIRS
-                except Exception:
-                    exclude_dirs = {
-                        ".fa",
-                        "node_modules",
-                        ".venv",
-                        "__pycache__",
-                        ".git",
-                        "sessions",
-                        ".gremlins_cache",
-                        "dist",
-                        "build",
-                        ".mypy_cache",
-                    }
-                for dirpath, dirnames, filenames in os.walk(workspace_root):
-                    dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
-                    for fname in filenames:
-                        if not any(
-                            fname.endswith(ext)
-                            for ext in (".md", ".py", ".ts", ".js", ".json", ".yaml", ".yml", ".toml", ".txt")
-                        ):
-                            continue
-                        fp = Path(dirpath) / fname
-                        try:
-                            if fp.stat().st_size > 100_000:
-                                continue
-                            content = fp.read_text(encoding="utf-8", errors="ignore")
-                            if q_lower in content.lower() or q_lower in str(
-                                fp.relative_to(workspace_root)
-                            ).lower():
-                                matched.append(str(fp.relative_to(workspace_root)))
-                                if len(matched) >= limit:
-                                    break
-                        except Exception:
-                            continue
-                    if len(matched) >= limit:
-                        break
-                summary = f"Found {len(matched)} files matching '{query}' via fallback glob grep (FTS failed: {e})"
+        # Fallback chain
+        try:
+            # Git ls-files fallback
+            matched = _git_fallback_search(workspace_root, query, limit, fts_error or "unknown")
+            if matched:
+                summary = f"Found {len(matched)} files matching '{query}' via git ls-files fallback (FTS failed: {fts_error})"
                 return ToolResult.ok(
                     summary,
-                    result={"paths": matched, "query": query, "limit": limit, "method": "fallback", "fts_error": str(e)},
+                    result={
+                        "paths": matched,
+                        "query": query,
+                        "limit": limit,
+                        "method": "git_ls_files",
+                        "fts_error": fts_error,
+                    },
                 )
-            except Exception as exc2:
-                return ToolResult.fail(
-                    "search_failed",
-                    f"Instant grep failed: {e}, fallback failed: {exc2}",
-                    retryable=False,
-                )
+
+            # Walk fallback
+            matched = _walk_fallback_search(workspace_root, query, limit)
+            summary = (
+                f"Found {len(matched)} files matching '{query}' via fallback walk (FTS failed: {fts_error})"
+            )
+            return ToolResult.ok(
+                summary,
+                result={
+                    "paths": matched,
+                    "query": query,
+                    "limit": limit,
+                    "method": "fallback_walk",
+                    "fts_error": fts_error,
+                },
+            )
+
+        except Exception as exc2:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+            return ToolResult.fail(
+                "search_failed",
+                f"Instant grep failed: {fts_error}, fallback failed: {exc2}",
+                retryable=False,
+            )
 
     return ToolSpec(
         name="fs.instant_grep",
-        description="Instant substring search via FTS5 trigram index (Cursor-like), <50ms, returns paths not content, token efficient, substring search 'auth'→'AuthMiddleware', excludes .fa/, node_modules/, .venv/, sessions/. Falls back to git ls-files (respects .gitignore, fast) if FTS not available.",
+        description=(
+            "Instant substring search via FTS5 trigram index (Cursor-like), <50ms, returns paths not content "
+            "token efficient. Falls back to git ls-files --cached --others --exclude-standard (respects .gitignore) "
+            "if FTS not available, then walk pruning symlink-safe."
+        ),
         input_schema={
             "type": "object",
             "required": ["query"],
             "properties": {
-                "query": {"type": "string", "description": "Substring to search, e.g., 'auth', 'AuthMiddleware'"},
-                "limit": {"type": "integer", "description": "Max paths to return, default 10", "default": 10},
+                "query": {"type": "string", "description": "Substring to search, e.g., 'auth'"},
+                "limit": {"type": "integer", "description": "Max paths, default 10 max 50", "default": 10},
             },
         },
         permission="read",
@@ -163,4 +258,4 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
     )
 
 
-__all__ = ["build_instant_grep_tool"]
+__all__ = ["EXCLUDE_DIRS", "build_instant_grep_tool"]

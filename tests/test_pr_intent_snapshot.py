@@ -190,9 +190,7 @@ def _staged(rows: list[tuple[str, str]]) -> list[StagedPath]:
 
 
 def test_classify_intent_research_only_adds() -> None:
-    assert (
-        classify_intent(_staged([("A", "knowledge/research/note-2026-05.md")])) == Intent.RESEARCH
-    )
+    assert classify_intent(_staged([("A", "knowledge/research/note-2026-05.md")])) == Intent.RESEARCH
 
 
 def test_classify_intent_adr_rule_via_adr_path() -> None:
@@ -204,10 +202,7 @@ def test_classify_intent_adr_rule_via_agents_md() -> None:
 
 
 def test_classify_intent_adr_rule_via_skill() -> None:
-    assert (
-        classify_intent(_staged([("M", "knowledge/skills/pr-creation/SKILL.md")]))
-        == Intent.ADR_RULE
-    )
+    assert classify_intent(_staged([("M", "knowledge/skills/pr-creation/SKILL.md")])) == Intent.ADR_RULE
 
 
 def test_classify_intent_implement_pure_adds_under_src() -> None:
@@ -420,10 +415,7 @@ def test_validate_invariant_shape_mismatch_for_implement(tmp_path: Path) -> None
 
 def test_validate_fix_dof_missing(tmp_path: Path) -> None:
     msg = (
-        "INTENT: FIX\n"
-        "CLASS: REPAIR\n"
-        "INVARIANT: Affects: ADR-7 §5\n"
-        "DETERMINISTIC MECHANISM: y src/fa/cli.py:1\n"
+        "INTENT: FIX\nCLASS: REPAIR\nINVARIANT: Affects: ADR-7 §5\nDETERMINISTIC MECHANISM: y src/fa/cli.py:1\n"
     )
     violations = validate_commit_msg(msg, Intent.FIX, [], tmp_path)
     codes = [v.code for v in violations]
@@ -618,9 +610,7 @@ def test_llms_txt_standalone_still_gives_chore() -> None:
 
 def test_llms_txt_ride_along_is_transparent() -> None:
     """knowledge/llms.txt alongside a src change does not distort the intent."""
-    result = classify_intent(
-        _staged([("M", "knowledge/llms.txt"), ("M", "src/fa/inner_loop/loop.py")])
-    )
+    result = classify_intent(_staged([("M", "knowledge/llms.txt"), ("M", "src/fa/inner_loop/loop.py")]))
     assert result == Intent.FIX
 
 

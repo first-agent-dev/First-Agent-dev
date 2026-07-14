@@ -60,9 +60,7 @@ def resolve_git_dir(repo_root: Path) -> Path:
             raise SystemExit(f"fa.hygiene.hooks: could not read {dotgit}: {exc}") from exc
         prefix = "gitdir:"
         if not raw.startswith(prefix):
-            raise SystemExit(
-                f"fa.hygiene.hooks: unsupported {dotgit} format; expected 'gitdir: <path>'"
-            )
+            raise SystemExit(f"fa.hygiene.hooks: unsupported {dotgit} format; expected 'gitdir: <path>'")
         gitdir = Path(raw[len(prefix) :].strip())
         if not gitdir.is_absolute():
             gitdir = (dotgit.parent / gitdir).resolve()

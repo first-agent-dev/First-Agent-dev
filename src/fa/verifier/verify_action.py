@@ -52,9 +52,7 @@ def verify_action(
 
     relevant = [event for event in event_list if event.tool == contract.target_action]
     observed_types: set[str] = {event.event_type for event in relevant}
-    observed_failures: set[str] = {
-        condition for event in relevant for condition in event.failure_conditions
-    }
+    observed_failures: set[str] = {condition for event in relevant for condition in event.failure_conditions}
 
     reasons: list[str] = []
 
@@ -144,9 +142,7 @@ def load_contract(text: str) -> VerifierContract:  # noqa: C901
                         )
                     inner = value[1:-1].strip()
                     target_list = (
-                        required_trace_events
-                        if key == "required_trace_events"
-                        else failure_conditions
+                        required_trace_events if key == "required_trace_events" else failure_conditions
                     )
                     if inner:
                         for item in inner.split(","):
@@ -169,9 +165,7 @@ def load_contract(text: str) -> VerifierContract:  # noqa: C901
             "failure_conditions",
         }:
             target_list = (
-                required_trace_events
-                if current_key == "required_trace_events"
-                else failure_conditions
+                required_trace_events if current_key == "required_trace_events" else failure_conditions
             )
             target_list.append(strip_inline_comment(stripped[2:]).strip())
 
@@ -179,8 +173,7 @@ def load_contract(text: str) -> VerifierContract:  # noqa: C901
         raise ValueError("verifier contract missing required key: target_action")
     if not required_trace_events and not failure_conditions:
         raise ValueError(
-            "verifier contract must declare at least one of "
-            "required_trace_events or failure_conditions"
+            "verifier contract must declare at least one of required_trace_events or failure_conditions"
         )
 
     return VerifierContract(

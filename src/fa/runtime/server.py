@@ -8,7 +8,6 @@ Prior art: OpenHands Action Execution Server, OpenCode ShellPool
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional
 
 try:
     from fastapi import FastAPI, HTTPException  # type: ignore[import-untyped]
@@ -21,7 +20,7 @@ except ImportError:
     BaseModel = object  # type: ignore
     HAS_FASTAPI = False
 
-from .pty_pool import PtyPool, PtyResult  # noqa: E402
+from .pty_pool import PtyPool, PtyResult
 
 if HAS_FASTAPI:
     app = FastAPI(title="fa-runtime-server", version="0.1")  # type: ignore
@@ -31,7 +30,7 @@ if HAS_FASTAPI:
         session_id: str = "main"
         command: str
         timeout: int = 30
-        workdir: Optional[str] = None
+        workdir: str | None = None
 
     class ExecuteResponse(BaseModel):  # type: ignore
         stdout: str
@@ -55,7 +54,7 @@ if HAS_FASTAPI:
             )
         except AssertionError as e:
             raise HTTPException(status_code=400, detail=f"Defensive check failed: {e}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/send_ctrl_c")

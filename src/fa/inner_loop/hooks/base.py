@@ -128,9 +128,7 @@ class HookRegistry:
     """
 
     def __init__(self, *, event_sink: HookDecisionSink | None = None) -> None:
-        self._chains: dict[LifecyclePoint, list[Middleware]] = {
-            point: [] for point in LifecyclePoint
-        }
+        self._chains: dict[LifecyclePoint, list[Middleware]] = {point: [] for point in LifecyclePoint}
         self.dispatch_trace: list[DispatchRecord] = []
         self._registered: set[int] = set()
         self._event_sink = event_sink

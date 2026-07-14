@@ -149,13 +149,9 @@ def _validate_fix_fields(
     if fix_class is not None:
         return f"`fix_class` is only valid when `intent` is `FIX`; got `{intent.value}`"
     if dof is not None:
-        return (
-            f"`degree_of_freedom_closed` is only valid when `intent` is `FIX`; got `{intent.value}`"
-        )
+        return f"`degree_of_freedom_closed` is only valid when `intent` is `FIX`; got `{intent.value}`"
     if mechanism is not None:
-        return (
-            f"`deterministic_mechanism` is only valid when `intent` is `FIX`; got `{intent.value}`"
-        )
+        return f"`deterministic_mechanism` is only valid when `intent` is `FIX`; got `{intent.value}`"
     return None
 
 
@@ -200,9 +196,7 @@ def build_prepare_pr_tool(draft_store: PrDraftStore) -> ToolSpec:
         if prefix_violation is not None:
             return ToolResult.fail("invariant_shape_mismatch", prefix_violation, retryable=True)
 
-        fix_violation = _validate_fix_fields(
-            intent, fix_class=fix_class, dof=dof, mechanism=mechanism
-        )
+        fix_violation = _validate_fix_fields(intent, fix_class=fix_class, dof=dof, mechanism=mechanism)
         if fix_violation is not None:
             return ToolResult.fail("invalid_params", fix_violation, retryable=True)
 

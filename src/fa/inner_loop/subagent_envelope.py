@@ -72,9 +72,7 @@ class SubagentEnvelope:
         return json.dumps(asdict(self), indent=2, ensure_ascii=False)
 
     @classmethod
-    def from_verifier(
-        cls, task_id: str, exit_code: int, stdout: str, duration_ms: int = 0
-    ) -> SubagentEnvelope:
+    def from_verifier(cls, task_id: str, exit_code: int, stdout: str, duration_ms: int = 0) -> SubagentEnvelope:
         passed = exit_code == 0
         return cls(
             task_id=task_id,
@@ -120,9 +118,7 @@ class SubagentEnvelope:
         )
 
 
-def write_envelope_artifact(
-    envelope: SubagentEnvelope, session_root: Path
-) -> Path:
+def write_envelope_artifact(envelope: SubagentEnvelope, session_root: Path) -> Path:
     """Write artifact .fa/subagents/<id>.json per task completion (Q&A)."""
     artifact_path = Path(session_root).resolve() / ".fa" / "subagents" / f"{envelope.task_id}.json"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)

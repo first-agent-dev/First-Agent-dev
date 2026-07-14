@@ -155,9 +155,7 @@ def test_install_hooks_requires_git_hooks_dir(tmp_path: Path) -> None:
     assert "does not exist" in str(exc.value)
 
 
-def test_install_hooks_errors_when_script_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_install_hooks_errors_when_script_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = _make_workspace(tmp_path)
     empty = tmp_path / "empty_scripts"
     empty.mkdir()
@@ -195,9 +193,7 @@ def test_main_force_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert existing.exists()
 
 
-def test_install_one_symlink_fallback_to_copy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_install_one_symlink_fallback_to_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When os.symlink raises OSError, _install_one falls back to copy."""
 
     root = _make_workspace(tmp_path)

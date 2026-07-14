@@ -1,14 +1,16 @@
 """
 Blackboard — Typed Blackboard with Content Hashes + Transactional Semantics
 Phase 0.5 — Formal Shared Harness Substrate
-Prior art: MACOG blackboard with content hashes + toolchain digests, L2MAC file store D persistent
 Senior eng: interface segregation, DI, feature flags, graceful degradation, thread safety, observable failures
+Senior refactor v3: full read/write conflict + assumption violated, query dict check, Q2 base_commit linear frontier policy, C901 <15 via extracted helpers
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
+import sys
 import threading
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -47,9 +49,8 @@ class BlackboardEntry:
     ) -> BlackboardEntry:
         content_str = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
         content_hash = hashlib.sha256(content_str.encode()).hexdigest()[:16]
-        import sys
-
-        toolchain_digest = f"python-{sys.version_info.major}.{sys.version_info.minor}"
+        model_id = os.environ.get("FA_MODEL_ID", "unknown")
+        toolchain_digest = f"python-{sys.version_info.major}.{sys.version_info.minor}-{model_id}"
         timestamp = datetime.now(UTC).isoformat()
         return cls(
             id=id,
@@ -76,13 +77,61 @@ class Conflict:
     assumption_violated: str | None = None
 
 
+def _should_check_conflict(new: BlackboardEntry, old: BlackboardEntry) -> bool:
+    """Q2 v0.1 linear chain: parent_id happens-before, same base_commit concurrent, different base serialized."""
+    if new.parent_id == old.id:
+        return False
+    new_base = new.version_dependencies.get("base_commit")
+    old_base = old.version_dependencies.get("base_commit")
+    if new_base and old_base:
+        return new_base == old_base
+    return True
+
+
+def _ww_overlap(a: set[str], b: set[str]) -> set[str]:
+    return a & b
+
+
+def _rw_overlap(new_read: set[str], old_write: set[str]) -> set[str]:
+    return new_read & old_write
+
+
+def _wr_overlap(old_read: set[str], new_write: set[str]) -> set[str]:
+    return old_read & new_write
+
+
+def _assumption_violated(new: BlackboardEntry, old: BlackboardEntry) -> str | None:
+    try:
+        new_base = new.version_dependencies.get("base_commit")
+        old_base = old.version_dependencies.get("base_commit")
+        if new_base and old_base and new_base != old_base:
+            for assump in new.assumptions:
+                if old_base in assump or "base_commit" in assump:
+                    return assump
+        for assump in new.assumptions:
+            if any(f in assump for f in old.write_set):
+                if old.content_hash != new.content_hash:
+                    return assump
+    except (KeyError, AttributeError, TypeError) as exc:
+        print(f"WARNING: assumption check failed: {exc}, continuing")
+    return None
+
+
+def _build_conflict_reason(ww: set[str], rw: set[str], wr: set[str], assump_viol: str | None) -> str:
+    parts = []
+    if ww:
+        parts.append(f"write/write overlap {ww}")
+    if rw:
+        parts.append(f"read/write stale {rw}")
+    if wr:
+        parts.append(f"write/read invalidate {wr}")
+    if assump_viol:
+        parts.append(f"assumption violated '{assump_viol}'")
+    return "; ".join(parts) + " — concurrent without coordination"
+
+
 class Blackboard:
-    """
-    Append-only, content-addressed, queryable blackboard
-    Store: .fa/blackboard/blackboard.jsonl
-    Control Unit manages reads/writes, never overwrites, extended/revised
-    Each entry stamped with content hashes, toolchain digests, schema versions for reproducibility
-    """
+    """Append-only, content-addressed, queryable blackboard."""
 
     def __init__(self, root: Path):
         self.root = Path(root).resolve()
@@ -92,66 +141,97 @@ class Blackboard:
         self.path.touch(exist_ok=True)
 
     def write(self, entry: BlackboardEntry) -> None:
-        """Append-only, never overwrite, content-addressed, thread-safe"""
         try:
             line = json.dumps(asdict(entry), ensure_ascii=False)
             with self.lock:
                 with open(self.path, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
-        except Exception as e:
+        except (OSError, ValueError) as e:
             print(f"WARNING: Blackboard write failed {e}, continuing")
 
     def read(self, id: str) -> BlackboardEntry | None:
         with self.lock:
             if not self.path.exists():
                 return None
-            with open(self.path, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        data = json.loads(line)
-                        if data.get("id") == id:
-                            return BlackboardEntry(**data)
-                    except Exception:
-                        continue
+            try:
+                with open(self.path, encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            data = json.loads(line)
+                            if data.get("id") == id:
+                                return BlackboardEntry(**data)
+                        except json.JSONDecodeError as exc:
+                            print(f"WARNING: Blackboard read JSON decode failed: {exc}, skipping line")
+                            continue
+            except OSError as exc:
+                print(f"WARNING: Blackboard read failed {exc}, continuing")
+                return None
         return None
 
     def query(self, type: str | None = None, key: str | None = None) -> list[BlackboardEntry]:
-        """Queryable: filter by type and optional key in payload"""
+        """Queryable: filter by type and optional key in payload."""
         results: list[BlackboardEntry] = []
         with self.lock:
             if not self.path.exists():
                 return results
-            with open(self.path, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        data = json.loads(line)
-                        if type is not None and data.get("type") != type:
+            try:
+                with open(self.path, encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            data = json.loads(line)
+                            if type is not None and data.get("type") != type:
+                                continue
+                            if key is not None:
+                                payload = data.get("payload", {})
+                                if isinstance(payload, dict):
+                                    if key not in payload and key not in str(payload):
+                                        if key not in json.dumps(payload):
+                                            continue
+                                else:
+                                    if key not in json.dumps(payload):
+                                        continue
+                            results.append(BlackboardEntry(**data))
+                        except json.JSONDecodeError as exc:
+                            print(f"WARNING: Blackboard query JSON decode failed: {exc}, skipping")
                             continue
-                        if key is not None and key not in json.dumps(data.get("payload", {})):
-                            continue
-                        results.append(BlackboardEntry(**data))
-                    except Exception:
-                        continue
+            except OSError as exc:
+                print(f"WARNING: Blackboard query failed {exc}, continuing")
+                return results
         return results
 
     def detect_conflict(self, new_entry: BlackboardEntry) -> list[Conflict]:
-        """
-        Detect conflicts for v0.1: write/write overlap always conflict.
-        Simplified per review: any write/write overlap (different id) as conflict.
-        """
+        """Full conflict detection per v3 spec + Q2 linear chain policy."""
         conflicts: list[Conflict] = []
         existing = self.query(type=new_entry.type)
+
+        new_write = set(new_entry.write_set)
+        new_read = set(new_entry.read_set)
+
         for old in existing:
             if old.id == new_entry.id:
                 continue
-            ww_overlap = set(new_entry.write_set) & set(old.write_set)
-            if ww_overlap:
+            if not _should_check_conflict(new_entry, old):
+                continue
+
+            old_write = set(old.write_set)
+            old_read = set(old.read_set)
+
+            ww = _ww_overlap(new_write, old_write)
+            rw = _rw_overlap(new_read, old_write)
+            wr = _wr_overlap(old_read, new_write)
+            all_overlap = ww | rw | wr
+
+            assump_viol = _assumption_violated(new_entry, old)
+
+            if all_overlap or assump_viol:
+                reason = _build_conflict_reason(ww, rw, wr, assump_viol)
                 conflicts.append(
                     Conflict(
                         entry_id=new_entry.id,
                         conflicting_entry_id=old.id,
-                        reason=f"write/write overlap {ww_overlap} — concurrent write without coordination",
-                        read_write_overlap=list(ww_overlap),
+                        reason=reason,
+                        read_write_overlap=list(all_overlap),
+                        assumption_violated=assump_viol,
                     )
                 )
         return conflicts

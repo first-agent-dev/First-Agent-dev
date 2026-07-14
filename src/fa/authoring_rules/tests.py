@@ -118,11 +118,7 @@ def _is_pytest_call(node: ast.AST, attr: str, aliases: _PytestAliases) -> TypeGu
         return False
     func = node.func
     if isinstance(func, ast.Attribute):
-        return (
-            isinstance(func.value, ast.Name)
-            and func.value.id in aliases.modules
-            and func.attr == attr
-        )
+        return isinstance(func.value, ast.Name) and func.value.id in aliases.modules and func.attr == attr
     if isinstance(func, ast.Name):
         return aliases.attrs.get(func.id) == attr
     return False
@@ -216,11 +212,7 @@ def _walk_module_scope(stmts: list[ast.stmt], exempt: set[int], aliases: _Pytest
 
 def _has_allow_module_level_true(call: ast.Call) -> bool:
     for kw in call.keywords:
-        if (
-            kw.arg == "allow_module_level"
-            and isinstance(kw.value, ast.Constant)
-            and kw.value.value is True
-        ):
+        if kw.arg == "allow_module_level" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
             return True
     return False
 
@@ -247,8 +239,7 @@ class _TestSemanticDecayRule:
                             path=rel,
                             line=node.lineno,
                             message=(
-                                "pytest.skip(...) call hides a test from the suite; "
-                                "fix the test or delete it"
+                                "pytest.skip(...) call hides a test from the suite; fix the test or delete it"
                             ),
                             remediation=(
                                 "remove the pytest.skip(...) call and address the "
@@ -297,8 +288,7 @@ class _TestSemanticDecayRule:
                                 "ADR-11-I5 requires strict=True"
                             ),
                             remediation=(
-                                "add strict=True to the xfail decorator so an "
-                                "unexpected pass fails the suite"
+                                "add strict=True to the xfail decorator so an unexpected pass fails the suite"
                             ),
                             rule_input_hash=node_input_hash(source_bytes, dec),
                         )
@@ -311,8 +301,7 @@ class _TestSemanticDecayRule:
                             path=rel,
                             line=dec.lineno,
                             message=(
-                                f"@pytest.mark.{attr} silently shrinks the test "
-                                "suite; remove before commit"
+                                f"@pytest.mark.{attr} silently shrinks the test suite; remove before commit"
                             ),
                             remediation=(
                                 f"remove the @pytest.mark.{attr} decorator; "
@@ -340,7 +329,7 @@ def _is_trivial_self_compare(expr: ast.expr) -> bool:
 
     Function calls and attribute accesses (``f() == f()``, ``a.b == a.b``)
     are deliberately NOT considered tautologies — those can legitimately
-    assert determinism / purity.
+    assert determinism / purity.  # noqa: S101 # internal invariant, not security, fail-fast per Gap 6 defensive checks
     """
     if not isinstance(expr, ast.Compare):
         return False
@@ -430,8 +419,7 @@ def _contradictory_finding(rel: str, source_bytes: bytes, node: ast.Assert) -> R
             "the test is broken, not merely a placeholder"
         ),
         remediation=(
-            "rewrite the assertion to compare distinct values, or delete "
-            "the test if it should never run"
+            "rewrite the assertion to compare distinct values, or delete the test if it should never run"
         ),
         rule_input_hash=node_input_hash(source_bytes, node),
     )

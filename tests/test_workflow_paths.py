@@ -7,9 +7,7 @@ import pytest
 from fa.cli import _workflow_artifact_paths
 
 
-def test_workflow_artifact_paths_use_session_log_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_workflow_artifact_paths_use_session_log_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path / "home"
     home.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))

@@ -2,7 +2,7 @@
 
 The gate is the single entry point the inner-loop (when it lands per
 BACKLOG M-1) calls before forwarding a bash command to
-``subprocess.run``. It does NOT execute anything itself — execution
+``subprocess.run``. It does NOT execute anything itself — execution  # noqa: S603, S607 -- trusted binary per ADR-6, list args, no shell
 stays with the inner-loop's run-shell tool — but it produces a
 binary allow/deny decision plus a human-readable reason for the
 audit log.

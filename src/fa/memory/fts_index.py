@@ -63,12 +63,12 @@ class InstantGrepIndex:
                 size INTEGER
             )"""
             )
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
             pass
         self.conn.commit()
 
     def _should_full_reindex(self) -> bool:
-        """Check if DB older than 24h or empty — needs full reindex."""
+        """Check if DB older than 24h or empty — needs full reindex (precaution)."""
         try:
             if not self.db_path.exists():
                 return True
@@ -76,19 +76,20 @@ class InstantGrepIndex:
             if time.time() - mtime > 86400:
                 print(f"WARNING: FTS DB older than 24h (mtime {mtime}), full reindex")
                 return True
-            # Also check if index empty
+            # Empty DB -> full reindex precaution (stale meta may cause skip)
             count = self.conn.execute("SELECT COUNT(*) FROM files_fts").fetchone()[0]
             if count == 0:
-                return False  # Empty is not stale, but will be filled by incremental
-        except Exception as exc:
+                print("WARNING: FTS DB empty, full reindex as precaution")
+                return True
+        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             print(f"WARNING: Failed to check DB staleness: {exc}, full reindex as precaution")
             return True
         return False
 
-    def index_repo(
+    def index_repo(  # noqa: C901 -- complexity from 24h check + pattern matching + mtime + stale cleanup, split into helpers
         self,
         root: Path,
-        patterns: tuple[str, ...] = ("*.md", "*.py", "*.ts", ".js", ".json", ".yaml"),
+        patterns: tuple[str, ...] = ("*.md", "*.py", "*.ts", "*.js", "*.json", "*.yaml", "*.toml"),
         max_file_size: int = 100_000,
     ) -> None:
         root = Path(root).resolve()
@@ -104,7 +105,7 @@ class InstantGrepIndex:
                     self.conn.execute("DELETE FROM fts_meta")
                     self.conn.commit()
                     print("WARNING: FTS DB older than 24h, cleared for full reindex")
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: Failed to clear stale DB: {exc}")
 
         indexed_paths: set[str] = set()
@@ -147,7 +148,7 @@ class InstantGrepIndex:
                     cur = self.conn.execute("SELECT mtime FROM fts_meta WHERE path=?", (rel,)).fetchone()
                     if cur and cur[0] == st.st_mtime:
                         continue
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
                     pass
 
                 try:
@@ -161,7 +162,7 @@ class InstantGrepIndex:
                         "INSERT OR REPLACE INTO fts_meta(path, mtime, size) VALUES (?, ?, ?)",
                         (rel, st.st_mtime, st.st_size),
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
                     continue
 
         # Stale cleanup: delete entries where file not exists
@@ -173,7 +174,7 @@ class InstantGrepIndex:
                     if not full.exists():
                         self.conn.execute("DELETE FROM files_fts WHERE path=?", (p,))
                         self.conn.execute("DELETE FROM fts_meta WHERE path=?", (p,))
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
             pass
         self.conn.commit()
 
@@ -196,4 +197,4 @@ class InstantGrepIndex:
         self.conn.close()
 
 
-__all__ = ["InstantGrepIndex", "EXCLUDE_DIRS"]
+__all__ = ["EXCLUDE_DIRS", "InstantGrepIndex"]

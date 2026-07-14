@@ -3,12 +3,13 @@ Tests for Minimal Structured Telemetry + Governed Mutation Foundation
 Phase 0.5 — Not 100k raw logs, but structured summaries + artifact_id
 """
 
-from pathlib import Path
-import tempfile
 import json
+import tempfile
+from pathlib import Path
+
 
 def test_telemetry_structured_fields():
-    from fa.telemetry.telemetry import TelemetryLogger, TelemetryEvent
+    from fa.telemetry.telemetry import TelemetryEvent, TelemetryLogger
 
     with tempfile.TemporaryDirectory() as tmp:
         logger = TelemetryLogger(Path(tmp) / "telemetry")
@@ -44,8 +45,9 @@ def test_telemetry_structured_fields():
         assert queried[0].prompt_tokens == 1000
         assert queried[0].cache_hit is True
 
+
 def test_telemetry_no_raw_logs_drowning():
-    from fa.telemetry.telemetry import TelemetryLogger, TelemetryEvent
+    from fa.telemetry.telemetry import TelemetryEvent, TelemetryLogger
 
     with tempfile.TemporaryDirectory() as tmp:
         logger = TelemetryLogger(Path(tmp) / "telemetry")
@@ -84,8 +86,9 @@ def test_telemetry_no_raw_logs_drowning():
         assert "artifact-large-output-id" in lines[0]
         assert large_output not in lines[0]
 
+
 def test_telemetry_sanitizes_secrets():
-    from fa.telemetry.telemetry import TelemetryLogger, TelemetryEvent
+    from fa.telemetry.telemetry import TelemetryEvent, TelemetryLogger
 
     with tempfile.TemporaryDirectory() as tmp:
         logger = TelemetryLogger(Path(tmp) / "telemetry")
@@ -114,4 +117,6 @@ def test_telemetry_sanitizes_secrets():
 
         queried = logger.query()
         # Secret should be redacted
-        assert "***REDACTED***" in json.dumps(queried[0].tool_args) or "sk-secret123" not in json.dumps(queried[0].tool_args)
+        assert "***REDACTED***" in json.dumps(queried[0].tool_args) or "sk-secret123" not in json.dumps(
+            queried[0].tool_args
+        )

@@ -77,12 +77,7 @@ def test_parse_same_line_entry_and_header_terminator() -> None:
 
 def test_parse_malformed_entries_excluded() -> None:
     # No separator, empty reason, empty path: all fail-closed (excluded).
-    text = (
-        "TEST-EDITS:\n"
-        "tests/test_nosep.py reason without dash\n"
-        "tests/test_empty.py — \n"
-        "— reason only\n"
-    )
+    text = "TEST-EDITS:\ntests/test_nosep.py reason without dash\ntests/test_empty.py — \n— reason only\n"
     assert parse_test_edits(text) == {}
 
 
@@ -124,9 +119,7 @@ def test_rename_dest_row_blocked_like_delete() -> None:
     # `git mv tests/test_x.py archive/` shows only the destination in
     # --name-status; a dest row UNDER tests/ (R/C) is still a removal
     # of the original and is blocked.
-    v = validate_test_edits(
-        _VALID_FIX_DRAFT, Intent.FIX, [StagedPath("R", "tests/test_renamed.py")]
-    )
+    v = validate_test_edits(_VALID_FIX_DRAFT, Intent.FIX, [StagedPath("R", "tests/test_renamed.py")])
     assert _codes(v) == ["test_delete_blocked"]
 
 
@@ -134,9 +127,7 @@ def test_add_always_allowed_and_implement_modify_allowed() -> None:
     rows_a = [StagedPath("A", "tests/test_new.py")]
     assert validate_test_edits(_VALID_FIX_DRAFT, Intent.FIX, rows_a) == []
     assert (
-        validate_test_edits(
-            _VALID_IMPLEMENT_DRAFT, Intent.IMPLEMENT, [StagedPath("M", "tests/test_x.py")]
-        )
+        validate_test_edits(_VALID_IMPLEMENT_DRAFT, Intent.IMPLEMENT, [StagedPath("M", "tests/test_x.py")])
         == []
     )
 
@@ -172,9 +163,7 @@ def _make_guard(tmp_path: Path, *, draft_text: str, git_output: str) -> IntentGu
     (repo_root / "knowledge").mkdir()
     (repo_root / "knowledge" / "llms.txt").write_text("placeholder\n", encoding="utf-8")
     (repo_root / "tests").mkdir()
-    (repo_root / "tests" / "test_x.py").write_text(
-        "def test_x():\n    assert 1\n", encoding="utf-8"
-    )
+    (repo_root / "tests" / "test_x.py").write_text("def test_x():\n    assert 1\n", encoding="utf-8")
     draft_store = PrDraftStore(tmp_path / "pr_draft.md")
     draft_store.write_text(draft_text)
     return IntentGuard(

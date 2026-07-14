@@ -281,8 +281,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fa",
         description="First-Agent command-line entrypoint.",
-        epilog=render_top_level_ru()
-        + "\n\nHint: `fa help <команда>` — можно проверить подробную справку.",
+        epilog=render_top_level_ru() + "\n\nHint: `fa help <команда>` — можно проверить подробную справку.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -1170,9 +1169,7 @@ def _canonical_loop_roles(roles: list[str], *, include_planner: bool) -> tuple[s
     return tuple(role for role in canonical if role in roles)
 
 
-def _run_initial_roles(
-    ctx: _WorkflowContext, roles: list[str]
-) -> tuple[int, int, EvalReport | None]:
+def _run_initial_roles(ctx: _WorkflowContext, roles: list[str]) -> tuple[int, int, EvalReport | None]:
     progress = _WorkflowProgress()
     eval_report: EvalReport | None = None
     n_stages = 0
@@ -1262,8 +1259,7 @@ def _run_adaptive(
                     fresh=False,
                     progress=progress,
                     transition_reason=(
-                        f"repair round {progress.repair_round}: canonical {role} "
-                        "after return_to_coder"
+                        f"repair round {progress.repair_round}: canonical {role} after return_to_coder"
                     ),
                 )
                 n_stages += 1
@@ -1311,8 +1307,7 @@ def _run_adaptive(
                     fresh=False,
                     progress=progress,
                     transition_reason=(
-                        f"replan round {progress.replan_round}: canonical {role} "
-                        "after return_to_planner"
+                        f"replan round {progress.replan_round}: canonical {role} after return_to_planner"
                     ),
                 )
                 n_stages += 1
@@ -1402,8 +1397,7 @@ def _run_repair(ctx: _WorkflowContext, roles: list[str], max_repairs: int) -> in
             replan_round=progress.replan_round,
         )
         print(
-            f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} "
-            f"(eval routed return_to_coder)",
+            f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} (eval routed return_to_coder)",
             file=sys.stderr,
         )
         coder_result = _run_stage(
@@ -1438,10 +1432,7 @@ def _run_repair(ctx: _WorkflowContext, roles: list[str], max_repairs: int) -> in
     if eval_report is None:
         reason = "repair workflow completed"
     elif budget_exhausted:
-        reason = (
-            f"repair budget exhausted ({progress.repair_round}/{max_repairs}); "
-            "last route return_to_coder"
-        )
+        reason = f"repair budget exhausted ({progress.repair_round}/{max_repairs}); last route return_to_coder"
     else:
         reason = f"eval verdict {eval_report.verdict} after {progress.repair_round} repair round(s)"
     _write_terminal_state(
@@ -1504,14 +1495,11 @@ def _cmd_workflow(
         seed = base_task or roles[0]
         run_id = f"wf-{int(time.time())}-{_slugify_task(seed)}"
 
-    per_role_task = {
-        role: getattr(args, f"task_{role}", None) for role in ("planner", "coder", "eval")
-    }
+    per_role_task = {role: getattr(args, f"task_{role}", None) for role in ("planner", "coder", "eval")}
     for role in roles:
         if not (per_role_task.get(role) or base_task):
             print(
-                f"fa workflow: no task for role {role!r} — pass a shared task "
-                f'or --task-{role} "..."',
+                f'fa workflow: no task for role {role!r} — pass a shared task or --task-{role} "..."',
                 file=sys.stderr,
             )
             return 2
@@ -1625,9 +1613,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         # token are tracked (for the redactor). Legacy mode: strict-file store.
         secrets = SecretStore({}) if proxy_mode else _load_secret_store()
     try:
-        models = load_models_config_from_path(
-            config_path, env=secrets, require_api_keys=not proxy_mode
-        )
+        models = load_models_config_from_path(config_path, env=secrets, require_api_keys=not proxy_mode)
     except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
         print(f"fa run: configuration error: {exc}", file=sys.stderr)
         return 2
@@ -1832,10 +1818,7 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
 
     proxy_token = _resolve_proxy_token()
     if not proxy_token:
-        print(
-            "ERROR: proxy token is missing; set FA_PROXY_TOKEN_FILE or mount "
-            "/run/secrets/fa_proxy_token."
-        )
+        print("ERROR: proxy token is missing; set FA_PROXY_TOKEN_FILE or mount /run/secrets/fa_proxy_token.")
         return 2
 
     health_url = _proxy_endpoint(proxy_url, "/healthz")
@@ -1853,9 +1836,7 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
 
     routes_url = _proxy_endpoint(proxy_url, "/routes")
     try:
-        routes_status, routes_body = _selfcheck_http_get(
-            routes_url, headers={_PROXY_TOKEN_HEADER: proxy_token}
-        )
+        routes_status, routes_body = _selfcheck_http_get(routes_url, headers={_PROXY_TOKEN_HEADER: proxy_token})
     except _SelfcheckNetworkError as exc:
         print(f"ERROR: proxy /routes is not reachable at {routes_url}: {exc}")
         print("Hint: check `docker compose logs fa-egress-proxy`.")
@@ -1888,9 +1869,7 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
 
     chain_config = models.roles.get(role_name)
     if chain_config is None:
-        print(
-            f"ERROR: role {role_name!r} not found in {config_path}; known: {sorted(models.roles)}"
-        )
+        print(f"ERROR: role {role_name!r} not found in {config_path}; known: {sorted(models.roles)}")
         return 2
 
     from fa.egress_proxy.routing import ProxyConfigError
@@ -1948,9 +1927,7 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     secrets: Mapping[str, str] = SecretStore({}) if proxy_mode else _load_secret_store()
 
     try:
-        models = load_models_config_from_path(
-            config_path, env=secrets, require_api_keys=not proxy_mode
-        )
+        models = load_models_config_from_path(config_path, env=secrets, require_api_keys=not proxy_mode)
     except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
         print(f"fa probe: configuration error: {exc}", file=sys.stderr)
         return 2
@@ -1970,10 +1947,7 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     for role_name in role_names:
         chain_config = models.roles.get(role_name)
         if chain_config is None:
-            print(
-                f"fa probe: role {role_name!r} not found in {config_path}; "
-                f"known: {sorted(models.roles)}"
-            )
+            print(f"fa probe: role {role_name!r} not found in {config_path}; known: {sorted(models.roles)}")
             any_failure = True
             continue
 
@@ -1986,17 +1960,12 @@ def _cmd_probe(args: argparse.Namespace) -> int:
             chain_config = rewritten
 
         # Override timeout_seconds on every chain entry for the probe.
-        probed_entries = tuple(
-            replace(entry, timeout_seconds=probe_timeout) for entry in chain_config.chain
-        )
+        probed_entries = tuple(replace(entry, timeout_seconds=probe_timeout) for entry in chain_config.chain)
         chain_config = replace(chain_config, chain=probed_entries)
 
         chain = _build_provider_chain(chain_config, transport=transport, secrets=secrets)
 
-        print(
-            f"\nfa probe: role={role_name}"
-            f" (model={chain_config.model}, family={chain_config.family})"
-        )
+        print(f"\nfa probe: role={role_name} (model={chain_config.model}, family={chain_config.family})")
 
         request = RequestInfo(
             model_slug=chain_config.model,
@@ -2212,8 +2181,7 @@ def _cmd_authoring_check(args: argparse.Namespace) -> int:
     # at cwd; never walk up the filesystem into a parent checkout.
     if not (workspace / "knowledge" / "llms.txt").exists():
         print(
-            "fa authoring-check: not a First-Agent workspace "
-            f"(no knowledge/llms.txt at {workspace})",
+            f"fa authoring-check: not a First-Agent workspace (no knowledge/llms.txt at {workspace})",
             file=sys.stderr,
         )
         return 2
@@ -2238,9 +2206,7 @@ def _cmd_egress_proxy(args: argparse.Namespace) -> int:
     # Routing source (non-secret). Skip api_key presence check: keys live in the
     # proxy's own secrets file, validated below.
     try:
-        models = load_models_config_from_path(
-            args.models.expanduser().resolve(), require_api_keys=False
-        )
+        models = load_models_config_from_path(args.models.expanduser().resolve(), require_api_keys=False)
     except (ConfigurationError, OSError) as exc:
         print(f"fa egress-proxy: models config error: {exc}", file=sys.stderr)
         return 2
@@ -2306,9 +2272,7 @@ def _read_deploy_key_material() -> str:
             text = candidate.read_text(encoding="utf-8")
         except OSError:
             continue
-        body = "".join(
-            line.strip() for line in text.splitlines() if line and not line.startswith("-----")
-        )
+        body = "".join(line.strip() for line in text.splitlines() if line and not line.startswith("-----"))
         if len(body) >= 16:
             return body
     return ""

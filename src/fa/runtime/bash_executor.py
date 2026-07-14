@@ -16,17 +16,13 @@ from .pty_pool import PtyResult
 class BashExecutor(Protocol):
     def run(
         self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main"
-    ) -> PtyResult:
-        ...
+    ) -> PtyResult: ...
 
-    def send_ctrl_c(self, session_id: str) -> str:
-        ...
+    def send_ctrl_c(self, session_id: str) -> str: ...
 
-    def close(self, session_id: str) -> None:
-        ...
+    def close(self, session_id: str) -> None: ...
 
-    def list_sessions(self) -> list[str]:
-        ...
+    def list_sessions(self) -> list[str]: ...
 
 
 class InProcessPtyExecutor(BashExecutor):
@@ -89,7 +85,7 @@ class RemoteRuntimeExecutor(BashExecutor):
                 truncated=data["truncated"],
                 session_id=data["session_id"],
             )
-        except Exception as e:
+        except Exception as e:  # graceful degradation per Phase 0.5, failure-observable WARNING
             print(f"WARNING: RemoteRuntimeExecutor failed {e}, falling back")
             raise
 

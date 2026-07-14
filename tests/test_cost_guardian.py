@@ -44,9 +44,7 @@ from fa.observability import (
 def _result_with_cost(*, tokens_in: int, tokens_out: int, usd: float) -> ToolResult:
     return ToolResult.ok(
         summary="ok",
-        artifacts=(
-            f"{COST_ARTIFACT_PREFIX}tokens_in={tokens_in},tokens_out={tokens_out},usd={usd}",
-        ),
+        artifacts=(f"{COST_ARTIFACT_PREFIX}tokens_in={tokens_in},tokens_out={tokens_out},usd={usd}",),
     )
 
 

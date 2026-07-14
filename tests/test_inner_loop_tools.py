@@ -31,9 +31,7 @@ def test_read_file_tool_reads_line_window(tmp_path: Path) -> None:
 def test_write_file_tool_writes_inside_workspace(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path)
 
-    result = registry.dispatch(
-        ToolCall(name="fs.write_file", params={"path": "out.txt", "content": "hello\n"})
-    )
+    result = registry.dispatch(ToolCall(name="fs.write_file", params={"path": "out.txt", "content": "hello\n"}))
 
     assert result.error is None
     assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "hello\n"
@@ -141,22 +139,53 @@ def test_run_bash_tool_preserves_failure_diagnostics(tmp_path: Path) -> None:
 
 
 def test_build_planner_registry_has_read_and_bash(tmp_path: Path) -> None:
-    """Planner registry: read-only reconnaissance (read_file + run_bash, no write_file)."""
+    """Planner registry v3 reduced: read-only analysis + limited write to research docs, no bash.
+
+    Per ADR-14/15 v3 reduced surface + Q3 decision planner gets limited write_file to
+    knowledge/research/** + .fa/** for filesystem-canon plans, not full write.
+    Old test expected read+bash, now expects read+glob+grep+instant_grep+limited write, no bash.
+    Kept name for backward compat but checks new reduced surface.
+    """
     from fa.inner_loop.tools import build_planner_registry
 
     registry = build_planner_registry(tmp_path)
     names = {spec.name for spec in registry.specs()}
+    # Planner should have read-only reconnaissance + limited write for plans
     assert "fs.read_file" in names
-    assert "fs.run_bash" in names
-    assert "fs.write_file" not in names
+    assert "fs.glob" in names
+    assert "fs.grep" in names
+    assert "fs.instant_grep" in names
+    # Limited write_file should be present (knowledge/research/** + .fa/**)
+    assert "fs.write_file" in names
+    # No bash for planner in reduced surface (pair over autonomy, implementer has bash)
+    assert "fs.run_bash" not in names
+
+    # Verify limited write denies src/ but allows knowledge/research/
+    result_denied = registry.dispatch(
+        ToolCall(name="fs.write_file", params={"path": "src/illegal.py", "content": "x"})
+    )
+    assert result_denied.error is not None
+    assert result_denied.error.code == "path_denied"
+
+    result_allowed = registry.dispatch(
+        ToolCall(name="fs.write_file", params={"path": "knowledge/research/plan.md", "content": "# Plan\n"})
+    )
+    assert result_allowed.error is None
 
 
 def test_build_eval_registry_has_read_and_bash(tmp_path: Path) -> None:
-    """Eval registry: read-only verification (read_file + run_bash, no write_file)."""
+    """Eval registry v3 reduced: verifier profile [bash] only + observability, no read/write.
+
+    Per PROFILES verifier = [fs.run_bash] only, 200 tokens. Old test expected read+bash.
+    """
     from fa.inner_loop.tools import build_eval_registry
 
     registry = build_eval_registry(tmp_path)
     names = {spec.name for spec in registry.specs()}
-    assert "fs.read_file" in names
+    # Verifier should have bash
     assert "fs.run_bash" in names
+    # No read_file, no write_file for verifier (cheap deterministic)
+    assert "fs.read_file" not in names
     assert "fs.write_file" not in names
+    # Observability tools may be present (chronicle_search, usage) per _register_extra_tools
+    # That's okay, but core verifier is bash

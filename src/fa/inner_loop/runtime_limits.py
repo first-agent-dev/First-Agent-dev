@@ -338,9 +338,7 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
         max_iterations=found.get("max_iterations", DEFAULT_MAX_ITERATIONS),
         bash_timeout_seconds=found.get("bash_timeout_seconds", DEFAULT_BASH_TIMEOUT_SECONDS),
         loop_guard_repeat_warn=found.get("loop_guard_repeat_warn", DEFAULT_LOOP_GUARD_REPEAT_WARN),
-        loop_guard_circuit_breaker=found.get(
-            "loop_guard_circuit_breaker", DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER
-        ),
+        loop_guard_circuit_breaker=found.get("loop_guard_circuit_breaker", DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER),
         loop_guard_window=found.get("loop_guard_window", DEFAULT_LOOP_GUARD_WINDOW),
         attempt_history_max_entries=found.get(
             "attempt_history_max_entries", DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES
@@ -349,9 +347,7 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
             "attempt_history_max_age_seconds", DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS
         ),
         qa_max_iterations=found.get("qa_max_iterations", DEFAULT_QA_MAX_ITERATIONS),
-        qa_max_consecutive_errors=found.get(
-            "qa_max_consecutive_errors", DEFAULT_QA_MAX_CONSECUTIVE_ERRORS
-        ),
+        qa_max_consecutive_errors=found.get("qa_max_consecutive_errors", DEFAULT_QA_MAX_CONSECUTIVE_ERRORS),
         qa_recurring_issue_threshold=found.get(
             "qa_recurring_issue_threshold", DEFAULT_QA_RECURRING_ISSUE_THRESHOLD
         ),

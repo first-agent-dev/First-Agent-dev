@@ -130,10 +130,7 @@ def validate_rm(command: str, *, workspace_root: Path) -> ValidationResult:
         if not containment.contained:
             return ValidationResult(
                 allow=False,
-                reason=(
-                    f"validator_rm: target {target!r} not contained "
-                    f"in workspace ({containment.reason})"
-                ),
+                reason=(f"validator_rm: target {target!r} not contained in workspace ({containment.reason})"),
             )
 
     return ValidationResult(allow=True, reason="validator_rm: ok")
@@ -236,8 +233,7 @@ def validate_chmod(command: str, *, workspace_root: Path) -> ValidationResult:
             return ValidationResult(
                 allow=False,
                 reason=(
-                    f"validator_chmod: target {target!r} not contained "
-                    f"in workspace ({containment.reason})"
+                    f"validator_chmod: target {target!r} not contained in workspace ({containment.reason})"
                 ),
             )
 
@@ -276,9 +272,7 @@ def validate_git(command: str, *, workspace_root: Path) -> ValidationResult:
         if "--global" in tokens or "--system" in tokens:
             return ValidationResult(
                 allow=False,
-                reason=(
-                    "validator_git: `git config --global/--system` writes outside the workspace"
-                ),
+                reason=("validator_git: `git config --global/--system` writes outside the workspace"),
             )
         # Look for user.email / user.name as the key argument.
         for token in non_flag[1:]:
@@ -286,10 +280,7 @@ def validate_git(command: str, *, workspace_root: Path) -> ValidationResult:
             if lowered in {"user.email", "user.name"}:
                 return ValidationResult(
                     allow=False,
-                    reason=(
-                        f"validator_git: writing `git config "
-                        f"{token}` rewrites git identity (denied)"
-                    ),
+                    reason=(f"validator_git: writing `git config {token}` rewrites git identity (denied)"),
                 )
 
     if subcommand == "push":

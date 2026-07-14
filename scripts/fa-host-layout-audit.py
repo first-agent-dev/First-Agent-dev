@@ -95,11 +95,7 @@ def main(argv: list[str]) -> int:
         str(legacy_proxy),
     )
     if host_scripts.exists():
-        entries = (
-            sorted(p.name for p in host_scripts.iterdir())
-            if host_scripts.is_dir()
-            else ["<not-a-dir>"]
-        )
+        entries = sorted(p.name for p in host_scripts.iterdir()) if host_scripts.is_dir() else ["<not-a-dir>"]
         _print_status("host scripts dir", "WARN", f"{host_scripts} -> {entries}")
     else:
         _print_status("host scripts dir", "OK", f"absent ({host_scripts})")
@@ -127,14 +123,10 @@ def main(argv: list[str]) -> int:
     routing_roles = _collect_top_level_roles(routing_text)
 
     missing_roles = sorted(
-        role
-        for role in ("planner", "coder", "eval")
-        if role in example_roles and role not in routing_roles
+        role for role in ("planner", "coder", "eval") if role in example_roles and role not in routing_roles
     )
     if missing_roles:
-        _print_status(
-            "roles", "WARN", f"deployed routing is missing example roles: {missing_roles}"
-        )
+        _print_status("roles", "WARN", f"deployed routing is missing example roles: {missing_roles}")
     else:
         _print_status("roles", "OK", f"deployed roles: {sorted(routing_roles)}")
 

@@ -354,9 +354,7 @@ class LearningObserver(ObserverMiddleware):
                 now=self.now,
             )
             return
-        summary = (
-            self.redactor.redact(result.summary) if self.redactor is not None else result.summary
-        )
+        summary = self.redactor.redact(result.summary) if self.redactor is not None else result.summary
         record_discovery(
             _learning_observer_key(call.name, call.params, call.call_id),
             DiscoveryEntry(
@@ -411,9 +409,7 @@ class SecretGuard(GuardMiddleware):
         # 5. Base64 substrings in text (non-literal encoding)
         for candidate in self._B64_RE.findall(text):
             try:
-                decoded = base64.b64decode(candidate, validate=True).decode(
-                    "utf-8", errors="replace"
-                )
+                decoded = base64.b64decode(candidate, validate=True).decode("utf-8", errors="replace")
             except (ValueError, binascii.Error):
                 continue
             for secret in self.secrets:

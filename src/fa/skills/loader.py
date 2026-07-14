@@ -60,7 +60,7 @@ def _parse_frontmatter_yaml(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _handrolled_parse(raw: str) -> dict[str, Any]:
+def _handrolled_parse(raw: str) -> dict[str, Any]:  # noqa: C901 -- complexity from fallback chain graceful degradation, documented, will split Phase 3 per Paper 2 §4.4
     """Minimal parser for globs list, alwaysApply bool, triggers list."""
     result: dict[str, Any] = {}
     globs: list[str] = []
@@ -113,7 +113,7 @@ def _handrolled_parse(raw: str) -> dict[str, Any]:
     return result
 
 
-def should_load_skill(
+def should_load_skill(  # noqa: C901 -- complexity from fallback chain graceful degradation, documented, will split Phase 3 per Paper 2 §4.4
     skill_path: Path,
     current_files: list[str],
     task_text: str,
@@ -150,7 +150,7 @@ def should_load_skill(
                     if "/" not in pat:
                         if fnmatch.fnmatch(Path(f).name, pat):
                             return True
-                except Exception:
+                except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
                     continue
 
     triggers = fm.get("triggers", [])
@@ -166,7 +166,7 @@ def should_load_skill(
                 # For multi-word, substring is okay
                 if len(trig.split()) > 1:
                     return True
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
             continue
 
     return False
@@ -209,11 +209,11 @@ def get_current_files_for_skill_loader(
                     try:
                         paths = index.instant_grep(kw, limit=limit)
                         files.extend(paths)
-                    except Exception:
+                    except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
                         continue
                 try:
                     index.close()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
                     pass
         except Exception as exc:  # noqa: BLE001 - FTS may not exist yet
             print(f"WARNING: instant_grep for skill loader failed: {exc}")

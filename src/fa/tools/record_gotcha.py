@@ -74,9 +74,7 @@ def record_gotcha(
 
     existing = target.read_text(encoding="utf-8") if target.exists() else ""
     separator = (
-        ""
-        if not existing or existing.endswith("\n\n")
-        else ("\n" if existing.endswith("\n") else "\n\n")
+        "" if not existing or existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
     )
 
     section_lines = [f"## {timestamp} — {cleaned_subject}", "", body.rstrip()]

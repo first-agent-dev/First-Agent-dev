@@ -30,9 +30,7 @@ _TOKEN = "fa-proxy-bootstrap-token-xyz"
 
 # --- routing (pure) --------------------------------------------------------
 def test_route_name_is_url_safe() -> None:
-    assert route_name_for("openrouter", "meta-llama/llama-3.1-8b") == (
-        "openrouter-meta-llama-llama-3-1-8b"
-    )
+    assert route_name_for("openrouter", "meta-llama/llama-3.1-8b") == ("openrouter-meta-llama-llama-3-1-8b")
 
 
 def test_build_route_table_dedupes_and_detects_conflict() -> None:
@@ -79,9 +77,7 @@ def test_inject_headers_strips_caller_auth_openai() -> None:
 
 
 def test_inject_headers_anthropic_uses_x_api_key() -> None:
-    t = build_route_table(
-        [("anthropic", "claude", "https://api.anthropic.com", "ANTHROPIC_API_KEY")]
-    )
+    t = build_route_table([("anthropic", "claude", "https://api.anthropic.com", "ANTHROPIC_API_KEY")])
     route = t.get("anthropic-claude")
     assert route is not None
     out = inject_headers(route, {"x-api-key": "attacker"}, _KEY)

@@ -188,8 +188,7 @@ def _assert_tool_pairing_invariant(messages: Sequence[Mapping[str, Any]]) -> Non
                         result_ids.add(str(block.get("tool_use_id") or ""))
     if use_ids != result_ids:
         raise AssertionError(
-            f"orphaned tool calls: use_only={use_ids - result_ids}, "
-            f"result_only={result_ids - use_ids}"
+            f"orphaned tool calls: use_only={use_ids - result_ids}, result_only={result_ids - use_ids}"
         )
 
 
@@ -684,9 +683,7 @@ def drive_session(  # noqa: C901
             for k, v in response.extras["message_extras"].items():
                 assistant_message[k] = v
         if tool_calls:
-            assistant_message["tool_calls"] = _tool_calls_for_message(
-                response.tool_calls, tool_calls
-            )
+            assistant_message["tool_calls"] = _tool_calls_for_message(response.tool_calls, tool_calls)
         messages.append(assistant_message)
         state.log.append(
             actor="model",
@@ -758,8 +755,7 @@ def drive_session(  # noqa: C901
             # cap or for a guard denial (PauseGuard, LoopGuard, etc.).
             stop_reason_code = "iteration_cap"
             stop_reason_detail = (
-                f"tool call skipped: per-turn iteration limit "
-                f"({effective_limits.max_iterations}) exceeded"
+                f"tool call skipped: per-turn iteration limit ({effective_limits.max_iterations}) exceeded"
             )
             if state.log is not None:
                 new_rows = state.log.read_all()[log_len_before:]

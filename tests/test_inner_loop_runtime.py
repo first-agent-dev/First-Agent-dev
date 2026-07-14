@@ -42,9 +42,7 @@ def test_run_session_executes_tool_through_hooks(tmp_path: Path) -> None:
     audit = AuditHook()
     hooks.register(SandboxHook(tmp_path))
     hooks.register(audit)
-    state = SessionState(
-        workspace_root=tmp_path, run_id="test", log=EventLog(tmp_path / "events.jsonl")
-    )
+    state = SessionState(workspace_root=tmp_path, run_id="test", log=EventLog(tmp_path / "events.jsonl"))
 
     results = run_session(
         (
@@ -87,13 +85,13 @@ def test_run_session_executes_tool_through_hooks(tmp_path: Path) -> None:
     # per-call signature of (kind, actor, middleware-or-"") so a regression
     # is diagnosable directly from the assertion failure message.
     def _signature(event: TraceEvent) -> tuple[str, str, str]:
-        middleware = (
-            str(event.content.get("middleware", "")) if event.kind == "hook_decision" else ""
-        )
+        middleware = str(event.content.get("middleware", "")) if event.kind == "hook_decision" else ""
         return (event.kind, event.actor, middleware)
 
     by_call: dict[str, list[tuple[str, str, str]]] = {}
     for event in events:
+        if event.kind == "telemetry":
+            continue
         by_call.setdefault(event.tool_call_id, []).append(_signature(event))
 
     expected_signature = [
@@ -118,9 +116,7 @@ def test_run_session_records_hook_denial(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path)
     hooks = HookRegistry()
     hooks.register(SandboxHook(tmp_path))
-    state = SessionState(
-        workspace_root=tmp_path, run_id="test-deny", log=EventLog(tmp_path / "deny.jsonl")
-    )
+    state = SessionState(workspace_root=tmp_path, run_id="test-deny", log=EventLog(tmp_path / "deny.jsonl"))
 
     results = run_session(
         (ToolCall(name="fs.run_bash", params={"command": "sudo rm -rf /"}, call_id="tc-1"),),
@@ -162,9 +158,7 @@ def test_run_session_handles_pause_guard_denial_cleanly(tmp_path: Path) -> None:
     hooks = HookRegistry()
     hooks.register(PauseGuard(state_dir=state_dir))
     hooks.register(SandboxHook(tmp_path))
-    state = SessionState(
-        workspace_root=tmp_path, run_id="t-pause", log=EventLog(tmp_path / "ev.jsonl")
-    )
+    state = SessionState(workspace_root=tmp_path, run_id="t-pause", log=EventLog(tmp_path / "ev.jsonl"))
 
     # Should not raise -- BUG-0001 made this propagate PermissionError.
     results = run_session(

@@ -245,21 +245,14 @@ def _split_by_headings(
         # Advance the breadcrumb stack across all (non-split-level too)
         # headings up to and including this split point so ancestor
         # tracking is correct even if intermediate H3..H6 are present.
-        while (
-            next_heading_idx < len(headings)
-            and headings[next_heading_idx].line_start <= sp.line_start
-        ):
+        while next_heading_idx < len(headings) and headings[next_heading_idx].line_start <= sp.line_start:
             breadcrumb_stack.observe(headings[next_heading_idx])
             next_heading_idx += 1
 
         breadcrumb = breadcrumb_stack.ancestors_for(sp)
 
         line_start = 1 if sp_idx == 0 else sp.line_start
-        line_end = (
-            split_points[sp_idx + 1].line_start - 1
-            if sp_idx + 1 < len(split_points)
-            else total_lines
-        )
+        line_end = split_points[sp_idx + 1].line_start - 1 if sp_idx + 1 < len(split_points) else total_lines
         line_end = max(line_end, line_start)
 
         byte_start = line_byte_offsets[line_start - 1]

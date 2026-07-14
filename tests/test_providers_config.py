@@ -329,9 +329,7 @@ def test_load_models_config_rejects_eval_family_matching_planner() -> None:
 
 
 def test_load_models_config_rejects_eval_family_matching_coder() -> None:
-    text = _make_three_role_text(
-        planner_family="kimi", coder_family="deepseek", eval_family="deepseek"
-    )
+    text = _make_three_role_text(planner_family="kimi", coder_family="deepseek", eval_family="deepseek")
     with pytest.raises(EvalFamilyConflictError) as info:
         load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
     msg = str(info.value)
@@ -430,9 +428,7 @@ def test_load_models_config_allows_planner_and_coder_same_family() -> None:
     # ADR-2 §Decision routing table allows a single «coder-tier»
     # model to back both planner and coder; only eval-vs-actor
     # disjointness is enforced.
-    text = _make_three_role_text(
-        planner_family="deepseek", coder_family="deepseek", eval_family="qwen"
-    )
+    text = _make_three_role_text(planner_family="deepseek", coder_family="deepseek", eval_family="qwen")
     config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
     assert config.roles["planner"].family == "deepseek"
     assert config.roles["coder"].family == "deepseek"
@@ -509,8 +505,7 @@ def test_load_models_config_skips_family_check_when_planner_missing() -> None:
     # below for the full assertion shape).
     partial_warnings = [w for w in config.warnings if "'eval'" in w and "'coder'" in w]
     assert len(partial_warnings) == 1, (
-        f"expected exactly one partial-disjoint warning naming "
-        f"eval+coder; got warnings={config.warnings!r}"
+        f"expected exactly one partial-disjoint warning naming eval+coder; got warnings={config.warnings!r}"
     )
 
 

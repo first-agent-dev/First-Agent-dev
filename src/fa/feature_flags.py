@@ -112,18 +112,14 @@ def _normalize_key(dotted: str) -> str:
     return dotted
 
 
-def _get_bool(
-    found: dict[str, Any], primary: str, aliases: list[str], default: bool
-) -> bool:
+def _get_bool(found: dict[str, Any], primary: str, aliases: list[str], default: bool) -> bool:
     for k in [primary, *aliases]:
         if k in found:
             return bool(found[k])
     return default
 
 
-def _get_int(
-    found: dict[str, Any], primary: str, aliases: list[str], default: int
-) -> int:
+def _get_int(found: dict[str, Any], primary: str, aliases: list[str], default: int) -> int:
     for k in [primary, *aliases]:
         if k in found:
             try:
@@ -133,9 +129,7 @@ def _get_int(
     return default
 
 
-def _get_str(
-    found: dict[str, Any], primary: str, aliases: list[str], default: str
-) -> str:
+def _get_str(found: dict[str, Any], primary: str, aliases: list[str], default: str) -> str:
     for k in [primary, *aliases]:
         if k in found:
             return str(found[k])
@@ -195,11 +189,7 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
         dotted = _normalize_key(dotted)
 
         if dotted not in _KNOWN_FLAGS:
-            warnings.append(
-                FeatureFlagWarning(
-                    line_no=line_no, key=dotted, detail="unknown flag"
-                )
-            )
+            warnings.append(FeatureFlagWarning(line_no=line_no, key=dotted, detail="unknown flag"))
             continue
 
         val_str = rest_stripped.strip().strip('"').strip("'")
@@ -223,11 +213,7 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
             else:
                 found[dotted] = val_str
         except Exception as exc:  # noqa: BLE001 - parse error -> warning
-            warnings.append(
-                FeatureFlagWarning(
-                    line_no=line_no, key=dotted, detail=f"parse error: {exc}"
-                )
-            )
+            warnings.append(FeatureFlagWarning(line_no=line_no, key=dotted, detail=f"parse error: {exc}"))
             continue
 
     flags = FeatureFlags(
@@ -235,19 +221,13 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
         telemetry_enabled=_get_bool(found, "telemetry.enabled", [], True),
         tool_batching_enabled=_get_bool(found, "tool_batching.enabled", [], True),
         runtime_mode=_get_str(found, "runtime.mode", [], "in_process"),
-        pty_pool_max_size=_get_int(
-            found, "pty_pool.max_size", ["pty_pool_max_size"], 2
-        ),
+        pty_pool_max_size=_get_int(found, "pty_pool.max_size", ["pty_pool_max_size"], 2),
         worktree_mode=_get_str(found, "worktree.mode", ["worktree_mode"], "shared"),
         fts_db_path=_get_str(found, "memory.fts_db_path", ["fts_db_path"], ".fa/fts.db"),
         prompt_caching=_get_bool(found, "prompt.caching", [], True),
-        prompt_cache_key_per_role=_get_bool(
-            found, "prompt.cache_key_per_role", [], True
-        ),
+        prompt_cache_key_per_role=_get_bool(found, "prompt.cache_key_per_role", [], True),
         offload_threshold=_get_int(found, "offload_threshold", [], 8000),
-        max_subagent_spawns_per_session=_get_int(
-            found, "max_subagent_spawns_per_session", [], 3
-        ),
+        max_subagent_spawns_per_session=_get_int(found, "max_subagent_spawns_per_session", [], 3),
     )
 
     return FeatureFlagsLoadResult(flags=flags, warnings=tuple(warnings))

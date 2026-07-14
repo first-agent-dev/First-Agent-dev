@@ -66,10 +66,7 @@ def test_compose_proxy_service_holds_the_keys_and_no_workspace() -> None:
         "proxy must not read models.yaml from the agent-writable state dir (R2-2)"
     )
     # The agent depends on the proxy being healthy.
-    assert (
-        doc["services"]["first-agent"]["depends_on"]["fa-egress-proxy"]["condition"]
-        == "service_healthy"
-    )
+    assert doc["services"]["first-agent"]["depends_on"]["fa-egress-proxy"]["condition"] == "service_healthy"
 
 
 def test_run_bash_passes_scrubbed_env() -> None:
@@ -112,9 +109,7 @@ def test_agent_routing_models_mount_is_read_only_file_after_state_mount() -> Non
     agent = doc["services"]["first-agent"]
     vols = agent.get("volumes", [])
     state_idx = next(
-        i
-        for i, vol in enumerate(vols)
-        if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa"
+        i for i, vol in enumerate(vols) if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa"
     )
     routing_idx = next(
         i

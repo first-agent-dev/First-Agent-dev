@@ -63,16 +63,10 @@ FlowStatus = Literal[
 
 
 _FINDING_SEVERITIES: frozenset[str] = frozenset(("critical", "major", "minor", "info"))
-_FINDING_CLASSES: frozenset[str] = frozenset(
-    ("implementation", "plan", "environment", "scope", "regression")
-)
+_FINDING_CLASSES: frozenset[str] = frozenset(("implementation", "plan", "environment", "scope", "regression"))
 _FINDING_ROUTES: frozenset[str] = frozenset(("coder", "planner", "human"))
-_EVAL_VERDICTS: frozenset[str] = frozenset(
-    ("PASS", "REPAIR_REQUIRED", "REPLAN_REQUIRED", "BLOCKED")
-)
-_ROUTE_DECISIONS: frozenset[str] = frozenset(
-    ("complete", "return_to_coder", "return_to_planner", "blocked")
-)
+_EVAL_VERDICTS: frozenset[str] = frozenset(("PASS", "REPAIR_REQUIRED", "REPLAN_REQUIRED", "BLOCKED"))
+_ROUTE_DECISIONS: frozenset[str] = frozenset(("complete", "return_to_coder", "return_to_planner", "blocked"))
 _STEP_VERDICTS: frozenset[str] = frozenset(("pass", "fail", "partial", "not_evaluated"))
 _FLOW_STATUSES: frozenset[str] = frozenset(
     (
@@ -233,8 +227,7 @@ class EvalReport:
             ),
             summary=_as_str(data["summary"]),
             step_results=tuple(
-                StepResult.from_json_dict(item)
-                for item in _as_dict_list(data.get("step_results", []))
+                StepResult.from_json_dict(item) for item in _as_dict_list(data.get("step_results", []))
             ),
             findings=tuple(
                 EvalFinding.from_json_dict(item) for item in _as_dict_list(data.get("findings", []))
@@ -521,7 +514,7 @@ def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
             os.fsync(handle.fileno())
             temp_path = Path(handle.name)
         os.replace(temp_path, path)
-    except Exception:
+    except Exception:  # graceful degradation per Phase 0.5, failure-observable WARNING
         if temp_path is not None:
             try:
                 temp_path.unlink()

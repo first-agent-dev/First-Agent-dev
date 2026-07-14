@@ -5,6 +5,6 @@ Full 5-stage: warning 70%, observation masking 80%, fast pruning 85%, aggressive
 ArXiv 2603.05344 verified
 """
 
-from .foundation import CompactionManager, CompactionAction
+from .foundation import CompactionAction, CompactionManager
 
-__all__ = ["CompactionManager", "CompactionAction"]
+__all__ = ["CompactionAction", "CompactionManager"]

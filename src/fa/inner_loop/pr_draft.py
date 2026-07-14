@@ -109,7 +109,7 @@ class PrDraftStore:
                 os.fsync(handle.fileno())
                 temp_path = Path(handle.name)
             os.replace(temp_path, self.path)
-        except Exception:
+        except Exception:  # graceful degradation per Phase 0.5, failure-observable WARNING
             if temp_path is not None:
                 try:
                     temp_path.unlink()

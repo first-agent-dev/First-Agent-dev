@@ -98,9 +98,7 @@ def build_prompt_parts_v2(
         {"role": "system", "content": f"Tools for role {role_id}:\n{json.dumps(tool_defs, indent=2)}"},
     ]
     if skills_always:
-        cacheable.append(
-            {"role": "system", "content": f"AlwaysSkills:\n{json.dumps(skills_always, indent=2)}"}
-        )
+        cacheable.append({"role": "system", "content": f"AlwaysSkills:\n{json.dumps(skills_always, indent=2)}"})
 
     non_cacheable: list[dict[str, Any]] = []
     if skills_conditional:
@@ -150,7 +148,7 @@ def to_anthropic_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any
         flags = load_feature_flags_from_path().flags
         if not getattr(flags, "prompt_caching", True):
             return {"messages": parts.cacheable + parts.non_cacheable, "_cache_key": cache_key}
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
         pass
 
     messages: list[dict[str, Any]] = []

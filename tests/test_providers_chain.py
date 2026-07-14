@@ -226,9 +226,7 @@ def test_dispatch_returns_first_success_with_attempts_and_logical_call_id() -> N
         clock=_StubClock(),
         id_factory=ItertoolsId("call"),
     )
-    response, logical_call_id, attempts = chain.request(
-        RequestInfo(model_slug="deepseek-v3", messages=())
-    )
+    response, logical_call_id, attempts = chain.request(RequestInfo(model_slug="deepseek-v3", messages=()))
     assert response.text == "from openrouter"
     assert logical_call_id == "call-0"
     assert [a.provider for a in attempts] == ["openrouter"]
@@ -240,9 +238,7 @@ def test_dispatch_falls_through_transient_failure_to_next_entry_and_cools_first(
     config = _config(_entry("openrouter"), _entry("fireworks"))
     stubs = {
         "openrouter": StubProvider(
-            outcomes=[
-                ProviderTransientError("rate_limited: status=429", status=429, kind="rate_limited")
-            ]
+            outcomes=[ProviderTransientError("rate_limited: status=429", status=429, kind="rate_limited")]
         ),
         "fireworks": StubProvider(outcomes=[_ok("from fireworks")]),
     }
@@ -331,9 +327,7 @@ def test_adaptive_cooldown_floor_uses_retry_after_when_longer() -> None:
 def test_auth_failure_continues_chain_without_cooldown() -> None:
     config = _config(_entry("openrouter"), _entry("fireworks"))
     stubs = {
-        "openrouter": StubProvider(
-            outcomes=[ProviderAuthError("auth_error: status=401", status=401)]
-        ),
+        "openrouter": StubProvider(outcomes=[ProviderAuthError("auth_error: status=401", status=401)]),
         "fireworks": StubProvider(outcomes=[_ok("served")]),
     }
     chain = ProviderChain(
@@ -353,9 +347,7 @@ def test_auth_failure_continues_chain_without_cooldown() -> None:
 
 def test_request_shape_error_fails_fast_without_trying_next_entry() -> None:
     config = _config(_entry("openrouter"), _entry("fireworks"))
-    or_stub = StubProvider(
-        outcomes=[ProviderRequestShapeError("request_shape_error: status=400", status=400)]
-    )
+    or_stub = StubProvider(outcomes=[ProviderRequestShapeError("request_shape_error: status=400", status=400)])
     fw_stub = StubProvider(outcomes=[_ok("would have served")])
 
     def factory(entry: ChainEntry) -> StubProvider:
@@ -378,9 +370,7 @@ def test_chain_exhaustion_raises_typed_error_with_attempts() -> None:
     config = _config(_entry("openrouter"), _entry("fireworks"))
     stubs = {
         "openrouter": StubProvider(
-            outcomes=[
-                ProviderTransientError("rate_limited: status=429", status=429, kind="rate_limited")
-            ]
+            outcomes=[ProviderTransientError("rate_limited: status=429", status=429, kind="rate_limited")]
         ),
         "fireworks": StubProvider(
             outcomes=[
@@ -453,9 +443,7 @@ def test_request_shape_error_carries_logical_call_id() -> None:
     # so the inner-loop runtime can correlate Tier-1 + Tier-2 rows
     # on a fail-fast 400/422 path.
     config = _config(_entry("openrouter"))
-    stub = StubProvider(
-        outcomes=[ProviderRequestShapeError("request_shape_error: status=400", status=400)]
-    )
+    stub = StubProvider(outcomes=[ProviderRequestShapeError("request_shape_error: status=400", status=400)])
     chain = ProviderChain(
         config,
         provider_factory=lambda _e: stub,

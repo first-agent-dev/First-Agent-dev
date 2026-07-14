@@ -102,9 +102,7 @@ def test_request_builds_chat_completions_url_and_authorization_header() -> None:
 
 
 def test_request_strips_trailing_slash_on_base_url() -> None:
-    transport = FakeTransport(
-        response=TransportResponse(status=200, body={"choices": [], "usage": {}})
-    )
+    transport = FakeTransport(response=TransportResponse(status=200, body={"choices": [], "usage": {}}))
     provider = OpenAICompatProvider(transport=transport)
     provider.request(
         _request(),
@@ -231,9 +229,7 @@ def test_4xx_auth_continue_chain(status: int) -> None:
     [(429, "rate_limited"), (500, "service_unavailable"), (503, "service_unavailable")],
 )
 def test_transient_status_codes_carry_retry_after(status: int, expected_kind: str) -> None:
-    transport = FakeTransport(
-        response=TransportResponse(status=status, body={}, retry_after_seconds=42.0)
-    )
+    transport = FakeTransport(response=TransportResponse(status=status, body={}, retry_after_seconds=42.0))
     provider = OpenAICompatProvider(transport=transport)
     with pytest.raises(ProviderTransientError) as info:
         provider.request(
@@ -250,9 +246,7 @@ def test_transient_status_codes_carry_retry_after(status: int, expected_kind: st
 
 
 def test_network_error_is_transient_timeout() -> None:
-    transport = FakeTransport(
-        response=TransportResponse(status=0, body={}, network_error="connection refused")
-    )
+    transport = FakeTransport(response=TransportResponse(status=0, body={}, network_error="connection refused"))
     provider = OpenAICompatProvider(transport=transport)
     with pytest.raises(ProviderTransientError) as info:
         provider.request(

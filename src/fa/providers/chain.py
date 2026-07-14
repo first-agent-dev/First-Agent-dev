@@ -57,9 +57,7 @@ DEFAULT_TRANSPORT_RETRIES = 2
 DEFAULT_TIMEOUT_SECONDS = 300
 # Waiver: allowlist for DETECTING local endpoints, not a bind address.
 LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0"})  # noqa: S104
-RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset(
-    {"__internal__", "__metadata__", "__fallback_marker__"}
-)
+RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset({"__internal__", "__metadata__", "__fallback_marker__"})
 
 
 @dataclass(frozen=True)
@@ -143,8 +141,7 @@ class ChainConfig:
                 raise ConfigurationError(f"{label}: api_key_env must be non-empty")
             if require_api_keys and not environ.get(entry.api_key_env, "").strip():
                 raise ConfigurationError(
-                    f"{label}: api_key_env={entry.api_key_env} not set or empty "
-                    f"in the configured secret store"
+                    f"{label}: api_key_env={entry.api_key_env} not set or empty in the configured secret store"
                 )
             # Best-effort model-identity check (ADR-9 §1 + §7 reframed):
             # slug strings vary legitimately across providers, so we
@@ -155,14 +152,10 @@ class ChainConfig:
             try:
                 inferred_family = extract_family(entry.slug)
             except FamilyExtractionError:
-                warnings.append(
-                    f"{label}: cannot infer family from slug {entry.slug!r}; verify chain entry"
-                )
+                warnings.append(f"{label}: cannot infer family from slug {entry.slug!r}; verify chain entry")
             else:
                 if self.family and inferred_family != self.family:
-                    warnings.append(
-                        f"{label}: slug family {inferred_family!r} != role family {self.family!r}"
-                    )
+                    warnings.append(f"{label}: slug family {inferred_family!r} != role family {self.family!r}")
         # Best-effort adapter-homogeneity check (ADR-9 §1 + §2g):
         # mixed adapter categories (OpenAI-compat + Anthropic in one
         # chain) break the 400/422 fail-fast assumption that «the
@@ -224,9 +217,7 @@ class ProviderChain:
         self._env: Mapping[str, str] = env if env is not None else os.environ
         self._clock = clock
         self._id_factory = id_factory
-        self._cooldowns: dict[tuple[str, str], CooldownRow] = (
-            cooldowns if cooldowns is not None else {}
-        )
+        self._cooldowns: dict[tuple[str, str], CooldownRow] = cooldowns if cooldowns is not None else {}
 
     @property
     def config(self) -> ChainConfig:
@@ -385,8 +376,7 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
         for field_name in ("provider", "slug", "base_url", "api_key_env"):
             if row.get(field_name) is None:
                 raise ConfigurationError(
-                    f"role {role!r} chain[{index}]: required field "
-                    f"{field_name!r} is null or missing"
+                    f"role {role!r} chain[{index}]: required field {field_name!r} is null or missing"
                 )
     # ``row.get(key, DEFAULT)`` returns the actual value when the YAML
     # row contains ``key: null`` (because the key exists), so passing
@@ -407,9 +397,7 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
             base_url=str(row["base_url"]),
             api_key_env=str(row["api_key_env"]),
             cooldown_seconds=int(
-                row["cooldown_seconds"]
-                if row.get("cooldown_seconds") is not None
-                else DEFAULT_COOLDOWN_SECONDS
+                row["cooldown_seconds"] if row.get("cooldown_seconds") is not None else DEFAULT_COOLDOWN_SECONDS
             ),
             transport_retries=int(
                 row["transport_retries"]
@@ -417,9 +405,7 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
                 else DEFAULT_TRANSPORT_RETRIES
             ),
             timeout_seconds=int(
-                row["timeout_seconds"]
-                if row.get("timeout_seconds") is not None
-                else DEFAULT_TIMEOUT_SECONDS
+                row["timeout_seconds"] if row.get("timeout_seconds") is not None else DEFAULT_TIMEOUT_SECONDS
             ),
             extra_headers=dict(row.get("extra_headers") or {}),
         )

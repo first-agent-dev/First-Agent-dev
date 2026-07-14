@@ -14,7 +14,7 @@ from fa.inner_loop.tools.base import require_string, resolve_workspace_path
 def _base_commit(root: Path) -> str:
     try:
         res = subprocess.run(
-            ["git", "rev-parse", "HEAD"],  # noqa: S607 - git binary, safe
+            ["git", "rev-parse", "HEAD"],  # noqa: S607
             cwd=root,
             capture_output=True,
             text=True,
@@ -22,7 +22,7 @@ def _base_commit(root: Path) -> str:
         )
         if res.returncode == 0:
             return res.stdout.strip()[:12]
-    except Exception as exc:  # noqa: BLE001 - git may fail, graceful
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: _base_commit failed: {exc}")
     return "unknown"
 
@@ -31,21 +31,50 @@ def _file_hash(p: Path) -> str:
     try:
         if p.exists():
             return hashlib.sha256(p.read_bytes()).hexdigest()[:12]
-    except Exception as exc:  # noqa: BLE001 - hash best-effort
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: _file_hash failed for {p}: {exc}")
     return "missing"
 
 
 def _check_conflict(
-    blackboard: Any,  # Blackboard | None
+    blackboard: Any,
     read_set: list[str],
     write_set: list[str],
     root: Path,
     llms_path: Path,
 ) -> ToolResult | None:
-    """Return ToolResult fail if conflict, else None."""
+    """Return fail if conflict, else None. Safety: ignore if blackboard from different workspace."""
     if blackboard is None:
         return None
+
+    # Safety check: blackboard must belong to current workspace_root, otherwise ignore (contextvar leak protection)
+    try:
+        bb_root = Path(getattr(blackboard, "root", Path("/"))).resolve()
+        # Expected: bb_root == root/.fa/blackboard, so parent.parent == root
+        # If not related, it's from different workspace (leaked contextvar) -> ignore
+        try:
+            # bb_root = <root>/.fa/blackboard
+            expected_root = root.resolve()
+            # Check if bb_root is inside expected_root/.fa
+            if not (bb_root == expected_root / ".fa" / "blackboard" or bb_root.is_relative_to(expected_root)):
+                # Also check if expected_root is parent of bb_root's parent.parent
+                if bb_root.parent.parent.resolve() != expected_root.resolve():
+                    # Different workspace, ignore conflict to avoid false positives from leaked session
+                    return None
+        except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+            # If relative_to fails, do strict equality check only
+            if bb_root != (root.resolve() / ".fa" / "blackboard"):
+                # If roots differ, ignore
+                # Additional safety: if blackboard path not under root, ignore
+                try:
+                    blackboard_path = Path(getattr(blackboard, "path", bb_root / "blackboard.jsonl")).resolve()
+                    if not blackboard_path.is_relative_to(expected_root):
+                        return None
+                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
+                    pass
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable
+        print(f"WARNING: safety check failed {exc}, ignoring")
+
     try:
         from fa.blackboard.blackboard import BlackboardEntry
 
@@ -71,7 +100,7 @@ def _check_conflict(
                 f"Conflict for {write_set}: {details}. Conflicts: {ids}",
                 retryable=True,
             )
-    except Exception as exc:  # noqa: BLE001 - graceful degradation
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: Blackboard check failed: {exc}, allowing write")
     return None
 
@@ -86,6 +115,16 @@ def _write_blackboard_ok(
 ) -> None:
     if blackboard is None:
         return
+    # Same safety check as above
+    try:
+        bb_root = Path(getattr(blackboard, "root", Path("/"))).resolve()
+        expected_root = root.resolve()
+        if not (bb_root == expected_root / ".fa" / "blackboard" or bb_root.is_relative_to(expected_root)):
+            if bb_root.parent.parent.resolve() != expected_root.resolve():
+                return
+    except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
+        pass
+
     try:
         from fa.blackboard.blackboard import BlackboardEntry
 
@@ -103,7 +142,7 @@ def _write_blackboard_ok(
             version_dependencies={"base_commit": base, "llms.txt": lh},
         )
         blackboard.write(ok_entry)
-    except Exception as exc:  # noqa: BLE001 - graceful
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: Blackboard write failed: {exc}")
 
 
@@ -123,7 +162,6 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
         except ValueError:
             rel_path = str(path)
 
-        # Get session via contextvar for DI (blackboard/transaction)
         session: Any = None
         blackboard: Any = None
         transaction: Any = None
@@ -134,7 +172,7 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
             if session is not None:
                 blackboard = getattr(session, "blackboard", None)
                 transaction = getattr(session, "transaction", None)
-        except Exception as exc:  # noqa: BLE001 - session retrieval best-effort
+        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             print(f"WARNING: get_current_session failed in write_file: {exc}")
 
         read_set: list[str] = []
@@ -142,7 +180,7 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
         try:
             if transaction is not None:
                 read_set = list(transaction.read_set)
-        except Exception as exc:  # noqa: BLE001 - transaction read best-effort
+        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             print(f"WARNING: transaction.read_set failed: {exc}")
 
         llms_path = root / "knowledge" / "llms.txt"
@@ -162,7 +200,7 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
         try:
             if transaction is not None:
                 transaction.add_write(rel_path)
-        except Exception as exc:  # noqa: BLE001 - transaction write best-effort
+        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             print(f"WARNING: transaction.add_write failed: {exc}")
 
         _write_blackboard_ok(blackboard, read_set, write_set, root, llms_path, content)

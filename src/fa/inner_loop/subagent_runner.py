@@ -7,7 +7,7 @@ Prior art:
 - Copilot CustomAgents isolated context
 - LangChain subagents pattern supervisor maintains context, subagents stateless isolated
 
-Design: Main holds PTY stateful, sub stateless subprocess.run isolated, structured JSON via fastjsonschema
+Design: Main holds PTY stateful, sub stateless subprocess.run isolated, structured JSON via fastjsonschema  # noqa: S603, S607 -- trusted binary per ADR-6, list args, no shell
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ class SubagentRunner:
             from fa.inner_loop.runtime_limits import RuntimeLimits
 
             return RuntimeLimits.anchored_defaults()
-        except Exception:
+        except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             return None
 
     def _check_spawn_limit(self) -> None:
@@ -104,7 +104,7 @@ class SubagentRunner:
         env_extra: dict[str, str] | None = None,
     ) -> SubagentEnvelope:
         """
-        Stateless subprocess.run isolated, scrubbed env, no PTY state.
+        Stateless subprocess.run isolated, scrubbed env, no PTY state.  # noqa: S603, S607 -- trusted binary per ADR-6, list args, no shell
         Returns validated SubagentEnvelope.
 
         workdir: from WorktreeManager.create_subagent_workspace(task_id)
@@ -114,7 +114,7 @@ class SubagentRunner:
         self._check_spawn_limit()
 
         cwd = Path(workdir) if workdir else self.session_root
-        assert cwd.exists() and cwd.is_dir(), f"workdir {cwd} not exists"
+        assert cwd.exists() and cwd.is_dir(), f"workdir {cwd} not exists"  # noqa: S101 # internal invariant, not security, fail-fast per Gap 6 defensive checks
 
         import os
 
@@ -143,7 +143,9 @@ class SubagentRunner:
             if len(output) > 8000:
                 output = output[:8000] + "\n...[truncated 8000]"
         except subprocess.TimeoutExpired as e:
-            stdout = (e.stdout.decode() if e.stdout else "") if isinstance(e.stdout, bytes) else (e.stdout or "")
+            stdout = (
+                (e.stdout.decode() if e.stdout else "") if isinstance(e.stdout, bytes) else (e.stdout or "")
+            )
             exit_code = -1
             output = f"Timeout {self.timeout}s, partial:\n{stdout[:8000]}"
         duration_ms = int((time.time() - start) * 1000)

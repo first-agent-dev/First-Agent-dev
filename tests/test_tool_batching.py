@@ -26,8 +26,8 @@ def test_batching_grouping() -> None:
 
 
 def test_threadpool_parallel() -> None:
-    from concurrent.futures import ThreadPoolExecutor
     import time
+    from concurrent.futures import ThreadPoolExecutor
 
     def fake_tool(name: str) -> str:
         time.sleep(0.1)

@@ -94,9 +94,7 @@ def test_render_tool_specs_sorts_by_name() -> None:
 def test_render_tool_specs_is_byte_stable_and_order_independent() -> None:
     specs = (_make_spec("a"), _make_spec("b"), _make_spec("c"))
     first = json.dumps(render_tool_specs(specs), ensure_ascii=False, sort_keys=True)
-    second = json.dumps(
-        render_tool_specs(tuple(reversed(specs))), ensure_ascii=False, sort_keys=True
-    )
+    second = json.dumps(render_tool_specs(tuple(reversed(specs))), ensure_ascii=False, sort_keys=True)
     assert first == second
 
 

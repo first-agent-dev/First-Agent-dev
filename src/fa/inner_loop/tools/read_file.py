@@ -22,7 +22,7 @@ def _read_pdf_text(path: Path) -> str | None:
         for page in doc:
             try:
                 texts.append(page.get_text("text"))
-            except Exception:
+            except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
                 continue
         doc.close()
         full = "\n".join(texts)
@@ -30,7 +30,7 @@ def _read_pdf_text(path: Path) -> str | None:
             return full
     except ImportError:
         pass
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: pymupdf failed for {path}: {exc}")
 
     # Try pdfminer.six as fallback
@@ -42,7 +42,7 @@ def _read_pdf_text(path: Path) -> str | None:
             return text
     except ImportError:
         pass
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: pdfminer failed for {path}: {exc}")
 
     # Try pypdf as last fallback
@@ -54,14 +54,14 @@ def _read_pdf_text(path: Path) -> str | None:
         for page in reader.pages:
             try:
                 texts.append(page.extract_text() or "")
-            except Exception:
+            except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
                 continue
         full = "\n".join(texts)
         if len(full.strip()) > 50:
             return full
     except ImportError:
         pass
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: pypdf failed for {path}: {exc}")
 
     return None

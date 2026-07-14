@@ -127,9 +127,7 @@ _SEVERITY_LABELS: Mapping[Severity, str] = {
     Severity.ADVISORY: "ADVISORY",
     Severity.INFO: "INFO",
 }
-_SEVERITY_BY_LABEL: Mapping[str, Severity] = {
-    label: severity for severity, label in _SEVERITY_LABELS.items()
-}
+_SEVERITY_BY_LABEL: Mapping[str, Severity] = {label: severity for severity, label in _SEVERITY_LABELS.items()}
 
 
 @dataclass(frozen=True)
@@ -476,9 +474,7 @@ def _parse_kernel_table(data: Mapping[str, object], path: Path) -> str:
     version = kernel.get("version")
     if not isinstance(version, str):
         raise ManifestError(
-            _manifest_diagnostic(
-                path, "kernel.version is required and must be a string", 'set version = "0.1"'
-            )
+            _manifest_diagnostic(path, "kernel.version is required and must be a string", 'set version = "0.1"')
         )
     if version != KERNEL_VERSION:
         raise ManifestError(
@@ -491,9 +487,7 @@ def _parse_kernel_table(data: Mapping[str, object], path: Path) -> str:
     return version
 
 
-def _parse_session_table(
-    data: Mapping[str, object], path: Path
-) -> tuple[str | None, tuple[str, ...]]:
+def _parse_session_table(data: Mapping[str, object], path: Path) -> tuple[str | None, tuple[str, ...]]:
     session = data.get("session")
     if session is None:
         return None, ()

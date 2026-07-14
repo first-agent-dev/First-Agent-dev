@@ -62,7 +62,7 @@ except ImportError as exc:
     build_instant_grep_tool = None
 
 
-def _register_extra_tools(
+def _register_extra_tools(  # noqa: C901 -- complexity from fallback chain graceful degradation, documented, will split Phase 3 per Paper 2 §4.4
     registry: ToolRegistry,
     workspace_root: Path,
     event_log_path: Path,
@@ -82,13 +82,13 @@ def _register_extra_tools(
                 # Avoid duplicate if already in registry
                 if "fs.glob" not in registry.names():
                     registry.register(build_glob_tool(workspace_root))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: Failed to register fs.glob: {exc}")
         if build_grep_tool:
             try:
                 if "fs.grep" not in registry.names():
                     registry.register(build_grep_tool(workspace_root))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: Failed to register fs.grep: {exc}")
 
     if include_observability:
@@ -96,21 +96,21 @@ def _register_extra_tools(
             try:
                 if "fs.chronicle_search" not in registry.names():
                     registry.register(build_chronicle_search_tool(event_log_path))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: Failed to register fs.chronicle_search: {exc}")
 
         if build_usage_tool:
             try:
                 if "fs.usage" not in registry.names():
                     registry.register(build_usage_tool(event_log_path))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: Failed to register fs.usage: {exc}")
 
         if build_list_tasks_tool and include_pair:
             try:
                 if "fs.list_tasks" not in registry.names():
                     registry.register(build_list_tasks_tool())
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: Failed to register fs.list_tasks: {exc}")
 
     if include_pair:
@@ -118,25 +118,25 @@ def _register_extra_tools(
             try:
                 if "fs.checkpoint" not in registry.names():
                     registry.register(build_checkpoint_tool(workspace_root))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: Failed to register fs.checkpoint: {exc}")
         if build_undo_tool:
             try:
                 if "fs.undo" not in registry.names():
                     registry.register(build_undo_tool(workspace_root))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: Failed to register fs.undo: {exc}")
         if build_diff_tool:
             try:
                 if "fs.diff" not in registry.names():
                     registry.register(build_diff_tool(workspace_root))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: Failed to register fs.diff: {exc}")
         if build_send_ctrl_c_tool:
             try:
                 if "fs.send_ctrl_c" not in registry.names():
                     registry.register(build_send_ctrl_c_tool())
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: Failed to register fs.send_ctrl_c: {exc}")
 
     if include_instant_grep and build_instant_grep_tool:
@@ -144,7 +144,7 @@ def _register_extra_tools(
             if "fs.instant_grep" not in registry.names():
                 db_path = workspace_root / ".fa" / "fts.db"
                 registry.register(build_instant_grep_tool(db_path, workspace_root))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             print(f"WARNING: Failed to register fs.instant_grep: {exc}")
 
 
@@ -172,10 +172,8 @@ def build_baseline_registry(
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
-        registry = build_registry_for_role(
-            "implementer", workspace_root, bash_timeout=bash_timeout_seconds
-        )
-    except Exception as exc:
+        registry = build_registry_for_role("implementer", workspace_root, bash_timeout=bash_timeout_seconds)
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: Failed to build implementer registry via profiles, fallback baseline: {exc}")
         registry = ToolRegistry()
         registry.register(build_read_file_tool(workspace_root))
@@ -209,7 +207,7 @@ def build_planner_registry(
         from fa.inner_loop.profiles import build_registry_for_role
 
         registry = build_registry_for_role("planner", workspace_root, bash_timeout=bash_timeout_seconds)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: Failed to build planner registry via profiles, fallback: {exc}")
         registry = ToolRegistry()
         registry.register(build_read_file_tool(workspace_root))
@@ -239,7 +237,7 @@ def build_eval_registry(
         from fa.inner_loop.profiles import build_registry_for_role
 
         registry = build_registry_for_role("verifier", workspace_root, bash_timeout=bash_timeout_seconds)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: Failed to build verifier registry via profiles, fallback: {exc}")
         registry = ToolRegistry()
         registry.register(build_read_file_tool(workspace_root))

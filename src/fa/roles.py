@@ -159,8 +159,7 @@ def extract_family(slug: str, *, override: str | None = None) -> str:
         normalised = override.strip().lower()
         if normalised not in KNOWN_FAMILIES:
             raise FamilyExtractionError(
-                f"family override {override!r} is not a known family "
-                f"(known: {sorted(KNOWN_FAMILIES)})"
+                f"family override {override!r} is not a known family (known: {sorted(KNOWN_FAMILIES)})"
             )
         return normalised
     if not slug:
@@ -170,8 +169,7 @@ def extract_family(slug: str, *, override: str | None = None) -> str:
         if pattern.match(normalised_slug):
             return family
     raise FamilyExtractionError(
-        f"cannot infer family from slug {slug!r}; tag it with an explicit "
-        "'family:' field in ~/.fa/models.yaml"
+        f"cannot infer family from slug {slug!r}; tag it with an explicit 'family:' field in ~/.fa/models.yaml"
     )
 
 

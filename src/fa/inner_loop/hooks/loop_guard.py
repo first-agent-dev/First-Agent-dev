@@ -172,8 +172,7 @@ class LoopGuard(GuardMiddleware):
                 self._warned.add(warn_key)
                 self._emit_warn(
                     "same_path_thrash",
-                    f"path {path!r} hit by {distinct} distinct attempts "
-                    f"(warn threshold {self.repeat_warn})",
+                    f"path {path!r} hit by {distinct} distinct attempts (warn threshold {self.repeat_warn})",
                 )
 
         return Decision.allow()

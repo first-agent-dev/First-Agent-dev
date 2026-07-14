@@ -68,9 +68,7 @@ def test_home_fa_env_denied() -> None:
 
 
 def test_extra_prefix_is_honored() -> None:
-    assert command_reads_secret_path(
-        "cat /custom/secret/place/x", extra_prefixes=("/custom/secret/place",)
-    )
+    assert command_reads_secret_path("cat /custom/secret/place/x", extra_prefixes=("/custom/secret/place",))
     assert not command_reads_secret_path("cat /custom/secret/place/x")
 
 

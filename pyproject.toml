@@ -85,7 +85,7 @@ fa = "fa.cli:main"
 packages = ["src/fa"]
 
 [tool.ruff]
-line-length = 100
+line-length = 112
 target-version = "py313"
 extend-exclude = ["catch-corpus", "fp-corpus", "mutants"]
 

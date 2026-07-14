@@ -15,6 +15,7 @@ from fa.inner_loop.tools.bash_env import build_scrubbed_env
 def _elide_500_preview(value: Any, max_bytes: int) -> str:
     """Elide to 500-char preview + marker, for token efficiency (Stage 0)."""
     import json
+
     if isinstance(value, str):
         rendered = value
     else:
@@ -22,7 +23,11 @@ def _elide_500_preview(value: Any, max_bytes: int) -> str:
     preview_len = 500
     if len(rendered) <= preview_len:
         return rendered
-    return rendered[:preview_len] + f"\n...[truncated {len(rendered)} chars, use | head -n 100 or grep to reduce, full in artifact]...\n" + rendered[-200:]
+    return (
+        rendered[:preview_len]
+        + f"\n...[truncated {len(rendered)} chars, use | head -n 100 or grep to reduce, full in artifact]...\n"
+        + rendered[-200:]
+    )
 
 
 def build_run_bash_tool(
