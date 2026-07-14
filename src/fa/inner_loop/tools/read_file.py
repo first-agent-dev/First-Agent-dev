@@ -42,6 +42,7 @@ def _read_pdf_text(path: Path) -> str | None:
         if text and len(text.strip()) > 50:
             return text
     except ImportError:
+        # Optional dependency not installed; continue to next PDF fallback.
         pass
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: pdfminer failed for {path}: {exc}")
