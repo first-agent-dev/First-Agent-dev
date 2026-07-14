@@ -16,7 +16,8 @@ from .pty_pool import PtyResult
 class BashExecutor(Protocol):
     def run(
         self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main"
-    ) -> PtyResult: ...
+    ) -> PtyResult:
+        pass
 
     def send_ctrl_c(self, session_id: str) -> str: ...
 
