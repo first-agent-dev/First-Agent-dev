@@ -181,9 +181,10 @@ def test_drive_session_completes_when_llm_signals_done(tmp_path: Path) -> None:
     )
     assert len(provider.calls) == 1
     request = provider.calls[0]
-    assert request.messages[0]["role"] == "system"
-    assert request.messages[1]["role"] == "user"
-    assert request.messages[1]["content"] == "do nothing"
+    # Under PromptComposer, messages has multiple structured system segments before the user task
+    user_msgs = [msg for msg in request.messages if msg["role"] == "user"]
+    assert len(user_msgs) == 1
+    assert user_msgs[0]["content"] == "Task: do nothing"
 
 
 # -- Tool-call dispatch ------------------------------------------------------

@@ -7,12 +7,14 @@ Prior art:
 - Copilot CustomAgents isolated context
 - LangChain subagents pattern supervisor maintains context, subagents stateless isolated
 
-Design: Main holds PTY stateful, sub stateless subprocess.run isolated, structured JSON via fastjsonschema  # noqa: S603, S607 -- trusted binary per ADR-6, list args, no shell
-Phase 3: filtered history task + 5 relevant files via instant_grep not full parent 124 steps, scrubbed env extra_allow X_FA_PROXY_TOKEN foundation per-subagent random, worklog aggregation
+Design: Main holds PTY stateful, sub stateless subprocess.run isolated, structured JSON via fastjsonschema
+Phase 3: filtered history task + 5 relevant files via instant_grep not full parent 124 steps,
+scrubbed env extra_allow X_FA_PROXY_TOKEN foundation per-subagent random, worklog aggregation
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from dataclasses import asdict
@@ -32,7 +34,8 @@ class SubagentRunner:
     """
     Stateless subagent runner with filtered history, JSON envelope, proxy_token foundation
     Phase 1: spawn limit enforced via SessionState counter (not instance counter), filtered history
-    Phase 3: filtered history via build_filtered_history (transaction.read_set/write_set + instant_grep fallback), worklog aggregation
+    Phase 3: filtered history via build_filtered_history (transaction.read_set/write_set
+    + instant_grep fallback)
     """
 
     def __init__(
@@ -56,7 +59,8 @@ class SubagentRunner:
             from fa.inner_loop.runtime_limits import RuntimeLimits
 
             return RuntimeLimits.anchored_defaults()
-        except Exception:  # noqa: BLE001 # graceful degradation
+        except Exception as exc:  # noqa: BLE001 # graceful degradation
+            print(f"WARNING: _get_limits failed: {exc}")
             return None
 
     def _check_spawn_limit(self) -> None:
@@ -76,7 +80,7 @@ class SubagentRunner:
                     )
                 try:
                     if hasattr(session, "increment_subagent_spawns"):
-                        session.increment_subagent_spawns()  # type: ignore
+                        session.increment_subagent_spawns()  # type: ignore[union-attr]
                     else:
                         session.subagent_spawns = count + 1
                 except Exception as exc:  # noqa: BLE001 - increment best-effort
@@ -101,8 +105,8 @@ class SubagentRunner:
         Optional blackboard plans behind flag blackboard.filtered_history_include_plans (default False).
         """
         try:
-            from fa.inner_loop.subagent_prompts import build_filtered_history
             from fa.inner_loop.context import get_current_session
+            from fa.inner_loop.subagent_prompts import build_filtered_history
 
             session = get_current_session()
             # Check feature flag for including blackboard plans (Q2)
@@ -112,12 +116,12 @@ class SubagentRunner:
                     include_plans = getattr(
                         session.feature_flags, "blackboard_filtered_history_include_plans", False
                     )
-            except Exception:
-                pass
+            except AttributeError as exc:  # best-effort feature flag load
+                print(f"WARNING: blackboard_filtered_history_include_plans flag check failed: {exc}")
 
             # For v0.1 minimal surface, keep file-based only unless flag True
             # build_filtered_history already handles fallback chain:
-            # transaction.read_set/write_set -> instant_grep(task) limit 5 -> glob llms.txt, AGENTS.md, README.md if <3 results
+            # transaction.read_set/write_set -> instant_grep(task) limit 5 -> glob/fallback if <3 results
             history = build_filtered_history(task, session, self.session_root, limit=5)
             # If include_plans flag True, append latest 3 plan entries from blackboard (600 tokens)
             if include_plans:
@@ -130,7 +134,7 @@ class SubagentRunner:
                     for plan in plans[-3:]:
                         preview = (
                             f"Plan {plan.id} hash:{plan.content_hash[:8]} "
-                            f"Goal:{str(plan.payload.get('Goal',''))[:200]} "
+                            f"Goal:{str(plan.payload.get('Goal', ''))[:200]} "
                             f"Assumptions:{plan.assumptions}"
                         )
                         history.append({"role": "system", "content": preview})
@@ -145,17 +149,18 @@ class SubagentRunner:
     def _append_to_worklog(self, envelope: SubagentEnvelope) -> None:
         """Worklog aggregation: Goal, Evidence, Steps, Verification from JSONs for PR body.
 
-        Writes to both root worklog.md committed sanitized summary (Goal, Evidence, Steps, Verification + artifact_id + 500-char preview)
-        and .fa/worklog-detailed.md gitignored detailed (full file paths, tool results cached, decisions, open questions).
+        Writes to root worklog.md committed summary (Goal, Evidence, Steps + artifact_id + 500-char preview)
+        and .fa/worklog-detailed.md gitignored detailed (full file paths, decisions, open questions).
         """
         try:
-            # Root committed worklog.md
-            root_worklog = Path.cwd() / "worklog.md"
-            # If not in cwd, try session_root parent? Use session_root parent if session_root is .fa or workspace?
-            # For simplicity, use self.session_root / "worklog.md" if exists, else Path.cwd() / "worklog.md"
+            # Use session_root parent if session_root is .fa or workspace.
+            # For simplicity, use self.session_root / "worklog.md" if exists,
+            # else Path.cwd() / "worklog.md"
             # Check which exists, prefer root of workspace (parent of .fa)
             candidates = [
-                self.session_root.parent / "worklog.md" if self.session_root.name == ".fa" else self.session_root / "worklog.md",
+                self.session_root.parent / "worklog.md"
+                if self.session_root.name == ".fa"
+                else self.session_root / "worklog.md",
                 Path.cwd() / "worklog.md",
             ]
             worklog_path = None
@@ -164,7 +169,8 @@ class SubagentRunner:
                     if cand.parent.exists():
                         worklog_path = cand
                         break
-                except Exception:
+                except Exception as exc:  # noqa: BLE001 # best-effort worklog candidate check
+                    print(f"WARNING: worklog candidate check failed for {cand}: {exc}")
                     continue
             if worklog_path is None:
                 worklog_path = self.session_root / "worklog.md"
@@ -172,15 +178,12 @@ class SubagentRunner:
             # Sanitized summary: no secrets, 500-char preview
             summary = envelope.summary[:500] if envelope.summary else ""
             evidence = ", ".join(envelope.files_changed[:5]) if envelope.files_changed else "none"
-            # Ensure no secret in summary
-            # Simple sanitization: if contains _key, _token, _secret, redact?
-            # For v0.1, assume envelope already sanitized
 
             section = (
                 f"\n## {envelope.task_id} {envelope.type} {envelope.verification[:20]}\n"
                 f"- Goal: {envelope.goal}\n"
                 f"- Evidence: {evidence}\n"
-                f"- Steps: {envelope.summary[:200]}\n"
+                f"- Steps: {summary[:200]}\n"
                 f"- Verification: {envelope.verification}\n"
                 f"- Risks: {', '.join(envelope.risks)}\n"
                 f"- Artifact: .fa/subagents/{envelope.task_id}.json\n"
@@ -194,7 +197,6 @@ class SubagentRunner:
                 print(f"WARNING: Failed to append to worklog.md {worklog_path}: {exc}")
 
             # Detailed gitignored .fa/worklog-detailed.md
-            detailed_path = self.session_root / ".fa" / "worklog-detailed.md"
             if self.session_root.name == ".fa":
                 detailed_path = self.session_root / "worklog-detailed.md"
             else:
@@ -218,10 +220,10 @@ class SubagentRunner:
         env_extra: dict[str, str] | None = None,
     ) -> SubagentEnvelope:
         """
-        Stateless subprocess.run isolated, scrubbed env, no PTY state.  # noqa: S603, S607
+        Stateless subprocess.run isolated, scrubbed env, no PTY state.
         Returns validated SubagentEnvelope.
         workdir: from WorktreeManager.create_subagent_workspace(task_id)
-        Filtered history: not full parent 124 steps, only task + relevant files (built via _build_filtered_history)
+        Filtered history: not full parent 124 steps, only task + relevant files
         """
         self._check_spawn_limit()
 
@@ -235,11 +237,10 @@ class SubagentRunner:
         try:
             filtered = self._build_filtered_history(task_id)
             # For v0.1, log filtered history length for observability
-            print(f"Filtered history for {task_id}: {len(filtered)} messages, total chars {sum(len(m.get('content','')) for m in filtered)}")
+            total_chars = sum(len(m.get("content", "")) for m in filtered)
+            print(f"Filtered history for {task_id}: {len(filtered)} messages, total chars {total_chars}")
         except Exception as exc:  # noqa: BLE001
             print(f"WARNING: filtered history build failed for {task_id}: {exc}")
-
-        import os
 
         from .tools.bash_env import build_scrubbed_env
 
@@ -250,10 +251,11 @@ class SubagentRunner:
 
         start = time.time()
         try:
-            completed = subprocess.run(  # noqa: S603, S607 -- trusted binary per ADR-6, list args not shell? Actually shell=True here, but command is from agent, need nosemgrep
+            # intentional sandbox boundary ADR-6, scrubbed env
+            completed = subprocess.run(  # noqa: S602
                 command,
                 cwd=cwd,
-                shell=True,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true -- intentional sandbox boundary ADR-6, scrubbed env
+                shell=True,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
@@ -266,7 +268,8 @@ class SubagentRunner:
             if len(output) > 8000:
                 output = output[:8000] + "\n...[truncated 8000]"
         except subprocess.TimeoutExpired as e:
-            stdout = (e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")) if e.stdout else ""
+            raw_stdout = e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
+            stdout = raw_stdout if e.stdout else ""
             exit_code = -1
             output = f"Timeout {self.timeout}s, partial:\n{stdout[:8000]}"
         duration_ms = int((time.time() - start) * 1000)

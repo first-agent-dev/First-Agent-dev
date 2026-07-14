@@ -64,6 +64,12 @@ except ImportError as exc:
     print(f"WARNING: Failed to import instant_grep tool: {exc}")
     build_instant_grep_tool = None
 
+try:
+    from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
+except ImportError as exc:
+    print(f"WARNING: Failed to import spawn_subagent tool: {exc}")
+    build_spawn_subagent_tool = None
+
 
 def _register_extra_tools(  # noqa: C901 -- complexity from fallback chain graceful degradation, documented, will split Phase 3 per Paper 2 §4.4
     registry: ToolRegistry,
@@ -149,6 +155,13 @@ def _register_extra_tools(  # noqa: C901 -- complexity from fallback chain grace
                 registry.register(build_instant_grep_tool(db_path, workspace_root))
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             print(f"WARNING: Failed to register fs.instant_grep: {exc}")
+
+    if build_spawn_subagent_tool:
+        try:
+            if "fs.spawn_subagent" not in registry.names():
+                registry.register(build_spawn_subagent_tool(workspace_root))
+        except Exception as exc:  # noqa: BLE001 # graceful degradation
+            print(f"WARNING: Failed to register fs.spawn_subagent: {exc}")
 
 
 def _event_log_path_for_root(workspace_root: Path) -> Path:

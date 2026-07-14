@@ -141,11 +141,16 @@ def build_prompt_parts(
 
 
 def to_anthropic_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any]:
-    """Phase 1: single breakpoint on last cacheable, not 4+1 yet."""
+    """Phase 3 SOTA: multi-breakpoint cache control anchoring on stable segments."""
     try:
-        from fa.feature_flags import load_feature_flags_from_path
+        from fa.inner_loop.context import get_current_session
 
-        flags = load_feature_flags_from_path().flags
+        session = get_current_session()
+        flags = getattr(session, "feature_flags", None)
+        if flags is None:
+            from fa.feature_flags import load_feature_flags_from_path
+
+            flags = load_feature_flags_from_path().flags
         if not getattr(flags, "prompt_caching", True):
             return {"messages": parts.cacheable + parts.non_cacheable, "_cache_key": cache_key}
     except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
@@ -153,7 +158,8 @@ def to_anthropic_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any
 
     messages: list[dict[str, Any]] = []
     for i, msg in enumerate(parts.cacheable):
-        if i == len(parts.cacheable) - 1:
+        # Anchor at system prompt (index 0), tool definitions (index 2), and final cacheable message
+        if i in (0, 2, len(parts.cacheable) - 1):
             msg = {**msg, "cache_control": {"type": "ephemeral"}}
         messages.append(msg)
     messages.extend(parts.non_cacheable)

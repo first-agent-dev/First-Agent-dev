@@ -14,18 +14,18 @@ PtyPool v3 Production — Phase 3 Locked Plan Implementation
 from __future__ import annotations
 
 import atexit
-import hashlib
-import os
+import logging
 import re
 import shutil
 import signal
-import sys
 import threading
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07")
 
@@ -39,7 +39,9 @@ class PtyResult:
 
 
 class PoolExhaustedError(RuntimeError):
-    """Pool full and trying to acquire same session_id that is locked, or maxSize=1 and main present trying sub."""
+    """Pool full and trying to acquire same session_id that is locked,
+    or maxSize=1 and main present trying sub.
+    """
 
 
 class PtySession:
@@ -84,7 +86,7 @@ class PtySession:
                 self._fallback.expect(self._sentinel_token, timeout=5)
                 self._is_fallback = True
             except Exception as exc:  # noqa: BLE001 # graceful degradation
-                print(f"WARNING: pexpect fallback failed: {exc}, using subprocess fallback")
+                logger.warning("pexpect fallback failed: %s, using subprocess fallback", exc)
                 self._is_fallback = True
         else:
             try:
@@ -96,32 +98,42 @@ class PtySession:
                     x=300,
                     y=100,
                 )
-            except Exception:  # noqa: BLE001 # may already exist
+            except Exception:  # may already exist
                 try:
                     self.tmux_session = self._server.find_where(
                         {"session_name": f"fa_{session_id}_{self.run_id}"}
                     )
-                except Exception:  # noqa: BLE001
-                    self.tmux_session = None
+                except Exception:  # noqa: BLE001, S110
+                    pass
                 if self.tmux_session is None:
                     # Try without run_id suffix for backward compat (main session)
                     try:
                         self.tmux_session = self._server.find_where({"session_name": f"fa_{session_id}"})
-                    except Exception:
+                    except Exception:  # noqa: BLE001, S110
                         pass
                 if self.tmux_session is None:
                     raise
 
             try:
-                self.pane = self.tmux_session.attached_window.attached_pane
+                if hasattr(self.tmux_session, "active_window"):
+                    self.pane = self.tmux_session.active_window.active_pane
+                else:
+                    self.pane = self.tmux_session.attached_window.attached_pane
+
                 # Use sentinel with control chars to avoid visible
+                # Wrap long send_keys lines
+                setup_cmd = (
+                    f"export PS1=$'\\x01{self._sentinel_token}\\x02' "
+                    f"&& export PROMPT_COMMAND='' && export PAGER=cat "
+                    f"&& export TERM=xterm-256color"
+                )
                 self.pane.send_keys(
-                    f"export PS1=$'\\x01{self._sentinel_token}\\x02' && export PROMPT_COMMAND='' && export PAGER=cat && export TERM=xterm-256color",
+                    setup_cmd,
                     suppress_history=True,
                 )
                 self._wait_for_sentinel()
             except Exception as exc:  # noqa: BLE001
-                print(f"WARNING: tmux pane init failed: {exc}, fallback to pexpect")
+                logger.warning("tmux pane init failed: %s, fallback to pexpect", exc)
                 self._is_fallback = True
                 self.pane = None
                 self.tmux_session = None
@@ -137,9 +149,7 @@ class PtySession:
         while time.time() - start < timeout:
             try:
                 # -J join wrapped lines per Gap 12, -p stdout, -S -20 last 20 lines, -E - end visible
-                content = "\n".join(
-                    self.pane.cmd("capture-pane", "-p", "-J", "-S", "-20", "-E", "-").stdout
-                )
+                content = "\n".join(self.pane.cmd("capture-pane", "-p", "-J", "-S", "-20", "-E", "-").stdout)
                 if self._sentinel_token in content:
                     return
             except Exception:  # noqa: BLE001, S110 # best-effort
@@ -195,7 +205,10 @@ class PtySession:
                 self.pane.send_keys(full)
             except Exception as exc:  # noqa: BLE001
                 return PtyResult(
-                    stdout=f"Failed to send command: {exc}", exit_code=-1, truncated=False, session_id=self.session_id
+                    stdout=f"Failed to send command: {exc}",
+                    exit_code=-1,
+                    truncated=False,
+                    session_id=self.session_id,
                 )
 
             import time
@@ -225,7 +238,12 @@ class PtySession:
             truncated = len(output) > 8000
             if truncated:
                 output = output[:8000] + "\n...[truncated 8000]"
-            return PtyResult(stdout=output.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id)
+            return PtyResult(
+                stdout=output.strip(),
+                exit_code=exit_code,
+                truncated=truncated,
+                session_id=self.session_id,
+            )
 
     def send_ctrl_c(self) -> str:
         if self._is_fallback:
@@ -256,19 +274,27 @@ class PtySession:
         else:
             if self.tmux_session is not None:
                 try:
-                    self.tmux_session.kill_session()
+                    if hasattr(self.tmux_session, "kill"):
+                        self.tmux_session.kill()
+                    else:
+                        self.tmux_session.kill_session()
                 except Exception:  # noqa: BLE001, S110
                     pass
 
 
 class PtyPool:
-    """
-    Production PtyPool: shared server with socket isolation fa_<run_id>, LRU eviction pinned main, thread-safe, DI, no global singleton
-    Implements Gap 12 (-J join), Improvement 1 (socket isolation -L), Gap 13 pexpect per-session isolation, Gap 14 signal/atexit leak prevention
+    """Production PtyPool: shared server with socket isolation fa_<run_id>,
+    LRU eviction pinned main, thread-safe, DI, no global singleton.
+    Implements Gap 12 (-J join), Improvement 1 (socket isolation -L),
+    Gap 13 pexpect per-session isolation, Gap 14 signal/atexit leak prevention.
     """
 
     def __init__(
-        self, max_size: int = 2, base_cwd: Path = Path("/workspace"), server: Any | None = None, run_id: str | None = None
+        self,
+        max_size: int = 2,
+        base_cwd: Path = Path("/workspace"),
+        server: Any | None = None,
+        run_id: str | None = None,
     ):
         self.max_size = max_size
         self.base_cwd = Path(base_cwd).resolve()
@@ -284,7 +310,7 @@ class PtyPool:
                 import libtmux  # type: ignore[import-untyped]
 
                 if shutil.which("tmux") is None:
-                    print("WARNING: tmux binary not found, falling back to pexpect")
+                    logger.warning("tmux binary not found, falling back to pexpect")
                     self._server = None
                 else:
                     # Socket isolation per run_id to avoid hijack in concurrent eval-harness / CI
@@ -294,16 +320,20 @@ class PtyPool:
                         # Ensure server started
                         self._server.cmd("start-server")
                     except Exception as exc:  # noqa: BLE001
-                        print(f"WARNING: libtmux Server socket_name={socket_name} failed: {exc}, trying default + start-server")
+                        logger.warning(
+                            "libtmux Server socket_name=%s failed: %s, trying default + start-server",
+                            socket_name,
+                            exc,
+                        )
                         try:
                             self._server = libtmux.Server()
                             self._server.cmd("start-server")
                         except Exception as exc2:  # noqa: BLE001
-                            print(f"WARNING: libtmux default server failed: {exc2}, fallback to pexpect")
+                            logger.warning("libtmux default server failed: %s, fallback to pexpect", exc2)
                             self._server = None
                     self._original_server = self._server
             except ImportError:
-                print("WARNING: libtmux not installed, falling back to pexpect")
+                logger.warning("libtmux not installed, falling back to pexpect")
                 self._server = None
 
         # Signal/atexit leak prevention per Gap 14 leave-no-trace
@@ -315,7 +345,7 @@ class PtyPool:
                 except (ValueError, OSError):
                     # Signal only works in main thread
                     pass
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     def _cleanup_all(self) -> None:
@@ -325,7 +355,7 @@ class PtyPool:
                 for sid in list(self.sessions.keys()):
                     try:
                         self.sessions[sid].close()
-                    except Exception:
+                    except Exception:  # noqa: BLE001, S110
                         pass
                 self.sessions.clear()
                 self._lru.clear()
@@ -336,9 +366,9 @@ class PtyPool:
                     socket_name = getattr(self._server, "socket_name", "") or ""
                     if socket_name.startswith("fa_"):
                         self._server.cmd("kill-server")
-                except Exception:
+                except Exception:  # noqa: BLE001, S110
                     pass
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     def acquire(self, session_id: str, workdir: str | None = None) -> PtySession:
@@ -358,12 +388,15 @@ class PtyPool:
                         lru_to_evict = sid
                         break
                 if lru_to_evict is None:
-                    # Only main present and trying to acquire different session_id and maxSize==1? Then fail-fast
+                    # Only main present and trying to acquire different session_id and maxSize==1?
+                    # Then fail-fast
                     # For maxSize=2, main + 1 sub already, trying 3rd distinct -> evict LRU sub (not main)
-                    # If no sub to evict (only main and trying new), evict main? No, per spec never reuse main, so evict main? Actually per clarified policy, main pinned, so evict LRU sub
-                    # If we are here and all sessions are main (only main), and trying sub, we have space? len>=maxSize, so need to evict
-                    # For maxSize=2, main + sub1 present, trying sub2 -> evict sub1
-                    # Find any sub (not main)
+                    # If no sub to evict (only main and trying new), evict main? No, per spec never reuse main,
+                    # so evict main? Actually per clarified policy, main pinned, so evict LRU sub.
+                    # If we are here and all sessions are main (only main), and trying sub, we have space?
+                    # len>=maxSize, so need to evict.
+                    # For maxSize=2, main + sub1 present, trying sub2 -> evict sub1.
+                    # Find any sub (not main).
                     for sid in list(self.sessions.keys()):
                         if sid != "main":
                             lru_to_evict = sid
@@ -376,7 +409,7 @@ class PtyPool:
                 # Evict LRU sub
                 try:
                     self.sessions[lru_to_evict].close()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110
                     pass
                 self.sessions.pop(lru_to_evict, None)
                 self._lru.pop(lru_to_evict, None)

@@ -223,7 +223,7 @@ def classify_batches(calls: list[ToolCall], registry: ToolRegistry) -> list[list
             reserved_in_current = [scoped] if scoped else []
         else:
             # Check whole batch would still be parallelizable with new call included
-            prospective = current + [call]
+            prospective = [*current, call]
             if _should_parallelize_tool_batch(prospective, registry):
                 current.append(call)
                 if scoped:

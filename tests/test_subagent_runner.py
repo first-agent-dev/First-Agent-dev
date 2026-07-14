@@ -1,0 +1,142 @@
+"""
+Unit tests for SubagentRunner (Phase 3).
+Verifies spawning, spawn limits, filtered history fallback, and worklog aggregation.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Generator
+from pathlib import Path
+
+import pytest
+
+from fa.inner_loop.context import set_current_session
+from fa.inner_loop.state import SessionState
+from fa.inner_loop.subagent_envelope import SubagentEnvelope
+from fa.inner_loop.subagent_runner import SubagentRunner
+
+
+@pytest.fixture
+def mock_session_state(tmp_path: Path) -> Generator[SessionState]:
+    state = SessionState(workspace_root=tmp_path, run_id="test-subagent-run")
+    token = set_current_session(state)
+    yield state
+    from fa.inner_loop.context import reset_current_session
+
+    reset_current_session(token)
+
+
+def test_subagent_runner_limits_and_spawn(tmp_path: Path, mock_session_state: SessionState) -> None:
+    runner = SubagentRunner(session_root=tmp_path)
+    limits = runner._get_limits()
+    assert limits is not None
+    assert limits.max_subagent_spawns_per_session == 3
+
+    # Initial spawns is 0
+    assert mock_session_state.get_subagent_spawns() == 0
+
+    # First check succeeds and increments count
+    runner._check_spawn_limit()
+    assert mock_session_state.get_subagent_spawns() == 1
+
+    runner._check_spawn_limit()
+    assert mock_session_state.get_subagent_spawns() == 2
+
+    runner._check_spawn_limit()
+    assert mock_session_state.get_subagent_spawns() == 3
+
+    # 4th check raises RuntimeError
+    with pytest.raises(RuntimeError) as exc_info:
+        runner._check_spawn_limit()
+    assert "Subagent spawn limit" in str(exc_info.value)
+
+
+def test_subagent_runner_instance_counter_fallback(tmp_path: Path) -> None:
+    # Ensure current session is None
+    set_current_session(None)
+
+    runner = SubagentRunner(session_root=tmp_path)
+    # Check limit using instance counter
+    runner._check_spawn_limit()
+    assert runner._instance_spawn_count == 1
+
+    runner._check_spawn_limit()
+    assert runner._instance_spawn_count == 2
+
+    runner._check_spawn_limit()
+    assert runner._instance_spawn_count == 3
+
+    with pytest.raises(RuntimeError) as exc_info:
+        runner._check_spawn_limit()
+    assert "Subagent spawn limit" in str(exc_info.value)
+
+
+def test_build_filtered_history_fallback(tmp_path: Path) -> None:
+    runner = SubagentRunner(session_root=tmp_path)
+    # Vague task should fall back to default files
+    history = runner._build_filtered_history("Read repository and tell what you found")
+    assert len(history) >= 1
+    assert history[0]["role"] == "user"
+    assert "Task:" in history[0]["content"]
+
+
+def test_append_to_worklog(tmp_path: Path) -> None:
+    runner = SubagentRunner(session_root=tmp_path)
+    envelope = SubagentEnvelope(
+        task_id="task-123",
+        type="verifier",
+        goal="Test goal",
+        exit_code=0,
+        summary="Summary of work completed.",
+        verification="exit_code=0",
+        files_changed=["a.txt", "b.txt"],
+        patch_diff="diff",
+        risks=["none"],
+        open_questions=[],
+        token_usage={},
+        duration_ms=150,
+        next_action="none",
+    )
+
+    runner._append_to_worklog(envelope)
+
+    # Check root/session_root worklog exists
+    worklog_file = tmp_path / "worklog.md"
+    assert worklog_file.exists()
+    content = worklog_file.read_text(encoding="utf-8")
+    assert "## task-123 verifier" in content
+    assert "Goal: Test goal" in content
+    assert "Evidence: a.txt, b.txt" in content
+
+    # Check detailed worklog
+    detailed_file = tmp_path / ".fa" / "worklog-detailed.md"
+    assert detailed_file.exists()
+    detailed_content = detailed_file.read_text(encoding="utf-8")
+    assert "## task-123 verifier" in detailed_content
+    assert "Full envelope:" in detailed_content
+
+
+def test_run_stateless(tmp_path: Path, mock_session_state: SessionState) -> None:
+    runner = SubagentRunner(session_root=tmp_path, timeout=5)
+    # Run a simple bash command
+    env_extra = {"TEST_VAR": "hello-subagent"}
+    envelope = runner.run_stateless(
+        task_id="task-test-run",
+        command="echo $TEST_VAR",
+        role="verifier",
+        workdir=tmp_path,
+        env_extra=env_extra,
+    )
+
+    assert envelope.task_id == "task-test-run"
+    assert envelope.type == "verifier"
+    assert envelope.exit_code == 0
+    assert "hello-subagent" in envelope.summary or "PASS" in envelope.summary
+
+    # Verify artifact was written
+    artifact_file = tmp_path / ".fa" / "subagents" / "task-test-run.json"
+    assert artifact_file.exists()
+    artifact_data = json.loads(artifact_file.read_text(encoding="utf-8"))
+    assert artifact_data["task_id"] == "task-test-run"
+    assert artifact_data["exit_code"] == 0

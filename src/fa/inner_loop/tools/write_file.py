@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import subprocess
 import uuid
 from collections.abc import Mapping
@@ -9,6 +10,8 @@ from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string, resolve_workspace_path
+
+logger = logging.getLogger(__name__)
 
 
 def _base_commit(root: Path) -> str:
@@ -23,7 +26,7 @@ def _base_commit(root: Path) -> str:
         if res.returncode == 0:
             return res.stdout.strip()[:12]
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        print(f"WARNING: _base_commit failed: {exc}")
+        logger.warning("_base_commit failed: %s", exc)
     return "unknown"
 
 
@@ -32,7 +35,7 @@ def _file_hash(p: Path) -> str:
         if p.exists():
             return hashlib.sha256(p.read_bytes()).hexdigest()[:12]
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        print(f"WARNING: _file_hash failed for {p}: {exc}")
+        logger.warning("_file_hash failed for %s: %s", p, exc)
     return "missing"
 
 
@@ -47,7 +50,8 @@ def _check_conflict(
     if blackboard is None:
         return None
 
-    # Safety check: blackboard must belong to current workspace_root, otherwise ignore (contextvar leak protection)
+    # Safety check: blackboard must belong to current workspace_root,
+    # otherwise ignore (contextvar leak protection)
     try:
         bb_root = Path(getattr(blackboard, "root", Path("/"))).resolve()
         # Expected: bb_root == root/.fa/blackboard, so parent.parent == root
@@ -73,7 +77,7 @@ def _check_conflict(
                 except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
                     pass
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable
-        print(f"WARNING: safety check failed {exc}, ignoring")
+        logger.warning("safety check failed %s, ignoring", exc)
 
     try:
         from fa.blackboard.blackboard import BlackboardEntry
@@ -101,7 +105,7 @@ def _check_conflict(
                 retryable=True,
             )
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        print(f"WARNING: Blackboard check failed: {exc}, allowing write")
+        logger.warning("Blackboard check failed: %s, allowing write", exc)
     return None
 
 
@@ -143,7 +147,7 @@ def _write_blackboard_ok(
         )
         blackboard.write(ok_entry)
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        print(f"WARNING: Blackboard write failed: {exc}")
+        logger.warning("Blackboard write failed: %s", exc)
 
 
 def build_write_file_tool(workspace_root: Path) -> ToolSpec:
@@ -173,7 +177,7 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
                 blackboard = getattr(session, "blackboard", None)
                 transaction = getattr(session, "transaction", None)
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            print(f"WARNING: get_current_session failed in write_file: {exc}")
+            logger.warning("get_current_session failed in write_file: %s", exc)
 
         read_set: list[str] = []
         write_set: list[str] = [rel_path]
@@ -181,7 +185,7 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
             if transaction is not None:
                 read_set = list(transaction.read_set)
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            print(f"WARNING: transaction.read_set failed: {exc}")
+            logger.warning("transaction.read_set failed: %s", exc)
 
         llms_path = root / "knowledge" / "llms.txt"
         if not llms_path.exists():
@@ -201,7 +205,7 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
             if transaction is not None:
                 transaction.add_write(rel_path)
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            print(f"WARNING: transaction.add_write failed: {exc}")
+            logger.warning("transaction.add_write failed: %s", exc)
 
         _write_blackboard_ok(blackboard, read_set, write_set, root, llms_path, content)
 

@@ -818,7 +818,15 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     contracts = load_contracts_from_dir(workspace / "verifiers")
     if contracts:
         hooks.register(VerifierObserver(contracts=contracts, event_log=log))
-    state = SessionState(workspace_root=workspace, run_id="cli-smoke", log=log)
+
+    from fa.feature_flags import FeatureFlags
+
+    state = SessionState(
+        workspace_root=workspace,
+        run_id="cli-smoke",
+        log=log,
+        feature_flags=FeatureFlags(blackboard_enabled=False),
+    )
     calls = (
         ToolCall(name="fs.read_file", params={"path": args.input}, call_id="tc-read"),
         ToolCall(
@@ -1636,6 +1644,17 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     effective_transport: Transport = transport if transport is not None else UrllibTransport()
     chain = _build_provider_chain(chain_config, transport=effective_transport, secrets=secrets)
 
+    compactor_chain = None
+    compactor_config = models.roles.get("compactor")
+    if compactor_config is not None:
+        if proxy_mode:
+            rewritten, proxy_err = _proxy_rewrite_chain(compactor_config, proxy_url)
+            if not proxy_err:
+                compactor_config = rewritten
+        compactor_chain = _build_provider_chain(
+            compactor_config, transport=effective_transport, secrets=secrets
+        )
+
     limits = load_runtime_limits_from_path().limits
     # Role-aware registry: planner/eval get read-only tools, coder gets
     # the full baseline (read + write + bash).
@@ -1771,6 +1790,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     outcome = drive_session(
         args.task,
         provider_chain=chain,
+        compactor_chain=compactor_chain,
         registry=registry,
         hooks=hooks,
         state=state,

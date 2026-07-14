@@ -189,3 +189,65 @@ def test_build_eval_registry_has_read_and_bash(tmp_path: Path) -> None:
     assert "fs.write_file" not in names
     # Observability tools may be present (chronicle_search, usage) per _register_extra_tools
     # That's okay, but core verifier is bash
+
+
+def test_grep_tool_returns_matched_lines_with_numbers(tmp_path: Path) -> None:
+    from fa.inner_loop.tools.grep import build_grep_tool
+
+    # Write a test file
+    test_file = tmp_path / "test.py"
+    test_file.write_text("line 1\nline 2 matching target\nline 3\n", encoding="utf-8")
+
+    tool = build_grep_tool(tmp_path)
+    # Run fallback python search on tmp_path (which is not a git repo)
+    result = tool.handler({"query": "matching target"})
+
+    assert result.error is None
+    assert "found 1 lines" in result.summary
+    assert "matches" in result.result
+    matches = result.result["matches"]
+    assert len(matches) == 1
+    assert matches[0]["path"] == "test.py"
+    assert matches[0]["line"] == 2
+    assert matches[0]["content"] == "line 2 matching target"
+
+
+def test_spawn_subagent_tool_gated_by_flag(tmp_path: Path) -> None:
+    from fa.feature_flags import FeatureFlags
+    from fa.inner_loop.context import set_current_session
+    from fa.inner_loop.state import SessionState
+    from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
+
+    tool = build_spawn_subagent_tool(tmp_path)
+
+    # 1. Disabled by default (flag = False)
+    state_disabled = SessionState(
+        workspace_root=tmp_path,
+        run_id="test-spawn-dis",
+        feature_flags=FeatureFlags(subagent_spawning_enabled=False),
+    )
+    token = set_current_session(state_disabled)
+    try:
+        res = tool.handler({"task_id": "subtask", "command": "echo 42", "role": "verifier"})
+        assert res.error is not None
+        assert res.error.code == "disabled"
+    finally:
+        from fa.inner_loop.context import reset_current_session
+
+        reset_current_session(token)
+
+    # 2. Enabled (flag = True)
+    state_enabled = SessionState(
+        workspace_root=tmp_path,
+        run_id="test-spawn-en",
+        feature_flags=FeatureFlags(subagent_spawning_enabled=True),
+    )
+    token = set_current_session(state_enabled)
+    try:
+        res = tool.handler({"task_id": "subtask-ok", "command": "echo 42", "role": "verifier"})
+        assert res.error is None
+        assert "completed successfully" in res.summary
+    finally:
+        from fa.inner_loop.context import reset_current_session
+
+        reset_current_session(token)

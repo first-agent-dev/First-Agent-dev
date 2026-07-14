@@ -23,6 +23,7 @@ have introduced additional kinds wired into specific hooks.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from collections.abc import Mapping
@@ -32,6 +33,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fa.inner_loop.registry import ToolCall, ToolResult
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from fa.observability.redaction import SecretRedactor
@@ -90,11 +93,42 @@ class EventLog:
         run_id: str = "",
         redactor: SecretRedactor | None = None,
     ) -> None:
-        self.path = path
+        self.path = Path(path)
         self.run_id = run_id
         self._next_id = self._initial_next_id(path)
         self._redactor = redactor
         self._lock = threading.Lock()
+        self._init_db()
+
+    def _init_db(self) -> None:
+        import sqlite3
+
+        db_path = self.path.parent / "session.db"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=15.0)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            with conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS event_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        event_id TEXT,
+                        ts TEXT,
+                        run_id TEXT,
+                        actor TEXT,
+                        kind TEXT,
+                        tool_name TEXT,
+                        tool_call_id TEXT,
+                        parent_event_id TEXT,
+                        content TEXT,
+                        harness_id TEXT
+                    );
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind ON event_log(kind);")
+            conn.close()
+        except Exception as exc:  # noqa: BLE001 # best-effort
+            logger.warning("Failed to initialize SQLite EventLog: %s", exc)
 
     @staticmethod
     def _initial_next_id(path: Path) -> int:
@@ -145,34 +179,112 @@ class EventLog:
             )
             self._next_id += 1
             self.path.parent.mkdir(parents=True, exist_ok=True)
+
+            # 1. Write to JSONL
             line = json.dumps(asdict(event), ensure_ascii=False, sort_keys=True)
             with self.path.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
+
+            # 2. Write to SQLite3 (WAL mode)
+            import sqlite3
+
+            db_path = self.path.parent / "session.db"
+            try:
+                conn = sqlite3.connect(str(db_path), timeout=15.0)
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO event_log (
+                            event_id, ts, run_id, actor, kind, tool_name,
+                            tool_call_id, parent_event_id, content, harness_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            event.event_id,
+                            event.ts,
+                            event.run_id,
+                            event.actor,
+                            event.kind,
+                            event.tool_name,
+                            event.tool_call_id,
+                            event.parent_event_id,
+                            json.dumps(event.content, ensure_ascii=False),
+                            event.harness_id,
+                        ),
+                    )
+                conn.close()
+            except Exception as exc:  # noqa: BLE001 # best-effort
+                logger.warning("Failed to write event to SQLite: %s", exc)
+
             return event
 
     def read_all(self) -> tuple[TraceEvent, ...]:
+        import sqlite3
+
+        db_path = self.path.parent / "session.db"
+        has_sqlite_events = False
+        events = []
+        if db_path.exists():
+            try:
+                conn = sqlite3.connect(str(db_path), timeout=15.0)
+                cur = conn.execute(
+                    """
+                    SELECT event_id, ts, run_id, actor, kind, tool_name,
+                           tool_call_id, parent_event_id, content, harness_id
+                    FROM event_log ORDER BY id ASC
+                    """
+                )
+                rows = cur.fetchall()
+                if rows:
+                    has_sqlite_events = True
+                    for row in rows:
+                        events.append(
+                            TraceEvent(
+                                event_id=row[0],
+                                ts=row[1],
+                                run_id=row[2],
+                                actor=row[3],
+                                kind=row[4],
+                                tool_name=row[5],
+                                tool_call_id=row[6],
+                                parent_event_id=row[7],
+                                content=json.loads(row[8]),
+                                harness_id=row[9],
+                            )
+                        )
+                conn.close()
+            except Exception as exc:  # noqa: BLE001 # fallback to JSONL reading
+                logger.warning("Failed to read events from SQLite: %s, falling back to JSONL", exc)
+
+        if has_sqlite_events:
+            return tuple(events)
+
         if not self.path.exists():
             return ()
-        events: list[TraceEvent] = []
-        for raw in self.path.read_text(encoding="utf-8").splitlines():
-            if not raw:
-                continue
-            parsed = json.loads(raw)
-            events.append(
-                TraceEvent(
-                    event_id=str(parsed["event_id"]),
-                    ts=str(parsed["ts"]),
-                    run_id=str(parsed.get("run_id", "")),
-                    actor=str(parsed["actor"]),
-                    kind=str(parsed["kind"]),
-                    content=dict(parsed.get("content", {})),
-                    harness_id=str(parsed["harness_id"]),
-                    tool_name=str(parsed.get("tool_name", "")),
-                    tool_call_id=str(parsed.get("tool_call_id", "")),
-                    parent_event_id=str(parsed.get("parent_event_id", "")),
+        events = []
+        try:
+            for raw in self.path.read_text(encoding="utf-8").splitlines():
+                if not raw:
+                    continue
+                parsed = json.loads(raw)
+                events.append(
+                    TraceEvent(
+                        event_id=str(parsed["event_id"]),
+                        ts=str(parsed["ts"]),
+                        run_id=str(parsed.get("run_id", "")),
+                        actor=str(parsed["actor"]),
+                        kind=str(parsed["kind"]),
+                        content=dict(parsed.get("content", {})),
+                        harness_id=str(parsed["harness_id"]),
+                        tool_name=str(parsed.get("tool_name", "")),
+                        tool_call_id=str(parsed.get("tool_call_id", "")),
+                        parent_event_id=str(parsed.get("parent_event_id", "")),
+                    )
                 )
-            )
-        return tuple(events)
+            return tuple(events)
+        except Exception as exc2:  # noqa: BLE001
+            logger.warning("Fallback JSONL reading failed: %s", exc2)
+            return ()
 
 
 @dataclass

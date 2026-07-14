@@ -6,12 +6,12 @@ Usage:
   fa eval run --model gpt-4o --suite formal-substrate
   or: PYTHONPATH=src python eval/run.py --role planner --task "Read repository..."
 
-Metrics: median tokens/tool-calls/USD, before/after 124→30-40, trajectory efficiency, verification strength, state consistency, safety compliance, replayability
+Metrics: median tokens/tool-calls/USD, before/after 124→30-40, trajectory efficiency, verification strength,
+state consistency, safety compliance, replayability
 """
 
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from typing import Any
@@ -32,6 +32,7 @@ def load_fixture(path: Path) -> dict[str, Any]:
 
 
 def run_fixture(fixture_path: Path, workspace_root: Path) -> dict[str, Any]:
+    _ = workspace_root
     meta = load_fixture(fixture_path)
     task_id = meta.get("task_id", fixture_path.stem)
     role = meta.get("role", "planner")
@@ -64,7 +65,7 @@ def run_fixture(fixture_path: Path, workspace_root: Path) -> dict[str, Any]:
     }
 
 
-def main():
+def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Mini eval-harness Phase 3")
@@ -95,7 +96,7 @@ def main():
     tool_calls = sorted([r["tool_calls"] for r in results])
     cost = sorted([r["cost_usd"] for r in results])
 
-    def median(lst):
+    def median(lst: list[Any]) -> Any:
         n = len(lst)
         if n == 0:
             return 0
@@ -116,16 +117,16 @@ def main():
     report_path = reports_dir / f"{run_id}.md"
     report_content = f"""# Eval Report {run_id}
 
-Date: {time.strftime('%Y-%m-%d %H:%M:%S')}
+Date: {time.strftime("%Y-%m-%d %H:%M:%S")}
 Workspace: {workspace_root}
 
 ## Aggregate Metrics (Phase 3 target: 124→30-40 steps, tokens ↓60%, tool-calls ↓50%)
 
-- Median tokens/task: {aggregate['median_tokens']}
-- Median tool-calls/task: {aggregate['median_tool_calls']}
-- Median cost USD/task: {aggregate['median_cost_usd']:.4f}
-- Pass rate: {aggregate['pass_rate']:.0%}
-- Total tasks: {aggregate['total_tasks']}
+- Median tokens/task: {aggregate["median_tokens"]}
+- Median tool-calls/task: {aggregate["median_tool_calls"]}
+- Median cost USD/task: {aggregate["median_cost_usd"]:.4f}
+- Pass rate: {aggregate["pass_rate"]:.0%}
+- Total tasks: {aggregate["total_tasks"]}
 
 ## Per-Task Results
 
@@ -133,9 +134,33 @@ Workspace: {workspace_root}
 |---------|------|---------|--------|------------|----------|-------------|
 """
     for r in results:
-        report_content += f"| {r['task_id']} | {r['role']} | {r['verdict']} | {r['tokens']} | {r['tool_calls']} | {r['cost_usd']:.4f} | {r['duration_ms']} |\n"
+        report_content += (
+            f"| {r['task_id']} | {r['role']} | {r['verdict']} | {r['tokens']} "
+            f"| {r['tool_calls']} | {r['cost_usd']:.4f} | {r['duration_ms']} |\n"
+        )
 
-    report_content += "\n## Trajectory Efficiency (tokens-per-task, re-fetch frequency)\n- Re-fetch frequency: measure how often agent re-reads files already processed — if frequent, compression too aggressive per cursor.directory plugin\n- Artifact trail: weakest dimension 2.2-2.5/5 — preserve explicitly files created/modified/read, function names, error messages\n\n## Verification Strength\n- Blackboard conflict detection: same base_commit concurrent → conflict_detected, different base → no conflict (Q2 policy)\n- Verifier subagent JSON PASS/FAIL, main sees only summary 500 tokens not 5k raw\n\n## State Consistency\n- PtyPool cd /tmp && pwd persists, export FOO=bar + echo $FOO → bar, ANSI stripped, Ctrl+C interrupts sleep 10\n- No global pool singleton, SessionState holds executor via DI, shared Server instance socket isolation fa_<run_id>, -J join wrapped lines, UUID sentinel per session\n\n## Safety Compliance\n- Secret isolation via scrubbed env, path containment, branch already checked out fail-fast BranchAlreadyCheckedOutError with git worktree list details\n- PinnedBuffer AGENTS.md + llms.txt exempt from compaction, re-injected verbatim (Governance Decay 47 tokens <0.5%)\n\n## Replayability\n- Events stored in ~/.fa/session-log/<run_id>/events.jsonl per ADR-7 trace-shape, plus .fa/blackboard/blackboard.jsonl append-only, .fa/telemetry/telemetry.jsonl <1k per line + artifact_id\n- Git-linked frames .fa/sessions/<run_id>.frame.json optional for institutional memory\n"""
+    # Split long text for line limits
+    report_content += """
+## Trajectory Efficiency (tokens-per-task, re-fetch frequency)
+- Re-fetch frequency: measure how often agent re-reads files already processed
+- Artifact trail: weakest dimension 2.2-2.5/5 — preserve explicitly files created/modified/read
+
+## Verification Strength
+- Blackboard conflict detection: same base_commit concurrent → conflict_detected
+- Verifier subagent JSON PASS/FAIL, main sees only summary 500 tokens not 5k raw
+
+## State Consistency
+- PtyPool cd /tmp && pwd persists, export FOO=bar + echo $FOO → bar, ANSI stripped
+- No global pool singleton, SessionState holds executor via DI, shared Server instance socket isolation fa_<id>
+
+## Safety Compliance
+- Secret isolation via scrubbed env, path containment, branch already checked out fail-fast
+- PinnedBuffer AGENTS.md + llms.txt exempt from compaction, re-injected verbatim
+
+## Replayability
+- Events stored in ~/.fa/session-log/<run_id>/events.jsonl per ADR-7 trace-shape
+- Git-linked frames .fa/sessions/<run_id>.frame.json optional for institutional memory
+"""
 
     report_path.write_text(report_content, encoding="utf-8")
     print(f"\nReport written to {report_path}")
@@ -145,14 +170,20 @@ Workspace: {workspace_root}
     leaderboard_path = Path("eval/leaderboard.md")
     leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
     if not leaderboard_path.exists():
-        leaderboard_path.write_text(
-            "| iteration_id | datestamp | median_tokens | median_tool_calls | median_cost_usd | pass_rate | report_path | changed_config |\n|---|---|---|---|---|---|---|---|\n",
-            encoding="utf-8",
+        header = (
+            "| iteration_id | datestamp | median_tokens | median_tool_calls "
+            "| median_cost_usd | pass_rate | report_path | changed_config |\n"
+            "|---|---|---|---|---|---|---|---|\n"
         )
+        leaderboard_path.write_text(header, encoding="utf-8")
     iteration_id = f"iter-{int(time.time())}"
     datestamp = time.strftime("%Y-%m-%d")
     changed_config = "runtime.mode=in_process, pty_pool_max_size=2, worktree_mode=shared"
-    line = f"| {iteration_id} | {datestamp} | {aggregate['median_tokens']} | {aggregate['median_tool_calls']} | {aggregate['median_cost_usd']:.4f} | {aggregate['pass_rate']:.0%} | {report_path} | {changed_config} |\n"
+    line = (
+        f"| {iteration_id} | {datestamp} | {aggregate['median_tokens']} | {aggregate['median_tool_calls']} "
+        f"| {aggregate['median_cost_usd']:.4f} | {aggregate['pass_rate']:.0%} | {report_path} "
+        f"| {changed_config} |\n"
+    )
     with open(leaderboard_path, "a", encoding="utf-8") as f:
         f.write(line)
     print(f"Leaderboard updated at {leaderboard_path}")

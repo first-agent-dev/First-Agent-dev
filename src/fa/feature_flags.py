@@ -29,6 +29,9 @@ class FeatureFlags:
     blackboard_enabled: bool = True
     telemetry_enabled: bool = True
     tool_batching_enabled: bool = True
+    subagent_spawning_enabled: bool = False
+    context_budget_enabled: bool = True
+    context_compaction_enabled: bool = False
     runtime_mode: str = "in_process"
     pty_pool_max_size: int = 2
     worktree_mode: str = "shared"
@@ -43,6 +46,9 @@ class FeatureFlags:
             "blackboard.enabled": self.blackboard_enabled,
             "telemetry.enabled": self.telemetry_enabled,
             "tool_batching.enabled": self.tool_batching_enabled,
+            "subagent_spawning_enabled": self.subagent_spawning_enabled,
+            "context_budget_enabled": self.context_budget_enabled,
+            "context_compaction_enabled": self.context_compaction_enabled,
             "runtime.mode": self.runtime_mode,
             "pty_pool.max_size": self.pty_pool_max_size,
             "worktree.mode": self.worktree_mode,
@@ -71,6 +77,9 @@ _KNOWN_FLAGS: dict[str, str] = {
     "blackboard.enabled": "bool",
     "telemetry.enabled": "bool",
     "tool_batching.enabled": "bool",
+    "subagent_spawning_enabled": "bool",
+    "context_budget_enabled": "bool",
+    "context_compaction_enabled": "bool",
     "runtime.mode": "str",
     "pty_pool.max_size": "int",
     "pty_pool_max_size": "int",
@@ -220,6 +229,9 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
         blackboard_enabled=_get_bool(found, "blackboard.enabled", [], True),
         telemetry_enabled=_get_bool(found, "telemetry.enabled", [], True),
         tool_batching_enabled=_get_bool(found, "tool_batching.enabled", [], True),
+        subagent_spawning_enabled=_get_bool(found, "subagent_spawning_enabled", [], False),
+        context_budget_enabled=_get_bool(found, "context_budget_enabled", [], True),
+        context_compaction_enabled=_get_bool(found, "context_compaction_enabled", [], False),
         runtime_mode=_get_str(found, "runtime.mode", [], "in_process"),
         pty_pool_max_size=_get_int(found, "pty_pool.max_size", ["pty_pool_max_size"], 2),
         worktree_mode=_get_str(found, "worktree.mode", ["worktree_mode"], "shared"),

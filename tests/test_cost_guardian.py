@@ -374,7 +374,7 @@ def test_guardian_end_to_end_through_run_session(tmp_path: Path) -> None:
                 "properties": {},
                 "additionalProperties": False,
             },
-            permission="read",
+            permission="workspace",
             handler=_handler,
         )
     )

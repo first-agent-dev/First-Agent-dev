@@ -2,13 +2,15 @@
 Blackboard — Typed Blackboard with Content Hashes + Transactional Semantics
 Phase 0.5 — Formal Shared Harness Substrate
 Senior eng: interface segregation, DI, feature flags, graceful degradation, thread safety, observable failures
-Senior refactor v3: full read/write conflict + assumption violated, query dict check, Q2 base_commit linear frontier policy, C901 <15 via extracted helpers
+Senior refactor v3: full read/write conflict + assumption violated, query dict check,
+Q2 base_commit linear frontier policy, C901 <15 via extracted helpers
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sys
 import threading
@@ -16,6 +18,8 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -78,7 +82,9 @@ class Conflict:
 
 
 def _should_check_conflict(new: BlackboardEntry, old: BlackboardEntry) -> bool:
-    """Q2 v0.1 linear chain: parent_id happens-before, same base_commit concurrent, different base serialized."""
+    """Q2 v0.1 linear chain: parent_id happens-before, same base_commit concurrent,
+    different base serialized.
+    """
     if new.parent_id == old.id:
         return False
     new_base = new.version_dependencies.get("base_commit")
@@ -130,6 +136,20 @@ def _build_conflict_reason(ww: set[str], rw: set[str], wr: set[str], assump_viol
     return "; ".join(parts) + " — concurrent without coordination"
 
 
+def _payload_matches_key(payload: Any, key: str | None) -> bool:
+    if key is None:
+        return True
+    if isinstance(payload, dict):
+        if key in payload or key in str(payload):
+            return True
+        if key in json.dumps(payload):
+            return True
+    else:
+        if key in json.dumps(payload):
+            return True
+    return False
+
+
 class Blackboard:
     """Append-only, content-addressed, queryable blackboard."""
 
@@ -139,65 +159,204 @@ class Blackboard:
         self.path = self.root / "blackboard.jsonl"
         self.lock = threading.Lock()
         self.path.touch(exist_ok=True)
+        self._init_db()
+
+    def _init_db(self) -> None:
+        import sqlite3
+
+        db_path = self.root / "session.db"
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=15.0)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            with conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS blackboard (
+                        id TEXT PRIMARY KEY,
+                        type TEXT,
+                        content_hash TEXT,
+                        toolchain_digest TEXT,
+                        schema_version TEXT,
+                        parent_id TEXT,
+                        read_set TEXT,
+                        write_set TEXT,
+                        assumptions TEXT,
+                        version_dependencies TEXT,
+                        timestamp TEXT,
+                        payload TEXT
+                    );
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_bb_type ON blackboard(type);")
+            conn.close()
+        except Exception as exc:  # noqa: BLE001 # best-effort
+            logger.warning("Failed to initialize SQLite Blackboard: %s", exc)
 
     def write(self, entry: BlackboardEntry) -> None:
         try:
+            # 1. Write to JSONL
             line = json.dumps(asdict(entry), ensure_ascii=False)
             with self.lock:
                 with open(self.path, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
-        except (OSError, ValueError) as e:
-            print(f"WARNING: Blackboard write failed {e}, continuing")
+
+            # 2. Write to SQLite3
+            import sqlite3
+
+            db_path = self.root / "session.db"
+            conn = sqlite3.connect(str(db_path), timeout=15.0)
+            with conn:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO blackboard (
+                        id, type, content_hash, toolchain_digest, schema_version, parent_id,
+                        read_set, write_set, assumptions, version_dependencies, timestamp, payload
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        entry.id,
+                        entry.type,
+                        entry.content_hash,
+                        entry.toolchain_digest,
+                        entry.schema_version,
+                        entry.parent_id,
+                        json.dumps(entry.read_set, ensure_ascii=False),
+                        json.dumps(entry.write_set, ensure_ascii=False),
+                        json.dumps(entry.assumptions, ensure_ascii=False),
+                        json.dumps(entry.version_dependencies, ensure_ascii=False),
+                        entry.timestamp,
+                        json.dumps(entry.payload, ensure_ascii=False),
+                    ),
+                )
+            conn.close()
+        except Exception as e:  # noqa: BLE001 # graceful degradation
+            logger.warning("Blackboard write failed: %s", e)
 
     def read(self, id: str) -> BlackboardEntry | None:
-        with self.lock:
-            if not self.path.exists():
-                return None
-            try:
-                with open(self.path, encoding="utf-8") as f:
-                    for line in f:
-                        try:
-                            data = json.loads(line)
-                            if data.get("id") == id:
-                                return BlackboardEntry(**data)
-                        except json.JSONDecodeError as exc:
-                            print(f"WARNING: Blackboard read JSON decode failed: {exc}, skipping line")
-                            continue
-            except OSError as exc:
-                print(f"WARNING: Blackboard read failed {exc}, continuing")
-                return None
+        import sqlite3
+
+        db_path = self.root / "session.db"
+        if not db_path.exists():
+            return None
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=15.0)
+            cur = conn.execute(
+                """
+                SELECT id, type, content_hash, toolchain_digest, schema_version, parent_id,
+                       read_set, write_set, assumptions, version_dependencies, timestamp, payload
+                FROM blackboard WHERE id = ?
+                """,
+                (id,),
+            )
+            row = cur.fetchone()
+            conn.close()
+            if row is not None:
+                return BlackboardEntry(
+                    id=row[0],
+                    type=row[1],
+                    content_hash=row[2],
+                    toolchain_digest=row[3],
+                    schema_version=row[4],
+                    parent_id=row[5],
+                    read_set=json.loads(row[6]),
+                    write_set=json.loads(row[7]),
+                    assumptions=json.loads(row[8]),
+                    version_dependencies=json.loads(row[9]),
+                    timestamp=row[10],
+                    payload=json.loads(row[11]),
+                )
+        except Exception as exc:  # noqa: BLE001 # fallback to JSONL reading
+            logger.warning("Failed to read Blackboard from SQLite: %s, falling back to JSONL", exc)
+            with self.lock:
+                if not self.path.exists():
+                    return None
+                try:
+                    with open(self.path, encoding="utf-8") as f:
+                        for line in f:
+                            try:
+                                data = json.loads(line)
+                                if data.get("id") == id:
+                                    return BlackboardEntry(**data)
+                            except json.JSONDecodeError as exc2:
+                                logger.warning("Blackboard read JSON decode failed: %s", exc2)
+                                continue
+                except OSError as exc2:
+                    logger.warning("Blackboard read failed: %s", exc2)
+                    return None
         return None
 
     def query(self, type: str | None = None, key: str | None = None) -> list[BlackboardEntry]:
         """Queryable: filter by type and optional key in payload."""
-        results: list[BlackboardEntry] = []
-        with self.lock:
-            if not self.path.exists():
-                return results
-            try:
-                with open(self.path, encoding="utf-8") as f:
-                    for line in f:
-                        try:
-                            data = json.loads(line)
-                            if type is not None and data.get("type") != type:
-                                continue
-                            if key is not None:
+        import sqlite3
+
+        db_path = self.root / "session.db"
+        if not db_path.exists():
+            return []
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=15.0)
+            if type is not None:
+                cur = conn.execute(
+                    """
+                    SELECT id, type, content_hash, toolchain_digest, schema_version, parent_id,
+                           read_set, write_set, assumptions, version_dependencies, timestamp, payload
+                    FROM blackboard WHERE type = ? ORDER BY timestamp ASC
+                    """,
+                    (type,),
+                )
+            else:
+                cur = conn.execute(
+                    """
+                    SELECT id, type, content_hash, toolchain_digest, schema_version, parent_id,
+                           read_set, write_set, assumptions, version_dependencies, timestamp, payload
+                    FROM blackboard ORDER BY timestamp ASC
+                    """
+                )
+            results = []
+            for row in cur.fetchall():
+                payload = json.loads(row[11])
+                if not _payload_matches_key(payload, key):
+                    continue
+                results.append(
+                    BlackboardEntry(
+                        id=row[0],
+                        type=row[1],
+                        content_hash=row[2],
+                        toolchain_digest=row[3],
+                        schema_version=row[4],
+                        parent_id=row[5],
+                        read_set=json.loads(row[6]),
+                        write_set=json.loads(row[7]),
+                        assumptions=json.loads(row[8]),
+                        version_dependencies=json.loads(row[9]),
+                        timestamp=row[10],
+                        payload=payload,
+                    )
+                )
+            conn.close()
+            return results
+        except Exception as exc:  # noqa: BLE001 # fallback to JSONL query
+            logger.warning("Failed to query Blackboard from SQLite: %s, falling back to JSONL", exc)
+            results = []
+            with self.lock:
+                if not self.path.exists():
+                    return results
+                try:
+                    with open(self.path, encoding="utf-8") as f:
+                        for line in f:
+                            try:
+                                data = json.loads(line)
+                                if type is not None and data.get("type") != type:
+                                    continue
                                 payload = data.get("payload", {})
-                                if isinstance(payload, dict):
-                                    if key not in payload and key not in str(payload):
-                                        if key not in json.dumps(payload):
-                                            continue
-                                else:
-                                    if key not in json.dumps(payload):
-                                        continue
-                            results.append(BlackboardEntry(**data))
-                        except json.JSONDecodeError as exc:
-                            print(f"WARNING: Blackboard query JSON decode failed: {exc}, skipping")
-                            continue
-            except OSError as exc:
-                print(f"WARNING: Blackboard query failed {exc}, continuing")
-                return results
-        return results
+                                if not _payload_matches_key(payload, key):
+                                    continue
+                                results.append(BlackboardEntry(**data))
+                            except json.JSONDecodeError as exc2:
+                                logger.warning("Blackboard query JSON decode failed: %s", exc2)
+                                continue
+                except OSError as exc2:
+                    logger.warning("Blackboard query failed: %s", exc2)
+                    return results
+            return results
 
     def detect_conflict(self, new_entry: BlackboardEntry) -> list[Conflict]:
         """Full conflict detection per v3 spec + Q2 linear chain policy."""

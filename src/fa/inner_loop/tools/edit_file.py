@@ -175,7 +175,7 @@ def build_edit_file_tool(workspace_root: Path) -> ToolSpec:
         new_text = text[:start] + new_string + text[end:]
 
         # Transaction handling
-        session, blackboard, transaction = _get_session_and_blackboard()
+        _session, blackboard, transaction = _get_session_and_blackboard()
         try:
             if transaction is not None:
                 rel = str(path.relative_to(root))
