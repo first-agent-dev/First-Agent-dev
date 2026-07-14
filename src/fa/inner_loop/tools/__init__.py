@@ -8,6 +8,7 @@ Phase 1: PROFILES dynamic toolset wired — researcher 600 tokens vs full 3000
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolRegistry
@@ -16,6 +17,8 @@ from fa.inner_loop.tools.prepare_pr import build_prepare_pr_tool
 from fa.inner_loop.tools.read_file import build_read_file_tool
 from fa.inner_loop.tools.run_bash import build_run_bash_tool
 from fa.inner_loop.tools.write_file import build_write_file_tool
+
+logger = logging.getLogger(__name__)
 
 try:
     from fa.inner_loop.tools.glob import build_glob_tool
@@ -26,7 +29,7 @@ except ImportError as exc:
 try:
     from fa.inner_loop.tools.grep import build_grep_tool
 except ImportError as exc:
-    print(f"WARNING: Failed to import grep tool: {exc}")
+    logger.warning("Failed to import grep tool: %s", exc)
     build_grep_tool = None
 
 try:
