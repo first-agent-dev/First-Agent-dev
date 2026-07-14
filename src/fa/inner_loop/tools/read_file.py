@@ -62,6 +62,7 @@ def _read_pdf_text(path: Path) -> str | None:
         if len(full.strip()) > 50:
             return full
     except ImportError:
+        # pypdf is optional; if unavailable, silently fall through to return None.
         pass
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: pypdf failed for {path}: {exc}")
