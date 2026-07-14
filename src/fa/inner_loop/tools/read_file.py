@@ -29,6 +29,7 @@ def _read_pdf_text(path: Path) -> str | None:
         if len(full.strip()) > 50:
             return full
     except ImportError:
+        # pymupdf is optional; fall through to pdfminer/pypdf fallback extractors.
         pass
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         print(f"WARNING: pymupdf failed for {path}: {exc}")
