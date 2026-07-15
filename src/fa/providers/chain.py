@@ -60,6 +60,20 @@ LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0"})  # noqa: S104
 RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset({"__internal__", "__metadata__", "__fallback_marker__"})
 
 
+def _validate_context_budget_settings(config: ChainConfig) -> None:
+    if config.context_limit <= 0:
+        raise ConfigurationError(f"role {config.role!r}: context_limit must be a positive integer")
+    if config.compaction_threshold is None:
+        return
+    if config.compaction_threshold <= 0:
+        raise ConfigurationError(f"role {config.role!r}: compaction_threshold must be a positive integer")
+    if config.compaction_threshold > config.context_limit:
+        raise ConfigurationError(
+            f"role {config.role!r}: compaction_threshold ({config.compaction_threshold}) "
+            f"cannot exceed context_limit ({config.context_limit})"
+        )
+
+
 @dataclass(frozen=True)
 class ChainEntry:
     """One row of a role's ``chain:`` config (ADR-9 §1).
@@ -90,6 +104,8 @@ class ChainConfig:
     model: str
     family: str
     chain: tuple[ChainEntry, ...]
+    context_limit: int = 150000
+    compaction_threshold: int | None = None
 
     def validate(
         self,
@@ -115,6 +131,7 @@ class ChainConfig:
         environ = env if env is not None else os.environ
         if not self.chain:
             raise ConfigurationError(f"role {self.role!r}: empty chain — role not callable")
+        _validate_context_budget_settings(self)
         for index, entry in enumerate(self.chain):
             label = f"role {self.role!r} chain[{index}]"
             if entry.provider in RESERVED_PROVIDER_NAMES:
@@ -437,9 +454,20 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
     # ``FamilyExtractionError`` for any override not in
     # :data:`KNOWN_FAMILIES`, which would reject custom /
     # not-yet-known family names that are legal in a v0.1 config.
+    context_limit_raw = raw.get("context_limit")
+    compaction_threshold_raw = raw.get("compaction_threshold")
+    try:
+        context_limit = int(context_limit_raw) if context_limit_raw is not None else 150000
+        compaction_threshold = int(compaction_threshold_raw) if compaction_threshold_raw is not None else None
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(
+            f"role {role!r}: context_limit and compaction_threshold must be integers"
+        ) from exc
     return ChainConfig(
         role=role,
         model=str(raw.get("model") or ""),
         family=str(raw.get("family") or "").strip().lower(),
         chain=entries,
+        context_limit=context_limit,
+        compaction_threshold=compaction_threshold,
     )

@@ -126,10 +126,8 @@ class SubagentRunner:
             # If include_plans flag True, append latest 3 plan entries from blackboard (600 tokens)
             if include_plans:
                 try:
-                    from fa.blackboard.blackboard import Blackboard
-
-                    bb = Blackboard(self.session_root / ".fa" / "blackboard")
-                    plans = bb.query(type="plan")
+                    bb = getattr(session, "blackboard", None) if session is not None else None
+                    plans = bb.query(type="plan") if bb is not None else []
                     # Latest 3
                     for plan in plans[-3:]:
                         preview = (

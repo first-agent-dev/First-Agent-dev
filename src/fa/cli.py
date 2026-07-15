@@ -1696,10 +1696,10 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     resume = getattr(args, "resume", False)
 
     # When resuming, inject the previous session's draft content as
-    # system-prompt extra so the LLM sees the existing plan/work-log
-    # from turn 1. This bridges the cross-session continuity gap:
-    # the draft lives under ~/.fa/session-log/ (not /workspace) so
-    # fs.read_file cannot reach it, but the system prompt can.
+    # mutable memory-summary context so the LLM sees the existing
+    # plan/work-log from turn 1 without promoting it into pinned
+    # standing governance. The draft lives under ~/.fa/session-log/
+    # (not /workspace) so fs.read_file cannot reach it directly.
     resume_draft_text: str = ""
     if resume and draft_path.is_file():
         try:
@@ -1798,7 +1798,8 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         acting_family=chain_config.family,
         limits=limits,
         max_turns=args.max_turns,
-        system_prompt_extra=resume_draft_text,
+        system_prompt_extra="",
+        initial_memory_summary=resume_draft_text,
         temperature=session_temperature,
         redactor=redactor,
         output=output_bus,

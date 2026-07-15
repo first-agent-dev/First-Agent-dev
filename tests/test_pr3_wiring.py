@@ -82,6 +82,36 @@ def test_drive_session_uses_prompt_composer(tmp_path: Path, mock_session_state: 
     assert messages[2].get("cache_control") == {"type": "ephemeral"}
 
 
+def test_openai_prompt_cache_key_forwarded_into_request_extras(
+    tmp_path: Path, mock_session_state: SessionState
+) -> None:
+    mock_chain = MagicMock(spec=ProviderChain)
+    mock_chain.config = MagicMock(spec=ChainConfig)
+    mock_chain.config.context_limit = 100000
+    mock_chain.config.compaction_threshold = 80000
+    mock_chain.config.model = "test-model"
+    mock_chain.config.family = "openai"
+
+    mock_chain.request.return_value = _mock_success_response("cache-key forwarded")
+
+    from fa.inner_loop.hooks import HookRegistry
+
+    outcome = drive_session(
+        "Test task",
+        provider_chain=mock_chain,
+        registry=ToolRegistry(),
+        hooks=HookRegistry(),
+        state=mock_session_state,
+        max_turns=1,
+    )
+
+    assert outcome.exit_code == 0
+    request_info = mock_chain.request.call_args[0][0]
+    assert "prompt_cache_key" in request_info.extras
+    assert request_info.extras["prompt_cache_retention"] == "1h"
+
+
+
 def test_cache_headers_stripped_when_disabled(tmp_path: Path) -> None:
     """If prompt_caching feature flag is disabled, cache_control headers must be stripped."""
     log = EventLog(tmp_path / "events.jsonl", run_id="test-pr3-disabled")
@@ -119,6 +149,7 @@ def test_cache_headers_stripped_when_disabled(tmp_path: Path) -> None:
     # Verify no cache_control headers are present anywhere in the requested messages
     for msg in messages:
         assert "cache_control" not in msg
+    assert request_info.extras == {}
 
 
 def test_prompt_composer_ast_invariants() -> None:

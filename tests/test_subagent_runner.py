@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from fa.feature_flags import FeatureFlags
 from fa.inner_loop.context import set_current_session
 from fa.inner_loop.state import SessionState
 from fa.inner_loop.subagent_envelope import SubagentEnvelope
@@ -33,10 +34,8 @@ def test_subagent_runner_limits_and_spawn(tmp_path: Path, mock_session_state: Se
     assert limits is not None
     assert limits.max_subagent_spawns_per_session == 3
 
-    # Initial spawns is 0
     assert mock_session_state.get_subagent_spawns() == 0
 
-    # First check succeeds and increments count
     runner._check_spawn_limit()
     assert mock_session_state.get_subagent_spawns() == 1
 
@@ -46,10 +45,28 @@ def test_subagent_runner_limits_and_spawn(tmp_path: Path, mock_session_state: Se
     runner._check_spawn_limit()
     assert mock_session_state.get_subagent_spawns() == 3
 
-    # 4th check raises RuntimeError
     with pytest.raises(RuntimeError) as exc_info:
         runner._check_spawn_limit()
     assert "Subagent spawn limit" in str(exc_info.value)
+
+
+def test_subagent_runner_honors_feature_flag_spawn_limit(tmp_path: Path) -> None:
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="test-subagent-run-limit-1",
+        feature_flags=FeatureFlags(subagent_spawning_enabled=True, max_subagent_spawns_per_session=1),
+    )
+    token = set_current_session(state)
+    try:
+        runner = SubagentRunner(session_root=tmp_path)
+        runner._check_spawn_limit()
+        assert state.get_subagent_spawns() == 1
+        with pytest.raises(RuntimeError):
+            runner._check_spawn_limit()
+    finally:
+        from fa.inner_loop.context import reset_current_session
+
+        reset_current_session(token)
 
 
 def test_subagent_runner_instance_counter_fallback(tmp_path: Path) -> None:
@@ -119,11 +136,10 @@ def test_append_to_worklog(tmp_path: Path) -> None:
 
 def test_run_stateless(tmp_path: Path, mock_session_state: SessionState) -> None:
     runner = SubagentRunner(session_root=tmp_path, timeout=5)
-    # Run a simple bash command
     env_extra = {"TEST_VAR": "hello-subagent"}
     envelope = runner.run_stateless(
         task_id="task-test-run",
-        command="echo $TEST_VAR",
+        command='test "$TEST_VAR" = hello-subagent',
         role="verifier",
         workdir=tmp_path,
         env_extra=env_extra,
@@ -132,11 +148,25 @@ def test_run_stateless(tmp_path: Path, mock_session_state: SessionState) -> None
     assert envelope.task_id == "task-test-run"
     assert envelope.type == "verifier"
     assert envelope.exit_code == 0
-    assert "hello-subagent" in envelope.summary or "PASS" in envelope.summary
+    assert envelope.summary == "PASS"
 
-    # Verify artifact was written
     artifact_file = tmp_path / ".fa" / "subagents" / "task-test-run.json"
     assert artifact_file.exists()
     artifact_data = json.loads(artifact_file.read_text(encoding="utf-8"))
     assert artifact_data["task_id"] == "task-test-run"
     assert artifact_data["exit_code"] == 0
+
+
+def test_run_stateless_researcher_role_preserved(tmp_path: Path, mock_session_state: SessionState) -> None:
+    runner = SubagentRunner(session_root=tmp_path, timeout=5)
+    envelope = runner.run_stateless(
+        task_id="task-research",
+        command="printf 'source summary'",
+        role="researcher",
+        workdir=tmp_path,
+    )
+
+    assert envelope.task_id == "task-research"
+    assert envelope.type == "researcher"
+    assert envelope.exit_code == 0
+    assert "source summary" in envelope.summary

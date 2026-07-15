@@ -79,8 +79,38 @@ def test_drive_session_budget_warn_event(tmp_path: Path, mock_session_state: Ses
     assert warn_events[0].content["action"] == "warn"
 
 
+def test_drive_session_stage2_zone_does_not_hard_stop_when_compaction_disabled(
+    tmp_path: Path, mock_session_state: SessionState
+) -> None:
+    mock_chain = MagicMock(spec=ProviderChain)
+    mock_chain.config = MagicMock(spec=ChainConfig)
+    mock_chain.config.context_limit = 100000
+    mock_chain.config.compaction_threshold = 80000
+    mock_chain.config.model = "test-model"
+    mock_chain.config.family = "openai"
+    mock_chain.request.return_value = _mock_success_response("stage2 zone allowed")
+
+    # ~85k estimated tokens => Stage 2 zone, but not Stage 3.
+    task = "A" * 340000
+
+    outcome = drive_session(
+        task,
+        provider_chain=mock_chain,
+        registry=ToolRegistry(),
+        hooks=MagicMock(),
+        state=mock_session_state,
+        max_turns=1,
+    )
+
+    assert outcome.exit_code == 0
+    assert mock_chain.request.call_count == 1
+    events = mock_session_state.log.read_all()
+    assert not [e for e in events if e.kind == "context_budget_hard_stop"]
+
+
+
 def test_drive_session_budget_hard_stop(tmp_path: Path, mock_session_state: SessionState) -> None:
-    """Reaching 90% capacity with compaction disabled must hard-stop immediately without LLM request."""
+    """Reaching the Stage 3 zone with compaction disabled must hard-stop immediately without LLM request."""
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = MagicMock(spec=ChainConfig)
     mock_chain.config.context_limit = 100000
@@ -88,7 +118,7 @@ def test_drive_session_budget_hard_stop(tmp_path: Path, mock_session_state: Sess
     mock_chain.config.model = "test-model"
     mock_chain.config.family = "openai"
 
-    # Generate a task with ~95,000 tokens (380,000 chars) to trigger 90%+ hard-stop
+    # Generate a task with ~95,000 tokens (380,000 chars) to trigger Stage 3 hard-stop.
     task = "A" * 380000
 
     outcome = drive_session(
@@ -100,18 +130,14 @@ def test_drive_session_budget_hard_stop(tmp_path: Path, mock_session_state: Sess
         max_turns=1,
     )
 
-    # Must exit with code 1 (failure) and stop reason 'context_budget_hard_stop'
     assert outcome.exit_code == 1
     assert outcome.stop_reason == "context_budget_hard_stop"
-
-    # Verify provider was NEVER requested (hard budget gate)
     assert mock_chain.request.call_count == 0
 
     events = mock_session_state.log.read_all()
-    # Assert proper database event logs written
     hard_stop_events = [e for e in events if e.kind == "context_budget_hard_stop"]
     assert len(hard_stop_events) == 1
-    assert hard_stop_events[0].content["action"] == "require_compaction"
+    assert hard_stop_events[0].content["action"] == "stage3"
 
     stopped_events = [
         e for e in events if e.kind == "run_stopped" and e.content.get("reason") == "context_budget_hard_stop"

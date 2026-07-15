@@ -201,10 +201,42 @@ def test_mid_session_file_change_reloads(tmp_path: Path, mock_session_state: Ses
     assert outcome.exit_code == 0
     assert len(captured_prompts) == 2
 
-    # Turn 1 payload must have V1
     system_msgs_t1 = [msg["content"] for msg in captured_prompts[0] if msg["role"] == "system"]
     assert any("Rule V1: Initial guideline" in msg for msg in system_msgs_t1)
 
-    # Turn 2 payload must have dynamically reloaded V2!
     system_msgs_t2 = [msg["content"] for msg in captured_prompts[1] if msg["role"] == "system"]
     assert any("Rule V2: Updated guideline mid-run" in msg for msg in system_msgs_t2)
+
+
+
+def test_resume_draft_is_memory_summary_not_pinned(tmp_path: Path, mock_session_state: SessionState) -> None:
+    agents_file = tmp_path / "AGENTS.md"
+    agents_file.write_text("Rule: standing governance", encoding="utf-8")
+
+    mock_chain = MagicMock(spec=ProviderChain)
+    mock_chain.config = MagicMock(spec=ChainConfig)
+    mock_chain.config.context_limit = 100000
+    mock_chain.config.compaction_threshold = 80000
+    mock_chain.config.model = "test-model"
+    mock_chain.config.family = "openai"
+    mock_chain.request.return_value = _mock_success_response("done")
+
+    from fa.inner_loop.hooks import HookRegistry
+
+    outcome = drive_session(
+        "Test task",
+        provider_chain=mock_chain,
+        registry=ToolRegistry(),
+        hooks=HookRegistry(),
+        state=mock_session_state,
+        max_turns=1,
+        initial_memory_summary="Resume draft from previous session",
+    )
+
+    assert outcome.exit_code == 0
+    request_info = mock_chain.request.call_args[0][0]
+    system_msgs = [msg["content"] for msg in request_info.messages if msg["role"] == "system"]
+    assert any("Memory summary:\nResume draft from previous session" in msg for msg in system_msgs)
+    pinned_msgs = [msg for msg in system_msgs if "STANDING PROFILE GUIDELINES" in msg]
+    assert not pinned_msgs
+    assert any("STANDING CONSTRAINT: AGENTS.md" in msg for msg in system_msgs)

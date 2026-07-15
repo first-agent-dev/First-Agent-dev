@@ -60,7 +60,13 @@ def estimate_tokens(
 
 
 class ContextBudget:
-    """Progressive context gating and thrashing prevention."""
+    """Progressive context gating and thrashing prevention.
+
+    Stage semantics:
+    - warn: operator signal only
+    - stage2: deterministic observation masking zone
+    - stage3: LLM compaction zone / hard-stop zone if compaction unavailable
+    """
 
     def __init__(
         self,
@@ -68,38 +74,54 @@ class ContextBudget:
         configured_threshold: int | None = None,
     ):
         self.limit_tokens = limit_tokens
-        # Dynamic fallback per ADR-17: min(80% limit, 150k)
+        # Dynamic fallback per ADR-17 / §9.4 for Stage 2.
         if configured_threshold is not None:
-            self.threshold = configured_threshold
+            self.stage2_threshold = configured_threshold
         else:
-            self.threshold = min(int(limit_tokens * 0.80), 150000)
+            self.stage2_threshold = min(int(limit_tokens * 0.80), 150000)
+        self.threshold = self.stage2_threshold
+        self.stage3_threshold = min(max(self.stage2_threshold + 1, int(limit_tokens * 0.90)), limit_tokens)
 
         self.consecutive_compactions = 0
         self.last_reclaimed_ratio = 1.0
 
     def check(self, current_tokens: int) -> dict[str, Any]:
-        """Check current tokens against budget.
-
-        Returns diagnostics on whether to warn (70%) or require compaction (80%).
-        """
+        """Classify current tokens against the progressive Stage C ladder."""
         ratio = current_tokens / self.limit_tokens if self.limit_tokens > 0 else 0.0
-        warn_threshold = 0.70
-        hard_threshold = 0.80
+        warn_threshold_tokens = min(int(self.limit_tokens * 0.70), int(self.stage2_threshold * 0.875))
+        warn_threshold_ratio = (
+            warn_threshold_tokens / self.limit_tokens if self.limit_tokens > 0 else 0.0
+        )
+        stage2_threshold_ratio = (
+            self.stage2_threshold / self.limit_tokens if self.limit_tokens > 0 else 0.0
+        )
+        stage3_threshold_ratio = (
+            self.stage3_threshold / self.limit_tokens if self.limit_tokens > 0 else 0.0
+        )
 
         action = "allow"
         message = "Context budget is healthy."
 
-        if ratio >= hard_threshold:
-            action = "require_compaction"
+        if current_tokens >= self.stage3_threshold:
+            action = "stage3"
             message = (
-                f"Context budget CRITICAL: {current_tokens} tokens ({ratio:.0%}) "
-                f"exceeds hard threshold {hard_threshold:.0%}. Compaction required!"
+                f"Context budget critical: {current_tokens} tokens ({ratio:.0%}) "
+                f"exceeds Stage 3 threshold {self.stage3_threshold} tokens "
+                f"({stage3_threshold_ratio:.0%}). LLM compaction required."
             )
-        elif ratio >= warn_threshold:
+        elif current_tokens >= self.stage2_threshold:
+            action = "stage2"
+            message = (
+                f"Context budget high: {current_tokens} tokens ({ratio:.0%}) "
+                f"exceeds Stage 2 threshold {self.stage2_threshold} tokens "
+                f"({stage2_threshold_ratio:.0%}). Observation masking recommended."
+            )
+        elif current_tokens >= warn_threshold_tokens:
             action = "warn"
             message = (
                 f"Context budget warning: {current_tokens} tokens ({ratio:.0%}) "
-                f"exceeds warning threshold {warn_threshold:.0%}. Consider pruning."
+                f"exceeds warning threshold {warn_threshold_tokens} tokens ({warn_threshold_ratio:.0%}). "
+                "Consider pruning."
             )
 
         return {
@@ -109,6 +131,9 @@ class ContextBudget:
             "current_tokens": current_tokens,
             "limit_tokens": self.limit_tokens,
             "threshold": self.threshold,
+            "warning_threshold": warn_threshold_tokens,
+            "stage2_threshold": self.stage2_threshold,
+            "stage3_threshold": self.stage3_threshold,
         }
 
     def record_compaction_attempt(self, tokens_before: int, tokens_after: int) -> bool:

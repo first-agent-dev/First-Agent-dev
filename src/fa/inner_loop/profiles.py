@@ -24,7 +24,7 @@ class RoleProfile:
     max_tokens: int
     stateless: bool
     globs: list[str] = field(default_factory=list)
-    alwaysApply: bool = False
+    alwaysApply: bool = False  # noqa: N815 - config surface preserves external key casing
     system_prompt_key: str | None = None
     bash_impl: str | None = None
 
@@ -72,7 +72,10 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
         "bash_impl": "stateful",
     },
     "planner": {
-        "description": "Architect/Planner, read-only analysis + limited write to research docs for filesystem-canon plans",
+        "description": (
+            "Architect/Planner, read-only analysis + limited write to research docs "
+            "for filesystem-canon plans"
+        ),
         "tools": ["fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep", "fs.write_file"],
         "max_tokens": 1000,
         "stateless": True,
@@ -143,7 +146,10 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
 
                         return ToolResult.fail(
                             "path_denied",
-                            f"Planner write_file limited to {allowed_prefixes}, got '{p}' — use implementer role for src/ writes",
+                            (
+                                f"Planner write_file limited to {allowed_prefixes}, got '{p}' — "
+                                "use implementer role for src/ writes"
+                            ),
                             retryable=False,
                         )
                 except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
@@ -200,7 +206,7 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
     # edit_file may not exist yet, placeholder
     try:
         # Try to import if exists in future
-        from fa.inner_loop.tools.edit_file import build_edit_file_tool  # type: ignore
+        from fa.inner_loop.tools.edit_file import build_edit_file_tool  # type: ignore[import-not-found]
 
         builders["fs.edit_file"] = lambda: build_edit_file_tool(root)
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable, edit_file optional
@@ -214,9 +220,8 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
             build_usage_tool,
         )
 
-        event_log = root / ".fa" / "events.jsonl"
-        builders["fs.chronicle_search"] = lambda: build_chronicle_search_tool(event_log)
-        builders["fs.usage"] = lambda: build_usage_tool(event_log)
+        builders["fs.chronicle_search"] = lambda: build_chronicle_search_tool()
+        builders["fs.usage"] = lambda: build_usage_tool()
         builders["fs.list_tasks"] = lambda: build_list_tasks_tool()
     except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
         pass

@@ -112,6 +112,34 @@ def test_run_session_executes_tool_through_hooks(tmp_path: Path) -> None:
     assert all(event.ts.endswith("Z") for event in events)
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_run_session_run_bash_is_stateful_when_pty_runtime_is_available(tmp_path: Path) -> None:
+    registry = build_baseline_registry(tmp_path)
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="test-stateful",
+        log=EventLog(tmp_path / "events.jsonl"),
+    )
+
+    results = run_session(
+        (
+            ToolCall(name="fs.run_bash", params={"command": "export FOO=bar"}, call_id="tc-1"),
+            ToolCall(name="fs.run_bash", params={"command": 'printf %s "$FOO"'}, call_id="tc-2"),
+        ),
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert len(results) == 2
+    assert results[0].error is None
+    assert results[1].error is None
+    assert results[1].result is not None
+    assert results[1].result["stdout"] == "bar"
+
+
 def test_run_session_records_hook_denial(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path)
     hooks = HookRegistry()

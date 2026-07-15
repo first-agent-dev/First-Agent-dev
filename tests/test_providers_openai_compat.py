@@ -115,6 +115,30 @@ def test_request_strips_trailing_slash_on_base_url() -> None:
     assert transport.last_url == "https://api.fireworks.ai/inference/v1/chat/completions"
 
 
+def test_request_forwards_prompt_cache_fields_from_extras() -> None:
+    transport = FakeTransport(
+        response=TransportResponse(
+            status=200,
+            body={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}], "usage": {}},
+        )
+    )
+    provider = OpenAICompatProvider(transport=transport)
+    provider.request(
+        RequestInfo(
+            model_slug="deepseek/deepseek-chat-v3",
+            messages=({"role": "user", "content": "hi"},),
+            extras={"prompt_cache_key": "cache-key", "prompt_cache_retention": "1h"},
+        ),
+        base_url="https://openrouter.ai/api/v1",
+        api_key="k",
+        timeout_seconds=60.0,
+        transport_retries=0,
+        extra_headers={},
+    )
+    assert transport.last_body["prompt_cache_key"] == "cache-key"
+    assert transport.last_body["prompt_cache_retention"] == "1h"
+
+
 def test_response_preserves_tool_calls_and_provider_extras() -> None:
     transport = FakeTransport(
         response=TransportResponse(

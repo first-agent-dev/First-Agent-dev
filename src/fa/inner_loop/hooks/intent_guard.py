@@ -203,7 +203,7 @@ def _merge_projected_paths(staged: list[StagedPath], projected: tuple[StagedPath
 
 
 def _bash_analysis_for_call(call: ToolCall, repo_root: Path) -> BashIntentAnalysis | None:
-    if call.name != "fs.run_bash":
+    if call.name not in {"fs.run_bash", "fs.spawn_subagent"}:
         return None
     command = call.params.get("command")
     if not isinstance(command, str) or not command.strip():

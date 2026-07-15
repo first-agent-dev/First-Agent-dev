@@ -1,6 +1,5 @@
 """
-Tests for ADR-13: StatefulPtyManager persistence, ANSI stripping, Ctrl+C, defensive worktree checks
-Prior art: OpenHands, OpenCode ShellPool, pi-persistent-term
+Tests for ADR-13: StatefulPtyManager persistence, ANSI stripping, Ctrl+C, defensive worktree checks.
 """
 
 from pathlib import Path
@@ -41,9 +40,28 @@ def test_ansi_strip():
     session = pool.acquire("test_ansi")
     # ls --color=always emits ANSI, should be stripped
     result = session.run("ls --color=always /tmp | head -n 1")
-    # ANSI codes like \x1b[ should not be in output after stripping
     assert "\x1b[" not in result.stdout, f"ANSI not stripped: {result.stdout!r}"
     pool.kill("test_ansi")
+
+
+def test_resolve_cr_basic() -> None:
+    from fa.runtime.pty_pool import resolve_cr
+
+    assert resolve_cr("foo\rbar\n") == "bar"
+    assert resolve_cr("12%\r34%\r56%") == "56%"
+
+
+
+def test_carriage_returns_cleaned_in_session_output():
+    from fa.runtime.pty_pool import PtyPool
+
+    pool = PtyPool(max_size=1, base_cwd=Path("/tmp"))
+    session = pool.acquire("test_cr")
+    result = session.run("printf 'foo\\rbar\\n'")
+    assert "\r" not in result.stdout
+    assert result.stdout.endswith("bar")
+    pool.kill("test_cr")
+
 
 
 def test_ctrl_c():

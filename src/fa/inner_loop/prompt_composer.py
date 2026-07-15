@@ -158,11 +158,22 @@ def to_anthropic_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any
 
     messages: list[dict[str, Any]] = []
     for i, msg in enumerate(parts.cacheable):
-        # Anchor at system prompt (index 0), tool definitions (index 2), and final cacheable message
+        # Anchor at system prompt (index 0), tool definitions (index 2), and final cacheable message.
         if i in (0, 2, len(parts.cacheable) - 1):
             msg = {**msg, "cache_control": {"type": "ephemeral"}}
         messages.append(msg)
-    messages.extend(parts.non_cacheable)
+
+    memory_anchor_applied = False
+    for msg in parts.non_cacheable:
+        if (
+            not memory_anchor_applied
+            and msg.get("role") == "system"
+            and isinstance(msg.get("content"), str)
+            and str(msg.get("content")).startswith("Memory summary:\n")
+        ):
+            msg = {**msg, "cache_control": {"type": "ephemeral"}}
+            memory_anchor_applied = True
+        messages.append(msg)
     return {"messages": messages, "_cache_key": cache_key}
 
 

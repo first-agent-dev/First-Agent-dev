@@ -16,11 +16,17 @@ logger = logging.getLogger(__name__)
 
 
 class PinnedBuffer:
-    """Implements standing instruction pinning to eliminate Governance Decay."""
+    """Implements standing instruction pinning to eliminate Governance Decay.
+
+    Hashes are recalculated on every refresh and embedded into the extracted
+    text as deterministic integrity markers. The buffer always reflects the
+    current on-disk state of pinned files: changed files reload, disappeared
+    files are removed from the cache and warned about.
+    """
 
     def __init__(self, workspace_root: Path):
         self.workspace_root = Path(workspace_root).resolve()
-        # Standing target files that contain critical constraints
+        # Standing target files that contain critical constraints.
         self.target_files = [
             "AGENTS.md",
             "knowledge/llms.txt",
@@ -30,17 +36,35 @@ class PinnedBuffer:
         self._hashes: dict[str, str] = {}
 
     def refresh(self) -> None:
-        """Scan and cache the raw contents and hashes of the pinned files."""
+        """Scan pinned files and replace the cache with current on-disk state."""
+        previous_hashes = dict(self._hashes)
+        previous_paths = set(self._cache)
+        new_cache: dict[str, str] = {}
+        new_hashes: dict[str, str] = {}
+
         for rel_path in self.target_files:
             fp = self.workspace_root / rel_path
-            if fp.is_file():
-                try:
-                    content = fp.read_text(encoding="utf-8", errors="ignore")
-                    h = hashlib.sha256(content.encode()).hexdigest()[:16]
-                    self._cache[rel_path] = content
-                    self._hashes[rel_path] = h
-                except OSError as exc:
-                    logger.warning("Failed to read pinned file %s: %s", rel_path, exc)
+            if not fp.is_file():
+                if rel_path in previous_paths:
+                    logger.warning("Pinned file disappeared mid-session and will be omitted: %s", rel_path)
+                continue
+            try:
+                content = fp.read_text(encoding="utf-8", errors="ignore")
+                content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
+                if rel_path in previous_hashes and previous_hashes[rel_path] != content_hash:
+                    logger.warning(
+                        "Pinned file changed hash and will be reloaded: %s %s -> %s",
+                        rel_path,
+                        previous_hashes[rel_path],
+                        content_hash,
+                    )
+                new_cache[rel_path] = content
+                new_hashes[rel_path] = content_hash
+            except OSError as exc:
+                logger.warning("Failed to read pinned file %s: %s", rel_path, exc)
+
+        self._cache = new_cache
+        self._hashes = new_hashes
 
     def extract_pinned_content(self, extra_instructions: str | None = None) -> str:
         """Generate the consolidated, verbatim string of standing guidelines."""

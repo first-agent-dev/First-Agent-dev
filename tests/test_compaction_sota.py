@@ -8,37 +8,58 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from fa.inner_loop.compaction.compactor import FullLLMCompactor, ObservationMasker
+from fa.inner_loop.artifacts import ArtifactStore
+from fa.inner_loop.compaction.compactor import FullLLMCompactor, ObservationMasker, project_messages_after_mask
 from fa.inner_loop.state import TraceEvent
 from fa.memory.context_budget import ContextBudget
 from fa.memory.pinned_buffer import PinnedBuffer
 
 
 def test_context_budget_gates() -> None:
-    # 1. Test thresholds: Limit = 100k
     budget = ContextBudget(limit_tokens=100000)
-    assert budget.threshold == 80000  # 80% of 100k, as 80k < 150k
+    assert budget.threshold == 80000
+    assert budget.stage2_threshold == 80000
+    assert budget.stage3_threshold == 90000
 
-    # Below 70% -> allow
     res = budget.check(current_tokens=50000)
     assert res["action"] == "allow"
     assert "healthy" in res["message"]
 
-    # 70% to 90% -> warn
     res = budget.check(current_tokens=75000)
     assert res["action"] == "warn"
     assert "warning" in res["message"]
 
-    # 90%+ -> require_compaction
+    res = budget.check(current_tokens=85000)
+    assert res["action"] == "stage2"
+    assert "Stage 2" in res["message"]
+
     res = budget.check(current_tokens=95000)
-    assert res["action"] == "require_compaction"
-    assert "CRITICAL" in res["message"]
+    assert res["action"] == "stage3"
+    assert "Stage 3" in res["message"]
 
 
 def test_context_budget_dynamic_fallback() -> None:
-    # 2. Test dynamic threshold limit: Limit = 300k
     budget = ContextBudget(limit_tokens=300000)
-    assert budget.threshold == 150000  # min(80% of 300k=240k, 150k) -> 150k
+    assert budget.threshold == 150000
+    assert budget.stage2_threshold == 150000
+    assert budget.stage3_threshold == 270000
+
+
+def test_context_budget_uses_threshold_for_gate_and_warns_before_it() -> None:
+    budget = ContextBudget(limit_tokens=300000)
+
+    warn = budget.check(current_tokens=140000)
+    assert warn["action"] == "warn"
+    assert warn["threshold"] == 150000
+    assert warn["warning_threshold"] == 131250
+
+    stage2 = budget.check(current_tokens=150000)
+    assert stage2["action"] == "stage2"
+    assert "150000 tokens" in stage2["message"]
+
+    stage3 = budget.check(current_tokens=270000)
+    assert stage3["action"] == "stage3"
+    assert "270000 tokens" in stage3["message"]
 
 
 def test_context_budget_circuit_breaker() -> None:
@@ -61,7 +82,6 @@ def test_context_budget_circuit_breaker() -> None:
 
 
 def test_pinned_buffer(tmp_path: Path) -> None:
-    # Write synthetic constraints
     agents_file = tmp_path / "AGENTS.md"
     agents_file.write_text("Constraint 1: Never leak secrets.\n", encoding="utf-8")
     llms_file = tmp_path / "knowledge" / "llms.txt"
@@ -77,6 +97,19 @@ def test_pinned_buffer(tmp_path: Path) -> None:
     assert "Never leak secrets" in content
     assert "STANDING CONSTRAINT: knowledge/llms.txt" in content
     assert "No imports from L0 TCB" in content
+
+
+def test_pinned_buffer_drops_stale_deleted_files(tmp_path: Path) -> None:
+    agents_file = tmp_path / "AGENTS.md"
+    agents_file.write_text("Constraint 1: Never leak secrets.\n", encoding="utf-8")
+
+    buffer = PinnedBuffer(tmp_path)
+    first = buffer.extract_pinned_content()
+    assert "STANDING CONSTRAINT: AGENTS.md" in first
+
+    agents_file.unlink()
+    second = buffer.extract_pinned_content()
+    assert "STANDING CONSTRAINT: AGENTS.md" not in second
 
 
 def test_observation_masker_reduces_large_tool_results() -> None:
@@ -150,9 +183,21 @@ def test_full_llm_compactor_fallback_truncate() -> None:
 
     summary = compactor.compact(long_text)
     assert "PREVIOUSLY" in summary
+    assert "PARKED" in summary
     assert "Local Fallback Truncation" in summary
     assert "CURRENT" in summary
     assert "NEXT ACTION" in summary
+
+
+def test_full_llm_compactor_short_history_fallback_still_has_headers() -> None:
+    compactor = FullLLMCompactor(compactor_chain=None)
+    summary = compactor.compact("line1\nline2")
+
+    assert "## PREVIOUSLY" in summary
+    assert "## PARKED" in summary
+    assert "## CURRENT" in summary
+    assert "## NEXT ACTION" in summary
+    assert "line1" in summary
 
 
 def test_full_llm_compactor_calls_chain_success() -> None:
@@ -171,6 +216,40 @@ def test_full_llm_compactor_calls_chain_success() -> None:
     assert "Analyzed repo" in summary
     assert "NEXT ACTION" in summary
     assert "Run pytest" in summary
+
+
+def test_full_llm_compactor_invalid_shape_falls_back() -> None:
+    mock_chain = MagicMock()
+    mock_response = MagicMock()
+    mock_response.text = "Free-form summary without the required headings"
+    mock_chain.request.return_value = (mock_response, "call-123", [])
+
+    compactor = FullLLMCompactor(compactor_chain=mock_chain)
+    summary = compactor.compact("\n".join([f"Line {i}" for i in range(150)]))
+
+    assert "## PREVIOUSLY" in summary
+    assert "## PARKED" in summary
+    assert "Local Fallback Truncation" in summary
+
+
+def test_project_messages_after_mask_offloads_to_artifact_store(tmp_path: Path) -> None:
+    artifact_store = ArtifactStore(tmp_path / "artifacts")
+    messages = [
+        {"role": "assistant", "content": "turn 1"},
+        {"role": "tool", "tool_call_id": "tc-1", "content": "A" * 500},
+        {"role": "assistant", "content": "turn 2"},
+        {"role": "tool", "tool_call_id": "tc-2", "content": "short"},
+    ]
+
+    projected = project_messages_after_mask(messages, artifact_store=artifact_store, recent_turns_to_keep=1)
+
+    masked = projected[1]
+    assert masked["role"] == "tool"
+    assert masked["tool_call_id"] == "tc-1"
+    assert "artifact_id=tool-result-" in masked["content"]
+    stored = list((tmp_path / "artifacts").glob("tool-result-*.json"))
+    assert len(stored) == 1
+    assert stored[0].read_text(encoding="utf-8").strip().startswith('"AAAA')
 
 
 def test_estimate_tokens_block_content() -> None:

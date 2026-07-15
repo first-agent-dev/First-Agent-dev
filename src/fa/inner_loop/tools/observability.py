@@ -1,8 +1,8 @@
-"""Observability tools for Pillar 3 KPI measurement and debugging — Stage 0
+"""Observability tools for Pillar 3 KPI measurement and debugging — Stage 0.
 
 Senior refactor:
 - chronicle_search: substring + JSON parse, limit, failure-observable
-- usage: parses steps + tool_calls breakdown, tries to sum tokens if present else TBD with warning, cache hit from events if present
+- usage: authoritative `usage` row parsing + tool_calls breakdown
 - list_tasks: DI via contextvar for pty_pool/worktree_manager if available
 """
 
@@ -15,12 +15,41 @@ from pathlib import Path
 from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
+from fa.inner_loop.state import EventLog
 from fa.inner_loop.tools.base import optional_int
 
 
-def build_chronicle_search_tool(event_log_path: Path) -> ToolSpec:
-    log_path = Path(event_log_path).resolve()
+def _resolve_event_log(params: Mapping[str, object]) -> tuple[EventLog | None, str | None]:
+    run_id_raw = params.get("run_id")
+    if run_id_raw is not None:
+        if not isinstance(run_id_raw, str) or not run_id_raw.strip():
+            return None, "run_id must be a non-empty string"
+        run_id = run_id_raw.strip()
+        path = Path.home() / ".fa" / "session-log" / run_id / "events.jsonl"
+        if not path.exists() and not (path.parent / "session.db").exists():
+            return None, f"run_id not found: {run_id}"
+        return EventLog(path, run_id=run_id), None
 
+    try:
+        from fa.inner_loop.context import get_current_session
+
+        session = get_current_session()
+        if session is not None and session.log is not None:
+            return session.log, None
+    except Exception:  # noqa: BLE001, S110 # best-effort session DI
+        pass
+
+    return None, "no active session; pass run_id explicitly"
+
+
+def _event_row_matches_query(row: Mapping[str, object], query: str) -> bool:
+    try:
+        return query.lower() in json.dumps(row, ensure_ascii=False, default=str).lower()
+    except Exception:  # noqa: BLE001
+        return query.lower() in str(row).lower()
+
+
+def build_chronicle_search_tool(_event_log_path: Path | None = None) -> ToolSpec:
     def handler(params: Mapping[str, object]) -> ToolResult:
         try:
             data = dict(params)
@@ -36,35 +65,57 @@ def build_chronicle_search_tool(event_log_path: Path) -> ToolSpec:
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
-        if not log_path.exists():
-            return ToolResult.ok(f"EventLog not found at {log_path}", result={"entries": []})
+        log, err = _resolve_event_log(data)
+        if err is not None:
+            code = "invalid_params" if "run_id must" in err else "no_active_session"
+            return ToolResult.fail(code, err, retryable=False)
+        assert log is not None  # noqa: S101
 
-        entries: list[dict[str, Any]] = []
         try:
-            with open(log_path, encoding="utf-8") as f:
-                for line in f:
-                    if query.lower() in line.lower():
-                        try:
-                            entries.append(json.loads(line))
-                        except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                            entries.append({"raw": line[:500]})
-                        if len(entries) >= limit:
-                            break
+            entries: list[dict[str, Any]] = []
+            for event in log.read_all():
+                row = {
+                    "event_id": event.event_id,
+                    "ts": event.ts,
+                    "run_id": event.run_id,
+                    "actor": event.actor,
+                    "kind": event.kind,
+                    "tool_name": event.tool_name,
+                    "tool_call_id": event.tool_call_id,
+                    "parent_event_id": event.parent_event_id,
+                    "content": dict(event.content),
+                    "harness_id": event.harness_id,
+                }
+                if _event_row_matches_query(row, query):
+                    entries.append(row)
+                    if len(entries) >= limit:
+                        break
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             return ToolResult.fail("read_error", f"Failed to read EventLog: {exc}", retryable=False)
 
-        summary = f"Found {len(entries)} entries matching '{query}' (limit {limit})"
-        return ToolResult.ok(summary, result={"entries": entries, "query": query, "limit": limit})
+        run_label = data.get("run_id") or log.run_id or "current"
+        summary = f"Found {len(entries)} entries matching '{query}' in run {run_label!r} (limit {limit})"
+        return ToolResult.ok(
+            summary,
+            result={"entries": entries, "query": query, "limit": limit, "run_id": run_label},
+        )
 
     return ToolSpec(
         name="fs.chronicle_search",
-        description="Search EventLog events.jsonl timeline by keyword — returns timeline entries, for debugging token usage vs result, debugging 124 steps timeout. Limit max 100.",
+        description=(
+            "Search the current run EventLog by keyword. Defaults to the active session only; "
+            "without an active session, pass run_id explicitly. Returns matching timeline entries."
+        ),
         input_schema={
             "type": "object",
             "required": ["query"],
             "properties": {
                 "query": {"type": "string", "description": "Keyword to search"},
                 "limit": {"type": "integer", "default": 10, "description": "Max entries max 100"},
+                "run_id": {
+                    "type": "string",
+                    "description": "Optional explicit run id when no active session exists",
+                },
             },
         },
         permission="read",
@@ -74,60 +125,59 @@ def build_chronicle_search_tool(event_log_path: Path) -> ToolSpec:
     )
 
 
-def build_usage_tool(event_log_path: Path) -> ToolSpec:
-    log_path = Path(event_log_path).resolve()
-
+def build_usage_tool(_event_log_path: Path | None = None) -> ToolSpec:
     def handler(params: Mapping[str, object]) -> ToolResult:
-        if not log_path.exists():
-            return ToolResult.ok(
-                "No EventLog yet — Pillar 3 KPIs TBD until UC5 baseline run",
-                result={"total_tokens": "TBD", "steps": 0, "tool_calls_breakdown": {}},
-            )
+        data = dict(params)
+        log, err = _resolve_event_log(data)
+        if err is not None:
+            code = "invalid_params" if "run_id must" in err else "no_active_session"
+            return ToolResult.fail(code, err, retryable=False)
+        assert log is not None  # noqa: S101
 
-        steps = 0
-        cache_hits = 0
-        total_tokens = 0
-        has_tokens_field = False
         tool_calls: Counter[str] = Counter()
+        total_in = 0
+        total_out = 0
+        total_cache_read = 0
+        total_cache_creation = 0
+        usage_rows = 0
 
         try:
-            with open(log_path, encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line)
-                        kind = entry.get("kind", "")
-                        if kind == "tool_call":
-                            steps += 1
-                            tool_calls[entry.get("tool_name", "unknown")] += 1
-                        # Try to parse tokens if present in content or top-level
-                        # Some events may have content with prompt_tokens/completion_tokens
-                        content = entry.get("content", {})
-                        if isinstance(content, dict):
-                            pt = content.get("prompt_tokens") or content.get("total_tokens")
-                            if isinstance(pt, (int, float)):
-                                total_tokens += int(pt)
-                                has_tokens_field = True
-                            ch = content.get("cache_hit")
-                            if isinstance(ch, bool) and ch:
-                                cache_hits += 1
-                    except Exception:  # noqa: BLE001, S112 # graceful degradation per Phase 0.5, failure-observable WARNING
-                        continue
+            for event in log.read_all():
+                if event.kind == "tool_call":
+                    tool_calls[event.tool_name or "unknown"] += 1
+                elif event.kind == "usage":
+                    content = event.content if isinstance(event.content, Mapping) else {}
+                    total_in += int(content.get("input_tokens", 0))
+                    total_out += int(content.get("output_tokens", 0))
+                    total_cache_read += int(content.get("cache_read_input_tokens", 0))
+                    total_cache_creation += int(content.get("cache_creation_input_tokens", 0))
+                    usage_rows += 1
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             return ToolResult.fail("read_error", f"Failed: {exc}", retryable=False)
 
-        cache_ratio = cache_hits / max(1, steps) if steps else 0.0
-        # If no tokens field parsed, mark TBD per Pillar 3 (KPI numbers TBD until UC5 baseline)
-        total_tokens_display = total_tokens if has_tokens_field else "TBD"
-        summary = f"Usage: {steps} tool calls, {total_tokens_display} tokens, cache hit {cache_ratio:.2%}, breakdown {dict(tool_calls)}"
-        if not has_tokens_field:
-            summary += " — total_tokens TBD until telemetry with prompt_tokens field (Pillar 3)"
+        cache_ratio = (
+            total_cache_read / max(total_in, 1)
+            if total_in > 0
+            else 0.0
+        )
+        run_label = data.get("run_id") or log.run_id or "current"
+
+        summary = (
+            f"Usage for run {run_label!r}: {sum(tool_calls.values())} tool calls, "
+            f"input={total_in}, output={total_out}, cache hit {cache_ratio:.2%}, "
+            f"usage rows={usage_rows}, breakdown {dict(tool_calls)}"
+        )
 
         return ToolResult.ok(
             summary,
             result={
-                "steps": steps,
-                "total_tokens": total_tokens_display,
-                "cache_hits": cache_hits,
+                "run_id": run_label,
+                "steps": sum(tool_calls.values()),
+                "usage_rows": usage_rows,
+                "input_tokens": total_in,
+                "output_tokens": total_out,
+                "cache_read_input_tokens": total_cache_read,
+                "cache_creation_input_tokens": total_cache_creation,
                 "cache_hit_ratio": cache_ratio,
                 "tool_calls_breakdown": dict(tool_calls),
             },
@@ -135,8 +185,19 @@ def build_usage_tool(event_log_path: Path) -> ToolSpec:
 
     return ToolSpec(
         name="fs.usage",
-        description="Show token usage per turn (if available else TBD), cache hit ratio, steps count, tool calls breakdown — for Pillar 3 KPI measurement. Pillar 3 numbers TBD until UC5 baseline per project-overview.",
-        input_schema={"type": "object", "properties": {}},
+        description=(
+            "Show current-run usage from authoritative usage event rows. Defaults to the active session only; "
+            "without an active session, pass run_id explicitly."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "type": "string",
+                    "description": "Optional explicit run id when no active session exists",
+                }
+            },
+        },
         permission="read",
         handler=handler,
         tags=("fs", "observability", "usage"),
@@ -204,7 +265,10 @@ def build_list_tasks_tool(  # noqa: C901 -- complexity from fallback chain grace
 
     return ToolSpec(
         name="fs.list_tasks",
-        description="List active PTY sessions + worktree tasks + subagent tasks — for observability. Gets pool/manager via DI from current session if not passed.",
+        description=(
+            "List active PTY sessions + worktree tasks + subagent tasks — for observability. "
+            "Gets pool/manager via DI from current session if not passed."
+        ),
         input_schema={"type": "object", "properties": {}},
         permission="read",
         handler=handler,

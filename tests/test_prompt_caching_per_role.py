@@ -18,8 +18,8 @@ def test_cache_key_per_role() -> None:
         {"name": "fs.run_bash"},
     ]
 
-    parts_r, key_r = build_prompt_parts(base, map_md, researcher_tools, role_id="researcher", task="find auth")
-    parts_c, key_c = build_prompt_parts(base, map_md, coder_tools, role_id="coder", task="find auth")
+    _parts_r, key_r = build_prompt_parts(base, map_md, researcher_tools, role_id="researcher", task="find auth")
+    _parts_c, key_c = build_prompt_parts(base, map_md, coder_tools, role_id="coder", task="find auth")
 
     assert key_r != key_c, f"Cache keys should differ for different toolsets: {key_r} vs {key_c}"
     assert "researcher" in key_r
@@ -44,6 +44,13 @@ def test_cacheable_split() -> None:
     assert "cache_control" in anth_req["messages"][-1] or any(
         "cache_control" in m for m in anth_req["messages"]
     )
+    memory_summary_rows = [
+        m
+        for m in anth_req["messages"]
+        if m.get("role") == "system" and str(m.get("content", "")).startswith("Memory summary:\n")
+    ]
+    assert len(memory_summary_rows) == 1
+    assert memory_summary_rows[0].get("cache_control") == {"type": "ephemeral"}
 
     openai_req = to_openai_request(parts, key)
     assert "prompt_cache_key" in openai_req["extra_body"]

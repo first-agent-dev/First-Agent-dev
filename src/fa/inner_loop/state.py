@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fa.inner_loop.registry import ToolCall, ToolResult
+from fa.inner_loop.session_db import SessionDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -98,37 +99,18 @@ class EventLog:
         self._next_id = self._initial_next_id(path)
         self._redactor = redactor
         self._lock = threading.Lock()
+        try:
+            self.session_db: SessionDatabase | None = SessionDatabase(self.path.parent / "session.db")
+        except RuntimeError as exc:
+            logger.warning("EventLog authority database unavailable for %s: %s", self.path, exc)
+            self.session_db = None
         self._init_db()
 
     def _init_db(self) -> None:
-        import sqlite3
-
-        db_path = self.path.parent / "session.db"
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            conn = sqlite3.connect(str(db_path), timeout=15.0)
-            conn.execute("PRAGMA journal_mode=WAL;")
-            conn.execute("PRAGMA synchronous=NORMAL;")
-            with conn:
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS event_log (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        event_id TEXT,
-                        ts TEXT,
-                        run_id TEXT,
-                        actor TEXT,
-                        kind TEXT,
-                        tool_name TEXT,
-                        tool_call_id TEXT,
-                        parent_event_id TEXT,
-                        content TEXT,
-                        harness_id TEXT
-                    );
-                """)
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind ON event_log(kind);")
-            conn.close()
-        except Exception as exc:  # noqa: BLE001 # best-effort
-            logger.warning("Failed to initialize SQLite EventLog: %s", exc)
+        # SessionDatabase owns authoritative schema creation. Construction may
+        # intentionally degrade to None for non-writable/special paths used by
+        # tests; append() becomes the enforcement point.
 
     @staticmethod
     def _initial_next_id(path: Path) -> int:
@@ -177,87 +159,48 @@ class EventLog:
                 tool_call_id=tool_call_id,
                 parent_event_id=parent_event_id,
             )
-            self._next_id += 1
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
-            # 1. Write to JSONL
-            line = json.dumps(asdict(event), ensure_ascii=False, sort_keys=True)
-            with self.path.open("a", encoding="utf-8") as handle:
-                handle.write(line + "\n")
+            # 1. Authoritative write to the per-run SessionDatabase.
+            if self.session_db is None:
+                raise RuntimeError(f"event_log_authority_unavailable: {self.path.parent / 'session.db'}")
+            self.session_db.append_event_row(asdict(event))
 
-            # 2. Write to SQLite3 (WAL mode)
-            import sqlite3
+            # 2. Advance logical id only after authoritative commit succeeds.
+            self._next_id += 1
 
-            db_path = self.path.parent / "session.db"
+            # 3. Best-effort JSONL mirror for audit/diffability.
             try:
-                conn = sqlite3.connect(str(db_path), timeout=15.0)
-                with conn:
-                    conn.execute(
-                        """
-                        INSERT INTO event_log (
-                            event_id, ts, run_id, actor, kind, tool_name,
-                            tool_call_id, parent_event_id, content, harness_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            event.event_id,
-                            event.ts,
-                            event.run_id,
-                            event.actor,
-                            event.kind,
-                            event.tool_name,
-                            event.tool_call_id,
-                            event.parent_event_id,
-                            json.dumps(event.content, ensure_ascii=False),
-                            event.harness_id,
-                        ),
-                    )
-                conn.close()
-            except Exception as exc:  # noqa: BLE001 # best-effort
-                logger.warning("Failed to write event to SQLite: %s", exc)
+                line = json.dumps(asdict(event), ensure_ascii=False, sort_keys=True)
+                with self.path.open("a", encoding="utf-8") as handle:
+                    handle.write(line + "\n")
+            except Exception as exc:  # noqa: BLE001 # mirror-only degradation
+                logger.warning("Failed to write EventLog JSONL mirror: %s", exc)
 
             return event
 
     def read_all(self) -> tuple[TraceEvent, ...]:
-        import sqlite3
-
-        db_path = self.path.parent / "session.db"
-        has_sqlite_events = False
-        events = []
-        if db_path.exists():
-            try:
-                conn = sqlite3.connect(str(db_path), timeout=15.0)
-                cur = conn.execute(
-                    """
-                    SELECT event_id, ts, run_id, actor, kind, tool_name,
-                           tool_call_id, parent_event_id, content, harness_id
-                    FROM event_log ORDER BY id ASC
-                    """
-                )
-                rows = cur.fetchall()
+        try:
+            if self.session_db is not None:
+                rows = self.session_db.read_event_rows()
                 if rows:
-                    has_sqlite_events = True
-                    for row in rows:
-                        events.append(
-                            TraceEvent(
-                                event_id=row[0],
-                                ts=row[1],
-                                run_id=row[2],
-                                actor=row[3],
-                                kind=row[4],
-                                tool_name=row[5],
-                                tool_call_id=row[6],
-                                parent_event_id=row[7],
-                                content=json.loads(row[8]),
-                                harness_id=row[9],
-                            )
+                    return tuple(
+                        TraceEvent(
+                            event_id=str(row["event_id"]),
+                            ts=str(row["ts"]),
+                            run_id=str(row.get("run_id", "")),
+                            actor=str(row["actor"]),
+                            kind=str(row["kind"]),
+                            content=dict(row.get("content", {})),
+                            harness_id=str(row["harness_id"]),
+                            tool_name=str(row.get("tool_name", "")),
+                            tool_call_id=str(row.get("tool_call_id", "")),
+                            parent_event_id=str(row.get("parent_event_id", "")),
                         )
-                conn.close()
-            except Exception as exc:  # noqa: BLE001 # fallback to JSONL reading
-                logger.warning("Failed to read events from SQLite: %s, falling back to JSONL", exc)
-
-        if has_sqlite_events:
-            return tuple(events)
+                        for row in rows
+                    )
+        except Exception as exc:  # noqa: BLE001 # legacy/degraded fallback
+            logger.warning("Failed to read events from authoritative SessionDatabase: %s", exc)
 
         if not self.path.exists():
             return ()
@@ -282,7 +225,7 @@ class EventLog:
                     )
                 )
             return tuple(events)
-        except Exception as exc2:  # noqa: BLE001
+        except Exception as exc2:  # noqa: BLE001 - legacy JSONL fallback must not crash readers
             logger.warning("Fallback JSONL reading failed: %s", exc2)
             return ()
 
@@ -313,6 +256,7 @@ class SessionState:
     artifact_store: Any | None = None  # ArtifactStore
     pty_pool: Any | None = None  # PtyPool
     worktree_manager: Any | None = None  # WorktreeManager
+    session_db: Any | None = None  # SessionDatabase
     turn: int = 0
     subagent_spawns: int = 0
     _subagent_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -326,6 +270,10 @@ class SessionState:
             )
         elif not self.log.run_id:
             self.log.run_id = self.run_id
+
+        # Unified per-run authority DB for hot-path runtime state.
+        if self.session_db is None and self.log is not None:
+            self.session_db = self.log.session_db
 
         # FeatureFlags loader with graceful degradation
         if self.feature_flags is None:
@@ -375,13 +323,24 @@ class SessionState:
             except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 enabled = True
             if enabled:
-                try:
-                    from fa.blackboard.blackboard import Blackboard
-
-                    self.blackboard = Blackboard(self.workspace_root / ".fa" / "blackboard")
-                except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                    print(f"WARNING: Failed to init Blackboard: {exc}, continuing without")
+                if self.session_db is None:
+                    print(
+                        "WARNING: SessionState blackboard disabled because authoritative "
+                        "session_db is unavailable"
+                    )
                     self.blackboard = None
+                else:
+                    try:
+                        from fa.blackboard.blackboard import Blackboard
+
+                        self.blackboard = Blackboard(
+                            self.workspace_root / ".fa" / "blackboard",
+                            session_db=self.session_db,
+                            run_id=self.run_id,
+                        )
+                    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+                        print(f"WARNING: Failed to init Blackboard: {exc}, continuing without")
+                        self.blackboard = None
 
         # Telemetry if enabled
         if self.telemetry is None:

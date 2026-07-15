@@ -70,7 +70,7 @@ class CapabilityGuard(GuardMiddleware):
             return Decision.deny("ENABLE_MCP_GATEWAY_MANAGEMENT is false")
         if call.name.startswith("mcp.server.") and not caps.ENABLE_DYNAMIC_MCP_SERVERS:
             return Decision.deny("ENABLE_DYNAMIC_MCP_SERVERS is false")
-        if call.name == "fs.run_bash":
+        if call.name in {"fs.run_bash", "fs.spawn_subagent"}:
             command = call.params.get("command")
             if isinstance(command, str):
                 # Cache the split once \u2014 the prior code called
@@ -113,7 +113,7 @@ class SandboxHook(GuardMiddleware):
         call = payload.tool_call
         if call is None:
             return Decision.allow()
-        if call.name == "fs.run_bash":
+        if call.name in {"fs.run_bash", "fs.spawn_subagent"}:
             return self._handle_bash(call.params.get("command"))
         if call.name in _FS_PATH_TOOLS:
             return self._handle_path(call.params.get("path"))
@@ -153,7 +153,7 @@ class ApprovalHook(GuardMiddleware):
         call = payload.tool_call
         if not self.require_write_approval or call is None:
             return Decision.allow()
-        if call.name in {"fs.write_file", "fs.run_bash"}:
+        if call.name in {"fs.write_file", "fs.run_bash", "fs.spawn_subagent"}:
             return Decision.deny("write approval required")
         return Decision.allow()
 
@@ -437,12 +437,12 @@ class SecretGuard(GuardMiddleware):
             content = call.params.get("content", "")
             if isinstance(content, str) and self._check_text(content):
                 return Decision.deny("secret leak detected in fs.write_file content")
-        if call.name == "fs.run_bash":
+        if call.name in {"fs.run_bash", "fs.spawn_subagent"}:
             command = call.params.get("command", "")
             if isinstance(command, str):
                 # Encoded / interpolated detection applies to ALL commands
                 if self._check_text(command):
-                    return Decision.deny("secret leak detected in fs.run_bash command")
+                    return Decision.deny("secret leak detected in shell-like command")
                 # Raw exact-match kept behind dangerous-keyword gate for
                 # performance: only when the command explicitly references
                 # env inspection.
@@ -467,7 +467,7 @@ class SecretGuard(GuardMiddleware):
                 if self._matches_env_inspection(command, dangerous_substrings):
                     for secret in self.secrets:
                         if secret in command:
-                            return Decision.deny("secret leak detected in fs.run_bash command")
+                            return Decision.deny("secret leak detected in shell-like command")
         return Decision.allow()
 
     _ENV_WORD_RE = re.compile(r"\b(env|set|declare|export)\b")

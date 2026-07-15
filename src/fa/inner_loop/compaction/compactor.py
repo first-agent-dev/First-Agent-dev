@@ -14,6 +14,31 @@ from fa.inner_loop.state import TraceEvent
 
 logger = logging.getLogger(__name__)
 
+_REQUIRED_SUMMARY_HEADERS: tuple[str, ...] = (
+    "## PREVIOUSLY",
+    "## PARKED",
+    "## CURRENT",
+    "## NEXT ACTION",
+)
+
+
+def _store_artifact(artifact_store: Any | None, payload: Any) -> str | None:
+    """Write an offloaded payload via whichever ArtifactStore API exists."""
+    if artifact_store is None:
+        return None
+    writer = getattr(artifact_store, "put", None)
+    if callable(writer):
+        return str(writer(payload))
+    legacy_writer = getattr(artifact_store, "write", None)
+    if callable(legacy_writer):
+        return str(legacy_writer(payload))
+    logger.warning("ArtifactStore has no put/write method; masked payload cannot be offloaded")
+    return None
+
+
+def _has_required_summary_headers(text: str) -> bool:
+    return all(header in text for header in _REQUIRED_SUMMARY_HEADERS)
+
 
 class ObservationMasker:
     """Stage 2: Non-LLM, zero-cost, content-addressed line reduction.
@@ -55,7 +80,7 @@ class ObservationMasker:
                 # If no artifact_id exists, write to ArtifactStore if available
                 if not artifact_id and artifact_store is not None:
                     try:
-                        artifact_id = artifact_store.put(content)
+                        artifact_id = _store_artifact(artifact_store, content)
                     except Exception as exc:  # noqa: BLE001 # best-effort
                         logger.warning("Failed to offload masked block to ArtifactStore: %s", exc)
 
@@ -128,8 +153,9 @@ class FullLLMCompactor:
         try:
             from fa.providers.base import RequestInfo
 
+            model_slug = getattr(getattr(self.compactor_chain, "config", None), "model", "compactor")
             request = RequestInfo(
-                model_slug="compactor",
+                model_slug=str(model_slug),
                 messages=(
                     {"role": "system", "content": system_prompt},
                     {
@@ -142,7 +168,13 @@ class FullLLMCompactor:
                 tools=(),
             )
             response, _call_id, _attempts = self.compactor_chain.request(request)
-            return response.text or ""
+            summary = response.text or ""
+            if not _has_required_summary_headers(summary):
+                logger.warning(
+                    "LLM compaction response missing required headers; falling back to local truncate"
+                )
+                return self._local_fallback_truncate(history_text)
+            return summary
         except Exception as exc:  # noqa: BLE001 # graceful fallback
             logger.warning("LLM compaction request failed: %s, falling back to local truncate", exc)
             return self._local_fallback_truncate(history_text)
@@ -151,10 +183,22 @@ class FullLLMCompactor:
         """Fallback local truncator if LLM fails."""
         lines = text.splitlines()
         if len(lines) <= 100:
-            return text
+            return (
+                "## PREVIOUSLY\n"
+                "[Local Fallback Summary: history short enough to preserve verbatim.]\n\n"
+                "## PARKED\n"
+                "[Fallback compaction could not reliably extract parked items.]\n\n"
+                "## CURRENT\n"
+                "Active task execution continued.\n\n"
+                "## NEXT ACTION\n"
+                "Continue with the next planned step.\n\n"
+                + text
+            )
         summary_text = (
             "## PREVIOUSLY\n"
             f"[Local Fallback Truncation: omitted {len(lines) - 50} lines of history for brevity.]\n\n"
+            "## PARKED\n"
+            "[Fallback compaction could not reliably extract parked items.]\n\n"
             "## CURRENT\n"
             "Active task execution continued.\n\n"
             "## NEXT ACTION\n"
@@ -200,7 +244,7 @@ def project_messages_after_mask(
             if artifact_store is not None:
                 try:
                     # Write to ArtifactStore content-addressed
-                    artifact_id = artifact_store.write(content)
+                    artifact_id = _store_artifact(artifact_store, content)
                 except Exception as exc:  # noqa: BLE001 # graceful degradation
                     logger.warning("Failed to offload masked message content to ArtifactStore: %s", exc)
 

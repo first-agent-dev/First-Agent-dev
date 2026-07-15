@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from fa.inner_loop.session_db import SessionDatabase
+
 logger = logging.getLogger(__name__)
 
 
@@ -151,121 +153,78 @@ def _payload_matches_key(payload: Any, key: str | None) -> bool:
 
 
 class Blackboard:
-    """Append-only, content-addressed, queryable blackboard."""
+    """Append-only, content-addressed, queryable blackboard.
 
-    def __init__(self, root: Path):
+    `root` remains a workspace-identity anchor for safety checks and optional
+    JSONL mirroring. Authoritative hot-path state may instead be backed by the
+    per-run SessionDatabase when injected.
+    """
+
+    def __init__(self, root: Path, *, session_db: SessionDatabase | None = None, run_id: str = ""):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "blackboard.jsonl"
         self.lock = threading.Lock()
         self.path.touch(exist_ok=True)
+        self._run_id = run_id
+        self._session_db = session_db if session_db is not None else SessionDatabase(self.root / "session.db")
         self._init_db()
 
     def _init_db(self) -> None:
-        import sqlite3
-
-        db_path = self.root / "session.db"
         try:
-            conn = sqlite3.connect(str(db_path), timeout=15.0)
-            conn.execute("PRAGMA journal_mode=WAL;")
-            conn.execute("PRAGMA synchronous=NORMAL;")
-            with conn:
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS blackboard (
-                        id TEXT PRIMARY KEY,
-                        type TEXT,
-                        content_hash TEXT,
-                        toolchain_digest TEXT,
-                        schema_version TEXT,
-                        parent_id TEXT,
-                        read_set TEXT,
-                        write_set TEXT,
-                        assumptions TEXT,
-                        version_dependencies TEXT,
-                        timestamp TEXT,
-                        payload TEXT
-                    );
-                """)
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_bb_type ON blackboard(type);")
-            conn.close()
-        except Exception as exc:  # noqa: BLE001 # best-effort
-            logger.warning("Failed to initialize SQLite Blackboard: %s", exc)
+            _ = self._session_db
+        except Exception as exc:  # best-effort
+            logger.warning("Failed to initialize authoritative Blackboard database: %s", exc)
+            raise
 
     def write(self, entry: BlackboardEntry) -> None:
+        row = {
+            "id": entry.id,
+            "run_id": self._run_id,
+            "type": entry.type,
+            "content_hash": entry.content_hash,
+            "toolchain_digest": entry.toolchain_digest,
+            "schema_version": entry.schema_version,
+            "parent_id": entry.parent_id,
+            "read_set": entry.read_set,
+            "write_set": entry.write_set,
+            "assumptions": entry.assumptions,
+            "version_dependencies": entry.version_dependencies,
+            "timestamp": entry.timestamp,
+            "payload": entry.payload,
+        }
+        # 1. Authoritative write to per-run DB.
+        self._session_db.write_blackboard_row(row)
+
+        # 2. Best-effort JSONL mirror.
         try:
-            # 1. Write to JSONL
             line = json.dumps(asdict(entry), ensure_ascii=False)
             with self.lock:
                 with open(self.path, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
-
-            # 2. Write to SQLite3
-            import sqlite3
-
-            db_path = self.root / "session.db"
-            conn = sqlite3.connect(str(db_path), timeout=15.0)
-            with conn:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO blackboard (
-                        id, type, content_hash, toolchain_digest, schema_version, parent_id,
-                        read_set, write_set, assumptions, version_dependencies, timestamp, payload
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        entry.id,
-                        entry.type,
-                        entry.content_hash,
-                        entry.toolchain_digest,
-                        entry.schema_version,
-                        entry.parent_id,
-                        json.dumps(entry.read_set, ensure_ascii=False),
-                        json.dumps(entry.write_set, ensure_ascii=False),
-                        json.dumps(entry.assumptions, ensure_ascii=False),
-                        json.dumps(entry.version_dependencies, ensure_ascii=False),
-                        entry.timestamp,
-                        json.dumps(entry.payload, ensure_ascii=False),
-                    ),
-                )
-            conn.close()
-        except Exception as e:  # noqa: BLE001 # graceful degradation
-            logger.warning("Blackboard write failed: %s", e)
+        except Exception as exc:  # noqa: BLE001 # mirror-only degradation
+            logger.warning("Blackboard JSONL mirror write failed: %s", exc)
 
     def read(self, id: str) -> BlackboardEntry | None:
-        import sqlite3
-
-        db_path = self.root / "session.db"
-        if not db_path.exists():
-            return None
         try:
-            conn = sqlite3.connect(str(db_path), timeout=15.0)
-            cur = conn.execute(
-                """
-                SELECT id, type, content_hash, toolchain_digest, schema_version, parent_id,
-                       read_set, write_set, assumptions, version_dependencies, timestamp, payload
-                FROM blackboard WHERE id = ?
-                """,
-                (id,),
-            )
-            row = cur.fetchone()
-            conn.close()
+            row = self._session_db.read_blackboard_row(id)
             if row is not None:
                 return BlackboardEntry(
-                    id=row[0],
-                    type=row[1],
-                    content_hash=row[2],
-                    toolchain_digest=row[3],
-                    schema_version=row[4],
-                    parent_id=row[5],
-                    read_set=json.loads(row[6]),
-                    write_set=json.loads(row[7]),
-                    assumptions=json.loads(row[8]),
-                    version_dependencies=json.loads(row[9]),
-                    timestamp=row[10],
-                    payload=json.loads(row[11]),
+                    id=row["id"],
+                    type=row["type"],
+                    content_hash=row["content_hash"],
+                    toolchain_digest=row["toolchain_digest"],
+                    schema_version=row["schema_version"],
+                    parent_id=row["parent_id"],
+                    read_set=row["read_set"],
+                    write_set=row["write_set"],
+                    assumptions=row["assumptions"],
+                    version_dependencies=row["version_dependencies"],
+                    timestamp=row["timestamp"],
+                    payload=row["payload"],
                 )
-        except Exception as exc:  # noqa: BLE001 # fallback to JSONL reading
-            logger.warning("Failed to read Blackboard from SQLite: %s, falling back to JSONL", exc)
+        except Exception as exc:  # noqa: BLE001 # legacy/degraded fallback
+            logger.warning("Failed to read Blackboard from authoritative SessionDatabase: %s", exc)
             with self.lock:
                 if not self.path.exists():
                     return None
@@ -286,55 +245,27 @@ class Blackboard:
 
     def query(self, type: str | None = None, key: str | None = None) -> list[BlackboardEntry]:
         """Queryable: filter by type and optional key in payload."""
-        import sqlite3
-
-        db_path = self.root / "session.db"
-        if not db_path.exists():
-            return []
         try:
-            conn = sqlite3.connect(str(db_path), timeout=15.0)
-            if type is not None:
-                cur = conn.execute(
-                    """
-                    SELECT id, type, content_hash, toolchain_digest, schema_version, parent_id,
-                           read_set, write_set, assumptions, version_dependencies, timestamp, payload
-                    FROM blackboard WHERE type = ? ORDER BY timestamp ASC
-                    """,
-                    (type,),
+            rows = self._session_db.query_blackboard_rows(type, key)
+            return [
+                BlackboardEntry(
+                    id=row["id"],
+                    type=row["type"],
+                    content_hash=row["content_hash"],
+                    toolchain_digest=row["toolchain_digest"],
+                    schema_version=row["schema_version"],
+                    parent_id=row["parent_id"],
+                    read_set=row["read_set"],
+                    write_set=row["write_set"],
+                    assumptions=row["assumptions"],
+                    version_dependencies=row["version_dependencies"],
+                    timestamp=row["timestamp"],
+                    payload=row["payload"],
                 )
-            else:
-                cur = conn.execute(
-                    """
-                    SELECT id, type, content_hash, toolchain_digest, schema_version, parent_id,
-                           read_set, write_set, assumptions, version_dependencies, timestamp, payload
-                    FROM blackboard ORDER BY timestamp ASC
-                    """
-                )
-            results = []
-            for row in cur.fetchall():
-                payload = json.loads(row[11])
-                if not _payload_matches_key(payload, key):
-                    continue
-                results.append(
-                    BlackboardEntry(
-                        id=row[0],
-                        type=row[1],
-                        content_hash=row[2],
-                        toolchain_digest=row[3],
-                        schema_version=row[4],
-                        parent_id=row[5],
-                        read_set=json.loads(row[6]),
-                        write_set=json.loads(row[7]),
-                        assumptions=json.loads(row[8]),
-                        version_dependencies=json.loads(row[9]),
-                        timestamp=row[10],
-                        payload=payload,
-                    )
-                )
-            conn.close()
-            return results
+                for row in rows
+            ]
         except Exception as exc:  # noqa: BLE001 # fallback to JSONL query
-            logger.warning("Failed to query Blackboard from SQLite: %s, falling back to JSONL", exc)
+            logger.warning("Failed to query Blackboard from authoritative SessionDatabase: %s", exc)
             results = []
             with self.lock:
                 if not self.path.exists():

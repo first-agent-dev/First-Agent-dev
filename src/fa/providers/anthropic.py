@@ -88,13 +88,11 @@ class AnthropicProvider:
 
 
 def _build_request_body(request: RequestInfo) -> dict[str, Any]:
-    system_parts: list[str] = []
+    system_rows: list[Mapping[str, Any]] = []
     msgs: list[Mapping[str, Any]] = []
     for row in request.messages:
         if row.get("role") == "system":
-            content = row.get("content")
-            if isinstance(content, str):
-                system_parts.append(content)
+            system_rows.append(row)
             continue
         msgs.append(row)
 
@@ -107,8 +105,23 @@ def _build_request_body(request: RequestInfo) -> dict[str, Any]:
         # does not set ``max_tokens`` explicitly.
         "max_tokens": request.max_tokens if request.max_tokens is not None else 64000,
     }
-    if system_parts:
-        body["system"] = "\n\n".join(system_parts)
+    if system_rows:
+        structured_system: list[dict[str, Any]] = []
+        has_structured_block = False
+        for row in system_rows:
+            content = row.get("content")
+            if not isinstance(content, str):
+                continue
+            block: dict[str, Any] = {"type": "text", "text": content}
+            cache_control = row.get("cache_control")
+            if isinstance(cache_control, Mapping):
+                block["cache_control"] = dict(cache_control)
+                has_structured_block = True
+            structured_system.append(block)
+        if has_structured_block:
+            body["system"] = structured_system
+        else:
+            body["system"] = "\n\n".join(cast(str, block["text"]) for block in structured_system)
     if request.temperature is not None:
         body["temperature"] = request.temperature
     if request.tools:

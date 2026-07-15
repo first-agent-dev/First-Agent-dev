@@ -74,7 +74,6 @@ except ImportError as exc:
 def _register_extra_tools(  # noqa: C901 -- complexity from fallback chain graceful degradation, documented, will split Phase 3 per Paper 2 §4.4
     registry: ToolRegistry,
     workspace_root: Path,
-    event_log_path: Path,
     *,
     include_pair: bool = True,
     include_observability: bool = True,
@@ -104,14 +103,14 @@ def _register_extra_tools(  # noqa: C901 -- complexity from fallback chain grace
         if build_chronicle_search_tool:
             try:
                 if "fs.chronicle_search" not in registry.names():
-                    registry.register(build_chronicle_search_tool(event_log_path))
+                    registry.register(build_chronicle_search_tool())
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: Failed to register fs.chronicle_search: {exc}")
 
         if build_usage_tool:
             try:
                 if "fs.usage" not in registry.names():
-                    registry.register(build_usage_tool(event_log_path))
+                    registry.register(build_usage_tool())
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 print(f"WARNING: Failed to register fs.usage: {exc}")
 
@@ -164,18 +163,6 @@ def _register_extra_tools(  # noqa: C901 -- complexity from fallback chain grace
             print(f"WARNING: Failed to register fs.spawn_subagent: {exc}")
 
 
-def _event_log_path_for_root(workspace_root: Path) -> Path:
-    candidates = [
-        workspace_root / ".fa" / "events.jsonl",
-        workspace_root / "events.jsonl",
-        Path.home() / ".fa" / "events.jsonl",
-    ]
-    for cand in candidates:
-        if cand.exists():
-            return cand
-    return workspace_root / ".fa" / "events.jsonl"
-
-
 def build_baseline_registry(
     workspace_root: Path,
     *,
@@ -196,12 +183,9 @@ def build_baseline_registry(
         registry.register(build_write_file_tool(workspace_root))
         registry.register(build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds))
 
-    event_log_path = _event_log_path_for_root(workspace_root)
-
     _register_extra_tools(
         registry,
         workspace_root,
-        event_log_path,
         include_pair=True,
         include_observability=True,
         include_instant_grep=False,  # already in implementer profile
@@ -229,12 +213,9 @@ def build_planner_registry(
         registry.register(build_read_file_tool(workspace_root))
         registry.register(build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds))
 
-    event_log_path = workspace_root / ".fa" / "events.jsonl"
-
     _register_extra_tools(
         registry,
         workspace_root,
-        event_log_path,
         include_pair=False,
         include_observability=True,
         include_instant_grep=False,
@@ -259,12 +240,9 @@ def build_eval_registry(
         registry.register(build_read_file_tool(workspace_root))
         registry.register(build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds))
 
-    event_log_path = workspace_root / ".fa" / "events.jsonl"
-
     _register_extra_tools(
         registry,
         workspace_root,
-        event_log_path,
         include_pair=False,
         include_observability=True,
         include_instant_grep=False,

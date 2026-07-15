@@ -74,6 +74,25 @@ def test_run_bash_tool_returns_timeout_error(tmp_path: Path, monkeypatch: Monkey
     assert result.error.retryable is True
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_run_bash_large_output_offloads_artifact_without_internal_error(tmp_path: Path) -> None:
+    from fa.inner_loop.context import reset_current_session, set_current_session
+    from fa.inner_loop.state import SessionState
+
+    state = SessionState(workspace_root=tmp_path, run_id="test-bash-large")
+    token = set_current_session(state)
+    try:
+        tool = build_run_bash_tool(tmp_path)
+        result = tool.handler({"command": "python3 - <<'PY'\nprint('A' * 9001)\nPY"})
+    finally:
+        reset_current_session(token)
+
+    assert result.error is None
+    assert result.result is not None
+    assert result.result["artifact_id"] is not None
+    assert "truncated" in result.result
+
+
 def test_read_file_tolerates_unresolved_workspace_root(tmp_path: Path) -> None:
     """Agent-Review BUG-0002: a workspace_root containing ``..`` MUST NOT
     cause ``relative_to`` to raise ``ValueError`` out of the handler.
@@ -244,10 +263,71 @@ def test_spawn_subagent_tool_gated_by_flag(tmp_path: Path) -> None:
     )
     token = set_current_session(state_enabled)
     try:
-        res = tool.handler({"task_id": "subtask-ok", "command": "echo 42", "role": "verifier"})
+        res = tool.handler({"task_id": "subtask-ok", "command": "echo 42", "role": "researcher"})
         assert res.error is None
         assert "completed successfully" in res.summary
+        assert res.result is not None
+        assert '"type": "researcher"' in res.result
+        assert state_enabled.log is not None
+        kinds = [e.kind for e in state_enabled.log.read_all()]
+        assert "subagent_spawn_start" in kinds
+        assert "subagent_spawn_done" in kinds
     finally:
         from fa.inner_loop.context import reset_current_session
 
         reset_current_session(token)
+
+
+def test_spawn_subagent_obeys_sandbox_and_secret_guards(tmp_path: Path) -> None:
+    from fa.inner_loop.hooks import (
+        HookPayload,
+        HookRegistry,
+        IntentGuard,
+        LifecyclePoint,
+        SandboxHook,
+        SecretGuard,
+    )
+    from fa.inner_loop.pr_draft import PrDraftStore
+    from fa.inner_loop.registry import ToolCall
+
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    hooks.register(SecretGuard(secrets=frozenset({"sekret"})))
+    hooks.register(IntentGuard(repo_root=tmp_path, draft_store=PrDraftStore(tmp_path / "draft.md")))
+
+    with pytest.raises(PermissionError):
+        hooks.dispatch(
+            LifecyclePoint.BEFORE_TOOL_EXEC,
+            HookPayload(
+                tool_call=ToolCall(
+                    name="fs.spawn_subagent",
+                    params={"task_id": "x", "command": "sudo rm -rf /", "role": "verifier"},
+                    call_id="tc-1",
+                )
+            ),
+        )
+
+    with pytest.raises(PermissionError):
+        hooks.dispatch(
+            LifecyclePoint.BEFORE_TOOL_EXEC,
+            HookPayload(
+                tool_call=ToolCall(
+                    name="fs.spawn_subagent",
+                    params={"task_id": "x", "command": "echo sekret", "role": "verifier"},
+                    call_id="tc-2",
+                )
+            ),
+        )
+
+    # Mutating shell-like subagent command should require a trusted draft just like fs.run_bash.
+    with pytest.raises(PermissionError):
+        hooks.dispatch(
+            LifecyclePoint.BEFORE_TOOL_EXEC,
+            HookPayload(
+                tool_call=ToolCall(
+                    name="fs.spawn_subagent",
+                    params={"task_id": "x", "command": "touch created.txt", "role": "verifier"},
+                    call_id="tc-3",
+                )
+            ),
+        )
