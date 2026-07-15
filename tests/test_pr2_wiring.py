@@ -18,6 +18,7 @@ import pytest
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
+from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolResult
 from fa.providers import ChainConfig, ProviderChain
 from fa.providers.base import ResponseInfo
@@ -34,7 +35,13 @@ def mock_session_state(tmp_path: Path) -> SessionState:
     )
 
 
-def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list]:
+def _require_log(state: SessionState) -> EventLog:
+    """Session fixtures always attach a log; narrow Optional for type checkers."""
+    assert state.log is not None
+    return state.log
+
+
+def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[object]]:
     resp = ResponseInfo(
         text=text,
         in_tokens=1000,
@@ -42,13 +49,15 @@ def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list]
         cache_read_input_tokens=0,
         cache_creation_input_tokens=0,
         finish_reason="stop",
-        tool_calls=[],
+        tool_calls=(),
         extras={},
     )
     return resp, "call-id", []
 
 
-def _mock_tool_call_response(call_id: str, name: str, params: dict) -> tuple[ResponseInfo, str, list]:
+def _mock_tool_call_response(
+    call_id: str, name: str, params: dict[str, object]
+) -> tuple[ResponseInfo, str, list[object]]:
     resp = ResponseInfo(
         text="Executing tool",
         in_tokens=1000,
@@ -96,7 +105,6 @@ def test_pins_present_each_turn_no_compaction(tmp_path: Path, mock_session_state
         )
     )
 
-    from fa.inner_loop.hooks import HookRegistry
 
     outcome = drive_session(
         "Test task",
@@ -131,7 +139,6 @@ def test_pin_missing_file_policy(tmp_path: Path, mock_session_state: SessionStat
 
     mock_chain.request.return_value = _mock_success_response("missing path done")
 
-    from fa.inner_loop.hooks import HookRegistry
 
     outcome = drive_session(
         "Test task",
@@ -187,7 +194,6 @@ def test_mid_session_file_change_reloads(tmp_path: Path, mock_session_state: Ses
         )
     )
 
-    from fa.inner_loop.hooks import HookRegistry
 
     outcome = drive_session(
         "Test task",
@@ -221,7 +227,6 @@ def test_resume_draft_is_memory_summary_not_pinned(tmp_path: Path, mock_session_
     mock_chain.config.family = "openai"
     mock_chain.request.return_value = _mock_success_response("done")
 
-    from fa.inner_loop.hooks import HookRegistry
 
     outcome = drive_session(
         "Test task",

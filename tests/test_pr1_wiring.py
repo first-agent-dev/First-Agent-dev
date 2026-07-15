@@ -3,7 +3,8 @@
 Verifies that:
 1. ContextBudget check is run inside the live turn loop of drive_session().
 2. Reaching 70% triggers a warning telemetry event.
-3. Reaching 90% triggers a hard-stop outcome with proper DB event logs and no further LLM calls.
+3. Reaching Stage 3 zone (~90% of limit / stage3_threshold) with compaction disabled
+   hard-stops with proper DB event logs and no further LLM calls.
 4. Token estimation includes block and tool payloads.
 """
 
@@ -18,6 +19,7 @@ import pytest
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
+from fa.inner_loop.hooks import HookRegistry
 from fa.providers import ChainConfig, ProviderChain
 from fa.providers.base import ResponseInfo
 
@@ -33,7 +35,13 @@ def mock_session_state(tmp_path: Path) -> SessionState:
     )
 
 
-def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list]:
+def _require_log(state: SessionState) -> EventLog:
+    """Session fixtures always attach a log; narrow Optional for type checkers."""
+    assert state.log is not None
+    return state.log
+
+
+def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[object]]:
     resp = ResponseInfo(
         text=text,
         in_tokens=1000,
@@ -41,7 +49,7 @@ def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list]
         cache_read_input_tokens=0,
         cache_creation_input_tokens=0,
         finish_reason="stop",
-        tool_calls=[],
+        tool_calls=(),
         extras={},
     )
     return resp, "call-id", []
@@ -66,13 +74,13 @@ def test_drive_session_budget_warn_event(tmp_path: Path, mock_session_state: Ses
         task,
         provider_chain=mock_chain,
         registry=ToolRegistry(),
-        hooks=MagicMock(),
+        hooks=HookRegistry(),
         state=mock_session_state,
         max_turns=1,
     )
 
     assert outcome.exit_code == 0
-    events = mock_session_state.log.read_all()
+    events = _require_log(mock_session_state).read_all()
     # Confirm a 'context_budget_warn' event was appended
     warn_events = [e for e in events if e.kind == "context_budget_warn"]
     assert len(warn_events) == 1
@@ -97,14 +105,14 @@ def test_drive_session_stage2_zone_does_not_hard_stop_when_compaction_disabled(
         task,
         provider_chain=mock_chain,
         registry=ToolRegistry(),
-        hooks=MagicMock(),
+        hooks=HookRegistry(),
         state=mock_session_state,
         max_turns=1,
     )
 
     assert outcome.exit_code == 0
     assert mock_chain.request.call_count == 1
-    events = mock_session_state.log.read_all()
+    events = _require_log(mock_session_state).read_all()
     assert not [e for e in events if e.kind == "context_budget_hard_stop"]
 
 
@@ -125,7 +133,7 @@ def test_drive_session_budget_hard_stop(tmp_path: Path, mock_session_state: Sess
         task,
         provider_chain=mock_chain,
         registry=ToolRegistry(),
-        hooks=MagicMock(),
+        hooks=HookRegistry(),
         state=mock_session_state,
         max_turns=1,
     )
@@ -134,7 +142,7 @@ def test_drive_session_budget_hard_stop(tmp_path: Path, mock_session_state: Sess
     assert outcome.stop_reason == "context_budget_hard_stop"
     assert mock_chain.request.call_count == 0
 
-    events = mock_session_state.log.read_all()
+    events = _require_log(mock_session_state).read_all()
     hard_stop_events = [e for e in events if e.kind == "context_budget_hard_stop"]
     assert len(hard_stop_events) == 1
     assert hard_stop_events[0].content["action"] == "stage3"
@@ -163,7 +171,9 @@ def test_budget_wiring_present() -> None:
     has_evaluate = False
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            if "context_budget" in node.module or "fa.memory.context_budget" in node.module:
+            if node.module and (
+                "context_budget" in node.module or node.module.endswith("context_budget")
+            ):
                 has_import = True
         if isinstance(node, ast.Attribute):
             if node.attr == "check":

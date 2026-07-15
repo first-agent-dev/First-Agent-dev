@@ -18,6 +18,7 @@ import pytest
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
+from fa.inner_loop.hooks import HookRegistry
 from fa.providers import ChainConfig, ProviderChain
 from fa.providers.base import ResponseInfo
 
@@ -33,7 +34,13 @@ def mock_session_state(tmp_path: Path) -> SessionState:
     )
 
 
-def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list]:
+def _require_log(state: SessionState) -> EventLog:
+    """Session fixtures always attach a log; narrow Optional for type checkers."""
+    assert state.log is not None
+    return state.log
+
+
+def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[object]]:
     resp = ResponseInfo(
         text=text,
         in_tokens=1000,
@@ -41,7 +48,7 @@ def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list]
         cache_read_input_tokens=0,
         cache_creation_input_tokens=0,
         finish_reason="stop",
-        tool_calls=[],
+        tool_calls=(),
         extras={},
     )
     return resp, "call-id", []
@@ -58,7 +65,6 @@ def test_drive_session_uses_prompt_composer(tmp_path: Path, mock_session_state: 
 
     mock_chain.request.return_value = _mock_success_response("caching completed")
 
-    from fa.inner_loop.hooks import HookRegistry
 
     outcome = drive_session(
         "Test task",
@@ -94,7 +100,6 @@ def test_openai_prompt_cache_key_forwarded_into_request_extras(
 
     mock_chain.request.return_value = _mock_success_response("cache-key forwarded")
 
-    from fa.inner_loop.hooks import HookRegistry
 
     outcome = drive_session(
         "Test task",
@@ -131,7 +136,6 @@ def test_cache_headers_stripped_when_disabled(tmp_path: Path) -> None:
 
     mock_chain.request.return_value = _mock_success_response("no-cache completed")
 
-    from fa.inner_loop.hooks import HookRegistry
 
     outcome = drive_session(
         "Test task",

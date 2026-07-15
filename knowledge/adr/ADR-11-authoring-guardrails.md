@@ -38,6 +38,7 @@ every option below is judged by how well it holds against an author who can edit
 | Commit outside the declared work area | Session-seam subset check | ADR-11-I8 |
 | Bypass `pre-commit` with `--no-verify` | CI-enforced, not pre-commit-only | ADR-11-I6 |
 | Drown real violations in false-positive noise | Severity lifecycle + catch/FP corpus | ADR-11-I2 |
+| Ship module + unit tests; never attach to session composition root | Live-path Definition-of-Done (composition-root tests) | ADR-11-I9 |
 
 ### Tooling boundary (blueprint §1.3)
 
@@ -106,10 +107,11 @@ slate, and the rollout order so the next authoring rule has one home.
 ## Decision
 
 We will choose **Option D — a two-tier Trusted Computing Base (TCB)**, land the **`ADR-11-I1..I8`**
-invariant slate below, bind every write target to an **active consumer**, and fix the
-**enforcement-ceiling** at PR-only agent rights + required human review. Implementation is staged per
-Appendix B of the blueprint (PR 1..PR 5); this ADR is the contract, not the code (see §Out of scope
-in the blueprint §14).
+invariant slate below (plus **`ADR-11-I9`** live-path Definition-of-Done — see
+[Amendment 2026-07-15](#amendment-2026-07-15--live-path-definition-of-done-adr-11-i9)), bind every
+write target to an **active consumer**, and fix the **enforcement-ceiling** at PR-only agent rights
++ required human review. Implementation is staged per Appendix B of the blueprint (PR 1..PR 5);
+this ADR is the contract, not the code (see §Out of scope in the blueprint §14).
 
 ### Two-tier TCB shape (blueprint §9.1, §9.6)
 
@@ -145,7 +147,7 @@ anchors (`ADR-11#adr-11-i1`). This deliberately avoids collision with
 and removes future renumbering churn. A mnemonic may ride in the heading (e.g. `ADR-11-I3
 (I-FROZEN)`); **mixed numbered + named invariants in one ADR are not allowed.**
 
-### The invariant slate (`ADR-11-I1..I8`)
+### The invariant slate (`ADR-11-I1..I8`, plus I9 by amendment)
 
 #### ADR-11-I1 — Level-0 TCB determinism
 
@@ -250,6 +252,8 @@ every new write target lands with a named consumer:
 | `fp-corpus/` | R-14 FP-rate measurement — gate for ADVISORY → HARD-BLOCK promotion |
 | `kernel_hash` / `rule_pack_hash` / `snapshot_id` | reproducibility check + `scripts/check_protected_paths.py` diff-check |
 | PLAN-style leading/lagging metrics | **No named consumer yet → DEFER.** Do not create the write target until a `make` target or report consumes it. |
+| Composition-root / `tests/test_*_wiring.py` (and peers proving live path) | `just check` → pytest + coverage gate (ADR-11-I6 / I9) |
+| `knowledge/skills/tests-writing/SKILL.md` | Agents on test-writing triggers; AGENTS.md §Loadable skills |
 
 ### Enforcement-ceiling (blueprint §12.7, resolved)
 
@@ -288,6 +292,7 @@ code namespace (see [ADR-11-I2](#adr-11-i2--severity-lifecycle-as-a-false-positi
 | F-8 | Signature changed; 4 call-sites updated, 1 missed | Partial refactoring | V10 (reference safety) |
 | F-9 | Test weakened (`== "deny"` → `in ("allow","deny")`) | Test semantic decay | V11 (assertion lock) |
 | F-10 | Session trailer (`Co-authored-by`) omitted | Procedural drift | V14 (AI trailers) |
+| F-11 | Product surface unit-tested but never called from `drive_session` / shipped session CLI (live-path theater) | Missing composition-root DoD | **ADR-11-I9** (pytest authority; optional future Level-1 assist) |
 
 Vectors not yet on the v0.1 rule roadmap (e.g. V4 negative-adjacency, V14 trailers — blueprint §11.1
 rates them LOW) stay catch-corpus targets for later packs; they do not block v0.1.
@@ -395,7 +400,7 @@ evidence — file inventories with line ranges — lives in the SSOT blueprint
   — SSOT. §0 decision briefing; §1 threat model; §9 two-tier TCB + active-consumer; §10 R-1..R-18
   specs; §11 fit audit; §12.7 enforcement-ceiling; §13 files used; Appendix A/B summary + rollout.
 - **R-N → invariant map.** R-1/R-11 → ADR-11-I1; R-2/R-14 → ADR-11-I2; R-3 → ADR-11-I3; R-4 →
-  ADR-11-I4; R-5 → ADR-11-I5; R-6 → ADR-11-I6; R-12/R-15/R-9 → ADR-11-I7; R-13 → ADR-11-I8; R-10 →
+  ADR-11-I4; R-5 → ADR-11-I5; R-6 → ADR-11-I6; R-12/R-15/R-9 → ADR-11-I7; R-13 → ADR-11-I8; **I9 (2026-07-15 amendment)** live-path DoD (no blueprint R-N; post-R-18 authoring gap); R-10 →
   this §Context threat model; R-7/R-8 → §Options B/C + ADR-11-I1; R-16/R-17/R-18 → §Consequences
   deferred.
 - **Catch-corpus baseline (F-1..F-10).** Imported from the PR B/C authoring-omission archaeology
@@ -467,3 +472,288 @@ bodies from failing the regular CI lint gates.
 None of these changes affect any pre-amendment caller: existing fields
 keep their types, existing diagnostic codes remain unique, and the
 wire form is additive-only.
+
+### Amendment 2026-07-15 — Live-path Definition-of-Done (ADR-11-I9)
+
+**Status of amendment:** accepted for authoring contract (steering +
+pytest authority); Level-1 automated HARD-BLOCK for “missing composition
+test” is **deferred** until a low-FP rule is designed. Until then,
+**pytest inside `just check` / CI** is the load-bearing gate for I9,
+and [`knowledge/skills/tests-writing/SKILL.md`](../skills/tests-writing/SKILL.md)
+is the loadable method agents use while writing tests.
+
+#### Why this is an ADR-11 concern (not only ADR-10)
+
+ADR-10 governs **runtime** determinism around the LLM call (classifiers,
+hooks, loop ownership). ADR-11 governs **authoring-time admission**:
+what an untrusted compiler (LLM author) may land in the tree without
+being caught.
+
+The Stage-C class of failure — modules and unit tests present, plans
+marked “shipped”, CI green, **production session path never invokes the
+feature (or only under non-default flags)** — is an **authoring**
+failure mode:
+
+| What existing seats already catch | What they do **not** catch |
+|---|---|
+| Intent before mutation (`pr.prepare` / IntentGuard) | Feature never called from `drive_session` |
+| Test delete/rename gaming (`validate_test_edits`) | New **unit** tests that never boot the session path |
+| Style / types / coverage floor (`just check`) | Coverage of isolated helpers ≠ live-path execution |
+| ADR-11-I5 skip/`assert True` decay | A thorough unit suite that never imports the loop |
+| ADR-11-I3 skill↔code parity | “Shipped” narrative vs default `FeatureFlags` |
+
+So I9 extends the **untrusted-compiler** threat model with one more
+attack (or negligence) vector:
+
+> **Ship a plausible module + unit tests + docs; never attach the module
+> to the composition root the operator actually runs; collect coverage
+> and merge.**
+
+This is not “no CI.” It is **missing mechanical Definition-of-Done for
+live-path behavior.**
+
+#### Central law (normative, one sentence)
+
+> **Harness behavior is not done until a test that boots the real
+> session path would fail if the production call site were removed.**
+
+Everything below instantiates this law as **ADR-11-I9**.
+
+#### ADR-11-I9 — Live-path Definition-of-Done for harness surfaces
+
+**Rule.**
+
+1. **Scope.** Any **product behavior** claimed for First-Agent’s session
+   path (UC1 loop, shipped CLI session drivers, tool/hook registration
+   those paths use) and implemented under `src/fa/` MUST be proven by at
+   least one **composition-root test** (class C1 below), not by unit
+   tests alone.
+
+2. **Composition roots (canonical).** Authoring proof targets the same
+   roots operators run. At minimum:
+
+   | Root | Typical symbol | Notes |
+   |---|---|---|
+   | Session loop | `fa.inner_loop.coder_loop.drive_session` | Primary UC1 path |
+   | Registry builders | builders used by `fa run` | Tools actually registered |
+   | Hook registration | chain used by `fa run` | Middleware actually attached |
+   | Shipped CLI session drivers | `fa.cli` session commands (`run`, `workflow`, …) | Must not omit chains/flags the tests inject manually |
+
+   Inspect-only CLIs (e.g. `fa chunk`) are roots only for claims about
+   those commands—not for Stage-C-class loop features.
+
+3. **Three proof levels (use L3 as DoD; do not stop at L1).**
+
+   | Level | Meaning | Alone enough for product claim? |
+   |---|---|---|
+   | **L1 Import-reachable** | Some live module imports the symbol | **No** — optional import / never called |
+   | **L2 Call-reachable** | Composition root invokes or builds the surface into the live registry/hooks | Necessary, still incomplete |
+   | **L3 Behavior under claim** | Test boots root; asserts side effect; **fails if call site removed** | **Yes — DoD** |
+
+   Import-graph BFS / dead-code tools may **assist** discovery; they are
+   **not** a substitute for L3. No formal allowlist file is required in
+   v0 of this amendment (reduces surface); orphan product surfaces are
+   caught by review + missing C1 tests + skills.
+
+4. **Test class taxonomy (authoring vocabulary).**
+
+   | Class | Boots | Default for |
+   |---|---|---|
+   | **C0 Unit** | Function/module isolation | Pure helpers only |
+   | **C1 Composition-root** | `drive_session` / real factories | **Harness product behavior** |
+   | **C2 CLI smoke** | `fa` CLI entry | Argv → factory wiring |
+   | **C3 Security boundary** | Gate + policy inputs | Sandbox / secrets / intent |
+   | **C4 Mutation-oriented** | Per mutation-clearing skill | After mutmut survivors |
+
+   **Default:** claimed session behavior → **C1**. C0 alone for that
+   claim is **test theater** (status tag language from hostile audits).
+
+5. **Anti-theater requirements for a valid C1 test.**
+
+   A C1 test MUST:
+
+   - Call the real composition root (`drive_session` or CLI path)—not
+     only construct the feature module.
+   - Assert an **observable side effect**: session event `kind`,
+     `SessionOutcome`, provider `request` call counts, request payload,
+     or product-owned filesystem effect.
+   - Remain failing if the production call site is removed (kill-check).
+   - State `FeatureFlags` (or defaults) **explicitly** when behavior
+     depends on flags; document which matrix is under test (gates-only
+     vs full cascade vs defaults).
+   - Mock **external I/O** (LLM provider), not the composition root or
+     the module whose wiring is being proven.
+
+   Recommended (not mandatory) adjunct: a **tight** AST/string guard that
+   the owning root still imports/calls the symbol (see gold files). Loose
+   guards (“any attribute named `check`”) are discouraged.
+
+6. **Authority seat vs steering seat (deliberate asymmetry).**
+
+   | Seat | Mechanism | Role |
+   |---|---|---|
+   | **Steering** | [`knowledge/skills/tests-writing/SKILL.md`](../skills/tests-writing/SKILL.md) | How agents write C1 tests; mid-session “not done” |
+   | **Authority** | pytest under **`just check`** / CI (ADR-11-I6) | Merge bar for agents using pre-push |
+   | **Deep hunt** | `repo-audit` / hostile audit skill | On demand, not every commit |
+   | **Human merge** | Review | Final; agents do not push to `main` |
+
+   **No new inner-loop tools** (`fs.*`) for wiring verification. Agents
+   run ordinary pytest / `just check`. Optional fast filter while
+   iterating (`pytest tests/test_*wiring*`) is convenience only—the
+   full suite remains authoritative.
+
+   **Do not** invent a permanent parallel merge philosophy named only
+   `just wiring`. Wiring tests are **normal tests** collected by the
+   existing test gate. A thin `just wiring` alias MAY exist as a speed
+   shortcut; it MUST NOT be the only place those tests run.
+
+7. **Flag defaults and product honesty.**
+
+   Wiring under `FeatureFlags(context_compaction_enabled=True)` while
+   production defaults keep compaction **off** is a valid **matrix B**
+   test, not automatic proof of “default product path.” Human review and
+   ADR/plan text own claim honesty. This amendment does **not** add a
+   machine `STATUS: LIVE|EXPERIMENTAL` enum (agents already work on
+   branches; owner merges to `main`).
+
+8. **Relationship to ADR-11-I5 (test semantic decay).**
+
+   I5 blocks skip/xfail/placeholder asserts. I9 requires the **right
+   kind** of test for product claims. A suite can pass I5 and still
+   violate I9 (excellent unit tests, zero `drive_session`). Both apply.
+
+9. **Active consumer for new write targets (extends §Decision table).**
+
+   | Write target | Active consumer |
+   |---|---|
+   | Composition-root / `*_wiring.py` tests | `just check` → pytest + coverage; human review |
+   | `knowledge/skills/tests-writing/SKILL.md` | Agents on test-writing triggers; AGENTS.md skill table |
+   | Production call sites in composition roots | Named C1 tests that fail when sites are removed |
+
+10. **Non-goals (explicit).**
+
+    - CodeGraph / repo-intel as merge authority.
+    - LLM-as-judge in CI for “are tests good enough.”
+    - Formal `wiring-allowlist.toml` (v0).
+    - Machine STATUS LIVE/EXPERIMENTAL fields (v0).
+    - New MCP/tools in the agent tool registry for wiring checks.
+    - Making human commit hooks as strict as agent IntentGuard
+      (seat asymmetry preserved).
+
+**Source.** Incident class “Stage C / substrate modernization”: Present ≠
+Wired ≠ Correct (hostile authoring audits); in-repo gold
+`tests/test_pr1_wiring.py`, `tests/test_pr5_wiring.py`,
+`tests/test_proxy_wiring_cli.py`; project-overview §1.2.5
+(compliance-by-construction, failure-observable); AGENTS.md rule
+“every write target must have an active consumer.”
+
+#### Worked examples (normative shape)
+
+**Compliant (C1) — budget warn on live path.**  
+`tests/test_pr1_wiring.py::test_drive_session_budget_warn_event` boots
+`drive_session`, forces usage into the warn band (implementation thresholds — today
+~70% warn / ~80% require_compaction of `limit_tokens`; do not hardcode
+mythical 90% if the code differs), asserts `context_budget_warn` on the
+session log. Removing the budget check
+from `_drive_session_inner` breaks the test.
+
+**Compliant (C1) — hard-stop without LLM call.**  
+Same file: `test_drive_session_budget_hard_stop` asserts
+`stop_reason == context_budget_hard_stop` and
+`provider_chain.request.call_count == 0`.
+
+**Compliant (C1) — Stage 3 uses `compactor_chain`.**  
+`tests/test_pr5_wiring.py::test_stage3_compaction_triggers_and_rebuilds_prompt`
+with compaction enabled asserts stage3 events and
+`mock_compactor_chain.request.call_count == 1`.
+
+**Non-compliant (theater) for a product claim.**
+
+```python
+def test_context_budget_unit_only():
+    b = ContextBudget(limit_tokens=100)
+    assert b.check(90)["action"] == "require_compaction"
+```
+
+Valid as **C0** for the pure class API; **invalid as sole proof** that
+the session loop enforces budget.
+
+#### Senior production guidelines (authoring sessions)
+
+1. **Write the kill-check first in your head** — “If I delete line N in
+   `coder_loop.py`, which test fails?” If none, you are not done.
+2. **Prefer event kinds and outcomes as contracts** — they are
+   failure-observable to operators and future agents (session log /
+   SQLite), not private locals.
+3. **One flag matrix per test** — do not silently mix “defaults” and
+   “everything on.”
+4. **Shared fixtures over copy-paste** — as wiring suites grow, extract
+   `tests/fixtures/session_wiring.py` rather than five divergent mocks.
+5. **CLI vs loop** — if only tests pass `compactor_chain=` into
+   `drive_session` but CLI never builds it, add **C2** or fix CLI.
+6. **Do not weaken existing wiring tests** to land a feature — I5 +
+   test-edit protection apply; fix production code.
+7. **Mutation testing is orthogonal** — green C1 does not imply high
+   mutation score; use `mutation-clearing` after wiring is real.
+8. **Outside-harness authors (e.g. cloud agents cloning the repo)** —
+   only merge gates and review protect `main`. I9’s authority seat is
+   pytest/CI so outsider PRs face the same bar as in-harness sessions.
+
+#### Implementation guidance (Level-0 / Level-1 — deferred automation)
+
+I9 does **not** require a Level-0 kernel change. Optional future teeth
+(not blocking this amendment):
+
+| Mechanism | Severity | Notes |
+|---|---|---|
+| Keep expanding `tests/test_*_wiring.py` | Authority today | Primary |
+| Level-1 rule: new public symbols under selected packages must appear in a test that imports `drive_session` | ADVISORY first | High FP risk — design carefully |
+| Named invariant tests `test_invariant_adr11_i9_*` | Documentation + CI | Optional |
+| Import-graph script in CI | Assist only | Not DoD alone |
+
+Promotion of any automated I9 rule to HARD-BLOCK follows ADR-11-I2
+(catch-corpus + fp-corpus < 1 %).
+
+#### Prior art (amendment-specific)
+
+- **In-repo.** `tests/test_pr1_wiring.py`, `tests/test_pr5_wiring.py`,
+  `tests/test_proxy_wiring_cli.py`; feature-flag defaults in
+  `src/fa/feature_flags.py`; seat map in
+  `knowledge/codemaps/model-freedom-control-runtime-pipeline.md`
+  (prompt soft / runtime strict / CI authority).
+- **First-Agent principles.** project-overview §1.2 minimalism-first
+  (prefer deterministic pytest over LLM auditor); §1.2.5
+  failure-observable; AGENTS.md “active consumer” rule.
+- **Industry.** Composition/integration tests as the bar unit coverage
+  cannot replace; ArchUnit-style “architecture as tests” applied to
+  *session wiring* rather than package layers alone; regression oracles
+  outside the implementer (e2e mindset).
+- **Negative prior art.** “High coverage + unit tests only” as proof of
+  agent-harness features; path-filtered CI that skips tests when only
+  docs change while claims ship in docs (I6 already forbids path-skip
+  of authoring authority—I9 keeps product tests on the same always-on
+  `just check` path).
+
+#### Consequences of this amendment
+
+- **Positive.** One citable invariant (I9) + one skill for how to write
+  proofs; stops treating unit-green as live-path done; aligns gap-close
+  PRs with a durable contract; no new tools or allowlist bureaucracy.
+- **Negative.** More integration tests per feature (cost in agent time);
+  some pure refactors need a one-line note that no new product surface
+  was added. Acceptable under uniform strictness for `src/fa/` product
+  behavior.
+- **Follow-up (out of this amendment’s code scope).** Full implementation
+  plan locking CI membership, optional `just` alias, DIGEST/AGENTS table
+  rows, and any Level-1 automation—authored in a later step from this
+  contract.
+
+#### References added by this amendment
+
+- [`knowledge/skills/tests-writing/SKILL.md`](../skills/tests-writing/SKILL.md)
+  — steering seat; load when writing tests or claiming harness behavior.
+- Gold tests: `tests/test_pr1_wiring.py`, `tests/test_pr5_wiring.py`,
+  `tests/test_proxy_wiring_cli.py`.
+- [`knowledge/project-overview.md` §1.2.5](../project-overview.md#125--compliance-by-construction-failure-observable).
+- Seat map:
+  [`knowledge/codemaps/model-freedom-control-runtime-pipeline.md`](../codemaps/model-freedom-control-runtime-pipeline.md).

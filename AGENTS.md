@@ -183,6 +183,7 @@ Skills are loaded on the trigger condition:
 | [`pr-creation`](./knowledge/skills/pr-creation/SKILL.md) | **Trigger:** Before opening any PR (including pure-doc PRs).<br><br>Canonical PR-creation rulebook. Carries the 5-intent classifier (`RESEARCH / ADR-RULE / IMPLEMENT / FIX / CHORE`). The PR description AND the first commit message body MUST open with the header lines specified by the skill's §Output format. The planned `prepare-commit-msg` / `commit-msg` reads the skill's §Reference tables as the single source of truth. Applies to every PR. |
 | [`repo-audit`](./knowledge/skills/repo-audit/SKILL.md)   | **Trigger:** When asked to perform a critical structure / doc / skill review.<br><br>Carries the 7-phase audit workflow (orientation → inventory → cross-reference → invariants → contradiction sweep → demotion ledger → final report). |
 | [`mutation-clearing`](./knowledge/skills/mutation-clearing/SKILL.md) | **Trigger:** When tasked with mutation testing fixes (`mutmut`) or mutant hunts.<br><br>Carries the 4-archetype triage taxonomy, spy isolation rules, and accepted equivalent mutants ledger criteria for zero-trust mutation clearing. |
+| [`tests-writing`](./knowledge/skills/tests-writing/SKILL.md) | **Trigger:** Before writing/changing tests, or when IMPLEMENT/FIX under `src/fa/` claims product/session behavior.<br><br>Live-path Definition-of-Done (ADR-11-I9): composition-root tests (`drive_session` / shipped CLI), anti-theater kill-check, flag matrices. Authority remains `just check` / pytest — this skill steers how tests are written. |
 
 New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this table.
 
@@ -225,6 +226,10 @@ New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this t
   The `isinstance` check serves two purposes: it validates untrusted
   input at runtime AND narrows the type for the checker. Both the
   code and the types are correct — no annotation shortcuts needed.
+- **Harness product behavior** is not done until a composition-root test would
+  fail if the production call site were removed (ADR-11-I9). Load
+  [`tests-writing`](./knowledge/skills/tests-writing/SKILL.md) before writing
+  those tests. Prefer `tests/test_*_wiring.py` patterns already in tree.
 - **Existing tests are protected.** Deleting/renaming any `tests/**`
   file is blocked at the hook and harness seats; modifying one during a
   FIX-shaped diff requires a `TEST-EDITS:` declaration in the PR draft

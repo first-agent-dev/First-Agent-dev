@@ -18,6 +18,7 @@ import pytest
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
+from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.providers import ChainConfig, ProviderChain
 from fa.providers.base import ResponseInfo
@@ -34,7 +35,13 @@ def mock_session_state(tmp_path: Path) -> SessionState:
     )
 
 
-def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list]:
+def _require_log(state: SessionState) -> EventLog:
+    """Session fixtures always attach a log; narrow Optional for type checkers."""
+    assert state.log is not None
+    return state.log
+
+
+def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[object]]:
     resp = ResponseInfo(
         text=text,
         in_tokens=1000,
@@ -42,13 +49,15 @@ def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list]
         cache_read_input_tokens=0,
         cache_creation_input_tokens=0,
         finish_reason="stop",
-        tool_calls=[],
+        tool_calls=(),
         extras={},
     )
     return resp, "call-id", []
 
 
-def _mock_tool_call_response(call_id: str, name: str, params: dict) -> tuple[ResponseInfo, str, list]:
+def _mock_tool_call_response(
+    call_id: str, name: str, params: dict[str, object]
+) -> tuple[ResponseInfo, str, list[object]]:
     resp = ResponseInfo(
         text="Executing tool",
         in_tokens=1000,
@@ -98,10 +107,10 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="model", kind="model_msg", content={"text": f"Step {i}", "tool_calls": t_calls}
         )
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "bulk output", "result": {"stdout": "A" * 100000}, "ok": True},
@@ -111,10 +120,10 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
 
     # Turn 5: recent window (protected) - keep small
     tool_calls_5 = [{"id": "tc-5", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
-    mock_session_state.log.append(
+    _require_log(mock_session_state).append(
         actor="model", kind="model_msg", content={"text": "Step 5", "tool_calls": tool_calls_5}
     )
-    mock_session_state.log.append(
+    _require_log(mock_session_state).append(
         actor="tool",
         kind="tool_result",
         content={"summary": "bulk output", "result": {"stdout": "A" * 1000}, "ok": True},
@@ -123,7 +132,6 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
     )
 
     # Initialize the messages list by reading from database events
-    from fa.inner_loop.hooks import HookRegistry
 
     outcome = drive_session(
         "Test task",
@@ -138,7 +146,7 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
     assert mock_chain.request.call_count == 1
 
     # Verify compaction events are logged inside SQLite state database
-    events = mock_session_state.log.read_all()
+    events = _require_log(mock_session_state).read_all()
     start_events = [e for e in events if e.kind == "compaction_stage2_start"]
     done_events = [e for e in events if e.kind == "compaction_stage2_done"]
     assert len(start_events) == 1

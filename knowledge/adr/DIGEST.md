@@ -676,6 +676,9 @@ imported into Level 0.
 
 **Source:** [`ADR-11`](./ADR-11-authoring-guardrails.md).
 
+**Amendments.**
+- **2026-07-15** — **ADR-11-I9 (Live-path Definition-of-Done):** harness product behavior is not done until a composition-root test (`drive_session` / shipped CLI session path) would fail if the production call site were removed. Unit tests alone are insufficient for session claims. Authority = pytest in `just check` / CI; steering = `knowledge/skills/tests-writing/SKILL.md`. Non-goals: wiring allowlists, STATUS enums, new fs tools, CodeGraph as gate. Complements I5 (test-decay) and ADR-10 runtime invariants.
+
 ## ADR-12 — API-key isolation from the agent (accepted 2026-06-16)
 
 **Decision.** Keep LLM API keys out of every surface the agent can reach. The

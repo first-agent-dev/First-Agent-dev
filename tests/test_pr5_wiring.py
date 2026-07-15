@@ -20,6 +20,7 @@ import pytest
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
+from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.providers import ChainConfig, ProviderChain
 from fa.providers.base import ResponseInfo
@@ -36,7 +37,13 @@ def mock_session_state(tmp_path: Path) -> SessionState:
     )
 
 
-def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list]:
+def _require_log(state: SessionState) -> EventLog:
+    """Session fixtures always attach a log; narrow Optional for type checkers."""
+    assert state.log is not None
+    return state.log
+
+
+def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[object]]:
     resp = ResponseInfo(
         text=text,
         in_tokens=1000,
@@ -44,7 +51,7 @@ def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list]
         cache_read_input_tokens=0,
         cache_creation_input_tokens=0,
         finish_reason="stop",
-        tool_calls=[],
+        tool_calls=(),
         extras={},
     )
     return resp, "call-id", []
@@ -86,7 +93,7 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
         cache_read_input_tokens=0,
         cache_creation_input_tokens=0,
         finish_reason="stop",
-        tool_calls=[],
+        tool_calls=(),
         extras={},
     )
     mock_compactor_chain.request.return_value = (compactor_resp, "comp-call-id", [])
@@ -108,12 +115,12 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
             content={"text": "Bulky step content " * 15000, "tool_calls": t_calls},
         )
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
@@ -126,10 +133,10 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="model", kind="model_msg", content={"text": f"Step content {i}", "tool_calls": t_calls}
         )
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
@@ -137,7 +144,6 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
             tool_call_id=f"tc-{i}",
         )
 
-    from fa.inner_loop.hooks import HookRegistry
 
     outcome = drive_session(
         "Test Stage 3 compaction task",
@@ -153,13 +159,13 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
     assert mock_chain.request.call_count == 1
     assert mock_compactor_chain.request.call_count == 1
 
-    events = mock_session_state.log.read_all()
+    events = _require_log(mock_session_state).read_all()
     stage3_start = [e for e in events if e.kind == "compaction_stage3_start"]
     stage3_done = [e for e in events if e.kind == "compaction_stage3_done"]
     assert len(stage3_start) == 1
     assert len(stage3_done) == 1
     assert "summary" in stage3_done[0].content
-    assert "Summarized the older conversation" in stage3_done[0].content["summary"]
+    assert "Summarized the older conversation" in str(stage3_done[0].content.get("summary", ""))
 
     compactor_req = mock_compactor_chain.request.call_args[0][0]
     assert compactor_req.model_slug == "compactor-model"
@@ -198,13 +204,13 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
             content={"text": f"Step {i}", "tool_calls": t_calls},
         )
         stdout = "A" * 330000 if i == 1 else "small"
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "bulk output", "result": {"stdout": stdout}, "ok": True},
@@ -212,7 +218,6 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
             tool_call_id=f"tc-{i}",
         )
 
-    from fa.inner_loop.hooks import HookRegistry
 
     outcome = drive_session(
         "Test Stage 2 only task",
@@ -228,7 +233,7 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
     assert mock_chain.request.call_count == 1
     assert mock_compactor_chain.request.call_count == 0
 
-    events = mock_session_state.log.read_all()
+    events = _require_log(mock_session_state).read_all()
     assert [e for e in events if e.kind == "compaction_stage2_done"]
     assert not [e for e in events if e.kind == "compaction_stage3_start"]
 
@@ -262,13 +267,13 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
         cache_read_input_tokens=0,
         cache_creation_input_tokens=0,
         finish_reason="stop",
-        tool_calls=[],
+        tool_calls=(),
         extras={},
     )
     mock_compactor_chain.request.return_value = (compactor_resp, "comp-call-id", [])
 
     # Seed the log with a previous compaction_stage3_done event
-    mock_session_state.log.append(
+    _require_log(mock_session_state).append(
         actor="runtime", kind="compaction_stage3_done", content={"summary": "PREVIOUS COMPACTION RECORDED"}
     )
 
@@ -277,12 +282,12 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
             content={"text": "Bulky step content " * 15000, "tool_calls": t_calls},
         )
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
@@ -295,10 +300,10 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="model", kind="model_msg", content={"text": f"Step content {i}", "tool_calls": t_calls}
         )
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
@@ -306,7 +311,6 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
             tool_call_id=f"tc-{i}",
         )
 
-    from fa.inner_loop.hooks import HookRegistry
 
     outcome = drive_session(
         "Test Task",
@@ -390,7 +394,7 @@ def test_circuit_breaker_logs_terminal_events_in_live_loop(
             cache_read_input_tokens=0,
             cache_creation_input_tokens=0,
             finish_reason="stop",
-            tool_calls=[],
+            tool_calls=(),
             extras={},
         ),
         "comp-call-id",
@@ -401,12 +405,12 @@ def test_circuit_breaker_logs_terminal_events_in_live_loop(
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
             content={"text": "Bulky step content " * 15000, "tool_calls": t_calls},
         )
-        mock_session_state.log.append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
@@ -414,7 +418,6 @@ def test_circuit_breaker_logs_terminal_events_in_live_loop(
             tool_call_id=f"tc-{i}",
         )
 
-    from fa.inner_loop.hooks import HookRegistry
     from fa.memory.context_budget import ContextBudget
 
     monkeypatch.setattr(ContextBudget, "record_compaction_attempt", lambda *_args, **_kwargs: False)
@@ -433,7 +436,7 @@ def test_circuit_breaker_logs_terminal_events_in_live_loop(
     assert outcome.stop_reason == "context_budget_hard_stop"
     assert mock_chain.request.call_count == 0
 
-    events = mock_session_state.log.read_all()
+    events = _require_log(mock_session_state).read_all()
     assert [e for e in events if e.kind == "compaction_circuit_breaker"]
     assert [e for e in events if e.kind == "context_budget_hard_stop"]
     assert [
