@@ -16,6 +16,9 @@ import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, override
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class BranchAlreadyCheckedOutError(RuntimeError):
@@ -48,7 +51,7 @@ def _sanitize_task_id(task_id: str, run_id: str = "") -> str:
         return sanitized
 
     if not original.strip():
-        print(f"WARNING: task_id empty after sanitization, original='{original}', using deterministic fallback")
+        logger.warning(f"task_id empty after sanitization, original='{original}', using deterministic fallback")
 
     hash_input = f"{original}:{run_id}".encode()
     short_hash = hashlib.sha256(hash_input).hexdigest()[:8]
@@ -137,7 +140,7 @@ class IsolatedWorktreeManager(WorktreeManager):
             )
             if result.returncode == 0:
                 return candidate
-        print(f"WARNING: base_branch {base_branch} not found, fallback to main")
+        logger.warning(f"base_branch {base_branch} not found, fallback to main")
         return base_branch
 
     @override

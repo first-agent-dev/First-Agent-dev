@@ -121,7 +121,7 @@ def _assumption_violated(new: BlackboardEntry, old: BlackboardEntry) -> str | No
                 if old.content_hash != new.content_hash:
                     return assump
     except (KeyError, AttributeError, TypeError) as exc:
-        print(f"WARNING: assumption check failed: {exc}, continuing")
+        logger.warning(f"assumption check failed: {exc}, continuing")
     return None
 
 

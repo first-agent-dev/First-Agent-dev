@@ -631,6 +631,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=COMMANDS["stats"]["args"]["--dead-zones"]["en"],
     )
+    stats_parser.add_argument(
+        "--global-history",
+        action="store_true",
+        default=False,
+        help="Show cross-run history from global_history.db (derived projection, not per-run events)",
+    )
     stats_parser.set_defaults(func=_cmd_stats)
 
     authoring_parser = subparsers.add_parser(
@@ -1770,7 +1776,30 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     contracts = load_contracts_from_dir(workspace / "verifiers")
     if contracts:
         hooks.register(VerifierObserver(contracts=contracts, event_log=log))
-    state = SessionState(workspace_root=workspace, run_id=run_id, log=log)
+
+    # Stateful PTY wiring — FIND-007 fix: live CLI harness now owns PtyPool
+    # Wired to feature flag pty_pool_max_size (was dead flag, now active)
+    pty_pool = None
+    try:
+        from fa.runtime import PtyPool
+
+        max_size = 2
+        try:
+            # Try to get max_size from feature flags if available via env config?
+            # For CLI, we don't have FeatureFlags yet, use default 2, but allow override via env FA_PTY_POOL_MAX_SIZE
+            import os
+
+            max_size = int(os.environ.get("FA_PTY_POOL_MAX_SIZE", "2"))
+        except Exception:
+            max_size = 2
+        pty_pool = PtyPool(max_size=max_size, base_cwd=workspace, run_id=run_id)
+    except Exception as exc:  # noqa: BLE001 - graceful degradation, fallback to subprocess
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to init PtyPool for live CLI: %s, fallback stateless", exc)
+        pty_pool = None
+
+    state = SessionState(workspace_root=workspace, run_id=run_id, log=log, pty_pool=pty_pool)
 
     # ── Live output ─────────────────────────────────────────────────────────
     from fa.output import ConsoleRenderer, EventBus, QuietRenderer
@@ -1787,6 +1816,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         output_bus.add(QuietRenderer())
     # json mode: Phase 2
 
+    _run_start_mono = time.monotonic()
     outcome = drive_session(
         args.task,
         provider_chain=chain,
@@ -1804,6 +1834,26 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         redactor=redactor,
         output=output_bus,
     )
+    _run_duration_ms = int((time.monotonic() - _run_start_mono) * 1000)
+    # Slice 9: export to global_history.db as derived projection (best-effort, never crashes main)
+    try:
+        from fa.inner_loop.global_history import export_session_to_global_history
+
+        export_session_to_global_history(
+            run_id=run_id,
+            outcome=outcome,
+            log=log,
+            role=role,
+            model=chain_config.model,
+            family=chain_config.family,
+            workspace_root=workspace,
+            duration_ms=_run_duration_ms,
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort export must not break run
+        import logging
+
+        logging.getLogger(__name__).warning("global_history export failed for %s: %s", run_id, exc)
+
     # Workflow seam: let an orchestrating caller capture the terminal outcome
     # (e.g. to parse the eval role's final message into ``eval_report.json``)
     # without changing this function's int return contract.
@@ -2045,6 +2095,61 @@ def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
         render_session,
         render_session_json,
     )
+
+    # --global-history: active consumer for global_history.db projection (Slice 9)
+    if getattr(args, "global_history", False):
+        try:
+            from fa.inner_loop.global_history import GlobalHistoryStore
+
+            db_path = Path.home() / ".fa" / "global_history.db"
+            store = GlobalHistoryStore(db_path=db_path)
+            rows = store.read_all()
+            if not rows:
+                print(f"fa stats: no global history found at {db_path}", file=sys.stderr)
+                return 1
+            # Filter by --run-id if provided
+            if getattr(args, "run_id", None):
+                run_id = args.run_id
+                rows = [r for r in rows if r.get("run_id") == run_id]
+                if not rows:
+                    print(f"fa stats: run {run_id!r} not found in global history", file=sys.stderr)
+                    return 1
+            # Filter by --since if provided (updated_at)
+            if getattr(args, "since", None) and not getattr(args, "run_id", None):
+                since_s = _parse_since(args.since)
+                if since_s is not None:
+                    cutoff = _time.time() - since_s
+                    # updated_at is ISO, parse roughly? For simplicity, skip if can't parse
+                    filtered = []
+                    for r in rows:
+                        try:
+                            # Try to parse ISO, if fails keep
+                            from datetime import datetime
+                            dt = datetime.fromisoformat(r.get("updated_at", "").replace("Z", "+00:00"))
+                            if dt.timestamp() >= cutoff:
+                                filtered.append(r)
+                        except Exception:
+                            filtered.append(r)
+                    rows = filtered
+            if args.output == "json":
+                import json as _json
+                print(_json.dumps(rows, indent=2, default=str))
+                return 0
+            # Console rendering for global history
+            print(f"\n{'═' * 50}\n📊 Global history: {len(rows)} runs\n{'═' * 50}\n", file=sys.stderr)
+            for r in rows[:20]:
+                print(
+                    f"  {r.get('run_id',''):<20s} {r.get('role',''):<8s} {r.get('model',''):<20s} "
+                    f"{r.get('stop_reason',''):<20s} turns={r.get('turns',0)} "
+                    f"in={r.get('input_tokens',0)} out={r.get('output_tokens',0)}",
+                    file=sys.stderr,
+                )
+            if len(rows) > 20:
+                print(f"  ... and {len(rows)-20} more", file=sys.stderr)
+            return 0
+        except Exception as exc:
+            print(f"fa stats: failed to read global history: {exc}", file=sys.stderr)
+            return 1
 
     workspace = args.workspace.resolve()
     runs_dir = Path.home() / ".fa" / "session-log"

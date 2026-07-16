@@ -20,6 +20,9 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _run_git(args: list[str], cwd: Path, timeout: int = 10) -> subprocess.CompletedProcess[str]:
@@ -55,7 +58,7 @@ def build_checkpoint_tool(workspace_root: Path) -> ToolSpec:
             # -A respects .gitignore, includes new untracked not ignored, includes deletions
             add = _run_git(["git", "add", "-A"], cwd=root, timeout=10)
             if add.returncode != 0:
-                print(f"WARNING: git add -A failed: {add.stderr}")
+                logger.warning(f"git add -A failed: {add.stderr}")
 
             # Commit atomic small commit with clear message per checkpoint patterns doc
             commit_msg = f"checkpoint: {message}\n\n- run_id: {run_id}\n- timestamp: {int(time.time())}\n- auto checkpoint before task per pair over autonomy"
@@ -73,7 +76,7 @@ def build_checkpoint_tool(workspace_root: Path) -> ToolSpec:
                 branch_res = _run_git(["git", "branch", branch_sanitized, checkpoint_id], cwd=root, timeout=5)
                 # Branch creation failure is non-fatal, just warning
                 if branch_res.returncode != 0:
-                    print(f"WARNING: checkpoint branch creation failed: {branch_res.stderr}")
+                    logger.warning(f"checkpoint branch creation failed: {branch_res.stderr}")
 
                 return ToolResult.ok(
                     f"Checkpoint created: {checkpoint_id} branch {branch_sanitized} - {message}",

@@ -10,6 +10,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 RESEARCHER_MINIMAL_PROMPT = (
     "You are websearch agent, tools=[web_search, fs.glob, fs.grep, fs.read_file, "
@@ -51,7 +54,7 @@ def _get_transaction_files(session_state: Any | None, limit: int) -> list[str]:
         write_set = list(getattr(transaction, "write_set", []))[:limit]
         return read_set + write_set
     except (AttributeError, TypeError, ValueError) as exc:
-        print(f"WARNING: transaction files failed: {exc}")
+        logger.warning(f"transaction files failed: {exc}")
         return []
 
 
@@ -65,7 +68,7 @@ def _get_fts_files(workspace_root: Path, task: str, limit: int) -> list[str]:
         try:
             from fa.memory.fts_index import InstantGrepIndex
         except ImportError as exc:
-            print(f"WARNING: InstantGrepIndex import failed: {exc}")
+            logger.warning(f"InstantGrepIndex import failed: {exc}")
             return []
 
         index = InstantGrepIndex(db_path)
@@ -76,12 +79,12 @@ def _get_fts_files(workspace_root: Path, task: str, limit: int) -> list[str]:
             try:
                 index.close()
             except (OSError, AttributeError) as exc:
-                print(f"WARNING: FTS index close failed: {exc}")
+                logger.warning(f"FTS index close failed: {exc}")
     except (OSError, ValueError, RuntimeError) as exc:
-        print(f"WARNING: FTS files failed: {exc}")
+        logger.warning(f"FTS files failed: {exc}")
         return []
     except Exception as exc:  # noqa: BLE001 # best-effort for unexpected
-        print(f"WARNING: FTS files unexpected failed: {exc}")
+        logger.warning(f"FTS files unexpected failed: {exc}")
         return []
 
 
@@ -133,7 +136,7 @@ def _build_messages(workspace_root: Path, task: str, files: list[str], limit: in
             messages.append({"role": "system", "content": msg})
             total_chars += len(msg)
         except (OSError, ValueError, UnicodeError) as exc:
-            print(f"WARNING: preview for {rel} failed: {exc}")
+            logger.warning(f"preview for {rel} failed: {exc}")
             continue
     return messages
 

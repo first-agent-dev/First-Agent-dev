@@ -306,10 +306,15 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
     role: str,
     acting_family: str,
 ) -> list[ToolResult] | None:
-    """Execute read-only batch in parallel, preserve order, synthetic error for orphaned."""
+    """Execute read-only batch in parallel, preserve order, synthetic error for orphaned.
+
+    Fixed for FIND-012: denied results must be preserved in returned tuple in original order.
+    """
+
     # BEFORE sequentially (guards fast, deterministic, must check sandbox before parallel)
+    # For order preservation we keep same index as batch.
     payloads: list[HookPayload | None] = []
-    results: list[ToolResult] = []
+    denied_results: list[ToolResult | None] = []
 
     for call in batch:
         state.record_tool_call(call)
@@ -319,12 +324,13 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
                 HookPayload(tool_call=call, role=role, acting_family=acting_family),
             )
             payloads.append(payload)
+            denied_results.append(None)
         except PermissionError as exc:
             result = default_tool_result_for_denial(str(exc))
             state.record_tool_result(call, result)
             state.observations.append(result.summary)
-            results.append(result)
             payloads.append(None)  # Denied placeholder
+            denied_results.append(result)
 
     # Filter executable payloads
     exec_payloads = [p for p in payloads if p is not None and p.tool_call is not None]
@@ -339,60 +345,70 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
                     for p in exec_payloads
                     if p.tool_call is not None
                 }
-                # Block until all complete (Hermes wait, not as_completed out-of-order for determinism)
-                # But we use wait to keep simple, then collect with timeout
                 done, _ = wait(futures.keys(), timeout=30)
                 for fut in done:
                     p = futures[fut]
                     try:
                         res = fut.result(timeout=5)
-                    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+                    except Exception as exc:  # noqa: BLE001 # graceful degradation
                         res = ToolResult.fail("exec_failed", f"Parallel exec failed: {exc}")
                     if p.tool_call is not None:
                         results_map[p.tool_call.call_id] = res
 
-                # Handle not done (timeout)
                 not_done = set(futures.keys()) - done
                 for fut in not_done:
                     p = futures[fut]
                     try:
                         fut.cancel()
-                    except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
+                    except Exception:  # noqa: BLE001, S110
                         pass
                     if p.tool_call is not None:
                         results_map[p.tool_call.call_id] = ToolResult.fail(
                             "exec_timeout", "Parallel exec timeout after 30s"
                         )
-        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            print(f"WARNING: ThreadPool parallel batch failed {exc}, fallback sequential")
-            # Fallback sequential
+        except Exception as exc:  # noqa: BLE001 # graceful degradation
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "ThreadPool parallel batch failed %s, fallback sequential", exc
+            )
             for p in exec_payloads:
                 try:
-                    assert p.tool_call is not None  # noqa: S101 # internal invariant, not security, fail-fast per Gap 6 defensive checks
+                    assert p.tool_call is not None  # noqa: S101
                     res = registry.dispatch(p.tool_call)
                     results_map[p.tool_call.call_id] = res
-                except Exception as e:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+                except Exception as e:  # noqa: BLE001
+                    assert p.tool_call is not None
                     results_map[p.tool_call.call_id] = ToolResult.fail("exec_failed", str(e))
 
-    # AFTER and record in original order (preserve order, not completion order)
-    # Also yield synthetic error blocks for any tool_use that never completed (streaming executor invariant)
+    # AFTER and record in original order (preserve order, including denied)
     ordered_results: list[ToolResult] = []
     post_exec_denied: PermissionError | None = None
 
-    for payload in payloads:
+    for idx, payload in enumerate(payloads):
         if payload is None:
-            continue  # Already recorded denied result
+            # Denied in BEFORE phase — preserve in original order
+            denied = denied_results[idx]
+            if denied is None:
+                denied = ToolResult.fail(
+                    "interrupted", "Interrupted before execution, missing tool_result"
+                )
+            ordered_results.append(denied)
+            continue
+
         call = payload.tool_call
         if call is None:
-            # Synthetic missing tool_result for orphaned tool_use
-            synthetic = ToolResult.fail("interrupted", "Interrupted before execution, missing tool_result")
+            synthetic = ToolResult.fail(
+                "interrupted", "Interrupted before execution, missing tool_result"
+            )
             ordered_results.append(synthetic)
             continue
 
         result = results_map.get(call.call_id)
         if result is None:
-            # Orphaned — generate synthetic error to maintain invariant every tool_use has matching tool_result
-            result = ToolResult.fail("interrupted", "Interrupted, missing tool_result — synthetic")
+            result = ToolResult.fail(
+                "interrupted", "Interrupted, missing tool_result — synthetic"
+            )
 
         payload_with_result = payload.with_tool_result(result)
         try:
@@ -404,27 +420,17 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
         state.observations.append(result.summary)
         ordered_results.append(result)
 
-    # Include earlier denied results that were appended before parallel exec
-    # results list already contains denied results from BEFORE phase
-    # For simplicity, return ordered_results extended with earlier denied? Actually results already contains denied
-    # We need to return all results in order: denied earlier + parallel ordered
-    # The earlier denied results were added to results list in BEFORE loop, but we returned new ordered_results
-    # Let's merge: results (denied) + ordered_results (parallel)
-    # But for this refactor, we will return results (denied) + ordered_results, caller will extend
-
     if post_exec_denied is not None:
         state.log.append(
             actor="runtime",
             kind="run_stopped",
-            content={"point": LifecyclePoint.AFTER_TOOL_EXEC.value, "reason": str(post_exec_denied)},
+            content={
+                "point": LifecyclePoint.AFTER_TOOL_EXEC.value,
+                "reason": str(post_exec_denied),
+            },
         )
-        return None  # Signal stop after recording
-
-    # Combine: results already contains denied from BEFORE, ordered_results contains parallel
-    # Actually results var in this scope shadows outer, we have local results from BEFORE? We used payloads, results list not used here.
-    # For clarity, return ordered_results (parallel) — caller will have already recorded denied results separately?
-    # In current helper, we recorded denied results directly to state and added to results list inside BEFORE loop? We appended to state but not to ordered_results.
-    # To keep simple, return ordered_results, and let caller handle denied results merging via state.
+        # Return ordered_results so denied results are preserved; run_session will detect run_stopped log and break.
+        return ordered_results
 
     return ordered_results
 
@@ -502,11 +508,25 @@ def run_session(
                 if should_stop_outer:
                     break
             else:
-                # Parallel safe batch
+                # Parallel safe batch — always returns list (FIND-012 fix preserves denied)
                 batch_results = _execute_batch_parallel(batch, registry, hooks, state, role, acting_family)
                 if batch_results is None:
+                    # Legacy None path (should not happen after fix) — treat as stop
                     break
                 results.extend(batch_results)
+                # Detect AFTER_TOOL_EXEC denial that was logged during parallel batch
+                try:
+                    if state.log is not None:
+                        recent = state.log.read_all()[-5:]
+                        if any(
+                            ev.kind == "run_stopped"
+                            and ev.content.get("point") == LifecyclePoint.AFTER_TOOL_EXEC.value
+                            for ev in recent
+                        ):
+                            # Sequential path uses should_stop flag; parallel uses log signal
+                            break
+                except Exception:
+                    pass
 
     finally:
         hooks.set_event_sink(None)

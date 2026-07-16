@@ -240,4 +240,4 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:  # noqa: C901 -- complexi
     )
 
 
-__all__ = ["EXCLUDE_DIRS", "build_grep_tool"]
+__all__ = ["EXCLUDE_DIRS", "build_grep_tool", "DEFAULT_LIMIT", "DEFAULT_MAX_FILE_SIZE", "MAX_LIMIT"]

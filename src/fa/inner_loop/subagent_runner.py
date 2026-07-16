@@ -14,6 +14,7 @@ scrubbed env extra_allow X_FA_PROXY_TOKEN foundation per-subagent random, worklo
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import time
@@ -22,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 import fastjsonschema
+
+logger = logging.getLogger(__name__)
 
 from fa.inner_loop.subagent_envelope import (
     SubagentEnvelope,
@@ -60,8 +63,30 @@ class SubagentRunner:
 
             return RuntimeLimits.anchored_defaults()
         except Exception as exc:  # noqa: BLE001 # graceful degradation
-            print(f"WARNING: _get_limits failed: {exc}")
+            logger.warning(f"_get_limits failed: {exc}")
             return None
+
+    def _resolve_max_spawns(self) -> int:
+        """Resolve max spawns from FeatureFlags > RuntimeLimits > default 3."""
+        try:
+            from fa.inner_loop.context import get_current_session
+
+            session = get_current_session()
+            if session is not None:
+                ff = getattr(session, "feature_flags", None)
+                if ff is not None:
+                    ff_max = getattr(ff, "max_subagent_spawns_per_session", None)
+                    if isinstance(ff_max, int) and ff_max >= 0:
+                        return ff_max
+        except Exception:
+            pass
+
+        limits = self._get_limits()
+        if limits is not None:
+            lim_max = getattr(limits, "max_subagent_spawns_per_session", None)
+            if isinstance(lim_max, int) and lim_max >= 0:
+                return lim_max
+        return 3
 
     def _check_spawn_limit(self) -> None:
         """Enforce max_subagent_spawns_per_session via SessionState if available."""
@@ -71,8 +96,7 @@ class SubagentRunner:
             session = get_current_session()
             if session is not None:
                 count = getattr(session, "subagent_spawns", 0)
-                limits = self._get_limits()
-                max_spawns = getattr(limits, "max_subagent_spawns_per_session", 3) if limits else 3
+                max_spawns = self._resolve_max_spawns()
                 if count >= max_spawns:
                     raise RuntimeError(
                         f"Subagent spawn limit {max_spawns} reached (current {count}), "
@@ -84,15 +108,14 @@ class SubagentRunner:
                     else:
                         session.subagent_spawns = count + 1
                 except Exception as exc:  # noqa: BLE001 - increment best-effort
-                    print(f"WARNING: increment_subagent_spawns failed: {exc}")
+                    logger.warning(f"increment_subagent_spawns failed: {exc}")
                 return
         except RuntimeError:
             raise
         except Exception as exc:  # noqa: BLE001 - graceful fallback
-            print(f"WARNING: Failed to check SessionState spawn counter: {exc}, using instance counter")
+            logger.warning(f"Failed to check SessionState spawn counter: {exc}, using instance counter")
 
-        limits = self._get_limits()
-        max_spawns = getattr(limits, "max_subagent_spawns_per_session", 3) if limits else 3
+        max_spawns = self._resolve_max_spawns()
         if self._instance_spawn_count >= max_spawns:
             raise RuntimeError(f"Subagent spawn limit {max_spawns} reached (instance counter)")
         self._instance_spawn_count += 1
@@ -117,7 +140,7 @@ class SubagentRunner:
                         session.feature_flags, "blackboard_filtered_history_include_plans", False
                     )
             except AttributeError as exc:  # best-effort feature flag load
-                print(f"WARNING: blackboard_filtered_history_include_plans flag check failed: {exc}")
+                logger.warning(f"blackboard_filtered_history_include_plans flag check failed: {exc}")
 
             # For v0.1 minimal surface, keep file-based only unless flag True
             # build_filtered_history already handles fallback chain:
@@ -137,11 +160,11 @@ class SubagentRunner:
                         )
                         history.append({"role": "system", "content": preview})
                 except Exception as exc:  # noqa: BLE001 # blackboard plans optional
-                    print(f"WARNING: failed to include blackboard plans in filtered history: {exc}")
+                    logger.warning(f"failed to include blackboard plans in filtered history: {exc}")
 
             return history
         except Exception as exc:  # noqa: BLE001 # filtered history best-effort
-            print(f"WARNING: build_filtered_history failed: {exc}, using task only")
+            logger.warning(f"build_filtered_history failed: {exc}, using task only")
             return [{"role": "user", "content": f"Task: {task}"}]
 
     def _append_to_worklog(self, envelope: SubagentEnvelope) -> None:
@@ -168,7 +191,7 @@ class SubagentRunner:
                         worklog_path = cand
                         break
                 except Exception as exc:  # noqa: BLE001 # best-effort worklog candidate check
-                    print(f"WARNING: worklog candidate check failed for {cand}: {exc}")
+                    logger.warning(f"worklog candidate check failed for {cand}: {exc}")
                     continue
             if worklog_path is None:
                 worklog_path = self.session_root / "worklog.md"
@@ -192,7 +215,7 @@ class SubagentRunner:
                 with open(worklog_path, "a", encoding="utf-8") as f:
                     f.write(section)
             except Exception as exc:  # noqa: BLE001 # worklog append best-effort
-                print(f"WARNING: Failed to append to worklog.md {worklog_path}: {exc}")
+                logger.warning(f"Failed to append to worklog.md {worklog_path}: {exc}")
 
             # Detailed gitignored .fa/worklog-detailed.md
             if self.session_root.name == ".fa":
@@ -204,10 +227,10 @@ class SubagentRunner:
                 with open(detailed_path, "a", encoding="utf-8") as f:
                     f.write(section + f"\n- Full envelope: {envelope.to_json()[:2000]}\n")
             except Exception as exc:  # noqa: BLE001
-                print(f"WARNING: Failed to append to detailed worklog {detailed_path}: {exc}")
+                logger.warning(f"Failed to append to detailed worklog {detailed_path}: {exc}")
 
         except Exception as exc:  # noqa: BLE001 # worklog aggregation best-effort
-            print(f"WARNING: append_to_worklog failed: {exc}")
+            logger.warning(f"append_to_worklog failed: {exc}")
 
     def run_stateless(
         self,
@@ -236,13 +259,22 @@ class SubagentRunner:
             filtered = self._build_filtered_history(task_id)
             # For v0.1, log filtered history length for observability
             total_chars = sum(len(m.get("content", "")) for m in filtered)
-            print(f"Filtered history for {task_id}: {len(filtered)} messages, total chars {total_chars}")
+            logger.info(f"Filtered history for {task_id}: {len(filtered)} messages, total chars {total_chars}")
         except Exception as exc:  # noqa: BLE001
-            print(f"WARNING: filtered history build failed for {task_id}: {exc}")
+            logger.warning(f"filtered history build failed for {task_id}: {exc}")
 
-        from .tools.bash_env import build_scrubbed_env
+        from .tools.bash_env import SECRET_NAME_RE, build_scrubbed_env
 
-        env = build_scrubbed_env(os.environ, extra_allow=frozenset(env_extra or {}))
+        extra_keys = frozenset((env_extra or {}).keys())
+        env = build_scrubbed_env(os.environ, extra_allow=extra_keys)
+
+        if env_extra:
+            for k, v in env_extra.items():
+                if not isinstance(k, str) or not isinstance(v, str):
+                    continue
+                if SECRET_NAME_RE.search(k):
+                    continue
+                env[k] = v
 
         if self.proxy_token:
             env["X_FA_PROXY_TOKEN"] = self.proxy_token
@@ -277,6 +309,7 @@ class SubagentRunner:
             exit_code=exit_code,
             stdout=output,
             duration_ms=duration_ms,
+            role=role,
         )
 
         try:
@@ -301,7 +334,7 @@ class SubagentRunner:
         try:
             write_envelope_artifact(envelope, self.session_root)
         except Exception as exc:  # noqa: BLE001 - artifact write best-effort
-            print(f"WARNING: Failed to write subagent artifact for {task_id}: {exc}")
+            logger.warning(f"Failed to write subagent artifact for {task_id}: {exc}")
 
         # Worklog aggregation
         self._append_to_worklog(envelope)

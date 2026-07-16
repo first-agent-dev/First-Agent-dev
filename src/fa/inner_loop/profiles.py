@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from fa.inner_loop.registry import ToolRegistry
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -117,7 +120,7 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
 
         builders["fs.read_file"] = lambda: build_read_file_tool(root)
     except Exception as exc:  # noqa: BLE001
-        print(f"WARNING: Failed to setup builder fs.read_file: {exc}")
+        logger.warning(f"Failed to setup builder fs.read_file: {exc}")
 
     try:
         from fa.inner_loop.tools.write_file import build_write_file_tool
@@ -173,35 +176,42 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
         builders["fs.write_file_limited"] = _build_limited_write
 
     except Exception as exc:  # noqa: BLE001
-        print(f"WARNING: Failed to setup builder fs.write_file: {exc}")
+        logger.warning(f"Failed to setup builder fs.write_file: {exc}")
 
     try:
         from fa.inner_loop.tools.run_bash import build_run_bash_tool
 
         builders["fs.run_bash"] = lambda: build_run_bash_tool(root, timeout_seconds=bash_timeout)
     except Exception as exc:  # noqa: BLE001
-        print(f"WARNING: Failed to setup builder fs.run_bash: {exc}")
+        logger.warning(f"Failed to setup builder fs.run_bash: {exc}")
 
     try:
         from fa.inner_loop.tools.glob import build_glob_tool
 
         builders["fs.glob"] = lambda: build_glob_tool(root)
     except Exception as exc:  # noqa: BLE001
-        print(f"WARNING: Failed to setup builder fs.glob: {exc}")
+        logger.warning(f"Failed to setup builder fs.glob: {exc}")
 
     try:
         from fa.inner_loop.tools.grep import build_grep_tool
 
         builders["fs.grep"] = lambda: build_grep_tool(root)
     except Exception as exc:  # noqa: BLE001
-        print(f"WARNING: Failed to setup builder fs.grep: {exc}")
+        logger.warning(f"Failed to setup builder fs.grep: {exc}")
 
     try:
         from fa.inner_loop.tools.instant_grep import build_instant_grep_tool
 
-        builders["fs.instant_grep"] = lambda: build_instant_grep_tool(root / ".fa" / "fts.db", root)
+        # Wired to feature flag fts_db_path (was dead flag, now active)
+        try:
+            from fa.feature_flags import load_feature_flags_from_path
+            ff = load_feature_flags_from_path().flags
+            fts_path = getattr(ff, "fts_db_path", ".fa/fts.db")
+        except Exception:
+            fts_path = ".fa/fts.db"
+        builders["fs.instant_grep"] = lambda: build_instant_grep_tool(root / fts_path, root)
     except Exception as exc:  # noqa: BLE001
-        print(f"WARNING: Failed to setup builder fs.instant_grep: {exc}")
+        logger.warning(f"Failed to setup builder fs.instant_grep: {exc}")
 
     # edit_file may not exist yet, placeholder
     try:
@@ -210,7 +220,7 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
 
         builders["fs.edit_file"] = lambda: build_edit_file_tool(root)
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable, edit_file optional
-        print(f"WARNING: edit_file builder not available: {exc}")
+        logger.warning(f"edit_file builder not available: {exc}")
 
     # Observability + pair tools (from Stage 0)
     try:
@@ -270,13 +280,13 @@ def build_registry_for_role(
         else:
             builder = builders.get(tool_name)
         if builder is None:
-            print(f"WARNING: Tool {tool_name} requested for role {role} but no builder found, skipping")
+            logger.warning(f"Tool {tool_name} requested for role {role} but no builder found, skipping")
             continue
         try:
             spec = builder()
             registry.register(spec)
         except Exception as exc:  # noqa: BLE001 - failure-observable
-            print(f"WARNING: Failed to build/register tool {tool_name} for role {role}: {exc}")
+            logger.warning(f"Failed to build/register tool {tool_name} for role {role}: {exc}")
 
     return registry
 

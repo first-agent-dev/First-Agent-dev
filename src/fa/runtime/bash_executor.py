@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Any, Protocol, override, runtime_checkable
 
 from .pty_pool import PtyResult
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -87,7 +90,7 @@ class RemoteRuntimeExecutor(BashExecutor):
                 session_id=data["session_id"],
             )
         except Exception as e:  # graceful degradation per Phase 0.5, failure-observable WARNING
-            print(f"WARNING: RemoteRuntimeExecutor failed {e}, falling back")
+            logger.warning(f"RemoteRuntimeExecutor failed {e}, falling back")
             raise
 
     @override

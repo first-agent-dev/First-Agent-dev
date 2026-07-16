@@ -30,6 +30,30 @@ logger = logging.getLogger(__name__)
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07")
 
 
+def resolve_cr(text: str) -> str:
+    """Normalize CR artifacts — FIND-016 fix.
+
+    Examples:
+    - ``foo\\rbar\\n`` -> ``bar``
+    - ``12%\\r34%\\r56%`` -> ``56%``
+    Used by PtySession and fs.run_bash for truthful output.
+    """
+    text = text.replace("\r\n", "\n")
+    lines: list[str] = []
+    for line in text.split("\n"):
+        if "\r" in line:
+            line = line.split("\r")[-1]
+        lines.append(line)
+    result = "\n".join(lines)
+    if result.endswith("\n") and text.endswith("\n"):
+        result = result[:-1]
+    return result
+
+
+def _normalize_cr(text: str) -> str:
+    return resolve_cr(text)
+
+
 @dataclass
 class PtyResult:
     stdout: str
@@ -168,7 +192,16 @@ class PtySession:
                         truncated=False,
                         session_id=self.session_id,
                     )
-                full = f"{command}; echo {self._exit_token}:$? {self._end_token}"
+                # Wrap in subshell to avoid killing persistent shell with exit,
+                # but preserve stateful commands (export, cd, source, etc) in main shell.
+                stripped = command.lstrip()
+                is_stateful = stripped.startswith(("export ", "cd ", "source ", ". ", "alias ", "unalias ", "set ", "unset "))
+                if stripped == "cd" or stripped.startswith("cd "):
+                    is_stateful = True
+                if is_stateful:
+                    full = f"{command}; echo {self._exit_token}:$? {self._end_token}"
+                else:
+                    full = f"({command}); echo {self._exit_token}:$? {self._end_token}"
                 try:
                     self._fallback.sendline(full)
                     self._fallback.expect(self._end_token, timeout=timeout)
@@ -182,6 +215,7 @@ class PtySession:
                         session_id=self.session_id,
                     )
                 clean = ANSI_RE.sub("", raw)
+                clean = resolve_cr(clean)
                 # Strip sentinel token that may be in prompt (pexpect PS1)
                 clean = clean.replace(self._sentinel_token, "")
                 m = re.search(rf"{re.escape(self._exit_token)}:(\d+)", clean)
@@ -200,7 +234,14 @@ class PtySession:
                     stdout="No pane available", exit_code=-1, truncated=False, session_id=self.session_id
                 )
 
-            full = f"{command}; echo {self._exit_token}:$? {self._end_token}"
+            stripped = command.lstrip()
+            is_stateful = stripped.startswith(("export ", "cd ", "source ", ". ", "alias ", "unalias ", "set ", "unset "))
+            if stripped == "cd" or stripped.startswith("cd "):
+                is_stateful = True
+            if is_stateful:
+                full = f"{command}; echo {self._exit_token}:$? {self._end_token}"
+            else:
+                full = f"({command}); echo {self._exit_token}:$? {self._end_token}"
             try:
                 self.pane.send_keys(full)
             except Exception as exc:  # noqa: BLE001
@@ -223,6 +264,7 @@ class PtySession:
                     text = "\n".join(lines)
                     if self._end_token in text:
                         clean = ANSI_RE.sub("", text)
+                        clean = resolve_cr(clean)
                         # Strip sentinel token that may appear in prompt
                         clean = clean.replace(self._sentinel_token, "")
                         m = re.search(rf"{re.escape(self._exit_token)}:(\d+)", clean)

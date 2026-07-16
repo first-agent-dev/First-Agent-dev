@@ -32,12 +32,10 @@ class FeatureFlags:
     subagent_spawning_enabled: bool = False
     context_budget_enabled: bool = True
     context_compaction_enabled: bool = False
-    runtime_mode: str = "in_process"
     pty_pool_max_size: int = 2
     worktree_mode: str = "shared"
     fts_db_path: str = ".fa/fts.db"
     prompt_caching: bool = True
-    prompt_cache_key_per_role: bool = True
     offload_threshold: int = 8000
     max_subagent_spawns_per_session: int = 3
 
@@ -49,12 +47,10 @@ class FeatureFlags:
             "subagent_spawning_enabled": self.subagent_spawning_enabled,
             "context_budget_enabled": self.context_budget_enabled,
             "context_compaction_enabled": self.context_compaction_enabled,
-            "runtime.mode": self.runtime_mode,
             "pty_pool.max_size": self.pty_pool_max_size,
             "worktree.mode": self.worktree_mode,
             "memory.fts_db_path": self.fts_db_path,
             "prompt.caching": self.prompt_caching,
-            "prompt.cache_key_per_role": self.prompt_cache_key_per_role,
             "offload_threshold": self.offload_threshold,
             "max_subagent_spawns_per_session": self.max_subagent_spawns_per_session,
         }
@@ -80,7 +76,6 @@ _KNOWN_FLAGS: dict[str, str] = {
     "subagent_spawning_enabled": "bool",
     "context_budget_enabled": "bool",
     "context_compaction_enabled": "bool",
-    "runtime.mode": "str",
     "pty_pool.max_size": "int",
     "pty_pool_max_size": "int",
     "worktree.mode": "str",
@@ -88,7 +83,6 @@ _KNOWN_FLAGS: dict[str, str] = {
     "memory.fts_db_path": "str",
     "fts_db_path": "str",
     "prompt.caching": "bool",
-    "prompt.cache_key_per_role": "bool",
     "offload_threshold": "int",
     "max_subagent_spawns_per_session": "int",
 }
@@ -232,12 +226,10 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
         subagent_spawning_enabled=_get_bool(found, "subagent_spawning_enabled", [], False),
         context_budget_enabled=_get_bool(found, "context_budget_enabled", [], True),
         context_compaction_enabled=_get_bool(found, "context_compaction_enabled", [], False),
-        runtime_mode=_get_str(found, "runtime.mode", [], "in_process"),
         pty_pool_max_size=_get_int(found, "pty_pool.max_size", ["pty_pool_max_size"], 2),
         worktree_mode=_get_str(found, "worktree.mode", ["worktree_mode"], "shared"),
         fts_db_path=_get_str(found, "memory.fts_db_path", ["fts_db_path"], ".fa/fts.db"),
         prompt_caching=_get_bool(found, "prompt.caching", [], True),
-        prompt_cache_key_per_role=_get_bool(found, "prompt.cache_key_per_role", [], True),
         offload_threshold=_get_int(found, "offload_threshold", [], 8000),
         max_subagent_spawns_per_session=_get_int(found, "max_subagent_spawns_per_session", [], 3),
     )

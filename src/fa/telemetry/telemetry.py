@@ -11,6 +11,9 @@ import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -113,7 +116,7 @@ class TelemetryLogger:
                 with open(self.path, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
         except Exception as e:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            print(f"WARNING: Telemetry log failed {e}, continuing")
+            logger.warning(f"Telemetry log failed {e}, continuing")
 
     def query(self, tool_name: str | None = None, test_result: str | None = None) -> list[TelemetryEvent]:
         results: list[TelemetryEvent] = []

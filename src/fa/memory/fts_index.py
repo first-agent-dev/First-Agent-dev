@@ -14,6 +14,9 @@ import os
 import sqlite3
 import time
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Single source of truth for excluded dirs — used by glob, grep, instant_grep fallback, fts_index
 EXCLUDE_DIRS = {
@@ -74,15 +77,15 @@ class InstantGrepIndex:
                 return True
             mtime = self.db_path.stat().st_mtime
             if time.time() - mtime > 86400:
-                print(f"WARNING: FTS DB older than 24h (mtime {mtime}), full reindex")
+                logger.warning(f"FTS DB older than 24h (mtime {mtime}), full reindex")
                 return True
             # Empty DB -> full reindex precaution (stale meta may cause skip)
             count = self.conn.execute("SELECT COUNT(*) FROM files_fts").fetchone()[0]
             if count == 0:
-                print("WARNING: FTS DB empty, full reindex as precaution")
+                logger.warning("FTS DB empty, full reindex as precaution")
                 return True
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            print(f"WARNING: Failed to check DB staleness: {exc}, full reindex as precaution")
+            logger.warning(f"Failed to check DB staleness: {exc}, full reindex as precaution")
             return True
         return False
 
@@ -104,9 +107,9 @@ class InstantGrepIndex:
                     self.conn.execute("DELETE FROM files_fts")
                     self.conn.execute("DELETE FROM fts_meta")
                     self.conn.commit()
-                    print("WARNING: FTS DB older than 24h, cleared for full reindex")
+                    logger.warning("FTS DB older than 24h, cleared for full reindex")
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                print(f"WARNING: Failed to clear stale DB: {exc}")
+                logger.warning(f"Failed to clear stale DB: {exc}")
 
         indexed_paths: set[str] = set()
 

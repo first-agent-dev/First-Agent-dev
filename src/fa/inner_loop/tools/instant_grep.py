@@ -42,6 +42,9 @@ MAX_FILE_SIZE_SOFT = 100_000
 
 
 def _git_ls_files(root: Path) -> list[str]:
+    import logging
+
+    logger = logging.getLogger(__name__)
     try:
         res = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],  # noqa: S607
@@ -53,7 +56,7 @@ def _git_ls_files(root: Path) -> list[str]:
         if res.returncode == 0:
             return [line.strip() for line in res.stdout.splitlines() if line.strip()]
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        print(f"WARNING: git ls-files failed in instant_grep fallback: {exc}")
+        logger.warning("git ls-files failed in instant_grep fallback: %s", exc)
     return []
 
 
@@ -96,32 +99,44 @@ def _matches_file_content(path: Path, query_lower: str) -> bool:
 def _fts_search(
     db_path: Path, workspace_root: Path, query: str, limit: int
 ) -> tuple[list[str] | None, str | None]:
-    """Try FTS5 fast path. Returns (paths, fts_error). If fts_error is not None, FTS failed."""
+    """Try FTS5 fast path — STRICTLY READ-ONLY.
+
+    FIND-013 fix: this function must NOT perform writes (index_repo). If FTS index
+    is missing or empty, return fts_error to force git-ls-files / walk fallback,
+    which are read-only. Indexing is explicit via fa reindex / CLI, not query path.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    index = None
+    # Strictly read-only: if db file does not exist, do not create it — trigger fallback
+    if not db_path.exists():
+        return None, f"FTS5 db not exists at {db_path} — read-only, use reindex"
     try:
         from fa.memory.fts_index import InstantGrepIndex
 
         index = InstantGrepIndex(db_path)
+        # Read-only check: if table missing or empty, treat as unavailable, no indexing
         try:
             count = index.conn.execute("SELECT COUNT(*) FROM files_fts").fetchone()[0]
             if count == 0:
-                index.index_repo(workspace_root)
-        except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            try:
-                index.index_repo(workspace_root)
-            except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
-                pass
+                raise RuntimeError("FTS5 index empty — use fa reindex to build, not query-time indexing")
+        except Exception as exc:
+            # Empty or missing table -> trigger fallback, do NOT auto-index (read-only guarantee)
+            raise RuntimeError(f"FTS5 not ready: {exc}") from exc
+
         paths = index.instant_grep(query, limit=limit)
-        index.close()
         return paths, None
-    except Exception as fts_exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+    except Exception as fts_exc:  # noqa: BLE001 # read-only fallback
         fts_error = str(fts_exc)
-        print(f"WARNING: FTS5 instant_grep failed: {fts_error}, fallback to git ls-files")
-        try:
-            # Ensure index closed if partially opened
-            index.close()  # type: ignore[possibly-undefined]
-        except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
-            pass
+        logger.warning("FTS5 instant_grep unavailable: %s, fallback to git ls-files", fts_error)
         return None, fts_error
+    finally:
+        if index is not None:
+            try:
+                index.close()
+            except Exception:  # noqa: BLE001, S110 # best-effort close
+                pass
 
 
 def _git_fallback_search(root: Path, query: str, limit: int, fts_error: str) -> list[str]:
@@ -258,4 +273,4 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
     )
 
 
-__all__ = ["EXCLUDE_DIRS", "build_instant_grep_tool"]
+__all__ = ["EXCLUDE_DIRS", "build_instant_grep_tool", "DEFAULT_LIMIT", "MAX_LIMIT", "MAX_FILE_SIZE_SOFT"]

@@ -15,6 +15,9 @@ from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string, resolve_workspace_path
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _find_fuzzy(text: str, old: str) -> tuple[int, int] | None:
@@ -86,7 +89,7 @@ def _get_session_and_blackboard():
         transaction = getattr(session, "transaction", None)
         return session, blackboard, transaction
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        print(f"WARNING: get_current_session failed in edit_file: {exc}")
+        logger.warning(f"get_current_session failed in edit_file: {exc}")
         return None, None, None
 
 
@@ -135,7 +138,7 @@ def _write_blackboard_entry(blackboard: Any, rel_path: str, root: Path, is_edit=
         )
         blackboard.write(entry)
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        print(f"WARNING: Blackboard write for edit_file failed: {exc}")
+        logger.warning(f"Blackboard write for edit_file failed: {exc}")
 
 
 def build_edit_file_tool(workspace_root: Path) -> ToolSpec:

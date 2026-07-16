@@ -15,6 +15,9 @@ import fnmatch
 import re
 from pathlib import Path
 from typing import Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_frontmatter_yaml(path: Path) -> dict[str, Any]:
@@ -26,7 +29,7 @@ def _parse_frontmatter_yaml(path: Path) -> dict[str, Any]:
     try:
         text = path.read_text(encoding="utf-8")
     except Exception as exc:  # noqa: BLE001 - file read best-effort
-        print(f"WARNING: Failed to read skill file {path}: {exc}")
+        logger.warning(f"Failed to read skill file {path}: {exc}")
         return {}
 
     # Extract frontmatter between first two ---
@@ -48,15 +51,15 @@ def _parse_frontmatter_yaml(path: Path) -> dict[str, Any]:
             if isinstance(data, dict):
                 return data
         except ImportError:
-            print("WARNING: yaml not available, using hand-rolled frontmatter parser for skill loader")
+            logger.warning("yaml not available, using hand-rolled frontmatter parser for skill loader")
         except Exception as exc:  # noqa: BLE001 - yaml parse may fail
-            print(f"WARNING: yaml.safe_load failed for {path}: {exc}, fallback hand-rolled")
+            logger.warning(f"yaml.safe_load failed for {path}: {exc}, fallback hand-rolled")
 
         # Fallback hand-rolled parser for simple cases
         return _handrolled_parse(frontmatter_raw)
 
     except Exception as exc:  # noqa: BLE001 - graceful
-        print(f"WARNING: Frontmatter parse failed for {path}: {exc}")
+        logger.warning(f"Frontmatter parse failed for {path}: {exc}")
         return {}
 
 
@@ -127,7 +130,7 @@ def should_load_skill(  # noqa: C901 -- complexity from fallback chain graceful 
     try:
         fm = _parse_frontmatter_yaml(skill_path)
     except Exception as exc:  # noqa: BLE001 - graceful
-        print(f"WARNING: should_load_skill parse failed for {skill_path}: {exc}")
+        logger.warning(f"should_load_skill parse failed for {skill_path}: {exc}")
         return False
 
     if fm.get("alwaysApply") is True:
@@ -193,7 +196,7 @@ def get_current_files_for_skill_loader(
                 files.extend(list(txn.read_set))
                 files.extend(list(txn.write_set))
     except Exception as exc:  # noqa: BLE001
-        print(f"WARNING: Failed to get transaction files for skill loader: {exc}")
+        logger.warning(f"Failed to get transaction files for skill loader: {exc}")
 
     # 2. From instant_grep for task relevance (structured websearch pattern)
     if task_text and workspace_root is not None:
@@ -216,7 +219,7 @@ def get_current_files_for_skill_loader(
                 except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
                     pass
         except Exception as exc:  # noqa: BLE001 - FTS may not exist yet
-            print(f"WARNING: instant_grep for skill loader failed: {exc}")
+            logger.warning(f"instant_grep for skill loader failed: {exc}")
 
     # Deduplicate, keep order, limit
     seen: set[str] = set()

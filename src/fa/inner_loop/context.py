@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import contextvars
 from typing import TYPE_CHECKING
+import logging
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from fa.inner_loop.state import SessionState
@@ -35,7 +38,7 @@ def reset_current_session(token: contextvars.Token[SessionState | None]) -> None
     try:
         _current_session.reset(token)
     except Exception as exc:  # noqa: BLE001 - reset best-effort, log warning
-        print(f"WARNING: reset_current_session failed: {exc}")
+        logger.warning(f"reset_current_session failed: {exc}")
 
 
 __all__ = ["get_current_session", "reset_current_session", "set_current_session"]

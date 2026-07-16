@@ -284,9 +284,9 @@ class SessionState:
                 self.feature_flags = result.flags
                 if result.warnings:
                     for w in result.warnings:
-                        print(f"WARNING: feature_flags {w.key}: {w.detail}")
+                        logger.warning(f"feature_flags {w.key}: {w.detail}")
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                print(f"WARNING: Failed to load feature_flags: {exc}, using defaults")
+                logger.warning(f"Failed to load feature_flags: {exc}, using defaults")
                 try:
                     from fa.feature_flags import FeatureFlags
 
@@ -301,7 +301,7 @@ class SessionState:
 
                 self.transaction = Transaction(id=self.run_id)
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                print(f"WARNING: Failed to init Transaction: {exc}")
+                logger.warning(f"Failed to init Transaction: {exc}")
 
         # ArtifactStore for offloading full outputs
         if self.artifact_store is None:
@@ -312,7 +312,7 @@ class SessionState:
                 # Use workspace_root/.fa/artifacts for token-efficient offload
                 self.artifact_store = ArtifactStore(self.workspace_root / ".fa" / "artifacts")
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                print(f"WARNING: Failed to init ArtifactStore: {exc}")
+                logger.warning(f"Failed to init ArtifactStore: {exc}")
 
         # Blackboard if enabled
         if self.blackboard is None:
@@ -324,9 +324,8 @@ class SessionState:
                 enabled = True
             if enabled:
                 if self.session_db is None:
-                    print(
-                        "WARNING: SessionState blackboard disabled because authoritative "
-                        "session_db is unavailable"
+                    logger.warning(
+                        "SessionState blackboard disabled because authoritative session_db is unavailable"
                     )
                     self.blackboard = None
                 else:
@@ -339,7 +338,7 @@ class SessionState:
                             run_id=self.run_id,
                         )
                     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                        print(f"WARNING: Failed to init Blackboard: {exc}, continuing without")
+                        logger.warning(f"Failed to init Blackboard: {exc}, continuing without")
                         self.blackboard = None
 
         # Telemetry if enabled
@@ -356,7 +355,7 @@ class SessionState:
 
                     self.telemetry = TelemetryLogger(self.workspace_root / ".fa" / "telemetry")
                 except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                    print(f"WARNING: Failed to init TelemetryLogger: {exc}, continuing without")
+                    logger.warning(f"Failed to init TelemetryLogger: {exc}, continuing without")
                     self.telemetry = None
 
         # WorktreeManager via Factory from flags (Phase 1)
@@ -371,7 +370,7 @@ class SessionState:
                     flags, session_root=self.workspace_root, repo_root=self.workspace_root, run_id=self.run_id
                 )
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                print(f"WARNING: Failed to init WorktreeManager: {exc}, using SharedDir fallback")
+                logger.warning(f"Failed to init WorktreeManager: {exc}, using SharedDir fallback")
                 try:
                     from fa.workspace.worktree_manager import SharedDirWorktreeManager
 
@@ -379,20 +378,36 @@ class SessionState:
                 except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                     self.worktree_manager = None
 
+        # PtyPool — FIND-007 fix: stateful shell wired into live session by default
+        if self.pty_pool is None:
+            try:
+                from fa.runtime import PtyPool
+
+                max_size = 2
+                try:
+                    if self.feature_flags is not None:
+                        max_size = int(getattr(self.feature_flags, "pty_pool_max_size", 2))
+                except Exception:
+                    max_size = 2
+                self.pty_pool = PtyPool(max_size=max_size, base_cwd=self.workspace_root, run_id=self.run_id)
+            except Exception as exc:  # noqa: BLE001 # graceful degradation, fallback to stateless subprocess
+                logger.warning(f"Failed to init PtyPool: {exc}, fallback to subprocess")
+                self.pty_pool = None
+
     # Transaction helpers
     def add_read(self, path: str) -> None:
         try:
             if self.transaction is not None:
                 self.transaction.add_read(path)
         except Exception as exc:  # noqa: BLE001 - best-effort
-            print(f"WARNING: add_read failed for {path}: {exc}")
+            logger.warning(f"add_read failed for {path}: {exc}")
 
     def add_write(self, path: str) -> None:
         try:
             if self.transaction is not None:
                 self.transaction.add_write(path)
         except Exception as exc:  # noqa: BLE001 - best-effort
-            print(f"WARNING: add_write failed for {path}: {exc}")
+            logger.warning(f"add_write failed for {path}: {exc}")
 
     def increment_subagent_spawns(self) -> int:
         """Thread-safe increment for subagent spawn limit (Phase 1)."""
@@ -416,7 +431,7 @@ class SessionState:
                     pass
                 return ws
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            print(f"WARNING: create_subagent_workspace failed for {task_id}: {exc}, fallback to session_root")
+            logger.warning(f"create_subagent_workspace failed for {task_id}: {exc}, fallback to session_root")
         return self.workspace_root
 
     def cleanup_subagent_workspace(self, path: Path) -> None:
@@ -424,7 +439,7 @@ class SessionState:
             if self.worktree_manager is not None:
                 self.worktree_manager.cleanup(path)
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            print(f"WARNING: cleanup_subagent_workspace failed for {path}: {exc}")
+            logger.warning(f"cleanup_subagent_workspace failed for {path}: {exc}")
 
     def record_tool_call(self, call: ToolCall) -> TraceEvent:
         assert self.log is not None  # noqa: S101
@@ -480,7 +495,7 @@ class SessionState:
                     content["artifact_id"] = artifact_id
                     content["preview"] = full_output[:500] + "...[offloaded]"
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            print(f"WARNING: Artifact offload failed: {exc}")
+            logger.warning(f"Artifact offload failed: {exc}")
 
         # Structured telemetry logging
         try:
@@ -534,7 +549,7 @@ class SessionState:
                     tool_call_id=call.call_id,
                 )
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            print(f"WARNING: Telemetry logging failed: {exc}")
+            logger.warning(f"Telemetry logging failed: {exc}")
 
         # Original tool_result event for ADR-7 paired rows
         return self.log.append(

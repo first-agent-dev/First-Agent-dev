@@ -72,14 +72,29 @@ class SubagentEnvelope:
         return json.dumps(asdict(self), indent=2, ensure_ascii=False)
 
     @classmethod
-    def from_verifier(cls, task_id: str, exit_code: int, stdout: str, duration_ms: int = 0) -> SubagentEnvelope:
+    def from_verifier(
+        cls, task_id: str, exit_code: int, stdout: str, duration_ms: int = 0, role: str = "verifier"
+    ) -> SubagentEnvelope:
         passed = exit_code == 0
+        # role is preserved as envelope type — both researcher and verifier run bash (stateless),
+        # but type must reflect caller role (D10 role-bounded)
+        envelope_type = (
+            role if role in {"researcher", "verifier", "code-reviewer", "implementer", "planner"} else "verifier"
+        )
+        # Researcher summary should surface the actual output (source summary) for observability,
+        # while verifier keeps PASS/FAIL short.
+        if envelope_type == "researcher":
+            summary = stdout[:500] if passed else f"FAIL: {stdout[:200]}"
+            goal = f"Research {task_id}"
+        else:
+            summary = "PASS" if passed else f"FAIL: {stdout[:200]}"
+            goal = f"Verify {task_id}"
         return cls(
             task_id=task_id,
-            type="verifier",
-            goal=f"Verify {task_id}",
+            type=envelope_type,
+            goal=goal,
             exit_code=exit_code,
-            summary="PASS" if passed else f"FAIL: {stdout[:200]}",
+            summary=summary,
             verification=f"exit_code={exit_code}",
             files_changed=[],
             patch_diff="",

@@ -19,6 +19,9 @@ from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import optional_int, require_string
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Single source of truth — import once at module load, fallback if not available
 try:
@@ -60,7 +63,7 @@ def _git_ls_files(root: Path) -> list[str]:
         if res.returncode == 0:
             return [line.strip() for line in res.stdout.splitlines() if line.strip()]
     except Exception as exc:  # noqa: BLE001 — best-effort, fallback to walk
-        print(f"WARNING: git ls-files failed: {exc}, fallback to walk")
+        logger.warning(f"git ls-files failed: {exc}, fallback to walk")
     return []
 
 
@@ -84,7 +87,7 @@ def _iter_files_fallback(root: Path) -> Generator[Path]:
                 if not resolved.is_relative_to(root_resolved):
                     continue
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable, symlink safety
-                print(f"WARNING: symlink check failed: {exc}, continuing")
+                logger.warning(f"symlink check failed: {exc}, continuing")
                 continue
             yield fp
 
@@ -228,4 +231,4 @@ def build_glob_tool(workspace_root: Path) -> ToolSpec:
     )
 
 
-__all__ = ["EXCLUDE_DIRS", "build_glob_tool"]
+__all__ = ["EXCLUDE_DIRS", "build_glob_tool", "DEFAULT_LIMIT", "MAX_LIMIT"]

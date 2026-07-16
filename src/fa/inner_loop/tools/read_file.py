@@ -5,6 +5,9 @@ from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import optional_int, require_string, resolve_workspace_path
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _read_pdf_text(path: Path) -> str | None:
@@ -32,7 +35,7 @@ def _read_pdf_text(path: Path) -> str | None:
         # pymupdf is optional; fall through to pdfminer/pypdf fallback extractors.
         pass
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        print(f"WARNING: pymupdf failed for {path}: {exc}")
+        logger.warning(f"pymupdf failed for {path}: {exc}")
 
     # Try pdfminer.six as fallback
     try:
@@ -45,7 +48,7 @@ def _read_pdf_text(path: Path) -> str | None:
         # Optional dependency not installed; continue to next PDF fallback.
         pass
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        print(f"WARNING: pdfminer failed for {path}: {exc}")
+        logger.warning(f"pdfminer failed for {path}: {exc}")
 
     # Try pypdf as last fallback
     try:
@@ -65,7 +68,7 @@ def _read_pdf_text(path: Path) -> str | None:
         # pypdf is optional; if unavailable, silently fall through to return None.
         pass
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        print(f"WARNING: pypdf failed for {path}: {exc}")
+        logger.warning(f"pypdf failed for {path}: {exc}")
 
     return None
 
@@ -117,9 +120,9 @@ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
                 try:
                     session.add_read(rel)
                 except Exception as exc:  # noqa: BLE001 - best-effort
-                    print(f"WARNING: add_read failed for {rel}: {exc}")
+                    logger.warning(f"add_read failed for {rel}: {exc}")
         except Exception as exc:  # noqa: BLE001
-            print(f"WARNING: get_current_session failed in read_file: {exc}")
+            logger.warning(f"get_current_session failed in read_file: {exc}")
 
         lines = text.splitlines()
         if start_line is not None or end_line is not None:
