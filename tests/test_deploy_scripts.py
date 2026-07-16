@@ -146,8 +146,7 @@ def test_fa_wrapper_unknown_help_topic_delegates_to_container() -> None:
     # important contract is that wrapper did NOT swallow `help run` as host help.
     assert result.returncode != 0
     assert any(
-        term in result.stderr
-        for term in ("exec: docker", "docker:", 'service "first-agent" is not running')
+        term in result.stderr for term in ("exec: docker", "docker:", 'service "first-agent" is not running')
     )
 
 
@@ -433,8 +432,7 @@ def test_normalize_env_combined_secret_and_legacy_comments_keeps_original_backup
         for path in (tmp_path / "backups").glob(".env.fa.pre-adr12-normalize.*.bak")
     ]
     assert any(
-        "LLM API keys -> .env.fa" in text and "OPENROUTER_API_KEY=sk-real" in text
-        for text in backup_texts
+        "LLM API keys -> .env.fa" in text and "OPENROUTER_API_KEY=sk-real" in text for text in backup_texts
     )
 
 

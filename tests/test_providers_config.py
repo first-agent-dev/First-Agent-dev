@@ -121,6 +121,26 @@ def test_load_models_config_preserves_chain_entry_optional_fields() -> None:
     }
 
 
+def test_load_models_config_parses_context_budget_fields() -> None:
+    text = textwrap.dedent(
+        """\
+        coder:
+          model:  "deepseek-v3"
+          family: "deepseek"
+          context_limit: 200000
+          compaction_threshold: 120000
+          chain:
+            - provider: openrouter
+              slug:     "deepseek/deepseek-chat-v3"
+              base_url: "https://openrouter.ai/api/v1"
+              api_key_env: OPENROUTER_API_KEY
+        """
+    )
+    config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    assert config.roles["coder"].context_limit == 200000
+    assert config.roles["coder"].compaction_threshold == 120000
+
+
 # ----- Empty / null / scalar root --------------------------------
 
 
@@ -259,6 +279,26 @@ def test_load_models_config_propagates_unknown_provider_error() -> None:
     assert "unknown provider" in str(info.value)
 
 
+def test_load_models_config_rejects_compaction_threshold_above_context_limit() -> None:
+    text = textwrap.dedent(
+        """\
+        coder:
+          model: "deepseek-v3"
+          family: "deepseek"
+          context_limit: 100000
+          compaction_threshold: 120000
+          chain:
+            - provider: openrouter
+              slug:     "deepseek/deepseek-chat-v3"
+              base_url: "https://openrouter.ai/api/v1"
+              api_key_env: OPENROUTER_API_KEY
+        """
+    )
+    with pytest.raises(ConfigurationError) as info:
+        load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    assert "cannot exceed context_limit" in str(info.value)
+
+
 def test_load_models_config_accumulates_warnings_from_chain_validator() -> None:
     # Slug whose extracted family disagrees with the role's declared
     # family — the chain validator emits a WARNING (not error). The
@@ -329,9 +369,7 @@ def test_load_models_config_rejects_eval_family_matching_planner() -> None:
 
 
 def test_load_models_config_rejects_eval_family_matching_coder() -> None:
-    text = _make_three_role_text(
-        planner_family="kimi", coder_family="deepseek", eval_family="deepseek"
-    )
+    text = _make_three_role_text(planner_family="kimi", coder_family="deepseek", eval_family="deepseek")
     with pytest.raises(EvalFamilyConflictError) as info:
         load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
     msg = str(info.value)
@@ -430,9 +468,7 @@ def test_load_models_config_allows_planner_and_coder_same_family() -> None:
     # ADR-2 §Decision routing table allows a single «coder-tier»
     # model to back both planner and coder; only eval-vs-actor
     # disjointness is enforced.
-    text = _make_three_role_text(
-        planner_family="deepseek", coder_family="deepseek", eval_family="qwen"
-    )
+    text = _make_three_role_text(planner_family="deepseek", coder_family="deepseek", eval_family="qwen")
     config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
     assert config.roles["planner"].family == "deepseek"
     assert config.roles["coder"].family == "deepseek"
@@ -509,8 +545,7 @@ def test_load_models_config_skips_family_check_when_planner_missing() -> None:
     # below for the full assertion shape).
     partial_warnings = [w for w in config.warnings if "'eval'" in w and "'coder'" in w]
     assert len(partial_warnings) == 1, (
-        f"expected exactly one partial-disjoint warning naming "
-        f"eval+coder; got warnings={config.warnings!r}"
+        f"expected exactly one partial-disjoint warning naming eval+coder; got warnings={config.warnings!r}"
     )
 
 

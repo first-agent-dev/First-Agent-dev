@@ -45,9 +45,7 @@ def repo_root(tmp_path: Path) -> Path:
         ("echo hello > /dev/null", BashIntentEffect.READ_ONLY),
     ],
 )
-def test_analyze_bash_read_only_commands(
-    command: str, expected: BashIntentEffect, repo_root: Path
-) -> None:
+def test_analyze_bash_read_only_commands(command: str, expected: BashIntentEffect, repo_root: Path) -> None:
     analysis = analyze_bash_for_intent(command, repo_root=repo_root)
     assert analysis.effect is expected
     assert analysis.projected == ()
@@ -85,9 +83,7 @@ def test_analyze_bash_verify_only_commands(command: str, repo_root: Path) -> Non
         "npm run build",
     ],
 )
-def test_analyze_bash_non_verify_commands_fall_back_to_opaque(
-    command: str, repo_root: Path
-) -> None:
+def test_analyze_bash_non_verify_commands_fall_back_to_opaque(command: str, repo_root: Path) -> None:
     analysis = analyze_bash_for_intent(command, repo_root=repo_root)
     assert analysis.effect is BashIntentEffect.OPAQUE_EXEC
 
@@ -421,9 +417,7 @@ def test_analyze_bash_git_precision_cases(
         "custom-tool 2>&1 > output.txt",
     ],
 )
-def test_analyze_bash_unknown_commands_with_redirection_stay_opaque(
-    command: str, repo_root: Path
-) -> None:
+def test_analyze_bash_unknown_commands_with_redirection_stay_opaque(command: str, repo_root: Path) -> None:
     _assert_bash_analysis(command, repo_root=repo_root, effect=BashIntentEffect.OPAQUE_EXEC)
 
 
@@ -440,7 +434,5 @@ def test_analyze_bash_unknown_commands_with_redirection_stay_opaque(
         (("/usr/local/bin/pytest", "-q"), None),
     ],
 )
-def test_normalise_verifier_contract(
-    words: tuple[str, ...], expected: tuple[str, str] | None
-) -> None:
+def test_normalise_verifier_contract(words: tuple[str, ...], expected: tuple[str, str] | None) -> None:
     assert _normalise_verifier(words) == expected

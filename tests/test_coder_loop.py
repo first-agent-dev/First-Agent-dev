@@ -181,9 +181,10 @@ def test_drive_session_completes_when_llm_signals_done(tmp_path: Path) -> None:
     )
     assert len(provider.calls) == 1
     request = provider.calls[0]
-    assert request.messages[0]["role"] == "system"
-    assert request.messages[1]["role"] == "user"
-    assert request.messages[1]["content"] == "do nothing"
+    # Under PromptComposer, messages has multiple structured system segments before the user task
+    user_msgs = [msg for msg in request.messages if msg["role"] == "user"]
+    assert len(user_msgs) == 1
+    assert user_msgs[0]["content"] == "Task: do nothing"
 
 
 # -- Tool-call dispatch ------------------------------------------------------
@@ -775,9 +776,7 @@ def test_drive_session_pads_truncated_tool_calls(tmp_path: Path) -> None:
 
     # events.jsonl must have 3 tool_result rows (2 real + 1 synthetic).
     events_path = tmp_path / "events.jsonl"
-    kinds = [
-        json.loads(line)["kind"] for line in events_path.read_text().splitlines() if line.strip()
-    ]
+    kinds = [json.loads(line)["kind"] for line in events_path.read_text().splitlines() if line.strip()]
     assert kinds.count("tool_result") == 3
 
 
@@ -839,9 +838,7 @@ def test_drive_session_keyboard_interrupt_returns_outcome(
     assert outcome.final_text == ""
 
     events_path = tmp_path / "events.jsonl"
-    kinds = [
-        json.loads(line)["kind"] for line in events_path.read_text().splitlines() if line.strip()
-    ]
+    kinds = [json.loads(line)["kind"] for line in events_path.read_text().splitlines() if line.strip()]
     assert "run_stopped" in kinds
     assert "abnormal_stop:interrupt" in events_path.read_text()
 
@@ -895,9 +892,7 @@ def test_drive_session_before_llm_call_guard_deny_returns_outcome(
     assert outcome.turns == 1
 
     events_path = tmp_path / "events.jsonl"
-    kinds = [
-        json.loads(line)["kind"] for line in events_path.read_text().splitlines() if line.strip()
-    ]
+    kinds = [json.loads(line)["kind"] for line in events_path.read_text().splitlines() if line.strip()]
     assert "run_stopped" in kinds
     assert "hook_deny:BEFORE_LLM_CALL" in events_path.read_text()
 

@@ -64,6 +64,7 @@ References:
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -74,7 +75,6 @@ from fa.inner_loop.hooks.base import HookPayload, HookRegistry, LifecyclePoint
 from fa.inner_loop.loop import run_session
 from fa.inner_loop.projection import project_for_model
 from fa.inner_loop.prompt import (
-    build_system_message,
     render_tool_specs,
 )
 from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult, ToolSpec
@@ -88,6 +88,8 @@ from fa.providers.errors import (
     ProviderChainExhaustedError,
     ProviderRequestShapeError,
 )
+
+logger = logging.getLogger(__name__)
 
 # Default LLM-turn cap. Distinct from :attr:`RuntimeLimits.max_iterations`
 # which counts *tool calls* across one ``run_session`` invocation; one
@@ -163,6 +165,14 @@ def _session_summary_content(totals: Mapping[str, int], n_turns: int) -> dict[st
     }
 
 
+def _merge_memory_summary_context(initial_summary: str, rebuilt_summary: str) -> str:
+    initial = initial_summary.strip()
+    rebuilt = rebuilt_summary.strip()
+    if initial and rebuilt:
+        return f"Resumed session context:\n{initial}\n\nPrevious compacted summary:\n{rebuilt}"
+    return initial or rebuilt
+
+
 def _assert_tool_pairing_invariant(messages: Sequence[Mapping[str, Any]]) -> None:
     """Assert provider-visible tool call/result ids are exactly paired."""
     use_ids: set[str] = set()
@@ -188,8 +198,7 @@ def _assert_tool_pairing_invariant(messages: Sequence[Mapping[str, Any]]) -> Non
                         result_ids.add(str(block.get("tool_use_id") or ""))
     if use_ids != result_ids:
         raise AssertionError(
-            f"orphaned tool calls: use_only={use_ids - result_ids}, "
-            f"result_only={result_ids - use_ids}"
+            f"orphaned tool calls: use_only={use_ids - result_ids}, result_only={result_ids - use_ids}"
         )
 
 
@@ -274,10 +283,11 @@ class SessionOutcome:
 
 # C901-baseline waiver (25>15): top-level session driver; decompose per
 # loop-improvement-workplan BEFORE adding more branches.
-def drive_session(  # noqa: C901
+def drive_session(
     task: str,
     *,
     provider_chain: ProviderChain,
+    compactor_chain: ProviderChain | None = None,
     registry: ToolRegistry,
     hooks: HookRegistry,
     state: SessionState,
@@ -286,6 +296,7 @@ def drive_session(  # noqa: C901
     limits: RuntimeLimits | None = None,
     max_turns: int = DEFAULT_MAX_TURNS,
     system_prompt_extra: str = "",
+    initial_memory_summary: str = "",
     temperature: float = DEFAULT_TEMPERATURE,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     redactor: SecretRedactor | None = None,
@@ -323,8 +334,10 @@ def drive_session(  # noqa: C901
             One ``run_session`` invocation per LLM turn means the
             tool-call cap applies per-turn, not per-session.
         max_turns: LLM-turn cap; defaults to :data:`DEFAULT_MAX_TURNS`.
-        system_prompt_extra: Optional text appended after the
-            canonical system prompt body.
+        system_prompt_extra: Optional standing profile guidance added to the
+            pinned governance block. Not for mutable resume/session context.
+        initial_memory_summary: Optional mutable summary/history injected into
+            the memory-summary plane before provider calls.
         temperature: Sampling temperature; default 0.0 keeps replay
             byte-deterministic against a deterministic provider stub.
         max_tokens: Per-turn output token cap.
@@ -341,9 +354,63 @@ def drive_session(  # noqa: C901
     if state.log is None:
         raise ValueError("SessionState.log must be set before drive_session")
 
+    from fa.inner_loop.context import reset_current_session, set_current_session
+
+    token = set_current_session(state)
+    try:
+        return _drive_session_inner(
+            task,
+            provider_chain=provider_chain,
+            compactor_chain=compactor_chain,
+            registry=registry,
+            hooks=hooks,
+            state=state,
+            role=role,
+            acting_family=acting_family,
+            limits=limits,
+            max_turns=max_turns,
+            system_prompt_extra=system_prompt_extra,
+            initial_memory_summary=initial_memory_summary,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            redactor=redactor,
+            output=output,
+        )
+    finally:
+        reset_current_session(token)
+
+
+def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, documented
+    task: str,
+    *,
+    provider_chain: ProviderChain,
+    compactor_chain: ProviderChain | None = None,
+    registry: ToolRegistry,
+    hooks: HookRegistry,
+    state: SessionState,
+    role: str = "coder",
+    acting_family: str = "",
+    limits: RuntimeLimits | None = None,
+    max_turns: int = DEFAULT_MAX_TURNS,
+    system_prompt_extra: str = "",
+    initial_memory_summary: str = "",
+    temperature: float = DEFAULT_TEMPERATURE,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    redactor: SecretRedactor | None = None,
+    output: EventBus | None = None,
+) -> SessionOutcome:
     effective_limits = limits if limits is not None else RuntimeLimits.anchored_defaults()
     tool_payload = render_tool_specs(registry.specs())
     artifact_store = ArtifactStore.from_event_log(state.log)
+
+    from fa.memory.context_budget import ContextBudget, estimate_tokens
+    from fa.memory.pinned_buffer import PinnedBuffer
+
+    context_limit = getattr(provider_chain.config, "context_limit", 150000) or 150000
+    compaction_threshold = getattr(provider_chain.config, "compaction_threshold", None)
+    budget = ContextBudget(limit_tokens=context_limit, configured_threshold=compaction_threshold)
+    pinned_buffer = PinnedBuffer(state.workspace_root)
+
     usage_totals = {
         "input_tokens": 0,
         "cache_read_input_tokens": 0,
@@ -352,11 +419,50 @@ def drive_session(  # noqa: C901
     }
     usage_turns = 0
     summary_written = False
-    system_message = build_system_message(system_prompt_extra, role=role)
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_message},
-        {"role": "user", "content": task},
-    ]
+    memory_summary = initial_memory_summary.strip()
+    conversation_history: list[dict[str, Any]] = []
+    # Rebuild conversation history from log database per D1 history authority
+    if state.log is not None:
+        try:
+            events = state.log.read_all()
+            latest_comp_idx = -1
+            rebuilt_summary = ""
+            for idx, ev in enumerate(events):
+                if ev.kind == "compaction_stage3_done":
+                    latest_comp_idx = idx
+                    rebuilt_summary = str(ev.content.get("summary") or "")
+
+            memory_summary = _merge_memory_summary_context(initial_memory_summary, rebuilt_summary)
+            relevant_events = events[latest_comp_idx + 1 :] if latest_comp_idx != -1 else events
+            for ev in relevant_events:
+                if ev.kind == "model_msg":
+                    text = ev.content.get("text")
+                    calls = ev.content.get("tool_calls")
+                    assistant_msg: dict[str, Any] = {
+                        "role": "assistant",
+                        "content": text or "",
+                    }
+                    if calls:
+                        assistant_msg["tool_calls"] = calls
+                    conversation_history.append(assistant_msg)
+                elif ev.kind == "tool_result":
+                    # Tool response
+                    # Find tool_call_id and full stdout content
+                    res_data = ev.content.get("result") or {}
+                    stdout = ""
+                    if isinstance(res_data, dict):
+                        stdout = str(res_data.get("stdout") or "")
+                    content_val = stdout if stdout else (ev.content.get("summary") or "")
+                    conversation_history.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": ev.tool_call_id,
+                            "content": content_val,
+                        }
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to rebuild history from log: %s", exc)
+
     state.log.append(actor="user", kind="user_msg", content={"text": task})
     state.log.append(
         actor="runtime",
@@ -467,13 +573,292 @@ def drive_session(  # noqa: C901
                 )
             )
         if __debug__:
-            _assert_tool_pairing_invariant(messages)
+            _assert_tool_pairing_invariant(conversation_history)
+
+        # ── PinnedBuffer Every Turn (Phase 2 / PR 2) ────────────────────────
+        try:
+            pinned_text = pinned_buffer.extract_pinned_content(extra_instructions=system_prompt_extra)
+        except Exception as exc:  # noqa: BLE001 # graceful degradation
+            logger.warning("PinnedBuffer update failed on turn %d: %s", turn, exc)
+            pinned_text = ""
+
+        # ── PromptComposer Sole Assembly Path (Phase 3 / PR 3) ──────────────
+        from fa.inner_loop.prompt import _ROLE_PROMPTS, CODER_SYSTEM_PROMPT
+        from fa.inner_loop.prompt_composer import (
+            build_prompt_parts_v2,
+            to_anthropic_request_v2,
+            to_openai_request_v2,
+        )
+
+        base_system = _ROLE_PROMPTS.get(role, CODER_SYSTEM_PROMPT)
+        pinned_text_for_turn = pinned_text
+
+        def _compose_request_payload(
+            *,
+            active_summary: str,
+            observations: list[dict[str, Any]],
+            base_system_value: str = base_system,
+            pinned_text_value: str = pinned_text_for_turn,
+        ) -> tuple[dict[str, Any], list[dict[str, Any]], Mapping[str, Any]]:
+            parts, cache_key = build_prompt_parts_v2(
+                base_system=base_system_value,
+                agents_md_map=pinned_text_value,
+                tool_defs=tool_payload,
+                role_id=role,
+                memory_summary=active_summary,
+                task=task,
+                observations=observations,
+            )
+            if provider_chain.config.family == "anthropic":
+                request_body = to_anthropic_request_v2(parts, cache_key)
+                return request_body, list(request_body["messages"]), {}
+            request_body = to_openai_request_v2(parts, cache_key)
+            extra_body = request_body.get("extra_body", {})
+            request_extras = dict(extra_body) if isinstance(extra_body, Mapping) else {}
+            return request_body, list(request_body["messages"]), request_extras
+
+        _request_body, messages_payload, request_extras = _compose_request_payload(
+            active_summary=memory_summary,
+            observations=conversation_history,
+        )
+
+        # ── ContextBudget Gating (Phase 1 / PR 1) ───────────────────────────
+        budget_enabled = True
+        try:
+            if state.feature_flags is not None:
+                budget_enabled = getattr(state.feature_flags, "context_budget_enabled", True)
+        except Exception:  # noqa: BLE001, S110 # graceful degradation
+            pass
+
+        if budget_enabled:
+            usage = estimate_tokens(messages_payload, tool_payload)
+            decision = budget.check(usage)
+            if decision["action"] == "warn":
+                logger.warning("ContextBudget Gating Warning: %s", decision["message"])
+                state.log.append(actor="runtime", kind="context_budget_warn", content=decision)
+            elif decision["action"] in {"stage2", "stage3"}:
+                compaction_enabled = False
+                try:
+                    if state.feature_flags is not None:
+                        compaction_enabled = getattr(state.feature_flags, "context_compaction_enabled", False)
+                except Exception:  # noqa: BLE001, S110 # graceful degradation
+                    pass
+
+                logger.warning("compaction_enabled: %s, flags: %s", compaction_enabled, state.feature_flags)
+
+                if not compaction_enabled:
+                    if decision["action"] == "stage2":
+                        logger.warning(
+                            "ContextBudget Stage 2 reached but compaction is disabled: %s",
+                            decision["message"],
+                        )
+                        state.log.append(actor="runtime", kind="context_budget_warn", content=decision)
+                    else:
+                        logger.warning("ContextBudget Gate Breach: Stage 3 reached! %s", decision["message"])
+                        state.log.append(actor="runtime", kind="context_budget_hard_stop", content=decision)
+                        state.log.append(
+                            actor="runtime",
+                            kind="run_stopped",
+                            content={"reason": "context_budget_hard_stop", "turns": turn},
+                        )
+                        return finish(
+                            SessionOutcome(
+                                exit_code=1,
+                                stop_reason="context_budget_hard_stop",
+                                turns=turn,
+                                final_text=decision["message"],
+                                tool_results=tuple(collected_results),
+                            )
+                        )
+                else:
+                    logger.info(
+                        "ContextBudget Stage 2 reached. Triggering deterministic observation masking first..."
+                    )
+                    state.log.append(
+                        actor="runtime",
+                        kind="compaction_stage2_start",
+                        content={"tokens_before": usage, "threshold": budget.stage2_threshold},
+                    )
+                    try:
+                        from fa.inner_loop.compaction.compactor import project_messages_after_mask
+
+                        masked_history = project_messages_after_mask(
+                            messages=conversation_history,
+                            artifact_store=artifact_store,
+                            recent_turns_to_keep=4,
+                        )
+                        _request_body, messages_payload, request_extras = _compose_request_payload(
+                            active_summary=memory_summary,
+                            observations=masked_history,
+                        )
+                        post_mask_usage = estimate_tokens(messages_payload, tool_payload)
+                        state.log.append(
+                            actor="runtime",
+                            kind="compaction_stage2_done",
+                            content={"tokens_before": usage, "tokens_after": post_mask_usage},
+                        )
+                        logger.info(
+                            "Stage 2 Compaction successful. Reclaimed tokens: %d -> %d",
+                            usage,
+                            post_mask_usage,
+                        )
+                        conversation_history = masked_history
+                        usage = post_mask_usage
+                        decision = budget.check(usage)
+                    except Exception as exc:  # noqa: BLE001 # graceful degradation
+                        logger.warning("Stage 2 Compaction failed: %s, continuing with verbatim prompt", exc)
+                        state.log.append(
+                            actor="runtime",
+                            kind="compaction_stage2_error",
+                            content={"error": str(exc)},
+                        )
+
+                    if decision["action"] == "stage3":
+                        logger.info("Stage 2 masking insufficient. Triggering Stage 3 LLM Compaction...")
+                        state.log.append(
+                            actor="runtime",
+                            kind="compaction_stage3_start",
+                            content={"tokens_before": usage, "threshold": budget.stage3_threshold},
+                        )
+                        try:
+                            from fa.inner_loop.compaction.compactor import (
+                                FullLLMCompactor,
+                                find_turn_boundary_backward,
+                            )
+
+                            cutoff_idx = find_turn_boundary_backward(
+                                conversation_history, recent_turns_to_keep=4
+                            )
+                            older_history = conversation_history[:cutoff_idx]
+                            protected_window = conversation_history[cutoff_idx:]
+
+                            older_history_text = ""
+                            if memory_summary:
+                                older_history_text += (
+                                    f"PREVIOUS COMPACTION SUMMARY:\n{memory_summary}\n\n"
+                                    "NEW CONVERSATION TO ADD:\n"
+                                )
+
+                            if older_history:
+                                lines = []
+                                for msg in older_history:
+                                    msg_role = msg.get("role", "unknown").upper()
+                                    msg_content = msg.get("content") or msg.get("text") or ""
+                                    lines.append(f"{msg_role}: {msg_content}")
+                                    if "tool_calls" in msg:
+                                        for tc in msg["tool_calls"]:
+                                            fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                                            fn_name = fn.get("name")
+                                            fn_args = fn.get("arguments")
+                                            lines.append(f"CALL TOOL: {fn_name} with arguments {fn_args}")
+                                older_history_text += "\n".join(lines)
+
+                            if older_history_text:
+                                compactor = FullLLMCompactor(compactor_chain=compactor_chain)
+                                updated_summary = compactor.compact(older_history_text)
+                                _request_body, messages_payload, request_extras = _compose_request_payload(
+                                    active_summary=updated_summary,
+                                    observations=protected_window,
+                                )
+                                post_compaction_usage = estimate_tokens(messages_payload, tool_payload)
+                                state.log.append(
+                                    actor="runtime",
+                                    kind="compaction_stage3_done",
+                                    content={
+                                        "tokens_before": usage,
+                                        "tokens_after": post_compaction_usage,
+                                        "summary": updated_summary,
+                                    },
+                                )
+                                logger.info(
+                                    "Stage 3 LLM Compaction done. Reclaimed tokens: %d -> %d",
+                                    usage,
+                                    post_compaction_usage,
+                                )
+
+                                is_ok = budget.record_compaction_attempt(
+                                    tokens_before=usage, tokens_after=post_compaction_usage
+                                )
+                                if not is_ok:
+                                    logger.error(
+                                        "Compaction circuit breaker triggered! Less than 10%% space reclaimed "
+                                        "3 consecutive times. Preventing endless compaction loop."
+                                    )
+                                    circuit_breaker_message = (
+                                        "Compaction circuit breaker triggered: anti-thrashing loop locked."
+                                    )
+                                    state.log.append(
+                                        actor="runtime",
+                                        kind="compaction_circuit_breaker",
+                                        content={"message": circuit_breaker_message},
+                                    )
+                                    state.log.append(
+                                        actor="runtime",
+                                        kind="context_budget_hard_stop",
+                                        content={
+                                            "message": circuit_breaker_message,
+                                            "current_tokens": post_compaction_usage,
+                                            "limit_tokens": budget.limit_tokens,
+                                            "threshold": budget.stage3_threshold,
+                                        },
+                                    )
+                                    state.log.append(
+                                        actor="runtime",
+                                        kind="run_stopped",
+                                        content={"reason": "context_budget_hard_stop", "turns": turn},
+                                    )
+                                    return finish(
+                                        SessionOutcome(
+                                            exit_code=1,
+                                            stop_reason="context_budget_hard_stop",
+                                            turns=turn,
+                                            final_text=circuit_breaker_message,
+                                            tool_results=tuple(collected_results),
+                                        )
+                                    )
+
+                                conversation_history = protected_window
+                                memory_summary = updated_summary
+                                usage = post_compaction_usage
+                                decision = budget.check(usage)
+                            else:
+                                logger.warning("No older history to compact for Stage 3")
+                        except Exception as exc:  # noqa: BLE001 # graceful degradation
+                            logger.warning("Stage 3 Compaction failed: %s", exc)
+                            state.log.append(
+                                actor="runtime",
+                                kind="compaction_stage3_error",
+                                content={"error": str(exc)},
+                            )
+
+                    if decision["action"] == "stage3":
+                        logger.warning(
+                            "ContextBudget Gate Breach: Stage 3 still exceeds budget! %s",
+                            decision["message"],
+                        )
+                        state.log.append(actor="runtime", kind="context_budget_hard_stop", content=decision)
+                        state.log.append(
+                            actor="runtime",
+                            kind="run_stopped",
+                            content={"reason": "context_budget_hard_stop", "turns": turn},
+                        )
+                        return finish(
+                            SessionOutcome(
+                                exit_code=1,
+                                stop_reason="context_budget_hard_stop",
+                                turns=turn,
+                                final_text=decision["message"],
+                                tool_results=tuple(collected_results),
+                            )
+                        )
+
         request = RequestInfo(
             model_slug=provider_chain.config.model,
-            messages=tuple(messages),
+            messages=tuple(messages_payload),
             temperature=temperature,
             max_tokens=max_tokens,
             tools=tool_payload,
+            extras=request_extras,
         )
         try:
             # --- Internal Retry Loop for Chain Exhaustion ---
@@ -684,10 +1069,8 @@ def drive_session(  # noqa: C901
             for k, v in response.extras["message_extras"].items():
                 assistant_message[k] = v
         if tool_calls:
-            assistant_message["tool_calls"] = _tool_calls_for_message(
-                response.tool_calls, tool_calls
-            )
-        messages.append(assistant_message)
+            assistant_message["tool_calls"] = _tool_calls_for_message(response.tool_calls, tool_calls)
+        conversation_history.append(assistant_message)
         state.log.append(
             actor="model",
             kind="model_msg",
@@ -758,8 +1141,7 @@ def drive_session(  # noqa: C901
             # cap or for a guard denial (PauseGuard, LoopGuard, etc.).
             stop_reason_code = "iteration_cap"
             stop_reason_detail = (
-                f"tool call skipped: per-turn iteration limit "
-                f"({effective_limits.max_iterations}) exceeded"
+                f"tool call skipped: per-turn iteration limit ({effective_limits.max_iterations}) exceeded"
             )
             if state.log is not None:
                 new_rows = state.log.read_all()[log_len_before:]
@@ -803,7 +1185,7 @@ def drive_session(  # noqa: C901
                     )
                 )
             spec = _projection_spec_for_call(registry, call)
-            messages.append(
+            conversation_history.append(
                 {
                     "role": "tool",
                     "tool_call_id": call.call_id,

@@ -70,9 +70,7 @@ def check_hooks(repo_root: Path | None = None) -> int:
             resolved = target.resolve()
             source_resolved = source.resolve()
             if resolved != source_resolved:
-                sys.stdout.write(
-                    f"⚠ {name}: symlink points to {resolved}, expected {source_resolved}\n"
-                )
+                sys.stdout.write(f"⚠ {name}: symlink points to {resolved}, expected {source_resolved}\n")
                 all_ok = False
                 continue
             if not _is_executable(target):
@@ -104,9 +102,7 @@ def check_hooks(repo_root: Path | None = None) -> int:
     if all_ok:
         sys.stdout.write("All FA git hooks active — local commits and pushes are guarded.\n")
     else:
-        sys.stdout.write(
-            "Some hooks missing, stale, or non-executable — run `just install` to fix.\n"
-        )
+        sys.stdout.write("Some hooks missing, stale, or non-executable — run `just install` to fix.\n")
         if stale_hooks:
             sys.stdout.write(
                 "Stale hooks need re-install after source changes: " + ", ".join(stale_hooks) + "\n"

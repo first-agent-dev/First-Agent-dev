@@ -35,9 +35,7 @@ def test_capability_guard_denies_server_ops_command_by_default(tmp_path: Path) -
 
     decision = guard.handle(
         LifecyclePoint.BEFORE_TOOL_EXEC,
-        HookPayload(
-            tool_call=ToolCall(name="fs.run_bash", params={"command": "deploy production"})
-        ),
+        HookPayload(tool_call=ToolCall(name="fs.run_bash", params={"command": "deploy production"})),
     )
 
     assert decision.action == "deny"
@@ -92,11 +90,7 @@ def test_verifier_observer_emits_verification_audit_row(tmp_path: Path) -> None:
 
     import json
 
-    rows = [
-        json.loads(line)
-        for line in log_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    rows = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     verification_rows = [r for r in rows if r["kind"] == "verification"]
     assert len(verification_rows) == 1
     row = verification_rows[0]
@@ -135,11 +129,7 @@ def test_verifier_observer_no_audit_row_on_success(tmp_path: Path) -> None:
         return
     import json
 
-    rows = [
-        json.loads(line)
-        for line in log_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    rows = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert [r for r in rows if r["kind"] == "verification"] == []
 
 

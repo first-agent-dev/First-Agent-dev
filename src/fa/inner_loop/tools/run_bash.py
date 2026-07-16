@@ -1,14 +1,89 @@
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
 from fa.inner_loop.tools.base import require_string
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
+
+logger = logging.getLogger(__name__)
+
+
+def _normalize_carriage_return(text: str) -> str:
+    """Normalize CR artifacts from PTY / progress-bar outputs.
+
+    Delegates to fa.runtime.pty_pool.resolve_cr for single source of truth (FIND-016).
+    Examples: foo\\rbar\\n -> bar, 12%\\r34%\\r56% -> 56%
+    """
+    try:
+        from fa.runtime.pty_pool import resolve_cr
+
+        return resolve_cr(text)
+    except Exception:
+        text = text.replace("\r\n", "\n")
+        cleaned_lines = []
+        for line in text.split("\n"):
+            if "\r" in line:
+                line = line.split("\r")[-1]
+            cleaned_lines.append(line)
+        result = "\n".join(cleaned_lines)
+        if result.endswith("\n") and text.endswith("\n"):
+            result = result[:-1]
+        return result
+
+
+def _elide_500_preview(value: Any, max_bytes: int) -> str:
+    """Elide to 500-char preview + marker, for token efficiency (Stage 0)."""
+    import json
+
+    if isinstance(value, str):
+        rendered = value
+    else:
+        rendered = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, default=repr)
+    preview_len = 500
+    if len(rendered) <= preview_len:
+        return rendered
+    return (
+        rendered[:preview_len]
+        + f"\n...[truncated {len(rendered)} chars, use | head -n 100 or grep to reduce, full in artifact]...\n"
+        + rendered[-200:]
+    )
+
+
+def _get_write_set_from_git_status(root: Path) -> list[str]:
+    """Dynamic git-status verification per Gap 8 — formal source-of-truth for transaction diffs, not regex."""
+    try:
+        res = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z"],  # noqa: S607
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if res.returncode != 0:
+            return []
+        files = []
+        entries = res.stdout.split("\0")
+        for entry in entries:
+            if not entry:
+                continue
+            if len(entry) < 3:
+                continue
+            path = entry[3:].strip()
+            if path:
+                if "\0" in path:
+                    path = path.split("\0")[0]
+                files.append(path)
+        return files
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("git status --porcelain -z failed: %s", exc)
+        return []
 
 
 def build_run_bash_tool(
@@ -17,21 +92,6 @@ def build_run_bash_tool(
     timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
     env_allowlist_extra: Iterable[str] = (),
 ) -> ToolSpec:
-    """Build the ``fs.run_bash`` ToolSpec.
-
-    ``timeout_seconds`` defaults to the documented anchor (30 s) so the
-    smoke entrypoint runs cleanly. The deterministic loop driver passes
-    the user-configured value from ``RuntimeLimits.bash_timeout_seconds``
-    (ADR-7 \u00a7Amendment 2026-05-20 rule 1: caps live in
-    ``~/.fa/config.yaml``, never in code constants).
-
-    Secret isolation (ADR-12): the agent's shell runs with an
-    allowlist-scrubbed environment (``bash_env.build_scrubbed_env``) so it
-    inherits no credential-bearing variables, even if one ever re-enters the
-    parent environment. ``env_allowlist_extra`` may add *non-secret* names; the
-    fail-closed secret filter still applies on top.
-    """
-
     root = workspace_root.resolve()
     extra_allow = frozenset(env_allowlist_extra)
 
@@ -42,24 +102,140 @@ def build_run_bash_tool(
         except ValueError as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
+        executor = None
+        session = None
+        artifact_store = None
+        transaction = None
         try:
-            # Waiver: shell=True is the tool's contract — fs.run_bash
-            # executes agent bash inside the sandbox boundary (ADR-6).
-            completed = subprocess.run(  # noqa: S602
+            from fa.inner_loop.context import get_current_session
+
+            session = get_current_session()
+            if session is not None:
+                # Guard against cross-workspace contamination
+                try:
+                    sess_root = getattr(session, "workspace_root", None)
+                    if sess_root is not None:
+                        sess_root_resolved = Path(sess_root).resolve()
+                        if sess_root_resolved != root:
+                            # Different workspace — don't reuse pty_pool, but keep artifact_store/transaction if possible
+                            executor = None
+                        else:
+                            executor = getattr(session, "bash_executor", None)
+                            if executor is None:
+                                pool = getattr(session, "pty_pool", None)
+                                if pool is not None:
+                                    try:
+                                        from fa.runtime.bash_executor import InProcessPtyExecutor
+
+                                        executor = InProcessPtyExecutor(pool)
+                                    except (ImportError, AttributeError, TypeError) as exc:
+                                        logger.warning(
+                                            "Failed to instantiate InProcessPtyExecutor: %s. Falling back.", exc
+                                        )
+                                        executor = pool
+                    else:
+                        executor = getattr(session, "bash_executor", None)
+                        if executor is None:
+                            pool = getattr(session, "pty_pool", None)
+                            if pool is not None:
+                                try:
+                                    from fa.runtime.bash_executor import InProcessPtyExecutor
+
+                                    executor = InProcessPtyExecutor(pool)
+                                except (ImportError, AttributeError, TypeError) as exc:
+                                    logger.warning(
+                                        "Failed to instantiate InProcessPtyExecutor: %s. Falling back.", exc
+                                    )
+                                    executor = pool
+                except Exception as exc:
+                    logger.warning("get_current_session/pty_pool resolution failed: %s", exc)
+                    executor = None
+
+                try:
+                    artifact_store = getattr(session, "artifact_store", None)
+                    transaction = getattr(session, "transaction", None)
+                except Exception:
+                    pass
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("get_current_session failed in run_bash: %s", exc)
+
+        if executor is not None:
+            try:
+                pty_result = executor.run(command, timeout=timeout_seconds, workdir=root, session_id="main")
+                try:
+                    if transaction is not None:
+                        write_set = _get_write_set_from_git_status(root)
+                        for f in write_set:
+                            transaction.add_write(f)
+                except (OSError, ValueError) as exc:
+                    logger.warning("transaction add_write from git status failed: %s", exc)
+
+                artifact_id = None
+                stdout = _normalize_carriage_return(pty_result.stdout)
+                if artifact_store is not None and len(stdout) > 8000:
+                    try:
+                        put_method = getattr(artifact_store, "put", None) or getattr(
+                            artifact_store, "write", None
+                        )
+                        if put_method is not None:
+                            artifact_id = put_method(stdout)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("artifact store write failed: %s", exc)
+
+                preview = _elide_500_preview(stdout, 8000)
+                summary = f"bash exited {pty_result.exit_code}"
+                result = {
+                    "returncode": pty_result.exit_code,
+                    "stdout": stdout if len(stdout) <= 8000 else preview,
+                    "stderr": "",
+                    "truncated": pty_result.truncated,
+                    "artifact_id": artifact_id,
+                    "session_id": pty_result.session_id,
+                }
+                if pty_result.exit_code == -1 and "Timeout" in stdout:
+                    logger.warning(
+                        "PtyPool executor timeout, fallback to subprocess for command %s", command[:200]
+                    )
+                    raise RuntimeError(f"PtyPool timeout fallback: {stdout[:200]}")
+                if pty_result.exit_code != 0:
+                    return ToolResult.fail(
+                        "command_failed",
+                        f"bash exited {pty_result.exit_code}\nstdout: {stdout[:2000]}",
+                        retryable=True,
+                    )
+                return ToolResult.ok(summary, result=result)
+
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("PtyPool executor failed: %s, fallback to subprocess", exc)
+
+        # Fallback: subprocess.run (stateless) with binary mode to preserve \r
+        try:
+            completed_bytes = subprocess.run(
                 command,
                 cwd=root,
-                # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
-                # intentional sandbox boundary (ADR-6)
                 shell=True,
                 check=False,
                 capture_output=True,
-                text=True,
+                text=False,
                 timeout=timeout_seconds,
-                # Secret isolation (ADR-12): hand the child an allowlist-scrubbed
-                # env so the agent shell (and anything it spawns) inherits no
-                # credential-bearing variables.
                 env=build_scrubbed_env(os.environ, extra_allow=extra_allow),
             )
+            try:
+                stdout_raw = completed_bytes.stdout.decode("utf-8", errors="ignore")
+            except Exception:
+                stdout_raw = ""
+            try:
+                stderr_raw = completed_bytes.stderr.decode("utf-8", errors="ignore")
+            except Exception:
+                stderr_raw = ""
+
+            class _Completed:
+                pass
+
+            completed = _Completed()
+            completed.stdout = stdout_raw
+            completed.stderr = stderr_raw
+            completed.returncode = completed_bytes.returncode
         except subprocess.TimeoutExpired:
             return ToolResult.fail(
                 "command_timeout",
@@ -67,18 +243,46 @@ def build_run_bash_tool(
                 retryable=True,
             )
 
+        try:
+            if transaction is not None:
+                write_set = _get_write_set_from_git_status(root)
+                for f in write_set:
+                    transaction.add_write(f)
+        except (OSError, ValueError) as exc:
+            logger.warning("Fallback transaction tracking failed: %s", exc)
+
+        stdout_clean = _normalize_carriage_return(completed.stdout)
+        stderr_clean = _normalize_carriage_return(completed.stderr)
+        artifact_id = None
+        if artifact_store is not None and len(stdout_clean) > 8000:
+            try:
+                put_method = getattr(artifact_store, "put", None) or getattr(
+                    artifact_store, "write", None
+                )
+                if put_method is not None:
+                    artifact_id = put_method(stdout_clean)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to offload large fallback stdout to ArtifactStore: %s", exc)
+
+        truncated = len(stdout_clean) > 8000
+        preview_stdout = (
+            stdout_clean if len(stdout_clean) <= 8000 else _elide_500_preview(stdout_clean, 8000)
+        )
         summary = f"bash exited {completed.returncode}"
         result = {
             "returncode": completed.returncode,
-            "stdout": completed.stdout,
-            "stderr": completed.stderr,
+            "stdout": preview_stdout,
+            "stderr": stderr_clean,
+            "artifact_id": artifact_id,
+            "truncated": truncated,
         }
+
         if completed.returncode != 0:
             detail = f"bash exited {completed.returncode}"
-            if completed.stderr:
-                detail += f"\nstderr: {completed.stderr[:2000]}"
-            if completed.stdout:
-                detail += f"\nstdout: {completed.stdout[:2000]}"
+            if stderr_clean:
+                detail += f"\nstderr: {stderr_clean[:2000]}"
+            if stdout_clean:
+                detail += f"\nstdout: {stdout_clean[:2000]}"
             return ToolResult.fail(
                 "command_failed",
                 detail,
@@ -88,7 +292,27 @@ def build_run_bash_tool(
 
     return ToolSpec(
         name="fs.run_bash",
-        description="Run a bash command in the workspace after sandbox hooks allow it.",
+        description="""Run a bash command in the workspace after sandbox hooks allow it.
+
+STATEFUL for main agent (via PtyPool EventStream Runtime, ADR-14): cwd, env, venv persist
+across calls (cd, export, source .venv/bin/activate survive). Stateless for cheap subagents
+(structured websearch, simple function) with isolated context.
+
+Background processes: use fs.run_bash_background for long-running commands (dev servers),
+then fs.read_terminal, fs.list_tasks, fs.kill_task, fs.send_ctrl_c.
+
+Output capped 8000 chars with artifact_id + 500-char preview (ADR-13/14). For large outputs,
+chain with | head -n 100 or | tail -n 100 or grep.
+
+Chain commands with && for atomicity: cd src && ls -la
+
+Formal transaction tracking via git status --porcelain -z (Gap 8) as source-of-truth for
+write_set, not regex.
+
+Socket isolation via -L fa_<run_id> (Improvement 1), line-wrapping -J + wide viewport -x 300
+(Gap 12), UUID sentinel per session, signal/atexit leak prevention (Gap 14), pexpect
+per-session isolation (Gap 13).
+""",
         input_schema={
             "type": "object",
             "required": ["command"],
@@ -97,6 +321,8 @@ def build_run_bash_tool(
         permission="workspace",
         handler=handler,
         tags=("fs", "bash"),
+        max_context_bytes=8000,
+        elide=_elide_500_preview,
     )
 
 

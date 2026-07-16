@@ -316,9 +316,7 @@ def test_max_iterations_truncates_run_session(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path)
     hooks = HookRegistry()
     hooks.register(SandboxHook(tmp_path))
-    state = SessionState(
-        workspace_root=tmp_path, run_id="t-cap", log=EventLog(tmp_path / "ev.jsonl")
-    )
+    state = SessionState(workspace_root=tmp_path, run_id="t-cap", log=EventLog(tmp_path / "ev.jsonl"))
 
     limits = RuntimeLimits(max_iterations=2, bash_timeout_seconds=10)
     calls = tuple(
@@ -337,9 +335,7 @@ def test_bash_timeout_is_plumbed_into_tool(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path, bash_timeout_seconds=1)
     hooks = HookRegistry()
     hooks.register(SandboxHook(tmp_path))
-    state = SessionState(
-        workspace_root=tmp_path, run_id="t-timeout", log=EventLog(tmp_path / "ev.jsonl")
-    )
+    state = SessionState(workspace_root=tmp_path, run_id="t-timeout", log=EventLog(tmp_path / "ev.jsonl"))
 
     results = run_session(
         (ToolCall(name="fs.run_bash", params={"command": "sleep 3"}, call_id="tc-1"),),

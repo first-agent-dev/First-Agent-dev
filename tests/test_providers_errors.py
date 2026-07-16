@@ -69,9 +69,7 @@ def test_provider_request_shape_error_carries_logical_call_id() -> None:
 def test_provider_chain_exhausted_carries_attempts() -> None:
     records = [
         ChainAttemptRecord(provider="fw", slug="m1", status=429, ms=100, error="rate_limited"),
-        ChainAttemptRecord(
-            provider="or", slug="m2", status=503, ms=50, error="service_unavailable"
-        ),
+        ChainAttemptRecord(provider="or", slug="m2", status=503, ms=50, error="service_unavailable"),
     ]
     exc = ProviderChainExhaustedError("chain exhausted", attempts=records)
     assert len(exc.attempts) == 2

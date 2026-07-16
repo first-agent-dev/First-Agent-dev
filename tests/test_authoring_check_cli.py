@@ -27,9 +27,7 @@ def test_help_lists_authoring_check() -> None:
 
 def test_authoring_check_json_on_clean_tree(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
     _make_workspace(tmp_path)
-    args = build_parser().parse_args(
-        ["authoring-check", "--workspace", str(tmp_path), "--output", "json"]
-    )
+    args = build_parser().parse_args(["authoring-check", "--workspace", str(tmp_path), "--output", "json"])
     exit_code = args.func(args)
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)

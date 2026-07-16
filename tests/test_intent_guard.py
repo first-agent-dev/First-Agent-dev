@@ -271,9 +271,7 @@ def test_intent_guard_denies_opaque_exec_bash_without_draft(tmp_path: Path) -> N
     )
     call = ToolCall(
         name="fs.run_bash",
-        params={
-            "command": ('python -c "import pathlib; pathlib.Path("src/fa/x.py").write_text("x")"')
-        },
+        params={"command": ('python -c "import pathlib; pathlib.Path("src/fa/x.py").write_text("x")"')},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "deny"
@@ -580,9 +578,7 @@ def test_intent_guard_mutating_call_includes_edit_file(tmp_path: Path) -> None:
         draft_text=_BAD_FIX_DRAFT,
         git_output="M\tsrc/fa/x.py\n",
     )
-    call = ToolCall(
-        name="fs.edit_file", params={"path": "src/fa/x.py", "old_string": "a", "new_string": "b"}
-    )
+    call = ToolCall(name="fs.edit_file", params={"path": "src/fa/x.py", "old_string": "a", "new_string": "b"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     # Draft is FIX-shaped but lacks DOF/MECHANISM → deny regardless of
     # whether the classifier or the user typed the intent.
@@ -611,15 +607,9 @@ def test_intent_guard_git_add_prefix_exact_match(tmp_path: Path) -> None:
         git_output="M\tsrc/fa/x.py\n",
     )
     exact_call = ToolCall(name="fs.run_bash", params={"command": "git add"})
-    assert (
-        guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=exact_call)).action
-        == "deny"
-    )
+    assert guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=exact_call)).action == "deny"
     space_call = ToolCall(name="fs.run_bash", params={"command": "git add src/fa/x.py"})
-    assert (
-        guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=space_call)).action
-        == "deny"
-    )
+    assert guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=space_call)).action == "deny"
 
     valid_tmp = tmp_path / "valid"
     valid_tmp.mkdir()
@@ -630,9 +620,7 @@ def test_intent_guard_git_add_prefix_exact_match(tmp_path: Path) -> None:
     )
     fallback_call = ToolCall(name="fs.run_bash", params={"command": "git add--interactive"})
     assert (
-        valid_guard.handle(
-            LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)
-        ).action
+        valid_guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)).action
         == "allow"
     )
 
@@ -647,15 +635,9 @@ def test_intent_guard_git_commit_prefix_exact_match(tmp_path: Path) -> None:
         git_output="M\tsrc/fa/x.py\n",
     )
     exact_call = ToolCall(name="fs.run_bash", params={"command": "git commit"})
-    assert (
-        guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=exact_call)).action
-        == "deny"
-    )
+    assert guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=exact_call)).action == "deny"
     space_call = ToolCall(name="fs.run_bash", params={"command": "git commit -m 'wip'"})
-    assert (
-        guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=space_call)).action
-        == "deny"
-    )
+    assert guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=space_call)).action == "deny"
 
     valid_tmp = tmp_path / "valid"
     valid_tmp.mkdir()
@@ -666,9 +648,7 @@ def test_intent_guard_git_commit_prefix_exact_match(tmp_path: Path) -> None:
     )
     fallback_call = ToolCall(name="fs.run_bash", params={"command": "git commit-tree"})
     assert (
-        valid_guard.handle(
-            LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)
-        ).action
+        valid_guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)).action
         == "allow"
     )
 

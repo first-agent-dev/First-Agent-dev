@@ -381,9 +381,7 @@ _INVARIANT_REQUIRED_PREFIXES: dict[Intent, tuple[str, ...]] = {
 # Exporting a live dict alias would let external code mutate global
 # validation behaviour at runtime; the mapping-proxy keeps ADR-10 I-1's
 # single source of truth observable without making it writable.
-INVARIANT_REQUIRED_PREFIXES: Mapping[Intent, tuple[str, ...]] = MappingProxyType(
-    _INVARIANT_REQUIRED_PREFIXES
-)
+INVARIANT_REQUIRED_PREFIXES: Mapping[Intent, tuple[str, ...]] = MappingProxyType(_INVARIANT_REQUIRED_PREFIXES)
 
 
 def parse_field(text: str, header: str) -> str | None:
@@ -595,8 +593,7 @@ def validate_commit_msg(
             violations.append(
                 Violation(
                     "class_missing",
-                    f"`INTENT: FIX` requires `{HEADER_CLASS}` header line "
-                    f"(one of: {sorted(CLASS_VALUES)})",
+                    f"`INTENT: FIX` requires `{HEADER_CLASS}` header line (one of: {sorted(CLASS_VALUES)})",
                 )
             )
         elif class_value not in CLASS_VALUES:
@@ -610,8 +607,7 @@ def validate_commit_msg(
         violations.append(
             Violation(
                 "class_unexpected",
-                f"`{HEADER_CLASS}` header line is only valid when "
-                f"`INTENT: FIX`; got `INTENT: {intent.value}`",
+                f"`{HEADER_CLASS}` header line is only valid when `INTENT: FIX`; got `INTENT: {intent.value}`",
             )
         )
 
@@ -657,8 +653,7 @@ def _validate_fix_clauses(
         violations.append(
             Violation(
                 "dof_missing",
-                f"`INTENT: FIX` requires `{HEADER_DOF_CLOSED}` header "
-                "line (one sentence | `n/a (reason)`)",
+                f"`INTENT: FIX` requires `{HEADER_DOF_CLOSED}` header line (one sentence | `n/a (reason)`)",
             )
         )
     if mech_value is None or not mech_value:
@@ -828,9 +823,7 @@ def _find_repo_root(start: Path) -> Path:
 
     if (start / "knowledge" / "llms.txt").is_file():
         return start
-    raise SystemExit(
-        "fa.hygiene.pr_intent: not a First-Agent workspace (no knowledge/llms.txt at cwd)"
-    )
+    raise SystemExit("fa.hygiene.pr_intent: not a First-Agent workspace (no knowledge/llms.txt at cwd)")
 
 
 def _git_dir(repo_root: Path) -> Path:

@@ -38,9 +38,7 @@ def test_diagnostic_report_matches_schema(tmp_path: Path) -> None:
     (tmp_path / "knowledge").mkdir()
     (tmp_path / "knowledge" / "llms.txt").write_text("x")
     (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_skip.py").write_text(
-        "import pytest\n\ndef test_x():\n    pytest.skip('x')\n"
-    )
+    (tmp_path / "tests" / "test_skip.py").write_text("import pytest\n\ndef test_x():\n    pytest.skip('x')\n")
     report = run_all(tmp_path, rules=RULE_ALLOWLIST)
     assert report.diagnostics, "fixture should produce at least one diagnostic"
     validate = _validator()

@@ -15,9 +15,7 @@ class FakeModelsConfig:
 
     def __init__(self, env_vars: list[str]) -> None:
         self.roles = {
-            "coder": type(
-                "Role", (), {"chain": [type("Entry", (), {"api_key_env": v}) for v in env_vars]}
-            )
+            "coder": type("Role", (), {"chain": [type("Entry", (), {"api_key_env": v}) for v in env_vars]})
         }
 
 
@@ -30,9 +28,7 @@ def test_exact_match() -> None:
 def test_substring_replacement() -> None:
     env = {"OPENROUTER_API_KEY": "sk-or-v1-real-key-12345"}
     redactor = SecretRedactor(env, ["OPENROUTER_API_KEY"])
-    assert (
-        redactor.redact("prefix sk-or-v1-real-key-12345 suffix") == "prefix ***REDACTED*** suffix"
-    )
+    assert redactor.redact("prefix sk-or-v1-real-key-12345 suffix") == "prefix ***REDACTED*** suffix"
 
 
 def test_no_false_positive() -> None:

@@ -154,9 +154,7 @@ def test_probe_unknown_role(
     _write_models(config_path)
     transport = _FakeTransport(status=200)
 
-    exit_code = _run_probe(
-        tmp_path, monkeypatch, config_path, transport, extra_args=["--role", "nonexistent"]
-    )
+    exit_code = _run_probe(tmp_path, monkeypatch, config_path, transport, extra_args=["--role", "nonexistent"])
 
     out = capsys.readouterr().out
     assert exit_code == 1
@@ -186,9 +184,7 @@ def test_probe_all_roles(
     )
     transport = _FakeTransport(status=200)
 
-    exit_code = _run_probe(
-        tmp_path, monkeypatch, config_path, transport, extra_args=["--all-roles"]
-    )
+    exit_code = _run_probe(tmp_path, monkeypatch, config_path, transport, extra_args=["--all-roles"])
 
     out = capsys.readouterr().out
     assert exit_code == 0
@@ -223,9 +219,7 @@ def test_probe_config_error(
     config_path.write_text("planner: not-a-mapping\n", encoding="utf-8")
     transport = _FakeTransport(status=200)
 
-    exit_code = _run_probe(
-        tmp_path, monkeypatch, config_path, transport, extra_args=["--role", "planner"]
-    )
+    exit_code = _run_probe(tmp_path, monkeypatch, config_path, transport, extra_args=["--role", "planner"])
 
     err = capsys.readouterr().err
     assert exit_code == 2

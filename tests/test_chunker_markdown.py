@@ -129,14 +129,7 @@ def test_byte_offsets_align_with_line_offsets(tmp_path: Path) -> None:
 
 def test_frontmatter_title_and_topic(tmp_path: Path) -> None:
     body = (
-        "---\n"
-        'title: "Architecture"\n'
-        "topic: architecture\n"
-        "compiled: 2026-05-03\n"
-        "---\n"
-        "\n"
-        "# Doc heading\n\n"
-        "Body.\n"
+        '---\ntitle: "Architecture"\ntopic: architecture\ncompiled: 2026-05-03\n---\n\n# Doc heading\n\nBody.\n'
     )
     path = _write(tmp_path, "front.md", body)
 

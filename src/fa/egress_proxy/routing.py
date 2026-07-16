@@ -120,8 +120,7 @@ def build_route_table(chain_entries: list[tuple[str, str, str, str]]) -> RouteTa
         _local_http = parsed.scheme == "http" and parsed.hostname in _LOCAL_HOSTS
         if not (_https or _local_http):
             raise ProxyConfigError(
-                f"route {name!r}: upstream base_url must be https:// (or "
-                f"http://localhost); got {base_url!r}"
+                f"route {name!r}: upstream base_url must be https:// (or http://localhost); got {base_url!r}"
             )
         existing = routes.get(name)
         candidate = ProxyRoute(

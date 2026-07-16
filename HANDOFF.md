@@ -39,6 +39,8 @@
    
 Overwritten each session! Details live at the pointer, not here.
 
+**As of:** 2026-07-15 — ADR-11-I9 live-path Definition-of-Done + `tests-writing` skill (local substrate commits on top of `fd54ce4`). Authoring contract: product harness behavior is done when a composition-root test (`drive_session` / shipped session CLI) fails if the production call site is removed. Steering: `knowledge/skills/tests-writing/SKILL.md` (v1.1, positive prescriptions). Authority remains `just check` / pytest (ADR-11-I6). Gold wiring suites `tests/test_pr{1..5}_wiring.py` cleaned for type-honest fixtures (`HookRegistry`, `tool_calls=()`, `_require_log`). DIGEST + AGENTS skill table updated. **Not pushed** — apply patch from `fd54ce4` and push from your machine. Next for authoring: optional shared `tests/fixtures/session_wiring.py`; keep closing Stage B/C gaps with C1 tests under the skill; ADR-11 PR3+ Level-1 packs still on blueprint path; Level-1 auto-rule for missing C1 stays deferred (FP).
+
 **As of:** 2026-07-01 - PR landed Safe mechanical cleanup is automated locally; GitHub CI remains the final authority;
 Host wrapper help command expansion - ux improvement.
 
@@ -224,25 +226,37 @@ review fixes (tracks `Dockerfile.fa`, ignores commented optional `FA_*` env rows
 
 Priority-ordered. Completed items deleted, not struck through.
 
-1. **First real `fa run --task` smoke against OpenRouter / Fireworks.**
-   The driver shipped in PR D + the `pr.prepare` producer landing
-   in PR E together close the contract loop, but adapter
-   response-shape coverage stays theoretical until this runs
-   end-to-end against a live provider. Yellow→green conversion
-   item; provider-specific adapter fixes likely (e.g., a vendor
-   that returns `tool_calls` under a non-canonical key).
-2. **Cross-session aggregation of `attempt_history.json` (R-10 /
+1. **Apply & push ADR-11-I9 + tests-writing patch** (base `fd54ce4`).
+   Files: ADR-11 amendment, `knowledge/skills/tests-writing/SKILL.md`,
+   AGENTS/DIGEST/skills README, gold `test_pr{1..5}_wiring.py`.
+   Load `tests-writing` for any further wiring tests. Human merge to
+   branch/PR from your VS Code machine.
+
+2. **Continue Stage B/C gap-close with C1 composition-root tests**
+   under `tests-writing` (kill-check, flag matrices A/B/C, events /
+   outcomes / `call_count`). Prefer extracting
+   `tests/fixtures/session_wiring.py` once mocks are copied a third time.
+
+3. **Authoring strengthen (discussed, not all landed):**
+   - Keep I9 as contract; **no** STATUS enum / allowlist file / new `fs.*` tools.
+   - Optional later: thin Level-1 **advisory** for missing live-path proof (FP-gated).
+   - ADR-11 blueprint **PR3+** still open: parity/docs rules, seam+corpora, messages advisory (BACKLOG I-12/I-13/I-14).
+   - Mutation survivors remain separate (`mutation-clearing` / I-23).
+
+4. **First real `fa run --task` smoke against OpenRouter / Fireworks.**
+
+5. **Cross-session aggregation of `attempt_history.json` (R-10 /
    R-12).** Per-run history is already written under
    `~/.fa/session-log/<run_id>/`; the missing piece is the
    roll-up surface that Pillar-3 measurement depends on (lessons
    moving across sessions instead of being re-discovered).
-3. **Orphan cross-ref sweep — ≈26 files** from PR A' extraction.
+6. **Orphan cross-ref sweep — ≈26 files** from PR A' extraction.
    Top-10: `llms.txt` (9), `MAINTENANCE.md` (7), `ADR-10` (6),
    `DIGEST.md` (4), `ADR-7` (4). Retarget «AGENTS.md PR Checklist
    rule #N» → [`pr-creation/SKILL.md` §PR Checklist](./knowledge/skills/pr-creation/SKILL.md).
-4. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
+7. **ADR-10 follow-ups** — I-5 FA-surface audit; A28 «LLM emits a
    number» audit; `[CODE]` namespace + A23 lint.
-5. **ADR-11 rollout PR 3 — parity + docs rules.** PR-2 landed
+8. **ADR-11 rollout PR 3 — parity + docs rules.** PR-2 landed
    2026-06-06 (V2 exports / V4 test-decay / V11 placeholder-asserts).
    Next: `src/fa/authoring_rules/parity.py` (V3 — `SQUASH_MSG`
    Python↔Bash drift, F-3) + `src/fa/authoring_rules/docs.py` (V5 —
@@ -250,12 +264,14 @@ Priority-ordered. Completed items deleted, not struck through.
    (`seam.py` V6 + `catch-corpus/` + `fp-corpus/` consumers) →
    PR 5 (`messages.py` V12 + advisory tuning). V10 stays deferred
    indefinitely per [`I-14`](./knowledge/BACKLOG.md#i-14--adr-11-pr-3-rule-packs-v3-v5-v7-v10-v12-v14).
-6. **Authoring-rules scope coverage** ([`I-12`](./knowledge/BACKLOG.md#i-12--authoring-rules-scope-coverage-gap-scripts-verifiers)).
+   **Note:** I9 (live-path DoD) is a separate authoring contract (2026-07-15);
+   it does not replace PR3+ Level-1 packs.
+9. **Authoring-rules scope coverage** ([`I-12`](./knowledge/BACKLOG.md#i-12--authoring-rules-scope-coverage-gap-scripts-verifiers)).
    PR-2 V2 scopes only to `src/`; V4/V11 to `tests/`. Extend to
    `scripts/` and `verifiers/` once either tree grows beyond its
    current single-file footprint, OR a V2-class regression is
    detected manually there.
-7. **V4 import-alias bypass** ([`I-13`](./knowledge/BACKLOG.md#i-13--v4-import-alias-bypass-from-pytest-import-skip)).
+10. **V4 import-alias bypass** ([`I-13`](./knowledge/BACKLOG.md#i-13--v4-import-alias-bypass-from-pytest-import-skip)).
    `from pytest import skip; skip(...)` slips past `TEST_SEMANTIC_DECAY`
    today. Half-day fix (add an `ast` import-walker); land when an
    `fp-corpus` measurement (PR-4) shows a real bypass, or sooner if

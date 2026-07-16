@@ -308,9 +308,7 @@ def _package_install_subcommand(tokens: list[str]) -> str:
 # to ``/etc/passwd``. The classifier demotes such commands to
 # :attr:`BashCategory.GENERAL_WRITE` (or higher if a danger marker is
 # present anywhere). Agent Review finding 2026-05-20 on PR #23.
-_SHELL_OPERATOR_TOKENS: frozenset[str] = frozenset(
-    {";", "&&", "||", "|", ">", ">>", "<", "<<", "&"}
-)
+_SHELL_OPERATOR_TOKENS: frozenset[str] = frozenset({";", "&&", "||", "|", ">", ">>", "<", "<<", "&"})
 
 
 def _has_shell_operator(tokens: list[str]) -> bool:

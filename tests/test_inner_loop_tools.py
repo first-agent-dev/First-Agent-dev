@@ -31,9 +31,7 @@ def test_read_file_tool_reads_line_window(tmp_path: Path) -> None:
 def test_write_file_tool_writes_inside_workspace(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path)
 
-    result = registry.dispatch(
-        ToolCall(name="fs.write_file", params={"path": "out.txt", "content": "hello\n"})
-    )
+    result = registry.dispatch(ToolCall(name="fs.write_file", params={"path": "out.txt", "content": "hello\n"}))
 
     assert result.error is None
     assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "hello\n"
@@ -74,6 +72,25 @@ def test_run_bash_tool_returns_timeout_error(tmp_path: Path, monkeypatch: Monkey
     assert result.error is not None
     assert result.error.code == "command_timeout"
     assert result.error.retryable is True
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_run_bash_large_output_offloads_artifact_without_internal_error(tmp_path: Path) -> None:
+    from fa.inner_loop.context import reset_current_session, set_current_session
+    from fa.inner_loop.state import SessionState
+
+    state = SessionState(workspace_root=tmp_path, run_id="test-bash-large")
+    token = set_current_session(state)
+    try:
+        tool = build_run_bash_tool(tmp_path)
+        result = tool.handler({"command": "python3 - <<'PY'\nprint('A' * 9001)\nPY"})
+    finally:
+        reset_current_session(token)
+
+    assert result.error is None
+    assert result.result is not None
+    assert result.result["artifact_id"] is not None
+    assert "truncated" in result.result
 
 
 def test_read_file_tolerates_unresolved_workspace_root(tmp_path: Path) -> None:
@@ -141,22 +158,176 @@ def test_run_bash_tool_preserves_failure_diagnostics(tmp_path: Path) -> None:
 
 
 def test_build_planner_registry_has_read_and_bash(tmp_path: Path) -> None:
-    """Planner registry: read-only reconnaissance (read_file + run_bash, no write_file)."""
+    """Planner registry v3 reduced: read-only analysis + limited write to research docs, no bash.
+
+    Per ADR-14/15 v3 reduced surface + Q3 decision planner gets limited write_file to
+    knowledge/research/** + .fa/** for filesystem-canon plans, not full write.
+    Old test expected read+bash, now expects read+glob+grep+instant_grep+limited write, no bash.
+    Kept name for backward compat but checks new reduced surface.
+    """
     from fa.inner_loop.tools import build_planner_registry
 
     registry = build_planner_registry(tmp_path)
     names = {spec.name for spec in registry.specs()}
+    # Planner should have read-only reconnaissance + limited write for plans
     assert "fs.read_file" in names
-    assert "fs.run_bash" in names
-    assert "fs.write_file" not in names
+    assert "fs.glob" in names
+    assert "fs.grep" in names
+    assert "fs.instant_grep" in names
+    # Limited write_file should be present (knowledge/research/** + .fa/**)
+    assert "fs.write_file" in names
+    # No bash for planner in reduced surface (pair over autonomy, implementer has bash)
+    assert "fs.run_bash" not in names
+
+    # Verify limited write denies src/ but allows knowledge/research/
+    result_denied = registry.dispatch(
+        ToolCall(name="fs.write_file", params={"path": "src/illegal.py", "content": "x"})
+    )
+    assert result_denied.error is not None
+    assert result_denied.error.code == "path_denied"
+
+    result_allowed = registry.dispatch(
+        ToolCall(name="fs.write_file", params={"path": "knowledge/research/plan.md", "content": "# Plan\n"})
+    )
+    assert result_allowed.error is None
 
 
 def test_build_eval_registry_has_read_and_bash(tmp_path: Path) -> None:
-    """Eval registry: read-only verification (read_file + run_bash, no write_file)."""
+    """Eval registry v3 reduced: verifier profile [bash] only + observability, no read/write.
+
+    Per PROFILES verifier = [fs.run_bash] only, 200 tokens. Old test expected read+bash.
+    """
     from fa.inner_loop.tools import build_eval_registry
 
     registry = build_eval_registry(tmp_path)
     names = {spec.name for spec in registry.specs()}
-    assert "fs.read_file" in names
+    # Verifier should have bash
     assert "fs.run_bash" in names
+    # No read_file, no write_file for verifier (cheap deterministic)
+    assert "fs.read_file" not in names
     assert "fs.write_file" not in names
+    # Observability tools may be present (chronicle_search, usage) per _register_extra_tools
+    # That's okay, but core verifier is bash
+
+
+def test_grep_tool_returns_matched_lines_with_numbers(tmp_path: Path) -> None:
+    from fa.inner_loop.tools.grep import build_grep_tool
+
+    # Write a test file
+    test_file = tmp_path / "test.py"
+    test_file.write_text("line 1\nline 2 matching target\nline 3\n", encoding="utf-8")
+
+    tool = build_grep_tool(tmp_path)
+    # Run fallback python search on tmp_path (which is not a git repo)
+    result = tool.handler({"query": "matching target"})
+
+    assert result.error is None
+    assert "found 1 lines" in result.summary
+    assert "matches" in result.result
+    matches = result.result["matches"]
+    assert len(matches) == 1
+    assert matches[0]["path"] == "test.py"
+    assert matches[0]["line"] == 2
+    assert matches[0]["content"] == "line 2 matching target"
+
+
+def test_spawn_subagent_tool_gated_by_flag(tmp_path: Path) -> None:
+    from fa.feature_flags import FeatureFlags
+    from fa.inner_loop.context import set_current_session
+    from fa.inner_loop.state import SessionState
+    from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
+
+    tool = build_spawn_subagent_tool(tmp_path)
+
+    # 1. Disabled by default (flag = False)
+    state_disabled = SessionState(
+        workspace_root=tmp_path,
+        run_id="test-spawn-dis",
+        feature_flags=FeatureFlags(subagent_spawning_enabled=False),
+    )
+    token = set_current_session(state_disabled)
+    try:
+        res = tool.handler({"task_id": "subtask", "command": "echo 42", "role": "verifier"})
+        assert res.error is not None
+        assert res.error.code == "disabled"
+    finally:
+        from fa.inner_loop.context import reset_current_session
+
+        reset_current_session(token)
+
+    # 2. Enabled (flag = True)
+    state_enabled = SessionState(
+        workspace_root=tmp_path,
+        run_id="test-spawn-en",
+        feature_flags=FeatureFlags(subagent_spawning_enabled=True),
+    )
+    token = set_current_session(state_enabled)
+    try:
+        res = tool.handler({"task_id": "subtask-ok", "command": "echo 42", "role": "researcher"})
+        assert res.error is None
+        assert "completed successfully" in res.summary
+        assert res.result is not None
+        assert '"type": "researcher"' in res.result
+        assert state_enabled.log is not None
+        kinds = [e.kind for e in state_enabled.log.read_all()]
+        assert "subagent_spawn_start" in kinds
+        assert "subagent_spawn_done" in kinds
+    finally:
+        from fa.inner_loop.context import reset_current_session
+
+        reset_current_session(token)
+
+
+def test_spawn_subagent_obeys_sandbox_and_secret_guards(tmp_path: Path) -> None:
+    from fa.inner_loop.hooks import (
+        HookPayload,
+        HookRegistry,
+        IntentGuard,
+        LifecyclePoint,
+        SandboxHook,
+        SecretGuard,
+    )
+    from fa.inner_loop.pr_draft import PrDraftStore
+    from fa.inner_loop.registry import ToolCall
+
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    hooks.register(SecretGuard(secrets=frozenset({"sekret"})))
+    hooks.register(IntentGuard(repo_root=tmp_path, draft_store=PrDraftStore(tmp_path / "draft.md")))
+
+    with pytest.raises(PermissionError):
+        hooks.dispatch(
+            LifecyclePoint.BEFORE_TOOL_EXEC,
+            HookPayload(
+                tool_call=ToolCall(
+                    name="fs.spawn_subagent",
+                    params={"task_id": "x", "command": "sudo rm -rf /", "role": "verifier"},
+                    call_id="tc-1",
+                )
+            ),
+        )
+
+    with pytest.raises(PermissionError):
+        hooks.dispatch(
+            LifecyclePoint.BEFORE_TOOL_EXEC,
+            HookPayload(
+                tool_call=ToolCall(
+                    name="fs.spawn_subagent",
+                    params={"task_id": "x", "command": "echo sekret", "role": "verifier"},
+                    call_id="tc-2",
+                )
+            ),
+        )
+
+    # Mutating shell-like subagent command should require a trusted draft just like fs.run_bash.
+    with pytest.raises(PermissionError):
+        hooks.dispatch(
+            LifecyclePoint.BEFORE_TOOL_EXEC,
+            HookPayload(
+                tool_call=ToolCall(
+                    name="fs.spawn_subagent",
+                    params={"task_id": "x", "command": "touch created.txt", "role": "verifier"},
+                    call_id="tc-3",
+                )
+            ),
+        )

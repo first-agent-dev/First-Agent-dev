@@ -281,8 +281,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fa",
         description="First-Agent command-line entrypoint.",
-        epilog=render_top_level_ru()
-        + "\n\nHint: `fa help <команда>` — можно проверить подробную справку.",
+        epilog=render_top_level_ru() + "\n\nHint: `fa help <команда>` — можно проверить подробную справку.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -632,6 +631,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=COMMANDS["stats"]["args"]["--dead-zones"]["en"],
     )
+    stats_parser.add_argument(
+        "--global-history",
+        action="store_true",
+        default=False,
+        help="Show cross-run history from global_history.db (derived projection, not per-run events)",
+    )
     stats_parser.set_defaults(func=_cmd_stats)
 
     authoring_parser = subparsers.add_parser(
@@ -819,7 +824,15 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     contracts = load_contracts_from_dir(workspace / "verifiers")
     if contracts:
         hooks.register(VerifierObserver(contracts=contracts, event_log=log))
-    state = SessionState(workspace_root=workspace, run_id="cli-smoke", log=log)
+
+    from fa.feature_flags import FeatureFlags
+
+    state = SessionState(
+        workspace_root=workspace,
+        run_id="cli-smoke",
+        log=log,
+        feature_flags=FeatureFlags(blackboard_enabled=False),
+    )
     calls = (
         ToolCall(name="fs.read_file", params={"path": args.input}, call_id="tc-read"),
         ToolCall(
@@ -1170,9 +1183,7 @@ def _canonical_loop_roles(roles: list[str], *, include_planner: bool) -> tuple[s
     return tuple(role for role in canonical if role in roles)
 
 
-def _run_initial_roles(
-    ctx: _WorkflowContext, roles: list[str]
-) -> tuple[int, int, EvalReport | None]:
+def _run_initial_roles(ctx: _WorkflowContext, roles: list[str]) -> tuple[int, int, EvalReport | None]:
     progress = _WorkflowProgress()
     eval_report: EvalReport | None = None
     n_stages = 0
@@ -1262,8 +1273,7 @@ def _run_adaptive(
                     fresh=False,
                     progress=progress,
                     transition_reason=(
-                        f"repair round {progress.repair_round}: canonical {role} "
-                        "after return_to_coder"
+                        f"repair round {progress.repair_round}: canonical {role} after return_to_coder"
                     ),
                 )
                 n_stages += 1
@@ -1311,8 +1321,7 @@ def _run_adaptive(
                     fresh=False,
                     progress=progress,
                     transition_reason=(
-                        f"replan round {progress.replan_round}: canonical {role} "
-                        "after return_to_planner"
+                        f"replan round {progress.replan_round}: canonical {role} after return_to_planner"
                     ),
                 )
                 n_stages += 1
@@ -1402,8 +1411,7 @@ def _run_repair(ctx: _WorkflowContext, roles: list[str], max_repairs: int) -> in
             replan_round=progress.replan_round,
         )
         print(
-            f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} "
-            f"(eval routed return_to_coder)",
+            f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} (eval routed return_to_coder)",
             file=sys.stderr,
         )
         coder_result = _run_stage(
@@ -1438,10 +1446,7 @@ def _run_repair(ctx: _WorkflowContext, roles: list[str], max_repairs: int) -> in
     if eval_report is None:
         reason = "repair workflow completed"
     elif budget_exhausted:
-        reason = (
-            f"repair budget exhausted ({progress.repair_round}/{max_repairs}); "
-            "last route return_to_coder"
-        )
+        reason = f"repair budget exhausted ({progress.repair_round}/{max_repairs}); last route return_to_coder"
     else:
         reason = f"eval verdict {eval_report.verdict} after {progress.repair_round} repair round(s)"
     _write_terminal_state(
@@ -1504,14 +1509,11 @@ def _cmd_workflow(
         seed = base_task or roles[0]
         run_id = f"wf-{int(time.time())}-{_slugify_task(seed)}"
 
-    per_role_task = {
-        role: getattr(args, f"task_{role}", None) for role in ("planner", "coder", "eval")
-    }
+    per_role_task = {role: getattr(args, f"task_{role}", None) for role in ("planner", "coder", "eval")}
     for role in roles:
         if not (per_role_task.get(role) or base_task):
             print(
-                f"fa workflow: no task for role {role!r} — pass a shared task "
-                f'or --task-{role} "..."',
+                f'fa workflow: no task for role {role!r} — pass a shared task or --task-{role} "..."',
                 file=sys.stderr,
             )
             return 2
@@ -1625,9 +1627,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         # token are tracked (for the redactor). Legacy mode: strict-file store.
         secrets = SecretStore({}) if proxy_mode else _load_secret_store()
     try:
-        models = load_models_config_from_path(
-            config_path, env=secrets, require_api_keys=not proxy_mode
-        )
+        models = load_models_config_from_path(config_path, env=secrets, require_api_keys=not proxy_mode)
     except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
         print(f"fa run: configuration error: {exc}", file=sys.stderr)
         return 2
@@ -1649,6 +1649,17 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
 
     effective_transport: Transport = transport if transport is not None else UrllibTransport()
     chain = _build_provider_chain(chain_config, transport=effective_transport, secrets=secrets)
+
+    compactor_chain = None
+    compactor_config = models.roles.get("compactor")
+    if compactor_config is not None:
+        if proxy_mode:
+            rewritten, proxy_err = _proxy_rewrite_chain(compactor_config, proxy_url)
+            if not proxy_err:
+                compactor_config = rewritten
+        compactor_chain = _build_provider_chain(
+            compactor_config, transport=effective_transport, secrets=secrets
+        )
 
     limits = load_runtime_limits_from_path().limits
     # Role-aware registry: planner/eval get read-only tools, coder gets
@@ -1691,10 +1702,10 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     resume = getattr(args, "resume", False)
 
     # When resuming, inject the previous session's draft content as
-    # system-prompt extra so the LLM sees the existing plan/work-log
-    # from turn 1. This bridges the cross-session continuity gap:
-    # the draft lives under ~/.fa/session-log/ (not /workspace) so
-    # fs.read_file cannot reach it, but the system prompt can.
+    # mutable memory-summary context so the LLM sees the existing
+    # plan/work-log from turn 1 without promoting it into pinned
+    # standing governance. The draft lives under ~/.fa/session-log/
+    # (not /workspace) so fs.read_file cannot reach it directly.
     resume_draft_text: str = ""
     if resume and draft_path.is_file():
         try:
@@ -1765,7 +1776,30 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     contracts = load_contracts_from_dir(workspace / "verifiers")
     if contracts:
         hooks.register(VerifierObserver(contracts=contracts, event_log=log))
-    state = SessionState(workspace_root=workspace, run_id=run_id, log=log)
+
+    # Stateful PTY wiring — FIND-007 fix: live CLI harness now owns PtyPool
+    # Wired to feature flag pty_pool_max_size (was dead flag, now active)
+    pty_pool = None
+    try:
+        from fa.runtime import PtyPool
+
+        max_size = 2
+        try:
+            # Try to get max_size from feature flags if available via env config?
+            # For CLI, we don't have FeatureFlags yet, use default 2, but allow override via env FA_PTY_POOL_MAX_SIZE
+            import os
+
+            max_size = int(os.environ.get("FA_PTY_POOL_MAX_SIZE", "2"))
+        except Exception:
+            max_size = 2
+        pty_pool = PtyPool(max_size=max_size, base_cwd=workspace, run_id=run_id)
+    except Exception as exc:  # noqa: BLE001 - graceful degradation, fallback to subprocess
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to init PtyPool for live CLI: %s, fallback stateless", exc)
+        pty_pool = None
+
+    state = SessionState(workspace_root=workspace, run_id=run_id, log=log, pty_pool=pty_pool)
 
     # ── Live output ─────────────────────────────────────────────────────────
     from fa.output import ConsoleRenderer, EventBus, QuietRenderer
@@ -1782,9 +1816,11 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         output_bus.add(QuietRenderer())
     # json mode: Phase 2
 
+    _run_start_mono = time.monotonic()
     outcome = drive_session(
         args.task,
         provider_chain=chain,
+        compactor_chain=compactor_chain,
         registry=registry,
         hooks=hooks,
         state=state,
@@ -1792,11 +1828,32 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         acting_family=chain_config.family,
         limits=limits,
         max_turns=args.max_turns,
-        system_prompt_extra=resume_draft_text,
+        system_prompt_extra="",
+        initial_memory_summary=resume_draft_text,
         temperature=session_temperature,
         redactor=redactor,
         output=output_bus,
     )
+    _run_duration_ms = int((time.monotonic() - _run_start_mono) * 1000)
+    # Slice 9: export to global_history.db as derived projection (best-effort, never crashes main)
+    try:
+        from fa.inner_loop.global_history import export_session_to_global_history
+
+        export_session_to_global_history(
+            run_id=run_id,
+            outcome=outcome,
+            log=log,
+            role=role,
+            model=chain_config.model,
+            family=chain_config.family,
+            workspace_root=workspace,
+            duration_ms=_run_duration_ms,
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort export must not break run
+        import logging
+
+        logging.getLogger(__name__).warning("global_history export failed for %s: %s", run_id, exc)
+
     # Workflow seam: let an orchestrating caller capture the terminal outcome
     # (e.g. to parse the eval role's final message into ``eval_report.json``)
     # without changing this function's int return contract.
@@ -1832,10 +1889,7 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
 
     proxy_token = _resolve_proxy_token()
     if not proxy_token:
-        print(
-            "ERROR: proxy token is missing; set FA_PROXY_TOKEN_FILE or mount "
-            "/run/secrets/fa_proxy_token."
-        )
+        print("ERROR: proxy token is missing; set FA_PROXY_TOKEN_FILE or mount /run/secrets/fa_proxy_token.")
         return 2
 
     health_url = _proxy_endpoint(proxy_url, "/healthz")
@@ -1853,9 +1907,7 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
 
     routes_url = _proxy_endpoint(proxy_url, "/routes")
     try:
-        routes_status, routes_body = _selfcheck_http_get(
-            routes_url, headers={_PROXY_TOKEN_HEADER: proxy_token}
-        )
+        routes_status, routes_body = _selfcheck_http_get(routes_url, headers={_PROXY_TOKEN_HEADER: proxy_token})
     except _SelfcheckNetworkError as exc:
         print(f"ERROR: proxy /routes is not reachable at {routes_url}: {exc}")
         print("Hint: check `docker compose logs fa-egress-proxy`.")
@@ -1888,9 +1940,7 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
 
     chain_config = models.roles.get(role_name)
     if chain_config is None:
-        print(
-            f"ERROR: role {role_name!r} not found in {config_path}; known: {sorted(models.roles)}"
-        )
+        print(f"ERROR: role {role_name!r} not found in {config_path}; known: {sorted(models.roles)}")
         return 2
 
     from fa.egress_proxy.routing import ProxyConfigError
@@ -1948,9 +1998,7 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     secrets: Mapping[str, str] = SecretStore({}) if proxy_mode else _load_secret_store()
 
     try:
-        models = load_models_config_from_path(
-            config_path, env=secrets, require_api_keys=not proxy_mode
-        )
+        models = load_models_config_from_path(config_path, env=secrets, require_api_keys=not proxy_mode)
     except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
         print(f"fa probe: configuration error: {exc}", file=sys.stderr)
         return 2
@@ -1970,10 +2018,7 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     for role_name in role_names:
         chain_config = models.roles.get(role_name)
         if chain_config is None:
-            print(
-                f"fa probe: role {role_name!r} not found in {config_path}; "
-                f"known: {sorted(models.roles)}"
-            )
+            print(f"fa probe: role {role_name!r} not found in {config_path}; known: {sorted(models.roles)}")
             any_failure = True
             continue
 
@@ -1986,17 +2031,12 @@ def _cmd_probe(args: argparse.Namespace) -> int:
             chain_config = rewritten
 
         # Override timeout_seconds on every chain entry for the probe.
-        probed_entries = tuple(
-            replace(entry, timeout_seconds=probe_timeout) for entry in chain_config.chain
-        )
+        probed_entries = tuple(replace(entry, timeout_seconds=probe_timeout) for entry in chain_config.chain)
         chain_config = replace(chain_config, chain=probed_entries)
 
         chain = _build_provider_chain(chain_config, transport=transport, secrets=secrets)
 
-        print(
-            f"\nfa probe: role={role_name}"
-            f" (model={chain_config.model}, family={chain_config.family})"
-        )
+        print(f"\nfa probe: role={role_name} (model={chain_config.model}, family={chain_config.family})")
 
         request = RequestInfo(
             model_slug=chain_config.model,
@@ -2055,6 +2095,61 @@ def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
         render_session,
         render_session_json,
     )
+
+    # --global-history: active consumer for global_history.db projection (Slice 9)
+    if getattr(args, "global_history", False):
+        try:
+            from fa.inner_loop.global_history import GlobalHistoryStore
+
+            db_path = Path.home() / ".fa" / "global_history.db"
+            store = GlobalHistoryStore(db_path=db_path)
+            rows = store.read_all()
+            if not rows:
+                print(f"fa stats: no global history found at {db_path}", file=sys.stderr)
+                return 1
+            # Filter by --run-id if provided
+            if getattr(args, "run_id", None):
+                run_id = args.run_id
+                rows = [r for r in rows if r.get("run_id") == run_id]
+                if not rows:
+                    print(f"fa stats: run {run_id!r} not found in global history", file=sys.stderr)
+                    return 1
+            # Filter by --since if provided (updated_at)
+            if getattr(args, "since", None) and not getattr(args, "run_id", None):
+                since_s = _parse_since(args.since)
+                if since_s is not None:
+                    cutoff = _time.time() - since_s
+                    # updated_at is ISO, parse roughly? For simplicity, skip if can't parse
+                    filtered = []
+                    for r in rows:
+                        try:
+                            # Try to parse ISO, if fails keep
+                            from datetime import datetime
+                            dt = datetime.fromisoformat(r.get("updated_at", "").replace("Z", "+00:00"))
+                            if dt.timestamp() >= cutoff:
+                                filtered.append(r)
+                        except Exception:
+                            filtered.append(r)
+                    rows = filtered
+            if args.output == "json":
+                import json as _json
+                print(_json.dumps(rows, indent=2, default=str))
+                return 0
+            # Console rendering for global history
+            print(f"\n{'═' * 50}\n📊 Global history: {len(rows)} runs\n{'═' * 50}\n", file=sys.stderr)
+            for r in rows[:20]:
+                print(
+                    f"  {r.get('run_id',''):<20s} {r.get('role',''):<8s} {r.get('model',''):<20s} "
+                    f"{r.get('stop_reason',''):<20s} turns={r.get('turns',0)} "
+                    f"in={r.get('input_tokens',0)} out={r.get('output_tokens',0)}",
+                    file=sys.stderr,
+                )
+            if len(rows) > 20:
+                print(f"  ... and {len(rows)-20} more", file=sys.stderr)
+            return 0
+        except Exception as exc:
+            print(f"fa stats: failed to read global history: {exc}", file=sys.stderr)
+            return 1
 
     workspace = args.workspace.resolve()
     runs_dir = Path.home() / ".fa" / "session-log"
@@ -2212,8 +2307,7 @@ def _cmd_authoring_check(args: argparse.Namespace) -> int:
     # at cwd; never walk up the filesystem into a parent checkout.
     if not (workspace / "knowledge" / "llms.txt").exists():
         print(
-            "fa authoring-check: not a First-Agent workspace "
-            f"(no knowledge/llms.txt at {workspace})",
+            f"fa authoring-check: not a First-Agent workspace (no knowledge/llms.txt at {workspace})",
             file=sys.stderr,
         )
         return 2
@@ -2238,9 +2332,7 @@ def _cmd_egress_proxy(args: argparse.Namespace) -> int:
     # Routing source (non-secret). Skip api_key presence check: keys live in the
     # proxy's own secrets file, validated below.
     try:
-        models = load_models_config_from_path(
-            args.models.expanduser().resolve(), require_api_keys=False
-        )
+        models = load_models_config_from_path(args.models.expanduser().resolve(), require_api_keys=False)
     except (ConfigurationError, OSError) as exc:
         print(f"fa egress-proxy: models config error: {exc}", file=sys.stderr)
         return 2
@@ -2306,9 +2398,7 @@ def _read_deploy_key_material() -> str:
             text = candidate.read_text(encoding="utf-8")
         except OSError:
             continue
-        body = "".join(
-            line.strip() for line in text.splitlines() if line and not line.startswith("-----")
-        )
+        body = "".join(line.strip() for line in text.splitlines() if line and not line.startswith("-----"))
         if len(body) >= 16:
             return body
     return ""

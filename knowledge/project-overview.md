@@ -238,6 +238,38 @@ benchmark slot — until then, the invariants in
 [`ADR-10`](./adr/ADR-10-deterministic-harness-invariants.md) are
 the construction-discipline carriers.
 
+### 1.2.6. Substrate Formality Principle — formal substrate before topology complexity
+
+> **Principle, not goal.** When you feel need to add parallel agents, dynamic DAGs, workflow mutation, agent pool scaling, fleet, or elaborate adaptive topologies to fix token efficiency, context window, or coordination problems, first check if missing formal shared substrate would allow simple chain to work:
+> - Is shared state formally queryable, versioned, content-hashed, with read_set/write_set/assumptions/version_dependencies declared per action?
+> - Is blackboard append-only, never overwritten, with Control Unit managing reads/writes, content-addressed, with toolchain digests and schema versions for reproducibility?
+> - Can instant grep / semantic search / verification sensors answer the question without spawning subagent?
+> - Can conflict be detected via transactional semantics (read_set overlaps write_set) rather than via file-level isolation?
+>
+> If answer is No to any, fix substrate first. **Topology complexity is symptom of missing formal substrate.**
+
+**Invariants:**
+- I-6.1 Every write declares read_set, write_set, assumptions, version_dependencies (base commit, llms.txt hash)
+- I-6.2 Blackboard append-only, content-hashed, queryable, detect_conflict() — no silent overwrite, returns fail code conflict_detected
+- I-6.3 Simple chain planner→coder→eval is default; parallel subagents only when substrate formal and task is embarrassingly parallel with non-overlapping write_sets
+- I-6.4 Formal substrate must have content hashes stamping, toolchain digests, schema versions for reproducibility (as MACOG blackboard)
+
+References: Paper 2 §4.4 Patterns and Trends — Topology complexity inversely correlates with harness-state formality (L2MAC simple chain + sophisticated state management vs EvoMAC/SEW elaborate adaptive topologies as workaround), Paper 2 §4.3 Shared Code-Centric Harness Substrate, Paper 1 MACOG blackboard with content hashes.
+
+### 1.2.7. Pair over Autonomy Principle
+
+> **Principle, not goal.** Agent should work as pair programming partner, not autonomous system. Optimize for effective pair work: checkpoint, undo, diff review, human-in-loop approval gates, observable failures, not for autonomous hours. Subagents only as cheap deterministic puzzle piece providers (structured websearch, simple function) when main context is near limit (180k), not as autonomous workers.
+>
+> **Why:** Self-evolving systems that produce 100k logs about nothing are want/FOMO, occupy neurodivergent minds. Enough to silently think and do one task together with agent as pair. Don't believe in smart autonomous systems now. Subagents solution to problem not yet formed by practice, except when main stateful works and chain grows, sometimes launches external agent with isolated context which very cheaply and deterministically brings missing puzzle piece.
+>
+> **Invariants:**
+> - I-7.1 Main has 180k context, subagent has clean slate ~1k, never inherits full parent history
+> - I-7.2 Subagent task must be solvable with <600 tokens tool defs and <8000 chars output, returns structured JSON, not raw logs
+> - I-7.3 Subagent is stateless, scrubbed env, no access to main's PTY state, isolated via WorktreeManager SharedDir v0.1
+> - I-7.4 No self-evolving harness without eval-harness proving simple chain insufficient and human approval for permission boundary changes
+> - I-7.5 Pair tools: checkpoint creates git commit/stash, undo restores, diff returns structured diff — deterministic Python, not LLM
+
+References: User philosophy 2026-07-11, Paper 2 §5.1.1 Harness as Distillation Surface (Cursor Composer RL on real traces), §5.2.5 Human-in-the-Loop Safety as Harness State, §4.4 topology complexity, L2MAC Control Unit.
 
 ## 2. Users
 

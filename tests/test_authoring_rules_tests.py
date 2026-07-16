@@ -123,11 +123,7 @@ def test_pytest_skip_call_is_hard_block(tmp_path: Path) -> None:
 
 def test_pytest_mark_skip_decorator_is_hard_block(tmp_path: Path) -> None:
     _make_workspace(tmp_path)
-    body = (
-        "import pytest\n\n"
-        '@pytest.mark.skip(reason="broken")\n'
-        "def test_thing():\n    assert 0 == 1\n"
-    )
+    body = 'import pytest\n\n@pytest.mark.skip(reason="broken")\ndef test_thing():\n    assert 0 == 1\n'
     _write_test(tmp_path, "tests/test_skip_dec.py", body)
     report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
     assert _codes(report) == ["FA-AUTHORING-V4-PYTEST-SKIP"]
@@ -166,9 +162,7 @@ def test_module_scope_skip_with_allow_module_level_is_clean(tmp_path: Path) -> N
 
 def test_function_scope_skip_with_kwarg_still_flagged(tmp_path: Path) -> None:
     _make_workspace(tmp_path)
-    body = (
-        'import pytest\n\ndef test_x():\n    pytest.skip("linux only", allow_module_level=True)\n'
-    )
+    body = 'import pytest\n\ndef test_x():\n    pytest.skip("linux only", allow_module_level=True)\n'
     _write_test(tmp_path, "tests/test_fnskip.py", body)
     report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
     assert _codes(report) == ["FA-AUTHORING-V4-PYTEST-SKIP"]
@@ -203,9 +197,7 @@ def test_try_at_module_scope_with_allow_module_level_exempt(tmp_path: Path) -> N
 def test_non_strict_xfail_call_form_is_hard_block(tmp_path: Path) -> None:
     _make_workspace(tmp_path)
     body = (
-        "import pytest\n\n"
-        '@pytest.mark.xfail(reason="known bug")\n'
-        "def test_thing():\n    raise AssertionError\n"
+        'import pytest\n\n@pytest.mark.xfail(reason="known bug")\ndef test_thing():\n    raise AssertionError\n'
     )
     _write_test(tmp_path, "tests/test_xfail_no_strict.py", body)
     report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))

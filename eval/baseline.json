@@ -1,0 +1,12 @@
+{
+  "baseline_run_id": "run-2026-07-10-baseline-124-steps",
+  "date": "2026-07-10",
+  "description": "Baseline 124 steps documented from exploration_log before Phase 3, target 30-40 after",
+  "metrics": {
+    "median_tokens": 85000,
+    "median_tool_calls": 124,
+    "median_cost_usd": 0.85,
+    "pass_rate": 0.6
+  },
+  "notes": "Baseline from PR #53 Phase 0-2, before PtyPool in-process. After Phase 3 target tokens ↓60% (85000→34000), tool-calls ↓50% (124→40-50), cost ↓60%."
+}

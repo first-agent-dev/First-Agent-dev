@@ -57,9 +57,21 @@ DEFAULT_TRANSPORT_RETRIES = 2
 DEFAULT_TIMEOUT_SECONDS = 300
 # Waiver: allowlist for DETECTING local endpoints, not a bind address.
 LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0"})  # noqa: S104
-RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset(
-    {"__internal__", "__metadata__", "__fallback_marker__"}
-)
+RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset({"__internal__", "__metadata__", "__fallback_marker__"})
+
+
+def _validate_context_budget_settings(config: ChainConfig) -> None:
+    if config.context_limit <= 0:
+        raise ConfigurationError(f"role {config.role!r}: context_limit must be a positive integer")
+    if config.compaction_threshold is None:
+        return
+    if config.compaction_threshold <= 0:
+        raise ConfigurationError(f"role {config.role!r}: compaction_threshold must be a positive integer")
+    if config.compaction_threshold > config.context_limit:
+        raise ConfigurationError(
+            f"role {config.role!r}: compaction_threshold ({config.compaction_threshold}) "
+            f"cannot exceed context_limit ({config.context_limit})"
+        )
 
 
 @dataclass(frozen=True)
@@ -92,6 +104,8 @@ class ChainConfig:
     model: str
     family: str
     chain: tuple[ChainEntry, ...]
+    context_limit: int = 150000
+    compaction_threshold: int | None = None
 
     def validate(
         self,
@@ -117,6 +131,7 @@ class ChainConfig:
         environ = env if env is not None else os.environ
         if not self.chain:
             raise ConfigurationError(f"role {self.role!r}: empty chain — role not callable")
+        _validate_context_budget_settings(self)
         for index, entry in enumerate(self.chain):
             label = f"role {self.role!r} chain[{index}]"
             if entry.provider in RESERVED_PROVIDER_NAMES:
@@ -143,8 +158,7 @@ class ChainConfig:
                 raise ConfigurationError(f"{label}: api_key_env must be non-empty")
             if require_api_keys and not environ.get(entry.api_key_env, "").strip():
                 raise ConfigurationError(
-                    f"{label}: api_key_env={entry.api_key_env} not set or empty "
-                    f"in the configured secret store"
+                    f"{label}: api_key_env={entry.api_key_env} not set or empty in the configured secret store"
                 )
             # Best-effort model-identity check (ADR-9 §1 + §7 reframed):
             # slug strings vary legitimately across providers, so we
@@ -155,14 +169,10 @@ class ChainConfig:
             try:
                 inferred_family = extract_family(entry.slug)
             except FamilyExtractionError:
-                warnings.append(
-                    f"{label}: cannot infer family from slug {entry.slug!r}; verify chain entry"
-                )
+                warnings.append(f"{label}: cannot infer family from slug {entry.slug!r}; verify chain entry")
             else:
                 if self.family and inferred_family != self.family:
-                    warnings.append(
-                        f"{label}: slug family {inferred_family!r} != role family {self.family!r}"
-                    )
+                    warnings.append(f"{label}: slug family {inferred_family!r} != role family {self.family!r}")
         # Best-effort adapter-homogeneity check (ADR-9 §1 + §2g):
         # mixed adapter categories (OpenAI-compat + Anthropic in one
         # chain) break the 400/422 fail-fast assumption that «the
@@ -224,9 +234,7 @@ class ProviderChain:
         self._env: Mapping[str, str] = env if env is not None else os.environ
         self._clock = clock
         self._id_factory = id_factory
-        self._cooldowns: dict[tuple[str, str], CooldownRow] = (
-            cooldowns if cooldowns is not None else {}
-        )
+        self._cooldowns: dict[tuple[str, str], CooldownRow] = cooldowns if cooldowns is not None else {}
 
     @property
     def config(self) -> ChainConfig:
@@ -385,8 +393,7 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
         for field_name in ("provider", "slug", "base_url", "api_key_env"):
             if row.get(field_name) is None:
                 raise ConfigurationError(
-                    f"role {role!r} chain[{index}]: required field "
-                    f"{field_name!r} is null or missing"
+                    f"role {role!r} chain[{index}]: required field {field_name!r} is null or missing"
                 )
     # ``row.get(key, DEFAULT)`` returns the actual value when the YAML
     # row contains ``key: null`` (because the key exists), so passing
@@ -407,9 +414,7 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
             base_url=str(row["base_url"]),
             api_key_env=str(row["api_key_env"]),
             cooldown_seconds=int(
-                row["cooldown_seconds"]
-                if row.get("cooldown_seconds") is not None
-                else DEFAULT_COOLDOWN_SECONDS
+                row["cooldown_seconds"] if row.get("cooldown_seconds") is not None else DEFAULT_COOLDOWN_SECONDS
             ),
             transport_retries=int(
                 row["transport_retries"]
@@ -417,9 +422,7 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
                 else DEFAULT_TRANSPORT_RETRIES
             ),
             timeout_seconds=int(
-                row["timeout_seconds"]
-                if row.get("timeout_seconds") is not None
-                else DEFAULT_TIMEOUT_SECONDS
+                row["timeout_seconds"] if row.get("timeout_seconds") is not None else DEFAULT_TIMEOUT_SECONDS
             ),
             extra_headers=dict(row.get("extra_headers") or {}),
         )
@@ -451,9 +454,20 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
     # ``FamilyExtractionError`` for any override not in
     # :data:`KNOWN_FAMILIES`, which would reject custom /
     # not-yet-known family names that are legal in a v0.1 config.
+    context_limit_raw = raw.get("context_limit")
+    compaction_threshold_raw = raw.get("compaction_threshold")
+    try:
+        context_limit = int(context_limit_raw) if context_limit_raw is not None else 150000
+        compaction_threshold = int(compaction_threshold_raw) if compaction_threshold_raw is not None else None
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(
+            f"role {role!r}: context_limit and compaction_threshold must be integers"
+        ) from exc
     return ChainConfig(
         role=role,
         model=str(raw.get("model") or ""),
         family=str(raw.get("family") or "").strip().lower(),
         chain=entries,
+        context_limit=context_limit,
+        compaction_threshold=compaction_threshold,
     )

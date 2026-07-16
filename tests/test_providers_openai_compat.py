@@ -102,9 +102,7 @@ def test_request_builds_chat_completions_url_and_authorization_header() -> None:
 
 
 def test_request_strips_trailing_slash_on_base_url() -> None:
-    transport = FakeTransport(
-        response=TransportResponse(status=200, body={"choices": [], "usage": {}})
-    )
+    transport = FakeTransport(response=TransportResponse(status=200, body={"choices": [], "usage": {}}))
     provider = OpenAICompatProvider(transport=transport)
     provider.request(
         _request(),
@@ -115,6 +113,30 @@ def test_request_strips_trailing_slash_on_base_url() -> None:
         extra_headers={},
     )
     assert transport.last_url == "https://api.fireworks.ai/inference/v1/chat/completions"
+
+
+def test_request_forwards_prompt_cache_fields_from_extras() -> None:
+    transport = FakeTransport(
+        response=TransportResponse(
+            status=200,
+            body={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}], "usage": {}},
+        )
+    )
+    provider = OpenAICompatProvider(transport=transport)
+    provider.request(
+        RequestInfo(
+            model_slug="deepseek/deepseek-chat-v3",
+            messages=({"role": "user", "content": "hi"},),
+            extras={"prompt_cache_key": "cache-key", "prompt_cache_retention": "1h"},
+        ),
+        base_url="https://openrouter.ai/api/v1",
+        api_key="k",
+        timeout_seconds=60.0,
+        transport_retries=0,
+        extra_headers={},
+    )
+    assert transport.last_body["prompt_cache_key"] == "cache-key"
+    assert transport.last_body["prompt_cache_retention"] == "1h"
 
 
 def test_response_preserves_tool_calls_and_provider_extras() -> None:
@@ -231,9 +253,7 @@ def test_4xx_auth_continue_chain(status: int) -> None:
     [(429, "rate_limited"), (500, "service_unavailable"), (503, "service_unavailable")],
 )
 def test_transient_status_codes_carry_retry_after(status: int, expected_kind: str) -> None:
-    transport = FakeTransport(
-        response=TransportResponse(status=status, body={}, retry_after_seconds=42.0)
-    )
+    transport = FakeTransport(response=TransportResponse(status=status, body={}, retry_after_seconds=42.0))
     provider = OpenAICompatProvider(transport=transport)
     with pytest.raises(ProviderTransientError) as info:
         provider.request(
@@ -250,9 +270,7 @@ def test_transient_status_codes_carry_retry_after(status: int, expected_kind: st
 
 
 def test_network_error_is_transient_timeout() -> None:
-    transport = FakeTransport(
-        response=TransportResponse(status=0, body={}, network_error="connection refused")
-    )
+    transport = FakeTransport(response=TransportResponse(status=0, body={}, network_error="connection refused"))
     provider = OpenAICompatProvider(transport=transport)
     with pytest.raises(ProviderTransientError) as info:
         provider.request(

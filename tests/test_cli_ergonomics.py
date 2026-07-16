@@ -250,9 +250,7 @@ def test_workflow_drives_all_stages(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert len(transport.calls) >= 3
 
 
-def test_workflow_emits_eval_report_and_records_route(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_workflow_emits_eval_report_and_records_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fa.inner_loop.workflow_artifacts import load_eval_report, load_flow_state
 
     config = tmp_path / "models.yaml"
@@ -338,9 +336,7 @@ def test_repair_mode_enforces_budget(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert state.last_route_decision == "return_to_coder"
 
 
-def test_repair_mode_zero_budget_behaves_like_one_eval(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_repair_mode_zero_budget_behaves_like_one_eval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fa.inner_loop.workflow_artifacts import load_flow_state
 
     config, session_dir = _repair_env(tmp_path, monkeypatch)
@@ -376,9 +372,7 @@ def test_repair_mode_does_not_loop_on_return_to_planner(
     assert state.repair_round == 0
 
 
-def test_repair_mode_requires_coder_and_eval_roles(
-    tmp_path: Path, capsys: CaptureFixture[str]
-) -> None:
+def test_repair_mode_requires_coder_and_eval_roles(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
     args = _workflow_args(tmp_path, tmp_path / "models.yaml", roles="planner", mode="repair")
     code = _cmd_workflow(args, transport=_ScriptedTransport())
     assert code == 2
@@ -463,18 +457,14 @@ def test_help_registry_covers_real_commands() -> None:
     choices = getattr(sub, "choices", None)
     assert choices is not None
     real = set(choices)
-    assert set(COMMANDS) <= real, (
-        f"help registry references unknown commands: {set(COMMANDS) - real}"
-    )
+    assert set(COMMANDS) <= real, f"help registry references unknown commands: {set(COMMANDS) - real}"
 
 
 def test_adaptive_mode_replans_until_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fa.inner_loop.workflow_artifacts import load_eval_report, load_flow_state
 
     config, session_dir = _repair_env(tmp_path, monkeypatch)
-    transport = _RoleAwareTransport(
-        [("REPLAN_REQUIRED", "return_to_planner"), ("PASS", "complete")]
-    )
+    transport = _RoleAwareTransport([("REPLAN_REQUIRED", "return_to_planner"), ("PASS", "complete")])
     args = _workflow_args(tmp_path, config, mode="adaptive", max_repairs=2, max_replans=1)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
@@ -493,9 +483,7 @@ def test_adaptive_mode_replans_until_pass(tmp_path: Path, monkeypatch: pytest.Mo
     assert state.last_route_decision == "complete"
 
 
-def test_adaptive_mode_enforces_replan_budget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_adaptive_mode_enforces_replan_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fa.inner_loop.workflow_artifacts import load_flow_state
 
     config, session_dir = _repair_env(tmp_path, monkeypatch)
@@ -515,9 +503,7 @@ def test_adaptive_mode_enforces_replan_budget(
     assert state.last_route_decision == "return_to_planner"
 
 
-def test_adaptive_mode_can_mix_repair_then_replan(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_adaptive_mode_can_mix_repair_then_replan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fa.inner_loop.workflow_artifacts import load_eval_report, load_flow_state
 
     config, session_dir = _repair_env(tmp_path, monkeypatch)

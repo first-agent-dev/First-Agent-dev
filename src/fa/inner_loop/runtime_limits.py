@@ -85,6 +85,9 @@ DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS = 0
 # baseline-USD is measured. See ``fa.observability.cost_guardian``
 # module docstring for the per-mode semantics.
 DEFAULT_COST_BUDGET_USD: float | None = None
+# ADR-15: subagent spawn limit for 1 subagent v0.1 to eliminate scope creep,
+# sequential single-shot, enforced via RuntimeLimits.
+DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION = 3
 
 
 @dataclass(frozen=True)
@@ -114,6 +117,8 @@ class RuntimeLimits:
     # Wave-3 R-45 cost guardian budget; see module-level
     # ``DEFAULT_COST_BUDGET_USD`` anchor for the tri-mode semantics.
     cost_budget_usd: float | None = DEFAULT_COST_BUDGET_USD
+    # ADR-15: subagent spawn limit
+    max_subagent_spawns_per_session: int = DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION
 
     @classmethod
     def anchored_defaults(cls) -> RuntimeLimits:
@@ -133,6 +138,7 @@ class RuntimeLimits:
             lockfile_suppression_seconds=DEFAULT_LOCKFILE_SUPPRESSION_SECONDS,
             auth_expired_suppression_seconds=DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS,
             cost_budget_usd=DEFAULT_COST_BUDGET_USD,
+            max_subagent_spawns_per_session=DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION,
         )
 
 
@@ -167,6 +173,7 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
         "lockfile_suppression_seconds",
         "auth_expired_suppression_seconds",
         "cost_budget_usd",
+        "max_subagent_spawns_per_session",
     }
 )
 
@@ -331,9 +338,7 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
         max_iterations=found.get("max_iterations", DEFAULT_MAX_ITERATIONS),
         bash_timeout_seconds=found.get("bash_timeout_seconds", DEFAULT_BASH_TIMEOUT_SECONDS),
         loop_guard_repeat_warn=found.get("loop_guard_repeat_warn", DEFAULT_LOOP_GUARD_REPEAT_WARN),
-        loop_guard_circuit_breaker=found.get(
-            "loop_guard_circuit_breaker", DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER
-        ),
+        loop_guard_circuit_breaker=found.get("loop_guard_circuit_breaker", DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER),
         loop_guard_window=found.get("loop_guard_window", DEFAULT_LOOP_GUARD_WINDOW),
         attempt_history_max_entries=found.get(
             "attempt_history_max_entries", DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES
@@ -342,9 +347,7 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
             "attempt_history_max_age_seconds", DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS
         ),
         qa_max_iterations=found.get("qa_max_iterations", DEFAULT_QA_MAX_ITERATIONS),
-        qa_max_consecutive_errors=found.get(
-            "qa_max_consecutive_errors", DEFAULT_QA_MAX_CONSECUTIVE_ERRORS
-        ),
+        qa_max_consecutive_errors=found.get("qa_max_consecutive_errors", DEFAULT_QA_MAX_CONSECUTIVE_ERRORS),
         qa_recurring_issue_threshold=found.get(
             "qa_recurring_issue_threshold", DEFAULT_QA_RECURRING_ISSUE_THRESHOLD
         ),
@@ -358,6 +361,9 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
             "auth_expired_suppression_seconds", DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS
         ),
         cost_budget_usd=found_float.get("cost_budget_usd", DEFAULT_COST_BUDGET_USD),
+        max_subagent_spawns_per_session=found.get(
+            "max_subagent_spawns_per_session", DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION
+        ),
     )
     return RuntimeLimitsLoadResult(limits=limits, warnings=tuple(warnings))
 
@@ -391,6 +397,7 @@ __all__ = [
     "DEFAULT_LOOP_GUARD_REPEAT_WARN",
     "DEFAULT_LOOP_GUARD_WINDOW",
     "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION",
     "DEFAULT_QA_MAX_CONSECUTIVE_ERRORS",
     "DEFAULT_QA_MAX_ITERATIONS",
     "DEFAULT_QA_RECURRING_ISSUE_THRESHOLD",

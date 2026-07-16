@@ -67,8 +67,7 @@ COMMANDS: dict[str, CommandHelp] = {
                 "en": "LLM-turn cap (default 16).",
             },
             "--workspace/-w": {
-                "ru": "Корень рабочего пространства; пути инструментов считаются "
-                "относительно него.",
+                "ru": "Корень рабочего пространства; пути инструментов считаются относительно него.",
                 "en": "Workspace root; tool paths resolve relative to it.",
             },
             "--config/-c": {
@@ -86,8 +85,7 @@ COMMANDS: dict[str, CommandHelp] = {
                 "previous role's work log can be read.",
             },
             "--output-mode": {
-                "ru": "Режим вывода: console (прогресс ходов на stderr) или quiet (только "
-                "итоговый результат).",
+                "ru": "Режим вывода: console (прогресс ходов на stderr) или quiet (только итоговый результат).",
                 "en": "Output mode: console (per-turn progress to stderr) or quiet (final only).",
             },
             "--detail": {
@@ -116,8 +114,7 @@ COMMANDS: dict[str, CommandHelp] = {
             "roles": {
                 "ru": "Список ролей через запятую в порядке выполнения, напр. planner,coder,eval "
                 "(позиционный, первый).",
-                "en": "Comma-separated roles in execution order, e.g. planner,coder,eval "
-                "(first positional).",
+                "en": "Comma-separated roles in execution order, e.g. planner,coder,eval (first positional).",
             },
             "task": {
                 "ru": "Текст задачи в кавычках (позиционный, второй). Передаётся каждой роли, "
@@ -134,8 +131,7 @@ COMMANDS: dict[str, CommandHelp] = {
                 "en": "Shared workspace root for every role.",
             },
             "--run-id/-i": {
-                "ru": "Общий run_id для всех ролей (по умолчанию генерируется "
-                "из времени и задачи).",
+                "ru": "Общий run_id для всех ролей (по умолчанию генерируется из времени и задачи).",
                 "en": "Shared run_id for all roles (default generated from timestamp + task).",
             },
             "--config/-c": {
@@ -155,12 +151,10 @@ COMMANDS: dict[str, CommandHelp] = {
             "--max-repairs": {
                 "ru": "Макс. число раундов coder→eval в режимах repair/adaptive "
                 "(по умолчанию 2, жёсткий потолок 3).",
-                "en": "Max coder→eval repair rounds in repair/adaptive "
-                "(default 2, hard ceiling 3).",
+                "en": "Max coder→eval repair rounds in repair/adaptive (default 2, hard ceiling 3).",
             },
             "--max-replans": {
-                "ru": "Макс. число planner re-entry раундов в adaptive "
-                "(по умолчанию 1, жёсткий потолок 2).",
+                "ru": "Макс. число planner re-entry раундов в adaptive (по умолчанию 1, жёсткий потолок 2).",
                 "en": "Max planner re-entry rounds in adaptive (default 1, hard ceiling 2).",
             },
         },
@@ -168,8 +162,7 @@ COMMANDS: dict[str, CommandHelp] = {
             'fa workflow planner,coder,eval "Реализуй фичу X"',
             'fa workflow coder,eval "Доделай и проверь src/fa/y.py"',
             'fa workflow coder,eval "Доведи src/fa/y.py до green" --mode repair --max-repairs 2',
-            'fa workflow planner,coder,eval "Проведи adaptive цикл" '
-            "--mode adaptive --max-replans 1",
+            'fa workflow planner,coder,eval "Проведи adaptive цикл" --mode adaptive --max-replans 1',
             'fa workflow planner,coder,eval --task-planner "Спланируй" --task-coder "Сделай" '
             '"Проверь результат"',
         ],
@@ -190,8 +183,7 @@ COMMANDS: dict[str, CommandHelp] = {
         "examples": ["fa selfcheck", "fa selfcheck -r planner"],
     },
     "probe": {
-        "summary_ru": "Liveness-тест цепочки провайдеров реальным минимальным "
-        "запросом (~10 токенов).",
+        "summary_ru": "Liveness-тест цепочки провайдеров реальным минимальным запросом (~10 токенов).",
         "summary_en": "Liveness-test the provider chain with a minimal real call (~10 tokens).",
         "args": {
             "--role/-r": {
@@ -381,18 +373,15 @@ HOST_COMMANDS: dict[str, CommandHelp] = {
         "examples": ["fa restart"],
     },
     "rebuild": {
-        "summary_ru": "Пересобрать Docker images и поднять stack заново через "
-        "docker compose up -d --build.",
-        "summary_en": "Rebuild Docker images and bring the stack up with "
-        "docker compose up -d --build.",
+        "summary_ru": "Пересобрать Docker images и поднять stack заново через docker compose up -d --build.",
+        "summary_en": "Rebuild Docker images and bring the stack up with docker compose up -d --build.",
         "args": {},
         "examples": ["fa rebuild", "fa help clean-rebuild"],
     },
     "shell": {
         "summary_ru": "Открыть bash внутри first-agent; при активной isolated session "
         "войти сразу в её workspace.",
-        "summary_en": "Open bash inside first-agent, using the active isolated session "
-        "workspace when present.",
+        "summary_en": "Open bash inside first-agent, using the active isolated session workspace when present.",
         "args": {
             "bash-args...": {
                 "ru": "Любые аргументы bash, например -lc 'команда'.",

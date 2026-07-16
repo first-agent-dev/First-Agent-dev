@@ -33,7 +33,8 @@ def test_session_state_records_full_tool_result_payload(tmp_path: Path) -> None:
 
     state.record_tool_result(call, ToolResult.ok("ok", result={"nested": {"value": 1}}))
 
-    row = log.read_all()[0]
+    rows = log.read_all()
+    row = next(r for r in rows if r.kind == "tool_result")
     assert row.kind == "tool_result"
     assert row.content["result"] == {"nested": {"value": 1}}
 

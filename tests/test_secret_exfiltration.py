@@ -35,9 +35,7 @@ _EXFIL_COMMANDS = [
 
 
 @pytest.mark.parametrize("command", _EXFIL_COMMANDS, ids=lambda c: c[:32])
-def test_bash_cannot_exfiltrate_key(
-    command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_bash_cannot_exfiltrate_key(command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Worst case: the key IS in the parent process env. The scrubbed child env
     # must still keep it out of the agent shell.
     monkeypatch.setenv(_VAR, _FAKE_KEY)
@@ -54,9 +52,7 @@ def test_bash_cannot_exfiltrate_key(
     assert _FAKE_KEY.encode().hex() not in blob
 
 
-def test_bash_env_has_no_credential_named_vars(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_bash_env_has_no_credential_named_vars(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-x")
     monkeypatch.setenv("GITHUB_TOKEN", "gh-x")
     monkeypatch.setenv("DB_PASSWORD", "pw-x")

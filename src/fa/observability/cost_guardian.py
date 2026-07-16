@@ -201,9 +201,7 @@ class CostGuardian(GuardMiddleware):
         if budget_usd is not None and budget_usd < 0:
             raise ValueError("budget_usd must be None or >= 0 (0 = observe-only)")
         self.budget_usd = budget_usd
-        self._extractor: CostExtractor = (
-            extractor if extractor is not None else default_cost_extractor
-        )
+        self._extractor: CostExtractor = extractor if extractor is not None else default_cost_extractor
         self._event_log = event_log
         self.rollup = CostRollup()
 

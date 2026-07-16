@@ -150,9 +150,7 @@ def load_capabilities(text: str) -> CapabilityLoadResult:
             continue
 
         if stripped.startswith("- "):
-            raise ValueError(
-                f"capability flags must be a key-value map, not a list (line {line_no}): {line!r}"
-            )
+            raise ValueError(f"capability flags must be a key-value map, not a list (line {line_no}): {line!r}")
 
         if ":" not in stripped:
             warnings.append(

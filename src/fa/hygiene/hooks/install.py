@@ -53,9 +53,7 @@ def _install_one(
 
     if target.exists() or target.is_symlink():
         if not force and not target.is_symlink():
-            raise FileExistsError(
-                f"{target} exists and is not a symlink; pass force=True to overwrite."
-            )
+            raise FileExistsError(f"{target} exists and is not a symlink; pass force=True to overwrite.")
         target.unlink()
 
     # On Windows, symlinks in .git/hooks/ may not be followed by
@@ -108,9 +106,7 @@ def install_hooks(
     root = resolve_repo_root(repo_root or Path.cwd())
     hooks_dir = resolve_hooks_dir(root)
     if not hooks_dir.is_dir():
-        raise SystemExit(
-            f"fa.hygiene.hooks.install: {hooks_dir} does not exist; is this a git checkout?"
-        )
+        raise SystemExit(f"fa.hygiene.hooks.install: {hooks_dir} does not exist; is this a git checkout?")
 
     src_dir = scripts_dir()
     installed: list[Path] = []
@@ -127,8 +123,7 @@ def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m fa.hygiene.hooks.install",
         description=(
-            "Install FA local hooks (pre-commit, pre-push, prepare-commit-msg, "
-            "commit-msg) into .git/hooks/."
+            "Install FA local hooks (pre-commit, pre-push, prepare-commit-msg, commit-msg) into .git/hooks/."
         ),
     )
     parser.add_argument(

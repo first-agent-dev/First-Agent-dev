@@ -244,9 +244,7 @@ def test_observers_in_run_session_record_failed_write(tmp_path: Path) -> None:
     on a real failing tool call routed through run_session."""
 
     log = EventLog(tmp_path / "events.jsonl", run_id="t-int")
-    history = AttemptHistory(
-        path=tmp_path / "attempt_history.json", max_entries=10, max_age_seconds=10_000
-    )
+    history = AttemptHistory(path=tmp_path / "attempt_history.json", max_entries=10, max_age_seconds=10_000)
     registry = build_baseline_registry(tmp_path)
     hooks = HookRegistry()
     hooks.register(FailureClassifierObserver(event_log=log))

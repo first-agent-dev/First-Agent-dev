@@ -183,6 +183,7 @@ Skills are loaded on the trigger condition:
 | [`pr-creation`](./knowledge/skills/pr-creation/SKILL.md) | **Trigger:** Before opening any PR (including pure-doc PRs).<br><br>Canonical PR-creation rulebook. Carries the 5-intent classifier (`RESEARCH / ADR-RULE / IMPLEMENT / FIX / CHORE`). The PR description AND the first commit message body MUST open with the header lines specified by the skill's §Output format. The planned `prepare-commit-msg` / `commit-msg` reads the skill's §Reference tables as the single source of truth. Applies to every PR. |
 | [`repo-audit`](./knowledge/skills/repo-audit/SKILL.md)   | **Trigger:** When asked to perform a critical structure / doc / skill review.<br><br>Carries the 7-phase audit workflow (orientation → inventory → cross-reference → invariants → contradiction sweep → demotion ledger → final report). |
 | [`mutation-clearing`](./knowledge/skills/mutation-clearing/SKILL.md) | **Trigger:** When tasked with mutation testing fixes (`mutmut`) or mutant hunts.<br><br>Carries the 4-archetype triage taxonomy, spy isolation rules, and accepted equivalent mutants ledger criteria for zero-trust mutation clearing. |
+| [`tests-writing`](./knowledge/skills/tests-writing/SKILL.md) | **Trigger:** Before writing/changing tests, or when IMPLEMENT/FIX under `src/fa/` claims product/session behavior.<br><br>Live-path Definition-of-Done (ADR-11-I9): composition-root tests (`drive_session` / shipped CLI), anti-theater kill-check, flag matrices. Authority remains `just check` / pytest — this skill steers how tests are written. |
 
 New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this table.
 
@@ -225,6 +226,10 @@ New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this t
   The `isinstance` check serves two purposes: it validates untrusted
   input at runtime AND narrows the type for the checker. Both the
   code and the types are correct — no annotation shortcuts needed.
+- **Harness product behavior** is not done until a composition-root test would
+  fail if the production call site were removed (ADR-11-I9). Load
+  [`tests-writing`](./knowledge/skills/tests-writing/SKILL.md) before writing
+  those tests. Prefer `tests/test_*_wiring.py` patterns already in tree.
 - **Existing tests are protected.** Deleting/renaming any `tests/**`
   file is blocked at the hook and harness seats; modifying one during a
   FIX-shaped diff requires a `TEST-EDITS:` declaration in the PR draft
@@ -254,3 +259,21 @@ Summaries in `knowledge/research/` are pointers, not authoritative sources.
   §Session Protocol (overwrite §Current state, rewrite §Next); update [`knowledge/llms.txt`](./knowledge/llms.txt) rows per
   [`MAINTENANCE.md`](./knowledge/MAINTENANCE.md) §When adding a
   new file (bucket, line count, ≤200 prose chars).
+
+## Querying Artifacts — Use Blackboard and Instant Grep First (ADR-14/15, 2026-07-11)
+
+- **For bootstrap:** Read AGENTS.md + llms.txt §MUST READ FIRST (5 files in order) + project-overview.md + HANDOFF.md as today. This is mandatory.
+
+- **For finding artifacts (skills, ADRs, research, files):** Use formal substrate first, not raw grep:
+  - `blackboard.query(type="skill", key="api")` → list of skill entries with path, content_hash, read_set/write_set, rank <50ms
+  - `fs.instant_grep(query="auth", limit=10)` → list paths <50ms substring search via FTS5 trigram, returns paths not content, token efficient
+  - Only if blackboard and instant_grep return empty, fallback to `grep -ril` as last resort.
+
+- **Why:** Blackboard is content-hashed, versioned, with read_set/write_set, assumptions, version_dependencies, queryable with rank, detects conflict (write_set overlap → conflict_detected). grep -ril scans all files each time, no rank, no content hash, no transactional semantics, slow, token heavy, caused 124 steps timeout.
+
+- **For full file list:** Do NOT read entire llms.txt BY-DEMAND INDEX full list (deprecated as of ADR-14/15). Query blackboard: `blackboard.query(type="research")` or `fs.glob("knowledge/**/*.md")` but prefer blackboard query.
+
+- **For writing files:** Declare read_set (files read before via instant_grep), write_set (file written), assumptions (base commit `git rev-parse HEAD`, llms.txt hash), version_dependencies. Blackboard checks conflict via `detect_conflict()` before allowing write. If conflict, return structured ToolResult.fail code "conflict_detected" with details, not silent overwrite (fixes Claude bug #55708 parent HEAD switched).
+
+- **Single entry point for artifacts:** Blackboard is single entry point for finding artifacts, but NOT single entry point for session bootstrap. Bootstrap remains AGENTS.md + llms.txt MUST READ FIRST.
+

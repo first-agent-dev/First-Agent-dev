@@ -35,6 +35,11 @@ dependencies = [
   # repo writes / index writes / verifier commands without regexing
   # shell syntax. Used at runtime by `fa.inner_loop.bash_intent`.
   "bashlex>=0.18",
+  # PtyPool: libtmux for tmux control, pexpect fallback when tmux missing (Gap 13)
+  # libtmux.Server(socket_name=f"fa_{run_id}") for socket isolation (Improvement 1)
+  # pexpect per-session independent spawn for fallback isolation
+  "libtmux>=0.40",
+  "pexpect>=4.9",
 ]
 
 [tool.first-agent.system-dependencies]
@@ -85,7 +90,7 @@ fa = "fa.cli:main"
 packages = ["src/fa"]
 
 [tool.ruff]
-line-length = 100
+line-length = 112
 target-version = "py313"
 extend-exclude = ["catch-corpus", "fp-corpus", "mutants"]
 

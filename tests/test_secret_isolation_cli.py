@@ -25,9 +25,7 @@ def test_resolve_secrets_path_wsl_default(monkeypatch: pytest.MonkeyPatch) -> No
     assert _resolve_secrets_path() == Path.home() / ".fa" / ".env"
 
 
-def test_load_secret_store_reads_file_not_environ(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_load_secret_store_reads_file_not_environ(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     f = tmp_path / "fa.env"
     f.write_text("FIREWORKS_API_KEY=fw-secret-123\n", encoding="utf-8")
     monkeypatch.setenv("FA_SECRETS_FILE", str(f))

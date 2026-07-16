@@ -99,9 +99,7 @@ def test_explicit_redundant_alias_counts_as_re_export(tmp_path: Path) -> None:
         "from __future__ import annotations\n\ndef helper() -> None:\n    pass\n",
     )
     body = (
-        "from __future__ import annotations\n"
-        "from fa_demo.sub import helper as helper\n\n"
-        '__all__ = ["helper"]\n'
+        'from __future__ import annotations\nfrom fa_demo.sub import helper as helper\n\n__all__ = ["helper"]\n'
     )
     _write_src(tmp_path, "src/fa_demo/facade.py", body)
     report = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))

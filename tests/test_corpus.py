@@ -99,9 +99,7 @@ def test_catch_corpus_fixture_fires_expected_code(
     _install_fixture(tmp_path, fixture_rel, dest_rel)
     report = run_all(tmp_path, rules=(rule,))
     codes = [d.code for d in report.diagnostics]
-    assert expected_code in codes, (
-        f"catch fixture {fixture_rel} did not fire {expected_code}; got {codes}"
-    )
+    assert expected_code in codes, f"catch fixture {fixture_rel} did not fire {expected_code}; got {codes}"
 
 
 @pytest.mark.parametrize(
@@ -109,9 +107,7 @@ def test_catch_corpus_fixture_fires_expected_code(
     _FP_CASES,
     ids=[c[0] for c in _FP_CASES],
 )
-def test_fp_corpus_fixture_does_not_fire(
-    tmp_path: Path, fixture_rel: str, dest_rel: str, rule: Rule
-) -> None:
+def test_fp_corpus_fixture_does_not_fire(tmp_path: Path, fixture_rel: str, dest_rel: str, rule: Rule) -> None:
     _make_workspace(tmp_path)
     _install_fixture(tmp_path, fixture_rel, dest_rel)
     report = run_all(tmp_path, rules=(rule,))

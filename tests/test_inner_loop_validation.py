@@ -116,9 +116,7 @@ class _PathMutatorGuard(GuardMiddleware):
         new_params = dict(call.params)
         new_params["path"] = self.new_path
         return Decision.modify(
-            payload.with_tool_call(
-                ToolCall(name=call.name, params=new_params, call_id=call.call_id)
-            )
+            payload.with_tool_call(ToolCall(name=call.name, params=new_params, call_id=call.call_id))
         )
 
 
@@ -151,16 +149,12 @@ def test_modify_does_not_bypass_schema_revalidation(tmp_path: Path) -> None:
             assert payload.tool_call is not None
             call = payload.tool_call
             return Decision.modify(
-                payload.with_tool_call(
-                    ToolCall(name=call.name, params={"path": ""}, call_id=call.call_id)
-                )
+                payload.with_tool_call(ToolCall(name=call.name, params={"path": ""}, call_id=call.call_id))
             )
 
     hooks = HookRegistry()
     hooks.register(_InvalidatingGuard())
-    state = SessionState(
-        workspace_root=tmp_path, run_id="t-modify", log=EventLog(tmp_path / "ev.jsonl")
-    )
+    state = SessionState(workspace_root=tmp_path, run_id="t-modify", log=EventLog(tmp_path / "ev.jsonl"))
 
     results = run_session(
         (ToolCall(name="demo.read", params={"path": "valid.txt"}, call_id="tc-1"),),
@@ -185,9 +179,7 @@ def test_sandbox_blocks_read_file_escape(tmp_path: Path) -> None:
     registry = build_baseline_registry(workspace)
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))
-    state = SessionState(
-        workspace_root=workspace, run_id="t-read", log=EventLog(workspace / "ev.jsonl")
-    )
+    state = SessionState(workspace_root=workspace, run_id="t-read", log=EventLog(workspace / "ev.jsonl"))
 
     results = run_session(
         (ToolCall(name="fs.read_file", params={"path": str(outside)}, call_id="tc-1"),),
@@ -211,9 +203,7 @@ def test_sandbox_blocks_write_file_escape(tmp_path: Path) -> None:
     registry = build_baseline_registry(workspace)
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))
-    state = SessionState(
-        workspace_root=workspace, run_id="t-write", log=EventLog(workspace / "ev.jsonl")
-    )
+    state = SessionState(workspace_root=workspace, run_id="t-write", log=EventLog(workspace / "ev.jsonl"))
 
     results = run_session(
         (
@@ -248,9 +238,7 @@ def test_modify_to_escape_is_caught_by_sandbox_replay(tmp_path: Path) -> None:
     # changes ``path``); the replay path is what catches the escape attempt.
     hooks.register(SandboxHook(workspace))
     hooks.register(_PathMutatorGuard(str(escape_target)))
-    state = SessionState(
-        workspace_root=workspace, run_id="t-replay", log=EventLog(workspace / "ev.jsonl")
-    )
+    state = SessionState(workspace_root=workspace, run_id="t-replay", log=EventLog(workspace / "ev.jsonl"))
 
     results = run_session(
         (
@@ -308,9 +296,7 @@ def test_dispatch_trace_records_sandbox_replay(tmp_path: Path) -> None:
     hooks.register(SandboxHook(workspace))
     hooks.register(recorder)
     hooks.register(_PathMutatorGuard("kept-in-ws.txt"))
-    state = SessionState(
-        workspace_root=workspace, run_id="t-trace", log=EventLog(workspace / "ev.jsonl")
-    )
+    state = SessionState(workspace_root=workspace, run_id="t-trace", log=EventLog(workspace / "ev.jsonl"))
 
     results = run_session(
         (

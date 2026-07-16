@@ -64,9 +64,7 @@ def _load_existing(path: Path) -> dict[str, dict[str, object]]:
         return {}
     parsed = json.loads(raw)
     if not isinstance(parsed, dict):
-        raise ValueError(
-            f"codebase map at {path} is not a JSON object (top-level {type(parsed).__name__})"
-        )
+        raise ValueError(f"codebase map at {path} is not a JSON object (top-level {type(parsed).__name__})")
     cleaned: dict[str, dict[str, object]] = {}
     for key, value in parsed.items():
         if not isinstance(value, dict):

@@ -146,8 +146,7 @@ class ConsoleRenderer:
     def _handle_session_start(self, e: OutputEvent) -> None:
         d = e.data
         self._write(
-            f"{self._c('1', 'FA')} │ {d.get('model', '?')} ({d.get('role', '?')}) │ "
-            f"max_turns={e.max_turns}"
+            f"{self._c('1', 'FA')} │ {d.get('model', '?')} ({d.get('role', '?')}) │ max_turns={e.max_turns}"
         )
 
     def _handle_turn_start(self, e: OutputEvent) -> None:

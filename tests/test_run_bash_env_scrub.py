@@ -64,9 +64,7 @@ def test_extra_allow_cannot_re_expose_a_secret_name() -> None:
     assert scrubbed["MY_TOOL_HOME"] == "/x"  # non-secret extra is allowed
 
 
-def test_run_bash_printenv_returns_no_secret(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_bash_printenv_returns_no_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FIREWORKS_API_KEY", "fw-LEAK-12345")
     tool = build_run_bash_tool(tmp_path)
     res = _run(tool, "printenv FIREWORKS_API_KEY || true")
@@ -74,18 +72,14 @@ def test_run_bash_printenv_returns_no_secret(
     assert "fw-LEAK-12345" not in _stderr(res)
 
 
-def test_run_bash_env_dump_returns_no_secret(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_bash_env_dump_returns_no_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-LEAK-99")
     tool = build_run_bash_tool(tmp_path)
     res = _run(tool, "env")
     assert "or-LEAK-99" not in _stdout(res)
 
 
-def test_run_bash_proc_self_environ_no_secret(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_bash_proc_self_environ_no_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "ak-LEAK-77")
     tool = build_run_bash_tool(tmp_path)
     res = _run(tool, "cat /proc/self/environ | tr '\\0' '\\n' || true")

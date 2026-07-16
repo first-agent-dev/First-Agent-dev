@@ -124,6 +124,34 @@ def test_request_supplies_default_max_tokens_when_absent() -> None:
     assert transport.last_body["max_tokens"] == 64000
 
 
+def test_request_preserves_cache_control_on_system_blocks() -> None:
+    transport = FakeTransport(
+        response=TransportResponse(
+            status=200,
+            body={"content": [], "stop_reason": "end_turn", "usage": {}},
+        ),
+    )
+    provider = AnthropicProvider(transport=transport)
+    provider.request(
+        RequestInfo(
+            model_slug="claude-3-5-sonnet-latest",
+            messages=(
+                {"role": "system", "content": "Base system", "cache_control": {"type": "ephemeral"}},
+                {"role": "system", "content": "Tools block", "cache_control": {"type": "ephemeral"}},
+                {"role": "user", "content": "hi"},
+            ),
+        ),
+        base_url="https://api.anthropic.com",
+        api_key="k",
+        timeout_seconds=60.0,
+        transport_retries=0,
+        extra_headers={},
+    )
+    assert isinstance(transport.last_body["system"], list)
+    assert transport.last_body["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert transport.last_body["messages"] == [{"role": "user", "content": "hi"}]
+
+
 def test_response_translates_tool_use_blocks_to_openai_tool_calls() -> None:
     transport = FakeTransport(
         response=TransportResponse(

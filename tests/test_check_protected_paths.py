@@ -95,9 +95,7 @@ def test_changed_paths_lists_diff(tmp_path: Path) -> None:
 # --- main ------------------------------------------------------------------
 
 
-def test_main_flags_protected_path_non_blocking(
-    tmp_path: Path, capsys: CaptureFixture[str]
-) -> None:
+def test_main_flags_protected_path_non_blocking(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
     _init_repo(tmp_path)
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "check_protected_paths.py").write_text("x\n", encoding="utf-8")
@@ -130,9 +128,7 @@ def test_dependency_hits_matches_manifests_only() -> None:
     assert cpp.dependency_hits(["docs.md"]) == []
 
 
-def test_main_flags_dependency_manifest_non_blocking(
-    tmp_path: Path, capsys: CaptureFixture[str]
-) -> None:
+def test_main_flags_dependency_manifest_non_blocking(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
     # Supply-chain tier: editing pyproject.toml annotates (slopsquatting
     # review prompt) but never blocks, and is not a TCB hit.
     _init_repo(tmp_path)
@@ -177,9 +173,7 @@ def test_added_suppressions_clean_diff_is_empty(tmp_path: Path) -> None:
     assert cpp.added_suppressions("main", tmp_path) == []
 
 
-def test_main_flags_new_suppression_non_blocking(
-    tmp_path: Path, capsys: CaptureFixture[str]
-) -> None:
+def test_main_flags_new_suppression_non_blocking(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
     _init_repo(tmp_path)
     _git(tmp_path, "checkout", "-b", "feature")
     (tmp_path / "w.py").write_text("b = 2  # noqa: BLE001\n", encoding="utf-8")

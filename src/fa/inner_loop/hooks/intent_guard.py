@@ -112,9 +112,7 @@ __all__ = [
 GitRunner = Callable[[], str]
 
 # Tool names that directly mutate the workspace / staged tree.
-_MUTATING_TOOL_NAMES: frozenset[str] = frozenset(
-    {"fs.write_file", "fs.edit_file", "fs.apply_patch"}
-)
+_MUTATING_TOOL_NAMES: frozenset[str] = frozenset({"fs.write_file", "fs.edit_file", "fs.apply_patch"})
 
 _DRAFT_REQUIRED_BASH_EFFECTS: frozenset[BashIntentEffect] = frozenset(
     {
@@ -193,9 +191,7 @@ def _project_call(call: ToolCall, staged: list[StagedPath], repo_root: Path) -> 
     return [*staged, StagedPath(status=status, path=path)]
 
 
-def _merge_projected_paths(
-    staged: list[StagedPath], projected: tuple[StagedPath, ...]
-) -> list[StagedPath]:
+def _merge_projected_paths(staged: list[StagedPath], projected: tuple[StagedPath, ...]) -> list[StagedPath]:
     merged = list(staged)
     existing = {entry.path for entry in merged}
     for entry in projected:
@@ -207,7 +203,7 @@ def _merge_projected_paths(
 
 
 def _bash_analysis_for_call(call: ToolCall, repo_root: Path) -> BashIntentAnalysis | None:
-    if call.name != "fs.run_bash":
+    if call.name not in {"fs.run_bash", "fs.spawn_subagent"}:
         return None
     command = call.params.get("command")
     if not isinstance(command, str) or not command.strip():
