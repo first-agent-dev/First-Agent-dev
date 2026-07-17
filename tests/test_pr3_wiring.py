@@ -20,7 +20,7 @@ from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.providers import ChainConfig, ProviderChain
-from fa.providers.base import ResponseInfo
+from tests.fixtures.session_wiring import mock_success_response, require_log
 
 
 @pytest.fixture
@@ -34,26 +34,6 @@ def mock_session_state(tmp_path: Path) -> SessionState:
     )
 
 
-def _require_log(state: SessionState) -> EventLog:
-    """Session fixtures always attach a log; narrow Optional for type checkers."""
-    assert state.log is not None
-    return state.log
-
-
-def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[object]]:
-    resp = ResponseInfo(
-        text=text,
-        in_tokens=1000,
-        out_tokens=100,
-        cache_read_input_tokens=0,
-        cache_creation_input_tokens=0,
-        finish_reason="stop",
-        tool_calls=(),
-        extras={},
-    )
-    return resp, "call-id", []
-
-
 def test_drive_session_uses_prompt_composer(tmp_path: Path, mock_session_state: SessionState) -> None:
     """Verifies PromptComposer is called to construct payloads and caching controls."""
     mock_chain = MagicMock(spec=ProviderChain)
@@ -63,7 +43,7 @@ def test_drive_session_uses_prompt_composer(tmp_path: Path, mock_session_state: 
     mock_chain.config.model = "test-model"
     mock_chain.config.family = "anthropic"  # Use anthropic to test cache breakpoints
 
-    mock_chain.request.return_value = _mock_success_response("caching completed")
+    mock_chain.request.return_value = mock_success_response("caching completed")
 
 
     outcome = drive_session(
@@ -98,7 +78,7 @@ def test_openai_prompt_cache_key_forwarded_into_request_extras(
     mock_chain.config.model = "test-model"
     mock_chain.config.family = "openai"
 
-    mock_chain.request.return_value = _mock_success_response("cache-key forwarded")
+    mock_chain.request.return_value = mock_success_response("cache-key forwarded")
 
 
     outcome = drive_session(
@@ -134,7 +114,7 @@ def test_cache_headers_stripped_when_disabled(tmp_path: Path) -> None:
     mock_chain.config.model = "test-model"
     mock_chain.config.family = "anthropic"
 
-    mock_chain.request.return_value = _mock_success_response("no-cache completed")
+    mock_chain.request.return_value = mock_success_response("no-cache completed")
 
 
     outcome = drive_session(

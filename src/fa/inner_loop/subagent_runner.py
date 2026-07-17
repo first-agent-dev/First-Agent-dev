@@ -78,8 +78,8 @@ class SubagentRunner:
                     ff_max = getattr(ff, "max_subagent_spawns_per_session", None)
                     if isinstance(ff_max, int) and ff_max >= 0:
                         return ff_max
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 # graceful fallback to defaults
+            logger.warning("Feature flag resolution for max_subagent_spawns_per_session failed: %s", exc)
 
         limits = self._get_limits()
         if limits is not None:
@@ -136,11 +136,9 @@ class SubagentRunner:
             include_plans = False
             try:
                 if session is not None and session.feature_flags is not None:
-                    include_plans = getattr(
-                        session.feature_flags, "blackboard_filtered_history_include_plans", False
-                    )
-            except AttributeError as exc:  # best-effort feature flag load
-                logger.warning(f"blackboard_filtered_history_include_plans flag check failed: {exc}")
+                    include_plans = session.feature_flags.blackboard_filtered_history_include_plans
+            except Exception as exc:  # best-effort feature flag load
+                logger.warning(f"blackboard_filtered_history_include_plans flag check failed: %s", exc)
 
             # For v0.1 minimal surface, keep file-based only unless flag True
             # build_filtered_history already handles fallback chain:

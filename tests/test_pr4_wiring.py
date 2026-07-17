@@ -9,7 +9,6 @@ Verifies that:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -21,7 +20,7 @@ from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.providers import ChainConfig, ProviderChain
-from fa.providers.base import ResponseInfo
+from tests.fixtures.session_wiring import mock_success_response, require_log
 
 
 @pytest.fixture
@@ -33,44 +32,6 @@ def mock_session_state(tmp_path: Path) -> SessionState:
         log=log,
         feature_flags=FeatureFlags(context_budget_enabled=True, context_compaction_enabled=True),
     )
-
-
-def _require_log(state: SessionState) -> EventLog:
-    """Session fixtures always attach a log; narrow Optional for type checkers."""
-    assert state.log is not None
-    return state.log
-
-
-def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[object]]:
-    resp = ResponseInfo(
-        text=text,
-        in_tokens=1000,
-        out_tokens=100,
-        cache_read_input_tokens=0,
-        cache_creation_input_tokens=0,
-        finish_reason="stop",
-        tool_calls=(),
-        extras={},
-    )
-    return resp, "call-id", []
-
-
-def _mock_tool_call_response(
-    call_id: str, name: str, params: dict[str, object]
-) -> tuple[ResponseInfo, str, list[object]]:
-    resp = ResponseInfo(
-        text="Executing tool",
-        in_tokens=1000,
-        out_tokens=100,
-        cache_read_input_tokens=0,
-        cache_creation_input_tokens=0,
-        finish_reason="tool_calls",
-        tool_calls=(
-            {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(params)}},
-        ),
-        extras={},
-    )
-    return resp, "call-id", []
 
 
 def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: SessionState) -> None:
@@ -87,7 +48,7 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
     # We load history with 2 bulky previous turns of 42k chars each
     # (total 84k, i.e. 21k tokens, plus system prompts)
     # We configure side effect to return stop
-    mock_chain.request.return_value = _mock_success_response("all done")
+    mock_chain.request.return_value = mock_success_response("all done")
 
     # Wire a dummy tool
     registry = ToolRegistry()
@@ -107,10 +68,10 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        _require_log(mock_session_state).append(
+        require_log(mock_session_state).append(
             actor="model", kind="model_msg", content={"text": f"Step {i}", "tool_calls": t_calls}
         )
-        _require_log(mock_session_state).append(
+        require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "bulk output", "result": {"stdout": "A" * 100000}, "ok": True},
@@ -120,10 +81,10 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
 
     # Turn 5: recent window (protected) - keep small
     tool_calls_5 = [{"id": "tc-5", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
-    _require_log(mock_session_state).append(
+    require_log(mock_session_state).append(
         actor="model", kind="model_msg", content={"text": "Step 5", "tool_calls": tool_calls_5}
     )
-    _require_log(mock_session_state).append(
+    require_log(mock_session_state).append(
         actor="tool",
         kind="tool_result",
         content={"summary": "bulk output", "result": {"stdout": "A" * 1000}, "ok": True},
@@ -146,7 +107,7 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
     assert mock_chain.request.call_count == 1
 
     # Verify compaction events are logged inside SQLite state database
-    events = _require_log(mock_session_state).read_all()
+    events = require_log(mock_session_state).read_all()
     start_events = [e for e in events if e.kind == "compaction_stage2_start"]
     done_events = [e for e in events if e.kind == "compaction_stage2_done"]
     assert len(start_events) == 1

@@ -113,6 +113,23 @@ PR branch.
 | :--- | :--- | :--- |
 | `advisory.yml` | sanity-check (`uv lock --check` + full `just check`), pip-audit (known CVEs), gitleaks (full-history secrets; version-pinned to the pre-commit hook) | blocking |
 | `authoring-guardrails.yml` | `fa authoring-check` (always-run, NO `paths:` filter — ADR-11-I6) + `check_protected_paths.py` | check blocking; flags non-blocking |
+
+**Verifying CI always-run (no `paths:` filter):** Do NOT use naïve
+`grep -q "paths:" .github/workflows/authoring-guardrails.yml` — it
+false-fails on YAML comments that mention `paths:` in prose.  Use the
+structured checker instead:
+
+```bash
+python scripts/check_workflow_no_path_filter.py .github/workflows/authoring-guardrails.yml
+# or check ALL workflows:
+python scripts/check_workflow_no_path_filter.py
+# JSON output for CI:
+python scripts/check_workflow_no_path_filter.py --output json
+```
+
+The script parses YAML (ignoring comments) and only flags actual
+`paths:` / `paths-ignore:` keys at the `on:` trigger level.  Tested in
+`tests/test_workflow_no_path_filter.py` (13 tests, incl. kill-check).
 | `pylint` | (deleted — runs inside `just lint`) | — |
 | `tests.yml` | weekly mutation run; stats → job summary + artifact | advisory (promotion trigger above) |
 | `semgrep.yml` | weekly OWASP/python SAST | advisory |

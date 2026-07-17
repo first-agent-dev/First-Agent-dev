@@ -525,8 +525,11 @@ def run_session(
                         ):
                             # Sequential path uses should_stop flag; parallel uses log signal
                             break
-                except Exception:
-                    pass
+                except Exception as exc:  # noqa: BLE001 # best-effort log scan for parallel stop signal
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "Failed to scan log for parallel AFTER_TOOL_EXEC stop signal: %s", exc
+                    )
 
     finally:
         hooks.set_event_sink(None)

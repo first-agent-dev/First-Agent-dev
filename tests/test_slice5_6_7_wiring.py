@@ -31,48 +31,12 @@ from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.tools import build_baseline_registry
 from fa.providers import ChainConfig, ProviderChain
 from fa.providers.base import ResponseInfo
-
-
-def _require_log(state: SessionState) -> EventLog:
-    assert state.log is not None
-    return state.log
-
-
-def _mock_response_with_tools(tool_calls: list[dict[str, Any]], text: str = "") -> tuple[ResponseInfo, str, list[Any]]:
-    """Helper to mock ProviderChain returning tool_calls."""
-    resp = ResponseInfo(
-        text=text,
-        in_tokens=100,
-        out_tokens=10,
-        cache_read_input_tokens=0,
-        cache_creation_input_tokens=0,
-        finish_reason="tool_calls",
-        tool_calls=tuple(tool_calls),
-        extras={},
-    )
-    return resp, "call-id-1", []
-
-
-def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[Any]]:
-    resp = ResponseInfo(
-        text=text,
-        in_tokens=100,
-        out_tokens=10,
-        cache_read_input_tokens=0,
-        cache_creation_input_tokens=0,
-        finish_reason="stop",
-        tool_calls=(),
-        extras={},
-    )
-    return resp, "call-id-final", []
-
-
-def _make_tool_call(name: str, params: dict[str, Any], call_id: str) -> dict[str, Any]:
-    return {
-        "id": call_id,
-        "type": "function",
-        "function": {"name": name, "arguments": json.dumps(params)},
-    }
+from tests.fixtures.session_wiring import (
+    make_tool_call,
+    mock_response_with_tools,
+    mock_success_response,
+    require_log,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -108,11 +72,11 @@ def test_pr6_wiring_bash_large_output_offloads_artifact_via_live_path(tmp_path: 
 
     # Turn 1: LLM asks to run bash printing 9001 A's
     large_cmd = "python3 - <<'PY'\nprint('A' * 9001)\nPY"
-    tc1 = _make_tool_call("fs.run_bash", {"command": large_cmd}, "tc-1")
+    tc1 = make_tool_call("fs.run_bash", {"command": large_cmd}, "tc-1")
     # Turn 2: stop
     mock_chain.request.side_effect = [
-        _mock_response_with_tools([tc1], text="run large"),
-        _mock_success_response("done"),
+        mock_response_with_tools([tc1], text="run large"),
+        mock_success_response("done"),
     ]
 
     outcome = drive_session(
@@ -128,7 +92,7 @@ def test_pr6_wiring_bash_large_output_offloads_artifact_via_live_path(tmp_path: 
     # Efficiency: 2 provider calls
     assert mock_chain.request.call_count == 2
 
-    events = _require_log(state).read_all()
+    events = require_log(state).read_all()
     tool_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.run_bash"]
     assert len(tool_results) == 1
     content = tool_results[0].content
@@ -172,12 +136,12 @@ def test_pr6_wiring_parallel_denied_preserved_order(tmp_path: Path) -> None:
     mock_chain.config.model = "test"
     mock_chain.config.family = "openai"
 
-    tc1 = _make_tool_call("fs.read_file", {"path": "a.txt"}, "tc-1")
-    tc2 = _make_tool_call("fs.read_file", {"path": "../../etc/passwd"}, "tc-2")
+    tc1 = make_tool_call("fs.read_file", {"path": "a.txt"}, "tc-1")
+    tc2 = make_tool_call("fs.read_file", {"path": "../../etc/passwd"}, "tc-2")
 
     mock_chain.request.side_effect = [
-        _mock_response_with_tools([tc1, tc2], text="read both"),
-        _mock_success_response("done"),
+        mock_response_with_tools([tc1, tc2], text="read both"),
+        mock_success_response("done"),
     ]
 
     outcome = drive_session(
@@ -198,7 +162,7 @@ def test_pr6_wiring_parallel_denied_preserved_order(tmp_path: Path) -> None:
     assert "hook_deny" in second.error.code or "escapes workspace" in second.error.message
 
     # Event log also has 2 tool_result events
-    tool_results = [e for e in _require_log(state).read_all() if e.kind == "tool_result"]
+    tool_results = [e for e in require_log(state).read_all() if e.kind == "tool_result"]
     assert len(tool_results) == 2
 
 
@@ -235,11 +199,11 @@ def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
     mock_chain.config.model = "test"
     mock_chain.config.family = "openai"
 
-    tc1 = _make_tool_call("fs.instant_grep", {"query": "needle"}, "tc-1")
+    tc1 = make_tool_call("fs.instant_grep", {"query": "needle"}, "tc-1")
 
     mock_chain.request.side_effect = [
-        _mock_response_with_tools([tc1]),
-        _mock_success_response("done"),
+        mock_response_with_tools([tc1]),
+        mock_success_response("done"),
     ]
 
     outcome = drive_session(
@@ -257,7 +221,7 @@ def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
     assert not fts_db.exists(), "instant_grep query path created fts.db — violates read-only guarantee"
 
     # Tool result should be via fallback, not fts5 when empty
-    events = _require_log(state).read_all()
+    events = require_log(state).read_all()
     tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.instant_grep"]
     assert len(tr) == 1
     result = tr[0].content.get("result") or {}
@@ -307,13 +271,13 @@ def test_pr6_wiring_pty_persistence_via_session(tmp_path: Path) -> None:
     mock_chain.config.model = "test"
     mock_chain.config.family = "openai"
 
-    tc1 = _make_tool_call("fs.run_bash", {"command": "cd /tmp && pwd"}, "tc-1")
-    tc2 = _make_tool_call("fs.run_bash", {"command": "pwd"}, "tc-2")
+    tc1 = make_tool_call("fs.run_bash", {"command": "cd /tmp && pwd"}, "tc-1")
+    tc2 = make_tool_call("fs.run_bash", {"command": "pwd"}, "tc-2")
 
     mock_chain.request.side_effect = [
-        _mock_response_with_tools([tc1], text="cd"),
-        _mock_response_with_tools([tc2], text="pwd check"),
-        _mock_success_response("done"),
+        mock_response_with_tools([tc1], text="cd"),
+        mock_response_with_tools([tc2], text="pwd check"),
+        mock_success_response("done"),
     ]
 
     outcome = drive_session(
@@ -326,7 +290,7 @@ def test_pr6_wiring_pty_persistence_via_session(tmp_path: Path) -> None:
     )
 
     assert outcome.exit_code == 0
-    events = _require_log(state).read_all()
+    events = require_log(state).read_all()
     tool_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.run_bash"]
     assert len(tool_results) == 2
     # Second result should still be /tmp if stateful
@@ -361,11 +325,11 @@ def test_pr6_wiring_cr_cleaning_via_bash(tmp_path: Path) -> None:
     mock_chain.config.family = "openai"
 
     # printf with \r
-    tc1 = _make_tool_call("fs.run_bash", {"command": "printf 'foo\\rbar\\n'"}, "tc-1")
+    tc1 = make_tool_call("fs.run_bash", {"command": "printf 'foo\\rbar\\n'"}, "tc-1")
 
     mock_chain.request.side_effect = [
-        _mock_response_with_tools([tc1]),
-        _mock_success_response("done"),
+        mock_response_with_tools([tc1]),
+        mock_success_response("done"),
     ]
 
     outcome = drive_session(
@@ -377,7 +341,7 @@ def test_pr6_wiring_cr_cleaning_via_bash(tmp_path: Path) -> None:
         max_turns=2,
     )
 
-    events = _require_log(state).read_all()
+    events = require_log(state).read_all()
     tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.run_bash"][0]
     stdout = str(tr.content.get("result", {}).get("stdout", ""))
     assert "\r" not in stdout, f"CR not cleaned: {stdout!r}"
@@ -416,15 +380,15 @@ def test_pr6_wiring_subagent_role_env_and_events(tmp_path: Path) -> None:
     mock_chain.config.model = "test"
     mock_chain.config.family = "openai"
 
-    tc1 = _make_tool_call(
+    tc1 = make_tool_call(
         "fs.spawn_subagent",
         {"task_id": "t-1", "command": "echo hello", "role": "researcher", "env": {"MYVAR": "ok"}},
         "tc-1",
     )
 
     mock_chain.request.side_effect = [
-        _mock_response_with_tools([tc1]),
-        _mock_success_response("done"),
+        mock_response_with_tools([tc1]),
+        mock_success_response("done"),
     ]
 
     outcome = drive_session(
@@ -437,7 +401,7 @@ def test_pr6_wiring_subagent_role_env_and_events(tmp_path: Path) -> None:
     )
 
     assert outcome.exit_code == 0
-    events = _require_log(state).read_all()
+    events = require_log(state).read_all()
     kinds = [e.kind for e in events]
     assert "subagent_spawn_start" in kinds
     assert "subagent_spawn_done" in kinds
@@ -499,13 +463,13 @@ def test_pr6_wiring_subagent_sandbox_deny(tmp_path: Path) -> None:
     mock_chain.config.family = "openai"
 
     # Malicious command should be denied by sandbox
-    tc1 = _make_tool_call(
+    tc1 = make_tool_call(
         "fs.spawn_subagent", {"task_id": "evil", "command": "sudo rm -rf /", "role": "verifier"}, "tc-1"
     )
 
     mock_chain.request.side_effect = [
-        _mock_response_with_tools([tc1]),
-        _mock_success_response("should not reach"),
+        mock_response_with_tools([tc1]),
+        mock_success_response("should not reach"),
     ]
 
     outcome = drive_session(
@@ -520,7 +484,7 @@ def test_pr6_wiring_subagent_sandbox_deny(tmp_path: Path) -> None:
     # Should have denied, not executed subagent
     # Provider may be called again (LLM sees deny and can correct), so we allow 1 or 2 calls
     assert mock_chain.request.call_count >= 1
-    events = _require_log(state).read_all()
+    events = require_log(state).read_all()
     # Check for hook_decision deny or tool_result with hook_deny
     tool_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.spawn_subagent"]
     assert len(tool_results) == 1

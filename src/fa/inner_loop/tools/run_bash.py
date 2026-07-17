@@ -154,8 +154,8 @@ def build_run_bash_tool(
                 try:
                     artifact_store = getattr(session, "artifact_store", None)
                     transaction = getattr(session, "transaction", None)
-                except Exception:
-                    pass
+                except Exception as exc:  # noqa: BLE001 # best-effort attribute extraction
+                    logger.debug("artifact_store/transaction extraction failed: %s", exc)
         except Exception as exc:  # noqa: BLE001
             logger.warning("get_current_session failed in run_bash: %s", exc)
 

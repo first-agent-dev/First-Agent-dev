@@ -9,7 +9,6 @@ Verifies that:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -19,9 +18,9 @@ from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
-from fa.inner_loop.registry import ToolResult
+from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.providers import ChainConfig, ProviderChain
-from fa.providers.base import ResponseInfo
+from tests.fixtures.session_wiring import mock_success_response, mock_tool_call_response, require_log
 
 
 @pytest.fixture
@@ -33,44 +32,6 @@ def mock_session_state(tmp_path: Path) -> SessionState:
         log=log,
         feature_flags=FeatureFlags(context_budget_enabled=True, context_compaction_enabled=False),
     )
-
-
-def _require_log(state: SessionState) -> EventLog:
-    """Session fixtures always attach a log; narrow Optional for type checkers."""
-    assert state.log is not None
-    return state.log
-
-
-def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[object]]:
-    resp = ResponseInfo(
-        text=text,
-        in_tokens=1000,
-        out_tokens=100,
-        cache_read_input_tokens=0,
-        cache_creation_input_tokens=0,
-        finish_reason="stop",
-        tool_calls=(),
-        extras={},
-    )
-    return resp, "call-id", []
-
-
-def _mock_tool_call_response(
-    call_id: str, name: str, params: dict[str, object]
-) -> tuple[ResponseInfo, str, list[object]]:
-    resp = ResponseInfo(
-        text="Executing tool",
-        in_tokens=1000,
-        out_tokens=100,
-        cache_read_input_tokens=0,
-        cache_creation_input_tokens=0,
-        finish_reason="tool_calls",
-        tool_calls=(
-            {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(params)}},
-        ),
-        extras={},
-    )
-    return resp, "call-id", []
 
 
 def test_pins_present_each_turn_no_compaction(tmp_path: Path, mock_session_state: SessionState) -> None:
@@ -87,13 +48,12 @@ def test_pins_present_each_turn_no_compaction(tmp_path: Path, mock_session_state
     mock_chain.config.family = "openai"
 
     mock_chain.request.side_effect = [
-        _mock_tool_call_response("tc-1", "fs.read_file", {"path": "test.txt"}),
-        _mock_tool_call_response("tc-2", "fs.read_file", {"path": "test.txt"}),
-        _mock_success_response("all done"),
+        mock_tool_call_response("tc-1", "fs.read_file", {"path": "test.txt"}),
+        mock_tool_call_response("tc-2", "fs.read_file", {"path": "test.txt"}),
+        mock_success_response("all done"),
     ]
 
     registry = ToolRegistry()
-    from fa.inner_loop.registry import ToolSpec
 
     registry.register(
         ToolSpec(
@@ -137,7 +97,7 @@ def test_pin_missing_file_policy(tmp_path: Path, mock_session_state: SessionStat
     mock_chain.config.model = "test-model"
     mock_chain.config.family = "openai"
 
-    mock_chain.request.return_value = _mock_success_response("missing path done")
+    mock_chain.request.return_value = mock_success_response("missing path done")
 
 
     outcome = drive_session(
@@ -176,13 +136,12 @@ def test_mid_session_file_change_reloads(tmp_path: Path, mock_session_state: Ses
         call_count = len(captured_prompts)
         if call_count == 1:
             agents_file.write_text("Rule V2: Updated guideline mid-run", encoding="utf-8")
-            return _mock_tool_call_response("tc-1", "fs.read_file", {"path": "test.txt"})
-        return _mock_success_response("turn done")
+            return mock_tool_call_response("tc-1", "fs.read_file", {"path": "test.txt"})
+        return mock_success_response("turn done")
 
     mock_chain.request.side_effect = _side_effect
 
     registry = ToolRegistry()
-    from fa.inner_loop.registry import ToolSpec
 
     registry.register(
         ToolSpec(
@@ -225,7 +184,7 @@ def test_resume_draft_is_memory_summary_not_pinned(tmp_path: Path, mock_session_
     mock_chain.config.compaction_threshold = 80000
     mock_chain.config.model = "test-model"
     mock_chain.config.family = "openai"
-    mock_chain.request.return_value = _mock_success_response("done")
+    mock_chain.request.return_value = mock_success_response("done")
 
 
     outcome = drive_session(

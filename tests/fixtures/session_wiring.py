@@ -71,6 +71,21 @@ def make_tool_call(name: str, params: dict[str, Any], call_id: str) -> dict[str,
     }
 
 
+def mock_tool_call_response(
+    call_id: str, name: str, params: dict[str, Any]
+) -> tuple[ResponseInfo, str, list[Any]]:
+    """Convenience: create a ResponseInfo containing a single tool call.
+
+    Used by pr2/pr4 wiring tests where a single tool call is returned per turn.
+    Equivalent to ``mock_response_with_tools([make_tool_call(name, params, call_id)])``
+    but with ``text="Executing tool"`` for parity with the original local defs.
+    """
+    return mock_response_with_tools(
+        [make_tool_call(name, params, call_id)],
+        text="Executing tool",
+    )
+
+
 def make_mock_chain(
     context_limit: int = 150000,
     compaction_threshold: int | None = None,

@@ -743,15 +743,27 @@ run_tests() {
     bash -c "rm -rf /sessions/deploy-smoke-test" 2>/dev/null || true
 
   if [[ "${SKIP_UV_SYNC}" == "0" ]]; then
-    if docker compose -f "${COMPOSE_FILE}" exec -T -e FA_RUN_ID="deploy-smoke-test" "${SERVICE_NAME}" \
-      /usr/local/bin/fa-entrypoint.sh bash -lc 'uv sync --frozen --extra dev' >/dev/null 2>&1; then
-      echo "  ✓ Dev dependencies synced."
+    # Sync dev deps on the HOST (the container is read_only=true and can't write
+    # to /opt/fa-venv). Host-side uv sync is faster and avoids the read_only
+    # limitation. Fall back to container-side if uv is not on the host.
+    if command -v uv >/dev/null 2>&1 && [[ -f "${REPO_DIR}/pyproject.toml" ]]; then
+      if uv sync --frozen --extra dev --project "${REPO_DIR}" >/dev/null 2>&1; then
+        echo "  ✓ Dev dependencies synced (host)."
+      else
+        echo "  ⚠ Failed to sync dev dependencies on host."
+      fi
     else
-      echo "  ⚠ Failed to sync dev dependencies."
+      if docker compose -f "${COMPOSE_FILE}" exec -T -e FA_RUN_ID="deploy-smoke-test" "${SERVICE_NAME}" \
+        /usr/local/bin/fa-entrypoint.sh bash -lc 'uv sync --frozen --extra dev' >/dev/null 2>&1; then
+        echo "  ✓ Dev dependencies synced (container)."
+      else
+        echo "  ⚠ Failed to sync dev dependencies."
+      fi
     fi
   fi
 
   echo "  → Running pytest..."
+
   # STEP 7 is non-fatal by contract: a failing test must NOT abort the deploy
   # (the stack is already up). `set +e` alone is insufficient here — the script
   # runs with `set -E` (errtrace), so the ERR trap still fires on a non-zero
@@ -759,9 +771,21 @@ run_tests() {
   # restore it afterwards so a red pytest is recorded in TEST_RC, not fatal.
   set +e
   trap - ERR
-  docker compose -f "${COMPOSE_FILE}" exec -T -e FA_RUN_ID="deploy-smoke-test" "${SERVICE_NAME}" \
-    /usr/local/bin/fa-entrypoint.sh bash -lc 'if command -v uv >/dev/null 2>&1; then uv run python -m pytest -v --tb=short; else python -m pytest -v --tb=short; fi'
-  TEST_RC=$?
+
+  # The agent container runs read_only=true (security hardening, ADR-12), so
+  # in-container pytest cannot install dev deps into /opt/fa-venv. Try host-side
+  # first (the repo checkout is right here), then fall back to container-side
+  # (works only if the container has dev deps pre-installed or is not read_only).
+  if command -v uv >/dev/null 2>&1 && [[ -f "${REPO_DIR}/pyproject.toml" ]]; then
+    echo "  → Running pytest on the HOST (repo is at ${REPO_DIR})..."
+    uv run --project "${REPO_DIR}" python -m pytest -v --tb=short
+    TEST_RC=$?
+  else
+    echo "  → uv not available on host; trying container-side pytest..."
+    docker compose -f "${COMPOSE_FILE}" exec -T -e FA_RUN_ID="deploy-smoke-test" "${SERVICE_NAME}" \
+      /usr/local/bin/fa-entrypoint.sh bash -lc 'if command -v uv >/dev/null 2>&1; then uv run python -m pytest -v --tb=short; else python -m pytest -v --tb=short; fi'
+    TEST_RC=$?
+  fi
   trap 'trap_err ${LINENO} "${BASH_COMMAND}"' ERR
   set -e
 

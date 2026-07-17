@@ -225,18 +225,41 @@ if ! wait_for_container "first-agent" 0; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Configure git inside container (local config, since /workspace is writable bind-mount)
+# 3. Resolve active session workspace (ADR-13 session isolation model)
+# ---------------------------------------------------------------------------
+# The entrypoint creates a per-session clone from /repo into /sessions/<id>
+# and publishes the path to /sessions/.active. Git config and push tests
+# must target the session workspace, NOT /workspace (which is an empty dir
+# after the transition from bind-mount to session workspaces).
+SESSION_WS=""
+# Read from host-side bind mount (preferred — avoids a container exec round-trip).
+if [[ -f /srv/first-agent/sessions/.active ]]; then
+    SESSION_WS="$(cat /srv/first-agent/sessions/.active)"
+fi
+# Fallback: ask the container.
+if [[ -z "$SESSION_WS" ]]; then
+    SESSION_WS="$(docker exec first-agent cat /sessions/.active 2>/dev/null || true)"
+fi
+if [[ -z "$SESSION_WS" ]]; then
+    log_error "No active session workspace found. The entrypoint should have created one."
+    log_error "Check: docker compose -f docker-compose.fa.yml logs first-agent"
+    exit 1
+fi
+log_info "Active session workspace: $SESSION_WS"
+
+# ---------------------------------------------------------------------------
+# 3b. Configure git inside container (in the session workspace)
 # ---------------------------------------------------------------------------
 log_info "Configuring git inside container..."
-docker exec first-agent bash -c 'cd /workspace && git config user.name "First Agent"'
-docker exec first-agent bash -c 'cd /workspace && git config user.email "agent@first-agent.local"'
+docker exec first-agent bash -c "cd '$SESSION_WS' && git config user.name 'First Agent'"
+docker exec first-agent bash -c "cd '$SESSION_WS' && git config user.email 'agent@first-agent.local'"
 
 # ---------------------------------------------------------------------------
 # 4. Test git SSH connectivity
 # ---------------------------------------------------------------------------
 log_info "Testing git SSH connectivity..."
 
-if docker exec -e REPO_SSH_URL="$REPO_SSH_URL" first-agent bash -lc 'cd /workspace && git ls-remote "$REPO_SSH_URL"' >/dev/null 2>&1; then
+if docker exec -e REPO_SSH_URL="$REPO_SSH_URL" first-agent bash -lc "cd '$SESSION_WS' && git ls-remote \"\$REPO_SSH_URL\"" >/dev/null 2>&1; then
     log_info "Git SSH connectivity: OK"
 else
     log_error "Git SSH test FAILED. Check:"
@@ -253,32 +276,32 @@ log_info "Testing git push..."
 
 # Idempotent cleanup: remove remote + local test branch from any previous aborted run
 log_info "Preparing clean test state..."
-docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc 'cd /workspace && git push origin --delete "$TEST_BRANCH" || true' 2>/dev/null || true
-if docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc 'cd /workspace && git rev-parse --verify "$TEST_BRANCH"' >/dev/null 2>&1; then
-    docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc 'cd /workspace && git checkout - || true; git branch -D "$TEST_BRANCH" || true'
+docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc "cd '$SESSION_WS' && git push origin --delete \"\$TEST_BRANCH\" || true" 2>/dev/null || true
+if docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc "cd '$SESSION_WS' && git rev-parse --verify \"\$TEST_BRANCH\"" >/dev/null 2>&1; then
+    docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc "cd '$SESSION_WS' && git checkout - || true; git branch -D \"\$TEST_BRANCH\" || true"
 fi
 
 # Push test branch
-docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc '
-    cd /workspace &&
-    git checkout -b "$TEST_BRANCH" &&
+docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc "
+    cd '$SESSION_WS' &&
+    git checkout -b \"\$TEST_BRANCH\" &&
     touch bootstrap-test.txt &&
     git add bootstrap-test.txt &&
-    git commit -m "test: bootstrap verification" &&
-    git push origin "$TEST_BRANCH"
-' || {
+    git commit -m 'test: bootstrap verification' &&
+    git push origin \"\$TEST_BRANCH\"
+" || {
     log_error "Git push test FAILED."
     exit 1
 }
 
 log_info "Git push test passed. Cleaning up test branch..."
-docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc '
-    cd /workspace &&
+docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc "
+    cd '$SESSION_WS' &&
     git checkout - || true;
-    git branch -D "$TEST_BRANCH" || true;
-    git push origin --delete "$TEST_BRANCH" || true;
+    git branch -D \"\$TEST_BRANCH\" || true;
+    git push origin --delete \"\$TEST_BRANCH\" || true;
     rm -f bootstrap-test.txt
-' || true
+" || true
 
 # ---------------------------------------------------------------------------
 # 5b. Secret-isolation smoke check (ADR-12): the AGENT container must hold no
@@ -399,7 +422,7 @@ echo "Quick commands (via host wrapper):"
 echo "  fa status                    Show container status"
 echo "  fa selfcheck --role planner  Validate config + routing (free)"
 echo "  fa probe --role planner      Liveness test (~10 tokens)"
-echo "  fa run --role coder --workspace /workspace --task \"...\""
+echo "  fa run --role coder --task \"...\""
 echo "  fa logs -f                   Agent logs"
 echo "  fa proxy-logs -f             Proxy logs"
 echo "  fa shell                     Bash inside agent container"

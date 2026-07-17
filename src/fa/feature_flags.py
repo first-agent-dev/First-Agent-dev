@@ -38,6 +38,7 @@ class FeatureFlags:
     prompt_caching: bool = True
     offload_threshold: int = 8000
     max_subagent_spawns_per_session: int = 3
+    blackboard_filtered_history_include_plans: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +54,7 @@ class FeatureFlags:
             "prompt.caching": self.prompt_caching,
             "offload_threshold": self.offload_threshold,
             "max_subagent_spawns_per_session": self.max_subagent_spawns_per_session,
+            "blackboard.filtered_history_include_plans": self.blackboard_filtered_history_include_plans,
         }
 
 
@@ -85,6 +87,7 @@ _KNOWN_FLAGS: dict[str, str] = {
     "prompt.caching": "bool",
     "offload_threshold": "int",
     "max_subagent_spawns_per_session": "int",
+    "blackboard.filtered_history_include_plans": "bool",
 }
 
 
@@ -232,6 +235,7 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
         prompt_caching=_get_bool(found, "prompt.caching", [], True),
         offload_threshold=_get_int(found, "offload_threshold", [], 8000),
         max_subagent_spawns_per_session=_get_int(found, "max_subagent_spawns_per_session", [], 3),
+        blackboard_filtered_history_include_plans=_get_bool(found, "blackboard.filtered_history_include_plans", [], False),
     )
 
     return FeatureFlagsLoadResult(flags=flags, warnings=tuple(warnings))

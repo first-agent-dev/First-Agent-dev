@@ -21,7 +21,7 @@ from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.providers import ChainConfig, ProviderChain
-from fa.providers.base import ResponseInfo
+from tests.fixtures.session_wiring import mock_success_response, require_log
 
 
 @pytest.fixture
@@ -35,26 +35,6 @@ def mock_session_state(tmp_path: Path) -> SessionState:
     )
 
 
-def _require_log(state: SessionState) -> EventLog:
-    """Session fixtures always attach a log; narrow Optional for type checkers."""
-    assert state.log is not None
-    return state.log
-
-
-def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[object]]:
-    resp = ResponseInfo(
-        text=text,
-        in_tokens=1000,
-        out_tokens=100,
-        cache_read_input_tokens=0,
-        cache_creation_input_tokens=0,
-        finish_reason="stop",
-        tool_calls=(),
-        extras={},
-    )
-    return resp, "call-id", []
-
-
 def test_drive_session_budget_warn_event(tmp_path: Path, mock_session_state: SessionState) -> None:
     """Reaching 70% capacity must write a warn event, but continue with the LLM call."""
     mock_chain = MagicMock(spec=ProviderChain)
@@ -65,7 +45,7 @@ def test_drive_session_budget_warn_event(tmp_path: Path, mock_session_state: Ses
     mock_chain.config.model = "test-model"
     mock_chain.config.family = "openai"
 
-    mock_chain.request.return_value = _mock_success_response("warn path executed")
+    mock_chain.request.return_value = mock_success_response("warn path executed")
 
     # Generate a task with ~75,000 tokens (300,000 chars) to trigger 70%+ warning
     task = "A" * 300000
@@ -80,7 +60,7 @@ def test_drive_session_budget_warn_event(tmp_path: Path, mock_session_state: Ses
     )
 
     assert outcome.exit_code == 0
-    events = _require_log(mock_session_state).read_all()
+    events = require_log(mock_session_state).read_all()
     # Confirm a 'context_budget_warn' event was appended
     warn_events = [e for e in events if e.kind == "context_budget_warn"]
     assert len(warn_events) == 1
@@ -96,7 +76,7 @@ def test_drive_session_stage2_zone_does_not_hard_stop_when_compaction_disabled(
     mock_chain.config.compaction_threshold = 80000
     mock_chain.config.model = "test-model"
     mock_chain.config.family = "openai"
-    mock_chain.request.return_value = _mock_success_response("stage2 zone allowed")
+    mock_chain.request.return_value = mock_success_response("stage2 zone allowed")
 
     # ~85k estimated tokens => Stage 2 zone, but not Stage 3.
     task = "A" * 340000
@@ -112,7 +92,7 @@ def test_drive_session_stage2_zone_does_not_hard_stop_when_compaction_disabled(
 
     assert outcome.exit_code == 0
     assert mock_chain.request.call_count == 1
-    events = _require_log(mock_session_state).read_all()
+    events = require_log(mock_session_state).read_all()
     assert not [e for e in events if e.kind == "context_budget_hard_stop"]
 
 
@@ -142,7 +122,7 @@ def test_drive_session_budget_hard_stop(tmp_path: Path, mock_session_state: Sess
     assert outcome.stop_reason == "context_budget_hard_stop"
     assert mock_chain.request.call_count == 0
 
-    events = _require_log(mock_session_state).read_all()
+    events = require_log(mock_session_state).read_all()
     hard_stop_events = [e for e in events if e.kind == "context_budget_hard_stop"]
     assert len(hard_stop_events) == 1
     assert hard_stop_events[0].content["action"] == "stage3"

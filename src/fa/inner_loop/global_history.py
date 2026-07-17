@@ -20,7 +20,6 @@ import json
 import logging
 import sqlite3
 import threading
-import time
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass

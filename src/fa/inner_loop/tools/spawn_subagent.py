@@ -140,8 +140,7 @@ def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:
                 )
                 return ToolResult.fail(
                     "subagent_failed",
-                    summary_err,
-                    result=envelope.to_json(),
+                    f"{summary_err} | envelope={envelope.to_json()[:500]}",
                     retryable=True,
                 )
 
@@ -160,13 +159,13 @@ def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:
                         content={"task_id": task_id, "role": role, "error": str(exc)},
                         tool_name="fs.spawn_subagent",
                     )
-                except Exception:
-                    pass
+                except Exception as log_exc:  # noqa: BLE001 # best-effort observability logging
+                    logger.warning("Failed to log subagent_spawn_fail during runner error: %s", log_exc)
             if session is not None and workdir != root:
                 try:
                     session.cleanup_subagent_workspace(workdir)
-                except Exception:  # noqa: BLE001, S110 # best-effort cleanup
-                    pass
+                except Exception as cleanup_exc:  # noqa: BLE001, S110 # best-effort cleanup
+                    logger.warning("Subagent workspace cleanup failed: %s", cleanup_exc)
             return ToolResult.fail("runner_failed", str(exc), retryable=False)
 
     return ToolSpec(

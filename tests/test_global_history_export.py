@@ -16,7 +16,6 @@ Oracle: DB row count, row fields, no exception on failure, grep no hot-path impo
 
 from __future__ import annotations
 
-import json
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -25,7 +24,7 @@ import pytest
 
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState
-from fa.inner_loop.coder_loop import SessionOutcome
+from fa.inner_loop.coder_loop import SessionOutcome, drive_session
 from fa.inner_loop.global_history import (
     GlobalHistoryStore,
     build_export_row,
@@ -35,48 +34,7 @@ from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.tools import build_baseline_registry
 from fa.providers import ChainConfig, ProviderChain
 from fa.providers.base import ResponseInfo
-from fa.inner_loop.coder_loop import drive_session
-
-
-def _require_log(state: SessionState) -> EventLog:
-    assert state.log is not None
-    return state.log
-
-
-def _mock_response_with_tools(tool_calls: list[dict], text: str = "") -> tuple[ResponseInfo, str, list]:
-    resp = ResponseInfo(
-        text=text,
-        in_tokens=0,
-        out_tokens=0,
-        cache_read_input_tokens=0,
-        cache_creation_input_tokens=0,
-        finish_reason="tool_calls",
-        tool_calls=tuple(tool_calls),
-        extras={},
-    )
-    return resp, "call-id-1", []
-
-
-def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list]:
-    resp = ResponseInfo(
-        text=text,
-        in_tokens=0,
-        out_tokens=0,
-        cache_read_input_tokens=0,
-        cache_creation_input_tokens=0,
-        finish_reason="stop",
-        tool_calls=(),
-        extras={},
-    )
-    return resp, "call-id-final", []
-
-
-def _make_tool_call(name: str, params: dict, call_id: str) -> dict:
-    return {
-        "id": call_id,
-        "type": "function",
-        "function": {"name": name, "arguments": json.dumps(params)},
-    }
+from tests.fixtures.session_wiring import make_tool_call, mock_response_with_tools, mock_success_response, require_log
 
 
 def _make_outcome(exit_code: int = 0, stop_reason: str = "stopped_by_llm", turns: int = 1) -> SessionOutcome:
@@ -329,7 +287,6 @@ def test_global_history_export_completeness(tmp_path: Path) -> None:
     assert row["updated_at"] != ""
 
 
-# ---------------------------------------------------------------------------
 # Failure policy
 # ---------------------------------------------------------------------------
 
@@ -365,7 +322,6 @@ def test_global_history_export_failure_policy(tmp_path: Path, caplog) -> None:
     assert any("global_history" in rec.message.lower() or "failed" in rec.message.lower() for rec in caplog.records) or True  # best-effort
 
 
-# ---------------------------------------------------------------------------
 # Projection-only enforcement
 # ---------------------------------------------------------------------------
 
@@ -439,46 +395,20 @@ def test_global_history_export_via_drive_session(tmp_path: Path) -> None:
     mock_chain.config.model = "test-model-live"
     mock_chain.config.family = "openai"
 
-    tc1 = _make_tool_call("fs.read_file", {"path": "a.txt"}, "tc-1")
+    tc1 = make_tool_call("fs.read_file", {"path": "a.txt"}, "tc-1")
     (tmp_path / "a.txt").write_text("hello")
 
     mock_chain.request.side_effect = [
         # First turn: read file
-        (
-            ResponseInfo(
-                text="",
-                in_tokens=10,
-                out_tokens=5,
-                cache_read_input_tokens=0,
-                cache_creation_input_tokens=0,
-                finish_reason="tool_calls",
-                tool_calls=(
-                    {
-                        "id": "tc-1",
-                        "type": "function",
-                        "function": {"name": "fs.read_file", "arguments": '{"path": "a.txt"}'},
-                    },
-                ),
-                extras={},
-            ),
-            "call-1",
-            [],
+        mock_response_with_tools(
+            [tc1],
+            text="",
         ),
-        # Second turn: stop
-        (
-            ResponseInfo(
-                text="done",
-                in_tokens=10,
-                out_tokens=5,
-                cache_read_input_tokens=0,
-                cache_creation_input_tokens=0,
-                finish_reason="stop",
-                tool_calls=(),
-                extras={},
-            ),
-            "call-2",
-            [],
-        ),
+        # Second turn: stop — using ResponseInfo directly because
+        # the original test used in/out tokens of 10/5 (not the fixture defaults).
+        # The fixture's mock_success_response uses 100/10 which is functionally
+        # equivalent for the assertion (only stop_reason and outcome matter).
+        mock_success_response("done"),
     ]
 
     outcome = drive_session(
