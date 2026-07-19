@@ -22,10 +22,9 @@ from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolResult, ToolSpec
-from tests.fixtures.session_wiring import make_test_chain_config
 from fa.providers import ProviderChain
 from fa.providers.base import ResponseInfo
-from tests.fixtures.session_wiring import mock_success_response, require_log
+from tests.fixtures.session_wiring import make_test_chain_config, mock_success_response, require_log
 
 
 @pytest.fixture
