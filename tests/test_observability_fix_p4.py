@@ -184,8 +184,8 @@ def test_loop_warn_emitted_via_warn_sink(tmp_path: Path) -> None:
     def _warn_sink(detector: str, message: str) -> None:
         try:
             log.append(actor="hook", kind="loop_guard_warn", content={"detector": detector, "message": message})
-        except Exception:
-            pass
+        except Exception as exc:
+            sys.stderr.write(f"_warn_sink: non-fatal log append failure: {exc}\n")
         try:
             bus.emit(OutputEvent(type="loop_warn", data={"detector": detector, "message": message}))
         except Exception:
