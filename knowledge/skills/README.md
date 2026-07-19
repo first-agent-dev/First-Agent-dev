@@ -106,6 +106,7 @@ skill is forcing-against.>
 | [`mutation-clearing/SKILL.md`](./mutation-clearing/SKILL.md) | active | When tasked with analyzing or clearing mutation testing survivors (`mutmut`), updating test selection in `pyproject.toml`, or running mutation fix loops. |
 | [`skill-writing/SKILL.md`](./skill-writing/SKILL.md) | active | When writing or modifying skills / harness mutation change contracts. |
 | [`tests-writing/SKILL.md`](./tests-writing/SKILL.md) | active | When writing or changing tests, or when IMPLEMENT/FIX under `src/fa/` claims product/session behavior — live-path (composition-root) Definition-of-Done, anti-theater rules, flag matrices (ADR-11-I9). |
+| [`plan-authoring/SKILL.md`](./plan-authoring/SKILL.md) | active | When authoring an implementation plan — converts intent, research notes, and codebase state into a grounded, falsifiable, READY-gated plan with contracts, path inventory, step cards, and verification spec. |
 
 ## Forward direction
 
