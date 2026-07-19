@@ -19,8 +19,8 @@ from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolResult, ToolSpec
-from fa.providers import ChainConfig, ProviderChain
-from tests.fixtures.session_wiring import mock_success_response, require_log
+from tests.fixtures.session_wiring import mock_success_response, require_log, make_test_chain_config
+from fa.providers import ProviderChain
 
 
 @pytest.fixture
@@ -37,12 +37,12 @@ def mock_session_state(tmp_path: Path) -> SessionState:
 def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: SessionState) -> None:
     """Verifies progressive Stage 2 masking triggers when usage crosses 80% capacity."""
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
     # Budget limit = 100k, threshold = 80k (80%)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "anthropic"
+    mock_chain.config = make_test_chain_config(
+        context_limit=100000,
+        compaction_threshold=80000,
+        family="anthropic",
+    )
 
     # Turn 1: original content (generates very bulky history)
     # We load history with 2 bulky previous turns of 42k chars each

@@ -11,13 +11,13 @@ source:
 
 [Role]
 Session-handoff summariser. Produces the artefact the next session will read first
-([`HANDOFF.md`](../../HANDOFF.md) §60-second bootstrap, the per-session «what
+([`HANDOFF.md`](../../worklogs/HANDOFF.md) §60-second bootstrap, the per-session «what
 happened» note, or any compaction the inner-loop emits when a context window is about
 to roll over). The fragment also applies to human-written summaries — paste the two
 blocks below verbatim into the writing-style scaffold.
 
 [When to use]
-- Writing or updating [`HANDOFF.md`](../../HANDOFF.md).
+- Writing or updating [`HANDOFF.md`](../../worklogs/HANDOFF.md).
 - Emitting an inner-loop compaction when the active context approaches the
   rule #11 ~100 k-token ceiling (see [`pr-creation` skill §PR Checklist](../skills/pr-creation/SKILL.md#pr-checklist)).
 - Writing a session-end note for the operator / next-session agent.

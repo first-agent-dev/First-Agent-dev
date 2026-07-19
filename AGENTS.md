@@ -6,18 +6,22 @@
 
 **First-Agent** is an implementation-first project aimed at becoming the most token- and tool-call-efficient open-source coding-agent harness.
 
+Session state is managed by per-run SQLite authority (`session.db`). See `knowledge/reference.md` §Session Data Layout.
+
 Goal-formulation in 4 pillars + minimalism-first principle:
 [`knowledge/project-overview.md` §1.1](./knowledge/project-overview.md#11-четыре-столпа-цели-project-goal--four-pillars).
 
 ## Repository Structure
 
-- [`AGENTS.md`](./AGENTS.md) — main conventios.
-- [`HANDOFF.md`](./HANDOFF.md) — worklog snapshot for cross-session work.
-- [`knowledge/llms.txt`](./knowledge/llms.txt) — one-fetch file index.
-- [`knowledge/README.md`](./knowledge/README.md) — memory system overwiew.
-- [`knowledge/`](./knowledge) — durable memory for /skills, /codemaps, /ADR, /research, /prompts, /pr-notes, etc.
+- [`AGENTS.md`](./AGENTS.md) — main conventions.
+- [`worklogs/HANDOFF.md`](./worklogs/HANDOFF.md) — worklog snapshot for cross-session work.
+- [`worklogs/`](./worklogs) — session work artifacts: HANDOFF, BACKLOG, implementation plans, pr-notes, archive.
+- [`knowledge/llms.txt`](./knowledge/llms.txt) — legacy routing fallback (one-fetch file index).
+- [`knowledge/README.md`](./knowledge/README.md) — memory system overview.
+- [`knowledge/reference.md`](./knowledge/reference.md) — terms, features, session architecture (single lookup).
+- [`knowledge/`](./knowledge) — durable memory for /skills, /codemaps, /ADR, /research, /prompts, etc.
 - [`knowledge/instructions/`](./knowledge/instructions/README.md) — deploy and operating docs for human.
-- [`knowledge/adr/README.md`](./knowledge/adr/README.md) — index of ADR's.
+- [`knowledge/adr/README.md`](./knowledge/adr/README.md) — index of ADRs.
 ## Pre-flight checklist
 
 Run BEFORE making any edits, opening a branch, or writing analysis on
@@ -44,13 +48,13 @@ prompt (axis, lens, pillar, harness, hook, ACI, UC1..UC5, NLAH, MCP,
 subtraction-first, minimalism-first, R-S-M, …), run:
 
 ```bash
-grep -i "^| \*\*<term>\*\*" knowledge/glossary.md
+grep -i "^| \*\*<term>\*\*" knowledge/reference.md
 ```
 
 Expect exactly one matching row. If the row is missing, fall back to
 [`knowledge/project-overview.md` §1.1–§1.2](./knowledge/project-overview.md);
-add the term to the glossary in the same PR if it is in active use.
-The glossary is the single source of truth.
+add the term to `knowledge/reference.md` §Terms in the same PR if it is in active use.
+Reference.md is the single source of truth for definitions.
 
 **Step 3 — Symmetric reading.** Before citing a research note as
 evidence, run:
@@ -92,7 +96,7 @@ the burden of proof is on adding, per
 - subtraction evaluated: <YES — answers in Step 4 | EXEMPT
   (documentation-only PR with no new artefact) — restate why>
 - session-type: <new-feature | bug-fix | refactor | doc-edit |
-  glossary-edit | dep-bump | research-briefing | other-explain>
+  reference-edit | dep-bump | research-briefing | other-explain>
 ```
 
 Four named slots. Pattern-match the template exactly; respect four-pillar goal stated in
@@ -101,7 +105,7 @@ Four named slots. Pattern-match the template exactly; respect four-pillar goal s
 
 ## Working in This Repo
 
-- **Session bootstrap.** Read [`HANDOFF.md`](./HANDOFF.md) § 60-second
+- **Session bootstrap.** Read [`HANDOFF.md`](./worklogs/HANDOFF.md) § 60-second
   bootstrap — it points to `knowledge/llms.txt` §MUST READ FIRST
   (five files, in order). If HANDOFF and llms.txt disagree, llms.txt
   wins. Complete the bootstrap first, then navigate as needed.
@@ -128,7 +132,8 @@ Four named slots. Pattern-match the template exactly; respect four-pillar goal s
 
 When loading context for a task, collect what is **necessary** to complete it — not breadth-first.
 Navigate the repo, identify relevant files, read only the parts that move the task forward.
-Use [`knowledge/llms.txt`](./knowledge/llms.txt) as the routing surface and [`HANDOFF.md`](./HANDOFF.md) as the bootstrap surface.
+Use [`knowledge/llms.txt`](./knowledge/llms.txt) as the routing surface and [`HANDOFF.md`](./worklogs/HANDOFF.md) as the bootstrap surface.
+`session.db` reduces context need: query `session.session_db` instead of scanning JSONL files for session data.
 Use §-anchors and grep-windows! Goal - keep the agent's working prompt focused on the task
 and to leave headroom for the actual edits, traces, and tool-output.
 
@@ -184,6 +189,7 @@ Skills are loaded on the trigger condition:
 | [`repo-audit`](./knowledge/skills/repo-audit/SKILL.md)   | **Trigger:** When asked to perform a critical structure / doc / skill review.<br><br>Carries the 7-phase audit workflow (orientation → inventory → cross-reference → invariants → contradiction sweep → demotion ledger → final report). |
 | [`mutation-clearing`](./knowledge/skills/mutation-clearing/SKILL.md) | **Trigger:** When tasked with mutation testing fixes (`mutmut`) or mutant hunts.<br><br>Carries the 4-archetype triage taxonomy, spy isolation rules, and accepted equivalent mutants ledger criteria for zero-trust mutation clearing. |
 | [`tests-writing`](./knowledge/skills/tests-writing/SKILL.md) | **Trigger:** Before writing/changing tests, or when IMPLEMENT/FIX under `src/fa/` claims product/session behavior.<br><br>Live-path Definition-of-Done (ADR-11-I9): composition-root tests (`drive_session` / shipped CLI), anti-theater kill-check, flag matrices. Authority remains `just check` / pytest — this skill steers how tests are written. |
+| [`doc-maintenance`](./knowledge/skills/doc-maintenance/SKILL.md) | **Trigger:** At session close, or when moving/pruning/adding any file under `knowledge/` or `worklogs/`.<br><br>Ensures link integrity, llms.txt updates, and HANDOFF freshness. Replaces former `knowledge/MAINTENANCE.md` routing file. |
 
 New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this table.
 
@@ -246,19 +252,19 @@ Route questions to the right folder. Load only what the task needs.
 | Question type | Look first | Verify with |
 |---|---|---|
 | Architecture, patterns, Decisions and rationale | [`knowledge/adr/`](./knowledge/adr/) | ADR |
-| Current task | [`HANDOFF.md`](./HANDOFF.md) | Session start |
+| Current task | [`worklogs/HANDOFF.md`](./worklogs/HANDOFF.md) | Session start |
 | Research findings | [`knowledge/research/`](./knowledge/research/) | Primary sources from `source:` frontmatter |
 | Specific decision / quote / number / date | **Primary source** (URL / code / gist), not a summary note | — |
-| Terms | [`knowledge/glossary.md`](./knowledge/glossary.md) | — |
+| Terms | [`knowledge/reference.md`](./knowledge/reference.md) §Terms | — |
+| Session state / event history / data layout | [`knowledge/reference.md`](./knowledge/reference.md) §Session Data Layout | `session.db` (SQLite authority) |
 
 **Chain-of-custody rule.** If citing a specific decision / quote / number / date,
 go to the primary source and quote from there.
 Summaries in `knowledge/research/` are pointers, not authoritative sources.
 
-- **Session close.** Update [`HANDOFF.md`](./HANDOFF.md) per its
-  §Session Protocol (overwrite §Current state, rewrite §Next); update [`knowledge/llms.txt`](./knowledge/llms.txt) rows per
-  [`MAINTENANCE.md`](./knowledge/MAINTENANCE.md) §When adding a
-  new file (bucket, line count, ≤200 prose chars).
+- **Session close.** Update [`worklogs/HANDOFF.md`](./worklogs/HANDOFF.md) per its
+  §Session Protocol (overwrite §Current state, rewrite §Next); load [`doc-maintenance`](./knowledge/skills/doc-maintenance/SKILL.md) skill before committing.
+  Update [`knowledge/llms.txt`](./knowledge/llms.txt) rows per doc-maintenance skill §When adding a new file.
 
 ## Querying Artifacts — Use Blackboard and Instant Grep First (ADR-14/15, 2026-07-11)
 
@@ -276,4 +282,6 @@ Summaries in `knowledge/research/` are pointers, not authoritative sources.
 - **For writing files:** Declare read_set (files read before via instant_grep), write_set (file written), assumptions (base commit `git rev-parse HEAD`, llms.txt hash), version_dependencies. Blackboard checks conflict via `detect_conflict()` before allowing write. If conflict, return structured ToolResult.fail code "conflict_detected" with details, not silent overwrite (fixes Claude bug #55708 parent HEAD switched).
 
 - **Single entry point for artifacts:** Blackboard is single entry point for finding artifacts, but NOT single entry point for session bootstrap. Bootstrap remains AGENTS.md + llms.txt MUST READ FIRST.
+
+- **Session data authority:** `session.db` is the SQLite authority for hot-path runtime state (3 tables: event_log, blackboard, session_meta). JSONL files are best-effort mirrors — if they disagree with session.db, session.db wins. See `knowledge/reference.md` §Session Data Layout for the full schema and authority hierarchy.
 

@@ -72,6 +72,19 @@ typecheck-advisory:
 authoring-check:
     fa authoring-check
 
+# Producer-consumer contract gate: verifies every EventType has both a
+# producer (emit call in production code) and a consumer (handler in
+# ConsoleRenderer). Prevents "not wired / partial implementation" gaps.
+# See: knowledge/research/root-cause-analysis-not-wired-gaps-2026-07-19.md
+contract-check:
+    python scripts/check_producer_consumer_contract.py
+
+# Guard: no MagicMock(spec=<frozen_dataclass>) in tests. Frozen dataclasses
+# are pure data — mock them and every new field becomes a latent regression.
+# Use real instances (make_test_chain_config, etc.) instead.
+no-mocked-dataclasses:
+    python scripts/check_no_mocked_dataclasses.py
+
 # Full suite with the coverage gate (fail_under in pyproject). For a quick
 # single-file iteration loop use plain `pytest tests/test_x.py` — no gate.
 test:
@@ -96,4 +109,4 @@ mutation:
 lock-check:
     uv lock --locked
 
-check: lock-check lint typecheck authoring-check test
+check: lock-check lint typecheck authoring-check contract-check no-mocked-dataclasses test

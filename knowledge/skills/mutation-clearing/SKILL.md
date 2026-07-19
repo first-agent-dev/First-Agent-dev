@@ -4,7 +4,7 @@ description: Systematic, zero-trust workflow for clearing mutmut mutation testin
 status: active
 triggers:
   - When tasked with mutation testing fixes (`mutmut`) or mutant hunts
-  - When clearing mutation survivors tracked in knowledge/mutation-survivors-workplan.md
+  - When clearing mutation survivors tracked in worklogs/implementation-plans/mutation-survivors-workplan.md
 last-reviewed: 2026-07-01
 ---
 
@@ -63,4 +63,4 @@ If an apparent equivalent mutant cannot be proven unobservable or if `# pragma: 
 
 ## Worked example
 
-See `knowledge/mutation-survivors-workplan.md` §Accepted Equivalent Mutants / Pragmas Ledger for canonical worked examples across `path_containment.py`, `secret_paths.py`, `classifier.py`, `validators.py`, and `bash_gate.py`.
+See `worklogs/implementation-plans/mutation-survivors-workplan.md` §Accepted Equivalent Mutants / Pragmas Ledger for canonical worked examples across `path_containment.py`, `secret_paths.py`, `classifier.py`, `validators.py`, and `bash_gate.py`.

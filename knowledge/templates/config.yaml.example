@@ -1,28 +1,76 @@
-# First-Agent runtime capability config — example template.
+# First-Agent runtime config — example template.
 #
 # Deploy location (AIO): /srv/first-agent/state/config.yaml
 #   (the container mounts /srv/first-agent/state at ~/.fa, so the agent reads it
 #    as ~/.fa/config.yaml — see src/fa/config.py DEFAULT_CONFIG_PATH).
 # Local dev: ~/.fa/config.yaml.
 #
-# This file is OPTIONAL. Omitting it (or the capabilities block) is identical to
-# every flag = false — the safe deny-by-default posture. Only create it to
-# OPT IN to a capability class. Editing it does NOT require a rebuild, but the
-# agent reads it at the start of a run, so start a fresh `fa run` after changes.
+# This file is OPTIONAL. Omitting it (or the feature_flags block) means every
+# flag keeps its production default (most are true; see comments below).
+# Only create it to change a default. Editing it does NOT require a rebuild;
+# the agent reads it at the start of each `fa run`, so start a fresh run
+# after changes.
 #
-# All five flags are runtime capability gates (ADR-6 §Amendment 2026-05-20).
-# They are AND-ed with the per-role allowed_tools whitelist and the path policy
-# check: all three must permit a call for a tool to run. Shown here at their
-# defaults (false) — uncomment and set true to enable.
+# Source of truth for flags: src/fa/feature_flags.py (FeatureFlags dataclass).
+# Unknown keys emit a warning but do not crash the run.
 
-capabilities:
-  # Load new tools at runtime.
-  # ENABLE_DYNAMIC_TOOLS: false
-  # Force the sandbox policy check on a dynamically-loaded tool's first call.
-  # REQUIRE_DYNAMIC_TOOL_SANDBOX: false
-  # MCP gateway management (register / configure / deregister upstream servers).
-  # ENABLE_MCP_GATEWAY_MANAGEMENT: false
-  # Spawn new MCP server subprocesses at runtime.
-  # ENABLE_DYNAMIC_MCP_SERVERS: false
-  # Mutating remote-service API calls (deploy / restart / scale / ...).
-  # ENABLE_SERVER_OPS: false
+feature_flags:
+  # ── Blackboard (typed append-only session state) ──────────────────────
+  # When true, the blackboard subsystem initialises and records read/write
+  # sets, conflict detection, and content-hashed entries. Disabling saves
+  # a small amount of per-session overhead but removes conflict detection.
+  blackboard.enabled: true           # default: true
+
+  # Include plan-level entries in the filtered history query (used by the
+  # LLM context composer). Off by default to keep the prompt lean.
+  blackboard.filtered_history_include_plans: false  # default: false
+
+  # ── Telemetry ─────────────────────────────────────────────────────────
+  # Controls whether the TelemetryLogger writes session metrics.
+  telemetry.enabled: true            # default: true
+
+  # ── Tool batching ─────────────────────────────────────────────────────
+  # When true, the inner loop may request multiple tool calls per LLM turn
+  # (if the model supports it). Disabling forces one tool call per turn.
+  tool_batching.enabled: true        # default: true
+
+  # ── Subagent spawning ─────────────────────────────────────────────────
+  # Allow the agent to spawn subagent tasks. OFF by default — enable only
+  # when you have a use-case that needs it (e.g. parallel research).
+  subagent_spawning_enabled: false   # default: false
+
+  # Maximum subagent spawns per session. Enforced even when spawning is on.
+  max_subagent_spawns_per_session: 3 # default: 3
+
+  # ── Context management ────────────────────────────────────────────────
+  # Track token usage against the context budget and emit warnings / stage
+  # transitions when the budget is low. Disabling removes budget guardrails.
+  context_budget_enabled: true       # default: true
+
+  # When the context budget is exhausted, compact the conversation using the
+  # `compactor` role (if declared in models.yaml). OFF by default — enable
+  # when you declare a compactor role and want automatic compaction.
+  context_compaction_enabled: false  # default: false
+
+  # Token threshold at which the context is offloaded to the compactor.
+  # Only meaningful when context_compaction_enabled is true.
+  offload_threshold: 8000            # default: 8000
+
+  # ── PTY pool ──────────────────────────────────────────────────────────
+  # Maximum concurrent stateful PTY sessions (for `fs.run_bash` commands
+  # that need `cd` / `env` state persistence across calls).
+  pty_pool.max_size: 2               # default: 2
+
+  # ── Worktree isolation ────────────────────────────────────────────────
+  # Controls how session workspaces are created. "shared" = single clone;
+  # "isolated" = per-session git worktree (heavier but fully isolated).
+  worktree.mode: shared              # default: "shared"
+
+  # ── Full-text search ──────────────────────────────────────────────────
+  # Path to the FTS5 database, relative to the workspace root.
+  memory.fts_db_path: .fa/fts.db     # default: ".fa/fts.db"
+
+  # ── Prompt caching ────────────────────────────────────────────────────
+  # Enable prompt-caching hints for providers that support them (e.g.
+  # Anthropic cache_control). Saves tokens on repeated system prompts.
+  prompt.caching: true               # default: true

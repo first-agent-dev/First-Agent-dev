@@ -32,9 +32,9 @@ from fa.inner_loop.global_history import (
 )
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.tools import build_baseline_registry
-from fa.providers import ChainConfig, ProviderChain
 from fa.providers.base import ResponseInfo
-from tests.fixtures.session_wiring import make_tool_call, mock_response_with_tools, mock_success_response, require_log
+from tests.fixtures.session_wiring import make_tool_call, mock_response_with_tools, mock_success_response, require_log, make_test_chain_config
+from fa.providers import ProviderChain
 
 
 def _make_outcome(exit_code: int = 0, stop_reason: str = "stopped_by_llm", turns: int = 1) -> SessionOutcome:
@@ -389,11 +389,9 @@ def test_global_history_export_via_drive_session(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test-model-live"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test-model-live",
+    )
 
     tc1 = make_tool_call("fs.read_file", {"path": "a.txt"}, "tc-1")
     (tmp_path / "a.txt").write_text("hello")

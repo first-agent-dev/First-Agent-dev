@@ -329,7 +329,7 @@ rule enforced at `register()` time per
 [ADR-2 §Amendment 2026-05-20](./ADR-2-llm-tiering.md#amendment-2026-05-20--eval-role-family-disjoint--primary-source-citation)
 + [ADR-7 §Amendment 2026-05-20](./ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule).
 **Doc-only at acceptance; runtime materialised by PR #24
-([M-1 closed 2026-05-20](../BACKLOG.md#m-1--inner-loop-scaffolding--hookregistry-runtime)).**
+([M-1 closed 2026-05-20](../../worklogs/BACKLOG.md#m-1--inner-loop-scaffolding--hookregistry-runtime)).**
 v0.1 hooks (`SandboxHook`, `ApprovalHook`, `AuditHook`) are now
 `GuardMiddleware` / `ObserverMiddleware` subclasses at
 `src/fa/inner_loop/hooks/`. The runtime adds `revalidates_after_modify`

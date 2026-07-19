@@ -451,7 +451,7 @@ PR-M.
 
 - Merged PR URLs.
 - Any open follow-up PRs.
-- New entries added to `BACKLOG.md` / `HANDOFF.md` / `MAINTENANCE.md`.
+- New entries added to `BACKLOG.md` / `HANDOFF.md` / `doc-maintenance` skill.
 
 ### Action — three sub-steps
 
@@ -823,7 +823,7 @@ they're work-product, not docs the agent should grep at runtime).
 - PR #8 PR-H — rule #10 question 4 code-functions-first (merged).
 - PR #9 PR-J — §1.3 three-stage model + repo-naming + HANDOFF
   cross-link (merged).
-- PR #10 PR-I — MAINTENANCE.md + BACKLOG.md (merged).
+- PR #10 PR-I — doc-maintenance skill + BACKLOG.md (merged).
 
 **Critical-re-pass (P6 → P7):**
 

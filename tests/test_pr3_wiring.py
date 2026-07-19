@@ -19,8 +19,8 @@ from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
-from fa.providers import ChainConfig, ProviderChain
-from tests.fixtures.session_wiring import mock_success_response, require_log
+from fa.providers import ProviderChain
+from tests.fixtures.session_wiring import make_test_chain_config, mock_success_response, require_log
 
 
 @pytest.fixture
@@ -37,11 +37,11 @@ def mock_session_state(tmp_path: Path) -> SessionState:
 def test_drive_session_uses_prompt_composer(tmp_path: Path, mock_session_state: SessionState) -> None:
     """Verifies PromptComposer is called to construct payloads and caching controls."""
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "anthropic"  # Use anthropic to test cache breakpoints
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+        family="anthropic"  # Use anthropic to test cache breakpoints,
+    )
 
     mock_chain.request.return_value = mock_success_response("caching completed")
 
@@ -72,11 +72,10 @@ def test_openai_prompt_cache_key_forwarded_into_request_extras(
     tmp_path: Path, mock_session_state: SessionState
 ) -> None:
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+    )
 
     mock_chain.request.return_value = mock_success_response("cache-key forwarded")
 
@@ -108,11 +107,11 @@ def test_cache_headers_stripped_when_disabled(tmp_path: Path) -> None:
     )
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "anthropic"
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+        family="anthropic",
+    )
 
     mock_chain.request.return_value = mock_success_response("no-cache completed")
 

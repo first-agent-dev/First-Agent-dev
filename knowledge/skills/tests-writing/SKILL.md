@@ -3,12 +3,11 @@ name: tests-writing
 description: |
   Production-grade rulebook for testing an LLM agent harness and AI-authored
   changes to it. Dual pyramid (deterministic harness vs model evals), live-path
-  composition-root DoD (ADR-11-I9), anti-theater, type-safe fixtures, flag
-  matrices, trajectories, fault/efficiency signals, security boundaries, and
-  mutation handoff. Load before writing/changing tests or claiming src/fa/
-  product behavior.
+  composition-root DoD, anti-theater, two-sided contract verification,
+  type-safe fixtures, flag matrices, path inventory, dual-write consistency,
+  fault/efficiency signals, security boundaries, and mutation handoff.
 status: active
-last-reviewed: 2026-07-16
+last-reviewed: 2026-07-19
 triggers:
   - "writing or changing tests under tests/"
   - "IMPLEMENT or FIX touching src/fa/ that claims product behavior"
@@ -18,6 +17,8 @@ triggers:
   - "designing evals vs pytest for agent quality"
   - "tests fail typecheck / Pylance on fixtures"
   - "AI-authored tests look green but may be theater"
+  - "adding a new EventType, event kind, or observable signal to the harness"
+  - "verifying that a producer emit and consumer handler are both wired"
 globs:
   - "tests/**/*.py"
   - "src/fa/**/*.py"
@@ -26,73 +27,63 @@ alwaysApply: false
 
 # Skill — Tests writing (agent harness, AI age)
 
-> **Purpose.** Make First-Agent’s *authoring* and *runtime* quality legible:
-> green CI means the **harness** is correct and wired; evals (later UC5) mean the
-> **model path** is good enough. This skill **steers** agents writing tests.
-> **Authority remains pytest inside `just check` / CI** (ADR-11-I6).
-> **Contract for product surfaces:** ADR-11-I9.
->
 > **Central law (live path):** *Harness behavior is done when a test that boots
-> the real session path fails if the production call site is removed.*
+> the real session path fails if the production PRODUCER call site is removed.*
+> A kill-check that passes because the call site was never written is VACUOUS —
+> the feature is not shipped.
+>
+> **Central law (two-sided contract):** *For every EventType (any observable
+> signal), BOTH the producer (`output.emit()` — code that creates the signal)
+> AND the consumer (`_handle_X()` — code that handles it) must exist and be
+> verified. Consumer-only proof is incomplete — it proves a dead handler works.*
 >
 > **Central law (AI systems):** *Prefer properties, schemas, trajectories, events,
 > and side effects as oracles; free-text model output is secondary only.*
 >
 > **Central law (AI-authored tests):** *Assume oracles can be weakened; use
 > kill-check, type honesty, and mutation after C1 as forcing functions.*
+>
+> **Central law (path sensitivity):** *A single EventType may be emitted from
+> multiple code paths. Testing one path does not prove the others work.
+> Enumerate all paths; test each.*
 
 ---
 
 ## Quick decision tree (read this first)
 
-1. **Pyramid A or B?** Wiring / control-flow / security / harness efficiency → **A** (CI). Subjective “did the model solve it?” → **B** (UC5; scheduled / when prompts change).
-2. **Session / product / loop claim?** → **C1** (or **C2** if CLI-only). Pure helper → **C0 / C0p**. Product claims use C1 as the proof class.
-3. **Root?** Prefer `drive_session` (+ factories used by shipped CLI). Add C2 when CLI builds objects the unit path injects differently.
-4. **Kill-check?** The test fails when the production call site / registration is removed. Otherwise rewrite until that holds.
-5. **Oracle rank?** Event `kind`+fields → `SessionOutcome` → tool trajectory → provider shape/`call_count`/token band → FS → full deny dataclass. Free-text prose only as a secondary signal.
-6. **Matrix?** Name **A** (gates only) / **B** (full cascade) / **C** (defaults); add provider family when cache/payload differs.
-7. **Types honest?** Use `tool_calls=()`, `_require_log`, real `HookRegistry()`; fix contracts until the checker is happy (prefer real types over suppressions).
-8. **Security claim?** Include ≥1 adversarial case (C3).
-9. **Early-stop / efficiency claim?** Assert low or zero `request.call_count` when hard-stop/deny should fire first.
-10. **AI-authored?** Run anti-theater + declare `TEST-EDITS` when changing existing tests under FIX; hand off to `mutation-clearing` after C1.
-11. **Third copy of the same mocks?** Extract `tests/fixtures/session_wiring.py` (or conftest helpers).
+1. **Pyramid A or B?** Wiring / control-flow / security / efficiency → **A** (CI). Subjective quality → **B** (evals; scheduled).
+2. **Session / product / loop claim?** → **C1** (or **C2** if CLI-only). Pure helper → **C0 / C0p**.
+3. **Root?** Prefer `drive_session` (+ factories used by shipped CLI). Add C2 when CLI builds objects differently.
+4. **Two-sided contract?** If adding or verifying an EventType → enumerate PRODUCER emit paths AND consumer handlers. Both must exist. **Producer proof before consumer proof.**
+5. **Kill-check?** Test fails when the PRODUCTION EMIT CALL is removed — `output.emit(OutputEvent(type="X"))` in loop/tools, not the `_handle_X()` handler. If the emit call doesn't exist yet, NOT shipped — vacuous kill-check.
+6. **Existence pre-check?** Grep for the emit call site in production code. If it doesn't exist, NOT wired. Vacuous kill-check = theater.
+7. **Path inventory?** Enumerate ALL code paths that should emit the event. At least one test per path.
+8. **Matrix coverage?** For every flag combination, at least one test MUST exist. Naming a matrix is necessary but NOT sufficient.
+9. **Dual-write?** If the system writes to both `log.append()` and `output.emit()`, verify BOTH on every code path. Missing `output.emit()` = operator sees nothing.
+10. **Oracle rank?** Event `kind`+fields → `SessionOutcome` → tool trajectory → provider `call_count`/token band → FS → free text.
+11. **Types honest?** `tool_calls=()`, `_require_log`, real `HookRegistry()`.
+12. **Security?** ≥1 adversarial case (C3).
+13. **Early-stop?** Assert low/zero `request.call_count` when a gate fires first.
+14. **AI-authored?** Anti-theater + `TEST-EDITS` under FIX; hand off to `mutation-clearing` after C1.
+15. **Third copy of same mocks?** Extract shared fixture module.
 
 | Priority | Prescription |
 | :--- | :--- |
-| **Must** (product claim) | C1/C2 + kill-check + honest types + ranked oracle + explicit matrix |
-| **Should** | Fault injection; efficiency `call_count`; shared factories after duplication; `test_invariant_adr…` for ADR-binding clauses; C0p on pure math/policy; provider-family param when relevant |
-| **Prefer instead** | Events/outcomes/trajectories over sole free-text equality; `hooks=HookRegistry()` over MagicMock for wiring; mocked LLM I/O over live API keys in Pyramid A; thresholds read from `ContextBudget` (and peers); kill-check over coverage % as DoD; real `drive_session` over mocking the composition root |
+| **Must** | C1/C2 + kill-check on PRODUCER + existence pre-check + honest types + ranked oracle + explicit matrix + path inventory + two-sided contract + dual-write consistency |
+| **Should** | Fault injection; efficiency `call_count`; shared factories; C0p on pure math/policy; provider-family param; automated contract check |
+| **Prefer instead** | Structured oracles over free-text; real registries over mocks; mocked I/O over live keys; thresholds from source; kill-check over coverage %; real `drive_session` over mocked root |
 
 ---
-
-## Trigger
-
-Load when **any** of:
-
-1. Adding or editing `tests/**`.
-2. IMPLEMENT/FIX under `src/fa/` claims session/CLI/product behavior.
-3. Audit tags **DEAD / PARTIAL / TEST-THEATER**.
-4. Tempted to mark a plan “shipped” because unit tests or coverage look good.
-5. Designing how much to mock vs call `drive_session`.
-6. Pylance/mypy complaints on fixtures (Optional log, list vs tuple, etc.).
-7. Reviewing AI-authored tests for theater or decay (ADR-11-I5).
-
-**Load scope:** test changes and/or `src/fa/` logic that claims product behavior.
-Pure docs-only PRs stay outside this skill.
-
----
-
-## Reference
 
 ### 0. Two pyramids (keep them separate)
 
 ```text
-PYRAMID A — Deterministic harness (this skill’s home; every PR)
+PYRAMID A — Deterministic harness (every PR)
   C2 CLI smoke → C1 composition-root → C3 security → C0/C0p unit+properties
   Oracles: events, outcomes, call counts, schemas, token bands, FS, deny reasons
   LLM: mocked or absent
 
-PYRAMID B — Model / agent quality (UC5; scheduled / model-prompt changes)
+PYRAMID B — Model / agent quality (scheduled)
   Human spot → scenarios → golden+judge → deterministic output props
   Oracles: task success, faithfulness, trajectory quality, safety
   LLM: real or recorded; non-determinism managed
@@ -100,79 +91,75 @@ PYRAMID B — Model / agent quality (UC5; scheduled / model-prompt changes)
 
 | Question | Pyramid |
 | :--- | :--- |
-| Is budget/compaction/hooks **wired** into the loop? | **A** (C1) |
-| Does the coder model solve UC1 well? | **B** |
-| Does IntentGuard deny without a trusted draft? | **A** (C3) |
-| Was Stage3 *invoked* and logged? vs is the summary *useful*? | **A** vs **B** |
-
-**v0.1 default:** A is mandatory in CI. B is Pillar 4 / UC5 — keep A fixtures
-exportable (event logs / trajectories) so B can attach later. Treat kill-check
-and ranked oracles as proof of correctness; treat coverage as a secondary metric.
+| Is feature X **wired** into the loop? | **A** (C1) |
+| Does the model solve tasks well? | **B** |
+| Does a security gate deny correctly? | **A** (C3) |
+| Was feature X *invoked*? vs is its *output useful*? | **A** vs **B** |
 
 ---
 
 ### 1. Taxonomy (Pyramid A)
 
-| Class | Boots | Use when | Complete product proof? |
+| Class | Boots | Use when | Product proof? |
 | :--- | :--- | :--- | :--- |
-| **C0 Unit** | Isolation | Pure helpers, parsers, estimators, redactors | Incomplete alone for session claims |
-| **C0p Property** | Many inputs | Thresholds, containment, redaction, parse robustness | Complements examples; pair with C1 for product claims |
-| **C1 Composition-root** | `drive_session` / real factories | **Default for `src/fa/` product behavior** | Yes (with kill-check) |
-| **C2 CLI smoke** | `fa` / `_cmd_*` | Argv→factory wiring, exit codes | Yes for CLI-only claims; pair with C1 for deep loop |
-| **C3 Security** | Gate + adversarial inputs | Sandbox, secrets, IntentGuard, bash, egress | Yes when adversarial cases included |
+| **C0 Unit** | Isolation | Pure helpers, parsers, estimators | Incomplete alone |
+| **C0p Property** | Many inputs | Thresholds, containment, parse robustness | Pair with C1 |
+| **C1 Composition-root** | `drive_session` / real factories | **Default for product behavior** | Yes (kill-check on PRODUCER) |
+| **C2 CLI smoke** | `fa` / `_cmd_*` | Argv→factory wiring, exit codes | Yes for CLI-only claims |
+| **C3 Security** | Gate + adversarial inputs | Sandbox, secrets, permissions | Yes with adversarial cases |
 | **C4 Mutation** | Per `mutation-clearing` | After mutmut survivors | Adequacy layer after C1 |
 
-**Default:** session → **C1** (+ C0/C0p for pure helpers).  
-**Refactor-only:** keep existing C1 green; add C1 only when a new product surface
-or behavior claim appears; use `TEST-EDITS` when changing existing tests under FIX.  
 **Split rule:** mock **LLM I/O** (`ProviderChain.request`); exercise real registry,
 hooks, budget, and prompt assembly under test.
-
-**C0p (should):** property-style checks on pure deterministic surfaces (budget bands,
-path containment, redaction). Prefer stdlib loops when Hypothesis is absent; keep
-pure and free of session I/O.
 
 ---
 
 ### 2. Composition roots and L1–L3
 
-| Root | Symbol (verify on tree) | Role |
+| Root | Symbol | Role |
 | :--- | :--- | :--- |
-| Session loop | `fa.inner_loop.coder_loop.drive_session` | Primary UC1 path |
+| Session loop | `fa.inner_loop.coder_loop.drive_session` | Primary path |
 | Registry builders | builders used by `fa run` | Tools registered |
 | Hook chain | registration used by `fa run` | Middleware attached |
-| Shipped CLI session drivers | `fa.cli` session commands (`run`, `workflow`, …) | CLI wires chains/flags |
-
-Inspect-only CLIs (e.g. `fa chunk`) are roots for claims about those commands only.
+| CLI drivers | `fa.cli` session commands | CLI wires chains/flags |
 
 | Level | Meaning | Product DoD? |
 | :--- | :--- | :--- |
 | L1 Import-reachable | Something imports the symbol | Incomplete |
 | L2 Call-reachable | Root invokes / registers it | Incomplete |
-| L3 Behavior + kill-check | Boots root; side effect; fails when call site removed | **Yes — DoD** |
+| L3 Behavior + kill-check on PRODUCER | Boots root; side effect; fails when EMIT CALL is removed | **Yes** |
+
+**L3 refinement:** Kill-check targets the PRODUCER call site (the
+`output.emit()` or `log.append()` call), NOT the consumer handler.
+If the producer call doesn't exist, the feature is at L0 (not wired).
 
 ---
 
 ### 3. Anti-theater checklist (C1 — all apply)
 
-1. **Kill-check** — removing the production call site fails this test (missing event,
-   wrong outcome, unexpected provider calls), using live behavior rather than a
-   leftover string in an unused file.
-2. **Observable side effect** — event `kind` (+ fields), `SessionOutcome`, provider
-   `call_count`/payload, or product-owned FS effect.
-3. **Live-path proof** — exercise the root that calls the surface; class construction
-   in the test file alone is incomplete for product claims.
-4. **Flag honesty** — explicit `FeatureFlags(...)`; name matrix A/B/C.
-5. **Mock boundary** — mock `ProviderChain.request` / network; keep `drive_session`
-   and the module under proof real.
-6. **Real hook type** — `hooks=HookRegistry()` (empty OK) for wiring claims.
-7. **Type-honest fixtures** — §5; resolve checker errors by matching production types.
-8. **Thresholds from source** — read `ContextBudget` (and related) fields in the tree.
-9. **Deterministic process** — offline; stable ordering (sort where needed); fixed clocks when time is involved.
-10. **Tight AST guard (should for wiring claims)** — root still imports/calls the
-    symbol under a precise pattern (module + intended attribute).
-11. **Early-stop efficiency (should when claiming hard-stop/deny)** —
-    `request.call_count == 0` (or expected low N).
+1. **Existence pre-check** — the PRODUCER emit call site EXISTS in production
+   code. Grep for `output.emit(OutputEvent(type="X"))` in loop/tools. If not
+   found: NOT shipped. Vacuous kill-check = not shipped.
+2. **Kill-check on PRODUCER** — removing `output.emit(OutputEvent(type="X"))`
+   fails this test. Target the producer, not the consumer handler.
+3. **Observable side effect** — event `kind`+fields, `SessionOutcome`, provider
+   `call_count`, or FS effect — not just "no exception."
+4. **Live-path proof** — exercise the real composition root; class construction
+   alone is incomplete.
+5. **Flag honesty** — explicit `FeatureFlags(...)`; name matrix A/B/C.
+6. **Mock boundary** — mock `ProviderChain.request`; keep `drive_session` real.
+7. **Real registry types** — `hooks=HookRegistry()` (empty OK) for wiring.
+8. **Type-honest fixtures** — §5; match production types exactly.
+9. **Thresholds from source** — read from `ContextBudget`, not magic numbers.
+10. **Deterministic** — offline; sort where needed; fixed clocks.
+11. **Tight AST guard (should)** — root imports/calls symbol precisely.
+12. **Early-stop efficiency (should)** — `request.call_count == 0` when gate fires.
+13. **Two-sided contract** — for every EventType, BOTH producer and consumer
+    verified. Consumer-only = incomplete.
+14. **Path inventory** — ALL code paths that emit the signal enumerated and tested.
+15. **Matrix coverage gate** — ≥1 test per flag combination. Naming ≠ covering.
+16. **Dual-write consistency** — `log.append()` + `output.emit()` both present
+    on every code path that should write.
 
 ---
 
@@ -180,225 +167,209 @@ Inspect-only CLIs (e.g. `fa chunk`) are roots for claims about those commands on
 
 | Matrix | Example | Proves |
 | :--- | :--- | :--- |
-| **A — gates only** | budget on, compaction off | Warn / stage2 allow / stage3 hard-stop before cascade |
-| **B — full cascade** | both on | Stage2/3, circuit breaker, `compactor_chain` |
-| **C — defaults** | `FeatureFlags()` | Operator path with stock flags |
-| **P — provider family (should)** | openai vs anthropic | `cache_control` / family-specific payload |
+| **A — primary** | budget on, compaction off | Primary path works |
+| **B — full cascade** | both on | Cascade / interaction paths |
+| **C — defaults** | `FeatureFlags()` | Operator-facing path |
+| **P — provider family** | openai vs anthropic | Backend-specific behavior |
 
-“Stage C shipped” from **B** alone while defaults keep compaction **off** is a
-**docs/review** claim (use prose/ADR; stock flags stay the operator truth until
-changed). Name the matrix in the docstring; parametrize family when relevant.
-
----
-
-### 5. Type-safe gold fixtures (Pylance / production honesty)
-
-| Production contract | Use this |
-| :--- | :--- |
-| `ResponseInfo.tool_calls: tuple[Mapping[str, Any], ...]` | `tool_calls=()` or `tool_calls=({...},)` |
-| `SessionState.log: EventLog \| None` | `log = _require_log(state); log.append(...)` |
-| Event `content` values as `object` | `"x" in str(content.get("summary", ""))` |
-| Hooks | `hooks=HookRegistry()` |
-
-```python
-def _require_log(state: SessionState) -> EventLog:
-    """Fixtures always attach a log; narrow Optional for type checkers."""
-    assert state.log is not None
-    return state.log
-```
-
-```python
-mock_chain = MagicMock(spec=ProviderChain)
-mock_chain.config = MagicMock(spec=ChainConfig)
-mock_chain.config.family = "openai"  # or "anthropic" for cache breakpoints
-mock_chain.request.return_value = _mock_success_response("done")
-# multi-turn: mock_chain.request.side_effect = [resp_with_tools, final_stop]
-# assert mock_chain.request.call_count
-```
-
-**Factories:** after three suites copy the same mocks, extract
-`tests/fixtures/session_wiring.py` (or conftest). Keep factories thin; still call
-the real root. Use `tmp_path` for product-owned FS.
+**Matrix coverage gate:** ≥1 C1 test per combination MUST exist before "shipped."
+Naming in docstring is necessary but NOT sufficient. Verify: for each combo,
+is there a test that sets those flags and asserts expected behavior?
 
 ---
 
-### 6. Oracles ranked (+ efficiency)
+### 5. Type-honest fixtures
 
-| Rank | Oracle | Good for |
+| Production type | Fixture must use | NOT |
 | :--- | :--- | :--- |
-| 1 | Session event `kind` + fields | Budget, compaction, lifecycle |
-| 2 | `SessionOutcome` (`exit_code`, `stop_reason`) | Hard-stop, hook deny, exhaust |
-| 3 | Tool trajectory (names, order, args schema, id pairing) | Registry + dispatch |
-| 4 | Provider request shape + **`call_count`** | PromptComposer, pins, cache, **Pillar 3** |
-| 5 | Token-estimate band / tools registered at start | Efficiency of harness path |
-| 6 | Product-owned FS / DB rows | Artifacts, blackboard, export |
-| 7 | Full deny reason / dataclass equality | C3 |
-| 8 | Free-text model output | Secondary only in A |
+| `tool_calls: tuple[…]` | `tool_calls=()` | `tool_calls=[]` |
+| `log: EventLog | None` | real `EventLog(tmp_path / …)` | mocked EventLog |
+| `hooks: HookRegistry` | `hooks=HookRegistry()` | `MagicMock` for wiring |
+| `output: EventBus` | real `EventBus()` + capture listener | `MagicMock` |
+| `state: SessionState` | real `SessionState(log=…)` | mock with `.log` |
+| `provider_chain` | `MagicMock(spec=ProviderChain)` — mock I/O only | mock the root |
+| `feature_flags` | explicit `FeatureFlags(...)` | `MagicMock` |
 
-**Primary oracles for product claims:** events, outcomes, trajectories, call counts,
-and structured contracts. Coverage remains a secondary metric; import presence alone
-is incomplete proof.
+**Narrowing Optional:** if production narrows `X | None` → `X`, mirror that in
+fixture. Don't `# type: ignore` to paper over fixture gaps.
 
 ---
 
-### 7. Trajectories (deterministic multi-step)
+### 6. Ranked oracles (with assertion patterns)
 
-When claiming tool use / multi-step control:
-
-1. Script `ProviderChain` with `side_effect` of `ResponseInfo` (tool_calls, then stop).
-2. Assert tools run (events or registry), **tool_call_id pairing**, stop conditions.
-3. When claiming multi-hook order, assert order explicitly.
-4. Prefer structured trajectory oracles over identical English prose.
-
-**State ownership (when claimed):** loop owns `SessionState`; middleware reads;
-mutations stay within the documented contract (ADR-10 I-4 spirit).
+| Rank | Oracle | Assertion pattern |
+| :--- | :--- | :--- |
+| 1 | Event `kind`+fields | `events = [e for e in capture if e.type == "X"]; assert len(events) >= 1; assert events[0].data["key"] == "val"` |
+| 2 | `SessionOutcome` | `assert outcome.stop_reason == "context_budget_hard_stop"; assert outcome.exit_code == 1` |
+| 3 | Tool trajectory | `assert [tc["function"]["name"] for tc in calls] == ["read", "write"]` |
+| 4 | Provider `call_count` / tokens | `assert mock_chain.request.call_count == 0  # early-stop` |
+| 5 | FS effects | `assert (tmp_path / "file").exists()` |
+| 6 | Deny reason dataclass | `assert result.error.code == "sandbox_violation"` |
+| 7 | Free-text `in`/`==` | Secondary only; never sole oracle for wiring |
 
 ---
 
-### 8. Fault injection and efficiency (should for reliability claims)
+### 7. Two-sided contract verification
 
-Script failures; keep deterministic:
+For every **EventType** (any observable signal) in `output.py`:
 
-| Injection | Assert |
+```
+PRODUCER (output.emit() in loop/tools)  ←→  CONSUMER (_handle_X() in ConsoleRenderer)
+```
+
+Both sides must exist and be verified. Consumer-only proof is incomplete.
+
+**Producer proof (C1 — mandatory before "shipped"):** Test exercises
+`drive_session` and asserts the EventType is emitted. Kill-check: removing
+the `output.emit()` call makes the test fail.
+
+**Consumer proof (C0 or C1 — necessary but insufficient alone):** Test
+verifies `_handle_X()` processes the event correctly. Must be paired with
+producer proof.
+
+**Contract check (automated — CI gate):**
+`scripts/check_producer_consumer_contract.py` verifies all EventTypes have
+both producer and consumer. Any gap = FAIL (exit 1). Wired into `just check`.
+
+**Ordering rule:** Producer proof BEFORE "shipped":
+1. Write the `output.emit()` call → 2. Write C1 producer test →
+3. Write handler → 4. Write consumer test → 5. Contract check PASS → 6. Shipped.
+
+**Two kill-checks for EventType claims:**
+(1) Remove `output.emit()` from production → C1 producer test fails.
+(2) Remove `_handle_X()` from renderer → C0/C1 consumer test fails.
+Both must hold. Producer kill-check is PRIMARY.
+
+---
+
+### 8. Path inventory
+
+A single EventType may be emitted from **multiple code paths**, each triggered
+by different conditions and flag combinations. Testing one path does NOT prove
+the others work.
+
+**Rule:** Before writing tests for an EventType, enumerate ALL production paths
+that should emit it. For each path: triggering condition, file:line, flag
+combination. Write at least one test per path. Document in test module docstring.
+
+**How to build:**
+1. `grep -rn 'type="X"' src/fa/`
+2. Trace backward from each emit to enclosing `if`/`elif`/`except`
+3. Cross-reference with feature flags
+4. Document in a table
+
+---
+
+### 9. Dual-write consistency
+
+The system has two write paths: **EventLog** (`log.append`) → session.db +
+JSONL, and **EventBus** (`output.emit`) → ConsoleRenderer. Every code path
+that writes to one MUST also write to the other. Missing `output.emit()` =
+operator sees nothing at the console.
+
+**Verify:** For every `log.append()` in a code path, check that a
+corresponding `output.emit(OutputEvent(type="X"))` exists in the same
+`if`/`elif`/`except` block.
+
+---
+
+### 10. C0 consumer-only: the false-confidence trap
+
+C0 consumer-only tests are necessary but NEVER sufficient. A test that verifies
+`_handle_X()` processes an event correctly does NOT prove the event is ever
+emitted. It proves a dead handler works.
+
+**Rule:** Every C0 consumer test for an EventType MUST be paired with a C1
+producer test. Without this, the C0 test is theater.
+
+**Prevention:** In test module docstring, label tests as C1-producer,
+C1-consumer, or C0-consumer-only. Audit for unpaired C0-consumer-only tests.
+
+---
+
+### 11. Security boundaries
+
+| Boundary | Minimum proof |
 | :--- | :--- |
-| Provider error / exhausted chain | `stop_reason` / events; clean stop |
-| Malformed / unknown tool_calls | reject path + pairing integrity |
-| Max-turns / circuit breaker / budget hard-stop | outcome correct; **`call_count` low** |
-| Hook deny mid-path | stop; provider calls end |
-
-Pillar 3: hard-stop and deny paths finish with the expected (usually minimal)
-provider round-trips.
-
----
-
-### 9. Security (C3)
-
-Include ≥1 adversarial case per safety claim:
-
-| Surface | Example |
-| :--- | :--- |
-| IntentGuard / pr.prepare | Mutate with missing trusted draft → deny |
-| bash_intent | Opaque/exec classified for write/exec risk |
-| Secret redaction | Secrets redacted on model-facing channel |
+| Sandbox containment | Exec denied outside workspace (C3) |
+| Secret leakage | Secret NOT in model-facing messages (C3) |
+| IntentGuard | Deny without trusted draft + allow with (C3) |
+| Tool permission model | `read` tool cannot write (C3) |
 | Path containment | `../` denied |
-| Egress / proxy | Agent side carries proxy token only (`test_proxy_wiring_cli.py`) |
+| Egress / proxy | Agent side carries proxy token only |
 
-Pair happy-path cases with adversarial ones. Prefer parametrized edges (see
-`test_bash_intent.py` style).
+Pair happy-path with adversarial. Prefer parametrized edges.
 
 ---
 
-### 10. Pyramid B boundary + UC5 attachment
+### 12. Pyramid B boundary
 
-| Eval / UC5 (B) | Pytest (A) |
+| Eval (B) | Deterministic test (A) |
 | :--- | :--- |
-| “Is the summary useful?” | “Was Stage3 invoked and event written?” |
-| “Did the coder solve the bug?” | “Did coder get write tools?” |
-| Hallucination rate | Schema-valid tool args |
+| "Is the output useful?" | "Was the feature invoked and event written?" |
+| "Did the agent solve it?" | "Did agent get the right tools?" |
 
-**Attachment (design A for B):** prefer tests that leave inspectable session event
-logs / trajectories. When UC5 lands: versioned goldens, calibrated judges,
-cost/latency metrics. Gate merges on Pyramid A; promote B judges only when
-calibrated and versioned.
+Design A for B: keep A fixtures exportable (structured logs/trajectories).
+Gate merges on A; promote B judges only when calibrated.
 
 ---
 
-### 11. Mutation handoff + AI-author patterns
+### 13. Mutation handoff + AI-author patterns
 
 | After C1 green | Next |
 | :--- | :--- |
-| Live path proven | Load **`mutation-clearing`** |
-| Coverage high, mutants live | Strengthen oracles (that skill’s archetypes) |
-| Start mutation | After C1 so mutants hit live code |
-
-**Rewrite toward these patterns when AI-authored tests are weak:**
+| Live path proven | Load `mutation-clearing` |
+| Coverage high, mutants live | Strengthen oracles |
 
 | Prefer | Instead of |
 | :--- | :--- |
 | Real assertions on events/outcomes | `assert True` / placeholders |
-| Strict xfail with ADR/issue when needed | Open-ended skip / non-strict xfail |
-| Ranked structured oracles | Sole free-text equality / loose prose `in` |
-| Real `drive_session` + mocked provider | Mocking the composition root under proof |
-| Thresholds from `ContextBudget` (source) | Invented magic ratios |
-| `hooks=HookRegistry()` | MagicMock hooks for wiring claims |
-| `TEST-EDITS` when changing existing tests under FIX | Silent weakening of C1 |
-| Fix types to match production | `# type: ignore` on contracts |
-| Adversarial + happy path for security | Happy-path-only C3 |
-| C1 for product claims | C0-only “shipped” proof |
-
-**Named invariants (should for ADR-binding clauses):**  
-`test_invariant_adr11_i9_…`, `test_invariant_adr10_i4_…` — pin the contract; use
-descriptive `test_*_wiring` names for ordinary live-path suites.
+| Strict xfail with issue | Open-ended skip / non-strict xfail |
+| Ranked structured oracles | Sole free-text equality |
+| Real `drive_session` + mocked provider | Mocking the composition root |
+| Thresholds from `ContextBudget` | Invented magic numbers |
+| `hooks=HookRegistry()` | MagicMock for wiring |
+| `TEST-EDITS` under FIX | Silent weakening of C1 |
+| C1 producer test for every EventType | C0 consumer-only "shipped" proof |
+| Kill-check on PRODUCER emit call | Kill-check on consumer handler |
+| Path inventory for all emit sites | Single-path test |
+| Matrix coverage gate | Matrix name in docstring only |
+| Dual-write consistency check | Single-write verification |
 
 ---
 
-### 12. Gold files (re-read tree; copy shape)
+### 14. Gold files
 
 | File | Proves |
 | :--- | :--- |
-| `tests/test_pr1_wiring.py` | Budget live path; warn; stage3 hard-stop with `call_count==0`; AST guard; **HookRegistry**; `_require_log`; `tool_calls=()` |
-| `tests/test_pr2_wiring.py` | Pins every turn / reload / missing file |
-| `tests/test_pr3_wiring.py` | PromptComposer; cache_control when enabled |
-| `tests/test_pr4_wiring.py` | Stage2 mask; tail protection; events |
-| `tests/test_pr5_wiring.py` | Stage3 + `compactor_chain`; summary carry-forward; circuit breaker |
-| `tests/test_proxy_wiring_cli.py` | C2 CLI/proxy; agent-side proxy token only |
-| `tests/test_coder_loop.py` | Mature HookRegistry + trajectory patterns |
-| `tests/test_bash_intent.py` | Parametrized adversarial / compound style |
-
-Bind thresholds to **`ContextBudget`** fields from the tree.
+| `tests/test_pr1_wiring.py` | Budget C1 pattern: warn, hard-stop with `call_count==0`, `HookRegistry`, `_require_log`, `tool_calls=()` |
+| `tests/test_coder_loop.py` | Mature `HookRegistry` + trajectory patterns |
+| `tests/test_event_type_c1_producers.py` | C1 producer tests for all EventTypes |
 
 ---
 
-### 13. Naming, isolation, CI
+### 15. Naming, isolation, CI
 
 | Practice | Guidance |
 | :--- | :--- |
-| Filenames | `test_<feature>_wiring.py` or `test_prN_wiring.py`; `test_invariant_adrN_…` when binding ADR |
-| Docstring | root + matrix + claim (+ kill-check target) |
-| Collection | Normal pytest; **`just check` is authority** |
-| Fast loop | `uv run pytest tests/test_*wiring*.py -q` (subset of the same suite) |
-| Isolation | `tmp_path`; careful monkeypatch; freeze time when wall-clock is used |
-| Determinism | Offline; sort unstable collections; mock LLM always in A |
-
----
-
-### 14. Sibling skills and later work
-
-| Topic | Where |
-| :--- | :--- |
-| Mutmut survivors | `mutation-clearing` |
-| PR INTENT / TEST-EDITS headers | `pr-creation` |
-| Deep structural audit | `repo-audit` |
-| Import allowlists, CodeGraph as gate, new `fs.*` tools | Outside I9 v0 scope |
-| Full UC5 eval platform | Future ADR / Pillar 4 |
-| Human commit-msg vs IntentGuard | Seat asymmetry (hooks soft; runtime strict) |
-
----
-
-### 15. Authority vs steering
-
-| Seat | Mechanism | Role |
-| :--- | :--- | :--- |
-| Steering | This skill | How to write proofs |
-| Authority | pytest in `just check` / CI | Merge bar for agents on pre-push |
-| Deep hunt | repo-audit / hostile skill | On demand |
-| Human merge | Review | Final |
+| Filenames | `test_<feature>_wiring.py`; `test_invariant_adrN_…` for ADR bindings |
+| Docstring | root + matrix + claim + kill-check target + path inventory |
+| Authority | Normal pytest; `just check` is authority |
+| CI gates | `just check` → pytest + coverage + typecheck + contract check |
+| Test edits | `validate_test_edits` / IntentGuard under FIX |
+| Isolation | `tmp_path`; freeze time; mock LLM always in A |
+| Determinism | Offline; sort unstable collections |
 
 ---
 
 ## Decision points
 
-1. Pyramid A or B?
-2. Session claim → C1; pure helper → C0/C0p.
-3. Root: `drive_session` vs CLI.
-4. Matrix A/B/C (+ family if needed).
-5. Oracle rank; kill-check holds?
-6. Types honest? Efficiency `call_count` if early-stop claimed?
-7. `TEST-EDITS` when changing existing tests under FIX?
-8. Extract fixtures after third duplication?
-9. Security → adversarial case?
-10. ADR-binding → prefer `test_invariant_adr…`?
-11. After C1 → mutation-clearing?
+1. Pyramid A or B? Session claim → C1; pure helper → C0/C0p.
+2. Two-sided contract? EventType → producer + consumer. Kill-check = PRODUCER.
+3. Existence pre-check? Path inventory? Matrix coverage gate? Dual-write?
+4. Oracle rank + kill-check holds? Types honest? Efficiency call_count?
+5. TEST-EDITS under FIX. Extract fixtures after 3rd duplication.
+6. Security → adversarial. After C1 → mutation-clearing.
 
 ---
 
@@ -408,34 +379,15 @@ Bind thresholds to **`ContextBudget`** fields from the tree.
 LIVE-PATH PROOF:
 - root: drive_session | cli:<subcommand>
 - test: tests/<file>.py::test_<name>
-- matrix: A-gates-only | B-full-cascade | C-defaults | P-<family>
-- oracle: event:<kind> | outcome:<stop_reason> | trajectory | provider_calls | payload
-- kill-check: removing <module.symbol / call site> fails the named test
-- efficiency: call_count=N | early-stop (if claimed)
+- matrix: A | B | C | P-<family>
+- oracle: event:<kind> | outcome:<stop_reason> | trajectory | call_count
+- kill-check: removing <file.py:line emit call> fails the named test
+- producer: <file.py>:<line> emit call site
+- paths-covered: N/M paths
+- contract-check: PASS | FAIL
+- efficiency: call_count=N | early-stop
 - pyramid: A
 ```
-
-Optional Pyramid B:
-
-```text
-EVAL NOTE:
-- gated separately from just check
-- dataset: <path or TBD>
-- scorer: deterministic-props | llm-judge (calibrated?) | human
-```
-
----
-
-## What CI / hooks validate
-
-| Check | Surface |
-| :--- | :--- |
-| Tests pass | `just check` → pytest + coverage |
-| Meaningful asserts (I5) | ADR-11-I5 / authoring rules |
-| Test path edits under policy | `validate_test_edits` / IntentGuard |
-| Types | `just check` typecheck |
-
-Product claims need C1/C2 green for ADR-11-I9 spirit.
 
 ---
 
@@ -443,43 +395,40 @@ Product claims need C1/C2 green for ADR-11-I9 spirit.
 
 | Situation | Action |
 | :--- | :--- |
-| Huge fixture for `drive_session` | Shared fixture module; still call real root |
-| Behavior only on CLI | C2; unify forked logic when present |
-| Greens when call site removed | Rewrite until kill-check holds |
-| Only unit tests for a loop product claim | Add C1 before done |
-| Mutants after C1 | `mutation-clearing` |
-| Want model prose quality signal | Pyramid B or property oracles |
-| Flaky | Mock LLM; sort; isolate FS; freeze time |
-| Pylance Optional/list | §5 — match production types |
-| AI theater suspected | Kill-check + prefer-table + mutation |
-| Efficiency claim | Assert expected `call_count` / early-stop |
+| Greens when PRODUCER emit call removed | Rewrite until kill-check on PRODUCER holds |
+| Kill-check passes but emit call doesn't exist | **Vacuous pass** — write the emit call first |
+| Only C0 consumer tests for EventType | Add C1 producer test |
+| Test covers one path but multiple emit sites | Add path inventory, test each |
+| Matrix declared but not all combos tested | Add test per combo |
+| `log.append()` but no `output.emit()` on same path | Add dual-write check |
+| Only unit tests for a product claim | Add C1 |
+| AI theater suspected | Kill-check on PRODUCER + path inventory + mutation |
 
 ---
 
 ## Worked examples
 
-### C1 — warn on live path
+### C1 — producer kill-check for context_warn
 
 ```python
-def test_drive_session_budget_warn_event(mock_session_state: SessionState) -> None:
-    """root=drive_session matrix=A claim=budget warn; kill-check=budget path in drive_session."""
-    mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100_000
-    mock_chain.config.family = "openai"
-    mock_chain.request.return_value = _mock_success_response("ok")
-    # Size task so estimate_tokens enters warn band per ContextBudget source fields.
-    outcome = drive_session(
-        huge_task,
-        provider_chain=mock_chain,
-        registry=ToolRegistry(),
-        hooks=HookRegistry(),
-        state=mock_session_state,
-        max_turns=1,
+def test_context_warn_emitted_at_budget_warn(tmp_path: Path) -> None:
+    """root=drive_session matrix=A claim=context_warn OutputEvent
+    kill-check=removing output.emit(OutputEvent(type="context_warn"))
+    from coder_loop.py budget-warn path makes this test fail
+    path-inventory: path 1 of 3 (warn threshold, non-compaction)
+    """
+    state, bus, capture = _make_session_with_output(tmp_path)
+    mock_chain = make_mock_chain(context_limit=100000)
+    mock_chain.request.return_value = mock_success_response("warn path")
+    task = "A" * 300000  # ~75k tokens → triggers warn
+
+    drive_session(
+        task, provider_chain=mock_chain, registry=ToolRegistry(),
+        hooks=HookRegistry(), state=state, max_turns=1, output=bus,
     )
-    assert outcome.exit_code == 0
-    kinds = [e.kind for e in _require_log(mock_session_state).read_all()]
-    assert "context_budget_warn" in kinds
+
+    warn_events = [e for e in capture.events if e.type == "context_warn"]
+    assert len(warn_events) >= 1
 ```
 
 ### C1 — hard-stop with zero provider calls (efficiency)
@@ -489,54 +438,53 @@ assert outcome.stop_reason == "context_budget_hard_stop"
 assert mock_chain.request.call_count == 0
 ```
 
-### C0 complete for class API; incomplete for loop product claim
+### C0 consumer-only — theater without C1 producer pair
 
 ```python
-def test_context_budget_unit_stages() -> None:
-    b = ContextBudget(limit_tokens=100)
-    assert b.check(90)["action"] in {"stage2", "stage3", "warn"}
-    # Pair with C1 before claiming the session loop enforces budget.
+def test_context_warn_visible_at_standard_detail(capsys) -> None:
+    """C0 consumer-only: proves handler renders context_warn GIVEN an event.
+    INCOMPLETE without C1 producer test that verifies the emit fires.
+    """
+    renderer = ConsoleRenderer(detail="standard")
+    event = OutputEvent(type="context_warn", data={"pct": 85})
+    renderer.on_event(event)
+    captured = capsys.readouterr()
+    assert "85%" in captured.err
+    # ⚠️ Passes even if producer emit was never written. Must pair with C1.
+```
+
+### Path inventory example
+
+```python
+"""context_warn coverage.
+
+Path inventory:
+  Path 1: Budget > warn threshold (non-compaction) — coder_loop.py L515
+  Path 2: Stage3 after compaction still exceeds — coder_loop.py L974
+  Path 3: Circuit breaker fires — coder_loop.py L919
+"""
 ```
 
 ---
 
-## Invariants (skill-local)
+## Invariants
 
-- **I-TW-1** Product session claims use C1 (or C2 if CLI-only) as the proof class.
+- **I-TW-1** Product session claims use C1 (or C2 if CLI-only).
 - **I-TW-2** Authority is pytest in `just check`.
-- **I-TW-3** Prefer pytest / `just check` over new inner-loop tools for wiring verification.
-- **I-TW-4** Prefer human/docs for experimental status (v0); keep CI free of STATUS enums and allowlist files.
-- **I-TW-5** Prefer events / outcomes / trajectories / efficiency signals as primary oracles.
-- **I-TW-6** Flag (and provider, when relevant) matrix explicit in fixture or body.
-- **I-TW-7** Fixtures match production types (tuples, Optional narrowing, real HookRegistry).
+- **I-TW-3** Prefer `just check` over new inner-loop tools for wiring verification.
+- **I-TW-4** Keep CI free of STATUS enums and allowlist files.
+- **I-TW-5** Prefer events / outcomes / trajectories as primary oracles.
+- **I-TW-6** Matrix coverage ENFORCED (≥1 test per combo), not just declared.
+- **I-TW-7** Fixtures match production types (tuples, Optional narrowing, real registries).
 - **I-TW-8** Pyramid A uses mocked LLM I/O and offline runs.
 - **I-TW-9** Security claims include ≥1 adversarial case.
-- **I-TW-10** Kill-check is mandatory for C1.
-- **I-TW-11** Prefer `test_invariant_adr…` for new ADR-binding clauses; use `*_wiring` for ordinary live-path suites.
-- **I-TW-12** Early-stop / deny claims assert low provider `call_count` where applicable.
-- **I-TW-13** AI-authored tests pass anti-theater; mutation after C1 for adequacy.
-
----
-
-## Prior art (selected)
-
-**In-repo:** gold `tests/test_pr{1..5}_wiring.py`, `test_proxy_wiring_cli.py`,
-`test_coder_loop.py`, `test_bash_intent.py`; ADR-11-I5/I9; ADR-10; `mutation-clearing`;
-project-overview §1.2 / §1.2.5.
-
-**Industry (AI age):** dual / agent testing pyramid (deterministic base + evals);
-mock LLM / test orchestration; trajectory oracles; property/schema checks; mutation
-for AI-written test adequacy; eval discipline separate from harness wiring; oracle
-outside the implementer for large AI-generated changes.
-
----
-
-## References
-
-- [`ADR-11`](../../adr/ADR-11-authoring-guardrails.md) — **I9** live-path DoD; **I5** test decay
-- [`ADR-10`](../../adr/ADR-10-deterministic-harness-invariants.md) — runtime I-1..I-5
-- [`mutation-clearing/SKILL.md`](../mutation-clearing/SKILL.md)
-- [`pr-creation/SKILL.md`](../pr-creation/SKILL.md) — TEST-EDITS
-- [`repo-audit/SKILL.md`](../repo-audit/SKILL.md)
-- [`AGENTS.md`](../../../AGENTS.md) — `just check`, loadable skills
-- [`project-overview.md`](../../project-overview.md) — Pillars 3–4, §1.2 / §1.2.5
+- **I-TW-10** Kill-check targets the PRODUCER emit call, not the consumer handler.
+- **I-TW-11** `test_invariant_adr…` for ADR bindings; `*_wiring` for ordinary suites.
+- **I-TW-12** Early-stop / deny claims assert low provider `call_count`.
+- **I-TW-13** AI-authored tests pass anti-theater; mutation after C1.
+- **I-TW-14** Two-sided contract: for every EventType, BOTH producer and consumer verified before "shipped."
+- **I-TW-15** Existence pre-check: verify emit call site EXISTS. Vacuous kill-check = not shipped = theater.
+- **I-TW-16** Path inventory: enumerate ALL emit paths. At least one test per path.
+- **I-TW-17** Dual-write: EventLog and EventBus both written on every code path.
+- **I-TW-18** C0 consumer-only tests are theater without C1 producer pair.
+- **I-TW-19** Contract check script MUST pass in CI for every PR touching EventTypes.

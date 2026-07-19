@@ -199,7 +199,13 @@ class GlobalHistoryStore:
 
 
 def _extract_telemetry_from_log(log: Any) -> dict[str, Any]:
-    """Extract token totals and tool breakdown from EventLog authoritative rows."""
+    """Extract token totals, tool breakdown, and turns from EventLog authoritative rows.
+
+    NEW-4: The ``turns`` field is counted from ``usage`` events (each usage event
+    = one LLM turn). This is accurate for both standalone runs and workflow
+    aggregate exports, where outcome.turns may be 0. build_export_row uses
+    max(outcome.turns, telemetry.turns) so the correct count wins.
+    """
     total_in = 0
     total_out = 0
     total_cache_read = 0
@@ -207,6 +213,7 @@ def _extract_telemetry_from_log(log: Any) -> dict[str, Any]:
     tool_counter: Counter[str] = Counter()
     has_compaction = 0
     created_at = ""
+    turns = 0  # NEW-4: count usage events = LLM turns
 
     try:
         events = log.read_all() if log is not None else ()
@@ -223,6 +230,7 @@ def _extract_telemetry_from_log(log: Any) -> dict[str, Any]:
                     total_out += int(c.get("output_tokens", 0))
                     total_cache_read += int(c.get("cache_read_input_tokens", 0))
                     total_cache_creation += int(c.get("cache_creation_input_tokens", 0))
+                    turns += 1  # NEW-4: each usage event = 1 LLM turn
                 elif ev.kind == "tool_call":
                     tool_counter[ev.tool_name or "unknown"] += 1
                 elif ev.kind == "compaction_stage3_done":
@@ -242,6 +250,7 @@ def _extract_telemetry_from_log(log: Any) -> dict[str, Any]:
         "tool_calls_breakdown_json": json.dumps(dict(tool_counter), ensure_ascii=False),
         "has_compaction_summary": has_compaction,
         "created_at": created_at or _now_iso_z(),
+        "turns": turns,  # NEW-4: from usage event count
     }
 
 
@@ -272,9 +281,13 @@ def build_export_row(
     except Exception:
         stop_reason = ""
     try:
-        turns = int(getattr(outcome, "turns", 0))
+        outcome_turns = int(getattr(outcome, "turns", 0))
     except Exception:
-        turns = 0
+        outcome_turns = 0
+    # NEW-4: Prefer outcome.turns when available (standalone run), fall back
+    # to telemetry turns (counted from usage events) for workflow aggregates
+    # where outcome.turns is 0.
+    turns = max(outcome_turns, int(telemetry.get("turns", 0)))
 
     now = _now_iso_z()
 

@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from fa.providers.anthropic import AnthropicProvider
 from fa.providers.base import Provider, Transport
 from fa.providers.errors import ConfigurationError
+from fa.providers.mistral import MistralProvider
+from fa.providers.mistral_conversations import MistralConversationsProvider
 from fa.providers.openai_compat import OpenAICompatProvider
 
 
@@ -32,6 +34,8 @@ class ProviderSpec:
 
 _OPENAI_COMPAT = ProviderSpec(factory=OpenAICompatProvider, adapter="openai_compat")
 _ANTHROPIC = ProviderSpec(factory=AnthropicProvider, adapter="anthropic")
+_MISTRAL = ProviderSpec(factory=MistralProvider, adapter="mistral")
+_MISTRAL_AGENTS = ProviderSpec(factory=MistralConversationsProvider, adapter="mistral_agents")
 
 PROVIDERS: Mapping[str, ProviderSpec] = {
     "openrouter": _OPENAI_COMPAT,
@@ -50,6 +54,8 @@ PROVIDERS: Mapping[str, ProviderSpec] = {
     "llm7": _OPENAI_COMPAT,
     "openmodel": _ANTHROPIC,
     "anthropic": _ANTHROPIC,
+    "mistral": _MISTRAL,
+    "mistral_agents": _MISTRAL_AGENTS,
 }
 
 

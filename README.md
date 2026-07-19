@@ -5,119 +5,139 @@
 ![Python](https://img.shields.io/badge/python-3.13-blue)
 ![Docker](https://img.shields.io/badge/docker-Ready-blue)
 
-
-> **Locally orchestrated, mixed-tier LLM coding agent for power-users.**  
+> **Locally orchestrated, mixed-tier LLM coding agent for power-users.**
 > Built on the principles of Unix-way, zero-trust LLM isolation, and minimalism-first.
 
-⭐ **Краткий обзор фичей и архитектуры (PITCH): [knowledge/overview/FEATURES.md](./knowledge/overview/FEATURES.md)**  
-📖 **Деплой / обновление / управление (AIO Server):** [knowledge/instructions/README.md](./knowledge/instructions/README.md)  
-🤖 **Для LLM-агентов (Start Here):** [AGENTS.md](./AGENTS.md)
+📖 **Deploy / operate (AIO Server):** [knowledge/instructions/README.md](./knowledge/instructions/README.md)
+🤖 **For LLM agents (Start Here):** [AGENTS.md](./AGENTS.md)
 
 ---
 
-## 🏗 Архитектура безопасности (By-Design)
+## Architecture at a Glance
 
-Мы не доверяем LLM слепо. First-Agent заперт в детерминированной песочнице: ключи изолированы в отдельном контейнере, а работа над кодом ведется только во временных Git-клонах.
+We don't trust the LLM blindly. First-Agent is locked in a deterministic sandbox:
+API keys are isolated in a separate container, and code changes happen only in
+temporary Git clones. Per-run session state is authoritative in SQLite (`session.db`);
+JSONL files are best-effort human-readable mirrors.
 
 ```mermaid
 graph TD
-    User([👨‍💻 Operator]) -->|fa run| HostWrapper[scripts/fa]
+    User([Operator]) -->|fa run| HostWrapper[scripts/fa]
     HostWrapper -->|docker exec| AgentContainer
-    
+
     subgraph AIO Server [AIO Host Server]
-        Repo[(/repo \n Read-Only Host Repo)]
-        
+        Repo[(/repo Read-Only Host Repo)]
+
         subgraph Docker Compose
             ProxyContainer[fa-egress-proxy]
             AgentContainer[first-agent]
         end
-        
-        AgentContainer -- HTTP (no keys) --> ProxyContainer
+
+        AgentContainer -- HTTP no keys --> ProxyContainer
         ProxyContainer -- HTTP + Injected Keys --> LLM[LLM Providers]
-        
+
         Repo -.->|RO Mount| AgentContainer
-        AgentContainer -->|git clone --local| Sessions[(/sessions \n Isolated RW Workspaces)]
+        AgentContainer -->|git clone --local| Sessions[(/sessions Isolated RW Workspaces)]
+    end
+
+    subgraph Session Data [Per-Run Session Authority]
+        SessionDB[(session.db SQLite Authority)]
+        JSONL[events.jsonl Mirror]
+        SessionDB --> JSONL
     end
 ```
 
 <details>
-<summary><b>Развернуть полное описание Scope и Зачем это нужно</b></summary>
+<summary><b>Full Scope & Rationale</b></summary>
 
-## 1. Зачем это
+**First-Agent** is a research-backed implementation-first project aiming to become
+the open-source reference implementation for locally orchestrated coding agents.
+Four explicit goals:
 
-**First-Agent** — research-backed implementation-first проект, стремящийся
-стать open-source reference implementation для locally orchestrated coding agents. 
-Помимо самого факта построения работающего harness, проект ставит 4 явных цели:
+1. Walk from formulation to working prototype, documenting every architectural
+   decision via ADR + research note.
+2. Ship v0.1 as a pragmatic single-user product for UC1 (coding+PR) + UC3
+   (local-docs-to-wiki) with hybrid-shape (filesystem-canon + lazy search-side scaling).
+3. Build the **most token- and tool-call-efficient harness** among known open-source
+   agent stacks.
+4. **Iteration via measurement.** v0.1 baseline: agent can write its own skills
+   (`SKILL.md` files) from completed tasks.
 
-1. Пройти весь путь от формулировки до working prototype, документируя
-   каждое архитектурное решение через ADR + research note.
-2. Выпустить v0.1 как pragmatic single-user product под UC1 (coding+PR) +
-   UC3 (local-docs-to-wiki) с hybrid-shape (filesystem-canon + lazy
-   search-side scaling).
-3. Построить **наиболее token- и tool-call-efficient harness** среди
-   известных open-source / open-design агент-стэков.
-4. **Iteration via measurement.** База в v0.1 — способность агента писать
-   собственные skills (`SKILL.md`-файлы) по итогам решённых задач.
+**Design principle — minimalism-first.** Not "cut later" — don't add without
+research-evidence or measured KPI-impact.
 
-**Принцип построения — minimalism-first.** Не «вырезать лишнее потом», а
-не добавлять без research-evidence или измеренного KPI-impact.
+**In scope (v0.1):** UC1 coding+PR, UC3 local-docs-to-wiki, static role-routing
+LLM tiering, mechanical-wiki memory (SQLite FTS5), sandbox + path allow-list.
 
-Опора — research papers (Tsinghua module-ablation,
-Stanford / Khattab Meta-Harness, Anthropic engineering posts), MCP-экосистема.
-
-## 2. Scope — что входит и что не входит
-
-### В scope (v0.1)
-
-- **UC1** — coding + PR-write end-to-end.
-- **UC3** — local-docs-to-wiki (`fa ingest`, chunk-aware retrieval, Q&A).
-- Static role-routing LLM tiering (Planner / Coder / Debug),
-  mechanical-wiki memory (SQLite FTS5), sandbox + path allow-list для тулов.
-
-### Вне scope (v0.1)
-
-- **UC2** continuous multi-source research — best-effort.
-- **UC4** multi-user Telegram chat — deferred.
-- **UC5** semi-autonomous multi-LLM research/experiment — deferred.
-- Production-деплой, мульти-тенантность, биллинг, собственный веб-UI.
+**Out of scope (v0.1):** UC2 multi-source research (best-effort), UC4 multi-user
+Telegram chat (deferred), UC5 semi-autonomous research (deferred), production
+deploy, multi-tenancy, billing, web UI.
 
 </details>
 
 ---
 
-## 🧭 Как работать с этим репо
+## Key Features
 
-Полный inventory всех документов — в
-[`knowledge/llms.txt`](./knowledge/llms.txt) (one-fetch индекс,
-[llmstxt.org](https://llmstxt.org/) convention). Конвенции по
-структуре и работе — в [`AGENTS.md`](./AGENTS.md).
+- **Session Database Authority** — Every `fa run` creates a per-run SQLite database
+  (`session.db`) that is the single source of truth for hot-path runtime state.
+  Three tables: event_log, blackboard, session_meta. JSONL files are best-effort
+  mirrors — if they disagree with session.db, session.db wins.
 
-Для нового человека / агента:
+- **Blackboard Conflict Detection** — When `edit_file` or `write_file` writes,
+  the Blackboard checks for conflicts: if entry B's `read_set` overlaps with a
+  prior entry A's `write_set`, `detect_conflict()` returns a structured failure.
+  Prevents the "parent HEAD switched" bug.
 
-1. Прочитать [`AGENTS.md`](./AGENTS.md) — repo conventions, query routing.
-2. Прочитать [`knowledge/llms.txt`](./knowledge/llms.txt) — карта
-   репо в одном fetch'е.
-3. Проверить [`HANDOFF.md`](./HANDOFF.md) — текущий snapshot
-   состояния репо для cross-LLM сессий.
-4. Просмотреть индекс ADR — [`knowledge/adr/README.md`](./knowledge/adr/README.md).
+- **Egress-Injection Proxy (ADR-12)** — API keys live only in a separate
+  `fa-egress-proxy` container. The agent reaches providers through the proxy
+  (HTTP + non-key token); proxy injects the real key. Agent can *use* keys but
+  never *read* them.
 
-Дальше — по необходимости (ADR / research-нота / промпт). Не нужно
-загружать всё в контекст сразу; routing-table в
-[`AGENTS.md` §Query Routing](./AGENTS.md#query-routing).
+- **Trusted Computing Base (ADR-11)** — Two-tier authoring TCB: frozen stdlib-only
+  Level-0 kernel + allowlisted Level-1 rules. LLM as Untrusted Compiler threat
+  model. Test-decay lock prevents `pytest.skip` / `assert True` gaming.
+
+- **Bash Intent Analysis** — `fs.run_bash` is parsed through `bashlex` AST.
+  IntentGuard classifies: `READ_ONLY`, `INDEX_WRITE`, `REPO_WRITE`, `DANGEROUS`.
+  REPO_WRITE blocked without authorized PR draft.
+
+- **Token-Efficient Retrieval** — Mechanical Wiki: filesystem-canon Markdown +
+  SQLite FTS5 BM25. No vector DB, no embeddings in v0.1. Tools have
+  `max_context_bytes` with automatic head/tail elision.
 
 ---
 
-## 📂 Основные папки и файлы
+## Quick Start
 
-- [`knowledge/overview/FEATURES.md`](./knowledge/overview/FEATURES.md) — обзор фичей и киллер-фич продукта.
-- [`AGENTS.md`](./AGENTS.md) — конвенции и инструкции для AI-агентов.
-- [`HANDOFF.md`](./HANDOFF.md) — snapshot состояния для cross-LLM сессий.
-- [`knowledge/README.md`](./knowledge/README.md) — как устроена память
-  проекта (frontmatter schema, конвенции).
-- [`knowledge/llms.txt`](./knowledge/llms.txt) — one-fetch индекс всех документов.
-- [`knowledge/instructions/`](./knowledge/instructions/README.md) —
-  инструкции по развёртыванию и эксплуатации (install + operations).
-- [`knowledge/adr/README.md`](./knowledge/adr/README.md) — индекс архитектурных решений (ADR).
-- [`knowledge/pr-notes/`](./knowledge/pr-notes/README.md) — архив PR-заметок.
+**For humans:**
+1. Deploy & operate: [knowledge/instructions/](./knowledge/instructions/README.md)
+2. Project vision & scope: [knowledge/project-overview.md](./knowledge/project-overview.md)
+
+**For agents:**
+1. Read [AGENTS.md](./AGENTS.md) — repo conventions, query routing, pre-flight checklist
+2. Read [knowledge/llms.txt](./knowledge/llms.txt) §MUST READ FIRST — 5-file bootstrap
+3. Read [worklogs/HANDOFF.md](./worklogs/HANDOFF.md) — current session state
+4. Definitions & session architecture: [knowledge/reference.md](./knowledge/reference.md)
+
+---
+
+## Repository Map
+
+| Path | Purpose |
+|------|---------|
+| [`AGENTS.md`](./AGENTS.md) | Agent session rules, conventions, query routing |
+| [`knowledge/project-overview.md`](./knowledge/project-overview.md) | Vision, principles, scope |
+| [`knowledge/reference.md`](./knowledge/reference.md) | Terms, features, session architecture |
+| [`worklogs/HANDOFF.md`](./worklogs/HANDOFF.md) | Current session state & next priorities |
+| [`worklogs/BACKLOG.md`](./worklogs/BACKLOG.md) | Active milestones & tracked items |
+| [`knowledge/adr/`](./knowledge/adr/README.md) | Architecture Decision Records |
+| [`knowledge/research/`](./knowledge/research/) | Research notes |
+| [`knowledge/skills/`](./knowledge/skills/README.md) | Agent-loadable disciplines (SKILL.md) |
+| [`knowledge/anti-patterns/`](./knowledge/anti-patterns/README.md) | Named anti-pattern catalog |
+| [`knowledge/instructions/`](./knowledge/instructions/README.md) | Deploy & operating docs (human) |
+| [`worklogs/pr-notes/`](./worklogs/pr-notes/README.md) | PR notes archive |
+| [`worklogs/implementation-plans/`](./worklogs/implementation-plans/) | Active implementation plans |
+| [`worklogs/archive/`](./worklogs/archive/) | Finished work artifacts |
 
 ---

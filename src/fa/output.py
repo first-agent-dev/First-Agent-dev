@@ -49,6 +49,13 @@ EventType = Literal[
     "hook_deny",
     "api_retry",
     "session_end",
+    "context_warn",
+    "compaction_start",
+    "compaction_end",
+    "subagent_start",
+    "subagent_end",
+    "cost_alert",
+    "loop_warn",
 ]
 
 
@@ -242,6 +249,55 @@ class ConsoleRenderer:
 
         if self.show_context_pct and d.get("context_used_pct") is not None:
             self._write(f" Context: {d['context_used_pct']:.0f}% of window")
+
+    # ── New handlers for PR #53 observability gaps ──────────────────────
+
+    def _handle_context_warn(self, e: OutputEvent) -> None:
+        d = e.data
+        pct = d.get("pct", 0)
+        action = d.get("action", "")
+        if action in ("stage2", "stage3") or pct >= 80:
+            self._write(f"  {self._c('33', '⚠️')} context: {pct}% of window ({action})")
+        elif self.detail in ("verbose", "debug"):
+            self._write(f"  {self._c('33', '⚠️')} context: {pct}% of window")
+
+    def _handle_compaction_start(self, e: OutputEvent) -> None:
+        d = e.data
+        stage = d.get("stage", "?")
+        self._write(f"  {self._c('36', '🗜️')} compaction stage{stage}: summarizing...")
+
+    def _handle_compaction_end(self, e: OutputEvent) -> None:
+        d = e.data
+        stage = d.get("stage", "?")
+        ok = d.get("ok", True)
+        if ok:
+            before = d.get("tokens_before", 0)
+            after = d.get("tokens_after", 0)
+            self._write(f"  {self._c('36', '🗜️')} compaction stage{stage}: done, {before} → {after} tokens")
+        else:
+            self._write(f"  {self._c('31', '❌')} compaction stage{stage} error: {d.get('error', 'unknown')}")
+
+    def _handle_subagent_start(self, e: OutputEvent) -> None:
+        d = e.data
+        role = d.get("role", "?")
+        self._write(f"  → Spawn subagent [{role}]")
+
+    def _handle_subagent_end(self, e: OutputEvent) -> None:
+        d = e.data
+        ok = d.get("ok", True)
+        if ok:
+            if self.detail in ("verbose", "debug"):
+                self._write(f"  ← subagent done: exit=0")
+        else:
+            self._write(f"  {self._c('31', '❌')} subagent failed: {d.get('error', 'unknown')}")
+
+    def _handle_cost_alert(self, e: OutputEvent) -> None:
+        d = e.data
+        self._write(f"  {self._c('33', '💰')} cost: {d.get('message', 'threshold reached')}")
+
+    def _handle_loop_warn(self, e: OutputEvent) -> None:
+        d = e.data
+        self._write(f"  {self._c('33', '🔄')} loop detected: {d.get('detector', '?')} — {d.get('message', '')}")
 
 
 # ── QuietRenderer ─────────────────────────────────────────────────────────

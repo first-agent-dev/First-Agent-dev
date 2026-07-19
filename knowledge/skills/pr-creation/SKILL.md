@@ -57,7 +57,7 @@ LLM judgement on which bucket the PR is in.
 | Label       | Path-shape that fires it                                                                                                                                  |
 |-------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `RESEARCH`  | Sole adds under `knowledge/research/*.md`. No `src/`, no `tests/`, no rule files. Includes audit-style sweeps (read-only repo audits producing findings). |
-| `ADR-RULE`  | ANY of the following in the diff: `knowledge/adr/ADR-*`, `AGENTS.md`, `knowledge/project-overview.md`, `knowledge/anti-patterns/AP-*`, `knowledge/MAINTENANCE.md`, `knowledge/skills/**`. |
+| `ADR-RULE`  | ANY of the following in the diff: `knowledge/adr/ADR-*`, `AGENTS.md`, `knowledge/project-overview.md`, `knowledge/anti-patterns/AP-*`, `knowledge/skills/doc-maintenance/SKILL.md`, `knowledge/skills/**`. |
 | `IMPLEMENT` | `src/fa/**` and/or `tests/**` with status `A` (added) ONLY — first-time work realising an accepted ADR-RULE contract.                                     |
 | `FIX`       | `src/fa/**` and/or `tests/**` with status `M` (modified) or mixed `A`+`M` — behaviour change interacting with a pre-existing invariant. Requires Level-2 CLASS. |
 | `CHORE`     | Sole touches in `{pyproject.toml, .pre-commit-config.yaml, .github/**, knowledge/llms.txt}`. Non-semantic; no logic or rule changes.                       |
@@ -266,7 +266,7 @@ is responsible for self-checking against each rule.
    mandated as a PR Checklist rule. Slot retained so rules
    6..10 keep their numbers; archival mechanics remain
    per-artefact in
-   [`knowledge/MAINTENANCE.md`](../../MAINTENANCE.md).)*
+   [`knowledge/skills/doc-maintenance/SKILL.md`](../doc-maintenance/SKILL.md).)*
 6. **PR description lists changed / new files as clickable
    blob-URLs** (`https://github.com/<owner>/<repo>/blob/<branch>/<path>`),
    at least for non-trivial files. Plain bullet text is
@@ -276,11 +276,11 @@ is responsible for self-checking against each rule.
 7. **`knowledge/llms.txt` reflects reality.** If this PR adds,
    removes, or renames a file under `docs/` or `knowledge/`,
    follow the matching checklist in
-   [`knowledge/MAINTENANCE.md`](../../MAINTENANCE.md) (§When
+   [`knowledge/skills/doc-maintenance/SKILL.md`](../doc-maintenance/SKILL.md) (§When
    adding a new file / §When archiving a research note / §When
    superseding a non-research file). Pre-commit regenerator is
    planned post-Phase S (backlog
-   [`I-6`](../../BACKLOG.md) — concept originated in the retired
+   [`I-6`](../../../worklogs/BACKLOG.md) — concept originated in the retired
    `docs/workflow.md` Phase-S step 7, folder removed 2026-05-29).
 8. **Research notes from the research-briefing workflow start
    with §0 Decision Briefing.** Notes under `knowledge/research/`
@@ -327,7 +327,7 @@ is responsible for self-checking against each rule.
    agent-reading cheat-sheet (one paragraph per ADR ≈ 80 lines
    for all seven); stale rows defeat the purpose. **In the same
    PR**, also cross-check
-   [`HANDOFF.md`](../../../HANDOFF.md) §Current state ADR list —
+   [`HANDOFF.md`](../../../worklogs/HANDOFF.md) §Current state ADR list —
    it is the human-readable mirror of the ADR slate (per
    `HANDOFF.md` §Why this file exists) and drifts silently if
    not enforced. If the PR adds an ADR, append a bullet under
@@ -366,7 +366,7 @@ is responsible for self-checking against each rule.
          MUST use `generateText` (not streaming). Captured in
          [ADR-7 §Amendment 2026-05-20](../../adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule)
          rule 5 and
-         [BACKLOG.md I-2](../../BACKLOG.md#i-2--agent--sub-agents-for-context-load-reduction)
+         [BACKLOG.md I-2](../../../worklogs/BACKLOG.md#i-2--agent--sub-agents-for-context-load-reduction)
          pending the BACKLOG I-2 implementation.
     2. Open-source agent-stack precedent that **already** removed
        or did not add a similar component, and the observed

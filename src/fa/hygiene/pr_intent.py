@@ -94,7 +94,7 @@ _CHORE_PREFIXES: tuple[str, ...] = (".github/",)
 
 # ADR-RULE bucket prefixes / exact paths per skill §Reference.
 _ADR_RULE_EXACT_PATHS: frozenset[str] = frozenset(
-    {"AGENTS.md", "knowledge/project-overview.md", "knowledge/MAINTENANCE.md"}
+    {"AGENTS.md", "knowledge/project-overview.md", "knowledge/skills/doc-maintenance/SKILL.md"}
 )
 _ADR_RULE_PREFIXES: tuple[str, ...] = (
     "knowledge/adr/ADR-",

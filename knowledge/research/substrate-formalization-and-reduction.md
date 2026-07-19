@@ -83,13 +83,13 @@ From `knowledge/README.md` layout + `src/fa/inner_loop/`:
 - `knowledge/skills/*/SKILL.md` — per-task disciplines, triggers verb-based, frontmatter name,description,status,triggers,last-reviewed
 - `knowledge/prompts/*.md` — prompts, RESOLVER.md, architect-fa.md, architect-fa-compact.md
 - `knowledge/anti-patterns/AP-*.md` — named anti-pattern catalog
-- `knowledge/overview/FEATURES.md` — pitch
+- `knowledge/reference.md` — pitch
 - `knowledge/templates/` — fa.env.template, config.yaml.example, models.yaml.example
 - `knowledge/trace/exploration_log.md` — alternatives rejected
 - `AGENTS.md` — universal session loadout, pre-flight checklist, context-budget discipline, industry-proven rules
 - `HANDOFF.md` — current state tables, Next priority
 - `knowledge/llms.txt` — one-fetch index, MUST READ FIRST 5 files, BY-DEMAND INDEX full list
-- `knowledge/glossary.md` — canonical definitions
+- `knowledge/reference.md` — canonical definitions
 - `src/fa/inner_loop/prompt.py` — PLANNER/CODER/EVAL system prompts constants
 - `src/fa/inner_loop/registry.py` — ToolRegistry, ToolSpec, ToolResult, ToolCall, JSON Schema validation via fastjsonschema, max_context_bytes
 - `src/fa/inner_loop/tools/*` — run_bash, base, bash_env, etc.

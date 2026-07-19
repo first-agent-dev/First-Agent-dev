@@ -103,3 +103,21 @@ eval:
 #         slug: "minimax/minimax-m3"
 #         base_url: "https://openrouter.ai/api/v1"
 #         api_key_env: OPENROUTER_API_KEY
+#
+# ───────────────────────────────────────────────────────────────────────────
+# Опциональная роль compactor (контекстная компакция — ADR-17).
+# Когда объявлена и включён флаг context_compaction_enabled в config.yaml,
+# fa run автоматически использует эту модель для сжатия контекста при
+# достижении порога offload_threshold токенов. Семья compactor должна
+# отличаться от coder/planner (правило ADR-2).
+# ───────────────────────────────────────────────────────────────────────────
+#
+# compactor:
+#   model: "accounts/fireworks/models/phi-4-mini"
+#   family: "phi"
+#   chain:
+#     - provider: fireworks
+#       slug: "accounts/fireworks/models/phi-4-mini"
+#       base_url: "https://api.fireworks.ai/inference/v1"
+#       api_key_env: FIREWORKS_API_KEY
+#       timeout_seconds: 15

@@ -42,8 +42,10 @@ from fa.inner_loop.coder_loop import (
     drive_session,
 )
 from fa.inner_loop.hooks import (
+    AttemptHistoryObserver,
     AuditHook,
     AuthExpiredBlocker,
+    FailureClassifierObserver,
     HookRegistry,
     IntentGuard,
     LearningObserver,
@@ -54,6 +56,7 @@ from fa.inner_loop.hooks import (
     SecretGuard,
     VerifierObserver,
 )
+from fa.inner_loop.recovery.attempt_history import AttemptHistory
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.tools import (
     build_baseline_registry,
@@ -759,11 +762,26 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     log = EventLog(log_path)
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))
+    # LoopGuard warn_sink: emit loop_guard_warn event to EventLog so
+    # the early-warning signal (repeat_warn threshold) reaches session.db
+    # and the operator gets console visibility. Without warn_sink, the
+    # _emit_warn method short-circuits and the event kind is dead code.
+    def _smoke_loop_guard_warn_sink(detector: str, message: str) -> None:
+        try:
+            log.append(
+                actor="hook",
+                kind="loop_guard_warn",
+                content={"detector": detector, "message": message},
+            )
+        except Exception:  # noqa: BLE001 — observer must never block
+            pass
+
     hooks.register(
         LoopGuard(
             repeat_warn=limits.loop_guard_repeat_warn,
             circuit_breaker=limits.loop_guard_circuit_breaker,
             window=limits.loop_guard_window,
+            warn_sink=_smoke_loop_guard_warn_sink,
         )
     )
     # R-4 BlockerMiddleware family: dormant on baseline tools (their
@@ -788,6 +806,13 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     # is stable when the T-2 LLM driver lands the artifact emitter
     # — mirrors the BlockerMiddleware-family rationale above.
     hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
+    # R-3 FailureClassifierObserver + R-6 AttemptHistoryObserver: classify
+    # tool failures and write recovery history so the coder-recovery prompt
+    # can read it. Wired here so the smoke entrypoint exercises the same
+    # hook chain as `fa run`.
+    attempt_history = AttemptHistory(workspace / ".fa" / "attempt_history.json")
+    hooks.register(FailureClassifierObserver(event_log=log))
+    hooks.register(AttemptHistoryObserver(history=attempt_history))
     # R-8 LearningObserver: writes discoveries/gotchas to the canonical
     # ``<workspace>/knowledge/trace/`` artifacts — the same path the
     # T-2 real runtime will use, so smoke literally exercises R-8's
@@ -1567,10 +1592,57 @@ def _cmd_workflow(
     label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
     print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)
     if mode == "repair":
-        return _run_repair(ctx, roles, max_repairs)
-    if mode == "adaptive":
-        return _run_adaptive(ctx, roles, max_repairs, max_replans)
-    return _run_linear(ctx, roles)
+        result_code = _run_repair(ctx, roles, max_repairs)
+    elif mode == "adaptive":
+        result_code = _run_adaptive(ctx, roles, max_repairs, max_replans)
+    else:
+        result_code = _run_linear(ctx, roles)
+
+    # LOGIC-11: Export single aggregate row to global_history.db after
+    # workflow completes. Per-stage exports are skipped in _cmd_run when
+    # outcome_sink is non-None, so each stage doesn't overwrite the previous
+    # one's row. This single export reads ALL events from the shared
+    # session.db and produces correct cross-stage telemetry.
+    try:
+        from fa.inner_loop.global_history import export_session_to_global_history
+        from fa.inner_loop.state import EventLog as _EventLog
+
+        session_dir = Path.home() / ".fa" / "session-log" / run_id
+        log_path = session_dir / "events.jsonl"
+        workflow_log = _EventLog(log_path, run_id=run_id)
+        # Build a synthetic outcome for the aggregate row.
+        # Token totals and tool breakdown come from _extract_telemetry_from_log
+        # which reads the shared session.db correctly.
+        from fa.inner_loop.coder_loop import SessionOutcome as _SO
+        aggregate_outcome = _SO(
+            exit_code=result_code,
+            stop_reason="workflow_complete" if result_code == 0 else "workflow_failed",
+            turns=0,  # turns in global_history come from telemetry, not outcome
+            final_text="",
+            tool_results=(),
+        )
+        # Get model/family from the last role's chain config
+        _models = load_models_config_from_path(ctx.args.config.expanduser().resolve(), require_api_keys=False)
+        _last_role = roles[-1] if roles else "coder"
+        _last_chain = _models.roles.get(_last_role)
+        _last_model = _last_chain.model if _last_chain else ""
+        _last_family = _last_chain.family if _last_chain else ""
+
+        export_session_to_global_history(
+            run_id=run_id,
+            outcome=aggregate_outcome,
+            log=workflow_log,
+            role="→".join(roles),
+            model=_last_model,
+            family=_last_family,
+            workspace_root=ctx.args.workspace,
+            duration_ms=0,  # not tracked at workflow level yet
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort, never crash workflow
+        import logging
+        logging.getLogger(__name__).warning("workflow global_history export failed for %s: %s", run_id, exc)
+
+    return result_code
 
 
 def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→proxy→loop)
@@ -1742,11 +1814,35 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     log = EventLog(log_path, run_id=run_id, redactor=redactor)
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))
+    # LoopGuard warn_sink: emit loop_guard_warn event to EventLog so the
+    # early-warning signal (repeat_warn threshold) reaches session.db and
+    # the operator gets console visibility. Without warn_sink, the _emit_warn
+    # method short-circuits and the event kind is dead code (LOGIC-14).
+    def _loop_guard_warn_sink(detector: str, message: str) -> None:
+        try:
+            log.append(
+                actor="hook",
+                kind="loop_guard_warn",
+                content={"detector": detector, "message": message},
+            )
+        except Exception:  # noqa: BLE001 — observer must never block
+            pass
+        # FIX-5: emit loop_warn for console visibility
+        try:
+            if output_bus is not None:
+                output_bus.emit(OutputEvent(
+                    type="loop_warn",
+                    data={"detector": detector, "message": message},
+                ))
+        except Exception:  # noqa: BLE001 — observer must never block
+            pass
+
     hooks.register(
         LoopGuard(
             repeat_warn=limits.loop_guard_repeat_warn,
             circuit_breaker=limits.loop_guard_circuit_breaker,
             window=limits.loop_guard_window,
+            warn_sink=_loop_guard_warn_sink,
         )
     )
     hooks.register(RateLimitBlocker(suppression_seconds=limits.rate_limit_suppression_seconds))
@@ -1766,6 +1862,15 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         )
     )
     hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
+    # R-3 FailureClassifierObserver + R-6 AttemptHistoryObserver: classify
+    # tool failures and write recovery history so the coder-recovery prompt
+    # can read it. These were defined but never registered (LOGIC-15),
+    # making `recovery_action` event kind dead code in production.
+    attempt_history = AttemptHistory(
+        Path.home() / ".fa" / "session-log" / run_id / "attempt_history.json"
+    )
+    hooks.register(FailureClassifierObserver(event_log=log))
+    hooks.register(AttemptHistoryObserver(history=attempt_history))
     hooks.register(
         LearningObserver(
             codebase_map_path=workspace / "knowledge" / "trace" / "codebase_map.json",
@@ -1785,10 +1890,10 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
 
         max_size = 2
         try:
-            # Try to get max_size from feature flags if available via env config?
-            # For CLI, we don't have FeatureFlags yet, use default 2, but allow override via env FA_PTY_POOL_MAX_SIZE
-            import os
-
+            # Override via env FA_PTY_POOL_MAX_SIZE (module-level os import;
+            # do NOT re-import os here — it shadows the module-level import
+            # and causes UnboundLocalError on earlier os.environ/os.getpid()
+            # references in this function).
             max_size = int(os.environ.get("FA_PTY_POOL_MAX_SIZE", "2"))
         except Exception:
             max_size = 2
@@ -1802,7 +1907,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     state = SessionState(workspace_root=workspace, run_id=run_id, log=log, pty_pool=pty_pool)
 
     # ── Live output ─────────────────────────────────────────────────────────
-    from fa.output import ConsoleRenderer, EventBus, QuietRenderer
+    from fa.output import ConsoleRenderer, EventBus, OutputEvent, QuietRenderer
 
     output_bus = EventBus()
     output_mode = getattr(args, "output_mode", None) or "console"
@@ -1816,43 +1921,72 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         output_bus.add(QuietRenderer())
     # json mode: Phase 2
 
+    # Wire output_bus to state so subagent/cost_guardian can emit console events
+    state.output_bus = output_bus
+
     _run_start_mono = time.monotonic()
-    outcome = drive_session(
-        args.task,
-        provider_chain=chain,
-        compactor_chain=compactor_chain,
-        registry=registry,
-        hooks=hooks,
-        state=state,
-        role=role,
-        acting_family=chain_config.family,
-        limits=limits,
-        max_turns=args.max_turns,
-        system_prompt_extra="",
-        initial_memory_summary=resume_draft_text,
-        temperature=session_temperature,
-        redactor=redactor,
-        output=output_bus,
-    )
+    try:
+        outcome = drive_session(
+            args.task,
+            provider_chain=chain,
+            compactor_chain=compactor_chain,
+            registry=registry,
+            hooks=hooks,
+            state=state,
+            role=role,
+            acting_family=chain_config.family,
+            limits=limits,
+            max_turns=args.max_turns,
+            system_prompt_extra="",
+            initial_memory_summary=resume_draft_text,
+            temperature=session_temperature,
+            redactor=redactor,
+            output=output_bus,
+        )
+    except RuntimeError as exc:
+        # LOGIC-8 + NEW-3: EventLog authority or write failures.
+        # Both SessionDatabase.append_event_row (event_log_write_failed) and
+        # EventLog.append (event_log_authority_unavailable) can raise
+        # RuntimeError. Catch both with explicit messages so the operator
+        # sees a clear diagnostic instead of a raw Python traceback.
+        exc_str = str(exc)
+        db_path = log.path.parent / "session.db"
+        if "event_log_authority_unavailable" in exc_str:
+            print(
+                f"fa run: session database not available at {db_path}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+        if "event_log_write_failed" in exc_str:
+            print(
+                f"fa run: failed to write event to session database at {db_path}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+        raise  # Re-raise unexpected RuntimeErrors
     _run_duration_ms = int((time.monotonic() - _run_start_mono) * 1000)
     # Slice 9: export to global_history.db as derived projection (best-effort, never crashes main)
-    try:
-        from fa.inner_loop.global_history import export_session_to_global_history
+    # LOGIC-11: skip per-stage export when called from _cmd_workflow (outcome_sink
+    # is non-None). The workflow controller exports a single aggregate row after
+    # all stages complete, avoiding INSERT OR REPLACE overwriting by later stages.
+    if outcome_sink is None:
+        try:
+            from fa.inner_loop.global_history import export_session_to_global_history
 
-        export_session_to_global_history(
-            run_id=run_id,
-            outcome=outcome,
-            log=log,
-            role=role,
-            model=chain_config.model,
-            family=chain_config.family,
-            workspace_root=workspace,
-            duration_ms=_run_duration_ms,
-        )
-    except Exception as exc:  # noqa: BLE001 - best-effort export must not break run
-        import logging
+            export_session_to_global_history(
+                run_id=run_id,
+                outcome=outcome,
+                log=log,
+                role=role,
+                model=chain_config.model,
+                family=chain_config.family,
+                workspace_root=workspace,
+                duration_ms=_run_duration_ms,
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort export must not break run
+            import logging
 
-        logging.getLogger(__name__).warning("global_history export failed for %s: %s", run_id, exc)
+            logging.getLogger(__name__).warning("global_history export failed for %s: %s", run_id, exc)
 
     # Workflow seam: let an orchestrating caller capture the terminal outcome
     # (e.g. to parse the eval role's final message into ``eval_report.json``)
@@ -2168,7 +2302,7 @@ def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
         session_dirs = [target]
     else:
         session_dirs = sorted(
-            [d for d in runs_dir.iterdir() if d.is_dir() and (d / "events.jsonl").exists()],
+            [d for d in runs_dir.iterdir() if d.is_dir() and (d / "session.db").exists()],
             key=lambda d: d.stat().st_mtime,
             reverse=True,
         )

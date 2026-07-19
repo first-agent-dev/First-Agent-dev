@@ -494,7 +494,7 @@ OpenAI announced the Astral acquisition on 19 Mar 2026, stating the tools will r
 
 - `knowledge/research/_template.md` — research note template
 - `knowledge/project-overview.md` §1.2 — minimalism-first principle
-- `knowledge/glossary.md` — term definitions
+- `knowledge/reference.md` — term definitions
 - `knowledge/llms.txt` — routing index
 - `AGENTS.md` — pre-flight checklist, context-budget discipline
 - `.github/workflows/ci.yml` — current CI pipeline

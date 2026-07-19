@@ -31,7 +31,7 @@ repos:
         args: [--disable, MD013]
 
   # Internal-link integrity: catches dangling *relative* markdown links when
-  # docs are moved/pruned (enforces knowledge/MAINTENANCE.md §When moving or
+  # docs are moved/pruned (enforces knowledge/skills/doc-maintenance/SKILL.md §When moving or
   # pruning a doc). Dependency-free, offline, deterministic — checks that local
   # file targets exist (anchor validation is opt-in via --anchors, off here to
   # avoid slug-algorithm noise). Pre-commit passes only the changed .md files,

@@ -955,7 +955,7 @@
 
 - **Closed by:**
   [`knowledge/anti-patterns/AP-002-stale-routing-index-counts.md`](../anti-patterns/AP-002-stale-routing-index-counts.md)
-  + [`MAINTENANCE.md` §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge)
+  + [`doc-maintenance skill` §When adding a new file](/skills/doc-maintenance/SKILL.md#when-adding-a-new-file-under-knowledge-or-worklogs)
   + sweep of all 58 rows in `knowledge/llms.txt` (M2 PR; no new ADR).
 - **Coupling:** Q-11 — first **RELAX** dogfood of the
   [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference)
@@ -1016,7 +1016,7 @@
     > 1 cross-bucket change without updating the row.
 - **Re-evaluation triggers:** (1) Next periodic sweep (no fixed
   cadence yet; opportunistic — bundled with the next PR that
-  touches `MAINTENANCE.md` or three+ llms.txt rows in a single
+  touches `doc-maintenance` skill or three+ llms.txt rows in a single
   edit) finds ≥ 5 % cross-bucket drift → escalate to the
   CI-mechanisation branch; (2) Project file distribution shifts
   toward larger files (median > 600 LOC) → re-cut boundaries to
@@ -1025,7 +1025,7 @@
   revisit the «raw count only» branch with the new evidence.
 - **Source:**
   [`knowledge/anti-patterns/AP-002-stale-routing-index-counts.md`](../anti-patterns/AP-002-stale-routing-index-counts.md)
-  + [`MAINTENANCE.md` §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge)
+  + [`doc-maintenance skill` §When adding a new file](/skills/doc-maintenance/SKILL.md#when-adding-a-new-file-under-knowledge-or-worklogs)
   + [`pr-creation` skill §Reference](../skills/pr-creation/SKILL.md#reference)
   + Q-11 (Layers 1 / 2 / 3 model this Q-12 inherits).
 
@@ -1465,7 +1465,7 @@
   + the four-place commit already on disk
   ([`project-overview.md`:70](../project-overview.md),
   [`BACKLOG.md`:117](../BACKLOG.md),
-  [`knowledge/glossary.md`:62-64](../glossary.md)).
+  [`knowledge/reference.md` §Terms](../reference.md#terms)).
   Closes BACKLOG I-9 path (b) by moving
   `knowledge/prompts/repo-audit-playbook.md` to
   `knowledge/skills/repo-audit/SKILL.md` in the same PR.
@@ -1525,7 +1525,7 @@
     `ADR-RULE` row gained one path-shape entry (`knowledge/skills/**`)
     on top of PR A's `{knowledge/adr/ADR-*, AGENTS.md,
     knowledge/project-overview.md, knowledge/anti-patterns/AP-*,
-    knowledge/MAINTENANCE.md}` set — not «unchanged». Reason:
+    knowledge/skills/doc-maintenance/SKILL.md}` set — not «unchanged». Reason:
     skills are themselves rule-bearing artefacts (the skill is
     where the PR-creation rule now lives), so amending an
     existing skill or adding a new one is functionally
@@ -1708,7 +1708,7 @@
   [`AGENTS.md` §Development Workflow](../../AGENTS.md#development-workflow)
   (AI-Session trailer paragraph deleted; cross-link to skill
   retained),
-  [`HANDOFF.md` §Process / rule changes 2026-05-26 PR A'](../../HANDOFF.md#current-state)
+  [`HANDOFF.md` §Process / rule changes 2026-05-26 PR A'](../../worklogs/HANDOFF.md#current-state)
   (expanded scope disclosure).
 
 ## Q-16 — What authoring-time guardrail architecture does FA adopt, and how is it enforced? (2026-06-01)
@@ -1879,7 +1879,7 @@
   - **(b) pexpect directly in coder_loop.** Reason: PTY in same process as LLM loop, crash loses state, ANSI fragile, OpenHands PR #4881 replaced pexpect with libtmux for stability. Lesson: pexpect kept as fallback with WARNING when tmux binary missing (`shutil.which("tmux") is None`) — graceful degradation, not primary path.
   - **(c) Keep subprocess.run stateless.** Reason: 124 steps timeout measured, token waste, no cd/venv persistence. Violates Pillar 3 median tokens/completed task. Lesson: never — stateless is root cause.
 - **Coupling:** Q-6 (sandbox), Q-8 (HookRegistry BETWEEN_ROUNDS), ADR-12 (secret isolation egress-proxy), ADR-11 Level-0 TCB stdlib-only (PTY manager in Level-1), ADR-7 §10 paired rows + projection cap 8000.
-- **Source:** [ADR-14](../adr/ADR-14-stateful-bash-eventstream-runtime.md), [Implementation Plan v3](../../research/adr-13-14-implementation-plan-2026-07-11-v3-reduced.md), OpenHands EventStream Runtime + PR #4881, OpenCode ShellPool #6488 97% reduction, Cursor 3.2 PTY tmux, pi-persistent-term comparison, Hermes persistent_shell, ArXiv 2603.05344 v2 staged compaction.
+- **Source:** [ADR-14](../adr/ADR-14-stateful-bash-eventstream-runtime.md), [Implementation Plan v3](../../worklogs/implementation-plans/adr-13-14-implementation-plan-2026-07-11-v3-reduced.md), OpenHands EventStream Runtime + PR #4881, OpenCode ShellPool #6488 97% reduction, Cursor 3.2 PTY tmux, pi-persistent-term comparison, Hermes persistent_shell, ArXiv 2603.05344 v2 staged compaction.
 
 ## Q-21 — How to enable multitask subagents without topology complexity explosion? (2026-07-11)
 

@@ -106,6 +106,7 @@ class ChainConfig:
     chain: tuple[ChainEntry, ...]
     context_limit: int = 150000
     compaction_threshold: int | None = None
+    extras: Mapping[str, Any] = field(default_factory=dict)
 
     def validate(
         self,
@@ -463,6 +464,15 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
         raise ConfigurationError(
             f"role {role!r}: context_limit and compaction_threshold must be integers"
         ) from exc
+    # Role-level extras: provider-specific parameters that the caller wants
+    # forwarded to the LLM request body. These are distinct from per-chain-entry
+    # ``extra_headers`` (HTTP headers) — ``extras`` are body-level fields like
+    # ``prediction``, ``reasoning_effort``, ``response_format``, etc.
+    # Currently used by the Mistral adapter for Mistral-specific features.
+    # Values are passed through verbatim (no validation here — the adapter
+    # validates its own fields).
+    extras_raw = raw.get("extras")
+    role_extras: Mapping[str, Any] = extras_raw if isinstance(extras_raw, Mapping) else {}
     return ChainConfig(
         role=role,
         model=str(raw.get("model") or ""),
@@ -470,4 +480,5 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
         chain=entries,
         context_limit=context_limit,
         compaction_threshold=compaction_threshold,
+        extras=role_extras,
     )
