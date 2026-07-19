@@ -146,7 +146,7 @@ top-4 + §TASK ROUTING ADR-7 primary entry. `ADR-template.md` and
 `exploration_log.md` are mandated for ADR-authoring tasks by
 [`pr-creation` skill PR Checklist rule #9](../skills/pr-creation/SKILL.md#pr-checklist) and
 the §When merging an ADR amendment cascade in
-[`MAINTENANCE.md`](../MAINTENANCE.md).
+[`doc-maintenance skill`](/skills/doc-maintenance/SKILL.md).
 
 A larger **typical** set of nine files appears in 4–5 of the six
 sessions but not all six — model-specific or harness-specific
@@ -166,7 +166,7 @@ empirical evidence что routing-сигналы после 2026-05 refactor'а
 работают **независимо от model selection и agent harness** (routing
 surface, not harness-specific behaviour, drives the convergence).
 Notably **`AGENTS.md` is not in the irreducible core** despite
-[HANDOFF.md §60-second bootstrap step 1](../../HANDOFF.md#60-second-bootstrap)
+[HANDOFF.md §60-second bootstrap step 1](../../worklogs/HANDOFF.md#60-second-bootstrap)
 mandating it — Opus B treated `HANDOFF` + `llms.txt` + `DIGEST` as
 sufficient rule-surface. The sample is N = 1 and `AGENTS.md` remains
 the authoritative rule-surface; the observation is a soft signal,
@@ -288,7 +288,7 @@ future measurement prompts должны быть single-message и без
 
 1. [`knowledge/llms.txt`](../llms.txt) §MUST READ FIRST или
    §TASK ROUTING materially changed (more than typo / link fix).
-2. [`HANDOFF.md`](../../HANDOFF.md) §60-second bootstrap rewritten.
+2. [`HANDOFF.md`](../../worklogs/HANDOFF.md) §60-second bootstrap rewritten.
 3. [`knowledge/adr/DIGEST.md`](../adr/DIGEST.md) restructured or
    becomes stale.
 4. A new model tier landed in

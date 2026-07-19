@@ -58,6 +58,7 @@ KNOWN_FAMILIES: frozenset[str] = frozenset(
         "mimo",
         "nemotron",
         "llama",
+        "mistral",
     }
 )
 
@@ -111,6 +112,15 @@ _FAMILY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # ``local-llama-finetune`` example).
     (re.compile(r"^(?:meta-llama/)?llama(?:-|$)"), "llama"),
     (re.compile(r"^meta-llama/"), "llama"),
+    # Mistral family. Covers ``mistral-*``, ``mistral-medium-*``,
+    # ``mistral-small-*``, ``mistral-large-*``, ``magistral-*``,
+    # ``codestral-*``, ``ministral-*``, and OpenRouter's
+    # ``mistralai/`` prefixed slugs.
+    (re.compile(r"^(?:mistralai/)?mistral(?:-|$)"), "mistral"),
+    (re.compile(r"^(?:mistralai/)?codestral(?:-|$)"), "mistral"),
+    (re.compile(r"^(?:mistralai/)?ministral(?:-|$)"), "mistral"),
+    (re.compile(r"^(?:mistralai/)?magistral(?:-|$)"), "mistral"),
+    (re.compile(r"^mistralai/"), "mistral"),
 )
 
 

@@ -1,6 +1,6 @@
 # Руководство по эксплуатации First-Agent (Docker / AIO)
 
-> Обновлено: 2026-06-17
+> Обновлено: 2026-07-18
 
 Это полный практический мануал по развёртыванию, обновлению и администрированию
 агента First-Agent на выделенном сервере (AIO — «всё в одном»). Здесь есть два
@@ -82,6 +82,30 @@ First-Agent работает не «голым процессом» на сер�
 | `/srv/first-agent/secrets/fa_proxy_token` | Токен fa→proxy (на хосте, 0600). Доказывает прокси, что вызов идёт от агента. **Не ключ** — утечка позволяет лишь платные вызовы через прокси, не раскрытие ключа. **Не коммитится.** |
 | `.env.fa` | Только **несекретные** runtime-настройки (`FA_AUTO_RUN`, `FA_TASK`, …). API-ключей здесь больше нет. |
 | `scripts/` | Скрипты установки, обновления, бэкапа и обслуживания. |
+| `~/.fa/session-log/<run_id>/session.db` | **Авторитетная SQLite-база сессии** (3 таблицы: `event_log`, `blackboard`, `session_meta`). Единственный источник истины для состояния сессии. `events.jsonl` — зеркало для чтения человеком, но НЕ авторитетен. Если JSONL и session.db расходятся — session.db прав. |
+| `~/.fa/global_history.db` | Производная аналитическая проекция (таблица `runs`). Заполняется в конце сессии, best-effort. Потребитель: `fa stats --global-history`. |
+
+### Артефакты сессии
+
+Каждый запуск `fa run` создаёт набор файлов в `~/.fa/session-log/<run_id>/`:
+
+| Файл | Назначение | Авторитетность |
+|------|------------|----------------|
+| `session.db` | SQLite: 3 таблицы (`event_log`, `blackboard`, `session_meta`). **Единственный источник истины.** | **Да** |
+| `events.jsonl` | JSONL-зеркало event_log (для `cat`/`grep`, best-effort) | Нет |
+| `pr_draft.md` | PR-драфт — нарратив сессии (человекочитаемый) | Самостоятельный |
+| `eval_report.json` | Вердикт eval + маршрут (`return_to_coder` / `return_to_planner` / `complete` / `blocked`) | Самостоятельный |
+| `flow_state.json` | Состояние workflow-контроллера (active_role, plan_version, repair/replan rounds) | Самостоятельный |
+| `attempt_history.json` | Лог попыток восстановления (rate-limit / lockfile / auth-expired) | Самостоятельный |
+
+Рабочие артефакты внутри `<workspace>/.fa/`:
+
+| Путь | Назначение |
+|------|------------|
+| `blackboard/blackboard.jsonl` | JSONL-зеркало session.db.blackboard (best-effort) |
+| `artifacts/` | Content-addressed хранилище offloaded tool results |
+| `subagents/<task_id>.json` | Результаты запуска подагентов |
+| `fts.db` | FTS5 полнотекстовый индекс (disposable cache) |
 
 
 ### 📂 Рабочие пространства (Workspace Isolation)
@@ -91,10 +115,61 @@ First-Agent работает не «голым процессом» на сер�
 - **Изоляция:** При каждом перезапуске контейнера (или старте первой задачи) автоматически создаётся изолированный клон хост-репозитория (`git clone --local`) в директории `/srv/first-agent/sessions/session-<ID>`.
 - **Как это выглядит для агента:** Агент работает в этом изолированном клоне. Он может делать коммиты, создавать ветки и пушить их. Основной хост-репозиторий всегда остаётся чистым для `fa update`.
 - **Доступ оператора:** Команда `fa shell` автоматически открывает `bash` внутри *активной* сессии агента, так что вам не нужно искать пути вручную.
-- **fa stats:** Учитывайте, что `fa stats` по умолчанию показывает статистику только для *текущей* сессии. Если вам нужна статистика прошлой сессии, перейдите в её директорию (`cd /srv/first-agent/sessions/session-<ID>`) и запустите `fa stats` там.
+- **fa stats:** Учитывайте, что `fa stats` по умолчанию показывает статистику только для *текущей* сессии. Если вам нужна статистика прошлой сессии, перейдите в её директорию (`cd /srv/first-agent/sessions/session-<ID>`) и запустите `fa stats` там. Для кросс-сессионной статистики используйте `fa stats --global-history` (читает из `~/.fa/global_history.db`).
+
+> **Данные сессии:** Каждый запуск `fa run` создаёт авторитетную SQLite-базу (`session.db`) в `~/.fa/session-log/<run_id>/`. Все события, blackboard-записи и метаданные сессии пишутся сначала в SQLite (авторитет), затем в `events.jsonl` (зеркало для чтения человеком, best-effort). Для программного чтения всегда используйте `session.db`.
 - **Сброс сессии:** Если агент сильно "намусорил" или зашел в тупик — просто сделайте `fa restart` или `fa rebuild`. Контейнер перезапустится и создаст чистую сессию из актуального хост-репозитория.
 
+### FeatureFlags (опциональный ~/.fa/config.yaml)
+
+Файл `~/.fa/config.yaml` (на хосте: `/srv/first-agent/state/config.yaml`) управляет
+runtime-флагами. **Файл необязателен:** его отсутствие = все флаги на дефолтах
+(безопасная конфигурация). Создавайте только чтобы что-то изменить.
+Изменения вступают в силу при следующем `fa run` (пересборка не нужна).
+
+Шаблон с комментариями: [`knowledge/templates/config.yaml.example`](../templates/config.yaml.example).
+
+| Флаг | Тип | По умолч. | Назначение |
+|------|-----|-----------|------------|
+| `blackboard.enabled` | bool | true | Включить Blackboard (конфликт-детекция, read/write sets) |
+| `blackboard.filtered_history_include_plans` | bool | false | Включить plan-записи в отфильтрованную историю |
+| `telemetry.enabled` | bool | true | Писать метрики сессии (TelemetryLogger) |
+| `tool_batching.enabled` | bool | true | Разрешить несколько tool calls за один LLM-ход |
+| `subagent_spawning_enabled` | bool | false | Разрешить запуск подагентов |
+| `max_subagent_spawns_per_session` | int | 3 | Лимит спавнов подагентов на сессию |
+| `context_budget_enabled` | bool | true | Отслеживать бюджет контекста |
+| `context_compaction_enabled` | bool | false | Автоматическая компакция контекста через роль `compactor` |
+| `offload_threshold` | int | 8000 | Порог токенов для запуска компакции |
+| `pty_pool.max_size` | int | 2 | Макс. параллельных stateful PTY-сессий |
+| `worktree.mode` | str | "shared" | Режим изоляции workspace: `shared` или `isolated` |
+| `memory.fts_db_path` | str | ".fa/fts.db" | Путь к FTS5 базе (относительно workspace) |
+| `prompt.caching` | bool | true | Включить cache_control hints для провайдеров |
+
+Пример минимального `config.yaml` (включить компакцию):
+
+```yaml
+feature_flags:
+  context_compaction_enabled: true
+```
+
 ### 🔒 Где живут API-ключи и почему агент их не видит
+
+#### Переменные окружения для кастомизации
+
+| Переменная | По умолч. | Назначение | Когда менять |
+|------------|-----------|------------|--------------|
+| `FA_COMPOSE_FILE` | `docker-compose.fa.yml` | Имя compose-файла, который использует wrapper `fa` | При кастомном compose-файле (например, для GPU) |
+| `FA_SECRETS_FILE` | `/run/secrets/fa.env` (AIO) или `~/.fa/.env` (WSL) | Путь к файлу API-ключей | При нестандартном расположении ключей |
+| `FA_PROXY_TOKEN_FILE` | `/run/secrets/fa_proxy_token` | Путь к файлу fa→proxy токена | Аналогично — при нестандартном layout |
+| `FA_PTY_POOL_MAX_SIZE` | `2` | Макс. параллельных PTY-сессий (переопределяет config.yaml) | При интенсивном bash-использовании |
+| `FA_EGRESS_PROXY_URL` | *(не задана)* | URL egress-proxy; если задана — агент в proxy-режиме | Задаётся docker-compose; вручную менять не нужно |
+
+Пример: кастомный compose-файл для GPU:
+
+```bash
+FA_COMPOSE_FILE=docker-compose.gpu.yml fa status
+FA_COMPOSE_FILE=docker-compose.gpu.yml fa run --role coder --task "..."
+```
 
 LLM API-ключи хранятся **только** в `/srv/first-agent/secrets/fa.env` (на хосте,
 права `0600`, вне репозитория) и монтируются read-only **только в контейнер
@@ -147,8 +222,8 @@ systemctl --user restart fa.service          # пересоздать стек (
 >
 > - `config.yaml` (опциональные capability-флаги) → `/srv/first-agent/state/config.yaml`
 >   (читается как `~/.fa/config.yaml`). Файл **необязателен**: его отсутствие = все
->   флаги `false` (безопасный deny-by-default). Создавайте только чтобы что-то
->   включить — шаблон: [`knowledge/templates/config.yaml.example`](../templates/config.yaml.example).
+>   флаги на дефолтах (большинство `true`; см. таблицу FeatureFlags выше). Создавайте только чтобы что-то
+>   изменить — шаблон: [`knowledge/templates/config.yaml.example`](../templates/config.yaml.example).
 > - `models.yaml` (маршрутизация) → `/srv/first-agent/routing/models.yaml` (см. ниже).
 > - `.env.fa` (несекретные `FA_*`) → `/srv/first-agent/repo/First-Agent-dev/.env.fa`.
 >
@@ -426,7 +501,7 @@ systemctl --user start   fa.service   # запустить
 > После правки `.env.fa` достаточно `systemctl --user restart fa.service` —
 > сервис выполняет `down` + `up -d`, пересоздаёт контейнер и перечитывает
 > окружение. (Не путайте с `docker compose restart`, который окружение **не**
-> перечитывает — см. раздел 7.3.) Эквивалент без systemd:
+> перечитывает — см. раздел 7.7.) Эквивалент без systemd:
 > `docker compose -f docker-compose.fa.yml up -d --force-recreate`.
 
 Прямая работа с контейнером (для диагностики):
@@ -574,32 +649,14 @@ docker compose -f docker-compose.fa.yml exec first-agent \
 
 ### 7.2. Workflow из трёх ролей (planner → coder → eval)
 
-Теперь базовый сценарий можно запускать одной командой: общий `run-id`,
-`workspace` и `resume` между ролями прокидываются автоматически.
+**Рекомендуемый способ** — одна команда `fa workflow`:
 
 ```bash
 cd /srv/first-agent/repo/First-Agent-dev
 fa workflow planner,coder,eval "Спланируй, реализуй и проверь X"
 ```
 
-Если нужен полный контроль, workflow всё ещё можно развернуть в три явных шага:
-
-```bash
-cd /srv/first-agent/repo/First-Agent-dev
-CF="docker-compose.fa.yml"
-
-# Планировщик
-docker compose -f $CF exec -T first-agent \
-    fa run -r planner -w /workspace -i work-1 "Спланируй X"
-
-# Кодер (продолжает черновик планировщика)
-docker compose -f $CF exec -T first-agent \
-    fa run -r coder -w /workspace -i work-1 --resume "Реализуй X"
-
-# Проверяющий (верифицирует работу кодера)
-docker compose -f $CF exec -T first-agent \
-    fa run -r eval -w /workspace -i work-1 --resume "Проверь X"
-```
+Общий `run-id`, `workspace` и `resume` между ролями прокидываются автоматически.
 
 Для разных инструкций на этапах используйте per-role overrides:
 
@@ -653,7 +710,158 @@ fa workflow coder,eval "Доведи src/fa/y.py до зелёного" --mode r
   (`PASS → DONE`, иначе `REPAIR_REQUIRED` / `REPLAN_REQUIRED` / `FAILED`) и
   число использованных раундов починки (`repair_round`).
 
-### 7.3. Авто-запуск одной задачи при старте контейнера
+### 7.3. Аналитика сессий (`fa stats`)
+
+`fa stats` анализирует логи прошлых сессий и выводит статистику:
+использование инструментов, паттерны доступа к файлам, таймлайны токенов,
+здоровье провайдеров, активность guard-хуков, dead zones, предупреждения
+об эффективности.
+
+```bash
+# Статистика последней сессии (консоль):
+fa stats
+
+# Статистика конкретной сессии:
+fa stats --run-id work-1
+
+# Только сессии не старше 7 дней:
+fa stats --since 7d
+
+# Форматы фильтра по возрасту:  30m / 1h / 24h / 7d  (число + суффикс)
+fa stats --since 24h
+fa stats --since 30m
+
+# Вывод в JSON (для скриптов / мониторинга):
+fa stats --output json
+fa stats --run-id work-1 --output json
+
+# Dead zones — файлы src/, к которым ни одна сессия не обращалась:
+fa stats --dead-zones
+
+# Комбинация: сессии за сутки + dead zones:
+fa stats --since 24h --dead-zones
+```
+
+#### Кросс-сессионная аналитика (`--global-history`)
+
+`fa stats --global-history` читает `~/.fa/global_history.db` — производную
+аналитическую проекцию (таблица `runs`), заполняемую в конце каждой сессии
+(best-effort, никогда не валит основной процесс). Показывает сводку по
+всем запускам: модель, роль, токены, стоимость, длительность, stop_reason.
+
+```bash
+# Все запуски (консоль, до 20 последних):
+fa stats --global-history
+
+# Все запуски в JSON:
+fa stats --global-history --output json
+
+# Фильтр по конкретному run-id:
+fa stats --global-history --run-id work-1
+
+# Фильтр по возрасту (как у обычного --since):
+fa stats --global-history --since 7d
+```
+
+> `global_history.db` — не авторитет. Это производная проекция для аналитики.
+> Авторитет сессии — `session.db`. Если нужен точный event-by-event отчёт —
+> используйте `fa stats --run-id <id>` (читает `events.jsonl` / `session.db`).
+
+### 7.4. Проверка authoring-guardrails (`fa authoring-check`)
+
+`fa authoring-check` запускает замороженное, stdlib-only Level-0 ядро
+authoring-guardrails (ADR-11 two-tier TCB) по текущему workspace:
+перечисляет файлы, считает SHA-256, прогоняет статический Level-1 allowlist
+и выводит отсортированные диагностики. Выход с кодом 0, если нет HARD-BLOCK;
+код 1 — если есть HARD-BLOCK.
+
+```bash
+# Проверить текущий workspace:
+fa authoring-check
+
+# Вывод в JSON (для CI / скриптов):
+fa authoring-check --output json
+
+# Указать другой workspace:
+fa authoring-check --workspace /path/to/repo
+
+# С manifest-файлом (.fa/session.toml — объявленные seam'ы редактирования):
+fa authoring-check --manifest .fa/session.toml
+```
+
+> Workspace должен содержать `knowledge/llms.txt` — маркер First-Agent
+> проекта. Без него команда завершится с exit 2.
+
+### 7.5. Передача задачи через stdin
+
+`fa run` поддерживает чтение задачи из stdin — полезно для конвейеров
+и скриптов:
+
+```bash
+# Явное чтение из stdin (ключ «-»):
+echo "Исправь баг в x.py" | fa run -r coder -
+
+# Pipe из git diff для роли eval:
+git diff | fa run -r eval "Проверь этот дифф"
+
+# Pipe из файла:
+cat task.txt | fa run -r coder -
+```
+
+**Прозрачный stdin:** если stdin не является терминалом (данные переданы
+по pipe) и при этом указан текст задачи, они объединяются — текст задачи
+получает контекст из pipe:
+
+```bash
+git diff | fa run -r eval "Проверь изменения в контексте:"
+# → LLM получит: "Проверь изменения в контексте:\n\n<stdin>\n...diff...\n</stdin>"
+```
+
+Если pipe есть, а текст задачи не указан — piped-данные становятся задачей.
+
+### 7.6. Роль compactor (контекстная компакция)
+
+Когда в `models.yaml` объявлена роль `compactor` и включён флаг
+`context_compaction_enabled: true` в `config.yaml`, `fa run` автоматически
+использует эту модель для сжатия контекста при достижении порога
+`offload_threshold` токенов (по умолчанию 8000). Это предотвращает
+переполнение контекста в длительных сессиях.
+
+**Шаг настройки:**
+
+1. Добавьте роль `compactor` в `/srv/first-agent/routing/models.yaml`:
+
+```yaml
+compactor:
+  model: "accounts/fireworks/models/phi-4-mini"
+  family: "phi"
+  chain:
+    - provider: fireworks
+      slug: "accounts/fireworks/models/phi-4-mini"
+      base_url: "https://api.fireworks.ai/inference/v1"
+      api_key_env: FIREWORKS_API_KEY
+      timeout_seconds: 15
+```
+
+2. Включите компакцию в `/srv/first-agent/state/config.yaml`:
+
+```yaml
+feature_flags:
+  context_compaction_enabled: true
+  offload_threshold: 8000        # порог токенов для запуска компакции
+```
+
+3. Пересоздайте контейнер (чтобы прокси подхватил новый route):
+
+```bash
+fa update
+```
+
+> `compactor` — роль с пониженной стоимостью (малая модель). Она не участвует
+> в workflow `planner→coder→eval`, а работает внутри `fa run` как внутренний
+> механизм управления контекстом.
+
+### 7.7. Авто-запуск одной задачи при старте контейнера
 
 Полезно для разовых пакетных заданий. Включается **только** при `FA_AUTO_RUN=1`
 (иначе из-за политики автоперезапуска задача крутилась бы в цикле).
@@ -767,6 +975,8 @@ Tailscale** (вашу частную сеть), а не из открытого 
 ## 10. Диагностика и типичные проблемы
 
 ### Быстрый аудит хост-раскладки (read-only)
+
+> **Авторитет сессии — SQLite, не JSONL.** Если вы читаете данные сессии вручную: `events.jsonl` удобен для `cat`/`grep`, но авторитетным источником является `session.db`. Для программного доступа используйте `sqlite3 ~/.fa/session-log/<run_id>/session.db "SELECT * FROM event_log"`.
 
 Перед тем как разбирать частную проблему, можно получить высокосигнальный
 снимок состояния хоста: где лежит canonical `routing/models.yaml`, остались ли
@@ -934,6 +1144,21 @@ git reset --hard HEAD
 Скорее всего не хватило оперативной памяти. Сделайте жёсткий перезапуск
 (раздел 5, минимальный перезапуск) и проверьте логи.
 
+### Диагностические команды (разработчик / отладка)
+
+Для глубокого отладления внутреннего цикла агента:
+
+```bash
+# Chunker: прогнать детерминированный chunker по файлу (инспекция индексации):
+fa chunk src/fa/cli.py --output json
+
+# Inner-loop smoke test: прогнать tool registry без LLM (нет API-вызова):
+fa inner-loop-smoke --workspace /workspace --input README.md
+
+# Authoring check (подробнее — в §7.4):
+fa authoring-check --output json
+```
+
 ---
 
 ## 11. Шпаргалка
@@ -990,15 +1215,23 @@ fa run --role coder --task "..."
 fa logs -f --tail=50             # логи agent-контейнера
 fa proxy-logs -f                 # логи прокси
 fa status                        # docker compose ps
+fa up                            # поднять стек
+fa down                          # остановить стек
 fa restart                       # restart обоих контейнеров
 fa rebuild                       # пересборка образов
+fa clean-rebuild                 # полная чистая переустановка (fa-clean-rebuild.sh)
+fa update                        # умное обновление (fa-update.sh)
 fa shell                         # bash внутри контейнера
+fa sessions                      # список session workspaces
+fa commit-traces                 # закоммитить trace-артефакты
+fa help                          # справка по всем командам (RU)
+fa help run                      # подробная справка по команде run
 ```
 
 Все команды `fa`, которые не являются инфраструктурными (logs, status, up,
-down, restart, rebuild, shell), автоматически передаются внутрь контейнера.
-Новые Python-подкоманды (добавленные в `src/fa/cli.py`) работают через
-wrapper без его изменения.
+down, restart, rebuild, shell, update, clean-rebuild, sessions, commit-traces),
+автоматически передаются внутрь контейнера. Новые Python-подкоманды
+(добавленные в `src/fa/cli.py`) работают через wrapper без его изменения.
 
 ### Проверка доступности провайдера (liveness probe)
 
@@ -1043,8 +1276,9 @@ docker compose -f docker-compose.fa.yml exec -T first-agent \
 `fa run` показывает прогресс в реальном времени на stderr:
 
 ```bash
-# Стандартный вывод (по умолчанию):
+# Стандартный вывод (по умолчанию — заголовки ходов + итог):
 fa run --role coder --task "..."
+fa run --role coder --task "..." --detail standard   # то же самое, явно
 
 # Минимальный (только заголовки и итог):
 fa run --role coder --task "..." --detail minimal
@@ -1057,8 +1291,15 @@ fa run --role coder --task "..." --detail debug
 
 # Без цвета (для логирования):
 fa run --role coder --task "..." --no-color
+```
 
-# Тихий режим (только финальный ответ):
+### Режим вывода
+
+```bash
+# По умолчанию — прогресс ходов на stderr:
+fa run --role coder --task "..." --output-mode console
+
+# Тихий режим — только финальный ответ, без прогресса ходов:
 fa run --role coder --task "..." --output-mode quiet
 ```
 

@@ -24,7 +24,7 @@
 > - [`agent-video-research.md`](./agent-video-research.md) — пять YouTube-видео
 >   о паттернах агентов; этот документ опирается на его словарь
 >   (tool use / RAG / planning / multi-agent, harness, determinism).
-> - [`knowledge/architecture.md`](../architecture.md) — трёхслойная модель
+> - [`knowledge/reference.md` §Patterns](../reference.md#patterns) — трёхслойная модель
 >   First-Agent (Interface / Cognitive / Execution). Роли из §5 ниже ложатся в
 >   Cognitive слой.
 

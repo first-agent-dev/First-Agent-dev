@@ -113,6 +113,7 @@ def test_extract_family_covers_every_known_family() -> None:
             ("mimo-7b", "mimo"),
             ("nemotron-3", "nemotron"),
             ("llama-3.3", "llama"),
+            ("mistral-medium-2604", "mistral"),
         ]
     }
     assert families_in_table == set(KNOWN_FAMILIES)
@@ -127,8 +128,8 @@ def test_extract_family_covers_every_known_family() -> None:
         "local-llama-finetune",  # ADR example
         "my-custom-finetune-v1",
         "some-random-model",
-        "mistral-small",  # not in the recognised set
         "phi-3-mini",  # not in the recognised set
+        "jamba-1.5",  # not in the recognised set
     ],
 )
 def test_extract_family_raises_on_ambiguous_slug(ambiguous_slug: str) -> None:
@@ -157,7 +158,7 @@ def test_extract_family_rejects_unknown_override() -> None:
     """A typo in the YAML override is caught early."""
 
     with pytest.raises(FamilyExtractionError, match="not a known family"):
-        extract_family("some-slug", override="mistral")
+        extract_family("some-slug", override="mistral-typo")
 
 
 # --- check_eval_disjoint --------------------------------------------------

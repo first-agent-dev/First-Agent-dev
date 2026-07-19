@@ -20,8 +20,8 @@ from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
-from fa.providers import ChainConfig, ProviderChain
-from tests.fixtures.session_wiring import mock_success_response, require_log
+from tests.fixtures.session_wiring import mock_success_response, require_log, make_test_chain_config
+from fa.providers import ProviderChain
 
 
 @pytest.fixture
@@ -39,11 +39,10 @@ def test_drive_session_budget_warn_event(tmp_path: Path, mock_session_state: Ses
     """Reaching 70% capacity must write a warn event, but continue with the LLM call."""
     mock_chain = MagicMock(spec=ProviderChain)
     # Set limit to 100,000 tokens
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+    )
 
     mock_chain.request.return_value = mock_success_response("warn path executed")
 
@@ -71,11 +70,10 @@ def test_drive_session_stage2_zone_does_not_hard_stop_when_compaction_disabled(
     tmp_path: Path, mock_session_state: SessionState
 ) -> None:
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+    )
     mock_chain.request.return_value = mock_success_response("stage2 zone allowed")
 
     # ~85k estimated tokens => Stage 2 zone, but not Stage 3.
@@ -100,11 +98,10 @@ def test_drive_session_stage2_zone_does_not_hard_stop_when_compaction_disabled(
 def test_drive_session_budget_hard_stop(tmp_path: Path, mock_session_state: SessionState) -> None:
     """Reaching the Stage 3 zone with compaction disabled must hard-stop immediately without LLM request."""
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+    )
 
     # Generate a task with ~95,000 tokens (380,000 chars) to trigger Stage 3 hard-stop.
     task = "A" * 380000

@@ -19,8 +19,8 @@ from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolResult, ToolSpec
-from fa.providers import ChainConfig, ProviderChain
-from tests.fixtures.session_wiring import mock_success_response, mock_tool_call_response, require_log
+from tests.fixtures.session_wiring import mock_success_response, mock_tool_call_response, require_log, make_test_chain_config
+from fa.providers import ProviderChain
 
 
 @pytest.fixture
@@ -41,11 +41,10 @@ def test_pins_present_each_turn_no_compaction(tmp_path: Path, mock_session_state
     agents_file.write_text("Rule: never modify src/", encoding="utf-8")
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+    )
 
     mock_chain.request.side_effect = [
         mock_tool_call_response("tc-1", "fs.read_file", {"path": "test.txt"}),
@@ -91,11 +90,10 @@ def test_pins_present_each_turn_no_compaction(tmp_path: Path, mock_session_state
 def test_pin_missing_file_policy(tmp_path: Path, mock_session_state: SessionState) -> None:
     """Missing AGENTS.md must warn but not crash the session."""
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+    )
 
     mock_chain.request.return_value = mock_success_response("missing path done")
 
@@ -121,11 +119,10 @@ def test_mid_session_file_change_reloads(tmp_path: Path, mock_session_state: Ses
     agents_file.write_text("Rule V1: Initial guideline", encoding="utf-8")
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+    )
 
     # Turn 1: original content, returns a tool call to trigger next turn
     # Turn 2: modified content, returns stop
@@ -179,11 +176,10 @@ def test_resume_draft_is_memory_summary_not_pinned(tmp_path: Path, mock_session_
     agents_file.write_text("Rule: standing governance", encoding="utf-8")
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+    )
     mock_chain.request.return_value = mock_success_response("done")
 
 

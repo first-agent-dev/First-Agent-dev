@@ -22,7 +22,8 @@ from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolResult, ToolSpec
-from fa.providers import ChainConfig, ProviderChain
+from tests.fixtures.session_wiring import make_test_chain_config
+from fa.providers import ProviderChain
 from fa.providers.base import ResponseInfo
 from tests.fixtures.session_wiring import mock_success_response, require_log
 
@@ -43,20 +44,20 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
 ) -> None:
     """Verifies that Stage 3 LLM Compaction triggers and uses the compactor_chain."""
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "anthropic"
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+        family="anthropic",
+    )
 
     mock_chain.request.return_value = mock_success_response("all done")
 
     # We also mock the compactor chain
     mock_compactor_chain = MagicMock(spec=ProviderChain)
-    mock_compactor_chain.config = MagicMock(spec=ChainConfig)
-    mock_compactor_chain.config.context_limit = 100000
-    mock_compactor_chain.config.model = "compactor-model"
-    mock_compactor_chain.config.family = "openai"
+    mock_compactor_chain.config = make_test_chain_config(
+        context_limit=100000,
+        model="compactor-model",
+    )
 
     compactor_resp = ResponseInfo(
         text=(
@@ -156,18 +157,18 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
     tmp_path: Path, mock_session_state: SessionState
 ) -> None:
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "anthropic"
-    mock_chain.request.return_value = mock_success_response("stage2 only")
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+        family="anthropic",
+    )
+    mock_chain.request.return_value = _mock_success_response("stage2 only")
 
     mock_compactor_chain = MagicMock(spec=ProviderChain)
-    mock_compactor_chain.config = MagicMock(spec=ChainConfig)
-    mock_compactor_chain.config.context_limit = 100000
-    mock_compactor_chain.config.model = "compactor-model"
-    mock_compactor_chain.config.family = "openai"
+    mock_compactor_chain.config = make_test_chain_config(
+        context_limit=100000,
+        model="compactor-model",
+    )
 
     registry = ToolRegistry()
     registry.register(
@@ -223,18 +224,19 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
 def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: SessionState) -> None:
     """Verifies that an existing memory_summary in the event log is correctly carried forward and prepended."""
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "anthropic"
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+        family="anthropic",
+    )
 
     mock_chain.request.return_value = mock_success_response("all done")
 
     mock_compactor_chain = MagicMock(spec=ProviderChain)
-    mock_compactor_chain.config = MagicMock(spec=ChainConfig)
-    mock_compactor_chain.config.context_limit = 100000
-    mock_compactor_chain.config.model = "compactor"
+    mock_compactor_chain.config = make_test_chain_config(
+        context_limit=100000,
+        model="compactor",
+    )
 
     compactor_resp = ResponseInfo(
         text=(
@@ -317,19 +319,20 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
 def test_circuit_breaker_stops_session(tmp_path: Path, mock_session_state: SessionState) -> None:
     """Verifies that the circuit breaker triggers and stops the session if <10% space is reclaimed 3 times."""
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "anthropic"
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+        family="anthropic",
+    )
 
     mock_chain.request.return_value = mock_success_response("done")
 
     # Prepare a mock compactor chain that returns a response of the exact same size (0% reclaimed)
     mock_compactor_chain = MagicMock(spec=ProviderChain)
-    mock_compactor_chain.config = MagicMock(spec=ChainConfig)
-    mock_compactor_chain.config.context_limit = 100000
-    mock_compactor_chain.config.model = "compactor"
+    mock_compactor_chain.config = make_test_chain_config(
+        context_limit=100000,
+        model="compactor",
+    )
 
     # We will simulate 2 failures/attempts already stored in ContextBudget, and run a 3rd one.
     # Actually, we can inspect ContextBudget's record_compaction_attempt behavior.
@@ -350,18 +353,18 @@ def test_circuit_breaker_logs_terminal_events_in_live_loop(
 ) -> None:
     """Verifies the live loop writes hard-stop telemetry when the breaker fires."""
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 100000
-    mock_chain.config.compaction_threshold = 80000
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "anthropic"
-    mock_chain.request.return_value = mock_success_response("unreachable")
+    mock_chain.config = make_test_chain_config(
+        compaction_threshold=80000,
+        context_limit=100000,
+        family="anthropic",
+    )
+    mock_chain.request.return_value = _mock_success_response("unreachable")
 
     mock_compactor_chain = MagicMock(spec=ProviderChain)
-    mock_compactor_chain.config = MagicMock(spec=ChainConfig)
-    mock_compactor_chain.config.context_limit = 100000
-    mock_compactor_chain.config.model = "compactor-model"
-    mock_compactor_chain.config.family = "openai"
+    mock_compactor_chain.config = make_test_chain_config(
+        context_limit=100000,
+        model="compactor-model",
+    )
     mock_compactor_chain.request.return_value = (
         ResponseInfo(
             text=(

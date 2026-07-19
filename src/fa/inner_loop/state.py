@@ -114,6 +114,30 @@ class EventLog:
 
     @staticmethod
     def _initial_next_id(path: Path) -> int:
+        """Seed _next_id from the authoritative DB, falling back to JSONL.
+
+        Per the dual-write discipline (session.db = authority, JSONL = mirror),
+        the event_id counter must be seeded from session.db COUNT(*) rather
+        than the JSONL line count. If JSONL writes fail but DB writes succeed
+        (e.g. during a workflow where each stage creates a new EventLog on the
+        same session.db), the JSONL count would undercount and produce
+        duplicate event_id values (LOGIC-1).
+        """
+        # Try DB first — it's the authority per dual-write discipline.
+        db_path = path.parent / "session.db"
+        try:
+            import sqlite3
+
+            conn = sqlite3.connect(str(db_path), timeout=5.0)
+            try:
+                cur = conn.execute("SELECT COUNT(*) FROM event_log")
+                count = int(cur.fetchone()[0])
+                return count + 1
+            finally:
+                conn.close()
+        except Exception:
+            pass
+        # Fallback to JSONL mirror for brand-new sessions without a DB yet.
         if not path.exists():
             return 1
         try:
@@ -257,6 +281,7 @@ class SessionState:
     pty_pool: Any | None = None  # PtyPool
     worktree_manager: Any | None = None  # WorktreeManager
     session_db: Any | None = None  # SessionDatabase
+    output_bus: Any | None = None  # EventBus — set by cli.py for console visibility
     turn: int = 0
     subagent_spawns: int = 0
     _subagent_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)

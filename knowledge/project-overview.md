@@ -221,7 +221,7 @@ each carries a concrete OSS pattern instance):
    in deep-dive
    [§1.5 K2 lines 1321–1383](./research/fa-abc-synthesis-deep-dive-2026-05.md#k2--cost-guardian-severity-ladder-extends-v3-25);
    fork2 PR #13 prior-art at
-   [`HANDOFF.md` PR #13 «F1 partial-config disjoint WARNING»](../HANDOFF.md).
+   [`HANDOFF.md` PR #13 «F1 partial-config disjoint WARNING»](../worklogs/HANDOFF.md).
 5. **Named-invariant tests citing ADR clauses** (Layer-2 retrofit
    pattern from fork2 PR #13 commit `93a5ee7`). Every binding
    ADR clause SHOULD have a corresponding pytest with the name
@@ -250,7 +250,7 @@ the construction-discipline carriers.
 
 **Invariants:**
 - I-6.1 Every write declares read_set, write_set, assumptions, version_dependencies (base commit, llms.txt hash)
-- I-6.2 Blackboard append-only, content-hashed, queryable, detect_conflict() — no silent overwrite, returns fail code conflict_detected
+- I-6.2 Blackboard append-only, content-hashed, queryable, detect_conflict() — no silent overwrite, returns fail code conflict_detected. **Implemented:** `session.db.blackboard` table with content hashing, read_set/write_set, and `detect_conflict()` in `src/fa/blackboard/blackboard.py`.
 - I-6.3 Simple chain planner→coder→eval is default; parallel subagents only when substrate formal and task is embarrassingly parallel with non-overlapping write_sets
 - I-6.4 Formal substrate must have content hashes stamping, toolchain digests, schema versions for reproducibility (as MACOG blackboard)
 
@@ -411,10 +411,8 @@ test из §1.2 (pre-UC5) или KPI-delta-test (post-UC5). Test reference
 - **Privacy / data handling:** remote API ≈ 99 % of traffic; user
   is OK with TG-data going to providers in v0.2. No special
   data-residency / PII-redaction requirements in v0.1.
-- **Storage:** filesystem-canonical (Markdown + frontmatter) per
-  [`knowledge/README.md`](./README.md). Disposable index in SQLite
-  (FTS5 for BM25). No remote DB. Decision:
-  [ADR-4](./adr/ADR-4-storage-backend.md).
+- **Storage:** Filesystem-canonical (Markdown + YAML frontmatter). Per-run hot-path authority in SQLite (`session.db` — 3 tables: event_log, blackboard, session_meta; JSONL mirrors are best-effort, not authoritative). Disposable FTS5 index for BM25 retrieval. No remote DB. Decision:
+  [ADR-4](./adr/ADR-4-storage-backend.md). Session data layout: [`knowledge/reference.md`](./reference.md#session-data-layout).
 
 ---
 This page stays one screen long; Add update task on every PR created.

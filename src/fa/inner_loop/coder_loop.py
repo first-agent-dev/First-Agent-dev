@@ -471,6 +471,9 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     )
 
     _session_start_mono = time.monotonic()
+    # LOGIC-5: track the last budget ratio so finish() can compute
+    # context_used_pct instead of hardcoding None.
+    last_budget_ratio: float = 0.0
 
     # ── Output: session_start ──────────────────────────────────────────────
     if output is not None:
@@ -522,7 +525,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             "total_in": usage_totals.get("input_tokens", 0),
                             "total_out": usage_totals.get("output_tokens", 0),
                             "cache_hit_ratio": summary.get("cache_hit_ratio", 0.0),
-                            "context_used_pct": None,
+                            "context_used_pct": round(last_budget_ratio * 100, 1),
                         },
                     )
                 )
@@ -633,9 +636,24 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         if budget_enabled:
             usage = estimate_tokens(messages_payload, tool_payload)
             decision = budget.check(usage)
+            last_budget_ratio = decision.get("ratio", 0.0)
             if decision["action"] == "warn":
                 logger.warning("ContextBudget Gating Warning: %s", decision["message"])
                 state.log.append(actor="runtime", kind="context_budget_warn", content=decision)
+                # FIX-1: emit context_warn OutputEvent for console visibility
+                if output is not None:
+                    output.emit(
+                        OutputEvent(
+                            type="context_warn",
+                            turn=turn,
+                            max_turns=max_turns,
+                            data={
+                                "pct": round(last_budget_ratio * 100),
+                                "action": decision["action"],
+                                "message": decision.get("message", ""),
+                            },
+                        )
+                    )
             elif decision["action"] in {"stage2", "stage3"}:
                 compaction_enabled = False
                 try:
@@ -653,9 +671,37 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             decision["message"],
                         )
                         state.log.append(actor="runtime", kind="context_budget_warn", content=decision)
+                        # FIX-1: emit context_warn for stage2 without compaction
+                        if output is not None:
+                            output.emit(
+                                OutputEvent(
+                                    type="context_warn",
+                                    turn=turn,
+                                    max_turns=max_turns,
+                                    data={
+                                        "pct": round(last_budget_ratio * 100),
+                                        "action": "stage2",
+                                        "message": decision.get("message", ""),
+                                    },
+                                )
+                            )
                     else:
                         logger.warning("ContextBudget Gate Breach: Stage 3 reached! %s", decision["message"])
                         state.log.append(actor="runtime", kind="context_budget_hard_stop", content=decision)
+                        # context_budget_hard_stop → console context_warn (critical)
+                        if output is not None:
+                            output.emit(
+                                OutputEvent(
+                                    type="context_warn",
+                                    turn=turn,
+                                    max_turns=max_turns,
+                                    data={
+                                        "pct": round(last_budget_ratio * 100),
+                                        "action": "stage3",
+                                        "message": decision.get("message", ""),
+                                    },
+                                )
+                            )
                         state.log.append(
                             actor="runtime",
                             kind="run_stopped",
@@ -679,6 +725,16 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         kind="compaction_stage2_start",
                         content={"tokens_before": usage, "threshold": budget.stage2_threshold},
                     )
+                    # FIX-2: emit compaction_start for console visibility
+                    if output is not None:
+                        output.emit(
+                            OutputEvent(
+                                type="compaction_start",
+                                turn=turn,
+                                max_turns=max_turns,
+                                data={"stage": 2, "tokens_before": usage},
+                            )
+                        )
                     try:
                         from fa.inner_loop.compaction.compactor import project_messages_after_mask
 
@@ -697,6 +753,21 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             kind="compaction_stage2_done",
                             content={"tokens_before": usage, "tokens_after": post_mask_usage},
                         )
+                        # FIX-2: emit compaction_end for console visibility
+                        if output is not None:
+                            output.emit(
+                                OutputEvent(
+                                    type="compaction_end",
+                                    turn=turn,
+                                    max_turns=max_turns,
+                                    data={
+                                        "stage": 2,
+                                        "tokens_before": usage,
+                                        "tokens_after": post_mask_usage,
+                                        "ok": True,
+                                    },
+                                )
+                            )
                         logger.info(
                             "Stage 2 Compaction successful. Reclaimed tokens: %d -> %d",
                             usage,
@@ -705,6 +776,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         conversation_history = masked_history
                         usage = post_mask_usage
                         decision = budget.check(usage)
+                        last_budget_ratio = decision.get("ratio", 0.0)
                     except Exception as exc:  # noqa: BLE001 # graceful degradation
                         logger.warning("Stage 2 Compaction failed: %s, continuing with verbatim prompt", exc)
                         state.log.append(
@@ -712,6 +784,16 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             kind="compaction_stage2_error",
                             content={"error": str(exc)},
                         )
+                        # compaction error → console
+                        if output is not None:
+                            output.emit(
+                                OutputEvent(
+                                    type="compaction_end",
+                                    turn=turn,
+                                    max_turns=max_turns,
+                                    data={"stage": 2, "ok": False, "error": str(exc)},
+                                )
+                            )
 
                     if decision["action"] == "stage3":
                         logger.info("Stage 2 masking insufficient. Triggering Stage 3 LLM Compaction...")
@@ -720,6 +802,16 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             kind="compaction_stage3_start",
                             content={"tokens_before": usage, "threshold": budget.stage3_threshold},
                         )
+                        # FIX-2: emit compaction_start for stage3
+                        if output is not None:
+                            output.emit(
+                                OutputEvent(
+                                    type="compaction_start",
+                                    turn=turn,
+                                    max_turns=max_turns,
+                                    data={"stage": 3, "tokens_before": usage},
+                                )
+                            )
                         try:
                             from fa.inner_loop.compaction.compactor import (
                                 FullLLMCompactor,
@@ -770,6 +862,21 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                         "summary": updated_summary,
                                     },
                                 )
+                                # FIX-2: emit compaction_end for stage3 done
+                                if output is not None:
+                                    output.emit(
+                                        OutputEvent(
+                                            type="compaction_end",
+                                            turn=turn,
+                                            max_turns=max_turns,
+                                            data={
+                                                "stage": 3,
+                                                "tokens_before": usage,
+                                                "tokens_after": post_compaction_usage,
+                                                "ok": True,
+                                            },
+                                        )
+                                    )
                                 logger.info(
                                     "Stage 3 LLM Compaction done. Reclaimed tokens: %d -> %d",
                                     usage,
@@ -792,6 +899,41 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                         kind="compaction_circuit_breaker",
                                         content={"message": circuit_breaker_message},
                                     )
+                                    # NEW-2: emit compaction_end for circuit breaker
+                                    # console visibility — the operator sees
+                                    # "❌ compaction circuit_breaker" instead of
+                                    # only a generic context_budget_hard_stop.
+                                    if output is not None:
+                                        output.emit(
+                                            OutputEvent(
+                                                type="compaction_end",
+                                                turn=turn,
+                                                max_turns=max_turns,
+                                                data={
+                                                    "stage": 3,
+                                                    "ok": False,
+                                                    "error": f"circuit_breaker: {circuit_breaker_message}",
+                                                },
+                                            )
+                                        )
+                                        # FINDING-V2 fix: emit context_warn for circuit
+                                        # breaker hard-stop path — mirrors the other
+                                        # stage3 path (L974) so the operator always
+                                        # sees the context percentage before the
+                                        # session dies, regardless of which
+                                        # compaction sub-path triggers the stop.
+                                        output.emit(
+                                            OutputEvent(
+                                                type="context_warn",
+                                                turn=turn,
+                                                max_turns=max_turns,
+                                                data={
+                                                    "pct": round(last_budget_ratio * 100),
+                                                    "action": "stage3",
+                                                    "message": circuit_breaker_message,
+                                                },
+                                            )
+                                        )
                                     state.log.append(
                                         actor="runtime",
                                         kind="context_budget_hard_stop",
@@ -830,6 +972,16 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                 kind="compaction_stage3_error",
                                 content={"error": str(exc)},
                             )
+                            # compaction error → console
+                            if output is not None:
+                                output.emit(
+                                    OutputEvent(
+                                        type="compaction_end",
+                                        turn=turn,
+                                        max_turns=max_turns,
+                                        data={"stage": 3, "ok": False, "error": str(exc)},
+                                    )
+                                )
 
                     if decision["action"] == "stage3":
                         logger.warning(
@@ -837,6 +989,23 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             decision["message"],
                         )
                         state.log.append(actor="runtime", kind="context_budget_hard_stop", content=decision)
+                        # NEW-1: emit context_warn for compaction-enabled hard-stop
+                        # path — mirrors the non-compaction stage3 path so the
+                        # operator always sees the context percentage before
+                        # the session dies, regardless of compaction setting.
+                        if output is not None:
+                            output.emit(
+                                OutputEvent(
+                                    type="context_warn",
+                                    turn=turn,
+                                    max_turns=max_turns,
+                                    data={
+                                        "pct": round(last_budget_ratio * 100),
+                                        "action": "stage3",
+                                        "message": decision.get("message", ""),
+                                    },
+                                )
+                            )
                         state.log.append(
                             actor="runtime",
                             kind="run_stopped",
@@ -852,13 +1021,25 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             )
                         )
 
+        # Merge role-level extras from ChainConfig with prompt-composer extras.
+        # ChainConfig.extras carries provider-specific body fields from
+        # ``~/.fa/models.yaml`` (e.g. Mistral's ``prediction``,
+        # ``reasoning_effort``, ``response_format``). Prompt-composer extras
+        # (``prompt_cache_key``, ``prompt_cache_retention``) come from
+        # the request body builder. Chain-level extras take precedence over
+        # prompt-composer extras for the same key, since the user's explicit
+        # config should override algorithmic defaults.
+        _merged_extras: dict[str, Any] = dict(request_extras)
+        if provider_chain.config.extras:
+            _merged_extras.update(provider_chain.config.extras)
+
         request = RequestInfo(
             model_slug=provider_chain.config.model,
             messages=tuple(messages_payload),
             temperature=temperature,
             max_tokens=max_tokens,
             tools=tool_payload,
-            extras=request_extras,
+            extras=_merged_extras,
         )
         try:
             # --- Internal Retry Loop for Chain Exhaustion ---
@@ -1026,6 +1207,21 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 kind="run_stopped",
                 content={"reason": "request_shape", "detail": str(exc)},
             )
+            # LOGIC-9: emit console event for request shape error
+            if output is not None:
+                output.emit(
+                    OutputEvent(
+                        type="api_retry",
+                        turn=turn,
+                        max_turns=max_turns,
+                        data={
+                            "provider": "unknown",
+                            "status": 0,
+                            "retry_after_s": 0,
+                            "reason": f"request_shape_error: {exc}",
+                        },
+                    )
+                )
             return finish(
                 SessionOutcome(
                     exit_code=2,
@@ -1049,6 +1245,17 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                     "detail": str(exc),
                 },
             )
+            # Dual-write: emit hook_deny OutputEvent for AFTER_LLM_CALL path
+            # (mirrors the BEFORE_LLM_CALL path at L559)
+            if output is not None:
+                output.emit(
+                    OutputEvent(
+                        type="hook_deny",
+                        turn=turn,
+                        max_turns=max_turns,
+                        data={"hook": "AFTER_LLM_CALL", "reason": str(exc)},
+                    )
+                )
             return finish(
                 SessionOutcome(
                     exit_code=1,

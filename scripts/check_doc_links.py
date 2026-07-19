@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline internal-link checker for the repo's Markdown docs.
 
-Enforces knowledge/MAINTENANCE.md §"When moving or pruning a doc": no dangling
+Enforces knowledge/skills/doc-maintenance/SKILL.md §"When moving or pruning a doc": no dangling
 relative links. Dependency-free and deterministic — never touches the network.
 
 Default mode checks that every relative *file* link (``](path)`` /
@@ -61,7 +61,7 @@ _LEGACY_SKIP = (
     "knowledge/prompts/prompting.md",
     "knowledge/project-overview.md",
     "knowledge/anti-patterns/README.md",
-    "knowledge/glossary.md",
+    "knowledge/reference.md",
 )
 
 
@@ -195,7 +195,7 @@ def main(argv: list[str]) -> int:
             print(f"  {e}", file=sys.stderr)
         print(
             f"\n{len(all_errors)} broken link(s). Fix them in this PR "
-            "(see knowledge/MAINTENANCE.md §When moving or pruning a doc).",
+            "(see knowledge/skills/doc-maintenance/SKILL.md §When moving or pruning a doc).",
             file=sys.stderr,
         )
         return 1

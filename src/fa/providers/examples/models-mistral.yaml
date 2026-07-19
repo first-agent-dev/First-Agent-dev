@@ -1,0 +1,136 @@
+# ── Mistral API Configuration for FA ───────────────────────────────
+#
+# This example shows three Mistral configurations:
+#   1. planner — Mistral chat completions with prediction + structured output
+#   2. coder   — Mistral chat completions with prompt caching + reasoning
+#   3. coder-agents — Mistral Conversations API with built-in web_search
+#
+# Prerequisites:
+#   export MISTRAL_API_KEY="your-api-key"
+#
+# Reference: https://docs.mistral.ai/api/endpoint/chat
+# ──────────────────────────────────────────────────────────────────
+
+# ── 1. Planner: Mistral with prediction + structured output ───────
+#
+# The `prediction` field is for PREDICTED/GUIDED OUTPUT — put the
+# PREVIOUS OUTPUT (e.g. old summary) here, NOT the input document.
+# The input document goes in `messages` via the prompt composer.
+#
+# Correct pattern:
+#   prediction.content = old_summary (500 tokens)
+#   prompt_cache_key  = "planner-session-42"  (cache the 28K input)
+#
+# Wrong pattern:
+#   prediction.content = full_28k_document  ← This is the bug!
+#
+# `response_format` with `json_schema` + `strict: true` is auto-added
+# by the Mistral adapter when not explicitly set. This gives ~100%
+# schema conformance vs ~64% for `json_object`.
+#
+planner:
+  model: "mistral-medium-2604"
+  family: "mistral"
+  temperature: 0.2
+  chain:
+    - provider: mistral
+      slug: "mistral-medium-2604"
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: MISTRAL_API_KEY
+      cooldown_seconds: 5
+      timeout_seconds: 120
+    # Fallback to lower-tier for rate limit overflow
+    - provider: mistral
+      slug: "mistral-small-latest"
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: MISTRAL_API_KEY
+  extras:
+    # Prompt caching: use the same key for requests that share a prompt
+    # prefix. Cached tokens billed at 10% of input price.
+    prompt_cache_key: "planner-long-doc-v1"  # change when doc changes
+    # Reasoning effort for adjustable reasoning models
+    reasoning_effort: "high"
+    # Structured output with json_schema (strict auto-set to true)
+    response_format:
+      type: "json_schema"
+      json_schema:
+        name: "summary"
+        schema:
+          type: "object"
+          properties:
+            points:
+              type: "array"
+              items:
+                type: "string"
+          required: ["points"]
+    # Predicted output: put the PREVIOUS summary here, not the input doc
+    prediction:
+      type: "content"
+      content: "1. Previous point one 2. Previous point two"
+    # Enable parallel tool calls
+    parallel_tool_calls: true
+
+
+# ── 2. Coder: Mistral with prompt caching + reasoning ─────────────
+#
+# Basic chat completions configuration. The `prompt_cache_key` is
+# automatically set by the prompt composer for session-level caching.
+# Role-level `extras` override the prompt composer defaults.
+#
+coder:
+  model: "mistral-medium-2604"
+  family: "mistral"
+  chain:
+    - provider: mistral
+      slug: "mistral-medium-2604"
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: MISTRAL_API_KEY
+      cooldown_seconds: 5
+      timeout_seconds: 300
+  extras:
+    reasoning_effort: "high"
+    safe_prompt: false  # Set true for safety-gated deployments
+
+
+# ── 3. Coder with built-in tools (Conversations API) ──────────────
+#
+# Use `mistral_agents` provider to access Mistral's Conversations API
+# which supports server-side built-in tools:
+#   - web_search / web_search_premium: web search
+#   - code_interpreter: server-side code execution
+#   - document_library: RAG over custom documents
+#
+# These tools do NOT work via /v1/chat/completions — they require
+# the /v1/conversations endpoint which this adapter targets.
+#
+# NOTE: This is a beta adapter. The Conversations API has different
+# request/response shapes than chat completions.
+#
+# coder-agents:
+#   model: "mistral-medium-2604"
+#   family: "mistral"
+#   chain:
+#     - provider: mistral_agents
+#       slug: "mistral-medium-2604"
+#       base_url: "https://api.mistral.ai"
+#       api_key_env: MISTRAL_API_KEY
+#   extras:
+#     mistral_tools:
+#       - type: web_search
+#       # - type: code_interpreter
+#       # - type: document_library
+
+
+# ── 4. Eval: Different family from planner+coder ─────────────────
+#
+# ADR-2 requires eval to be from a disjoint family. Since planner
+# and coder use "mistral", eval must use a different family.
+#
+eval:
+  model: "deepseek-v3"
+  family: "deepseek"
+  chain:
+    - provider: openrouter
+      slug: "deepseek/deepseek-chat-v3"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: OPENROUTER_API_KEY

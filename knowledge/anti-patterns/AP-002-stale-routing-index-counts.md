@@ -1,7 +1,7 @@
 ---
 compiled: 2026-05-22
 applies_to:
-  - "knowledge/MAINTENANCE.md §When adding a new file (row format rule)"
+  - "knowledge/skills/doc-maintenance/SKILL.md §When adding a new file (row format rule)"
   - "knowledge/llms.txt BY-DEMAND-INDEX rows that carry `(~N lines)` metadata"
   - "Any cheap-read overlay surface that mirrors a value that drifts"
 status: accepted
@@ -43,7 +43,7 @@ velocity.
 The pre-M2 row format demanded **raw line-count metadata** with no
 tolerance band: `(~N lines)` rounded to the nearest ten. Every PR that
 touched a mirrored file SHOULD have updated the row, but only the
-explicit-archival PRs (`MAINTENANCE.md §When archiving a research note`)
+explicit-archival PRs (`doc-maintenance skill §When archiving a research note`)
 remembered. Live precedent: the AGENTS.md row claimed `~390` while the
 file is `533` lines, drifted across 12 PRs since the count was last
 edited.
@@ -55,7 +55,7 @@ edit the row, re-run gates) is high; the perceived benefit (the next
 agent can pre-batch better) is invisible until the agent actually
 ranges over many rows; the surface metric (`pytest`, `pre-commit`,
 `ruff`) is mute on it; and the rule that demands the value lives in a
-file (`MAINTENANCE.md`) the editing agent is rarely re-reading.
+file (doc-maintenance skill) the editing agent is rarely re-reading.
 
 ## Right shape
 
@@ -109,7 +109,7 @@ accumulated 27 % drift:
 
 1. **No test, no lint, no CI gate.** A drifted `(~390)` does not break
    the build. The rule that demands the value lives in
-   `knowledge/MAINTENANCE.md`, which an editing agent reads only when
+   `knowledge/skills/doc-maintenance/SKILL.md`, which an editing agent reads only when
    it is *explicitly* archiving a file — never when it is editing
    `AGENTS.md` to add a section. The forcing function fires at the
    wrong moment.
@@ -140,7 +140,7 @@ Three layers, same shape as
   routing (bucket label + raw count)`. A future PR that wants to
   *remove* the bucket label (e.g. «it's redundant with the raw
   count») would have to declare `CLASS: RELAX` and amend
-  [`MAINTENANCE.md`](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge)
+  [`doc-maintenance skill`](/skills/doc-maintenance/SKILL.md#when-adding-a-new-file-under-knowledge-or-worklogs)
   in the same PR — visibility of the invariant change is the
   forcing function.
 - **Layer 2 — periodic sweep (deferred, opportunistic).** A small
@@ -161,7 +161,7 @@ Three layers, same shape as
 
 ## Linked-ADR / Linked-rule
 
-- [`knowledge/MAINTENANCE.md` §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge)
+- [`knowledge/skills/doc-maintenance/SKILL.md` §When adding a new file](/skills/doc-maintenance/SKILL.md#when-adding-a-new-file-under-knowledge-or-worklogs)
   — owns the row-format rule that this anti-pattern strengthens.
 - [`pr-creation` skill §PR Checklist rule #3](../skills/pr-creation/SKILL.md#pr-checklist)
   — declares the 1000 / 2000 thresholds that informed the M / L

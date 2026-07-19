@@ -305,7 +305,7 @@ UNCERTAIN-ASK.
   scope; SKIP-permanently — теряет один из самых empirically-strong
   Pillar-3 efficient-harness wins на горизонте 2026 года.
 - **Concrete first step (if TAKE → defer marker):** Добавить entry
-  в [`knowledge/BACKLOG.md`](../BACKLOG.md) — новый `I-10` row:
+  в [`knowledge/BACKLOG.md`](../../worklogs/BACKLOG.md) — новый `I-10` row:
   «Multi-model ensembling with diversity-based selector (UC5-candidate)»
   с unblock-trigger «UC5d implementation (score tracking / leaderboard)
   ships + selector primitive lands». В **отдельном** последующем PR;
@@ -832,7 +832,7 @@ escalation level и стоит follow-up PR-обсуждения.
 
 См. §0 R-4 для full block. Embed:
 
-В [`knowledge/BACKLOG.md`](../BACKLOG.md) — новый row:
+В [`knowledge/BACKLOG.md`](../../worklogs/BACKLOG.md) — новый row:
 
 ```text
 ## I-10 — Multi-model ensembling with diversity-based selector (UC5-candidate)
@@ -953,7 +953,7 @@ FA repo files (local git HEAD `59dcb9b`, 2026-05-12):
   этой ноты).
 - [`knowledge/research/latent-verifier-evolve-research-2026-05.md`](./latent-verifier-evolve-research-2026-05.md)
   §0 R-4 (latent-space watch-list only) — cross-link target из R-5.
-- [`knowledge/BACKLOG.md`](../BACKLOG.md) — existing I-1..I-9; R-4
+- [`knowledge/BACKLOG.md`](../../worklogs/BACKLOG.md) — existing I-1..I-9; R-4
   proposes I-10.
 - [`knowledge/prompts/research-briefing.md`](../prompts/research-briefing.md)
   — Stage 1-5 workflow (this note's production process).

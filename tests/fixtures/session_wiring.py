@@ -11,6 +11,25 @@ Gold patterns:
 - ResponseInfo with tool_calls tuple
 - Thresholds from ContextBudget source when needed (not here)
 
+## Design principle: never mock dataclasses
+
+Frozen dataclasses are pure data — no behavior, no side effects. Mocking them
+with ``MagicMock(spec=...)`` creates latent regression bugs: when a new field
+is added to the dataclass, the mock doesn't inherit it, so any production code
+that accesses the new field raises ``AttributeError`` at runtime.
+
+Instead, use real instances. Benefits:
+
+- New fields with defaults just work (no test changes needed).
+- New required fields break at import time with a clear TypeError
+  (not at runtime in a specific test).
+- Removed/renamed fields break at import time, not silently.
+- The dataclass definition is the single source of truth.
+
+Only mock objects with *behavior* (methods, side effects, state).
+For ProviderChain we mock it because we need to control ``request()`` return
+values. But its ``config`` attribute should be a real ``ChainConfig``.
+
 This file is NOT a test file itself; it is imported by tests/test_*_wiring.py suites.
 """
 
@@ -23,7 +42,7 @@ from unittest.mock import MagicMock
 
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState
-from fa.providers import ChainConfig, ProviderChain
+from fa.providers import ChainConfig, ChainEntry, ProviderChain
 from fa.providers.base import ResponseInfo
 
 
@@ -86,19 +105,95 @@ def mock_tool_call_response(
     )
 
 
+# ── Real value-object factories ─────────────────────────────────────
+# These replace MagicMock(spec=ChainConfig) with real ChainConfig instances.
+# When a new field is added to ChainConfig with a default value, these
+# factories inherit it automatically — zero test breakage.
+# When a new required field is added, the factory's constructor call raises
+# TypeError at import time with a clear message — not at runtime.
+
+
+def make_test_chain_entry(
+    provider: str = "openrouter",
+    slug: str = "test/test-model",
+    base_url: str = "https://openrouter.ai/api/v1",
+    api_key_env: str = "TEST_API_KEY",
+    **overrides: Any,
+) -> ChainEntry:
+    """Create a real ChainEntry with test defaults.
+
+    Extra keyword arguments override any field on ChainEntry.
+    """
+    return ChainEntry(
+        provider=provider,
+        slug=slug,
+        base_url=base_url,
+        api_key_env=api_key_env,
+        **overrides,
+    )
+
+
+def make_test_chain_config(
+    role: str = "coder",
+    model: str = "test-model",
+    family: str = "openai",
+    context_limit: int = 150000,
+    compaction_threshold: int | None = None,
+    extras: dict[str, Any] | None = None,
+    **overrides: Any,
+) -> ChainConfig:
+    """Create a real ChainConfig with test defaults.
+
+    Uses an empty chain tuple by default (no chain entries needed for most
+    tests — the ProviderChain mock controls request() behavior directly).
+
+    Extra keyword arguments override any field on ChainConfig. This is safe
+    because ChainConfig is a frozen dataclass — unknown keys raise TypeError.
+
+    **Why real ChainConfig, not MagicMock(spec=ChainConfig)?**
+
+    Real instances automatically inherit new fields with defaults.
+    MagicMock(spec=...) does not — it creates a latent regression bug where
+    every new field on ChainConfig must be manually added to every mock site.
+    """
+    return ChainConfig(
+        role=role,
+        model=model,
+        family=family,
+        chain=(),
+        context_limit=context_limit,
+        compaction_threshold=compaction_threshold,
+        extras=extras if extras is not None else {},
+        **overrides,
+    )
+
+
 def make_mock_chain(
     context_limit: int = 150000,
     compaction_threshold: int | None = None,
     model: str = "test-model",
     family: str = "openai",
+    extras: dict[str, Any] | None = None,
+    **config_overrides: Any,
 ) -> MagicMock:
-    """Create mock ProviderChain with ChainConfig fields — type-honest."""
+    """Create mock ProviderChain with a **real** ChainConfig.
+
+    The ProviderChain itself is mocked (we control ``request()`` return
+    values), but its ``config`` attribute is a real ``ChainConfig`` instance.
+    This eliminates the entire class of "new field on dataclass breaks mocks"
+    regressions.
+
+    Extra keyword arguments are forwarded to ``make_test_chain_config()``.
+    """
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = context_limit
-    mock_chain.config.compaction_threshold = compaction_threshold
-    mock_chain.config.model = model
-    mock_chain.config.family = family
+    mock_chain.config = make_test_chain_config(
+        context_limit=context_limit,
+        compaction_threshold=compaction_threshold,
+        model=model,
+        family=family,
+        extras=extras,
+        **config_overrides,
+    )
     return mock_chain
 
 

@@ -97,6 +97,28 @@ def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:
             except Exception as exc:  # noqa: BLE001 - best-effort observability
                 logger.warning("Failed to log subagent_spawn_start: %s", exc)
 
+        # FIX-3: emit subagent_start OutputEvent via output_bus
+        # for console visibility — the operator sees "⚡ subagent start"
+        # instead of only a log entry in session.db.
+        if session is not None:
+            try:
+                output_bus = getattr(session, "output_bus", None)
+                if output_bus is not None:
+                    from fa.output import EventBus, OutputEvent
+
+                    output_bus.emit(
+                        OutputEvent(
+                            type="subagent_start",
+                            data={
+                                "task_id": task_id,
+                                "role": role,
+                                "command_preview": command[:200],
+                            },
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001 - best-effort
+                logger.warning("Failed to emit subagent_start OutputEvent: %s", exc)
+
         # 5. Instantiate and Execute SubagentRunner
         try:
             from fa.inner_loop.subagent_runner import SubagentRunner
@@ -133,6 +155,28 @@ def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Failed to log subagent_spawn_done/fail: %s", exc)
 
+            # FIX-3: emit subagent_end OutputEvent via output_bus
+            if session is not None:
+                try:
+                    output_bus = getattr(session, "output_bus", None)
+                    if output_bus is not None:
+                        from fa.output import OutputEvent
+
+                        output_bus.emit(
+                            OutputEvent(
+                                type="subagent_end",
+                                data={
+                                    "task_id": task_id,
+                                    "role": role,
+                                    "exit_code": envelope.exit_code,
+                                    "duration_ms": envelope.duration_ms,
+                                    "ok": envelope.exit_code == 0,
+                                },
+                            )
+                        )
+                except Exception as exc:  # noqa: BLE001 - best-effort
+                    logger.warning("Failed to emit subagent_end OutputEvent: %s", exc)
+
             if envelope.exit_code != 0:
                 summary_err = (
                     f"Subagent {task_id} failed with exit_code {envelope.exit_code}. "
@@ -161,6 +205,28 @@ def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:
                     )
                 except Exception as log_exc:  # noqa: BLE001 # best-effort observability logging
                     logger.warning("Failed to log subagent_spawn_fail during runner error: %s", log_exc)
+
+            # FIX-3: emit subagent_end OutputEvent for runner error path
+            if session is not None:
+                try:
+                    output_bus = getattr(session, "output_bus", None)
+                    if output_bus is not None:
+                        from fa.output import OutputEvent
+
+                        output_bus.emit(
+                            OutputEvent(
+                                type="subagent_end",
+                                data={
+                                    "task_id": task_id,
+                                    "role": role,
+                                    "exit_code": -1,
+                                    "ok": False,
+                                    "error": str(exc),
+                                },
+                            )
+                        )
+                except Exception as emit_exc:  # noqa: BLE001 - best-effort
+                    logger.warning("Failed to emit subagent_end OutputEvent (error path): %s", emit_exc)
             if session is not None and workdir != root:
                 try:
                     session.cleanup_subagent_workspace(workdir)

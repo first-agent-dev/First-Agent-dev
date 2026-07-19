@@ -1,4 +1,4 @@
-.PHONY: install lint fix format typecheck authoring-check test lock-check check run audit deadcode mutation install-hooks
+.PHONY: install lint fix format typecheck authoring-check contract-check no-mocked-dataclasses test lock-check check run audit deadcode mutation install-hooks
 
 install:
 	uv sync
@@ -30,13 +30,19 @@ typecheck:
 authoring-check:
 	fa authoring-check
 
+contract-check:
+	python scripts/check_producer_consumer_contract.py
+
+no-mocked-dataclasses:
+	python scripts/check_no_mocked_dataclasses.py
+
 test:
 	pytest --cov=fa --cov-report=term-missing --cov-report=xml
 
 lock-check:
 	uv lock --locked
 
-check: lock-check lint typecheck authoring-check test
+check: lock-check lint typecheck authoring-check contract-check no-mocked-dataclasses test
 
 run:
 	fa --help

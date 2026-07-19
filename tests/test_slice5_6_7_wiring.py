@@ -29,9 +29,10 @@ from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.tools import build_baseline_registry
-from fa.providers import ChainConfig, ProviderChain
 from fa.providers.base import ResponseInfo
+from fa.providers import ProviderChain
 from tests.fixtures.session_wiring import (
+    make_test_chain_config,
     make_tool_call,
     mock_response_with_tools,
     mock_success_response,
@@ -64,11 +65,7 @@ def test_pr6_wiring_bash_large_output_offloads_artifact_via_live_path(tmp_path: 
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test-model"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config()
 
     # Turn 1: LLM asks to run bash printing 9001 A's
     large_cmd = "python3 - <<'PY'\nprint('A' * 9001)\nPY"
@@ -130,11 +127,9 @@ def test_pr6_wiring_parallel_denied_preserved_order(tmp_path: Path) -> None:
     hooks.register(SandboxHook(tmp_path))
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call("fs.read_file", {"path": "a.txt"}, "tc-1")
     tc2 = make_tool_call("fs.read_file", {"path": "../../etc/passwd"}, "tc-2")
@@ -193,11 +188,9 @@ def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call("fs.instant_grep", {"query": "needle"}, "tc-1")
 
@@ -265,11 +258,9 @@ def test_pr6_wiring_pty_persistence_via_session(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call("fs.run_bash", {"command": "cd /tmp && pwd"}, "tc-1")
     tc2 = make_tool_call("fs.run_bash", {"command": "pwd"}, "tc-2")
@@ -318,11 +309,9 @@ def test_pr6_wiring_cr_cleaning_via_bash(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     # printf with \r
     tc1 = make_tool_call("fs.run_bash", {"command": "printf 'foo\\rbar\\n'"}, "tc-1")
@@ -374,11 +363,9 @@ def test_pr6_wiring_subagent_role_env_and_events(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call(
         "fs.spawn_subagent",
@@ -456,11 +443,9 @@ def test_pr6_wiring_subagent_sandbox_deny(tmp_path: Path) -> None:
     hooks.register(SecretGuard(secrets=frozenset({"sekret"})))
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     # Malicious command should be denied by sandbox
     tc1 = make_tool_call(

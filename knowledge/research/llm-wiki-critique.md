@@ -50,7 +50,7 @@ claims_requiring_verification:
 содержания). Поэтому документ **не обновляет существующее «знание из
 gist»**, а **добавляет новое**: критический разбор паттерна + выводы,
 точечно применимые к уже зафиксированным у нас вещам (трёхслойная
-архитектура агента в [`knowledge/architecture.md`](../architecture.md)
+архитектура агента в [`knowledge/reference.md` §Patterns](../reference.md#patterns)
 и память проекта в [`knowledge/`](../README.md)).
 
 ## Связь с текущей фазой

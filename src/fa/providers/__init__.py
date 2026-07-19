@@ -14,6 +14,9 @@ Public surface:
   :func:`fa.providers.config.load_models_config` /
   :func:`fa.providers.config.load_models_config_from_path` (T-4 loader)
 * :class:`fa.providers.transport.UrllibTransport` (production HTTP)
+* :class:`fa.providers.mistral.MistralProvider` (Mistral chat completions)
+* :class:`fa.providers.mistral_conversations.MistralConversationsProvider`
+  (Mistral Agents/Conversations API — beta)
 """
 
 from __future__ import annotations
@@ -46,6 +49,8 @@ from fa.providers.errors import (
     ProviderTransientError,
     ReservedProviderError,
 )
+from fa.providers.mistral import MistralProvider
+from fa.providers.mistral_conversations import MistralConversationsProvider
 from fa.providers.registry import PROVIDERS, ProviderSpec, build_provider
 from fa.providers.secret_store import SecretStore
 from fa.providers.transport import DEFAULT_USER_AGENT, UrllibTransport
@@ -54,6 +59,8 @@ from fa.providers.types import ChainAttemptRecord
 __all__ = [
     "DEFAULT_MODELS_YAML_PATH",
     "DEFAULT_USER_AGENT",
+    "MistralConversationsProvider",
+    "MistralProvider",
     "PROVIDERS",
     "ChainAttemptRecord",
     "ChainConfig",

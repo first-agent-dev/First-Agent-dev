@@ -26,7 +26,7 @@ explicitly: *"The inner-loop ADR (R-1, deferred) will fix the
 exact exception type and the surface; for now the contract
 is…"* — and then leaves a stub Python signature.
 
-[`HANDOFF.md`](../../HANDOFF.md) §Next steps item 1 reserves
+[`HANDOFF.md`](../../worklogs/HANDOFF.md) §Next steps item 1 reserves
 the ADR-7 slot and enumerates six surfaces to pin: tool-registry
 contract, tool-call audit log shape, edit-format
 (string-replace vs unified-diff), input JSON-Schema validation,
@@ -451,7 +451,7 @@ can refuse to compare runs across harness versions
 
 **Future KPI consumption** (added 2026-05-12 §Amendment). The same
 `events.jsonl` schema is the auto-collection source for
-[BACKLOG I-7](../BACKLOG.md#i-7--bootstrap-cost-as-auto-collected-kpi-uc5-blocked)
+[BACKLOG I-7](../../worklogs/BACKLOG.md#i-7--bootstrap-cost-as-auto-collected-kpi-uc5-blocked)
 once the UC5 eval-harness lands; the §6 baseline table in
 [`bootstrap-cost-baseline-2026-05.md`](../research/bootstrap-cost-baseline-2026-05.md)
 is the migration-source historical row.
@@ -693,14 +693,14 @@ shape is pinned so the migration is config-only:
   the underlying model identity to the agent runtime).
   `harness_id` is the stable identity carrier the auto-KPI
   pipeline
-  ([BACKLOG I-7](../BACKLOG.md#i-7--bootstrap-cost-as-auto-collected-kpi-uc5-blocked))
+  ([BACKLOG I-7](../../worklogs/BACKLOG.md#i-7--bootstrap-cost-as-auto-collected-kpi-uc5-blocked))
   will key on.
 
 ## Consequences
 
 - **Positive — single source of truth for every tool PR.**
   The first implementation PR (inner-loop scaffolding,
-  [HANDOFF §Next steps item 1](../../HANDOFF.md#next))
+  [HANDOFF §Next steps item 1](../../worklogs/HANDOFF.md#next))
   consumes the contract verbatim — `src/fa/inner_loop/registry.py`,
   `loop.py`, `hooks/`, `tools/`, `trace.py` — and item 2
   (chunker indexer end-to-end) is the first downstream consumer of
@@ -763,7 +763,7 @@ shape is pinned so the migration is config-only:
     the tool to §3 catalog plus an `output_schema` for the
     stdout/stderr/exit-code shape.
   - **FA's own mid-tier inner-loop scaffolding ships (Phase M;
-    [BACKLOG I-8](../BACKLOG.md#i-8--mid-tier--first-agents-own-harness-bootstrap-re-test))**
+    [BACKLOG I-8](../../worklogs/BACKLOG.md#i-8--mid-tier--first-agents-own-harness-bootstrap-re-test))**
     (added 2026-05-12 §Amendment). Action: re-run the
     ADR-7-prep bootstrap prompt on FA's own harness per
     [`bootstrap-cost-baseline-2026-05.md`](../research/bootstrap-cost-baseline-2026-05.md)
@@ -796,19 +796,19 @@ shape is pinned so the migration is config-only:
     Step 2 sweep — missing ones added by this PR).
   - **BACKLOG forward-references unblocked by this ADR**
     (added 2026-05-12 §Amendment).
-    - [BACKLOG I-1](../BACKLOG.md#i-1--planner-picks-needed-skills--tool-calls-at-planning-stage)
+    - [BACKLOG I-1](../../worklogs/BACKLOG.md#i-1--planner-picks-needed-skills--tool-calls-at-planning-stage)
       (Planner pre-selects tool-calls at planning stage) —
       unblock-trigger «ADR-7 merges **and**
       `src/fa/inner_loop/registry.py` module lands with a `ToolSpec`
       dataclass plus loader» is half-satisfied by this ADR;
       the other half lands in the chunker-indexer
       implementation PR.
-    - [BACKLOG I-2](../BACKLOG.md#i-2--agent--sub-agents-for-context-load-reduction)
+    - [BACKLOG I-2](../../worklogs/BACKLOG.md#i-2--agent--sub-agents-for-context-load-reduction)
       (sub-agents for context-load reduction) — needs Phase M
       runner consuming this contract; the contract pre-defines
       the `ToolResult.artifacts[]` shape so a sub-agent
       merge-protocol can cite event IDs.
-    - [BACKLOG I-3](../BACKLOG.md#i-3--dispatcher-llm-lazy-load-skills--collect-repo-parts-on-the-fly)
+    - [BACKLOG I-3](../../worklogs/BACKLOG.md#i-3--dispatcher-llm-lazy-load-skills--collect-repo-parts-on-the-fly)
       (dispatcher LLM, lazy-load skills) — depends on I-1 +
       skills system (future ADR-8); §6 three-tier disclosure
       is the shape a dispatcher would key on.
@@ -846,7 +846,7 @@ loop's three-tier disclosure (§6), static layered prompt
    tier-2 material alone; **none** loaded tier-3 schemas).
 2. **§7 Trace** — future-KPI-consumption paragraph linking
    `events.jsonl` schema to
-   [BACKLOG I-7](../BACKLOG.md#i-7--bootstrap-cost-as-auto-collected-kpi-uc5-blocked)
+   [BACKLOG I-7](../../worklogs/BACKLOG.md#i-7--bootstrap-cost-as-auto-collected-kpi-uc5-blocked)
    (auto-collected bootstrap-cost KPI) as the downstream
    consumer once UC5 eval-harness lands.
 3. **§9 Loop invariant** — empirical context-budget paragraph
@@ -863,7 +863,7 @@ loop's three-tier disclosure (§6), static layered prompt
 5. **§Consequences re-evaluation triggers** — 5th trigger
    added: «FA's own mid-tier inner-loop scaffolding ships
    (Phase M;
-   [BACKLOG I-8](../BACKLOG.md#i-8--mid-tier--first-agents-own-harness-bootstrap-re-test))».
+   [BACKLOG I-8](../../worklogs/BACKLOG.md#i-8--mid-tier--first-agents-own-harness-bootstrap-re-test))».
    Action: re-run ADR-7-prep bootstrap prompt on FA's own
    harness. Success criterion: 6-file irreducible core
    reproduces; failure re-opens routing proposals A / D / H.
@@ -992,7 +992,7 @@ mechanical pairing check the prompt-only approach cannot.
    (`src/fa/inner_loop/loop.py`) reads on every tool request;
    reject events documented in §7 trace; consumers are the
    inner-loop unit tests and the future eval-harness
-   ([BACKLOG I-7](../BACKLOG.md#i-7--bootstrap-cost-as-auto-collected-kpi-uc5-blocked)).
+   ([BACKLOG I-7](../../worklogs/BACKLOG.md#i-7--bootstrap-cost-as-auto-collected-kpi-uc5-blocked)).
 
 **Files changed (this PR, knowledge-layer only).**
 
@@ -1038,7 +1038,7 @@ The accompanying ADR-2 §Amendment 2026-04-29 closed the «no
 auto-escalation» question and left **intra-role** retries
 allowed, but did not pin the retry parameters. Without explicit
 invariants, the inner-loop scaffolding PR
-([HANDOFF §Next steps item 1](../../HANDOFF.md#next))
+([HANDOFF §Next steps item 1](../../worklogs/HANDOFF.md#next))
 would land magic-numbers in hook code, with no audit trail tying
 the choice back to research evidence. The §8 Hook pipeline is
 silent on whether a hook may itself call an LLM (e.g. a future
@@ -1103,7 +1103,7 @@ transferability but did not pin the hook-internal LLM choice.
    `SUBAGENT_MAX_STEPS` MUST be ≤ 100. Captured here so the
    inner-loop scaffolding PR cannot accidentally diverge from
    the eventual sub-agent ADR; cross-referenced from
-   [BACKLOG I-2](../BACKLOG.md#i-2--agent--sub-agents-for-context-load-reduction)
+   [BACKLOG I-2](../../worklogs/BACKLOG.md#i-2--agent--sub-agents-for-context-load-reduction)
    so the constraint is visible at the read-side.
 
 **Why these belong in one amendment.** All four rules govern
@@ -1485,7 +1485,7 @@ under a workspace-canon root, not new event rows.
 
 ## References
 
-- [HANDOFF.md §Next steps item 1](../../HANDOFF.md#next) — the explicit six-surface scope this ADR pins.
+- [HANDOFF.md §Next steps item 1](../../worklogs/HANDOFF.md#next) — the explicit six-surface scope this ADR pins.
 - [`research/efficient-llm-agent-harness-2026-05.md`](../research/efficient-llm-agent-harness-2026-05.md) §0 (R-1..R-8) + §10 (contract sketch).
 - [`research/bootstrap-cost-baseline-2026-05.md`](../research/bootstrap-cost-baseline-2026-05.md) §3 (6-file irreducible core), §5 (context-saturation), §6 (baseline range), §9 (re-measurement triggers) — measurement counterpart, cited from §6 / §7 / §9 / §11 / §Consequences in this ADR's §Amendment 2026-05-12.
 - [`research/cross-reference-ampcode-sliders-to-adr-2026-04.md`](../research/cross-reference-ampcode-sliders-to-adr-2026-04.md) §10 R-1, R-3, R-7.

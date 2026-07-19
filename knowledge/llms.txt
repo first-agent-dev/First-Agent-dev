@@ -12,9 +12,9 @@ Five files cover ~90% of session-start context. Read in order:
 
 1. AGENTS.md — universal session loadout: repo navigation, style, §Pre-flight checklist, §Context-budget discipline, cross-project anti-patterns, §Loadable skills, query routing, §Querying Artifacts — Use Blackboard and Instant Grep First
 2. knowledge/project-overview.md — §1.1 four-pillar goal; §1.2 minimalism-first; §1.2.5 compliance-by-construction; §1.2.6 Substrate Formality; §1.2.7 Pair over Autonomy
-3. HANDOFF.md — current state tables (Landmarks / Gotchas / Backlog), §Next priority list
+3. worklogs/HANDOFF.md — current state tables (Landmarks / Gotchas / Backlog), §Next priority list
 4. knowledge/adr/DIGEST.md — one-paragraph cheat-sheet per ADR
-5. knowledge/glossary.md — canonical definitions
+5. knowledge/reference.md — canonical definitions, features, session architecture (replaces glossary.md)
 
 ## § TASK ROUTING
 
@@ -28,7 +28,7 @@ Task type → primary entrypoint, then secondary:
 - Any PR → knowledge/skills/pr-creation/SKILL.md (5-intent classifier + PR Checklist)
 - Relocate / rename a module? → grep knowledge/anti-patterns/README.md first; AP-001 is canonical path-bypass trap
 - Deploy / operate / administer the AIO → knowledge/instructions/README.md (human start-here index)
-- Move / prune a doc? → knowledge/MAINTENANCE.md §When moving or pruning a doc (fix every reference in same PR; no dangling links)
+- Move / prune a doc? → knowledge/skills/doc-maintenance/SKILL.md §When moving or pruning a doc (fix every reference in same PR; no dangling links)
 - Specific number / date / quote → primary source from `source:` frontmatter, NOT a summary. Per AGENTS.md §Query Routing
 
 # STOP HERE UNLESS SPECIFICALLY ROUTED — For full file list, use formal substrate below.
@@ -36,6 +36,8 @@ Task type → primary entrypoint, then secondary:
 ## § FORMAL SUBSTRATE — Blackboard + Instant Grep (Replaces BY-DEMAND INDEX)
 
 **BY-DEMAND INDEX full file list is deprecated as of ADR-14/15 (2026-07-11). Use formal substrate for artifact search:**
+
+**Session data authority:** `session.db` is per-run SQLite authority (3 tables: event_log, blackboard, session_meta). JSONL files are best-effort mirrors — if they disagree with session.db, session.db wins. Full schema: knowledge/reference.md §Session Data Layout.
 
 - **For finding artifacts (skills, ADRs, research, files):** Use `blackboard.query(type="skill", key="api")` or `fs.instant_grep(query="auth", limit=10)` → list paths <50ms, content-hashed, with read_set/write_set, rank, token efficient. Do NOT use `grep -ril` scanning all files each time (slow, no rank, no content hash, token heavy, caused 124 steps timeout).
 
@@ -51,11 +53,13 @@ Task type → primary entrypoint, then secondary:
 
 ## § BY-DEMAND INDEX (Deprecated)
 
-This section is deprecated as of ADR-14/15 (2026-07-11). Previously full per-folder file list (200+ files). Now replaced by formal Blackboard query + instant grep. Reduces maintenance burden per MAINTENANCE.md link integrity.
+This section is deprecated as of ADR-14/15 (2026-07-11). Previously full per-folder file list (200+ files). Now replaced by formal Blackboard query + instant grep. Reduces maintenance burden per doc-maintenance skill link integrity.
+
+**Deleted files (merged into knowledge/reference.md):** `knowledge/architecture.md`, `knowledge/glossary.md`, `knowledge/overview/FEATURES.md`. If you see references to these, they now live in `knowledge/reference.md`.
 
 **Why deprecated:**
 
-- Maintenance burden: When adding/removing file under docs/ or knowledge/, previously had to update llms.txt BY-DEMAND INDEX manually per MAINTENANCE.md. Now BY-DEMAND INDEX auto-generated from blackboard or not needed — query blackboard instead.
+- Maintenance burden: When adding/removing file under docs/ or knowledge/, previously had to update llms.txt BY-DEMAND INDEX manually per doc-maintenance skill. Now BY-DEMAND INDEX auto-generated from blackboard or not needed — query blackboard instead.
 - Token waste: Previously, agent might read entire BY-DEMAND INDEX full list (hundreds of files) to find one file, token heavy. Now query returns 10 paths <50ms.
 - Formal substrate has content_hash, read_set/write_set, version_dependencies for reproducibility, llms.txt does not.
 

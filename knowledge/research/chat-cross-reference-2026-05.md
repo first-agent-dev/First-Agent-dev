@@ -91,11 +91,11 @@ output is a Markdown findings report attached to chat.
   repo list.
 
 **Pre-flight reading (in order, before opening any external repo):**
-1. [`HANDOFF.md`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/HANDOFF.md) — current FA state.
+1. [`HANDOFF.md`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/worklogs/HANDOFF.md) — current FA state.
 2. [`AGENTS.md`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/AGENTS.md) — operational rules (esp. minimalism-first 4-question test, rule #10).
 3. [`knowledge/llms.txt`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/knowledge/llms.txt) — canonical index.
 4. [`knowledge/adr/DIGEST.md`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/knowledge/adr/DIGEST.md) — one-row-per-ADR summary.
-5. [`knowledge/BACKLOG.md`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/knowledge/BACKLOG.md) — pending items (I-1..I-9 referenced below).
+5. [`knowledge/BACKLOG.md`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/worklogs/BACKLOG.md) — pending items (I-1..I-9 referenced below).
 6. [`knowledge/adr/ADR-7-inner-loop-tool-registry.md`](https://github.com/MondayInRussian/First-Agent-fork2/blob/main/knowledge/adr/ADR-7-inner-loop-tool-registry.md) — most recent ADR; many §3 patterns map to it.
 
 **Deliverable for next session:**

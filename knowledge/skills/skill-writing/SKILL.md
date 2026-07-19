@@ -62,7 +62,7 @@ alwaysApply: false  # default false, true only for MUST READ FIRST
 
 - Each skill is single file `SKILL.md` under `knowledge/skills/<name>/`
 - Name matches directory
-- Description ≤ 200 chars per MAINTENANCE.md row prose cap
+- Description ≤ 200 chars per doc-maintenance skill row prose cap
 - Triggers are natural language, not regex, for LLM readability
 - No bare code fences: always ```python, ```bash, etc per AGENTS.md
 
@@ -140,4 +140,4 @@ Copy this template into PR description when mutating harness:
 
 - `src/fa/telemetry/telemetry.py` CHANGE_CONTRACT_TEMPLATE (source of truth)
 - `knowledge/adr/ADR-14-*` and `ADR-15-*` for blackboard, telemetry, FTS
-- `knowledge/MAINTENANCE.md` for llms.txt deprecation and link integrity
+- `knowledge/skills/doc-maintenance/SKILL.md` for llms.txt deprecation and link integrity

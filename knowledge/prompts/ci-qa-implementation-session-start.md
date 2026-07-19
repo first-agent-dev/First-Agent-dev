@@ -35,7 +35,7 @@ Before any file edit, work through a `<thinking>` block with these exact subtask
 
 ### Subtask 1: Pre-flight (AGENTS.md Steps 1–3)
 - Run `git log -n 5 --since="7 days" --oneline -- knowledge/ docs/ AGENTS.md`
-- For any project-specific noun in this prompt (R-N, uv, just, gitleaks, Semgrep, pyrefly, deptry, pip-audit), run `grep -i "^| \*\*<term>\*\*" knowledge/glossary.md`
+- For any project-specific noun in this prompt (R-N, uv, just, gitleaks, Semgrep, pyrefly, deptry, pip-audit), run `grep -i "^| \*\*<term>\*\*" knowledge/reference.md`
 - Check `knowledge/research/` for any note newer than `ci-qa-tooling-adversarial-2026-06.md` that might supersede it
 - Read `HANDOFF.md` §Current state
 

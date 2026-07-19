@@ -106,6 +106,43 @@ class GuardActivity:
     warn: int = 0
 
 
+@dataclass(frozen=True)
+class ToolError:
+    """Failed tool call detail."""
+
+    tool: str
+    code: str = ""
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class CompactionRecord:
+    """One compaction event pair (start → done/error)."""
+
+    stage: int
+    ok: bool
+    tokens_before: int = 0
+    tokens_after: int = 0
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class SubagentRecord:
+    """Subagent spawn result."""
+
+    ok: bool
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class ContextBudgetEvent:
+    """Context budget warn or hard-stop event."""
+
+    action: str
+    pct: float = 0.0
+    message: str = ""
+
+
 @dataclass
 class SessionAnalytics:
     """Complete analytics for one session. Serializable to JSON for WebUI."""
@@ -129,6 +166,12 @@ class SessionAnalytics:
     cache_hit_ratio: float = 0.0
     redundant_reads: int = 0
     repeated_commands: int = 0
+
+    # PR #53 observability: tool errors, compaction, subagent, context budget
+    tool_errors: list[ToolError] = field(default_factory=list)
+    compaction_records: list[CompactionRecord] = field(default_factory=list)
+    subagent_records: list[SubagentRecord] = field(default_factory=list)
+    context_budget_events: list[ContextBudgetEvent] = field(default_factory=list)
 
 
 # ── Parsing ────────────────────────────────────────────────────────────────
@@ -178,6 +221,11 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 �
     total_out = 0
     cache_hit_ratio = 0.0
     n_turns = 0
+    # PR #53 observability accumulators
+    tool_errors: list[ToolError] = []
+    compaction_records: list[CompactionRecord] = []
+    subagent_records: list[SubagentRecord] = []
+    context_budget_events: list[ContextBudgetEvent] = []
 
     for event in events:
         kind = event.kind
@@ -233,6 +281,67 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 �
 
         elif kind == "loop_guard_warn":
             guard_data["LoopGuard"]["warn"] += 1
+
+        # ── PR #53 observability: tool_result errors ──────────────────
+        elif kind == "tool_result":
+            tool_name = event.tool_name
+            ok = bool(content.get("ok", True))
+            if not ok:
+                error = content.get("error")
+                if isinstance(error, dict):
+                    tool_errors.append(ToolError(
+                        tool=tool_name,
+                        code=str(error.get("code", "")),
+                        message=str(error.get("message", "")),
+                    ))
+
+        # ── PR #53 observability: compaction events ───────────────────
+        elif kind == "compaction_stage2_done":
+            compaction_records.append(CompactionRecord(
+                stage=2,
+                ok=True,
+                tokens_before=int(content.get("tokens_before", 0)),
+                tokens_after=int(content.get("tokens_after", 0)),
+            ))
+        elif kind == "compaction_stage2_error":
+            compaction_records.append(CompactionRecord(
+                stage=2,
+                ok=False,
+                error=str(content.get("error", "")),
+            ))
+        elif kind == "compaction_stage3_done":
+            compaction_records.append(CompactionRecord(
+                stage=3,
+                ok=True,
+                tokens_before=int(content.get("tokens_before", 0)),
+                tokens_after=int(content.get("tokens_after", 0)),
+            ))
+        elif kind == "compaction_stage3_error":
+            compaction_records.append(CompactionRecord(
+                stage=3,
+                ok=False,
+                error=str(content.get("error", "")),
+            ))
+
+        # ── PR #53 observability: subagent events ─────────────────────
+        elif kind == "subagent_spawn_done":
+            subagent_records.append(SubagentRecord(ok=True))
+        elif kind == "subagent_spawn_fail":
+            subagent_records.append(SubagentRecord(ok=False, error=str(content.get("error", ""))))
+
+        # ── PR #53 observability: context budget events ───────────────
+        elif kind == "context_budget_warn":
+            context_budget_events.append(ContextBudgetEvent(
+                action=str(content.get("action", "warn")),
+                pct=float(content.get("ratio", 0.0)) * 100,
+                message=str(content.get("message", "")),
+            ))
+        elif kind == "context_budget_hard_stop":
+            context_budget_events.append(ContextBudgetEvent(
+                action="hard_stop",
+                pct=float(content.get("ratio", 0.0)) * 100,
+                message=str(content.get("message", "")),
+            ))
 
         elif kind == "session_summary":
             total_in = int(content.get("input_tokens", 0))
@@ -310,6 +419,10 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 �
         cache_hit_ratio=cache_hit_ratio,
         redundant_reads=redundant,
         repeated_commands=repeated,
+        tool_errors=tool_errors,
+        compaction_records=compaction_records,
+        subagent_records=subagent_records,
+        context_budget_events=context_budget_events,
     )
 
 
@@ -402,6 +515,42 @@ def render_session(analytics: SessionAnalytics, *, stream: TextIO = sys.stderr) 
             if g.warn:
                 parts_g.append(f"{g.warn} warn")
             w(f"   {g.hook:<20s} {', '.join(parts_g)}\n")
+        w("\n")
+
+    # Tool errors
+    if a.tool_errors:
+        w("❌ Tool errors:\n")
+        for te in a.tool_errors[:10]:
+            w(f"   {te.tool:<20s} {te.code}: {te.message[:60]}\n")
+        if len(a.tool_errors) > 10:
+            w(f"   ... and {len(a.tool_errors) - 10} more\n")
+        w("\n")
+
+    # Compaction
+    if a.compaction_records:
+        w("🗜️ Compaction:\n")
+        for cr in a.compaction_records:
+            if cr.ok:
+                w(f"   stage{cr.stage}: {cr.tokens_before} → {cr.tokens_after} tokens ✓\n")
+            else:
+                w(f"   stage{cr.stage}: error — {cr.error[:60]} ✗\n")
+        w("\n")
+
+    # Subagent
+    if a.subagent_records:
+        ok_count = sum(1 for s in a.subagent_records if s.ok)
+        fail_count = len(a.subagent_records) - ok_count
+        w(f"🔀 Subagent: {ok_count} ok, {fail_count} failed\n")
+        for sr in a.subagent_records:
+            if not sr.ok:
+                w(f"   failed: {sr.error[:60]}\n")
+        w("\n")
+
+    # Context budget
+    if a.context_budget_events:
+        w("📐 Context budget:\n")
+        for cbe in a.context_budget_events:
+            w(f"   {cbe.action}: {cbe.pct:.0f}% — {cbe.message[:60]}\n")
         w("\n")
 
     # Efficiency

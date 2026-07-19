@@ -19,8 +19,9 @@ Durable project knowledge for First-Agent. Everything here is:
 ```text
 knowledge/
 ├── README.md                 # this file
-├── llms.txt                  # one-fetch URL index for LLM agents (llmstxt.org)
+├── llms.txt                  # legacy routing fallback for LLM agents (llmstxt.org)
 ├── project-overview.md       # one-page product + scope snapshot
+├── reference.md              # terms, features, session architecture (single lookup)
 ├── adr/                      # architecture decision records
 │   ├── README.md
 │   ├── DIGEST.md             # one-paragraph cheat-sheet per accepted ADR (rule #9)
@@ -28,8 +29,6 @@ knowledge/
 ├── anti-patterns/            # named anti-pattern catalog (AP-NNN-<slug>.md)
 │   ├── README.md             # entry schema + Layer-1/2/3 detection model
 │   └── AP-001-…              # worked example: spec-bypassing workaround
-├── overview/                 # product-pitch / feature overviews
-│   └── FEATURES.md           # killer-feature + architecture pitch
 ├── templates/                # operator-facing config/secret templates
 │   ├── fa.env.template       # LLM API-key template (host secrets/fa.env)
 │   ├── config.yaml.example   # FA config example
@@ -43,8 +42,10 @@ knowledge/
 │   └── _template.md          # skeleton (frontmatter v1+v2 + §0 Decision Briefing)
 ├── skills/                   # per-task agent-loadable disciplines (SKILL.md per skill)
 │   ├── README.md             # scope, template, skill-vs-prompt-vs-rule distinction
+│   ├── doc-maintenance/SKILL.md  # session closure + file hygiene discipline
 │   ├── pr-creation/SKILL.md  # PR intent classification + anti-shallow-fix gate
-│   └── repo-audit/SKILL.md   # 7-phase agent-oriented repo audit workflow
+│   ├── repo-audit/SKILL.md   # 7-phase agent-oriented repo audit workflow
+│   └── tests-writing/SKILL.md    # composition-root test discipline
 └── trace/                    # exploration log — alternatives rejected at
     └── exploration_log.md    # decision time + lesson for re-opening branches
 ```
@@ -71,9 +72,9 @@ knowledge/
   integrity**: in the *same PR* that removes, renames,
   or replaces a file, update or delete **every** reference to it. Find them
   with `grep -rn <old-path>` and fix `llms.txt`, `HANDOFF.md`, ADR
-  [`DIGEST.md`](./adr/DIGEST.md), [`glossary.md`](./glossary.md), any in-doc
+  [`DIGEST.md`](./adr/DIGEST.md), [`reference.md`](./reference.md), any in-doc
   links, and code comments.
-  Checklist: [`MAINTENANCE.md` §When moving or pruning a doc](./MAINTENANCE.md).
+  Checklist: [`doc-maintenance` skill §When moving or pruning a doc](./skills/doc-maintenance/SKILL.md).
   Rationale: [`research/llm-wiki-critique.md`](./research/llm-wiki-critique.md).
 
 ### Provenance-frontmatter (for `research/` and any summary notes)
@@ -230,17 +231,20 @@ see [`pr-creation` skill PR Checklist rule #9](skills/pr-creation/SKILL.md#pr-ch
 | A per-task agent-loadable discipline (loaded on-demand, e.g. before opening a PR) | `knowledge/skills/<name>/SKILL.md` (see [`skills/README.md`](./skills/README.md) for the skill-vs-prompt-vs-rule distinction) |
 | Exploration trail (which alternatives were rejected & why) | `knowledge/trace/exploration_log.md` |
 | Project-wide context (mission, scope, users) | `knowledge/project-overview.md` |
+| A term, feature, or session architecture detail | `knowledge/reference.md` |
+| Cross-session state or active work | `worklogs/` (see [`worklogs/README.md`](../worklogs/README.md)) |
 | How-to / guide / reference | `knowledge/` (the former `docs/` folder was retired 2026-05-29) |
 
 ## Routing — Where the agent looks for an answer
 
 | Question type | Primary source | Secondary / verification |
 |---|---|---|
-| "What is our architecture for X?" | `knowledge/architecture.md` | ADRs in `knowledge/adr/` |
+| "What is our architecture for X?" | `knowledge/reference.md` §Patterns | ADRs in `knowledge/adr/` |
 | "What decision did we make regarding Y and why?" | `knowledge/adr/` | — |
 | "What did we find during the research of Z?" | `knowledge/research/<Z>.md` | Primary sources from `source:` frontmatter |
 | Specific number / date / quote | **Always** the primary source (`source:` of the note), not the summary | — |
 | Procedure / how-to | `knowledge/skills/<name>/SKILL.md` for per-task disciplines | `knowledge/prompts/` for prompt templates |
+| Term definition / session data layout | `knowledge/reference.md` | — |
 | Before opening a PR (intent classification, anti-shallow-fix gate) | [`knowledge/skills/pr-creation/SKILL.md`](./skills/pr-creation/SKILL.md) | [`AGENTS.md` §Loadable skills (PR-creation load-directive)](../AGENTS.md#loadable-skills) (load-directive) |
 
 This same rule is documented in [`AGENTS.md`](../AGENTS.md#query-routing).

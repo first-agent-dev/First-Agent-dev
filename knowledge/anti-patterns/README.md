@@ -87,10 +87,10 @@ this order:
    entry via the routing surface, not by grep alone. The section name
    must match the heading in `knowledge/llms.txt:125` exactly so a
    `grep`-based agent finds it. Row format follows
-   [`knowledge/MAINTENANCE.md` §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge):
+   [`doc-maintenance skill` §When adding a new file](/skills/doc-maintenance/SKILL.md#when-adding-a-new-file-under-knowledge-or-worklogs):
    `- [path/to/file.md](raw-url) (BUCKET, ~N lines): description.`
    — size-bucket label (S / M / L / XL per the table in
-   MAINTENANCE.md) + file length rounded to the nearest ten.
+   doc-maintenance skill) + file length rounded to the nearest ten.
 5. Include in the PR description: «Anti-pattern catalogued: `AP-NNN`
    ([link]). CLASS: <REPAIR|RELAX|WORKAROUND>. INVARIANT: <one
    sentence>.» — see
@@ -114,4 +114,7 @@ is the worked example).
 | Entry  | Title                                                   | Linked-ADR                                                                                                                              | Status   |
 | ------ | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | AP-001 | Spec-bypassing workaround masquerading as fix           | [ADR-7 §Sub-amendment 2026-05-21b](../adr/ADR-7-inner-loop-tool-registry.md#sub-amendment-2026-05-21b--r-8-learningobserver-filesystem-canon-artifacts) | accepted |
-| AP-002 | Stale row counts in routing index drift silently        | [MAINTENANCE.md §When adding a new file](../MAINTENANCE.md#when-adding-a-new-file-under-docs-or-knowledge) | accepted |
+| AP-002 | Stale row counts in routing index drift silently        | [doc-maintenance skill §When adding a new file](/skills/doc-maintenance/SKILL.md#when-adding-a-new-file-under-knowledge-or-worklogs) | accepted |
+| AP-003 | Shallow fix without closing a degree of freedom         | [pr-creation skill anti-shallow-fix gate](../skills/pr-creation/SKILL.md) | accepted |
+| AP-004 | Symptom-chasing without fixing the underlying model     | [AGENTS.md §Industry-proven rules](../../AGENTS.md#industry-proven-rules-from-prior-art-in-oss-agent-stacks) | accepted |
+| AP-005 | Dual-write authority violation                          | [session_db authority](../reference.md#session-data-layout) | accepted |
