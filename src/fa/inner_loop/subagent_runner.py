@@ -73,7 +73,7 @@ class SubagentRunner:
 
             session = get_current_session()
             if session is not None:
-                ff = getattr(session, "feature_flags", None)
+                ff = session.feature_flags if session is not None else None
                 if ff is not None:
                     ff_max = getattr(ff, "max_subagent_spawns_per_session", None)
                     if isinstance(ff_max, int) and ff_max >= 0:
@@ -95,7 +95,7 @@ class SubagentRunner:
 
             session = get_current_session()
             if session is not None:
-                count = getattr(session, "subagent_spawns", 0)
+                count = session.subagent_spawns if session is not None else 0
                 max_spawns = self._resolve_max_spawns()
                 if count >= max_spawns:
                     raise RuntimeError(
@@ -147,7 +147,7 @@ class SubagentRunner:
             # If include_plans flag True, append latest 3 plan entries from blackboard (600 tokens)
             if include_plans:
                 try:
-                    bb = getattr(session, "blackboard", None) if session is not None else None
+                    bb = session.blackboard if session is not None else None
                     plans = bb.query(type="plan") if bb is not None else []
                     # Latest 3
                     for plan in plans[-3:]:

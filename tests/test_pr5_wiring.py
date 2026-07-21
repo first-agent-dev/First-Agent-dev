@@ -22,9 +22,9 @@ from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolResult, ToolSpec
+from tests.fixtures.session_wiring import make_test_chain_config
 from fa.providers import ProviderChain
 from fa.providers.base import ResponseInfo
-from tests.fixtures.session_wiring import make_test_chain_config, mock_success_response, require_log
 
 
 @pytest.fixture
@@ -38,6 +38,26 @@ def mock_session_state(tmp_path: Path) -> SessionState:
     )
 
 
+def _require_log(state: SessionState) -> EventLog:
+    """Session fixtures always attach a log; narrow Optional for type checkers."""
+    assert state.log is not None
+    return state.log
+
+
+def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[object]]:
+    resp = ResponseInfo(
+        text=text,
+        in_tokens=1000,
+        out_tokens=100,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+        finish_reason="stop",
+        tool_calls=(),
+        extras={},
+    )
+    return resp, "call-id", []
+
+
 def test_stage3_compaction_triggers_and_rebuilds_prompt(
     tmp_path: Path, mock_session_state: SessionState
 ) -> None:
@@ -49,7 +69,7 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
         family="anthropic",
     )
 
-    mock_chain.request.return_value = mock_success_response("all done")
+    mock_chain.request.return_value = _mock_success_response("all done")
 
     # We also mock the compactor chain
     mock_compactor_chain = MagicMock(spec=ProviderChain)
@@ -96,12 +116,12 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        require_log(mock_session_state).append(
+        _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
             content={"text": "Bulky step content " * 15000, "tool_calls": t_calls},
         )
-        require_log(mock_session_state).append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
@@ -114,10 +134,10 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        require_log(mock_session_state).append(
+        _require_log(mock_session_state).append(
             actor="model", kind="model_msg", content={"text": f"Step content {i}", "tool_calls": t_calls}
         )
-        require_log(mock_session_state).append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
@@ -140,7 +160,7 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
     assert mock_chain.request.call_count == 1
     assert mock_compactor_chain.request.call_count == 1
 
-    events = require_log(mock_session_state).read_all()
+    events = _require_log(mock_session_state).read_all()
     stage3_start = [e for e in events if e.kind == "compaction_stage3_start"]
     stage3_done = [e for e in events if e.kind == "compaction_stage3_done"]
     assert len(stage3_start) == 1
@@ -185,13 +205,13 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        require_log(mock_session_state).append(
+        _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
             content={"text": f"Step {i}", "tool_calls": t_calls},
         )
         stdout = "A" * 330000 if i == 1 else "small"
-        require_log(mock_session_state).append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "bulk output", "result": {"stdout": stdout}, "ok": True},
@@ -214,7 +234,7 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
     assert mock_chain.request.call_count == 1
     assert mock_compactor_chain.request.call_count == 0
 
-    events = require_log(mock_session_state).read_all()
+    events = _require_log(mock_session_state).read_all()
     assert [e for e in events if e.kind == "compaction_stage2_done"]
     assert not [e for e in events if e.kind == "compaction_stage3_start"]
 
@@ -229,7 +249,7 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
         family="anthropic",
     )
 
-    mock_chain.request.return_value = mock_success_response("all done")
+    mock_chain.request.return_value = _mock_success_response("all done")
 
     mock_compactor_chain = MagicMock(spec=ProviderChain)
     mock_compactor_chain.config = make_test_chain_config(
@@ -255,7 +275,7 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
     mock_compactor_chain.request.return_value = (compactor_resp, "comp-call-id", [])
 
     # Seed the log with a previous compaction_stage3_done event
-    require_log(mock_session_state).append(
+    _require_log(mock_session_state).append(
         actor="runtime", kind="compaction_stage3_done", content={"summary": "PREVIOUS COMPACTION RECORDED"}
     )
 
@@ -264,12 +284,12 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        require_log(mock_session_state).append(
+        _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
             content={"text": "Bulky step content " * 15000, "tool_calls": t_calls},
         )
-        require_log(mock_session_state).append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
@@ -282,10 +302,10 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        require_log(mock_session_state).append(
+        _require_log(mock_session_state).append(
             actor="model", kind="model_msg", content={"text": f"Step content {i}", "tool_calls": t_calls}
         )
-        require_log(mock_session_state).append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
@@ -324,7 +344,7 @@ def test_circuit_breaker_stops_session(tmp_path: Path, mock_session_state: Sessi
         family="anthropic",
     )
 
-    mock_chain.request.return_value = mock_success_response("done")
+    mock_chain.request.return_value = _mock_success_response("done")
 
     # Prepare a mock compactor chain that returns a response of the exact same size (0% reclaimed)
     mock_compactor_chain = MagicMock(spec=ProviderChain)
@@ -388,12 +408,12 @@ def test_circuit_breaker_logs_terminal_events_in_live_loop(
         t_calls = [
             {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
         ]
-        require_log(mock_session_state).append(
+        _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
             content={"text": "Bulky step content " * 15000, "tool_calls": t_calls},
         )
-        require_log(mock_session_state).append(
+        _require_log(mock_session_state).append(
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
@@ -419,7 +439,7 @@ def test_circuit_breaker_logs_terminal_events_in_live_loop(
     assert outcome.stop_reason == "context_budget_hard_stop"
     assert mock_chain.request.call_count == 0
 
-    events = require_log(mock_session_state).read_all()
+    events = _require_log(mock_session_state).read_all()
     assert [e for e in events if e.kind == "compaction_circuit_breaker"]
     assert [e for e in events if e.kind == "context_budget_hard_stop"]
     assert [

@@ -485,6 +485,7 @@ Path inventory:
 - **I-TW-14** Two-sided contract: for every EventType, BOTH producer and consumer verified before "shipped."
 - **I-TW-15** Existence pre-check: verify emit call site EXISTS. Vacuous kill-check = not shipped = theater.
 - **I-TW-16** Path inventory: enumerate ALL emit paths. At least one test per path.
-- **I-TW-17** Dual-write: EventLog and EventBus both written on every code path.
+- **I-TW-17** CONSOLE_MIRROR_KINDS (in output.py) defines which log.append kinds MUST also emit an OutputEvent. Every kind in that set must have both a log.append producer and an output.emit producer on the same code path. The check_log_kind_contract.py script validates this.
 - **I-TW-18** C0 consumer-only tests are theater without C1 producer pair.
 - **I-TW-19** Contract check script MUST pass in CI for every PR touching EventTypes.
+- **I-TW-20** Never mock dataclass config objects (ChainConfig, ChainEntry, CooldownRow, etc.). Use real instances via make_test_chain_config(). Only mock objects with behavior (ProviderChain, Provider, Transport). Guard: scripts/check_no_mocked_dataclasses.py

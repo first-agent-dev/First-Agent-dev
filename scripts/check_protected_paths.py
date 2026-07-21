@@ -35,6 +35,8 @@ _TCB_PATHS = frozenset(
         ".github/workflows/authoring-guardrails.yml",
         ".github/CODEOWNERS",
         "scripts/check_protected_paths.py",
+        ".fa/dependency_contract.toml",  # S15: supply-chain TCB (ADR-11-I7)
+        "scripts/check_dependency_contract.py",  # S15: contract enforcement
     }
 )
 # Any path beneath these prefixes is protected (the whole rule pack).

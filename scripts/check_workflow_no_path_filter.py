@@ -31,6 +31,7 @@ from typing import Any
 
 import yaml
 
+
 # Keys that constitute path filtering at the trigger level.
 _PATH_FILTER_KEYS = frozenset({"paths", "paths-ignore"})
 

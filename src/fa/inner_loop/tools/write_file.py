@@ -174,8 +174,8 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
 
             session = get_current_session()
             if session is not None:
-                blackboard = getattr(session, "blackboard", None)
-                transaction = getattr(session, "transaction", None)
+                blackboard = session.blackboard if session is not None else None
+                transaction = session.transaction if session is not None else None
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             logger.warning("get_current_session failed in write_file: %s", exc)
 

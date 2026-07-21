@@ -8,9 +8,12 @@ Stage 3: Full LLM Handoff Compaction (90% capacity) - dense status summary
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fa.inner_loop.state import TraceEvent
+
+if TYPE_CHECKING:
+    from fa.providers.chain import ProviderChain
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +128,7 @@ class FullLLMCompactor:
     zero-filler, 4-header Markdown block: PREVIOUSLY, PARKED, CURRENT, NEXT ACTION.
     """
 
-    def __init__(self, compactor_chain: Any | None = None):
+    def __init__(self, compactor_chain: ProviderChain | None = None):
         self.compactor_chain = compactor_chain
 
     def compact(self, history_text: str) -> str:
@@ -153,7 +156,7 @@ class FullLLMCompactor:
         try:
             from fa.providers.base import RequestInfo
 
-            model_slug = getattr(getattr(self.compactor_chain, "config", None), "model", "compactor")
+            model_slug = self.compactor_chain.config.model
             request = RequestInfo(
                 model_slug=str(model_slug),
                 messages=(

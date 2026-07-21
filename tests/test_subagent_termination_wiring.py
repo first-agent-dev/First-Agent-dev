@@ -43,8 +43,9 @@ from fa.inner_loop import EventLog, SessionState
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.tools import build_baseline_registry
-from fa.providers import ChainConfig, ProviderChain
+from fa.providers import ProviderChain
 from tests.fixtures.session_wiring import (
+    make_test_chain_config,
     make_tool_call,
     mock_response_with_tools,
     mock_success_response,
@@ -200,11 +201,9 @@ def test_ctrl_c_interrupts_pty_session_via_drive_session(tmp_path: Path) -> None
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     # Turn 1: start a long-running bash
     tc1 = make_tool_call("fs.run_bash", {"command": "sleep 60"}, "tc-1")
@@ -262,11 +261,9 @@ def test_subagent_spawn_and_cleanup_via_drive_session(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call(
         "fs.spawn_subagent",

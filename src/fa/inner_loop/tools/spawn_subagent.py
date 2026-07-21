@@ -29,7 +29,8 @@ def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:
         enabled = False
         try:
             if session is not None and session.feature_flags is not None:
-                enabled = getattr(session.feature_flags, "subagent_spawning_enabled", False)
+                # S13: FAIL-OPEN — subagent_spawning_enabled defaults to False (don't spawn when unconfigured)
+                enabled = session.feature_flags.subagent_spawning_enabled if session.feature_flags is not None else False
         except AttributeError as exc:  # best-effort flag check
             logger.warning("subagent_spawning_enabled flag check failed: %s", exc)
 
@@ -102,7 +103,7 @@ def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:
         # instead of only a log entry in session.db.
         if session is not None:
             try:
-                output_bus = getattr(session, "output_bus", None)
+                output_bus = session.output_bus if session is not None else None
                 if output_bus is not None:
                     from fa.output import EventBus, OutputEvent
 
@@ -139,6 +140,7 @@ def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:
             # 7. Log spawn done/fail events
             if session is not None and session.log is not None:
                 try:
+                    # TODO: type as LogKind after spawn_subagent.py refactor (deferred)
                     kind = "subagent_spawn_done" if envelope.exit_code == 0 else "subagent_spawn_fail"
                     session.log.append(
                         actor="tool",
@@ -158,7 +160,7 @@ def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:
             # FIX-3: emit subagent_end OutputEvent via output_bus
             if session is not None:
                 try:
-                    output_bus = getattr(session, "output_bus", None)
+                    output_bus = session.output_bus if session is not None else None
                     if output_bus is not None:
                         from fa.output import OutputEvent
 
@@ -209,7 +211,7 @@ def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:
             # FIX-3: emit subagent_end OutputEvent for runner error path
             if session is not None:
                 try:
-                    output_bus = getattr(session, "output_bus", None)
+                    output_bus = session.output_bus if session is not None else None
                     if output_bus is not None:
                         from fa.output import OutputEvent
 

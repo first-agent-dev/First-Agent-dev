@@ -113,16 +113,16 @@ def build_run_bash_tool(
             if session is not None:
                 # Guard against cross-workspace contamination
                 try:
-                    sess_root = getattr(session, "workspace_root", None)
+                    sess_root = session.workspace_root if session is not None else None
                     if sess_root is not None:
                         sess_root_resolved = Path(sess_root).resolve()
                         if sess_root_resolved != root:
                             # Different workspace — don't reuse pty_pool, but keep artifact_store/transaction if possible
                             executor = None
                         else:
-                            executor = getattr(session, "bash_executor", None)
+                            executor = session.bash_executor if session is not None else None
                             if executor is None:
-                                pool = getattr(session, "pty_pool", None)
+                                pool = session.pty_pool if session is not None else None
                                 if pool is not None:
                                     try:
                                         from fa.runtime.bash_executor import InProcessPtyExecutor
@@ -134,9 +134,9 @@ def build_run_bash_tool(
                                         )
                                         executor = pool
                     else:
-                        executor = getattr(session, "bash_executor", None)
+                        executor = session.bash_executor if session is not None else None
                         if executor is None:
-                            pool = getattr(session, "pty_pool", None)
+                            pool = session.pty_pool if session is not None else None
                             if pool is not None:
                                 try:
                                     from fa.runtime.bash_executor import InProcessPtyExecutor
@@ -152,8 +152,8 @@ def build_run_bash_tool(
                     executor = None
 
                 try:
-                    artifact_store = getattr(session, "artifact_store", None)
-                    transaction = getattr(session, "transaction", None)
+                    artifact_store = session.artifact_store if session is not None else None
+                    transaction = session.transaction if session is not None else None
                 except Exception as exc:  # noqa: BLE001 # best-effort attribute extraction
                     logger.debug("artifact_store/transaction extraction failed: %s", exc)
         except Exception as exc:  # noqa: BLE001

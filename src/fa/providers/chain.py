@@ -62,15 +62,24 @@ RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset({"__internal__", "__metadata
 
 def _validate_context_budget_settings(config: ChainConfig) -> None:
     if config.context_limit <= 0:
-        raise ConfigurationError(f"role {config.role!r}: context_limit must be a positive integer")
+        raise ConfigurationError(
+            f"role {config.role!r}: context_limit must be a positive integer, "
+            f"got {config.context_limit}. Fix: set a positive context_limit under "
+            f"the '{config.role}' role in ~/.fa/models.yaml."
+        )
     if config.compaction_threshold is None:
         return
     if config.compaction_threshold <= 0:
-        raise ConfigurationError(f"role {config.role!r}: compaction_threshold must be a positive integer")
+        raise ConfigurationError(
+            f"role {config.role!r}: compaction_threshold must be a positive integer, "
+            f"got {config.compaction_threshold}. Fix: set a positive compaction_threshold "
+            f"or remove it (null = disabled) under the '{config.role}' role in ~/.fa/models.yaml."
+        )
     if config.compaction_threshold > config.context_limit:
         raise ConfigurationError(
             f"role {config.role!r}: compaction_threshold ({config.compaction_threshold}) "
-            f"cannot exceed context_limit ({config.context_limit})"
+            f"cannot exceed context_limit ({config.context_limit}). "
+            f"Fix: reduce compaction_threshold or increase context_limit in ~/.fa/models.yaml."
         )
 
 
@@ -131,7 +140,11 @@ class ChainConfig:
         warnings: list[str] = []
         environ = env if env is not None else os.environ
         if not self.chain:
-            raise ConfigurationError(f"role {self.role!r}: empty chain — role not callable")
+            raise ConfigurationError(
+                f"role {self.role!r}: empty chain — no providers configured for this role. "
+                f"Fix: add at least one chain entry under the 'chain:' key for role "
+                f"'{self.role}' in ~/.fa/models.yaml."
+            )
         _validate_context_budget_settings(self)
         for index, entry in enumerate(self.chain):
             label = f"role {self.role!r} chain[{index}]"
@@ -142,24 +155,35 @@ class ChainConfig:
                 )
             if entry.provider not in PROVIDERS:
                 raise ConfigurationError(
-                    f"{label}: unknown provider {entry.provider!r}; known: {sorted(PROVIDERS)}"
+                    f"{label}: unknown provider {entry.provider!r}; known: {sorted(PROVIDERS)}. "
+                    f"Fix: check the 'provider' field in ~/.fa/models.yaml for role '{self.role}'."
                 )
             parsed = urlparse(entry.base_url)
             if parsed.scheme == "http":
                 if parsed.hostname not in LOCALHOST_HOSTS:
                     raise ConfigurationError(
-                        f"{label}: base_url {entry.base_url!r} must be https:// for non-localhost"
+                        f"{label}: base_url {entry.base_url!r} must be https:// for non-localhost. "
+                        f"Fix: change the base_url scheme to https:// in ~/.fa/models.yaml, "
+                        f"or use an http://localhost gateway."
                     )
                 warnings.append(f"{label}: http:// base_url permitted only for localhost gateway")
             elif parsed.scheme != "https":
                 raise ConfigurationError(
-                    f"{label}: base_url {entry.base_url!r} must be https:// or http://localhost"
+                    f"{label}: base_url {entry.base_url!r} must be https:// or http://localhost. "
+                    f"Fix: set a valid base_url under the 'chain:' entry in ~/.fa/models.yaml."
                 )
             if not entry.api_key_env:
-                raise ConfigurationError(f"{label}: api_key_env must be non-empty")
+                raise ConfigurationError(
+                    f"{label}: api_key_env must be non-empty. "
+                    f"Fix: set the 'api_key_env' field to an environment variable name "
+                    f"containing your API key in ~/.fa/models.yaml."
+                )
             if require_api_keys and not environ.get(entry.api_key_env, "").strip():
                 raise ConfigurationError(
-                    f"{label}: api_key_env={entry.api_key_env} not set or empty in the configured secret store"
+                    f"{label}: api_key_env={entry.api_key_env!r} not set or empty in the "
+                    f"configured secret store. Fix: set the {entry.api_key_env!r} environment "
+                    f"variable to your API key, or update 'api_key_env' in ~/.fa/models.yaml "
+                    f"to reference a different variable."
                 )
             # Best-effort model-identity check (ADR-9 §1 + §7 reframed):
             # slug strings vary legitimately across providers, so we
@@ -394,7 +418,9 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
         for field_name in ("provider", "slug", "base_url", "api_key_env"):
             if row.get(field_name) is None:
                 raise ConfigurationError(
-                    f"role {role!r} chain[{index}]: required field {field_name!r} is null or missing"
+                    f"role {role!r} chain[{index}]: required field {field_name!r} is null or missing. "
+                    f"Fix: set the '{field_name}' field in the chain[{index}] entry under "
+                    f"role '{role}' in ~/.fa/models.yaml."
                 )
     # ``row.get(key, DEFAULT)`` returns the actual value when the YAML
     # row contains ``key: null`` (because the key exists), so passing
@@ -462,7 +488,10 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
         compaction_threshold = int(compaction_threshold_raw) if compaction_threshold_raw is not None else None
     except (TypeError, ValueError) as exc:
         raise ConfigurationError(
-            f"role {role!r}: context_limit and compaction_threshold must be integers"
+            f"role {role!r}: context_limit and compaction_threshold must be integers "
+            f"(got context_limit={context_limit_raw!r}, "
+            f"compaction_threshold={compaction_threshold_raw!r}). "
+            f"Fix: use integer values in ~/.fa/models.yaml."
         ) from exc
     # Role-level extras: provider-specific parameters that the caller wants
     # forwarded to the LLM request body. These are distinct from per-chain-entry

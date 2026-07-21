@@ -79,7 +79,7 @@ from fa.inner_loop.prompt import (
 )
 from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import RuntimeLimits
-from fa.inner_loop.state import SessionState
+from fa.inner_loop.state import SessionState, _now_iso_z
 from fa.observability.redaction import SecretRedactor
 from fa.output import EventBus, OutputEvent
 from fa.providers.base import RequestInfo, ResponseInfo
@@ -352,7 +352,11 @@ def drive_session(
             :func:`fa.inner_loop.loop.run_session`).
     """
     if state.log is None:
-        raise ValueError("SessionState.log must be set before drive_session")
+        raise ValueError(
+            "SessionState.log must be set before drive_session. "
+            "Fix: pass log=EventLog(path) when constructing SessionState, "
+            "or let __post_init__ create one from the default path."
+        )
 
     from fa.inner_loop.context import reset_current_session, set_current_session
 
@@ -406,8 +410,29 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     from fa.memory.context_budget import ContextBudget, estimate_tokens
     from fa.memory.pinned_buffer import PinnedBuffer
 
-    context_limit = getattr(provider_chain.config, "context_limit", 150000) or 150000
-    compaction_threshold = getattr(provider_chain.config, "compaction_threshold", None)
+    # G1 fix: direct access — ChainConfig always has both fields.
+    # The old getattr+or pattern had a logic trap: `or 150000` silently
+    # converted context_limit=0 to 150000. ChainConfig.validate() already
+    # rejects context_limit <= 0 (chain.py:63), but the floor below is
+    # defense-in-depth for misconfigured-but-positive values.
+    context_limit = provider_chain.config.context_limit
+    compaction_threshold = provider_chain.config.compaction_threshold
+
+    # MIN_CONTEXT_LIMIT: below this, context budget is meaningless.
+    # Catches typos like context_limit=100 (meant 100000).
+    MIN_CONTEXT_LIMIT = 32_000
+    if context_limit < MIN_CONTEXT_LIMIT:
+        state.log.append(
+            actor="runtime",
+            kind="telemetry",
+            content={"message": f"context_limit={context_limit} below floor {MIN_CONTEXT_LIMIT}, clamped"},
+        )
+        context_limit = MIN_CONTEXT_LIMIT
+
+    # TODO: Adaptive context sizing — eventually derive context_limit from API response
+    # metadata (model's actual context_window). ADR-17 §Option B point 5 describes the
+    # target architecture. Current implementation uses static config from models.yaml.
+    # See: knowledge/adr/ADR-17-context-management-and-compaction.md
     budget = ContextBudget(limit_tokens=context_limit, configured_threshold=compaction_threshold)
     pinned_buffer = PinnedBuffer(state.workspace_root)
 
@@ -487,6 +512,13 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
     collected_results: list[ToolResult] = []
     turn = 0
+    # S22: Session-level chain exhaustion counter for max_chain_retries guard.
+    # Distinct from the inner per-turn retry loop (_per_turn_chain_retries):
+    #   - Inner loop retries provider_chain.request() with cooldown waits
+    #   - This counter retries the entire turn (continue back to while loop)
+    #   - max_chain_retries (FeatureFlags, default=0) controls this counter
+    #   - transport_retries (ChainEntry, models.yaml) controls per-provider HTTP retries
+    chain_exhaustion_count = 0
 
     def record_usage(response: ResponseInfo) -> None:
         nonlocal usage_turns
@@ -529,6 +561,21 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         },
                     )
                 )
+
+            # S9: Guardrail metrics for data-driven improvement (G9).
+            # Incremental counting from EventLog.kind_counts, written at
+            # session end via session_db.set_meta(). Never crash the session
+            # for metrics — try/except with logging on failure.
+            if state.session_db is not None and state.log is not None:
+                try:
+                    kind_counts = dict(state.log.kind_counts)
+                    state.session_db.set_meta("kind_counts", kind_counts, _now_iso_z())
+                    budget_breaches = kind_counts.get("context_budget_warn", 0) + kind_counts.get("context_budget_hard_stop", 0)
+                    state.session_db.set_meta("budget_threshold_breaches", budget_breaches, _now_iso_z())
+                    state.session_db.set_meta("chain_exhaustion_events", state.log.chain_exhaustion_count, _now_iso_z())
+                except Exception as exc:  # noqa: BLE001 # never crash at session end
+                    logger.warning("session_meta write failed: %s", exc)
+
         return outcome
 
     while turn < max_turns:
@@ -626,12 +673,8 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         )
 
         # ── ContextBudget Gating (Phase 1 / PR 1) ───────────────────────────
-        budget_enabled = True
-        try:
-            if state.feature_flags is not None:
-                budget_enabled = getattr(state.feature_flags, "context_budget_enabled", True)
-        except Exception:  # noqa: BLE001, S110 # graceful degradation
-            pass
+        # S13: FAIL-CLOSED — context_budget_enabled defaults to True when flags unavailable
+        budget_enabled = state.feature_flags.context_budget_enabled if state.feature_flags is not None else True
 
         if budget_enabled:
             usage = estimate_tokens(messages_payload, tool_payload)
@@ -655,12 +698,26 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         )
                     )
             elif decision["action"] in {"stage2", "stage3"}:
-                compaction_enabled = False
-                try:
-                    if state.feature_flags is not None:
-                        compaction_enabled = getattr(state.feature_flags, "context_compaction_enabled", False)
-                except Exception:  # noqa: BLE001, S110 # graceful degradation
-                    pass
+                # S6: compaction_warning — single observation point for
+                # compaction-level pressure. Fires in BOTH enabled and
+                # disabled cases so the operator can always see when the
+                # system detected pressure at compaction threshold,
+                # regardless of whether compaction is actually enabled.
+                # S14: compaction SSoT — derive from compaction_threshold is not None
+                # instead of the deprecated context_compaction_enabled flag.
+                # If a threshold is configured, compaction is enabled. Period.
+                compaction_enabled = compaction_threshold is not None
+
+                state.log.append(
+                    actor="runtime",
+                    kind="compaction_warning",
+                    content={
+                        "action": decision["action"],
+                        "compaction_enabled": compaction_enabled,
+                        "ratio": last_budget_ratio,
+                        "threshold": budget.stage2_threshold if decision["action"] == "stage2" else budget.stage3_threshold,
+                    },
+                )
 
                 logger.warning("compaction_enabled: %s, flags: %s", compaction_enabled, state.feature_flags)
 
@@ -888,8 +945,10 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                 )
                                 if not is_ok:
                                     logger.error(
-                                        "Compaction circuit breaker triggered! Less than 10%% space reclaimed "
-                                        "3 consecutive times. Preventing endless compaction loop."
+                                        "Compaction circuit breaker triggered: less than 10%% space "
+                                        "reclaimed 3 consecutive times. Anti-thrashing loop locked. "
+                                        "Consider increasing context_limit or reducing conversation "
+                                        "complexity in ~/.fa/models.yaml."
                                     )
                                     circuit_breaker_message = (
                                         "Compaction circuit breaker triggered: anti-thrashing loop locked."
@@ -931,6 +990,23 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                                     "pct": round(last_budget_ratio * 100),
                                                     "action": "stage3",
                                                     "message": circuit_breaker_message,
+                                                },
+                                            )
+                                        )
+                                        # S23: emit loop_warn for compaction circuit
+                                        # breaker — actionable console guidance so
+                                        # the operator sees "loop detected:
+                                        # compaction_circuit_breaker" with an
+                                        # explicit message instead of just a
+                                        # generic context_budget_hard_stop.
+                                        output.emit(
+                                            OutputEvent(
+                                                type="loop_warn",
+                                                turn=turn,
+                                                max_turns=max_turns,
+                                                data={
+                                                    "detector": "compaction_circuit_breaker",
+                                                    "message": "Compaction circuit breaker triggered — context budget exceeded after compaction attempts",
                                                 },
                                             )
                                         )
@@ -1043,7 +1119,12 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         )
         try:
             # --- Internal Retry Loop for Chain Exhaustion ---
-            max_chain_retries = 3
+            # S22: renamed from max_chain_retries to avoid collision with
+            # the FeatureFlags field that controls session-level retry.
+            # This is the per-turn retry: wait for cooldowns and retry the
+            # same request. The session-level retry (FeatureFlags.max_chain_retries)
+            # is in the outer ProviderChainExhaustedError handler.
+            _per_turn_chain_retries = 3
             attempt_count = 0
             while True:
                 try:
@@ -1065,7 +1146,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                     "logical_call_id": exc.logical_call_id,
                                 },
                             )
-                    if attempt_count >= max_chain_retries:
+                    if attempt_count >= _per_turn_chain_retries:
                         raise  # Break the while loop, letting the outer try/except catch it as norm
 
                     now = time.time()
@@ -1171,12 +1252,51 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         "logical_call_id": exc.logical_call_id,
                     },
                 )
+
+            # S22: Session-level chain retry logic (CT13).
+            # max_chain_retries (FeatureFlags, default=0 → fail-fast)
+            # controls how many times to retry the ENTIRE turn after chain
+            # exhaustion. This is DISTINCT from:
+            #   - transport_retries (ChainEntry, models.yaml) — HTTP-level per-provider
+            #   - _per_turn_chain_retries (inner while loop) — per-turn cooldown-wait retries
+            # The session-level retry fires only after ALL entries are exhausted
+            # AND the inner per-turn retries are spent.
+            chain_exhaustion_count += 1
+            if state.log is not None:
+                state.log.chain_exhaustion_count += 1
+
+            max_chain_retries = state.feature_flags.max_chain_retries if state.feature_flags is not None else 0
+            if chain_exhaustion_count <= max_chain_retries:
+                # Retry the entire provider chain — continue to next turn
+                logger.info(
+                    "Provider chain exhausted, session-level retry (%d/%d)",
+                    chain_exhaustion_count,
+                    max_chain_retries,
+                )
+                if output is not None:
+                    for _att in exc.attempts:
+                        output.emit(
+                            OutputEvent(
+                                type="api_retry",
+                                turn=turn,
+                                max_turns=max_turns,
+                                data={
+                                    "provider": _att.provider,
+                                    "status": _att.status,
+                                    "retry_after_s": 0,
+                                    "reason": _att.error or "unknown",
+                                },
+                            )
+                        )
+                continue  # back to the top of while turn < max_turns
+
+            # Max retries reached — session exits with chain_exhausted
             state.log.append(
                 actor="runtime",
                 kind="run_stopped",
                 content={"reason": "chain_exhausted", "detail": str(exc)},
             )
-            # ── Output: api_retry (all entries failed) ─────────────────────
+            # ── Output: api_retry (all entries failed, no more retries) ────
             if output is not None:
                 for _att in exc.attempts:
                     output.emit(
@@ -1308,6 +1428,23 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             # so the CLI distinguishes a clean stop from a truncated
             # one. The audit trail already has the ``model_msg`` row
             # carrying the abnormal ``finish_reason`` verbatim.
+            # S17: LOGIC-10 — emit actionable console guidance for abnormal_stop
+            hint = ""
+            if response.finish_reason == "length":
+                hint = "Output truncated (finish_reason=length). Consider increasing max_tokens or simplifying the task."
+            elif response.finish_reason == "content_filter":
+                hint = "Output blocked by content filter (finish_reason=content_filter). Review the prompt for policy violations."
+            else:
+                hint = f"Unexpected finish_reason: {response.finish_reason}"
+            if output is not None:
+                output.emit(
+                    OutputEvent(
+                        type="loop_warn",
+                        turn=turn,
+                        max_turns=max_turns,
+                        data={"detector": "abnormal_stop", "message": hint},
+                    )
+                )
             state.log.append(
                 actor="runtime",
                 kind="run_stopped",

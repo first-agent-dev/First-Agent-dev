@@ -1,6 +1,6 @@
 # PLAN: Guardrail Gap Closure P1–P5              Plan-ID: PLAN-guardrail-gap-closure
-Status: READY                                   Depth: P3
-Revision: v4   Changed-since-last: Q1–Q5 answers applied
+Status: DRAFT                                   Depth: P3
+Revision: v1   Changed-since-last: initial
 Upstream context: merged-guardrail-action-plan-2026-07-19.md, external-verification-guardrail-gaps-2026-07-19.md, missing-guardrail-dimensions-2026-07-19.md
 
 ═══════════════════════════════════════════════════════════════════════
@@ -75,7 +75,7 @@ PROJECT MEANING: In the FA inner-loop, these gaps become the difference between
   cannot tune the guardrail stack.
 
 GOAL (G1–G12):
-  G1: Fix `or 150000` logic trap — context_limit=0 must not become 150000; add MIN_CONTEXT_LIMIT=32000 floor
+  G1: Fix `or 150000` logic trap — context_limit=0 must not become 150000
   G2: Fix compactor_chain type erasure — double-getattr bug on compactor.py:156
   G3: Add `LogKind = Literal[...]` + `CONSOLE_MIRROR_KINDS` + contract check script
   G4: Type 9 `Any | None` fields on SessionState with real types
@@ -86,7 +86,7 @@ GOAL (G1–G12):
   G9: Extend session_meta with guardrail metrics at session end (G9 real-time)
   G10: Create TRACE mechanism (`.fa/corrections.jsonl` + `compile_corrections.py`)
   G11: Add frozen integrity guard (AST scanner for `object.__setattr__` bypass)
-  G12: Add missing log-kind parsers + error audit + ADR-11-I1 check + max_chain_retries + compaction_end visibility
+  G12: Add missing log-kind parsers + error audit + ADR-11-I1 check + max_retry + compaction_end visibility
 
 NON-GOALS:
   - Discriminated union events (P6 deferred)
@@ -171,7 +171,7 @@ Minimal-mechanism checks:
 
 | State | AS-IS | TO-BE |
 |---|---|---|
-| context_limit | `getattr(...) or 150000` (swallows 0) | `provider_chain.config.context_limit` + MIN_CONTEXT_LIMIT=32000 floor with clamp warning (direct, ChainConfig always has it) |
+| context_limit | `getattr(...) or 150000` (swallows 0) | `provider_chain.config.context_limit` (direct, ChainConfig always has it) |
 | compactor_chain type | `Any | None` | `ProviderChain | None` |
 | compactor double-getattr | `getattr(getattr(self, "config", None), "model", "compactor")` | `if self.compactor_chain is not None: self.compactor_chain.config.model else: ""` |
 | LogKind | `kind: str` on EventLog.append | `kind: LogKind` (Literal[30 values]) on EventLog.append |
@@ -180,19 +180,19 @@ Minimal-mechanism checks:
 | SessionState fields | 9 × `Any | None` | 8 × `RealType | None`, 1 × `Any | None` (pty_pool) |
 | getattr sites | 12 × `getattr(flags, "field", default)` | Direct `flags.field` with explicit None check + fail-closed/open |
 | compaction gate | `context_compaction_enabled` flag | `compaction_threshold is not None` (SSoT) |
-| FAIL_CLOSED_FLAGS | absent | `frozenset` in feature_flags.py: 2 safety-critical flags (context_budget_enabled, context_compaction_enabled) |
-| FAIL_OPEN_FLAGS | absent | `frozenset` in feature_flags.py: 12 convenience flags (incl. subagent_spawning_enabled — FAIL-OPEN, max_chain_retries — default=0) |
+| FAIL_CLOSED_FLAGS | absent | `frozenset` in feature_flags.py: 3 safety-critical flags |
+| FAIL_OPEN_FLAGS | absent | `frozenset` in feature_flags.py: 10 convenience flags |
 | dependency_contract.toml | absent | NEW frozen TOML, fail-closed parsing |
 | check_dependency_contract.py | absent | NEW script, reuses RuleResult/Severity pattern |
 | check_protected_paths.py | exits 0 for deps | exits 1 for deps by default; `--advisory-deps` flag |
-| session_meta metrics | no guardrail data | `kind_counts` (incremental dict on state, not re-read at end), `budget_threshold_breaches` at session end; session_db writability checked |
+| session_meta metrics | no guardrail data | `guardrail_rule_fires`, `budget_threshold_breaches`, `kind_counts` at session end |
 | fa stats --guardrail-metrics | absent | NEW CLI flag reading session_meta across runs |
 | Behavioral assertions | none in loop_guard tests | 3 assertions: deny→no-calls, hard_stop→no-tools, loop_guard→one-warn |
 | corrections.jsonl | absent | NEW JSONL log, human-mediated only |
 | compile_corrections.py | absent | NEW script, produces report (never auto-commits) |
 | frozen_guard.py | absent | NEW AST scanner for `object.__setattr__` + frozen verification |
 | ADR-11-I1 check | absent | NEW script (or extension to check_dead_flags.py), stdlib-only import scan |
-| max_chain_retries | absent in FeatureFlags | `max_chain_retries: int = 0` field in FeatureFlags (config.yaml) + guard in coder_loop (fail-fast default, user opts in; distinct from transport_retries=2 in ChainEntry/models.yaml) |
+| max_retry | absent in FeatureFlags | `max_retry: int = 5` field + guard in coder_loop |
 | compaction_end visibility | compaction_end event exists but no circuit-breaker message | Explicit loop_warn on circuit breaker with actionable message |
 
 Target liveness per signal: ALL must be L3 (kill-checkable from composition root).
@@ -235,8 +235,7 @@ Target liveness per signal: ALL must be L3 (kill-checkable from composition root
   Data: two `frozenset[str]` in `feature_flags.py`
   Invariant: every FeatureFlags field is in exactly one set
   Enforced at: feature_flags.py module level
-  Verified by: test that `FAIL_CLOSED_FLAGS | FAIL_OPEN_FLAGS == set(f.name for f in fields(FeatureFlags))`
-  Key design: subagent_spawning_enabled is FAIL-OPEN (default=False when flags missing — don't spawn when unconfigured)
+  Verified by: test that `FAIL_CLOSED_FLAGS | FAIL_OPEN_FLAGS == set(f.name for f in fields(FeatureFlags)) - {"pty_pool_max_size"}`
 
 ### CT6: compaction SSoT
   Invariant: `compaction_enabled = compaction_threshold is not None` — single source of truth
@@ -259,11 +258,9 @@ Target liveness per signal: ALL must be L3 (kill-checkable from composition root
   KILL-CHECK: remove a contract entry → script exits 1
 
 ### CT9: session_meta guardrail metrics
-  PRODUCER: EventLog.kind_counts (dict[str, int], incremented inside append() under lock) → coder_loop.py session-end path writes via session_db.set_meta
+  PRODUCER: coder_loop.py session-end path → `session_db.set_meta("guardrail_rule_fires", ...)`, etc.
   CONSUMER: `fa stats --guardrail-metrics` CLI flag → reads session_meta across runs
-  Payload: `{kind: count}` dicts, `budget_threshold_breaches: int`, `chain_exhaustion_events: int` (dedicated counter, not derived from kind_counts)
-  INVARIANT: kind_counts dict lives on EventLog (not SessionState), updated incrementally inside the existing _lock on each append(), not re-read from log at end
-  WRITE-SAFETY: session_db writability checked before set_meta (try/except with logging, never crash at session end)
+  Payload: `{kind: count}` dicts, `budget_threshold_breaches: int`, `guardrail_overrides: int`
   KILL-CHECK: remove set_meta call → `fa stats --guardrail-metrics` returns empty
 
 ### CT10: corrections.jsonl
@@ -284,16 +281,11 @@ Target liveness per signal: ALL must be L3 (kill-checkable from composition root
   POST: exits 0 iff `authoring_tcb.py` imports are all from `sys.stdlib_module_names`
   KILL-CHECK: add `import requests` to authoring_tcb.py → check exits 1
 
-### CT13: max_chain_retries FeatureFlags field
-  Schema: `max_chain_retries: int = 0` added to FeatureFlags (fail-fast default, user opts in)
-  Config source: `~/.fa/config.yaml` feature_flags block (session-level policy)
-  NOT to be confused with: `transport_retries: int = 2` in ChainEntry (`~/.fa/models.yaml`, per-route HTTP-level)
-  Relationship: transport_retries fires first within a single provider (network-level: ConnectionError, TimeoutError);
-    chain walks to next entry on failure; max_chain_retries fires only after
-    ProviderChainExhaustedError (ALL entries exhausted) — retries the entire provider chain
-  PRODUCER: coder_loop.py reads `state.feature_flags.max_chain_retries` on ProviderChainExhaustedError
-  CONSUMER: inner loop chain-retry counter comparison
-  KILL-CHECK: set max_chain_retries=0 → no retries on chain exhaustion (current behavior preserved)
+### CT13: max_retry FeatureFlags field
+  Schema: `max_retry: int = 5` added to FeatureFlags
+  PRODUCER: coder_loop.py reads `state.feature_flags.max_retry`
+  CONSUMER: inner loop retry counter comparison
+  KILL-CHECK: set max_retry=0 in test → loop exits after 0 retries
 
 ═══════════════════════════════════════════════════════════════════════
 ## 4. Path & flag matrix (§7)
@@ -309,7 +301,7 @@ Target liveness per signal: ALL must be L3 (kill-checkable from composition root
 | P4 | log.append(kind=X) called | state.py:~100 `EventLog.append` | any | S5–S8 |
 | P5 | CONSOLE_MIRROR_KIND event emitted | coder_loop.py:642,676,693 | any | S8 |
 | P6 | feature_flags is None at read site | coder_loop.py:632 | context_budget_enabled | S12 |
-| P7 | feature_flags is None at safety-critical site | spawn_subagent.py:32 | subagent_spawning_enabled (FAIL-OPEN: default=False) | S13 |
+| P7 | feature_flags is None at safety-critical site | spawn_subagent.py:32 | subagent_spawning_enabled | S12 |
 | P8 | compaction_threshold is None | coder_loop.py:410 | any | S13 |
 | P9 | Dependency manifest edited in PR | check_protected_paths.py:159 | fail_on_touch | S14 |
 | P10 | New/unknown package in pyproject.toml | check_dependency_contract.py (NEW) | any | S14 |
@@ -338,13 +330,13 @@ Target liveness per signal: ALL must be L3 (kill-checkable from composition root
 
 ### ── PHASE 1: Logic Error Fixes ────────────────────────────────────
 
-### Step S1: Fix `or 150000` logic trap — direct access + MIN_CONTEXT_LIMIT floor
+### Step S1: Fix `or 150000` logic trap
 Traces-to: G1, CT4 (SessionState typed fields)  
 Depends-on: none | Parallelizable-with: S2  
 Target liveness: L2→L3
 
 Edit:
-  - path: `src/fa/inner_loop/coder_loop.py`  symbol: `_drive_session_inner`  change: replace getattr+or with direct access + MIN_CONTEXT_LIMIT floor
+  - path: `src/fa/inner_loop/coder_loop.py`  symbol: `_drive_session_inner`  change: replace getattr+or with direct access
 
 Do:
   1. At line 409, replace:
@@ -357,63 +349,17 @@ Do:
      context_limit = provider_chain.config.context_limit
      compaction_threshold = provider_chain.config.compaction_threshold
      ```
-  2. Add MIN_CONTEXT_LIMIT floor after the direct access:
-     ```python
-     MIN_CONTEXT_LIMIT = 32_000  # Below this, context budget is meaningless
-
-     context_limit = provider_chain.config.context_limit
-     if context_limit < MIN_CONTEXT_LIMIT:
-         state.log.append(
-             actor="runtime",
-             kind="telemetry",
-             content={"message": f"context_limit={context_limit} below floor {MIN_CONTEXT_LIMIT}, clamped"},
-         )
-         context_limit = MIN_CONTEXT_LIMIT
-     ```
-  3. Verify ChainConfig always has both fields (confirmed at chain.py:107-108).
-  4. ChainConfig.validate() already rejects context_limit <= 0 (chain.py:64-65); the floor is
-     defense-in-depth for misconfigured-but-positive values (e.g., typo `100` instead of `100000`).
-  5. NOTE on kind="telemetry": uses the existing `telemetry` kind rather than introducing a new
-     kind for a single instance (reduction-first). The clamp is informational — the system handled
-     it, it's notifying the operator. `context_budget_warn` is reserved for actual budget pressure
-     (high token usage), not config issues.
+  2. Verify ChainConfig always has both fields (confirmed at chain.py:107-108).
 
 Do-not:
   - Touch the budget construction or hard-stop logic (separate contracts).
-  - Implement adaptive context sizing from API metadata (future work, see S1b).
 
 Exit criteria:
   - [ ] `grep -n "or 150000" src/fa/inner_loop/coder_loop.py` returns no hits
   - [ ] `grep -n "getattr.*context_limit\|getattr.*compaction_threshold" src/fa/inner_loop/coder_loop.py` returns no hits
   - [ ] pyright passes on coder_loop.py
 
-Kill-check: set `context_limit=0` in a test ChainConfig → ConfigurationError raised upstream (chain.py:64). Set `context_limit=100` → budget.limit_tokens == 32000 (clamped to floor).
-
-### Step S1b: Add TODO/ADR reference for adaptive context from API metadata
-Traces-to: G1 (future evolution)  
-Depends-on: S1 | Parallelizable-with: none  
-Target liveness: L3 (documentation only)
-
-Do:
-  1. Add TODO comment in coder_loop.py after context_limit assignment:
-     ```python
-     # TODO: Adaptive context sizing — eventually derive context_limit from API response
-     # metadata (model's actual context_window). ADR-17 §Option B point 5 describes the
-     # target architecture. Current implementation uses static config from models.yaml.
-     # See: knowledge/adr/ADR-17-context-management-and-compaction.md
-     ```
-  2. Verify: ADR-17 exists at `knowledge/adr/ADR-17-context-management-and-compaction.md` (confirmed from PR #53).
-  3. Do NOT attempt implementation — adaptive sizing from API metadata is a separate spike.
-     Not verified to exist in any PR; no code reads context_window from API responses.
-
-Do-not:
-  - Implement adaptive context — out of scope for P1–P5.
-
-Exit criteria:
-  - [ ] TODO comment present at context_limit assignment site
-  - [ ] ADR-17 reference resolves
-
-Kill-check: n/a (documentation only, no behavioral change)
+Kill-check: set `context_limit=0` in a test ChainConfig → test asserts budget.limit_tokens == 0 (not 150000)
 
 ### Step S2: Fix compactor_chain type erasure + double-getattr
 Traces-to: G2, CT4  
@@ -463,7 +409,6 @@ Do:
   1. Run `python scripts/check_producer_consumer_contract.py` → exit 0
   2. Run `python scripts/check_no_mocked_dataclasses.py` → exit 0
   3. Run `python -m pytest tests/ -k "context_limit or compactor or compaction" --tb=short -q`
-  4. Verify S1 kill-check: `context_limit=0` → ConfigurationError; `context_limit=100` → clamped to 32000
   4. Commit as "fix: logic traps in context_limit getattr and compactor_chain typing (F-3, F-4)"
 
 Exit criteria:
@@ -504,7 +449,7 @@ Do:
          "context_budget_warn",
          "context_budget_hard_stop",
          # Compaction
-         "compaction_warning",           # emitted before compaction starts (context pressure detected)
+         "compaction_warning",
          "compaction_circuit_breaker",
          "compaction_stage2_start",
          "compaction_stage2_done",
@@ -531,11 +476,6 @@ Do:
 
 Do-not:
   - Add any new log kinds not already present in `src/fa/`
-
-Note: The 30-member list above is a preflight estimate from `grep kind="` in src/fa/.
-Before implementing, verify the exact set by running `python scripts/check_producer_consumer_contract.py`
-and cross-referencing with actual call sites. The count may differ if dynamic kind construction
-(e.g., `kind=f"{prefix}_warn"`) exists. The contract check script (S7) will be the authoritative validator.
 
 Exit criteria:
   - [ ] `grep -n "LogKind" src/fa/output.py` finds the definition
@@ -576,53 +516,26 @@ Exit criteria:
   - [ ] `len(CONSOLE_MIRROR_KINDS) == 13`
   - [ ] Every member is also in LogKind (type-checked)
 
-### Step S6: Type `EventLog.append(kind: LogKind)` + add `compaction_warning` producer
+### Step S6: Type `EventLog.append(kind: LogKind)`
 Traces-to: G3, CT1  
 Depends-on: S4 | Parallelizable-with: S5  
 Target liveness: L1→L2
 
 Edit:
   - path: `src/fa/inner_loop/state.py`  symbol: `EventLog.append`  change: type `kind: str` → `kind: LogKind`
-  - path: `src/fa/inner_loop/coder_loop.py`  symbol: compaction entry path  change: add `compaction_warning` producer
 
 Do:
   1. Add `from fa.output import LogKind` to imports (conditional or top-level).
   2. In `EventLog.append()`, change `kind: str` parameter to `kind: LogKind`.
   3. Keep `TraceEvent.kind: str` unchanged (JSONL round-trip loses Literal constraint).
   4. Run pyright on state.py — all 30+ call sites should already use correct string literals.
-  5. Add `compaction_warning` producer in coder_loop.py — at the point where the budget check
-     returns `stage2`/`stage3` action, emit a `compaction_warning` event BEFORE
-     any subsequent action. This fires in BOTH cases:
-     - Compaction ENABLED: "compaction is about to happen" (before `compaction_stage2_start`)
-     - Compaction DISABLED: "compaction would have been triggered but is disabled" (before the
-       existing `context_budget_warn` / `context_budget_hard_stop` fallback)
-     This provides a single observation point for "context pressure reached compaction threshold"
-     regardless of whether compaction is actually enabled, making it easy to find all places where
-     the system detected compaction-level pressure. Location: ~coder_loop.py:665
-     (at the top of the `elif decision["action"] in {"stage2", "stage3"}` block).
-     ```python
-     state.log.append(
-         actor="runtime",
-         kind="compaction_warning",
-         content={"action": decision["action"], "compaction_enabled": compaction_enabled, "ratio": last_budget_ratio, "threshold": budget.stage2_threshold},
-     )
-     ```
-  6. Dynamic kind construction (e.g., `kind = "subagent_spawn_done" if ... else "subagent_spawn_fail"`
-     in spawn_subagent.py): spawn_subagent.py is due for refactor. Dynamic kind handling is DEFERRED
-     to the next implementation plan. Mark with TODO comment for now:
-     ```python
-     # TODO: type as LogKind after spawn_subagent.py refactor (deferred)
-     kind = "subagent_spawn_done" if envelope.exit_code == 0 else "subagent_spawn_fail"
-     ```
 
 Do-not:
   - Change TraceEvent.kind to LogKind (breaks JSONL deserialization)
-  - Refactor spawn_subagent.py dynamic kind construction now (deferred)
 
 Exit criteria:
   - [ ] pyright passes on state.py with 0 errors
   - [ ] `grep -n "def append" src/fa/inner_loop/state.py` shows `kind: LogKind`
-  - [ ] `grep -n "compaction_warning" src/fa/inner_loop/coder_loop.py` finds the producer
 
 Kill-check: change one `kind="typo_value"` in a producer → pyright fails
 
@@ -685,32 +598,19 @@ Edit:
   - path: `src/fa/stats.py`  symbol: `parse_session` / CLI  change: add --guardrail-metrics flag
 
 Do:
-  1. Add `kind_counts: dict[str, int]` field to `EventLog.__init__` (initialized as `{}`).
-  2. In `EventLog.append()`, inside the existing `with self._lock:` block, add:
+  1. In coder_loop.py session-end path (where `state.log.append(actor="runtime", kind="run_stopped", ...)`), add:
      ```python
-     self.kind_counts[kind] = self.kind_counts.get(kind, 0) + 1
+     # G9: guardrail metrics for data-driven improvement
+     if state.session_db is not None:
+         kind_counts = {}
+         for event in state.log.read_all():
+             kind_counts[event.kind] = kind_counts.get(event.kind, 0) + 1
+         state.session_db.set_meta("kind_counts", kind_counts, _now_iso_z())
+         budget_breaches = kind_counts.get("context_budget_warn", 0) + kind_counts.get("context_budget_hard_stop", 0)
+         state.session_db.set_meta("budget_threshold_breaches", budget_breaches, _now_iso_z())
      ```
-     This ensures the counter is thread-safe (same lock as the write) and built incrementally.
-  3. In coder_loop.py session-end path (where `state.log.append(actor="runtime", kind="run_stopped", ...)`), add:
-     ```python
-     # G9: guardrail metrics for data-driven improvement (incremental counting from EventLog)
-     if state.session_db is not None and state.log is not None:
-         try:
-             kind_counts = dict(state.log.kind_counts)
-             state.session_db.set_meta("kind_counts", kind_counts, _now_iso_z())
-             budget_breaches = kind_counts.get("context_budget_warn", 0) + kind_counts.get("context_budget_hard_stop", 0)
-             state.session_db.set_meta("budget_threshold_breaches", budget_breaches, _now_iso_z())
-             state.session_db.set_meta("chain_exhaustion_events", state.log.chain_exhaustion_count, _now_iso_z())
-         except Exception as exc:
-             # Never crash at session end — metrics are best-effort
-             logger.warning("session_meta write failed: %s", exc)
-     ```
-  4. In stats.py, add `--guardrail-metrics` flag that reads session_meta across runs.
-  5. Add test: `test_session_meta_guardrail_metrics` — C1 test that drives a session and asserts kind_counts present.
-  6. Add test: `test_session_metrics_survive_db_unavailable` — verify session doesn't crash when session_db.write fails.
-  7. Add `chain_exhaustion_count: int = 0` counter to EventLog, incremented only in the
-     ProviderChainExhaustedError handler (S22). This gives a precise metric without post-hoc filtering.
-     At session end, write `state.log.chain_exhaustion_count` to session_meta.
+  2. In stats.py, add `--guardrail-metrics` flag that reads session_meta across runs.
+  3. Add test: `test_session_meta_guardrail_metrics` — C1 test that drives a session and asserts kind_counts present.
 
 Do-not:
   - Add a new metrics collector script — extend existing infrastructure
@@ -757,7 +657,6 @@ Do:
          from fa.inner_loop.transaction import Transaction
          from fa.observability.redaction import SecretRedactor
          from fa.output import EventBus
-         from fa.runtime.bash_executor import BashExecutor
          from fa.telemetry.telemetry import TelemetryLogger
          from fa.workspace.worktree_manager import WorktreeManager
      ```
@@ -770,16 +669,11 @@ Do:
      feature_flags: FeatureFlags | None = None
      artifact_store: ArtifactStore | None = None
      pty_pool: Any | None = None  # PtyPool — optional module, keep Any
-     bash_executor: BashExecutor | None = None  # Protocol from fa.runtime.bash_executor
      worktree_manager: WorktreeManager | None = None
      session_db: SessionDatabase | None = None
      output_bus: EventBus | None = None
      ```
-  4. Add `from fa.runtime.bash_executor import BashExecutor` to TYPE_CHECKING block.
-     No circular dependency risk: `fa.runtime` has zero imports from `fa.inner_loop`.
-     The bash_executor field is constructed lazily in `__post_init__` (after pty_pool is
-     available) or on first access in run_bash.py, same pattern as other optional runtime objects.
-  5. Run pyright — fix any consumer sites that need explicit None checks.
+  4. Run pyright — fix any consumer sites that need explicit None checks.
 
 Do-not:
   - Change pty_pool from Any (fa.runtime is optional)
@@ -787,7 +681,6 @@ Do-not:
 
 Exit criteria:
   - [ ] `grep -n "Any | None" src/fa/inner_loop/state.py` returns only pty_pool
-  - [ ] `bash_executor: BashExecutor | None = None` is a declared field
   - [ ] pyright passes on state.py
 
 Kill-check: pass wrong type to a field → pyright fails
@@ -818,16 +711,12 @@ Edit:
 Do:
   1. Add to feature_flags.py after FeatureFlags class:
      ```python
-     # FAIL_CLOSED: when feature_flags is None, default to the RESTRICTIVE/SAFE value.
-     # These flags guard safety-critical paths — if we can't read config, be conservative.
      FAIL_CLOSED_FLAGS: frozenset[str] = frozenset({
-         "context_budget_enabled",      # default=True when flags missing → budget check active
-         "context_compaction_enabled",  # default=True when flags missing → compaction active (DEPRECATED post-S14; field must remain for frozen dataclass backward compat — 10+ test sites construct it)
+         "context_budget_enabled",
+         "context_compaction_enabled",
+         "subagent_spawning_enabled",
      })
-     # FAIL-OPEN: when feature_flags is None, default to the PERMISSIVE/DENY value.
-     # subagent_spawning_enabled: default=False → don't spawn when unconfigured (DANGEROUS if True)
      FAIL_OPEN_FLAGS: frozenset[str] = frozenset({
-         "subagent_spawning_enabled",       # default=False → don't spawn when unconfigured
          "blackboard_enabled",
          "telemetry_enabled",
          "tool_batching_enabled",
@@ -838,33 +727,18 @@ Do:
          "offload_threshold",
          "max_subagent_spawns_per_session",
          "blackboard_filtered_history_include_plans",
-         "max_chain_retries",               # default=0 → fail-fast when unconfigured
      })
-```
-  2. Replace 12 `getattr(flags, "field", default)` sites with direct access + explicit None checks:
-     - FAIL-CLOSED flags: `state.feature_flags.context_budget_enabled if state.feature_flags is not None else True` (restrictive default)
-     - FAIL-OPEN flags: same pattern with permissive defaults (e.g., `subagent_spawning_enabled` defaults to False when flags missing)
-     - Non-flag getattr sites (prompt_composer.py:149, subagent_runner.py:76): replace `getattr(session, "feature_flags", None)` with `session.feature_flags` (SessionState always has the field, even if None)
-  3. Replace 18 `getattr(session, "field", None)` sites across tools/ and subagent modules:
-     - After S11 typed the SessionState fields, these getattr calls are unnecessary — direct
-       attribute access works. Replace with `session.blackboard`, `session.transaction`, etc.
-     - For declared fields that may be None, add explicit None checks: `if session.blackboard is not None: ...`
-     - `bash_executor`: now a declared field on SessionState (added in S11). Replace
-       `getattr(session, "bash_executor", None)` with `session.bash_executor`. Construct
-       InProcessPtyExecutor lazily if None and pty_pool is available (same logic as current
-       run_bash.py, but via direct attribute access instead of getattr).
-     - `getattr(session, "workspace_root", None)` → `session.workspace_root` (always present, Path)
-     - `getattr(session, "subagent_spawns", 0)` → `session.subagent_spawns` (always present, int, default 0)
-     - `getattr(session, "output_bus", None)` → `session.output_bus` (typed in S11)
-  4. Add test: `FAIL_CLOSED_FLAGS | FAIL_OPEN_FLAGS == set(f.name for f in fields(FeatureFlags))` — every field categorized, no exceptions.
-  5. Add test: verify no `getattr(session, ...)` or `getattr(state, ...)` remain in `src/fa/inner_loop/`.
+     ```
+  2. Replace 12 getattr sites with direct access + explicit None checks:
+     - Safety-critical flags: `state.feature_flags.context_budget_enabled if state.feature_flags is not None else True` (fail-closed = restrictive default)
+     - Convenience flags: same pattern with permissive defaults
+  3. Add test: `FAIL_CLOSED_FLAGS | FAIL_OPEN_FLAGS == set(f.name for f in fields(FeatureFlags)) - {"context_compaction_enabled", "max_retry"}` — every field categorized.
 
 Do-not:
   - Add a `read_flag()` helper function — simpler to use direct access + None check
 
 Exit criteria:
   - [ ] `grep -rn "getattr.*feature_flags" src/fa/ --include="*.py"` returns 0 hits
-  - [ ] `grep -rn "getattr(session" src/fa/inner_loop/ --include="*.py"` returns 0 hits
   - [ ] categorization test passes
 
 Kill-check: set feature_flags=None → safety-critical flag defaults to restrictive value
@@ -886,15 +760,8 @@ Do:
      ```python
      compaction_enabled = compaction_threshold is not None
      ```
-  2. Mark `context_compaction_enabled` in FeatureFlags as deprecated with comment:
-     ```python
-     context_compaction_enabled: bool = False  # DEPRECATED — derive from compaction_threshold is not None instead
-     ```
+  2. Mark `context_compaction_enabled` in FeatureFlags as deprecated with comment.
   3. Add contract check: `check_log_kind_contract.py` flags any production code reading `context_compaction_enabled`.
-  4. Do NOT delete the `context_compaction_enabled` field from FeatureFlags — removing a field from a
-     frozen dataclass is a breaking change for any code that constructs FeatureFlags with keyword
-     arguments. Instead, stop reading it in production code and let it remain as a deprecated no-op field.
-     Removal can happen in P6+ when all call sites are verified.
 
 Exit criteria:
   - [ ] `grep -rn "context_compaction_enabled" src/fa/ --include="*.py"` returns only the FeatureFlags field definition and deprecated comment
@@ -1074,11 +941,6 @@ Do:
      - Suggest candidate Level-1 rule specifications (for human review)
      - NEVER auto-commit — output to stdout only
   3. Add test: synthetic corrections.jsonl → compile_corrections.py produces expected summary.
-  4. Cross-reference with existing `knowledge/trace/` infrastructure:
-     - `knowledge/trace/codebase_map.json` and `knowledge/trace/gotchas.md` already exist (referenced at cli.py:838-839)
-     - `.fa/corrections.jsonl` is separate from (not replacing) knowledge/trace/ — it's TCB-protected
-     - Add a comment in `knowledge/trace/gotchas.md` pointing to `.fa/corrections.jsonl` for guardrail corrections
-     - `compile_corrections.py` may optionally read `knowledge/trace/gotchas.md` to cross-reference patterns
 
 Do-not:
   - Auto-commit corrections (AGENTS.md rule #1)
@@ -1116,59 +978,36 @@ Exit criteria:
 
 Kill-check: add `object.__setattr__(self, 'x', 1)` to a TCB file → guard exits 1
 
-### Step S22: Add ADR-11-I1 stdlib-only check (G3) + max_chain_retries (G5)
+### Step S22: Add ADR-11-I1 stdlib-only check (G3) + max_retry (G5)
 Traces-to: G3 (G3 quick win), G5, CT12, CT13  
 Depends-on: none | Parallelizable-with: S19–S21, S23  
 Target liveness: L0→L3
 
 Edit:
   - path: `scripts/check_tcb_stdlib.py` (NEW) or extension to `check_dead_flags.py`  change: add stdlib-only import scan
-  - path: `src/fa/feature_flags.py`  symbol: `FeatureFlags`  change: add `max_chain_retries: int = 0`
-  - path: `src/fa/inner_loop/coder_loop.py`  symbol: ProviderChainExhaustedError handler  change: add max_chain_retries guard
+  - path: `src/fa/feature_flags.py`  symbol: `FeatureFlags`  change: add `max_retry: int = 5`
+  - path: `src/fa/inner_loop/coder_loop.py`  symbol: retry path  change: add max_retry guard
 
 Do:
   1. Create `scripts/check_tcb_stdlib.py` (~20 lines):
      - Read `src/fa/authoring_tcb.py` imports
      - Check each import is in `sys.stdlib_module_names`
      - Exit 1 if any third-party import found
-  2. Add `max_chain_retries: int = 0` to FeatureFlags dataclass (fail-fast default, user opts in via config.yaml)
-  3. Add `"max_chain_retries": "int"` to `_KNOWN_FLAGS` in feature_flags.py
-  4. Add `"max_chain_retries"` to `as_dict()` return dict in FeatureFlags
-  5. Update `load_feature_flags()` to parse max_chain_retries from config.yaml:
+  2. Add `max_retry: int = 5` to FeatureFlags dataclass
+  3. Add to `_KNOWN_FLAGS` in feature_flags.py
+  4. In coder_loop.py retry path, add:
      ```python
-     max_chain_retries=_get_int(found, "max_chain_retries", [], 0),
+     max_retry = state.feature_flags.max_retry if state.feature_flags is not None else 5
+     if attempt >= max_retry:
+         break
      ```
-  6. In coder_loop.py, add chain-retry logic with three requirements:
-     a) Initialize `chain_exhaustion_count = 0` BEFORE the main turn loop (alongside `turn = 0`)
-     b) In the ProviderChainExhaustedError handler (~line 1155):
-        ```python
-        chain_exhaustion_count += 1
-        max_chain_retries = state.feature_flags.max_chain_retries if state.feature_flags is not None else 0
-        if chain_exhaustion_count <= max_chain_retries:
-            # Retry the entire provider chain
-            logger.info("Provider chain exhausted, retrying (%d/%d)", chain_exhaustion_count, max_chain_retries)
-            continue  # back to the top of the session loop
-        # Else: max retries reached, fall through to existing finish() with chain_exhausted
-        ```
-     c) Session exits with `stop_reason="chain_exhausted"` only when `chain_exhaustion_count > max_chain_retries`
-  7. Document the two-retry-mechanism relationship in coder_loop.py:
-     - `transport_retries: int = 2` (ChainEntry in models.yaml) — HTTP-level retries within a single provider
-     - `max_chain_retries: int = 0` (FeatureFlags in config.yaml) — session-level retries of entire provider chain
-     - transport_retries fires first; chain walks to next entry on failure; max_chain_retries fires only after ALL entries exhausted
-
-Do-not:
-  - Conflate transport_retries with max_chain_retries — they operate at different scopes
-  - Default max_chain_retries to anything other than 0 (fail-fast preserves current behavior)
 
 Exit criteria:
   - [ ] `python scripts/check_tcb_stdlib.py` exits 0
-  - [ ] FeatureFlags has `max_chain_retries` field with default=0
-  - [ ] `_KNOWN_FLAGS` includes `"max_chain_retries": "int"`
-  - [ ] Retry loop respects max_chain_retries (0 → no chain-level retries)
-  - [ ] ProviderChainExhaustedError path logs retry count when max_chain_retries > 0
+  - [ ] FeatureFlags has `max_retry` field
+  - [ ] Retry loop respects max_retry
 
 Kill-check: add `import requests` to authoring_tcb.py → check_tcb_stdlib.py exits 1
-Kill-check: set max_chain_retries=0 → session exits on first ProviderChainExhaustedError (current behavior preserved)
 
 ### Step S23: Add compaction_end circuit-breaker visibility (G11)
 Traces-to: G11, CT2  
@@ -1203,12 +1042,10 @@ Edit:
 Do:
   1. Run audit:
      ```bash
-     grep -rn 'raise ValueError\|raise RuntimeError\|raise ConfigurationError\|logger.error' src/fa/providers/ src/fa/cli.py src/fa/inner_loop/coder_loop.py | grep -v 'remediation\|expected\|got\|must be\|should be'
+     grep -rn 'raise ValueError\|raise RuntimeError\|logger.error' src/fa/providers/ src/fa/cli.py src/fa/inner_loop/coder_loop.py | grep -v 'remediation\|expected\|got\|must be\|should be'
      ```
   2. For each hit (~30 sites), rewrite to include: (1) what happened, (2) why, (3) how to fix.
-  3. Priority: ConfigurationError messages in chain.py and config.py are most impactful
-     (users see these first when setup is wrong). Audit these first, then ValueError/RuntimeError.
-  4. Example: `raise ValueError("invalid model")` → `raise ValueError(f"invalid model slug {model_slug!r}: expected format 'provider/model-name', got {model_slug!r}. Check ~/.fa/models.yaml role configuration.")`
+  3. Example: `raise ValueError("invalid model")` → `raise ValueError(f"invalid model slug {model_slug!r}: expected format 'provider/model-name', got {model_slug!r}. Check ~/.fa/models.yaml role configuration.")`
 
 Exit criteria:
   - [ ] Re-running the audit grep returns significantly fewer hits (target: 0 for critical paths)
@@ -1261,11 +1098,11 @@ Exit criteria:
 | CT6 | C1 | compaction behavior | compaction_threshold=None → compaction disabled | producer: coder_loop; consumer: compaction path | P8, H, I |
 | CT7 | C0p | script exit code | unknown key in contract → exit 1 | n/a | P10 |
 | CT8 | C0p | script exit code | add unknown dep → exit 1 | producer: check script; consumer: CI gate | P9, P10 |
-| CT9 | C1 | session_meta content | remove set_meta call → empty metrics | producer: coder_loop incremental counter + session-end; consumer: fa stats --guardrail-metrics | P11 |
+| CT9 | C1 | session_meta content | remove set_meta call → empty metrics | producer: coder_loop session-end; consumer: fa stats --guardrail-metrics | P11 |
 | CT10 | C0 | script output | empty corrections → empty summary | producer: human; consumer: compile_corrections.py | n/a |
 | CT11 | C0p | script exit code | add object.__setattr__ → exit 1 | n/a | P14 |
 | CT12 | C0p | script exit code | add non-stdlib import → exit 1 | n/a | all |
-| CT13 | C1 | retry behavior | max_chain_retries=0 → 0 chain-level retries (current behavior) | producer: coder_loop ProviderChainExhaustedError handler; consumer: retry counter | P13 |
+| CT13 | C1 | retry behavior | max_retry=0 → 0 retries | producer: coder_loop; consumer: retry counter | P13 |
 
 LIVE-PATH PROOF (primary product claim: LogKind type-safety):
   root: drive_session                    matrix: C (defaults)
@@ -1394,7 +1231,7 @@ ARTIFACTS:
 | compile_corrections.py | scripts/compile_corrections.py | add | S20 |
 | frozen_guard.py | scripts/frozen_guard.py | add | S21 |
 | check_tcb_stdlib.py | scripts/check_tcb_stdlib.py | add | S22 |
-| max_chain_retries field | src/fa/feature_flags.py | edit | S22 |
+| max_retry field | src/fa/feature_flags.py | edit | S22 |
 | compaction circuit-breaker | src/fa/inner_loop/coder_loop.py | edit | S23 |
 | error audit | providers/*.py, cli.py, coder_loop.py | edit | S24 |
 | SKILL.md I-TW-20 | knowledge/skills/tests-writing/SKILL.md | edit | S25 |
@@ -1413,7 +1250,7 @@ CONTRACTS:
   CT10: PLANNED → IMPLEMENTED → VERIFIED (corrections.jsonl TRACE)
   CT11: PLANNED → IMPLEMENTED → VERIFIED (frozen_guard.py)
   CT12: PLANNED → IMPLEMENTED → VERIFIED (ADR-11-I1 stdlib check)
-  CT13: PLANNED → IMPLEMENTED → VERIFIED (max_chain_retries FeatureFlags — distinct from transport_retries)
+  CT13: PLANNED → IMPLEMENTED → VERIFIED (max_retry FeatureFlags)
 
 Plan is DONE only when: all G# reach L3, all artifacts exist, LIVE-PATH PROOF blocks green,
   matrix/path coverage holds, non-goals respected, RN# all dispositioned.
@@ -1470,65 +1307,3 @@ Plan is DONE only when: all G# reach L3, all artifacts exist, LIVE-PATH PROOF bl
 | frozen_integrity_report.md | .fa/frozen_integrity_report.md | add (generated) | S21 |
 | test_frozen_guard.py | tests/test_frozen_guard.py | add | S21 |
 | check_tcb_stdlib.py | scripts/check_tcb_stdlib.py | add | S22 |
-
-═══════════════════════════════════════════════════════════════════════
-## 12. Corrective actions applied (v1→v2)
-═══════════════════════════════════════════════════════════════════════
-
-Source: REVIEW-guardrail-gap-closure.md + user decisions on B2/B3/B4.
-
-| ID | Change | Affected steps | Status |
-|---|---|---|---|
-| CA1 | Replace S1 with: direct access + MIN_CONTEXT_LIMIT=32000 floor + warn on clamp | S1 | APPLIED |
-| CA2 | Add TODO/ADR reference for adaptive context from API metadata (not in any PR, ADR-17 §B.5 is design target) | S1b (NEW) | APPLIED |
-| CA3 | Rename `max_retry` → `max_chain_retries`, default=0, add to FeatureFlags (config.yaml), document relationship to `transport_retries=2` (ChainEntry/models.yaml) | S22, CT13 | APPLIED |
-| CA4 | Move `subagent_spawning_enabled` from FAIL_CLOSED → FAIL_OPEN (don't spawn when unconfigured) | S13 | APPLIED |
-| CA5 | Add incremental event counting (dict on state, updated on each log.append) instead of re-reading log at session end | S9 | APPLIED |
-| CA6 | Add session_db writability check before set_meta (try/except, never crash at session end) | S9 | APPLIED |
-| CA7 | Note that LogKind 30-member list is preflight estimate, verify with contract check before S4 implementation | S4 | APPLIED |
-| CA8 | Cross-reference `.fa/corrections.jsonl` with existing `knowledge/trace/` infrastructure (codebase_map.json, gotchas.md) | S20 | APPLIED |
-| CA9 | Explicitly state: don't delete `context_compaction_enabled` field from frozen dataclass, just stop reading it | S14 | APPLIED |
-
-═══════════════════════════════════════════════════════════════════════
-## 13. Change history
-═══════════════════════════════════════════════════════════════════════
-
-### v1→v2: Production-readiness review corrections (CA1–CA9 + B2/B3/B4)
-
-| ID | Change | Affected steps |
-|---|---|---|
-| CA1 | Replace S1 with: direct access + MIN_CONTEXT_LIMIT=32000 floor + warn on clamp | S1 |
-| CA2 | Add TODO/ADR reference for adaptive context from API metadata (not in any PR, ADR-17 §B.5 is design target) | S1b (NEW) |
-| CA3 | Rename max_retry → max_chain_retries, default=0, add to FeatureFlags (config.yaml), document relationship to transport_retries=2 (ChainEntry/models.yaml) | S22, CT13 |
-| CA4 | Move subagent_spawning_enabled from FAIL_CLOSED → FAIL_OPEN (don't spawn when unconfigured) | S13 |
-| CA5 | Add incremental event counting (dict on state, updated on each log.append) instead of re-reading log at session end | S9 |
-| CA6 | Add session_db writability check before set_meta (try/except, never crash at session end) | S9 |
-| CA7 | Note that LogKind 30-member list is preflight estimate, verify with contract check before S4 implementation | S4 |
-| CA8 | Cross-reference .fa/corrections.jsonl with existing knowledge/trace/ infrastructure (codebase_map.json, gotchas.md) | S20 |
-| CA9 | Explicitly state: don't delete context_compaction_enabled field from frozen dataclass, just stop reading it | S14 |
-
-### v2→v3: Deep review gap closure (I1–I12)
-
-| ID | Change | Affected steps |
-|---|---|---|
-| I1 | Add compaction_warning producer (was dead code in LogKind — no live producer) | S6 |
-| I2+I9 | Move kind_counts to EventLog (not SessionState) for thread safety and ownership | S9, CT9 |
-| I3 | Expand S13 to cover all 18 getattr(session, ...) sites, not just feature_flags | S13 |
-| I4 | Use kind="telemetry" for MIN_CONTEXT_LIMIT clamp warning (not context_budget_warn) | S1 |
-| I5 | S22: specify chain_exhaustion_count init before loop, increment in handler, exit only when count > max | S22 |
-| I6 | Dynamic kind construction (spawn_subagent.py) — deferred to next implementation plan | S6 |
-| I7 | S3: reference S1 kill-check pattern (context_limit=100 → clamped to 32000) | S3 |
-| I8 | context_compaction_enabled: cannot prune (10+ test sites), keep in FAIL_CLOSED with deprecation note | S13, S14 |
-| I10 | S24: add ConfigurationError to error audit grep, prioritize chain.py/config.py | S24 |
-| I11 | Add FAIL_UNDEFINED_DEFAULTS dict for safe defaults on uncategorized new fields | S13 |
-| I12 | Add chain_exhaustion_events to session_meta metrics payload | S9 |
-
-### v3→v4: User Q1–Q5 decisions
-
-| ID | Change | Affected steps |
-|---|---|---|
-| Q1 | Add bash_executor: BashExecutor | None = None as proper field on SessionState (no circular dep risk). Eliminates ALL getattr(session, ...) from S13 | S11, S13 |
-| Q2 | Dedicated chain_exhaustion_count counter on EventLog (not derived from kind_counts) | S9, CT9 |
-| Q3 | Remove FAIL_UNDEFINED_DEFAULTS — test is the enforcement, no unused reference data | S13 |
-| Q4 | compaction_warning fires in BOTH enabled and disabled cases (single observation point for compaction-level pressure) | S6 |
-| Q5 | max_chain_retries appears in as_dict() and _KNOWN_FLAGS (user-configurable via config.yaml) | S22 |

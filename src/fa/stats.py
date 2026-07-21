@@ -23,15 +23,19 @@ from typing import Any, TextIO
 
 from fa.formatting import fmt_tokens as _fmt_tokens
 from fa.inner_loop.state import EventLog
+from fa.output import LogKind
 
 __all__ = [
     "BashCommand",
+    "CompactionWarningRecord",
+    "CircuitBreakerRecord",
     "FileAccess",
     "GuardActivity",
     "ProviderHealth",
     "SessionAnalytics",
     "ToolUsage",
     "TurnTokens",
+    "UNPARSED_KINDS",
     "aggregate_sessions",
     "efficiency_warnings",
     "find_dead_zones",
@@ -40,6 +44,26 @@ __all__ = [
     "render_session",
     "render_session_json",
 ]
+
+# ── Unparsed kinds ──────────────────────────────────────────────────────────
+# LogKinds that have no actionable analytics value for `fa stats`.
+# These are either infrastructure signals (service_unavailable, timeout),
+# low-value observability (audit, telemetry), or event types where the
+# content is fully captured by other parsers (cost_observation → session_summary
+# totals, recovery_action/verification → tool_result, subagent_spawn_start →
+# subagent_spawn_done/fail). Listing them explicitly makes invisibility
+# auditable — adding a new LogKind to output.py without a parser here
+# will fail the contract check.
+UNPARSED_KINDS: frozenset[LogKind] = frozenset({
+    "audit",                  # low-value — rule evaluation audit trail
+    "cost_observation",       # redundant — session_summary has totals
+    "recovery_action",        # captured by tool_result + provider_attempt
+    "service_unavailable",    # infrastructure — no structured analytics
+    "subagent_spawn_start",   # captured by subagent_spawn_done/fail
+    "telemetry",              # low-value — per-tool audit noise
+    "timeout",                # infrastructure — no structured analytics
+    "verification",           # captured by tool_result
+})
 
 # ── Data model ─────────────────────────────────────────────────────────────
 
@@ -143,6 +167,32 @@ class ContextBudgetEvent:
     message: str = ""
 
 
+@dataclass(frozen=True)
+class CompactionWarningRecord:
+    """Compaction-pressure warning — fires in both enabled/disabled cases."""
+
+    action: str
+    compaction_enabled: bool
+    ratio: float = 0.0
+    threshold: float = 0.0
+
+
+@dataclass(frozen=True)
+class CircuitBreakerRecord:
+    """Compaction circuit-breaker event — anti-thrashing guard fired."""
+
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class CompactionStartRecord:
+    """Compaction stage start — tokens_before and threshold."""
+
+    stage: int
+    tokens_before: int = 0
+    threshold: float = 0.0
+
+
 @dataclass
 class SessionAnalytics:
     """Complete analytics for one session. Serializable to JSON for WebUI."""
@@ -172,6 +222,14 @@ class SessionAnalytics:
     compaction_records: list[CompactionRecord] = field(default_factory=list)
     subagent_records: list[SubagentRecord] = field(default_factory=list)
     context_budget_events: list[ContextBudgetEvent] = field(default_factory=list)
+
+    # S19: extended observability — compaction warnings, circuit breakers,
+    # compaction starts, and message-level token accounting.
+    compaction_warnings: list[CompactionWarningRecord] = field(default_factory=list)
+    circuit_breaker_events: list[CircuitBreakerRecord] = field(default_factory=list)
+    compaction_starts: list[CompactionStartRecord] = field(default_factory=list)
+    model_msg_count: int = 0
+    user_msg_count: int = 0
 
 
 # ── Parsing ────────────────────────────────────────────────────────────────
@@ -226,6 +284,12 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 �
     compaction_records: list[CompactionRecord] = []
     subagent_records: list[SubagentRecord] = []
     context_budget_events: list[ContextBudgetEvent] = []
+    # S19: extended observability accumulators
+    compaction_warnings: list[CompactionWarningRecord] = []
+    circuit_breaker_events: list[CircuitBreakerRecord] = []
+    compaction_starts: list[CompactionStartRecord] = []
+    model_msg_count: int = 0
+    user_msg_count: int = 0
 
     for event in events:
         kind = event.kind
@@ -343,6 +407,41 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 �
                 message=str(content.get("message", "")),
             ))
 
+        # ── S19: compaction warning / circuit breaker / compaction starts ──
+        elif kind == "compaction_warning":
+            compaction_warnings.append(CompactionWarningRecord(
+                action=str(content.get("action", "")),
+                compaction_enabled=bool(content.get("compaction_enabled", False)),
+                ratio=float(content.get("ratio", 0.0)),
+                threshold=float(content.get("threshold", 0.0)),
+            ))
+
+        elif kind == "compaction_circuit_breaker":
+            circuit_breaker_events.append(CircuitBreakerRecord(
+                message=str(content.get("message", "")),
+            ))
+
+        elif kind == "compaction_stage2_start":
+            compaction_starts.append(CompactionStartRecord(
+                stage=2,
+                tokens_before=int(content.get("tokens_before", 0)),
+                threshold=float(content.get("threshold", 0.0)),
+            ))
+
+        elif kind == "compaction_stage3_start":
+            compaction_starts.append(CompactionStartRecord(
+                stage=3,
+                tokens_before=int(content.get("tokens_before", 0)),
+                threshold=float(content.get("threshold", 0.0)),
+            ))
+
+        # ── S19: model_msg / user_msg counting ────────────────────────
+        elif kind == "model_msg":
+            model_msg_count += 1
+
+        elif kind == "user_msg":
+            user_msg_count += 1
+
         elif kind == "session_summary":
             total_in = int(content.get("input_tokens", 0))
             total_out = int(content.get("output_tokens", 0))
@@ -423,6 +522,11 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 �
         compaction_records=compaction_records,
         subagent_records=subagent_records,
         context_budget_events=context_budget_events,
+        compaction_warnings=compaction_warnings,
+        circuit_breaker_events=circuit_breaker_events,
+        compaction_starts=compaction_starts,
+        model_msg_count=model_msg_count,
+        user_msg_count=user_msg_count,
     )
 
 
@@ -552,6 +656,25 @@ def render_session(analytics: SessionAnalytics, *, stream: TextIO = sys.stderr) 
         for cbe in a.context_budget_events:
             w(f"   {cbe.action}: {cbe.pct:.0f}% — {cbe.message[:60]}\n")
         w("\n")
+
+    # Compaction warnings (S19)
+    if a.compaction_warnings:
+        w("⚡ Compaction pressure:\n")
+        for cw in a.compaction_warnings:
+            enabled = "enabled" if cw.compaction_enabled else "disabled"
+            w(f"   {cw.action}: ratio={cw.ratio:.0%} threshold={cw.threshold:.0%} ({enabled})\n")
+        w("\n")
+
+    # Circuit breaker (S19)
+    if a.circuit_breaker_events:
+        w("🔴 Circuit breaker:\n")
+        for cb in a.circuit_breaker_events:
+            w(f"   {cb.message[:80]}\n")
+        w("\n")
+
+    # Message-level accounting (S19)
+    if a.model_msg_count or a.user_msg_count:
+        w(f"💬 Messages: {a.model_msg_count} model, {a.user_msg_count} user\n\n")
 
     # Efficiency
     warnings = efficiency_warnings(a)

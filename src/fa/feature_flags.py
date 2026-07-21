@@ -31,7 +31,7 @@ class FeatureFlags:
     tool_batching_enabled: bool = True
     subagent_spawning_enabled: bool = False
     context_budget_enabled: bool = True
-    context_compaction_enabled: bool = False
+    context_compaction_enabled: bool = False  # DEPRECATED — derive from compaction_threshold is not None instead (S14)
     pty_pool_max_size: int = 2
     worktree_mode: str = "shared"
     fts_db_path: str = ".fa/fts.db"
@@ -39,6 +39,7 @@ class FeatureFlags:
     offload_threshold: int = 8000
     max_subagent_spawns_per_session: int = 3
     blackboard_filtered_history_include_plans: bool = False
+    max_chain_retries: int = 0  # S22: session-level chain retry limit (default=0 → fail-fast, user opts in)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -55,7 +56,38 @@ class FeatureFlags:
             "offload_threshold": self.offload_threshold,
             "max_subagent_spawns_per_session": self.max_subagent_spawns_per_session,
             "blackboard.filtered_history_include_plans": self.blackboard_filtered_history_include_plans,
+            "max_chain_retries": self.max_chain_retries,
         }
+
+
+# ── Fail-closed / fail-open flag categorization (S13) ────────────────
+# When feature_flags is None (config unavailable), these determine the
+# safe default for each flag. Every FeatureFlags field must be in exactly
+# one set. Verified by test_s13_fail_closed_open_categorization.
+
+# FAIL_CLOSED: when feature_flags is None, default to the RESTRICTIVE/SAFE value.
+# These flags guard safety-critical paths — if we can't read config, be conservative.
+FAIL_CLOSED_FLAGS: frozenset[str] = frozenset({
+    "context_budget_enabled",      # default=True when flags missing → budget check active
+    "context_compaction_enabled",  # default=True when flags missing → compaction active (DEPRECATED; field must remain for frozen dataclass backward compat — 10+ test sites construct it)
+})
+
+# FAIL-OPEN: when feature_flags is None, default to the PERMISSIVE/DENY value.
+# subagent_spawning_enabled: default=False → don't spawn when unconfigured (DANGEROUS if True)
+FAIL_OPEN_FLAGS: frozenset[str] = frozenset({
+    "subagent_spawning_enabled",       # default=False → don't spawn when unconfigured
+    "blackboard_enabled",
+    "telemetry_enabled",
+    "tool_batching_enabled",
+    "pty_pool_max_size",
+    "worktree_mode",
+    "fts_db_path",
+    "prompt_caching",
+    "offload_threshold",
+    "max_subagent_spawns_per_session",
+    "blackboard_filtered_history_include_plans",
+    "max_chain_retries",               # default=0 → fail-fast when unconfigured
+})
 
 
 @dataclass(frozen=True)
@@ -88,6 +120,7 @@ _KNOWN_FLAGS: dict[str, str] = {
     "offload_threshold": "int",
     "max_subagent_spawns_per_session": "int",
     "blackboard.filtered_history_include_plans": "bool",
+    "max_chain_retries": "int",
 }
 
 
@@ -236,6 +269,7 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
         offload_threshold=_get_int(found, "offload_threshold", [], 8000),
         max_subagent_spawns_per_session=_get_int(found, "max_subagent_spawns_per_session", [], 3),
         blackboard_filtered_history_include_plans=_get_bool(found, "blackboard.filtered_history_include_plans", [], False),
+        max_chain_retries=_get_int(found, "max_chain_retries", [], 0),
     )
 
     return FeatureFlagsLoadResult(flags=flags, warnings=tuple(warnings))
@@ -252,6 +286,8 @@ def load_feature_flags_from_path(
 
 
 __all__ = [
+    "FAIL_CLOSED_FLAGS",
+    "FAIL_OPEN_FLAGS",
     "FeatureFlagWarning",
     "FeatureFlags",
     "FeatureFlagsLoadResult",

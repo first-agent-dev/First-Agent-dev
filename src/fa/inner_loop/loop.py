@@ -452,12 +452,8 @@ def run_session(
         raise ValueError("SessionState.log must be set before run_session")
 
     # Feature flag graceful degradation
-    tool_batching_enabled = True
-    try:
-        if state.feature_flags is not None:
-            tool_batching_enabled = getattr(state.feature_flags, "tool_batching_enabled", True)
-    except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        tool_batching_enabled = True
+    # S13: FAIL-OPEN — tool_batching_enabled defaults to True (convenience)
+    tool_batching_enabled = state.feature_flags.tool_batching_enabled if state.feature_flags is not None else True
 
     hooks.set_event_sink(_make_hook_decision_sink(state.log))
 

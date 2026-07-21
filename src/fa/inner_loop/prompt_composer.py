@@ -146,7 +146,7 @@ def to_anthropic_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any
         from fa.inner_loop.context import get_current_session
 
         session = get_current_session()
-        flags = getattr(session, "feature_flags", None)
+        flags = session.feature_flags if session is not None else None
         if flags is None:
             from fa.feature_flags import load_feature_flags_from_path
 

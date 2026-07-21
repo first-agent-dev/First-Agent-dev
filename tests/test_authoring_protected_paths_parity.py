@@ -32,7 +32,7 @@ def _parse_codeowners_tcb_paths(codeowners_path: Path) -> set[str]:
             continue
         pattern = parts[0]
         # Only keep authoring-related TCB paths, not all CODEOWNERS
-        if "authoring" in pattern or "CODEOWNERS" in pattern or "check_protected_paths" in pattern or "authoring-guardrails" in pattern:
+        if "authoring" in pattern or "CODEOWNERS" in pattern or "check_protected_paths" in pattern or "authoring-guardrails" in pattern or "dependency_contract" in pattern:
             # Normalize: remove leading / and keep as repo-relative
             norm = pattern.lstrip("/")
             paths.add(norm)

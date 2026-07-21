@@ -330,7 +330,7 @@ This keeps the `event_log` table lean while preserving full outputs for post-hoc
 |----------|---------|---------|
 | `llms.txt` | BY-DEMAND INDEX for agent context loading | **Deprecated in favor of blackboard.query()** — the blackboard now provides structured, content-hashed, queryable access to session state that llms.txt tried to serve as a flat index for |
 | `HANDOFF.md` | Cross-session worklog | **Could be superseded by blackboard entries** with `type="handoff"` — the blackboard provides richer semantics (read_set, write_set, assumptions) that handoff notes currently lack |
-| `MAINTENANCE.md` | Doc maintenance rules | Standalone convention — no DB integration needed |
+| `doc-maintenance` skill | Doc maintenance rules | Standalone convention — no DB integration needed |
 | `AGENTS.md` | Session loadout | Read by the prompt composer, no DB integration |
 | `trace/exploration_log.md` | Exploration trace | Could map to blackboard entries with `type="exploration"` |
 | `trace/codebase_map.json` | Codebase map | Could map to blackboard entries with `type="codebase_map"` |

@@ -25,8 +25,9 @@ from fa.inner_loop import EventLog, SessionState
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.tools import build_baseline_registry
-from fa.providers import ChainConfig, ProviderChain
+from fa.providers import ProviderChain
 from tests.fixtures.session_wiring import (
+    make_test_chain_config,
     make_tool_call,
     mock_response_with_tools,
     mock_success_response,
@@ -66,11 +67,9 @@ def test_list_tasks_finds_pty_session(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
 
@@ -132,11 +131,9 @@ def test_list_tasks_finds_subagent_artifact(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
 
@@ -203,11 +200,9 @@ def test_list_tasks_finds_worktree_dir(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
 
@@ -263,11 +258,9 @@ def test_list_tasks_empty_when_no_pool_or_manager(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
 

@@ -85,8 +85,8 @@ def _get_session_and_blackboard():
             return None, None, None
         # Safety check: blackboard must belong to same workspace as session's workspace_root
         # If leaked from different workspace, ignore (return None)
-        blackboard = getattr(session, "blackboard", None)
-        transaction = getattr(session, "transaction", None)
+        blackboard = session.blackboard if session is not None else None
+        transaction = session.transaction if session is not None else None
         return session, blackboard, transaction
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         logger.warning(f"get_current_session failed in edit_file: {exc}")
