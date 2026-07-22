@@ -28,12 +28,8 @@ def test_append_kind_parameter_is_log_kind() -> None:
     param = sig.parameters.get("kind")
     assert param is not None, "kind parameter not found"
     annotation_str = str(param.annotation)
-    assert "LogKind" in annotation_str, (
-        f"Expected LogKind in kind annotation, got: {annotation_str}"
-    )
-    assert param.annotation is not str, (
-        "kind parameter is still typed as str — should be LogKind"
-    )
+    assert "LogKind" in annotation_str, f"Expected LogKind in kind annotation, got: {annotation_str}"
+    assert param.annotation is not str, "kind parameter is still typed as str — should be LogKind"
 
 
 # ── Kill-check 2: TraceEvent.kind is still str ─────────────────────
@@ -53,9 +49,7 @@ def test_trace_event_kind_is_str() -> None:
     assert kind_field is not None, "kind field not found on TraceEvent"
     # With `from __future__ import annotations`, field.type is a string
     type_str = str(kind_field.type)
-    assert type_str == "str", (
-        f"TraceEvent.kind should be str for JSONL round-trip, got: {type_str}"
-    )
+    assert type_str == "str", f"TraceEvent.kind should be str for JSONL round-trip, got: {type_str}"
 
 
 # ── Kill-check 3: compaction_warning producer exists in source ──────
@@ -64,9 +58,7 @@ def test_trace_event_kind_is_str() -> None:
 def test_compaction_warning_producer_in_source() -> None:
     """coder_loop.py must contain a log.append(kind='compaction_warning', ...) call."""
     content = CODER_LOOP_PATH.read_text(encoding="utf-8")
-    assert 'kind="compaction_warning"' in content, (
-        "compaction_warning producer not found in coder_loop.py"
-    )
+    assert 'kind="compaction_warning"' in content, "compaction_warning producer not found in coder_loop.py"
 
 
 # ── Kill-check 4: compaction_warning content includes compaction_enabled field ─
@@ -94,8 +86,7 @@ def test_compaction_warning_before_compaction_branch() -> None:
     assert warning_pos > 0, "compaction_warning emit not found"
     assert branch_pos > 0, "if not compaction_enabled branch not found"
     assert warning_pos < branch_pos, (
-        f"compaction_warning (pos {warning_pos}) must appear BEFORE "
-        f"if not compaction_enabled branch (pos {branch_pos})"
+        f"compaction_warning (pos {warning_pos}) must appear BEFORE if not compaction_enabled branch (pos {branch_pos})"
     )
 
 

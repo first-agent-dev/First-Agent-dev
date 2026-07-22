@@ -146,9 +146,7 @@ class PtySession:
                 )
             except Exception:  # may already exist
                 try:
-                    self.tmux_session = server_ref.find_where(
-                        {"session_name": f"fa_{session_id}_{self.run_id}"}
-                    )
+                    self.tmux_session = server_ref.find_where({"session_name": f"fa_{session_id}_{self.run_id}"})
                 except Exception:  # noqa: BLE001, S110
                     pass
                 if self.tmux_session is None:
@@ -247,23 +245,15 @@ class PtySession:
             truncated = len(clean) > 8000
             if truncated:
                 clean = clean[:8000] + "\n...[truncated]"
-            return PtyResult(
-                stdout=clean.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id
-            )
-        return PtyResult(
-            stdout="No fallback available", exit_code=-1, truncated=False, session_id=self.session_id
-        )
+            return PtyResult(stdout=clean.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id)
+        return PtyResult(stdout="No fallback available", exit_code=-1, truncated=False, session_id=self.session_id)
 
     def _run_tmux(self, command: str, timeout: int) -> PtyResult:
         if self.pane is None:
-            return PtyResult(
-                stdout="No pane available", exit_code=-1, truncated=False, session_id=self.session_id
-            )
+            return PtyResult(stdout="No pane available", exit_code=-1, truncated=False, session_id=self.session_id)
 
         stripped = command.lstrip()
-        is_stateful = stripped.startswith(
-            ("export ", "cd ", "source ", ". ", "alias ", "unalias ", "set ", "unset ")
-        )
+        is_stateful = stripped.startswith(("export ", "cd ", "source ", ". ", "alias ", "unalias ", "set ", "unset "))
         if stripped == "cd" or stripped.startswith("cd "):
             is_stateful = True
         if is_stateful:

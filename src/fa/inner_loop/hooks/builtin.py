@@ -78,11 +78,7 @@ class CapabilityGuard(GuardMiddleware):
                 # (Agent-Review nit on PR #24). ``maxsplit=1`` keeps
                 # the cost O(prefix-length) regardless of command size.
                 head_tokens = command.split(maxsplit=1)
-                if (
-                    head_tokens
-                    and head_tokens[0] in {"deploy", "restart", "scale"}
-                    and not caps.ENABLE_SERVER_OPS
-                ):
+                if head_tokens and head_tokens[0] in {"deploy", "restart", "scale"} and not caps.ENABLE_SERVER_OPS:
                     return Decision.deny("ENABLE_SERVER_OPS is false")
         return Decision.allow()
 
@@ -342,9 +338,7 @@ class LearningObserver(ObserverMiddleware):
             return
         if result.error is not None:
             error_msg = (
-                self.redactor.redact(result.error.message)
-                if self.redactor is not None
-                else result.error.message
+                self.redactor.redact(result.error.message) if self.redactor is not None else result.error.message
             )
             record_gotcha(
                 f"{call.name} failed",

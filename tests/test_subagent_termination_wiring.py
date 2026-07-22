@@ -54,6 +54,7 @@ from tests.fixtures.session_wiring import (
 # Test 1 — SubagentRunner timeout produces exit_code=-1 (C0)
 # ---------------------------------------------------------------------------
 
+
 def test_subagent_timeout_produces_exit_code_minus_one(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
     - root: SubagentRunner.run_stateless (subprocess-based, not drive_session)
@@ -77,8 +78,7 @@ def test_subagent_timeout_produces_exit_code_minus_one(tmp_path: Path) -> None:
 
     assert envelope.exit_code == -1, f"Expected exit_code=-1 for timeout, got {envelope.exit_code}"
     assert "Timeout" in envelope.summary or "Timeout" in str(envelope.verification), (
-        f"Expected 'Timeout' in summary/verification, got "
-        f"summary={envelope.summary!r} verif={envelope.verification!r}"
+        f"Expected 'Timeout' in summary/verification, got summary={envelope.summary!r} verif={envelope.verification!r}"
     )
     assert envelope.duration_ms >= 0, "duration_ms should be non-negative"
 
@@ -86,6 +86,7 @@ def test_subagent_timeout_produces_exit_code_minus_one(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Test 2 — Subagent timeout envelope is valid (C0)
 # ---------------------------------------------------------------------------
+
 
 def test_subagent_timeout_envelope_is_valid(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
@@ -237,6 +238,7 @@ def test_ctrl_c_interrupts_pty_session_via_drive_session(tmp_path: Path) -> None
 # ---------------------------------------------------------------------------
 # Test 4 — Subagent spawn + cleanup artifact via drive_session (C1)
 # ---------------------------------------------------------------------------
+
 
 def test_subagent_spawn_and_cleanup_via_drive_session(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:

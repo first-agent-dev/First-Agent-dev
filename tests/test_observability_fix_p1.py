@@ -76,13 +76,15 @@ def test_loop_guard_warn_event_emitted_via_drive_session(tmp_path: Path) -> None
 
     # Register a simple test tool that always succeeds
     registry = ToolRegistry()
-    registry.register(ToolSpec(
-        name="test.echo",
-        description="Echo test tool",
-        input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
-        permission="read",
-        handler=lambda params: ToolResult.ok(str(params.get("text", ""))),
-    ))
+    registry.register(
+        ToolSpec(
+            name="test.echo",
+            description="Echo test tool",
+            input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
+            permission="read",
+            handler=lambda params: ToolResult.ok(str(params.get("text", ""))),
+        )
+    )
 
     mock_chain = make_mock_chain(context_limit=150000)
     # Return the same tool call repeatedly to trigger loop detection
@@ -118,8 +120,7 @@ def test_loop_guard_warn_event_emitted_via_drive_session(tmp_path: Path) -> None
     events = require_log(state).read_all()
     warn_events = [e for e in events if e.kind == "loop_guard_warn"]
     assert len(warn_events) >= 1, (
-        f"Expected at least 1 loop_guard_warn event, got {len(warn_events)}. "
-        f"Kinds present: {[e.kind for e in events]}"
+        f"Expected at least 1 loop_guard_warn event, got {len(warn_events)}. Kinds present: {[e.kind for e in events]}"
     )
 
 
@@ -144,13 +145,15 @@ def test_loop_guard_circuit_breaker_works_without_sink(tmp_path: Path) -> None:
 
     # Register a simple test tool
     registry = ToolRegistry()
-    registry.register(ToolSpec(
-        name="test.echo",
-        description="Echo test tool",
-        input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
-        permission="read",
-        handler=lambda params: ToolResult.ok(str(params.get("text", ""))),
-    ))
+    registry.register(
+        ToolSpec(
+            name="test.echo",
+            description="Echo test tool",
+            input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
+            permission="read",
+            handler=lambda params: ToolResult.ok(str(params.get("text", ""))),
+        )
+    )
 
     mock_chain = make_mock_chain(context_limit=150000)
     same_call = {
@@ -181,8 +184,7 @@ def test_loop_guard_circuit_breaker_works_without_sink(tmp_path: Path) -> None:
     # one tool result should contain the LoopGuard deny message.
     denied = [r for r in outcome.tool_results if "LoopGuard" in r.summary]
     assert len(denied) >= 1, (
-        f"Expected at least 1 LoopGuard-denied tool result. "
-        f"Got: {[r.summary for r in outcome.tool_results]}"
+        f"Expected at least 1 LoopGuard-denied tool result. Got: {[r.summary for r in outcome.tool_results]}"
     )
 
 
@@ -212,13 +214,15 @@ def test_recovery_action_event_on_tool_failure(tmp_path: Path) -> None:
 
     # Register a tool that fails
     registry = ToolRegistry()
-    registry.register(ToolSpec(
-        name="test.fail_tool",
-        description="Test tool that always fails",
-        input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
-        permission="read",
-        handler=lambda params: ToolResult.fail("test_error", "deliberate failure", retryable=True),
-    ))
+    registry.register(
+        ToolSpec(
+            name="test.fail_tool",
+            description="Test tool that always fails",
+            input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+            permission="read",
+            handler=lambda params: ToolResult.fail("test_error", "deliberate failure", retryable=True),
+        )
+    )
 
     fail_call = {
         "id": "tc-fail",
@@ -281,13 +285,15 @@ def test_attempt_history_file_written_on_tool_failure(tmp_path: Path) -> None:
 
     # Register a tool that fails
     registry = ToolRegistry()
-    registry.register(ToolSpec(
-        name="test.fail_tool",
-        description="Test tool that always fails",
-        input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
-        permission="read",
-        handler=lambda params: ToolResult.fail("test_error", "deliberate failure", retryable=True),
-    ))
+    registry.register(
+        ToolSpec(
+            name="test.fail_tool",
+            description="Test tool that always fails",
+            input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+            permission="read",
+            handler=lambda params: ToolResult.fail("test_error", "deliberate failure", retryable=True),
+        )
+    )
 
     fail_call = {
         "id": "tc-fail2",

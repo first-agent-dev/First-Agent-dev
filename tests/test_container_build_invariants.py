@@ -56,9 +56,7 @@ def test_uv_install_does_not_depend_on_home() -> None:
     (which breaks the moment HOME is changed)."""
     text = _DOCKERFILE.read_text(encoding="utf-8")
     assert "UV_INSTALL_DIR=/usr/local/bin" in text
-    assert "/root/.local/bin/uv" not in text, (
-        "do not mv uv from /root/.local; use UV_INSTALL_DIR (HOME-independent)"
-    )
+    assert "/root/.local/bin/uv" not in text, "do not mv uv from /root/.local; use UV_INSTALL_DIR (HOME-independent)"
 
 
 def test_dockerfile_uses_retrying_downloads_for_apt_and_uv() -> None:
@@ -162,9 +160,7 @@ def test_setup_chowns_state_to_container_uid() -> None:
     """B3: bind-mounted state/secrets must be owned by the container's uid (1000),
     not the host username (which may be a different uid)."""
     text = _SETUP.read_text(encoding="utf-8")
-    assert "chown -R 1000:1000" in text, (
-        "setup must chown FA_DIR to numeric 1000:1000 to match the container uid"
-    )
+    assert "chown -R 1000:1000" in text, "setup must chown FA_DIR to numeric 1000:1000 to match the container uid"
 
 
 def test_setup_normalizes_secret_ownership_after_creation() -> None:
@@ -178,8 +174,7 @@ def test_setup_normalizes_secret_ownership_after_creation() -> None:
     deploykey_pos = text.index("ssh-keygen -t ed25519 -f")
     assert chown_pos != -1, "setup must re-chown secrets/ to 1000 after creating them"
     assert chown_pos > deploykey_pos, (
-        "the secret-ownership normalization must run AFTER the deploy key (and all "
-        "other secret files) are created"
+        "the secret-ownership normalization must run AFTER the deploy key (and all other secret files) are created"
     )
 
 
@@ -206,9 +201,7 @@ def test_post_setup_does_not_teardown_to_hand_off_to_systemd() -> None:
     assert "systemctl --user start fa.service" not in text, (
         "post-setup must not START via systemd (no-ops without a user session); use docker compose up -d"
     )
-    assert "docker compose -f docker-compose.fa.yml up -d" in text, (
-        "post-setup must bring the stack up via compose"
-    )
+    assert "docker compose -f docker-compose.fa.yml up -d" in text, "post-setup must bring the stack up via compose"
 
 
 def test_clean_rebuild_brings_up_via_compose_not_systemd_start() -> None:
@@ -224,9 +217,7 @@ def test_clean_rebuild_brings_up_via_compose_not_systemd_start() -> None:
 
 # --- unified routing file (ADR-12 Option C / R2-2) ----------------------------
 def _volume_by_target(service: dict[str, Any], target: str) -> dict[str, Any]:
-    return next(
-        vol for vol in service.get("volumes", []) if isinstance(vol, dict) and vol.get("target") == target
-    )
+    return next(vol for vol in service.get("volumes", []) if isinstance(vol, dict) and vol.get("target") == target)
 
 
 def test_compose_uses_single_routing_source_for_agent_and_proxy() -> None:
@@ -259,13 +250,9 @@ def test_agent_routing_file_mount_order() -> None:
     """Nested ro routing file mount must come after the rw state dir mount."""
     agent = _compose()["services"]["first-agent"]
     vols = agent.get("volumes", [])
-    state_idx = next(
-        i for i, vol in enumerate(vols) if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa"
-    )
+    state_idx = next(i for i, vol in enumerate(vols) if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa")
     routing_idx = next(
-        i
-        for i, vol in enumerate(vols)
-        if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa/models.yaml"
+        i for i, vol in enumerate(vols) if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa/models.yaml"
     )
     assert routing_idx > state_idx
 
@@ -337,7 +324,5 @@ def test_post_setup_validates_the_real_keys_file() -> None:
     """F1: the 'did you add keys' gate must check the secrets file the proxy
     actually reads (secrets/fa.env), not .env.fa (which holds non-secret FA_*)."""
     text = _POST_SETUP.read_text(encoding="utf-8")
-    assert "/srv/first-agent/secrets/fa.env" in text, (
-        "post-setup must validate the real LLM-keys file (secrets/fa.env)"
-    )
+    assert "/srv/first-agent/secrets/fa.env" in text, "post-setup must validate the real LLM-keys file (secrets/fa.env)"
     assert "nano " not in text, "use micro, not nano (repo standard)"

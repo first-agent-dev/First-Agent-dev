@@ -87,8 +87,7 @@ def test_explicit_legacy_file_is_skipped_unless_all(tmp_path: Path) -> None:
         # With --all: legacy skip is overridden → broken link detected → exit 1.
         forced = _run("--all", str(probe))
         assert forced.returncode == 1, (
-            f"expected exit 1 (broken link with --all); "
-            f"got {forced.returncode}: {forced.stdout + forced.stderr}"
+            f"expected exit 1 (broken link with --all); got {forced.returncode}: {forced.stdout + forced.stderr}"
         )
         assert "this-target-does-not-exist.md" in forced.stderr
     finally:

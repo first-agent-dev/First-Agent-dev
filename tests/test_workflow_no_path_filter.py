@@ -181,8 +181,7 @@ class TestCheckWorkflowSmoke:
         assert wf.exists(), "authoring-guardrails.yml must exist"
         result = check_workflow(wf)
         assert result["has_path_filter"] is False, (
-            f"authoring-guardrails.yml must not have paths/paths-ignore filters: "
-            f"found {result['filter_keys_found']}"
+            f"authoring-guardrails.yml must not have paths/paths-ignore filters: found {result['filter_keys_found']}"
         )
 
     def test_all_workflows_no_path_filter(self) -> None:
@@ -191,9 +190,7 @@ class TestCheckWorkflowSmoke:
         assert workflow_dir.is_dir()
         for wf_path in sorted(workflow_dir.glob("*.yml")):
             result = check_workflow(wf_path)
-            assert result["has_path_filter"] is False, (
-                f"{wf_path.name} has path filter: {result['filter_keys_found']}"
-            )
+            assert result["has_path_filter"] is False, f"{wf_path.name} has path filter: {result['filter_keys_found']}"
 
     def test_json_output_valid(self, tmp_path: Path) -> None:
         """--output json produces valid JSON."""

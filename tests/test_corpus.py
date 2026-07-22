@@ -111,6 +111,4 @@ def test_fp_corpus_fixture_does_not_fire(tmp_path: Path, fixture_rel: str, dest_
     _make_workspace(tmp_path)
     _install_fixture(tmp_path, fixture_rel, dest_rel)
     report = run_all(tmp_path, rules=(rule,))
-    assert report.diagnostics == (), (
-        f"fp fixture {fixture_rel} should not fire any rule; got {report.diagnostics}"
-    )
+    assert report.diagnostics == (), f"fp fixture {fixture_rel} should not fire any rule; got {report.diagnostics}"

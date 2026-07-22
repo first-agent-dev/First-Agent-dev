@@ -57,12 +57,12 @@ def test_cmd_run_handles_event_log_write_failed(tmp_path: Path) -> None:
     exc_str = str(exc)
 
     # Verify the condition used in _cmd_run matches
-    assert "event_log_write_failed" in exc_str, \
-        "RuntimeError message must contain 'event_log_write_failed'"
+    assert "event_log_write_failed" in exc_str, "RuntimeError message must contain 'event_log_write_failed'"
 
     # Verify the OTHER branch does NOT match (they are distinct)
-    assert "event_log_authority_unavailable" not in exc_str, \
+    assert "event_log_authority_unavailable" not in exc_str, (
         "event_log_write_failed must NOT match the event_log_authority_unavailable branch"
+    )
 
     # Now verify both branches are handled in the actual _cmd_run code
     import inspect
@@ -71,10 +71,8 @@ def test_cmd_run_handles_event_log_write_failed(tmp_path: Path) -> None:
 
     source = inspect.getsource(_cmd_run)
     # Both conditions must be present in the source
-    assert 'event_log_authority_unavailable' in source, \
-        "Missing event_log_authority_unavailable handler in _cmd_run"
-    assert 'event_log_write_failed' in source, \
-        "Missing event_log_write_failed handler in _cmd_run (NEW-3 fix)"
+    assert "event_log_authority_unavailable" in source, "Missing event_log_authority_unavailable handler in _cmd_run"
+    assert "event_log_write_failed" in source, "Missing event_log_write_failed handler in _cmd_run (NEW-3 fix)"
 
 
 def test_event_log_write_failed_produces_distinct_message() -> None:
@@ -88,10 +86,12 @@ def test_event_log_write_failed_produces_distinct_message() -> None:
     msg_write = "event_log_write_failed: database is locked"
 
     # They should NOT match each other's condition
-    assert "event_log_authority_unavailable" not in msg_write, \
+    assert "event_log_authority_unavailable" not in msg_write, (
         "event_log_write_failed message must not be caught by authority check"
-    assert "event_log_write_failed" not in msg_authority, \
+    )
+    assert "event_log_write_failed" not in msg_authority, (
         "event_log_authority_unavailable message must not be caught by write check"
+    )
 
 
 # ── NEW-1: Compaction-enabled hard-stop emits context_warn ────────────────
@@ -114,6 +114,7 @@ def test_compaction_stage3_still_exceeds_emits_context_warn(tmp_path: Path) -> N
     class _Capture:
         def __init__(self) -> None:
             self.events: list[OutputEvent] = []
+
         def on_event(self, event: OutputEvent) -> None:
             self.events.append(event)
 
@@ -190,6 +191,7 @@ def test_circuit_breaker_emits_compaction_end(tmp_path: Path) -> None:
     class _Capture:
         def __init__(self) -> None:
             self.events: list[OutputEvent] = []
+
         def on_event(self, event: OutputEvent) -> None:
             self.events.append(event)
 
@@ -249,10 +251,7 @@ def test_circuit_breaker_emits_compaction_end(tmp_path: Path) -> None:
                         )
 
     # Find compaction_end events with ok=False (circuit breaker)
-    compaction_ends = [
-        e for e in capture.events
-        if e.type == "compaction_end" and not e.data.get("ok", True)
-    ]
+    compaction_ends = [e for e in capture.events if e.type == "compaction_end" and not e.data.get("ok", True)]
     assert len(compaction_ends) >= 1, (
         f"Expected at least 1 compaction_end(ok=False) from circuit breaker, "
         f"got {len(compaction_ends)}. "
@@ -360,8 +359,7 @@ def test_build_export_row_prefers_outcome_turns_when_nonzero(tmp_path: Path) -> 
 
     # max(5, 1) = 5 — outcome.turns wins
     assert row["turns"] == 5, (
-        f"Expected turns=5 (from outcome), got {row['turns']}. "
-        f"Standalone run should use outcome.turns when nonzero."
+        f"Expected turns=5 (from outcome), got {row['turns']}. Standalone run should use outcome.turns when nonzero."
     )
 
 
@@ -508,10 +506,7 @@ def test_circuit_breaker_emits_context_warn(tmp_path: Path) -> None:
                         )
 
     # Verify the circuit breaker path emits context_warn
-    warn_events = [
-        e for e in capture.events
-        if e.type == "context_warn" and e.data.get("action") == "stage3"
-    ]
+    warn_events = [e for e in capture.events if e.type == "context_warn" and e.data.get("action") == "stage3"]
     assert len(warn_events) >= 1, (
         f"Expected context_warn(action=stage3) from circuit breaker path. "
         f"All events: {[(e.type, e.data) for e in capture.events]}"
@@ -520,10 +515,7 @@ def test_circuit_breaker_emits_context_warn(tmp_path: Path) -> None:
     assert "pct" in warn_events[0].data, f"Missing 'pct' in context_warn data: {warn_events[0].data}"
 
     # Also verify compaction_end(ok=False) was emitted (NEW-2 fix still holds)
-    compaction_ends = [
-        e for e in capture.events
-        if e.type == "compaction_end" and not e.data.get("ok", True)
-    ]
+    compaction_ends = [e for e in capture.events if e.type == "compaction_end" and not e.data.get("ok", True)]
     assert len(compaction_ends) >= 1, "Expected compaction_end(ok=False) from circuit breaker"
 
     # And the outcome should be hard-stop

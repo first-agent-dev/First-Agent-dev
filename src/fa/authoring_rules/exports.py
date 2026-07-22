@@ -85,22 +85,14 @@ def _extract_all(tree: ast.Module) -> set[str] | None:
                     working = _UNPROVABLE if names is None else names
                     break  # multiple targets sharing __all__ in one Assign is pathological
         # --- AnnAssign: __all__: T = ... ---
-        elif (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == "__all__"
-        ):
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == "__all__":
             if node.value is None:
                 continue  # declaration without value; ignore (no runtime export set)
             saw_declaration = True
             names = _literal_string_names(node.value)
             working = _UNPROVABLE if names is None else names
         # --- AugAssign: __all__ += ... ---
-        elif (
-            isinstance(node, ast.AugAssign)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == "__all__"
-        ):
+        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id == "__all__":
             if working is None or working is _UNPROVABLE:
                 # No prior working set OR already unprovable; the augmented
                 # operation cannot make us provable. Mark unprovable if we
@@ -195,9 +187,7 @@ class _ExportsCompletenessRule:
                         path=rel,
                         line=defining.lineno,
                         message=f"public symbol {name!r} is defined but not in __all__",
-                        remediation=(
-                            f"add {name!r} to __all__ in {rel}, or rename it _{name} if it is module-private"
-                        ),
+                        remediation=(f"add {name!r} to __all__ in {rel}, or rename it _{name} if it is module-private"),
                         rule_input_hash=node_input_hash(source_bytes, defining),
                     )
                 )

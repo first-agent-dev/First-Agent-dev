@@ -122,9 +122,7 @@ def parse_transport_response(
     if status == 200:
         return normalize_success(response.body)
     if status in {400, 422}:
-        raise ProviderRequestShapeError(
-            f"request_shape_error: status={status} body={response.body!r}", status=status
-        )
+        raise ProviderRequestShapeError(f"request_shape_error: status={status} body={response.body!r}", status=status)
     if status in {401, 403}:
         raise ProviderAuthError(f"auth_error: status={status}", status=status)
     if status == 429 or 500 <= status <= 504:

@@ -34,9 +34,7 @@ def _write(tmp_path: Path, name: str, body: str) -> Path:
         ("unknown.xyz", "text"),
     ],
 )
-def test_extension_routes_to_one_chunk_with_expected_lang(
-    tmp_path: Path, name: str, expected_lang: str
-) -> None:
+def test_extension_routes_to_one_chunk_with_expected_lang(tmp_path: Path, name: str, expected_lang: str) -> None:
     path = _write(tmp_path, name, "content\nmore content\n")
 
     chunks = CompositeChunker().chunk_file(path)

@@ -111,9 +111,7 @@ def _find_regex_phantom_flags(
     for match in pattern.finditer(text):
         name = match.group(1)
         if name not in declared:
-            results.append(
-                {"name": name, "file": str(py_file), "line": text[: match.start()].count("\n") + 1}
-            )
+            results.append({"name": name, "file": str(py_file), "line": text[: match.start()].count("\n") + 1})
     return results
 
 
@@ -169,12 +167,11 @@ def _find_phantom_getattr_flags(py_files: list[Path], declared: set[str]) -> lis
         candidates.extend(_find_ast_phantom_flags(text, py_file, declared))
         for candidate in candidates:
             if not any(
-                existing["name"] == candidate["name"]
-                and existing["file"] == candidate["file"]
-                for existing in phantom
+                existing["name"] == candidate["name"] and existing["file"] == candidate["file"] for existing in phantom
             ):
                 phantom.append(candidate)
     return phantom
+
 
 def check_dead_flags(repo_root: Path) -> dict[str, Any]:
     """Main check: find dead flags and phantom flags."""

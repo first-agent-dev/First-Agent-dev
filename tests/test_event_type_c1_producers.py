@@ -105,9 +105,7 @@ def test_session_start_emitted(tmp_path: Path) -> None:
     )
 
     start_events = [e for e in capture.events if e.type == "session_start"]
-    assert len(start_events) >= 1, (
-        f"Expected session_start event. Types: {[e.type for e in capture.events]}"
-    )
+    assert len(start_events) >= 1, f"Expected session_start event. Types: {[e.type for e in capture.events]}"
 
 
 # ── turn_start ───────────────────────────────────────────────────────────
@@ -134,9 +132,7 @@ def test_turn_start_emitted(tmp_path: Path) -> None:
     )
 
     turn_events = [e for e in capture.events if e.type == "turn_start"]
-    assert len(turn_events) >= 1, (
-        f"Expected turn_start event. Types: {[e.type for e in capture.events]}"
-    )
+    assert len(turn_events) >= 1, f"Expected turn_start event. Types: {[e.type for e in capture.events]}"
 
 
 # ── llm_response ─────────────────────────────────────────────────────────
@@ -163,9 +159,7 @@ def test_llm_response_emitted(tmp_path: Path) -> None:
     )
 
     llm_events = [e for e in capture.events if e.type == "llm_response"]
-    assert len(llm_events) >= 1, (
-        f"Expected llm_response event. Types: {[e.type for e in capture.events]}"
-    )
+    assert len(llm_events) >= 1, f"Expected llm_response event. Types: {[e.type for e in capture.events]}"
 
 
 # ── tool_call ────────────────────────────────────────────────────────────
@@ -181,13 +175,15 @@ def test_tool_call_emitted(tmp_path: Path) -> None:
 
     # Register a test tool
     registry = ToolRegistry()
-    registry.register(ToolSpec(
-        name="test.echo",
-        description="Echo test tool",
-        input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
-        permission="read",
-        handler=lambda params: ToolResult.ok(str(params.get("text", ""))),
-    ))
+    registry.register(
+        ToolSpec(
+            name="test.echo",
+            description="Echo test tool",
+            input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
+            permission="read",
+            handler=lambda params: ToolResult.ok(str(params.get("text", ""))),
+        )
+    )
 
     mock_chain = make_mock_chain(context_limit=150000)
     tool_call = {
@@ -211,9 +207,7 @@ def test_tool_call_emitted(tmp_path: Path) -> None:
     )
 
     tc_events = [e for e in capture.events if e.type == "tool_call"]
-    assert len(tc_events) >= 1, (
-        f"Expected tool_call event. Types: {[e.type for e in capture.events]}"
-    )
+    assert len(tc_events) >= 1, f"Expected tool_call event. Types: {[e.type for e in capture.events]}"
 
 
 # ── hook_deny ────────────────────────────────────────────────────────────
@@ -256,9 +250,7 @@ def test_hook_deny_emitted(tmp_path: Path) -> None:
     )
 
     deny_events = [e for e in capture.events if e.type == "hook_deny"]
-    assert len(deny_events) >= 1, (
-        f"Expected hook_deny event. Types: {[e.type for e in capture.events]}"
-    )
+    assert len(deny_events) >= 1, f"Expected hook_deny event. Types: {[e.type for e in capture.events]}"
 
 
 # ── subagent_start / subagent_end ────────────────────────────────────────
@@ -314,25 +306,23 @@ def test_subagent_events_emitted_via_output_bus(tmp_path: Path) -> None:
         mock_runner_class.return_value = mock_runner
 
         tool = build_spawn_subagent_tool(tmp_path)
-        result = tool.handler({
-            "task_id": "task-1",
-            "command": "echo hello",
-            "role": "verifier",
-        })
+        result = tool.handler(
+            {
+                "task_id": "task-1",
+                "command": "echo hello",
+                "role": "verifier",
+            }
+        )
 
     assert result.error is None, f"Subagent tool should succeed: {result}"
 
     # Verify subagent_start was emitted
     start_events = [e for e in capture.events if e.type == "subagent_start"]
-    assert len(start_events) >= 1, (
-        f"Expected subagent_start event. Types: {[e.type for e in capture.events]}"
-    )
+    assert len(start_events) >= 1, f"Expected subagent_start event. Types: {[e.type for e in capture.events]}"
     assert start_events[0].data["task_id"] == "task-1"
 
     # Verify subagent_end was emitted
     end_events = [e for e in capture.events if e.type == "subagent_end"]
-    assert len(end_events) >= 1, (
-        f"Expected subagent_end event. Types: {[e.type for e in capture.events]}"
-    )
+    assert len(end_events) >= 1, f"Expected subagent_end event. Types: {[e.type for e in capture.events]}"
     assert end_events[0].data["task_id"] == "task-1"
     assert end_events[0].data["ok"] is True

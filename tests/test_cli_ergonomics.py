@@ -352,9 +352,7 @@ def test_repair_mode_zero_budget_behaves_like_one_eval(tmp_path: Path, monkeypat
     assert state.repair_round == 0
 
 
-def test_repair_mode_does_not_loop_on_return_to_planner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_repair_mode_does_not_loop_on_return_to_planner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fa.inner_loop.workflow_artifacts import load_flow_state
 
     config, session_dir = _repair_env(tmp_path, monkeypatch)
@@ -389,9 +387,7 @@ def test_workflow_invalid_mode_rejected(tmp_path: Path, capsys: CaptureFixture[s
 
 
 def test_workflow_parses_mode_and_max_repairs() -> None:
-    args = build_parser().parse_args(
-        ["workflow", "coder,eval", "do X", "--mode", "repair", "--max-repairs", "3"]
-    )
+    args = build_parser().parse_args(["workflow", "coder,eval", "do X", "--mode", "repair", "--max-repairs", "3"])
     assert args.mode == "repair"
     assert args.max_repairs == 3
 

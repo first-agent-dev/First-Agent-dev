@@ -37,9 +37,7 @@ class TestDeadFlagsUnit:
         """After declaring blackboard_filtered_history_include_plans, there should be no phantom flags."""
         result = check_dead_flags(Path.cwd())
         phantom_names = [p["name"] for p in result["phantom_flags"]]
-        assert len(phantom_names) == 0, (
-            f"Expected 0 phantom flags, got {phantom_names}"
-        )
+        assert len(phantom_names) == 0, f"Expected 0 phantom flags, got {phantom_names}"
 
     def test_known_fields_not_phantom(self) -> None:
         """Declared fields should NOT appear in phantom list."""

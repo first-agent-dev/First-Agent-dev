@@ -104,9 +104,7 @@ def check_hooks(repo_root: Path | None = None) -> int:
     else:
         sys.stdout.write("Some hooks missing, stale, or non-executable — run `just install` to fix.\n")
         if stale_hooks:
-            sys.stdout.write(
-                "Stale hooks need re-install after source changes: " + ", ".join(stale_hooks) + "\n"
-            )
+            sys.stdout.write("Stale hooks need re-install after source changes: " + ", ".join(stale_hooks) + "\n")
 
     return 0 if all_ok else 1
 

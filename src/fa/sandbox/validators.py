@@ -232,9 +232,7 @@ def validate_chmod(command: str, *, workspace_root: Path) -> ValidationResult:
         if not containment.contained:
             return ValidationResult(
                 allow=False,
-                reason=(
-                    f"validator_chmod: target {target!r} not contained in workspace ({containment.reason})"
-                ),
+                reason=(f"validator_chmod: target {target!r} not contained in workspace ({containment.reason})"),
             )
 
     return ValidationResult(allow=True, reason="validator_chmod: ok")

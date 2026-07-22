@@ -40,11 +40,10 @@ def test_drive_session_uses_prompt_composer(tmp_path: Path, mock_session_state: 
     mock_chain.config = make_test_chain_config(
         compaction_threshold=80000,
         context_limit=100000,
-        family="anthropic"  # Use anthropic to test cache breakpoints,
+        family="anthropic",  # Use anthropic to test cache breakpoints,
     )
 
     mock_chain.request.return_value = mock_success_response("caching completed")
-
 
     outcome = drive_session(
         "Test task",
@@ -79,7 +78,6 @@ def test_openai_prompt_cache_key_forwarded_into_request_extras(
 
     mock_chain.request.return_value = mock_success_response("cache-key forwarded")
 
-
     outcome = drive_session(
         "Test task",
         provider_chain=mock_chain,
@@ -93,7 +91,6 @@ def test_openai_prompt_cache_key_forwarded_into_request_extras(
     request_info = mock_chain.request.call_args[0][0]
     assert "prompt_cache_key" in request_info.extras
     assert request_info.extras["prompt_cache_retention"] == "1h"
-
 
 
 def test_cache_headers_stripped_when_disabled(tmp_path: Path) -> None:
@@ -114,7 +111,6 @@ def test_cache_headers_stripped_when_disabled(tmp_path: Path) -> None:
     )
 
     mock_chain.request.return_value = mock_success_response("no-cache completed")
-
 
     outcome = drive_session(
         "Test task",

@@ -235,8 +235,7 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
                     line_no=line_no,
                     key=dotted,
                     detail=(
-                        "deprecated and ignored; use models.yaml compaction_threshold "
-                        "presence to enable compaction"
+                        "deprecated and ignored; use models.yaml compaction_threshold presence to enable compaction"
                     ),
                 )
             )

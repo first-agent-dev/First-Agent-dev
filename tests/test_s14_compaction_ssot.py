@@ -28,16 +28,10 @@ def test_legacy_compaction_flag_is_not_a_current_feature_field() -> None:
 
 
 def test_legacy_compaction_flag_warns_and_is_ignored() -> None:
-    result = load_feature_flags(
-        "feature_flags:\n"
-        "  context_compaction_enabled: true\n"
-        "  context_budget_enabled: true\n"
-    )
+    result = load_feature_flags("feature_flags:\n  context_compaction_enabled: true\n  context_budget_enabled: true\n")
     assert result.flags.context_budget_enabled is True
     assert any(
-        warning.key == "context_compaction_enabled"
-        and "deprecated" in warning.detail
-        and "ignored" in warning.detail
+        warning.key == "context_compaction_enabled" and "deprecated" in warning.detail and "ignored" in warning.detail
         for warning in result.warnings
     )
 

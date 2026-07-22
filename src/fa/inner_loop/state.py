@@ -394,9 +394,7 @@ class SessionState:
             enabled = self.feature_flags.blackboard_enabled if self.feature_flags is not None else True
             if enabled:
                 if self.session_db is None:
-                    logger.warning(
-                        "SessionState blackboard disabled because authoritative session_db is unavailable"
-                    )
+                    logger.warning("SessionState blackboard disabled because authoritative session_db is unavailable")
                     self.blackboard = None
                 else:
                     try:

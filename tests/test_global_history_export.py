@@ -53,6 +53,7 @@ def _make_outcome(exit_code: int = 0, stop_reason: str = "stopped_by_llm", turns
 # Required test 1 — idempotent
 # ---------------------------------------------------------------------------
 
+
 def test_global_history_export_idempotent(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
     - root: GlobalHistoryStore
@@ -115,6 +116,7 @@ def test_global_history_export_idempotent(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Required test 2 — concurrent safety
 # ---------------------------------------------------------------------------
+
 
 def test_global_history_export_concurrent(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
@@ -208,6 +210,7 @@ def test_global_history_export_concurrent(tmp_path: Path) -> None:
 # Required test 3 — terminal completeness
 # ---------------------------------------------------------------------------
 
+
 def test_global_history_export_completeness(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
     - root: build_export_row + export_session_to_global_history via real EventLog
@@ -228,21 +231,17 @@ def test_global_history_export_completeness(tmp_path: Path) -> None:
     )
 
     # Simulate events: 2 tool_calls (read, write), 1 usage, 1 compaction_stage3_done
+    log.append(actor="coder", kind="tool_call", content={"params": {}}, tool_name="fs.read_file", tool_call_id="tc-1")
     log.append(
-        actor="coder", kind="tool_call", content={"params": {}},
-        tool_name="fs.read_file", tool_call_id="tc-1"
+        actor="tool", kind="tool_result", content={"summary": "read ok"}, tool_name="fs.read_file", tool_call_id="tc-1"
     )
+    log.append(actor="coder", kind="tool_call", content={"params": {}}, tool_name="fs.write_file", tool_call_id="tc-2")
     log.append(
-        actor="tool", kind="tool_result", content={"summary": "read ok"},
-        tool_name="fs.read_file", tool_call_id="tc-1"
-    )
-    log.append(
-        actor="coder", kind="tool_call", content={"params": {}},
-        tool_name="fs.write_file", tool_call_id="tc-2"
-    )
-    log.append(
-        actor="tool", kind="tool_result", content={"summary": "write ok"},
-        tool_name="fs.write_file", tool_call_id="tc-2"
+        actor="tool",
+        kind="tool_result",
+        content={"summary": "write ok"},
+        tool_name="fs.write_file",
+        tool_call_id="tc-2",
     )
     log.append(
         actor="runtime",
@@ -303,6 +302,7 @@ def test_global_history_export_completeness(tmp_path: Path) -> None:
 # Failure policy
 # ---------------------------------------------------------------------------
 
+
 def test_global_history_export_failure_policy(tmp_path: Path, caplog: Any) -> None:
     """LIVE-PATH PROOF:
     - root: export_session_to_global_history best-effort
@@ -332,14 +332,15 @@ def test_global_history_export_failure_policy(tmp_path: Path, caplog: Any) -> No
     assert ok is False, "export should return False on failure, not raise"
     # Should have logged warning
     # caplog may capture warning from global_history module
-    assert any(
-        "global_history" in rec.message.lower() or "failed" in rec.message.lower()
-        for rec in caplog.records
-    ) or True  # best-effort
+    assert (
+        any("global_history" in rec.message.lower() or "failed" in rec.message.lower() for rec in caplog.records)
+        or True
+    )  # best-effort
 
 
 # Projection-only enforcement
 # ---------------------------------------------------------------------------
+
 
 def test_global_history_is_projection_only() -> None:
     """LIVE-PATH PROOF:
@@ -365,9 +366,7 @@ def test_global_history_is_projection_only() -> None:
         if not p.exists():
             continue
         content = p.read_text(encoding="utf-8")
-        assert "global_history" not in content, (
-            f"{fp} should not import global_history — projection-only D8"
-        )
+        assert "global_history" not in content, f"{fp} should not import global_history — projection-only D8"
 
     # Allowed importers: cli.py, stats.py may contain global_history
     allowed = ["src/fa/cli.py"]
@@ -383,6 +382,7 @@ def test_global_history_is_projection_only() -> None:
 # Extra: C1 via drive_session that auto-exports via cli path? But we test direct export above.
 # Add C1 that uses drive_session + export via build_export_row (not cli) to prove live path.
 # ---------------------------------------------------------------------------
+
 
 def test_global_history_export_via_drive_session(tmp_path: Path) -> None:
     """LIVE-PATH PROOF C1:

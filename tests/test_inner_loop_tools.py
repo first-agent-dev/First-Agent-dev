@@ -41,9 +41,7 @@ def test_write_file_tool_writes_inside_workspace(tmp_path: Path) -> None:
 def test_workspace_path_escape_is_rejected(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path)
 
-    result = registry.dispatch(
-        ToolCall(name="fs.write_file", params={"path": "../escape.txt", "content": "no"})
-    )
+    result = registry.dispatch(ToolCall(name="fs.write_file", params={"path": "../escape.txt", "content": "no"}))
 
     assert result.error is not None
     assert result.error.code == "write_failed"
@@ -181,9 +179,7 @@ def test_build_planner_registry_has_read_and_bash(tmp_path: Path) -> None:
     assert "fs.run_bash" not in names
 
     # Verify limited write denies src/ but allows knowledge/research/
-    result_denied = registry.dispatch(
-        ToolCall(name="fs.write_file", params={"path": "src/illegal.py", "content": "x"})
-    )
+    result_denied = registry.dispatch(ToolCall(name="fs.write_file", params={"path": "src/illegal.py", "content": "x"}))
     assert result_denied.error is not None
     assert result_denied.error.code == "path_denied"
 

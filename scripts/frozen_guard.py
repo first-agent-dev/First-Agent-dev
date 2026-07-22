@@ -124,9 +124,7 @@ def scan_tcb_frozen(tcb_files: set[Path], repo_root: Path) -> list[tuple[str, st
     return violations
 
 
-def write_report(
-    repo_root: Path, setattr_hits: list[tuple[str, int]], tcb_hits: list[tuple[str, str, str]]
-) -> None:
+def write_report(repo_root: Path, setattr_hits: list[tuple[str, int]], tcb_hits: list[tuple[str, str, str]]) -> None:
     """Write .fa/frozen_integrity_report.md (best-effort)."""
     fa_dir = repo_root / ".fa"
     fa_dir.mkdir(parents=True, exist_ok=True)

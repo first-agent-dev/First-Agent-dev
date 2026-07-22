@@ -31,8 +31,7 @@ def test_script_exits_0_on_clean_tree() -> None:
     """The contract check script must exit 0 on the current clean source tree."""
     result = _run_script()
     assert result.returncode == 0, (
-        f"Script exited {result.returncode} on clean tree.\n"
-        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        f"Script exited {result.returncode} on clean tree.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
 
 
@@ -42,9 +41,7 @@ def test_script_exits_0_on_clean_tree() -> None:
 def test_script_reports_log_kind_count() -> None:
     """The script output must include the LogKind member count."""
     result = _run_script()
-    assert "LogKind members:" in result.stdout, (
-        f"Script output missing LogKind member count.\nstdout:\n{result.stdout}"
-    )
+    assert "LogKind members:" in result.stdout, f"Script output missing LogKind member count.\nstdout:\n{result.stdout}"
 
 
 # ── Kill-check 3: Script reports CONSOLE_MIRROR_KINDS ───────────────

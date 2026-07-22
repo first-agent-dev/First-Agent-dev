@@ -187,6 +187,7 @@ class TestMistralFamilyExtraction:
     def test_eval_conflict_with_mistral(self) -> None:
         """Eval matching mistral coder raises EvalFamilyConflictError."""
         from fa.roles import EvalFamilyConflictError
+
         with pytest.raises(EvalFamilyConflictError):
             check_eval_disjoint(
                 planner_family="openai",

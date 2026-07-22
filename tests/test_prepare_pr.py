@@ -105,9 +105,7 @@ def test_happy_path_fix_emits_all_clauses(draft_store: PrDraftStore, draft_path:
     assert f"{HEADER_DET_MECHANISM} raise SystemExit" in text
 
 
-def test_happy_path_chore_without_body_has_single_trailing_newline(
-    draft_store: PrDraftStore, draft_path: Path
-) -> None:
+def test_happy_path_chore_without_body_has_single_trailing_newline(draft_store: PrDraftStore, draft_path: Path) -> None:
     result = _invoke(draft_store, {"intent": "CHORE", "invariant": "n/a"})
     assert result.error is None
     assert draft_path.read_text(encoding="utf-8") == "INTENT: CHORE\nINVARIANT: n/a\n"
@@ -128,9 +126,7 @@ def test_optional_body_appended_after_blank_line(draft_store: PrDraftStore, draf
     assert text.endswith(f"\n\n{body}\n")
 
 
-def test_whitespace_only_body_is_omitted_without_artifact_newlines(
-    draft_store: PrDraftStore, draft_path: Path
-) -> None:
+def test_whitespace_only_body_is_omitted_without_artifact_newlines(draft_store: PrDraftStore, draft_path: Path) -> None:
     result = _invoke(
         draft_store,
         {

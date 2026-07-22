@@ -124,9 +124,7 @@ class IsolatedWorktreeManager(WorktreeManager):
         for line in result.stdout.splitlines():
             if not line.startswith("branch "):
                 continue
-            existing = (
-                line.split("refs/heads/")[-1] if "refs/heads/" in line else line.replace("branch ", "", 1)
-            )
+            existing = line.split("refs/heads/")[-1] if "refs/heads/" in line else line.replace("branch ", "", 1)
             if existing == branch:
                 return True, result.stdout
         return False, result.stdout
@@ -196,9 +194,7 @@ class IsolatedWorktreeManager(WorktreeManager):
                     found = True
                     break
         if not found:
-            raise RuntimeError(
-                f"worktree {worktree_path} not in git worktree list after add: {list_result.stdout}"
-            )
+            raise RuntimeError(f"worktree {worktree_path} not in git worktree list after add: {list_result.stdout}")
 
         return worktree_path
 

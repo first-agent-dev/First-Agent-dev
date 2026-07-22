@@ -40,9 +40,7 @@ def test_only_pty_pool_has_any_none() -> None:
         if in_class and not line.startswith("    ") and line.strip() and "class" not in line:
             break
 
-    assert any_none_fields == ["pty_pool"], (
-        f"Expected only pty_pool with Any | None, got: {any_none_fields}"
-    )
+    assert any_none_fields == ["pty_pool"], f"Expected only pty_pool with Any | None, got: {any_none_fields}"
 
 
 # ── Kill-check 2: bash_executor is a declared field ─────────────────
@@ -52,9 +50,7 @@ def test_bash_executor_field_exists() -> None:
     """bash_executor must be a declared field on SessionState as
     BashExecutor | None = None (user Q1: standardize approach, no getattr)."""
     field_names = {f.name for f in dataclasses.fields(SessionState)}
-    assert "bash_executor" in field_names, (
-        f"bash_executor not in SessionState fields: {sorted(field_names)}"
-    )
+    assert "bash_executor" in field_names, f"bash_executor not in SessionState fields: {sorted(field_names)}"
 
 
 # ── Kill-check 3: TYPE_CHECKING imports include BashExecutor ─────────
@@ -86,9 +82,7 @@ def test_typed_fields_in_source() -> None:
         "output_bus: EventBus",
     }
     for expected in expected_types:
-        assert expected in content, (
-            f"Expected type annotation '{expected}' not found in state.py"
-        )
+        assert expected in content, f"Expected type annotation '{expected}' not found in state.py"
 
 
 # ── Kill-check 5: SessionState construction works ───────────────────
@@ -119,6 +113,7 @@ def test_no_runtime_import_of_typed_modules() -> None:
     import importlib
 
     import fa.inner_loop.state
+
     importlib.reload(fa.inner_loop.state)
 
     after = set(sys.modules.keys())
@@ -132,6 +127,4 @@ def test_no_runtime_import_of_typed_modules() -> None:
         "fa.runtime.bash_executor",
     }
     actually_imported = forbidden & new_modules
-    assert not actually_imported, (
-        f"TYPE_CHECKING guard failed — runtime import of: {actually_imported}"
-    )
+    assert not actually_imported, f"TYPE_CHECKING guard failed — runtime import of: {actually_imported}"

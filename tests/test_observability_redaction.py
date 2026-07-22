@@ -14,9 +14,7 @@ class FakeModelsConfig:
     """Minimal stand-in for ModelsConfig with .roles[role].chain entries."""
 
     def __init__(self, env_vars: list[str]) -> None:
-        self.roles = {
-            "coder": type("Role", (), {"chain": [type("Entry", (), {"api_key_env": v}) for v in env_vars]})
-        }
+        self.roles = {"coder": type("Role", (), {"chain": [type("Entry", (), {"api_key_env": v}) for v in env_vars]})}
 
 
 def test_exact_match() -> None:

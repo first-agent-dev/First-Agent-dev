@@ -66,9 +66,7 @@ def mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[A
     return resp, "call-id-final", []
 
 
-def mock_response_with_tools(
-    tool_calls: list[dict[str, Any]], text: str = ""
-) -> tuple[ResponseInfo, str, list[Any]]:
+def mock_response_with_tools(tool_calls: list[dict[str, Any]], text: str = "") -> tuple[ResponseInfo, str, list[Any]]:
     resp = ResponseInfo(
         text=text,
         in_tokens=100,
@@ -90,9 +88,7 @@ def make_tool_call(name: str, params: dict[str, Any], call_id: str) -> dict[str,
     }
 
 
-def mock_tool_call_response(
-    call_id: str, name: str, params: dict[str, Any]
-) -> tuple[ResponseInfo, str, list[Any]]:
+def mock_tool_call_response(call_id: str, name: str, params: dict[str, Any]) -> tuple[ResponseInfo, str, list[Any]]:
     """Convenience: create a ResponseInfo containing a single tool call.
 
     Used by pr2/pr4 wiring tests where a single tool call is returned per turn.

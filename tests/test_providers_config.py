@@ -671,9 +671,7 @@ def test_load_models_config_accepts_debug_role_alongside_three() -> None:
     # debug / eval). The loader must accept arbitrary role names
     # without altering the family-disjoint check, which only
     # constrains the planner/coder/eval triad.
-    text = _make_three_role_text(
-        planner_family="kimi", coder_family="deepseek", eval_family="qwen"
-    ) + textwrap.dedent(
+    text = _make_three_role_text(planner_family="kimi", coder_family="deepseek", eval_family="qwen") + textwrap.dedent(
         """\
         debug:
           model:  "claude-3-5-sonnet"

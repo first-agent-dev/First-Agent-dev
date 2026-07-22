@@ -240,9 +240,7 @@ def test_drive_session_hits_iteration_cap(tmp_path: Path) -> None:
         "function": {"name": "echo", "arguments": '{"text": "again"}'},
     }
     # Always emit the same tool call so the loop never terminates on its own.
-    provider = FakeProvider(
-        [_make_response(finish_reason="tool_calls", tool_calls=(looping_call,)) for _ in range(20)]
-    )
+    provider = FakeProvider([_make_response(finish_reason="tool_calls", tool_calls=(looping_call,)) for _ in range(20)])
     chain = _make_chain(provider)
     registry = _registry_with_dummy_tool()
     hooks = HookRegistry()

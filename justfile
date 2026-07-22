@@ -24,8 +24,7 @@ install:
 # hook installation, or hook status fails; the final marker is emitted only
 # after all three steps succeed.
 agent-bootstrap:
-    just install
-    @echo "FA_AGENT_READY=1"
+    uv run python scripts/bootstrap/host_bootstrap.py
 
 # Install the M-6 commit-message hooks (prepare-commit-msg / commit-msg)
 # into .git/hooks via the tested Python installer. Without this the
@@ -51,10 +50,10 @@ hooks-status:
     uv run python -m fa.hygiene.hooks.status
 
 lint:
-    ruff check .
-    ruff format --check .
-    deptry src/
-    pylint src/fa
+    uv run ruff check .
+    uv run ruff format --check .
+    uv run deptry src/
+    uv run pylint src/fa
 
 # Agents: run `just fix` after editing; it auto-resolves every mechanical
 # lint/format finding (incl. RUF022 __all__ sorting) so none of it needs
@@ -64,60 +63,60 @@ lint:
 # an actual design decision (fix the code or add `# noqa: <code>` + a
 # rationale comment — see AGENTS.md §Judgment rules).
 fix:
-    ruff check --fix-only .
-    ruff format .
-    ruff check .
+    uv run ruff check --fix-only .
+    uv run ruff format .
+    uv run ruff check .
 
 # Back-compat alias for `just fix`.
 format: fix
 
 typecheck:
-    mypy
+    uv run mypy
 
 typecheck-advisory:
-    -pyrefly check
+    -uv run pyrefly check
 
 authoring-check:
-    fa authoring-check
+    uv run fa authoring-check
 
 # Dependency allowlist gate: verifies every direct pyproject dependency is
 # covered by the tracked TCB contract.
 dependency-contract-check:
-    python scripts/check_dependency_contract.py
+    uv run python scripts/check_dependency_contract.py
 
 # Producer-consumer contract gate: verifies every EventType has both a
 # producer (emit call in production code) and a consumer (handler in
 # ConsoleRenderer). Prevents "not wired / partial implementation" gaps.
 # See: knowledge/research/root-cause-analysis-not-wired-gaps-2026-07-19.md
 contract-check:
-    python scripts/check_producer_consumer_contract.py
+    uv run python scripts/check_producer_consumer_contract.py
 
 # Guard: no MagicMock(spec=<frozen_dataclass>) in tests. Frozen dataclasses
 # are pure data — mock them and every new field becomes a latent regression.
 # Use real instances (make_test_chain_config, etc.) instead.
 no-mocked-dataclasses:
-    python scripts/check_no_mocked_dataclasses.py
+    uv run python scripts/check_no_mocked_dataclasses.py
 
 # Full suite with the coverage gate (fail_under in pyproject). For a quick
 # single-file iteration loop use plain `pytest tests/test_x.py` — no gate.
 test:
-    pytest --cov=fa --cov-report=term-missing --cov-report=xml
+    uv run pytest --cov=fa --cov-report=term-missing --cov-report=xml
 
 # Vulnerability scanning (Dependencies + SAST)
 audit:
-    pip-audit
+    uv run pip-audit
     uvx semgrep --config=p/python --config=p/owasp-top-ten
 
 deadcode:
-    -vulture src/ --min-confidence 90
+    -uv run vulture src/ --min-confidence 90
 
 # Mutation testing on the high-risk sandbox scope ([tool.mutmut] in
 # pyproject). Slow (~1 min): runs the sandbox test files per mutant.
 # Survivor-clearing tracker: knowledge/mutation-survivors-workplan.md
 mutation:
-    mutmut run
-    mutmut results
-    mutmut export-cicd-stats
+    uv run mutmut run
+    uv run mutmut results
+    uv run mutmut export-cicd-stats
 
 lock-check:
     uv lock --locked

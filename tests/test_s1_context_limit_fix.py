@@ -55,6 +55,7 @@ def test_context_limit_zero_rejected_by_chain_config() -> None:
     The `or 150000` trap that would silently convert 0→150000 is now removed,
     so the upstream validation is the sole defense against zero."""
     from fa.providers.chain import ChainEntry
+
     entry = ChainEntry(
         provider="test",
         slug="test/model",
@@ -100,10 +101,7 @@ def test_context_limit_below_floor_clamped(tmp_path: Path, session_state: Sessio
     # Telemetry event should be logged
     events = require_log(session_state).read_all()
     telemetry_events = [e for e in events if e.kind == "telemetry"]
-    clamp_events = [
-        e for e in telemetry_events
-        if "below floor" in str(e.content.get("message", ""))
-    ]
+    clamp_events = [e for e in telemetry_events if "below floor" in str(e.content.get("message", ""))]
     assert len(clamp_events) == 1, f"Expected 1 clamp telemetry event, got {len(clamp_events)}"
     assert "context_limit=100" in str(clamp_events[0].content["message"])
     assert str(MIN_CONTEXT_LIMIT) in str(clamp_events[0].content["message"])
@@ -135,10 +133,7 @@ def test_context_limit_normal_passthrough(tmp_path: Path, session_state: Session
     # No clamp telemetry events
     events = require_log(session_state).read_all()
     telemetry_events = [e for e in events if e.kind == "telemetry"]
-    clamp_events = [
-        e for e in telemetry_events
-        if "below floor" in str(e.content.get("message", ""))
-    ]
+    clamp_events = [e for e in telemetry_events if "below floor" in str(e.content.get("message", ""))]
     assert len(clamp_events) == 0, "No clamp event expected for normal context_limit"
 
 
@@ -167,10 +162,7 @@ def test_context_limit_at_floor_not_clamped(tmp_path: Path, session_state: Sessi
     # No clamp telemetry events — 32000 is exactly at floor, not below
     events = require_log(session_state).read_all()
     telemetry_events = [e for e in events if e.kind == "telemetry"]
-    clamp_events = [
-        e for e in telemetry_events
-        if "below floor" in str(e.content.get("message", ""))
-    ]
+    clamp_events = [e for e in telemetry_events if "below floor" in str(e.content.get("message", ""))]
     assert len(clamp_events) == 0, "No clamp event for context_limit at floor"
 
 

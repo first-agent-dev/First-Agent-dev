@@ -95,8 +95,7 @@ def test_stats_aggregate_and_render_edge_paths(tmp_path: Path) -> None:
         tool_usage=[ToolUsage(name="fs.read_file", count=3)],
         file_access=[FileAccess(path="src/fa/cli.py", reads=3)],
         token_timeline=[
-            TurnTokens(turn=i, in_tokens=100, out_tokens=20, cache_read=0, cache_creation=0)
-            for i in range(1, 5)
+            TurnTokens(turn=i, in_tokens=100, out_tokens=20, cache_read=0, cache_creation=0) for i in range(1, 5)
         ],
         total_in=400,
         total_out=80,
@@ -187,10 +186,17 @@ def test_profile_optional_builders_all_missing_are_skipped(caplog: Any, tmp_path
     import fa.inner_loop.tools as tools
 
     names = (
-        "build_glob_tool", "build_grep_tool", "build_chronicle_search_tool",
-        "build_usage_tool", "build_list_tasks_tool", "build_checkpoint_tool",
-        "build_diff_tool", "build_send_ctrl_c_tool", "build_undo_tool",
-        "build_instant_grep_tool", "build_spawn_subagent_tool",
+        "build_glob_tool",
+        "build_grep_tool",
+        "build_chronicle_search_tool",
+        "build_usage_tool",
+        "build_list_tasks_tool",
+        "build_checkpoint_tool",
+        "build_diff_tool",
+        "build_send_ctrl_c_tool",
+        "build_undo_tool",
+        "build_instant_grep_tool",
+        "build_spawn_subagent_tool",
     )
     original = {name: getattr(tools, name) for name in names}
     try:
@@ -198,8 +204,12 @@ def test_profile_optional_builders_all_missing_are_skipped(caplog: Any, tmp_path
             setattr(tools, name, None)
         registry = ToolRegistry()
         tools._register_extra_tools(
-            registry, tmp_path, include_pair=True, include_observability=True,
-            include_instant_grep=True, include_glob_grep=True,
+            registry,
+            tmp_path,
+            include_pair=True,
+            include_observability=True,
+            include_instant_grep=True,
+            include_glob_grep=True,
         )
     finally:
         for name, value in original.items():
@@ -212,7 +222,8 @@ def test_subagent_invalid_secret_environment_is_denied(tmp_path: Path) -> None:
     from fa.inner_loop.context import reset_current_session, set_current_session
 
     state = SessionState(
-        workspace_root=tmp_path, run_id="subagent-secret",
+        workspace_root=tmp_path,
+        run_id="subagent-secret",
         log=EventLog(tmp_path / "events.jsonl", run_id="subagent-secret"),
         feature_flags=FeatureFlags(subagent_spawning_enabled=True),
     )
@@ -233,7 +244,8 @@ def test_subagent_missing_required_input_is_structured(tmp_path: Path) -> None:
     from fa.inner_loop.context import reset_current_session, set_current_session
 
     state = SessionState(
-        workspace_root=tmp_path, run_id="subagent-invalid",
+        workspace_root=tmp_path,
+        run_id="subagent-invalid",
         log=EventLog(tmp_path / "events.jsonl", run_id="subagent-invalid"),
         feature_flags=FeatureFlags(subagent_spawning_enabled=True),
     )

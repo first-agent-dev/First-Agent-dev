@@ -121,9 +121,7 @@ def test_context_warn_emitted_at_budget_warn(tmp_path: Path) -> None:
     )
 
     warn_events = [e for e in capture.events if e.type == "context_warn"]
-    assert len(warn_events) >= 1, (
-        f"Expected context_warn event. Types: {[e.type for e in capture.events]}"
-    )
+    assert len(warn_events) >= 1, f"Expected context_warn event. Types: {[e.type for e in capture.events]}"
 
 
 # ── LOGIC-9: ProviderRequestShapeError console event ──────────────────────
@@ -193,13 +191,15 @@ def test_loop_warn_emitted_via_warn_sink(tmp_path: Path) -> None:
 
     # Register a test tool
     registry = ToolRegistry()
-    registry.register(ToolSpec(
-        name="test.echo",
-        description="Echo test tool",
-        input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
-        permission="read",
-        handler=lambda params: ToolResult.ok(str(params.get("text", ""))),
-    ))
+    registry.register(
+        ToolSpec(
+            name="test.echo",
+            description="Echo test tool",
+            input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
+            permission="read",
+            handler=lambda params: ToolResult.ok(str(params.get("text", ""))),
+        )
+    )
 
     mock_chain = make_mock_chain(context_limit=150000)
     same_call = {
@@ -225,9 +225,7 @@ def test_loop_warn_emitted_via_warn_sink(tmp_path: Path) -> None:
     )
 
     loop_warn_events = [e for e in capture.events if e.type == "loop_warn"]
-    assert len(loop_warn_events) >= 1, (
-        f"Expected loop_warn event. Types: {[e.type for e in capture.events]}"
-    )
+    assert len(loop_warn_events) >= 1, f"Expected loop_warn event. Types: {[e.type for e in capture.events]}"
 
 
 # ── ConsoleRenderer detail-level tests ────────────────────────────────────

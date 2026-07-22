@@ -54,10 +54,7 @@ def test_compactor_chain_uses_config_model_directly() -> None:
         context_limit=100000,
     )
     mock_response = MagicMock()
-    mock_response.text = (
-        "## PREVIOUSLY\nDone.\n\n## PARKED\nNone.\n\n"
-        "## CURRENT\nOngoing.\n\n## NEXT ACTION\nContinue."
-    )
+    mock_response.text = "## PREVIOUSLY\nDone.\n\n## PARKED\nNone.\n\n## CURRENT\nOngoing.\n\n## NEXT ACTION\nContinue."
     mock_chain.request.return_value = (mock_response, "call-123", [])
 
     compactor = FullLLMCompactor(compactor_chain=mock_chain)
@@ -84,8 +81,7 @@ def test_no_getattr_on_compactor_chain_config_model() -> None:
                 # Check if any string arg is "config" or "model" in the context
                 # of compactor_chain access
                 string_args = [
-                    arg.value for arg in node.args
-                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                    arg.value for arg in node.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
                 ]
                 if "config" in string_args or "model" in string_args:
                     # Check context: is this on compactor_chain?
@@ -109,9 +105,7 @@ def test_compactor_chain_type_is_provider_chain() -> None:
         pytest.fail("compactor_chain has no type annotation")
 
     annotation_str = str(annotation)
-    assert "ProviderChain" in annotation_str, (
-        f"Expected ProviderChain in type annotation, got: {annotation_str}"
-    )
+    assert "ProviderChain" in annotation_str, f"Expected ProviderChain in type annotation, got: {annotation_str}"
     assert "Any" not in annotation_str, (
         f"Found 'Any' in type annotation — should be ProviderChain | None: {annotation_str}"
     )

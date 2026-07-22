@@ -226,12 +226,8 @@ class EvalReport:
                 data["route_decision"], _ROUTE_DECISIONS, "route_decision"
             ),
             summary=_as_str(data["summary"]),
-            step_results=tuple(
-                StepResult.from_json_dict(item) for item in _as_dict_list(data.get("step_results", []))
-            ),
-            findings=tuple(
-                EvalFinding.from_json_dict(item) for item in _as_dict_list(data.get("findings", []))
-            ),
+            step_results=tuple(StepResult.from_json_dict(item) for item in _as_dict_list(data.get("step_results", []))),
+            findings=tuple(EvalFinding.from_json_dict(item) for item in _as_dict_list(data.get("findings", []))),
             integration_checks=_as_str_tuple(data.get("integration_checks", [])),
             regression_checks=_as_str_tuple(data.get("regression_checks", [])),
             confidence=_as_str(data.get("confidence", "")),

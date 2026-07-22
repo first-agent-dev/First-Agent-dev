@@ -30,9 +30,7 @@ def test_console_mirror_kinds_subset_of_log_kind() -> None:
     """Every CONSOLE_MIRROR_KINDS member must also be a valid LogKind."""
     log_kinds = set(typing.get_args(LogKind))
     not_in_logkind = CONSOLE_MIRROR_KINDS - log_kinds
-    assert not not_in_logkind, (
-        f"CONSOLE_MIRROR_KINDS members not in LogKind: {not_in_logkind}"
-    )
+    assert not not_in_logkind, f"CONSOLE_MIRROR_KINDS members not in LogKind: {not_in_logkind}"
 
 
 # ── Kill-check 3: CONSOLE_MIRROR_KINDS is in __all__ ───────────────
@@ -41,6 +39,7 @@ def test_console_mirror_kinds_subset_of_log_kind() -> None:
 def test_console_mirror_kinds_in_all() -> None:
     """CONSOLE_MIRROR_KINDS must be exported in fa.output.__all__."""
     from fa.output import __all__
+
     assert "CONSOLE_MIRROR_KINDS" in __all__
 
 
@@ -58,9 +57,7 @@ def test_safety_critical_kinds_present() -> None:
         "tool_call",
     }
     missing = required - CONSOLE_MIRROR_KINDS
-    assert not missing, (
-        f"Required safety-critical kinds missing from CONSOLE_MIRROR_KINDS: {missing}"
-    )
+    assert not missing, f"Required safety-critical kinds missing from CONSOLE_MIRROR_KINDS: {missing}"
 
 
 # ── Kill-check 5: Compaction stages are all present ─────────────────
@@ -78,6 +75,4 @@ def test_compaction_stages_all_present() -> None:
         "compaction_stage3_error",
     }
     missing = compaction_kinds - CONSOLE_MIRROR_KINDS
-    assert not missing, (
-        f"Compaction stage kinds missing from CONSOLE_MIRROR_KINDS: {missing}"
-    )
+    assert not missing, f"Compaction stage kinds missing from CONSOLE_MIRROR_KINDS: {missing}"

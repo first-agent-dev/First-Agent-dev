@@ -218,9 +218,7 @@ def test_install_one_symlink_fallback_to_copy(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(install_mod.os, "symlink", original_symlink)
 
 
-def test_install_one_copy_fallback_target_is_executable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_install_one_copy_fallback_target_is_executable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Copy-fallback target must have the execute bit set (git requirement)."""
 
     root = _make_workspace(tmp_path)

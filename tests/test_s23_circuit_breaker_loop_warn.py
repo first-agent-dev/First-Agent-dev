@@ -81,20 +81,14 @@ def test_loop_warn_on_circuit_breaker(tmp_path: Path) -> None:
 
     # Check for loop_warn with compaction_circuit_breaker detector
     loop_warn_events = [
-        e for e in captured
-        if e.type == "loop_warn"
-        and e.data.get("detector") == "compaction_circuit_breaker"
+        e for e in captured if e.type == "loop_warn" and e.data.get("detector") == "compaction_circuit_breaker"
     ]
 
     # The session may or may not hit the circuit breaker depending on
     # whether compaction reclaims enough space. If context_warn with
     # stage3 was emitted and the session ended with hard_stop, the
     # circuit breaker path fired and loop_warn must be present.
-    context_warn_stage3 = [
-        e for e in captured
-        if e.type == "context_warn"
-        and e.data.get("action") == "stage3"
-    ]
+    context_warn_stage3 = [e for e in captured if e.type == "context_warn" and e.data.get("action") == "stage3"]
 
     if context_warn_stage3:
         assert len(loop_warn_events) >= 1, (

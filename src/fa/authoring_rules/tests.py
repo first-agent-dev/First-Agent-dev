@@ -238,9 +238,7 @@ class _TestSemanticDecayRule:
                             code="FA-AUTHORING-V4-PYTEST-SKIP",
                             path=rel,
                             line=node.lineno,
-                            message=(
-                                "pytest.skip(...) call hides a test from the suite; fix the test or delete it"
-                            ),
+                            message=("pytest.skip(...) call hides a test from the suite; fix the test or delete it"),
                             remediation=(
                                 "remove the pytest.skip(...) call and address the "
                                 "underlying failure, OR convert to "
@@ -264,8 +262,7 @@ class _TestSemanticDecayRule:
                             path=rel,
                             line=dec.lineno,
                             message=(
-                                "@pytest.mark.skip decorator hides a test from the suite; "
-                                "fix the test or delete it"
+                                "@pytest.mark.skip decorator hides a test from the suite; fix the test or delete it"
                             ),
                             remediation=(
                                 "remove the @pytest.mark.skip decorator and address "
@@ -300,12 +297,9 @@ class _TestSemanticDecayRule:
                             code="FA-AUTHORING-V4-FOCUS-MARKER",
                             path=rel,
                             line=dec.lineno,
-                            message=(
-                                f"@pytest.mark.{attr} silently shrinks the test suite; remove before commit"
-                            ),
+                            message=(f"@pytest.mark.{attr} silently shrinks the test suite; remove before commit"),
                             remediation=(
-                                f"remove the @pytest.mark.{attr} decorator; "
-                                "use the `-k` selector locally instead"
+                                f"remove the @pytest.mark.{attr} decorator; use the `-k` selector locally instead"
                             ),
                             rule_input_hash=node_input_hash(source_bytes, dec),
                         )
@@ -415,12 +409,9 @@ def _contradictory_finding(rel: str, source_bytes: bytes, node: ast.Assert) -> R
         path=rel,
         line=node.lineno,
         message=(
-            "self-contradictory assertion will always fail when executed; "
-            "the test is broken, not merely a placeholder"
+            "self-contradictory assertion will always fail when executed; the test is broken, not merely a placeholder"
         ),
-        remediation=(
-            "rewrite the assertion to compare distinct values, or delete the test if it should never run"
-        ),
+        remediation=("rewrite the assertion to compare distinct values, or delete the test if it should never run"),
         rule_input_hash=node_input_hash(source_bytes, node),
     )
 

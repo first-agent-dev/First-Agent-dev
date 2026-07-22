@@ -196,9 +196,7 @@ def test_try_at_module_scope_with_allow_module_level_exempt(tmp_path: Path) -> N
 
 def test_non_strict_xfail_call_form_is_hard_block(tmp_path: Path) -> None:
     _make_workspace(tmp_path)
-    body = (
-        'import pytest\n\n@pytest.mark.xfail(reason="known bug")\ndef test_thing():\n    raise AssertionError\n'
-    )
+    body = 'import pytest\n\n@pytest.mark.xfail(reason="known bug")\ndef test_thing():\n    raise AssertionError\n'
     _write_test(tmp_path, "tests/test_xfail_no_strict.py", body)
     report = run_all(tmp_path, rules=(TEST_SEMANTIC_DECAY,))
     assert _codes(report) == ["FA-AUTHORING-V4-NON-STRICT-XFAIL"]

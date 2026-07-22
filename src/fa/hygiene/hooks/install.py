@@ -122,9 +122,7 @@ def install_hooks(
 def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m fa.hygiene.hooks.install",
-        description=(
-            "Install FA local hooks (pre-commit, pre-push, prepare-commit-msg, commit-msg) into .git/hooks/."
-        ),
+        description=("Install FA local hooks (pre-commit, pre-push, prepare-commit-msg, commit-msg) into .git/hooks/."),
     )
     parser.add_argument(
         "--force",

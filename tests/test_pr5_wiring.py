@@ -56,9 +56,7 @@ def _mock_success_response(text: str = "done") -> tuple[ResponseInfo, str, list[
     return resp, "call-id", []
 
 
-def test_stage3_compaction_triggers_and_rebuilds_prompt(
-    tmp_path: Path, mock_session_state: SessionState
-) -> None:
+def test_stage3_compaction_triggers_and_rebuilds_prompt(tmp_path: Path, mock_session_state: SessionState) -> None:
     """Verifies that Stage 3 LLM Compaction triggers and uses the compactor_chain."""
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
@@ -111,9 +109,7 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
     # Pre-populate session log:
     # First 2 turns: extremely bulky (outside protected window, eligible for compaction)
     for i in range(1, 3):
-        t_calls = [
-            {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
-        ]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
         _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
@@ -129,9 +125,7 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
 
     # Remaining 5 turns: small (inside protected window, or just additional turns)
     for i in range(3, 8):
-        t_calls = [
-            {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
-        ]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
         _require_log(mock_session_state).append(
             actor="model", kind="model_msg", content={"text": f"Step content {i}", "tool_calls": t_calls}
         )
@@ -142,7 +136,6 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(
             tool_name="fs.read_file",
             tool_call_id=f"tc-{i}",
         )
-
 
     outcome = drive_session(
         "Test Stage 3 compaction task",
@@ -200,9 +193,7 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
 
     # Create five turns so the first one sits outside the protected tail and can be masked.
     for i in range(1, 6):
-        t_calls = [
-            {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
-        ]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
         _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
@@ -216,7 +207,6 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
             tool_name="fs.read_file",
             tool_call_id=f"tc-{i}",
         )
-
 
     outcome = drive_session(
         "Test Stage 2 only task",
@@ -237,7 +227,6 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
     assert not [e for e in events if e.kind == "compaction_stage3_start"]
 
 
-
 def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: SessionState) -> None:
     """Verifies that an existing memory_summary in the event log is correctly carried forward and prepended."""
     mock_chain = MagicMock(spec=ProviderChain)
@@ -256,12 +245,7 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
     )
 
     compactor_resp = ResponseInfo(
-        text=(
-            "## PREVIOUSLY\nCompacted again.\n\n"
-            "## PARKED\nNone.\n\n"
-            "## CURRENT\nOngoing.\n\n"
-            "## NEXT ACTION\nNext."
-        ),
+        text=("## PREVIOUSLY\nCompacted again.\n\n## PARKED\nNone.\n\n## CURRENT\nOngoing.\n\n## NEXT ACTION\nNext."),
         in_tokens=500,
         out_tokens=100,
         cache_read_input_tokens=0,
@@ -279,9 +263,7 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
 
     # First few turns after the summary: extremely bulky
     for i in range(1, 3):
-        t_calls = [
-            {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
-        ]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
         _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
@@ -297,9 +279,7 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
 
     # Last few turns: small
     for i in range(3, 8):
-        t_calls = [
-            {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
-        ]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
         _require_log(mock_session_state).append(
             actor="model", kind="model_msg", content={"text": f"Step content {i}", "tool_calls": t_calls}
         )
@@ -310,7 +290,6 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
             tool_name="fs.read_file",
             tool_call_id=f"tc-{i}",
         )
-
 
     outcome = drive_session(
         "Test Task",
@@ -403,9 +382,7 @@ def test_circuit_breaker_logs_terminal_events_in_live_loop(
     )
 
     for i in range(1, 8):
-        t_calls = [
-            {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
-        ]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
         _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
@@ -440,8 +417,4 @@ def test_circuit_breaker_logs_terminal_events_in_live_loop(
     events = _require_log(mock_session_state).read_all()
     assert [e for e in events if e.kind == "compaction_circuit_breaker"]
     assert [e for e in events if e.kind == "context_budget_hard_stop"]
-    assert [
-        e
-        for e in events
-        if e.kind == "run_stopped" and e.content.get("reason") == "context_budget_hard_stop"
-    ]
+    assert [e for e in events if e.kind == "run_stopped" and e.content.get("reason") == "context_budget_hard_stop"]

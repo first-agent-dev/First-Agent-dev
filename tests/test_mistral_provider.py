@@ -256,30 +256,36 @@ class TestResponseFormat:
     def test_json_schema_auto_strict(self) -> None:
         """json_schema without explicit strict gets strict=True."""
         body: dict[str, Any] = {}
-        _apply_response_format(body, {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "summary",
-                "schema": {
-                    "type": "object",
-                    "properties": {"points": {"type": "array", "items": {"type": "string"}}},
-                    "required": ["points"],
+        _apply_response_format(
+            body,
+            {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "summary",
+                    "schema": {
+                        "type": "object",
+                        "properties": {"points": {"type": "array", "items": {"type": "string"}}},
+                        "required": ["points"],
+                    },
                 },
             },
-        })
+        )
         assert body["response_format"]["json_schema"]["strict"] is True
 
     def test_json_schema_explicit_strict_preserved(self) -> None:
         """json_schema with explicit strict=False is preserved."""
         body: dict[str, Any] = {}
-        _apply_response_format(body, {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "summary",
-                "schema": {"type": "object", "properties": {}},
-                "strict": False,
+        _apply_response_format(
+            body,
+            {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "summary",
+                    "schema": {"type": "object", "properties": {}},
+                    "strict": False,
+                },
             },
-        })
+        )
         assert body["response_format"]["json_schema"]["strict"] is False
 
     def test_json_object_passthrough(self) -> None:
@@ -422,9 +428,7 @@ class TestMistralResponseNormalization:
         body = {
             "id": "cmpl-test",
             "model": "mistral-medium-2604",
-            "choices": [
-                {"index": 0, "message": {"content": "Updated", "role": "assistant"}, "finish_reason": "stop"}
-            ],
+            "choices": [{"index": 0, "message": {"content": "Updated", "role": "assistant"}, "finish_reason": "stop"}],
             "usage": {
                 "prompt_tokens": 100,
                 "completion_tokens": 10,
@@ -452,9 +456,7 @@ class TestMistralResponseNormalization:
         body = {
             "id": "cmpl-test",
             "model": "mistral-medium-2604",
-            "choices": [
-                {"index": 0, "message": {"content": "Hi", "role": "assistant"}, "finish_reason": "stop"}
-            ],
+            "choices": [{"index": 0, "message": {"content": "Hi", "role": "assistant"}, "finish_reason": "stop"}],
             "usage": {
                 "prompt_tokens": 200,
                 "completion_tokens": 10,
@@ -487,9 +489,7 @@ class TestMistralErrorMapping:
 
     def test_auth_error(self) -> None:
         """401 raises ProviderAuthError."""
-        transport = FakeTransport(
-            TransportResponse(status=401, body={"error": "unauthorized"})
-        )
+        transport = FakeTransport(TransportResponse(status=401, body={"error": "unauthorized"}))
         provider = MistralProvider(transport)
         request = RequestInfo(
             model_slug="mistral-medium-2604",
@@ -507,9 +507,7 @@ class TestMistralErrorMapping:
 
     def test_transient_error_429(self) -> None:
         """429 raises ProviderTransientError."""
-        transport = FakeTransport(
-            TransportResponse(status=429, body={"error": "rate limited"})
-        )
+        transport = FakeTransport(TransportResponse(status=429, body={"error": "rate limited"}))
         provider = MistralProvider(transport)
         request = RequestInfo(
             model_slug="mistral-medium-2604",
@@ -528,9 +526,7 @@ class TestMistralErrorMapping:
 
     def test_shape_error_422(self) -> None:
         """422 raises ProviderRequestShapeError."""
-        transport = FakeTransport(
-            TransportResponse(status=422, body={"error": "validation"})
-        )
+        transport = FakeTransport(TransportResponse(status=422, body={"error": "validation"}))
         provider = MistralProvider(transport)
         request = RequestInfo(
             model_slug="mistral-medium-2604",
@@ -556,21 +552,25 @@ class TestMistralRegistry:
     def test_mistral_in_providers(self) -> None:
         """'mistral' is a registered provider."""
         from fa.providers.registry import PROVIDERS
+
         assert "mistral" in PROVIDERS
 
     def test_mistral_adapter_name(self) -> None:
         """mistral provider has adapter='mistral'."""
         from fa.providers.registry import PROVIDERS
+
         assert PROVIDERS["mistral"].adapter == "mistral"
 
     def test_mistral_agents_in_providers(self) -> None:
         """'mistral_agents' is a registered provider."""
         from fa.providers.registry import PROVIDERS
+
         assert "mistral_agents" in PROVIDERS
 
     def test_mistral_agents_adapter_name(self) -> None:
         """mistral_agents provider has adapter='mistral_agents'."""
         from fa.providers.registry import PROVIDERS
+
         assert PROVIDERS["mistral_agents"].adapter == "mistral_agents"
 
     def test_build_provider_mistral(self) -> None:

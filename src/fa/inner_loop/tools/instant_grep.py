@@ -66,8 +66,7 @@ def _iter_files_fallback(root: Path) -> Iterator[Path]:
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
         for fname in filenames:
             if not any(
-                fname.endswith(ext)
-                for ext in (".md", ".py", ".ts", ".js", ".json", ".yaml", ".yml", ".toml", ".txt")
+                fname.endswith(ext) for ext in (".md", ".py", ".ts", ".js", ".json", ".yaml", ".yml", ".toml", ".txt")
             ):
                 continue
             fp = Path(dirpath) / fname
@@ -96,9 +95,7 @@ def _matches_file_content(path: Path, query_lower: str) -> bool:
         return False
 
 
-def _fts_search(
-    db_path: Path, workspace_root: Path, query: str, limit: int
-) -> tuple[list[str] | None, str | None]:
+def _fts_search(db_path: Path, workspace_root: Path, query: str, limit: int) -> tuple[list[str] | None, str | None]:
     """Try FTS5 fast path — STRICTLY READ-ONLY.
 
     FIND-013 fix: this function must NOT perform writes (index_repo). If FTS index
@@ -217,8 +214,7 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
             matched = _git_fallback_search(workspace_root, query, limit, fts_error or "unknown")
             if matched:
                 summary = (
-                    f"Found {len(matched)} files matching '{query}' via git ls-files fallback "
-                    f"(FTS failed: {fts_error})"
+                    f"Found {len(matched)} files matching '{query}' via git ls-files fallback (FTS failed: {fts_error})"
                 )
                 return ToolResult.ok(
                     summary,
@@ -233,9 +229,7 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
 
             # Walk fallback
             matched = _walk_fallback_search(workspace_root, query, limit)
-            summary = (
-                f"Found {len(matched)} files matching '{query}' via fallback walk (FTS failed: {fts_error})"
-            )
+            summary = f"Found {len(matched)} files matching '{query}' via fallback walk (FTS failed: {fts_error})"
             return ToolResult.ok(
                 summary,
                 result={

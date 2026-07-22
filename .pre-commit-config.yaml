@@ -1,11 +1,12 @@
-# Pin Python version for all hook environments. The project requires >=3.13;
-# pinning to 3.13 keeps hook envs consistent with CI.
+# Use the Python interpreter running pre-commit (the project .venv). uv sync
+# pins that environment to the project's supported Python version without
+# requiring a system-level `python3.13` executable on PATH.
 default_language_version:
-  python: python3.13
+  python: python
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v6.0.0
     hooks:
       - id: check-added-large-files
       - id: check-merge-conflict

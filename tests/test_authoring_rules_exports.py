@@ -98,9 +98,7 @@ def test_explicit_redundant_alias_counts_as_re_export(tmp_path: Path) -> None:
         "src/fa_demo/sub.py",
         "from __future__ import annotations\n\ndef helper() -> None:\n    pass\n",
     )
-    body = (
-        'from __future__ import annotations\nfrom fa_demo.sub import helper as helper\n\n__all__ = ["helper"]\n'
-    )
+    body = 'from __future__ import annotations\nfrom fa_demo.sub import helper as helper\n\n__all__ = ["helper"]\n'
     _write_src(tmp_path, "src/fa_demo/facade.py", body)
     report = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
     assert report.diagnostics == ()
@@ -226,12 +224,7 @@ def test_rule_returns_sequence_of_rule_results(tmp_path: Path) -> None:
 
 def test_set_literal_all_opts_out(tmp_path: Path) -> None:
     _make_workspace(tmp_path)
-    body = (
-        "from __future__ import annotations\n\n"
-        '__all__ = {"A", "B"}\n\n'
-        "def A():\n    pass\n\n"
-        "def B():\n    pass\n"
-    )
+    body = 'from __future__ import annotations\n\n__all__ = {"A", "B"}\n\ndef A():\n    pass\n\ndef B():\n    pass\n'
     _write_src(tmp_path, "src/fa_demo/set_all.py", body)
     report = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
     assert report.diagnostics == ()
@@ -240,10 +233,7 @@ def test_set_literal_all_opts_out(tmp_path: Path) -> None:
 def test_annassign_all_with_literal_value(tmp_path: Path) -> None:
     _make_workspace(tmp_path)
     body = (
-        "from __future__ import annotations\n\n"
-        '__all__: list[str] = ["A"]\n\n'
-        "def A():\n    pass\n\n"
-        "def B():\n    pass\n"
+        'from __future__ import annotations\n\n__all__: list[str] = ["A"]\n\ndef A():\n    pass\n\ndef B():\n    pass\n'
     )
     _write_src(tmp_path, "src/fa_demo/annassign_value.py", body)
     report = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
@@ -304,12 +294,7 @@ def test_augassign_with_non_literal_marks_unprovable(tmp_path: Path) -> None:
 
 def test_starred_in_all_opts_out(tmp_path: Path) -> None:
     _make_workspace(tmp_path)
-    body = (
-        "from __future__ import annotations\n\n"
-        '__all__ = ["A", *OTHER]\n\n'
-        "def A():\n    pass\n\n"
-        "def B():\n    pass\n"
-    )
+    body = 'from __future__ import annotations\n\n__all__ = ["A", *OTHER]\n\ndef A():\n    pass\n\ndef B():\n    pass\n'
     _write_src(tmp_path, "src/fa_demo/starred_all.py", body)
     report = run_all(tmp_path, rules=(EXPORTS_COMPLETENESS,))
     assert report.diagnostics == ()
