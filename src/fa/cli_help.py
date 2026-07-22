@@ -51,16 +51,13 @@ COMMANDS: dict[str, CommandHelp] = {
         "summary_en": "Drive an LLM coder session for one role.",
         "args": {
             "task": {
-                "ru": "Текст задачи в кавычках (позиционный). '-' — читать задачу из stdin. "
-                "Можно также через --task.",
-                "en": "Task text in quotes (positional). '-' reads the task from stdin. "
-                "Also accepted via --task.",
+                "ru": "Текст задачи в кавычках (позиционный). '-' — читать задачу из stdin. Можно также через --task.",
+                "en": "Task text in quotes (positional). '-' reads the task from stdin. Also accepted via --task.",
             },
             "--role/-r": {
                 "ru": "Роль: planner | coder | eval (по умолчанию coder). Должна совпадать "
                 "с ключом верхнего уровня в ~/.fa/models.yaml.",
-                "en": "Role: planner | coder | eval (default coder). Must match a top-level "
-                "key in ~/.fa/models.yaml.",
+                "en": "Role: planner | coder | eval (default coder). Must match a top-level key in ~/.fa/models.yaml.",
             },
             "--max-turns/-n": {
                 "ru": "Лимит ходов LLM (по умолчанию 16).",
@@ -89,8 +86,7 @@ COMMANDS: dict[str, CommandHelp] = {
                 "en": "Output mode: console (per-turn progress to stderr) or quiet (final only).",
             },
             "--detail": {
-                "ru": "Уровень детализации консоли: minimal | standard | verbose | debug "
-                "(по умолчанию standard).",
+                "ru": "Уровень детализации консоли: minimal | standard | verbose | debug (по умолчанию standard).",
                 "en": "Console detail level (default: standard).",
             },
             "--no-color": {
@@ -149,8 +145,7 @@ COMMANDS: dict[str, CommandHelp] = {
                 "rounds; 'adaptive' planner re-entry from the eval route.",
             },
             "--max-repairs": {
-                "ru": "Макс. число раундов coder→eval в режимах repair/adaptive "
-                "(по умолчанию 2, жёсткий потолок 3).",
+                "ru": "Макс. число раундов coder→eval в режимах repair/adaptive (по умолчанию 2, жёсткий потолок 3).",
                 "en": "Max coder→eval repair rounds in repair/adaptive (default 2, hard ceiling 3).",
             },
             "--max-replans": {
@@ -163,8 +158,7 @@ COMMANDS: dict[str, CommandHelp] = {
             'fa workflow coder,eval "Доделай и проверь src/fa/y.py"',
             'fa workflow coder,eval "Доведи src/fa/y.py до green" --mode repair --max-repairs 2',
             'fa workflow planner,coder,eval "Проведи adaptive цикл" --mode adaptive --max-replans 1',
-            'fa workflow planner,coder,eval --task-planner "Спланируй" --task-coder "Сделай" '
-            '"Проверь результат"',
+            'fa workflow planner,coder,eval --task-planner "Спланируй" --task-coder "Сделай" "Проверь результат"',
         ],
     },
     "selfcheck": {
@@ -379,8 +373,7 @@ HOST_COMMANDS: dict[str, CommandHelp] = {
         "examples": ["fa rebuild", "fa help clean-rebuild"],
     },
     "shell": {
-        "summary_ru": "Открыть bash внутри first-agent; при активной isolated session "
-        "войти сразу в её workspace.",
+        "summary_ru": "Открыть bash внутри first-agent; при активной isolated session войти сразу в её workspace.",
         "summary_en": "Open bash inside first-agent, using the active isolated session workspace when present.",
         "args": {
             "bash-args...": {

@@ -576,9 +576,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         "context_budget_hard_stop", 0
                     )
                     state.session_db.set_meta("budget_threshold_breaches", budget_breaches, _now_iso_z())
-                    state.session_db.set_meta(
-                        "chain_exhaustion_events", log.chain_exhaustion_count, _now_iso_z()
-                    )
+                    state.session_db.set_meta("chain_exhaustion_events", log.chain_exhaustion_count, _now_iso_z())
                 except Exception as exc:  # noqa: BLE001 # never crash at session end
                     logger.warning("session_meta write failed: %s", exc)
 
@@ -718,9 +716,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                     "action": decision["action"],
                     "compaction_enabled": compaction_enabled,
                     "ratio": last_budget_ratio,
-                    "threshold": budget.stage2_threshold
-                    if decision["action"] == "stage2"
-                    else budget.stage3_threshold,
+                    "threshold": budget.stage2_threshold if decision["action"] == "stage2" else budget.stage3_threshold,
                 }
                 log.append(
                     actor="runtime",
@@ -792,9 +788,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             )
                         )
                 else:
-                    logger.info(
-                        "ContextBudget Stage 2 reached. Triggering deterministic observation masking first..."
-                    )
+                    logger.info("ContextBudget Stage 2 reached. Triggering deterministic observation masking first...")
                     log.append(
                         actor="runtime",
                         kind="compaction_stage2_start",
@@ -893,17 +887,14 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                 find_turn_boundary_backward,
                             )
 
-                            cutoff_idx = find_turn_boundary_backward(
-                                conversation_history, recent_turns_to_keep=4
-                            )
+                            cutoff_idx = find_turn_boundary_backward(conversation_history, recent_turns_to_keep=4)
                             older_history = conversation_history[:cutoff_idx]
                             protected_window = conversation_history[cutoff_idx:]
 
                             older_history_text = ""
                             if memory_summary:
                                 older_history_text += (
-                                    f"PREVIOUS COMPACTION SUMMARY:\n{memory_summary}\n\n"
-                                    "NEW CONVERSATION TO ADD:\n"
+                                    f"PREVIOUS COMPACTION SUMMARY:\n{memory_summary}\n\nNEW CONVERSATION TO ADD:\n"
                                 )
 
                             if older_history:
@@ -1172,9 +1163,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
                     now = time.time()
                     active_cooldowns = [
-                        row.expires_at - now
-                        for key, row in provider_chain.cooldowns.items()
-                        if row.expires_at > now
+                        row.expires_at - now for key, row in provider_chain.cooldowns.items() if row.expires_at > now
                     ]
 
                     wait_s = max(1.0, min(active_cooldowns)) if active_cooldowns else 5.0
@@ -1453,8 +1442,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             hint = ""
             if response.finish_reason == "length":
                 hint = (
-                    "Output truncated (finish_reason=length). Consider increasing max_tokens "
-                    "or simplifying the task."
+                    "Output truncated (finish_reason=length). Consider increasing max_tokens or simplifying the task."
                 )
             elif response.finish_reason == "content_filter":
                 hint = (

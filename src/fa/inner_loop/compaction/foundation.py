@@ -21,8 +21,7 @@ class CompactionManager:
         (
             0.80,
             "observation_masking",
-            "Mask older tool results with reference pointers to offloaded scratch files, "
-            "keep 6 recent full-fidelity",
+            "Mask older tool results with reference pointers to offloaded scratch files, keep 6 recent full-fidelity",
         ),
         (
             0.85,
@@ -33,8 +32,7 @@ class CompactionManager:
         (
             0.99,
             "full_compaction",
-            "Serialize entire history to scratch file + LLM summarizer compress middle, "
-            "preserve recent verbatim",
+            "Serialize entire history to scratch file + LLM summarizer compress middle, preserve recent verbatim",
         ),
     ]
 

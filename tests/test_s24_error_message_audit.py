@@ -59,8 +59,7 @@ def test_all_config_errors_include_fix_guidance() -> None:
 
     assert not violations, (
         f"{len(violations)} error message(s) missing fix guidance "
-        f"(expected one of {FIX_KEYWORDS}):\n"
-        + "\n".join(f"  - {v}" for v in violations)
+        f"(expected one of {FIX_KEYWORDS}):\n" + "\n".join(f"  - {v}" for v in violations)
     )
 
 
@@ -97,6 +96,5 @@ def test_config_error_messages_mention_models_yaml() -> None:
 
     assert not violations, (
         f"{len(violations)} ConfigurationError(s) in providers/ missing "
-        f"'models.yaml' reference:\n"
-        + "\n".join(f"  - {v}" for v in violations)
+        f"'models.yaml' reference:\n" + "\n".join(f"  - {v}" for v in violations)
     )

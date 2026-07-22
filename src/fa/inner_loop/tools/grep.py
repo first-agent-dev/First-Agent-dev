@@ -165,9 +165,7 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:  # noqa: C901 -- complexi
             if ls_res.returncode == 0:
                 tracked = ls_res.stdout.splitlines()
                 # Filter excluded dirs that git might list
-                files_to_scan = [
-                    root / p for p in tracked if not any(part in EXCLUDE_DIRS for part in Path(p).parts)
-                ]
+                files_to_scan = [root / p for p in tracked if not any(part in EXCLUDE_DIRS for part in Path(p).parts)]
         except Exception as exc:  # noqa: BLE001 # fallback to directory walk
             logger.warning("git ls-files failed: %s, falling back to walk", exc)
 

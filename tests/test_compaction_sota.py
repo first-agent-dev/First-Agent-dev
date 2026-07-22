@@ -206,8 +206,7 @@ def test_full_llm_compactor_calls_chain_success() -> None:
     mock_chain = MagicMock()
     mock_response = MagicMock()
     mock_response.text = (
-        "## PREVIOUSLY\nAnalyzed repo.\n\n## PARKED\nNone.\n\n"
-        "## CURRENT\nTask ongoing.\n\n## NEXT ACTION\nRun pytest."
+        "## PREVIOUSLY\nAnalyzed repo.\n\n## PARKED\nNone.\n\n## CURRENT\nTask ongoing.\n\n## NEXT ACTION\nRun pytest."
     )
     mock_chain.request.return_value = (mock_response, "call-123", [])
 

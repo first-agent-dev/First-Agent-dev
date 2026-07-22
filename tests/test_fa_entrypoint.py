@@ -63,11 +63,7 @@ def _write_fa_stub(bin_dir: Path, env: dict[str, str], exit_code: int = 0) -> Pa
 
     # — mechanism 2: exported bash function (noexec-safe) —
     env["BASH_FUNC_fa%%"] = (
-        "() { "
-        'printf \'%q \' "$@" >> "$FA_STUB_CALLS"; '
-        "printf '\\n' >> \"$FA_STUB_CALLS\"; "
-        f"exit {exit_code};"
-        " }"
+        f'() {{ printf \'%q \' "$@" >> "$FA_STUB_CALLS"; printf \'\\n\' >> "$FA_STUB_CALLS"; exit {exit_code}; }}'
     )
 
     return calls

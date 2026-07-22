@@ -320,8 +320,7 @@ def test_max_iterations_truncates_run_session(tmp_path: Path) -> None:
 
     limits = RuntimeLimits(max_iterations=2, bash_timeout_seconds=10)
     calls = tuple(
-        ToolCall(name="fs.read_file", params={"path": p}, call_id=f"tc-{p}")
-        for p in ("a.txt", "b.txt", "c.txt")
+        ToolCall(name="fs.read_file", params={"path": p}, call_id=f"tc-{p}") for p in ("a.txt", "b.txt", "c.txt")
     )
     results = run_session(calls, registry=registry, hooks=hooks, state=state, limits=limits)
 

@@ -96,6 +96,4 @@ def test_stats_global_history_projection_only() -> None:
     cli_path = Path("src/fa/cli.py")
     assert cli_path.exists()
     content = cli_path.read_text(encoding="utf-8")
-    assert "global_history" in content, (
-        "cli.py should import global_history as an active consumer"
-    )
+    assert "global_history" in content, "cli.py should import global_history as an active consumer"

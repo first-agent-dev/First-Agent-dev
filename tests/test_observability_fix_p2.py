@@ -54,7 +54,7 @@ def test_initial_next_id_reads_db_not_jsonl(tmp_path: Path) -> None:
         conn.execute(
             "INSERT INTO event_log (event_id, ts, run_id, actor, kind, content, harness_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (f"ev-{i+1:06d}", "2026-01-01T00:00:00Z", "test", "test", "test", "{}", "fa@0.1"),
+            (f"ev-{i + 1:06d}", "2026-01-01T00:00:00Z", "test", "test", "test", "{}", "fa@0.1"),
         )
     conn.commit()
     conn.close()
@@ -159,10 +159,8 @@ def test_stats_discovers_session_by_db_not_jsonl(tmp_path: Path) -> None:
         "content TEXT NOT NULL, harness_id TEXT NOT NULL)"
     )
     conn.execute(
-        "INSERT INTO event_log (event_id, ts, run_id, actor, kind, content, harness_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        ("ev-000001", "2026-01-01T00:00:00Z", "test-session", "runtime", "run_started",
-         '{"role":"coder"}', "fa@0.1"),
+        "INSERT INTO event_log (event_id, ts, run_id, actor, kind, content, harness_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("ev-000001", "2026-01-01T00:00:00Z", "test-session", "runtime", "run_started", '{"role":"coder"}', "fa@0.1"),
     )
     conn.commit()
     conn.close()
@@ -173,10 +171,7 @@ def test_stats_discovers_session_by_db_not_jsonl(tmp_path: Path) -> None:
 
     # The session discovery in _cmd_stats uses (d / "session.db").exists()
     # after the fix. We verify the condition directly.
-    discovered = [
-        d for d in runs_dir.iterdir()
-        if d.is_dir() and (d / "session.db").exists()
-    ]
+    discovered = [d for d in runs_dir.iterdir() if d.is_dir() and (d / "session.db").exists()]
     assert len(discovered) == 1
     assert discovered[0].name == "test-session"
 
@@ -217,8 +212,7 @@ def test_cmd_run_friendly_error_on_db_unavailable(tmp_path: Path) -> None:
     source = inspect.getsource(cli_module._cmd_run)
     # Verify the fix is present: RuntimeError catch for event_log_authority_unavailable
     assert "event_log_authority_unavailable" in source, (
-        "LOGIC-8 fix missing: _cmd_run should catch RuntimeError with "
-        "'event_log_authority_unavailable' check"
+        "LOGIC-8 fix missing: _cmd_run should catch RuntimeError with 'event_log_authority_unavailable' check"
     )
     assert "RuntimeError as exc" in source, (
         "LOGIC-8 fix missing: _cmd_run should have try/except RuntimeError around drive_session"

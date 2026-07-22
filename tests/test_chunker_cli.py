@@ -75,9 +75,7 @@ def test_fa_chunk_directory_argument_rejected(
     assert "not a file" in capsys.readouterr().err
 
 
-def test_fa_help_lists_chunk_subcommand(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_fa_help_lists_chunk_subcommand(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     code = _run_cli(monkeypatch)
 
     assert code == 0

@@ -41,9 +41,7 @@ def test_cacheable_split() -> None:
     assert len(parts.non_cacheable) == 2
 
     anth_req = to_anthropic_request(parts, key)
-    assert "cache_control" in anth_req["messages"][-1] or any(
-        "cache_control" in m for m in anth_req["messages"]
-    )
+    assert "cache_control" in anth_req["messages"][-1] or any("cache_control" in m for m in anth_req["messages"])
     memory_summary_rows = [
         m
         for m in anth_req["messages"]

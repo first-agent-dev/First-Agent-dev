@@ -210,6 +210,4 @@ class AttemptHistory:
         library / approach».
         """
 
-        return sum(
-            1 for entry in self.entries if entry.tool_name == tool_name and entry.params_hash == params_hash
-        )
+        return sum(1 for entry in self.entries if entry.tool_name == tool_name and entry.params_hash == params_hash)

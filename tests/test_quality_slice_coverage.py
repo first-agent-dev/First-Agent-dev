@@ -23,13 +23,11 @@ def _spec(name: str) -> ToolSpec:
         description=name,
         input_schema={"type": "object"},
         permission="read",
-        handler=lambda _: ToolResult.ok("")
+        handler=lambda _: ToolResult.ok(""),
     )
 
 
-def test_extra_tool_registration_failures_and_duplicates_are_observable(
-    tmp_path: Path, caplog: Any
-) -> None:
+def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path: Path, caplog: Any) -> None:
     """Every optional registration branch fails independently and remains retry-safe."""
     names = (
         "build_glob_tool",

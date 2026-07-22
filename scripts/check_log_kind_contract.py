@@ -26,7 +26,7 @@ SRC_FA = REPO_ROOT / "src" / "fa"
 
 def extract_log_kinds() -> list[str]:
     source = (REPO_ROOT / "src" / "fa" / "output.py").read_text()
-    match = re.search(r'LogKind = Literal\[(.*?)\]', source, re.DOTALL)
+    match = re.search(r"LogKind = Literal\[(.*?)\]", source, re.DOTALL)
     if not match:
         print("FAIL: Could not find LogKind definition in output.py")
         sys.exit(1)
@@ -48,7 +48,7 @@ def extract_console_mirror_kinds() -> set[str]:
     source = (REPO_ROOT / "src" / "fa" / "output.py").read_text()
     # Find the CONSOLE_MIRROR_KINDS frozenset
     match = re.search(
-        r'CONSOLE_MIRROR_KINDS.*?frozenset(?:\[[^\]]+\])?\(\s*\{(.*?)\}\s*\)',
+        r"CONSOLE_MIRROR_KINDS.*?frozenset(?:\[[^\]]+\])?\(\s*\{(.*?)\}\s*\)",
         source,
         re.DOTALL,
     )
@@ -81,9 +81,7 @@ def extract_log_append_kinds() -> dict[str, list[str]]:
             context = "\n".join(lines[context_start:lineno])
 
             # Check this is a log.append / state.log.append / self.log.append call
-            is_append_context = bool(re.search(
-                r'\.(append|log\.append)\s*\(', context
-            ))
+            is_append_context = bool(re.search(r"\.(append|log\.append)\s*\(", context))
 
             if not is_append_context:
                 # Also match dynamic kind assignments that feed into append:
@@ -91,13 +89,11 @@ def extract_log_append_kinds() -> dict[str, list[str]]:
                 # Check if the variable 'kind' is used in a log.append later
                 if re.search(r'kind\s*=\s*"([a-z_0-9]+)"', line):
                     # Look ahead ~10 lines for .append
-                    ahead = "\n".join(lines[lineno:lineno + 10])
-                    if re.search(r'\.(log\.append|append)\s*\(', ahead):
+                    ahead = "\n".join(lines[lineno : lineno + 10])
+                    if re.search(r"\.(log\.append|append)\s*\(", ahead):
                         for m in re.finditer(r'kind\s*=\s*"([a-z_0-9]+)"', line):
                             kind_val = m.group(1)
-                            result.setdefault(kind_val, []).append(
-                                f"{rel_path}:{lineno} (dynamic)"
-                            )
+                            result.setdefault(kind_val, []).append(f"{rel_path}:{lineno} (dynamic)")
                 continue
 
             for m in re.finditer(r'kind="([a-z_0-9]+)"', line):
@@ -156,7 +152,7 @@ def check_console_mirror_dual_write(console_mirror_kinds: set[str]) -> list[str]
         for m in re.finditer(r'type="([a-z_]+)"', source):
             # Verify it's in an OutputEvent/emit context
             ctx_start = max(0, m.start() - 200)
-            ctx = source[ctx_start:m.end()]
+            ctx = source[ctx_start : m.end()]
             if "OutputEvent" in ctx or "emit" in ctx:
                 emit_types_found.add(m.group(1))
 

@@ -42,9 +42,7 @@ def test_script_exits_0_on_clean_tree() -> None:
 def test_contract_in_tcb_paths() -> None:
     """The dependency contract TOML must be in _TCB_PATHS for protection."""
     content = (REPO_ROOT / "scripts" / "check_protected_paths.py").read_text()
-    assert "dependency_contract.toml" in content, (
-        "dependency_contract.toml not in check_protected_paths.py _TCB_PATHS"
-    )
+    assert "dependency_contract.toml" in content, "dependency_contract.toml not in check_protected_paths.py _TCB_PATHS"
 
 
 # ── Kill-check 3: Contract contains all 6 deps ──────────────────────
@@ -63,9 +61,7 @@ def test_contract_has_all_core_deps() -> None:
     core = contract.get("packages", {}).get("core", {})
     expected = {"markdown-it-py", "fastjsonschema", "pyyaml", "bashlex", "libtmux", "pexpect"}
     contract_set = set(core.keys())
-    assert expected == contract_set, (
-        f"Contract core packages mismatch.\nExpected: {expected}\nGot: {contract_set}"
-    )
+    assert expected == contract_set, f"Contract core packages mismatch.\nExpected: {expected}\nGot: {contract_set}"
 
 
 # ── Kill-check 4: Script detects unknown dep ────────────────────────

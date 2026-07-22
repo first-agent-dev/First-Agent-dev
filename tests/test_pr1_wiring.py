@@ -92,7 +92,6 @@ def test_drive_session_stage2_zone_does_not_hard_stop_when_compaction_disabled(
     assert not [e for e in events if e.kind == "context_budget_hard_stop"]
 
 
-
 def test_drive_session_budget_hard_stop(tmp_path: Path, mock_session_state: SessionState) -> None:
     """Reaching the Stage 3 zone with compaction disabled must hard-stop immediately without LLM request."""
     mock_chain = MagicMock(spec=ProviderChain)
@@ -146,9 +145,7 @@ def test_budget_wiring_present() -> None:
     has_evaluate = False
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            if node.module and (
-                "context_budget" in node.module or node.module.endswith("context_budget")
-            ):
+            if node.module and ("context_budget" in node.module or node.module.endswith("context_budget")):
                 has_import = True
         if isinstance(node, ast.Attribute):
             if node.attr == "check":

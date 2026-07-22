@@ -344,9 +344,7 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
         try:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {
-                    executor.submit(registry.dispatch, p.tool_call): p
-                    for p in exec_payloads
-                    if p.tool_call is not None
+                    executor.submit(registry.dispatch, p.tool_call): p for p in exec_payloads if p.tool_call is not None
                 }
                 done, _ = wait(futures.keys(), timeout=30)
                 for fut in done:
@@ -451,9 +449,7 @@ def run_session(
 
     # Feature flag graceful degradation
     # S13: FAIL-OPEN — tool_batching_enabled defaults to True (convenience)
-    tool_batching_enabled = (
-        state.feature_flags.tool_batching_enabled if state.feature_flags is not None else True
-    )
+    tool_batching_enabled = state.feature_flags.tool_batching_enabled if state.feature_flags is not None else True
 
     hooks.set_event_sink(_make_hook_decision_sink(log))
 
@@ -494,9 +490,7 @@ def run_session(
                 # Sequential path
                 should_stop_outer = False
                 for call in batch:
-                    result, should_stop = _execute_one_sequential(
-                        call, registry, hooks, state, role, acting_family
-                    )
+                    result, should_stop = _execute_one_sequential(call, registry, hooks, state, role, acting_family)
                     results.append(result)
                     if should_stop:
                         should_stop_outer = True
@@ -515,8 +509,7 @@ def run_session(
                     if state.log is not None:
                         recent = state.log.read_all()[-5:]
                         if any(
-                            ev.kind == "run_stopped"
-                            and ev.content.get("point") == LifecyclePoint.AFTER_TOOL_EXEC.value
+                            ev.kind == "run_stopped" and ev.content.get("point") == LifecyclePoint.AFTER_TOOL_EXEC.value
                             for ev in recent
                         ):
                             # Sequential path uses should_stop flag; parallel uses log signal

@@ -626,10 +626,7 @@ def render_session(analytics: SessionAnalytics, *, stream: TextIO = sys.stderr) 
                 f"   {tt.turn:<6d} {_fmt_tokens(tt.in_tokens):<8s} "
                 f"{_fmt_tokens(tt.out_tokens):<8s} {tt.cache_hit_ratio:.0%}\n"
             )
-        w(
-            f"   {'Total':<6s} {_fmt_tokens(a.total_in):<8s} "
-            f"{_fmt_tokens(a.total_out):<8s} {a.cache_hit_ratio:.0%}\n"
-        )
+        w(f"   {'Total':<6s} {_fmt_tokens(a.total_in):<8s} {_fmt_tokens(a.total_out):<8s} {a.cache_hit_ratio:.0%}\n")
         w("\n")
 
     # Provider
@@ -832,9 +829,7 @@ def efficiency_warnings(analytics: SessionAnalytics) -> list[str]:
         warnings.append(f"{analytics.redundant_reads} redundant file reads (same file read multiple times)")
 
     if analytics.repeated_commands > 0:
-        warnings.append(
-            f"{analytics.repeated_commands} repeated bash commands (same command run multiple times)"
-        )
+        warnings.append(f"{analytics.repeated_commands} repeated bash commands (same command run multiple times)")
 
     # Cold start warning
     if analytics.token_timeline and analytics.token_timeline[0].cache_hit_ratio == 0:
@@ -842,8 +837,7 @@ def efficiency_warnings(analytics: SessionAnalytics) -> list[str]:
             late_cold = [t for t in analytics.token_timeline[2:] if t.cache_hit_ratio < 0.1]
             if late_cold:
                 warnings.append(
-                    f"Cache miss after turn 2 (turns {[t.turn for t in late_cold]}) "
-                    f"— prompt caching may not be working"
+                    f"Cache miss after turn 2 (turns {[t.turn for t in late_cold]}) — prompt caching may not be working"
                 )
 
     return warnings

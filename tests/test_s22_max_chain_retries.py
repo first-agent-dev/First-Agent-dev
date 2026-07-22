@@ -80,6 +80,7 @@ def test_load_feature_flags_parses_max_chain_retries() -> None:
 def test_tcb_stdlib_clean_exit() -> None:
     """check_tcb_stdlib exits 0 on clean tree."""
     from scripts.check_tcb_stdlib import check_stdlib_only
+
     repo_root = Path(__file__).resolve().parents[1]
     tcb_path = repo_root / "src" / "fa" / "authoring_tcb.py"
     violations = check_stdlib_only(tcb_path)
@@ -89,12 +90,15 @@ def test_tcb_stdlib_clean_exit() -> None:
 def test_tcb_stdlib_detects_non_stdlib(tmp_path: Path) -> None:
     """check_tcb_stdlib detects non-stdlib import."""
     from scripts.check_tcb_stdlib import check_stdlib_only
+
     bad_file = tmp_path / "bad_tcb.py"
-    bad_file.write_text(textwrap.dedent("""\
+    bad_file.write_text(
+        textwrap.dedent("""\
         import json
         import requests  # third-party!
         from dataclasses import dataclass
-    """))
+    """)
+    )
     violations = check_stdlib_only(bad_file)
     assert "requests" in violations
 
@@ -105,6 +109,7 @@ def test_tcb_stdlib_detects_non_stdlib(tmp_path: Path) -> None:
 def test_chain_exhaustion_count_starts_at_zero() -> None:
     """EventLog.chain_exhaustion_count starts at 0."""
     from fa.inner_loop.state import EventLog
+
     log = EventLog(tmp_path_factory() / "events.jsonl")
     assert log.chain_exhaustion_count == 0
 
@@ -112,4 +117,5 @@ def test_chain_exhaustion_count_starts_at_zero() -> None:
 def tmp_path_factory() -> Path:
     """Helper to get a temp path (called from test functions that use tmp_path)."""
     import tempfile
+
     return Path(tempfile.mkdtemp())

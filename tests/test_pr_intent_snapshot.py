@@ -163,12 +163,10 @@ def test_test_edit_declaration_section_pins_header() -> None:
     body = SKILL_PATH.read_text(encoding="utf-8")
     blocks = _extract_text_blocks_under("Test-edit declaration", body)
     assert len(blocks) == 1, (
-        "skill §Test-edit declaration must contain exactly one ```text "
-        f"fenced example block; found {len(blocks)}."
+        f"skill §Test-edit declaration must contain exactly one ```text fenced example block; found {len(blocks)}."
     )
     assert HEADER_TEST_EDITS in blocks[0], (
-        f"skill §Test-edit declaration example must carry the literal "
-        f"`{HEADER_TEST_EDITS}` header the hook parses."
+        f"skill §Test-edit declaration example must carry the literal `{HEADER_TEST_EDITS}` header the hook parses."
     )
 
 
@@ -414,21 +412,14 @@ def test_validate_invariant_shape_mismatch_for_implement(tmp_path: Path) -> None
 
 
 def test_validate_fix_dof_missing(tmp_path: Path) -> None:
-    msg = (
-        "INTENT: FIX\nCLASS: REPAIR\nINVARIANT: Affects: ADR-7 §5\nDETERMINISTIC MECHANISM: y src/fa/cli.py:1\n"
-    )
+    msg = "INTENT: FIX\nCLASS: REPAIR\nINVARIANT: Affects: ADR-7 §5\nDETERMINISTIC MECHANISM: y src/fa/cli.py:1\n"
     violations = validate_commit_msg(msg, Intent.FIX, [], tmp_path)
     codes = [v.code for v in violations]
     assert "dof_missing" in codes
 
 
 def test_validate_fix_mechanism_missing(tmp_path: Path) -> None:
-    msg = (
-        "INTENT: FIX\n"
-        "CLASS: REPAIR\n"
-        "INVARIANT: Affects: ADR-7 §5\n"
-        "DEGREE-OF-FREEDOM CLOSED: closes the freedom\n"
-    )
+    msg = "INTENT: FIX\nCLASS: REPAIR\nINVARIANT: Affects: ADR-7 §5\nDEGREE-OF-FREEDOM CLOSED: closes the freedom\n"
     violations = validate_commit_msg(msg, Intent.FIX, [], tmp_path)
     codes = [v.code for v in violations]
     assert "mechanism_missing" in codes

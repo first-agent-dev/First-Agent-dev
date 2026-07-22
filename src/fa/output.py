@@ -233,9 +233,7 @@ class ConsoleRenderer:
 
     def _handle_session_start(self, e: OutputEvent) -> None:
         d = e.data
-        self._write(
-            f"{self._c('1', 'FA')} │ {d.get('model', '?')} ({d.get('role', '?')}) │ max_turns={e.max_turns}"
-        )
+        self._write(f"{self._c('1', 'FA')} │ {d.get('model', '?')} ({d.get('role', '?')}) │ max_turns={e.max_turns}")
 
     def _handle_turn_start(self, e: OutputEvent) -> None:
         if self.detail == "minimal":
@@ -354,8 +352,7 @@ class ConsoleRenderer:
     def _handle_config_warning(self, e: OutputEvent) -> None:
         d = e.data
         self._write(
-            f"  {self._c('33', '⚠️')} config: {d.get('key', 'unknown')} — "
-            f"{d.get('detail', 'configuration warning')}"
+            f"  {self._c('33', '⚠️')} config: {d.get('key', 'unknown')} — {d.get('detail', 'configuration warning')}"
         )
 
     def _handle_compaction_start(self, e: OutputEvent) -> None:

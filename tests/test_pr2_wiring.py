@@ -63,7 +63,6 @@ def test_pins_present_each_turn_no_compaction(tmp_path: Path, mock_session_state
         )
     )
 
-
     outcome = drive_session(
         "Test task",
         provider_chain=mock_chain,
@@ -95,7 +94,6 @@ def test_pin_missing_file_policy(tmp_path: Path, mock_session_state: SessionStat
     )
 
     mock_chain.request.return_value = mock_success_response("missing path done")
-
 
     outcome = drive_session(
         "Test task",
@@ -149,7 +147,6 @@ def test_mid_session_file_change_reloads(tmp_path: Path, mock_session_state: Ses
         )
     )
 
-
     outcome = drive_session(
         "Test task",
         provider_chain=mock_chain,
@@ -169,7 +166,6 @@ def test_mid_session_file_change_reloads(tmp_path: Path, mock_session_state: Ses
     assert any("Rule V2: Updated guideline mid-run" in msg for msg in system_msgs_t2)
 
 
-
 def test_resume_draft_is_memory_summary_not_pinned(tmp_path: Path, mock_session_state: SessionState) -> None:
     agents_file = tmp_path / "AGENTS.md"
     agents_file.write_text("Rule: standing governance", encoding="utf-8")
@@ -180,7 +176,6 @@ def test_resume_draft_is_memory_summary_not_pinned(tmp_path: Path, mock_session_
         context_limit=100000,
     )
     mock_chain.request.return_value = mock_success_response("done")
-
 
     outcome = drive_session(
         "Test task",

@@ -39,6 +39,7 @@ from tests.fixtures.session_wiring import (
 # FIND-006 — artifact offload via run_bash large output
 # ---------------------------------------------------------------------------
 
+
 def test_pr6_wiring_bash_large_output_offloads_artifact_via_live_path(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
     - root: drive_session
@@ -101,6 +102,7 @@ def test_pr6_wiring_bash_large_output_offloads_artifact_via_live_path(tmp_path: 
 # FIND-012 — scheduler denied preservation
 # ---------------------------------------------------------------------------
 
+
 def test_pr6_wiring_parallel_denied_preserved_order(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
     - root: drive_session
@@ -159,6 +161,7 @@ def test_pr6_wiring_parallel_denied_preserved_order(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # FIND-013 — instant_grep read-only
 # ---------------------------------------------------------------------------
+
 
 def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
@@ -227,6 +230,7 @@ def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
 # FIND-007 PTY persistence
 # ---------------------------------------------------------------------------
 
+
 def test_pr6_wiring_pty_persistence_via_session(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
     - root: drive_session with real PtyPool DI
@@ -291,6 +295,7 @@ def test_pr6_wiring_pty_persistence_via_session(tmp_path: Path) -> None:
 # FIND-016 CR cleaning
 # ---------------------------------------------------------------------------
 
+
 def test_pr6_wiring_cr_cleaning_via_bash(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
     - root: drive_session
@@ -338,6 +343,7 @@ def test_pr6_wiring_cr_cleaning_via_bash(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # FIND-010 + FIND-002 subagent
 # ---------------------------------------------------------------------------
+
 
 def test_pr6_wiring_subagent_role_env_and_events(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
@@ -479,6 +485,7 @@ def test_pr6_wiring_subagent_sandbox_deny(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # C0p property — CR cleaning pure function
 # ---------------------------------------------------------------------------
+
 
 def test_pr6_wiring_resolve_cr_property() -> None:
     """C0p property: resolve_cr semantics."""

@@ -150,8 +150,7 @@ class ChainConfig:
             label = f"role {self.role!r} chain[{index}]"
             if entry.provider in RESERVED_PROVIDER_NAMES:
                 raise ReservedProviderError(
-                    f"{label}: reserved provider name {entry.provider!r}; "
-                    f"reserved: {sorted(RESERVED_PROVIDER_NAMES)}"
+                    f"{label}: reserved provider name {entry.provider!r}; reserved: {sorted(RESERVED_PROVIDER_NAMES)}"
                 )
             if entry.provider not in PROVIDERS:
                 raise ConfigurationError(
@@ -444,9 +443,7 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
                 row["cooldown_seconds"] if row.get("cooldown_seconds") is not None else DEFAULT_COOLDOWN_SECONDS
             ),
             transport_retries=int(
-                row["transport_retries"]
-                if row.get("transport_retries") is not None
-                else DEFAULT_TRANSPORT_RETRIES
+                row["transport_retries"] if row.get("transport_retries") is not None else DEFAULT_TRANSPORT_RETRIES
             ),
             timeout_seconds=int(
                 row["timeout_seconds"] if row.get("timeout_seconds") is not None else DEFAULT_TIMEOUT_SECONDS

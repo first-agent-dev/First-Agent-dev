@@ -247,7 +247,9 @@ def test_intent_guard_deny_no_provider_calls(tmp_path: Path) -> None:
 
     class DenyAllBeforeToolExec(GuardMiddleware):
         """Hook that denies every BEFORE_TOOL_EXEC."""
+
         attaches_to = (LifecyclePoint.BEFORE_TOOL_EXEC,)
+
         def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
             return Decision.deny("test_deny: no tool execution allowed")
 
@@ -294,11 +296,9 @@ def test_hard_stop_no_tool_calls_after(tmp_path: Path) -> None:
     # If run_stopped appears, no tool_call should follow it
     if "run_stopped" in kinds:
         stop_idx = kinds.index("run_stopped")
-        post_stop_kinds = kinds[stop_idx + 1:]
+        post_stop_kinds = kinds[stop_idx + 1 :]
         tool_calls_after = [k for k in post_stop_kinds if k == "tool_call"]
-        assert not tool_calls_after, (
-            f"tool_call events after run_stopped: {tool_calls_after}"
-        )
+        assert not tool_calls_after, f"tool_call events after run_stopped: {tool_calls_after}"
 
 
 def test_loop_guard_exactly_one_warn(tmp_path: Path) -> None:
@@ -333,6 +333,4 @@ def test_loop_guard_exactly_one_warn(tmp_path: Path) -> None:
     events = state.log.read_all()
     warn_events = [e for e in events if e.kind == "loop_guard_warn"]
     # Exactly 1 warn event (warn-once before circuit breaker deny)
-    assert len(warn_events) == 1, (
-        f"Expected exactly 1 loop_guard_warn event, got {len(warn_events)}"
-    )
+    assert len(warn_events) == 1, f"Expected exactly 1 loop_guard_warn event, got {len(warn_events)}"

@@ -666,9 +666,7 @@ def _analyze_repo_write_command(
         if not targets:
             return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("touch without targets",))
         projected = tuple(
-            entry
-            for entry in (_project_path(word, repo_root, delete=False) for word in targets)
-            if entry is not None
+            entry for entry in (_project_path(word, repo_root, delete=False) for word in targets) if entry is not None
         )
         if not projected:
             return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("touch targets not literal",))
@@ -697,9 +695,7 @@ def _analyze_repo_write_command(
         targets = _non_flag_args(words[1:])
         if not targets:
             return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("rm without targets",))
-        projected = tuple(
-            entry for entry in (_project_path(word, repo_root, delete=True) for word in targets) if entry
-        )
+        projected = tuple(entry for entry in (_project_path(word, repo_root, delete=True) for word in targets) if entry)
         if not projected:
             return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("rm targets not literal",))
         return BashIntentAnalysis(
@@ -732,9 +728,7 @@ def _analyze_tee(
                 reasons=("tee with write redirection",),
             )
         return BashIntentAnalysis(BashIntentEffect.READ_ONLY, reasons=("tee to stdout",))
-    projected = tuple(
-        entry for entry in (_project_path(word, repo_root, delete=False) for word in targets) if entry
-    )
+    projected = tuple(entry for entry in (_project_path(word, repo_root, delete=False) for word in targets) if entry)
     if not projected:
         return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("tee targets not literal",))
     return BashIntentAnalysis(
@@ -795,9 +789,7 @@ def _analyze_sed(
     if not files:
         return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("sed -i without literal files",))
     projected = tuple(
-        entry
-        for entry in (_project_path(word, repo_root, delete=False, force_modify=True) for word in files)
-        if entry
+        entry for entry in (_project_path(word, repo_root, delete=False, force_modify=True) for word in files) if entry
     )
     if not projected:
         return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("sed -i files not literal",))
@@ -820,9 +812,7 @@ def _analyze_perl(
     if not files:
         return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("perl -pi without literal files",))
     projected = tuple(
-        entry
-        for entry in (_project_path(word, repo_root, delete=False, force_modify=True) for word in files)
-        if entry
+        entry for entry in (_project_path(word, repo_root, delete=False, force_modify=True) for word in files) if entry
     )
     if not projected:
         return BashIntentAnalysis(BashIntentEffect.OPAQUE_EXEC, reasons=("perl -pi files not literal",))

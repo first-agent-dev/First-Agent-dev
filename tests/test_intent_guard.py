@@ -619,10 +619,7 @@ def test_intent_guard_git_add_prefix_exact_match(tmp_path: Path) -> None:
         git_output="M\tsrc/fa/x.py\n",
     )
     fallback_call = ToolCall(name="fs.run_bash", params={"command": "git add--interactive"})
-    assert (
-        valid_guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)).action
-        == "allow"
-    )
+    assert valid_guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)).action == "allow"
 
 
 def test_intent_guard_git_commit_prefix_exact_match(tmp_path: Path) -> None:
@@ -647,10 +644,7 @@ def test_intent_guard_git_commit_prefix_exact_match(tmp_path: Path) -> None:
         git_output="M\tsrc/fa/x.py\n",
     )
     fallback_call = ToolCall(name="fs.run_bash", params={"command": "git commit-tree"})
-    assert (
-        valid_guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)).action
-        == "allow"
-    )
+    assert valid_guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)).action == "allow"
 
 
 def test_intent_guard_path_projection_for_existing_file_uses_modify_status(tmp_path: Path) -> None:

@@ -28,11 +28,7 @@ def test_instant_grep_trigram() -> None:
         # With trigram, should find auth.md because "auth" substring of "Authentication"
         assert len(results) >= 1, f"Expected at least 1 result for 'auth', got {results}"
         # At least auth.md should be in results (or both)
-        assert (
-            any("auth.md" in r for r in results)
-            or any("Authentication" in r for r in results)
-            or len(results) >= 1
-        )
+        assert any("auth.md" in r for r in results) or any("Authentication" in r for r in results) or len(results) >= 1
 
         index.close()
 

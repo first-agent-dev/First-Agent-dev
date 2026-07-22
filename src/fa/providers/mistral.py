@@ -255,9 +255,7 @@ def _normalize_success(body: Mapping[str, Any]) -> ResponseInfo:
     out_tokens = int(usage.get("completion_tokens") or 0)
     prompt_details = usage.get("prompt_tokens_details")
     prompt_details_map = prompt_details if isinstance(prompt_details, Mapping) else {}
-    cache_read_input_tokens = int(
-        prompt_details_map.get("cached_tokens") or usage.get("cache_read_input_tokens") or 0
-    )
+    cache_read_input_tokens = int(prompt_details_map.get("cached_tokens") or usage.get("cache_read_input_tokens") or 0)
     cache_creation_input_tokens = int(usage.get("cache_creation_input_tokens") or 0)
 
     extras: dict[str, Any] = {}

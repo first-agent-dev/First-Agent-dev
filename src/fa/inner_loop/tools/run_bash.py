@@ -133,9 +133,7 @@ def _resolve_execution_context(root: Path) -> _ExecutionContext:
 
                                     executor = InProcessPtyExecutor(pool)
                                 except (ImportError, AttributeError, TypeError) as exc:
-                                    logger.warning(
-                                        "Failed to instantiate InProcessPtyExecutor: %s. Falling back.", exc
-                                    )
+                                    logger.warning("Failed to instantiate InProcessPtyExecutor: %s. Falling back.", exc)
                                     executor = pool
                 else:
                     executor = session.bash_executor if session is not None else None
@@ -147,9 +145,7 @@ def _resolve_execution_context(root: Path) -> _ExecutionContext:
 
                                 executor = InProcessPtyExecutor(pool)
                             except (ImportError, AttributeError, TypeError) as exc:
-                                logger.warning(
-                                    "Failed to instantiate InProcessPtyExecutor: %s. Falling back.", exc
-                                )
+                                logger.warning("Failed to instantiate InProcessPtyExecutor: %s. Falling back.", exc)
                                 executor = pool
             except Exception as exc:  # noqa: BLE001 — optional session lookup falls back to subprocess
                 logger.warning("get_current_session/pty_pool resolution failed: %s", exc)
@@ -334,17 +330,13 @@ def build_run_bash_tool(
 
         if executor is not None:
             try:
-                pty_result = _run_pty_executor(
-                    executor, command, root, timeout_seconds, artifact_store, transaction
-                )
+                pty_result = _run_pty_executor(executor, command, root, timeout_seconds, artifact_store, transaction)
                 if pty_result is not None:
                     return pty_result
             except Exception as exc:  # noqa: BLE001
                 logger.warning("PtyPool executor failed: %s, fallback to subprocess", exc)
 
-        return _run_subprocess_fallback(
-            command, root, timeout_seconds, extra_allow, artifact_store, transaction
-        )
+        return _run_subprocess_fallback(command, root, timeout_seconds, extra_allow, artifact_store, transaction)
 
     return ToolSpec(
         name="fs.run_bash",

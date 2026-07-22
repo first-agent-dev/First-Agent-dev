@@ -217,8 +217,7 @@ def test_inner_loop_smoke_gotcha_dedups_across_repeated_runs(tmp_path: Path) -> 
     after_second = gotchas.read_text(encoding="utf-8")
 
     assert after_second == after_first, (
-        "Second smoke run accumulated a duplicate gotcha section — "
-        "the deterministic-clock + dedup pair is broken."
+        "Second smoke run accumulated a duplicate gotcha section — the deterministic-clock + dedup pair is broken."
     )
 
 
@@ -260,8 +259,7 @@ def test_invariant_adr7_r8_canon_root_is_knowledge_trace(tmp_path: Path) -> None
         "knowledge/anti-patterns/AP-001-spec-bypassing-workaround.md."
     )
     assert canon_gotchas_dir.is_dir(), (
-        "R-8 canon-root invariant violated: parent directory for "
-        f"gotchas.md does not exist at {canon_gotchas_dir}."
+        f"R-8 canon-root invariant violated: parent directory for gotchas.md does not exist at {canon_gotchas_dir}."
     )
     relocated = tmp_path / ".fa" / "knowledge" / "trace" / "codebase_map.json"
     assert not relocated.exists(), (
@@ -484,9 +482,7 @@ def test_fa_run_writes_events_jsonl(
     assert exit_code == 0
     events = home / ".fa" / "session-log" / "audit-run" / "events.jsonl"
     assert events.exists()
-    kinds = [
-        json.loads(line)["kind"] for line in events.read_text(encoding="utf-8").splitlines() if line.strip()
-    ]
+    kinds = [json.loads(line)["kind"] for line in events.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert "user_msg" in kinds
     assert "model_msg" in kinds
 

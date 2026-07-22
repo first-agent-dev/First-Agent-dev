@@ -58,9 +58,7 @@ def test_shell_script_passes_shellcheck(script: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.skipif(
-    not os.access(_SCRIPTS / "fa", os.X_OK), reason="Filesystem does not support executable bits"
-)
+@pytest.mark.skipif(not os.access(_SCRIPTS / "fa", os.X_OK), reason="Filesystem does not support executable bits")
 def test_executable_script_modes_are_pinned() -> None:
     """Scripts invoked directly by operators/git must keep executable mode."""
     expected_exec = [
@@ -145,9 +143,7 @@ def test_fa_wrapper_unknown_help_topic_delegates_to_container() -> None:
     # Docker is intentionally unavailable in the unit test environment; the
     # important contract is that wrapper did NOT swallow `help run` as host help.
     assert result.returncode != 0
-    assert any(
-        term in result.stderr for term in ("exec: docker", "docker:", 'service "first-agent" is not running')
-    )
+    assert any(term in result.stderr for term in ("exec: docker", "docker:", 'service "first-agent" is not running'))
 
 
 def test_fa_wrapper_uses_cli_help_as_single_source_of_truth() -> None:
@@ -296,9 +292,7 @@ def _write_env_templates(repo: Path) -> None:
     )
 
 
-def _run_normalizer(
-    repo: Path, env_fa: Path, secrets_env: Path, backup_dir: Path
-) -> subprocess.CompletedProcess[str]:
+def _run_normalizer(repo: Path, env_fa: Path, secrets_env: Path, backup_dir: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(_SCRIPTS / "fa-normalize-env.sh")],
         env={
@@ -428,12 +422,9 @@ def test_normalize_env_combined_secret_and_legacy_comments_keeps_original_backup
     assert "FA_ROLE=coder" in env_text
     assert "OPENROUTER_API_KEY=sk-real" in secrets_env.read_text(encoding="utf-8")
     backup_texts = [
-        path.read_text(encoding="utf-8")
-        for path in (tmp_path / "backups").glob(".env.fa.pre-adr12-normalize.*.bak")
+        path.read_text(encoding="utf-8") for path in (tmp_path / "backups").glob(".env.fa.pre-adr12-normalize.*.bak")
     ]
-    assert any(
-        "LLM API keys -> .env.fa" in text and "OPENROUTER_API_KEY=sk-real" in text for text in backup_texts
-    )
+    assert any("LLM API keys -> .env.fa" in text and "OPENROUTER_API_KEY=sk-real" in text for text in backup_texts)
 
 
 def test_normalize_env_provider_placeholder_append_is_idempotent(tmp_path: Path) -> None:

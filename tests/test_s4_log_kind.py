@@ -48,6 +48,7 @@ def test_log_kind_member_count_matches_source() -> None:
     found_kinds: set[str] = set()
     for line in result.stdout.splitlines():
         import re
+
         m = re.search(r'kind="([^"]+)"', line)
         if m:
             found_kinds.add(m.group(1))
@@ -63,15 +64,11 @@ def test_log_kind_member_count_matches_source() -> None:
 
     # Every source kind must be in LogKind
     missing_from_logkind = found_kinds - args
-    assert not missing_from_logkind, (
-        f"Kinds found in source but missing from LogKind: {missing_from_logkind}"
-    )
+    assert not missing_from_logkind, f"Kinds found in source but missing from LogKind: {missing_from_logkind}"
 
     # Every LogKind member must have a producer in source
     missing_from_source = args - found_kinds
-    assert not missing_from_source, (
-        f"LogKind members with no producer in source: {missing_from_source}"
-    )
+    assert not missing_from_source, f"LogKind members with no producer in source: {missing_from_source}"
 
 
 # ── Kill-check 3: All members are strings ───────────────────────────
@@ -98,6 +95,7 @@ def test_log_kind_no_duplicates() -> None:
 def test_log_kind_in_all() -> None:
     """LogKind must be exported in fa.output.__all__."""
     from fa.output import __all__
+
     assert "LogKind" in __all__, "LogKind not found in fa.output.__all__"
 
 

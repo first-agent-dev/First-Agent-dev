@@ -51,7 +51,6 @@ def test_resolve_cr_basic() -> None:
     assert resolve_cr("12%\r34%\r56%") == "56%"
 
 
-
 def test_carriage_returns_cleaned_in_session_output() -> None:
     from fa.runtime.pty_pool import PtyPool
 
@@ -61,7 +60,6 @@ def test_carriage_returns_cleaned_in_session_output() -> None:
     assert "\r" not in result.stdout
     assert result.stdout.endswith("bar")
     pool.kill("test_cr")
-
 
 
 def test_helper_fallback_without_child_returns_structured_failure(tmp_path: Path) -> None:

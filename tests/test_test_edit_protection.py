@@ -126,10 +126,7 @@ def test_rename_dest_row_blocked_like_delete() -> None:
 def test_add_always_allowed_and_implement_modify_allowed() -> None:
     rows_a = [StagedPath("A", "tests/test_new.py")]
     assert validate_test_edits(_VALID_FIX_DRAFT, Intent.FIX, rows_a) == []
-    assert (
-        validate_test_edits(_VALID_IMPLEMENT_DRAFT, Intent.IMPLEMENT, [StagedPath("M", "tests/test_x.py")])
-        == []
-    )
+    assert validate_test_edits(_VALID_IMPLEMENT_DRAFT, Intent.IMPLEMENT, [StagedPath("M", "tests/test_x.py")]) == []
 
 
 def test_non_test_paths_ignored() -> None:

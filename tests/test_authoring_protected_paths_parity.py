@@ -35,8 +35,11 @@ def _parse_codeowners_tcb_paths(codeowners_path: Path) -> set[str]:
         if any(
             marker in pattern
             for marker in (
-                "authoring", "CODEOWNERS", "check_protected_paths",
-                "authoring-guardrails", "dependency_contract"
+                "authoring",
+                "CODEOWNERS",
+                "check_protected_paths",
+                "authoring-guardrails",
+                "dependency_contract",
             )
         ):
             # Normalize: remove leading / and keep as repo-relative
@@ -136,8 +139,7 @@ def test_codeowners_and_check_protected_paths_same_tcb() -> None:
                 missing_in_script.add(pat)
 
     assert not missing_in_script, (
-        f"CODEOWNERS contains authoring TCB paths not covered by _TCB_PATHS: {missing_in_script}. "
-        f"Keep them in sync."
+        f"CODEOWNERS contains authoring TCB paths not covered by _TCB_PATHS: {missing_in_script}. Keep them in sync."
     )
 
 

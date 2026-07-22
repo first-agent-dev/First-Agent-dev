@@ -239,8 +239,7 @@ def _proxy_rewrite_chain(chain_config: ChainConfig, proxy_url: str) -> tuple[Cha
     proxy_token = _resolve_proxy_token()
     if not proxy_token:
         return chain_config, (
-            "FA_EGRESS_PROXY_URL set but no proxy token found "
-            "(set FA_PROXY_TOKEN_FILE or /run/secrets/fa_proxy_token)"
+            "FA_EGRESS_PROXY_URL set but no proxy token found (set FA_PROXY_TOKEN_FILE or /run/secrets/fa_proxy_token)"
         )
     return (
         _apply_proxy_mode(chain_config, proxy_url=proxy_url, proxy_token=proxy_token),
@@ -1267,10 +1266,7 @@ def _run_adaptive(
     while True:
         if eval_report.route_decision == "return_to_coder":
             if progress.repair_round >= max_repairs:
-                reason = (
-                    f"repair budget exhausted ({progress.repair_round}/{max_repairs}); "
-                    "last route return_to_coder"
-                )
+                reason = f"repair budget exhausted ({progress.repair_round}/{max_repairs}); last route return_to_coder"
                 _write_terminal_state(
                     ctx,
                     last_role="eval",
@@ -1291,8 +1287,7 @@ def _run_adaptive(
                 replan_round=progress.replan_round,
             )
             print(
-                f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} "
-                "(adaptive route return_to_coder)",
+                f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} (adaptive route return_to_coder)",
                 file=sys.stderr,
             )
             for role in _canonical_loop_roles(roles, include_planner=False):
@@ -1301,9 +1296,7 @@ def _run_adaptive(
                     role,
                     fresh=False,
                     progress=progress,
-                    transition_reason=(
-                        f"repair round {progress.repair_round}: canonical {role} after return_to_coder"
-                    ),
+                    transition_reason=(f"repair round {progress.repair_round}: canonical {role} after return_to_coder"),
                 )
                 n_stages += 1
                 if result.exit_code != 0:
@@ -1316,8 +1309,7 @@ def _run_adaptive(
         if eval_report.route_decision == "return_to_planner":
             if progress.replan_round >= max_replans:
                 reason = (
-                    f"replan budget exhausted ({progress.replan_round}/{max_replans}); "
-                    "last route return_to_planner"
+                    f"replan budget exhausted ({progress.replan_round}/{max_replans}); last route return_to_planner"
                 )
                 _write_terminal_state(
                     ctx,
@@ -1553,8 +1545,7 @@ def _cmd_workflow(
         missing = [r for r in ("coder", "eval") if r not in roles]
         if missing:
             print(
-                f"fa workflow: --mode repair requires roles to include "
-                f"{' and '.join(missing)} (got {','.join(roles)})",
+                f"fa workflow: --mode repair requires roles to include {' and '.join(missing)} (got {','.join(roles)})",
                 file=sys.stderr,
             )
             return 2
@@ -1733,9 +1724,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
             rewritten, proxy_err = _proxy_rewrite_chain(compactor_config, proxy_url)
             if not proxy_err:
                 compactor_config = rewritten
-        compactor_chain = _build_provider_chain(
-            compactor_config, transport=effective_transport, secrets=secrets
-        )
+        compactor_chain = _build_provider_chain(compactor_config, transport=effective_transport, secrets=secrets)
 
     limits = load_runtime_limits_from_path().limits
     # Role-aware registry: planner/eval get read-only tools, coder gets

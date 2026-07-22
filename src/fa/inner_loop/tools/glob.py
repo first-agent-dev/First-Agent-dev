@@ -192,9 +192,7 @@ def build_glob_tool(workspace_root: Path) -> ToolSpec:
             if tracked:
                 # tracked are already relative, filtered by gitignore, but still respect EXCLUDE_DIRS
                 # Filter out excluded dirs that git might list (e.g., .fa if tracked historically)
-                filtered_tracked = [
-                    rel for rel in tracked if not any(part in EXCLUDE_DIRS for part in Path(rel).parts)
-                ]
+                filtered_tracked = [rel for rel in tracked if not any(part in EXCLUDE_DIRS for part in Path(rel).parts)]
                 matched = _collect_matches(filtered_tracked, pattern, limit)
             else:
                 # Fallback: walk + relative conversion

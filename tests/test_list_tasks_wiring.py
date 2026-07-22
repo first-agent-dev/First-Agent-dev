@@ -37,6 +37,7 @@ from tests.fixtures.session_wiring import (
 # Test 1 — PTY session listing
 # ---------------------------------------------------------------------------
 
+
 def test_list_tasks_finds_pty_session(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
     - root: drive_session
@@ -103,6 +104,7 @@ def test_list_tasks_finds_pty_session(tmp_path: Path) -> None:
 # Test 2 — Subagent artifact discovery
 # ---------------------------------------------------------------------------
 
+
 def test_list_tasks_finds_subagent_artifact(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
     - root: drive_session
@@ -159,14 +161,13 @@ def test_list_tasks_finds_subagent_artifact(tmp_path: Path) -> None:
     tasks = result.get("tasks", [])
     subagent_tasks = [t for t in tasks if t.get("type") == "subagent"]
     assert len(subagent_tasks) >= 1, f"Expected at least 1 subagent task, got {tasks}"
-    assert any(t.get("id") == "t-1" for t in subagent_tasks), (
-        f"Expected 't-1' subagent task, got {subagent_tasks}"
-    )
+    assert any(t.get("id") == "t-1" for t in subagent_tasks), f"Expected 't-1' subagent task, got {subagent_tasks}"
 
 
 # ---------------------------------------------------------------------------
 # Test 3 — Worktree dir discovery
 # ---------------------------------------------------------------------------
+
 
 def test_list_tasks_finds_worktree_dir(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
@@ -238,6 +239,7 @@ def test_list_tasks_finds_worktree_dir(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Test 4 — Empty list when no pool/manager
 # ---------------------------------------------------------------------------
+
 
 def test_list_tasks_empty_when_no_pool_or_manager(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:

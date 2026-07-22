@@ -443,9 +443,7 @@ def test_learning_observer_write_failure_audited(tmp_path: Path) -> None:
     assert state.log is not None
     events = state.log.read_all()
     observer_rows = [
-        event
-        for event in events
-        if event.kind == "hook_decision" and event.content.get("middleware") == "learning"
+        event for event in events if event.kind == "hook_decision" and event.content.get("middleware") == "learning"
     ]
     assert len(observer_rows) == 1, "LearningObserver write failure did not emit audit row"
     row = observer_rows[0]
@@ -648,7 +646,5 @@ def test_after_tool_exec_fires_on_invalid_payload(tmp_path: Path) -> None:
     assert state.log is not None
     events = state.log.read_all()
     hook_decisions = [e for e in events if e.kind == "hook_decision"]
-    after_exec_decisions = [
-        e for e in hook_decisions if e.content.get("point") == LifecyclePoint.AFTER_TOOL_EXEC.value
-    ]
+    after_exec_decisions = [e for e in hook_decisions if e.content.get("point") == LifecyclePoint.AFTER_TOOL_EXEC.value]
     assert len(after_exec_decisions) == 1

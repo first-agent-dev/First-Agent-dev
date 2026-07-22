@@ -229,6 +229,7 @@ class TestBuildConversationsBody:
     def test_invalid_mistral_tools_skipped(self, caplog: pytest.LogCaptureFixture) -> None:
         """Invalid mistral_tools entries are skipped with a warning."""
         import logging
+
         request = RequestInfo(
             model_slug="mistral-small-latest",
             messages=({"role": "user", "content": "Hi"},),
@@ -378,9 +379,7 @@ class TestConversationsErrorMapping:
 
     def test_auth_error(self) -> None:
         """401 raises ProviderAuthError."""
-        transport = FakeTransport(
-            TransportResponse(status=401, body={"error": "unauthorized"})
-        )
+        transport = FakeTransport(TransportResponse(status=401, body={"error": "unauthorized"}))
         provider = MistralConversationsProvider(transport)
         request = RequestInfo(
             model_slug="mistral-small-latest",
@@ -398,9 +397,7 @@ class TestConversationsErrorMapping:
 
     def test_rate_limit_error(self) -> None:
         """429 raises ProviderTransientError."""
-        transport = FakeTransport(
-            TransportResponse(status=429, body={"error": "rate limited"})
-        )
+        transport = FakeTransport(TransportResponse(status=429, body={"error": "rate limited"}))
         provider = MistralConversationsProvider(transport)
         request = RequestInfo(
             model_slug="mistral-small-latest",

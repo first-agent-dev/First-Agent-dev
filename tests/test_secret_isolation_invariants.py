@@ -27,9 +27,7 @@ def test_compose_agent_container_has_no_llm_key_mount() -> None:
     # No /run/secrets/fa.env mount on the agent.
     for vol in agent.get("volumes", []):
         if isinstance(vol, dict):
-            assert vol.get("target") != "/run/secrets/fa.env", (
-                "agent container must not mount the LLM keys file"
-            )
+            assert vol.get("target") != "/run/secrets/fa.env", "agent container must not mount the LLM keys file"
     # No FA_SECRETS_FILE env on the agent.
     env = agent.get("environment", [])
     assert not any(str(e).startswith("FA_SECRETS_FILE") for e in env)
@@ -52,9 +50,7 @@ def test_compose_proxy_service_holds_the_keys_and_no_workspace() -> None:
     # files are the same ones the agent mounts RW, and the entrypoint would
     # prepend /workspace/src to PYTHONPATH → the proxy would run agent-writable
     # code in the key-holding container.
-    assert "/workspace" not in targets, (
-        "proxy must NOT mount /workspace — it must run immutable image code (R2-1)"
-    )
+    assert "/workspace" not in targets, "proxy must NOT mount /workspace — it must run immutable image code (R2-1)"
     # R2-1: and must not be told to import from /workspace/src.
     proxy_env = proxy.get("environment", [])
     assert not any("PYTHONPATH=/workspace" in str(e) for e in proxy_env), (
@@ -62,9 +58,7 @@ def test_compose_proxy_service_holds_the_keys_and_no_workspace() -> None:
     )
     # R2-2: the proxy's routing config must come from a dir the agent does NOT
     # mount read-write (state is agent-RW), so the agent cannot redirect it.
-    assert "/home/fa/.fa" not in targets, (
-        "proxy must not read models.yaml from the agent-writable state dir (R2-2)"
-    )
+    assert "/home/fa/.fa" not in targets, "proxy must not read models.yaml from the agent-writable state dir (R2-2)"
     # The agent depends on the proxy being healthy.
     assert doc["services"]["first-agent"]["depends_on"]["fa-egress-proxy"]["condition"] == "service_healthy"
 
@@ -108,13 +102,9 @@ def test_agent_routing_models_mount_is_read_only_file_after_state_mount() -> Non
     doc = yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))
     agent = doc["services"]["first-agent"]
     vols = agent.get("volumes", [])
-    state_idx = next(
-        i for i, vol in enumerate(vols) if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa"
-    )
+    state_idx = next(i for i, vol in enumerate(vols) if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa")
     routing_idx = next(
-        i
-        for i, vol in enumerate(vols)
-        if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa/models.yaml"
+        i for i, vol in enumerate(vols) if isinstance(vol, dict) and vol.get("target") == "/home/fa/.fa/models.yaml"
     )
     routing = vols[routing_idx]
 

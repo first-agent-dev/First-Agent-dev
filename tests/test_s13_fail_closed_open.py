@@ -47,10 +47,7 @@ def test_no_getattr_feature_flags() -> None:
     )
     # grep exits 1 when no matches found
     hits = [line for line in result.stdout.splitlines() if "__pycache__" not in line]
-    assert not hits, (
-        f"Found getattr.*feature_flags sites ({len(hits)}):\n"
-        + "\n".join(hits)
-    )
+    assert not hits, f"Found getattr.*feature_flags sites ({len(hits)}):\n" + "\n".join(hits)
 
 
 # ── Kill-check 3: Zero getattr(session, ...) sites in inner_loop ───
@@ -66,10 +63,7 @@ def test_no_getattr_session_in_inner_loop() -> None:
         cwd=Path(__file__).resolve().parent.parent,
     )
     hits = [line for line in result.stdout.splitlines() if "__pycache__" not in line]
-    assert not hits, (
-        f"Found getattr(session, ...) sites ({len(hits)}):\n"
-        + "\n".join(hits)
-    )
+    assert not hits, f"Found getattr(session, ...) sites ({len(hits)}):\n" + "\n".join(hits)
 
 
 # ── Kill-check 4: FAIL-CLOSED flags default to restrictive value ────
@@ -81,7 +75,6 @@ def test_fail_closed_flags_default_restrictive() -> None:
     # context_budget_enabled: default=True → budget check active
     # (When flags missing, budget should still be enforced)
     assert "context_budget_enabled" in FAIL_CLOSED_FLAGS
-
 
 
 # ── Kill-check 5: FAIL-OPEN flags default to permissive/deny value ──
@@ -99,5 +92,6 @@ def test_fail_open_subagent_spawning() -> None:
 def test_flags_exported() -> None:
     """FAIL_CLOSED_FLAGS and FAIL_OPEN_FLAGS must be in feature_flags.__all__."""
     from fa.feature_flags import __all__
+
     assert "FAIL_CLOSED_FLAGS" in __all__
     assert "FAIL_OPEN_FLAGS" in __all__

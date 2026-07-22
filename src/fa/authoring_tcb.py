@@ -459,9 +459,7 @@ def _require_table(data: Mapping[str, object], path: Path) -> None:
 def _parse_kernel_table(data: Mapping[str, object], path: Path) -> str:
     kernel = data["kernel"]
     if not isinstance(kernel, dict):
-        raise ManifestError(
-            _manifest_diagnostic(path, "[kernel] must be a table", "make [kernel] a TOML table")
-        )
+        raise ManifestError(_manifest_diagnostic(path, "[kernel] must be a table", "make [kernel] a TOML table"))
     unknown = sorted(set(kernel) - _KERNEL_KEYS)
     if unknown:
         raise ManifestError(
@@ -492,9 +490,7 @@ def _parse_session_table(data: Mapping[str, object], path: Path) -> tuple[str | 
     if session is None:
         return None, ()
     if not isinstance(session, dict):
-        raise ManifestError(
-            _manifest_diagnostic(path, "[session] must be a table", "make [session] a TOML table")
-        )
+        raise ManifestError(_manifest_diagnostic(path, "[session] must be a table", "make [session] a TOML table"))
     unknown = sorted(set(session) - _SESSION_KEYS)
     if unknown:
         raise ManifestError(
@@ -506,9 +502,7 @@ def _parse_session_table(data: Mapping[str, object], path: Path) -> tuple[str | 
         )
     session_id = session.get("id")
     if session_id is not None and not isinstance(session_id, str):
-        raise ManifestError(
-            _manifest_diagnostic(path, "session.id must be a string", "set id to a string or omit")
-        )
+        raise ManifestError(_manifest_diagnostic(path, "session.id must be a string", "set id to a string or omit"))
     seam = _parse_seam(session.get("seam"), path)
     return session_id, seam
 
@@ -518,9 +512,7 @@ def _parse_seam(value: object, path: Path) -> tuple[str, ...]:
         return ()
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ManifestError(
-            _manifest_diagnostic(
-                path, "session.seam must be a list of strings", 'set seam = ["path", ...] or omit'
-            )
+            _manifest_diagnostic(path, "session.seam must be a list of strings", 'set seam = ["path", ...] or omit')
         )
     return tuple(value)
 
@@ -531,9 +523,7 @@ def parse_manifest(path: Path) -> Manifest:
         raw = path.read_bytes()
     except OSError as exc:
         raise ManifestError(
-            _manifest_diagnostic(
-                path, f"manifest not readable: {exc}", "pass --manifest with a readable TOML path"
-            )
+            _manifest_diagnostic(path, f"manifest not readable: {exc}", "pass --manifest with a readable TOML path")
         ) from exc
     try:
         data = tomllib.loads(raw.decode("utf-8"))

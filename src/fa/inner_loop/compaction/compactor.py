@@ -89,9 +89,7 @@ class ObservationMasker:
 
                 # Replace content with masked placeholder
                 line_count = len(stdout.splitlines())
-                masked_summary = (
-                    f"[Omitted tool result of {line_count} lines (artifact_id={artifact_id or 'unknown'})]"
-                )
+                masked_summary = f"[Omitted tool result of {line_count} lines (artifact_id={artifact_id or 'unknown'})]"
                 masked_content = {
                     "summary": masked_summary,
                     "artifact_id": artifact_id,
@@ -173,9 +171,7 @@ class FullLLMCompactor:
             response, _call_id, _attempts = self.compactor_chain.request(request)
             summary = response.text or ""
             if not _has_required_summary_headers(summary):
-                logger.warning(
-                    "LLM compaction response missing required headers; falling back to local truncate"
-                )
+                logger.warning("LLM compaction response missing required headers; falling back to local truncate")
                 return self._local_fallback_truncate(history_text)
             return summary
         except Exception as exc:  # noqa: BLE001 # graceful fallback
@@ -251,9 +247,7 @@ def project_messages_after_mask(
                     logger.warning("Failed to offload masked message content to ArtifactStore: %s", exc)
 
             lines_count = len(content.splitlines())
-            placeholder = (
-                f"[Omitted tool result of {lines_count} lines (artifact_id={artifact_id or 'unknown'})]"
-            )
+            placeholder = f"[Omitted tool result of {lines_count} lines (artifact_id={artifact_id or 'unknown'})]"
             projected.append(
                 {
                     "role": msg.get("role"),

@@ -63,9 +63,7 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
     # Pre-populate session log history to trigger 80% threshold and Stage 2 masking
     # Turn 1 to 4: bulky (eligible for masking)
     for i in range(1, 5):
-        t_calls = [
-            {"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}
-        ]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
         require_log(mock_session_state).append(
             actor="model", kind="model_msg", content={"text": f"Step {i}", "tool_calls": t_calls}
         )

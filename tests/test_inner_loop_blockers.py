@@ -64,11 +64,7 @@ def _payload(
 ) -> HookPayload:
     """Construct an ``AFTER_TOOL_EXEC``-style payload with an optional error."""
 
-    error = (
-        ToolError(code=error_code, message=error_message, retryable=True)
-        if (error_code or error_message)
-        else None
-    )
+    error = ToolError(code=error_code, message=error_message, retryable=True) if (error_code or error_message) else None
     return HookPayload(
         tool_call=RegistryToolCall(name=tool_name, params={}, call_id=call_id),
         tool_result=ToolResult(

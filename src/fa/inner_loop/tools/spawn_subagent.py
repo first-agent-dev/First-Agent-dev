@@ -39,17 +39,13 @@ def _parse_spawn_request(params: Mapping[str, object]) -> _SpawnRequest | ToolRe
         env_extra: dict[str, str] | None = None
         if env_raw is not None:
             if not isinstance(env_raw, dict):
-                return ToolResult.fail(
-                    "invalid_params", "env must be an object map string->string", retryable=True
-                )
+                return ToolResult.fail("invalid_params", "env must be an object map string->string", retryable=True)
             from fa.inner_loop.tools.bash_env import SECRET_NAME_RE
 
             env_extra = {}
             for key, value in env_raw.items():
                 if not isinstance(key, str) or not isinstance(value, str):
-                    return ToolResult.fail(
-                        "invalid_params", "env keys and values must be strings", retryable=True
-                    )
+                    return ToolResult.fail("invalid_params", "env keys and values must be strings", retryable=True)
                 if SECRET_NAME_RE.search(key):
                     return ToolResult.fail(
                         "invalid_params", f"env key {key!r} looks like secret and is denied", retryable=False
@@ -143,9 +139,7 @@ def _handle_spawn_subagent(root: Path, params: Mapping[str, object]) -> ToolResu
     try:
         if session is not None and session.feature_flags is not None:
             # S13: FAIL-OPEN — subagent_spawning_enabled defaults to False (don't spawn when unconfigured)
-            enabled = (
-                session.feature_flags.subagent_spawning_enabled if session.feature_flags is not None else False
-            )
+            enabled = session.feature_flags.subagent_spawning_enabled if session.feature_flags is not None else False
     except AttributeError as exc:  # best-effort flag check
         logger.warning("subagent_spawning_enabled flag check failed: %s", exc)
 
@@ -227,9 +221,7 @@ def _handle_spawn_subagent(root: Path, params: Mapping[str, object]) -> ToolResu
             logger.warning("Failed to record subagent completion: %s", exc)
 
         if envelope.exit_code != 0:
-            summary_err = (
-                f"Subagent {task_id} failed with exit_code {envelope.exit_code}. Summary: {envelope.summary}"
-            )
+            summary_err = f"Subagent {task_id} failed with exit_code {envelope.exit_code}. Summary: {envelope.summary}"
             return ToolResult.fail(
                 "subagent_failed",
                 f"{summary_err} | envelope={envelope.to_json()[:500]}",
@@ -268,8 +260,7 @@ def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:
                     "enum": ["verifier", "researcher"],
                     "default": "verifier",
                     "description": (
-                        "Role affects envelope type and future behavior; both run bash "
-                        "stateless per operator decision"
+                        "Role affects envelope type and future behavior; both run bash stateless per operator decision"
                     ),
                 },
                 "env": {

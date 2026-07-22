@@ -17,9 +17,7 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class BashExecutor(Protocol):
-    def run(
-        self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main"
-    ) -> PtyResult:
+    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main") -> PtyResult:
         pass
 
     def send_ctrl_c(self, session_id: str) -> str: ...
@@ -52,9 +50,7 @@ class InProcessPtyExecutor(BashExecutor):
         self.pool = pool
 
     @override
-    def run(
-        self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main"
-    ) -> PtyResult:
+    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main") -> PtyResult:
         sess = self.pool.acquire(session_id, workdir=str(workdir) if workdir else None)
         return sess.run(command, timeout=timeout)
 
@@ -96,9 +92,7 @@ class RemoteRuntimeExecutor(BashExecutor):
         self.timeout = timeout
 
     @override
-    def run(
-        self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main"
-    ) -> PtyResult:
+    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main") -> PtyResult:
         import requests
 
         try:
