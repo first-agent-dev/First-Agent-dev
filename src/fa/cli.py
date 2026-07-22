@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import shlex
@@ -56,8 +57,8 @@ from fa.inner_loop.hooks import (
     SecretGuard,
     VerifierObserver,
 )
-from fa.inner_loop.recovery.attempt_history import AttemptHistory
 from fa.inner_loop.pr_draft import PrDraftStore
+from fa.inner_loop.recovery.attempt_history import AttemptHistory
 from fa.inner_loop.tools import (
     build_baseline_registry,
     build_eval_registry,
@@ -92,6 +93,8 @@ from fa.providers.errors import (
 )
 from fa.roles import EvalFamilyConflictError
 from fa.verifier import load_contracts_from_dir
+
+logger = logging.getLogger(__name__)
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
@@ -762,6 +765,7 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     log = EventLog(log_path)
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))
+
     # LoopGuard warn_sink: emit loop_guard_warn event to EventLog so
     # the early-warning signal (repeat_warn threshold) reaches session.db
     # and the operator gets console visibility. Without warn_sink, the
@@ -773,8 +777,8 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
                 kind="loop_guard_warn",
                 content={"detector": detector, "message": message},
             )
-        except Exception:  # noqa: BLE001 — observer must never block
-            pass
+        except Exception as exc:  # noqa: BLE001 — observer must never block
+            logger.warning("loop guard observer failed: %s", exc)
 
     hooks.register(
         LoopGuard(
@@ -1613,8 +1617,7 @@ def _cmd_workflow(
         # Build a synthetic outcome for the aggregate row.
         # Token totals and tool breakdown come from _extract_telemetry_from_log
         # which reads the shared session.db correctly.
-        from fa.inner_loop.coder_loop import SessionOutcome as _SO
-        aggregate_outcome = _SO(
+        aggregate_outcome = SessionOutcome(
             exit_code=result_code,
             stop_reason="workflow_complete" if result_code == 0 else "workflow_failed",
             turns=0,  # turns in global_history come from telemetry, not outcome
@@ -1640,6 +1643,7 @@ def _cmd_workflow(
         )
     except Exception as exc:  # noqa: BLE001 — best-effort, never crash workflow
         import logging
+
         logging.getLogger(__name__).warning("workflow global_history export failed for %s: %s", run_id, exc)
 
     return result_code
@@ -1814,6 +1818,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     log = EventLog(log_path, run_id=run_id, redactor=redactor)
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))
+
     # LoopGuard warn_sink: emit loop_guard_warn event to EventLog so the
     # early-warning signal (repeat_warn threshold) reaches session.db and
     # the operator gets console visibility. Without warn_sink, the _emit_warn
@@ -1825,17 +1830,19 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
                 kind="loop_guard_warn",
                 content={"detector": detector, "message": message},
             )
-        except Exception:  # noqa: BLE001 — observer must never block
-            pass
+        except Exception as exc:  # noqa: BLE001 — observer must never block
+            logger.warning("loop guard observer failed: %s", exc)
         # FIX-5: emit loop_warn for console visibility
         try:
             if output_bus is not None:
-                output_bus.emit(OutputEvent(
-                    type="loop_warn",
-                    data={"detector": detector, "message": message},
-                ))
-        except Exception:  # noqa: BLE001 — observer must never block
-            pass
+                output_bus.emit(
+                    OutputEvent(
+                        type="loop_warn",
+                        data={"detector": detector, "message": message},
+                    )
+                )
+        except Exception as exc:  # noqa: BLE001 — observer must never block
+            logger.warning("loop guard observer failed: %s", exc)
 
     hooks.register(
         LoopGuard(
@@ -1866,9 +1873,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     # tool failures and write recovery history so the coder-recovery prompt
     # can read it. These were defined but never registered (LOGIC-15),
     # making `recovery_action` event kind dead code in production.
-    attempt_history = AttemptHistory(
-        Path.home() / ".fa" / "session-log" / run_id / "attempt_history.json"
-    )
+    attempt_history = AttemptHistory(Path.home() / ".fa" / "session-log" / run_id / "attempt_history.json")
     hooks.register(FailureClassifierObserver(event_log=log))
     hooks.register(AttemptHistoryObserver(history=attempt_history))
     hooks.register(
@@ -1895,7 +1900,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
             # and causes UnboundLocalError on earlier os.environ/os.getpid()
             # references in this function).
             max_size = int(os.environ.get("FA_PTY_POOL_MAX_SIZE", "2"))
-        except Exception:
+        except (TypeError, ValueError):
             max_size = 2
         pty_pool = PtyPool(max_size=max_size, base_cwd=workspace, run_id=run_id)
     except Exception as exc:  # noqa: BLE001 - graceful degradation, fallback to subprocess
@@ -1921,8 +1926,8 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         output_bus.add(QuietRenderer())
     # json mode: Phase 2
 
-    # Wire output_bus to state so subagent/cost_guardian can emit console events
-    state.output_bus = output_bus
+    # Wire output_bus to state so bootstrap warnings and runtime hooks emit console events.
+    state.attach_output_bus(output_bus)
 
     _run_start_mono = time.monotonic()
     try:
@@ -2259,29 +2264,31 @@ def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
                         try:
                             # Try to parse ISO, if fails keep
                             from datetime import datetime
+
                             dt = datetime.fromisoformat(r.get("updated_at", "").replace("Z", "+00:00"))
                             if dt.timestamp() >= cutoff:
                                 filtered.append(r)
-                        except Exception:
+                        except (TypeError, ValueError, AttributeError):
                             filtered.append(r)
                     rows = filtered
             if args.output == "json":
                 import json as _json
+
                 print(_json.dumps(rows, indent=2, default=str))
                 return 0
             # Console rendering for global history
             print(f"\n{'═' * 50}\n📊 Global history: {len(rows)} runs\n{'═' * 50}\n", file=sys.stderr)
             for r in rows[:20]:
                 print(
-                    f"  {r.get('run_id',''):<20s} {r.get('role',''):<8s} {r.get('model',''):<20s} "
-                    f"{r.get('stop_reason',''):<20s} turns={r.get('turns',0)} "
-                    f"in={r.get('input_tokens',0)} out={r.get('output_tokens',0)}",
+                    f"  {r.get('run_id', ''):<20s} {r.get('role', ''):<8s} {r.get('model', ''):<20s} "
+                    f"{r.get('stop_reason', ''):<20s} turns={r.get('turns', 0)} "
+                    f"in={r.get('input_tokens', 0)} out={r.get('output_tokens', 0)}",
                     file=sys.stderr,
                 )
             if len(rows) > 20:
-                print(f"  ... and {len(rows)-20} more", file=sys.stderr)
+                print(f"  ... and {len(rows) - 20} more", file=sys.stderr)
             return 0
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — CLI must report stats failure, never crash with traceback
             print(f"fa stats: failed to read global history: {exc}", file=sys.stderr)
             return 1
 

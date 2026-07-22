@@ -14,3 +14,5 @@
 /.github/workflows/authoring-guardrails.yml @MondayInRussian
 /.github/CODEOWNERS                 @MondayInRussian
 /scripts/check_protected_paths.py   @MondayInRussian
+/.fa/dependency_contract.toml       @MondayInRussian
+/scripts/check_dependency_contract.py @MondayInRussian

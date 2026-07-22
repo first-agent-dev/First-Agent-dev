@@ -89,15 +89,9 @@ class ContextBudget:
         """Classify current tokens against the progressive Stage C ladder."""
         ratio = current_tokens / self.limit_tokens if self.limit_tokens > 0 else 0.0
         warn_threshold_tokens = min(int(self.limit_tokens * 0.70), int(self.stage2_threshold * 0.875))
-        warn_threshold_ratio = (
-            warn_threshold_tokens / self.limit_tokens if self.limit_tokens > 0 else 0.0
-        )
-        stage2_threshold_ratio = (
-            self.stage2_threshold / self.limit_tokens if self.limit_tokens > 0 else 0.0
-        )
-        stage3_threshold_ratio = (
-            self.stage3_threshold / self.limit_tokens if self.limit_tokens > 0 else 0.0
-        )
+        warn_threshold_ratio = warn_threshold_tokens / self.limit_tokens if self.limit_tokens > 0 else 0.0
+        stage2_threshold_ratio = self.stage2_threshold / self.limit_tokens if self.limit_tokens > 0 else 0.0
+        stage3_threshold_ratio = self.stage3_threshold / self.limit_tokens if self.limit_tokens > 0 else 0.0
 
         action = "allow"
         message = "Context budget is healthy."

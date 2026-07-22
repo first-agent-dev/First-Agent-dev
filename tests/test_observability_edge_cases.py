@@ -22,11 +22,8 @@ Kill-check: reverting each fix makes the corresponding test fail.
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.global_history import (
@@ -35,10 +32,8 @@ from fa.inner_loop.global_history import (
     build_export_row,
     export_session_to_global_history,
 )
-from fa.providers import ProviderChain
 from fa.inner_loop.state import EventLog
-from tests.fixtures.session_wiring import make_mock_chain, make_session_state, mock_success_response
-
+from tests.fixtures.session_wiring import make_mock_chain, mock_success_response
 
 # ── NEW-3: RuntimeError("event_log_write_failed") caught in _cmd_run ─────
 
@@ -71,6 +66,7 @@ def test_cmd_run_handles_event_log_write_failed(tmp_path: Path) -> None:
 
     # Now verify both branches are handled in the actual _cmd_run code
     import inspect
+
     from fa.cli import _cmd_run
 
     source = inspect.getsource(_cmd_run)
@@ -114,8 +110,6 @@ def test_compaction_stage3_still_exceeds_emits_context_warn(tmp_path: Path) -> N
     from fa.inner_loop.hooks import HookRegistry
     from fa.inner_loop.registry import ToolRegistry
     from fa.output import EventBus, OutputEvent
-    from fa.providers import ChainConfig
-    from fa.providers.base import ResponseInfo
 
     class _Capture:
         def __init__(self) -> None:
@@ -130,19 +124,18 @@ def test_compaction_stage3_still_exceeds_emits_context_warn(tmp_path: Path) -> N
         log=log,
         feature_flags=FeatureFlags(
             context_budget_enabled=True,
-            context_compaction_enabled=True,
         ),
     )
     bus = EventBus()
     capture = _Capture()
     bus.add(capture)
 
-    mock_chain = make_mock_chain(context_limit=100000)
+    mock_chain = make_mock_chain(context_limit=100000, compaction_threshold=80_000)
     mock_chain.request.return_value = mock_success_response("test")
 
     # Patch estimate_tokens and budget to force stage3 after compaction
     with patch("fa.memory.context_budget.estimate_tokens", return_value=95000):
-        with patch("fa.memory.context_budget.ContextBudget") as MockBudget:
+        with patch("fa.memory.context_budget.ContextBudget") as mock_budget_class:
             mock_budget = MagicMock()
             # First check: stage2 (trigger compaction path)
             # After compaction: stage3 still exceeds
@@ -153,12 +146,12 @@ def test_compaction_stage3_still_exceeds_emits_context_warn(tmp_path: Path) -> N
             mock_budget.stage2_threshold = 0.75
             mock_budget.stage3_threshold = 0.85
             mock_budget.record_compaction_attempt.return_value = True
-            MockBudget.return_value = mock_budget
+            mock_budget_class.return_value = mock_budget
 
             with patch("fa.inner_loop.compaction.compactor.project_messages_after_mask") as mock_mask:
                 mock_mask.return_value = []
 
-                outcome = drive_session(
+                drive_session(
                     "test",
                     provider_chain=mock_chain,
                     registry=ToolRegistry(),
@@ -193,8 +186,6 @@ def test_circuit_breaker_emits_compaction_end(tmp_path: Path) -> None:
     from fa.inner_loop.hooks import HookRegistry
     from fa.inner_loop.registry import ToolRegistry
     from fa.output import EventBus, OutputEvent
-    from fa.providers import ChainConfig
-    from fa.providers.base import ResponseInfo
 
     class _Capture:
         def __init__(self) -> None:
@@ -209,14 +200,13 @@ def test_circuit_breaker_emits_compaction_end(tmp_path: Path) -> None:
         log=log,
         feature_flags=FeatureFlags(
             context_budget_enabled=True,
-            context_compaction_enabled=True,
         ),
     )
     bus = EventBus()
     capture = _Capture()
     bus.add(capture)
 
-    mock_chain = make_mock_chain(context_limit=100000)
+    mock_chain = make_mock_chain(context_limit=100000, compaction_threshold=80_000)
     mock_chain.request.return_value = mock_success_response("test")
 
     # Simulate: stage2 → compaction → record_compaction_attempt returns False (circuit breaker)
@@ -224,7 +214,7 @@ def test_circuit_breaker_emits_compaction_end(tmp_path: Path) -> None:
     # enough space. We need conversation_history to have content so the
     # stage3 compaction path executes.
     with patch("fa.memory.context_budget.estimate_tokens", return_value=95000):
-        with patch("fa.memory.context_budget.ContextBudget") as MockBudget:
+        with patch("fa.memory.context_budget.ContextBudget") as mock_budget_class:
             mock_budget = MagicMock()
             mock_budget.check.side_effect = [
                 {"action": "stage2", "ratio": 0.85, "message": "stage2 reached"},
@@ -234,7 +224,7 @@ def test_circuit_breaker_emits_compaction_end(tmp_path: Path) -> None:
             mock_budget.stage3_threshold = 0.85
             # Circuit breaker: compaction failed to reclaim enough space
             mock_budget.record_compaction_attempt.return_value = False
-            MockBudget.return_value = mock_budget
+            mock_budget_class.return_value = mock_budget
 
             with patch("fa.inner_loop.compaction.compactor.project_messages_after_mask") as mock_mask:
                 # Return some masked history so compaction path continues
@@ -244,12 +234,12 @@ def test_circuit_breaker_emits_compaction_end(tmp_path: Path) -> None:
                     # Return non-zero so there's "older history" to compact
                     mock_boundary.return_value = 1
 
-                    with patch("fa.inner_loop.compaction.compactor.FullLLMCompactor") as MockCompactor:
+                    with patch("fa.inner_loop.compaction.compactor.FullLLMCompactor") as mock_compactor_class:
                         mock_compactor = MagicMock()
                         mock_compactor.compact.return_value = "compacted summary"
-                        MockCompactor.return_value = mock_compactor
+                        mock_compactor_class.return_value = mock_compactor
 
-                        outcome = drive_session(
+                        drive_session(
                             "test",
                             provider_chain=mock_chain,
                             registry=ToolRegistry(),
@@ -450,13 +440,14 @@ def test_circuit_breaker_emits_context_warn(tmp_path: Path) -> None:
     compaction") had it. This test specifically exercises the circuit breaker
     sub-path to ensure the gap is covered.
     """
+    from unittest.mock import MagicMock, patch
+
     from fa.feature_flags import FeatureFlags
     from fa.inner_loop import EventLog, SessionState
     from fa.inner_loop.coder_loop import drive_session
     from fa.inner_loop.hooks import HookRegistry
     from fa.inner_loop.registry import ToolRegistry
     from fa.output import EventBus, OutputEvent
-    from unittest.mock import MagicMock, patch
 
     class _Capture:
         def __init__(self) -> None:
@@ -472,19 +463,18 @@ def test_circuit_breaker_emits_context_warn(tmp_path: Path) -> None:
         log=log,
         feature_flags=FeatureFlags(
             context_budget_enabled=True,
-            context_compaction_enabled=True,
         ),
     )
     bus = EventBus()
     capture = _Capture()
     bus.add(capture)
 
-    mock_chain = make_mock_chain(context_limit=100000)
+    mock_chain = make_mock_chain(context_limit=100000, compaction_threshold=80_000)
     mock_chain.request.return_value = mock_success_response("test")
 
     # Simulate: stage2 → compaction → circuit breaker (record_compaction_attempt returns False)
     with patch("fa.memory.context_budget.estimate_tokens", return_value=95000):
-        with patch("fa.memory.context_budget.ContextBudget") as MockBudget:
+        with patch("fa.memory.context_budget.ContextBudget") as mock_budget_class:
             mock_budget = MagicMock()
             mock_budget.check.side_effect = [
                 {"action": "stage2", "ratio": 0.85, "message": "stage2 reached"},
@@ -495,7 +485,7 @@ def test_circuit_breaker_emits_context_warn(tmp_path: Path) -> None:
             mock_budget.limit_tokens = 100000
             # Circuit breaker: compaction failed to reclaim enough space
             mock_budget.record_compaction_attempt.return_value = False
-            MockBudget.return_value = mock_budget
+            mock_budget_class.return_value = mock_budget
 
             with patch("fa.inner_loop.compaction.compactor.project_messages_after_mask") as mock_mask:
                 mock_mask.return_value = [{"role": "user", "content": "test"}]
@@ -503,10 +493,10 @@ def test_circuit_breaker_emits_context_warn(tmp_path: Path) -> None:
                 with patch("fa.inner_loop.compaction.compactor.find_turn_boundary_backward") as mock_boundary:
                     mock_boundary.return_value = 1
 
-                    with patch("fa.inner_loop.compaction.compactor.FullLLMCompactor") as MockCompactor:
+                    with patch("fa.inner_loop.compaction.compactor.FullLLMCompactor") as mock_compactor_class:
                         mock_compactor = MagicMock()
                         mock_compactor.compact.return_value = "compacted summary"
-                        MockCompactor.return_value = mock_compactor
+                        mock_compactor_class.return_value = mock_compactor
 
                         outcome = drive_session(
                             "test",

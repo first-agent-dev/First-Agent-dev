@@ -14,7 +14,7 @@
 > idea is deferred (rather than rejected) during a session,
 > append it here in the same session it was proposed.
 >
-> **Distinction from [`HANDOFF.md`](../HANDOFF.md) §Current state.**
+> **Distinction from [`HANDOFF.md`](../worklogs/HANDOFF.md) §Current state.**
 > HANDOFF tracks items **in flight right now**; BACKLOG tracks
 > items **deferred with an unblock-trigger**. Different scopes,
 > different cadences, do not merge.
@@ -459,7 +459,7 @@
     line 496.
   - [`knowledge/trace/exploration_log.md`](./trace/exploration_log.md)
     lines 362, 385, 402, 427.
-  - [`HANDOFF.md`](../HANDOFF.md) lines 164, 176.
+  - [`HANDOFF.md`](../worklogs/HANDOFF.md) lines 164, 176.
   - [`src/fa/tools/__init__.py`](../src/fa/tools/__init__.py)
     docstring (single-writer contract deferral).
 
@@ -639,7 +639,7 @@
   - [`knowledge/trace/exploration_log.md` Q-13](./trace/exploration_log.md) —
     Options A/B1/B2/B3/C rejected with Reason + Lesson;
     Option D + α chosen 2026-05-22.
-  - [`HANDOFF.md` §Current state ADR list](../HANDOFF.md) —
+  - [`HANDOFF.md` §Current state ADR list](../worklogs/HANDOFF.md) —
     ADR-9 bullet with `M-4` cross-reference.
 
 ## M-5 — T-4 `~/.fa/models.yaml` loader (closes M3 of release roadmap)
@@ -731,7 +731,7 @@
     §Amendment 2026-05-20 rule 1 (eval-role family-disjoint).
   - [`knowledge/adr/DIGEST.md` ADR-9 row](./adr/DIGEST.md) —
     Amendments bullet extended with T-4 landing date.
-  - [`HANDOFF.md` §Current state ADR list](../HANDOFF.md) —
+  - [`HANDOFF.md` §Current state ADR list](../worklogs/HANDOFF.md) —
     ADR-9 bullet with `M-5` T-4 loader sub-clause.
 
 ## M-6 — PR B — `pr_intent` classifier module + `prepare-commit-msg` / `commit-msg` git hooks
@@ -844,7 +844,7 @@
   - [`knowledge/anti-patterns/AP-003-shallow-fix-no-mechanism.md`](./anti-patterns/AP-003-shallow-fix-no-mechanism.md)
     — synthetic worked-history; placeholder until PR B's hook
     captures the first real escalation.
-  - [`HANDOFF.md`](../HANDOFF.md) §Process / rule changes
+  - [`HANDOFF.md`](../worklogs/HANDOFF.md) §Process / rule changes
     2026-05-25 (PR A) and 2026-05-26 (PR A') — historical scoping
     context.
 - **Blocked-on:** nothing — PR A landed (rule supersession);
@@ -952,7 +952,7 @@
   - [`knowledge/trace/exploration_log.md` Q-15 §Coupling](./trace/exploration_log.md)
     — explicit cross-link to Q-7 / Q-8 (HookRegistry seat) +
     AP-001 (action-count rationale).
-  - [`HANDOFF.md`](../HANDOFF.md) §Process / rule changes
+  - [`HANDOFF.md`](../worklogs/HANDOFF.md) §Process / rule changes
     2026-05-25 last paragraph — feasibility verified by the
     session-start audit of `src/fa/inner_loop/hooks/base.py`.
 - **Blocked-on:** M-6 (PR B) — closed by PR #20; `IntentGuard` imports
@@ -1570,7 +1570,7 @@ tokens, cache hit ratio, model distribution, p50/p95 latency.
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring
   sweeps + cross-reference cascade rules; companion to this file.
-- [`HANDOFF.md`](../HANDOFF.md) §Current state — for items
+- [`HANDOFF.md`](../worklogs/HANDOFF.md) §Current state — for items
   actively in flight (not deferred).
 - [`AGENTS.md` §Context-budget discipline](../AGENTS.md#context-budget-discipline)
   — mitigations (a) and (b) reference I-2 and I-1/I-3

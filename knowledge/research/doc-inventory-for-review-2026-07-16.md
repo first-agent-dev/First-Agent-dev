@@ -28,12 +28,12 @@
 | # | File | Lines | Status | Notes |
 |---|------|-------|--------|-------|
 | 4 | `knowledge/project-overview.md` | 420 | ✏️ | Four pillars description should mention SessionDatabase authority |
-| 5 | `knowledge/architecture.md` | 273 | ✏️ | **Primary candidate** — needs blackboard ↔ DB ↔ main-loop integration section |
-| 6 | `knowledge/glossary.md` | 86 | ✏️ | Add entries for: SessionDatabase, EventLog authority, Blackboard, Transaction, ArtifactStore, GlobalHistoryStore, dual-write pattern, ContextVar DI |
+| 5 | `knowledge/reference.md` (was architecture.md) | 228 | done | Merged patterns into reference.md §Patterns |
+| 6 | `knowledge/reference.md` (was glossary.md) | 228 | done | Merged entries into reference.md §Terms |
 | 7 | `knowledge/llms.txt` | 81 | ✏️ | Mark as deprecated in favor of blackboard.query(); note the mapping |
-| 8 | `knowledge/MAINTENANCE.md` | 116 | ? | Review for link integrity after any file moves |
+| 8 | `knowledge/skills/doc-maintenance/SKILL.md` (was MAINTENANCE.md) | ~80 | done | Converted to loadable skill |
 | 9 | `knowledge/README.md` | ? | ✏️ | Update memory system overview to mention SessionDatabase authority |
-| 10 | `knowledge/overview/FEATURES.md` | 114 | ✏️ | Add feature entries for blackboard, session_db, global_history |
+| 10 | `knowledge/reference.md` (was FEATURES.md) | 228 | done | Merged features into reference.md §Features |
 
 ---
 
@@ -198,8 +198,8 @@
 | 94 | `knowledge/STAGE_0_0.5_VERIFICATION.md` | ? | Review |
 | 95 | `knowledge/STAGE_1_VERIFICATION.md` | ? | Review |
 | 96 | `knowledge/ci-guardrails-reference.md` | ? | Review |
-| 97 | `knowledge/loop-improvement-workplan.md` | ? | Review |
-| 98 | `knowledge/mutation-survivors-workplan.md` | ? | Review |
+| 97 | `worklogs/implementation-plans/loop-improvement-workplan.md` | ? | Review |
+| 98 | `worklogs/implementation-plans/mutation-survivors-workplan.md` | ? | Review |
 | 99 | `knowledge/review-stage-0-0.5-vs-plan.md` | ? | Review |
 
 ---
@@ -220,12 +220,12 @@
 
 Based on the blackboard/DB/main-loop integration research, these files **definitely** need updates:
 
-1. **`knowledge/architecture.md`** — Must document the full initialization chain, SessionDatabase authority, dual-write pattern
-2. **`knowledge/glossary.md`** — Missing entries for SessionDatabase, Blackboard, Transaction, dual-write, ContextVar DI
+1. **`knowledge/reference.md` (was architecture.md)** — Merged into reference.md §Patterns + §Session Data Layout
+2. **`knowledge/reference.md` (was glossary.md)** — Merged into reference.md §Terms
 3. **`knowledge/instructions/02-operations.md`** — Needs section on session.db, JSONL mirrors, global_history.db, fa stats
 4. **`knowledge/llms.txt`** — Mark as deprecated in favor of blackboard.query()
 5. **`AGENTS.md`** — Session loadout should mention session_db and blackboard
-6. **`knowledge/overview/FEATURES.md`** — Add features for blackboard, session_db, global_history
+6. **`knowledge/reference.md` (was FEATURES.md)** — Merged into reference.md §Features
 7. **`knowledge/project-overview.md`** — Update substrate description with SessionDatabase authority
 8. **`knowledge/adr/ADR-4-storage-backend.md`** — SQLite is now the authority, not just JSONL
 9. **`knowledge/adr/ADR-7-inner-loop-tool-registry.md`** — EventLog now writes to session_db first

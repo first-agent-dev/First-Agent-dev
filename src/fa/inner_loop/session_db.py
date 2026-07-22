@@ -69,12 +69,8 @@ class SessionDatabase:
                         );
                         """
                     )
-                    conn.execute(
-                        "CREATE INDEX IF NOT EXISTS idx_event_log_kind ON event_log(kind);"
-                    )
-                    conn.execute(
-                        "CREATE INDEX IF NOT EXISTS idx_event_log_run_id_id ON event_log(run_id, id);"
-                    )
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_event_log_kind ON event_log(kind);")
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_event_log_run_id_id ON event_log(run_id, id);")
                     conn.execute(
                         "CREATE INDEX IF NOT EXISTS idx_event_log_tool_call_id ON event_log(tool_call_id);"
                     )
@@ -97,9 +93,7 @@ class SessionDatabase:
                         );
                         """
                     )
-                    conn.execute(
-                        "CREATE INDEX IF NOT EXISTS idx_blackboard_type ON blackboard(type);"
-                    )
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_blackboard_type ON blackboard(type);")
                     conn.execute(
                         "CREATE INDEX IF NOT EXISTS idx_blackboard_run_type_ts "
                         "ON blackboard(run_id, type, timestamp);"

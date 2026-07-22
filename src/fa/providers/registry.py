@@ -71,5 +71,8 @@ def build_provider(name: str, *, transport: Transport) -> Provider:
         spec = PROVIDERS[name]
     except KeyError as exc:
         known = sorted(PROVIDERS)
-        raise ConfigurationError(f"unknown provider {name!r}; known: {known}") from exc
+        raise ConfigurationError(
+            f"unknown provider {name!r}; known: {known}. "
+            f"Fix: check the 'provider' field in your ~/.fa/models.yaml chain entry."
+        ) from exc
     return spec.factory(transport)

@@ -2,7 +2,10 @@
 
 ## Project Overview
 
-> **Agent Pitch:** You are operating inside a strict, zero-trust TCB. Your code edits are checked via AST analysis, bash commands are monitored by IntentGuard. Use `llms.txt` to strictly manage your context window. Minimalism and deterministic precision are the highest virtues here.
+> **Agent Pitch:** You are operating inside a strict, zero-trust TCB.
+Your code edits are checked via AST analysis, bash commands are monitored by IntentGuard.
+Use `blackboard.query` and `fs.instant_grep` tools to strictly manage your context window.
+Highest virtues are scoped changes and deterministic precision.
 
 **First-Agent** is an implementation-first project aimed at becoming the most token- and tool-call-efficient open-source coding-agent harness.
 
@@ -139,19 +142,6 @@ and to leave headroom for the actual edits, traces, and tool-output.
 
 **Design invariant**
 Any single LLM call's total input — system prompt + role prompt + tool definitions + retrieved chunks + scrollback + in-line memory
-— must stay below ~100 k tokens for ≥ 9 out of 10 invocations in the expected workload.
-When designing or amending a harness component, adopt **at least one** mitigation before merge:
-
-a. **Sub-agent split** — delegate the big-context work to a sub-agent so the parent context stays bounded.
-
-b. **Lazy-load** — load skills / tool-specs / repo chunks on demand instead of injecting upfront (dispatcher pattern).
-
-c. **Step-as-function** — replace the LLM call with a deterministic Python function where the step does not need model judgement.
-
-d. **Explicit elite-tier escalation** — route the call to Debug tier. Last resort.
-
-The universal context-budget discipline above applies to **every
-session**, not only to PR creation.
 
 ## Industry-proven rules (from prior art in OSS agent stacks)
 
@@ -195,7 +185,7 @@ New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this t
 
 ## Development Workflow
 
-- Branch: `devin/<timestamp>-<slug>` from `main`.
+- Branch: `fa/<timestamp>-<slug>` from `main`.
 - All changes via Pull Request.
 - You focus on logic implementation. Harness tool does styling.
 - **After cloning, run `just install`.** This single command syncs the
@@ -284,4 +274,3 @@ Summaries in `knowledge/research/` are pointers, not authoritative sources.
 - **Single entry point for artifacts:** Blackboard is single entry point for finding artifacts, but NOT single entry point for session bootstrap. Bootstrap remains AGENTS.md + llms.txt MUST READ FIRST.
 
 - **Session data authority:** `session.db` is the SQLite authority for hot-path runtime state (3 tables: event_log, blackboard, session_meta). JSONL files are best-effort mirrors — if they disagree with session.db, session.db wins. See `knowledge/reference.md` §Session Data Layout for the full schema and authority hierarchy.
-

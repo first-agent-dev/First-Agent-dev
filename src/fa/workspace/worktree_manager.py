@@ -1,22 +1,24 @@
 """
 WorktreeManager Abstraction — SharedDir primary for v0.1 (100% stable) per ADR-14/15 v3 reduced surface
 
-IsolatedWorktreeManager kept for tests / future branch worktree-isolated, but Factory returns SharedDir by default with warning if isolated requested (per Q4 A_shared_only).
+IsolatedWorktreeManager is retained for tests and future isolation. The factory returns
+SharedDir by default, with a warning when isolation is requested.
 
-Per Q1: custom exceptions BranchAlreadyCheckedOutError / CleanupFailedError with git worktree list details per spec Phase 1 fail-fast.
-No assert for safety-critical checks (compliance-by-construction §1.2.5), assert only for internal invariants with noqa S101.
+Per Q1, custom BranchAlreadyCheckedOutError and CleanupFailedError exceptions include git worktree details.
+Safety-critical checks do not use assert; asserts are limited to internal invariants
+(compliance-by-construction §1.2.5).
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import shutil
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, override
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ class BranchAlreadyCheckedOutError(RuntimeError):
 
 
 class CleanupFailedError(AssertionError, RuntimeError):
-    """Cleanup failed — worktree path still exists after remove --force. Subclasses AssertionError for backward compat."""
+    """Cleanup failed after remove --force; path still exists (AssertionError-compatible)."""
 
     def __init__(self, path: Path, details: str = ""):
         super().__init__(f"worktree_path {path} still exists after remove --force. {details}")

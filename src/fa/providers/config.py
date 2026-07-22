@@ -240,7 +240,9 @@ def load_models_config(
         return ModelsConfig(roles={})
     if not isinstance(raw_root, Mapping):
         raise ConfigurationError(
-            f"models.yaml root must be a mapping of role names to role configs; got {type(raw_root).__name__}"
+            f"models.yaml root must be a mapping of role names to role configs; "
+            f"got {type(raw_root).__name__}. Fix: ensure ~/.fa/models.yaml is a YAML "
+            f"mapping with role names (e.g. 'coder', 'planner') as top-level keys."
         )
 
     environ: Mapping[str, str] = env if env is not None else os.environ
@@ -255,11 +257,14 @@ def load_models_config(
         if raw_role is None:
             raise ConfigurationError(
                 f"models.yaml role {role_name!r}: role config is null; "
-                "expected a mapping with `model`, `family`, and `chain` fields"
+                f"expected a mapping with 'model', 'family', and 'chain' fields. "
+                f"Fix: provide a role config mapping under '{role_name}' in ~/.fa/models.yaml."
             )
         if not isinstance(raw_role, Mapping):
             raise ConfigurationError(
-                f"models.yaml role {role_name!r}: role config must be a mapping; got {type(raw_role).__name__}"
+                f"models.yaml role {role_name!r}: role config must be a mapping; "
+                f"got {type(raw_role).__name__}. Fix: ensure the '{role_name}' entry "
+                f"in ~/.fa/models.yaml is a YAML mapping with 'model', 'family', and 'chain'."
             )
         chain_config = chain_from_mapping(role_name, raw_role)
         warnings.extend(chain_config.validate(environ, require_api_keys=require_api_keys))

@@ -3,7 +3,7 @@
 Senior refactor v2 — fixes F821 undefined e bug + C901 complexity split:
 - Module-level single source EXCLUDE_DIRS
 - FTS5 fast path with count check and index_repo fallback (helper _fts_search)
-- Fallback chain: git ls-files --cached --others --exclude-standard (respects .gitignore) → walk with pruning symlink-safe (helper _git_fallback_search, _walk_fallback_search)
+- Fallback chain: git ls-files --cached --others --exclude-standard, then a symlink-safe walk.
 - Streaming file read for fallback, no hard size skip, soft limit warning
 - Returns paths not content, always valid fts_error variable
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
@@ -60,7 +60,7 @@ def _git_ls_files(root: Path) -> list[str]:
     return []
 
 
-def _iter_files_fallback(root: Path):
+def _iter_files_fallback(root: Path) -> Iterator[Path]:
     root_resolved = root.resolve()
     for dirpath, dirnames, filenames in os.walk(root_resolved, followlinks=False):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
@@ -216,7 +216,10 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
             # Git ls-files fallback
             matched = _git_fallback_search(workspace_root, query, limit, fts_error or "unknown")
             if matched:
-                summary = f"Found {len(matched)} files matching '{query}' via git ls-files fallback (FTS failed: {fts_error})"
+                summary = (
+                    f"Found {len(matched)} files matching '{query}' via git ls-files fallback "
+                    f"(FTS failed: {fts_error})"
+                )
                 return ToolResult.ok(
                     summary,
                     result={
@@ -254,8 +257,10 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
     return ToolSpec(
         name="fs.instant_grep",
         description=(
-            "Instant substring search via FTS5 trigram index (Cursor-like), <50ms, returns paths not content "
-            "token efficient. Falls back to git ls-files --cached --others --exclude-standard (respects .gitignore) "
+            "Instant substring search via FTS5 trigram index (Cursor-like), under 50ms, "
+            "returns paths rather than content; "
+            "token efficient. Falls back to git ls-files --cached --others --exclude-standard "
+            "(respects .gitignore) "
             "if FTS not available, then walk pruning symlink-safe."
         ),
         input_schema={
@@ -273,4 +278,4 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
     )
 
 
-__all__ = ["EXCLUDE_DIRS", "build_instant_grep_tool", "DEFAULT_LIMIT", "MAX_LIMIT", "MAX_FILE_SIZE_SOFT"]
+__all__ = ["DEFAULT_LIMIT", "EXCLUDE_DIRS", "MAX_FILE_SIZE_SOFT", "MAX_LIMIT", "build_instant_grep_tool"]

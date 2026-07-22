@@ -10,14 +10,10 @@ Verifies:
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
-from fa.providers.chain import ChainConfig, chain_from_mapping
-from fa.providers.errors import ConfigurationError
-from fa.roles import KNOWN_FAMILIES, extract_family, check_eval_disjoint
-
+from fa.providers.chain import chain_from_mapping
+from fa.roles import KNOWN_FAMILIES, check_eval_disjoint, extract_family
 
 # ── ChainConfig.extras ──────────────────────────────────────────────
 

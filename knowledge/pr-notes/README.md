@@ -2,7 +2,7 @@
 
 Point-in-time PR notes / PR bodies, kept for history. These are **artifacts of a
 specific PR**, not living docs — they are not maintained after merge. For current
-state read [`HANDOFF.md`](../../HANDOFF.md); for durable design read the
+state read [`HANDOFF.md`](../../worklogs/HANDOFF.md); for durable design read the
 [ADRs](../adr/README.md).
 
 Newest first:

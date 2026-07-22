@@ -23,10 +23,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # ── 1. Extract EventType literals from output.py ─────────────────────────
 
+
 def extract_event_types() -> list[str]:
     source = (REPO_ROOT / "src" / "fa" / "output.py").read_text()
     # Parse the Literal[...] type annotation
-    match = re.search(r'EventType = Literal\[(.*?)\]', source, re.DOTALL)
+    match = re.search(r"EventType = Literal\[(.*?)\]", source, re.DOTALL)
     if not match:
         print("FAIL: Could not find EventType definition in output.py")
         sys.exit(1)
@@ -44,10 +45,11 @@ def extract_event_types() -> list[str]:
 
 # ── 2. Check ConsoleRenderer handlers (consumers) ───────────────────────
 
+
 def extract_handler_events() -> set[str]:
     source = (REPO_ROOT / "src" / "fa" / "output.py").read_text()
     # Match def _handle_<event_type>(self, e: OutputEvent)
-    return set(re.findall(r'def _handle_([a-z_]+)\(', source))
+    return set(re.findall(r"def _handle_([a-z_]+)\(", source))
 
 
 # ── 3. Check output.emit() calls in production code (producers) ─────────
@@ -57,7 +59,9 @@ PRODUCER_FILES = [
     "src/fa/inner_loop/tools/spawn_subagent.py",
     "src/fa/cli.py",
     "src/fa/observability/cost_guardian.py",
+    "src/fa/inner_loop/state.py",
 ]
+
 
 def extract_producer_events() -> dict[str, list[str]]:
     """Return {event_type: [file.py, ...]} for each emit call found."""
@@ -72,9 +76,16 @@ def extract_producer_events() -> dict[str, list[str]]:
             # Only count if it's inside an OutputEvent() or output.emit() context
             # Check surrounding 200 chars for OutputEvent or emit
             start = max(0, match.start() - 200)
-            context = source[start:match.end()]
-            if 'OutputEvent' in context or 'emit' in context:
+            context = source[start : match.end()]
+            if "OutputEvent" in context or "emit" in context:
                 result.setdefault(et, []).append(fpath.split("/")[-1])
+        # Centralized typed EventBus helper: the literal is passed as a
+        # parameter, so there is no direct type= string at the call sites.
+        if fpath.endswith("spawn_subagent.py") and "def _emit_subagent_event" in source:
+            if "event_type: EventType" in source:
+                for et in ("subagent_start", "subagent_end"):
+                    if f'"{et}"' in source:
+                        result.setdefault(et, []).append(fpath.split("/")[-1])
     return result
 
 
@@ -83,6 +94,7 @@ def extract_producer_events() -> dict[str, list[str]]:
 TEST_DIRS = [
     "tests/",
 ]
+
 
 def extract_c1_tested_events() -> set[str]:
     """Find event types that have C1 tests (drive_session-based)."""
@@ -93,9 +105,12 @@ def extract_c1_tested_events() -> set[str]:
             continue
         for py_file in test_path.rglob("test_*.py"):
             source = py_file.read_text()
-            # If the test file calls drive_session, any event type it
-            # checks for is a C1-tested type
-            if 'drive_session(' not in source:
+            # Most product signals use drive_session as the composition root.
+            # Bootstrap/config warnings are produced by SessionState before
+            # drive_session exists, so their C1 root is the real SessionState
+            # construction plus output-bus attachment.
+            is_c1_root = "drive_session(" in source or "SessionState(" in source
+            if not is_c1_root:
                 continue
             for match in re.finditer(r'type="([a-z_]+)"', source):
                 tested.add(match.group(1))
@@ -114,6 +129,7 @@ def extract_c1_tested_events() -> set[str]:
 DORMANT_TYPES = {
     "cost_alert",  # CostGuardian dormant by design
 }
+
 
 def main() -> int:
     event_types = extract_event_types()
@@ -144,7 +160,7 @@ def main() -> int:
                 print(f"  💤 {et:<22s} DORMANT (no producer expected)")
             else:
                 print(f"  ❌ {et:<22s} CONSUMER ONLY — handler exists, NO emit() in production code")
-                print(f"     → Add output.emit(OutputEvent(type=\"{et}\")) in the appropriate module")
+                print(f'     → Add output.emit(OutputEvent(type="{et}")) in the appropriate module')
                 gaps_found = True
 
     if not any(et in handlers and et not in producers and et not in DORMANT_TYPES for et in event_types):
@@ -180,7 +196,7 @@ def main() -> int:
         if has_producer and not has_c1 and not is_dormant:
             producer_files = ", ".join(producers.get(et, []))
             print(f"  ❌ {et:<22s} NO C1 test — producer in {producer_files}")
-            print(f"     → Add a C1 test that exercises the production code path and asserts the emit")
+            print("     → Add a C1 test that exercises the production code path and asserts the emit")
             c1_gaps = True
 
     if not c1_gaps:

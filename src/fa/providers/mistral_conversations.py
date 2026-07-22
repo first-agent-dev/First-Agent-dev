@@ -146,6 +146,71 @@ class MistralConversationsProvider:
         return _parse_conversations_response(response)
 
 
+def _build_mistral_tools(request: RequestInfo) -> list[dict[str, Any]]:
+    """Convert function and built-in tools into Conversations API shape."""
+    tools: list[dict[str, Any]] = []
+    if request.tools:
+        for tool in request.tools:
+            # Check if this is a built-in tool descriptor
+            tool_type = tool.get("type")
+            if tool_type in _MISTRAL_BUILTIN_TOOL_TYPES:
+                tools.append(dict(tool))
+            elif tool_type == "function":
+                fn = tool.get("function", {})
+                tools.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": fn.get("name", ""),
+                            "description": fn.get("description", ""),
+                            "parameters": fn.get("parameters", {}),
+                        },
+                    }
+                )
+            else:
+                # Passthrough unknown tool shapes
+                tools.append(dict(tool))
+
+    # Built-in tools from extras
+    mistral_tools = request.extras.get("mistral_tools")
+    if isinstance(mistral_tools, list):
+        for mt in mistral_tools:
+            if isinstance(mt, Mapping) and mt.get("type") in _MISTRAL_BUILTIN_TOOL_TYPES:
+                tools.append(dict(mt))
+            else:
+                logger.warning(
+                    "Skipping invalid mistral_tools entry: %r — expected mapping with type in %s",
+                    mt,
+                    sorted(_MISTRAL_BUILTIN_TOOL_TYPES),
+                )
+
+    return tools
+
+
+def _build_completion_args(request: RequestInfo) -> dict[str, Any]:
+    """Collect optional model parameters for the Conversations API."""
+    completion_args: dict[str, Any] = {}
+    if request.temperature is not None:
+        completion_args["temperature"] = request.temperature
+    if request.max_tokens is not None:
+        completion_args["max_tokens"] = request.max_tokens
+
+    # Pass through Mistral-specific extras into completion_args
+    for key in (
+        "response_format",
+        "prediction",
+        "reasoning_effort",
+        "prompt_cache_key",
+        "safe_prompt",
+        "prompt_mode",
+        "parallel_tool_calls",
+    ):
+        if key in request.extras:
+            completion_args[key] = request.extras[key]
+
+    return completion_args
+
+
 def _build_conversations_body(request: RequestInfo) -> dict[str, Any]:
     """Build a Conversations API request body from canonical RequestInfo.
 
@@ -176,59 +241,11 @@ def _build_conversations_body(request: RequestInfo) -> dict[str, Any]:
     if instructions_parts:
         body["instructions"] = "\n\n".join(instructions_parts)
 
-    # Build tools list: function tools + built-in tools
-    tools: list[dict[str, Any]] = []
-    if request.tools:
-        for tool in request.tools:
-            # Check if this is a built-in tool descriptor
-            tool_type = tool.get("type")
-            if tool_type in _MISTRAL_BUILTIN_TOOL_TYPES:
-                tools.append(dict(tool))
-            elif tool_type == "function":
-                fn = tool.get("function", {})
-                tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": fn.get("name", ""),
-                        "description": fn.get("description", ""),
-                        "parameters": fn.get("parameters", {}),
-                    },
-                })
-            else:
-                # Passthrough unknown tool shapes
-                tools.append(dict(tool))
-
-    # Built-in tools from extras
-    mistral_tools = request.extras.get("mistral_tools")
-    if isinstance(mistral_tools, list):
-        for mt in mistral_tools:
-            if isinstance(mt, Mapping) and mt.get("type") in _MISTRAL_BUILTIN_TOOL_TYPES:
-                tools.append(dict(mt))
-            else:
-                logger.warning(
-                    "Skipping invalid mistral_tools entry: %r — expected "
-                    "mapping with type in %s",
-                    mt,
-                    sorted(_MISTRAL_BUILTIN_TOOL_TYPES),
-                )
-
+    tools = _build_mistral_tools(request)
     if tools:
         body["tools"] = tools
 
-    # completion_args: temperature, max_tokens, response_format, etc.
-    completion_args: dict[str, Any] = {}
-    if request.temperature is not None:
-        completion_args["temperature"] = request.temperature
-    if request.max_tokens is not None:
-        completion_args["max_tokens"] = request.max_tokens
-
-    # Pass through Mistral-specific extras into completion_args
-    for key in ("response_format", "prediction", "reasoning_effort",
-                "prompt_cache_key", "safe_prompt", "prompt_mode",
-                "parallel_tool_calls"):
-        if key in request.extras:
-            completion_args[key] = request.extras[key]
-
+    completion_args = _build_completion_args(request)
     if completion_args:
         body["completion_args"] = completion_args
 
@@ -251,6 +268,71 @@ def _build_conversations_body(request: RequestInfo) -> dict[str, Any]:
 def _parse_conversations_response(response: TransportResponse) -> ResponseInfo:
     """Parse Conversations API response — reuses shared status mapping."""
     return parse_transport_response(response, _normalize_conversations_success)
+
+
+def _normalize_conversation_outputs(
+    outputs: list[Mapping[str, Any]],
+) -> tuple[list[str], list[dict[str, Any]], str]:
+    """Normalize message output text/tool calls and finish reason."""
+    text_parts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    finish_reason = "stop"
+    for output in outputs:
+        output_type = output.get("type")
+        if output_type == "message.output":
+            # Model text response
+            content = output.get("content")
+            if isinstance(content, str):
+                text_parts.append(content)
+            elif isinstance(content, list):
+                # Content blocks (similar to Anthropic)
+                for block in content:
+                    if isinstance(block, Mapping) and block.get("type") == "text":
+                        text_parts.append(cast(str, block.get("text", "")))
+
+            # Tool calls from the message output
+            raw_tool_calls = output.get("tool_calls") or []
+            for tc in raw_tool_calls:
+                if isinstance(tc, Mapping):
+                    tc_type = tc.get("type")
+                    if tc_type == "function":
+                        tool_calls.append(dict(tc))
+                    else:
+                        # Conversations API tool_call format — normalise
+                        fn = tc.get("function") or {}
+                        tool_calls.append(
+                            {
+                                "id": tc.get("id", ""),
+                                "type": "function",
+                                "function": {
+                                    "name": tc.get("name", fn.get("name", "")),
+                                    "arguments": (
+                                        tc.get("arguments")
+                                        if isinstance(tc.get("arguments"), str)
+                                        else json.dumps(tc.get("arguments") or fn.get("arguments") or {})
+                                    ),
+                                },
+                            }
+                        )
+
+            # Finish reason from message output
+            if output.get("finish_reason"):
+                mapped = _FINISH_REASON_MAP.get(
+                    cast(str, output["finish_reason"]),
+                    cast(str, output["finish_reason"]),
+                )
+                finish_reason = mapped
+
+        elif output_type == "tool.execution":
+            # Server-side tool execution — record as extra, not as a
+            # standard tool call (the execution is complete, no client-
+            # side tool result needed).
+            pass
+        elif output_type == "reference.output":
+            # Citation/reference output — record as extra
+            pass
+
+    return text_parts, tool_calls, finish_reason
 
 
 def _normalize_conversations_success(body: Mapping[str, Any]) -> ResponseInfo:
@@ -290,58 +372,7 @@ def _normalize_conversations_success(body: Mapping[str, Any]) -> ResponseInfo:
     conversation_id = body.get("conversation_id")
 
     outputs = cast(list[Mapping[str, Any]], body.get("outputs", []))
-    for output in outputs:
-        output_type = output.get("type")
-        if output_type == "message.output":
-            # Model text response
-            content = output.get("content")
-            if isinstance(content, str):
-                text_parts.append(content)
-            elif isinstance(content, list):
-                # Content blocks (similar to Anthropic)
-                for block in content:
-                    if isinstance(block, Mapping) and block.get("type") == "text":
-                        text_parts.append(cast(str, block.get("text", "")))
-
-            # Tool calls from the message output
-            raw_tool_calls = output.get("tool_calls") or []
-            for tc in raw_tool_calls:
-                if isinstance(tc, Mapping):
-                    tc_type = tc.get("type")
-                    if tc_type == "function":
-                        tool_calls.append(dict(tc))
-                    else:
-                        # Conversations API tool_call format — normalise
-                        fn = tc.get("function") or {}
-                        tool_calls.append({
-                            "id": tc.get("id", ""),
-                            "type": "function",
-                            "function": {
-                                "name": tc.get("name", fn.get("name", "")),
-                                "arguments": (
-                                    tc.get("arguments")
-                                    if isinstance(tc.get("arguments"), str)
-                                    else json.dumps(tc.get("arguments") or fn.get("arguments") or {})
-                                ),
-                            },
-                        })
-
-            # Finish reason from message output
-            if output.get("finish_reason"):
-                mapped = _FINISH_REASON_MAP.get(
-                    cast(str, output["finish_reason"]),
-                    cast(str, output["finish_reason"]),
-                )
-                finish_reason = mapped
-
-        elif output_type == "tool.execution":
-            # Server-side tool execution — record as extra, not as a
-            # standard tool call (the execution is complete, no client-
-            # side tool result needed).
-            pass
-        elif output_type == "reference.output":
-            # Citation/reference output — record as extra
-            pass
+    text_parts, tool_calls, finish_reason = _normalize_conversation_outputs(outputs)
 
     usage = cast(Mapping[str, Any], body.get("usage") or {})
     in_tokens = int(usage.get("prompt_tokens") or 0)

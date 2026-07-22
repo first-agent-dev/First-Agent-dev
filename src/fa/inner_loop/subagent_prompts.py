@@ -8,9 +8,9 @@ S110/S112 with WARNING, E501 wrapped  # noqa: E501
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def _get_transaction_files(session_state: Any | None, limit: int) -> list[str]:
     if session_state is None:
         return []
     try:
-        transaction = getattr(session_state, "transaction", None)
+        transaction = session_state.transaction if session_state is not None else None
         if transaction is None:
             return []
         read_set = list(getattr(transaction, "read_set", []))[:limit]

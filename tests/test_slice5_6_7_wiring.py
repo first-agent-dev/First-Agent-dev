@@ -17,19 +17,15 @@ Skill: knowledge/skills/tests-writing/SKILL.md
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock
-from typing import Any
-
-import pytest
 
 from fa.feature_flags import FeatureFlags
-from fa.inner_loop import EventLog, SessionState, ToolRegistry
+from fa.inner_loop import EventLog, SessionState
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.tools import build_baseline_registry
-from fa.providers.base import ResponseInfo
 from fa.providers import ProviderChain
 from tests.fixtures.session_wiring import (
     make_test_chain_config,
@@ -38,7 +34,6 @@ from tests.fixtures.session_wiring import (
     mock_success_response,
     require_log,
 )
-
 
 # ---------------------------------------------------------------------------
 # FIND-006 — artifact offload via run_bash large output
@@ -93,7 +88,7 @@ def test_pr6_wiring_bash_large_output_offloads_artifact_via_live_path(tmp_path: 
     tool_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.run_bash"]
     assert len(tool_results) == 1
     content = tool_results[0].content
-    result = content.get("result") or {}
+    result = cast(dict[str, Any], content.get("result") or {})
     # Oracle rank 6: FS artifact + result fields
     assert result.get("artifact_id") is not None
     assert result.get("truncated") is True or "truncated" in str(content)
@@ -217,10 +212,10 @@ def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
     events = require_log(state).read_all()
     tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.instant_grep"]
     assert len(tr) == 1
-    result = tr[0].content.get("result") or {}
+    result = cast(dict[str, Any], tr[0].content.get("result") or {})
     # method should be git_ls_files or fallback_walk, not fts5 alone when empty
     method = result.get("method", "")
-    assert method in ("git_ls_files", "fallback_walk", "fts5")  # allow fts5 if index pre-exists, but empty case -> fallback
+    assert method in ("git_ls_files", "fallback_walk", "fts5")  # FTS may use a pre-existing index.
     # At least paths contains findme.py OR fallback succeeded
     paths = result.get("paths", [])
     # If git repo not present, walk fallback should find it
@@ -285,7 +280,8 @@ def test_pr6_wiring_pty_persistence_via_session(tmp_path: Path) -> None:
     tool_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.run_bash"]
     assert len(tool_results) == 2
     # Second result should still be /tmp if stateful
-    second_stdout = str(tool_results[1].content.get("result", {}).get("stdout", ""))
+    second_result = cast(dict[str, Any], tool_results[1].content.get("result", {}) or {})
+    second_stdout = str(second_result.get("stdout", ""))
     # If fallback to subprocess (no pty), second pwd would be tmp_path not /tmp
     # We assert /tmp present to prove statefulness
     assert "/tmp" in second_stdout, f"Expected /tmp persistence, got {second_stdout!r}"
@@ -321,7 +317,7 @@ def test_pr6_wiring_cr_cleaning_via_bash(tmp_path: Path) -> None:
         mock_success_response("done"),
     ]
 
-    outcome = drive_session(
+    drive_session(
         "test cr cleaning",
         provider_chain=mock_chain,
         registry=registry,
@@ -331,8 +327,9 @@ def test_pr6_wiring_cr_cleaning_via_bash(tmp_path: Path) -> None:
     )
 
     events = require_log(state).read_all()
-    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.run_bash"][0]
-    stdout = str(tr.content.get("result", {}).get("stdout", ""))
+    tr = next(e for e in events if e.kind == "tool_result" and e.tool_name == "fs.run_bash")
+    tr_result = cast(dict[str, Any], tr.content.get("result", {}) or {})
+    stdout = str(tr_result.get("stdout", ""))
     assert "\r" not in stdout, f"CR not cleaned: {stdout!r}"
     assert "bar" in stdout
     assert "foo" not in stdout or stdout.strip() == "bar"
@@ -394,7 +391,7 @@ def test_pr6_wiring_subagent_role_env_and_events(tmp_path: Path) -> None:
     assert "subagent_spawn_done" in kinds
 
     # Check envelope type preserved
-    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.spawn_subagent"][0]
+    tr = next(e for e in events if e.kind == "tool_result" and e.tool_name == "fs.spawn_subagent")
     result_json = tr.content.get("result") or {}
     # result field is JSON string of envelope
     import json as _json
@@ -408,12 +405,12 @@ def test_pr6_wiring_subagent_role_env_and_events(tmp_path: Path) -> None:
     # In our implementation, ToolResult.ok result=envelope.to_json() -> string, then projected via projection?
     # Simpler: check that returned tool result summary contains researcher
     # We'll check event content for role
-    spawn_start = [e for e in events if e.kind == "subagent_spawn_start"][0]
+    spawn_start = next(e for e in events if e.kind == "subagent_spawn_start")
     assert spawn_start.content.get("role") == "researcher"
     # Artifact exists
     artifact = tmp_path / ".fa" / "subagents" / "t-1.json"
     # SubagentRunner writes to session_root/.fa/subagents, session_root is workspace (tmp_path) per SessionState
-    # Actually SubagentRunner writes to session_root/.fa/subagents where session_root is root passed to tool builder (tmp_path)
+    # SubagentRunner writes to session_root/.fa/subagents; the builder root is tmp_path.
     # Might be tmp_path/.fa/subagents
     assert artifact.exists() or (Path(tmp_path) / ".fa" / "subagents" / "t-1.json").exists()
 
@@ -457,7 +454,7 @@ def test_pr6_wiring_subagent_sandbox_deny(tmp_path: Path) -> None:
         mock_success_response("should not reach"),
     ]
 
-    outcome = drive_session(
+    drive_session(
         "evil subagent",
         provider_chain=mock_chain,
         registry=registry,

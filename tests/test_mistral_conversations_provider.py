@@ -17,7 +17,6 @@ import pytest
 
 from fa.providers.base import (
     RequestInfo,
-    ResponseInfo,
     TransportResponse,
 )
 from fa.providers.errors import ProviderAuthError, ProviderTransientError
@@ -25,7 +24,6 @@ from fa.providers.mistral_conversations import (
     MistralConversationsProvider,
     _build_conversations_body,
 )
-
 
 # ── Fake transport ──────────────────────────────────────────────────
 

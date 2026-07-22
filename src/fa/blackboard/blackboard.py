@@ -266,7 +266,7 @@ class Blackboard:
             ]
         except Exception as exc:  # noqa: BLE001 # fallback to JSONL query
             logger.warning("Failed to query Blackboard from authoritative SessionDatabase: %s", exc)
-            results = []
+            results: list[BlackboardEntry] = []
             with self.lock:
                 if not self.path.exists():
                     return results

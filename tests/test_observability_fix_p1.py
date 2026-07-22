@@ -20,9 +20,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
-
-import pytest
+from typing import Any
 
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState
@@ -33,10 +31,9 @@ from fa.inner_loop.hooks import (
     HookRegistry,
     LoopGuard,
 )
-from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult, ToolSpec
-from fa.providers import ChainConfig, ProviderChain
-from tests.fixtures.session_wiring import make_mock_chain, make_session_state, mock_success_response, require_log
-
+from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSpec
+from fa.providers.base import ResponseInfo
+from tests.fixtures.session_wiring import make_mock_chain, mock_success_response, require_log
 
 # ── LOGIC-14: LoopGuard warn_sink wiring ──────────────────────────────────
 
@@ -193,7 +190,7 @@ def test_loop_guard_circuit_breaker_works_without_sink(tmp_path: Path) -> None:
 
 
 def test_recovery_action_event_on_tool_failure(tmp_path: Path) -> None:
-    """root=drive_session matrix=C claim=recovery_action event; kill-check=FailureClassifierObserver registration.
+    """Drive a session and verify the recovery_action event is emitted.
 
     When a tool fails, FailureClassifierObserver must emit a
     recovery_action event to EventLog. Previously, the observer was
@@ -233,7 +230,7 @@ def test_recovery_action_event_on_tool_failure(tmp_path: Path) -> None:
         mock_success_response("done after failure"),
     ]
 
-    outcome = drive_session(
+    drive_session(
         "test recovery action",
         provider_chain=mock_chain,
         registry=registry,
@@ -247,7 +244,7 @@ def test_recovery_action_event_on_tool_failure(tmp_path: Path) -> None:
     recovery_events = [e for e in events if e.kind == "recovery_action"]
     assert len(recovery_events) >= 1, (
         f"Expected at least 1 recovery_action event, got {len(recovery_events)}. "
-        f"Kinds present: {sorted(set(e.kind for e in events))}"
+        f"Kinds present: {sorted({e.kind for e in events})}"
     )
     # Verify structure
     re = recovery_events[0]
@@ -322,8 +319,8 @@ def test_attempt_history_file_written_on_tool_failure(tmp_path: Path) -> None:
 
 
 def _mock_response_with_tools(
-    tool_calls: list[dict],
-) -> tuple:
+    tool_calls: list[dict[str, Any]],
+) -> tuple[ResponseInfo, str, list[object]]:
     """Return a mock response with tool calls for drive_session."""
     from fa.providers.base import ResponseInfo
 

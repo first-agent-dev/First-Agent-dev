@@ -3,19 +3,20 @@
 Senior refactor:
 - Fuzzy matching: exact → stripped → line-stripped sequence search
 - Single responsibility helpers: _parse_params, _read_text, _find_fuzzy, _write_with_transaction
-- Safety: symlink escape already via resolve_workspace_path, blackboard belongs to workspace check (leaked session protection)
+- Safety: resolve_workspace_path prevents symlink escape; blackboard ownership is checked
+  to prevent session leakage.
 - Blackboard helpers shared with write_file via extracted module to avoid duplication
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string, resolve_workspace_path
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +47,12 @@ def _find_fuzzy(text: str, old: str) -> tuple[int, int] | None:
     # 3) Line-stripped sequence search
     old_lines = old.splitlines()
     # Filter out empty lines for comparison but keep original for length calc? Keep non-empty for matching
-    old_stripped_lines = [l.strip() for l in old_lines if l.strip() != ""]
+    old_stripped_lines = [line.strip() for line in old_lines if line.strip() != ""]
     if not old_stripped_lines:
         return None
 
     text_lines = text.splitlines()
-    text_stripped = [l.strip() for l in text_lines]
+    text_stripped = [line.strip() for line in text_lines]
 
     # Search for consecutive sequence
     for i in range(len(text_stripped) - len(old_stripped_lines) + 1):
@@ -76,7 +77,7 @@ def _find_fuzzy(text: str, old: str) -> tuple[int, int] | None:
     return None
 
 
-def _get_session_and_blackboard():
+def _get_session_and_blackboard() -> tuple[Any | None, Any | None, Any | None]:
     try:
         from fa.inner_loop.context import get_current_session
 
@@ -85,15 +86,20 @@ def _get_session_and_blackboard():
             return None, None, None
         # Safety check: blackboard must belong to same workspace as session's workspace_root
         # If leaked from different workspace, ignore (return None)
-        blackboard = getattr(session, "blackboard", None)
-        transaction = getattr(session, "transaction", None)
+        blackboard = session.blackboard if session is not None else None
+        transaction = session.transaction if session is not None else None
         return session, blackboard, transaction
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         logger.warning(f"get_current_session failed in edit_file: {exc}")
         return None, None, None
 
 
-def _write_blackboard_entry(blackboard: Any, rel_path: str, root: Path, is_edit=True):
+def _write_blackboard_entry(
+    blackboard: Any,
+    rel_path: str,
+    root: Path,
+    is_edit: bool = True,
+) -> None:
     if blackboard is None:
         return
     # Safety: check blackboard belongs to current root (leak protection)
@@ -148,10 +154,10 @@ def build_edit_file_tool(workspace_root: Path) -> ToolSpec:
 
     def handler(params: Mapping[str, object]) -> ToolResult:
         try:
-            path = resolve_workspace_path(root, require_string(params, "path"))  # type: ignore[arg-type]
-            old_string = require_string(params, "old_string")  # type: ignore[arg-type]
-            new_string = require_string(params, "new_string")  # type: ignore[arg-type]
-        except ValueError as exc:
+            path = resolve_workspace_path(root, require_string(params, "path"))
+            old_string = require_string(params, "old_string")
+            new_string = require_string(params, "new_string")
+        except (ValueError, PermissionError) as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
         if not path.exists():
@@ -169,7 +175,9 @@ def build_edit_file_tool(workspace_root: Path) -> ToolSpec:
             preview = text[:500]
             return ToolResult.fail(
                 "edit_failed",
-                f"old_string not found in {path.relative_to(root)} even with fuzzy whitespace/indentation tolerance. File preview: {preview[:200]!r}",
+                "old_string not found in "
+                f"{path.relative_to(root)} even with fuzzy whitespace/indentation tolerance. "
+                f"File preview: {preview[:200]!r}",
                 retryable=True,
             )
 
@@ -200,7 +208,10 @@ def build_edit_file_tool(workspace_root: Path) -> ToolSpec:
 
     return ToolSpec(
         name="fs.edit_file",
-        description="Edit file via string replace old_string -> new_string with fuzzy matching tolerating whitespace and indentation differences (exact → stripped → line-stripped sequence), token efficient vs full write, declares read/write sets for blackboard.",
+        description=(
+            "Edit file via string replacement with fuzzy whitespace/indentation matching "
+            "(exact, stripped, then line-stripped sequence). Declares blackboard read/write sets."
+        ),
         input_schema={
             "type": "object",
             "required": ["path", "old_string", "new_string"],

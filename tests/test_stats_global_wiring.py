@@ -11,16 +11,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-
-import pytest
+from typing import Any
 
 from fa.inner_loop.global_history import GlobalHistoryStore
 
 
-def test_stats_global_history_cli_reads_projection(tmp_path: Path, monkeypatch) -> None:
+def test_stats_global_history_cli_reads_projection(tmp_path: Path, monkeypatch: Any) -> None:
     """C2: fa stats --global-history reads derived projection.
 
-    Creates tmp global_history.db with 2 rows, monkeypatches HOME to tmp, runs _cmd_stats with --global-history flag.
+    Creates a temporary global_history.db and runs _cmd_stats with --global-history.
     """
     # Setup fake HOME with global_history.db
     fake_home = tmp_path / "home"
@@ -56,8 +55,9 @@ def test_stats_global_history_cli_reads_projection(tmp_path: Path, monkeypatch) 
         store.export_run(row)
 
     # Now run cli _cmd_stats with --global-history
-    from fa.cli import _cmd_stats
     import argparse
+
+    from fa.cli import _cmd_stats
 
     args = argparse.Namespace(
         run_id=None,
@@ -69,7 +69,8 @@ def test_stats_global_history_cli_reads_projection(tmp_path: Path, monkeypatch) 
     )
 
     # Capture stdout
-    import io, sys
+    import io
+    import sys
 
     captured = io.StringIO()
     old_stdout = sys.stdout
@@ -95,4 +96,6 @@ def test_stats_global_history_projection_only() -> None:
     cli_path = Path("src/fa/cli.py")
     assert cli_path.exists()
     content = cli_path.read_text(encoding="utf-8")
-    assert "global_history" in content, "cli.py should import global_history as active consumer per AGENTS rule #3"
+    assert "global_history" in content, (
+        "cli.py should import global_history as an active consumer"
+    )

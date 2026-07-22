@@ -5,8 +5,8 @@ Proves Level-0 kernel + Level-1 RULE_ALLOWLIST wiring is not theater.
 - Root: fa.authoring_rules.RULE_ALLOWLIST + fa.authoring_tcb.run_all (used by fa authoring-check)
 - Matrix: C-defaults (clean tree + F-2 fixture)
 - Oracle: diagnostic code FA-AUTHORING-V2-EXPORTS-COMPLETENESS, severity HARD-BLOCK, exit_code 1
-- Kill-check: removing EXPORTS_COMPLETENESS from RULE_ALLOWLIST makes test_authoring_check_catches_f2_via_default_allowlist fail (no diagnostic)
-- Pyramid: A, C2 (inspect-only CLI authoring-check is root for claims about that command per tests-writing skill)
+- Kill-check: removing EXPORTS_COMPLETENESS from RULE_ALLOWLIST must make the test fail.
+- Pyramid: A, C2 (CLI authoring-check is the claim root).
 
 Skill: tests-writing, ADR-11-I9
 
@@ -23,11 +23,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from fa.authoring_rules import EXPORTS_COMPLETENESS, RULE_ALLOWLIST
 from fa.authoring_tcb import run_all
-
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _F2_FIXTURE = _REPO_ROOT / "catch-corpus" / "F-2" / "fixture.py"

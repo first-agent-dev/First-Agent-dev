@@ -986,7 +986,7 @@ checked-in шаблоном `knowledge/templates/models.yaml.example`. Скри�
 меняет — только печатает `OK` / `WARN`.
 
 ```bash
-python3 /srv/first-agent/repo/First-Agent-dev/scripts/fa-host-layout-audit.py
+python3 /srv/first-agent/repo/First-Agent-dev/scripts/fa_host_layout_audit.py
 # флаги по умолчанию: --fa-dir /srv/first-agent
 #                     --repo-dir /srv/first-agent/repo/First-Agent-dev
 ```

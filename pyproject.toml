@@ -80,7 +80,18 @@ dev = [
   # rewrite instead of refactor; vulture surfaces them. Run via
   # `just deadcode`. Advisory (not in `just check`) — vulture cannot see
   # dynamic dispatch, so findings need human judgement before deletion.
-  "vulture>=2.11",
+    "vulture>=2.11",
+]
+# Deferred/runtime integrations. Not installed by the default dev or runtime
+# environment; install only when PDF extraction or the FastAPI remote runtime
+# is intentionally enabled.
+runtime = [
+    "pymupdf>=1.24",
+    "pdfminer.six>=20231228",
+    "pypdf>=4.0",
+    "fastapi>=0.115",
+    "pydantic>=2.0",
+    "requests>=2.32",
 ]
 
 [project.scripts]
@@ -90,7 +101,7 @@ fa = "fa.cli:main"
 packages = ["src/fa"]
 
 [tool.ruff]
-line-length = 112
+line-length = 120
 target-version = "py313"
 extend-exclude = ["catch-corpus", "fp-corpus", "mutants"]
 
@@ -167,6 +178,10 @@ addopts = [
   "--strict-markers",
 ]
 testpaths = ["tests"]
+# Tests import shared fixtures and repository checker modules as namespace
+# packages (`tests.*`, `scripts.*`). Keep the repository root on pytest's
+# import path in every invocation, including CI's `uv run just check`.
+pythonpath = ["."]
 asyncio_mode = "auto"
 
 [tool.coverage.run]
@@ -294,6 +309,12 @@ preset = "strict"
 # Revisit when migrating from mypy to pyrefly as primary type checker.
 [tool.pyrefly.errors]
 implicit-any-empty-container = false
+
+[tool.deptry.package_module_name_map]
+# Deferred optional distributions expose import names that differ from their
+# PyPI project names.
+pymupdf = ["fitz"]
+"pdfminer.six" = ["pdfminer"]
 
 [tool.deptry.per_rule_ignores]
 # Dev-only packages are intentionally not imported in src/; they are

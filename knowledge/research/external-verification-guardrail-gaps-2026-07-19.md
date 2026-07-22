@@ -842,7 +842,7 @@ Actions are organized by the user's priority instruction: **HIGH = Pillar 4 (mea
 - `ADR-11-authoring-guardrails.md`: 760 lines; 9 invariants (`I1` to `I9`); 2026-07-15 amendment (`I9` live-path DoD, `KernelReport.allowlist_signature`, `Severity.__bool__`, advisory-undated synth); enforcement-ceiling (§12.7): PR-only agent rights + human review + `check_protected_paths.py` flag; active-consumer table (§Decision)
 - `knowledge/project-overview.md`: 4 pillars (§1.1); minimalism-first 5 questions (§1.2); subtraction-second (`§1.2` title); compliance-by-construction (§1.2.5); KPI candidates (§3); out-of-scope (§4)
 - `knowledge/research/ADR-11-Authoring-Guardrails-Blueprint.md` referenced but not fully read line-by-line
-- `scripts/fa` (various) — `fa` CLI script; `fa-entrypoint.sh`; `fa-host-layout-audit.py`
+- `scripts/fa` (various) — `fa` CLI script; `fa-entrypoint.sh`; `fa_host_layout_audit.py`
 - No file named `missing-guardrail-dimensions-2026-07-19.md` or `deep-research-failure-mode-closure-2026-07-19.md` exists on `residual-fixes`
 
 ---

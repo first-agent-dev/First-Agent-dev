@@ -17,7 +17,7 @@
 > authoritative per-module index see
 > [`knowledge/llms.txt`](./llms.txt) §BY-DEMAND INDEX; for milestone
 > status see [`knowledge/BACKLOG.md`](./BACKLOG.md) and
-> [`HANDOFF.md`](../HANDOFF.md).
+> [`HANDOFF.md`](../worklogs/HANDOFF.md).
 
 - **Instruction Layer →** `AGENTS.md` + ADRs + `knowledge/` (text
   half of NLAH); the coder system prompt + tool-spec projection are

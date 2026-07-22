@@ -14,13 +14,13 @@ Senior refactor v2:
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import time
 from collections.abc import Mapping
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,11 @@ def build_checkpoint_tool(workspace_root: Path) -> ToolSpec:
                 logger.warning(f"git add -A failed: {add.stderr}")
 
             # Commit atomic small commit with clear message per checkpoint patterns doc
-            commit_msg = f"checkpoint: {message}\n\n- run_id: {run_id}\n- timestamp: {int(time.time())}\n- auto checkpoint before task per pair over autonomy"
+            commit_msg = (
+                f"checkpoint: {message}\n\n- run_id: {run_id}\n"
+                f"- timestamp: {int(time.time())}\n"
+                "- auto checkpoint before task per pair over autonomy"
+            )
             commit = _run_git(["git", "commit", "-m", commit_msg], cwd=root, timeout=10)
 
             if commit.returncode == 0:
@@ -136,7 +140,10 @@ def build_checkpoint_tool(workspace_root: Path) -> ToolSpec:
 
     return ToolSpec(
         name="fs.checkpoint",
-        description="Create checkpoint via git add -A (respects .gitignore) + commit + ephemeral branch agent/checkpoint-<run_id>-<ts> (local only, not pushed to origin/main). Fallback stash create/store. For pair over autonomy, checkpoint before task, undo restores. Automated, merges to origin/main manual last step.",
+        description=(
+            "Create a checkpoint with git add/commit and an ephemeral local branch. "
+            "Falls back to a stash; undo restores it. Merges remain manual."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -205,7 +212,10 @@ def build_undo_tool(workspace_root: Path) -> ToolSpec:
 
     return ToolSpec(
         name="fs.undo",
-        description="Undo last checkpoint via git checkout checkpoint branch, or reset --hard <id>, or reset --hard HEAD~1, or stash pop — Ctrl+Z for pair over autonomy. Checkpoint branches local only, merges to origin/main manual.",
+        description=(
+            "Undo the last checkpoint via its branch, reset, or stash pop. "
+            "Checkpoint branches are local and merges remain manual."
+        ),
         input_schema={"type": "object", "properties": {"checkpoint_id": {"type": "string"}}},
         permission="workspace",
         handler=handler,
@@ -247,7 +257,10 @@ def build_diff_tool(workspace_root: Path) -> ToolSpec:
                     + f"\n...[truncated {len(diff_text)} chars, {len(diff_text.splitlines())} lines]...\n"
                     + diff_text[-500:]
                 )
-                summary = f"Diff {len(diff_text)} chars, {len(diff_text.splitlines())} lines, {len(files_changed)} files (truncated preview)\n{stat_text[:1000]}"
+                summary = (
+                    f"Diff {len(diff_text)} chars, {len(diff_text.splitlines())} lines, "
+                    f"{len(files_changed)} files (truncated preview)\n{stat_text[:1000]}"
+                )
                 return ToolResult.ok(
                     summary,
                     result={
@@ -259,7 +272,10 @@ def build_diff_tool(workspace_root: Path) -> ToolSpec:
                         "lines": len(diff_text.splitlines()),
                     },
                 )
-            summary = f"Diff {len(diff_text)} chars, {len(diff_text.splitlines())} lines, {len(files_changed)} files\n{stat_text[:1000]}"
+            summary = (
+                f"Diff {len(diff_text)} chars, {len(diff_text.splitlines())} lines, "
+                f"{len(files_changed)} files\n{stat_text[:1000]}"
+            )
             return ToolResult.ok(
                 summary,
                 result={
@@ -276,7 +292,10 @@ def build_diff_tool(workspace_root: Path) -> ToolSpec:
 
     return ToolSpec(
         name="fs.diff",
-        description="Returns git diff structured between base and target (default HEAD) with --stat summary + truncated diff token efficient — for pair over autonomy review before PR, merges to origin/main manual last step.",
+        description=(
+            "Return a structured git diff between base and target with a stat summary and "
+            "truncated preview for pair review; merges remain manual."
+        ),
         input_schema={
             "type": "object",
             "properties": {"base": {"type": "string"}, "target": {"type": "string"}},
@@ -315,7 +334,7 @@ def build_send_ctrl_c_tool(pty_pool: object | None = None) -> ToolSpec:
 
     return ToolSpec(
         name="fs.send_ctrl_c",
-        description="Send Ctrl+C to PTY session to interrupt hanging command — for pair over autonomy, recover from hanging.",
+        description="Send Ctrl+C to a PTY session to interrupt a hanging command.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}}},
         permission="workspace",
         handler=handler,

@@ -11,24 +11,22 @@ SessionAnalytics fields empty.
 from __future__ import annotations
 
 import io
-import sys
 from pathlib import Path
-
-import pytest
+from typing import Any
 
 from fa.inner_loop.state import EventLog
+from fa.output import LogKind
 from fa.stats import (
     CompactionRecord,
     ContextBudgetEvent,
     SessionAnalytics,
-    SubagentRecord,
     ToolError,
     parse_session,
     render_session,
 )
 
 
-def _write_events(tmp_path: Path, events: list[tuple[str, str, dict, str, str]]) -> Path:
+def _write_events(tmp_path: Path, events: list[tuple[str, LogKind, dict[str, Any], str, str]]) -> Path:
     """Write events to an EventLog and return the path.
 
     Each event tuple: (actor, kind, content_dict, tool_name, tool_call_id)
@@ -39,6 +37,15 @@ def _write_events(tmp_path: Path, events: list[tuple[str, str, dict, str, str]])
         log.append(actor=actor, kind=kind, content=content, tool_name=tool_name, tool_call_id=tool_call_id)
     return jsonl_path
 
+def _summary_event() -> tuple[str, LogKind, dict[str, Any], str, str]:
+    return (
+        "runtime",
+        "session_summary",
+        {"n_turns": 1, "input_tokens": 100, "output_tokens": 10, "cache_hit_ratio": 0.0},
+        "",
+        "",
+    )
+
 
 # ── LOGIC-7: tool_result error extraction ──────────────────────────────────
 
@@ -48,8 +55,10 @@ def test_stats_parses_tool_result_errors(tmp_path: Path) -> None:
     jsonl_path = _write_events(tmp_path, [
         ("runtime", "run_started", {"role": "coder"}, "", ""),
         ("coder", "tool_call", {"params": {"path": "/tmp/a.txt"}}, "fs.read_file", "tc-1"),
-        ("tool", "tool_result", {"summary": "failed", "ok": False, "error": {"code": "file_not_found", "message": "No such file"}}, "fs.read_file", "tc-1"),
-        ("runtime", "session_summary", {"n_turns": 1, "input_tokens": 100, "output_tokens": 10, "cache_hit_ratio": 0.0}, "", ""),
+        ("tool", "tool_result", {"summary": "failed", "ok": False,
+         "error": {"code": "file_not_found", "message": "No such file"}},
+         "fs.read_file", "tc-1"),
+        _summary_event(),
     ])
     result = parse_session(jsonl_path)
     assert result is not None
@@ -64,7 +73,7 @@ def test_stats_tool_result_ok_not_in_errors(tmp_path: Path) -> None:
         ("runtime", "run_started", {"role": "coder"}, "", ""),
         ("coder", "tool_call", {"params": {"path": "/tmp/a.txt"}}, "fs.read_file", "tc-1"),
         ("tool", "tool_result", {"summary": "ok", "ok": True}, "fs.read_file", "tc-1"),
-        ("runtime", "session_summary", {"n_turns": 1, "input_tokens": 100, "output_tokens": 10, "cache_hit_ratio": 0.0}, "", ""),
+        _summary_event(),
     ])
     result = parse_session(jsonl_path)
     assert result is not None
@@ -80,7 +89,7 @@ def test_stats_parses_compaction_events(tmp_path: Path) -> None:
         ("runtime", "run_started", {"role": "coder"}, "", ""),
         ("runtime", "compaction_stage2_done", {"tokens_before": 120000, "tokens_after": 80000}, "", ""),
         ("runtime", "compaction_stage3_done", {"tokens_before": 80000, "tokens_after": 50000}, "", ""),
-        ("runtime", "session_summary", {"n_turns": 1, "input_tokens": 100, "output_tokens": 10, "cache_hit_ratio": 0.0}, "", ""),
+        _summary_event(),
     ])
     result = parse_session(jsonl_path)
     assert result is not None
@@ -96,7 +105,7 @@ def test_stats_parses_compaction_error(tmp_path: Path) -> None:
     jsonl_path = _write_events(tmp_path, [
         ("runtime", "run_started", {"role": "coder"}, "", ""),
         ("runtime", "compaction_stage2_error", {"error": "masking failed"}, "", ""),
-        ("runtime", "session_summary", {"n_turns": 1, "input_tokens": 100, "output_tokens": 10, "cache_hit_ratio": 0.0}, "", ""),
+        _summary_event(),
     ])
     result = parse_session(jsonl_path)
     assert result is not None
@@ -114,7 +123,7 @@ def test_stats_parses_subagent_events(tmp_path: Path) -> None:
         ("runtime", "run_started", {"role": "coder"}, "", ""),
         ("tool", "subagent_spawn_done", {"ok": True}, "", ""),
         ("tool", "subagent_spawn_fail", {"error": "chain exhausted"}, "", ""),
-        ("runtime", "session_summary", {"n_turns": 1, "input_tokens": 100, "output_tokens": 10, "cache_hit_ratio": 0.0}, "", ""),
+        _summary_event(),
     ])
     result = parse_session(jsonl_path)
     assert result is not None
@@ -131,9 +140,15 @@ def test_stats_parses_context_budget_events(tmp_path: Path) -> None:
     """parse_session extracts context budget warn and hard-stop events."""
     jsonl_path = _write_events(tmp_path, [
         ("runtime", "run_started", {"role": "coder"}, "", ""),
-        ("runtime", "context_budget_warn", {"action": "warn", "ratio": 0.72, "message": "context at 72%"}, "", ""),
-        ("runtime", "context_budget_hard_stop", {"action": "stage3", "ratio": 0.92, "message": "context at 92%"}, "", ""),
-        ("runtime", "session_summary", {"n_turns": 1, "input_tokens": 100, "output_tokens": 10, "cache_hit_ratio": 0.0}, "", ""),
+        (
+            "runtime", "context_budget_warn",
+            {"action": "warn", "ratio": 0.72, "message": "context at 72%"}, "", ""
+        ),
+        (
+            "runtime", "context_budget_hard_stop",
+            {"action": "stage3", "ratio": 0.92, "message": "context at 92%"}, "", ""
+        ),
+        _summary_event(),
     ])
     result = parse_session(jsonl_path)
     assert result is not None

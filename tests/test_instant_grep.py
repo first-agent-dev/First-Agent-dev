@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 
-def test_instant_grep_trigram():
+def test_instant_grep_trigram() -> None:
     from fa.memory.fts_index import InstantGrepIndex
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -37,7 +37,7 @@ def test_instant_grep_trigram():
         index.close()
 
 
-def test_instant_grep_limit():
+def test_instant_grep_limit() -> None:
     from fa.memory.fts_index import InstantGrepIndex
 
     with tempfile.TemporaryDirectory() as tmp:

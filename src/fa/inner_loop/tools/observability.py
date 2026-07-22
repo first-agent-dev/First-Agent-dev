@@ -19,6 +19,17 @@ from fa.inner_loop.state import EventLog
 from fa.inner_loop.tools.base import optional_int
 
 
+def _as_int(value: object) -> int:
+    """Coerce untrusted event payload values without leaking ``object`` to mypy."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float | str):
+        return int(value)
+    return 0
+
+
 def _resolve_event_log(params: Mapping[str, object]) -> tuple[EventLog | None, str | None]:
     run_id_raw = params.get("run_id")
     if run_id_raw is not None:
@@ -147,19 +158,15 @@ def build_usage_tool(_event_log_path: Path | None = None) -> ToolSpec:
                     tool_calls[event.tool_name or "unknown"] += 1
                 elif event.kind == "usage":
                     content = event.content if isinstance(event.content, Mapping) else {}
-                    total_in += int(content.get("input_tokens", 0))
-                    total_out += int(content.get("output_tokens", 0))
-                    total_cache_read += int(content.get("cache_read_input_tokens", 0))
-                    total_cache_creation += int(content.get("cache_creation_input_tokens", 0))
+                    total_in += _as_int(content.get("input_tokens", 0))
+                    total_out += _as_int(content.get("output_tokens", 0))
+                    total_cache_read += _as_int(content.get("cache_read_input_tokens", 0))
+                    total_cache_creation += _as_int(content.get("cache_creation_input_tokens", 0))
                     usage_rows += 1
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             return ToolResult.fail("read_error", f"Failed: {exc}", retryable=False)
 
-        cache_ratio = (
-            total_cache_read / max(total_in, 1)
-            if total_in > 0
-            else 0.0
-        )
+        cache_ratio = total_cache_read / max(total_in, 1) if total_in > 0 else 0.0
         run_label = data.get("run_id") or log.run_id or "current"
 
         summary = (
@@ -209,7 +216,7 @@ def build_list_tasks_tool(  # noqa: C901 -- complexity from fallback chain grace
     pty_pool: Any | None = None, worktree_manager: Any | None = None
 ) -> ToolSpec:
     # DI via contextvar if not passed explicitly — for pair over autonomy, try to get from current session
-    def _get_pool_and_manager():
+    def _get_pool_and_manager() -> tuple[Any | None, Any | None]:
         pool = pty_pool
         wm = worktree_manager
         try:

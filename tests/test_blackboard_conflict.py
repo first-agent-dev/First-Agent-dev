@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 
-def test_blackboard_write_read():
+def test_blackboard_write_read() -> None:
     from fa.blackboard.blackboard import Blackboard, BlackboardEntry
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -28,7 +28,7 @@ def test_blackboard_write_read():
         assert read_back.content_hash == entry.content_hash
 
 
-def test_blackboard_conflict_detection():
+def test_blackboard_conflict_detection() -> None:
     from fa.blackboard.blackboard import Blackboard, BlackboardEntry
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -62,7 +62,7 @@ def test_blackboard_conflict_detection():
         assert any("src/auth.py" in c.read_write_overlap for c in conflicts)
 
 
-def test_blackboard_append_only():
+def test_blackboard_append_only() -> None:
     from fa.blackboard.blackboard import Blackboard, BlackboardEntry
 
     with tempfile.TemporaryDirectory() as tmp:

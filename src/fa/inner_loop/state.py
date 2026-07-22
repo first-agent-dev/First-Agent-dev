@@ -34,11 +34,20 @@ from typing import TYPE_CHECKING, Any
 
 from fa.inner_loop.registry import ToolCall, ToolResult
 from fa.inner_loop.session_db import SessionDatabase
+from fa.output import LogKind, OutputEvent
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from fa.blackboard.blackboard import Blackboard
+    from fa.feature_flags import FeatureFlags
+    from fa.inner_loop.artifacts import ArtifactStore
+    from fa.inner_loop.transaction import Transaction
     from fa.observability.redaction import SecretRedactor
+    from fa.output import EventBus
+    from fa.runtime.bash_executor import BashExecutor
+    from fa.telemetry.telemetry import TelemetryLogger
+    from fa.workspace.worktree_manager import WorktreeManager
 
 DEFAULT_STATE_ROOT = Path.home() / ".fa" / "session-log"
 HARNESS_ID = "fa-inner-loop@0.1.0"
@@ -99,6 +108,12 @@ class EventLog:
         self._next_id = self._initial_next_id(path)
         self._redactor = redactor
         self._lock = threading.Lock()
+        # S9: Incremental event counting for guardrail metrics (G9).
+        # Updated inside append() under the existing _lock for thread safety.
+        self.kind_counts: dict[str, int] = {}
+        # S9: Dedicated counter for chain exhaustion events (user Q2:
+        # not derived from kind_counts — precise metric for retry logic).
+        self.chain_exhaustion_count: int = 0
         try:
             self.session_db: SessionDatabase | None = SessionDatabase(self.path.parent / "session.db")
         except RuntimeError as exc:
@@ -135,8 +150,8 @@ class EventLog:
                 return count + 1
             finally:
                 conn.close()
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — DB bootstrap may be unavailable; JSONL fallback remains explicit
+            logger.warning("EventLog DB counter unavailable, using JSONL fallback: %s", exc)
         # Fallback to JSONL mirror for brand-new sessions without a DB yet.
         if not path.exists():
             return 1
@@ -162,7 +177,7 @@ class EventLog:
         self,
         *,
         actor: str,
-        kind: str,
+        kind: LogKind,
         content: Mapping[str, object] | None = None,
         tool_name: str = "",
         tool_call_id: str = "",
@@ -172,6 +187,9 @@ class EventLog:
         if content is not None:
             redacted_content = {k: self._redact_value(v) for k, v in content.items()}
         with self._lock:
+            # S9: Incremental kind counting under existing lock (thread-safe).
+            self.kind_counts[str(kind)] = self.kind_counts.get(str(kind), 0) + 1
+
             event = TraceEvent(
                 event_id=f"ev-{self._next_id:06d}",
                 ts=_now_iso_z(),
@@ -272,19 +290,49 @@ class SessionState:
     run_id: str = field(default_factory=lambda: f"run-{os.getpid()}")
     log: EventLog | None = None
     observations: list[str] = field(default_factory=list)
-    # Stage 0.5 extensions
-    transaction: Any | None = None  # Transaction, avoid circular import at runtime
-    blackboard: Any | None = None  # Blackboard
-    telemetry: Any | None = None  # TelemetryLogger
-    feature_flags: Any | None = None  # FeatureFlags
-    artifact_store: Any | None = None  # ArtifactStore
-    pty_pool: Any | None = None  # PtyPool
-    worktree_manager: Any | None = None  # WorktreeManager
-    session_db: Any | None = None  # SessionDatabase
-    output_bus: Any | None = None  # EventBus — set by cli.py for console visibility
+    # Stage 0.5 extensions — typed for pyright narrowing (S11).
+    # All use TYPE_CHECKING imports to avoid circular deps at runtime.
+    # pty_pool remains Any | None because fa.runtime is optional.
+    transaction: Transaction | None = None
+    blackboard: Blackboard | None = None
+    telemetry: TelemetryLogger | None = None
+    feature_flags: FeatureFlags | None = None
+    artifact_store: ArtifactStore | None = None
+    pty_pool: Any | None = None  # PtyPool — optional module, keep Any
+    bash_executor: BashExecutor | None = None  # Protocol from fa.runtime.bash_executor (user Q1)
+    worktree_manager: WorktreeManager | None = None
+    session_db: SessionDatabase | None = None
+    # The CLI wires this after bootstrap; pending events are flushed on attach.
+    output_bus: EventBus | None = None
+    _pending_output_events: list[OutputEvent] = field(default_factory=list, init=False, repr=False)
     turn: int = 0
     subagent_spawns: int = 0
     _subagent_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def require_log(self) -> EventLog:
+        """Return the authoritative session log or fail closed."""
+        if self.log is None:
+            raise ValueError("SessionState.log must be initialized before session execution")
+        return self.log
+
+    def attach_output_bus(self, output_bus: EventBus) -> None:
+        """Attach the display bus and flush warnings queued during bootstrap."""
+        self.output_bus = output_bus
+        pending = tuple(self._pending_output_events)
+        self._pending_output_events.clear()
+        for event in pending:
+            output_bus.emit(event)
+
+    def _record_config_warning(self, *, line_no: int, key: str, detail: str) -> None:
+        """Persist and expose a config warning without losing early bootstrap events."""
+        content = {"line_no": line_no, "key": key, "detail": detail}
+        if self.log is not None:
+            self.log.append(actor="config", kind="config_warning", content=content)
+        event = OutputEvent(type="config_warning", data=content)
+        if self.output_bus is None:
+            self._pending_output_events.append(event)
+        else:
+            self.output_bus.emit(OutputEvent(type="config_warning", data=content))
 
     def __post_init__(self) -> None:  # noqa: C901 -- complexity from FeatureFlags + Transaction + Blackboard + Telemetry + WorktreeManager init, DI via SessionState, graceful degradation
         self.workspace_root = self.workspace_root.resolve()
@@ -310,6 +358,7 @@ class SessionState:
                 if result.warnings:
                     for w in result.warnings:
                         logger.warning(f"feature_flags {w.key}: {w.detail}")
+                        self._record_config_warning(line_no=w.line_no, key=w.key, detail=w.detail)
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 logger.warning(f"Failed to load feature_flags: {exc}, using defaults")
                 try:
@@ -341,12 +390,8 @@ class SessionState:
 
         # Blackboard if enabled
         if self.blackboard is None:
-            enabled = True
-            try:
-                if self.feature_flags is not None:
-                    enabled = getattr(self.feature_flags, "blackboard_enabled", True)
-            except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                enabled = True
+            # S13: FAIL-OPEN — blackboard_enabled defaults to True (convenience)
+            enabled = self.feature_flags.blackboard_enabled if self.feature_flags is not None else True
             if enabled:
                 if self.session_db is None:
                     logger.warning(
@@ -368,12 +413,8 @@ class SessionState:
 
         # Telemetry if enabled
         if self.telemetry is None:
-            enabled = True
-            try:
-                if self.feature_flags is not None:
-                    enabled = getattr(self.feature_flags, "telemetry_enabled", True)
-            except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                enabled = True
+            # S13: FAIL-OPEN — telemetry_enabled defaults to True (convenience)
+            enabled = self.feature_flags.telemetry_enabled if self.feature_flags is not None else True
             if enabled:
                 try:
                     from fa.telemetry.telemetry import TelemetryLogger
@@ -408,12 +449,8 @@ class SessionState:
             try:
                 from fa.runtime import PtyPool
 
-                max_size = 2
-                try:
-                    if self.feature_flags is not None:
-                        max_size = int(getattr(self.feature_flags, "pty_pool_max_size", 2))
-                except Exception:
-                    max_size = 2
+                # S13: FAIL-OPEN — pty_pool_max_size defaults to 2
+                max_size = self.feature_flags.pty_pool_max_size if self.feature_flags is not None else 2
                 self.pty_pool = PtyPool(max_size=max_size, base_cwd=self.workspace_root, run_id=self.run_id)
             except Exception as exc:  # noqa: BLE001 # graceful degradation, fallback to stateless subprocess
                 logger.warning(f"Failed to init PtyPool: {exc}, fallback to subprocess")
@@ -506,13 +543,8 @@ class SessionState:
         artifact_id: str | None = None
         try:
             if self.artifact_store is not None:
-                # If result summary or result dict large, offload
-                threshold = 8000
-                try:
-                    if self.feature_flags is not None:
-                        threshold = getattr(self.feature_flags, "offload_threshold", 8000)
-                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
-                    pass
+                # S13: FAIL-OPEN — offload_threshold defaults to 8000
+                threshold = self.feature_flags.offload_threshold if self.feature_flags is not None else 8000
                 full_output = json.dumps(content, ensure_ascii=False, default=str)
                 if len(full_output) > threshold:
                     artifact_id = self.artifact_store.put(content)

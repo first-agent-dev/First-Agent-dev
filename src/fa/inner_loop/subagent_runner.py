@@ -22,15 +22,15 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-import fastjsonschema
-
-logger = logging.getLogger(__name__)
+import fastjsonschema  # type: ignore[import-untyped]
 
 from fa.inner_loop.subagent_envelope import (
     SubagentEnvelope,
     validate_envelope,
     write_envelope_artifact,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SubagentRunner:
@@ -73,7 +73,7 @@ class SubagentRunner:
 
             session = get_current_session()
             if session is not None:
-                ff = getattr(session, "feature_flags", None)
+                ff = session.feature_flags if session is not None else None
                 if ff is not None:
                     ff_max = getattr(ff, "max_subagent_spawns_per_session", None)
                     if isinstance(ff_max, int) and ff_max >= 0:
@@ -89,31 +89,31 @@ class SubagentRunner:
         return 3
 
     def _check_spawn_limit(self) -> None:
-        """Enforce max_subagent_spawns_per_session via SessionState if available."""
+        """Enforce the session limit, falling back to an instance counter if needed."""
         try:
             from fa.inner_loop.context import get_current_session
 
             session = get_current_session()
-            if session is not None:
-                count = getattr(session, "subagent_spawns", 0)
-                max_spawns = self._resolve_max_spawns()
-                if count >= max_spawns:
-                    raise RuntimeError(
-                        f"Subagent spawn limit {max_spawns} reached (current {count}), "
-                        f"1 subagent sequential limit for v0.1 pair over autonomy"
-                    )
-                try:
-                    if hasattr(session, "increment_subagent_spawns"):
-                        session.increment_subagent_spawns()  # type: ignore[union-attr]
-                    else:
-                        session.subagent_spawns = count + 1
-                except Exception as exc:  # noqa: BLE001 - increment best-effort
-                    logger.warning(f"increment_subagent_spawns failed: {exc}")
-                return
-        except RuntimeError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - graceful fallback
-            logger.warning(f"Failed to check SessionState spawn counter: {exc}, using instance counter")
+        except Exception as exc:  # noqa: BLE001 - context lookup is a fallback boundary
+            logger.warning("Failed to check SessionState spawn counter: %s, using instance counter", exc)
+            session = None
+
+        if session is not None:
+            count = session.subagent_spawns
+            max_spawns = self._resolve_max_spawns()
+            if count >= max_spawns:
+                raise RuntimeError(
+                    f"Subagent spawn limit {max_spawns} reached (current {count}), "
+                    "1 subagent sequential limit for v0.1 pair over autonomy"
+                )
+            try:
+                if hasattr(session, "increment_subagent_spawns"):
+                    session.increment_subagent_spawns()
+                else:
+                    session.subagent_spawns = count + 1
+            except Exception as exc:  # noqa: BLE001 - increment best-effort
+                logger.warning("increment_subagent_spawns failed: %s", exc)
+            return
 
         max_spawns = self._resolve_max_spawns()
         if self._instance_spawn_count >= max_spawns:
@@ -137,8 +137,8 @@ class SubagentRunner:
             try:
                 if session is not None and session.feature_flags is not None:
                     include_plans = session.feature_flags.blackboard_filtered_history_include_plans
-            except Exception as exc:  # best-effort feature flag load
-                logger.warning(f"blackboard_filtered_history_include_plans flag check failed: %s", exc)
+            except (AttributeError, TypeError) as exc:
+                logger.warning("blackboard_filtered_history_include_plans flag check failed: %s", exc)
 
             # For v0.1 minimal surface, keep file-based only unless flag True
             # build_filtered_history already handles fallback chain:
@@ -147,7 +147,7 @@ class SubagentRunner:
             # If include_plans flag True, append latest 3 plan entries from blackboard (600 tokens)
             if include_plans:
                 try:
-                    bb = getattr(session, "blackboard", None) if session is not None else None
+                    bb = session.blackboard if session is not None else None
                     plans = bb.query(type="plan") if bb is not None else []
                     # Latest 3
                     for plan in plans[-3:]:
@@ -334,7 +334,11 @@ class SubagentRunner:
         except Exception as exc:  # noqa: BLE001 - artifact write best-effort
             logger.warning(f"Failed to write subagent artifact for {task_id}: {exc}")
 
-        # Worklog aggregation
-        self._append_to_worklog(envelope)
+        # Worklog aggregation is a mirror/summary boundary; it must not erase a
+        # valid subagent result when the worklog sink is unavailable.
+        try:
+            self._append_to_worklog(envelope)
+        except Exception as exc:  # noqa: BLE001 - worklog is best-effort
+            logger.warning("Failed to aggregate subagent worklog for %s: %s", task_id, exc)
 
         return envelope

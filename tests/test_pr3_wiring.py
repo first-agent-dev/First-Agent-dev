@@ -20,7 +20,7 @@ from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.providers import ProviderChain
-from tests.fixtures.session_wiring import make_test_chain_config, mock_success_response, require_log
+from tests.fixtures.session_wiring import make_test_chain_config, mock_success_response
 
 
 @pytest.fixture

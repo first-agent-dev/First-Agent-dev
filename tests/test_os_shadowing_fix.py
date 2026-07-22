@@ -14,8 +14,6 @@ Kill-check: re-introducing `import os` inside _cmd_run makes this test fail.
 
 from __future__ import annotations
 
-import inspect
-
 from fa.cli import _cmd_run
 
 

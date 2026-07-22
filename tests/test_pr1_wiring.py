@@ -16,7 +16,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
@@ -31,7 +30,6 @@ def mock_session_state(tmp_path: Path) -> SessionState:
         workspace_root=tmp_path,
         run_id="test-pr1-run",
         log=log,
-        feature_flags=FeatureFlags(context_budget_enabled=True, context_compaction_enabled=False),
     )
 
 

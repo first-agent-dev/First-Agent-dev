@@ -12,10 +12,10 @@ Prior art: Cursor Rules globs + alwaysApply false.
 from __future__ import annotations
 
 import fnmatch
+import logging
 import re
 from pathlib import Path
 from typing import Any
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def _parse_frontmatter_yaml(path: Path) -> dict[str, Any]:
 
         # Try yaml.safe_load
         try:
-            import yaml  # type: ignore
+            import yaml
 
             data = yaml.safe_load(frontmatter_raw)
             if isinstance(data, dict):

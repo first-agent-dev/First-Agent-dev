@@ -16,23 +16,22 @@ Skill: knowledge/skills/tests-writing/SKILL.md
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock
-
-import pytest
 
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.tools import build_baseline_registry
-from fa.providers import ChainConfig, ProviderChain
+from fa.providers import ProviderChain
 from tests.fixtures.session_wiring import (
+    make_test_chain_config,
     make_tool_call,
     mock_response_with_tools,
     mock_success_response,
     require_log,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test 1 — PTY session listing
@@ -66,11 +65,9 @@ def test_list_tasks_finds_pty_session(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
 
@@ -95,7 +92,7 @@ def test_list_tasks_finds_pty_session(tmp_path: Path) -> None:
     tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.list_tasks"]
     assert len(tr) == 1, "Expected exactly one fs.list_tasks tool_result event"
 
-    result = tr[0].content.get("result") or {}
+    result = cast(dict[str, Any], tr[0].content.get("result") or {})
     tasks = result.get("tasks", [])
     pty_tasks = [t for t in tasks if t.get("type") == "pty"]
     assert len(pty_tasks) >= 1, f"Expected at least 1 PTY task, got {tasks}"
@@ -132,11 +129,9 @@ def test_list_tasks_finds_subagent_artifact(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
 
@@ -160,11 +155,13 @@ def test_list_tasks_finds_subagent_artifact(tmp_path: Path) -> None:
     tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.list_tasks"]
     assert len(tr) == 1
 
-    result = tr[0].content.get("result") or {}
+    result = cast(dict[str, Any], tr[0].content.get("result") or {})
     tasks = result.get("tasks", [])
     subagent_tasks = [t for t in tasks if t.get("type") == "subagent"]
     assert len(subagent_tasks) >= 1, f"Expected at least 1 subagent task, got {tasks}"
-    assert any(t.get("id") == "t-1" for t in subagent_tasks), f"Expected 't-1' subagent task, got {subagent_tasks}"
+    assert any(t.get("id") == "t-1" for t in subagent_tasks), (
+        f"Expected 't-1' subagent task, got {subagent_tasks}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -197,17 +194,15 @@ def test_list_tasks_finds_worktree_dir(tmp_path: Path) -> None:
         feature_flags=FeatureFlags(),
     )
     # Attach worktree_manager to session so fs.list_tasks can find it
-    state.worktree_manager = mock_wm  # type: ignore[attr-defined]
+    state.worktree_manager = mock_wm
 
     registry = build_baseline_registry(tmp_path)
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
 
@@ -231,11 +226,13 @@ def test_list_tasks_finds_worktree_dir(tmp_path: Path) -> None:
     tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.list_tasks"]
     assert len(tr) == 1
 
-    result = tr[0].content.get("result") or {}
+    result = cast(dict[str, Any], tr[0].content.get("result") or {})
     tasks = result.get("tasks", [])
     worktree_tasks = [t for t in tasks if t.get("type") == "worktree"]
     assert len(worktree_tasks) >= 1, f"Expected at least 1 worktree task, got {tasks}"
-    assert any(t.get("id") == "agent-1" for t in worktree_tasks), f"Expected 'agent-1' worktree task, got {worktree_tasks}"
+    assert any(t.get("id") == "agent-1" for t in worktree_tasks), (
+        f"Expected 'agent-1' worktree task, got {worktree_tasks}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -263,11 +260,9 @@ def test_list_tasks_empty_when_no_pool_or_manager(tmp_path: Path) -> None:
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = MagicMock(spec=ChainConfig)
-    mock_chain.config.context_limit = 150000
-    mock_chain.config.compaction_threshold = None
-    mock_chain.config.model = "test"
-    mock_chain.config.family = "openai"
+    mock_chain.config = make_test_chain_config(
+        model="test",
+    )
 
     tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
 
@@ -291,7 +286,7 @@ def test_list_tasks_empty_when_no_pool_or_manager(tmp_path: Path) -> None:
     tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.list_tasks"]
     assert len(tr) == 1
 
-    result = tr[0].content.get("result") or {}
+    result = cast(dict[str, Any], tr[0].content.get("result") or {})
     tasks = result.get("tasks", [])
     # No pty_pool, no worktree_manager, no subagent artifacts -> should be empty
     # (might have subagent artifacts if tmp_path has .fa/subagents but we didn't create any)
