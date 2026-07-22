@@ -10,12 +10,13 @@ Phase 1: build_registry_for_role + estimate_tokens implemented, glob/grep added
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fa.inner_loop.registry import ToolRegistry
-import logging
+from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +77,7 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
     },
     "planner": {
         "description": (
-            "Architect/Planner, read-only analysis + limited write to research docs "
-            "for filesystem-canon plans"
+            "Architect/Planner, read-only analysis + limited write to research docs for filesystem-canon plans"
         ),
         "tools": ["fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep", "fs.write_file"],
         "max_tokens": 1000,
@@ -104,14 +104,54 @@ TYPED_PROFILES: dict[str, RoleProfile] = {
 }
 
 
-def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[str, Any]:
+def _add_optional_tool_builders(builders: dict[str, Callable[[], ToolSpec]], root: Path) -> None:
+    # edit_file may not exist yet, placeholder
+    try:
+        # Try to import if exists in future
+        from fa.inner_loop.tools.edit_file import build_edit_file_tool
+
+        builders["fs.edit_file"] = lambda: build_edit_file_tool(root)
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable, edit_file optional
+        logger.warning(f"edit_file builder not available: {exc}")
+
+    # Observability + pair tools (from Stage 0)
+    try:
+        from fa.inner_loop.tools.observability import (
+            build_chronicle_search_tool,
+            build_list_tasks_tool,
+            build_usage_tool,
+        )
+
+        builders["fs.chronicle_search"] = lambda: build_chronicle_search_tool()
+        builders["fs.usage"] = lambda: build_usage_tool()
+        builders["fs.list_tasks"] = lambda: build_list_tasks_tool()
+    except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
+        pass
+
+    try:
+        from fa.inner_loop.tools.pair_tools import (
+            build_checkpoint_tool,
+            build_diff_tool,
+            build_send_ctrl_c_tool,
+            build_undo_tool,
+        )
+
+        builders["fs.checkpoint"] = lambda: build_checkpoint_tool(root)
+        builders["fs.undo"] = lambda: build_undo_tool(root)
+        builders["fs.diff"] = lambda: build_diff_tool(root)
+        builders["fs.send_ctrl_c"] = lambda: build_send_ctrl_c_tool()
+    except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
+        pass
+
+
+def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[str, Callable[[], ToolSpec]]:
     """Map tool name -> builder lambda, uses existing builders, graceful degradation.
 
     For Phase 1, we have: read_file, write_file, run_bash, glob, grep, instant_grep,
     chronicle_search, usage, list_tasks, checkpoint, undo, diff, send_ctrl_c.
     Glob/grep are new in Phase 1 (user decision add_glob_grep_now).
     """
-    builders: dict[str, Any] = {}
+    builders: dict[str, Callable[[], ToolSpec]] = {}
     root = Path(workspace_root).resolve()
 
     # Lazy imports to avoid circular and missing deps
@@ -128,13 +168,13 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
         builders["fs.write_file"] = lambda: build_write_file_tool(root)
 
         # Limited write for planner: allowlist knowledge/research/ + .fa/
-        def _build_limited_write():
+        def _build_limited_write() -> ToolSpec:
             base_spec = build_write_file_tool(root)
             allowed_prefixes = ["knowledge/research/", ".fa/"]
 
             orig_handler = base_spec.handler
 
-            def limited_handler(params):
+            def limited_handler(params: Mapping[str, object]) -> ToolResult:
                 # Check path allowlist compliance-by-construction
                 try:
                     p = params.get("path", "")
@@ -205,51 +245,17 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
         # Wired to feature flag fts_db_path (was dead flag, now active)
         try:
             from fa.feature_flags import load_feature_flags_from_path
+
             ff = load_feature_flags_from_path().flags
             fts_path = getattr(ff, "fts_db_path", ".fa/fts.db")
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — missing optional FTS config uses deterministic default
+            logger.warning("Feature-flag FTS path unavailable: %s; using .fa/fts.db", exc)
             fts_path = ".fa/fts.db"
         builders["fs.instant_grep"] = lambda: build_instant_grep_tool(root / fts_path, root)
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs.instant_grep: {exc}")
 
-    # edit_file may not exist yet, placeholder
-    try:
-        # Try to import if exists in future
-        from fa.inner_loop.tools.edit_file import build_edit_file_tool  # type: ignore[import-not-found]
-
-        builders["fs.edit_file"] = lambda: build_edit_file_tool(root)
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable, edit_file optional
-        logger.warning(f"edit_file builder not available: {exc}")
-
-    # Observability + pair tools (from Stage 0)
-    try:
-        from fa.inner_loop.tools.observability import (
-            build_chronicle_search_tool,
-            build_list_tasks_tool,
-            build_usage_tool,
-        )
-
-        builders["fs.chronicle_search"] = lambda: build_chronicle_search_tool()
-        builders["fs.usage"] = lambda: build_usage_tool()
-        builders["fs.list_tasks"] = lambda: build_list_tasks_tool()
-    except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
-        pass
-
-    try:
-        from fa.inner_loop.tools.pair_tools import (
-            build_checkpoint_tool,
-            build_diff_tool,
-            build_send_ctrl_c_tool,
-            build_undo_tool,
-        )
-
-        builders["fs.checkpoint"] = lambda: build_checkpoint_tool(root)
-        builders["fs.undo"] = lambda: build_undo_tool(root)
-        builders["fs.diff"] = lambda: build_diff_tool(root)
-        builders["fs.send_ctrl_c"] = lambda: build_send_ctrl_c_tool()
-    except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
-        pass
+    _add_optional_tool_builders(builders, root)
 
     return builders
 
@@ -312,7 +318,7 @@ def estimate_tokens(registry: ToolRegistry) -> int:
     except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         # Fallback if registry API different
         try:
-            specs = getattr(registry, "all_specs", lambda: [])()
+            specs: list[ToolSpec] = getattr(registry, "all_specs", lambda: [])()
             for spec in specs:
                 total_chars += len(spec.description)
         except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING

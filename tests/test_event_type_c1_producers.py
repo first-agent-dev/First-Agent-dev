@@ -22,17 +22,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState
 from fa.inner_loop.coder_loop import drive_session
-from fa.inner_loop.hooks import HookRegistry, IntentGuard
+from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSpec
 from fa.output import EventBus, OutputEvent
-from fa.providers import ChainConfig
 from fa.providers.base import ResponseInfo
 from tests.fixtures.session_wiring import make_mock_chain, mock_success_response
 
@@ -51,12 +49,10 @@ def _make_session_with_output(
     tmp_path: Path,
     *,
     budget_enabled: bool = True,
-    compaction_enabled: bool = False,
 ) -> tuple[SessionState, EventBus, _Capture]:
     """Create session state + output bus with capture listener."""
     flags = FeatureFlags(
         context_budget_enabled=budget_enabled,
-        context_compaction_enabled=compaction_enabled,
     )
     log = EventLog(tmp_path / "events.jsonl", run_id="test-c1")
     state = SessionState(
@@ -71,7 +67,7 @@ def _make_session_with_output(
     return state, bus, capture
 
 
-def _mock_response_with_tools(tool_calls: list[dict]) -> tuple:
+def _mock_response_with_tools(tool_calls: list[dict[str, Any]]) -> tuple[ResponseInfo, str, list[Any]]:
     resp = ResponseInfo(
         text="",
         in_tokens=100,
@@ -303,7 +299,7 @@ def test_subagent_events_emitted_via_output_bus(tmp_path: Path) -> None:
 
     # Mock SubagentRunner to avoid needing a real one
     # It's imported locally inside the handler, so patch at the source module
-    with patch("fa.inner_loop.subagent_runner.SubagentRunner") as MockRunner:
+    with patch("fa.inner_loop.subagent_runner.SubagentRunner") as mock_runner_class:
         from fa.inner_loop.subagent_envelope import SubagentEnvelope
 
         mock_runner = MagicMock()
@@ -315,7 +311,7 @@ def test_subagent_events_emitted_via_output_bus(tmp_path: Path) -> None:
             role="verifier",
         )
         mock_runner.run_stateless.return_value = mock_envelope
-        MockRunner.return_value = mock_runner
+        mock_runner_class.return_value = mock_runner
 
         tool = build_spawn_subagent_tool(tmp_path)
         result = tool.handler({

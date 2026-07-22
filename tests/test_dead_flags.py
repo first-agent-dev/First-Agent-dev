@@ -9,12 +9,8 @@ Kill-check: removing a FeatureFlags field makes script report it as dead
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from scripts.check_dead_flags import check_dead_flags, main
 
@@ -23,17 +19,19 @@ class TestDeadFlagsUnit:
     """Unit tests for check_dead_flags() against real repo."""
 
     def test_no_dead_flags_on_clean_tree(self) -> None:
-        """All 12 FeatureFlags fields should have ≥1 production reference."""
+        """All active FeatureFlags fields should have ≥1 production reference."""
         result = check_dead_flags(Path.cwd())
         assert result["dead_count"] == 0, (
             f"Dead flags found: {[f['name'] for f in result['declared_fields'] if f['is_dead']]}"
         )
 
-    def test_all_12_fields_present(self) -> None:
-        """FeatureFlags should have exactly 12 declared fields."""
+    def test_all_current_fields_present(self) -> None:
+        """FeatureFlags should expose the current 13-field schema."""
         result = check_dead_flags(Path.cwd())
         declared_names = [f["name"] for f in result["declared_fields"]]
         assert len(declared_names) == 13, f"Expected 13 fields, got {len(declared_names)}: {declared_names}"
+        deprecated = [f["name"] for f in result["declared_fields"] if f["is_deprecated"]]
+        assert deprecated == []
 
     def test_no_phantom_flags_on_clean_tree(self) -> None:
         """After declaring blackboard_filtered_history_include_plans, there should be no phantom flags."""
@@ -55,7 +53,10 @@ class TestDeadFlagsUnit:
         """Every declared field should have usage_count > 0."""
         result = check_dead_flags(Path.cwd())
         for f in result["declared_fields"]:
-            assert f["usage_count"] > 0, f"Field {f['name']} has 0 usage refs"
+            if f["is_deprecated"]:
+                assert f["usage_count"] == 0
+            else:
+                assert f["usage_count"] > 0, f"Field {f['name']} has 0 usage refs"
 
 
 class TestDeadFlagsCLI:

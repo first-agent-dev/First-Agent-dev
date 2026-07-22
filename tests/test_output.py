@@ -136,6 +136,42 @@ def test_console_no_color() -> None:
     assert r._c("31", "red") == "red"
 
 
+def test_console_config_warning_consumer() -> None:
+    """C0 consumer paired with the config-warning C1 producer."""
+    buf = StringIO()
+    r = ConsoleRenderer(detail="standard")
+    with patch.object(r, "_write", side_effect=lambda t: buf.write(t + "\n")):
+        r.on_event(
+            _event(
+                "config_warning",
+                key="context_compaction_enabled",
+                detail="deprecated and ignored",
+                line_no=2,
+            )
+        )
+    out = buf.getvalue()
+    assert "context_compaction_enabled" in out
+    assert "deprecated and ignored" in out
+
+
+def test_console_compaction_warning_consumes_enablement_fields() -> None:
+    """C0 consumer paired with compaction C1 producer tests."""
+    buf = StringIO()
+    r = ConsoleRenderer(detail="standard")
+    with patch.object(r, "_write", side_effect=lambda t: buf.write(t + "\n")):
+        r.on_event(
+            _event(
+                "compaction_warning",
+                compaction_enabled=False,
+                threshold=None,
+                action="stage2",
+            )
+        )
+    out = buf.getvalue()
+    assert "compaction disabled" in out
+    assert "stage2" in out
+
+
 def test_console_session_end() -> None:
     buf = StringIO()
     r = ConsoleRenderer(detail="standard")

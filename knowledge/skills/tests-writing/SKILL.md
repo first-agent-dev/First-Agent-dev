@@ -489,3 +489,137 @@ Path inventory:
 - **I-TW-18** C0 consumer-only tests are theater without C1 producer pair.
 - **I-TW-19** Contract check script MUST pass in CI for every PR touching EventTypes.
 - **I-TW-20** Never mock dataclass config objects (ChainConfig, ChainEntry, CooldownRow, etc.). Use real instances via make_test_chain_config(). Only mock objects with behavior (ProviderChain, Provider, Transport). Guard: scripts/check_no_mocked_dataclasses.py
+
+---
+
+## 16. Static-quality and configuration-contract patterns
+
+These patterns apply when an AI-authored change touches typing, dependencies,
+feature flags, or quality-gate configuration. A green command is not enough;
+the test must prove the intended contract and fail when the producer/config
+source is removed.
+
+### 16.1 Strict typing: type the boundary, not the symptom
+
+Prefer a typed adapter or a narrowed composition-root value over a broad
+`# type: ignore`.
+
+```python
+# Good: narrow once at the integration boundary.
+log = state.log
+if log is None:
+    raise RuntimeError("session log is required before drive_session")
+
+# Good: external untyped package is isolated and named.
+from vendor import client  # type: ignore[import-not-found]  # optional backend; adapter below
+
+# Bad: hides all downstream errors.
+# mypy: ignore-errors
+# type: ignore
+```
+
+Required proof for a strict-typing change:
+
+1. run the type checker on the actual source tree, not installed package copies;
+2. verify module identity exactly once (`module.__file__` under `src/`);
+3. type shared fixtures before mass-editing tests;
+4. use `Protocol`/typed result objects at untyped boundaries;
+5. retain the exact error code on every ignore and a reason for the boundary;
+6. add a negative check that removing the narrowing/adapter reintroduces the
+   original type error.
+
+### 16.2 Optional dependencies: runtime policy and deptry policy must agree
+
+An import guarded by `try/except ImportError` is not automatically a valid
+optional dependency. Choose and test one contract:
+
+```python
+try:
+    import optional_backend
+except ImportError:
+    optional_backend = None
+
+if optional_backend is None:
+    return ToolResult.fail(
+        "unsupported_backend",
+        "PDF support is not installed; use a text format or install the approved extra",
+        retryable=False,
+    )
+```
+
+The dependency must then be either:
+
+- declared in the supported extra and locked; or
+- isolated behind an explicitly deferred adapter with a structured unavailable
+  result and a deptry configuration/test that explains why it is absent.
+
+Never suppress DEP001/DEP003 solely because a package is transitive or because
+an import is inside `try`. Direct imports used by production code require a
+first-party dependency decision.
+
+### 16.3 Configuration thresholds: test the full matrix and the observable decision
+
+A numeric threshold may intentionally be the feature's enable switch when
+minimalism is the contract. Make that explicit and do not retain a redundant
+boolean flag.
+
+```python
+compaction_enabled = config.compaction_threshold is not None
+threshold = config.compaction_threshold  # presence enables; value tunes
+```
+
+Minimum C1 matrix:
+
+| Threshold | Required oracle |
+|---:|---|
+| absent | no compaction producer; structured warning says disabled/unconfigured |
+| present and valid | compaction producer fires using the exact configured threshold |
+| present but invalid/out of range | config fails or emits a structured diagnostic; no silent enable |
+
+Assert EventLog/session DB and EventBus consistency. A test that only inspects
+the final text or only constructs a config object is incomplete. If a legacy
+boolean key exists, test that it is warned about and ignored, never used as a
+second decision source.
+
+### 16.4 Configuration migration: legacy input must be observable
+
+When removing or renaming a configuration key:
+
+1. test valid current input;
+2. test legacy input;
+3. define warn/ignore, fail, or deterministic migration behavior;
+4. assert the structured warning/error reaches the operator/session authority;
+5. prove the legacy value cannot silently change the new decision;
+6. update schema, `as_dict`, fail-open/closed sets, fixtures, and docs together.
+
+A parser warning that is only sent to a Python logger is not sufficient when
+session DB/EventLog is the project authority.
+
+### 16.5 Quality-gate configuration: test the gate itself
+
+For every new or changed gate, add:
+
+- a clean-tree pass test;
+- a minimal synthetic violation test;
+- a test proving the gate is invoked by `just check`/CI;
+- a test proving a global suppression does not hide the violation, unless the
+  suppression is an explicit reviewed policy decision;
+- a report of advisory versus blocking semantics.
+
+Do not turn a blocking finding into an ignore without recording the lost
+capability and a replacement signal.
+
+### 16.6 Live-path completion for “feature added but never run”
+
+If a feature has never been exercised against the real composition root, its
+status is L1/L2, not shipped. Add a deterministic offline C1 test that boots
+`drive_session`, mocks only provider I/O, uses real `ContextBudget`, real
+`EventLog`, real `EventBus`, and real `FeatureFlags`/`ChainConfig`. The test
+must assert:
+
+- the configuration decision;
+- the producer event and its fields;
+- the consumer-visible event;
+- session DB/EventLog persistence;
+- provider call count/early-stop where relevant;
+- the negative path when the feature is disabled.

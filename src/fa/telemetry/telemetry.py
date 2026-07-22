@@ -7,11 +7,11 @@ Senior refactor: field-level truncation always valid JSON, never cut raw JSON
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
-import logging
 
 logger = logging.getLogger(__name__)
 

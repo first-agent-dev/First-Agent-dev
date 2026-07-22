@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import importlib
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import optional_int, require_string, resolve_workspace_path
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ def _read_pdf_text(path: Path) -> str | None:
     """
     # Try pymupdf (fitz) first - fastest, best for text tables
     try:
-        import fitz  # type: ignore[import-untyped]
+        fitz = importlib.import_module("fitz")
 
         doc = fitz.open(str(path))
         texts = []
@@ -39,9 +40,9 @@ def _read_pdf_text(path: Path) -> str | None:
 
     # Try pdfminer.six as fallback
     try:
-        from pdfminer.high_level import extract_text  # type: ignore[import-untyped]
+        pdfminer_high_level = importlib.import_module("pdfminer.high_level")
 
-        text = extract_text(str(path))
+        text = str(pdfminer_high_level.extract_text(str(path)))
         if text and len(text.strip()) > 50:
             return text
     except ImportError:
@@ -52,9 +53,9 @@ def _read_pdf_text(path: Path) -> str | None:
 
     # Try pypdf as last fallback
     try:
-        from pypdf import PdfReader  # type: ignore[import-untyped]
+        pypdf = importlib.import_module("pypdf")
 
-        reader = PdfReader(str(path))
+        reader = pypdf.PdfReader(str(path))
         texts = []
         for page in reader.pages:
             try:
@@ -82,7 +83,7 @@ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
             path = resolve_workspace_path(root, require_string(data, "path"))
             start_line = optional_int(data, "start_line")
             end_line = optional_int(data, "end_line")
-        except ValueError as exc:
+        except (ValueError, PermissionError) as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
         # Handle PDF via dedicated extractor for user data 01-11.pdf compatibility
@@ -146,7 +147,10 @@ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
 
     return ToolSpec(
         name="fs.read_file",
-        description="Read UTF-8 file or PDF (via pymupdf/pdfminer fallback) inside workspace. Declares read_set for blackboard/transaction. For PDF tables, extracts text per page.",
+        description=(
+            "Read UTF-8 files or PDFs inside the workspace, using pymupdf/pdfminer fallback. "
+            "Declares read_set for blackboard/transaction and extracts PDF text per page."
+        ),
         input_schema={
             "type": "object",
             "required": ["path"],

@@ -8,9 +8,9 @@ S110/S112 with WARNING, E501 wrapped  # noqa: E501
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
-import logging
 
 logger = logging.getLogger(__name__)
 

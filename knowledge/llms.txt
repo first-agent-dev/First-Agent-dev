@@ -27,7 +27,7 @@ Task type → primary entrypoint, then secondary:
 - Edit exploration_log.md → schema in knowledge/README.md §trace/
 - Any PR → knowledge/skills/pr-creation/SKILL.md (5-intent classifier + PR Checklist)
 - Relocate / rename a module? → grep knowledge/anti-patterns/README.md first; AP-001 is canonical path-bypass trap
-- Deploy / operate / administer the AIO → knowledge/instructions/README.md (human start-here index)
+- Deploy / operate / administer the AIO → knowledge/instructions/README.md (human start-here index); live CI/security/governance execution → knowledge/instructions/03-live-server-ci-governance-plan-ru.md
 - Move / prune a doc? → knowledge/skills/doc-maintenance/SKILL.md §When moving or pruning a doc (fix every reference in same PR; no dangling links)
 - Specific number / date / quote → primary source from `source:` frontmatter, NOT a summary. Per AGENTS.md §Query Routing
 
@@ -62,6 +62,10 @@ This section is deprecated as of ADR-14/15 (2026-07-11). Previously full per-fol
 - Maintenance burden: When adding/removing file under docs/ or knowledge/, previously had to update llms.txt BY-DEMAND INDEX manually per doc-maintenance skill. Now BY-DEMAND INDEX auto-generated from blackboard or not needed — query blackboard instead.
 - Token waste: Previously, agent might read entire BY-DEMAND INDEX full list (hundreds of files) to find one file, token heavy. Now query returns 10 paths <50ms.
 - Formal substrate has content_hash, read_set/write_set, version_dependencies for reproducibility, llms.txt does not.
+
+**Maintained operator additions:**
+
+- [`knowledge/instructions/03-live-server-ci-governance-plan-ru.md`](./instructions/03-live-server-ci-governance-plan-ru.md): Russian live-server plan for CI/security simulation, shipped harness verification, GitHub governance, worktree review, and patch application.
 
 **What to use instead:**
 

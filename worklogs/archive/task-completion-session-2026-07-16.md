@@ -176,7 +176,7 @@ code state after PR #53 merge (HEAD `8f3b35d`):
 - `scripts/fa-entrypoint.sh`, `scripts/fa-update.sh`, `scripts/fa-post-setup.sh`
 - `scripts/fa-clean-rebuild.sh`, `scripts/setup-fa-desktop.sh`
 - `scripts/fa-normalize-env.sh`, `scripts/backup-fa.sh`, `scripts/fa`
-- `scripts/fa.service`, `scripts/fa-host-layout-audit.py`
+- `scripts/fa.service`, `scripts/fa_host_layout_audit.py`
 - `.env.fa.template`, `knowledge/templates/fa.env.template`
 - `knowledge/templates/models.yaml.example`, `knowledge/templates/config.yaml.example`
 

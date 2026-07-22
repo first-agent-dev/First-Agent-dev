@@ -17,14 +17,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolResult, ToolSpec
-from tests.fixtures.session_wiring import make_test_chain_config
 from fa.providers import ProviderChain
 from fa.providers.base import ResponseInfo
+from tests.fixtures.session_wiring import make_test_chain_config
 
 
 @pytest.fixture
@@ -34,7 +33,6 @@ def mock_session_state(tmp_path: Path) -> SessionState:
         workspace_root=tmp_path,
         run_id="test-pr5-run",
         log=log,
-        feature_flags=FeatureFlags(context_budget_enabled=True, context_compaction_enabled=True),
     )
 
 

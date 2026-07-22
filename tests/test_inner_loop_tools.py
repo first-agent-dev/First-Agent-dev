@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from pytest import MonkeyPatch
@@ -223,8 +224,9 @@ def test_grep_tool_returns_matched_lines_with_numbers(tmp_path: Path) -> None:
 
     assert result.error is None
     assert "found 1 lines" in result.summary
-    assert "matches" in result.result
-    matches = result.result["matches"]
+    result_data = cast(dict[str, Any], result.result or {})
+    assert "matches" in result_data
+    matches = result_data["matches"]
     assert len(matches) == 1
     assert matches[0]["path"] == "test.py"
     assert matches[0]["line"] == 2

@@ -11,14 +11,9 @@ Verifies:
 from __future__ import annotations
 
 import dataclasses
-import inspect
 from pathlib import Path
-from typing import get_type_hints
-
-import pytest
 
 from fa.inner_loop.state import SessionState
-
 
 STATE_PATH = Path("src/fa/inner_loop/state.py")
 
@@ -26,7 +21,7 @@ STATE_PATH = Path("src/fa/inner_loop/state.py")
 # ── Kill-check 1: Only pty_pool has Any | None ──────────────────────
 
 
-def test_only_pty_pool_has_any_none():
+def test_only_pty_pool_has_any_none() -> None:
     """In the SessionState class, only pty_pool should have Any | None.
     All other fields must be typed with their real types."""
     content = STATE_PATH.read_text(encoding="utf-8")
@@ -53,7 +48,7 @@ def test_only_pty_pool_has_any_none():
 # ── Kill-check 2: bash_executor is a declared field ─────────────────
 
 
-def test_bash_executor_field_exists():
+def test_bash_executor_field_exists() -> None:
     """bash_executor must be a declared field on SessionState as
     BashExecutor | None = None (user Q1: standardize approach, no getattr)."""
     field_names = {f.name for f in dataclasses.fields(SessionState)}
@@ -65,7 +60,7 @@ def test_bash_executor_field_exists():
 # ── Kill-check 3: TYPE_CHECKING imports include BashExecutor ─────────
 
 
-def test_type_checking_imports_bash_executor():
+def test_type_checking_imports_bash_executor() -> None:
     """state.py must import BashExecutor under TYPE_CHECKING."""
     content = STATE_PATH.read_text(encoding="utf-8")
     assert "from fa.runtime.bash_executor import BashExecutor" in content, (
@@ -76,7 +71,7 @@ def test_type_checking_imports_bash_executor():
 # ── Kill-check 4: Typed fields present in source ───────────────────
 
 
-def test_typed_fields_in_source():
+def test_typed_fields_in_source() -> None:
     """The source code must have real type annotations for the 8 typed fields."""
     content = STATE_PATH.read_text(encoding="utf-8")
     expected_types = {
@@ -99,7 +94,7 @@ def test_typed_fields_in_source():
 # ── Kill-check 5: SessionState construction works ───────────────────
 
 
-def test_session_state_construction(tmp_path: Path):
+def test_session_state_construction(tmp_path: Path) -> None:
     """SessionState must still construct normally with the typed fields."""
     state = SessionState(workspace_root=tmp_path, run_id="test-s11")
     assert state.transaction is not None
@@ -111,7 +106,7 @@ def test_session_state_construction(tmp_path: Path):
 # ── Kill-check 6: No circular import at runtime ─────────────────────
 
 
-def test_no_runtime_import_of_typed_modules():
+def test_no_runtime_import_of_typed_modules() -> None:
     """The TYPE_CHECKING imports should NOT cause runtime imports.
     Verify by checking that importing state.py doesn't trigger imports
     of the heavy modules (Blackboard, TelemetryLogger, etc.)."""
@@ -122,6 +117,7 @@ def test_no_runtime_import_of_typed_modules():
 
     # Re-import state
     import importlib
+
     import fa.inner_loop.state
     importlib.reload(fa.inner_loop.state)
 

@@ -10,17 +10,17 @@ Verifies that:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolResult, ToolSpec
-from tests.fixtures.session_wiring import mock_success_response, mock_tool_call_response, require_log, make_test_chain_config
 from fa.providers import ProviderChain
+from tests.fixtures.session_wiring import make_test_chain_config, mock_success_response, mock_tool_call_response
 
 
 @pytest.fixture
@@ -30,7 +30,6 @@ def mock_session_state(tmp_path: Path) -> SessionState:
         workspace_root=tmp_path,
         run_id="test-pr2-run",
         log=log,
-        feature_flags=FeatureFlags(context_budget_enabled=True, context_compaction_enabled=False),
     )
 
 
@@ -128,7 +127,7 @@ def test_mid_session_file_change_reloads(tmp_path: Path, mock_session_state: Ses
     # Turn 2: modified content, returns stop
     captured_prompts = []
 
-    def _side_effect(request_info, *args, **kwargs):
+    def _side_effect(request_info: Any, *args: Any, **kwargs: Any) -> tuple[Any, str, list[Any]]:
         captured_prompts.append(request_info.messages)
         call_count = len(captured_prompts)
         if call_count == 1:

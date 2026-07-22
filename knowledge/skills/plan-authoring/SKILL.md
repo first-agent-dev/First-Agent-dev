@@ -868,3 +868,23 @@ TASK:
 
 - Defer to the project's CI authority (e.g. `just check` or equivalent)
   as the actual merge gate; this plan's DoD is necessary, not a substitute.
+
+---
+
+## 19. Addendum — forensic claim verification before plan acceptance
+
+When another agent supplies a past-tense implementation summary, treat it as a
+research note, not repository truth. Before accepting each claim:
+
+1. locate the exact file/symbol/config key;
+2. verify the diff or current source contains the claimed mechanism;
+3. run the focused gate and one negative variant;
+4. classify `present`, `partial`, `absent`, `unsafe`, or `unverified`;
+5. add a disposition row to the plan.
+
+For configuration/feature claims, build a truth table across flag, threshold,
+default, malformed, and legacy inputs. For observable claims, trace producer →
+EventLog/session DB → EventBus/renderer/consumer; consumer-only tests are not
+proof of wiring. For static gates, verify both the tool result and the command
+that invokes the tool. A plan cannot be READY while a past-tense claim is only
+supported by prose.

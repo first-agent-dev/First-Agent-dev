@@ -194,8 +194,7 @@ class FullLLMCompactor:
                 "## CURRENT\n"
                 "Active task execution continued.\n\n"
                 "## NEXT ACTION\n"
-                "Continue with the next planned step.\n\n"
-                + text
+                "Continue with the next planned step.\n\n" + text
             )
         summary_text = (
             "## PREVIOUSLY\n"

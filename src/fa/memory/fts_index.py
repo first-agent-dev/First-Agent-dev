@@ -10,11 +10,11 @@ Progressive disclosure: llms.txt map always injected (short summaries), full fil
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import time
 from pathlib import Path
-import logging
 
 logger = logging.getLogger(__name__)
 

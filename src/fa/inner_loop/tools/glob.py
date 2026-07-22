@@ -3,8 +3,8 @@
 Senior refactor (v3 review):
 - Single responsibility helpers, deterministic pure functions
 - Safety: resolved root, symlink escape check, EXCLUDE_DIRS single source
-- Intended fictions preserved: returns paths not content, token efficient limit 50, respects .gitignore, fallback pruning
-- Improved: git ls-files --cached --others --exclude-standard includes untracked respecting .gitignore (not only tracked)
+- Returns paths rather than content, uses a token-efficient limit of 50, and prunes symlinks.
+- Uses git ls-files --cached --others --exclude-standard so untracked, non-ignored files are included.
 - Matching centralized: Path.match + fnmatch basename fallback, no duplicate branches
 - No size filter (glob returns paths, size irrelevant for token efficiency)
 """
@@ -12,6 +12,7 @@ Senior refactor (v3 review):
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 import subprocess
 from collections.abc import Generator, Mapping
@@ -19,7 +20,6 @@ from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import optional_int, require_string
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +215,10 @@ def build_glob_tool(workspace_root: Path) -> ToolSpec:
 
     return ToolSpec(
         name="fs.glob",
-        description="Glob files by pattern (e.g., '**/*.py', 'src/**/*.md'), respects .gitignore via git ls-files --cached --others --exclude-standard, returns paths not content, token efficient, limit default 50 max 200.",
+        description=(
+            "Glob files by pattern, respecting .gitignore via git ls-files; returns paths "
+            "rather than content with a default limit of 50 and maximum of 200."
+        ),
         input_schema={
             "type": "object",
             "required": ["pattern"],
@@ -231,4 +234,4 @@ def build_glob_tool(workspace_root: Path) -> ToolSpec:
     )
 
 
-__all__ = ["EXCLUDE_DIRS", "build_glob_tool", "DEFAULT_LIMIT", "MAX_LIMIT"]
+__all__ = ["DEFAULT_LIMIT", "EXCLUDE_DIRS", "MAX_LIMIT", "build_glob_tool"]

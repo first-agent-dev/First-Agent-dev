@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import sys
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -87,13 +87,15 @@ def compile_summary(entries: list[dict[str, Any]]) -> dict[str, Any]:
     suggested_rules: list[dict[str, Any]] = []
     for code, data in sorted(by_code.items()):
         if data["count"] >= 2:
-            suggested_rules.append({
-                "code": code,
-                "occurrences": data["count"],
-                "candidate_rule": f"AUTO-SUGGEST: Consider creating a Level-1 rule for {code} "
-                                  f"(seen {data['count']}x). Remediation pattern: "
-                                  f"{data['remediations'][0] if data['remediations'] else 'none'}",
-            })
+            suggested_rules.append(
+                {
+                    "code": code,
+                    "occurrences": data["count"],
+                    "candidate_rule": f"AUTO-SUGGEST: Consider creating a Level-1 rule for {code} "
+                    f"(seen {data['count']}x). Remediation pattern: "
+                    f"{data['remediations'][0] if data['remediations'] else 'none'}",
+                }
+            )
 
     return {
         "total": len(entries),

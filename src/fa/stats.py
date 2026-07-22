@@ -26,16 +26,21 @@ from fa.inner_loop.state import EventLog
 from fa.output import LogKind
 
 __all__ = [
+    "UNPARSED_KINDS",
     "BashCommand",
-    "CompactionWarningRecord",
     "CircuitBreakerRecord",
+    "CompactionRecord",
+    "CompactionStartRecord",
+    "CompactionWarningRecord",
+    "ContextBudgetEvent",
     "FileAccess",
     "GuardActivity",
     "ProviderHealth",
     "SessionAnalytics",
+    "SubagentRecord",
+    "ToolError",
     "ToolUsage",
     "TurnTokens",
-    "UNPARSED_KINDS",
     "aggregate_sessions",
     "efficiency_warnings",
     "find_dead_zones",
@@ -54,16 +59,19 @@ __all__ = [
 # subagent_spawn_done/fail). Listing them explicitly makes invisibility
 # auditable — adding a new LogKind to output.py without a parser here
 # will fail the contract check.
-UNPARSED_KINDS: frozenset[LogKind] = frozenset({
-    "audit",                  # low-value — rule evaluation audit trail
-    "cost_observation",       # redundant — session_summary has totals
-    "recovery_action",        # captured by tool_result + provider_attempt
-    "service_unavailable",    # infrastructure — no structured analytics
-    "subagent_spawn_start",   # captured by subagent_spawn_done/fail
-    "telemetry",              # low-value — per-tool audit noise
-    "timeout",                # infrastructure — no structured analytics
-    "verification",           # captured by tool_result
-})
+UNPARSED_KINDS: frozenset[LogKind] = frozenset(
+    {
+        "audit",  # low-value — rule evaluation audit trail
+        "config_warning",  # operator-visible at runtime; no session analytics aggregate
+        "cost_observation",  # redundant — session_summary has totals
+        "recovery_action",  # captured by tool_result + provider_attempt
+        "service_unavailable",  # infrastructure — no structured analytics
+        "subagent_spawn_start",  # captured by subagent_spawn_done/fail
+        "telemetry",  # low-value — per-tool audit noise
+        "timeout",  # infrastructure — no structured analytics
+        "verification",  # captured by tool_result
+    }
+)
 
 # ── Data model ─────────────────────────────────────────────────────────────
 
@@ -353,39 +361,49 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 �
             if not ok:
                 error = content.get("error")
                 if isinstance(error, dict):
-                    tool_errors.append(ToolError(
-                        tool=tool_name,
-                        code=str(error.get("code", "")),
-                        message=str(error.get("message", "")),
-                    ))
+                    tool_errors.append(
+                        ToolError(
+                            tool=tool_name,
+                            code=str(error.get("code", "")),
+                            message=str(error.get("message", "")),
+                        )
+                    )
 
         # ── PR #53 observability: compaction events ───────────────────
         elif kind == "compaction_stage2_done":
-            compaction_records.append(CompactionRecord(
-                stage=2,
-                ok=True,
-                tokens_before=int(content.get("tokens_before", 0)),
-                tokens_after=int(content.get("tokens_after", 0)),
-            ))
+            compaction_records.append(
+                CompactionRecord(
+                    stage=2,
+                    ok=True,
+                    tokens_before=int(content.get("tokens_before", 0)),
+                    tokens_after=int(content.get("tokens_after", 0)),
+                )
+            )
         elif kind == "compaction_stage2_error":
-            compaction_records.append(CompactionRecord(
-                stage=2,
-                ok=False,
-                error=str(content.get("error", "")),
-            ))
+            compaction_records.append(
+                CompactionRecord(
+                    stage=2,
+                    ok=False,
+                    error=str(content.get("error", "")),
+                )
+            )
         elif kind == "compaction_stage3_done":
-            compaction_records.append(CompactionRecord(
-                stage=3,
-                ok=True,
-                tokens_before=int(content.get("tokens_before", 0)),
-                tokens_after=int(content.get("tokens_after", 0)),
-            ))
+            compaction_records.append(
+                CompactionRecord(
+                    stage=3,
+                    ok=True,
+                    tokens_before=int(content.get("tokens_before", 0)),
+                    tokens_after=int(content.get("tokens_after", 0)),
+                )
+            )
         elif kind == "compaction_stage3_error":
-            compaction_records.append(CompactionRecord(
-                stage=3,
-                ok=False,
-                error=str(content.get("error", "")),
-            ))
+            compaction_records.append(
+                CompactionRecord(
+                    stage=3,
+                    ok=False,
+                    error=str(content.get("error", "")),
+                )
+            )
 
         # ── PR #53 observability: subagent events ─────────────────────
         elif kind == "subagent_spawn_done":
@@ -395,45 +413,57 @@ def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 �
 
         # ── PR #53 observability: context budget events ───────────────
         elif kind == "context_budget_warn":
-            context_budget_events.append(ContextBudgetEvent(
-                action=str(content.get("action", "warn")),
-                pct=float(content.get("ratio", 0.0)) * 100,
-                message=str(content.get("message", "")),
-            ))
+            context_budget_events.append(
+                ContextBudgetEvent(
+                    action=str(content.get("action", "warn")),
+                    pct=float(content.get("ratio", 0.0)) * 100,
+                    message=str(content.get("message", "")),
+                )
+            )
         elif kind == "context_budget_hard_stop":
-            context_budget_events.append(ContextBudgetEvent(
-                action="hard_stop",
-                pct=float(content.get("ratio", 0.0)) * 100,
-                message=str(content.get("message", "")),
-            ))
+            context_budget_events.append(
+                ContextBudgetEvent(
+                    action="hard_stop",
+                    pct=float(content.get("ratio", 0.0)) * 100,
+                    message=str(content.get("message", "")),
+                )
+            )
 
         # ── S19: compaction warning / circuit breaker / compaction starts ──
         elif kind == "compaction_warning":
-            compaction_warnings.append(CompactionWarningRecord(
-                action=str(content.get("action", "")),
-                compaction_enabled=bool(content.get("compaction_enabled", False)),
-                ratio=float(content.get("ratio", 0.0)),
-                threshold=float(content.get("threshold", 0.0)),
-            ))
+            compaction_warnings.append(
+                CompactionWarningRecord(
+                    action=str(content.get("action", "")),
+                    compaction_enabled=bool(content.get("compaction_enabled", False)),
+                    ratio=float(content.get("ratio", 0.0)),
+                    threshold=float(content.get("threshold", 0.0)),
+                )
+            )
 
         elif kind == "compaction_circuit_breaker":
-            circuit_breaker_events.append(CircuitBreakerRecord(
-                message=str(content.get("message", "")),
-            ))
+            circuit_breaker_events.append(
+                CircuitBreakerRecord(
+                    message=str(content.get("message", "")),
+                )
+            )
 
         elif kind == "compaction_stage2_start":
-            compaction_starts.append(CompactionStartRecord(
-                stage=2,
-                tokens_before=int(content.get("tokens_before", 0)),
-                threshold=float(content.get("threshold", 0.0)),
-            ))
+            compaction_starts.append(
+                CompactionStartRecord(
+                    stage=2,
+                    tokens_before=int(content.get("tokens_before", 0)),
+                    threshold=float(content.get("threshold", 0.0)),
+                )
+            )
 
         elif kind == "compaction_stage3_start":
-            compaction_starts.append(CompactionStartRecord(
-                stage=3,
-                tokens_before=int(content.get("tokens_before", 0)),
-                threshold=float(content.get("threshold", 0.0)),
-            ))
+            compaction_starts.append(
+                CompactionStartRecord(
+                    stage=3,
+                    tokens_before=int(content.get("tokens_before", 0)),
+                    threshold=float(content.get("threshold", 0.0)),
+                )
+            )
 
         # ── S19: model_msg / user_msg counting ────────────────────────
         elif kind == "model_msg":
@@ -698,7 +728,17 @@ def render_session_json(analytics: SessionAnalytics) -> dict[str, Any]:
 def aggregate_sessions(sessions: list[SessionAnalytics]) -> dict[str, Any]:
     """Compute cross-session aggregate metrics."""
     if not sessions:
-        return {"sessions": 0}
+        return {
+            "sessions": 0,
+            "ok": 0,
+            "failed": 0,
+            "total_in": 0,
+            "total_out": 0,
+            "avg_cache_hit": 0.0,
+            "stop_reasons": {},
+            "most_read_files": [],
+            "total_turns": 0,
+        }
 
     total_in = sum(s.total_in for s in sessions)
     total_out = sum(s.total_out for s in sessions)

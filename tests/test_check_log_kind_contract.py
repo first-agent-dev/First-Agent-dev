@@ -27,7 +27,7 @@ def _run_script() -> subprocess.CompletedProcess[str]:
 # ── Kill-check 1: Script exits 0 on clean tree ──────────────────────
 
 
-def test_script_exits_0_on_clean_tree():
+def test_script_exits_0_on_clean_tree() -> None:
     """The contract check script must exit 0 on the current clean source tree."""
     result = _run_script()
     assert result.returncode == 0, (
@@ -39,7 +39,7 @@ def test_script_exits_0_on_clean_tree():
 # ── Kill-check 2: Script reports LogKind member count ───────────────
 
 
-def test_script_reports_log_kind_count():
+def test_script_reports_log_kind_count() -> None:
     """The script output must include the LogKind member count."""
     result = _run_script()
     assert "LogKind members:" in result.stdout, (
@@ -50,7 +50,7 @@ def test_script_reports_log_kind_count():
 # ── Kill-check 3: Script reports CONSOLE_MIRROR_KINDS ───────────────
 
 
-def test_script_reports_console_mirror_kinds():
+def test_script_reports_console_mirror_kinds() -> None:
     """The script output must include the CONSOLE_MIRROR_KINDS count."""
     result = _run_script()
     assert "CONSOLE_MIRROR_KINDS members:" in result.stdout, (
@@ -61,7 +61,7 @@ def test_script_reports_console_mirror_kinds():
 # ── Kill-check 4: Script validates all 4 checks ─────────────────────
 
 
-def test_script_runs_all_checks():
+def test_script_runs_all_checks() -> None:
     """The script must run all 4 contract checks."""
     result = _run_script()
     output = result.stdout

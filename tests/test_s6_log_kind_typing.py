@@ -10,25 +10,10 @@ Verifies:
 
 from __future__ import annotations
 
-import ast
 import inspect
 from pathlib import Path
-from unittest.mock import MagicMock
 
-import pytest
-
-from fa.inner_loop import EventLog, SessionState, ToolRegistry
-from fa.inner_loop.coder_loop import drive_session
-from fa.inner_loop.hooks import HookRegistry
-from fa.output import LogKind
-from fa.providers import ChainConfig, ProviderChain
-from tests.fixtures.session_wiring import (
-    make_mock_chain,
-    make_test_chain_config,
-    mock_success_response,
-    require_log,
-)
-
+from fa.inner_loop import EventLog
 
 CODER_LOOP_PATH = Path("src/fa/inner_loop/coder_loop.py")
 SPAWN_SUBAGENT_PATH = Path("src/fa/inner_loop/tools/spawn_subagent.py")
@@ -37,7 +22,7 @@ SPAWN_SUBAGENT_PATH = Path("src/fa/inner_loop/tools/spawn_subagent.py")
 # ── Kill-check 1: EventLog.append kind parameter is LogKind ─────────
 
 
-def test_append_kind_parameter_is_log_kind():
+def test_append_kind_parameter_is_log_kind() -> None:
     """EventLog.append's kind parameter must be typed as LogKind, not str."""
     sig = inspect.signature(EventLog.append)
     param = sig.parameters.get("kind")
@@ -54,10 +39,11 @@ def test_append_kind_parameter_is_log_kind():
 # ── Kill-check 2: TraceEvent.kind is still str ─────────────────────
 
 
-def test_trace_event_kind_is_str():
+def test_trace_event_kind_is_str() -> None:
     """TraceEvent.kind must remain str for JSONL round-trip compatibility."""
-    from fa.inner_loop.state import TraceEvent
     import dataclasses
+
+    from fa.inner_loop.state import TraceEvent
 
     kind_field = None
     for f in dataclasses.fields(TraceEvent):
@@ -75,7 +61,7 @@ def test_trace_event_kind_is_str():
 # ── Kill-check 3: compaction_warning producer exists in source ──────
 
 
-def test_compaction_warning_producer_in_source():
+def test_compaction_warning_producer_in_source() -> None:
     """coder_loop.py must contain a log.append(kind='compaction_warning', ...) call."""
     content = CODER_LOOP_PATH.read_text(encoding="utf-8")
     assert 'kind="compaction_warning"' in content, (
@@ -86,7 +72,7 @@ def test_compaction_warning_producer_in_source():
 # ── Kill-check 4: compaction_warning content includes compaction_enabled field ─
 
 
-def test_compaction_warning_content_includes_enabled():
+def test_compaction_warning_content_includes_enabled() -> None:
     """The compaction_warning event content must include 'compaction_enabled' field."""
     content = CODER_LOOP_PATH.read_text(encoding="utf-8")
     # Find the compaction_warning emit block
@@ -99,7 +85,7 @@ def test_compaction_warning_content_includes_enabled():
 # ── Kill-check 5: compaction_warning fires before compaction_enabled branch ─
 
 
-def test_compaction_warning_before_compaction_branch():
+def test_compaction_warning_before_compaction_branch() -> None:
     """In the source code, the compaction_warning emit must appear BEFORE
     the `if not compaction_enabled:` branch so it fires in BOTH cases."""
     content = CODER_LOOP_PATH.read_text(encoding="utf-8")
@@ -113,15 +99,15 @@ def test_compaction_warning_before_compaction_branch():
     )
 
 
-# ── Kill-check 6: TODO comment in spawn_subagent.py ────────────────
+# ── Kill-check 6: typed dynamic kind in spawn_subagent.py ─────────
 
 
-def test_spawn_subagent_dynamic_kind_todo():
-    """spawn_subagent.py must have a TODO comment about deferred dynamic kind typing."""
+def test_spawn_subagent_dynamic_kind_is_typed() -> None:
+    """The dynamic completion kind is constrained to the LogKind union."""
     content = SPAWN_SUBAGENT_PATH.read_text(encoding="utf-8")
-    assert "TODO" in content and "LogKind" in content, (
-        "spawn_subagent.py missing TODO comment about LogKind typing after refactor"
-    )
+    assert "kind: LogKind" in content
+    assert '"subagent_spawn_done"' in content
+    assert '"subagent_spawn_fail"' in content
 
 
 # ── Kill-check 7: EventLog.append rejects non-LogKind at runtime ──
@@ -130,7 +116,7 @@ def test_spawn_subagent_dynamic_kind_todo():
 # type annotation is LogKind, which is the enforcement mechanism.)
 
 
-def test_log_kind_import_in_state():
+def test_log_kind_import_in_state() -> None:
     """state.py must import LogKind from fa.output for the type annotation."""
     content = Path("src/fa/inner_loop/state.py").read_text(encoding="utf-8")
     assert "from fa.output import LogKind" in content, (

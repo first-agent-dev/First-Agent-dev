@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from fa.inner_loop.context import reset_current_session, set_current_session
 from fa.inner_loop.state import EventLog, SessionState
@@ -87,7 +88,7 @@ def test_chronicle_search_requires_explicit_target_without_active_session() -> N
     assert result.error.code == "no_active_session"
 
 
-def test_usage_explicit_run_id_reads_run_authority(tmp_path: Path, monkeypatch) -> None:
+def test_usage_explicit_run_id_reads_run_authority(tmp_path: Path, monkeypatch: Any) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     run_dir = home / ".fa" / "session-log" / "run-42"

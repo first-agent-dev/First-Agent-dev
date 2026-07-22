@@ -8,7 +8,7 @@ _default:
     just --list
 
 install:
-    uv sync --extra dev
+    uv sync --frozen --extra dev
     just install-hooks
     just hooks-status
     @echo ""
@@ -18,6 +18,14 @@ install:
     @echo "  - prepare-commit-msg / commit-msg hooks installed"
     @echo "  - Local commits are now guarded by hook chain"
     @echo "  - Run 'just hooks-status' to verify at any time"
+
+# Canonical agent-environment bootstrap. The harness must invoke this recipe
+# before declaring the workspace ready. It fails closed if dependency sync,
+# hook installation, or hook status fails; the final marker is emitted only
+# after all three steps succeed.
+agent-bootstrap:
+    just install
+    @echo "FA_AGENT_READY=1"
 
 # Install the M-6 commit-message hooks (prepare-commit-msg / commit-msg)
 # into .git/hooks via the tested Python installer. Without this the
@@ -72,6 +80,11 @@ typecheck-advisory:
 authoring-check:
     fa authoring-check
 
+# Dependency allowlist gate: verifies every direct pyproject dependency is
+# covered by the tracked TCB contract.
+dependency-contract-check:
+    python scripts/check_dependency_contract.py
+
 # Producer-consumer contract gate: verifies every EventType has both a
 # producer (emit call in production code) and a consumer (handler in
 # ConsoleRenderer). Prevents "not wired / partial implementation" gaps.
@@ -109,4 +122,4 @@ mutation:
 lock-check:
     uv lock --locked
 
-check: lock-check lint typecheck authoring-check contract-check no-mocked-dataclasses test
+check: lock-check dependency-contract-check lint typecheck authoring-check contract-check no-mocked-dataclasses test

@@ -1,70 +1,63 @@
-"""Kill-check tests for S14: Remove compaction_enabled flag gate (F-10 / G6).
+"""C1/source-contract tests for compaction enablement SSoT.
 
-Verifies:
-1. compaction_enabled is derived from compaction_threshold is not None (SSoT)
-2. context_compaction_enabled is NOT read by any production code outside feature_flags.py
-3. context_compaction_enabled is marked DEPRECATED in FeatureFlags
+The numeric ``ChainConfig.compaction_threshold`` is the only enablement
+surface: presence enables compaction, absence disables it. The former
+``FeatureFlags.context_compaction_enabled`` key is legacy input only and
+must be warned/ignored by the feature-flag loader.
 """
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
-import pytest
+from fa.feature_flags import FeatureFlags, load_feature_flags
+from fa.providers.chain import ChainConfig
 
 
-CODER_LOOP_PATH = Path("src/fa/inner_loop/coder_loop.py")
+def test_compaction_enablement_uses_threshold_presence() -> None:
+    """The production decision must be derived from threshold presence."""
+    content = Path("src/fa/inner_loop/coder_loop.py").read_text(encoding="utf-8")
+    assert "compaction_enabled = compaction_threshold is not None" in content
 
 
-# ── Kill-check 1: compaction_enabled uses SSoT ──────────────────────
+def test_legacy_compaction_flag_is_not_a_current_feature_field() -> None:
+    """The redundant boolean is absent from the frozen current config."""
+    field_names = {field.name for field in FeatureFlags.__dataclass_fields__.values()}
+    assert "context_compaction_enabled" not in field_names
+    assert "context_compaction_enabled" not in FeatureFlags().as_dict()
 
 
-def test_compaction_enabled_uses_threshold_ssoT():
-    """In coder_loop.py, compaction_enabled must be derived from
-    compaction_threshold is not None — not from the feature flag."""
-    content = CODER_LOOP_PATH.read_text(encoding="utf-8")
-    assert "compaction_enabled = compaction_threshold is not None" in content, (
-        "Expected compaction_enabled = compaction_threshold is not None in coder_loop.py"
+def test_legacy_compaction_flag_warns_and_is_ignored() -> None:
+    result = load_feature_flags(
+        "feature_flags:\n"
+        "  context_compaction_enabled: true\n"
+        "  context_budget_enabled: true\n"
+    )
+    assert result.flags.context_budget_enabled is True
+    assert any(
+        warning.key == "context_compaction_enabled"
+        and "deprecated" in warning.detail
+        and "ignored" in warning.detail
+        for warning in result.warnings
     )
 
 
-# ── Kill-check 2: No production code reads context_compaction_enabled ─
-
-
-def test_no_production_code_reads_compaction_flag():
-    """No production code outside feature_flags.py should read
-    context_compaction_enabled — it's deprecated."""
-    result = subprocess.run(
-        ["grep", "-rn", "context_compaction_enabled", "src/fa/", "--include=*.py"],
-        capture_output=True,
-        text=True,
-        cwd=Path(__file__).resolve().parent.parent,
+def test_threshold_is_the_chain_config_surface() -> None:
+    disabled = ChainConfig(
+        role="coder",
+        model="test-model",
+        family="openai",
+        chain=(),
+        context_limit=100_000,
+        compaction_threshold=None,
     )
-    hits = [line for line in result.stdout.splitlines()
-            if "__pycache__" not in line
-            and "feature_flags.py" not in line
-            and "deprecated" not in line.lower()
-            and "DEPRECATED" not in line]
-    # Allow: feature_flags.py (definition, as_dict, _KNOWN_FLAGS, FAIL_CLOSED, loader)
-    # Allow: coder_loop.py comment mentioning "deprecated"
-    non_flag_hits = []
-    for line in hits:
-        if "feature_flags.py" not in line:
-            non_flag_hits.append(line)
-    assert not non_flag_hits, (
-        f"Production code reads context_compaction_enabled outside feature_flags.py:\n"
-        + "\n".join(non_flag_hits)
+    enabled = ChainConfig(
+        role="coder",
+        model="test-model",
+        family="openai",
+        chain=(),
+        context_limit=100_000,
+        compaction_threshold=80_000,
     )
-
-
-# ── Kill-check 3: context_compaction_enabled marked deprecated ───────
-
-
-def test_compaction_flag_marked_deprecated():
-    """The context_compaction_enabled field in FeatureFlags must be marked
-    as DEPRECATED."""
-    content = Path("src/fa/feature_flags.py").read_text(encoding="utf-8")
-    assert "DEPRECATED" in content and "context_compaction_enabled" in content, (
-        "context_compaction_enabled must be marked DEPRECATED in feature_flags.py"
-    )
+    assert disabled.compaction_threshold is None
+    assert enabled.compaction_threshold == 80_000

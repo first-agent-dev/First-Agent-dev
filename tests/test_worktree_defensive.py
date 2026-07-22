@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 
-def test_shared_dir_manager():
+def test_shared_dir_manager() -> None:
     from fa.workspace.worktree_manager import SharedDirWorktreeManager
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -26,7 +26,7 @@ def test_shared_dir_manager():
             pass
 
 
-def test_isolated_manager_branch_already_checked_out():
+def test_isolated_manager_branch_already_checked_out() -> None:
     from fa.workspace.worktree_manager import IsolatedWorktreeManager
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -67,7 +67,7 @@ def test_isolated_manager_branch_already_checked_out():
         assert not ws1.exists()
 
 
-def test_worktree_defensive_exists():
+def test_worktree_defensive_exists() -> None:
     from fa.workspace.worktree_manager import IsolatedWorktreeManager
 
     with tempfile.TemporaryDirectory() as tmp:

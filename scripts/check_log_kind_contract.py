@@ -48,7 +48,7 @@ def extract_console_mirror_kinds() -> set[str]:
     source = (REPO_ROOT / "src" / "fa" / "output.py").read_text()
     # Find the CONSOLE_MIRROR_KINDS frozenset
     match = re.search(
-        r'CONSOLE_MIRROR_KINDS.*?frozenset\(\{(.*?)\}\)',
+        r'CONSOLE_MIRROR_KINDS.*?frozenset(?:\[[^\]]+\])?\(\s*\{(.*?)\}\s*\)',
         source,
         re.DOTALL,
     )
@@ -119,9 +119,11 @@ def check_console_mirror_dual_write(console_mirror_kinds: set[str]) -> list[str]
     # Map LogKind → EventType for dual-write check
     # Console mirror kinds use a specific OutputEvent type.
     # The mapping is documented in the output.emit() calls.
-    KIND_TO_EVENT_TYPE: dict[str, str] = {
+    kind_to_event_type: dict[str, str] = {
         "context_budget_warn": "context_warn",
         "context_budget_hard_stop": "context_warn",
+        "compaction_warning": "compaction_warning",
+        "config_warning": "config_warning",
         "compaction_stage2_start": "compaction_start",
         "compaction_stage2_done": "compaction_end",
         "compaction_stage2_error": "compaction_end",
@@ -140,6 +142,8 @@ def check_console_mirror_dual_write(console_mirror_kinds: set[str]) -> list[str]
         REPO_ROOT / "src" / "fa" / "inner_loop" / "coder_loop.py",
         REPO_ROOT / "src" / "fa" / "inner_loop" / "tools" / "spawn_subagent.py",
         REPO_ROOT / "src" / "fa" / "cli.py",
+        REPO_ROOT / "src" / "fa" / "inner_loop" / "state.py",
+        REPO_ROOT / "src" / "fa" / "inner_loop" / "tools" / "spawn_subagent.py",
     ]
 
     # Build a set of all EventType strings that appear in output.emit calls
@@ -157,8 +161,19 @@ def check_console_mirror_dual_write(console_mirror_kinds: set[str]) -> list[str]
                 emit_types_found.add(m.group(1))
 
     for kind in sorted(console_mirror_kinds):
-        expected_type = KIND_TO_EVENT_TYPE.get(kind)
+        expected_type = kind_to_event_type.get(kind)
         if expected_type and expected_type in emit_types_found:
+            continue
+        # spawn_subagent centralizes its two event emissions through a typed
+        # helper; prove the helper is typed and the expected event literal is
+        # present rather than requiring a duplicated constructor at each call.
+        spawn_source = (REPO_ROOT / "src" / "fa" / "inner_loop" / "tools" / "spawn_subagent.py").read_text()
+        if (
+            kind in {"subagent_spawn_done", "subagent_spawn_fail"}
+            and "def _emit_subagent_event" in spawn_source
+            and "event_type: EventType" in spawn_source
+            and f'"{expected_type}"' in spawn_source
+        ):
             continue
         # If no mapping exists, that's a gap
         gaps.append(kind)

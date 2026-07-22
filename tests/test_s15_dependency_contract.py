@@ -13,9 +13,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -31,7 +28,7 @@ def _run_script() -> subprocess.CompletedProcess[str]:
 # ── Kill-check 1: Script exits 0 on clean tree ──────────────────────
 
 
-def test_script_exits_0_on_clean_tree():
+def test_script_exits_0_on_clean_tree() -> None:
     """The dependency contract check must exit 0 on the current tree."""
     result = _run_script()
     assert result.returncode == 0, (
@@ -42,7 +39,7 @@ def test_script_exits_0_on_clean_tree():
 # ── Kill-check 2: Contract in _TCB_PATHS ────────────────────────────
 
 
-def test_contract_in_tcb_paths():
+def test_contract_in_tcb_paths() -> None:
     """The dependency contract TOML must be in _TCB_PATHS for protection."""
     content = (REPO_ROOT / "scripts" / "check_protected_paths.py").read_text()
     assert "dependency_contract.toml" in content, (
@@ -53,7 +50,7 @@ def test_contract_in_tcb_paths():
 # ── Kill-check 3: Contract contains all 6 deps ──────────────────────
 
 
-def test_contract_has_all_core_deps():
+def test_contract_has_all_core_deps() -> None:
     """The contract must list all 6 core dependencies."""
     try:
         import tomllib
@@ -74,7 +71,7 @@ def test_contract_has_all_core_deps():
 # ── Kill-check 4: Script detects unknown dep ────────────────────────
 
 
-def test_script_detects_unknown_dep(tmp_path: Path):
+def test_script_detects_unknown_dep(tmp_path: Path) -> None:
     """If we create a pyproject.toml with an unknown dep, the script must fail."""
     # This is a synthetic test — we verify the script logic, not actually
     # modifying the real pyproject.toml

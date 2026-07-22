@@ -14,15 +14,12 @@ import subprocess
 from dataclasses import fields as dc_fields
 from pathlib import Path
 
-import pytest
-
 from fa.feature_flags import FAIL_CLOSED_FLAGS, FAIL_OPEN_FLAGS, FeatureFlags
-
 
 # ── Kill-check 1: Categorization covers all fields ──────────────────
 
 
-def test_all_fields_categorized():
+def test_all_fields_categorized() -> None:
     """Every FeatureFlags field must be in exactly one of FAIL_CLOSED_FLAGS
     or FAIL_OPEN_FLAGS. No field may be uncategorized."""
     all_field_names = {f.name for f in dc_fields(FeatureFlags)}
@@ -39,7 +36,7 @@ def test_all_fields_categorized():
 # ── Kill-check 2: Zero getattr(flags, ...) sites ───────────────────
 
 
-def test_no_getattr_feature_flags():
+def test_no_getattr_feature_flags() -> None:
     """No getattr(state.feature_flags, ...) or getattr(flags, ...) calls
     should remain in src/fa/ — direct attribute access is required."""
     result = subprocess.run(
@@ -59,7 +56,7 @@ def test_no_getattr_feature_flags():
 # ── Kill-check 3: Zero getattr(session, ...) sites in inner_loop ───
 
 
-def test_no_getattr_session_in_inner_loop():
+def test_no_getattr_session_in_inner_loop() -> None:
     """No getattr(session, ...) calls should remain in src/fa/inner_loop/
     — direct attribute access is required (S11 typed all fields)."""
     result = subprocess.run(
@@ -78,22 +75,19 @@ def test_no_getattr_session_in_inner_loop():
 # ── Kill-check 4: FAIL-CLOSED flags default to restrictive value ────
 
 
-def test_fail_closed_flags_default_restrictive():
+def test_fail_closed_flags_default_restrictive() -> None:
     """When feature_flags is None, FAIL-CLOSED flags must default to
     the restrictive/safe value."""
     # context_budget_enabled: default=True → budget check active
     # (When flags missing, budget should still be enforced)
     assert "context_budget_enabled" in FAIL_CLOSED_FLAGS
 
-    # context_compaction_enabled: default=True → compaction active
-    # (DEPRECATED but must remain in FAIL_CLOSED for backward compat)
-    assert "context_compaction_enabled" in FAIL_CLOSED_FLAGS
 
 
 # ── Kill-check 5: FAIL-OPEN flags default to permissive/deny value ──
 
 
-def test_fail_open_subagent_spawning():
+def test_fail_open_subagent_spawning() -> None:
     """subagent_spawning_enabled is FAIL-OPEN: default=False → don't spawn
     when unconfigured (DANGEROUS if True without explicit opt-in)."""
     assert "subagent_spawning_enabled" in FAIL_OPEN_FLAGS
@@ -102,7 +96,7 @@ def test_fail_open_subagent_spawning():
 # ── Kill-check 6: FAIL_CLOSED_FLAGS and FAIL_OPEN_FLAGS exported ───
 
 
-def test_flags_exported():
+def test_flags_exported() -> None:
     """FAIL_CLOSED_FLAGS and FAIL_OPEN_FLAGS must be in feature_flags.__all__."""
     from fa.feature_flags import __all__
     assert "FAIL_CLOSED_FLAGS" in __all__

@@ -285,7 +285,7 @@ def test_hard_stop_no_tool_calls_after(tmp_path: Path) -> None:
     # Drive a simple session (no hard stop in this path, but verify
     # the event ordering invariant: no tool_call after run_stopped)
     calls = tuple(_make_call(f"f{i}.txt", call_id=f"tc-{i}") for i in range(2))
-    results = run_session(calls, registry=registry, hooks=hooks, state=state)
+    run_session(calls, registry=registry, hooks=hooks, state=state)
 
     assert state.log is not None
     events = state.log.read_all()
@@ -327,7 +327,7 @@ def test_loop_guard_exactly_one_warn(tmp_path: Path) -> None:
 
     # 6 identical calls; warn at 2, circuit at 4
     calls = tuple(_make_call("same.txt", content="dup\n", call_id=f"tc-{i}") for i in range(6))
-    results = run_session(calls, registry=registry, hooks=hooks, state=state)
+    run_session(calls, registry=registry, hooks=hooks, state=state)
 
     assert state.log is not None
     events = state.log.read_all()

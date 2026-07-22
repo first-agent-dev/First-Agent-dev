@@ -8,8 +8,8 @@ Uses Python contextvars so thread-safe and works with ThreadPool in Phase 2.
 from __future__ import annotations
 
 import contextvars
-from typing import TYPE_CHECKING
 import logging
+from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 

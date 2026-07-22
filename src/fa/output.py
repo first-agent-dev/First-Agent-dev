@@ -52,6 +52,8 @@ EventType = Literal[
     "api_retry",
     "session_end",
     "context_warn",
+    "compaction_warning",
+    "config_warning",
     "compaction_start",
     "compaction_end",
     "subagent_start",
@@ -87,8 +89,9 @@ LogKind = Literal[
     # Context budget
     "context_budget_warn",
     "context_budget_hard_stop",
-    # Compaction
-    "compaction_warning",           # emitted before compaction starts (context pressure detected)
+    # Configuration and compaction
+    "config_warning",
+    "compaction_warning",  # emitted before compaction starts (context pressure detected)
     "compaction_circuit_breaker",
     "compaction_stage2_start",
     "compaction_stage2_done",
@@ -116,21 +119,25 @@ LogKind = Literal[
 # (stderr) in addition to the audit trail (events.jsonl). The contract
 # check script (check_log_kind_contract.py) validates dual-write.
 
-CONSOLE_MIRROR_KINDS: frozenset[LogKind] = frozenset({
-    "context_budget_warn",
-    "context_budget_hard_stop",
-    "compaction_stage2_start",
-    "compaction_stage2_done",
-    "compaction_stage2_error",
-    "compaction_stage3_start",
-    "compaction_stage3_done",
-    "compaction_stage3_error",
-    "compaction_circuit_breaker",
-    "tool_call",
-    "subagent_spawn_done",
-    "subagent_spawn_fail",
-    "run_stopped",
-})
+CONSOLE_MIRROR_KINDS: frozenset[LogKind] = frozenset(
+    {
+        "context_budget_warn",
+        "context_budget_hard_stop",
+        "compaction_warning",
+        "config_warning",
+        "compaction_stage2_start",
+        "compaction_stage2_done",
+        "compaction_stage2_error",
+        "compaction_stage3_start",
+        "compaction_stage3_done",
+        "compaction_stage3_error",
+        "compaction_circuit_breaker",
+        "tool_call",
+        "subagent_spawn_done",
+        "subagent_spawn_fail",
+        "run_stopped",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,6 +342,22 @@ class ConsoleRenderer:
         elif self.detail in ("verbose", "debug"):
             self._write(f"  {self._c('33', '⚠️')} context: {pct}% of window")
 
+    def _handle_compaction_warning(self, e: OutputEvent) -> None:
+        d = e.data
+        enabled = bool(d.get("compaction_enabled", False))
+        threshold = d.get("threshold")
+        action = d.get("action", "")
+        state = "enabled" if enabled else "disabled"
+        threshold_text = f", threshold={threshold}" if threshold is not None else ""
+        self._write(f"  {self._c('33', '⚠️')} compaction {state}{threshold_text} ({action})")
+
+    def _handle_config_warning(self, e: OutputEvent) -> None:
+        d = e.data
+        self._write(
+            f"  {self._c('33', '⚠️')} config: {d.get('key', 'unknown')} — "
+            f"{d.get('detail', 'configuration warning')}"
+        )
+
     def _handle_compaction_start(self, e: OutputEvent) -> None:
         d = e.data
         stage = d.get("stage", "?")
@@ -361,7 +384,7 @@ class ConsoleRenderer:
         ok = d.get("ok", True)
         if ok:
             if self.detail in ("verbose", "debug"):
-                self._write(f"  ← subagent done: exit=0")
+                self._write("  ← subagent done: exit=0")
         else:
             self._write(f"  {self._c('31', '❌')} subagent failed: {d.get('error', 'unknown')}")
 

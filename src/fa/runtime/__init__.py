@@ -19,6 +19,6 @@ except ImportError as exc:
         "Failed to import fa.runtime.server: %s — app=None, continuing",
         exc,
     )
-    app = None  # type: ignore
+    app = None
 
 __all__ = ["PtyPool", "PtySession", "app"]

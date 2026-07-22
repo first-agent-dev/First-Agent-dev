@@ -18,23 +18,25 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
-
-import pytest
 
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState
 from fa.inner_loop.coder_loop import SessionOutcome, drive_session
 from fa.inner_loop.global_history import (
     GlobalHistoryStore,
-    build_export_row,
     export_session_to_global_history,
 )
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.tools import build_baseline_registry
-from fa.providers.base import ResponseInfo
-from tests.fixtures.session_wiring import make_tool_call, mock_response_with_tools, mock_success_response, require_log, make_test_chain_config
 from fa.providers import ProviderChain
+from tests.fixtures.session_wiring import (
+    make_test_chain_config,
+    make_tool_call,
+    mock_response_with_tools,
+    mock_success_response,
+)
 
 
 def _make_outcome(exit_code: int = 0, stop_reason: str = "stopped_by_llm", turns: int = 1) -> SessionOutcome:
@@ -125,7 +127,7 @@ def test_global_history_export_concurrent(tmp_path: Path) -> None:
     Product claim: concurrent exports safe via WAL + busy_timeout + short-lived connections.
     """
     db_path = tmp_path / "global_history.db"
-    store = GlobalHistoryStore(db_path=db_path)
+    GlobalHistoryStore(db_path=db_path)
 
     def export_distinct(i: int) -> None:
         row = {
@@ -163,7 +165,7 @@ def test_global_history_export_concurrent(tmp_path: Path) -> None:
     final_store = GlobalHistoryStore(db_path=db_path)
     assert final_store.count_runs() == 5
 
-    # Concurrent same run_id — 5 threads same run_id, should result in count still 5 (or 1 if fresh db) and no exception
+    # Concurrent same run_id should not raise or corrupt the database.
     def export_same() -> None:
         row = {
             "run_id": "run-shared",
@@ -219,18 +221,29 @@ def test_global_history_export_completeness(tmp_path: Path) -> None:
     db_path = tmp_path / "global_history.db"
     log_path = tmp_path / "events.jsonl"
     log = EventLog(log_path, run_id="run-complete")
-    state = SessionState(
+    SessionState(
         workspace_root=tmp_path,
         run_id="run-complete",
         log=log,
-        feature_flags=FeatureFlags(context_budget_enabled=False, context_compaction_enabled=False),
     )
 
     # Simulate events: 2 tool_calls (read, write), 1 usage, 1 compaction_stage3_done
-    log.append(actor="coder", kind="tool_call", content={"params": {}}, tool_name="fs.read_file", tool_call_id="tc-1")
-    log.append(actor="tool", kind="tool_result", content={"summary": "read ok"}, tool_name="fs.read_file", tool_call_id="tc-1")
-    log.append(actor="coder", kind="tool_call", content={"params": {}}, tool_name="fs.write_file", tool_call_id="tc-2")
-    log.append(actor="tool", kind="tool_result", content={"summary": "write ok"}, tool_name="fs.write_file", tool_call_id="tc-2")
+    log.append(
+        actor="coder", kind="tool_call", content={"params": {}},
+        tool_name="fs.read_file", tool_call_id="tc-1"
+    )
+    log.append(
+        actor="tool", kind="tool_result", content={"summary": "read ok"},
+        tool_name="fs.read_file", tool_call_id="tc-1"
+    )
+    log.append(
+        actor="coder", kind="tool_call", content={"params": {}},
+        tool_name="fs.write_file", tool_call_id="tc-2"
+    )
+    log.append(
+        actor="tool", kind="tool_result", content={"summary": "write ok"},
+        tool_name="fs.write_file", tool_call_id="tc-2"
+    )
     log.append(
         actor="runtime",
         kind="usage",
@@ -290,7 +303,7 @@ def test_global_history_export_completeness(tmp_path: Path) -> None:
 # Failure policy
 # ---------------------------------------------------------------------------
 
-def test_global_history_export_failure_policy(tmp_path: Path, caplog) -> None:
+def test_global_history_export_failure_policy(tmp_path: Path, caplog: Any) -> None:
     """LIVE-PATH PROOF:
     - root: export_session_to_global_history best-effort
     - test: failure policy
@@ -319,7 +332,10 @@ def test_global_history_export_failure_policy(tmp_path: Path, caplog) -> None:
     assert ok is False, "export should return False on failure, not raise"
     # Should have logged warning
     # caplog may capture warning from global_history module
-    assert any("global_history" in rec.message.lower() or "failed" in rec.message.lower() for rec in caplog.records) or True  # best-effort
+    assert any(
+        "global_history" in rec.message.lower() or "failed" in rec.message.lower()
+        for rec in caplog.records
+    ) or True  # best-effort
 
 
 # Projection-only enforcement
@@ -349,7 +365,9 @@ def test_global_history_is_projection_only() -> None:
         if not p.exists():
             continue
         content = p.read_text(encoding="utf-8")
-        assert "global_history" not in content, f"{fp} should not import global_history — would violate projection-only D8"
+        assert "global_history" not in content, (
+            f"{fp} should not import global_history — projection-only D8"
+        )
 
     # Allowed importers: cli.py, stats.py may contain global_history
     allowed = ["src/fa/cli.py"]

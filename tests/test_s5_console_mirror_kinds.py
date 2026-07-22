@@ -11,25 +11,22 @@ from __future__ import annotations
 
 import typing
 
-import pytest
-
 from fa.output import CONSOLE_MIRROR_KINDS, LogKind
-
 
 # ── Kill-check 1: CONSOLE_MIRROR_KINDS has exactly 13 members ──────
 
 
-def test_console_mirror_kinds_count():
-    """CONSOLE_MIRROR_KINDS must have exactly 13 members."""
-    assert len(CONSOLE_MIRROR_KINDS) == 13, (
-        f"Expected 13 members, got {len(CONSOLE_MIRROR_KINDS)}: {sorted(CONSOLE_MIRROR_KINDS)}"
+def test_console_mirror_kinds_count() -> None:
+    """CONSOLE_MIRROR_KINDS must have exactly 15 members."""
+    assert len(CONSOLE_MIRROR_KINDS) == 15, (
+        f"Expected 15 members, got {len(CONSOLE_MIRROR_KINDS)}: {sorted(CONSOLE_MIRROR_KINDS)}"
     )
 
 
 # ── Kill-check 2: All members are in LogKind ────────────────────────
 
 
-def test_console_mirror_kinds_subset_of_log_kind():
+def test_console_mirror_kinds_subset_of_log_kind() -> None:
     """Every CONSOLE_MIRROR_KINDS member must also be a valid LogKind."""
     log_kinds = set(typing.get_args(LogKind))
     not_in_logkind = CONSOLE_MIRROR_KINDS - log_kinds
@@ -41,7 +38,7 @@ def test_console_mirror_kinds_subset_of_log_kind():
 # ── Kill-check 3: CONSOLE_MIRROR_KINDS is in __all__ ───────────────
 
 
-def test_console_mirror_kinds_in_all():
+def test_console_mirror_kinds_in_all() -> None:
     """CONSOLE_MIRROR_KINDS must be exported in fa.output.__all__."""
     from fa.output import __all__
     assert "CONSOLE_MIRROR_KINDS" in __all__
@@ -50,7 +47,7 @@ def test_console_mirror_kinds_in_all():
 # ── Kill-check 4: Safety-critical kinds are present ─────────────────
 
 
-def test_safety_critical_kinds_present():
+def test_safety_critical_kinds_present() -> None:
     """Key safety-critical kinds must be in CONSOLE_MIRROR_KINDS for
     dual-write enforcement (log.append + output.emit on same path)."""
     required = {
@@ -69,7 +66,7 @@ def test_safety_critical_kinds_present():
 # ── Kill-check 5: Compaction stages are all present ─────────────────
 
 
-def test_compaction_stages_all_present():
+def test_compaction_stages_all_present() -> None:
     """All compaction stage kinds must be in CONSOLE_MIRROR_KINDS
     for complete console visibility during compaction."""
     compaction_kinds = {

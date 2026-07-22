@@ -51,9 +51,12 @@ def test_repeated_code_suggests_rule(tmp_path: Path) -> None:
     """Code appearing ≥2 times → suggested_rules entry."""
     path = tmp_path / "corrections.jsonl"
     entries_data = [
-        {"ts": "2026-07-20T00:00:00Z", "code": "FA-AUTHORING-002", "remediation": "Fix getattr", "path": "a.py", "corrected_by": "human"},
-        {"ts": "2026-07-20T01:00:00Z", "code": "FA-AUTHORING-002", "remediation": "Fix getattr again", "path": "b.py", "corrected_by": "human"},
-        {"ts": "2026-07-20T02:00:00Z", "code": "FA-AUTHORING-003", "remediation": "One-off", "path": "c.py", "corrected_by": "human"},
+        {"ts": "2026-07-20T00:00:00Z", "code": "FA-AUTHORING-002",
+         "remediation": "Fix getattr", "path": "a.py", "corrected_by": "human"},
+        {"ts": "2026-07-20T01:00:00Z", "code": "FA-AUTHORING-002",
+         "remediation": "Fix getattr again", "path": "b.py", "corrected_by": "human"},
+        {"ts": "2026-07-20T02:00:00Z", "code": "FA-AUTHORING-003",
+         "remediation": "One-off", "path": "c.py", "corrected_by": "human"},
     ]
     path.write_text("\n".join(json.dumps(e) for e in entries_data) + "\n")
     entries = load_corrections(path)
@@ -69,7 +72,10 @@ def test_repeated_code_suggests_rule(tmp_path: Path) -> None:
 def test_invalid_json_skipped(tmp_path: Path) -> None:
     """Invalid JSON line → warning, not crash."""
     path = tmp_path / "corrections.jsonl"
-    path.write_text('{"ts":"2026-07-20T00:00:00Z","code":"OK","remediation":"x","path":"a.py","corrected_by":"human"}\n{invalid json}\n')
+    path.write_text(
+        '{"ts":"2026-07-20T00:00:00Z","code":"OK","remediation":"x",'
+        '"path":"a.py","corrected_by":"human"}\n{invalid json}\n'
+    )
     entries = load_corrections(path)
     assert len(entries) == 1  # only the valid line
 

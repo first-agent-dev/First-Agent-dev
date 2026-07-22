@@ -11,18 +11,13 @@ Kill-check: reverting either change causes the test to fail.
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
-import pytest
-
+from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.global_history import (
     GlobalHistoryStore,
-    build_export_row,
     export_session_to_global_history,
 )
-from fa.inner_loop.coder_loop import SessionOutcome
-
 
 # ── LOGIC-11: No overwrite in global_history.db ───────────────────────────
 
@@ -104,7 +99,10 @@ def test_two_exports_same_run_id_overwrites(tmp_path: Path) -> None:
     # First stage export
     export_session_to_global_history(
         run_id="wf-override-test",
-        outcome=SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=3, final_text="", tool_results=()),
+        outcome=SessionOutcome(
+            exit_code=0, stop_reason="stopped_by_llm", turns=3,
+            final_text="", tool_results=()
+        ),
         log=None,
         role="planner",
         model="model-1",
@@ -117,7 +115,10 @@ def test_two_exports_same_run_id_overwrites(tmp_path: Path) -> None:
     # Second stage export — overwrites!
     export_session_to_global_history(
         run_id="wf-override-test",
-        outcome=SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=12, final_text="", tool_results=()),
+        outcome=SessionOutcome(
+            exit_code=0, stop_reason="stopped_by_llm", turns=12,
+            final_text="", tool_results=()
+        ),
         log=None,
         role="coder",
         model="model-2",

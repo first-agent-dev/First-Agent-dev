@@ -22,10 +22,12 @@ import sys
 from pathlib import Path
 
 # TCB files that MUST have frozen=True on all @dataclass
-TCB_FILES = frozenset({
-    "src/fa/authoring_tcb.py",
-    "src/fa/feature_flags.py",
-})
+TCB_FILES = frozenset(
+    {
+        "src/fa/authoring_tcb.py",
+        "src/fa/feature_flags.py",
+    }
+)
 
 # Directories to exclude from scan (test fixtures, corpus)
 EXCLUDE_PREFIXES = ("tests/", "catch-corpus/", "fp-corpus/")
@@ -111,13 +113,20 @@ def scan_tcb_frozen(tcb_files: set[Path], repo_root: Path) -> list[tuple[str, st
             if frozen:
                 for item in node.body:
                     if isinstance(item, ast.FunctionDef) and item.name == "__post_init__":
-                        violations.append((rel, node.name, "__post_init__ on frozen dataclass (potential mutation bypass)"))
+                        violations.append(
+                            (
+                                rel,
+                                node.name,
+                                "__post_init__ on frozen dataclass (potential mutation bypass)",
+                            )
+                        )
 
     return violations
 
 
-def write_report(repo_root: Path, setattr_hits: list[tuple[str, int]],
-                 tcb_hits: list[tuple[str, str, str]]) -> None:
+def write_report(
+    repo_root: Path, setattr_hits: list[tuple[str, int]], tcb_hits: list[tuple[str, str, str]]
+) -> None:
     """Write .fa/frozen_integrity_report.md (best-effort)."""
     fa_dir = repo_root / ".fa"
     fa_dir.mkdir(parents=True, exist_ok=True)

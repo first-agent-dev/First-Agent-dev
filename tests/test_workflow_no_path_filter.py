@@ -9,15 +9,9 @@ Kill-check: injecting paths: key makes test fail
 
 from __future__ import annotations
 
-import json
-import subprocess
-import sys
 from pathlib import Path
 
-import pytest
-
 from scripts.check_workflow_no_path_filter import check_workflow, main
-
 
 # ---------------------------------------------------------------------------
 # Unit tests on check_workflow()

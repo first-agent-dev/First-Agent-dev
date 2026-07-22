@@ -9,9 +9,10 @@ Phase 1: PROFILES dynamic toolset wired — researcher 600 tokens vs full 3000
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
-from fa.inner_loop.registry import ToolRegistry
+from fa.inner_loop.registry import ToolRegistry, ToolSpec
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
 from fa.inner_loop.tools.prepare_pr import build_prepare_pr_tool
 from fa.inner_loop.tools.read_file import build_read_file_tool
@@ -20,18 +21,23 @@ from fa.inner_loop.tools.write_file import build_write_file_tool
 
 logger = logging.getLogger(__name__)
 
+build_glob_tool: Callable[[Path], ToolSpec] | None
 try:
     from fa.inner_loop.tools.glob import build_glob_tool
 except ImportError as exc:
     logger.warning(f"Failed to import glob tool: {exc}")
     build_glob_tool = None
 
+build_grep_tool: Callable[[Path], ToolSpec] | None
 try:
     from fa.inner_loop.tools.grep import build_grep_tool
 except ImportError as exc:
     logger.warning("Failed to import grep tool: %s", exc)
     build_grep_tool = None
 
+build_chronicle_search_tool: Callable[[], ToolSpec] | None
+build_usage_tool: Callable[[], ToolSpec] | None
+build_list_tasks_tool: Callable[[], ToolSpec] | None
 try:
     from fa.inner_loop.tools.observability import (
         build_chronicle_search_tool,
@@ -44,6 +50,10 @@ except ImportError as exc:
     build_usage_tool = None
     build_list_tasks_tool = None
 
+build_checkpoint_tool: Callable[[Path], ToolSpec] | None
+build_diff_tool: Callable[[Path], ToolSpec] | None
+build_send_ctrl_c_tool: Callable[[], ToolSpec] | None
+build_undo_tool: Callable[[Path], ToolSpec] | None
 try:
     from fa.inner_loop.tools.pair_tools import (
         build_checkpoint_tool,
@@ -58,12 +68,14 @@ except ImportError as exc:
     build_diff_tool = None
     build_send_ctrl_c_tool = None
 
+build_instant_grep_tool: Callable[[Path, Path], ToolSpec] | None
 try:
     from fa.inner_loop.tools.instant_grep import build_instant_grep_tool
 except ImportError as exc:
     logger.warning(f"Failed to import instant_grep tool: {exc}")
     build_instant_grep_tool = None
 
+build_spawn_subagent_tool: Callable[[Path], ToolSpec] | None
 try:
     from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
 except ImportError as exc:
@@ -153,9 +165,10 @@ def _register_extra_tools(  # noqa: C901 -- complexity from fallback chain grace
                 # Wired to feature flag fts_db_path (was dead flag, now active per FIND-018 sweep)
                 try:
                     from fa.feature_flags import load_feature_flags_from_path
+
                     ff = load_feature_flags_from_path().flags
                     fts_path = getattr(ff, "fts_db_path", ".fa/fts.db")
-                except Exception:
+                except (ImportError, OSError, ValueError, AttributeError, TypeError):
                     fts_path = ".fa/fts.db"
                 db_path = workspace_root / fts_path
                 registry.register(build_instant_grep_tool(db_path, workspace_root))

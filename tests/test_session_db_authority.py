@@ -15,30 +15,31 @@ from fa.inner_loop.tools.write_file import build_write_file_tool
 def test_event_log_authority_roundtrip(tmp_path: Path) -> None:
     log = EventLog(tmp_path / "events.jsonl", run_id="run-1")
 
-    log.append(actor="runtime", kind="first", content={"n": 1})
-    log.append(actor="runtime", kind="second", content={"n": 2})
+    log.append(actor="runtime", kind="tool_call", content={"n": 1})
+    log.append(actor="runtime", kind="tool_result", content={"n": 2})
 
     events = log.read_all()
-    assert [e.kind for e in events] == ["first", "second"]
+    assert [e.kind for e in events] == ["tool_call", "tool_result"]
+    assert log.session_db is not None
     assert log.session_db.path == tmp_path / "session.db"
     assert (tmp_path / "events.jsonl").read_text(encoding="utf-8").count("\n") == 2
 
 
 def test_event_log_db_failure_does_not_create_split_brain(tmp_path: Path) -> None:
     log = EventLog(tmp_path / "events.jsonl", run_id="run-1")
-    log.append(actor="runtime", kind="first", content={"n": 1})
+    log.append(actor="runtime", kind="tool_call", content={"n": 1})
 
     db_path = tmp_path / "session.db"
     os.chmod(db_path, stat.S_IREAD)
     try:
         with pytest.raises(RuntimeError, match="event_log_write_failed"):
-            log.append(actor="runtime", kind="second", content={"n": 2})
+            log.append(actor="runtime", kind="tool_result", content={"n": 2})
     finally:
         os.chmod(db_path, stat.S_IWRITE | stat.S_IREAD)
 
     # Authoritative read remains consistent and the JSONL mirror is not ahead.
     events = log.read_all()
-    assert [e.kind for e in events] == ["first"]
+    assert [e.kind for e in events] == ["tool_call"]
     assert (tmp_path / "events.jsonl").read_text(encoding="utf-8").count("\n") == 1
 
 
@@ -48,8 +49,9 @@ def test_session_state_blackboard_uses_same_per_run_db(tmp_path: Path) -> None:
     assert state.log is not None
     assert state.blackboard is not None
     assert state.session_db is not None
+    assert state.log.session_db is not None
     assert state.log.session_db.path == state.session_db.path
-    assert state.blackboard._session_db.path == state.session_db.path  # type: ignore[attr-defined]
+    assert state.blackboard._session_db.path == state.session_db.path
 
 
 def test_blackboard_authority_roundtrip(tmp_path: Path) -> None:

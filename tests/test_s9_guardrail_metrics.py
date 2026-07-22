@@ -13,26 +13,20 @@ from __future__ import annotations
 import tempfile
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from fa.inner_loop import EventLog, SessionState, ToolRegistry
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
-from fa.output import LogKind
 from tests.fixtures.session_wiring import (
-    make_mock_chain,
     make_test_chain_config,
     mock_success_response,
-    require_log,
 )
-
 
 # ── Kill-check 1: kind_counts incremental counting ───────────────────
 
 
-def test_kind_counts_incremented_on_append():
+def test_kind_counts_incremented_on_append() -> None:
     """EventLog.kind_counts must be incremented on each append() call."""
     with tempfile.TemporaryDirectory() as tmp:
         log = EventLog(Path(tmp) / "test.jsonl", run_id="test-kg9")
@@ -47,7 +41,7 @@ def test_kind_counts_incremented_on_append():
 # ── Kill-check 2: chain_exhaustion_count exists ──────────────────────
 
 
-def test_chain_exhaustion_count_exists():
+def test_chain_exhaustion_count_exists() -> None:
     """EventLog must have chain_exhaustion_count initialized to 0."""
     with tempfile.TemporaryDirectory() as tmp:
         log = EventLog(Path(tmp) / "test.jsonl", run_id="test-kg9")
@@ -94,10 +88,14 @@ def test_session_end_writes_guardrail_metrics(tmp_path: Path) -> None:
         assert "run_started" in kind_counts_val, f"Expected run_started in kind_counts, got {kind_counts_val}"
 
         assert budget_breaches_val is not None, "budget_threshold_breaches not found in session_meta"
-        assert isinstance(budget_breaches_val, int), f"budget_threshold_breaches should be int, got {type(budget_breaches_val)}"
+        assert isinstance(budget_breaches_val, int), (
+            f"budget_threshold_breaches should be int, got {type(budget_breaches_val)}"
+        )
 
         assert chain_exhaustion_val is not None, "chain_exhaustion_events not found in session_meta"
-        assert isinstance(chain_exhaustion_val, int), f"chain_exhaustion_events should be int, got {type(chain_exhaustion_val)}"
+        assert isinstance(chain_exhaustion_val, int), (
+            f"chain_exhaustion_events should be int, got {type(chain_exhaustion_val)}"
+        )
 
 
 # ── Kill-check 4: Session doesn't crash when session_db.set_meta fails ─
@@ -144,7 +142,7 @@ def test_session_survives_db_unavailable(tmp_path: Path) -> None:
 # ── Kill-check 5: kind_counts under lock (concurrent access) ─────────
 
 
-def test_kind_counts_thread_safe():
+def test_kind_counts_thread_safe() -> None:
     """kind_counts must be thread-safe — concurrent append() calls should
     not lose counts."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -154,7 +152,7 @@ def test_kind_counts_thread_safe():
         n_appends_per_thread = 50
         barrier = threading.Barrier(n_threads)
 
-        def append_events():
+        def append_events() -> None:
             barrier.wait()
             for _ in range(n_appends_per_thread):
                 log.append(actor="thread", kind="usage", content={})

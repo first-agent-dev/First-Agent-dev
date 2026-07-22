@@ -17,7 +17,7 @@
    the row to the «Archived» footer; if the note was **deleted**, drop
    the row — never leave a row pointing at a missing file. (Pruning is
    allowed — see §When moving or pruning a doc.)
-4. Cross-check [`HANDOFF.md`](../HANDOFF.md) §Current state — if
+4. Cross-check [`HANDOFF.md`](../worklogs/HANDOFF.md) §Current state — if
    the note was cited there as input to a current decision,
    replace the citation with the superseding artefact.
 5. Cross-check [`knowledge/adr/DIGEST.md`](./adr/DIGEST.md) — if
@@ -43,7 +43,7 @@ repo navigable. The one hard rule is **no dangling links** (see
    superseding artefact). Drop the `llms.txt` row entirely.
 4. Update [`knowledge/llms.txt`](./llms.txt) (BY-DEMAND INDEX rows and,
    if the doc is an entry point, a §TASK ROUTING row),
-   [`HANDOFF.md`](../HANDOFF.md) only where a line is an *active* link
+   [`HANDOFF.md`](../worklogs/HANDOFF.md) only where a line is an *active* link
    (dated history prose stays as written), and the file indexes in
    [`README.md`](../README.md) §Основные файлы / [`AGENTS.md`](../AGENTS.md)
    §Repository Structure if a top-level entry changed.
@@ -69,7 +69,7 @@ repo navigable. The one hard rule is **no dangling links** (see
    original `Q-N` plus any prior amendments — the existing six
    blocks (`Q-1` through `Q-6`) plus the two `Q-1.amend-…`
    entries are the in-repo precedent.
-3. Cross-check [`HANDOFF.md`](../HANDOFF.md) §Current state ADR
+3. Cross-check [`HANDOFF.md`](../worklogs/HANDOFF.md) §Current state ADR
    list — bump the amendment date if the amended ADR is listed
    there.
 

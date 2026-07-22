@@ -7,7 +7,7 @@ from __future__ import annotations
 
 
 def test_batching_grouping() -> None:
-    READ_ONLY = {"fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep"}
+    read_only = {"fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep"}
 
     calls = [
         {"name": "fs.glob"},
@@ -17,12 +17,12 @@ def test_batching_grouping() -> None:
         {"name": "fs.grep"},
     ]
 
-    parallel = [c for c in calls if c["name"] in READ_ONLY]
-    sequential = [c for c in calls if c["name"] not in READ_ONLY]
+    parallel = [c for c in calls if c["name"] in read_only]
+    sequential = [c for c in calls if c["name"] not in read_only]
 
     assert len(parallel) == 3
     assert len(sequential) == 2
-    assert all(c["name"] in READ_ONLY for c in parallel)
+    assert all(c["name"] in read_only for c in parallel)
 
 
 def test_threadpool_parallel() -> None:

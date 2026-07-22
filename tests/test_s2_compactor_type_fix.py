@@ -18,8 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from fa.inner_loop.compaction.compactor import FullLLMCompactor
-from fa.providers import ChainConfig, ProviderChain
-
+from fa.providers import ProviderChain
 
 COMPACTOR_PATH = Path("src/fa/inner_loop/compaction/compactor.py")
 
@@ -27,7 +26,7 @@ COMPACTOR_PATH = Path("src/fa/inner_loop/compaction/compactor.py")
 # ── Kill-check 1: compactor_chain=None returns local fallback ─────────
 
 
-def test_compactor_chain_none_returns_local_fallback():
+def test_compactor_chain_none_returns_local_fallback() -> None:
     """When compactor_chain is None, compact() must return the local
     fallback truncation result — not crash."""
     compactor = FullLLMCompactor(compactor_chain=None)
@@ -44,7 +43,7 @@ def test_compactor_chain_none_returns_local_fallback():
 # ── Kill-check 2: compactor_chain with config uses config.model ───────
 
 
-def test_compactor_chain_uses_config_model_directly():
+def test_compactor_chain_uses_config_model_directly() -> None:
     """When compactor_chain has a real ChainConfig with .config.model,
     the model_slug in the RequestInfo must come from config.model."""
     from tests.fixtures.session_wiring import make_test_chain_config
@@ -62,7 +61,7 @@ def test_compactor_chain_uses_config_model_directly():
     mock_chain.request.return_value = (mock_response, "call-123", [])
 
     compactor = FullLLMCompactor(compactor_chain=mock_chain)
-    result = compactor.compact("History content")
+    compactor.compact("History content")
 
     # Verify the request was made and the model_slug came from config.model
     assert mock_chain.request.called
@@ -73,7 +72,7 @@ def test_compactor_chain_uses_config_model_directly():
 # ── Kill-check 3: no getattr on compactor_chain for config/model ──────
 
 
-def test_no_getattr_on_compactor_chain_config_model():
+def test_no_getattr_on_compactor_chain_config_model() -> None:
     """Source code must not use getattr to access compactor_chain.config.model.
     Direct attribute access is required."""
     content = COMPACTOR_PATH.read_text(encoding="utf-8")
@@ -99,7 +98,7 @@ def test_no_getattr_on_compactor_chain_config_model():
 # ── Kill-check 4: compactor_chain type is ProviderChain | None ────────
 
 
-def test_compactor_chain_type_is_provider_chain():
+def test_compactor_chain_type_is_provider_chain() -> None:
     """The __init__ parameter must be typed as ProviderChain | None, not Any | None."""
     sig = inspect.signature(FullLLMCompactor.__init__)
     param = sig.parameters.get("compactor_chain")
@@ -121,7 +120,7 @@ def test_compactor_chain_type_is_provider_chain():
 # ── Kill-check 5: direct attribute access pattern exists ──────────────
 
 
-def test_direct_model_access_pattern_exists():
+def test_direct_model_access_pattern_exists() -> None:
     """Source code must contain `self.compactor_chain.config.model` pattern."""
     content = COMPACTOR_PATH.read_text(encoding="utf-8")
     assert "self.compactor_chain.config.model" in content, (
@@ -132,7 +131,7 @@ def test_direct_model_access_pattern_exists():
 # ── Kill-check 6: no Any type annotation on compactor_chain parameter ─
 
 
-def test_no_any_type_on_compactor_chain_in_source():
+def test_no_any_type_on_compactor_chain_in_source() -> None:
     """The source code must not use `Any | None` for the compactor_chain parameter.
     This is a static AST check on the source, not the runtime signature."""
     content = COMPACTOR_PATH.read_text(encoding="utf-8")

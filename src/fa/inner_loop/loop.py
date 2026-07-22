@@ -179,8 +179,8 @@ def is_parallelizable(call: ToolCall, registry: ToolRegistry) -> bool:
 def classify_batches(calls: list[ToolCall], registry: ToolRegistry) -> list[list[ToolCall]]:
     """Group into batches where parallel safe and no path overlap, writes single.
 
-    Example: [glob, read(a.py), write(a.py), grep, read(b.py)] -> [[glob, read(a.py)], [write(a.py)], [grep, read(b.py)]]
-    Path overlap forces serial: [read(a.py), read(a.py)] -> [[read(a.py)], [read(a.py)]] not parallel (same file)
+    Example: read/write calls are split when paths overlap; independent reads may batch.
+    Path overlap forces serial execution for the same file.
     """
     batches: list[list[ToolCall]] = []
     current: list[ToolCall] = []
@@ -253,6 +253,7 @@ def _execute_one_sequential(
     Returns (result, should_stop). should_stop True when AFTER_TOOL_EXEC denies.
     Result is always returned (paired rows) even when should_stop.
     """
+    log = state.require_log()
     state.record_tool_call(call)
     try:
         payload = hooks.dispatch(
@@ -284,7 +285,7 @@ def _execute_one_sequential(
     try:
         hooks.dispatch(LifecyclePoint.AFTER_TOOL_EXEC, payload)
     except PermissionError as exc:
-        state.log.append(
+        log.append(
             actor="runtime",
             kind="run_stopped",
             content={"point": LifecyclePoint.AFTER_TOOL_EXEC.value, "reason": str(exc)},
@@ -310,6 +311,8 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
 
     Fixed for FIND-012: denied results must be preserved in returned tuple in original order.
     """
+
+    log = state.require_log()
 
     # BEFORE sequentially (guards fast, deterministic, must check sandbox before parallel)
     # For order preservation we keep same index as batch.
@@ -369,59 +372,54 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
         except Exception as exc:  # noqa: BLE001 # graceful degradation
             import logging
 
-            logging.getLogger(__name__).warning(
-                "ThreadPool parallel batch failed %s, fallback sequential", exc
-            )
+            logging.getLogger(__name__).warning("ThreadPool parallel batch failed %s, fallback sequential", exc)
             for p in exec_payloads:
                 try:
                     assert p.tool_call is not None  # noqa: S101
                     res = registry.dispatch(p.tool_call)
                     results_map[p.tool_call.call_id] = res
                 except Exception as e:  # noqa: BLE001
-                    assert p.tool_call is not None
-                    results_map[p.tool_call.call_id] = ToolResult.fail("exec_failed", str(e))
+                    if p.tool_call is not None:
+                        results_map[p.tool_call.call_id] = ToolResult.fail("exec_failed", str(e))
 
     # AFTER and record in original order (preserve order, including denied)
     ordered_results: list[ToolResult] = []
     post_exec_denied: PermissionError | None = None
 
-    for idx, payload in enumerate(payloads):
-        if payload is None:
+    for idx, pending_payload in enumerate(payloads):
+        if pending_payload is None:
             # Denied in BEFORE phase — preserve in original order
             denied = denied_results[idx]
             if denied is None:
-                denied = ToolResult.fail(
-                    "interrupted", "Interrupted before execution, missing tool_result"
-                )
+                denied = ToolResult.fail("interrupted", "Interrupted before execution, missing tool_result")
             ordered_results.append(denied)
             continue
 
-        call = payload.tool_call
-        if call is None:
-            synthetic = ToolResult.fail(
-                "interrupted", "Interrupted before execution, missing tool_result"
-            )
+        payload = pending_payload
+        pending_call = payload.tool_call
+        if pending_call is None:
+            synthetic = ToolResult.fail("interrupted", "Interrupted before execution, missing tool_result")
             ordered_results.append(synthetic)
             continue
 
-        result = results_map.get(call.call_id)
-        if result is None:
-            result = ToolResult.fail(
-                "interrupted", "Interrupted, missing tool_result — synthetic"
-            )
+        resolved_result = results_map.get(pending_call.call_id)
+        if resolved_result is None:
+            resolved_result = ToolResult.fail("interrupted", "Interrupted, missing tool_result — synthetic")
 
+        result = resolved_result
+        call = pending_call
         payload_with_result = payload.with_tool_result(result)
         try:
             hooks.dispatch(LifecyclePoint.AFTER_TOOL_EXEC, payload_with_result)
         except PermissionError as exc:
             post_exec_denied = exc
 
-        state.record_tool_result(call, result)
+        state.record_tool_result(pending_call, result)
         state.observations.append(result.summary)
         ordered_results.append(result)
 
     if post_exec_denied is not None:
-        state.log.append(
+        log.append(
             actor="runtime",
             kind="run_stopped",
             content={
@@ -429,7 +427,7 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
                 "reason": str(post_exec_denied),
             },
         )
-        # Return ordered_results so denied results are preserved; run_session will detect run_stopped log and break.
+        # Preserve denied results; run_session detects the run_stopped log.
         return ordered_results
 
     return ordered_results
@@ -446,16 +444,18 @@ def run_session(
     limits: RuntimeLimits | None = None,
 ) -> tuple[ToolResult, ...]:
     effective_limits = limits if limits is not None else RuntimeLimits.anchored_defaults()
+    log = state.require_log()
     token = set_current_session(state)
 
-    if state.log is None:
-        raise ValueError("SessionState.log must be set before run_session")
+    # require_log() above establishes the authoritative session-log invariant.
 
     # Feature flag graceful degradation
     # S13: FAIL-OPEN — tool_batching_enabled defaults to True (convenience)
-    tool_batching_enabled = state.feature_flags.tool_batching_enabled if state.feature_flags is not None else True
+    tool_batching_enabled = (
+        state.feature_flags.tool_batching_enabled if state.feature_flags is not None else True
+    )
 
-    hooks.set_event_sink(_make_hook_decision_sink(state.log))
+    hooks.set_event_sink(_make_hook_decision_sink(log))
 
     results: list[ToolResult] = []
     calls_list = list(calls)
@@ -482,7 +482,7 @@ def run_session(
                     HookPayload(role=role, acting_family=acting_family),
                 )
             except PermissionError as exc:
-                state.log.append(
+                log.append(
                     actor="runtime",
                     kind="run_stopped",
                     content={"point": LifecyclePoint.BETWEEN_ROUNDS.value, "reason": str(exc)},
@@ -523,6 +523,7 @@ def run_session(
                             break
                 except Exception as exc:  # noqa: BLE001 # best-effort log scan for parallel stop signal
                     import logging
+
                     logging.getLogger(__name__).warning(
                         "Failed to scan log for parallel AFTER_TOOL_EXEC stop signal: %s", exc
                     )

@@ -18,9 +18,17 @@
 ## Layer 0 — deterministic local gates (`just check`)
 
 Authoritative per local-first architecture; CI re-runs the same commands.
-**PR-handoff rule:** `just check` must pass before a PR is opened for
-human review. This is distinct from commit-time hygiene (which is fast
-and bypassable per ADR-11-I6) — it is the authoritative local gate.
+**Environment-readiness rule:** the agent runner MUST invoke `just agent-bootstrap`
+and require its `FA_AGENT_READY=1` marker before constructing an LLM session.
+The recipe runs `uv sync --frozen --extra dev`, installs all four hooks, and
+runs `hooks-status`; any failure prevents readiness. This is distinct from
+commit-time hygiene (which is fast and bypassable per ADR-11-I6).
+
+**PR-handoff rule:** `just check` must pass before the agent opens a PR for
+human review. CI re-runs the same gate. Required branch protection blocks the
+normal merge path, while a maintainer may retain an explicit emergency
+override for a deliberate human merge with failed checks; the agent account
+must not have that bypass permission.
 
 | Mechanism | Command seat | What it catches | Gate |
 | :--- | :--- | :--- | :--- |
@@ -93,8 +101,10 @@ into the commit. `FA_HOOK_FULL_CHECK=1` runs `uv run just check` at commit
 stage for agent sessions that want local CI parity before the commit object is
 created.
 
-The `pre-push` hook runs `uv run just check` before branch publication; use
-`FA_HOOK_SKIP_FULL_CHECK=1 git push` only for an intentional operator bypass.
+The `pre-push` hook runs `uv run just check` before branch publication;
+`FA_HOOK_SKIP_FULL_CHECK=1 git push` and `git --no-verify` are intentional
+operator-only escape hatches. The agent runner must not set the skip variable
+or use `--no-verify`.
 Snapshot tests pin hook constants to the skill §Output format / §Test-edit
 declaration so the two views cannot drift. **Bypassable locally**
 (`--no-verify`, by design per ADR-11-I6) — CI is the authority, this seat is

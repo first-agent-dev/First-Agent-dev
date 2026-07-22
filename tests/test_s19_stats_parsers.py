@@ -17,21 +17,18 @@ Covers:
 from __future__ import annotations
 
 import json
+import typing
 from pathlib import Path
+from typing import Any
 
 from fa.output import LogKind
 from fa.stats import (
     UNPARSED_KINDS,
-    CircuitBreakerRecord,
-    CompactionStartRecord,
-    CompactionWarningRecord,
-    SessionAnalytics,
     parse_session,
 )
-import typing
 
 
-def _write_events_jsonl(path: Path, events: list[dict]) -> None:
+def _write_events_jsonl(path: Path, events: list[dict[str, Any]]) -> None:
     """Write synthetic events.jsonl for stats parsing."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:
@@ -39,7 +36,7 @@ def _write_events_jsonl(path: Path, events: list[dict]) -> None:
             f.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
 
-def _base_event(run_id: str = "test-run", kind: str = "run_started", **extra: object) -> dict:
+def _base_event(run_id: str = "test-run", kind: str = "run_started", **extra: object) -> dict[str, Any]:
     return {
         "event_id": "ev-000001",
         "ts": "2026-07-20T00:00:00Z",
@@ -62,8 +59,14 @@ def test_compaction_warning_parsed(tmp_path: Path) -> None:
     events_path = tmp_path / "events.jsonl"
     _write_events_jsonl(events_path, [
         _base_event(kind="run_started", role="coder"),
-        _base_event(kind="compaction_warning", action="stage2", compaction_enabled=True, ratio=0.75, threshold=0.7),
-        _base_event(kind="session_summary", n_turns=1, input_tokens=100, output_tokens=50, cache_hit_ratio=0.5, output_tokens_total=50),
+        _base_event(
+            kind="compaction_warning", action="stage2", compaction_enabled=True,
+            ratio=0.75, threshold=0.7
+        ),
+        _base_event(
+            kind="session_summary", n_turns=1, input_tokens=100, output_tokens=50,
+            cache_hit_ratio=0.5, output_tokens_total=50
+        ),
     ])
     result = parse_session(events_path)
     assert result is not None
@@ -122,7 +125,10 @@ def test_model_user_msg_counted(tmp_path: Path) -> None:
         _base_event(kind="model_msg", text="world", tool_calls=[], finish_reason="stop"),
         _base_event(kind="user_msg", text="hello2"),
         _base_event(kind="model_msg", text="world2", tool_calls=[], finish_reason="stop"),
-        _base_event(kind="session_summary", n_turns=2, input_tokens=200, output_tokens=100, cache_hit_ratio=0.5),
+        _base_event(
+            kind="session_summary", n_turns=2, input_tokens=200,
+            output_tokens=100, cache_hit_ratio=0.5
+        ),
     ])
     result = parse_session(events_path)
     assert result is not None

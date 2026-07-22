@@ -95,91 +95,86 @@ def _count_field_usage(field_name: str, py_files: list[Path]) -> list[dict[str, 
     return refs
 
 
-def _find_phantom_getattr_flags(py_files: list[Path], declared: set[str]) -> list[dict[str, Any]]:
-    """Find getattr(feature_flags, "name") where "name" is NOT in declared fields.
-
-    Uses AST parsing for precision — walks Call nodes where func is getattr
-    and second arg is a string literal not in declared set.
-    """
-    phantom: list[dict[str, Any]] = []
-    # Regex: match getattr where FIRST arg is a feature_flags variable.
-    # Must match: getattr(feature_flags, "name"), getattr(ff, "name"),
-    #   getattr(state.feature_flags, "name"), getattr(self.feature_flags, "name"),
-    #   getattr(flags, "name") where flags is likely a FeatureFlags alias.
-    # Must NOT match: getattr(session, "feature_flags"), getattr(outcome, "exit_code")
-    # Key: first arg must END with feature_flags or be ff/flags.
-    getattr_pattern = re.compile(
+def _find_regex_phantom_flags(
+    text: str,
+    py_file: Path,
+    declared: set[str],
+) -> list[dict[str, Any]]:
+    """Find undeclared flag names using the tolerant source-text scan."""
+    pattern = re.compile(
         r"""getattr\s*\(\s*
         (?:[\w.]*feature_flags|ff|flags)\s*,\s*
         ['"]([^'"]+)['"]""",
         re.VERBOSE,
     )
+    results: list[dict[str, Any]] = []
+    for match in pattern.finditer(text):
+        name = match.group(1)
+        if name not in declared:
+            results.append(
+                {"name": name, "file": str(py_file), "line": text[: match.start()].count("\n") + 1}
+            )
+    return results
 
+
+def _is_feature_flags_getattr(node: ast.Call) -> bool:
+    """Whether an AST getattr call targets a likely FeatureFlags object."""
+    if len(node.args) < 2:
+        return False
+    first = node.args[0]
+    if isinstance(first, ast.Name):
+        return first.id in {"ff", "flags", "feature_flags"}
+    return isinstance(first, ast.Attribute) and first.attr == "feature_flags"
+
+
+def _find_ast_phantom_flags(
+    text: str,
+    py_file: Path,
+    declared: set[str],
+) -> list[dict[str, Any]]:
+    """Find undeclared flag names using precise AST inspection."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+
+    results: list[dict[str, Any]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id != "getattr":
+            continue
+        if not _is_feature_flags_getattr(node):
+            continue
+        second = node.args[1]
+        if not isinstance(second, ast.Constant) or not isinstance(second.value, str):
+            continue
+        name = second.value
+        if name in declared:
+            continue
+        results.append({"name": name, "file": str(py_file), "line": node.lineno})
+    return results
+
+
+def _find_phantom_getattr_flags(py_files: list[Path], declared: set[str]) -> list[dict[str, Any]]:
+    """Find undeclared ``getattr`` FeatureFlags accesses using regex and AST scans."""
+    phantom: list[dict[str, Any]] = []
     for py_file in py_files:
         try:
             text = py_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
 
-        # Regex approach (catches common patterns AST might miss in complex expressions)
-        for match in getattr_pattern.finditer(text):
-            name = match.group(1)
-            if name not in declared:
-                line_no = text[: match.start()].count("\n") + 1
-                phantom.append(
-                    {
-                        "name": name,
-                        "file": str(py_file),
-                        "line": line_no,
-                    }
-                )
-
-        # AST approach for completeness — only flag phantom when first arg
-        # is clearly a FeatureFlags reference (contains feature_flags or is ff)
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:
-            continue
-
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            if not isinstance(node.func, ast.Name) or node.func.id != "getattr":
-                continue
-            if len(node.args) < 2:
-                continue
-            # Second arg must be a string constant
-            second = node.args[1]
-            if not isinstance(second, ast.Constant) or not isinstance(second.value, str):
-                continue
-            name = second.value
-            # Skip if it's a declared field (these are just normal getattr access)
-            if name in declared:
-                continue
-            # First arg must look like a FeatureFlags reference
-            first = node.args[0]
-            first_is_ff = False
-            if isinstance(first, ast.Name):
-                # Bare ff / flags / feature_flags
-                first_is_ff = first.id in ("ff", "flags", "feature_flags")
-            elif isinstance(first, ast.Attribute):
-                # state.feature_flags, session.feature_flags, etc.
-                first_is_ff = first.attr == "feature_flags"
-            if not first_is_ff:
-                continue
+        candidates = _find_regex_phantom_flags(text, py_file, declared)
+        candidates.extend(_find_ast_phantom_flags(text, py_file, declared))
+        for candidate in candidates:
             if not any(
-                p["name"] == name and p["file"] == str(py_file) for p in phantom
+                existing["name"] == candidate["name"]
+                and existing["file"] == candidate["file"]
+                for existing in phantom
             ):
-                phantom.append(
-                    {
-                        "name": name,
-                        "file": str(py_file),
-                        "line": node.lineno,
-                    }
-                )
-
+                phantom.append(candidate)
     return phantom
-
 
 def check_dead_flags(repo_root: Path) -> dict[str, Any]:
     """Main check: find dead flags and phantom flags."""
@@ -197,6 +192,7 @@ def check_dead_flags(repo_root: Path) -> dict[str, Any]:
             {
                 "name": name,
                 "usage_count": len(refs),
+                "is_deprecated": False,
                 "is_dead": is_dead,
                 "refs": refs[:5],  # Cap at 5 for brevity
             }
@@ -246,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
             for p in result["phantom_flags"]:
                 print(f"  {p['name']} (in {p['file']}:{p['line']})")
         if result["dead_count"] == 0 and result["phantom_count"] == 0:
-            print("\nAll FeatureFlags fields have production consumers. No phantom flags.")
+            print("\nAll active FeatureFlags fields have production consumers. No phantom flags.")
 
     return 1 if result["dead_count"] > 0 else 0
 

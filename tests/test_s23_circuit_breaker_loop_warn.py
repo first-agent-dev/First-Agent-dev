@@ -17,13 +17,11 @@ This test has two parts:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks.base import HookRegistry
 from fa.inner_loop.registry import ToolRegistry
 from fa.output import EventBus, OutputEvent
-
 from tests.fixtures.session_wiring import (
     make_mock_chain,
     make_session_state,

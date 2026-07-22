@@ -32,7 +32,12 @@ def _parse_toml_simple(path: Path) -> dict:
 def extract_contract_packages(contract: dict) -> set[str]:
     """Extract all package names from the dependency contract."""
     packages = set()
-    for section_key in ("packages.core", "packages.security_critical", "packages.dev"):
+    for section_key in (
+        "packages.core",
+        "packages.security_critical",
+        "packages.dev",
+        "packages.optional.runtime",
+    ):
         # Handle nested keys
         parts = section_key.split(".")
         section = contract

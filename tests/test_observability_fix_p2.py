@@ -22,12 +22,9 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from fa.inner_loop.state import EventLog
-
 
 # ── LOGIC-1: _initial_next_id reads DB, not JSONL ─────────────────────────
 
@@ -115,7 +112,7 @@ def test_no_duplicate_event_ids_after_two_sessions_same_db(tmp_path: Path) -> No
     # First EventLog instance — write some events
     log1 = EventLog(jsonl_path, run_id="test-dup")
     for i in range(3):
-        log1.append(actor="test", kind="test_event", content={"i": i})
+        log1.append(actor="test", kind="telemetry", content={"i": i})
 
     # Simulate JSONL write failure: delete the JSONL
     if jsonl_path.exists():
@@ -123,7 +120,7 @@ def test_no_duplicate_event_ids_after_two_sessions_same_db(tmp_path: Path) -> No
 
     # Second EventLog instance on the same path
     log2 = EventLog(jsonl_path, run_id="test-dup")
-    event4 = log2.append(actor="test", kind="test_event", content={"i": 3})
+    event4 = log2.append(actor="test", kind="telemetry", content={"i": 3})
 
     # Verify all event_ids are unique
     conn = sqlite3.connect(str(db_path))
@@ -144,7 +141,6 @@ def test_stats_discovers_session_by_db_not_jsonl(tmp_path: Path) -> None:
 
     Kill-check: reverting to events.jsonl check makes session invisible.
     """
-    from fa.cli import build_parser
 
     runs_dir = tmp_path / "session-log"
     session_dir = runs_dir / "test-session"
@@ -194,7 +190,6 @@ def test_cmd_run_friendly_error_on_db_unavailable(tmp_path: Path) -> None:
     Kill-check: removing the try/except produces a raw RuntimeError traceback
     instead of a friendly message.
     """
-    from fa.cli import _cmd_run
 
     args = MagicMock()
     args.task_pos = None
@@ -215,8 +210,9 @@ def test_cmd_run_friendly_error_on_db_unavailable(tmp_path: Path) -> None:
     # For the actual LOGIC-8 fix, we need to test the RuntimeError path.
     # Since we can't easily make session.db unwritable in this env,
     # we verify the code structure: the try/except wraps drive_session.
-    import fa.cli as cli_module
     import inspect
+
+    import fa.cli as cli_module
 
     source = inspect.getsource(cli_module._cmd_run)
     # Verify the fix is present: RuntimeError catch for event_log_authority_unavailable

@@ -23,7 +23,7 @@ import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,25 @@ class PtyResult:
     session_id: str
 
 
+class _TmuxSessionLike(Protocol):
+    active_window: Any
+    attached_window: Any
+
+    def kill(self) -> None: ...
+
+    def kill_session(self) -> None: ...
+
+
+class _TmuxServerLike(Protocol):
+    socket_name: str
+
+    def new_session(self, **kwargs: Any) -> _TmuxSessionLike: ...
+
+    def find_where(self, filters: dict[str, str]) -> _TmuxSessionLike | None: ...
+
+    def cmd(self, *args: str) -> Any: ...
+
+
 class PoolExhaustedError(RuntimeError):
     """Pool full and trying to acquire same session_id that is locked,
     or maxSize=1 and main present trying sub.
@@ -73,7 +92,7 @@ class PtySession:
         self,
         session_id: str,
         cwd: Path,
-        server: Any | None = None,
+        server: _TmuxServerLike | None = None,
         env: dict[str, str] | None = None,
         run_id: str | None = None,
     ):
@@ -113,9 +132,12 @@ class PtySession:
                 logger.warning("pexpect fallback failed: %s, using subprocess fallback", exc)
                 self._is_fallback = True
         else:
+            server_ref = self._server
+            if server_ref is None:
+                raise RuntimeError("tmux server unavailable")
             try:
                 # Wide viewport -x 300 -y 100 per Gap 12 to preserve formal substrate JSON integrity
-                self.tmux_session = self._server.new_session(
+                self.tmux_session = server_ref.new_session(
                     session_name=f"fa_{session_id}_{self.run_id}",
                     attach=False,
                     start_directory=str(self.cwd),
@@ -124,7 +146,7 @@ class PtySession:
                 )
             except Exception:  # may already exist
                 try:
-                    self.tmux_session = self._server.find_where(
+                    self.tmux_session = server_ref.find_where(
                         {"session_name": f"fa_{session_id}_{self.run_id}"}
                     )
                 except Exception:  # noqa: BLE001, S110
@@ -132,7 +154,7 @@ class PtySession:
                 if self.tmux_session is None:
                     # Try without run_id suffix for backward compat (main session)
                     try:
-                        self.tmux_session = self._server.find_where({"session_name": f"fa_{session_id}"})
+                        self.tmux_session = server_ref.find_where({"session_name": f"fa_{session_id}"})
                     except Exception:  # noqa: BLE001, S110
                         pass
                 if self.tmux_session is None:
@@ -181,61 +203,21 @@ class PtySession:
             time.sleep(0.1)
         raise TimeoutError(f"Sentinel {self._sentinel_token} not found")
 
-    def run(self, command: str, timeout: int = 30) -> PtyResult:
-        # CWD lock per session to avoid concurrent cd race (Gap: CWD lock)
-        with self._cwd_lock:
-            if self._is_fallback:
-                if self._fallback is None:
-                    return PtyResult(
-                        stdout="No fallback available",
-                        exit_code=-1,
-                        truncated=False,
-                        session_id=self.session_id,
-                    )
-                # Wrap in subshell to avoid killing persistent shell with exit,
-                # but preserve stateful commands (export, cd, source, etc) in main shell.
-                stripped = command.lstrip()
-                is_stateful = stripped.startswith(("export ", "cd ", "source ", ". ", "alias ", "unalias ", "set ", "unset "))
-                if stripped == "cd" or stripped.startswith("cd "):
-                    is_stateful = True
-                if is_stateful:
-                    full = f"{command}; echo {self._exit_token}:$? {self._end_token}"
-                else:
-                    full = f"({command}); echo {self._exit_token}:$? {self._end_token}"
-                try:
-                    self._fallback.sendline(full)
-                    self._fallback.expect(self._end_token, timeout=timeout)
-                    raw = self._fallback.before or ""
-                except Exception:  # noqa: BLE001
-                    raw = self._fallback.before or "" if self._fallback else ""
-                    return PtyResult(
-                        stdout=f"Timeout {timeout}s partial:\n{ANSI_RE.sub('', raw)[:8000]}",
-                        exit_code=-1,
-                        truncated=True,
-                        session_id=self.session_id,
-                    )
-                clean = ANSI_RE.sub("", raw)
-                clean = resolve_cr(clean)
-                # Strip sentinel token that may be in prompt (pexpect PS1)
-                clean = clean.replace(self._sentinel_token, "")
-                m = re.search(rf"{re.escape(self._exit_token)}:(\d+)", clean)
-                exit_code = int(m.group(1)) if m else -1
-                if f"{self._exit_token}:" in clean:
-                    clean = clean.split(f"{self._exit_token}:")[0]
-                truncated = len(clean) > 8000
-                if truncated:
-                    clean = clean[:8000] + "\n...[truncated]"
+    def _run_fallback(self, command: str, timeout: int) -> PtyResult:
+        if self._is_fallback:
+            if self._fallback is None:
                 return PtyResult(
-                    stdout=clean.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id
+                    stdout="No fallback available",
+                    exit_code=-1,
+                    truncated=False,
+                    session_id=self.session_id,
                 )
-
-            if self.pane is None:
-                return PtyResult(
-                    stdout="No pane available", exit_code=-1, truncated=False, session_id=self.session_id
-                )
-
+            # Wrap in subshell to avoid killing persistent shell with exit,
+            # but preserve stateful commands (export, cd, source, etc) in main shell.
             stripped = command.lstrip()
-            is_stateful = stripped.startswith(("export ", "cd ", "source ", ". ", "alias ", "unalias ", "set ", "unset "))
+            is_stateful = stripped.startswith(
+                ("export ", "cd ", "source ", ". ", "alias ", "unalias ", "set ", "unset ")
+            )
             if stripped == "cd" or stripped.startswith("cd "):
                 is_stateful = True
             if is_stateful:
@@ -243,58 +225,114 @@ class PtySession:
             else:
                 full = f"({command}); echo {self._exit_token}:$? {self._end_token}"
             try:
-                self.pane.send_keys(full)
-            except Exception as exc:  # noqa: BLE001
+                self._fallback.sendline(full)
+                self._fallback.expect(self._end_token, timeout=timeout)
+                raw = self._fallback.before or ""
+            except Exception:  # noqa: BLE001
+                raw = self._fallback.before or "" if self._fallback else ""
                 return PtyResult(
-                    stdout=f"Failed to send command: {exc}",
+                    stdout=f"Timeout {timeout}s partial:\n{ANSI_RE.sub('', raw)[:8000]}",
                     exit_code=-1,
-                    truncated=False,
+                    truncated=True,
                     session_id=self.session_id,
                 )
-
-            import time
-
-            start = time.time()
-            output = ""
-            exit_code = -1
-            while time.time() - start < timeout:
-                try:
-                    # -J join wrapped lines per Gap 12 to prevent JSON corruption
-                    lines = self.pane.cmd("capture-pane", "-p", "-J", "-S", "-100", "-E", "-").stdout
-                    text = "\n".join(lines)
-                    if self._end_token in text:
-                        clean = ANSI_RE.sub("", text)
-                        clean = resolve_cr(clean)
-                        # Strip sentinel token that may appear in prompt
-                        clean = clean.replace(self._sentinel_token, "")
-                        m = re.search(rf"{re.escape(self._exit_token)}:(\d+)", clean)
-                        if m:
-                            exit_code = int(m.group(1))
-                        if f"{self._exit_token}:" in clean:
-                            clean = clean.split(f"{self._exit_token}:")[0]
-                        output = clean
-                        break
-                except Exception:  # noqa: BLE001, S110
-                    pass
-                time.sleep(0.2)
-            truncated = len(output) > 8000
+            clean = ANSI_RE.sub("", raw)
+            clean = resolve_cr(clean)
+            # Strip sentinel token that may be in prompt (pexpect PS1)
+            clean = clean.replace(self._sentinel_token, "")
+            m = re.search(rf"{re.escape(self._exit_token)}:(\d+)", clean)
+            exit_code = int(m.group(1)) if m else -1
+            if f"{self._exit_token}:" in clean:
+                clean = clean.split(f"{self._exit_token}:")[0]
+            truncated = len(clean) > 8000
             if truncated:
-                output = output[:8000] + "\n...[truncated 8000]"
+                clean = clean[:8000] + "\n...[truncated]"
             return PtyResult(
-                stdout=output.strip(),
-                exit_code=exit_code,
-                truncated=truncated,
+                stdout=clean.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id
+            )
+        return PtyResult(
+            stdout="No fallback available", exit_code=-1, truncated=False, session_id=self.session_id
+        )
+
+    def _run_tmux(self, command: str, timeout: int) -> PtyResult:
+        if self.pane is None:
+            return PtyResult(
+                stdout="No pane available", exit_code=-1, truncated=False, session_id=self.session_id
+            )
+
+        stripped = command.lstrip()
+        is_stateful = stripped.startswith(
+            ("export ", "cd ", "source ", ". ", "alias ", "unalias ", "set ", "unset ")
+        )
+        if stripped == "cd" or stripped.startswith("cd "):
+            is_stateful = True
+        if is_stateful:
+            full = f"{command}; echo {self._exit_token}:$? {self._end_token}"
+        else:
+            full = f"({command}); echo {self._exit_token}:$? {self._end_token}"
+        try:
+            self.pane.send_keys(full)
+        except Exception as exc:  # noqa: BLE001
+            return PtyResult(
+                stdout=f"Failed to send command: {exc}",
+                exit_code=-1,
+                truncated=False,
                 session_id=self.session_id,
             )
+
+        import time
+
+        start = time.time()
+        output = ""
+        exit_code = -1
+        while time.time() - start < timeout:
+            try:
+                # -J join wrapped lines per Gap 12 to prevent JSON corruption
+                lines = self.pane.cmd("capture-pane", "-p", "-J", "-S", "-100", "-E", "-").stdout
+                text = "\n".join(lines)
+                if self._end_token in text:
+                    clean = ANSI_RE.sub("", text)
+                    clean = resolve_cr(clean)
+                    # Strip sentinel token that may appear in prompt
+                    clean = clean.replace(self._sentinel_token, "")
+                    m = re.search(rf"{re.escape(self._exit_token)}:(\d+)", clean)
+                    if m:
+                        exit_code = int(m.group(1))
+                    if f"{self._exit_token}:" in clean:
+                        clean = clean.split(f"{self._exit_token}:")[0]
+                    output = clean
+                    break
+            except Exception:  # noqa: BLE001, S110
+                pass
+            time.sleep(0.2)
+        truncated = len(output) > 8000
+        if truncated:
+            output = output[:8000] + "\n...[truncated 8000]"
+        return PtyResult(
+            stdout=output.strip(),
+            exit_code=exit_code,
+            truncated=truncated,
+            session_id=self.session_id,
+        )
+
+    def run(self, command: str, timeout: int = 30) -> PtyResult:
+        """Run one command while serializing cwd/session access."""
+        with self._cwd_lock:
+            if self._is_fallback:
+                return self._run_fallback(command, timeout)
+            return self._run_tmux(command, timeout)
 
     def send_ctrl_c(self) -> str:
         if self._is_fallback:
             if self._fallback is None:
                 return "No fallback"
             try:
+                # The active run() call owns the pexpect reader. A second
+                # concurrent expect() here races with run() for the prompt/
+                # end sentinel and can leave the non-daemon worker blocked.
+                # Send the interrupt only; run() observes its own end token.
                 self._fallback.sendcontrol("c")
-                self._fallback.expect(self._sentinel_token, timeout=5)
-                return "Ctrl+C ready"
+                return "Ctrl+C sent"
             except Exception:  # noqa: BLE001
                 return "Ctrl+C sent not ready"
         if self.pane is None:
@@ -343,13 +381,13 @@ class PtyPool:
         self.sessions: dict[str, PtySession] = {}
         self._lru: OrderedDict[str, None] = OrderedDict()
         self.lock = threading.Lock()
-        self._server: Any | None = server
+        self._server: _TmuxServerLike | None = server
         self.run_id = run_id or f"run-{uuid.uuid4().hex[:8]}"
         self._original_server: Any | None = None
 
         if self._server is None:
             try:
-                import libtmux  # type: ignore[import-untyped]
+                import libtmux
 
                 if shutil.which("tmux") is None:
                     logger.warning("tmux binary not found, falling back to pexpect")
@@ -358,7 +396,7 @@ class PtyPool:
                     # Socket isolation per run_id to avoid hijack in concurrent eval-harness / CI
                     socket_name = f"fa_{self.run_id}"
                     try:
-                        self._server = libtmux.Server(socket_name=socket_name)
+                        self._server = cast(_TmuxServerLike, libtmux.Server(socket_name=socket_name))
                         # Ensure server started
                         self._server.cmd("start-server")
                     except Exception as exc:  # noqa: BLE001
@@ -368,8 +406,11 @@ class PtyPool:
                             exc,
                         )
                         try:
-                            self._server = libtmux.Server()
-                            self._server.cmd("start-server")
+                            self._server = cast(_TmuxServerLike, libtmux.Server())
+                            server_ref = self._server
+                            if server_ref is None:
+                                raise RuntimeError("tmux server unavailable")
+                            server_ref.cmd("start-server")
                         except Exception as exc2:  # noqa: BLE001
                             logger.warning("libtmux default server failed: %s, fallback to pexpect", exc2)
                             self._server = None

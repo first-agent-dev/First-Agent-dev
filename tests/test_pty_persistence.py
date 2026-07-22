@@ -8,7 +8,7 @@ from pathlib import Path
 # For unit tests without tmux, PtyPool falls back to pexpect
 
 
-def test_pty_persistence_cd():
+def test_pty_persistence_cd() -> None:
     from fa.runtime.pty_pool import PtyPool
 
     pool = PtyPool(max_size=1, base_cwd=Path("/tmp"))
@@ -22,7 +22,7 @@ def test_pty_persistence_cd():
     pool.kill("test_cd")
 
 
-def test_pty_env_persistence():
+def test_pty_env_persistence() -> None:
     from fa.runtime.pty_pool import PtyPool
 
     pool = PtyPool(max_size=1, base_cwd=Path("/tmp"))
@@ -33,7 +33,7 @@ def test_pty_env_persistence():
     pool.kill("test_env")
 
 
-def test_ansi_strip():
+def test_ansi_strip() -> None:
     from fa.runtime.pty_pool import PtyPool
 
     pool = PtyPool(max_size=1, base_cwd=Path("/tmp"))
@@ -52,7 +52,7 @@ def test_resolve_cr_basic() -> None:
 
 
 
-def test_carriage_returns_cleaned_in_session_output():
+def test_carriage_returns_cleaned_in_session_output() -> None:
     from fa.runtime.pty_pool import PtyPool
 
     pool = PtyPool(max_size=1, base_cwd=Path("/tmp"))
@@ -64,7 +64,31 @@ def test_carriage_returns_cleaned_in_session_output():
 
 
 
-def test_ctrl_c():
+def test_helper_fallback_without_child_returns_structured_failure(tmp_path: Path) -> None:
+    """C2: PTY fallback helper fails closed when the child is unavailable."""
+    from fa.runtime.pty_pool import PtySession
+
+    session = PtySession("helper-fallback", tmp_path, server=None)
+    session._fallback = None
+    session._is_fallback = True
+    result = session._run_fallback("pwd", timeout=1)
+    assert result.exit_code == -1
+    assert result.stdout == "No fallback available"
+
+
+def test_helper_tmux_without_pane_returns_structured_failure(tmp_path: Path) -> None:
+    """C2: tmux helper fails closed when no pane is available."""
+    from fa.runtime.pty_pool import PtySession
+
+    session = PtySession("helper-tmux", tmp_path, server=None)
+    session._is_fallback = False
+    session.pane = None
+    result = session._run_tmux("pwd", timeout=1)
+    assert result.exit_code == -1
+    assert result.stdout == "No pane available"
+
+
+def test_ctrl_c() -> None:
     from fa.runtime.pty_pool import PtyPool
 
     pool = PtyPool(max_size=1, base_cwd=Path("/tmp"))
@@ -72,7 +96,7 @@ def test_ctrl_c():
     # Start sleep in background? Actually send sleep 10 then Ctrl+C
     import threading
 
-    def run_sleep():
+    def run_sleep() -> None:
         session.run("sleep 10", timeout=2)  # should timeout
 
     thread = threading.Thread(target=run_sleep)
@@ -83,4 +107,5 @@ def test_ctrl_c():
     msg = session.send_ctrl_c()
     assert "Ctrl+C" in msg or "ready" in msg.lower()
     thread.join(timeout=2)
+    assert not thread.is_alive(), "PtySession.run thread did not stop after Ctrl+C"
     pool.kill("test_ctrlc")

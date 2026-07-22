@@ -15,10 +15,7 @@ import subprocess
 import typing
 from pathlib import Path
 
-import pytest
-
 from fa.output import LogKind
-
 
 # ── Constants ────────────────────────────────────────────────────────
 
@@ -28,7 +25,7 @@ SRC_FA = Path("src/fa")
 # ── Kill-check 1: LogKind is defined and has members ─────────────────
 
 
-def test_log_kind_defined_and_nonempty():
+def test_log_kind_defined_and_nonempty() -> None:
     """LogKind must be a Literal with at least 30 members."""
     args = typing.get_args(LogKind)
     assert len(args) >= 30, f"LogKind has only {len(args)} members, expected >= 30"
@@ -37,7 +34,7 @@ def test_log_kind_defined_and_nonempty():
 # ── Kill-check 2: Member count matches source kind= literals ────────
 
 
-def test_log_kind_member_count_matches_source():
+def test_log_kind_member_count_matches_source() -> None:
     """The number of LogKind members must match the number of unique kind=
     string literals found in src/fa/ (including dynamically constructed kinds)."""
     args = set(typing.get_args(LogKind))
@@ -80,7 +77,7 @@ def test_log_kind_member_count_matches_source():
 # ── Kill-check 3: All members are strings ───────────────────────────
 
 
-def test_log_kind_all_members_are_strings():
+def test_log_kind_all_members_are_strings() -> None:
     """Every LogKind member must be a string literal."""
     for member in typing.get_args(LogKind):
         assert isinstance(member, str), f"LogKind member {member!r} is not a string"
@@ -89,7 +86,7 @@ def test_log_kind_all_members_are_strings():
 # ── Kill-check 4: No duplicate members ──────────────────────────────
 
 
-def test_log_kind_no_duplicates():
+def test_log_kind_no_duplicates() -> None:
     """LogKind must not have duplicate members."""
     args = typing.get_args(LogKind)
     assert len(args) == len(set(args)), "LogKind has duplicate members"
@@ -98,7 +95,7 @@ def test_log_kind_no_duplicates():
 # ── Kill-check 5: LogKind is in __all__ ─────────────────────────────
 
 
-def test_log_kind_in_all():
+def test_log_kind_in_all() -> None:
     """LogKind must be exported in fa.output.__all__."""
     from fa.output import __all__
     assert "LogKind" in __all__, "LogKind not found in fa.output.__all__"
@@ -107,7 +104,7 @@ def test_log_kind_in_all():
 # ── Kill-check 6: compaction_warning is present (was dead code before S6) ─
 
 
-def test_compaction_warning_in_log_kind():
+def test_compaction_warning_in_log_kind() -> None:
     """compaction_warning must be in LogKind — it's the single observation
     point for compaction-level pressure (added by S6 producer, but the
     type member must exist for the contract check to validate)."""
@@ -118,7 +115,7 @@ def test_compaction_warning_in_log_kind():
 # ── Kill-check 7: Specific expected members present ─────────────────
 
 
-def test_expected_members_present():
+def test_expected_members_present() -> None:
     """Spot-check that key safety-critical kinds are present."""
     args = set(typing.get_args(LogKind))
     expected = {

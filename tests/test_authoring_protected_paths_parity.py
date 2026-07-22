@@ -11,8 +11,8 @@ Proves CODEOWNERS and check_protected_paths.py list same TCB paths.
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 
 
 def _parse_codeowners_tcb_paths(codeowners_path: Path) -> set[str]:
@@ -32,7 +32,13 @@ def _parse_codeowners_tcb_paths(codeowners_path: Path) -> set[str]:
             continue
         pattern = parts[0]
         # Only keep authoring-related TCB paths, not all CODEOWNERS
-        if "authoring" in pattern or "CODEOWNERS" in pattern or "check_protected_paths" in pattern or "authoring-guardrails" in pattern or "dependency_contract" in pattern:
+        if any(
+            marker in pattern
+            for marker in (
+                "authoring", "CODEOWNERS", "check_protected_paths",
+                "authoring-guardrails", "dependency_contract"
+            )
+        ):
             # Normalize: remove leading / and keep as repo-relative
             norm = pattern.lstrip("/")
             paths.add(norm)
@@ -71,7 +77,7 @@ def _parse_check_protected_paths_tcb() -> set[str]:
                                 if path:
                                     # Normalize: lstrip / and keep
                                     tcb_paths.add(path.lstrip("/"))
-                    except Exception:
+                    except (TypeError, ValueError, re.error):
                         continue
     return tcb_paths
 
@@ -94,7 +100,7 @@ def test_codeowners_and_check_protected_paths_same_tcb() -> None:
     assert len(codeowners_tcb) >= 3, f"CODEOWNERS TCB set too small: {codeowners_tcb}"
     assert len(script_tcb) >= 3, f"check_protected_paths _TCB_PATHS too small: {script_tcb}"
 
-    # CODEOWNERS may list directory (src/fa/authoring_rules/) that covers file (src/fa/authoring_rules/__init__.py)
+    # CODEOWNERS may list a directory covering a file.
     # So we check that every path in script_tcb is covered by some CODEOWNERS pattern (exact or prefix)
     def is_covered(path: str, patterns: set[str]) -> bool:
         # Exact match
@@ -115,8 +121,8 @@ def test_codeowners_and_check_protected_paths_same_tcb() -> None:
 
     # For reverse, we check that every CODEOWNERS authoring path is covered by script_tcb (exact or prefix)
     # Since CODEOWNERS may have directory pattern, and script may have file, we need reverse check too
-    # For simplicity, we check that every CODEOWNERS pattern (if file) is in script_tcb or covered by directory in script? 
-    # But script_tcb contains files, not directories (except maybe). So we check that each CODEOWNERS file pattern is in script_tcb
+    # For simplicity, each file pattern must be in script_tcb or under a script directory.
+    # script_tcb contains files, so each CODEOWNERS file pattern must be present.
     # If CODEOWNERS pattern is directory, it should have at least one file in script_tcb under it
     missing_in_script = set()
     for pat in codeowners_tcb:
@@ -126,7 +132,7 @@ def test_codeowners_and_check_protected_paths_same_tcb() -> None:
                 missing_in_script.add(pat)
         else:
             if pat not in script_tcb:
-                # Also check if script has directory that would cover this file? No, script lists files, so file should be exact
+                # Script lists files, so this check intentionally requires an exact match.
                 missing_in_script.add(pat)
 
     assert not missing_in_script, (

@@ -14,24 +14,20 @@ Kill-check: removing the emit calls or handler registrations makes tests fail.
 
 from __future__ import annotations
 
-import io
 import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
-
-import pytest
+from typing import Any
 
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry, LoopGuard
 from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSpec
-from fa.output import ConsoleRenderer, EventBus, OutputEvent, QuietRenderer
-from fa.providers import ChainConfig, ProviderChain
-from fa.providers.errors import ProviderChainExhaustedError, ProviderRequestShapeError
-from tests.fixtures.session_wiring import make_mock_chain, make_session_state, mock_success_response, require_log
-
+from fa.output import ConsoleRenderer, EventBus, OutputEvent
+from fa.providers.base import ResponseInfo
+from fa.providers.errors import ProviderRequestShapeError
+from tests.fixtures.session_wiring import make_mock_chain, mock_success_response
 
 # ── Capturing output bus for event assertions ─────────────────────────────
 
@@ -46,9 +42,11 @@ class _CaptureListener:
         self.events.append(event)
 
 
-def _make_session_with_output(tmp_path: Path, *, budget_enabled: bool = True, compaction_enabled: bool = False):
+def _make_session_with_output(
+    tmp_path: Path, *, budget_enabled: bool = True, compaction_enabled: bool = False
+) -> tuple[SessionState, EventBus, _CaptureListener]:
     """Create session state + output bus with capture listener."""
-    flags = FeatureFlags(context_budget_enabled=budget_enabled, context_compaction_enabled=compaction_enabled)
+    flags = FeatureFlags(context_budget_enabled=budget_enabled)
     log = EventLog(tmp_path / "events.jsonl", run_id="test-p4")
     state = SessionState(
         workspace_root=tmp_path,
@@ -80,7 +78,7 @@ def test_context_used_pct_not_none_at_session_end(tmp_path: Path) -> None:
 
     task = "X" * 300000  # ~75k tokens
 
-    outcome = drive_session(
+    drive_session(
         task,
         provider_chain=mock_chain,
         registry=ToolRegistry(),
@@ -184,11 +182,11 @@ def test_loop_warn_emitted_via_warn_sink(tmp_path: Path) -> None:
     def _warn_sink(detector: str, message: str) -> None:
         try:
             log.append(actor="hook", kind="loop_guard_warn", content={"detector": detector, "message": message})
-        except Exception:
+        except (OSError, RuntimeError, ValueError, TypeError):
             pass
         try:
             bus.emit(OutputEvent(type="loop_warn", data={"detector": detector, "message": message}))
-        except Exception:
+        except (OSError, RuntimeError, ValueError, TypeError):
             pass
 
     hooks.register(LoopGuard(repeat_warn=2, circuit_breaker=5, window=10, warn_sink=_warn_sink))
@@ -235,10 +233,10 @@ def test_loop_warn_emitted_via_warn_sink(tmp_path: Path) -> None:
 # ── ConsoleRenderer detail-level tests ────────────────────────────────────
 
 
-def test_context_warn_visible_at_standard_detail(capsys) -> None:
+def test_context_warn_visible_at_standard_detail(capsys: Any) -> None:
     """context_warn OutputEvent renders at --detail standard."""
     renderer = ConsoleRenderer(detail="standard")
-    renderer._write = lambda text: sys.stderr.write(text + "\n")
+    renderer._write = lambda text: sys.stderr.write(text + "\n")  # type: ignore[method-assign,assignment]  # test capture seam
     event = OutputEvent(type="context_warn", data={"pct": 85, "action": "stage2", "message": "budget warning"})
     renderer.on_event(event)
     captured = capsys.readouterr()
@@ -246,10 +244,10 @@ def test_context_warn_visible_at_standard_detail(capsys) -> None:
     assert "context" in captured.err.lower()
 
 
-def test_compaction_start_renders(capsys) -> None:
+def test_compaction_start_renders(capsys: Any) -> None:
     """compaction_start OutputEvent renders."""
     renderer = ConsoleRenderer(detail="standard")
-    renderer._write = lambda text: sys.stderr.write(text + "\n")
+    renderer._write = lambda text: sys.stderr.write(text + "\n")  # type: ignore[method-assign,assignment]  # test capture seam
     event = OutputEvent(type="compaction_start", data={"stage": 2, "tokens_before": 120000})
     renderer.on_event(event)
     captured = capsys.readouterr()
@@ -257,11 +255,14 @@ def test_compaction_start_renders(capsys) -> None:
     assert "stage2" in captured.err
 
 
-def test_loop_warn_renders(capsys) -> None:
+def test_loop_warn_renders(capsys: Any) -> None:
     """loop_warn OutputEvent renders."""
     renderer = ConsoleRenderer(detail="standard")
-    renderer._write = lambda text: sys.stderr.write(text + "\n")
-    event = OutputEvent(type="loop_warn", data={"detector": "identical_call_repeat", "message": "test.echo repeated 2 times"})
+    renderer._write = lambda text: sys.stderr.write(text + "\n")  # type: ignore[method-assign,assignment]  # test capture seam
+    event = OutputEvent(
+        type="loop_warn",
+        data={"detector": "identical_call_repeat", "message": "test.echo repeated 2 times"},
+    )
     renderer.on_event(event)
     captured = capsys.readouterr()
     assert "loop" in captured.err.lower()
@@ -270,7 +271,7 @@ def test_loop_warn_renders(capsys) -> None:
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _mock_response_with_tools(tool_calls: list[dict]) -> tuple:
+def _mock_response_with_tools(tool_calls: list[dict[str, Any]]) -> tuple[ResponseInfo, str, list[object]]:
     from fa.providers.base import ResponseInfo
 
     resp = ResponseInfo(

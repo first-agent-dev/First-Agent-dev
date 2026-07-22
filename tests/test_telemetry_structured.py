@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 
-def test_telemetry_structured_fields():
+def test_telemetry_structured_fields() -> None:
     from fa.telemetry.telemetry import TelemetryEvent, TelemetryLogger
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -46,7 +46,7 @@ def test_telemetry_structured_fields():
         assert queried[0].cache_hit is True
 
 
-def test_telemetry_no_raw_logs_drowning():
+def test_telemetry_no_raw_logs_drowning() -> None:
     from fa.telemetry.telemetry import TelemetryEvent, TelemetryLogger
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -72,7 +72,8 @@ def test_telemetry_no_raw_logs_drowning():
             branch_decision="",
             rejected_alternatives=[],
             human_approval=None,
-            artifact_id="artifact-large-output-id",  # Reference to full output offloaded to ArtifactStore, not raw log
+            # Reference to full output offloaded to ArtifactStore, not raw log.
+            artifact_id="artifact-large-output-id",
         )
 
         logger.log(event)
@@ -87,7 +88,7 @@ def test_telemetry_no_raw_logs_drowning():
         assert large_output not in lines[0]
 
 
-def test_telemetry_sanitizes_secrets():
+def test_telemetry_sanitizes_secrets() -> None:
     from fa.telemetry.telemetry import TelemetryEvent, TelemetryLogger
 
     with tempfile.TemporaryDirectory() as tmp:

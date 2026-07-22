@@ -23,12 +23,10 @@ from fa.inner_loop.hooks import HookRegistry
 from fa.providers import ChainConfig, ProviderChain
 from fa.providers.errors import ConfigurationError
 from tests.fixtures.session_wiring import (
-    make_mock_chain,
     make_test_chain_config,
     mock_success_response,
     require_log,
 )
-
 
 # ── Constants ────────────────────────────────────────────────────────
 
@@ -52,7 +50,7 @@ def session_state(tmp_path: Path) -> SessionState:
 # ── Kill-check 1: context_limit=0 is rejected upstream ───────────────
 
 
-def test_context_limit_zero_rejected_by_chain_config():
+def test_context_limit_zero_rejected_by_chain_config() -> None:
     """ChainConfig.validate() rejects context_limit=0 with ConfigurationError.
     The `or 150000` trap that would silently convert 0→150000 is now removed,
     so the upstream validation is the sole defense against zero."""
@@ -104,11 +102,11 @@ def test_context_limit_below_floor_clamped(tmp_path: Path, session_state: Sessio
     telemetry_events = [e for e in events if e.kind == "telemetry"]
     clamp_events = [
         e for e in telemetry_events
-        if "below floor" in e.content.get("message", "")
+        if "below floor" in str(e.content.get("message", ""))
     ]
     assert len(clamp_events) == 1, f"Expected 1 clamp telemetry event, got {len(clamp_events)}"
-    assert "context_limit=100" in clamp_events[0].content["message"]
-    assert str(MIN_CONTEXT_LIMIT) in clamp_events[0].content["message"]
+    assert "context_limit=100" in str(clamp_events[0].content["message"])
+    assert str(MIN_CONTEXT_LIMIT) in str(clamp_events[0].content["message"])
 
 
 # ── Kill-check 3: normal context_limit passes through unchanged ──────
@@ -139,7 +137,7 @@ def test_context_limit_normal_passthrough(tmp_path: Path, session_state: Session
     telemetry_events = [e for e in events if e.kind == "telemetry"]
     clamp_events = [
         e for e in telemetry_events
-        if "below floor" in e.content.get("message", "")
+        if "below floor" in str(e.content.get("message", ""))
     ]
     assert len(clamp_events) == 0, "No clamp event expected for normal context_limit"
 
@@ -171,7 +169,7 @@ def test_context_limit_at_floor_not_clamped(tmp_path: Path, session_state: Sessi
     telemetry_events = [e for e in events if e.kind == "telemetry"]
     clamp_events = [
         e for e in telemetry_events
-        if "below floor" in e.content.get("message", "")
+        if "below floor" in str(e.content.get("message", ""))
     ]
     assert len(clamp_events) == 0, "No clamp event for context_limit at floor"
 
@@ -179,7 +177,7 @@ def test_context_limit_at_floor_not_clamped(tmp_path: Path, session_state: Sessi
 # ── Static checks: no `or 150000` and no getattr on context_limit ───
 
 
-def test_no_or_150000_code_pattern():
+def test_no_or_150000_code_pattern() -> None:
     """Source code must not contain `or 150000` as a code pattern (comments are OK)."""
     content = CODER_LOOP_PATH.read_text(encoding="utf-8")
     tree = ast.parse(content)
@@ -194,7 +192,7 @@ def test_no_or_150000_code_pattern():
                     )
 
 
-def test_no_getattr_context_limit_or_compaction_threshold():
+def test_no_getattr_context_limit_or_compaction_threshold() -> None:
     """Source code must not use getattr for context_limit or compaction_threshold
     on provider_chain.config — direct attribute access is now required."""
     content = CODER_LOOP_PATH.read_text(encoding="utf-8")
@@ -213,7 +211,7 @@ def test_no_getattr_context_limit_or_compaction_threshold():
                             )
 
 
-def test_direct_context_limit_access_exists():
+def test_direct_context_limit_access_exists() -> None:
     """Source code must access context_limit via direct attribute: provider_chain.config.context_limit"""
     content = CODER_LOOP_PATH.read_text(encoding="utf-8")
     assert "provider_chain.config.context_limit" in content, (
@@ -224,7 +222,7 @@ def test_direct_context_limit_access_exists():
     )
 
 
-def test_min_context_limit_constant_exists():
+def test_min_context_limit_constant_exists() -> None:
     """Source code must define MIN_CONTEXT_LIMIT = 32_000."""
     content = CODER_LOOP_PATH.read_text(encoding="utf-8")
     assert "MIN_CONTEXT_LIMIT" in content, "MIN_CONTEXT_LIMIT constant not found"

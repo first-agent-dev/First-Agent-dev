@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-import fastjsonschema
+import fastjsonschema  # type: ignore[import-untyped]
 
 # Full schema chosen in Q&A: Goal, Verification, Risks
 SUBAGENT_ENVELOPE_SCHEMA = {
@@ -79,7 +79,9 @@ class SubagentEnvelope:
         # role is preserved as envelope type — both researcher and verifier run bash (stateless),
         # but type must reflect caller role (D10 role-bounded)
         envelope_type = (
-            role if role in {"researcher", "verifier", "code-reviewer", "implementer", "planner"} else "verifier"
+            role
+            if role in {"researcher", "verifier", "code-reviewer", "implementer", "planner"}
+            else "verifier"
         )
         # Researcher summary should surface the actual output (source summary) for observability,
         # while verifier keeps PASS/FAIL short.

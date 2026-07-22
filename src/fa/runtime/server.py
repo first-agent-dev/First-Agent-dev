@@ -7,44 +7,52 @@ Prior art: OpenHands Action Execution Server, OpenCode ShellPool
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
+from typing import Any
 
 try:
-    from fastapi import FastAPI, HTTPException  # type: ignore[import-untyped]
-    from pydantic import BaseModel  # type: ignore[import-untyped]
-
+    _fastapi = importlib.import_module("fastapi")
+    _pydantic = importlib.import_module("pydantic")
+    FastAPI: Any = _fastapi.FastAPI
+    HTTPException: Any = _fastapi.HTTPException
+    BaseModel: Any = _pydantic.BaseModel
     HAS_FASTAPI = True
 except ImportError:
-    FastAPI = None  # type: ignore
-    HTTPException = Exception  # type: ignore
-    BaseModel = object  # type: ignore
+    FastAPI = None
+    HTTPException = Exception
+    BaseModel = object
     HAS_FASTAPI = False
 
 from .pty_pool import PtyPool, PtyResult
 
-if HAS_FASTAPI:
-    app = FastAPI(title="fa-runtime-server", version="0.1")  # type: ignore
-    pool = PtyPool(max_size=3, base_cwd=Path("/workspace"))
+app: Any = None
+pool: PtyPool | None = None
 
-    class ExecuteRequest(BaseModel):  # type: ignore
+if HAS_FASTAPI:
+    app = FastAPI(title="fa-runtime-server", version="0.1")
+    pool = PtyPool(max_size=3, base_cwd=Path("/workspace"))
+    runtime_pool = pool
+
+    class ExecuteRequest(BaseModel):  # type: ignore[misc]  # optional dependency is loaded dynamically
         session_id: str = "main"
         command: str
         timeout: int = 30
         workdir: str | None = None
 
-    class ExecuteResponse(BaseModel):  # type: ignore
+    class ExecuteResponse(BaseModel):  # type: ignore[misc]  # optional dependency is loaded dynamically
         stdout: str
         exit_code: int
         truncated: bool
         session_id: str
 
-    class KillRequest(BaseModel):  # type: ignore
+    class KillRequest(BaseModel):  # type: ignore[misc]  # optional dependency is loaded dynamically
         session_id: str
 
-    @app.post("/execute", response_model=ExecuteResponse)
-    def execute(req: ExecuteRequest):  # type: ignore
+    @app.post("/execute", response_model=ExecuteResponse)  # type: ignore[untyped-decorator]  # FastAPI is optional
+    def execute(req: ExecuteRequest) -> ExecuteResponse:
         try:
-            session = pool.acquire(req.session_id, workdir=req.workdir)
+            session = runtime_pool.acquire(req.session_id, workdir=req.workdir)
             result: PtyResult = session.run(req.command, timeout=req.timeout)
             return ExecuteResponse(
                 stdout=result.stdout,
@@ -53,32 +61,32 @@ if HAS_FASTAPI:
                 session_id=result.session_id,
             )
         except AssertionError as e:
-            raise HTTPException(status_code=400, detail=f"Defensive check failed: {e}")
-        except Exception as e:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=400, detail=f"Defensive check failed: {e}") from e
+        except Exception as e:  # graceful degradation per Phase 0.5, failure-observable WARNING
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
-    @app.post("/send_ctrl_c")
-    def send_ctrl_c(session_id: str):  # type: ignore
-        if session_id not in pool.sessions:
+    @app.post("/send_ctrl_c")  # type: ignore[untyped-decorator]  # FastAPI is optional
+    def send_ctrl_c(session_id: str) -> dict[str, str]:
+        if session_id not in runtime_pool.sessions:
             raise HTTPException(status_code=404, detail="session not found")
-        msg = pool.sessions[session_id].send_ctrl_c()
+        msg = runtime_pool.sessions[session_id].send_ctrl_c()
         return {"msg": msg, "session_id": session_id}
 
-    @app.get("/list")
-    def list_sessions():  # type: ignore
-        return {"sessions": pool.list_sessions()}
+    @app.get("/list")  # type: ignore[untyped-decorator]  # FastAPI is optional
+    def list_sessions() -> dict[str, list[str]]:
+        return {"sessions": runtime_pool.list_sessions()}
 
-    @app.post("/kill")
-    def kill_session(req: KillRequest):  # type: ignore
-        if req.session_id not in pool.sessions:
+    @app.post("/kill")  # type: ignore[untyped-decorator]  # FastAPI is optional
+    def kill_session(req: KillRequest) -> dict[str, str]:
+        if req.session_id not in runtime_pool.sessions:
             raise HTTPException(status_code=404, detail="session not found")
-        pool.kill(req.session_id)
+        runtime_pool.kill(req.session_id)
         return {"killed": req.session_id}
 
-    @app.get("/health")
-    def health():  # type: ignore
-        return {"status": "ok", "sessions": len(pool.sessions), "max_size": pool.max_size}
+    @app.get("/health")  # type: ignore[untyped-decorator]  # FastAPI is optional
+    def health() -> dict[str, str | int]:
+        return {"status": "ok", "sessions": len(runtime_pool.sessions), "max_size": runtime_pool.max_size}
 
 else:
-    app = None  # type: ignore
-    pool = None  # type: ignore
+    app = None
+    pool = None

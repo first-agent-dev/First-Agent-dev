@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 from fa.inner_loop.registry import ToolCall, ToolResult
 from fa.inner_loop.session_db import SessionDatabase
-from fa.output import LogKind
+from fa.output import LogKind, OutputEvent
 
 logger = logging.getLogger(__name__)
 
@@ -150,8 +150,8 @@ class EventLog:
                 return count + 1
             finally:
                 conn.close()
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — DB bootstrap may be unavailable; JSONL fallback remains explicit
+            logger.warning("EventLog DB counter unavailable, using JSONL fallback: %s", exc)
         # Fallback to JSONL mirror for brand-new sessions without a DB yet.
         if not path.exists():
             return 1
@@ -302,10 +302,37 @@ class SessionState:
     bash_executor: BashExecutor | None = None  # Protocol from fa.runtime.bash_executor (user Q1)
     worktree_manager: WorktreeManager | None = None
     session_db: SessionDatabase | None = None
-    output_bus: EventBus | None = None  # None window: None from __post_init__ until cli.py wires it via state.output_bus = EventBus(). All emit sites must guard with `if output is not None:`.
+    # The CLI wires this after bootstrap; pending events are flushed on attach.
+    output_bus: EventBus | None = None
+    _pending_output_events: list[OutputEvent] = field(default_factory=list, init=False, repr=False)
     turn: int = 0
     subagent_spawns: int = 0
     _subagent_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def require_log(self) -> EventLog:
+        """Return the authoritative session log or fail closed."""
+        if self.log is None:
+            raise ValueError("SessionState.log must be initialized before session execution")
+        return self.log
+
+    def attach_output_bus(self, output_bus: EventBus) -> None:
+        """Attach the display bus and flush warnings queued during bootstrap."""
+        self.output_bus = output_bus
+        pending = tuple(self._pending_output_events)
+        self._pending_output_events.clear()
+        for event in pending:
+            output_bus.emit(event)
+
+    def _record_config_warning(self, *, line_no: int, key: str, detail: str) -> None:
+        """Persist and expose a config warning without losing early bootstrap events."""
+        content = {"line_no": line_no, "key": key, "detail": detail}
+        if self.log is not None:
+            self.log.append(actor="config", kind="config_warning", content=content)
+        event = OutputEvent(type="config_warning", data=content)
+        if self.output_bus is None:
+            self._pending_output_events.append(event)
+        else:
+            self.output_bus.emit(OutputEvent(type="config_warning", data=content))
 
     def __post_init__(self) -> None:  # noqa: C901 -- complexity from FeatureFlags + Transaction + Blackboard + Telemetry + WorktreeManager init, DI via SessionState, graceful degradation
         self.workspace_root = self.workspace_root.resolve()
@@ -331,6 +358,7 @@ class SessionState:
                 if result.warnings:
                     for w in result.warnings:
                         logger.warning(f"feature_flags {w.key}: {w.detail}")
+                        self._record_config_warning(line_no=w.line_no, key=w.key, detail=w.detail)
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 logger.warning(f"Failed to load feature_flags: {exc}, using defaults")
                 try:

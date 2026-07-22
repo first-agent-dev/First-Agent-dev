@@ -329,7 +329,7 @@ def _is_trivial_self_compare(expr: ast.expr) -> bool:
 
     Function calls and attribute accesses (``f() == f()``, ``a.b == a.b``)
     are deliberately NOT considered tautologies — those can legitimately
-    assert determinism / purity.  # noqa: S101 # internal invariant, not security, fail-fast per Gap 6 defensive checks
+    assert determinism / purity.  # noqa: S101  # internal invariant; fail-fast defensive check
     """
     if not isinstance(expr, ast.Compare):
         return False

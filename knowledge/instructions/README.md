@@ -10,6 +10,7 @@
 |---------|---------|
 | **Развернуть с нуля** (новый сервер: BIOS → Ubuntu → Docker → Tailscale → первый запуск) — делается **один раз** | [`01-install.md`](./01-install.md) |
 | **Обслуживать работающий деплой** (обновление, пересборка, бэкапы, перезапуск, диагностика, запуск задач) — **повседневно** | [`02-operations.md`](./02-operations.md) |
+| **Проверить CI и governance на live-сервере** (S9, security, harness, GitHub, коммит) | [`03-live-server-ci-governance-plan-ru.md`](./03-live-server-ci-governance-plan-ru.md) |
 | **Усилить защиту SSH** (firewall, fail2ban, Tailscale ACL) | [`../../scripts/ssh-tailscale/README.md`](../../scripts/ssh-tailscale/README.md) |
 
 ## Как это устроено (принцип разделения)

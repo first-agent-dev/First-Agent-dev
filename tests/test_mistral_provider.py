@@ -14,13 +14,11 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
 from fa.providers.base import (
     RequestInfo,
-    ResponseInfo,
     TransportResponse,
 )
 from fa.providers.errors import (
@@ -29,13 +27,12 @@ from fa.providers.errors import (
     ProviderTransientError,
 )
 from fa.providers.mistral import (
+    _PREDICTION_LENGTH_WARN_CHARS,
     MistralProvider,
     _apply_prediction,
     _apply_response_format,
     _build_request_body,
-    _PREDICTION_LENGTH_WARN_CHARS,
 )
-
 
 # ── Fake transport ──────────────────────────────────────────────────
 
@@ -578,7 +575,6 @@ class TestMistralRegistry:
 
     def test_build_provider_mistral(self) -> None:
         """build_provider('mistral') returns a MistralProvider."""
-        from fa.providers.base import Transport
         from fa.providers.mistral import MistralProvider
         from fa.providers.registry import build_provider
 

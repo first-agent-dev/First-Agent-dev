@@ -22,17 +22,16 @@ Covers:
 from __future__ import annotations
 
 import textwrap
+from dataclasses import fields
 from pathlib import Path
 
 from fa.feature_flags import (
+    _KNOWN_FLAGS,
     FAIL_CLOSED_FLAGS,
     FAIL_OPEN_FLAGS,
     FeatureFlags,
-    _KNOWN_FLAGS,
     load_feature_flags,
 )
-from dataclasses import fields
-
 
 # ── FeatureFlags field tests ───────────────────────────────────────────
 

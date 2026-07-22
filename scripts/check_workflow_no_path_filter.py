@@ -31,7 +31,6 @@ from typing import Any
 
 import yaml
 
-
 # Keys that constitute path filtering at the trigger level.
 _PATH_FILTER_KEYS = frozenset({"paths", "paths-ignore"})
 
@@ -98,7 +97,7 @@ def check_workflow(path: Path) -> dict[str, Any]:
     # YAML parses the key ``on`` as boolean ``True`` — a well-known gotcha.
     # GitHub Actions uses ``on`` as a key, but PyYAML (and all YAML 1.1
     # parsers) interpret bare ``on``/``off``/``yes``/``no`` as booleans.
-    on_section = data.get("on") or data.get(True)  # type: ignore[call-overload]
+    on_section = data.get("on") or data.get(True)
     triggers = _collect_on_triggers(on_section)
 
     filter_keys_found: set[str] = set()

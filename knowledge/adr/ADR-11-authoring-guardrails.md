@@ -609,12 +609,12 @@ Everything below instantiates this law as **ADR-11-I9**.
 
 7. **Flag defaults and product honesty.**
 
-   Wiring under `FeatureFlags(context_compaction_enabled=True)` while
-   production defaults keep compaction **off** is a valid **matrix B**
-   test, not automatic proof of “default product path.” Human review and
-   ADR/plan text own claim honesty. This amendment does **not** add a
-   machine `STATUS: LIVE|EXPERIMENTAL` enum (agents already work on
-   branches; owner merges to `main`).
+   Wiring with `ChainConfig.compaction_threshold` present while
+   production defaults keep compaction **off** is a valid **matrix B** test,
+   not automatic proof of “default product path.” Threshold presence is the
+   sole compaction enablement source. Human review and ADR/plan text own claim
+   honesty. This amendment does **not** add a machine `STATUS: LIVE|EXPERIMENTAL`
+   enum (agents already work on branches; owner merges to `main`).
 
 8. **Relationship to ADR-11-I5 (test semantic decay).**
 

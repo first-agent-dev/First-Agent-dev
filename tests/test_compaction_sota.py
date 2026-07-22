@@ -6,6 +6,7 @@ Verifies ContextBudget, PinnedBuffer, ObservationMasker, and FullLLMCompactor.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 from fa.inner_loop.artifacts import ArtifactStore
@@ -170,11 +171,12 @@ def test_observation_masker_reduces_large_tool_results() -> None:
 
     assert len(masked) == 4
     # Turn 1 tool result was masked
-    assert "Omitted tool result" in masked[1].content["summary"]
-    assert masked[1].content["artifact_id"] is None
+    assert "Omitted tool result" in str(masked[1].content.get("summary", ""))
+    assert masked[1].content.get("artifact_id") is None
 
     # Turn 2 tool result remains verbatim (recent window)
-    assert masked[3].content["result"]["stdout"].startswith("success")
+    result_content = cast(dict[str, Any], masked[3].content.get("result", {}))
+    assert str(result_content.get("stdout", "")).startswith("success")
 
 
 def test_full_llm_compactor_fallback_truncate() -> None:
@@ -271,5 +273,6 @@ def test_estimate_tokens_block_content() -> None:
         },
     ]
 
-    total = estimate_tokens(messages, tools_schema={"name": "schema"})
+    typed_messages = cast(list[dict[str, Any]], messages)
+    total = estimate_tokens(typed_messages, tools_schema={"name": "schema"})
     assert total > 0

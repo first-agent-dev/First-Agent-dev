@@ -176,7 +176,7 @@ class GlobalHistoryStore:
             if row is None:
                 return None
             col_names = [d[0] for d in cur.description]
-            return dict(zip(col_names, row))
+            return dict(zip(col_names, row, strict=True))
         finally:
             conn.close()
 
@@ -185,7 +185,7 @@ class GlobalHistoryStore:
         try:
             cur = conn.execute("SELECT * FROM runs ORDER BY updated_at DESC")
             col_names = [d[0] for d in cur.description]
-            return [dict(zip(col_names, r)) for r in cur.fetchall()]
+            return [dict(zip(col_names, r, strict=True)) for r in cur.fetchall()]
         finally:
             conn.close()
 
@@ -221,7 +221,7 @@ def _extract_telemetry_from_log(log: Any) -> dict[str, Any]:
             # created_at from first event ts
             try:
                 created_at = str(events[0].ts)
-            except Exception:
+            except (AttributeError, IndexError):
                 created_at = _now_iso_z()
             for ev in events:
                 if ev.kind == "usage":
@@ -235,7 +235,7 @@ def _extract_telemetry_from_log(log: Any) -> dict[str, Any]:
                     tool_counter[ev.tool_name or "unknown"] += 1
                 elif ev.kind == "compaction_stage3_done":
                     has_compaction = 1
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — derived export must not crash the hot path
         logger.warning("Failed to extract telemetry from log for global export: %s", exc)
 
     cache_hit_ratio = (total_cache_read / max(total_in, 1)) if total_in > 0 else 0.0
@@ -274,15 +274,15 @@ def build_export_row(
     # outcome may be SessionOutcome or mock
     try:
         exit_code = int(getattr(outcome, "exit_code", 0))
-    except Exception:
+    except (TypeError, ValueError, AttributeError):
         exit_code = 0
     try:
         stop_reason = str(getattr(outcome, "stop_reason", ""))
-    except Exception:
+    except (TypeError, ValueError, AttributeError):
         stop_reason = ""
     try:
         outcome_turns = int(getattr(outcome, "turns", 0))
-    except Exception:
+    except (TypeError, ValueError, AttributeError):
         outcome_turns = 0
     # NEW-4: Prefer outcome.turns when available (standalone run), fall back
     # to telemetry turns (counted from usage events) for workflow aggregates
@@ -345,7 +345,7 @@ def export_session_to_global_history(
         store = GlobalHistoryStore(db_path=db_path)
         store.export_run(row)
         return True
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — derived export is best-effort and must not break sessions
         logger.warning("global_history export failed for %s: %s", run_id, exc)
         return False
 
