@@ -320,6 +320,10 @@ implicit-any-empty-container = false
 # PyPI project names.
 pymupdf = ["fitz"]
 "pdfminer.six" = ["pdfminer"]
+pypdf = ["pypdf"]
+fastapi = ["fastapi"]
+pydantic = ["pydantic"]
+requests = ["requests"]
 
 [tool.deptry.per_rule_ignores]
 # Dev-only packages are intentionally not imported in src/; they are
@@ -330,4 +334,7 @@ DEP002 = [
     "mypy", "pre-commit", "pytest", "pytest-asyncio", "pytest-cov",
     "mutmut", "ruff", "types-PyYAML", "pytest-gremlins", "pip-audit",
     "deptry", "pyrefly", "pylint", "vulture",
+    # Deferred runtime integrations are loaded dynamically and intentionally
+    # absent from the default environment; the dependency contract owns them.
+    "pymupdf", "pdfminer.six", "pypdf", "fastapi", "pydantic",
 ]
