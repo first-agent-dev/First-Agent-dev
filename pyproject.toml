@@ -301,6 +301,11 @@ cache = true
 project-includes = [
     "src",
     "tests",
+    "scripts",
+]
+search-path = [
+    "src",
+    ".",
 ]
 python-version = "3.13.0"
 preset = "strict"

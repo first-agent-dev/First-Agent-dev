@@ -1,0 +1,316 @@
+diff --git a/.pre-commit-config.yaml b/.pre-commit-config.yaml
+index 148d867..ff7c0d4 100644
+--- a/.pre-commit-config.yaml
++++ b/.pre-commit-config.yaml
+@@ -1,11 +1,12 @@
+-# Pin Python version for all hook environments. The project requires >=3.13;
+-# pinning to 3.13 keeps hook envs consistent with CI.
++# Use the Python interpreter running pre-commit (the project .venv). uv sync
++# pins that environment to the project's supported Python version without
++# requiring a system-level `python3.13` executable on PATH.
+ default_language_version:
+-  python: python3.13
++  python: python
+
+ repos:
+   - repo: https://github.com/pre-commit/pre-commit-hooks
+-    rev: v4.6.0
++    rev: v6.0.0
+     hooks:
+       - id: check-added-large-files
+       - id: check-merge-conflict
+diff --git a/.vscode/extensions.json b/.vscode/extensions.json
+new file mode 100644
+index 0000000..46612f7
+--- /dev/null
++++ b/.vscode/extensions.json
+@@ -0,0 +1,8 @@
++{
++  "recommendations": [
++    "ms-python.python",
++    "charliermarsh.ruff",
++    "redhat.vscode-yaml",
++    "ms-azuretools.vscode-docker"
++  ]
++}
+diff --git a/.vscode/settings.json b/.vscode/settings.json
+new file mode 100644
+index 0000000..2492d50
+--- /dev/null
++++ b/.vscode/settings.json
+@@ -0,0 +1,17 @@
++{
++  "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
++  "python-envs.workspaceSearchPaths": [
++    "./.venv"
++  ],
++  "python-envs.alwaysUseUv": true,
++  "python-envs.terminal.autoActivationType": "shellStartup",
++  "python.terminal.activateEnvironment": true,
++  "python.testing.pytestEnabled": true,
++  "python.testing.pytestArgs": [
++    "tests"
++  ],
++  "python.analysis.extraPaths": [
++    "${workspaceFolder}/src",
++    "${workspaceFolder}"
++  ]
++}
+diff --git a/.vscode/tasks.json b/.vscode/tasks.json
+new file mode 100644
+index 0000000..9a9ec4c
+--- /dev/null
++++ b/.vscode/tasks.json
+@@ -0,0 +1,23 @@
++{
++  "version": "2.0.0",
++  "tasks": [
++    {
++      "label": "First-Agent: host bootstrap",
++      "type": "process",
++      "command": "uvx",
++      "args": [
++        "--from",
++        "rust-just==1.57.0",
++        "just",
++        "agent-bootstrap"
++      ],
++      "options": {
++        "cwd": "${workspaceFolder}"
++      },
++      "runOptions": {
++        "runOn": "folderOpen"
++      },
++      "problemMatcher": []
++    }
++  ]
++}
+diff --git a/justfile b/justfile
+index eca2e73..1484851 100644
+--- a/justfile
++++ b/justfile
+@@ -24,8 +24,7 @@ install:
+ # hook installation, or hook status fails; the final marker is emitted only
+ # after all three steps succeed.
+ agent-bootstrap:
+-    just install
+-    @echo "FA_AGENT_READY=1"
++    uv run python scripts/bootstrap/host_bootstrap.py
+
+ # Install the M-6 commit-message hooks (prepare-commit-msg / commit-msg)
+ # into .git/hooks via the tested Python installer. Without this the
+@@ -51,10 +50,10 @@ hooks-status:
+     uv run python -m fa.hygiene.hooks.status
+
+ lint:
+-    ruff check .
+-    ruff format --check .
+-    deptry src/
+-    pylint src/fa
++    uv run ruff check .
++    uv run ruff format --check .
++    uv run deptry src/
++    uv run pylint src/fa
+
+ # Agents: run `just fix` after editing; it auto-resolves every mechanical
+ # lint/format finding (incl. RUF022 __all__ sorting) so none of it needs
+@@ -64,60 +63,60 @@ lint:
+ # an actual design decision (fix the code or add `# noqa: <code>` + a
+ # rationale comment — see AGENTS.md §Judgment rules).
+ fix:
+-    ruff check --fix-only .
+-    ruff format .
+-    ruff check .
++    uv run ruff check --fix-only .
++    uv run ruff format .
++    uv run ruff check .
+
+ # Back-compat alias for `just fix`.
+ format: fix
+
+ typecheck:
+-    mypy
++    uv run mypy
+
+ typecheck-advisory:
+-    -pyrefly check
++    -uv run pyrefly check
+
+ authoring-check:
+-    fa authoring-check
++    uv run fa authoring-check
+
+ # Dependency allowlist gate: verifies every direct pyproject dependency is
+ # covered by the tracked TCB contract.
+ dependency-contract-check:
+-    python scripts/check_dependency_contract.py
++    uv run python scripts/check_dependency_contract.py
+
+ # Producer-consumer contract gate: verifies every EventType has both a
+ # producer (emit call in production code) and a consumer (handler in
+ # ConsoleRenderer). Prevents "not wired / partial implementation" gaps.
+ # See: knowledge/research/root-cause-analysis-not-wired-gaps-2026-07-19.md
+ contract-check:
+-    python scripts/check_producer_consumer_contract.py
++    uv run python scripts/check_producer_consumer_contract.py
+
+ # Guard: no MagicMock(spec=<frozen_dataclass>) in tests. Frozen dataclasses
+ # are pure data — mock them and every new field becomes a latent regression.
+ # Use real instances (make_test_chain_config, etc.) instead.
+ no-mocked-dataclasses:
+-    python scripts/check_no_mocked_dataclasses.py
++    uv run python scripts/check_no_mocked_dataclasses.py
+
+ # Full suite with the coverage gate (fail_under in pyproject). For a quick
+ # single-file iteration loop use plain `pytest tests/test_x.py` — no gate.
+ test:
+-    pytest --cov=fa --cov-report=term-missing --cov-report=xml
++    uv run pytest --cov=fa --cov-report=term-missing --cov-report=xml
+
+ # Vulnerability scanning (Dependencies + SAST)
+ audit:
+-    pip-audit
++    uv run pip-audit
+     uvx semgrep --config=p/python --config=p/owasp-top-ten
+
+ deadcode:
+-    -vulture src/ --min-confidence 90
++    -uv run vulture src/ --min-confidence 90
+
+ # Mutation testing on the high-risk sandbox scope ([tool.mutmut] in
+ # pyproject). Slow (~1 min): runs the sandbox test files per mutant.
+ # Survivor-clearing tracker: knowledge/mutation-survivors-workplan.md
+ mutation:
+-    mutmut run
+-    mutmut results
+-    mutmut export-cicd-stats
++    uv run mutmut run
++    uv run mutmut results
++    uv run mutmut export-cicd-stats
+
+ lock-check:
+     uv lock --locked
+diff --git a/pyproject.toml b/pyproject.toml
+index 184618e..d4acace 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -301,6 +301,11 @@ cache = true
+ project-includes = [
+     "src",
+     "tests",
++    "scripts",
++]
++search-path = [
++    "src",
++    ".",
+ ]
+ python-version = "3.13.0"
+ preset = "strict"
+diff --git a/scripts/bootstrap/host_bootstrap.py b/scripts/bootstrap/host_bootstrap.py
+new file mode 100644
+index 0000000..5b87f15
+--- /dev/null
++++ b/scripts/bootstrap/host_bootstrap.py
+@@ -0,0 +1,102 @@
++"""Cross-platform host development bootstrap for VS Code and terminal use."""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import os
++import shutil
++import subprocess
++import sys
++from pathlib import Path
++from typing import Any
++
++JUST_PACKAGE = "rust-just==1.57.0"
++MARKER_PATH = Path(".fa") / "host-bootstrap.json"
++
++
++def _run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
++    print("+", " ".join(command), flush=True)
++    # Command is assembled from repository constants and the resolved uv path.
++    return subprocess.run(command, check=check, text=True)  # noqa: S603
++
++
++def _repo_root() -> Path:
++    return Path(__file__).resolve().parents[2]
++
++
++def _fingerprint(root: Path) -> str:
++    digest = hashlib.sha256()
++    digest.update(f"python={sys.version_info.major}.{sys.version_info.minor}".encode())
++    digest.update(f"platform={sys.platform}".encode())
++    for name in ("pyproject.toml", "uv.lock"):
++        path = root / name
++        digest.update(name.encode())
++        digest.update(path.read_bytes())
++    digest.update(JUST_PACKAGE.encode())
++    return digest.hexdigest()
++
++
++def _ready_marker(root: Path, fingerprint: str) -> dict[str, Any]:
++    return {
++        "schema": 1,
++        "ready": True,
++        "python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
++        "platform": sys.platform,
++        "just_package": JUST_PACKAGE,
++        "fingerprint": fingerprint,
++    }
++
++
++def _marker_matches(root: Path, fingerprint: str) -> bool:
++    marker = root / MARKER_PATH
++    if not marker.is_file() or not (root / ".venv").is_dir():
++        return False
++    try:
++        data = json.loads(marker.read_text(encoding="utf-8"))
++    except (OSError, json.JSONDecodeError):
++        return False
++    return data.get("ready") is True and data.get("fingerprint") == fingerprint
++
++
++def _write_marker(root: Path, data: dict[str, Any]) -> None:
++    marker = root / MARKER_PATH
++    marker.parent.mkdir(parents=True, exist_ok=True)
++    temporary = marker.with_suffix(".tmp")
++    temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
++    temporary.replace(marker)
++
++
++def main() -> int:
++    root = _repo_root()
++    os.chdir(root)
++    uv = shutil.which("uv")
++    if uv is None:
++        print(
++            "ERROR: uv is required for host bootstrap. Install uv once, then reopen VS Code.",
++            file=sys.stderr,
++        )
++        return 2
++
++    fingerprint = _fingerprint(root)
++    if _marker_matches(root, fingerprint):
++        status = _run([uv, "run", "python", "-m", "fa.hygiene.hooks.status"], check=False)
++        if status.returncode == 0:
++            print("FA_AGENT_READY=1")
++            return 0
++
++    _run([uv, "tool", "install", "--force", JUST_PACKAGE])
++    # This updates the user's shell startup file where supported. The VS Code
++    # task itself uses uvx, so readiness does not depend on the current shell
++    # inheriting the updated PATH.
++    _run([uv, "tool", "update-shell"], check=False)
++    _run([uv, "sync", "--frozen", "--extra", "dev"])
++    _run([uv, "run", "python", "-m", "fa.hygiene.hooks.install", "--force"])
++    _run([uv, "run", "python", "-m", "fa.hygiene.hooks.status"])
++    _write_marker(root, _ready_marker(root, fingerprint))
++    print("FA_AGENT_READY=1")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())

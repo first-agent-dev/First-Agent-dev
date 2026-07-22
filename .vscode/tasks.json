@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "First-Agent: host bootstrap",
+      "type": "process",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "rust-just==1.57.0",
+        "just",
+        "agent-bootstrap"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "runOptions": {
+        "runOn": "folderOpen"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
