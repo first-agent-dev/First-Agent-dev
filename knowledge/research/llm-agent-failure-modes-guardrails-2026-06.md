@@ -124,7 +124,7 @@ governance are precisely the right counters. Gaps were (2), (4), (5).
 
 | # | Failure mode (evidence) | FA guardrail before | Gap → action |
 |---|---|---|---|
-| 1a | Copy-paste-and-tweak duplication (GitClear 8x) | pylint `duplicate-code`, binary gate, src/ | covered |
+| 1a | Copy-paste-and-tweak duplication (GitClear 8x) | pylint `duplicate-code`, binary gate, src/ | covered, with caveat: [AP-006](../anti-patterns/AP-006-protocol-adapter-collapsed-as-duplicate.md) — the gate cannot distinguish copy-paste drift from a load-bearing `Callable`-typed adapter; a 2026-07 incident shipped a token-budget regression through this exact gate plus green mypy/pyrefly/ruff/~1900 tests |
 | 1b | Dead code left after rewrites | `just deadcode` broken (no vulture dep) | R-5 fixed |
 | 2a | Function bloat / complexity creep (Sonar) | none (pylint shape-caps correctly dropped as cosmetic) | R-2 C901=15 |
 | 3a | Test deletion / skip / xfail weakening (ImpossibleBench) | ADR-11 V4 HARD-BLOCK | covered |

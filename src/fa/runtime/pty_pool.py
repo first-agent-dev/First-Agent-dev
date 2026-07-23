@@ -60,6 +60,16 @@ class PtyResult:
     exit_code: int
     truncated: bool
     session_id: str
+    # Explicit timeout signal (ADR-14 follow-up). Callers previously
+    # sniffed stdout for the substring "Timeout" to distinguish a hard
+    # timeout from an ordinary non-zero exit — that convention only ever
+    # matched the pexpect fallback path's stdout shape; the tmux path's
+    # timeout branch never populated a matching string, so
+    # fa.inner_loop.tools.run_bash's `"Timeout" in stdout` check silently
+    # misclassified every tmux-path timeout as `command_failed` instead of
+    # `command_timeout`. Default False keeps existing call sites (which
+    # never set this) correct without changes.
+    timed_out: bool = False
 
 
 class _TmuxSessionLike(Protocol):
@@ -208,6 +218,46 @@ class PtySession:
             time.sleep(0.1)
         raise TimeoutError(f"Sentinel {self._sentinel_token} not found")
 
+    @staticmethod
+    def _is_stateful_command(command: str) -> bool:
+        """True for commands that must run in the persistent shell itself
+        (export/cd/source/...), not a subshell — shared by both backends
+        so the classification can never drift between them.
+        """
+        stripped = command.lstrip()
+        is_stateful = stripped.startswith(("export ", "cd ", "source ", ". ", "alias ", "unalias ", "set ", "unset "))
+        if stripped == "cd" or stripped.startswith("cd "):
+            is_stateful = True
+        return is_stateful
+
+    def _resolve_heredoc_command(self, command: str, is_stateful: bool, call_id: str) -> tuple[str, Path | None]:
+        """Route heredoc-bearing non-stateful commands through a temp script file.
+
+        Heredocs (`<<WORD` / `<<-WORD`) cannot survive ANY wrapping strategy
+        that appends text to the same line as the heredoc's closing
+        delimiter — POSIX requires the delimiter alone on its line, and
+        `(command); echo ...` (or even a bare trailing `)`) breaks that,
+        leaving the shell waiting forever for a delimiter line that will
+        never arrive. This affects BOTH backends identically (`_run_tmux`'s
+        `send_keys` and `_run_fallback`'s `sendline` both send the wrapped
+        string as one shell input), so both call this helper rather than
+        each re-implementing (and potentially drifting on) the detection.
+
+        Returns ``(command_to_run, script_path)`` — ``script_path`` is
+        ``None`` when no rewriting was needed or possible; the caller is
+        responsible for calling ``_cleanup_script(script_path)`` once done.
+        """
+        if is_stateful or not re.search(r"<<-?\s*['\"]?\w", command):
+            return command, None
+        try:
+            script_path = self.cwd / f".fa-bash-{call_id}.sh"
+            script_path.write_text(f"#!/bin/sh\n{command}\n", encoding="utf-8")
+            script_path.chmod(0o700)
+            return f"sh {script_path}", script_path
+        except OSError as exc:
+            logger.warning("Failed to write heredoc script file: %s, running inline (may hang)", exc)
+            return command, None
+
     def _run_fallback(self, command: str, timeout: int) -> PtyResult:
         if self._is_fallback:
             if self._fallback is None:
@@ -219,28 +269,37 @@ class PtySession:
                 )
             # Wrap in subshell to avoid killing persistent shell with exit,
             # but preserve stateful commands (export, cd, source, etc) in main shell.
-            stripped = command.lstrip()
-            is_stateful = stripped.startswith(
-                ("export ", "cd ", "source ", ". ", "alias ", "unalias ", "set ", "unset ")
-            )
-            if stripped == "cd" or stripped.startswith("cd "):
-                is_stateful = True
+            is_stateful = self._is_stateful_command(command)
+            call_id = uuid.uuid4().hex[:8]
+            command_to_run, script_path = self._resolve_heredoc_command(command, is_stateful, call_id)
             if is_stateful:
-                full = f"{command}; echo {self._exit_token}:$? {self._end_token}"
+                full = f"{command_to_run}; echo {self._exit_token}:$? {self._end_token}"
             else:
-                full = f"({command}); echo {self._exit_token}:$? {self._end_token}"
+                full = f"({command_to_run}); echo {self._exit_token}:$? {self._end_token}"
             try:
                 self._fallback.sendline(full)
                 self._fallback.expect(self._end_token, timeout=timeout)
                 raw = self._fallback.before or ""
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 raw = self._fallback.before or "" if self._fallback else ""
+                # Distinguish a genuine timeout (pexpect.TIMEOUT) from other
+                # failures (e.g. EOF from a dead child) so callers can
+                # branch on PtyResult.timed_out instead of string-sniffing
+                # stdout for "Timeout" — that heuristic previously mislabeled
+                # EVERY failure here (timeout or not) with the same message.
+                import pexpect
+
+                is_timeout = isinstance(exc, pexpect.TIMEOUT)
+                label = f"Timeout {timeout}s partial" if is_timeout else f"Command failed: {exc}"
+                self._cleanup_script(script_path)
                 return PtyResult(
-                    stdout=f"Timeout {timeout}s partial:\n{ANSI_RE.sub('', raw)[:8000]}",
+                    stdout=f"{label}:\n{ANSI_RE.sub('', raw)[:8000]}",
                     exit_code=-1,
                     truncated=True,
                     session_id=self.session_id,
+                    timed_out=is_timeout,
                 )
+            self._cleanup_script(script_path)
             clean = ANSI_RE.sub("", raw)
             clean = resolve_cr(clean)
             # Strip sentinel token that may be in prompt (pexpect PS1)
@@ -259,17 +318,54 @@ class PtySession:
         if self.pane is None:
             return PtyResult(stdout="No pane available", exit_code=-1, truncated=False, session_id=self.session_id)
 
-        stripped = command.lstrip()
-        is_stateful = stripped.startswith(("export ", "cd ", "source ", ". ", "alias ", "unalias ", "set ", "unset "))
-        if stripped == "cd" or stripped.startswith("cd "):
-            is_stateful = True
+        # Per-INVOCATION markers (not self._exit_token/self._end_token, which
+        # are fixed for the session's lifetime). tmux capture-pane always
+        # returns the pane's PERSISTENT scrollback, not an incremental
+        # buffer (unlike pexpect's consuming expect()) — every prior
+        # command's echoed-and-executed marker text stays visible forever.
+        # Reusing one marker set across calls in the same session causes two
+        # compounding bugs, both reproduced and fixed here:
+        #   1. `str.split(exit_token)[0]` cuts at the FIRST occurrence, which
+        #      is the shell's echo of the just-typed command line (it always
+        #      appears before the real `echo <token>:$?` executes) — so the
+        #      returned "output" is the echoed input, not the command result.
+        #   2. A slow command can match a STALE end_token already present in
+        #      scrollback from a PRIOR completed command and return that
+        #      prior command's output immediately, before the new command
+        #      has even finished running (race, not just a display bug).
+        # A fresh uuid4 per call plus a START marker anchoring the slice
+        # eliminates both: matching cannot succeed against old scrollback,
+        # and extraction never depends on which occurrence of a repeated
+        # substring is "first".
+        call_id = uuid.uuid4().hex[:8]
+        start_token = f"FA_START_{call_id}"
+        exit_token = f"FA_EXIT_{call_id}"
+        end_token = f"FA_END_{call_id}"
+
+        is_stateful = self._is_stateful_command(command)
+
+        # Heredocs (`<<WORD` / `<<-WORD`) cannot survive ANY wrapping
+        # strategy that appends text to the same line as the heredoc's
+        # closing delimiter — POSIX requires the delimiter alone on its
+        # line, and `(command); echo ...` (or even a bare trailing `)`)
+        # breaks that, leaving the shell waiting forever for a delimiter
+        # line that will never arrive (verified: this hangs until the
+        # caller's timeout, every time, for every wrapping shape tried).
+        # See _resolve_heredoc_command — shared with _run_fallback so both
+        # backends route heredocs through a temp script file identically;
+        # a prior version of this fix only patched THIS method and left
+        # _run_fallback with the identical hang (caught when a machine
+        # without the tmux binary fell back to pexpect and hit it).
+        command_to_run, script_path = self._resolve_heredoc_command(command, is_stateful, call_id)
+
         if is_stateful:
-            full = f"{command}; echo {self._exit_token}:$? {self._end_token}"
+            full = f"echo {start_token}; {command_to_run}; echo {exit_token}:$? {end_token}"
         else:
-            full = f"({command}); echo {self._exit_token}:$? {self._end_token}"
+            full = f"echo {start_token}; ({command_to_run}); echo {exit_token}:$? {end_token}"
         try:
             self.pane.send_keys(full)
         except Exception as exc:  # noqa: BLE001
+            self._cleanup_script(script_path)
             return PtyResult(
                 stdout=f"Failed to send command: {exc}",
                 exit_code=-1,
@@ -282,35 +378,69 @@ class PtySession:
         start = time.time()
         output = ""
         exit_code = -1
+        timed_out = True
         while time.time() - start < timeout:
             try:
-                # -J join wrapped lines per Gap 12 to prevent JSON corruption
-                lines = self.pane.cmd("capture-pane", "-p", "-J", "-S", "-100", "-E", "-").stdout
+                # -J join wrapped lines per Gap 12 to prevent JSON corruption.
+                # -S "-" (full scrollback, not a fixed "-100" window): a
+                # fixed window can scroll the start_token out of view before
+                # the end_token appears for high-output commands, which
+                # would otherwise silently degrade to the same first-match
+                # ambiguity this fix closes. Measured overhead is
+                # negligible (~3ms/call at both typical and near-tmux
+                # history-limit scrollback sizes).
+                lines = self.pane.cmd("capture-pane", "-p", "-J", "-S", "-", "-E", "-").stdout
                 text = "\n".join(lines)
-                if self._end_token in text:
-                    clean = ANSI_RE.sub("", text)
+                # Anchor on THIS call's start marker; rfind (not find) so a
+                # stale copy of an identically-shaped OLDER marker can never
+                # match — though with a fresh uuid4 per call this is belt
+                # and suspenders, not load-bearing.
+                start_idx = text.rfind(start_token)
+                if start_idx == -1:
+                    time.sleep(0.2)
+                    continue
+                newline_idx = text.find("\n", start_idx)
+                start_of_output = newline_idx + 1 if newline_idx != -1 else start_idx + len(start_token)
+                remainder = text[start_of_output:]
+                if end_token in remainder:
+                    clean = ANSI_RE.sub("", remainder)
                     clean = resolve_cr(clean)
                     # Strip sentinel token that may appear in prompt
                     clean = clean.replace(self._sentinel_token, "")
-                    m = re.search(rf"{re.escape(self._exit_token)}:(\d+)", clean)
+                    m = re.search(rf"{re.escape(exit_token)}:(\d+)", clean)
                     if m:
                         exit_code = int(m.group(1))
-                    if f"{self._exit_token}:" in clean:
-                        clean = clean.split(f"{self._exit_token}:")[0]
-                    output = clean
-                    break
+                        output = clean[: m.start()]
+                        timed_out = False
+                        break
             except Exception:  # noqa: BLE001, S110
                 pass
             time.sleep(0.2)
+        self._cleanup_script(script_path)
         truncated = len(output) > 8000
         if truncated:
             output = output[:8000] + "\n...[truncated 8000]"
+        if timed_out:
+            output = f"Timeout {timeout}s partial:\n{output}" if output else f"Timeout {timeout}s: no output captured"
         return PtyResult(
             stdout=output.strip(),
             exit_code=exit_code,
             truncated=truncated,
             session_id=self.session_id,
+            timed_out=timed_out,
         )
+
+    @staticmethod
+    def _cleanup_script(script_path: Path | None) -> None:
+        """Best-effort removal of a temp heredoc script (§_run_tmux). Never
+        raises — a leaked 0700 file under the session cwd is a minor
+        housekeeping issue, not a correctness or security failure."""
+        if script_path is None:
+            return
+        try:
+            script_path.unlink(missing_ok=True)
+        except OSError:
+            pass  # best-effort cleanup; a leaked temp file is not a correctness issue
 
     def run(self, command: str, timeout: int = 30) -> PtyResult:
         """Run one command while serializing cwd/session access."""

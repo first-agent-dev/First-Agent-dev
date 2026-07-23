@@ -19,8 +19,17 @@ class _Pane:
         ready = re.search(r"FA_READY_[^' ]+", command)
         if ready:
             self.ready = ready.group(0)
+        # Fake simulates the real PtySession._run_tmux wire protocol: a
+        # per-invocation start marker echoed first (`echo FA_START_<id>`),
+        # then the command's real output, then the exit/end marker line.
+        # This mirrors what real tmux capture-pane returns: the shell
+        # echoes back what was typed before executing it, so the start
+        # marker line precedes the actual command output in the pane.
+        start = re.search(r"FA_START_[^' ;]+", command)
         end = re.search(r"(FA_EXIT_[^: ]+):\$\? (FA_END_[^ ]+)", command)
-        if end:
+        if start and end:
+            self.response = f"{start.group(0)}\noutput\n{end.group(1)}:7 {end.group(2)}"
+        elif end:
             self.response = f"output\n{end.group(1)}:7 {end.group(2)}"
 
     def cmd(self, *_: str) -> SimpleNamespace:

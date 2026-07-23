@@ -45,14 +45,21 @@ class SessionDatabase:
     def _init_schema(self) -> None:
         # pylint: disable=duplicate-code
         # Rationale: the outer with-lock/connect/PRAGMA boilerplate mirrors
-        # GlobalHistoryStore._init_schema because both stores share the same
-        # short-lived-connection + WAL + threading.Lock discipline. The table
-        # schemas inside the `with conn:` block are ENTIRELY different
-        # (event_log/blackboard/session_meta vs runs) — factoring this
-        # boilerplate would require either a base class (Option B from PR #58
-        # Phase 2, rejected as over-engineering for two call sites) or a
-        # higher-order init helper that obscures the schema declarations.
-        # Similarity is structural boilerplate, not copy-paste logic.
+        # the analytics-projection store's own _init_schema (see
+        # fa.inner_loop._sqlite_common's module docstring for which two
+        # stores share this discipline) because both stores share the same
+        # short-lived-connection + WAL + threading.Lock discipline. The
+        # table schemas inside the `with conn:` block are ENTIRELY
+        # different (event_log/blackboard/session_meta vs the projection
+        # store's own table) and are correctly NOT shared. A base class
+        # would force both stores through one `_init_schema` contract to
+        # save ~10 lines of identical glue, at the cost of coupling two
+        # stores with different lifecycles (per-run hot-path authority vs
+        # cross-run derived projection) and different failure-wrapping
+        # messages — over-engineering for a 2-consumer pair. The
+        # connection-opening step itself (not this boilerplate) is already
+        # factored out into `fa.inner_loop._sqlite_common`. Similarity
+        # here is structural boilerplate, not copy-paste logic.
         try:
             with self._write_lock:
                 conn = self._connect()

@@ -579,6 +579,7 @@ Path inventory:
 - **I-TW-18** C0 consumer-only tests are theater without C1 producer pair.
 - **I-TW-19** Contract check script MUST pass in CI for every PR touching EventTypes.
 - **I-TW-20** Never mock dataclass config objects (ChainConfig, ChainEntry, CooldownRow, etc.). Use real instances via make_test_chain_config(). Only mock objects with behavior (ProviderChain, Provider, Transport). Guard: scripts/check_no_mocked_dataclasses.py
+- **I-TW-21** Deleting a `Callable`-typed adapter/wrapper requires a C1 test at the real slot's calling convention, not a direct unit call to the wrapped function — mypy/pyrefly cannot catch positional parameter-semantics mismatches (AP-006, §16.7).
 
 ---
 
@@ -713,3 +714,45 @@ must assert:
 - session DB/EventLog persistence;
 - provider call count/early-stop where relevant;
 - the negative path when the feature is disabled.
+
+### 16.7 Callable/Protocol parameter collapse (AP-006)
+
+When a "de-duplication" edit deletes a thin wrapper whose only job was
+adapting a function to a `Callable[...]`-typed slot (a tool's `elide=`,
+an `on_event=` hook, any dependency-injected strategy function) and
+points the slot directly at the wrapped function, mypy strict and
+pyrefly passing is NOT proof of correctness. `Callable[[A, B], C]` is a
+purely positional-arity-and-type contract — nothing checks that the
+callee's 2nd parameter *means* the same thing the slot's contract
+promises. See [AP-006](../../anti-patterns/AP-006-protocol-adapter-collapsed-as-duplicate.md)
+for the full incident (a ~10x token-budget blowup shipped through
+green mypy, pyrefly, ruff, pylint 10.00/10, and ~1900 passing tests).
+
+```python
+# Deleted as "redundant" by a duplicate-code cleanup — WRONG.
+# truncate_for_preview's 2nd positional param is preview_len, not
+# max_bytes; the slot calls elider(value, max_context_bytes) POSITIONALLY.
+ToolSpec(..., max_context_bytes=8000, elide=truncate_for_preview)
+
+# Kept as a named adapter — RIGHT. The seam is the contract, not duplication.
+def _bash_run_elide(value: Any, _max_bytes: int) -> str:
+    return truncate_for_preview(value, preview_len=500)
+ToolSpec(..., max_context_bytes=8000, elide=_bash_run_elide)
+```
+
+Required proof before deleting any such wrapper:
+
+1. grep every call site of the SLOT's type alias (not the function being
+   deleted) and confirm whether it is invoked positionally or by keyword;
+2. if positional, diff the slot's declared parameter roles against the
+   wrapped function's own parameter names/roles — a mismatch means the
+   wrapper is load-bearing, not duplicate;
+3. a C1 test that boots the REAL composition root and calls through the
+   actual slot (e.g. `project_for_model` → `spec.elide`), not a direct
+   unit call to the wrapped function with its own keyword arguments —
+   direct-call tests are exactly what passed unnoticed in the AP-006
+   incident;
+4. if pylint still flags the retained adapter as `duplicate-code` against
+   a sibling adapter using the same shared interface, waive with a
+   rationale naming the interface (AGENTS.md §Judgment rules) — do not
+   delete the seam to silence the finding.

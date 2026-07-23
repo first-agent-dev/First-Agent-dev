@@ -4,11 +4,24 @@ import os
 import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
 from fa.inner_loop.tools._common import prepare_workspace_context, truncate_for_preview, validate_bash_command
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
+
+
+def _bash_run_elide(value: Any, _max_bytes: int) -> str:
+    """Adapt ``truncate_for_preview`` to the ``ToolElider`` protocol.
+
+    See the identical adapter in ``fa.inner_loop.tools.run_bash`` for the
+    full rationale: passing ``truncate_for_preview`` directly as
+    ``elide=`` binds the tool's ``max_context_bytes`` into its
+    ``preview_len`` parameter, producing an oversized, marker-less
+    preview instead of the intended fixed 500+200 shape.
+    """
+    return truncate_for_preview(value, preview_len=500)
 
 
 def build_run_bash_tool(
@@ -88,7 +101,7 @@ Chain commands with && for atomicity: cd src && ls -la
         handler=handler,
         tags=("fs", "bash"),
         max_context_bytes=8000,
-        elide=truncate_for_preview,
+        elide=_bash_run_elide,
     )
 
 

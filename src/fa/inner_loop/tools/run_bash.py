@@ -48,6 +48,27 @@ def _normalize_carriage_return(text: str) -> str:
         return result
 
 
+def _bash_run_elide(value: Any, _max_bytes: int) -> str:
+    """Adapt ``truncate_for_preview`` to the ``ToolElider`` protocol.
+
+    ``ToolElider`` is ``Callable[[value, max_context_bytes], str]`` and
+    ``ToolRegistry``'s projection layer calls it POSITIONALLY as
+    ``elider(result, spec.max_context_bytes)``. ``truncate_for_preview``'s
+    own second positional parameter is ``preview_len`` — passing it
+    directly as ``elide=truncate_for_preview`` would silently bind the
+    tool's context budget (thousands of bytes) into ``preview_len``,
+    producing a preview an order of magnitude larger than the intended
+    fixed 500-char head + 200-char tail shape and losing the truncation
+    notice (this exact regression shipped once; see
+    tests/test_run_bash_tool_projection.py for the kill-check).
+
+    ``_max_bytes`` (the tool's ``max_context_bytes``) is intentionally
+    unused here: fs.run_bash's preview length is a fixed token-budget
+    constant (500+200), not proportional to the tool's overall budget.
+    """
+    return truncate_for_preview(value, preview_len=500)
+
+
 def _get_write_set_from_git_status(root: Path) -> list[str]:
     """Dynamic git-status verification per Gap 8 — formal source-of-truth for transaction diffs, not regex."""
     try:
@@ -174,7 +195,7 @@ def _run_pty_executor(
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("artifact store write failed: %s", exc)
 
-            preview = truncate_for_preview(stdout, preview_len=500, max_bytes=8000)
+            preview = truncate_for_preview(stdout, preview_len=500)
             summary = f"bash exited {pty_result.exit_code}"
             result = {
                 "returncode": pty_result.exit_code,
@@ -184,7 +205,7 @@ def _run_pty_executor(
                 "artifact_id": artifact_id,
                 "session_id": pty_result.session_id,
             }
-            if pty_result.exit_code == -1 and "Timeout" in stdout:
+            if pty_result.timed_out:
                 logger.warning("PtyPool executor timeout, fallback to subprocess for command %s", command[:200])
                 raise RuntimeError(f"PtyPool timeout fallback: {stdout[:200]}")
             if pty_result.exit_code != 0:
@@ -265,11 +286,7 @@ def _run_subprocess_fallback(
             logger.warning("Failed to offload large fallback stdout to ArtifactStore: %s", exc)
 
     truncated = len(stdout_clean) > 8000
-    preview_stdout = (
-        stdout_clean
-        if len(stdout_clean) <= 8000
-        else truncate_for_preview(stdout_clean, preview_len=500, max_bytes=8000)
-    )
+    preview_stdout = stdout_clean if len(stdout_clean) <= 8000 else truncate_for_preview(stdout_clean, preview_len=500)
     summary = f"bash exited {completed.returncode}"
     result = {
         "returncode": completed.returncode,
@@ -353,7 +370,7 @@ per-session isolation (Gap 13).
         handler=handler,
         tags=("fs", "bash"),
         max_context_bytes=8000,
-        elide=truncate_for_preview,
+        elide=_bash_run_elide,
     )
 
 
