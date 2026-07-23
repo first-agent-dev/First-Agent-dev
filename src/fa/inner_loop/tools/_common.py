@@ -86,23 +86,30 @@ def validate_search_params(
     return query, limit
 
 
-def truncate_for_preview(value: object, preview_len: int | None = 500, max_bytes: int | None = None) -> str:
+def truncate_for_preview(value: object, preview_len: int = 500) -> str:
     """Truncate a value for preview display, showing start and end.
 
     Converts non-string values to JSON, then truncates if too long,
     showing the first ``preview_len`` chars and last 200 chars with
     a truncation marker in between.
 
-    The ``max_bytes`` parameter is accepted for ``ToolSpec.elide``
-    protocol compatibility (the projection layer calls
-    ``elider(result, max_context_bytes)``); it does not change the
-    truncation length — the 500+200 shape is the fixed token-budget
-    preview for fs.run_bash output.
+    This function is deliberately NOT budget-aware: it always renders a
+    fixed-shape (``preview_len`` + 200 tail chars) preview regardless of
+    any caller's context-window budget. Do NOT pass this function directly
+    as a ``ToolSpec.elide`` callable — ``ToolElider`` is
+    ``Callable[[value, max_context_bytes], str]`` and the projection layer
+    calls it positionally (``elider(result, spec.max_context_bytes)``); a
+    direct reference here would silently bind ``max_context_bytes`` to
+    this function's ``preview_len`` parameter, replacing the fixed
+    500-char head with whatever budget the tool happens to have (typically
+    thousands of characters) and losing the tail + truncation notice.
+    Elide callables must go through a small named adapter matching
+    ``ToolElider``'s ``(value, max_bytes) -> str`` shape instead — see
+    ``_bash_run_elide`` in ``fa.inner_loop.tools.run_bash``.
 
     Args:
         value: Value to render (string or JSON-serializable).
         preview_len: Maximum head length before truncation (default 500).
-        max_bytes: Ignored; accepted for elide-callable protocol.
 
     Returns:
         Rendered string, possibly truncated with marker.
@@ -113,8 +120,6 @@ def truncate_for_preview(value: object, preview_len: int | None = 500, max_bytes
         >>> truncate_for_preview("x" * 1000)[:5]
         'xxxxx'
     """
-    if preview_len is None or preview_len <= 0:
-        preview_len = 500
     if isinstance(value, str):
         rendered = value
     else:

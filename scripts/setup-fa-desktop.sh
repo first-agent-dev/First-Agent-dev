@@ -199,6 +199,20 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
 sudo NEEDRESTART_MODE=a apt-get update
 sudo NEEDRESTART_MODE=a apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 sudo usermod -aG docker "$FA_USER"
+# The docker group is evaluated at LOGIN time (PAM / systemd-logind); simply
+# spawning a new shell does NOT pick it up, and the later `docker info` /
+# `docker compose` preflight in fa-post-setup.sh will fail with "permission
+# denied" until the operator fully logs out of GNOME (or reboots). Print
+# this warning NOW — right after the usermod, not buried in the step-17
+# summary where operators who abandon the script mid-way never see it.
+if ! id -Gn "$FA_USER" | tr ' ' '\n' | grep -qxE 'docker'; then
+    log_warn "Added '$FA_USER' to the 'docker' group, but group memberships are"
+    log_warn "only evaluated at login. You MUST fully log out of GNOME (or reboot)"
+    log_warn "before running fa-post-setup.sh, otherwise 'docker compose' will fail"
+    log_warn "with 'permission denied while trying to connect to the Docker daemon'."
+    log_warn "A quick 'newgrp docker' works for the CURRENT shell only; it does not"
+    log_warn "help for subsequent steps of this script or for future logins."
+fi
 
 log_info "Pinning Docker CE packages..."
 sudo apt-mark hold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin

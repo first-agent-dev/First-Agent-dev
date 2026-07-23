@@ -251,15 +251,22 @@ log_info "Active session workspace: $SESSION_WS"
 # 3b. Configure git inside container (in the session workspace)
 # ---------------------------------------------------------------------------
 log_info "Configuring git inside container..."
-docker exec first-agent bash -c "cd '$SESSION_WS' && git config user.name 'First Agent'"
-docker exec first-agent bash -c "cd '$SESSION_WS' && git config user.email 'agent@first-agent.local'"
+# SESSION_WS originates from a container-controlled file (.active). Pass it
+# through -e (the environment) and keep the bash script body SINGLE-QUOTED
+# so there is NO host-side shell interpolation of untrusted input. Same
+# pattern applies to every docker exec block below.
+docker exec -e SESSION_WS="$SESSION_WS" first-agent \
+    bash -c 'cd "$SESSION_WS" && git config user.name "First Agent"'
+docker exec -e SESSION_WS="$SESSION_WS" first-agent \
+    bash -c 'cd "$SESSION_WS" && git config user.email "agent@first-agent.local"'
 
 # ---------------------------------------------------------------------------
 # 4. Test git SSH connectivity
 # ---------------------------------------------------------------------------
 log_info "Testing git SSH connectivity..."
 
-if docker exec -e REPO_SSH_URL="$REPO_SSH_URL" first-agent bash -lc "cd '$SESSION_WS' && git ls-remote \"\$REPO_SSH_URL\"" >/dev/null 2>&1; then
+if docker exec -e REPO_SSH_URL="$REPO_SSH_URL" -e SESSION_WS="$SESSION_WS" first-agent \
+        bash -lc 'cd "$SESSION_WS" && git ls-remote "$REPO_SSH_URL"' >/dev/null 2>&1; then
     log_info "Git SSH connectivity: OK"
 else
     log_error "Git SSH test FAILED. Check:"
@@ -276,32 +283,35 @@ log_info "Testing git push..."
 
 # Idempotent cleanup: remove remote + local test branch from any previous aborted run
 log_info "Preparing clean test state..."
-docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc "cd '$SESSION_WS' && git push origin --delete \"\$TEST_BRANCH\" || true" 2>/dev/null || true
-if docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc "cd '$SESSION_WS' && git rev-parse --verify \"\$TEST_BRANCH\"" >/dev/null 2>&1; then
-    docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc "cd '$SESSION_WS' && git checkout - || true; git branch -D \"\$TEST_BRANCH\" || true"
+docker exec -e TEST_BRANCH="$TEST_BRANCH" -e SESSION_WS="$SESSION_WS" first-agent \
+    bash -lc 'cd "$SESSION_WS" && git push origin --delete "$TEST_BRANCH" || true' 2>/dev/null || true
+if docker exec -e TEST_BRANCH="$TEST_BRANCH" -e SESSION_WS="$SESSION_WS" first-agent \
+        bash -lc 'cd "$SESSION_WS" && git rev-parse --verify "$TEST_BRANCH"' >/dev/null 2>&1; then
+    docker exec -e TEST_BRANCH="$TEST_BRANCH" -e SESSION_WS="$SESSION_WS" first-agent \
+        bash -lc 'cd "$SESSION_WS" && git checkout - || true; git branch -D "$TEST_BRANCH" || true'
 fi
 
 # Push test branch
-docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc "
-    cd '$SESSION_WS' &&
-    git checkout -b \"\$TEST_BRANCH\" &&
+docker exec -e TEST_BRANCH="$TEST_BRANCH" -e SESSION_WS="$SESSION_WS" first-agent bash -lc '
+    cd "$SESSION_WS" &&
+    git checkout -b "$TEST_BRANCH" &&
     touch bootstrap-test.txt &&
     git add bootstrap-test.txt &&
-    git commit -m 'test: bootstrap verification' &&
-    git push origin \"\$TEST_BRANCH\"
-" || {
+    git commit -m "test: bootstrap verification" &&
+    git push origin "$TEST_BRANCH"
+' || {
     log_error "Git push test FAILED."
     exit 1
 }
 
 log_info "Git push test passed. Cleaning up test branch..."
-docker exec -e TEST_BRANCH="$TEST_BRANCH" first-agent bash -lc "
-    cd '$SESSION_WS' &&
+docker exec -e TEST_BRANCH="$TEST_BRANCH" -e SESSION_WS="$SESSION_WS" first-agent bash -lc '
+    cd "$SESSION_WS" &&
     git checkout - || true;
-    git branch -D \"\$TEST_BRANCH\" || true;
-    git push origin --delete \"\$TEST_BRANCH\" || true;
+    git branch -D "$TEST_BRANCH" || true;
+    git push origin --delete "$TEST_BRANCH" || true;
     rm -f bootstrap-test.txt
-" || true
+' || true
 
 # ---------------------------------------------------------------------------
 # 5b. Secret-isolation smoke check (ADR-12): the AGENT container must hold no

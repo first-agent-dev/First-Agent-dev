@@ -13,6 +13,14 @@ Wants=network-online.target tailscaled.service
 Type=oneshot
 RemainAfterExit=yes
 OOMScoreAdjust=-500
+# Restart=on-failure here applies ONLY to the oneshot ExecStart itself: if
+# `docker compose up -d` returns non-zero at boot (e.g. docker isn't ready
+# yet, network not up), systemd retries it every RestartSec. Container
+# crash-loop recovery is NOT handled by systemd — it is handled by
+# `restart: unless-stopped` on both services in docker-compose.fa.yml
+# (Docker itself restarts crashed containers; live-restore keeps them
+# across dockerd restarts). Removing Restart= would regress the cold-boot
+# race where docker.service starts after fa.service.
 Restart=on-failure
 RestartSec=10
 WorkingDirectory=/srv/first-agent/repo/First-Agent-dev

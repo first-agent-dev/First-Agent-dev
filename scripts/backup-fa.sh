@@ -29,11 +29,58 @@
 
 set -euo pipefail
 
-# Source credentials from host secrets directory (outside repo, not tracked)
-if [ -f /srv/first-agent/secrets/backup.env ]; then
-    # shellcheck source=/dev/null
-    source /srv/first-agent/secrets/backup.env
-fi
+# ── Safe dotenv loader ──────────────────────────────────────────────────
+# We deliberately do NOT `source` backup.env: that executes the file as
+# shell, which means a typo, a value containing $(...)/`...`, or a stray
+# space/glob in a credential would be evaluated by bash under the cron
+# user's privileges — a classic "dotenv-as-source" anti-pattern seen in
+# many junior-grade deploy scripts. Senior pattern: a KEY=VALUE line
+# parser with a strict whitelist of expected variable names, no eval,
+# no export of arbitrary names. Single/double quotes around the value
+# are stripped once; comment lines and blank lines are ignored.
+_load_backup_env() {
+    local _file="$1"
+    [ -f "$_file" ] || return 0
+    local _line _key _val
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        # strip leading/trailing whitespace
+        _line="${_line#"${_line%%[![:space:]]*}"}"
+        _line="${_line%"${_line##*[![:space:]]}"}"
+        # skip blanks and comments
+        [ -z "$_line" ] && continue
+        case "$_line" in \#*) continue ;; esac
+        # require NAME=VALUE shape with a valid shell identifier
+        case "$_line" in
+            [A-Za-z_][A-Za-z0-9_]*=*) ;;
+            *) continue ;;  # ignore malformed lines silently
+        esac
+        _key="${_line%%=*}"
+        _val="${_line#*=}"
+        # strip any whitespace surrounding the key (KEY = VALUE form) and the
+        # value, so hand-formatted `B2_KEY_ID = "x"` is tolerated (defensive).
+        _key="${_key#"${_key%%[![:space:]]*}"}"
+        _key="${_key%"${_key##*[![:space:]]}"}"
+        _val="${_val#"${_val%%[![:space:]]*}"}"
+        _val="${_val%"${_val##*[![:space:]]}"}"
+        # strip a single matching pair of surrounding single/double quotes
+        case "$_val" in
+            "\""*"\"") _val="${_val#\"}"; _val="${_val%\"}" ;;
+            "'"*"'") _val="${_val#\'}"; _val="${_val%\'}" ;;
+        esac
+        # whitelist: only export the three documented B2 credential vars.
+        # Any extra name in the file is ignored — defense against typos /
+        # accidentally-pasted exports.
+        case "$_key" in
+            B2_KEY_ID|B2_APPLICATION_KEY|B2_BUCKET)
+                # shellcheck disable=SC2163  # dynamic export is intentional
+                export "$_key=$_val"
+                ;;
+        esac
+    done <"$_file"
+}
+
+# Load credentials from host secrets directory (outside repo, not tracked).
+_load_backup_env /srv/first-agent/secrets/backup.env
 
 B2_KEY_ID="${B2_KEY_ID:-CHANGEME}"
 B2_APPLICATION_KEY="${B2_APPLICATION_KEY:-CHANGEME}"

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from unittest.mock import patch
 
 from fa.inner_loop._sqlite_common import (
     SQLITE_BUSY_TIMEOUT_MS,
@@ -109,3 +110,49 @@ class TestCreateSqliteConnection:
             assert [r[0] for r in rows] == ["alpha", "beta"]
         finally:
             conn.close()
+
+
+class TestConsumerWiring:
+    """Kill-check: SessionDatabase and GlobalHistoryStore actually delegate to
+    create_sqlite_connection() rather than each re-implementing
+    sqlite3.connect(...) inline (which would silently reintroduce the R0801
+    duplicate-code finding this module exists to close, and drift the two
+    stores' connection discipline out of sync over time).
+
+    The TestCreateSqliteConnection / TestConstants classes above are C0 on
+    the helper in isolation; they pass unconditionally even if neither
+    consumer imports the helper at all. This class is what actually proves
+    the extraction did what its docstring claims.
+    """
+
+    def test_session_database_delegates_to_shared_factory(self, tmp_path: Path) -> None:
+        """kill-check: reverting SessionDatabase._connect to an inline
+        sqlite3.connect(...) call (the pre-extraction shape) makes this
+        test fail — see fa.inner_loop.session_db._connect.
+        """
+        from fa.inner_loop import session_db
+
+        with patch(
+            "fa.inner_loop.session_db.create_sqlite_connection",
+            wraps=create_sqlite_connection,
+        ) as spy:
+            db = session_db.SessionDatabase(tmp_path / "session.db")
+            db._connect().close()  # exercising the delegation directly, by design
+
+        assert spy.call_count >= 1
+
+    def test_global_history_store_delegates_to_shared_factory(self, tmp_path: Path) -> None:
+        """kill-check: reverting GlobalHistoryStore._connect to an inline
+        sqlite3.connect(...) call (the pre-extraction shape) makes this
+        test fail — see fa.inner_loop.global_history._connect.
+        """
+        from fa.inner_loop import global_history
+
+        with patch(
+            "fa.inner_loop.global_history.create_sqlite_connection",
+            wraps=create_sqlite_connection,
+        ) as spy:
+            store = global_history.GlobalHistoryStore(db_path=tmp_path / "global_history.db")
+            store._connect().close()  # exercising the delegation directly, by design
+
+        assert spy.call_count >= 1

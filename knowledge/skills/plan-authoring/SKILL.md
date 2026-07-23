@@ -133,6 +133,17 @@ observable signal?                                 → Contract Card required
 Could more than one call site trigger this?         → Path/flag matrix
                                                      required (§7).
 
+Does a step delete/collapse a wrapper or adapter to  → Mandatory live-path C1
+close a duplicate-code (or similar lint) finding?      test at the REAL call
+                                                     site's calling convention
+                                                     (not the wrapper's own
+                                                     signature). Static gates
+                                                     (mypy/pyrefly/ruff/pylint)
+                                                     cannot see parameter-
+                                                     semantics mismatches in
+                                                     Callable/Protocol-typed
+                                                     slots — AP-006.
+
 ═══════════════════════════════════════════════════════════════════════
 1. TRACEABILITY & ID CONVENTIONS
 ═══════════════════════════════════════════════════════════════════════
@@ -810,6 +821,13 @@ I-IP-14 Prefer the minimal mechanism that realizes the stated intent;
 
 I-IP-15 Assumptions are labeled ASSUMPTION and never presented as verified
         fact anywhere in the document.
+
+I-IP-16 A step that deletes/collapses a wrapper adapting a function to a
+        Callable/Protocol-typed slot requires a C1 test at the real
+        call site's calling convention (positional, per the slot's
+        type), not a unit test on the wrapped function's own keyword
+        signature — static gates cannot see this class of defect
+        (AP-006).
 
 ═══════════════════════════════════════════════════════════════════════
 17. OPERATOR USAGE WRAPPER

@@ -118,3 +118,5 @@ is the worked example).
 | AP-003 | Shallow fix without closing a degree of freedom         | [pr-creation skill anti-shallow-fix gate](../skills/pr-creation/SKILL.md) | accepted |
 | AP-004 | Symptom-chasing without fixing the underlying model     | [AGENTS.md §Industry-proven rules](../../AGENTS.md#industry-proven-rules-from-prior-art-in-oss-agent-stacks) | accepted |
 | AP-005 | Dual-write authority violation                          | [session_db authority](../reference.md#session-data-layout) | accepted |
+| AP-006 | Protocol-adapter collapsed as duplicate-code            | [ADR-7 §2 ToolSpec](../adr/ADR-7-inner-loop-tool-registry.md) | accepted |
+| AP-007 | Session-lifetime identifier reused against a persistent channel | [ADR-14 stateful bash runtime](../adr/ADR-14-stateful-bash-eventstream-runtime.md) | accepted |

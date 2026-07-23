@@ -119,17 +119,27 @@ else
 fi
 
 # 1b. Remove stray port-22 'Anywhere' rules that are NOT scoped to tailscale0
-#     (Edge case 3). Delete from highest index to keep numbering stable.
-mapfile -t stray < <(ufw status numbered 2>/dev/null \
-    | grep -E '\b22\b' | grep -iE 'Anywhere' | grep -iv 'tailscale0' \
-    | grep -oE '^\[[ ]*[0-9]+\]' | grep -oE '[0-9]+' | sort -rn)
-if [[ "${#stray[@]}" -gt 0 ]]; then
-    log_warn "  Found stray port-22 ALLOW Anywhere rule(s) not bound to tailscale0: ${stray[*]}"
-    for n in "${stray[@]}"; do
-        log_warn "  Deleting UFW rule #${n}..."
-        yes | ufw delete "${n}" >/dev/null 2>&1 || ufw --force delete "${n}" || true
-    done
-else
+#     (Edge case 3). RE-FETCH the numbered rule list AFTER every delete: each
+#     ufw delete renumbers the remaining rules (IPv4 + IPv6 pairs shift), so
+#     iterating a pre-snapshot array can delete the WRONG rule on the second
+#     and later passes — a classic junior-grade ufw-scripting bug. We loop
+#     one-at-a-time, always delete the highest-numbered match (stable because
+#     higher indices don't shift when you remove the highest), and use
+#     `ufw --force delete` (non-interactive, reads no TTY) instead of
+#     `yes | ufw delete`, which fails on builds where ufw reads confirmation
+#     from /dev/tty rather than stdin.
+while true; do
+    mapfile -t stray < <(ufw status numbered 2>/dev/null \
+        | grep -E '\b22\b' | grep -iE 'Anywhere' | grep -iv 'tailscale0' \
+        | grep -oE '^\[[ ]*[0-9]+\]' | grep -oE '[0-9]+' | sort -rn)
+    if [[ "${#stray[@]}" -eq 0 ]]; then
+        break
+    fi
+    n="${stray[0]}"
+    log_warn "  Deleting stray UFW rule #${n}..."
+    ufw --force delete "${n}" >/dev/null 2>&1 || true
+done
+if ! ufw status numbered 2>/dev/null | grep -E '\b22\b' | grep -iE 'Anywhere' | grep -iv 'tailscale0' >/dev/null; then
     log_info "  No stray open port-22 rules."
 fi
 
