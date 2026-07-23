@@ -58,6 +58,7 @@ from fa.providers.base import (
     TransportResponse,
     parse_transport_response,
 )
+from fa.providers._common import make_authenticated_request, parse_token_usage
 
 logger = logging.getLogger(__name__)
 
@@ -129,17 +130,12 @@ class MistralConversationsProvider:
         url = base_url.rstrip("/") + "/v1/conversations"
         body = _build_conversations_body(request)
 
-        headers: dict[str, str] = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        for key, value in extra_headers.items():
-            headers[key] = value
-
-        response = self._transport.post(
-            url,
-            headers=headers,
-            json_body=body,
+        response = make_authenticated_request(
+            transport=self._transport,
+            url=url,
+            api_key=api_key,
+            body=body,
+            extra_headers=extra_headers,
             timeout_seconds=timeout_seconds,
             transport_retries=transport_retries,
         )
@@ -366,21 +362,19 @@ def _normalize_conversations_success(body: Mapping[str, Any]) -> ResponseInfo:
             }
         }
     """
-    text_parts: list[str] = []
-    tool_calls: list[dict[str, Any]] = []
-    finish_reason = "stop"
     conversation_id = body.get("conversation_id")
 
     outputs = cast(list[Mapping[str, Any]], body.get("outputs", []))
     text_parts, tool_calls, finish_reason = _normalize_conversation_outputs(outputs)
 
+    token_usage = parse_token_usage(body)
+    in_tokens = token_usage["in_tokens"]
+    out_tokens = token_usage["out_tokens"]
+    cache_read_input_tokens = token_usage["cache_read_input_tokens"]
+    cache_creation_input_tokens = token_usage["cache_creation_input_tokens"]
+
+    # Extract usage dict for prediction_tokens check (Mistral-specific)
     usage = cast(Mapping[str, Any], body.get("usage") or {})
-    in_tokens = int(usage.get("prompt_tokens") or 0)
-    out_tokens = int(usage.get("completion_tokens") or 0)
-    prompt_details = usage.get("prompt_tokens_details")
-    prompt_details_map = prompt_details if isinstance(prompt_details, Mapping) else {}
-    cache_read_input_tokens = int(prompt_details_map.get("cached_tokens") or usage.get("cache_read_input_tokens") or 0)
-    cache_creation_input_tokens = int(usage.get("cache_creation_input_tokens") or 0)
 
     extras: dict[str, Any] = {}
     if conversation_id:

@@ -16,48 +16,16 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
+from fa.inner_loop.tools._common import git_ls_files
+from fa.inner_loop.tools._common import validate_search_params
 from fa.inner_loop.tools.base import optional_int, require_string
 
-try:
-    from fa.memory.fts_index import EXCLUDE_DIRS
-
-    EXCLUDE_DIRS = set(EXCLUDE_DIRS)
-except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-    EXCLUDE_DIRS = {
-        ".fa",
-        "node_modules",
-        ".venv",
-        "__pycache__",
-        ".git",
-        "sessions",
-        ".gremlins_cache",
-        "dist",
-        "build",
-        ".mypy_cache",
-    }
+# Single source of truth for excluded directories
+from fa.memory.fts_index import EXCLUDE_DIRS
 
 DEFAULT_LIMIT = 10
 MAX_LIMIT = 50
 MAX_FILE_SIZE_SOFT = 100_000
-
-
-def _git_ls_files(root: Path) -> list[str]:
-    import logging
-
-    logger = logging.getLogger(__name__)
-    try:
-        res = subprocess.run(
-            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],  # noqa: S607
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if res.returncode == 0:
-            return [line.strip() for line in res.stdout.splitlines() if line.strip()]
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        logger.warning("git ls-files failed in instant_grep fallback: %s", exc)
-    return []
 
 
 def _iter_files_fallback(root: Path) -> Iterator[Path]:
@@ -138,7 +106,7 @@ def _fts_search(db_path: Path, workspace_root: Path, query: str, limit: int) -> 
 
 def _git_fallback_search(root: Path, query: str, limit: int, fts_error: str) -> list[str]:
     """Fallback via git ls-files, respects EXCLUDE_DIRS, streaming content check."""
-    tracked = _git_ls_files(root)
+    tracked = git_ls_files(root)
     matched: list[str] = []
     q_lower = query.lower()
     for rel in tracked:
@@ -186,18 +154,9 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
 
     def handler(params: Mapping[str, object]) -> ToolResult:
         try:
-            data = dict(params)
-            query = require_string(data, "query")
-            limit = optional_int(data, "limit") or DEFAULT_LIMIT
-            if limit <= 0:
-                limit = DEFAULT_LIMIT
-            if limit > MAX_LIMIT:
-                limit = MAX_LIMIT
+            query, limit = validate_search_params(params, DEFAULT_LIMIT, MAX_LIMIT)
         except ValueError as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
-
-        if not query.strip():
-            return ToolResult.fail("invalid_params", "query must be non-empty", retryable=True)
 
         # Fast path FTS5
         paths, fts_error = _fts_search(db_path, workspace_root, query, limit)

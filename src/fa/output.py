@@ -23,6 +23,7 @@ Design rules:
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
@@ -30,6 +31,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from fa.formatting import fmt_tokens as _fmt_tokens
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "CONSOLE_MIRROR_KINDS",
@@ -171,10 +174,12 @@ class EventBus:
         for listener in self._listeners:
             try:
                 listener.on_event(event)
-            except Exception as exc:  # noqa: BLE001 — never crash the loop
-                print(
-                    f"[output] {type(listener).__name__} raised: {exc}",
-                    file=sys.stderr,
+            except Exception as exc:  # Listener errors are logged but never crash the loop
+                logger.error(
+                    "Output listener %s raised: %s",
+                    type(listener).__name__,
+                    exc,
+                    exc_info=True,
                 )
 
 

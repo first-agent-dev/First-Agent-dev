@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONTRACT_PATH = REPO_ROOT / ".fa" / "dependency_contract.toml"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 
 
-def _parse_toml_simple(path: Path) -> dict:
+def _parse_toml_simple(path: Path) -> dict[str, Any]:
     """Parse a simple TOML file using stdlib tomllib (ADR-11-I1 compliant)."""
     try:
         import tomllib
@@ -29,7 +30,7 @@ def _parse_toml_simple(path: Path) -> dict:
         return tomllib.load(f)
 
 
-def extract_contract_packages(contract: dict) -> set[str]:
+def extract_contract_packages(contract: dict[str, Any]) -> set[str]:
     """Extract all package names from the dependency contract."""
     packages = set()
     for section_key in (
@@ -47,7 +48,7 @@ def extract_contract_packages(contract: dict) -> set[str]:
     return packages
 
 
-def extract_pyproject_deps(pyproject: dict) -> set[str]:
+def extract_pyproject_deps(pyproject: dict[str, Any]) -> set[str]:
     """Extract package names from pyproject.toml [project.dependencies]."""
     deps = pyproject.get("project", {}).get("dependencies", [])
     names = set()

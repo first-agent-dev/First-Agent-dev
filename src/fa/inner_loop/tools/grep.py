@@ -19,29 +19,14 @@ from pathlib import Path
 from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
+from fa.inner_loop.tools._common import validate_search_params
 from fa.inner_loop.tools.base import optional_int, require_string
 
 logger = logging.getLogger(__name__)
 
 # Single source of truth — import once at module load, fallback if not available
-try:
-    from fa.memory.fts_index import EXCLUDE_DIRS as _FTS_EXCLUDE
-
-    EXCLUDE_DIRS: set[str] = set(_FTS_EXCLUDE)
-except Exception as exc:  # noqa: BLE001 # graceful degradation
-    logger.warning("Failed to import EXCLUDE_DIRS, using defaults: %s", exc)
-    EXCLUDE_DIRS = {
-        ".git",
-        ".fa",
-        "node_modules",
-        ".venv",
-        "__pycache__",
-        ".gremlins_cache",
-        "sessions",
-        "dist",
-        "build",
-        ".mypy_cache",
-    }
+# Single source of truth for excluded directories
+from fa.memory.fts_index import EXCLUDE_DIRS
 
 DEFAULT_LIMIT = 20
 DEFAULT_MAX_FILE_SIZE = 200_000  # soft limit, overridable via param
@@ -122,13 +107,8 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:  # noqa: C901 -- complexi
 
     def handler(params: Mapping[str, object]) -> ToolResult:  # noqa: C901 -- complexity from fallback chain
         try:
+            query, limit = validate_search_params(params, DEFAULT_LIMIT, MAX_LIMIT)
             data = dict(params)
-            query = require_string(data, "query")
-            limit = optional_int(data, "limit") or DEFAULT_LIMIT
-            if limit <= 0:
-                limit = DEFAULT_LIMIT
-            if limit > MAX_LIMIT:
-                limit = MAX_LIMIT
             glob_filter = data.get("glob")
             if glob_filter is not None and not isinstance(glob_filter, str):
                 glob_filter = None
@@ -137,9 +117,6 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:  # noqa: C901 -- complexi
                 max_file_size = 0  # 0 means no limit
         except ValueError as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
-
-        if not query.strip():
-            return ToolResult.fail("invalid_params", "query must be non-empty", retryable=True)
 
         # 1) Fast path: git grep (handles large files natively in C)
         result = _git_grep(root, query, limit)

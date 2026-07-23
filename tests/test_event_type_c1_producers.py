@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 from unittest.mock import MagicMock, patch
 
 from fa.feature_flags import FeatureFlags
@@ -230,6 +230,7 @@ def test_hook_deny_emitted(tmp_path: Path) -> None:
         name = "deny_test"
         attaches_to = (LifecyclePoint.BEFORE_LLM_CALL,)
 
+        @override
         def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
             return Decision.deny("test deny")
 

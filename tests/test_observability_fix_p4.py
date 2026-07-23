@@ -181,10 +181,14 @@ def test_loop_warn_emitted_via_warn_sink(tmp_path: Path) -> None:
         try:
             log.append(actor="hook", kind="loop_guard_warn", content={"detector": detector, "message": message})
         except (OSError, RuntimeError, ValueError, TypeError):
+            # Observer must never block the hook chain; swallow errors to isolate
+            # the test from logging/emission failures.
             pass
         try:
             bus.emit(OutputEvent(type="loop_warn", data={"detector": detector, "message": message}))
         except (OSError, RuntimeError, ValueError, TypeError):
+            # Observer must never block the hook chain; swallow errors to isolate
+            # the test from logging/emission failures.
             pass
 
     hooks.register(LoopGuard(repeat_warn=2, circuit_breaker=5, window=10, warn_sink=_warn_sink))

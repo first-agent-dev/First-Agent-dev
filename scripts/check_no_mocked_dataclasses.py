@@ -21,6 +21,7 @@ from __future__ import annotations
 import ast
 import sys
 from pathlib import Path
+from typing import override
 
 # Dataclasses that should NEVER be mocked with MagicMock(spec=...).
 # These are pure value objects — use real instances instead.
@@ -50,6 +51,7 @@ class MagicMockDataclassVisitor(ast.NodeVisitor):
         self.filepath = filepath
         self.violations: list[tuple[int, str]] = []
 
+    @override
     def visit_Call(self, node: ast.Call) -> None:
         # Check if this is MagicMock(spec=SomeProtectedClass)
         # or MagicMock(spec=SomeProtectedClass)

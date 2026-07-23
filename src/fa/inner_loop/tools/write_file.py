@@ -54,20 +54,22 @@ def _check_conflict(
     # otherwise ignore (contextvar leak protection)
     try:
         bb_root = Path(getattr(blackboard, "root", Path("/"))).resolve()
+        # Initialize expected_root BEFORE the nested fallback so every exception
+        # path has a defined value (pyrefly PY6 closure).
+        expected_root = root.resolve()
         # Expected: bb_root == root/.fa/blackboard, so parent.parent == root
         # If not related, it's from different workspace (leaked contextvar) -> ignore
         try:
             # bb_root = <root>/.fa/blackboard
-            expected_root = root.resolve()
             # Check if bb_root is inside expected_root/.fa
             if not (bb_root == expected_root / ".fa" / "blackboard" or bb_root.is_relative_to(expected_root)):
                 # Also check if expected_root is parent of bb_root's parent.parent
-                if bb_root.parent.parent.resolve() != expected_root.resolve():
+                if bb_root.parent.parent.resolve() != expected_root:
                     # Different workspace, ignore conflict to avoid false positives from leaked session
                     return None
         except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             # If relative_to fails, do strict equality check only
-            if bb_root != (root.resolve() / ".fa" / "blackboard"):
+            if bb_root != (expected_root / ".fa" / "blackboard"):
                 # If roots differ, ignore
                 # Additional safety: if blackboard path not under root, ignore
                 try:

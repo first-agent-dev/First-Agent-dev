@@ -164,6 +164,13 @@ class PtySession:
                 else:
                     self.pane = self.tmux_session.attached_window.attached_pane
 
+                # Narrow local before dereference (pyrefly PY7 closure):
+                # self.pane is typed Any | None; the attribute-access site must
+                # see a guaranteed-non-None local to satisfy the type checker.
+                pane = self.pane
+                if pane is None:
+                    raise RuntimeError("tmux pane not available after session setup")
+
                 # Use sentinel with control chars to avoid visible
                 # Wrap long send_keys lines
                 setup_cmd = (
@@ -171,7 +178,7 @@ class PtySession:
                     f"&& export PROMPT_COMMAND='' && export PAGER=cat "
                     f"&& export TERM=xterm-256color"
                 )
-                self.pane.send_keys(
+                pane.send_keys(
                     setup_cmd,
                     suppress_history=True,
                 )
