@@ -51,6 +51,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any, cast
 
+from fa.providers._common import make_authenticated_request, parse_token_usage
 from fa.providers.base import (
     RequestInfo,
     ResponseInfo,
@@ -58,7 +59,6 @@ from fa.providers.base import (
     TransportResponse,
     parse_transport_response,
 )
-from fa.providers._common import make_authenticated_request, parse_token_usage
 
 logger = logging.getLogger(__name__)
 

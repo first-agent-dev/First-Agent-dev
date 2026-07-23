@@ -14,18 +14,18 @@ from __future__ import annotations
 import fnmatch
 import logging
 import os
-import subprocess
 from collections.abc import Generator, Mapping
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools._common import git_ls_files
 from fa.inner_loop.tools.base import optional_int, require_string
+from fa.memory.fts_index import EXCLUDE_DIRS
 
 logger = logging.getLogger(__name__)
 
 # Single source of truth for excluded directories
-from fa.memory.fts_index import EXCLUDE_DIRS
+
 
 MAX_LIMIT = 200
 DEFAULT_LIMIT = 50

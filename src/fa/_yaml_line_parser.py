@@ -49,19 +49,19 @@ def iter_yaml_lines(text: str) -> Iterator[ParsedLine]:
     """
     for line_no, raw in enumerate(text.splitlines(), start=1):
         line = raw.rstrip()
-        
+
         # Skip blank lines
         if not line.strip():
             continue
-        
+
         # Skip comments
         if line.lstrip().startswith("#"):
             continue
-        
+
         stripped = line.lstrip()
         indent = len(line) - len(stripped)
         is_top_level = indent == 0
-        
+
         yield ParsedLine(
             line_no=line_no,
             raw=line,

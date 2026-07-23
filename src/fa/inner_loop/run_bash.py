@@ -9,7 +9,6 @@ from typing import Any
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
 from fa.inner_loop.tools._common import prepare_workspace_context, truncate_for_preview, validate_bash_command
-from fa.inner_loop.tools.base import require_string
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
 
 

@@ -2,11 +2,10 @@
 
 Verifies the extracted line iteration utility works correctly and handles edge cases.
 """
+
 from __future__ import annotations
 
-import pytest
-
-from fa._yaml_line_parser import iter_yaml_lines, ParsedLine
+from fa._yaml_line_parser import iter_yaml_lines
 
 
 class TestIterYamlLines:
@@ -15,9 +14,9 @@ class TestIterYamlLines:
     def test_skips_blank_lines(self) -> None:
         """iter_yaml_lines skips blank lines."""
         text = """
-        
+
         key: value
-        
+
         """
         lines = list(iter_yaml_lines(text))
         assert len(lines) == 1
@@ -84,7 +83,7 @@ section2:
 
     def test_preserves_raw_line(self) -> None:
         """iter_yaml_lines preserves the raw line content."""
-        text = """  key: value  
+        text = """  key: value
 """
         lines = list(iter_yaml_lines(text))
         assert lines[0].raw == "  key: value"
@@ -96,7 +95,7 @@ section2:
 section:
   # Inline comment
   key1: value1
-  
+
   key2: value2
 """
         lines = list(iter_yaml_lines(text))

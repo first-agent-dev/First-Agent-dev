@@ -11,14 +11,11 @@ Senior refactor v2 — fixes F821 undefined e bug + C901 complexity split:
 from __future__ import annotations
 
 import os
-import subprocess
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
-from fa.inner_loop.tools._common import git_ls_files
-from fa.inner_loop.tools._common import validate_search_params
-from fa.inner_loop.tools.base import optional_int, require_string
+from fa.inner_loop.tools._common import git_ls_files, validate_search_params
 
 # Single source of truth for excluded directories
 from fa.memory.fts_index import EXCLUDE_DIRS

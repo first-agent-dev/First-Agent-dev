@@ -79,10 +79,10 @@ def validate_search_params(
         limit = default_limit
     if limit > max_limit:
         limit = max_limit
-    
+
     if not query.strip():
         raise ValueError("query must be non-empty")
-    
+
     return query, limit
 
 
@@ -110,10 +110,10 @@ def truncate_for_preview(value: object, preview_len: int = 500) -> str:
         rendered = value
     else:
         rendered = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, default=repr)
-    
+
     if len(rendered) <= preview_len:
         return rendered
-    
+
     return (
         rendered[:preview_len]
         + f"\n...[truncated {len(rendered)} chars, use | head -n 100 or grep to reduce, full in artifact]...\n"
@@ -173,8 +173,8 @@ def prepare_workspace_context(
 
 __all__ = [
     "git_ls_files",
-    "validate_search_params",
+    "prepare_workspace_context",
     "truncate_for_preview",
     "validate_bash_command",
-    "prepare_workspace_context",
+    "validate_search_params",
 ]

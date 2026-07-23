@@ -53,9 +53,7 @@ def parse_token_usage(body: Mapping[str, Any]) -> TokenUsage:
     # Handle cache tokens - check both nested and flat formats
     prompt_details = usage.get("prompt_tokens_details")
     prompt_details_map = prompt_details if isinstance(prompt_details, Mapping) else {}
-    cache_read_input_tokens = int(
-        prompt_details_map.get("cached_tokens") or usage.get("cache_read_input_tokens") or 0
-    )
+    cache_read_input_tokens = int(prompt_details_map.get("cached_tokens") or usage.get("cache_read_input_tokens") or 0)
     cache_creation_input_tokens = int(usage.get("cache_creation_input_tokens") or 0)
 
     return TokenUsage(
@@ -119,4 +117,4 @@ def make_authenticated_request(
     )
 
 
-__all__ = ["parse_token_usage", "TokenUsage", "make_authenticated_request"]
+__all__ = ["TokenUsage", "make_authenticated_request", "parse_token_usage"]

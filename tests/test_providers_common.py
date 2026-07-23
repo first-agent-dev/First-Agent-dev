@@ -2,11 +2,10 @@
 
 Verifies the extracted common functions work correctly and handle edge cases.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
-
-import pytest
 
 from fa.providers._common import make_authenticated_request, parse_token_usage
 

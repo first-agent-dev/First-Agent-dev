@@ -20,13 +20,14 @@ from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools._common import validate_search_params
-from fa.inner_loop.tools.base import optional_int, require_string
+from fa.inner_loop.tools.base import optional_int
+from fa.memory.fts_index import EXCLUDE_DIRS
 
 logger = logging.getLogger(__name__)
 
 # Single source of truth — import once at module load, fallback if not available
 # Single source of truth for excluded directories
-from fa.memory.fts_index import EXCLUDE_DIRS
+
 
 DEFAULT_LIMIT = 20
 DEFAULT_MAX_FILE_SIZE = 200_000  # soft limit, overridable via param

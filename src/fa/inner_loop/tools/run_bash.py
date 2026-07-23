@@ -10,7 +10,7 @@ from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
-from fa.inner_loop.tools.base import require_string
+from fa.inner_loop.tools._common import prepare_workspace_context, truncate_for_preview, validate_bash_command
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
 
 logger = logging.getLogger(__name__)
@@ -46,9 +46,6 @@ def _normalize_carriage_return(text: str) -> str:
         if result.endswith("\n") and text.endswith("\n"):
             result = result[:-1]
         return result
-
-
-from fa.inner_loop.tools._common import prepare_workspace_context, truncate_for_preview, validate_bash_command
 
 
 def _elide_500_preview(value: Any, max_bytes: int) -> str:
