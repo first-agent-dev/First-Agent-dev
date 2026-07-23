@@ -303,10 +303,7 @@ project-includes = [
     "tests",
     "scripts",
 ]
-search-path = [
-    "src",
-    ".",
-]
+
 python-version = "3.13.0"
 preset = "strict"
 # Repository-root search path: pytest's pythonpath = ["."] makes tests/fixtures
