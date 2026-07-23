@@ -72,6 +72,25 @@ def test_analyze_bash_verify_only_commands(command: str, repo_root: Path) -> Non
 @pytest.mark.parametrize(
     "command",
     [
+        # Absolute-path Python invocations must still be classified as
+        # VERIFY_ONLY (regression guard: previously ``_is_python_interpreter``
+        # matched the raw argv[0] exactly, so ``/usr/bin/python3 -m pytest``
+        # was mis-classified as OPAQUE_EXEC and incorrectly tripped the
+        # pr.prepare gate before read-only test commands).
+        "/usr/bin/python3 -m pytest --version",
+        "/usr/local/bin/python -m mypy src",
+        "/opt/py312/bin/python3 -m ruff format --check .",
+    ],
+)
+def test_analyze_bash_absolute_path_python_is_verify_only(command: str, repo_root: Path) -> None:
+    analysis = analyze_bash_for_intent(command, repo_root=repo_root)
+    assert analysis.effect is BashIntentEffect.VERIFY_ONLY
+    assert analysis.projected == ()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "ruff check --fix .",
         "python -m ruff check --fix .",
         "ruff format .",

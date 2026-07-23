@@ -5,6 +5,7 @@ Verifies the extracted common functions work correctly and handle edge cases.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 from fa.providers._common import make_authenticated_request, parse_token_usage
@@ -77,7 +78,7 @@ class TestParseTokenUsage:
 
     def test_parse_missing_usage_returns_zeros(self) -> None:
         """parse_token_usage returns zeros when usage field is missing."""
-        body = {}
+        body: dict[str, Any] = {}
         result = parse_token_usage(body)
         assert result["in_tokens"] == 0
         assert result["out_tokens"] == 0
@@ -86,7 +87,7 @@ class TestParseTokenUsage:
 
     def test_parse_empty_usage_returns_zeros(self) -> None:
         """parse_token_usage returns zeros when usage field is empty."""
-        body = {"usage": {}}
+        body: dict[str, Any] = {"usage": {}}
         result = parse_token_usage(body)
         assert result["in_tokens"] == 0
         assert result["out_tokens"] == 0

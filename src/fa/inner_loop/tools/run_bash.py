@@ -48,11 +48,6 @@ def _normalize_carriage_return(text: str) -> str:
         return result
 
 
-def _elide_500_preview(value: Any, max_bytes: int) -> str:
-    """Elide to 500-char preview + marker, for token efficiency (Stage 0)."""
-    return truncate_for_preview(value, preview_len=500)
-
-
 def _get_write_set_from_git_status(root: Path) -> list[str]:
     """Dynamic git-status verification per Gap 8 — formal source-of-truth for transaction diffs, not regex."""
     try:
@@ -179,7 +174,7 @@ def _run_pty_executor(
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("artifact store write failed: %s", exc)
 
-            preview = _elide_500_preview(stdout, 8000)
+            preview = truncate_for_preview(stdout, preview_len=500, max_bytes=8000)
             summary = f"bash exited {pty_result.exit_code}"
             result = {
                 "returncode": pty_result.exit_code,
@@ -270,7 +265,11 @@ def _run_subprocess_fallback(
             logger.warning("Failed to offload large fallback stdout to ArtifactStore: %s", exc)
 
     truncated = len(stdout_clean) > 8000
-    preview_stdout = stdout_clean if len(stdout_clean) <= 8000 else _elide_500_preview(stdout_clean, 8000)
+    preview_stdout = (
+        stdout_clean
+        if len(stdout_clean) <= 8000
+        else truncate_for_preview(stdout_clean, preview_len=500, max_bytes=8000)
+    )
     summary = f"bash exited {completed.returncode}"
     result = {
         "returncode": completed.returncode,
@@ -354,7 +353,7 @@ per-session isolation (Gap 13).
         handler=handler,
         tags=("fs", "bash"),
         max_context_bytes=8000,
-        elide=_elide_500_preview,
+        elide=truncate_for_preview,
     )
 
 

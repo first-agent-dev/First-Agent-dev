@@ -21,10 +21,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from fa.inner_loop._sqlite_common import create_sqlite_connection
 
-_SQLITE_TIMEOUT_SECONDS = 15.0
-_SQLITE_BUSY_TIMEOUT_MS = 15_000
+logger = logging.getLogger(__name__)
 
 
 class SessionDatabase:
@@ -41,11 +40,19 @@ class SessionDatabase:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.path), timeout=_SQLITE_TIMEOUT_SECONDS)
-        conn.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS};")
-        return conn
+        return create_sqlite_connection(self.path)
 
     def _init_schema(self) -> None:
+        # pylint: disable=duplicate-code
+        # Rationale: the outer with-lock/connect/PRAGMA boilerplate mirrors
+        # GlobalHistoryStore._init_schema because both stores share the same
+        # short-lived-connection + WAL + threading.Lock discipline. The table
+        # schemas inside the `with conn:` block are ENTIRELY different
+        # (event_log/blackboard/session_meta vs runs) — factoring this
+        # boilerplate would require either a base class (Option B from PR #58
+        # Phase 2, rejected as over-engineering for two call sites) or a
+        # higher-order init helper that obscures the schema declarations.
+        # Similarity is structural boilerplate, not copy-paste logic.
         try:
             with self._write_lock:
                 conn = self._connect()

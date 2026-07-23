@@ -10,16 +10,19 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class ParsedLine:
-    """Parsed information about a YAML-like configuration line."""
+    """Parsed information about a single non-blank, non-comment YAML-like line.
+
+    Blank lines and comment lines are filtered by :func:`iter_yaml_lines`
+    before being yielded, so every ``ParsedLine`` instance represents a
+    content line.
+    """
 
     line_no: int
     raw: str
     stripped: str
     indent: int
-    is_blank: bool
-    is_comment: bool
     is_top_level: bool
 
 
@@ -30,10 +33,11 @@ def iter_yaml_lines(text: str) -> Iterator[ParsedLine]:
     top-level keys (indent == 0).
 
     Args:
-        text: YAML-like configuration text
+        text: YAML-like configuration text.
 
     Yields:
-        ParsedLine with line number, content, indentation, and flags
+        :class:`ParsedLine` for every content (non-blank, non-comment) line,
+        with 1-based ``line_no`` matching the source text.
 
     Example:
         >>> text = '''
@@ -67,8 +71,6 @@ def iter_yaml_lines(text: str) -> Iterator[ParsedLine]:
             raw=line,
             stripped=stripped,
             indent=indent,
-            is_blank=False,
-            is_comment=False,
             is_top_level=is_top_level,
         )
 

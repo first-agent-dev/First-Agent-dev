@@ -4,17 +4,11 @@ import os
 import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
 from fa.inner_loop.tools._common import prepare_workspace_context, truncate_for_preview, validate_bash_command
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
-
-
-def _elide_500_preview(value: Any, max_bytes: int) -> str:
-    """Elide to 500-char preview + marker, for token efficiency (Stage 0)."""
-    return truncate_for_preview(value, preview_len=500)
 
 
 def build_run_bash_tool(
@@ -94,7 +88,7 @@ Chain commands with && for atomicity: cd src && ls -la
         handler=handler,
         tags=("fs", "bash"),
         max_context_bytes=8000,
-        elide=_elide_500_preview,
+        elide=truncate_for_preview,
     )
 
 

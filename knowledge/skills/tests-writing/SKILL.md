@@ -359,6 +359,96 @@ Gate merges on A; promote B judges only when calibrated.
 | Test edits | `validate_test_edits` / IntentGuard under FIX |
 | Isolation | `tmp_path`; freeze time; mock LLM always in A |
 | Determinism | Offline; sort unstable collections |
+| Subprocess env | Shadow-bin dirs on PATH (see §15.1); **never filter PATH directories** |
+
+---
+
+### 15.1 Subprocess isolation: shadow-bins (PATH overlay)
+
+When a test invokes a production script that calls out to an external CLI
+(`docker`, `podman`, `kubectl`, `gh`, `cargo`, `npm`, …) via `subprocess.run`
+or by exec'ing a shell script, follow these rules:
+
+1. **Use `env=` on `subprocess.run`/`Popen` — never mutate `os.environ`.**
+2. **Pin interpreters explicitly.** If the script uses `${PYTHON:-python3}`,
+   set `env["PYTHON"] = sys.executable` so the subprocess imports the code
+   under test instead of whatever `python3` happens to resolve on the host
+   (VSCode launches pytest via the venv binary without activating the venv
+   on PATH, so bare `python3` resolves to the system interpreter →
+   `ModuleNotFoundError: fa`).
+3. **Shadow unwanted CLIs with a temp bin directory, don't filter PATH.**
+   Append a *prepend* directory (created once via `tmp_path_factory` or a
+   module-scoped `tempfile.mkdtemp` + `atexit` cleanup) containing small
+   executable shim scripts named after the CLI you want to block. Make the
+   shim print a recognisable stderr line and exit non-zero (e.g.
+   `exit 127` with `"docker: not found (test shim)"`). Unix PATH lookup is
+   first-match-wins, so your shim intercepts the target name while *every
+   other host binary* (`bash`, `sh`, `true`, `cat`, `ls`, `pwd`, `python3`,
+   `coreutils`, …) continues to resolve through the inherited PATH
+   unchanged.
+
+   Rationale: Docker Desktop, Snap installs, Nix, Homebrew, and distro
+   packages routinely place CLIs in the *same* directory as core utilities
+   (`/usr/bin`, `/usr/local/bin`, `/snap/bin`). Filtering PATH entries by
+   "contains a docker binary" removes `/usr/bin` from PATH and breaks
+   `bash`/`sh`/`ls` resolution for the subprocess. We have watched this
+   regression happen in real life (PR #58 pre-push fix cycle,
+   `FileNotFoundError: 'bash'`). Shadowing is surgically narrow; filtering
+   is semantically broken on Unix.
+
+   Pattern:
+
+   ```python
+   _SHADOW_DIR: Path | None = None
+
+   def _shadow_dir() -> Path:
+       global _SHADOW_DIR
+       if _SHADOW_DIR is None:
+           d = Path(tempfile.mkdtemp(prefix="fa-test-shadow-"))
+           for name in ("docker", "podman"):
+               p = d / name
+               p.write_text(
+                   '#!/bin/sh\n'
+                   'echo "docker: not found (test shim)" >&2\n'
+                   'exit 127\n',
+                   encoding="utf-8",
+               )
+               p.chmod(0o755)
+           atexit.register(lambda: shutil.rmtree(d, ignore_errors=True))
+           _SHADOW_DIR = d
+       return _SHADOW_DIR
+
+   def _script_env() -> dict[str, str]:
+       env = os.environ.copy()
+       env["PYTHON"] = sys.executable
+       venv_bin = str(Path(sys.executable).parent)
+       parts = [str(_shadow_dir()), venv_bin]
+       for p in env.get("PATH", "").split(os.pathsep):
+           if p and p not in parts:
+               parts.append(p)
+       env["PATH"] = os.pathsep.join(parts)
+       return env
+   ```
+
+4. **Always assert the contract, not the implementation.** If the production
+   code should fall back/error when Docker is absent, assert the production
+   behaviour (e.g. `result.returncode != 0` AND one of several acceptable
+   failure strings: `"exec: docker"`, `"docker:"`, `"service not running"`)
+   so the test doesn't pin to a single host's exact errno/wording.
+5. **Kill-check (C1/C2 only):** If you're shadowing to prevent a real
+   side effect (container exec, network call, deploy), the test must fail
+   if the shim weren't there (i.e. the script *would* have called the real
+   binary). Mutate the shim to `exit 0` and confirm the test catches the
+   resulting success path as a failure — this proves the shim is on the
+   live path and not bypassed.
+
+| Do | Don't |
+| :--- | :--- |
+| Prepend a temp dir with same-named shims | Filter PATH dirs that contain a binary (removes bash, ls, etc.) |
+| Set `PYTHON=sys.executable` for scripts that invoke `${PYTHON:-python3}` | Rely on the venv being activated in the developer's shell |
+| Exit 127 with an identifiable "test shim" stderr string in the shim | Silently exit 0 (masks real delegation — theater) |
+| Use `atexit` / module-scope fixture for the shadow dir | Create/delete the dir in every test (noisy, slow) |
+| Assert a set of acceptable failure messages | Pin the exact `docker: command not found` wording (locale/errno vary) |
 
 ---
 

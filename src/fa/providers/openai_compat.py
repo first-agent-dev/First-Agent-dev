@@ -51,6 +51,16 @@ class OpenAICompatProvider:
         transport_retries: int,
         extra_headers: Mapping[str, str],
     ) -> ResponseInfo:
+        # pylint: disable=duplicate-code
+        # Rationale: this method's make_authenticated_request(...) call looks
+        # similar to MistralConversationsProvider.request because both adapters
+        # intentionally use the *same* make_authenticated_request helper from
+        # fa.providers._common with parameter names that match that helper's
+        # signature — that is the helper's whole purpose. The body construction
+        # above (chat/completions shape) and response parsing below
+        # (_normalize_success vs _normalize_conversations_success) differ
+        # entirely between adapters, so factoring further would be over-
+        # engineering (see PR #58 Phase 3 analysis).
         url = base_url.rstrip("/") + "/chat/completions"
         body: dict[str, Any] = {
             "model": request.model_slug,

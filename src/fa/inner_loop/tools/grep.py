@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
-from fa.inner_loop.tools._common import validate_search_params
+from fa.inner_loop.tools._common import git_ls_files, validate_search_params
 from fa.inner_loop.tools.base import optional_int
 from fa.memory.fts_index import EXCLUDE_DIRS
 
@@ -131,21 +131,12 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:  # noqa: C901 -- complexi
             )
 
         # 2) Fallback: python streaming (no git grep available)
-        files_to_scan = []
-        try:
-            ls_res = subprocess.run(
-                ["git", "ls-files", "--cached", "--others", "--exclude-standard"],  # noqa: S607
-                cwd=root,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if ls_res.returncode == 0:
-                tracked = ls_res.stdout.splitlines()
-                # Filter excluded dirs that git might list
-                files_to_scan = [root / p for p in tracked if not any(part in EXCLUDE_DIRS for part in Path(p).parts)]
-        except Exception as exc:  # noqa: BLE001 # fallback to directory walk
-            logger.warning("git ls-files failed: %s, falling back to walk", exc)
+        tracked = git_ls_files(root)
+        if tracked:
+            # Filter excluded dirs that git might list
+            files_to_scan = [root / p for p in tracked if not any(part in EXCLUDE_DIRS for part in Path(p).parts)]
+        else:
+            files_to_scan = []
 
         if not files_to_scan:
             files_to_scan = list(_iter_files_for_grep(root))

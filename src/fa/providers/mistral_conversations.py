@@ -127,6 +127,12 @@ class MistralConversationsProvider:
         transport_retries: int,
         extra_headers: Mapping[str, str],
     ) -> ResponseInfo:
+        # pylint: disable=duplicate-code
+        # Rationale: see OpenAICompatProvider.request — both adapters call the
+        # shared make_authenticated_request() helper with matching parameter
+        # names (by design); body construction (conversations API shape) and
+        # response parsing (_normalize_conversations_success) are entirely
+        # provider-specific, so further factoring would be over-engineering.
         url = base_url.rstrip("/") + "/v1/conversations"
         body = _build_conversations_body(request)
 

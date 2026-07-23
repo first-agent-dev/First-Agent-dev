@@ -10,11 +10,14 @@ when available + simple substring assertions); they do not spin up Docker.
 
 from __future__ import annotations
 
+import atexit
 import os
 import re
 import shutil
 import stat
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -36,6 +39,119 @@ _SHELL_SCRIPTS = [
     _SCRIPTS / "ssh-tailscale" / "20-harden.sh",
     _SCRIPTS / "ssh-tailscale" / "30-verify.sh",
 ]
+
+
+# Container CLIs that scripts/fa may try to ``exec``. Unit tests must never
+# reach a real container runtime (even if one happens to be installed on the
+# developer's host) because the test contract asserts delegation failure
+# behaviour. We shadow them with a tiny stub script (see ``_docker_shadow_dir``)
+# rather than stripping PATH directories — stripping is unsafe because
+# ``docker`` often lives in the same directory as ``bash`` (e.g. ``/usr/bin``
+# on Ubuntu), and removing that directory breaks every other binary lookup.
+_CONTAINER_RUNTIMES_TO_SHADOW: tuple[str, ...] = ("docker", "podman")
+
+_docker_shadow_dir: Path | None = None
+
+
+def _get_docker_shadow_dir() -> Path:
+    """Create (once) a temp directory holding fake docker/podman stubs.
+
+    The stubs emit a deterministic "docker: not found" style message to stderr
+    and exit non-zero, which matches the shape of a missing-binary error
+    closely enough to satisfy scripts/fa's fallthrough behaviour AND the
+    assertion in ``test_fa_wrapper_unknown_help_topic_delegates_to_container``.
+    The directory is cleaned up at interpreter exit.
+    """
+    global _docker_shadow_dir
+    if _docker_shadow_dir is not None and _docker_shadow_dir.exists():
+        return _docker_shadow_dir
+    d = Path(tempfile.mkdtemp(prefix="fa-test-docker-shadow-"))
+    stub = (
+        "#!/bin/sh\n"
+        "# Test-only stub injected by tests/test_deploy_scripts.py::_wrapper_env().\n"
+        "# Replaces docker/podman on PATH so unit tests don't accidentally exec into\n"
+        "# a real container on hosts that happen to have one running. Production\n"
+        "# operator shells never see this directory.\n"
+        'echo "docker: not found (test shim; refusing to exec into container from unit tests)" >&2\n'
+        "exit 127\n"
+    )
+    for name in _CONTAINER_RUNTIMES_TO_SHADOW:
+        p = d / name
+        p.write_text(stub, encoding="utf-8")
+        p.chmod(0o755)
+    _docker_shadow_dir = d
+    return d
+
+
+def _cleanup_docker_shadow() -> None:
+    global _docker_shadow_dir
+    if _docker_shadow_dir is not None and _docker_shadow_dir.exists():
+        shutil.rmtree(_docker_shadow_dir, ignore_errors=True)
+    _docker_shadow_dir = None
+
+
+atexit.register(_cleanup_docker_shadow)
+
+
+def _wrapper_env() -> dict[str, str]:
+    """Build a deterministic env for exercising scripts/fa.
+
+    Design goals (each corresponds to a real failure we have hit):
+
+    1. ``fa`` must be importable when ``scripts/fa`` invokes
+       ``${PYTHON:-python3} -m fa.cli_help``. When pytest is launched from an
+       editor (VSCode) pointing directly at the venv interpreter (e.g. the
+       ``../snap/code/.../cpython-3.14`` shim VSCode uses on Ubuntu), the
+       venv's ``bin/`` is NOT on PATH the way an interactive
+       ``source .venv/bin/activate`` would make it, so plain ``python3``
+       resolves to the system interpreter (no ``fa`` module). Pinning
+       ``PYTHON=sys.executable`` removes that PATH-dependency.
+
+    2. ``bash``, ``true``, ``cat``, ``pwd``, ``ls`` and every other host
+       binary MUST remain resolvable. The earlier implementation filtered PATH
+       directories that contained a ``docker`` binary, which on stock Ubuntu
+       ripped ``/usr/bin`` out of PATH and made ``bash`` itself unfindable
+       (FileNotFoundError: 'bash'). The fix is to **prepend** a shadow
+       directory containing docker/podman stubs rather than **removing** any
+       PATH entries. Unix PATH lookup is first-match-wins, so our stub wins
+       for ``docker``/``podman`` while every other command falls through to
+       the host.
+
+    3. ``docker compose exec`` must deterministically fail (rc != 0) so the
+       "unknown help topic delegates to container" test does not flake on
+       hosts where the first-agent container happens to be running (a live
+       container makes delegation return rc=0 with real help, which is
+       correct production behaviour but violates the "we did not swallow the
+       topic as host help" assertion). The stubs in the shadow directory
+       exit 127 with a "docker: not found" message matching one of the
+       assertion's accepted terms.
+    """
+    env = os.environ.copy()
+    env["PYTHON"] = sys.executable
+
+    # Build PATH: shadow dir FIRST (our stubs win), then the venv bin (so
+    # python3 resolves to the venv when pytest was launched without an
+    # activated venv), then the inherited PATH verbatim — no directory is
+    # ever removed. This is what fixes the "bash not found" regression:
+    # /usr/bin (and any other directory the user has) stays on PATH.
+    venv_bin = str(Path(sys.executable).parent)
+    shadow = str(_get_docker_shadow_dir())
+    existing = env.get("PATH", "")
+    parts: list[str] = [shadow]
+    for p in existing.split(os.pathsep):
+        if not p or p in parts:
+            continue
+        parts.append(p)
+    if venv_bin not in parts:
+        # Insert venv bin right after the shadow so it wins over any other
+        # python3 on PATH, but after the shadow so docker stubs still win.
+        parts.insert(1, venv_bin)
+    env["PATH"] = os.pathsep.join(parts)
+
+    # Drop container-oriented env vars that would change wrapper dispatch.
+    for var in ("FA_COMPOSE_FILE",):
+        env.pop(var, None)
+    return env
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
@@ -85,6 +201,7 @@ def _run_fa_wrapper(*args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        env=_wrapper_env(),
     )
 
 
@@ -144,6 +261,67 @@ def test_fa_wrapper_unknown_help_topic_delegates_to_container() -> None:
     # important contract is that wrapper did NOT swallow `help run` as host help.
     assert result.returncode != 0
     assert any(term in result.stderr for term in ("exec: docker", "docker:", 'service "first-agent" is not running'))
+
+
+def test_wrapper_env_preserves_host_binaries_and_shadows_docker() -> None:
+    """Regression guard for the env builder.
+
+    A previous implementation filtered PATH entries that contained a
+    ``docker`` binary, which on stock Ubuntu (where docker lives in
+    ``/usr/bin`` alongside bash, ls, cat, true, python3, ...) stripped
+    ``/usr/bin`` from PATH and produced FileNotFoundError: 'bash' when
+    ``_run_fa_wrapper`` tried to exec bash.
+
+    This test pins three invariants for ``_wrapper_env()``:
+
+    1. Common host utilities (bash, sh, true, pwd, ls, cat, echo) remain
+       resolvable through ``which`` under the constructed env.
+    2. ``docker`` and ``podman`` resolve to the test-shim directory (not to
+       any real container runtime the developer's host may have installed).
+    3. Invoking the shimmed docker fails non-zero with a deterministic
+       "docker:" message, matching the assertion contract used by
+       ``test_fa_wrapper_unknown_help_topic_delegates_to_container``.
+    """
+    env = _wrapper_env()
+    path = env.get("PATH", "")
+    assert path, "_wrapper_env must set PATH"
+
+    def _which(name: str) -> str | None:
+        for d in path.split(os.pathsep):
+            candidate = Path(d) / name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+        return None
+
+    # Invariant 1: essential host utilities remain resolvable.
+    for required in ("bash", "sh", "true", "pwd", "ls", "cat", "echo"):
+        resolved = _which(required)
+        assert resolved is not None, f"_wrapper_env stripped {required!r} from PATH: {path}"
+
+    # Invariant 2: docker/podman resolve to our shadow dir, not to any
+    # host-installed binary (even if the developer has Docker Desktop).
+    shadow = str(_get_docker_shadow_dir())
+    for container_cli in _CONTAINER_RUNTIMES_TO_SHADOW:
+        resolved = _which(container_cli)
+        assert resolved is not None, f"_wrapper_env must provide a {container_cli} shim"
+        assert resolved == str(Path(shadow) / container_cli), (
+            f"{container_cli} resolved to {resolved!r} instead of test shim "
+            f"at {Path(shadow) / container_cli!r} (a real container runtime "
+            "leaked into the test subprocess)."
+        )
+
+    # Invariant 3: the shim fails non-zero with a stderr line containing
+    # "docker:" so the wrapper's "docker: not found" assertion fires.
+    result = subprocess.run(
+        ["docker", "compose", "exec", "first-agent", "fa", "help"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert result.returncode != 0
+    assert "docker:" in result.stderr
+    assert "test shim" in result.stderr  # identifiable as the shim, not real docker
 
 
 def test_fa_wrapper_uses_cli_help_as_single_source_of_truth() -> None:

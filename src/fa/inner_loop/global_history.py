@@ -27,12 +27,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from fa.inner_loop._sqlite_common import create_sqlite_connection
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_GLOBAL_HISTORY_PATH = Path.home() / ".fa" / "global_history.db"
-
-_SQLITE_TIMEOUT_SECONDS = 15.0
-_SQLITE_BUSY_TIMEOUT_MS = 15_000
 
 
 def _now_iso_z() -> str:
@@ -78,9 +77,7 @@ class GlobalHistoryStore:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.path), timeout=_SQLITE_TIMEOUT_SECONDS)
-        conn.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS};")
-        return conn
+        return create_sqlite_connection(self.path)
 
     def _init_schema(self) -> None:
         try:
