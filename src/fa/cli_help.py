@@ -176,6 +176,17 @@ COMMANDS: dict[str, CommandHelp] = {
         },
         "examples": ["fa selfcheck", "fa selfcheck -r planner"],
     },
+    "routing-check": {
+        "summary_ru": "Статическая проверка models.yaml на конфликты маршрутов и опечатки в base_url.",
+        "summary_en": "Static models.yaml lint for route conflicts and near-miss base_url typos.",
+        "args": {
+            "--config/-c": {
+                "ru": "Путь к models.yaml (по умолчанию ~/.fa/models.yaml).",
+                "en": "Path to models.yaml (default ~/.fa/models.yaml).",
+            },
+        },
+        "examples": ["fa routing-check", "fa routing-check -c /srv/first-agent/routing/models.yaml"],
+    },
     "probe": {
         "summary_ru": "Liveness-тест цепочки провайдеров реальным минимальным запросом (~10 токенов).",
         "summary_en": "Liveness-test the provider chain with a minimal real call (~10 tokens).",

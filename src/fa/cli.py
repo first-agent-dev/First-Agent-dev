@@ -91,6 +91,7 @@ from fa.providers.errors import (
     ProviderChainExhaustedError,
     ProviderRequestShapeError,
 )
+from fa.providers.routing_lint import lint_models_config
 from fa.roles import EvalFamilyConflictError
 from fa.verifier import load_contracts_from_dir
 
@@ -555,6 +556,27 @@ def build_parser() -> argparse.ArgumentParser:
         help=COMMANDS["selfcheck"]["args"]["--config/-c"]["en"],
     )
     selfcheck_parser.set_defaults(func=_cmd_selfcheck)
+
+    routing_check_parser = subparsers.add_parser(
+        "routing-check",
+        help=COMMANDS["routing-check"]["summary_en"],
+        description=(
+            "Statically lint models.yaml for cross-role route conflicts (the "
+            "same check fa egress-proxy performs at container-start time) and "
+            "near-miss base_url typos, WITHOUT Docker, network, or a running "
+            "proxy. Intended as a fast pre-build/pre-deploy gate."
+        ),
+        epilog=render_command_help_ru("routing-check"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    routing_check_parser.add_argument(
+        "--config",
+        "-c",
+        type=Path,
+        default=DEFAULT_MODELS_YAML_PATH,
+        help=COMMANDS["routing-check"]["args"]["--config/-c"]["en"],
+    )
+    routing_check_parser.set_defaults(func=_cmd_routing_check)
 
     probe_parser = subparsers.add_parser(
         "probe",
@@ -1992,6 +2014,42 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     if outcome.final_text:
         print(outcome.final_text)
     return outcome.exit_code
+
+
+def _cmd_routing_check(args: argparse.Namespace) -> int:
+    """Lint ``models.yaml`` for cross-role route conflicts + near-miss URLs.
+
+    Static, offline check (no Docker, no network, no running proxy): re-runs
+    the exact route-conflict validation ``fa egress-proxy`` performs at
+    container-start time, plus a same-provider near-miss base_url heuristic
+    (catches a lone typo — e.g. '/v1' vs '/vl' — that a conflict check alone
+    cannot see when there is no second entry to disagree with). Intended to
+    run as a pre-build/pre-deploy gate: it fails in well under a second,
+    before a Docker image build or a container crash-loop would otherwise
+    surface the same problem.
+    """
+    config_path = args.config.expanduser().resolve()
+    print(f"fa routing-check: {config_path}")
+
+    try:
+        models = load_models_config_from_path(config_path, require_api_keys=False)
+    except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
+        print(f"ERROR: models config error: {exc}")
+        return 2
+
+    if not models.roles:
+        print("WARNING: no roles declared; nothing to check.")
+        return 0
+
+    findings = lint_models_config(models)
+    if not findings:
+        print(f"fa routing-check: OK ({len(models.roles)} role(s) checked, no issues found)")
+        return 0
+
+    print("fa routing-check: ISSUES FOUND")
+    for finding in findings:
+        print(f"- [{finding.category}] {finding.message}")
+    return 1
 
 
 def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic flow

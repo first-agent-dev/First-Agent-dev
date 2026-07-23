@@ -457,6 +457,29 @@ done
 [[ "${_missing}" -eq 0 ]] || { log_error "Aborting before build — fix the above."; exit 1; }
 
 # ───────────────────────────────────────────────────────────────
+# 6b. Routing lint (fast, offline) — catches route conflicts / near-miss
+#     base_url typos in models.yaml BEFORE spending 2+ minutes on an
+#     image build that would only fail later, as a confusing
+#     "fa-egress-proxy is unhealthy" crash-loop, once the proxy container
+#     actually tries to load the same file at startup. Best-effort: if
+#     `uv` is not available on this host, skip with a warning rather than
+#     block the rebuild (the proxy container will still catch a real
+#     conflict at its own startup, just later and more expensively).
+# ───────────────────────────────────────────────────────────────
+if command -v uv >/dev/null 2>&1 && [[ -f "${REPO_DIR}/pyproject.toml" ]]; then
+    log_info "Routing lint (fa routing-check) on ${ROUTING_MODELS_FILE}..."
+    if uv run --project "${REPO_DIR}" fa routing-check --config "${ROUTING_MODELS_FILE}"; then
+        log_info "Routing lint: OK."
+    else
+        log_error "Routing lint found issues in ${ROUTING_MODELS_FILE} (see above)."
+        log_error "Fix models.yaml, then re-run. Aborting before build."
+        exit 1
+    fi
+else
+    log_warn "uv not found on host — skipping fast routing lint (the proxy container will still validate at startup)."
+fi
+
+# ───────────────────────────────────────────────────────────────
 # 7. Rebuild clean + bring up the two containers
 # ───────────────────────────────────────────────────────────────
 log_info "Building images (NO_CACHE=${NO_CACHE}, COMPOSE_BUILD_PULL=${COMPOSE_BUILD_PULL}, BUILD_PROGRESS=${BUILD_PROGRESS})..."
