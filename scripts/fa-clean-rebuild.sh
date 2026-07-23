@@ -330,13 +330,26 @@ fi
 # ───────────────────────────────────────────────────────────────
 BK=""
 if [[ "${NO_BACKUP}" != "1" ]]; then
-    BK="${HOME}/fa-backup-$(date +%Y%m%d-%H%M%S)"
-    ( umask 077; mkdir -p "${BK}" )
+    # Land the backup in ${FA_DIR}/backup/ — same dataset as state, already
+    # created by setup-fa-desktop.sh, already 1000:1000 owned, already the
+    # directory the nightly restic cron writes its logs into. Placing it
+    # under $HOME was wrong: $HOME may be on a different filesystem, is
+    # not covered by restic, and survives a wipe of /srv/first-agent but
+    # is then orphaned from the rest of the operator's FA state.
+    _backup_root="${FA_DIR}/backup"
+    sudo mkdir -p "${_backup_root}"
+    BK="${_backup_root}/fa-backup-$(date +%Y%m%d-%H%M%S)"
+    ( umask 077; sudo mkdir -p "${BK}" )
     log_info "Backing up state + routing + secrets to ${BK} (0700) ..."
     sudo cp -a "${FA_DIR}/state" "${BK}/state" 2>/dev/null || true
     sudo cp -a "${FA_DIR}/routing" "${BK}/routing" 2>/dev/null || true
     sudo cp -a "${FA_DIR}/secrets" "${BK}/secrets" 2>/dev/null || true
-    sudo chown -R "${USER}:${USER}" "${BK}" 2>/dev/null || true
+    # Hand ownership to the invoking operator (even when invoked under a
+    # sudo chain). SUDO_UID/GID are set by sudo to the real user's ids; if
+    # we weren't under sudo they are unset, fall back to the current user.
+    _owner_uid="${SUDO_UID:-$(id -u)}"
+    _owner_gid="${SUDO_GID:-$(id -g)}"
+    sudo chown -R "${_owner_uid}:${_owner_gid}" "${BK}" 2>/dev/null || true
     chmod -R go-rwx "${BK}" 2>/dev/null || true
     log_info "Backup done: ${BK}"
 else

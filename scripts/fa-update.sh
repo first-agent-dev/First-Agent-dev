@@ -711,7 +711,7 @@ print("  ✓ Core Python imports OK.")
 PYEOF
 
   docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" bash -lc \
-    "if [[ -f /sessions/.active ]]; then ACTIVE_DIR=\$(cat /sessions/.active); cat \$ACTIVE_DIR/.fa/entrypoint-status.txt 2>/dev/null || echo '  (no entrypoint status file — expected on first run)'; else echo '  (no active session)'; fi" || true
+    'if [[ -f /sessions/.active ]]; then ACTIVE_DIR=$(cat /sessions/.active); cat "$ACTIVE_DIR/.fa/entrypoint-status.txt" 2>/dev/null || echo "  (no entrypoint status file — expected on first run)"; else echo "  (no active session)"; fi' || true
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -790,9 +790,13 @@ run_tests() {
   set -e
 
   # Restore the operator's .active (clobbered by deploy-smoke-test entrypoint).
+  # Write through stdin, NOT through string interpolation: the _saved_active
+  # value came out of the container and is untrusted input; passing it over
+  # a pipe means bash never parses it as code.
   if [[ -n "${_saved_active}" ]]; then
-    docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" \
-      bash -c "echo '${_saved_active}' > /sessions/.active" 2>/dev/null || true
+    printf '%s\n' "${_saved_active}" \
+      | docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" \
+          bash -c 'cat > /sessions/.active' 2>/dev/null || true
   fi
 
   if [[ "${TEST_RC}" -ne 0 ]]; then
@@ -858,10 +862,20 @@ cleanup_images() {
 
 ensure_host_scripts() {
   # Ensure host-side scripts are executable after checkout/update.
-  if [[ -d "scripts" ]]; then
-    find scripts/ -name '*.sh' -type f -exec chmod +x {} + || true
-    # scripts/fa (no .sh extension) is the host-side unified CLI wrapper.
-    [[ -f "scripts/fa" ]] && chmod +x "scripts/fa" || true
+  # Use ABSOLUTE paths (not relative `scripts/`) so the function is correct
+  # even if a future refactor reorders calls before the `cd "${REPO_DIR}"`
+  # in main(). A silent chmod failure here is the root cause of the
+  # "Permission denied on /usr/local/bin/fa" class.
+  local _scripts_dir="${REPO_DIR}/scripts"
+  local _hooks_dir="${REPO_DIR}/src/fa/hygiene/hooks"
+  if [[ -d "${_scripts_dir}" ]]; then
+    find "${_scripts_dir}" -maxdepth 2 -type f \( -name '*.sh' -o -name 'fa' \) -exec chmod +x {} + 2>/dev/null || true
+  fi
+  if [[ -d "${_hooks_dir}" ]]; then
+    local _h
+    for _h in commit-msg pre-commit pre-push prepare-commit-msg; do
+      [[ -f "${_hooks_dir}/${_h}" ]] && chmod +x "${_hooks_dir}/${_h}" 2>/dev/null || true
+    done
   fi
 
   # Ensure the host-side `fa` CLI wrapper is symlinked into PATH.

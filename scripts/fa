@@ -18,13 +18,19 @@ set -euo pipefail
 _SELF="$(readlink -f "$0")"
 REPO_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
 COMPOSE_FILE="${FA_COMPOSE_FILE:-docker-compose.fa.yml}"
-COMPOSE="docker compose -f $REPO_DIR/$COMPOSE_FILE"
+# Use a BASH ARRAY (not a string) for COMPOSE so expansion doesn't word-split
+# paths with spaces and so flags compose correctly ("${COMPOSE[@]}" always
+# expands to exactly the argv words we put in). Senior bash pattern — the
+# bare-string `COMPOSE="docker compose -f $VAR"` is a classic footgun.
+COMPOSE=(docker compose -f "${REPO_DIR}/${COMPOSE_FILE}")
 
 # TTY detection: pass -T (disable TTY) when stdin is not a terminal
 # (pipes, scripts, cron). Keep TTY for interactive use (fa shell).
-TTY_FLAG="-T"
+# Arrays let "no flag" contribute ZERO words (instead of an empty string
+# that docker compose would treat as an argument).
+TTY_FLAG=(-T)
 if [ -t 0 ] && [ -t 1 ]; then
-    TTY_FLAG=""
+    TTY_FLAG=()
 fi
 
 # Resolve active session workspace for docker exec commands
@@ -34,10 +40,13 @@ if [[ -f "$_FA_ROOT/sessions/.active" ]]; then
     _SESSION_WORKSPACE="$(cat "$_FA_ROOT/sessions/.active")"
 fi
 
-_W_FLAG=""
+_W_FLAG=()
 if [[ -n "$_SESSION_WORKSPACE" ]]; then
-    _W_FLAG="-w $_SESSION_WORKSPACE"
+    _W_FLAG=(-w "$_SESSION_WORKSPACE")
 fi
+
+# Return truthy when an active session workspace is set (used by case branches).
+_have_workspace() { [[ -n "$_SESSION_WORKSPACE" ]]; }
 
 _is_help_arg() {
     case "${1:-}" in
@@ -58,10 +67,10 @@ _print_host_topic_help() {
     _help_python --host-topic "${1:-}"
 }
 _delegate_to_agent() {
-    if [[ -n "$_W_FLAG" ]]; then
-        exec $COMPOSE exec $TTY_FLAG -w "$_SESSION_WORKSPACE" first-agent fa "$@"
+    if _have_workspace; then
+        exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" "${_W_FLAG[@]}" first-agent fa "$@"
     else
-        exec $COMPOSE exec $TTY_FLAG first-agent fa "$@"
+        exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" first-agent fa "$@"
     fi
 }
 
@@ -80,45 +89,49 @@ case "${1:-}" in
     logs)
         shift
         if _is_help_arg "${1:-}"; then _print_host_topic_help logs; exit 0; fi
-        exec $COMPOSE logs "$@" first-agent
+        exec "${COMPOSE[@]}" logs "$@" first-agent
         ;;
     proxy-logs)
         shift
         if _is_help_arg "${1:-}"; then _print_host_topic_help proxy-logs; exit 0; fi
-        exec $COMPOSE logs "$@" fa-egress-proxy
+        exec "${COMPOSE[@]}" logs "$@" fa-egress-proxy
         ;;
     status)
         shift
         if _is_help_arg "${1:-}"; then _print_host_topic_help status; exit 0; fi
-        exec $COMPOSE ps
+        exec "${COMPOSE[@]}" ps
         ;;
     up)
         shift
         if _is_help_arg "${1:-}"; then _print_host_topic_help up; exit 0; fi
-        exec $COMPOSE up -d
+        exec "${COMPOSE[@]}" up -d
         ;;
     down)
         shift
         if _is_help_arg "${1:-}"; then _print_host_topic_help down; exit 0; fi
-        exec $COMPOSE down
+        exec "${COMPOSE[@]}" down
         ;;
     restart)
         shift
         if _is_help_arg "${1:-}"; then _print_host_topic_help restart; exit 0; fi
-        exec $COMPOSE restart first-agent fa-egress-proxy
+        exec "${COMPOSE[@]}" restart first-agent fa-egress-proxy
         ;;
     rebuild)
         shift
         if _is_help_arg "${1:-}"; then _print_host_topic_help rebuild; exit 0; fi
-        exec $COMPOSE up -d --build
+        exec "${COMPOSE[@]}" up -d --build
         ;;
     shell)
         shift
         if _is_help_arg "${1:-}"; then _print_host_topic_help shell; exit 0; fi
-        if [[ -n "$_W_FLAG" ]]; then
-            exec $COMPOSE exec -w "$_SESSION_WORKSPACE" first-agent bash "$@"
+        # shell uses TTY (interactive) — docker picks up the terminal from
+        # stdin/stdout; ${TTY_FLAG[@]} is empty for interactive, -T for non-tty.
+        # Arrays-as-flags: use _have_workspace helper to avoid testing an
+        # empty-array expansion with -n (which is always false).
+        if _have_workspace; then
+            exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" "${_W_FLAG[@]}" first-agent bash "$@"
         else
-            exec $COMPOSE exec first-agent bash "$@"
+            exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" first-agent bash "$@"
         fi
         ;;
     update)
@@ -154,7 +167,7 @@ case "${1:-}" in
         shift
         if _is_help_arg "${1:-}"; then _print_host_topic_help sessions; exit 0; fi
         # shellcheck disable=SC2010
-        ls -lt "$_FA_ROOT/sessions/" | grep -v "^total\|\.active"
+        ls -lt "$_FA_ROOT/sessions/" | grep -v "^total\\|\.active"
         ;;
 
     # ── Help ────────────────────────────────────────────────────────────

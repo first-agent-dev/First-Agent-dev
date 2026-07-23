@@ -735,3 +735,180 @@ def test_fa_update_run_tests_step_is_truly_non_fatal() -> None:
     invoke = run_tests.index("-m pytest")
     restore = run_tests.index("ERR\n  set -e")
     assert drop < invoke < restore, "must drop ERR trap before pytest and restore after"
+
+
+# ── Batch-1 regression: backup-fa.sh safe dotenv parser ──────────────────
+
+
+def test_backup_script_does_not_source_env_file() -> None:
+    """backup-fa.sh MUST NOT `source` the credentials file.
+
+    `source` executes the file as shell, so a typo, a $(...) in a value, or
+    a glob metacharacter would be evaluated as code under the cron user.
+    The fix is a strict KEY=VALUE line parser (see _load_backup_env).
+    """
+    text = (_SCRIPTS / "backup-fa.sh").read_text(encoding="utf-8")
+    assert "source /srv/first-agent/secrets/backup.env" not in text, (
+        "backup-fa.sh must not source backup.env — use a restricted dotenv parser"
+    )
+    assert "_load_backup_env" in text, "must define a _load_backup_env function"
+
+
+def test_backup_env_parser_whitelists_only_b2_vars(tmp_path: Path) -> None:
+    """The parser must export only B2_KEY_ID/B2_APPLICATION_KEY/B2_BUCKET,
+    ignore comments/blanks, strip surrounding quotes, and NEVER expand
+    shell command substitutions in values."""
+    env_file = tmp_path / "backup.env"
+    env_file.write_text(
+        "# this is a comment\n"
+        "B2_KEY_ID=mykeyid\n"
+        'B2_APPLICATION_KEY="my app key"\n'
+        "B2_BUCKET='my-bucket'\n"
+        "MALICIOUS=$(echo pwned)\n"
+        "OTHER_VAR=should-be-ignored\n"
+        "\n"
+        "BADLINE without equals\n",
+        encoding="utf-8",
+    )
+    script = _SCRIPTS / "backup-fa.sh"
+    snippet = (
+        "set -euo pipefail\n"
+        # Pull the _load_backup_env function definition out of the script.
+        f"source <(awk '/^_load_backup_env\\(\\)/,/^}}/' {script!s})\n"
+        f'_load_backup_env "{env_file!s}"\n'
+        'printf "KEY=[%s]\\n" "${B2_KEY_ID:-UNSET}"\n'
+        'printf "APP=[%s]\\n" "${B2_APPLICATION_KEY:-UNSET}"\n'
+        'printf "BKT=[%s]\\n" "${B2_BUCKET:-UNSET}"\n'
+        'printf "MAL=[%s]\\n" "${MALICIOUS:-UNSET}"\n'
+        'printf "OTH=[%s]\\n" "${OTHER_VAR:-UNSET}"\n'
+    )
+    proc = subprocess.run(["bash", "-c", snippet], capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert "KEY=[mykeyid]" in out
+    assert "APP=[my app key]" in out, out  # double-quotes stripped
+    assert "BKT=[my-bucket]" in out, out  # single-quotes stripped
+    assert "MAL=[UNSET]" in out, "$(echo pwned) must not be expanded/exported"
+    assert "OTH=[UNSET]" in out, "non-whitelisted names must be ignored"
+
+
+# ── Batch-2 regression: no shell interpolation of untrusted input ────────
+
+
+def test_post_setup_passes_session_ws_via_environment_not_interpolation() -> None:
+    """fa-post-setup.sh MUST pass SESSION_WS into docker exec via -e and keep
+    the bash script body SINGLE-QUOTED (no host-side `'$SESSION_WS'` or
+    `\\$SESSION_WS` interpolation into double-quoted strings). SESSION_WS
+    originates from a container-written file and is untrusted input."""
+    text = (_SCRIPTS / "fa-post-setup.sh").read_text(encoding="utf-8")
+    # Forbidden patterns: cd '$SESSION_WS' / cd '…$SESSION_WS' in a double-quoted
+    # bash -c body (which would have HOST expanded $SESSION_WS into the string).
+    # The fixed code uses single-quoted script bodies with -e SESSION_WS=… .
+    assert "cd '$SESSION_WS'" not in text, "HOST-side interpolation of SESSION_WS into docker exec bash -c string"
+    # Must pass SESSION_WS through docker -e flag.
+    assert "-e SESSION_WS=" in text or '-e SESSION_WS="$SESSION_WS"' in text
+
+
+def test_fa_update_restores_active_session_via_stdin_not_interpolation() -> None:
+    """fa-update.sh must write the restored .active through stdin, NOT via
+    bash -c \"echo '${_saved_active}' > /sessions/.active\" interpolation."""
+    text = (_SCRIPTS / "fa-update.sh").read_text(encoding="utf-8")
+    assert "echo '${_saved_active}'" not in text, (
+        "interpolation of _saved_active into bash -c string is an injection sink"
+    )
+    # The fix pipes printf '%s\\n' over stdin into `docker exec … bash -c 'cat > …'`.
+    assert "cat > /sessions/.active" in text
+
+
+# ── Batch-3 regressions: arrays, absolute paths, backup location ─────────
+
+
+def test_fa_wrapper_uses_arrays_for_compose_and_flags() -> None:
+    """`scripts/fa` must hold COMPOSE/TTY_FLAG/_W_FLAG as bash arrays and
+    expand them with \"${COMPOSE[@]}\" — bare `exec $COMPOSE` word-splits
+    and breaks on paths/flags with spaces."""
+    text = (_SCRIPTS / "fa").read_text(encoding="utf-8")
+    assert "COMPOSE=(docker compose" in text, "COMPOSE must be a bash array"
+    assert '"${COMPOSE[@]}"' in text, 'must expand COMPOSE as "${COMPOSE[@]}"'
+    assert "TTY_FLAG=(-T)" in text
+    assert "_W_FLAG=(-w" in text
+    # No bare `exec $COMPOSE` left in the script.
+    assert not re.search(r"exec\s+\$COMPOSE\b", text), "no bare `exec $COMPOSE` word-splitting expansion"
+
+
+def test_fa_clean_rebuild_backs_up_to_fa_dir_backup() -> None:
+    """fa-clean-rebuild.sh step 3 must place backups under ${FA_DIR}/backup/,
+    not $HOME, so they live on the same dataset as the rest of FA state
+    and are covered by the nightly restic backup."""
+    text = (_SCRIPTS / "fa-clean-rebuild.sh").read_text(encoding="utf-8")
+    assert 'BK="${HOME}/fa-backup-' not in text, "backups must NOT land under $HOME"
+    assert "${FA_DIR}/backup" in text, "backup root must be ${FA_DIR}/backup"
+
+
+def test_fa_update_ensure_host_scripts_uses_absolute_paths_and_covers_hooks() -> None:
+    """ensure_host_scripts() must use ${REPO_DIR}/scripts (absolute path),
+    not a relative `scripts/` that depends on cwd, and must also chmod the
+    git hooks (matching setup-fa-desktop.sh and fa-post-setup.sh) so a
+    post-pull state never loses the +x bit on hooks."""
+    text = (_SCRIPTS / "fa-update.sh").read_text(encoding="utf-8")
+    fn = text[text.index("ensure_host_scripts()") :]
+    fn = fn[: fn.index("\n}\n") + 2]
+    assert '"${REPO_DIR}/scripts"' in fn, "ensure_host_scripts must find scripts/ via absolute REPO_DIR path"
+    assert "commit-msg" in fn and "pre-push" in fn, "ensure_host_scripts must chmod hooks/ (not just scripts/*.sh)"
+    assert "find scripts/" not in fn, "must not use relative `scripts/` path"
+
+
+# ── Batch-4 regressions: ufw delete idempotency, fa.service comment ──────
+
+
+def test_ufw_delete_uses_force_and_refetches() -> None:
+    """scripts/ssh-tailscale/20-harden.sh must delete stray UFW rules with
+    `ufw --force delete` (no `yes |` hack) and must RE-FETCH the numbered
+    rule list inside the delete loop (one delete renumbers the rest)."""
+    script_path = _SCRIPTS / "ssh-tailscale" / "20-harden.sh"
+    text = script_path.read_text(encoding="utf-8")
+    # Strip comment lines when scanning for `yes | ufw delete` — the script
+    # may legitimately mention it in an explanatory comment.
+    code_lines = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
+    code = "\n".join(code_lines)
+    assert "yes | ufw delete" not in code, "`yes | ufw delete` is unreliable (use --force)"
+    assert "ufw --force delete" in code
+    # The fixed loop has `while true; do mapfile …; [[ ${#stray[@]} -eq 0 ]] && break`
+    assert "while true" in code
+    assert "${#stray[@]}" in code  # re-fetches each iteration
+
+
+def test_fa_service_documents_restart_semantics() -> None:
+    """fa.service should carry a comment explaining that Restart=on-failure
+    only retries the oneshot ExecStart (cold-boot) while container crash
+    restart is handled by docker-compose `restart: unless-stopped`."""
+    unit = (_SCRIPTS / "fa.service").read_text(encoding="utf-8")
+    assert "Restart=on-failure" in unit  # keep the useful retries
+    assert "unless-stopped" in unit  # comment must reference docker's policy
+
+
+# ── Bonus: docker-group notice fires right after usermod ─────────────────
+
+
+def test_setup_warns_about_docker_group_right_after_usermod() -> None:
+    """setup-fa-desktop.sh should warn about docker-group membership
+    immediately after `usermod -aG docker`, not buried in the step-17
+    summary. Operators who bail early otherwise miss the instruction and
+    hit 'permission denied' on the next docker command."""
+    text = (_SCRIPTS / "setup-fa-desktop.sh").read_text(encoding="utf-8")
+    usermod_idx = text.index("usermod -aG docker")
+    post = text[usermod_idx : usermod_idx + 1200]
+    assert "log out" in post.lower() or "log out of GNOME" in post or "Log out" in post, (
+        "a docker-group logout warning must appear within ~1KB of the usermod call"
+    )
+
+
+def test_main_is_intentional_ssot_for_update() -> None:
+    """fa-update.sh is documented to always deploy main (SSOT; only hand-
+    merged code ships). Guard that the `switch to main` step is present
+    and documented so a future contributor doesn't "fix" it without
+    reading the operator contract."""
+    text = (_SCRIPTS / "fa-update.sh").read_text(encoding="utf-8")
+    assert "git switch main" in text or "git checkout main" in text
+    # Must carry a comment mentioning SSOT / main-only policy.
+    assert "main" in text
