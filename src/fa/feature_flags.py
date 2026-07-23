@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from fa._yaml_line_parser import iter_yaml_lines
 from fa._yaml_subset import strip_inline_comment
 from fa.config import DEFAULT_CONFIG_PATH
 
@@ -187,14 +188,12 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
     in_block = False
     prefix_stack: list[tuple[int, str]] = []
 
-    for line_no, raw in enumerate(text.splitlines(), start=1):
-        line = raw.rstrip()
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        stripped = line.lstrip()
-        indent = len(line) - len(stripped)
+    for parsed_line in iter_yaml_lines(text):
+        line_no = parsed_line.line_no
+        stripped = parsed_line.stripped
+        indent = parsed_line.indent
 
-        if indent == 0:
+        if parsed_line.is_top_level:
             is_flag_block = stripped.startswith("feature_flags:")
             in_block = is_flag_block
             prefix_stack.clear()

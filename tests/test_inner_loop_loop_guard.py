@@ -9,6 +9,7 @@ silently allows N identical attempts because the detector never fires.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import override
 
 import pytest
 
@@ -250,6 +251,7 @@ def test_intent_guard_deny_no_provider_calls(tmp_path: Path) -> None:
 
         attaches_to = (LifecyclePoint.BEFORE_TOOL_EXEC,)
 
+        @override
         def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
             return Decision.deny("test_deny: no tool execution allowed")
 

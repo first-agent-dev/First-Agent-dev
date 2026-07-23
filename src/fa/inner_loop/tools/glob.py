@@ -14,57 +14,21 @@ from __future__ import annotations
 import fnmatch
 import logging
 import os
-import subprocess
 from collections.abc import Generator, Mapping
 from pathlib import Path
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
+from fa.inner_loop.tools._common import git_ls_files
 from fa.inner_loop.tools.base import optional_int, require_string
+from fa.memory.fts_index import EXCLUDE_DIRS
 
 logger = logging.getLogger(__name__)
 
-# Single source of truth — import once at module load, fallback if not available
-try:
-    from fa.memory.fts_index import EXCLUDE_DIRS as _FTS_EXCLUDE
+# Single source of truth for excluded directories
 
-    EXCLUDE_DIRS: set[str] = set(_FTS_EXCLUDE)
-except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-    EXCLUDE_DIRS = {
-        ".git",
-        ".fa",
-        "node_modules",
-        ".venv",
-        "__pycache__",
-        ".gremlins_cache",
-        "sessions",
-        "dist",
-        "build",
-        ".mypy_cache",
-    }
 
 MAX_LIMIT = 200
 DEFAULT_LIMIT = 50
-
-
-def _git_ls_files(root: Path) -> list[str]:
-    """Return files respecting .gitignore: tracked + untracked not ignored.
-
-    Uses --cached --others --exclude-standard (token-efficient git native).
-    Falls back to empty list on failure — caller will use walk fallback.
-    """
-    try:
-        res = subprocess.run(
-            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],  # noqa: S607
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if res.returncode == 0:
-            return [line.strip() for line in res.stdout.splitlines() if line.strip()]
-    except Exception as exc:  # noqa: BLE001 — best-effort, fallback to walk
-        logger.warning(f"git ls-files failed: {exc}, fallback to walk")
-    return []
 
 
 def _iter_files_fallback(root: Path) -> Generator[Path]:
@@ -187,7 +151,7 @@ def build_glob_tool(workspace_root: Path) -> ToolSpec:
 
         # 2) Get file list — git fast path first, fallback walk
         try:
-            tracked = _git_ls_files(root)
+            tracked = git_ls_files(root)
 
             if tracked:
                 # tracked are already relative, filtered by gitignore, but still respect EXCLUDE_DIRS

@@ -19,29 +19,15 @@ from pathlib import Path
 from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
-from fa.inner_loop.tools.base import optional_int, require_string
+from fa.inner_loop.tools._common import git_ls_files, validate_search_params
+from fa.inner_loop.tools.base import optional_int
+from fa.memory.fts_index import EXCLUDE_DIRS
 
 logger = logging.getLogger(__name__)
 
 # Single source of truth — import once at module load, fallback if not available
-try:
-    from fa.memory.fts_index import EXCLUDE_DIRS as _FTS_EXCLUDE
+# Single source of truth for excluded directories
 
-    EXCLUDE_DIRS: set[str] = set(_FTS_EXCLUDE)
-except Exception as exc:  # noqa: BLE001 # graceful degradation
-    logger.warning("Failed to import EXCLUDE_DIRS, using defaults: %s", exc)
-    EXCLUDE_DIRS = {
-        ".git",
-        ".fa",
-        "node_modules",
-        ".venv",
-        "__pycache__",
-        ".gremlins_cache",
-        "sessions",
-        "dist",
-        "build",
-        ".mypy_cache",
-    }
 
 DEFAULT_LIMIT = 20
 DEFAULT_MAX_FILE_SIZE = 200_000  # soft limit, overridable via param
@@ -122,13 +108,8 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:  # noqa: C901 -- complexi
 
     def handler(params: Mapping[str, object]) -> ToolResult:  # noqa: C901 -- complexity from fallback chain
         try:
+            query, limit = validate_search_params(params, DEFAULT_LIMIT, MAX_LIMIT)
             data = dict(params)
-            query = require_string(data, "query")
-            limit = optional_int(data, "limit") or DEFAULT_LIMIT
-            if limit <= 0:
-                limit = DEFAULT_LIMIT
-            if limit > MAX_LIMIT:
-                limit = MAX_LIMIT
             glob_filter = data.get("glob")
             if glob_filter is not None and not isinstance(glob_filter, str):
                 glob_filter = None
@@ -137,9 +118,6 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:  # noqa: C901 -- complexi
                 max_file_size = 0  # 0 means no limit
         except ValueError as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
-
-        if not query.strip():
-            return ToolResult.fail("invalid_params", "query must be non-empty", retryable=True)
 
         # 1) Fast path: git grep (handles large files natively in C)
         result = _git_grep(root, query, limit)
@@ -153,21 +131,12 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:  # noqa: C901 -- complexi
             )
 
         # 2) Fallback: python streaming (no git grep available)
-        files_to_scan = []
-        try:
-            ls_res = subprocess.run(
-                ["git", "ls-files", "--cached", "--others", "--exclude-standard"],  # noqa: S607
-                cwd=root,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if ls_res.returncode == 0:
-                tracked = ls_res.stdout.splitlines()
-                # Filter excluded dirs that git might list
-                files_to_scan = [root / p for p in tracked if not any(part in EXCLUDE_DIRS for part in Path(p).parts)]
-        except Exception as exc:  # noqa: BLE001 # fallback to directory walk
-            logger.warning("git ls-files failed: %s, falling back to walk", exc)
+        tracked = git_ls_files(root)
+        if tracked:
+            # Filter excluded dirs that git might list
+            files_to_scan = [root / p for p in tracked if not any(part in EXCLUDE_DIRS for part in Path(p).parts)]
+        else:
+            files_to_scan = []
 
         if not files_to_scan:
             files_to_scan = list(_iter_files_for_grep(root))

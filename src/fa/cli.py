@@ -2277,7 +2277,8 @@ def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
             if len(rows) > 20:
                 print(f"  ... and {len(rows) - 20} more", file=sys.stderr)
             return 0
-        except Exception as exc:  # noqa: BLE001 — CLI must report stats failure, never crash with traceback
+        except Exception as exc:  # CLI must report stats failure, never crash with traceback
+            logger.error("fa stats: failed to read global history: %s", exc, exc_info=True)
             print(f"fa stats: failed to read global history: {exc}", file=sys.stderr)
             return 1
 

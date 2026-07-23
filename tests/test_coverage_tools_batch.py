@@ -97,7 +97,9 @@ def test_session_database_all_authority_facades_and_queries(tmp_path: Path) -> N
     db.append_event_row(event)
     assert db.read_event_rows()[0]["content"] == {"path": "a.py"}
 
-    board = {
+    # Typed as dict[str, object] to support both the dict payload and the
+    # intentional scalar-payload branch below (pyrefly PY3 closure).
+    board: dict[str, object] = {
         "id": "plan-1",
         "run_id": "run-1",
         "type": "plan",

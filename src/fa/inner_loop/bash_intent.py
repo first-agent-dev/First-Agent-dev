@@ -424,7 +424,14 @@ def _analyze_literal_words(
     head_raw = words[0]
     head = Path(head_raw).name
 
-    if _is_python_interpreter(head_raw):
+    if _is_python_interpreter(head):
+        # Use basename (head) not the raw path so absolute-path invocations
+        # like ``/usr/bin/python3 -m pytest --version`` (the form
+        # ``sys.executable`` produces when tests spawn subprocesses) are
+        # classified correctly. We already require strict word-for-word
+        # matching on ``words[1:]`` in :func:`_analyze_python` /
+        # :func:`_normalise_verifier`, so matching the interpreter by basename
+        # does not widen trust to untrusted wrappers.
         return _analyze_python(
             words,
             redirect_projection=redirect_projection,

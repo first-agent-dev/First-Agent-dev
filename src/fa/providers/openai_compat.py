@@ -23,6 +23,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
+from fa.providers._common import make_authenticated_request, parse_token_usage
 from fa.providers.base import (
     RequestInfo,
     ResponseInfo,
@@ -50,6 +51,16 @@ class OpenAICompatProvider:
         transport_retries: int,
         extra_headers: Mapping[str, str],
     ) -> ResponseInfo:
+        # pylint: disable=duplicate-code
+        # Rationale: this method's make_authenticated_request(...) call looks
+        # similar to MistralConversationsProvider.request because both adapters
+        # intentionally use the *same* make_authenticated_request helper from
+        # fa.providers._common with parameter names that match that helper's
+        # signature — that is the helper's whole purpose. The body construction
+        # above (chat/completions shape) and response parsing below
+        # (_normalize_success vs _normalize_conversations_success) differ
+        # entirely between adapters, so factoring further would be over-
+        # engineering (see PR #58 Phase 3 analysis).
         url = base_url.rstrip("/") + "/chat/completions"
         body: dict[str, Any] = {
             "model": request.model_slug,
@@ -64,17 +75,12 @@ class OpenAICompatProvider:
         for key, value in request.extras.items():
             body.setdefault(key, value)
 
-        headers: dict[str, str] = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        for key, value in extra_headers.items():
-            headers[key] = value
-
-        response = self._transport.post(
-            url,
-            headers=headers,
-            json_body=body,
+        response = make_authenticated_request(
+            transport=self._transport,
+            url=url,
+            api_key=api_key,
+            body=body,
+            extra_headers=extra_headers,
             timeout_seconds=timeout_seconds,
             transport_retries=transport_retries,
         )
@@ -96,13 +102,11 @@ def _normalize_success(body: Mapping[str, Any]) -> ResponseInfo:
     raw_tool_calls = cast(list[Mapping[str, Any]], message.get("tool_calls") or [])
     tool_calls = tuple(raw_tool_calls)
 
-    usage = cast(Mapping[str, Any], body.get("usage") or {})
-    in_tokens = int(usage.get("prompt_tokens") or 0)
-    out_tokens = int(usage.get("completion_tokens") or 0)
-    prompt_details = usage.get("prompt_tokens_details")
-    prompt_details_map = prompt_details if isinstance(prompt_details, Mapping) else {}
-    cache_read_input_tokens = int(prompt_details_map.get("cached_tokens") or usage.get("cache_read_input_tokens") or 0)
-    cache_creation_input_tokens = int(usage.get("cache_creation_input_tokens") or 0)
+    token_usage = parse_token_usage(body)
+    in_tokens = token_usage["in_tokens"]
+    out_tokens = token_usage["out_tokens"]
+    cache_read_input_tokens = token_usage["cache_read_input_tokens"]
+    cache_creation_input_tokens = token_usage["cache_creation_input_tokens"]
 
     extras: dict[str, Any] = {}
     for key in ("system_fingerprint", "provider", "id", "created", "model"):

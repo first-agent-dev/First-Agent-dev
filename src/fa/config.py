@@ -34,6 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
+from fa._yaml_line_parser import iter_yaml_lines
 from fa._yaml_subset import strip_inline_comment
 
 DEFAULT_CONFIG_PATH: Path = Path.home() / ".fa" / "config.yaml"
@@ -133,16 +134,12 @@ def load_capabilities(text: str) -> CapabilityLoadResult:
     warnings: list[CapabilityWarning] = []
     in_capabilities = False
 
-    for line_no, raw in enumerate(text.splitlines(), start=1):
-        line = raw.rstrip()
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-
-        stripped = line.lstrip()
-        indent = len(line) - len(stripped)
+    for parsed_line in iter_yaml_lines(text):
+        line_no = parsed_line.line_no
+        stripped = parsed_line.stripped
 
         # Top-level key resets the section context.
-        if indent == 0:
+        if parsed_line.is_top_level:
             in_capabilities = stripped.startswith("capabilities:")
             continue
 
@@ -150,7 +147,9 @@ def load_capabilities(text: str) -> CapabilityLoadResult:
             continue
 
         if stripped.startswith("- "):
-            raise ValueError(f"capability flags must be a key-value map, not a list (line {line_no}): {line!r}")
+            raise ValueError(
+                f"capability flags must be a key-value map, not a list (line {line_no}): {parsed_line.raw!r}"
+            )
 
         if ":" not in stripped:
             warnings.append(

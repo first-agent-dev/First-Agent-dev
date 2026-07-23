@@ -92,7 +92,7 @@ by a separately documented coverage-policy decision.
 
 The Russian operator plan is the live execution companion:
 
-[`knowledge/instructions/03-live-server-ci-governance-plan-ru.md`](../instructions/03-live-server-ci-governance-plan-ru.md)
+[`knowledge/instructions/03-live-server-ci-governance-plan-ru.md`](../../knowledge/instructions/03-live-server-ci-governance-plan-ru.md)
 
 It covers Docker/read-only-rootfs smoke tests, pip-audit, gitleaks, Semgrep,
 mutation, shipped-harness/session-path verification, GitHub governance, final

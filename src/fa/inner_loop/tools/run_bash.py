@@ -10,7 +10,7 @@ from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
-from fa.inner_loop.tools.base import require_string
+from fa.inner_loop.tools._common import prepare_workspace_context, truncate_for_preview, validate_bash_command
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
 
 logger = logging.getLogger(__name__)
@@ -46,24 +46,6 @@ def _normalize_carriage_return(text: str) -> str:
         if result.endswith("\n") and text.endswith("\n"):
             result = result[:-1]
         return result
-
-
-def _elide_500_preview(value: Any, max_bytes: int) -> str:
-    """Elide to 500-char preview + marker, for token efficiency (Stage 0)."""
-    import json
-
-    if isinstance(value, str):
-        rendered = value
-    else:
-        rendered = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, default=repr)
-    preview_len = 500
-    if len(rendered) <= preview_len:
-        return rendered
-    return (
-        rendered[:preview_len]
-        + f"\n...[truncated {len(rendered)} chars, use | head -n 100 or grep to reduce, full in artifact]...\n"
-        + rendered[-200:]
-    )
 
 
 def _get_write_set_from_git_status(root: Path) -> list[str]:
@@ -192,7 +174,7 @@ def _run_pty_executor(
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("artifact store write failed: %s", exc)
 
-            preview = _elide_500_preview(stdout, 8000)
+            preview = truncate_for_preview(stdout, preview_len=500, max_bytes=8000)
             summary = f"bash exited {pty_result.exit_code}"
             result = {
                 "returncode": pty_result.exit_code,
@@ -283,7 +265,11 @@ def _run_subprocess_fallback(
             logger.warning("Failed to offload large fallback stdout to ArtifactStore: %s", exc)
 
     truncated = len(stdout_clean) > 8000
-    preview_stdout = stdout_clean if len(stdout_clean) <= 8000 else _elide_500_preview(stdout_clean, 8000)
+    preview_stdout = (
+        stdout_clean
+        if len(stdout_clean) <= 8000
+        else truncate_for_preview(stdout_clean, preview_len=500, max_bytes=8000)
+    )
     summary = f"bash exited {completed.returncode}"
     result = {
         "returncode": completed.returncode,
@@ -313,15 +299,12 @@ def build_run_bash_tool(
     timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
     env_allowlist_extra: Iterable[str] = (),
 ) -> ToolSpec:
-    root = workspace_root.resolve()
-    extra_allow = frozenset(env_allowlist_extra)
+    root, extra_allow = prepare_workspace_context(workspace_root, env_allowlist_extra)
 
     def handler(params: Mapping[str, object]) -> ToolResult:
-        data = dict(params)
-        try:
-            command = require_string(data, "command")
-        except ValueError as exc:
-            return ToolResult.fail("invalid_params", str(exc), retryable=True)
+        command, error = validate_bash_command(params)
+        if error is not None:
+            return error
 
         context = _resolve_execution_context(root)
         executor = context.executor
@@ -370,7 +353,7 @@ per-session isolation (Gap 13).
         handler=handler,
         tags=("fs", "bash"),
         max_context_bytes=8000,
-        elide=_elide_500_preview,
+        elide=truncate_for_preview,
     )
 
 

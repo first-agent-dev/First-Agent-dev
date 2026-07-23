@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,13 @@ from fa.providers.base import TransportResponse
 # Injected via the _cmd_run(secrets=...) seam (ADR-12): tests supply keys through
 # the private store instead of os.environ, matching production's file-only model.
 _TEST_SECRETS = SecretStore({"TEST_FA_RUN_KEY": "sk-test-x"})
+
+# Use the interpreter running pytest when spawning bash commands, so tests work
+# on minimal environments that only expose ``python3`` (e.g. stock Ubuntu) as
+# well as venvs where ``python`` exists. Canonical pytest idiom for
+# interpreter-agnostic subprocess tests (``sys.executable`` is absolute, so
+# PATH resolution does not matter).
+_PYTHON = sys.executable
 
 
 @pytest.fixture(autouse=True)
@@ -630,7 +638,7 @@ def test_fa_run_verify_only_bash_allowed_before_pr_prepare(
                 _tool_call(
                     "tc-bash",
                     "fs.run_bash",
-                    json.dumps({"command": "python -m pytest --version"}),
+                    json.dumps({"command": f"{_PYTHON} -m pytest --version"}),
                 ),
             ),
             _stop_body("done"),
@@ -748,7 +756,7 @@ def test_fa_run_opaque_exec_bash_allowed_after_pr_prepare(
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
-    command = "python -c \"open('opaque.py', 'w').write('x')\""
+    command = f"{_PYTHON} -c \"open('opaque.py', 'w').write('x')\""
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
