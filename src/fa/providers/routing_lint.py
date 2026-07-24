@@ -1,7 +1,7 @@
 """Shift-left ``models.yaml`` routing lint (ADR-12 preflight companion).
 
-Two independent checks, both already provable from ``models.yaml`` alone —
-no Docker, no network, no running proxy required:
+Three independent checks, all provable from ``models.yaml`` alone — no
+Docker, no network, no running proxy required:
 
 1. **Cross-role route conflicts** — re-runs
    :func:`fa.egress_proxy.routing.build_route_table` against every role's
@@ -17,21 +17,37 @@ no Docker, no network, no running proxy required:
    custom gateway). This catches the case a cross-role conflict check
    cannot: a lone typo in an entry that has no sibling to disagree with.
 
-Both checks are advisory-shaped (return findings; never raise) so callers
+3. **Unknown provider_params key** — flags a chain entry's ``provider_params``
+   key that the entry's own adapter does not recognise (e.g.
+   ``reasoning_efort`` instead of ``reasoning_effort``). Adapters that do
+   unrestricted body passthrough (``openai_compat``, ``anthropic`` category
+   providers) have no fixed key set to check against and are silently
+   skipped — this check only fires for adapters that publish an explicit
+   recognised-keys constant (currently ``mistral`` and ``mistral_agents``).
+   ``body.setdefault(key, value)`` in every adapter accepts ANY key with no
+   validation, so a typo'd key is otherwise silently swallowed — the
+   provider never receives the field the operator intended, with no error
+   anywhere.
+
+Every check is advisory-shaped (return findings; never raise) so callers
 (CLI, deploy-script preflight, tests) decide what counts as fatal.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from fa.egress_proxy.routing import ProxyConfigError, build_route_table
+from fa.egress_proxy.routing import ProxyConfigError, build_route_table, route_name_for
 from fa.providers.config import ModelsConfig
+from fa.providers.mistral import MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS
+from fa.providers.mistral_conversations import MISTRAL_CONVERSATIONS_RECOGNIZED_PROVIDER_PARAMS_KEYS
 
 __all__ = [
     "CANONICAL_PROVIDER_BASE_URLS",
+    "KNOWN_PROVIDER_PARAMS_KEYS",
     "RoutingFinding",
     "lint_models_config",
 ]
@@ -41,7 +57,7 @@ __all__ = [
 class RoutingFinding:
     """One lint finding — always advisory; the caller decides fatality."""
 
-    category: str  # "route_conflict" | "near_miss_base_url"
+    category: str  # "route_conflict" | "near_miss_base_url" | "unknown_provider_params_key"
     role: str
     message: str
 
@@ -68,6 +84,20 @@ CANONICAL_PROVIDER_BASE_URLS: Mapping[str, tuple[str, ...]] = {
     "anthropic": ("https://api.anthropic.com",),
     "mistral": ("https://api.mistral.ai/v1",),
     "mistral_agents": ("https://api.mistral.ai",),
+}
+
+# Provider -> the set of provider_params keys THAT provider's adapter
+# recognises, imported directly from each adapter module (single source of
+# truth lives in the adapter; this dict only routes provider name ->
+# adapter constant, never duplicates the key list itself). Providers absent
+# here (openai_compat-category, anthropic) do unrestricted
+# ``body.setdefault(key, value)`` passthrough with no fixed key set to
+# validate against, so they are deliberately excluded — a missing entry
+# means "no check for this provider", not "this provider rejects
+# provider_params".
+KNOWN_PROVIDER_PARAMS_KEYS: Mapping[str, frozenset[str]] = {
+    "mistral": MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS,
+    "mistral_agents": MISTRAL_CONVERSATIONS_RECOGNIZED_PROVIDER_PARAMS_KEYS,
 }
 
 # Edit-distance ceiling for "typo of a canonical URL" vs. "an unrelated,
@@ -106,7 +136,7 @@ def _normalize(url: str) -> str:
     return url.rstrip("/")
 
 
-def _near_miss_finding(role: str, provider: str, slug: str, base_url: str) -> RoutingFinding | None:
+def _near_miss_finding(role: str, chain_index: int, provider: str, model: str, base_url: str) -> RoutingFinding | None:
     canonical_urls = CANONICAL_PROVIDER_BASE_URLS.get(provider)
     if not canonical_urls:
         return None
@@ -133,7 +163,7 @@ def _near_miss_finding(role: str, provider: str, slug: str, base_url: str) -> Ro
         category="near_miss_base_url",
         role=role,
         message=(
-            f"role {role!r} chain entry (provider={provider!r}, slug={slug!r}): "
+            f"models.yaml: role {role!r} chain[{chain_index}] (provider={provider!r}, model={model!r}): "
             f"base_url {base_url!r} is {best_distance} character(s) different from "
             f"the known-good {best_canonical!r} for provider {provider!r}. "
             "This is very likely a typo (e.g. 'v1' vs 'vl'), not a deliberate "
@@ -143,8 +173,41 @@ def _near_miss_finding(role: str, provider: str, slug: str, base_url: str) -> Ro
     )
 
 
+# Matches the leading `route 'NAME'` (or `route 'NAME':`) prefix shared by
+# every fa.egress_proxy.routing.ProxyConfigError message shape, so a
+# conflict's route name can be recovered without re-implementing
+# build_route_table's own validation logic here (single source of truth
+# for "is this a conflict" stays in build_route_table; this regex only
+# recovers WHICH route it was, for citing chain-entry locations).
+_ROUTE_NAME_RE = re.compile(r"^route '([^']*)'")
+
+
+def _unknown_provider_params_finding(
+    role: str, chain_index: int, provider: str, model: str, provider_params: Mapping[str, object]
+) -> RoutingFinding | None:
+    known_keys = KNOWN_PROVIDER_PARAMS_KEYS.get(provider)
+    if known_keys is None or not provider_params:
+        return None  # no fixed key set for this provider, or nothing to check
+    unknown_keys = sorted(set(provider_params) - known_keys)
+    if not unknown_keys:
+        return None
+    return RoutingFinding(
+        category="unknown_provider_params_key",
+        role=role,
+        message=(
+            f"models.yaml: role {role!r} chain[{chain_index}] (provider={provider!r}, model={model!r}): "
+            f"provider_params key(s) {unknown_keys!r} not recognised by the {provider!r} adapter "
+            f"(known keys: {sorted(known_keys)!r}). This is very likely a typo — an unrecognised key "
+            "is silently accepted and forwarded verbatim in the request body by "
+            "body.setdefault(key, value), so the provider never receives the field you intended and "
+            "no error is raised anywhere. Fix: correct the key name in models.yaml, or confirm this "
+            "is an intentional passthrough field the provider documents but this adapter does not yet."
+        ),
+    )
+
+
 def lint_models_config(models: ModelsConfig) -> list[RoutingFinding]:
-    """Run both routing lint checks against an already-loaded config.
+    """Run all routing lint checks against an already-loaded config.
 
     Never raises: :class:`fa.egress_proxy.routing.ProxyConfigError` from the
     conflict check is caught and folded into a :class:`RoutingFinding` like
@@ -154,17 +217,43 @@ def lint_models_config(models: ModelsConfig) -> list[RoutingFinding]:
 
     findings: list[RoutingFinding] = []
 
-    chain_entries: list[tuple[str, str, str, str]] = []
+    # (role, chain_index, provider, model, base_url, api_key_env) — the index
+    # lets a route_conflict finding cite exactly which entries collided,
+    # instead of forcing the operator to hunt through models.yaml for every
+    # occurrence of a given provider/model pair.
+    located_entries: list[tuple[str, int, str, str, str, str]] = []
     for role_name, chain_config in models.roles.items():
-        for entry in chain_config.chain:
-            chain_entries.append((entry.provider, entry.slug, entry.base_url, entry.api_key_env))
-            near_miss = _near_miss_finding(role_name, entry.provider, entry.slug, entry.base_url)
+        for chain_index, entry in enumerate(chain_config.chain):
+            located_entries.append(
+                (role_name, chain_index, entry.provider, entry.model, entry.base_url, entry.api_key_env)
+            )
+            near_miss = _near_miss_finding(role_name, chain_index, entry.provider, entry.model, entry.base_url)
             if near_miss is not None:
                 findings.append(near_miss)
+            unknown_params = _unknown_provider_params_finding(
+                role_name, chain_index, entry.provider, entry.model, entry.provider_params
+            )
+            if unknown_params is not None:
+                findings.append(unknown_params)
 
+    chain_entries = [
+        (provider, model, base_url, api_key_env) for _, _, provider, model, base_url, api_key_env in located_entries
+    ]
     try:
         build_route_table(chain_entries)
     except ProxyConfigError as exc:
-        findings.append(RoutingFinding(category="route_conflict", role="<cross-role>", message=str(exc)))
+        message = str(exc)
+        match = _ROUTE_NAME_RE.search(message)
+        locations: list[str] = []
+        if match is not None:
+            conflict_name = match.group(1)
+            locations = [
+                f"role {role!r} chain[{chain_index}]"
+                for role, chain_index, provider, model, _base_url, _api_key_env in located_entries
+                if route_name_for(provider, model) == conflict_name
+            ]
+        if locations:
+            message = f"{message} (chain entries: {', '.join(locations)})"
+        findings.append(RoutingFinding(category="route_conflict", role="<cross-role>", message=message))
 
     return findings

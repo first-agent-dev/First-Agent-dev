@@ -39,7 +39,7 @@ def test_legacy_compaction_flag_warns_and_is_ignored() -> None:
 def test_threshold_is_the_chain_config_surface() -> None:
     disabled = ChainConfig(
         role="coder",
-        model="test-model",
+        name="test-model",
         family="openai",
         chain=(),
         context_limit=100_000,
@@ -47,7 +47,7 @@ def test_threshold_is_the_chain_config_surface() -> None:
     )
     enabled = ChainConfig(
         role="coder",
-        model="test-model",
+        name="test-model",
         family="openai",
         chain=(),
         context_limit=100_000,

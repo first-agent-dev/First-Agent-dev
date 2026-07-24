@@ -265,7 +265,7 @@ def _apply_proxy_mode(
     base = proxy_url.rstrip("/")
     new_entries = []
     for entry in chain_config.chain:
-        name = route_name_for(entry.provider, entry.slug)
+        name = route_name_for(entry.provider, entry.model)
         headers = dict(entry.extra_headers)
         headers[_PROXY_TOKEN_HEADER] = proxy_token
         # Advertise this route's upstream timeout so the proxy forwards with the
@@ -1641,7 +1641,7 @@ def _cmd_workflow(
         _models = load_models_config_from_path(ctx.args.config.expanduser().resolve(), require_api_keys=False)
         _last_role = roles[-1] if roles else "coder"
         _last_chain = _models.roles.get(_last_role)
-        _last_model = _last_chain.model if _last_chain else ""
+        _last_model = _last_chain.name if _last_chain else ""
         _last_family = _last_chain.family if _last_chain else ""
 
         export_session_to_global_history(
@@ -1994,7 +1994,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
                 outcome=outcome,
                 log=log,
                 role=role,
-                model=chain_config.model,
+                model=chain_config.name,
                 family=chain_config.family,
                 workspace_root=workspace,
                 duration_ms=_run_duration_ms,
@@ -2222,10 +2222,10 @@ def _cmd_probe(args: argparse.Namespace) -> int:
 
         chain = _build_provider_chain(chain_config, transport=transport, secrets=secrets)
 
-        print(f"\nfa probe: role={role_name} (model={chain_config.model}, family={chain_config.family})")
+        print(f"\nfa probe: role={role_name} (model={chain_config.name}, family={chain_config.family})")
 
         request = RequestInfo(
-            model_slug=chain_config.model,
+            model_slug=chain_config.name,
             messages=({"role": "user", "content": "hi"},),
             temperature=0.0,
             max_tokens=1,
@@ -2467,7 +2467,7 @@ def _selfcheck_expected_routes(chain_config: ChainConfig) -> dict[str, str]:
 
     routes: dict[str, str] = {}
     for entry in chain_config.chain:
-        routes.setdefault(route_name_for(entry.provider, entry.slug), entry.api_key_env)
+        routes.setdefault(route_name_for(entry.provider, entry.model), entry.api_key_env)
     return routes
 
 
@@ -2527,7 +2527,7 @@ def _cmd_egress_proxy(args: argparse.Namespace) -> int:
         return 2
 
     chain_entries = [
-        (entry.provider, entry.slug, entry.base_url, entry.api_key_env)
+        (entry.provider, entry.model, entry.base_url, entry.api_key_env)
         for role in models.roles.values()
         for entry in role.chain
     ]

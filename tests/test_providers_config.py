@@ -40,31 +40,31 @@ def test_load_models_config_parses_three_role_example() -> None:
     text = textwrap.dedent(
         """\
         coder:
-          model:  "deepseek-v3"
+          name:  "deepseek-v3"
           family: "deepseek"
           chain:
             - provider: openrouter
-              slug:     "deepseek/deepseek-chat-v3"
+              model:     "deepseek/deepseek-chat-v3"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
             - provider: fireworks
-              slug:     "accounts/fireworks/models/deepseek-v3"
+              model:     "accounts/fireworks/models/deepseek-v3"
               base_url: "https://api.fireworks.ai/inference/v1"
               api_key_env: FIREWORKS_API_KEY
         planner:
-          model:  "kimi-k2"
+          name:  "kimi-k2"
           family: "kimi"
           chain:
             - provider: openrouter
-              slug:     "moonshotai/kimi-k2"
+              model:     "moonshotai/kimi-k2"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         eval:
-          model:  "qwen-3-32b"
+          name:  "qwen-3-32b"
           family: "qwen"
           chain:
             - provider: openrouter
-              slug:     "qwen/qwen-3-32b-instruct"
+              model:     "qwen/qwen-3-32b-instruct"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         """
@@ -74,7 +74,7 @@ def test_load_models_config_parses_three_role_example() -> None:
     assert isinstance(config, ModelsConfig)
     assert set(config.roles) == {"coder", "planner", "eval"}
     assert isinstance(config.roles["coder"], ChainConfig)
-    assert config.roles["coder"].model == "deepseek-v3"
+    assert config.roles["coder"].name == "deepseek-v3"
     assert config.roles["coder"].family == "deepseek"
     assert len(config.roles["coder"].chain) == 2
     assert config.roles["coder"].chain[0].provider == "openrouter"
@@ -94,11 +94,11 @@ def test_load_models_config_preserves_chain_entry_optional_fields() -> None:
     text = textwrap.dedent(
         """\
         coder:
-          model:  "deepseek-v3"
+          name:  "deepseek-v3"
           family: "deepseek"
           chain:
             - provider: openrouter
-              slug:     "deepseek/deepseek-chat-v3"
+              model:     "deepseek/deepseek-chat-v3"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
               cooldown_seconds: 120
@@ -125,13 +125,13 @@ def test_load_models_config_parses_context_budget_fields() -> None:
     text = textwrap.dedent(
         """\
         coder:
-          model:  "deepseek-v3"
+          name:  "deepseek-v3"
           family: "deepseek"
           context_limit: 200000
           compaction_threshold: 120000
           chain:
             - provider: openrouter
-              slug:     "deepseek/deepseek-chat-v3"
+              model:     "deepseek/deepseek-chat-v3"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         """
@@ -232,7 +232,7 @@ def test_load_models_config_propagates_empty_chain_error() -> None:
     text = textwrap.dedent(
         """\
         coder:
-          model: "deepseek-v3"
+          name: "deepseek-v3"
           family: "deepseek"
           chain: []
         """
@@ -246,11 +246,11 @@ def test_load_models_config_propagates_missing_api_key_env_error() -> None:
     text = textwrap.dedent(
         """\
         coder:
-          model: "deepseek-v3"
+          name: "deepseek-v3"
           family: "deepseek"
           chain:
             - provider: openrouter
-              slug:     "deepseek/deepseek-chat-v3"
+              model:     "deepseek/deepseek-chat-v3"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         """
@@ -265,11 +265,11 @@ def test_load_models_config_propagates_unknown_provider_error() -> None:
     text = textwrap.dedent(
         """\
         coder:
-          model: "deepseek-v3"
+          name: "deepseek-v3"
           family: "deepseek"
           chain:
             - provider: not_a_real_provider
-              slug:     "deepseek-v3"
+              model:     "deepseek-v3"
               base_url: "https://example.com/v1"
               api_key_env: SOME_KEY
         """
@@ -283,13 +283,13 @@ def test_load_models_config_rejects_compaction_threshold_above_context_limit() -
     text = textwrap.dedent(
         """\
         coder:
-          model: "deepseek-v3"
+          name: "deepseek-v3"
           family: "deepseek"
           context_limit: 100000
           compaction_threshold: 120000
           chain:
             - provider: openrouter
-              slug:     "deepseek/deepseek-chat-v3"
+              model:     "deepseek/deepseek-chat-v3"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         """
@@ -300,24 +300,24 @@ def test_load_models_config_rejects_compaction_threshold_above_context_limit() -
 
 
 def test_load_models_config_accumulates_warnings_from_chain_validator() -> None:
-    # Slug whose extracted family disagrees with the role's declared
+    # Chain-entry model whose extracted family disagrees with the role's declared
     # family — the chain validator emits a WARNING (not error). The
     # loader must surface it via ``ModelsConfig.warnings``.
     text = textwrap.dedent(
         """\
         coder:
-          model:  "deepseek-v3"
+          name:  "deepseek-v3"
           family: "qwen"
           chain:
             - provider: openrouter
-              slug:     "deepseek/deepseek-chat-v3"
+              model:     "deepseek/deepseek-chat-v3"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         """
     )
     config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
     assert config.roles["coder"].family == "qwen"
-    assert any("slug family 'deepseek' != role family 'qwen'" in w for w in config.warnings)
+    assert any("entry family 'deepseek' != role family 'qwen'" in w for w in config.warnings)
 
 
 # ----- Family-disjoint enforcement -------------------------------
@@ -332,27 +332,27 @@ def _make_three_role_text(*, planner_family: str, coder_family: str, eval_family
     return textwrap.dedent(
         f"""\
         planner:
-          model:  "synthetic-planner"
+          name:  "synthetic-planner"
           family: "{planner_family}"
           chain:
             - provider: openrouter
-              slug:     "{planner_family}-planner"
+              model:     "{planner_family}-planner"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         coder:
-          model:  "synthetic-coder"
+          name:  "synthetic-coder"
           family: "{coder_family}"
           chain:
             - provider: openrouter
-              slug:     "{coder_family}-coder"
+              model:     "{coder_family}-coder"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         eval:
-          model:  "synthetic-eval"
+          name:  "synthetic-eval"
           family: "{eval_family}"
           chain:
             - provider: openrouter
-              slug:     "{eval_family}-eval"
+              model:     "{eval_family}-eval"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         """
@@ -390,27 +390,27 @@ def test_load_models_config_normalises_family_case_for_disjoint_check() -> None:
     text = textwrap.dedent(
         """\
         planner:
-          model:  "deepseek-v3"
+          name:  "deepseek-v3"
           family: "DeepSeek"
           chain:
             - provider: openrouter
-              slug:     "deepseek-planner"
+              model:     "deepseek-planner"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         coder:
-          model:  "kimi-k2"
+          name:  "kimi-k2"
           family: "kimi"
           chain:
             - provider: openrouter
-              slug:     "kimi-coder"
+              model:     "kimi-coder"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         eval:
-          model:  "deepseek-v3-eval"
+          name:  "deepseek-v3-eval"
           family: "deepseek"
           chain:
             - provider: openrouter
-              slug:     "deepseek-eval"
+              model:     "deepseek-eval"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         """
@@ -435,27 +435,27 @@ def test_load_models_config_normalises_whitespace_for_disjoint_check() -> None:
     text = textwrap.dedent(
         """\
         planner:
-          model:  "deepseek-v3"
+          name:  "deepseek-v3"
           family: "  deepseek  "
           chain:
             - provider: openrouter
-              slug:     "deepseek-planner"
+              model:     "deepseek-planner"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         coder:
-          model:  "kimi-k2"
+          name:  "kimi-k2"
           family: "kimi"
           chain:
             - provider: openrouter
-              slug:     "kimi-coder"
+              model:     "kimi-coder"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         eval:
-          model:  "deepseek-v3-eval"
+          name:  "deepseek-v3-eval"
           family: "deepseek"
           chain:
             - provider: openrouter
-              slug:     "deepseek-eval"
+              model:     "deepseek-eval"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         """
@@ -485,19 +485,19 @@ def test_load_models_config_skips_family_check_when_eval_missing() -> None:
     text = textwrap.dedent(
         """\
         planner:
-          model:  "kimi-k2"
+          name:  "kimi-k2"
           family: "kimi"
           chain:
             - provider: openrouter
-              slug:     "moonshotai/kimi-k2"
+              model:     "moonshotai/kimi-k2"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         coder:
-          model:  "kimi-k2-coder"
+          name:  "kimi-k2-coder"
           family: "kimi"
           chain:
             - provider: openrouter
-              slug:     "moonshotai/kimi-k2"
+              model:     "moonshotai/kimi-k2"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         """
@@ -521,19 +521,19 @@ def test_load_models_config_skips_family_check_when_planner_missing() -> None:
     text = textwrap.dedent(
         """\
         coder:
-          model:  "kimi-k2"
+          name:  "kimi-k2"
           family: "kimi"
           chain:
             - provider: openrouter
-              slug:     "moonshotai/kimi-k2"
+              model:     "moonshotai/kimi-k2"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         eval:
-          model:  "kimi-k2-eval"
+          name:  "kimi-k2-eval"
           family: "kimi"
           chain:
             - provider: openrouter
-              slug:     "moonshotai/kimi-k2"
+              model:     "moonshotai/kimi-k2"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         """
@@ -567,19 +567,19 @@ def _make_two_role_text(*, role_a: str, family_a: str, role_b: str, family_b: st
     return textwrap.dedent(
         f"""\
         {role_a}:
-          model:  "synthetic-{role_a}"
+          name:  "synthetic-{role_a}"
           family: "{family_a}"
           chain:
             - provider: openrouter
-              slug:     "{family_a}-{role_a}"
+              model:     "{family_a}-{role_a}"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         {role_b}:
-          model:  "synthetic-{role_b}"
+          name:  "synthetic-{role_b}"
           family: "{family_b}"
           chain:
             - provider: openrouter
-              slug:     "{family_b}-{role_b}"
+              model:     "{family_b}-{role_b}"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         """
@@ -636,11 +636,11 @@ def test_load_models_config_no_partial_warning_when_eval_alone() -> None:
     text = textwrap.dedent(
         """\
         eval:
-          model:  "qwen-3-32b"
+          name:  "qwen-3-32b"
           family: "qwen"
           chain:
             - provider: openrouter
-              slug:     "qwen/qwen-3-32b"
+              model:     "qwen/qwen-3-32b"
               base_url: "https://openrouter.ai/api/v1"
               api_key_env: OPENROUTER_API_KEY
         """
@@ -674,11 +674,11 @@ def test_load_models_config_accepts_debug_role_alongside_three() -> None:
     text = _make_three_role_text(planner_family="kimi", coder_family="deepseek", eval_family="qwen") + textwrap.dedent(
         """\
         debug:
-          model:  "claude-3-5-sonnet"
+          name:  "claude-3-5-sonnet"
           family: "anthropic"
           chain:
             - provider: anthropic
-              slug:     "claude-3-5-sonnet-20240620"
+              model:     "claude-3-5-sonnet-20240620"
               base_url: "https://api.anthropic.com"
               api_key_env: ANTHROPIC_API_KEY
         """
@@ -698,11 +698,11 @@ def test_load_models_config_from_path_reads_file(tmp_path: Path) -> None:
         textwrap.dedent(
             """\
             coder:
-              model:  "deepseek-v3"
+              name:  "deepseek-v3"
               family: "deepseek"
               chain:
                 - provider: openrouter
-                  slug:     "deepseek/deepseek-chat-v3"
+                  model:     "deepseek/deepseek-chat-v3"
                   base_url: "https://openrouter.ai/api/v1"
                   api_key_env: OPENROUTER_API_KEY
             """
@@ -711,7 +711,7 @@ def test_load_models_config_from_path_reads_file(tmp_path: Path) -> None:
     )
     env = _env_with_keys("OPENROUTER_API_KEY")
     config = load_models_config_from_path(path, env=env)
-    assert config.roles["coder"].model == "deepseek-v3"
+    assert config.roles["coder"].name == "deepseek-v3"
 
 
 def test_load_models_config_from_path_missing_file_returns_empty(tmp_path: Path) -> None:

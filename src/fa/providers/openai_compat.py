@@ -58,6 +58,8 @@ class OpenAICompatProvider:
         }
         if request.temperature is not None:
             body["temperature"] = request.temperature
+        if request.top_p is not None:
+            body["top_p"] = request.top_p
         if request.max_tokens is not None:
             body["max_tokens"] = request.max_tokens
         if request.tools:

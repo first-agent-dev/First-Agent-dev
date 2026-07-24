@@ -50,6 +50,38 @@ def test_build_route_table_dedupes_and_detects_conflict() -> None:
         )
 
 
+def test_build_route_table_conflict_message_names_the_differing_url() -> None:
+    """A genuine base_url mismatch must name BOTH urls in the message."""
+    with pytest.raises(ProxyConfigError, match=r"conflicting upstreams.*a\.example.*b\.example"):
+        build_route_table(
+            [
+                ("p", "s", "https://a.example", "K"),
+                ("p", "s", "https://b.example", "K"),
+            ]
+        )
+
+
+def test_build_route_table_conflict_message_names_api_key_env_when_urls_match() -> None:
+    """Regression: two entries with an IDENTICAL base_url but different
+    api_key_env (the real-world "multi-key rotation" models.yaml shape)
+    must NOT get the "conflicting upstreams: X vs X" message — that
+    printed the same string twice and gave the operator no signal about
+    what actually differs. The message must name api_key_env explicitly.
+    """
+    with pytest.raises(ProxyConfigError) as exc_info:
+        build_route_table(
+            [
+                ("p", "s", "https://a.example/v1", "KEY_A"),
+                ("p", "s", "https://a.example/v1", "KEY_B"),
+            ]
+        )
+    message = str(exc_info.value)
+    assert "conflicting upstreams" not in message
+    assert "api_key_env" in message
+    assert "KEY_A" in message
+    assert "KEY_B" in message
+
+
 def test_build_route_table_rejects_non_https_upstream() -> None:
     """R2-2: a tampered models.yaml must not redirect the key-injecting proxy to
     an http:// or attacker host. https required (http only for localhost)."""

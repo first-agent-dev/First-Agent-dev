@@ -58,13 +58,13 @@ def test_context_limit_zero_rejected_by_chain_config() -> None:
 
     entry = ChainEntry(
         provider="test",
-        slug="test/model",
+        model="test/model",
         base_url="https://api.example.com/v1",
         api_key_env="TEST_KEY",
     )
     cfg = ChainConfig(
         role="coder",
-        model="test-model",
+        name="test-model",
         family="test",
         chain=(entry,),
         context_limit=0,

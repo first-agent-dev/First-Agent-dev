@@ -49,19 +49,19 @@ class TestRouteConflictDetection:
         models = _models(
             """
 planner:
-  model: mistral-small
+  name: mistral-small
   family: mistral
   chain:
     - provider: mistral
-      slug: "mistral-small-2603"
+      model: "mistral-small-2603"
       base_url: "https://api.mistral.ai/vl"
       api_key_env: MISTRAL_API_KEY
 coder:
-  model: mistral-small
+  name: mistral-small
   family: mistral
   chain:
     - provider: mistral
-      slug: "mistral-small-2603"
+      model: "mistral-small-2603"
       base_url: "https://api.mistral.ai/v1"
       api_key_env: MISTRAL_API_KEY
 """
@@ -72,6 +72,50 @@ coder:
         assert "conflicting upstreams" in conflict[0].message
         assert "api.mistral.ai/vl" in conflict[0].message
         assert "api.mistral.ai/v1" in conflict[0].message
+        # Regression: the finding must cite WHICH chain entries collided,
+        # not just the abstract route name — the operator needs to know
+        # where in models.yaml to look.
+        assert "role 'planner' chain[0]" in conflict[0].message
+        assert "role 'coder' chain[0]" in conflict[0].message
+
+    def test_flags_identical_base_url_with_different_api_key_env(self) -> None:
+        # Regression for the real-world incident: a "multi-key rotation"
+        # models.yaml shape (several chain entries for the same
+        # (provider, slug) pair, each with a DIFFERENT api_key_env, intended
+        # as per-provider key rotation). The base_urls are byte-identical,
+        # so the message must name api_key_env as the actual differing
+        # field instead of misleadingly printing "url vs url".
+        models = _models(
+            """
+coder:
+  name: mistral-small
+  family: mistral
+  chain:
+    - provider: mistral
+      model: "mistral-small-2603"
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: MISTRAL_API_KEY
+    - provider: mistral
+      model: "mistral-small-2603"
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: MISTRAL_API_KEY_1
+    - provider: mistral
+      model: "mistral-small-2603"
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: MISTRAL_API_KEY_2
+"""
+        )
+        findings = lint_models_config(models)
+        conflict = [f for f in findings if f.category == "route_conflict"]
+        assert len(conflict) == 1
+        message = conflict[0].message
+        assert "conflicting upstreams" not in message  # not a URL mismatch
+        assert "api_key_env" in message
+        assert "MISTRAL_API_KEY" in message
+        assert "MISTRAL_API_KEY_1" in message
+        assert "role 'coder' chain[0]" in message
+        assert "role 'coder' chain[1]" in message
+        assert "role 'coder' chain[2]" in message
 
     def test_matching_duplicate_route_is_not_a_conflict(self) -> None:
         # Same (provider, slug, base_url) reused across roles collapses to
@@ -80,19 +124,19 @@ coder:
         models = _models(
             """
 planner:
-  model: llama
+  name: llama
   family: llama
   chain:
     - provider: openrouter
-      slug: "meta-llama/llama-3.1-8b"
+      model: "meta-llama/llama-3.1-8b"
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: OPENROUTER_API_KEY
 coder:
-  model: llama
+  name: llama
   family: llama
   chain:
     - provider: openrouter
-      slug: "meta-llama/llama-3.1-8b"
+      model: "meta-llama/llama-3.1-8b"
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: OPENROUTER_API_KEY
 """
@@ -109,11 +153,11 @@ class TestNearMissBaseUrlHeuristic:
         models = _models(
             """
 coder:
-  model: mistral-small
+  name: mistral-small
   family: mistral
   chain:
     - provider: mistral
-      slug: "mistral-small-2603"
+      model: "mistral-small-2603"
       base_url: "https://api.mistral.ai/vl"
       api_key_env: MISTRAL_API_KEY
 """
@@ -124,16 +168,20 @@ coder:
         assert "api.mistral.ai/vl" in near_miss[0].message
         assert "api.mistral.ai/v1" in near_miss[0].message
         assert near_miss[0].role == "coder"
+        # Regression: must cite the exact chain index, not just the role,
+        # so the operator can find the right block when a role has
+        # multiple chain entries.
+        assert "chain[0]" in near_miss[0].message
 
     def test_exact_canonical_match_is_clean(self) -> None:
         models = _models(
             """
 coder:
-  model: mistral-small
+  name: mistral-small
   family: mistral
   chain:
     - provider: mistral
-      slug: "mistral-small-2603"
+      model: "mistral-small-2603"
       base_url: "https://api.mistral.ai/v1"
       api_key_env: MISTRAL_API_KEY
 """
@@ -144,11 +192,11 @@ coder:
         models = _models(
             """
 coder:
-  model: llama
+  name: llama
   family: llama
   chain:
     - provider: openrouter
-      slug: "meta-llama/llama-3.1-8b"
+      model: "meta-llama/llama-3.1-8b"
       base_url: "https://openrouter.ai/api/v1/"
       api_key_env: OPENROUTER_API_KEY
 """
@@ -162,11 +210,11 @@ coder:
         models = _models(
             """
 coder:
-  model: custom
+  name: custom
   family: custom
   chain:
     - provider: mistral
-      slug: "custom-model"
+      model: "custom-model"
       base_url: "http://localhost:8080/v1"
       api_key_env: LOCAL_KEY
 """
@@ -183,19 +231,19 @@ coder:
         models = _models(
             """
 coder:
-  model: mistral-small
+  name: mistral-small
   family: mistral
   chain:
     - provider: mistral
-      slug: "mistral-small-2603"
+      model: "mistral-small-2603"
       base_url: "https://api.mistral.ai/v1"
       api_key_env: MISTRAL_API_KEY
 planner:
-  model: mistral-medium
+  name: mistral-medium
   family: mistral
   chain:
     - provider: mistral_agents
-      slug: "mistral-medium"
+      model: "mistral-medium"
       base_url: "https://api.mistral.ai"
       api_key_env: MISTRAL_API_KEY
 """
@@ -209,16 +257,147 @@ planner:
         models = _models(
             """
 coder:
-  model: whatever
+  name: whatever
   family: whatever
   chain:
     - provider: alistaitsacle
-      slug: "whatever-model"
+      model: "whatever-model"
       base_url: "https://some.completely.unrelated.host/v9"
       api_key_env: ALISTAITSACLE_API_KEY
 """
         )
         assert "alistaitsacle" not in CANONICAL_PROVIDER_BASE_URLS
+        assert lint_models_config(models) == []
+
+
+class TestUnknownProviderParamsKey:
+    """Catches a typo'd provider_params key (e.g. reasoning_efort) that
+    body.setdefault(key, value) would otherwise silently swallow with no
+    error anywhere — the provider simply never receives the intended field.
+    """
+
+    def test_flags_typo_in_mistral_provider_params(self) -> None:
+        models = _models(
+            """
+coder:
+  name: mistral-small
+  family: mistral
+  chain:
+    - provider: mistral
+      model: "mistral-small-2603"
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: MISTRAL_API_KEY
+      provider_params:
+        reasoning_efort: "high"
+"""
+        )
+        findings = lint_models_config(models)
+        unknown = [f for f in findings if f.category == "unknown_provider_params_key"]
+        assert len(unknown) == 1
+        assert "reasoning_efort" in unknown[0].message
+        assert "reasoning_effort" in unknown[0].message  # known-keys list must name the likely intended key
+        assert "chain[0]" in unknown[0].message
+        assert unknown[0].role == "coder"
+
+    def test_known_mistral_key_is_not_flagged(self) -> None:
+        models = _models(
+            """
+coder:
+  name: mistral-small
+  family: mistral
+  chain:
+    - provider: mistral
+      model: "mistral-small-2603"
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: MISTRAL_API_KEY
+      provider_params:
+        reasoning_effort: "high"
+        safe_prompt: false
+"""
+        )
+        assert lint_models_config(models) == []
+
+    def test_known_mistral_agents_key_is_not_flagged(self) -> None:
+        # mistral_agents (Conversations API) has a DIFFERENT recognised-key
+        # set than mistral (chat completions) — mistral_tools/store/agent_id
+        # are valid here but would be unknown for the plain mistral adapter.
+        models = _models(
+            """
+coder:
+  name: mistral-medium
+  family: mistral
+  chain:
+    - provider: mistral_agents
+      model: "mistral-medium-2604"
+      base_url: "https://api.mistral.ai"
+      api_key_env: MISTRAL_API_KEY
+      provider_params:
+        mistral_tools:
+          - type: web_search
+        store: true
+        agent_id: "agt-123"
+"""
+        )
+        assert lint_models_config(models) == []
+
+    def test_mistral_agents_key_is_flagged_on_plain_mistral_provider(self) -> None:
+        # Regression guard for the two adapters' DIFFERENT key sets: a key
+        # valid for mistral_agents (mistral_tools) must still be flagged as
+        # unknown when used on the plain mistral (chat-completions) entry.
+        models = _models(
+            """
+coder:
+  name: mistral-small
+  family: mistral
+  chain:
+    - provider: mistral
+      model: "mistral-small-2603"
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: MISTRAL_API_KEY
+      provider_params:
+        mistral_tools:
+          - type: web_search
+"""
+        )
+        findings = lint_models_config(models)
+        unknown = [f for f in findings if f.category == "unknown_provider_params_key"]
+        assert len(unknown) == 1
+        assert "mistral_tools" in unknown[0].message
+
+    def test_unrestricted_adapter_is_never_flagged(self) -> None:
+        # openai_compat-category providers (openrouter, fireworks, ...) and
+        # anthropic do unrestricted body.setdefault passthrough with no
+        # fixed key set — there is nothing to validate against, so ANY
+        # provider_params content must be silently accepted, not flagged.
+        models = _models(
+            """
+coder:
+  name: deepseek-v3
+  family: deepseek
+  chain:
+    - provider: openrouter
+      model: "deepseek/deepseek-chat-v3"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: OPENROUTER_API_KEY
+      provider_params:
+        some_totally_made_up_field: "x"
+"""
+        )
+        assert lint_models_config(models) == []
+
+    def test_no_provider_params_is_never_flagged(self) -> None:
+        models = _models(
+            """
+coder:
+  name: mistral-small
+  family: mistral
+  chain:
+    - provider: mistral
+      model: "mistral-small-2603"
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: MISTRAL_API_KEY
+"""
+        )
         assert lint_models_config(models) == []
 
 
@@ -230,19 +409,19 @@ class TestLintReturnsBothFindingKindsTogether:
         models = _models(
             """
 planner:
-  model: mistral-small
+  name: mistral-small
   family: mistral
   chain:
     - provider: mistral
-      slug: "mistral-small-2603"
+      model: "mistral-small-2603"
       base_url: "https://api.mistral.ai/vl"
       api_key_env: MISTRAL_API_KEY
 coder:
-  model: mistral-small
+  name: mistral-small
   family: mistral
   chain:
     - provider: mistral
-      slug: "mistral-small-2603"
+      model: "mistral-small-2603"
       base_url: "https://api.mistral.ai/v1"
       api_key_env: MISTRAL_API_KEY
 """
@@ -270,19 +449,19 @@ class TestRoutingCheckCliComposition:
         config_path.write_text(
             """
 planner:
-  model: mistral-small
+  name: mistral-small
   family: mistral
   chain:
     - provider: mistral
-      slug: "mistral-small-2603"
+      model: "mistral-small-2603"
       base_url: "https://api.mistral.ai/vl"
       api_key_env: MISTRAL_API_KEY
 coder:
-  model: mistral-small
+  name: mistral-small
   family: mistral
   chain:
     - provider: mistral
-      slug: "mistral-small-2603"
+      model: "mistral-small-2603"
       base_url: "https://api.mistral.ai/v1"
       api_key_env: MISTRAL_API_KEY
 """,
@@ -304,11 +483,11 @@ coder:
         config_path.write_text(
             """
 coder:
-  model: llama
+  name: llama
   family: llama
   chain:
     - provider: openrouter
-      slug: "meta-llama/llama-3.1-8b"
+      model: "meta-llama/llama-3.1-8b"
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: OPENROUTER_API_KEY
 """,
@@ -328,11 +507,11 @@ coder:
         config_path.write_text(
             """
 coder:
-  model: llama
+  name: llama
   family: llama
   chain:
     - provider: not_a_real_provider
-      slug: "x"
+      model: "x"
       base_url: "https://example.com/v1"
       api_key_env: X_API_KEY
 """,

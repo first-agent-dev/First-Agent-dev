@@ -1566,6 +1566,126 @@ Read all `~/.fa/session-log/*/events.jsonl`, aggregate: total cost,
 tokens, cache hit ratio, model distribution, p50/p95 latency.
 `fa stats --since 7d`.
 
+## I-32 — Multi-key rotation per `(provider, slug)` (quota resilience)
+
+**Origin:** discovered 2026-07-23 via a real operator `models.yaml` that
+declared 3 chain entries for `coder` — same `provider: mistral`, same
+`slug: mistral-small-2603`, same `base_url`, but 3 *different*
+`api_key_env` names (`MISTRAL_API_KEY` / `MISTRAL_API_KEY_1` /
+`MISTRAL_API_KEY_2`). The intent (confirmed with the operator) was
+key-rotation / quota-pooling across several API keys for the *same*
+provider+model, to survive a single key's rate limit. This does not work
+today, in either deployment mode:
+
+- **Egress-proxy mode (ADR-12, the shipped deploy topology):**
+  `fa.egress_proxy.routing.build_route_table` computes ONE route name per
+  `(provider, slug)` pair (`route_name_for`), and a `RouteTable` can bind
+  exactly one `api_key_env` per route name. Multiple entries sharing
+  `(provider, slug)` with different `api_key_env` values collide and
+  `build_route_table` correctly raises `ProxyConfigError` (fail-closed,
+  not a bug — a route cannot inject two different keys). Reproduced via
+  `fa routing-check` (see `src/fa/providers/routing_lint.py`, shipped
+  2026-07-23) and directly via `build_route_table`.
+- **Direct (non-proxy) mode:** even without the proxy, `ProviderChain`'s
+  cooldown ledger (`src/fa/providers/chain.py::ProviderChain._cooldowns`,
+  keyed on `(provider, slug)` per ADR-9 §3) means a transient failure
+  (e.g. 429 rate-limit) on the FIRST entry cools down the *whole*
+  `(provider, slug)` tuple — the second and third entries (different keys,
+  otherwise healthy) are never attempted for that request. Reproduced via
+  a fake-provider unit test: 3 identical-`(provider,slug)` entries with
+  distinct keys, first entry raises `ProviderTransientError`, chain
+  exhausts after exactly 1 attempt instead of trying the other 2 keys.
+
+**What "make it work" requires** (not attempted yet — scoping only):
+
+- A route/cooldown identity that includes the *credential*, not just
+  `(provider, slug)` — e.g. `(provider, slug, api_key_env)` — so distinct
+  keys for the same model are independently routable and independently
+  cooled down. This touches:
+  - `fa.egress_proxy.routing.route_name_for` / `RouteTable` (proxy mode);
+  - `ProviderChain._cooldowns` keying (`src/fa/providers/chain.py`);
+  - `fa.providers.routing_lint`'s conflict/near-miss checks (would need
+    to stop treating same-`(provider,slug)`-different-`api_key_env` as
+    a hard conflict once rotation is a supported shape, and instead
+    validate it as a *legitimate* rotation chain).
+- A decision on selection policy: round-robin, random, or "first not in
+  cooldown" (matching the existing ordered-fallback semantics, just with
+  a wider identity key) — needs its own ADR-9 amendment, not a silent
+  behavior change.
+- `fa selfcheck` / `fa probe` currently assume one key per route in their
+  reporting shape; would need updating to report per-key health within a
+  rotation group.
+
+**Unblock-trigger:** an operator actually hits a persistent single-key
+quota ceiling in production (this is currently a "nice to have" per the
+reporting operator, not an active blocker) — implement then, with the
+ADR-9 amendment written first so the selection-policy decision doesn't
+get made implicitly by whichever PR happens to touch `chain.py` first.
+
+## I-33 — LLM-call cost accounting: three disconnected, unfinished stubs
+
+**Origin:** discovered 2026-07-24 during a code-review sweep prompted by the
+`models.yaml` schema amendment (I-32's neighbor) — the reviewer asked
+whether `src/fa/observability/cost_table.py` was redundant with something
+else that already computes LLM-call cost. It is not: there are three
+INDEPENDENT, mutually-unaware stubs, none of which produce a real dollar
+figure anywhere in the runtime today. Not a priority now (operator: "not
+sure if I need it, maybe later for evals") — recorded so a future session
+doesn't rediscover this from scratch or add a 4th disconnected stub.
+
+1. **`src/fa/observability/cost_table.py`** — a `(family, provider, slug) ->
+   CostPerMillion` pricing lookup table with real seed data (9 rows) and a
+   working `lookup()` function. **Zero production callers** (`grep -rn
+   "cost_table.lookup\|from fa.observability.cost_table" src/fa/` returns
+   nothing outside the module itself). Its own docstring claims it feeds an
+   ADR-9 §4 `"llm_call"` Tier-1 observability row — that `LogKind`/`OutputEvent`
+   kind was never implemented anywhere (`grep -rn 'kind="llm_call"'
+   src/fa/` returns zero hits); the shipped observability schema uses
+   `provider_attempt` / `usage` / `session_summary` kinds instead, none of
+   which carry a cost field. The lookup table's keys are also now stale
+   relative to the ADR-9 §Amendment 2026-07-23 schema (they use the old
+   example `slug` strings like `"deepseek/deepseek-chat-v3"`, which is a
+   value shape that still exists post-amendment as `ChainEntry.model`, but
+   the table itself is unreachable regardless).
+
+2. **`TelemetryEvent.cost_usd`** (`src/fa/telemetry/telemetry.py`) — a
+   per-TOOL-CALL telemetry dataclass field (different granularity than
+   per-LLM-call). Its only producer, `src/fa/inner_loop/state.py:570-576`,
+   hardcodes `cost_usd=0.0` and `model_id=""` unconditionally on every
+   construction — never actually computed from a real response or looked up
+   from a pricing table. `TelemetryLogger` writes these zeros faithfully to
+   `.fa/telemetry/telemetry.jsonl`.
+
+3. **`OutputEvent.data["est_cost_usd"]`** — has a live CONSUMER
+   (`src/fa/output.py:329-330`, gated behind `self.show_cost`, renders
+   `~$0.0042` in the CLI's live turn-by-turn output) but **zero producers**
+   anywhere (`grep -rn 'est_cost_usd' src/fa/` finds only the consumer line).
+   This is the project's own named "dead handler, no producer emit()"
+   anti-pattern (the shape `scripts/check_producer_consumer_contract.py`
+   exists to catch) — it slipped past that automated gate because the key
+   lives inside an untyped `OutputEvent.data: dict`, not a top-level typed
+   `EventType` member the gate enumerates. `self.show_cost` can be enabled
+   today and will silently render nothing (the `if ... is not None` guard
+   means the line never appears, not that it errors) — a config-shaped
+   footgun for an operator who turns the flag on expecting a cost readout.
+
+**First concrete step whenever this is picked up:** decide the target
+granularity FIRST (per-LLM-call, matching `cost_table.py`'s `(family,
+provider, slug)` key shape and ADR-9 §4's original design intent, is
+probably right for a cost-budget/eval use case — per-tool-call granularity
+in `TelemetryEvent` answers a different question and should likely stay
+separate, not be conflated). Then either wire `cost_table.lookup()` into
+`ProviderChain.request()`'s success path (using `entry.model` /
+`self._config.family` / `entry.provider` as the lookup key under the
+current, amended schema) and thread the result into a genuinely emitted
+`OutputEvent.data["est_cost_usd"]` — closing gap 3 — or delete all three
+stubs if a different design is chosen. Do not add a fourth partial
+implementation without first reading this entry.
+
+**Unblock-trigger:** cost/budget accounting becomes a requirement for an
+eval harness or a per-session spend cap (operator's own stated "maybe later
+for evals" framing).
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring

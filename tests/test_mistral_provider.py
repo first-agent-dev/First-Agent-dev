@@ -28,6 +28,7 @@ from fa.providers.errors import (
 )
 from fa.providers.mistral import (
     _PREDICTION_LENGTH_WARN_CHARS,
+    MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS,
     MistralProvider,
     _apply_prediction,
     _apply_response_format,
@@ -193,6 +194,40 @@ class TestBuildRequestBody:
         )
         body = _build_request_body(request)
         assert "max_tokens" not in body
+
+    def test_recognized_provider_params_keys_are_all_actually_forwarded(self) -> None:
+        """Anti-drift regression: MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS is
+        consumed by fa.providers.routing_lint as the single source of truth
+        for "does this adapter recognise this provider_params key" — if the
+        constant claims a key is recognised but _build_request_body actually
+        drops it, routing-check would give a false "OK" for a config whose
+        provider_params silently never reaches the request. Found stale
+        2026-07-24: the constant previously listed only 5 of the 7 keys
+        _build_request_body actually accepts (missing "response_format" and
+        "prompt_cache_key") despite being unused by any code path at the
+        time, so nothing caught the drift. This test is that catch.
+        """
+        sample_values: dict[str, object] = {
+            "prediction": {"type": "content", "content": "x"},
+            "response_format": {"type": "json_object"},
+            "reasoning_effort": "high",
+            "prompt_cache_key": "some-key",
+            "safe_prompt": True,
+            "prompt_mode": "reasoning",
+            "parallel_tool_calls": False,
+        }
+        assert set(sample_values) == MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS, (
+            "This test's sample_values must be kept in sync with the exported "
+            "constant so every recognised key is exercised below."
+        )
+        for key, value in sample_values.items():
+            request = RequestInfo(
+                model_slug="mistral-medium-2604",
+                messages=({"role": "user", "content": "Hi"},),
+                extras={key: value},
+            )
+            body = _build_request_body(request)
+            assert key in body, f"recognised key {key!r} was NOT forwarded into the request body"
 
 
 # ── Prediction validation ───────────────────────────────────────────

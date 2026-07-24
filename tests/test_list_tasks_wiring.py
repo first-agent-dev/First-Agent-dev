@@ -67,7 +67,7 @@ def test_list_tasks_finds_pty_session(tmp_path: Path) -> None:
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test",
+        name="test",
     )
 
     tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
@@ -132,7 +132,7 @@ def test_list_tasks_finds_subagent_artifact(tmp_path: Path) -> None:
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test",
+        name="test",
     )
 
     tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
@@ -202,7 +202,7 @@ def test_list_tasks_finds_worktree_dir(tmp_path: Path) -> None:
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test",
+        name="test",
     )
 
     tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
@@ -263,7 +263,7 @@ def test_list_tasks_empty_when_no_pool_or_manager(tmp_path: Path) -> None:
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test",
+        name="test",
     )
 
     tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")

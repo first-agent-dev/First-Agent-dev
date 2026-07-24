@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -39,10 +39,18 @@ from fa.roles import EvalFamilyConflictError, check_eval_disjoint
 
 @dataclass
 class StubProvider:
-    """Stub :class:`fa.providers.base.Provider` returning canned outcomes per call."""
+    """Stub :class:`fa.providers.base.Provider` returning canned outcomes per call.
+
+    ``received_requests`` records the actual :class:`RequestInfo` object
+    passed to each ``request()`` call, in order — the C1 oracle for
+    asserting on what the dispatcher actually builds and sends per entry
+    (not just what :class:`ChainAttemptRecord` bookkeeping reports, which
+    would stay green even if the wrong request were dispatched).
+    """
 
     outcomes: list[ResponseInfo | Exception]
     name: str = "stub"
+    received_requests: list[RequestInfo] = field(default_factory=list)
 
     def request(
         self,
@@ -54,16 +62,17 @@ class StubProvider:
         transport_retries: int,
         extra_headers: Mapping[str, str],
     ) -> ResponseInfo:
+        self.received_requests.append(request)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
 
 
-def _entry(provider: str = "openrouter", slug: str = "deepseek/deepseek-chat-v3") -> ChainEntry:
+def _entry(provider: str = "openrouter", model: str = "deepseek/deepseek-chat-v3") -> ChainEntry:
     return ChainEntry(
         provider=provider,
-        slug=slug,
+        model=model,
         base_url="https://openrouter.ai/api/v1",
         api_key_env="OPENROUTER_API_KEY",
         cooldown_seconds=300,
@@ -75,7 +84,7 @@ def _ok(text: str = "ok") -> ResponseInfo:
 
 
 def _config(*entries: ChainEntry) -> ChainConfig:
-    return ChainConfig(role="coder", model="deepseek-v3", family="deepseek", chain=tuple(entries))
+    return ChainConfig(role="coder", name="deepseek-v3", family="deepseek", chain=tuple(entries))
 
 
 class _StubClock:
@@ -113,7 +122,7 @@ def test_validate_rejects_reserved_provider_name() -> None:
     config = _config(
         ChainEntry(
             provider="__internal__",
-            slug="x",
+            model="x",
             base_url="https://x.example/v1",
             api_key_env="OPENROUTER_API_KEY",
         )
@@ -126,7 +135,7 @@ def test_validate_rejects_unknown_provider() -> None:
     config = _config(
         ChainEntry(
             provider="not_a_provider",
-            slug="x",
+            model="x",
             base_url="https://x.example/v1",
             api_key_env="OPENROUTER_API_KEY",
         )
@@ -139,7 +148,7 @@ def test_validate_rejects_non_https_non_localhost_base_url() -> None:
     config = _config(
         ChainEntry(
             provider="openrouter",
-            slug="x",
+            model="x",
             base_url="http://api.evil.example/v1",
             api_key_env="OPENROUTER_API_KEY",
         )
@@ -158,7 +167,7 @@ def test_validate_rejects_empty_api_key_env_name() -> None:
     config = _config(
         ChainEntry(
             provider="openrouter",
-            slug="x",
+            model="x",
             base_url="https://x.example/v1",
             api_key_env="",
         )
@@ -174,7 +183,7 @@ def test_validate_permits_localhost_http_with_warning() -> None:
     config = _config(
         ChainEntry(
             provider="openrouter",
-            slug="deepseek/deepseek-chat-v3",
+            model="deepseek/deepseek-chat-v3",
             base_url="http://localhost:8080/v1",
             api_key_env="OPENROUTER_API_KEY",
         )
@@ -186,24 +195,24 @@ def test_validate_permits_localhost_http_with_warning() -> None:
 def test_validate_warns_when_slug_family_differs_from_role_family() -> None:
     config = ChainConfig(
         role="coder",
-        model="claude-3-5-sonnet",
+        name="claude-3-5-sonnet",
         family="anthropic",
-        chain=(_entry(slug="deepseek/deepseek-chat-v3"),),
+        chain=(_entry(model="deepseek/deepseek-chat-v3"),),
     )
     warnings = config.validate(env={"OPENROUTER_API_KEY": "k"})
-    assert any("slug family" in w for w in warnings)
+    assert any("entry family" in w for w in warnings)
 
 
 def test_validate_warns_on_mixed_adapter_categories() -> None:
     config = ChainConfig(
         role="coder",
-        model="deepseek-v3",
+        name="deepseek-v3",
         family="deepseek",
         chain=(
             _entry(),
             ChainEntry(
                 provider="anthropic",
-                slug="claude-3-5-sonnet-latest",
+                model="claude-3-5-sonnet-latest",
                 base_url="https://api.anthropic.com",
                 api_key_env="OPENROUTER_API_KEY",
             ),
@@ -211,6 +220,168 @@ def test_validate_warns_on_mixed_adapter_categories() -> None:
     )
     warnings = config.validate(env={"OPENROUTER_API_KEY": "k"})
     assert any("mixes adapter categories" in w for w in warnings)
+
+
+# ----- ADR-9 §Amendment 2026-07-23: per-entry model_slug + provider_params ---
+
+
+def test_dispatch_sends_each_entrys_own_model_not_the_role_name() -> None:
+    """Regression: the dispatcher used to send the ROLE's `name` (formerly
+    `model`) to every provider, ignoring each entry's own `model` (formerly
+    `slug`) entirely. Reproduced against the real ADR-9 §1 example shape:
+    OpenRouter and Fireworks legitimately use DIFFERENT model-identifier
+    strings for "the same" model. Both entries fail so we can inspect what
+    was actually sent to each, without needing a third entry to succeed on.
+    """
+    config = ChainConfig(
+        role="coder",
+        name="deepseek-v3",  # role-level display label — must NEVER be sent
+        family="deepseek",
+        chain=(
+            ChainEntry(
+                provider="openrouter",
+                model="deepseek/deepseek-chat-v3",
+                base_url="https://openrouter.ai/api/v1",
+                api_key_env="OPENROUTER_API_KEY",
+            ),
+            ChainEntry(
+                provider="fireworks",
+                model="accounts/fireworks/models/deepseek-v3",
+                base_url="https://api.fireworks.ai/inference/v1",
+                api_key_env="FIREWORKS_API_KEY",
+            ),
+        ),
+    )
+    or_stub = StubProvider(outcomes=[ProviderTransientError("x", status=500, kind="server_error")])
+    fw_stub = StubProvider(outcomes=[ProviderTransientError("x", status=500, kind="server_error")])
+
+    def factory(entry: ChainEntry) -> StubProvider:
+        return or_stub if entry.provider == "openrouter" else fw_stub
+
+    chain = ProviderChain(
+        config,
+        provider_factory=factory,
+        env={"OPENROUTER_API_KEY": "k", "FIREWORKS_API_KEY": "k2"},
+        clock=_StubClock(),
+        id_factory=ItertoolsId("call"),
+    )
+    with pytest.raises(ProviderChainExhaustedError):
+        chain.request(RequestInfo(model_slug=config.name, messages=()))
+
+    assert len(or_stub.received_requests) == 1
+    assert len(fw_stub.received_requests) == 1
+    assert or_stub.received_requests[0].model_slug == "deepseek/deepseek-chat-v3"
+    assert fw_stub.received_requests[0].model_slug == "accounts/fireworks/models/deepseek-v3"
+    # Neither entry ever saw the role-level name/display label.
+    assert or_stub.received_requests[0].model_slug != config.name
+    assert fw_stub.received_requests[0].model_slug != config.name
+
+
+def test_dispatch_scopes_provider_params_to_the_owning_entry_only() -> None:
+    """Regression: role-level ``extras`` used to be broadcast unconditionally
+    to every chain entry. Per-entry ``provider_params`` (ADR-9 §Amendment
+    2026-07-23) must be sent ONLY to the entry that declares it — a sibling
+    entry for a different provider must never see it.
+    """
+    config = ChainConfig(
+        role="coder",
+        name="mistral-small-2603",
+        family="mistral",
+        chain=(
+            ChainEntry(
+                provider="mistral",
+                model="mistral-small-2603",
+                base_url="https://api.mistral.ai/v1",
+                api_key_env="MISTRAL_API_KEY",
+                provider_params={"reasoning_effort": "high", "safe_prompt": False},
+            ),
+            ChainEntry(
+                provider="openrouter",
+                model="mistralai/mistral-small",
+                base_url="https://openrouter.ai/api/v1",
+                api_key_env="OPENROUTER_API_KEY",
+                # deliberately no provider_params here
+            ),
+        ),
+    )
+    mistral_stub = StubProvider(outcomes=[ProviderTransientError("x", status=500, kind="server_error")])
+    openrouter_stub = StubProvider(outcomes=[_ok("from openrouter")])
+
+    def factory(entry: ChainEntry) -> StubProvider:
+        return mistral_stub if entry.provider == "mistral" else openrouter_stub
+
+    chain = ProviderChain(
+        config,
+        provider_factory=factory,
+        env={"MISTRAL_API_KEY": "k", "OPENROUTER_API_KEY": "k2"},
+        clock=_StubClock(),
+        id_factory=ItertoolsId("call"),
+    )
+    response, _, _ = chain.request(RequestInfo(model_slug=config.name, messages=()))
+    assert response.text == "from openrouter"
+
+    assert len(mistral_stub.received_requests) == 1
+    assert mistral_stub.received_requests[0].extras.get("reasoning_effort") == "high"
+    assert mistral_stub.received_requests[0].extras.get("safe_prompt") is False
+
+    assert len(openrouter_stub.received_requests) == 1
+    # The fallback entry must NOT see the primary entry's provider_params.
+    assert "reasoning_effort" not in openrouter_stub.received_requests[0].extras
+    assert "safe_prompt" not in openrouter_stub.received_requests[0].extras
+
+
+def test_dispatch_applies_role_sampling_defaults_to_every_entry() -> None:
+    """Role-level ``sampling`` (temperature/max_tokens/top_p — new in ADR-9
+    §Amendment 2026-07-23) is sent identically to every chain entry when the
+    caller does not pass an explicit override.
+    """
+    config = ChainConfig(
+        role="coder",
+        name="deepseek-v3",
+        family="deepseek",
+        sampling={"temperature": 0.2, "max_tokens": 8000, "top_p": 0.9},
+        chain=(_entry("openrouter"), _entry("fireworks")),
+    )
+    stub = StubProvider(outcomes=[_ok("served")])
+    chain = ProviderChain(
+        config,
+        provider_factory=lambda _e: stub,
+        env={"OPENROUTER_API_KEY": "k"},
+        clock=_StubClock(),
+        id_factory=ItertoolsId("call"),
+    )
+    chain.request(RequestInfo(model_slug=config.name, messages=()))
+    sent = stub.received_requests[0]
+    assert sent.temperature == 0.2
+    assert sent.max_tokens == 8000
+    assert sent.top_p == 0.9
+
+
+def test_dispatch_explicit_caller_override_beats_role_sampling_default() -> None:
+    """An explicit caller-supplied value (e.g. `fa probe`'s
+    `temperature=0.0, max_tokens=1`) MUST take precedence over the role's
+    `sampling:` defaults — matching the pre-existing chain-extras-over-
+    prompt-composer-extras precedence convention this ADR already documents.
+    """
+    config = ChainConfig(
+        role="coder",
+        name="deepseek-v3",
+        family="deepseek",
+        sampling={"temperature": 0.7, "max_tokens": 8000},
+        chain=(_entry("openrouter"),),
+    )
+    stub = StubProvider(outcomes=[_ok("served")])
+    chain = ProviderChain(
+        config,
+        provider_factory=lambda _e: stub,
+        env={"OPENROUTER_API_KEY": "k"},
+        clock=_StubClock(),
+        id_factory=ItertoolsId("call"),
+    )
+    chain.request(RequestInfo(model_slug=config.name, messages=(), temperature=0.0, max_tokens=1))
+    sent = stub.received_requests[0]
+    assert sent.temperature == 0.0
+    assert sent.max_tokens == 1
 
 
 # ----- dispatch: success paths -----------------------------------------
@@ -508,8 +679,8 @@ def test_cooldown_ledger_is_shared_across_provider_chain_instances() -> None:
     # whose chains share the same (provider, slug) tuple share the
     # cooldown state.»
     shared: dict[tuple[str, str], CooldownRow] = {}
-    coder = ChainConfig(role="coder", model="deepseek-v3", family="deepseek", chain=(_entry(),))
-    planner = ChainConfig(role="planner", model="deepseek-v3", family="deepseek", chain=(_entry(),))
+    coder = ChainConfig(role="coder", name="deepseek-v3", family="deepseek", chain=(_entry(),))
+    planner = ChainConfig(role="planner", name="deepseek-v3", family="deepseek", chain=(_entry(),))
     coder_stub = StubProvider(
         outcomes=[
             ProviderTransientError("rate_limited: status=429", status=429, kind="rate_limited"),
@@ -575,19 +746,19 @@ def test_chain_from_mapping_coalesces_yaml_null_family_to_empty_string() -> None
     # validator would emit a confusing warning. The loader must
     # coalesce to the empty string.
     raw = {
-        "model": None,
+        "name": None,
         "family": None,
         "chain": [
             {
                 "provider": "openrouter",
-                "slug": "deepseek/deepseek-chat-v3",
+                "model": "deepseek/deepseek-chat-v3",
                 "base_url": "https://openrouter.ai/api/v1",
                 "api_key_env": "OPENROUTER_API_KEY",
             }
         ],
     }
     config = chain_from_mapping("coder", raw)
-    assert config.model == ""
+    assert config.name == ""
     assert config.family == ""
     # Validator must not produce a misleading «family 'None' !=» warning.
     warnings = config.validate(env={"OPENROUTER_API_KEY": "k"})
@@ -595,22 +766,22 @@ def test_chain_from_mapping_coalesces_yaml_null_family_to_empty_string() -> None
 
 
 def test_chain_from_mapping_raises_on_yaml_null_required_field() -> None:
-    # Each of the four required chain-entry fields (provider, slug,
+    # Each of the four required chain-entry fields (provider, model,
     # base_url, api_key_env) must raise a clean ConfigurationError
     # naming the offending field when the YAML row contains the field
     # as ``null``. Without this guard the loader would smuggle
     # str(None) == "None" into the ChainEntry and the downstream
     # ChainConfig.validate would raise a confusing «unknown provider
     # 'None'» / «api_key_env=None not set» error instead.
-    for null_field in ("provider", "slug", "base_url", "api_key_env"):
+    for null_field in ("provider", "model", "base_url", "api_key_env"):
         row: dict[str, Any] = {
             "provider": "openrouter",
-            "slug": "deepseek/deepseek-chat-v3",
+            "model": "deepseek/deepseek-chat-v3",
             "base_url": "https://openrouter.ai/api/v1",
             "api_key_env": "OPENROUTER_API_KEY",
         }
         row[null_field] = None
-        raw = {"model": "deepseek-v3", "family": "deepseek", "chain": [row]}
+        raw = {"name": "deepseek-v3", "family": "deepseek", "chain": [row]}
         with pytest.raises(ConfigurationError) as info:
             chain_from_mapping("coder", raw)
         msg = str(info.value)
@@ -624,15 +795,15 @@ def test_chain_from_mapping_raises_on_missing_required_field() -> None:
     # from a otherwise-valid row; the loader must surface a clean
     # ConfigurationError naming the missing field rather than letting
     # ``row["provider"]`` raise KeyError.
-    for missing_field in ("provider", "slug", "base_url", "api_key_env"):
+    for missing_field in ("provider", "model", "base_url", "api_key_env"):
         row: dict[str, Any] = {
             "provider": "openrouter",
-            "slug": "deepseek/deepseek-chat-v3",
+            "model": "deepseek/deepseek-chat-v3",
             "base_url": "https://openrouter.ai/api/v1",
             "api_key_env": "OPENROUTER_API_KEY",
         }
         del row[missing_field]
-        raw = {"model": "deepseek-v3", "family": "deepseek", "chain": [row]}
+        raw = {"name": "deepseek-v3", "family": "deepseek", "chain": [row]}
         with pytest.raises(ConfigurationError) as info:
             chain_from_mapping("coder", raw)
         assert missing_field in str(info.value)
@@ -647,12 +818,12 @@ def test_chain_from_mapping_coalesces_yaml_null_chain_field_to_empty_tuple() -> 
     # ``ChainConfig.validate`` surfaces the intended
     # ``ConfigurationError("empty chain — role not callable")``
     # rather than a confusing TypeError.
-    raw_explicit_null = {"model": "x", "family": "x", "chain": None}
+    raw_explicit_null = {"name": "x", "family": "x", "chain": None}
     # Must not raise TypeError.
     config_null = chain_from_mapping("coder", raw_explicit_null)
     assert config_null.chain == ()
 
-    raw_missing_key = {"model": "x", "family": "x"}
+    raw_missing_key = {"name": "x", "family": "x"}
     config_missing = chain_from_mapping("coder", raw_missing_key)
     assert config_missing.chain == ()
 
@@ -666,18 +837,19 @@ def test_chain_from_mapping_coalesces_yaml_null_on_chain_entry_numeric_fields() 
     # ``is not None`` ladder is what guarantees the defaults kick in
     # AND that an explicit zero is preserved.
     raw = {
-        "model": "deepseek-v3",
+        "name": "deepseek-v3",
         "family": "deepseek",
         "chain": [
             {
                 "provider": "openrouter",
-                "slug": "deepseek/deepseek-chat-v3",
+                "model": "deepseek/deepseek-chat-v3",
                 "base_url": "https://openrouter.ai/api/v1",
                 "api_key_env": "OPENROUTER_API_KEY",
                 "cooldown_seconds": None,
                 "transport_retries": None,
                 "timeout_seconds": None,
                 "extra_headers": None,
+                "provider_params": None,
             }
         ],
     }
@@ -688,6 +860,7 @@ def test_chain_from_mapping_coalesces_yaml_null_on_chain_entry_numeric_fields() 
     assert entry.transport_retries == 2  # DEFAULT_TRANSPORT_RETRIES
     assert entry.timeout_seconds == 300  # DEFAULT_TIMEOUT_SECONDS
     assert entry.extra_headers == {}
+    assert entry.provider_params == {}
 
 
 def test_chain_from_mapping_preserves_explicit_zero_on_numeric_fields() -> None:
@@ -698,12 +871,12 @@ def test_chain_from_mapping_preserves_explicit_zero_on_numeric_fields() -> None:
     # is falsy in Python — the loader MUST preserve the explicit
     # zero.
     raw = {
-        "model": "local-mock",
+        "name": "local-mock",
         "family": "local",
         "chain": [
             {
                 "provider": "openrouter",
-                "slug": "deepseek/deepseek-chat-v3",
+                "model": "deepseek/deepseek-chat-v3",
                 "base_url": "http://localhost:8080/v1",
                 "api_key_env": "OPENROUTER_API_KEY",
                 "cooldown_seconds": 0,
@@ -724,12 +897,12 @@ def test_chain_from_mapping_omitted_optional_fields_use_defaults() -> None:
     # uses the declared module defaults when the YAML row simply
     # omits the optional fields.
     raw = {
-        "model": "deepseek-v3",
+        "name": "deepseek-v3",
         "family": "deepseek",
         "chain": [
             {
                 "provider": "openrouter",
-                "slug": "deepseek/deepseek-chat-v3",
+                "model": "deepseek/deepseek-chat-v3",
                 "base_url": "https://openrouter.ai/api/v1",
                 "api_key_env": "OPENROUTER_API_KEY",
             }
@@ -741,25 +914,26 @@ def test_chain_from_mapping_omitted_optional_fields_use_defaults() -> None:
     assert entry.transport_retries == 2
     assert entry.timeout_seconds == 300
     assert entry.extra_headers == {}
+    assert entry.provider_params == {}
 
 
 def test_chain_from_mapping_preserves_string_family() -> None:
     # Positive sanity check that the ``or ""`` coercion does not
     # break the happy path.
     raw = {
-        "model": "deepseek-v3",
+        "name": "deepseek-v3",
         "family": "deepseek",
         "chain": [
             {
                 "provider": "openrouter",
-                "slug": "deepseek/deepseek-chat-v3",
+                "model": "deepseek/deepseek-chat-v3",
                 "base_url": "https://openrouter.ai/api/v1",
                 "api_key_env": "OPENROUTER_API_KEY",
             }
         ],
     }
     config = chain_from_mapping("coder", raw)
-    assert config.model == "deepseek-v3"
+    assert config.name == "deepseek-v3"
     assert config.family == "deepseek"
 
 
@@ -772,25 +946,25 @@ def test_chain_from_mapping_normalises_family_to_lowercase() -> None:
     # the safety-critical eval-vs-actor disjoint rule from ADR-2
     # §Amendment 2026-05-20. ``chain_from_mapping`` must normalise
     # via ``.strip().lower()`` so every downstream consumer (the
-    # disjoint check, the validator's slug-family mismatch warning,
+    # disjoint check, the validator's entry-family mismatch warning,
     # cooldown logging, Tier-2 telemetry) sees a canonical form.
     raw = {
-        "model": "DeepSeek-V3",
+        "name": "DeepSeek-V3",
         "family": "DeepSeek",
         "chain": [
             {
                 "provider": "openrouter",
-                "slug": "deepseek/deepseek-chat-v3",
+                "model": "deepseek/deepseek-chat-v3",
                 "base_url": "https://openrouter.ai/api/v1",
                 "api_key_env": "OPENROUTER_API_KEY",
             }
         ],
     }
     config = chain_from_mapping("coder", raw)
-    # ``model`` is NOT normalised — a provider's ``slug`` and the
-    # user-facing ``model`` label may legally be mixed-case. Only
+    # ``name`` is NOT normalised — a provider's ``model`` and the
+    # user-facing ``name`` label may legally be mixed-case. Only
     # ``family`` participates in the safety-critical equality check.
-    assert config.model == "DeepSeek-V3"
+    assert config.name == "DeepSeek-V3"
     assert config.family == "deepseek"
 
 
@@ -801,12 +975,12 @@ def test_chain_from_mapping_strips_whitespace_around_family() -> None:
     # strip behaviour so a future refactor cannot regress only the
     # case half.
     raw = {
-        "model": "deepseek-v3",
+        "name": "deepseek-v3",
         "family": "  deepseek  ",
         "chain": [
             {
                 "provider": "openrouter",
-                "slug": "deepseek/deepseek-chat-v3",
+                "model": "deepseek/deepseek-chat-v3",
                 "base_url": "https://openrouter.ai/api/v1",
                 "api_key_env": "OPENROUTER_API_KEY",
             }
@@ -841,3 +1015,115 @@ def test_invariant_adr2_eval_disjoint_uncircumventable_by_family_case() -> None:
             coder_family=planner.family,
             eval_family=eval_role.family,
         )
+
+
+# ----- ADR-9 §Amendment 2026-07-23: hard-cutover rejection of old field names ---
+
+
+def test_chain_from_mapping_rejects_old_role_level_model_field() -> None:
+    # Hard cutover (no dual-schema support, per explicit operator decision):
+    # the historical role-level 'model:' field name is REJECTED, not
+    # silently accepted or auto-migrated, so a stale models.yaml fails
+    # loudly at load time instead of silently sending a wrong/empty
+    # 'name' downstream.
+    raw = {
+        "model": "deepseek-v3",  # OLD field name
+        "family": "deepseek",
+        "chain": [
+            {
+                "provider": "openrouter",
+                "model": "deepseek/deepseek-chat-v3",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+            }
+        ],
+    }
+    with pytest.raises(ConfigurationError, match="'model:' at role level is the OLD field name") as info:
+        chain_from_mapping("coder", raw)
+    # Message must name the correct replacement field so the operator does
+    # not have to go read the ADR to fix their file.
+    assert "name:" in str(info.value)
+
+
+def test_chain_from_mapping_rejects_old_role_level_extras_field() -> None:
+    raw = {
+        "name": "mistral-small",
+        "family": "mistral",
+        "extras": {"reasoning_effort": "high"},  # OLD field name/location
+        "chain": [
+            {
+                "provider": "mistral",
+                "model": "mistral-small-2603",
+                "base_url": "https://api.mistral.ai/v1",
+                "api_key_env": "MISTRAL_API_KEY",
+            }
+        ],
+    }
+    with pytest.raises(ConfigurationError, match="'extras:' at role level is the OLD field name") as info:
+        chain_from_mapping("coder", raw)
+    assert "provider_params:" in str(info.value)
+
+
+def test_chain_from_mapping_rejects_old_chain_entry_slug_field() -> None:
+    raw = {
+        "name": "deepseek-v3",
+        "family": "deepseek",
+        "chain": [
+            {
+                "provider": "openrouter",
+                "slug": "deepseek/deepseek-chat-v3",  # OLD field name
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+            }
+        ],
+    }
+    with pytest.raises(ConfigurationError, match="'slug:' is the OLD field name") as info:
+        chain_from_mapping("coder", raw)
+    assert "model:" in str(info.value)
+
+
+def test_chain_from_mapping_rejects_old_chain_entry_extras_field() -> None:
+    raw = {
+        "name": "mistral-small",
+        "family": "mistral",
+        "chain": [
+            {
+                "provider": "mistral",
+                "model": "mistral-small-2603",
+                "base_url": "https://api.mistral.ai/v1",
+                "api_key_env": "MISTRAL_API_KEY",
+                "extras": {"reasoning_effort": "high"},  # not a valid chain-entry field
+            }
+        ],
+    }
+    with pytest.raises(ConfigurationError, match="not a valid chain-entry field") as info:
+        chain_from_mapping("coder", raw)
+    assert "provider_params:" in str(info.value)
+
+
+def test_chain_from_mapping_accepts_new_schema_with_sampling_and_provider_params() -> None:
+    # Positive counterpart to the four rejection tests above: the intended
+    # replacement schema loads cleanly, `sampling` and `provider_params`
+    # round-trip onto ChainConfig/ChainEntry unchanged (no validation of
+    # their *content* here — see ProviderChain.request tests for how the
+    # values are actually applied at dispatch time).
+    raw = {
+        "name": "mistral-small-2603",
+        "family": "mistral",
+        "sampling": {"temperature": 0.2, "max_tokens": 8000, "top_p": 1.0},
+        "chain": [
+            {
+                "provider": "mistral",
+                "model": "mistral-small-2603",
+                "base_url": "https://api.mistral.ai/v1",
+                "api_key_env": "MISTRAL_API_KEY",
+                "provider_params": {"reasoning_effort": "high", "safe_prompt": False},
+            }
+        ],
+    }
+    config = chain_from_mapping("coder", raw)
+    assert config.name == "mistral-small-2603"
+    assert config.sampling == {"temperature": 0.2, "max_tokens": 8000, "top_p": 1.0}
+    entry = config.chain[0]
+    assert entry.model == "mistral-small-2603"
+    assert entry.provider_params == {"reasoning_effort": "high", "safe_prompt": False}

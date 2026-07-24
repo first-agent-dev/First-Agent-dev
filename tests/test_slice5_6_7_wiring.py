@@ -125,7 +125,7 @@ def test_pr6_wiring_parallel_denied_preserved_order(tmp_path: Path) -> None:
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test",
+        name="test",
     )
 
     tc1 = make_tool_call("fs.read_file", {"path": "a.txt"}, "tc-1")
@@ -187,7 +187,7 @@ def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test",
+        name="test",
     )
 
     tc1 = make_tool_call("fs.instant_grep", {"query": "needle"}, "tc-1")
@@ -258,7 +258,7 @@ def test_pr6_wiring_pty_persistence_via_session(tmp_path: Path) -> None:
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test",
+        name="test",
     )
 
     tc1 = make_tool_call("fs.run_bash", {"command": "cd /tmp && pwd"}, "tc-1")
@@ -311,7 +311,7 @@ def test_pr6_wiring_cr_cleaning_via_bash(tmp_path: Path) -> None:
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test",
+        name="test",
     )
 
     # printf with \r
@@ -367,7 +367,7 @@ def test_pr6_wiring_subagent_role_env_and_events(tmp_path: Path) -> None:
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test",
+        name="test",
     )
 
     tc1 = make_tool_call(
@@ -447,7 +447,7 @@ def test_pr6_wiring_subagent_sandbox_deny(tmp_path: Path) -> None:
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test",
+        name="test",
     )
 
     # Malicious command should be denied by sandbox

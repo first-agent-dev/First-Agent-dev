@@ -177,6 +177,15 @@ the audit-evidence format.
 
 ## §1 Chain configuration shape
 
+> **Superseded 2026-07-23.** The field names below (`model:` at role
+> level, `slug:` per chain entry, role-level `extras:`) are the
+> **original v0.1 shape** and are kept here for historical context only.
+> They are rejected at load time as of the
+> [§Amendment 2026-07-23](#amendment-2026-07-23--modelsyaml-field-naming-disambiguation--per-entry-modelprovider_params-correctness-fix)
+> hard cutover. Current schema: role-level `name:`/`family:`/`sampling:`
+> + per-chain-entry `model:`/`provider_params:` — see the amendment
+> section below for the corrected example and full rationale.
+
 `~/.fa/models.yaml` per-role chain example:
 
 ```yaml
@@ -229,13 +238,13 @@ eval:
       api_key_env: NVIDIA_BUILD_API_KEY
 ```
 
-**Required fields per chain entry:** `provider` (string, must
+**(Historical) required fields per chain entry:** `provider` (string, must
 match a key in `PROVIDERS` registry), `slug` (provider-specific
 model identifier), `base_url` (HTTPS URL — wire-shape preserved
 verbatim), `api_key_env` (environment variable name carrying the
 API key for that provider).
 
-**Optional fields per chain entry:** `cooldown_seconds` (integer,
+**(Historical) optional fields per chain entry:** `cooldown_seconds` (integer,
 default 300), `transport_retries` (integer, default 1 — see Q-2 in
 the survey), `timeout_seconds` (integer, default 60 — per-request
 httpx timeout covering connect + read; raise for queued free-tier
@@ -243,6 +252,7 @@ endpoints e.g. 300), `extra_headers` (dict<str, str> for provider-
 specific request headers — e.g. OpenRouter's recommended
 `HTTP-Referer` + `X-Title` для usage analytics; never used to
 spoof transport identity per §8 point 2).
+
 
 **Config-load validation (`src/fa/providers/chain.py::ChainConfig.validate()`).**
 Validator MUST raise `ConfigurationError` at config-load time (not
@@ -978,8 +988,290 @@ one readable block.
   streaming only» relaxes in v0.2 (FA-internal prior art, not
   OSS-borrowed).
 
+### Amendment 2026-07-23 — `models.yaml` field-naming disambiguation + per-entry `model`/`provider_params` correctness fix
+
+**Source.** Live production incident (not synthetic): an operator
+building `models.yaml` by hand against this ADR's own §1 example could
+not determine what `slug:` was for or how it differed from the role-level
+`model:` field, and separately recalled having to duplicate a full URL
+into both `model:` and `slug:` when configuring a Fireworks chain entry
+in the past to get the right value sent to the provider. Both confusions
+trace to two real, reproduced defects in the T-2 implementation, not to
+operator error or to this ADR's prose:
+
+**Defect 1 — `slug` is never sent to any provider.** §1 documents
+`slug` as "provider-specific model identifier" and §2 step 2b's
+`BEFORE_LLM_CALL` hook context includes it, but the actual runtime
+dispatch (`ProviderChain.request`, `src/fa/providers/chain.py`) builds
+exactly one `RequestInfo` from the caller's `model_slug=` argument
+— which every call site (`coder_loop.py`, `cli.py` `_cmd_probe`,
+`compactor.py`) populates from **`ChainConfig.model`** (the role-level
+field) — and forwards that same `RequestInfo` unchanged to every
+`provider.request()` call in the chain loop. `entry.slug` is read in
+exactly two places: the `(provider, slug)` cooldown-ledger key, and a
+best-effort `extract_family(slug)` warning. **It never reaches the HTTP
+request body.** Reproduced directly: a chain with `model: "deepseek-v3"`
+(role) and two entries — `slug: "deepseek/deepseek-chat-v3"` (OpenRouter)
+and `slug: "accounts/fireworks/models/deepseek-v3"` (Fireworks) — sends
+`"model": "deepseek-v3"` to **both** providers; neither entry's own
+`slug` is used. For providers whose real model identifier differs from
+the role's logical name (the exact shape §1's own example chain
+declares), every non-primary chain entry receives the wrong `model`
+string and would 404 / reject instead of falling back correctly. This
+also explains the operator's Fireworks recollection: writing the full
+`https://api.fireworks.ai/.../model-name` URL into `model:`/`slug:` was
+a workaround that happened to produce a request that "worked" only
+insofar as `model:` (whatever string was in it) is the only thing ever
+actually sent — `slug:` was never the operative field, contrary to what
+its name and §1's own docs implied.
+
+**Defect 2 — role-level `extras` are broadcast unfiltered to every
+chain entry.** `chain_from_mapping` reads a role-level `extras:` block
+into `ChainConfig.extras` (§1 lists Mistral-specific fields —
+`prediction`, `reasoning_effort`, `safe_prompt`, `prompt_mode`,
+`parallel_tool_calls` — as the intended content); `coder_loop.py` merges
+`ChainConfig.extras` into every request's `RequestInfo.extras`
+unconditionally, and every adapter's `request()` method does
+`for key, value in request.extras.items(): body.setdefault(key, value)`
+(or the Mistral-specific equivalent) with no provider-awareness at all.
+Reproduced directly: a chain with `extras: {reasoning_effort: "high"}`
+and a two-entry chain (`mistral` primary, `openrouter` fallback) sends
+`reasoning_effort` to **both** providers, including OpenRouter's
+OpenAI-compatible endpoint, which does not define this field.
+
+**Prior-art grounding.** Neither defect is a novel design problem;
+production multi-provider config schemas already solve both:
+
+- **LiteLLM** (the most widely deployed OSS multi-provider proxy)
+  separates a user-facing alias (`model_name:`) from the literal
+  wire-level value (`litellm_params.model:`) — the latter is what is
+  actually sent to the provider, always. FA's `model:`/`slug:` pair
+  attempted the same split but the wire-level half was never wired up.
+- **Mistral's own API** (confirmed against `docs.mistral.ai/api/endpoint/chat`
+  and the official `mistralai/client-python` SDK reference), and every
+  other provider FA integrates (Fireworks, OpenRouter, Anthropic), all
+  call the wire-level field `model` in their own request body — there is
+  no provider-side concept resembling FA's `slug`. Naming FA's
+  per-entry field `slug` invented terminology with no external referent,
+  which is the direct cause of the operator's "model name again? what is
+  the difference" question.
+- **Vercel AI SDK** scopes non-portable per-provider tunables under
+  `providerOptions: { <provider name>: {...} }` — set once, sent only to
+  the matching provider, never broadcast to siblings with a different
+  wire shape. This is the shape §1's own "provider-specific" framing for
+  `extras` already implied but the implementation did not enforce.
+
+**Decision (breaking change — hard cutover, no dual-schema support).**
+
+Given the confirmed scope of defect 1 (any multi-provider chain where
+providers use different model-identifier strings for "the same" model
+was silently broken since T-2 landed) and defect 2 (any chain mixing a
+Mistral-shaped primary with a non-Mistral fallback silently leaked
+Mistral-only fields), the fix is not additive — three fields change
+shape and one call-site contract changes. Per project convention
+(REPAIR vs RELAX in `pr-creation/SKILL.md` — a strict invariant changing
+shape requires an ADR amendment, which this is), and per explicit
+operator instruction, this lands as a **hard cutover**: old-schema
+`models.yaml` files (using role-level `model:` as the sole model field,
+or chain-entry `slug:`) are rejected with a clear `ConfigurationError`
+at load time, not silently accepted or auto-migrated. Every deployed
+`models.yaml` (including the operator's own) must be rewritten before
+upgrading.
+
+1. **Role-level `model:` → `name:`.** Purely a display/logging/
+   `extract_family()`-input label. **MUST NEVER be forwarded to any
+   provider's HTTP request body** — this is now an explicit, tested
+   invariant, not an implicit one. `family:` is unchanged (ADR-2
+   §Amendment 2026-05-20 disjoint-check input only).
+
+2. **Chain-entry `slug:` → `model:`.** Renamed to match every real
+   provider's own terminology (no more "model name again?" ambiguity)
+   **and** wired for real: `ProviderChain.request()` now builds a
+   **per-entry** `RequestInfo` with `model_slug=entry.model` (not the
+   role's `name`) before each `provider.request()` call. This is the
+   actual behavior fix underlying defect 1 — the field rename alone
+   would not have helped if the dispatch loop still ignored it.
+   `(provider, slug)` cooldown-ledger keying and
+   `ChainAttemptRecord.slug`'s observability JSON key are **out of
+   scope for this amendment** (see §Scope boundary below) and continue
+   to read from the same underlying value, now sourced from
+   `ChainEntry.model` instead of `ChainEntry.slug`.
+
+3. **Role-level `extras:` → per-chain-entry `provider_params:`.**
+   Moved from `ChainConfig` to `ChainEntry`, matching Vercel AI SDK's
+   `providerOptions`-per-provider scoping. `ProviderChain.request()`
+   merges **only the current entry's** `provider_params` into that
+   entry's `RequestInfo.extras` — a sibling entry for a different
+   provider never sees another entry's `provider_params`. This is the
+   fix for defect 2.
+
+4. **New role-level `sampling:` block** (`temperature`, `max_tokens`,
+   `top_p`) — a `models.yaml`-configurable override for values that were
+   previously Python-hardcoded module constants
+   (`coder_loop.DEFAULT_TEMPERATURE = 0.0`,
+   `coder_loop.DEFAULT_MAX_TOKENS = 64000`) with **no config-file knob at
+   all**. Sent identically to every chain entry (these three fields are
+   the common denominator every adapter in `PROVIDERS` already
+   understands — confirmed: `OpenAICompatProvider`, `MistralProvider`,
+   and `AnthropicProvider` all accept `temperature`/`max_tokens` as
+   named `RequestInfo` fields already; `top_p` is new, threaded the same
+   way). Per-call-site explicit overrides (e.g. `fa probe`'s
+   `temperature=0.0, max_tokens=1`) continue to take precedence over the
+   role's `sampling:` defaults, matching the existing
+   chain-extras-override-prompt-composer-extras precedence rule in §1.
+
+**Scope boundary — explicitly NOT touched by this amendment:**
+
+- `ChainAttemptRecord.slug` and every Tier-1/2/3 observability JSON key
+  named `"slug"` (§4) are an **external contract** — already-written
+  `events.jsonl` files and any dashboard/tooling parsing them depend on
+  this exact key name. Renaming it is a separate, JSONL-schema-versioning
+  concern or a future amendment reference; it is out of scope here even
+  though the underlying value is now sourced from the renamed
+  `ChainEntry.model` field.
+- `(provider, slug)` as the cooldown-ledger key tuple (§3) is unchanged
+  in shape — still keyed on `(entry.provider, entry.model)` after the
+  rename, same two-tuple semantics, same known limitation (BACKLOG I-32
+  — multi-key rotation would need to widen this key, tracked separately,
+  not attempted here).
+- `route_name_for(provider, slug)` in `fa.egress_proxy.routing` keeps its
+  parameter name `slug` in its own signature (it is a pure, generic
+  "second identity component" function with no coupling to `models.yaml`
+  parsing); call sites now pass `entry.model` as that argument.
+- Provider-side model *listing*/*catalog* concerns (e.g. validating a
+  `model:` string against a live `/models` endpoint) remain out of scope,
+  same as the parent ADR's §8.
+
+**Migration note for the operator's own deployed `models.yaml`:**
+every `slug:` line becomes `model:`; every role's `model:` line becomes
+`name:`; the Mistral `extras:` block moves from role level into each
+Mistral chain entry as `provider_params:` (fallback entries for
+non-Mistral providers get no `provider_params:` block at all, matching
+the corrected per-entry scoping).
+
+**Corrected §1 example, same 3 roles, new schema:**
+
+```yaml
+coder:
+  name:   "deepseek-v3"           # display label / extract_family() input ONLY —
+                                   # never sent to any provider's request body.
+  family: "deepseek"              # unchanged — optional explicit override.
+  sampling:                       # NEW — sent identically to every chain entry.
+    temperature: 0.2
+    max_tokens: 8000
+    top_p: 1.0
+  chain:
+    - provider: openrouter
+      model:    "deepseek/deepseek-chat-v3"   # THE literal string sent as
+                                               # "model" in this entry's request.
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: OPENROUTER_API_KEY
+      cooldown_seconds: 300
+    - provider: fireworks
+      model:    "accounts/fireworks/models/deepseek-v3"
+      base_url: "https://api.fireworks.ai/inference/v1"
+      api_key_env: FIREWORKS_API_KEY
+    - provider: nvidia_build
+      model:    "deepseek-ai/deepseek-v3"
+      base_url: "https://integrate.api.nvidia.com/v1"
+      api_key_env: NVIDIA_BUILD_API_KEY
+    - provider: groq
+      model:    "deepseek-v3"
+      base_url: "https://api.groq.com/openai/v1"
+      api_key_env: GROQ_API_KEY
+
+planner:
+  name:   "kimi-k2"
+  family: "kimi"
+  chain:
+    - provider: openrouter
+      model:    "moonshotai/kimi-k2"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: OPENROUTER_API_KEY
+    - provider: groq
+      model:    "kimi-k2"
+      base_url: "https://api.groq.com/openai/v1"
+      api_key_env: GROQ_API_KEY
+
+eval:
+  name:   "qwen-3-32b"            # different family from coder + planner — disjoint
+  family: "qwen"
+  chain:
+    - provider: openrouter
+      model:    "qwen/qwen-3-32b-instruct"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: OPENROUTER_API_KEY
+    - provider: nvidia_build
+      model:    "qwen/qwen-3-32b"
+      base_url: "https://integrate.api.nvidia.com/v1"
+      api_key_env: NVIDIA_BUILD_API_KEY
+```
+
+**A worked mixed-provider `provider_params:` example** (the exact shape
+that motivated this amendment — a Mistral-specific tunable that must
+NOT reach a non-Mistral fallback):
+
+```yaml
+coder:
+  name:   "mistral-small-2603"
+  family: "mistral"
+  chain:
+    - provider: mistral
+      model:    "mistral-small-2603"
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: MISTRAL_API_KEY
+      provider_params:            # sent ONLY to this entry (mistral).
+        reasoning_effort: "high"
+        safe_prompt: false
+    - provider: openrouter
+      model:    "mistralai/mistral-small"   # different platform, different
+                                             # model string — now actually used.
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: OPENROUTER_API_KEY
+      # no provider_params here — OpenRouter's OpenAI-compatible endpoint
+      # does not define reasoning_effort/safe_prompt, and (post-fix) will
+      # genuinely never receive them.
+```
+
+**(Current) required fields per chain entry:** `provider` (string, must
+match a key in `PROVIDERS` registry), `model` (provider-specific model
+identifier — the literal string sent as `"model"` in this entry's
+request body; renamed from `slug` — see amendment above), `base_url`
+(HTTPS URL — wire-shape preserved verbatim), `api_key_env` (environment
+variable name carrying the API key for that provider).
+
+**(Current) optional fields per chain entry:** `cooldown_seconds` (integer,
+default 300), `transport_retries` (integer, default 1 — see Q-2 in the
+survey), `timeout_seconds` (integer, default 60 — per-request httpx
+timeout covering connect + read; raise for queued free-tier endpoints
+e.g. 300), `extra_headers` (dict<str, str> for provider-specific request
+headers — e.g. OpenRouter's recommended `HTTP-Referer` + `X-Title` для
+usage analytics; never used to spoof transport identity per §8 point 2),
+`provider_params` (dict<str, Any> for provider-specific request-body
+fields sent ONLY to this entry — e.g. Mistral's `reasoning_effort`,
+`safe_prompt`, `prompt_mode`, `parallel_tool_calls`, `prediction`;
+renamed and re-scoped from role-level `extras` — see amendment above).
+
 ## References
 
+- **Amendment 2026-07-23 references:**
+  - `knowledge/skills/pr-creation/SKILL.md` §Level-2 CLASS — this lands as
+    `INTENT: FIX`, `CLASS: RELAX` (a strict invariant — "the wire-level
+    model string is chosen how" — changes shape; ADR amendment landing in
+    the same PR per that skill's rule).
+  - `knowledge/BACKLOG.md` / `worklogs/BACKLOG.md` I-32 — the multi-key
+    rotation gap this same investigation surfaced remains separately
+    tracked; not implemented by this amendment.
+  - LiteLLM config schema:
+    <https://mintlify.wiki/BerriAI/litellm/api/config-schema>
+    (`model_list[].model_name` alias vs `litellm_params.model` wire value).
+  - Mistral Chat Completions API:
+    <https://docs.mistral.ai/api/endpoint/chat> (request body `model`
+    field; no `slug`-equivalent concept in the provider's own API).
+  - Vercel AI SDK `providerOptions` scoping:
+    <https://ai-sdk.dev/docs/ai-sdk-core/reasoning> and
+    <https://ai-sdk.dev/providers/ai-sdk-providers/mistral>
+    (per-provider tunables, never broadcast to unrelated providers).
 - Companion survey: [`knowledge/research/provider-client-survey-2026-05.md`](../research/provider-client-survey-2026-05.md) — audit evidence for all decisions in this ADR.
 - [ADR-2 — LLM tiering](./ADR-2-llm-tiering.md) — Role/tier mapping; «no cross-tier auto-escalation»; Amendment 2026-05-20 family-disjoint rule (rationale + slug-extraction; sub-amendment 2026-05-21 role-layer enforcement).
 - [ADR-6 — Tool sandbox](./ADR-6-tool-sandbox-allow-list.md) — LLM call is NOT a tool call (LLM calls bypass tool sandbox; tool sandbox boundary is the chain's *upstream* concern).

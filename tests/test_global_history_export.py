@@ -408,7 +408,7 @@ def test_global_history_export_via_drive_session(tmp_path: Path) -> None:
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test-model-live",
+        name="test-model-live",
     )
 
     tc1 = make_tool_call("fs.read_file", {"path": "a.txt"}, "tc-1")

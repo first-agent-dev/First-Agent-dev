@@ -21,6 +21,7 @@ from fa.providers.base import (
 )
 from fa.providers.errors import ProviderAuthError, ProviderTransientError
 from fa.providers.mistral_conversations import (
+    MISTRAL_CONVERSATIONS_RECOGNIZED_PROVIDER_PARAMS_KEYS,
     MistralConversationsProvider,
     _build_conversations_body,
 )
@@ -243,6 +244,54 @@ class TestBuildConversationsBody:
         with caplog.at_level(logging.WARNING, logger="fa.providers.mistral_conversations"):
             body = _build_conversations_body(request)
         assert "tools" not in body or not body.get("tools")
+
+    def test_recognized_provider_params_keys_are_all_actually_forwarded(self) -> None:
+        """Anti-drift regression: MISTRAL_CONVERSATIONS_RECOGNIZED_PROVIDER_PARAMS_KEYS
+        is consumed by fa.providers.routing_lint as the single source of
+        truth for "does this adapter recognise this provider_params key" —
+        if the constant claims a key is recognised but _build_conversations_body
+        actually drops it, routing-check would give a false "OK" for a
+        config whose provider_params silently never reaches the request.
+        Mirrors the equivalent regression test for the plain (chat-
+        completions) mistral adapter — see tests/test_mistral_provider.py.
+        """
+        completion_args_keys = {
+            "prediction": {"type": "content", "content": "x"},
+            "response_format": {"type": "json_object"},
+            "reasoning_effort": "high",
+            "prompt_cache_key": "some-key",
+            "safe_prompt": True,
+            "prompt_mode": "reasoning",
+            "parallel_tool_calls": False,
+        }
+        top_level_keys = {
+            "store": False,
+            "agent_id": "agt-123",
+            # mistral_tools is exercised in test_builtin_tools_from_extras
+            # above with a shape-validated value; not repeated here.
+        }
+        all_sample_keys = set(completion_args_keys) | set(top_level_keys) | {"mistral_tools"}
+        assert all_sample_keys == MISTRAL_CONVERSATIONS_RECOGNIZED_PROVIDER_PARAMS_KEYS, (
+            "This test's sample keys must be kept in sync with the exported constant."
+        )
+        for key, value in completion_args_keys.items():
+            request = RequestInfo(
+                model_slug="mistral-medium-2604",
+                messages=({"role": "user", "content": "Hi"},),
+                extras={key: value},
+            )
+            body = _build_conversations_body(request)
+            assert key in body.get("completion_args", {}), (
+                f"recognised completion_args key {key!r} was NOT forwarded into the request body"
+            )
+        for key, value in top_level_keys.items():
+            request = RequestInfo(
+                model_slug="mistral-medium-2604",
+                messages=({"role": "user", "content": "Hi"},),
+                extras={key: value},
+            )
+            body = _build_conversations_body(request)
+            assert key in body, f"recognised top-level key {key!r} was NOT forwarded into the request body"
 
 
 # ── Response normalization ──────────────────────────────────────────

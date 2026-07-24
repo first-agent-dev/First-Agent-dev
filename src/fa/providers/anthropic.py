@@ -124,6 +124,8 @@ def _build_request_body(request: RequestInfo) -> dict[str, Any]:
             body["system"] = "\n\n".join(cast(str, block["text"]) for block in structured_system)
     if request.temperature is not None:
         body["temperature"] = request.temperature
+    if request.top_p is not None:
+        body["top_p"] = request.top_p
     if request.tools:
         body["tools"] = [
             {

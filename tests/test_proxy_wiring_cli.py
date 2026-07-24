@@ -16,18 +16,18 @@ _TOKEN = "fa-proxy-token-abcdef123456"
 def _chain() -> ChainConfig:
     return ChainConfig(
         role="coder",
-        model="llama",
+        name="llama",
         family="llama",
         chain=(
             ChainEntry(
                 provider="openrouter",
-                slug="meta-llama/llama-3.1-8b",
+                model="meta-llama/llama-3.1-8b",
                 base_url="https://openrouter.ai/api/v1",
                 api_key_env="OPENROUTER_API_KEY",
             ),
             ChainEntry(
                 provider="fireworks",
-                slug="llama-v3p1-8b",
+                model="llama-v3p1-8b",
                 base_url="https://api.fireworks.ai/inference/v1",
                 api_key_env="FIREWORKS_API_KEY",
             ),

@@ -89,12 +89,12 @@ class FakeProvider:
 def _make_chain(provider: FakeProvider) -> ProviderChain:
     entry = ChainEntry(
         provider="openrouter",
-        slug="test/model",
+        model="test/model",
         base_url="https://example.invalid/v1",
         api_key_env="TEST_KEY",
         cooldown_seconds=300,
     )
-    config = ChainConfig(role="coder", model="test-model", family="", chain=(entry,))
+    config = ChainConfig(role="coder", name="test-model", family="", chain=(entry,))
     return ProviderChain(
         config,
         provider_factory=lambda _e: provider,
@@ -806,12 +806,12 @@ def test_drive_session_keyboard_interrupt_returns_outcome(
 
     entry = ChainEntry(
         provider="openrouter",
-        slug="test/model",
+        model="test/model",
         base_url="https://example.invalid/v1",
         api_key_env="TEST_KEY",
         cooldown_seconds=300,
     )
-    config = ChainConfig(role="coder", model="test-model", family="", chain=(entry,))
+    config = ChainConfig(role="coder", name="test-model", family="", chain=(entry,))
     chain = ProviderChain(
         config,
         provider_factory=lambda _e: InterruptProvider(),

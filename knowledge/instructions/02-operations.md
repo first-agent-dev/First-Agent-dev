@@ -833,11 +833,11 @@ git diff | fa run -r eval "Проверь изменения в контекст
 
 ```yaml
 compactor:
-  model: "accounts/fireworks/models/phi-4-mini"
+  name: "phi-4-mini"
   family: "phi"
   chain:
     - provider: fireworks
-      slug: "accounts/fireworks/models/phi-4-mini"
+      model: "accounts/fireworks/models/phi-4-mini"
       base_url: "https://api.fireworks.ai/inference/v1"
       api_key_env: FIREWORKS_API_KEY
       timeout_seconds: 15

@@ -1,10 +1,10 @@
-"""ChainConfig + ProviderChain + cooldown bookkeeping (ADR-9 §1..§4).
+"""ChainConfig + ProviderChain + cooldown bookkeeping (ADR-9 §1..§4, §Amendment 2026-07-23).
 
 This is the dispatch core of T-2: a per-role ordered list of chain
 entries, each pinning the *same* logical model identity on a different
 provider platform. The chain walks entries in declared order; the
 first entry not in cooldown is attempted; transient failure cools the
-``(provider, slug)`` tuple and the walk continues to the next entry.
+``(provider, model)`` tuple and the walk continues to the next entry.
 
 The dispatcher is intentionally *not* aware of observability hooks —
 ADR-9 §4 lifecycle wiring lives in the inner-loop runtime. Instead,
@@ -28,7 +28,7 @@ import os
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 from urllib.parse import urlparse
 
@@ -85,7 +85,7 @@ def _validate_context_budget_settings(config: ChainConfig) -> None:
 
 @dataclass(frozen=True)
 class ChainEntry:
-    """One row of a role's ``chain:`` config (ADR-9 §1).
+    """One row of a role's ``chain:`` config (ADR-9 §1, §Amendment 2026-07-23).
 
     ``transport_retries`` is the per-entry low-level transport retry budget.
     It is consumed by the production transport before the provider chain sees
@@ -93,29 +93,55 @@ class ChainEntry:
     fallback/cooldown logic: it applies only to transport/network failures, not
     to HTTP transient status responses such as 429/5xx, which remain owned by
     :class:`ProviderChain`.
+
+    ``model`` is THE literal string sent as ``"model"`` in this entry's HTTP
+    request body — renamed from the historical ``slug`` field name (which
+    every real provider calls ``model`` in its own API; see ADR-9 §Amendment
+    2026-07-23 for the rationale and the accompanying dispatch-loop fix that
+    makes this field actually reach the request, where the old ``slug`` field
+    never did).
+
+    ``provider_params`` are provider-specific request-body fields sent ONLY
+    to this entry (e.g. Mistral's ``reasoning_effort``, ``safe_prompt``) —
+    renamed and re-scoped from the historical role-level ``ChainConfig.extras``,
+    which was broadcast unconditionally to every chain entry regardless of
+    whether that provider understood the field.
     """
 
     provider: str
-    slug: str
+    model: str
     base_url: str
     api_key_env: str
     cooldown_seconds: int = DEFAULT_COOLDOWN_SECONDS
     transport_retries: int = DEFAULT_TRANSPORT_RETRIES
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     extra_headers: Mapping[str, str] = field(default_factory=dict)
+    provider_params: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class ChainConfig:
-    """Per-role chain config — produced by the ``~/.fa/models.yaml`` loader."""
+    """Per-role chain config — produced by the ``~/.fa/models.yaml`` loader.
+
+    ``name`` is a display/logging/``extract_family()``-input label ONLY —
+    it is NEVER forwarded to any provider's request body (renamed from the
+    historical ``model`` field name, which collided with the per-entry wire
+    value; see ADR-9 §Amendment 2026-07-23).
+
+    ``sampling`` carries role-level default request parameters
+    (``temperature``, ``max_tokens``, ``top_p``) sent identically to every
+    chain entry — the common denominator every registered adapter already
+    understands. Per-call-site explicit overrides (e.g. ``fa probe``'s
+    ``temperature=0.0, max_tokens=1``) take precedence over these defaults.
+    """
 
     role: str
-    model: str
+    name: str
     family: str
     chain: tuple[ChainEntry, ...]
     context_limit: int = 150000
     compaction_threshold: int | None = None
-    extras: Mapping[str, Any] = field(default_factory=dict)
+    sampling: Mapping[str, Any] = field(default_factory=dict)
 
     def validate(
         self,
@@ -185,18 +211,18 @@ class ChainConfig:
                     f"to reference a different variable."
                 )
             # Best-effort model-identity check (ADR-9 §1 + §7 reframed):
-            # slug strings vary legitimately across providers, so we
-            # WARN (not error) when extract_family(slug) disagrees
-            # with the role's declared ``family:``. Slugs that defeat
+            # entry.model strings vary legitimately across providers, so we
+            # WARN (not error) when extract_family(entry.model) disagrees
+            # with the role's declared ``family:``. Model strings that defeat
             # the heuristic entirely surface as FamilyExtractionError
             # — also a warning, not a hard reject.
             try:
-                inferred_family = extract_family(entry.slug)
+                inferred_family = extract_family(entry.model)
             except FamilyExtractionError:
-                warnings.append(f"{label}: cannot infer family from slug {entry.slug!r}; verify chain entry")
+                warnings.append(f"{label}: cannot infer family from model {entry.model!r}; verify chain entry")
             else:
                 if self.family and inferred_family != self.family:
-                    warnings.append(f"{label}: slug family {inferred_family!r} != role family {self.family!r}")
+                    warnings.append(f"{label}: entry family {inferred_family!r} != role family {self.family!r}")
         # Best-effort adapter-homogeneity check (ADR-9 §1 + §2g):
         # mixed adapter categories (OpenAI-compat + Anthropic in one
         # chain) break the 400/422 fail-fast assumption that «the
@@ -293,19 +319,47 @@ class ProviderChain:
 
         if logical_call_id is None:
             logical_call_id = self._id_factory()
+        # Role-level `sampling:` (ADR-9 §Amendment 2026-07-23) supplies
+        # DEFAULTS for fields the caller did not set explicitly. A caller
+        # that passes an explicit value (e.g. `fa probe`'s
+        # `temperature=0.0, max_tokens=1`) always wins — matching the
+        # existing chain-extras-over-prompt-composer-extras precedence
+        # rule this ADR already documents for provider_params/extras.
+        sampling = self._config.sampling
+        effective_temperature = request.temperature if request.temperature is not None else sampling.get("temperature")
+        effective_max_tokens = request.max_tokens if request.max_tokens is not None else sampling.get("max_tokens")
+        effective_top_p = request.top_p if request.top_p is not None else sampling.get("top_p")
         attempts: list[ChainAttemptRecord] = []
         for entry in self._config.chain:
             now = self._clock()
-            key = (entry.provider, entry.slug)
+            key = (entry.provider, entry.model)
             row = self._cooldowns.get(key)
             if row is not None and row.expires_at > now:
                 continue
             api_key = self._env.get(entry.api_key_env, "")
             provider = self._provider_factory(entry)
             start = self._clock()
+            # Per-entry request (ADR-9 §Amendment 2026-07-23): each chain
+            # entry gets ITS OWN `model_slug` (entry.model — the literal
+            # string this provider expects, which legitimately differs
+            # across platforms for "the same" logical model) and ITS OWN
+            # `provider_params` merged into `extras` — never a sibling
+            # entry's provider-specific fields. Role-level `sampling`
+            # defaults apply uniformly (every adapter already understands
+            # temperature/max_tokens/top_p).
+            entry_extras: dict[str, Any] = dict(request.extras)
+            entry_extras.update(entry.provider_params)
+            entry_request = replace(
+                request,
+                model_slug=entry.model,
+                temperature=effective_temperature,
+                max_tokens=effective_max_tokens,
+                top_p=effective_top_p,
+                extras=entry_extras,
+            )
             try:
                 response = provider.request(
-                    request,
+                    entry_request,
                     base_url=entry.base_url,
                     api_key=api_key,
                     timeout_seconds=float(entry.timeout_seconds),
@@ -317,7 +371,7 @@ class ProviderChain:
                 attempts.append(
                     ChainAttemptRecord(
                         provider=entry.provider,
-                        slug=entry.slug,
+                        slug=entry.model,
                         status=exc.status,
                         ms=elapsed_ms,
                         error="request_shape",
@@ -332,7 +386,7 @@ class ProviderChain:
                 attempts.append(
                     ChainAttemptRecord(
                         provider=entry.provider,
-                        slug=entry.slug,
+                        slug=entry.model,
                         status=exc.status,
                         ms=elapsed_ms,
                         error="auth_failed",
@@ -344,7 +398,7 @@ class ProviderChain:
                 attempts.append(
                     ChainAttemptRecord(
                         provider=entry.provider,
-                        slug=entry.slug,
+                        slug=entry.model,
                         status=exc.status,
                         ms=elapsed_ms,
                         error=exc.kind,
@@ -361,7 +415,7 @@ class ProviderChain:
                 )
                 self._cooldowns[key] = CooldownRow(
                     provider=entry.provider,
-                    slug=entry.slug,
+                    slug=entry.model,
                     started_at=start,
                     expires_at=cooldown_until,
                     trigger_status=exc.status,
@@ -373,7 +427,7 @@ class ProviderChain:
             attempts.append(
                 ChainAttemptRecord(
                     provider=entry.provider,
-                    slug=entry.slug,
+                    slug=entry.model,
                     status=200,
                     ms=elapsed_ms,
                     error=None,
@@ -391,10 +445,34 @@ class ProviderChain:
 def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
     """Build a :class:`ChainConfig` from a YAML-loaded mapping.
 
-    Helper used by the future ``~/.fa/models.yaml`` loader; landed
-    here (rather than in the loader) so the chain shape stays
-    co-located with its validator.
+    Helper used by the ``~/.fa/models.yaml`` loader; landed here (rather
+    than in the loader) so the chain shape stays co-located with its
+    validator.
+
+    ADR-9 §Amendment 2026-07-23 hard cutover: the historical field names
+    (role-level ``model:``, chain-entry ``slug:``, role-level ``extras:``)
+    are REJECTED with an explicit migration hint, not silently accepted —
+    see the amendment for the rationale (the old names were both confusing
+    and, for ``slug``/``extras``, connected to nothing / broadcast
+    incorrectly).
     """
+
+    if "model" in raw:
+        raise ConfigurationError(
+            f"role {role!r}: 'model:' at role level is the OLD field name (ADR-9 §Amendment "
+            f"2026-07-23). Fix: rename it to 'name:' in ~/.fa/models.yaml — the role-level "
+            f"field is a display/logging label only and is NEVER sent to any provider; the "
+            f'string actually sent as "model" in each HTTP request now comes from each '
+            f"chain entry's own 'model:' field (was 'slug:')."
+        )
+    if "extras" in raw:
+        raise ConfigurationError(
+            f"role {role!r}: 'extras:' at role level is the OLD field name (ADR-9 §Amendment "
+            f"2026-07-23). Fix: move these fields into a 'provider_params:' block under EACH "
+            f"chain entry that should receive them in ~/.fa/models.yaml — role-level 'extras:' "
+            f"used to be broadcast to every chain entry regardless of whether that provider "
+            f"understood the field; 'provider_params:' is scoped to a single entry."
+        )
 
     # ``raw.get("chain", ())`` returns the actual value when the YAML
     # contains ``chain: null`` (or bare ``chain:``) because the key
@@ -405,16 +483,31 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
     # chain — role not callable")`` instead of a confusing crash.
     chain_rows: Sequence[Mapping[str, Any]] = raw.get("chain") or ()
     # Required chain-entry fields must be non-null AND present per ADR-9 §1
-    # chain-entry schema. ``str(row["provider"])`` would smuggle the literal
-    # string ``"None"`` into the ``ChainEntry`` on YAML ``provider: null``,
-    # and ``row["provider"]`` would raise ``KeyError`` (less helpful than a
+    # chain-entry schema (as amended 2026-07-23: 'model', not 'slug').
+    # ``str(row["provider"])`` would smuggle the literal string ``"None"``
+    # into the ``ChainEntry`` on YAML ``provider: null``, and
+    # ``row["provider"]`` would raise ``KeyError`` (less helpful than a
     # named ``ConfigurationError``) on a missing key. The downstream
     # validator catches the smuggled ``"None"`` indirectly («unknown
     # provider 'None'»), but the user-facing message is clearer when the
     # loader surfaces the offending field by name. Same pattern as the
     # optional-field null coercion below.
     for index, row in enumerate(chain_rows):
-        for field_name in ("provider", "slug", "base_url", "api_key_env"):
+        if "slug" in row:
+            raise ConfigurationError(
+                f"role {role!r} chain[{index}]: 'slug:' is the OLD field name (ADR-9 §Amendment "
+                f"2026-07-23). Fix: rename it to 'model:' in ~/.fa/models.yaml — this is the "
+                f'literal string sent as "model" in this entry\'s request body (every real '
+                f"provider API calls this field 'model'; the historical 'slug' name was never "
+                f"actually wired to the request)."
+            )
+        if "extras" in row:
+            raise ConfigurationError(
+                f"role {role!r} chain[{index}]: 'extras:' is not a valid chain-entry field "
+                f"(ADR-9 §Amendment 2026-07-23). Fix: use 'provider_params:' instead in "
+                f"~/.fa/models.yaml."
+            )
+        for field_name in ("provider", "model", "base_url", "api_key_env"):
             if row.get(field_name) is None:
                 raise ConfigurationError(
                     f"role {role!r} chain[{index}]: required field {field_name!r} is null or missing. "
@@ -431,12 +524,12 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
     # a localhost gateway, ``timeout_seconds: 0`` to opt out of the
     # transport timeout — is preserved instead of being silently
     # coalesced to the default (0 is falsy in Python). For
-    # ``extra_headers`` ``or {}`` is safe because an empty dict and
-    # a missing dict are observationally equivalent.
+    # ``extra_headers`` / ``provider_params`` ``or {}`` is safe because
+    # an empty dict and a missing dict are observationally equivalent.
     entries = tuple(
         ChainEntry(
             provider=str(row["provider"]),
-            slug=str(row["slug"]),
+            model=str(row["model"]),
             base_url=str(row["base_url"]),
             api_key_env=str(row["api_key_env"]),
             cooldown_seconds=int(
@@ -449,21 +542,22 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
                 row["timeout_seconds"] if row.get("timeout_seconds") is not None else DEFAULT_TIMEOUT_SECONDS
             ),
             extra_headers=dict(row.get("extra_headers") or {}),
+            provider_params=dict(row.get("provider_params") or {}),
         )
         for row in chain_rows
     )
     # ``raw.get(key, "")`` returns the actual value when the YAML row
     # contains ``key: null`` (because the key exists), so ``str(None)``
     # would smuggle the literal string ``"None"`` into the config and
-    # the validator would emit a confusing «slug family X != role
+    # the validator would emit a confusing «entry family X != role
     # family 'None'» warning. ``raw.get(key) or ""`` coalesces both
     # missing-key and None-value to the empty string.
     #
     # ``family`` is additionally normalised via ``.strip().lower()``
     # so every downstream consumer of ``ChainConfig.family`` —
     # ``check_eval_disjoint`` (ADR-2 §Amendment 2026-05-20 rule 1,
-    # case-sensitive ``==``), the validator's slug-family mismatch
-    # warning (compares against ``extract_family(slug)`` which is
+    # case-sensitive ``==``), the validator's entry-family mismatch
+    # warning (compares against ``extract_family(entry.model)`` which is
     # already lowercased), cooldown logging, Tier-2 telemetry — sees
     # a canonical form. Without this normalisation a YAML
     # ``family: "DeepSeek"`` (mixed case) would bypass the
@@ -490,21 +584,22 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
             f"compaction_threshold={compaction_threshold_raw!r}). "
             f"Fix: use integer values in ~/.fa/models.yaml."
         ) from exc
-    # Role-level extras: provider-specific parameters that the caller wants
-    # forwarded to the LLM request body. These are distinct from per-chain-entry
-    # ``extra_headers`` (HTTP headers) — ``extras`` are body-level fields like
-    # ``prediction``, ``reasoning_effort``, ``response_format``, etc.
-    # Currently used by the Mistral adapter for Mistral-specific features.
-    # Values are passed through verbatim (no validation here — the adapter
-    # validates its own fields).
-    extras_raw = raw.get("extras")
-    role_extras: Mapping[str, Any] = extras_raw if isinstance(extras_raw, Mapping) else {}
+    # Role-level sampling defaults (ADR-9 §Amendment 2026-07-23): sent
+    # identically to every chain entry unless the caller passes an
+    # explicit override (see ProviderChain.request). Values are passed
+    # through verbatim; ProviderChain.request applies them as fallbacks
+    # for RequestInfo.temperature / max_tokens / top_p (None means "use
+    # role default"), so no type coercion happens here — a malformed
+    # value surfaces as a TypeError from the provider's own transport
+    # layer, same failure mode as a malformed explicit call-site value.
+    sampling_raw = raw.get("sampling")
+    sampling: Mapping[str, Any] = sampling_raw if isinstance(sampling_raw, Mapping) else {}
     return ChainConfig(
         role=role,
-        model=str(raw.get("model") or ""),
+        name=str(raw.get("name") or ""),
         family=str(raw.get("family") or "").strip().lower(),
         chain=entries,
         context_limit=context_limit,
         compaction_threshold=compaction_threshold,
-        extras=role_extras,
+        sampling=sampling,
     )

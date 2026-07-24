@@ -4,7 +4,7 @@ Verifies:
 1. compactor_chain is typed as ProviderChain | None (not Any | None)
 2. model_slug is accessed via direct attribute (not double-getattr)
 3. compactor_chain=None → compact() returns local fallback (not crash)
-4. compactor_chain with real config → model_slug comes from config.model
+4. compactor_chain with real config → model_slug comes from config.name
 5. No getattr on compactor_chain for config/model access in source
 """
 
@@ -40,17 +40,17 @@ def test_compactor_chain_none_returns_local_fallback() -> None:
     assert "## NEXT ACTION" in result
 
 
-# ── Kill-check 2: compactor_chain with config uses config.model ───────
+# ── Kill-check 2: compactor_chain with config uses config.name ────────
 
 
 def test_compactor_chain_uses_config_model_directly() -> None:
-    """When compactor_chain has a real ChainConfig with .config.model,
-    the model_slug in the RequestInfo must come from config.model."""
+    """When compactor_chain has a real ChainConfig with .config.name,
+    the model_slug in the RequestInfo must come from config.name."""
     from tests.fixtures.session_wiring import make_test_chain_config
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test-compactor-model",
+        name="test-compactor-model",
         context_limit=100000,
     )
     mock_response = MagicMock()
@@ -60,7 +60,7 @@ def test_compactor_chain_uses_config_model_directly() -> None:
     compactor = FullLLMCompactor(compactor_chain=mock_chain)
     compactor.compact("History content")
 
-    # Verify the request was made and the model_slug came from config.model
+    # Verify the request was made and the model_slug came from config.name
     assert mock_chain.request.called
     request_arg = mock_chain.request.call_args[0][0]
     assert request_arg.model_slug == "test-compactor-model"
@@ -70,7 +70,7 @@ def test_compactor_chain_uses_config_model_directly() -> None:
 
 
 def test_no_getattr_on_compactor_chain_config_model() -> None:
-    """Source code must not use getattr to access compactor_chain.config.model.
+    """Source code must not use getattr to access compactor_chain.config.name.
     Direct attribute access is required."""
     content = COMPACTOR_PATH.read_text(encoding="utf-8")
     tree = ast.parse(content)
@@ -83,7 +83,7 @@ def test_no_getattr_on_compactor_chain_config_model() -> None:
                 string_args = [
                     arg.value for arg in node.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
                 ]
-                if "config" in string_args or "model" in string_args:
+                if "config" in string_args or "model" in string_args or "name" in string_args:
                     # Check context: is this on compactor_chain?
                     pytest.fail(
                         f"Found getattr(..., {string_args}, ...) at line {node.lineno}. "
@@ -115,10 +115,12 @@ def test_compactor_chain_type_is_provider_chain() -> None:
 
 
 def test_direct_model_access_pattern_exists() -> None:
-    """Source code must contain `self.compactor_chain.config.model` pattern."""
+    """Source code must contain `self.compactor_chain.config.name` pattern
+    (ADR-9 §Amendment 2026-07-23 renamed ChainConfig.model -> ChainConfig.name;
+    the role-level field is a display label never sent to any provider)."""
     content = COMPACTOR_PATH.read_text(encoding="utf-8")
-    assert "self.compactor_chain.config.model" in content, (
-        "Expected direct access `self.compactor_chain.config.model` not found"
+    assert "self.compactor_chain.config.name" in content, (
+        "Expected direct access `self.compactor_chain.config.name` not found"
     )
 
 

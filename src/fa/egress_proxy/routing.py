@@ -101,6 +101,35 @@ class RouteTable:
         return tuple(self._routes[name] for name in sorted(self._routes))
 
 
+def _conflict_message(name: str, existing: ProxyRoute, candidate: ProxyRoute) -> str:
+    """Explain a route-name collision precisely, naming the field that differs.
+
+    ``ProxyRoute.__eq__`` (frozen-dataclass field comparison) can fire on
+    ``upstream_base_url`` OR ``api_key_env`` — printing only ``base_url vs
+    base_url`` is actively misleading when the URLs are byte-identical and
+    the real difference is the API-key-env name (the common shape: several
+    ``models.yaml`` chain entries for the same ``(provider, slug)`` pair,
+    intended as per-provider key rotation — a route can bind only ONE
+    ``api_key_env``, so this is a hard config conflict, not a cosmetic one).
+    """
+    if existing.upstream_base_url != candidate.upstream_base_url:
+        return (
+            f"route {name!r} maps to conflicting upstreams: "
+            f"{existing.upstream_base_url!r} vs {candidate.upstream_base_url!r}"
+        )
+    # base_url is identical; the dataclass inequality must come from
+    # api_key_env (the only other compared field besides `name`/`provider`,
+    # which are equal by construction — they derive `name` together).
+    return (
+        f"route {name!r}: two chain entries share the identical base_url "
+        f"{existing.upstream_base_url!r} but declare DIFFERENT api_key_env "
+        f"values ({existing.api_key_env!r} vs {candidate.api_key_env!r}). "
+        "A proxy route can inject only ONE key per (provider, slug) pair — "
+        "pick a single api_key_env for this route, or give the entries "
+        "distinct slugs if they are genuinely different models."
+    )
+
+
 def build_route_table(chain_entries: list[tuple[str, str, str, str]]) -> RouteTable:
     """Build a :class:`RouteTable` from ``(provider, slug, base_url, api_key_env)``.
 
@@ -130,10 +159,7 @@ def build_route_table(chain_entries: list[tuple[str, str, str, str]]) -> RouteTa
             api_key_env=api_key_env,
         )
         if existing is not None and existing != candidate:
-            raise ProxyConfigError(
-                f"route {name!r} maps to conflicting upstreams: "
-                f"{existing.upstream_base_url} vs {candidate.upstream_base_url}"
-            )
+            raise ProxyConfigError(_conflict_message(name, existing, candidate))
         routes[name] = candidate
     return RouteTable(routes)
 

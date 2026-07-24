@@ -1,8 +1,10 @@
 """Tests for Mistral-related changes in chain config and family extraction.
 
 Verifies:
-- ChainConfig.extras field is populated from YAML
-- Role-level extras merge with prompt-composer extras in RequestInfo
+- ChainEntry.provider_params is populated from YAML (per-entry, ADR-9
+  §Amendment 2026-07-23 — was role-level ChainConfig.extras before the
+  amendment; moved because role-level extras were broadcast unconditionally
+  to every chain entry regardless of provider)
 - Mistral family extraction from model slugs
 - Mistral added to KNOWN_FAMILIES
 - Family-disjoint check works with mistral family
@@ -15,118 +17,130 @@ import pytest
 from fa.providers.chain import chain_from_mapping
 from fa.roles import KNOWN_FAMILIES, check_eval_disjoint, extract_family
 
-# ── ChainConfig.extras ──────────────────────────────────────────────
+# ── ChainEntry.provider_params ──────────────────────────────────────
 
 
-class TestChainConfigExtras:
-    """Test that ChainConfig.extras is populated from YAML."""
+class TestChainEntryProviderParams:
+    """Test that ChainEntry.provider_params is populated from YAML."""
 
-    def test_extras_parsed_from_yaml(self) -> None:
-        """Role-level extras are parsed from the YAML mapping."""
+    def test_provider_params_parsed_from_yaml(self) -> None:
+        """Per-entry provider_params are parsed from the YAML mapping."""
         raw = {
-            "model": "mistral-medium-2604",
+            "name": "mistral-medium-2604",
             "family": "mistral",
             "chain": [
                 {
                     "provider": "mistral",
-                    "slug": "mistral-medium-2604",
+                    "model": "mistral-medium-2604",
                     "base_url": "https://api.mistral.ai/v1",
                     "api_key_env": "MISTRAL_API_KEY",
-                }
-            ],
-            "extras": {
-                "reasoning_effort": "high",
-                "prompt_cache_key": "planner-v1",
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "summary",
-                        "schema": {"type": "object", "properties": {"points": {"type": "array"}}},
+                    "provider_params": {
+                        "reasoning_effort": "high",
+                        "prompt_cache_key": "planner-v1",
+                        "response_format": {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "summary",
+                                "schema": {"type": "object", "properties": {"points": {"type": "array"}}},
+                            },
+                        },
                     },
-                },
-            },
+                }
+            ],
         }
         config = chain_from_mapping("planner", raw)
-        assert config.extras["reasoning_effort"] == "high"
-        assert config.extras["prompt_cache_key"] == "planner-v1"
-        assert config.extras["response_format"]["type"] == "json_schema"
+        entry = config.chain[0]
+        assert entry.provider_params["reasoning_effort"] == "high"
+        assert entry.provider_params["prompt_cache_key"] == "planner-v1"
+        assert entry.provider_params["response_format"]["type"] == "json_schema"
 
-    def test_extras_missing_defaults_empty(self) -> None:
-        """No extras field yields empty dict."""
+    def test_provider_params_missing_defaults_empty(self) -> None:
+        """No provider_params field yields empty dict."""
         raw = {
-            "model": "gpt-4",
+            "name": "gpt-4",
             "family": "openai",
             "chain": [
                 {
                     "provider": "openrouter",
-                    "slug": "openai/gpt-4",
+                    "model": "openai/gpt-4",
                     "base_url": "https://openrouter.ai/api/v1",
                     "api_key_env": "OPENROUTER_API_KEY",
                 }
             ],
         }
         config = chain_from_mapping("coder", raw)
-        assert config.extras == {}
+        assert config.chain[0].provider_params == {}
 
-    def test_extras_null_defaults_empty(self) -> None:
-        """extras: null yields empty dict."""
+    def test_provider_params_null_defaults_empty(self) -> None:
+        """provider_params: null yields empty dict."""
         raw = {
-            "model": "gpt-4",
+            "name": "gpt-4",
             "family": "openai",
             "chain": [
                 {
                     "provider": "openrouter",
-                    "slug": "openai/gpt-4",
+                    "model": "openai/gpt-4",
                     "base_url": "https://openrouter.ai/api/v1",
                     "api_key_env": "OPENROUTER_API_KEY",
+                    "provider_params": None,
                 }
             ],
-            "extras": None,
         }
         config = chain_from_mapping("coder", raw)
-        assert config.extras == {}
+        assert config.chain[0].provider_params == {}
 
-    def test_extras_prediction_field(self) -> None:
-        """Prediction field in extras is preserved."""
+    def test_provider_params_prediction_field(self) -> None:
+        """Prediction field in provider_params is preserved."""
         raw = {
-            "model": "mistral-medium-2604",
+            "name": "mistral-medium-2604",
             "family": "mistral",
             "chain": [
                 {
                     "provider": "mistral",
-                    "slug": "mistral-medium-2604",
+                    "model": "mistral-medium-2604",
                     "base_url": "https://api.mistral.ai/v1",
                     "api_key_env": "MISTRAL_API_KEY",
+                    "provider_params": {
+                        "prediction": {
+                            "type": "content",
+                            "content": "Previous summary text",
+                        },
+                    },
                 }
             ],
-            "extras": {
-                "prediction": {
-                    "type": "content",
-                    "content": "Previous summary text",
-                },
-            },
         }
         config = chain_from_mapping("planner", raw)
-        assert config.extras["prediction"]["type"] == "content"
-        assert config.extras["prediction"]["content"] == "Previous summary text"
+        entry = config.chain[0]
+        assert entry.provider_params["prediction"]["type"] == "content"
+        assert entry.provider_params["prediction"]["content"] == "Previous summary text"
 
-    def test_extras_non_mapping_ignored(self) -> None:
-        """Non-mapping extras (e.g. string) is treated as empty."""
+    def test_provider_params_does_not_leak_to_sibling_entry(self) -> None:
+        """Regression (the bug this amendment fixed): a Mistral entry's
+        provider_params must not appear on a sibling OpenRouter entry's
+        provider_params — the two are independent per-entry dicts, unlike
+        the historical role-level `extras` which was shared/broadcast."""
         raw = {
-            "model": "gpt-4",
-            "family": "openai",
+            "name": "mistral-small-2603",
+            "family": "mistral",
             "chain": [
                 {
+                    "provider": "mistral",
+                    "model": "mistral-small-2603",
+                    "base_url": "https://api.mistral.ai/v1",
+                    "api_key_env": "MISTRAL_API_KEY",
+                    "provider_params": {"reasoning_effort": "high"},
+                },
+                {
                     "provider": "openrouter",
-                    "slug": "openai/gpt-4",
+                    "model": "mistralai/mistral-small",
                     "base_url": "https://openrouter.ai/api/v1",
                     "api_key_env": "OPENROUTER_API_KEY",
-                }
+                },
             ],
-            "extras": "invalid",
         }
         config = chain_from_mapping("coder", raw)
-        assert config.extras == {}
+        assert config.chain[0].provider_params == {"reasoning_effort": "high"}
+        assert config.chain[1].provider_params == {}
 
 
 # ── Family extraction ───────────────────────────────────────────────
@@ -208,16 +222,16 @@ class TestMistralConfigLoader:
 
         yaml_text = """
 planner:
-  model: "mistral-medium-2604"
+  name: "mistral-medium-2604"
   family: "mistral"
   chain:
     - provider: mistral
-      slug: "mistral-medium-2604"
+      model: "mistral-medium-2604"
       base_url: "https://api.mistral.ai/v1"
       api_key_env: MISTRAL_API_KEY
-  extras:
-    reasoning_effort: "high"
-    prompt_cache_key: "planner-v1"
+      provider_params:
+        reasoning_effort: "high"
+        prompt_cache_key: "planner-v1"
 """
         config = load_models_config(
             yaml_text,
@@ -226,7 +240,7 @@ planner:
         )
         assert "planner" in config.roles
         assert config.roles["planner"].family == "mistral"
-        assert config.roles["planner"].extras["reasoning_effort"] == "high"
+        assert config.roles["planner"].chain[0].provider_params["reasoning_effort"] == "high"
 
     def test_mistral_agents_role_loads(self) -> None:
         """A mistral_agents role config loads without errors."""
@@ -234,16 +248,16 @@ planner:
 
         yaml_text = """
 coder:
-  model: "mistral-medium-2604"
+  name: "mistral-medium-2604"
   family: "mistral"
   chain:
     - provider: mistral_agents
-      slug: "mistral-medium-2604"
+      model: "mistral-medium-2604"
       base_url: "https://api.mistral.ai/v1"
       api_key_env: MISTRAL_API_KEY
-  extras:
-    mistral_tools:
-      - type: web_search
+      provider_params:
+        mistral_tools:
+          - type: web_search
 """
         config = load_models_config(
             yaml_text,
@@ -251,7 +265,7 @@ coder:
             require_api_keys=True,
         )
         assert "coder" in config.roles
-        assert config.roles["coder"].extras["mistral_tools"][0]["type"] == "web_search"
+        assert config.roles["coder"].chain[0].provider_params["mistral_tools"][0]["type"] == "web_search"
 
     def test_mixed_mistral_openai_config(self) -> None:
         """Mixed Mistral + OpenAI config loads and family-disjoint passes."""
@@ -259,27 +273,27 @@ coder:
 
         yaml_text = """
 planner:
-  model: "mistral-medium-2604"
+  name: "mistral-medium-2604"
   family: "mistral"
   chain:
     - provider: mistral
-      slug: "mistral-medium-2604"
+      model: "mistral-medium-2604"
       base_url: "https://api.mistral.ai/v1"
       api_key_env: MISTRAL_API_KEY
 coder:
-  model: "deepseek-v3"
+  name: "deepseek-v3"
   family: "deepseek"
   chain:
     - provider: openrouter
-      slug: "deepseek/deepseek-chat-v3"
+      model: "deepseek/deepseek-chat-v3"
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: OPENROUTER_API_KEY
 eval:
-  model: "gpt-4o"
+  name: "gpt-4o"
   family: "openai"
   chain:
     - provider: openrouter
-      slug: "openai/gpt-4o"
+      model: "openai/gpt-4o"
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: OPENROUTER_API_KEY
 """

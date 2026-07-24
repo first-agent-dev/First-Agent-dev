@@ -85,6 +85,34 @@ _FINISH_REASON_MAP: Mapping[str, str] = {
     "end_turn": "stop",  # Agent-style end turn
 }
 
+# Mistral Conversations-API-specific top-level ``completion_args`` keys this
+# adapter recognises — the passthrough set _build_completion_args iterates.
+_COMPLETION_ARGS_PASSTHROUGH_KEYS: tuple[str, ...] = (
+    "response_format",
+    "prediction",
+    "reasoning_effort",
+    "prompt_cache_key",
+    "safe_prompt",
+    "prompt_mode",
+    "parallel_tool_calls",
+)
+
+# Every top-level RequestInfo.extras / provider_params key this adapter
+# recognises: _COMPLETION_ARGS_PASSTHROUGH_KEYS (nested into
+# completion_args) PLUS ``mistral_tools``, ``store``, ``agent_id`` (handled
+# separately in _build_conversations_body / _build_mistral_tools — NOT
+# nested into completion_args). Exported (not module-private) so
+# fa.providers.routing_lint can reuse it as the single source of truth for
+# the "unknown provider_params key" check — this is a DIFFERENT key set
+# from fa.providers.mistral.MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS because
+# this is a different endpoint (/v1/conversations, not
+# /v1/chat/completions) with a different feature surface (built-in
+# server-side tools, conversation persistence via ``store``, pre-created
+# agents via ``agent_id`` — none of which the chat-completions endpoint has).
+MISTRAL_CONVERSATIONS_RECOGNIZED_PROVIDER_PARAMS_KEYS = frozenset(_COMPLETION_ARGS_PASSTHROUGH_KEYS) | frozenset(
+    {"mistral_tools", "store", "agent_id"}
+)
+
 
 class MistralConversationsProvider:
     """``/v1/conversations`` adapter for Mistral Agents/Conversations API.
@@ -194,19 +222,13 @@ def _build_completion_args(request: RequestInfo) -> dict[str, Any]:
     completion_args: dict[str, Any] = {}
     if request.temperature is not None:
         completion_args["temperature"] = request.temperature
+    if request.top_p is not None:
+        completion_args["top_p"] = request.top_p
     if request.max_tokens is not None:
         completion_args["max_tokens"] = request.max_tokens
 
     # Pass through Mistral-specific extras into completion_args
-    for key in (
-        "response_format",
-        "prediction",
-        "reasoning_effort",
-        "prompt_cache_key",
-        "safe_prompt",
-        "prompt_mode",
-        "parallel_tool_calls",
-    ):
+    for key in _COMPLETION_ARGS_PASSTHROUGH_KEYS:
         if key in request.extras:
             completion_args[key] = request.extras[key]
 

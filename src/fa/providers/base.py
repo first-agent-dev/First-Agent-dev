@@ -49,6 +49,7 @@ class RequestInfo:
     messages: tuple[Mapping[str, Any], ...]
     temperature: float | None = None
     max_tokens: int | None = None
+    top_p: float | None = None
     tools: tuple[Mapping[str, Any], ...] = ()
     extras: Mapping[str, Any] = field(default_factory=dict)
 

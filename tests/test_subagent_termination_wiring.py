@@ -201,7 +201,7 @@ def test_ctrl_c_interrupts_pty_session_via_drive_session(tmp_path: Path) -> None
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test",
+        name="test",
     )
 
     # Turn 1: start a long-running bash
@@ -262,7 +262,7 @@ def test_subagent_spawn_and_cleanup_via_drive_session(tmp_path: Path) -> None:
 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config(
-        model="test",
+        name="test",
     )
 
     tc1 = make_tool_call(

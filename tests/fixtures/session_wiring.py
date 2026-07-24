@@ -111,7 +111,7 @@ def mock_tool_call_response(call_id: str, name: str, params: dict[str, Any]) -> 
 
 def make_test_chain_entry(
     provider: str = "openrouter",
-    slug: str = "test/test-model",
+    model: str = "test/test-model",
     base_url: str = "https://openrouter.ai/api/v1",
     api_key_env: str = "TEST_API_KEY",
     **overrides: Any,
@@ -122,7 +122,7 @@ def make_test_chain_entry(
     """
     return ChainEntry(
         provider=provider,
-        slug=slug,
+        model=model,
         base_url=base_url,
         api_key_env=api_key_env,
         **overrides,
@@ -131,11 +131,11 @@ def make_test_chain_entry(
 
 def make_test_chain_config(
     role: str = "coder",
-    model: str = "test-model",
+    name: str = "test-model",
     family: str = "openai",
     context_limit: int = 150000,
     compaction_threshold: int | None = None,
-    extras: dict[str, Any] | None = None,
+    sampling: dict[str, Any] | None = None,
     **overrides: Any,
 ) -> ChainConfig:
     """Create a real ChainConfig with test defaults.
@@ -154,12 +154,12 @@ def make_test_chain_config(
     """
     return ChainConfig(
         role=role,
-        model=model,
+        name=name,
         family=family,
         chain=(),
         context_limit=context_limit,
         compaction_threshold=compaction_threshold,
-        extras=extras if extras is not None else {},
+        sampling=sampling if sampling is not None else {},
         **overrides,
     )
 
@@ -167,9 +167,9 @@ def make_test_chain_config(
 def make_mock_chain(
     context_limit: int = 150000,
     compaction_threshold: int | None = None,
-    model: str = "test-model",
+    name: str = "test-model",
     family: str = "openai",
-    extras: dict[str, Any] | None = None,
+    sampling: dict[str, Any] | None = None,
     **config_overrides: Any,
 ) -> MagicMock:
     """Create mock ProviderChain with a **real** ChainConfig.
@@ -185,9 +185,9 @@ def make_mock_chain(
     mock_chain.config = make_test_chain_config(
         context_limit=context_limit,
         compaction_threshold=compaction_threshold,
-        model=model,
+        name=name,
         family=family,
-        extras=extras,
+        sampling=sampling,
         **config_overrides,
     )
     return mock_chain

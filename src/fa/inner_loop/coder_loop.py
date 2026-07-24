@@ -508,7 +508,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             OutputEvent(
                 type="session_start",
                 max_turns=max_turns,
-                data={"model": provider_chain.config.model, "role": role, "family": acting_family},
+                data={"model": provider_chain.config.name, "role": role, "family": acting_family},
             )
         )
 
@@ -1109,26 +1109,22 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             )
                         )
 
-        # Merge role-level extras from ChainConfig with prompt-composer extras.
-        # ChainConfig.extras carries provider-specific body fields from
-        # ``~/.fa/models.yaml`` (e.g. Mistral's ``prediction``,
-        # ``reasoning_effort``, ``response_format``). Prompt-composer extras
-        # (``prompt_cache_key``, ``prompt_cache_retention``) come from
-        # the request body builder. Chain-level extras take precedence over
-        # prompt-composer extras for the same key, since the user's explicit
-        # config should override algorithmic defaults.
-        _merged_extras: dict[str, Any] = dict(request_extras)
-        if provider_chain.config.extras:
-            _merged_extras.update(provider_chain.config.extras)
-
+        # Prompt-composer extras (``prompt_cache_key``, ``prompt_cache_retention``)
+        # come from the request body builder. Per-provider fields (Mistral's
+        # ``prediction``, ``reasoning_effort``, etc.) are no longer merged here —
+        # ProviderChain.request() now merges each chain entry's OWN
+        # ``provider_params`` per-entry (ADR-9 §Amendment 2026-07-23), so a
+        # sibling entry for a different provider never sees another entry's
+        # provider-specific fields.
         request = RequestInfo(
-            model_slug=provider_chain.config.model,
+            model_slug=provider_chain.config.name,
             messages=tuple(messages_payload),
             temperature=temperature,
             max_tokens=max_tokens,
             tools=tool_payload,
-            extras=_merged_extras,
+            extras=dict(request_extras),
         )
+
         try:
             # --- Internal Retry Loop for Chain Exhaustion ---
             # S22: renamed from max_chain_retries to avoid collision with

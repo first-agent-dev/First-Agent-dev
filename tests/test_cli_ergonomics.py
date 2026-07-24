@@ -23,27 +23,27 @@ _TEST_SECRETS = SecretStore({"TEST_FA_RUN_KEY": "sk-test-x"})
 
 _FAKE_MODELS_YAML = """\
 planner:
-  model: "test-model"
+  name: "test-model"
   family: "openai"
   chain:
     - provider: openrouter
-      slug: "test/model"
+      model: "test/model"
       base_url: "https://example.invalid/v1"
       api_key_env: TEST_FA_RUN_KEY
 coder:
-  model: "test-model"
+  name: "test-model"
   family: "openai"
   chain:
     - provider: openrouter
-      slug: "test/model"
+      model: "test/model"
       base_url: "https://example.invalid/v1"
       api_key_env: TEST_FA_RUN_KEY
 eval:
-  model: "test-model"
+  name: "test-model"
   family: "anthropic"
   chain:
     - provider: openrouter
-      slug: "test/model"
+      model: "test/model"
       base_url: "https://example.invalid/v1"
       api_key_env: TEST_FA_RUN_KEY
 """

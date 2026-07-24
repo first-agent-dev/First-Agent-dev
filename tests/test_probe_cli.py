@@ -27,11 +27,11 @@ def _write_models(path: Path, *, roles: dict[str, dict[str, str]] | None = None)
     for role_name, cfg in roles.items():
         sections.append(
             f"""{role_name}:
-  model: "{cfg["model"]}"
+  name: "{cfg["model"]}"
   family: "{cfg["family"]}"
   chain:
     - provider: openrouter
-      slug: "{cfg["slug"]}"
+      model: "{cfg["slug"]}"
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: OPENROUTER_API_KEY
 """

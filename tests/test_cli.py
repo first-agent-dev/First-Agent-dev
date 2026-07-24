@@ -285,11 +285,11 @@ def test_invariant_adr7_r8_canon_root_is_knowledge_trace(tmp_path: Path) -> None
 
 _FAKE_MODELS_YAML = """\
 coder:
-  model: "test-model"
+  name: "test-model"
   family: "openai"
   chain:
     - provider: openrouter
-      slug: "test/model"
+      model: "test/model"
       base_url: "https://example.invalid/v1"
       api_key_env: TEST_FA_RUN_KEY
 """

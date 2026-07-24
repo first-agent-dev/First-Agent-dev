@@ -154,7 +154,7 @@ class FullLLMCompactor:
         try:
             from fa.providers.base import RequestInfo
 
-            model_slug = self.compactor_chain.config.model
+            model_slug = self.compactor_chain.config.name
             request = RequestInfo(
                 model_slug=str(model_slug),
                 messages=(

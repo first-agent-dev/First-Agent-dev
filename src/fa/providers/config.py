@@ -8,16 +8,16 @@ family-disjoint invariant from
 :func:`fa.roles.check_eval_disjoint` (ADR-2 §Amendment 2026-05-20
 rule 1) when ``planner``, ``coder``, and ``eval`` are all declared.
 
-Loader contract (ADR-9 §1 schema, verbatim):
+Loader contract (ADR-9 §1 + §Amendment 2026-07-23 schema, verbatim):
 
 .. code-block:: yaml
 
     coder:
-      model:  "deepseek-v3"
+      name:   "deepseek-v3"
       family: "deepseek"
       chain:
         - provider: openrouter
-          slug:     "deepseek/deepseek-chat-v3"
+          model:    "deepseek/deepseek-chat-v3"
           base_url: "https://openrouter.ai/api/v1"
           api_key_env: OPENROUTER_API_KEY
           cooldown_seconds: 3   # optional: local cooldown floor after transient failure
@@ -26,22 +26,22 @@ Loader contract (ADR-9 §1 schema, verbatim):
           extra_headers:        # optional: extra HTTP headers for this route
             HTTP-Referer: "https://example.invalid"
         - provider: fireworks
-          slug:     "accounts/fireworks/models/deepseek-v3"
+          model:    "accounts/fireworks/models/deepseek-v3"
           base_url: "https://api.fireworks.ai/inference/v1"
           api_key_env: FIREWORKS_API_KEY
 
     planner:
-      model:  "glm-5p2"
+      name:   "glm-5p2"
       family: "glm"
       chain:
         - provider: fireworks
-          slug: "accounts/fireworks/models/glm-5p2"
+          model: "accounts/fireworks/models/glm-5p2"
           base_url: "https://api.fireworks.ai/inference/v1"
           api_key_env: FIREWORKS_API_KEY
           cooldown_seconds: 3
 
     eval:
-      model:  "qwen-3-32b"
+      name:   "qwen-3-32b"
       family: "qwen"
       chain: [...]
 
@@ -165,7 +165,7 @@ class ModelsConfig:
     whatever the YAML file declares (the loader does not synthesise
     missing roles). ``warnings`` collects best-effort heuristic
     findings from each chain's
-    :meth:`fa.providers.chain.ChainConfig.validate` call — slug
+    :meth:`fa.providers.chain.ChainConfig.validate` call — model
     family mismatches, mixed-adapter chains, ``http://`` base URLs
     on a localhost gateway, etc. — so the caller can log them
     without losing context. Hard errors (unknown provider, missing

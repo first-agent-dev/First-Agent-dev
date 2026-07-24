@@ -10,24 +10,55 @@
 #   (или: docker compose -f docker-compose.fa.yml up -d --force-recreate)
 # ЛОКАЛЬНАЯ РАЗРАБОТКА (без Docker): ~/.fa/models.yaml
 #
-# Этот файл описывает ТОЛЬКО МАРШРУТИЗАЦИЮ:
-# - какую модель использовать,
+# ⚠️ Схема изменена (ADR-9 §Amendment 2026-07-23, hard cutover — жёсткая
+# замена без обратной совместимости). Старые файлы со старыми именами полей
+# (`model:` на уровне роли, `slug:` в chain entry, `extras:` на уровне роли)
+# теперь ОТКЛОНЯЮТСЯ загрузчиком с явной подсказкой по миграции.
+#
+# ПРОВЕРКА СВОЕГО models.yaml перед деплоем (доли секунды, без Docker):
+#   fa routing-check --config /srv/first-agent/routing/models.yaml
+# Ловит: конфликт двух chain entry на один и тот же (provider, model) с
+# разными api_key_env/base_url, и опечатки в base_url (например "v1" vs "vl").
+#
+# Этот файл описывает:
+# - какую модель использовать (per-provider `model:` — РЕАЛЬНАЯ строка,
+#   отправляемая в HTTP body как "model" именно этому провайдеру),
 # - по какому URL ходить,
-# - какое ИМЯ переменной с API-ключом ожидать.
+# - какое ИМЯ переменной с API-ключом ожидать,
+# - опционально: sampling-параметры и provider-специфичные поля.
 #
-# Здесь пока НЕ задаются sampling-параметры (temperature / top_p / top_k /
-# max_tokens / penalties) — их задаёт сам агентный цикл.
+# Читаются следующие поля.
 #
-# Любые лишние поля в chain entry сейчас ИГНОРИРУЮТСЯ loader'ом.
-# Читаются только эти поля:
-#   provider, slug, base_url, api_key_env  (обязательные)
-#   timeout_seconds, cooldown_seconds, transport_retries, extra_headers  (необязательные)
+# На уровне роли:
+#   name       (обязательно) — display-метка для логов/family-inference.
+#              НИКОГДА не отправляется провайдеру (в отличие от chain-entry
+#              `model:` ниже — не путайте эти два поля).
+#   family     (обязательно) — используется ТОЛЬКО для ADR-2 eval-disjoint
+#              проверки; в HTTP-запрос не попадает.
+#   sampling   (опционально) — {temperature, max_tokens, top_p}, отправляется
+#              ОДИНАКОВО во все chain entry этой роли.
+#   chain      (обязательно) — упорядоченный список fallback-провайдеров.
 #
-# Значение необязательных полей:
-#   timeout_seconds: HTTP-таймаут одного запроса в секундах
-#   cooldown_seconds: локальная пауза после временного сбоя провайдера
-#   transport_retries: дополнительные retry на сетевом/транспортном уровне
-#   extra_headers: дополнительные HTTP-заголовки для этого маршрута
+# На уровне chain entry (внутри `chain:`):
+#   provider          (обязательно) — выбирает адаптер (стиль авторизации +
+#                     endpoint); в теле HTTP-запроса НЕ появляется.
+#   model             (обязательно) — РЕАЛЬНАЯ строка модели ИМЕННО для этого
+#                     провайдера — то, что физически уходит как "model" в
+#                     JSON-теле запроса. У разных провайдеров для "одной и той
+#                     же" модели эта строка может отличаться (см. пример
+#                     fallback ниже) — указывайте то значение, которое
+#                     ожидает конкретный провайдер, а не общее название.
+#   base_url          (обязательно) — HTTPS URL провайдера.
+#   api_key_env       (обязательно) — ИМЯ переменной окружения с ключом.
+#   timeout_seconds   (опционально) — HTTP-таймаут одного запроса в секундах.
+#   cooldown_seconds  (опционально) — локальная пауза после временного сбоя.
+#   transport_retries (опционально) — дополнительные retry на транспорте.
+#   extra_headers     (опционально) — доп. HTTP-заголовки для этого маршрута.
+#   provider_params   (опционально) — provider-специфичные ПОЛЯ ТЕЛА запроса
+#                     (например, у Mistral: reasoning_effort, safe_prompt,
+#                     prompt_mode, parallel_tool_calls, prediction).
+#                     Отправляются ТОЛЬКО этому entry — соседний fallback на
+#                     другом провайдере их не получит.
 #
 # НИКОГДА не вставляйте сюда реальные API-ключи.
 # api_key_env — это ИМЯ переменной, а реальное значение хранится ТОЛЬКО в:
@@ -51,11 +82,11 @@
 # ───────────────────────────────────────────────────────────────────────────
 
 planner:
-  model: "accounts/fireworks/models/glm-5p2"
-  family: "glm"            # свободная текстовая метка; важна для eval-disjoint проверки
+  name: "glm-5p2"           # display-метка; НЕ отправляется провайдеру
+  family: "glm"             # свободная текстовая метка; важна для eval-disjoint проверки
   chain:
     - provider: fireworks
-      slug: "accounts/fireworks/models/glm-5p2"
+      model: "accounts/fireworks/models/glm-5p2"   # реальная строка модели для Fireworks
       base_url: "https://api.fireworks.ai/inference/v1"
       api_key_env: FIREWORKS_API_KEY
       timeout_seconds: 15
@@ -63,11 +94,14 @@ planner:
       transport_retries: 1
 
 coder:
-  model: "accounts/fireworks/models/minimax-m3"
+  name: "minimax-m3"
   family: "minimax"
+  sampling:                # опционально — отправляется во ВСЕ entry этой роли
+    temperature: 0.2
+    max_tokens: 8000
   chain:
     - provider: fireworks
-      slug: "accounts/fireworks/models/minimax-m3"
+      model: "accounts/fireworks/models/minimax-m3"
       base_url: "https://api.fireworks.ai/inference/v1"
       api_key_env: FIREWORKS_API_KEY
       timeout_seconds: 15
@@ -75,11 +109,11 @@ coder:
       transport_retries: 1
 
 eval:
-  model: "accounts/fireworks/models/nemotron-3-ultra-nvfp4"
+  name: "nemotron-3-ultra"
   family: "nemotron"       # отличается от glm + minimax → ADR-2 OK
   chain:
     - provider: fireworks
-      slug: "accounts/fireworks/models/nemotron-3-ultra-nvfp4"
+      model: "accounts/fireworks/models/nemotron-3-ultra-nvfp4"
       base_url: "https://api.fireworks.ai/inference/v1"
       api_key_env: FIREWORKS_API_KEY
       timeout_seconds: 15
@@ -93,16 +127,38 @@ eval:
 #   реально вызываете (например, только `coder`), либо не объявляйте `eval`.
 #   Конфиг planner+coder+eval с ОДНОЙ И ТОЙ ЖЕ family будет отклонён правилом ADR-2.
 # - В chain может быть несколько entry; агент пойдёт по ним сверху вниз при сбое.
+#   ВАЖНО: у разных провайдеров модель может называться ПО-РАЗНОМУ даже когда
+#   это "одна и та же" модель — указывайте то `model:`, которое ожидает
+#   именно этот провайдер (пример ниже: minimax-m3 на Fireworks vs OpenRouter).
 #   Пример fallback для одной роли:
 #     chain:
 #       - provider: fireworks
-#         slug: "accounts/fireworks/models/minimax-m3"
+#         model: "accounts/fireworks/models/minimax-m3"
 #         base_url: "https://api.fireworks.ai/inference/v1"
 #         api_key_env: FIREWORKS_API_KEY
 #       - provider: openrouter
-#         slug: "minimax/minimax-m3"
+#         model: "minimax/minimax-m3"
 #         base_url: "https://openrouter.ai/api/v1"
 #         api_key_env: OPENROUTER_API_KEY
+#
+# - `provider_params:` — provider-специфичные поля тела запроса, ТОЛЬКО для
+#   данного entry (не путать с `extra_headers:` — это HTTP-заголовки).
+#   Пример для Mistral-цепочки с fallback на не-Mistral провайдер:
+#     chain:
+#       - provider: mistral
+#         model: "mistral-small-2603"
+#         base_url: "https://api.mistral.ai/v1"
+#         api_key_env: MISTRAL_API_KEY
+#         provider_params:            # уходит ТОЛЬКО в mistral-запрос
+#           reasoning_effort: "high"
+#           safe_prompt: false
+#       - provider: openrouter
+#         model: "mistralai/mistral-small"
+#         base_url: "https://openrouter.ai/api/v1"
+#         api_key_env: OPENROUTER_API_KEY
+#         # provider_params здесь не нужен — OpenRouter не понимает
+#         # reasoning_effort/safe_prompt, и (после этой поправки ADR-9)
+#         # действительно их не получит.
 #
 # ───────────────────────────────────────────────────────────────────────────
 # Опциональная роль compactor (контекстная компакция — ADR-17).
@@ -113,11 +169,11 @@ eval:
 # ───────────────────────────────────────────────────────────────────────────
 #
 # compactor:
-#   model: "accounts/fireworks/models/phi-4-mini"
+#   name: "phi-4-mini"
 #   family: "phi"
 #   chain:
 #     - provider: fireworks
-#       slug: "accounts/fireworks/models/phi-4-mini"
+#       model: "accounts/fireworks/models/phi-4-mini"
 #       base_url: "https://api.fireworks.ai/inference/v1"
 #       api_key_env: FIREWORKS_API_KEY
 #       timeout_seconds: 15

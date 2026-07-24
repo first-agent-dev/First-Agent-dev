@@ -42,15 +42,15 @@ def _proxy_server(
         httpd.server_close()
 
 
-def _write_models(path: Path, slug: str = "meta-llama/llama-3.1-8b") -> None:
+def _write_models(path: Path, model: str = "meta-llama/llama-3.1-8b") -> None:
     path.write_text(
         f"""
 coder:
-  model: llama
+  name: llama
   family: llama
   chain:
     - provider: openrouter
-      slug: "{slug}"
+      model: "{model}"
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: OPENROUTER_API_KEY
 """.lstrip(),
@@ -99,7 +99,7 @@ def test_selfcheck_reports_route_desync(
     capsys: CaptureFixture[str],
 ) -> None:
     config_path = tmp_path / "models.yaml"
-    _write_models(config_path, slug="meta-llama/llama-3.1-8b")
+    _write_models(config_path, model="meta-llama/llama-3.1-8b")
     with _proxy_server(
         [("openrouter", "different-slug", "https://up.example/v1", "OPENROUTER_API_KEY")],
         secrets={"OPENROUTER_API_KEY": _KEY},

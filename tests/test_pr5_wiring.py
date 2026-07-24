@@ -71,7 +71,7 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(tmp_path: Path, mock_ses
     mock_compactor_chain = MagicMock(spec=ProviderChain)
     mock_compactor_chain.config = make_test_chain_config(
         context_limit=100000,
-        model="compactor-model",
+        name="compactor-model",
     )
 
     compactor_resp = ResponseInfo(
@@ -177,7 +177,7 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
     mock_compactor_chain = MagicMock(spec=ProviderChain)
     mock_compactor_chain.config = make_test_chain_config(
         context_limit=100000,
-        model="compactor-model",
+        name="compactor-model",
     )
 
     registry = ToolRegistry()
@@ -241,7 +241,7 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
     mock_compactor_chain = MagicMock(spec=ProviderChain)
     mock_compactor_chain.config = make_test_chain_config(
         context_limit=100000,
-        model="compactor",
+        name="compactor",
     )
 
     compactor_resp = ResponseInfo(
@@ -327,7 +327,7 @@ def test_circuit_breaker_stops_session(tmp_path: Path, mock_session_state: Sessi
     mock_compactor_chain = MagicMock(spec=ProviderChain)
     mock_compactor_chain.config = make_test_chain_config(
         context_limit=100000,
-        model="compactor",
+        name="compactor",
     )
 
     # We will simulate 2 failures/attempts already stored in ContextBudget, and run a 3rd one.
@@ -359,7 +359,7 @@ def test_circuit_breaker_logs_terminal_events_in_live_loop(
     mock_compactor_chain = MagicMock(spec=ProviderChain)
     mock_compactor_chain.config = make_test_chain_config(
         context_limit=100000,
-        model="compactor-model",
+        name="compactor-model",
     )
     mock_compactor_chain.request.return_value = (
         ResponseInfo(

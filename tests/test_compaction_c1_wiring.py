@@ -112,7 +112,7 @@ def test_invalid_threshold_fails_closed(threshold: int) -> None:
     """C2 config contract: invalid thresholds never silently enable compaction."""
     config = ChainConfig(
         role="coder",
-        model="test-model",
+        name="test-model",
         family="openai",
         chain=(),
         context_limit=100_000,

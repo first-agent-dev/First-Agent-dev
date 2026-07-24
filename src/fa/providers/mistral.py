@@ -61,11 +61,24 @@ logger = logging.getLogger(__name__)
 # reasonable upper bound for "expected output" (summaries, code edits, etc.).
 _PREDICTION_LENGTH_WARN_CHARS = 8192
 
-# Mistral-specific top-level body keys that this adapter recognises.
-_MISTRAL_EXTRAS_KEYS = frozenset(
+# Mistral-specific top-level body keys this adapter recognises (module
+# docstring above is the source of truth this set must track). Exported
+# (not module-private) so fa.providers.routing_lint can reuse it as the
+# single source of truth for the "unknown provider_params key" check
+# instead of hardcoding a second, driftable copy.
+#
+# Historical note: this set was previously missing "response_format" and
+# "prompt_cache_key" (5 of the 7 documented keys) despite being unused
+# anywhere in the module at the time — found stale during the ADR-9
+# §Amendment 2026-07-23 code review and corrected to match the docstring
+# + _build_request_body's actual behavior (prediction/response_format get
+# structural handling; the rest are generic passthrough).
+MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS = frozenset(
     {
         "prediction",
+        "response_format",
         "reasoning_effort",
+        "prompt_cache_key",
         "safe_prompt",
         "prompt_mode",
         "parallel_tool_calls",
@@ -133,6 +146,8 @@ def _build_request_body(request: RequestInfo) -> dict[str, Any]:
     }
     if request.temperature is not None:
         body["temperature"] = request.temperature
+    if request.top_p is not None:
+        body["top_p"] = request.top_p
     if request.max_tokens is not None:
         body["max_tokens"] = request.max_tokens
     if request.tools:

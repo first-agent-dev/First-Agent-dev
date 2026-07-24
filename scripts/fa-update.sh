@@ -192,11 +192,11 @@ ensure_routing_models() {
     else
       sudo tee "${MODELS_YAML_FILE}" >/dev/null <<'EOF'
 coder:
-  model: "deepseek-v3"
+  name: "deepseek-v3"
   family: "deepseek"
   chain:
     - provider: openrouter
-      slug: "deepseek/deepseek-chat-v3"
+      model: "deepseek/deepseek-chat-v3"
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: OPENROUTER_API_KEY
 EOF
