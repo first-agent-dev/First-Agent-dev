@@ -46,6 +46,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any, cast
 
+from fa.providers._common import extract_text_content
 from fa.providers.base import (
     RequestInfo,
     ResponseInfo,
@@ -262,7 +263,8 @@ def _normalize_success(body: Mapping[str, Any]) -> ResponseInfo:
     choices = cast(list[Mapping[str, Any]], body.get("choices", []))
     first = choices[0] if choices else {}
     message = cast(Mapping[str, Any], first.get("message", {}))
-    text = cast(str, message.get("content") or "")
+    raw_content = message.get("content")
+    text = extract_text_content(raw_content)
     finish_reason = cast(str, first.get("finish_reason") or "")
     raw_tool_calls = cast(list[Mapping[str, Any]], message.get("tool_calls") or [])
     tool_calls = tuple(raw_tool_calls)

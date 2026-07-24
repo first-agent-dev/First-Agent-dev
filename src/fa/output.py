@@ -261,7 +261,9 @@ class ConsoleRenderer:
         self._write("  " + self._c("36", " │ ".join(parts)))
 
         if self.detail in ("verbose", "debug") and d.get("text"):
-            preview = d["text"][:200].replace("\n", " ")
+            raw_text = d["text"]
+            text_str = raw_text if isinstance(raw_text, str) else str(raw_text)
+            preview = text_str[:200].replace("\n", " ")
             self._write(f"  {self._c('2', f'💭 {preview}')}")
 
     def _handle_tool_call(self, e: OutputEvent) -> None:

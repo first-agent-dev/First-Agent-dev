@@ -633,3 +633,25 @@ def test_unrecognized_extras_filtered_out() -> None:
     assert "prompt_cache_retention" not in body
     assert body["prompt_cache_key"] == "valid-key"
 
+
+def test_list_content_normalization() -> None:
+    """Mistral responses with list-based content blocks normalize correctly to str."""
+    from fa.providers.mistral import _normalize_success
+
+    body = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "text": "internal thought"},
+                        {"type": "text", "text": "hello world"},
+                    ],
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+    }
+    response_info = _normalize_success(body)
+    assert response_info.text == "hello world"

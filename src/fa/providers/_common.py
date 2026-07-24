@@ -117,4 +117,30 @@ def make_authenticated_request(
     )
 
 
-__all__ = ["TokenUsage", "make_authenticated_request", "parse_token_usage"]
+def extract_text_content(content: Any) -> str:
+    """Extract string content from content field (which may be a string, list of blocks, or None).
+
+    Robustly handles multi-part content block lists (e.g. reasoning/thinking models)
+    by skipping thinking blocks and joining text blocks.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, Mapping):
+                if item.get("type") == "thinking":
+                    continue
+                if "text" in item and isinstance(item["text"], str):
+                    parts.append(item["text"])
+                elif "content" in item and isinstance(item["content"], str):
+                    parts.append(item["content"])
+            elif isinstance(item, str):
+                parts.append(item)
+        return "".join(parts)
+    if content is None:
+        return ""
+    return str(content)
+
+
+__all__ = ["TokenUsage", "extract_text_content", "make_authenticated_request", "parse_token_usage"]
