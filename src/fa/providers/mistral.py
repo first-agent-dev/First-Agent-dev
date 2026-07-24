@@ -155,6 +155,8 @@ def _build_request_body(request: RequestInfo) -> dict[str, Any]:
 
     # Process extras — split into Mistral-specific and generic.
     for key, value in request.extras.items():
+        if key not in MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS:
+            continue
         if key == "prediction":
             _apply_prediction(body, value)
         elif key == "response_format":

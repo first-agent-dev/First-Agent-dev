@@ -620,3 +620,16 @@ class TestMistralRegistry:
         provider = build_provider("mistral", transport=FakeTransportForBuild())
         assert isinstance(provider, MistralProvider)
         assert provider.name == "mistral"
+
+
+def test_unrecognized_extras_filtered_out() -> None:
+    """Unrecognized extras (e.g. prompt_cache_retention) are filtered out."""
+    req = RequestInfo(
+        model_slug="mistral-small-2603",
+        messages=({"role": "user", "content": "hi"},),
+        extras={"prompt_cache_retention": "1h", "prompt_cache_key": "valid-key"},
+    )
+    body = _build_request_body(req)
+    assert "prompt_cache_retention" not in body
+    assert body["prompt_cache_key"] == "valid-key"
+
