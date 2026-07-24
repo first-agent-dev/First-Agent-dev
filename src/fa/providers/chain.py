@@ -37,6 +37,7 @@ from fa.providers.base import (
     RequestInfo,
     ResponseInfo,
 )
+from fa.providers.debug_bodies import debug_body_context
 from fa.providers.errors import (
     ConfigurationError,
     ProviderAuthError,
@@ -330,7 +331,7 @@ class ProviderChain:
         effective_max_tokens = request.max_tokens if request.max_tokens is not None else sampling.get("max_tokens")
         effective_top_p = request.top_p if request.top_p is not None else sampling.get("top_p")
         attempts: list[ChainAttemptRecord] = []
-        for entry in self._config.chain:
+        for attempt_index, entry in enumerate(self._config.chain):
             now = self._clock()
             key = (entry.provider, entry.model)
             row = self._cooldowns.get(key)
@@ -358,14 +359,20 @@ class ProviderChain:
                 extras=entry_extras,
             )
             try:
-                response = provider.request(
-                    entry_request,
-                    base_url=entry.base_url,
-                    api_key=api_key,
-                    timeout_seconds=float(entry.timeout_seconds),
-                    transport_retries=int(entry.transport_retries),
-                    extra_headers=entry.extra_headers,
-                )
+                with debug_body_context(
+                    logical_call_id=logical_call_id,
+                    provider=entry.provider,
+                    slug=entry.model,
+                    attempt_index=attempt_index,
+                ):
+                    response = provider.request(
+                        entry_request,
+                        base_url=entry.base_url,
+                        api_key=api_key,
+                        timeout_seconds=float(entry.timeout_seconds),
+                        transport_retries=int(entry.transport_retries),
+                        extra_headers=entry.extra_headers,
+                    )
             except ProviderRequestShapeError as exc:
                 elapsed_ms = int((self._clock() - start) * 1000)
                 attempts.append(

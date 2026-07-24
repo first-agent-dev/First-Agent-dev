@@ -1044,3 +1044,62 @@ def test_drive_session_logs_provider_attempts(
     assert provider_attempts[0].content["slug"] == "test/model"
     assert provider_attempts[0].content["status"] == 200
     assert provider_attempts[0].content.get("error") is None
+
+
+def test_drive_session_logs_llm_call_rollup(tmp_path: Path) -> None:
+    """ADR-9 Sec4 Tier-1 rollup: one ``kind="llm_call"`` row per logical
+    call, embedding the full attempts list plus token/timing totals —
+    the single-row view an operator reads instead of joining N
+    ``provider_attempt`` rows by ``logical_call_id`` by hand.
+
+    Kill-check performed manually: removing the ``log.append(kind="llm_call"...)``
+    call site in ``coder_loop.py`` makes this test fail (zero ``llm_call``
+    rows found) while ``test_drive_session_logs_provider_attempts`` above
+    stays green — proving this test actually pins the NEW producer, not
+    just the pre-existing per-attempt one.
+    """
+    provider = FakeProvider([_make_response(text="done", finish_reason="stop", in_tokens=11, out_tokens=7)])
+    chain = _make_chain(provider)
+    registry = _registry_with_dummy_tool()
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    state = _make_state(tmp_path)
+
+    outcome = drive_session(
+        "task",
+        provider_chain=chain,
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert outcome.exit_code == 0
+    assert state.log is not None
+    events = state.log.read_all()
+    llm_calls = [e for e in events if e.kind == "llm_call"]
+    assert len(llm_calls) == 1
+    row = llm_calls[0].content
+    assert row["role"] == "coder"
+    assert row["model"] == chain.config.name
+    assert row["in_tokens"] == 11
+    assert row["out_tokens"] == 7
+    assert isinstance(row["wallclock_ms"], int)
+    chain_rows = row["chain"]
+    assert isinstance(chain_rows, list)
+    assert chain_rows == [
+        {
+            "provider": "openrouter",
+            "slug": "test/model",
+            "status": 200,
+            "ms": chain_rows[0]["ms"],
+            "error": None,
+        }
+    ]
+    # The logical_call_id on the rollup row correlates 1:1 with the
+    # provider_attempt row(s) for the same call (ADR-9 Sec4 correlation
+    # contract) — both derive from the same ProviderChain.request() return.
+    provider_attempts = [e for e in events if e.kind == "provider_attempt"]
+    assert row["logical_call_id"] == provider_attempts[0].content["logical_call_id"]
+    # cost_usd is deliberately absent (BACKLOG I-33 — no wired cost source
+    # exists yet; a fake/None placeholder would be worse than omission).
+    assert "cost_usd" not in row

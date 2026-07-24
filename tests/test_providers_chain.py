@@ -670,6 +670,48 @@ def test_request_externally_injected_id_is_preserved_on_exhaustion() -> None:
     assert info.value.logical_call_id == "caller-supplied-uuid"
 
 
+def test_request_binds_debug_body_context_per_entry_attempt() -> None:
+    """ADR-9 Sec4 Tier-3: the dispatcher must bind logical_call_id /
+    provider / slug / attempt_index around EACH per-entry ``provider.request()``
+    call so a wrapped Transport (fa.providers.debug_bodies.DebugBodyTransport)
+    can correlate the body it captures back to the right chain entry —
+    critical when a fallback chain tries 2+ providers for one logical call.
+    """
+    from fa.providers.debug_bodies import _CONTEXT
+
+    observed: list[tuple[str, str, str, int] | None] = []
+
+    class RecordingStubProvider(StubProvider):
+        def request(self, request, **kwargs):  # type: ignore[no-untyped-def]
+            ctx = _CONTEXT.get()
+            observed.append(None if ctx is None else (ctx.logical_call_id, ctx.provider, ctx.slug, ctx.attempt_index))
+            return super().request(request, **kwargs)
+
+    config = _config(_entry("openrouter", "model-a"), _entry("fireworks", "model-b"))
+    stub = RecordingStubProvider(
+        outcomes=[
+            ProviderTransientError("rate_limited: status=429", status=429, kind="rate_limited"),
+            _ok(),
+        ]
+    )
+    chain = ProviderChain(
+        config,
+        provider_factory=lambda _e: stub,
+        env={"OPENROUTER_API_KEY": "k", "FIREWORKS_API_KEY": "k2"},
+        clock=_StubClock(),
+        id_factory=ItertoolsId("call"),
+    )
+    chain.request(RequestInfo(model_slug="deepseek-v3", messages=()))
+
+    assert observed == [
+        ("call-0", "openrouter", "model-a", 0),
+        ("call-0", "fireworks", "model-b", 1),
+    ]
+    # Context must not leak past the request() call — the contextvar is
+    # reset on the way out of each `with debug_body_context(...)` block.
+    assert _CONTEXT.get() is None
+
+
 # ----- ADR-9 §3 cross-role shared cooldown ledger ----------------------
 
 

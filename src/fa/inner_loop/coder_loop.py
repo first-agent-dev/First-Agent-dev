@@ -1204,6 +1204,35 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             "logical_call_id": _logical_id,
                         },
                     )
+                # Tier-1 observability rollup (ADR-9 Sec4): one row per
+                # logical call, embedding the attempts list this loop just
+                # wrote individually above. cost_usd is intentionally
+                # OMITTED per BACKLOG I-33 -- no wired cost source exists
+                # yet; a fake/None placeholder here would be worse than
+                # absence (a consumer could mistake it for "free").
+                log.append(
+                    actor="provider",
+                    kind="llm_call",
+                    content={
+                        "logical_call_id": _logical_id,
+                        "role": role,
+                        "model": provider_chain.config.name,
+                        "family": acting_family,
+                        "chain": [
+                            {
+                                "provider": attempt.provider,
+                                "slug": attempt.slug,
+                                "status": attempt.status,
+                                "ms": attempt.ms,
+                                "error": attempt.error,
+                            }
+                            for attempt in _attempts
+                        ],
+                        "in_tokens": response.in_tokens,
+                        "out_tokens": response.out_tokens,
+                        "wallclock_ms": sum(attempt.ms for attempt in _attempts),
+                    },
+                )
             record_usage(response)
             # ── Output: llm_response ───────────────────────────────────────
             if output is not None:

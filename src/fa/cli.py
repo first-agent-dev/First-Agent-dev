@@ -86,6 +86,7 @@ from fa.providers import (
     load_models_config_from_path,
 )
 from fa.providers.base import Provider, RequestInfo, Transport
+from fa.providers.debug_bodies import wrap_transport_for_debug_bodies
 from fa.providers.errors import (
     ConfigurationError,
     ProviderChainExhaustedError,
@@ -1736,7 +1737,34 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
             return 2
         chain_config = rewritten
 
+    # run_id + redactor are resolved here (earlier than the historical call
+    # site further down) because Tier-3 debug-body capture
+    # (fa.providers.debug_bodies, ADR-9 §4) needs both BEFORE the transport
+    # is wrapped and handed to _build_provider_chain — ProviderChain's
+    # provider factory closes over the transport reference at chain-build
+    # time, so wrapping it after the chain already exists would have no
+    # effect. run_id resolution is a pure expression of args.run_id /
+    # os.getpid() (idempotent within one process); the redactor is a pure
+    # function of secrets/models/proxy_mode — computing both here instead
+    # of at their original (unchanged) call site below is side-effect-free.
+    run_id = args.run_id or f"run-{os.getpid()}"
+    try:
+        redactor = SecretRedactor.from_models_config(
+            secrets,
+            models,
+            extra_values=_proxy_redactor_extra() if proxy_mode else (),
+            allow_empty=proxy_mode,
+        )
+    except SecretRedactorError as exc:
+        print(f"fa run: secret redactor configuration error: {exc}", file=sys.stderr)
+        return 2
+
     effective_transport: Transport = transport if transport is not None else UrllibTransport()
+    effective_transport = wrap_transport_for_debug_bodies(
+        effective_transport,
+        run_log_dir=Path.home() / ".fa" / "session-log" / run_id,
+        redactor=redactor,
+    )
     chain = _build_provider_chain(chain_config, transport=effective_transport, secrets=secrets)
 
     compactor_chain = None
@@ -1773,7 +1801,6 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
             bash_timeout_seconds=limits.bash_timeout_seconds,
         )
 
-    run_id = args.run_id or f"run-{os.getpid()}"
     # M-7 §Q-N: ``pr.prepare`` is the producer side of the
     # IntentGuard read seam. The shared ``PrDraftStore`` binds the
     # stable on-disk path to current-session provenance so stale or
@@ -1813,19 +1840,8 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         return 2
     registry.register(build_prepare_pr_tool(draft_store))
     log_path = Path.home() / ".fa" / "session-log" / run_id / "events.jsonl"
-    # In proxy mode the provider keys are absent here (they live in the proxy),
-    # so the redactor is seeded from the secrets the agent process DOES hold:
-    # the fa→proxy token and the deploy key (read value-only, never logged).
-    try:
-        redactor = SecretRedactor.from_models_config(
-            secrets,
-            models,
-            extra_values=_proxy_redactor_extra() if proxy_mode else (),
-            allow_empty=proxy_mode,
-        )
-    except SecretRedactorError as exc:
-        print(f"fa run: secret redactor configuration error: {exc}", file=sys.stderr)
-        return 2
+    # redactor was already resolved above (before the transport was wrapped
+    # for Tier-3 debug-body capture); reused here unchanged.
     log = EventLog(log_path, run_id=run_id, redactor=redactor)
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))

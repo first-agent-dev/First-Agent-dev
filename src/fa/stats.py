@@ -64,6 +64,10 @@ UNPARSED_KINDS: frozenset[LogKind] = frozenset(
         "audit",  # low-value — rule evaluation audit trail
         "config_warning",  # operator-visible at runtime; no session analytics aggregate
         "cost_observation",  # redundant — session_summary has totals
+        "llm_call",  # ADR-9 Sec4 Tier-1 rollup — redundant with provider_attempt + usage,
+        # both already parsed above; the rollup row exists for `fa routing-check`-adjacent
+        # log-reading tools that want one row per logical call instead of a join, not for
+        # fa stats specifically.
         "recovery_action",  # captured by tool_result + provider_attempt
         "service_unavailable",  # infrastructure — no structured analytics
         "subagent_spawn_start",  # captured by subagent_spawn_done/fail

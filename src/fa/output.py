@@ -82,6 +82,7 @@ LogKind = Literal[
     "model_msg",
     "usage",
     "provider_attempt",
+    "llm_call",
     # Tool I/O
     "tool_call",
     "tool_result",
