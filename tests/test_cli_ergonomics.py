@@ -16,6 +16,7 @@ from _pytest.capture import CaptureFixture
 
 from fa.cli import _cmd_help, _cmd_workflow, _resolve_task, build_parser
 from fa.cli_help import COMMANDS, help_as_json
+from fa.inner_loop.session_db import SessionDatabase
 from fa.providers import SecretStore
 from fa.providers.base import TransportResponse
 
@@ -233,6 +234,46 @@ def _workflow_args(tmp_path: Path, config: Path, **over: Any) -> argparse.Namesp
     }
     base.update(over)
     return argparse.Namespace(**base)
+
+
+def test_session_selector_parser_preserves_workspace_default() -> None:
+    run_args = build_parser().parse_args(["run", "--task", "work"])
+    workflow_args = build_parser().parse_args(["workflow", "planner", "work"])
+
+    assert run_args.session_id is None
+    assert workflow_args.session_id is None
+    assert run_args.workspace is None
+    assert workflow_args.workspace is None
+
+
+def test_workflow_session_manager_uses_one_invocation_run_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2 producer proof: workflow stages share one manager-admitted run ID."""
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    args = _workflow_args(tmp_path, config, run_id="", session_id=None)
+
+    assert _cmd_workflow(args, transport=_ScriptedTransport(), secrets=_TEST_SECRETS) == 0
+
+    manifests = sorted((home / ".fa" / "sessions").glob("*/manifest.json"))
+    assert len(manifests) == 1
+    session_id = json.loads(manifests[0].read_text(encoding="utf-8"))["session_id"]
+    run_dirs = sorted(d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir())
+    assert len(run_dirs) == 1
+    run_id = run_dirs[0].name
+    assert (run_dirs[0] / "flow_state.json").is_file()
+    assert (run_dirs[0] / "eval_report.json").is_file()
+
+    db = SessionDatabase.open_existing(home / ".fa" / "sessions" / session_id / "session.db", session_id=session_id)
+    rows = db.read_event_rows(run_id=run_id)
+    assert rows
+    assert {row["run_id"] for row in rows} == {run_id}
+    assert {row["session_id"] for row in rows} == {session_id}
 
 
 def test_workflow_drives_all_stages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

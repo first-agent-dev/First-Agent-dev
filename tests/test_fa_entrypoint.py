@@ -118,6 +118,7 @@ def test_entrypoint_autorun_runs_child_once_and_writes_success(tmp_path: Path) -
             "FA_TASK": "implement the plan",
             "FA_ROLE": "planner",
             "FA_MAX_TURNS": "7",
+            "FA_SESSION_ID": "docker-test-session",
             "FA_RUN_ID": "docker-test-run",
             "FA_RESUME": "1",
             "FA_STUB_CALLS": str(calls),
@@ -240,7 +241,7 @@ def test_entrypoint_creates_session_clone(tmp_path: Path) -> None:
     test_entrypoint.write_text(modified, encoding="utf-8")
     test_entrypoint.chmod(0o755)
 
-    env.update({"FA_RUN_ID": "test-session-123", "FA_AUTO_RUN": "0"})
+    env.update({"FA_SESSION_ID": "test-session-123", "FA_AUTO_RUN": "0"})
 
     proc = subprocess.Popen(["bash", str(test_entrypoint)], env=env, text=True)
     try:
@@ -255,6 +256,38 @@ def test_entrypoint_creates_session_clone(tmp_path: Path) -> None:
     active_file = sessions_dir / ".active"
     assert active_file.exists()
     assert active_file.read_text(encoding="utf-8").strip() == str(session_workspace)
+
+
+def test_entrypoint_failed_clone_does_not_launch_override_or_child(tmp_path: Path) -> None:
+    """C2 negative proof: clone failure transitions to INVALID_CONFIG standby."""
+    env, status, bin_dir = _base_env(tmp_path)
+    calls = _write_fa_stub(bin_dir, env)
+    env.pop("FA_WORKSPACE", None)
+    env.update({"FA_SESSION_ID": "failed-clone", "FA_AUTO_RUN": "1", "FA_TASK": "work", "FA_STUB_CALLS": str(calls)})
+
+    fake_repo = tmp_path / "fake-repo"
+    fake_repo.mkdir()
+    (fake_repo / ".git").mkdir()
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    test_entrypoint = tmp_path / "fa-entrypoint-failed-clone.sh"
+    original = _ENTRYPOINT.read_text(encoding="utf-8")
+    modified = original.replace('"/repo/.git"', f'"{fake_repo}/.git"')
+    modified = modified.replace("file:///repo", f"file://{fake_repo}")
+    modified = modified.replace('"/repo"', f'"{fake_repo}"')
+    modified = modified.replace('"/sessions/', f'"{sessions_dir}/')
+    test_entrypoint.write_text(modified, encoding="utf-8")
+    test_entrypoint.chmod(0o755)
+
+    proc = subprocess.Popen(["bash", str(test_entrypoint)], env=env, text=True)
+    try:
+        text = _wait_for_status(status, "status=INVALID_CONFIG", proc)
+    finally:
+        _terminate(proc)
+
+    assert "clone/checkout failed" in text
+    assert not calls.exists()
+    assert not (sessions_dir / "failed-clone").exists()
 
 
 def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
@@ -291,7 +324,7 @@ def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
     test_entrypoint.write_text(modified, encoding="utf-8")
     test_entrypoint.chmod(0o755)
 
-    env.update({"FA_RUN_ID": "test-session-existing", "FA_AUTO_RUN": "0"})
+    env.update({"FA_SESSION_ID": "test-session-existing", "FA_AUTO_RUN": "0"})
 
     proc = subprocess.Popen(["bash", str(test_entrypoint)], env=env, text=True)
     try:
@@ -338,7 +371,7 @@ def test_entrypoint_command_override_executes_inside_session_clone(tmp_path: Pat
 
     env.update(
         {
-            "FA_RUN_ID": "test-override",
+            "FA_SESSION_ID": "test-override",
         }
     )
 

@@ -59,6 +59,7 @@ from fa.inner_loop.hooks import (
 )
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
+from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
 from fa.inner_loop.tools import (
     build_baseline_registry,
     build_eval_registry,
@@ -94,6 +95,7 @@ from fa.providers.errors import (
 )
 from fa.providers.routing_lint import lint_models_config
 from fa.roles import EvalFamilyConflictError
+from fa.session.manager import RunContext, SessionContext, SessionManager, SessionManagerError
 from fa.verifier import load_contracts_from_dir
 
 logger = logging.getLogger(__name__)
@@ -103,6 +105,76 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
 def _valid_run_id(value: str) -> bool:
     return bool(_RUN_ID_RE.fullmatch(value))
+
+
+def _session_manager_for_args(args: argparse.Namespace) -> SessionManager:
+    """Build the lifecycle manager from deployment/test roots, never host topology."""
+    workspace_override = getattr(args, "workspace", None)
+    configured_workspace_root = os.environ.get("FA_WORKSPACE_ROOT")
+    if configured_workspace_root:
+        workspace_root = Path(configured_workspace_root)
+    elif workspace_override is not None:
+        workspace_root = Path(workspace_override).expanduser().resolve().parent
+    elif Path("/sessions").is_dir() or Path("/repo").is_dir():
+        workspace_root = Path("/sessions")
+    else:
+        workspace_root = Path.cwd()
+    configured_source = os.environ.get("FA_SESSION_SOURCE")
+    if configured_source:
+        source_workspace: Path | None = Path(configured_source)
+    else:
+        source_workspace = Path("/repo") if Path("/repo").is_dir() else None
+    return SessionManager(
+        state_root=Path.home() / ".fa",
+        workspace_root=workspace_root,
+        source_workspace=source_workspace,
+    )
+
+
+def _open_run_authority(run: RunContext) -> SessionDatabase:
+    try:
+        return SessionDatabase.open_existing(run.session_db_path, session_id=run.session_id)
+    except SessionDatabaseError as exc:
+        raise SessionManagerError(exc.code, str(exc)) from exc
+
+
+def _resolve_workflow_lifecycle(
+    args: argparse.Namespace,
+    initial_run_id: str,
+) -> tuple[str, SessionContext | None, RunContext | None, SessionDatabase | None]:
+    """Resolve one workflow invocation context; legacy direct Namespaces stay local."""
+    if not hasattr(args, "session_id"):
+        return initial_run_id, None, None, None
+    resolved_context = _resolve_cli_run_context(args)
+    if resolved_context is None:
+        raise RuntimeError("workflow session context unexpectedly absent")
+    session_context, run_context, session_db = resolved_context
+    args.workspace = run_context.workspace_path
+    return run_context.run_id, session_context, run_context, session_db
+
+
+def _resolve_cli_run_context(
+    args: argparse.Namespace,
+) -> tuple[SessionContext, RunContext, SessionDatabase] | None:
+    """Resolve production context or return None for explicit legacy fixtures."""
+    private_run = getattr(args, "_run_context", None)
+    if private_run is not None:
+        session = getattr(args, "_session_context", None)
+        if session is None:
+            raise SessionManagerError("session_context_missing", "workflow stage has no session context")
+        authority = getattr(args, "_session_db", None) or _open_run_authority(private_run)
+        return session, private_run, authority
+    if not hasattr(args, "session_id"):
+        # Existing isolated unit fixtures construct a Namespace directly. They
+        # remain outside the production CLI lifecycle claim until migrated.
+        return None
+    manager = _session_manager_for_args(args)
+    session = manager.create_or_attach_session(
+        session_id=getattr(args, "session_id", None),
+        workspace_override=getattr(args, "workspace", None),
+    )
+    run = manager.begin_run(session, getattr(args, "run_id", None) or None)
+    return session, run, _open_run_authority(run)
 
 
 def _resolve_task(positional: str | None, flag: str | None) -> str | None:
@@ -386,8 +458,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--workspace",
         "-w",
         type=Path,
-        default=Path.cwd(),
+        default=None,
         help=COMMANDS["run"]["args"]["--workspace/-w"]["en"],
+    )
+    run_parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Attach to an existing persistent session; omit to create a new session.",
     )
     run_parser.add_argument(
         "--max-turns",
@@ -456,8 +533,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--workspace",
         "-w",
         type=Path,
-        default=Path.cwd(),
+        default=None,
         help=COMMANDS["workflow"]["args"]["--workspace/-w"]["en"],
+    )
+    workflow_parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Attach to an existing persistent session; omit to create a new session.",
     )
     workflow_parser.add_argument(
         "--run-id",
@@ -635,6 +717,11 @@ def build_parser() -> argparse.ArgumentParser:
         "-i",
         default=None,
         help=COMMANDS["stats"]["args"]["--run-id/-i"]["en"],
+    )
+    stats_parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Restrict stats to one persistent session authority.",
     )
     stats_parser.add_argument(
         "--since",
@@ -917,14 +1004,14 @@ class _WorkflowArtifactPaths:
     flow_state: Path
 
 
-def _workflow_artifact_paths(run_id: str) -> _WorkflowArtifactPaths:
+def _workflow_artifact_paths(run_id: str, *, base_dir: Path | None = None) -> _WorkflowArtifactPaths:
     """Return canonical workflow artifact paths under ``~/.fa/session-log``.
 
     Temporary physical model (workflow implementation plan 2026-06-29):
     human-readable draft remains ``pr_draft.md``; controller truth lives in
     separate JSON artifacts for eval verdicts and workflow state.
     """
-    base_dir = Path.home() / ".fa" / "session-log" / run_id
+    base_dir = base_dir or (Path.home() / ".fa" / "session-log" / run_id)
     return _WorkflowArtifactPaths(
         base_dir=base_dir,
         eval_report=base_dir / "eval_report.json",
@@ -1010,6 +1097,9 @@ class _WorkflowContext:
     artifact_paths: _WorkflowArtifactPaths
     transport: Transport | None
     secrets: Mapping[str, str] | None
+    session_context: SessionContext | None = None
+    run_context: RunContext | None = None
+    session_db: SessionDatabase | None = None
 
     def task_for(self, role: str) -> str | None:
         return self.per_role_task.get(role) or self.base_task
@@ -1073,19 +1163,29 @@ def _run_stage(
             last_transition_reason=transition_reason,
         ),
     )
-    stage_args = argparse.Namespace(
-        task_pos=None,
-        task=ctx.task_for(role),
-        role=role,
-        config=ctx.args.config,
-        workspace=ctx.args.workspace,
-        max_turns=ctx.args.max_turns,
-        run_id=ctx.run_id,
-        resume=not fresh,
-        output_mode="console",
-        detail="standard",
-        no_color=False,
-    )
+    stage_kwargs: dict[str, object] = {
+        "task_pos": None,
+        "task": ctx.task_for(role),
+        "role": role,
+        "config": ctx.args.config,
+        "workspace": ctx.args.workspace,
+        "max_turns": ctx.args.max_turns,
+        "run_id": ctx.run_id,
+        "resume": not fresh,
+        "output_mode": "console",
+        "detail": "standard",
+        "no_color": False,
+    }
+    if ctx.run_context is not None and ctx.session_context is not None:
+        stage_kwargs.update(
+            {
+                "session_id": ctx.session_context.session_id,
+                "_session_context": ctx.session_context,
+                "_run_context": ctx.run_context,
+                "_session_db": ctx.session_db,
+            }
+        )
+    stage_args = argparse.Namespace(**stage_kwargs)
     sink: list[SessionOutcome] = []
     code = _cmd_run(
         stage_args,
@@ -1582,7 +1682,16 @@ def _cmd_workflow(
             )
             return 2
 
-    artifact_paths = _workflow_artifact_paths(run_id)
+    try:
+        run_id, session_context, run_context, session_db = _resolve_workflow_lifecycle(args, run_id)
+    except SessionManagerError as exc:
+        print(f"fa workflow: session error [{exc.code}]: {exc}", file=sys.stderr)
+        return 2
+
+    artifact_paths = _workflow_artifact_paths(
+        run_id,
+        base_dir=run_context.run_log_dir if run_context is not None else None,
+    )
     artifact_paths.base_dir.mkdir(parents=True, exist_ok=True)
     write_flow_state(
         artifact_paths.flow_state,
@@ -1606,6 +1715,9 @@ def _cmd_workflow(
         artifact_paths=artifact_paths,
         transport=transport,
         secrets=secrets,
+        session_context=session_context,
+        run_context=run_context,
+        session_db=session_db,
     )
     label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
     print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)
@@ -1627,7 +1739,12 @@ def _cmd_workflow(
 
         session_dir = Path.home() / ".fa" / "session-log" / run_id
         log_path = session_dir / "events.jsonl"
-        workflow_log = _EventLog(log_path, run_id=run_id)
+        workflow_log = _EventLog(
+            log_path,
+            run_id=run_id,
+            session_db=session_db,
+            session_id=session_context.session_id if session_context is not None else "",
+        )
         # Build a synthetic outcome for the aggregate row.
         # Token totals and tool breakdown come from _extract_telemetry_from_log
         # which reads the shared session.db correctly.
@@ -1703,8 +1820,17 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
             file=sys.stderr,
         )
         return 2
+    if (
+        getattr(args, "resume", False)
+        and hasattr(args, "session_id")
+        and not getattr(args, "session_id", None)
+        and getattr(args, "_run_context", None) is None
+    ):
+        print("fa run: --resume requires --session-id and starts a new run", file=sys.stderr)
+        return 2
 
-    workspace = args.workspace.resolve()
+    workspace_override = getattr(args, "workspace", None)
+    workspace = workspace_override.resolve() if workspace_override is not None else Path.cwd().resolve()
     config_path = args.config.expanduser().resolve()
     # Secret-isolation (ADR-12): API keys live ONLY in this private store, never
     # in os.environ. Every key reader below (config validation, provider chain,
@@ -1737,17 +1863,25 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
             return 2
         chain_config = rewritten
 
-    # run_id + redactor are resolved here (earlier than the historical call
-    # site further down) because Tier-3 debug-body capture
-    # (fa.providers.debug_bodies, ADR-9 §4) needs both BEFORE the transport
-    # is wrapped and handed to _build_provider_chain — ProviderChain's
-    # provider factory closes over the transport reference at chain-build
-    # time, so wrapping it after the chain already exists would have no
-    # effect. run_id resolution is a pure expression of args.run_id /
-    # os.getpid() (idempotent within one process); the redactor is a pure
-    # function of secrets/models/proxy_mode — computing both here instead
-    # of at their original (unchanged) call site below is side-effect-free.
-    run_id = args.run_id or f"run-{os.getpid()}"
+    # Resolve session/run context before transport wrapping and provider-chain
+    # construction. The legacy branch is retained only for direct unit
+    # Namespaces that predate the session selector field.
+    session_context: SessionContext | None = None
+    run_context: RunContext | None = None
+    session_db: SessionDatabase | None = None
+    try:
+        resolved_context = _resolve_cli_run_context(args)
+    except SessionManagerError as exc:
+        print(f"fa run: session error [{exc.code}]: {exc}", file=sys.stderr)
+        return 2
+    if resolved_context is not None:
+        session_context, run_context, session_db = resolved_context
+        workspace = run_context.workspace_path
+        run_id = run_context.run_id
+        run_log_dir = run_context.run_log_dir
+    else:
+        run_id = args.run_id or f"run-{os.getpid()}"
+        run_log_dir = Path.home() / ".fa" / "session-log" / run_id
     try:
         redactor = SecretRedactor.from_models_config(
             secrets,
@@ -1762,7 +1896,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     effective_transport: Transport = transport if transport is not None else UrllibTransport()
     effective_transport = wrap_transport_for_debug_bodies(
         effective_transport,
-        run_log_dir=Path.home() / ".fa" / "session-log" / run_id,
+        run_log_dir=run_log_dir,
         redactor=redactor,
     )
     chain = _build_provider_chain(chain_config, transport=effective_transport, secrets=secrets)
@@ -1805,7 +1939,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     # IntentGuard read seam. The shared ``PrDraftStore`` binds the
     # stable on-disk path to current-session provenance so stale or
     # externally-fabricated drafts are not trusted by the guard.
-    draft_path = Path.home() / ".fa" / "session-log" / run_id / "pr_draft.md"
+    draft_path = run_log_dir / "pr_draft.md"
     draft_store = PrDraftStore(draft_path)
 
     # --resume preserves the on-disk draft for the next role to read;
@@ -1839,10 +1973,24 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         )
         return 2
     registry.register(build_prepare_pr_tool(draft_store))
-    log_path = Path.home() / ".fa" / "session-log" / run_id / "events.jsonl"
+    log_path = run_log_dir / "events.jsonl"
     # redactor was already resolved above (before the transport was wrapped
     # for Tier-3 debug-body capture); reused here unchanged.
-    log = EventLog(log_path, run_id=run_id, redactor=redactor)
+    try:
+        log = EventLog(
+            log_path,
+            run_id=run_id,
+            redactor=redactor,
+            session_db=session_db,
+            session_id=session_context.session_id if session_context is not None else "",
+        )
+    except RuntimeError as exc:
+        db_path = log_path.parent / "session.db"
+        print(
+            f"fa run: session database not available at {db_path}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))
 
@@ -1900,7 +2048,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     # tool failures and write recovery history so the coder-recovery prompt
     # can read it. These were defined but never registered (LOGIC-15),
     # making `recovery_action` event kind dead code in production.
-    attempt_history = AttemptHistory(Path.home() / ".fa" / "session-log" / run_id / "attempt_history.json")
+    attempt_history = AttemptHistory(run_log_dir / "attempt_history.json")
     hooks.register(FailureClassifierObserver(event_log=log))
     hooks.register(AttemptHistoryObserver(history=attempt_history))
     hooks.register(
@@ -1936,7 +2084,14 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         logging.getLogger(__name__).warning("Failed to init PtyPool for live CLI: %s, fallback stateless", exc)
         pty_pool = None
 
-    state = SessionState(workspace_root=workspace, run_id=run_id, log=log, pty_pool=pty_pool)
+    state = SessionState(
+        workspace_root=workspace,
+        session_id=session_context.session_id if session_context is not None else "",
+        run_id=run_id,
+        log=log,
+        session_db=session_db,
+        pty_pool=pty_pool,
+    )
 
     # ── Live output ─────────────────────────────────────────────────────────
     from fa.output import ConsoleRenderer, EventBus, OutputEvent, QuietRenderer
@@ -2285,14 +2440,93 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     return 1 if any_failure else 0
 
 
+def _discover_stats_sources(  # noqa: C901 — source validation matrix
+    *,
+    state_root: Path,
+    selected_session_id: str | None,
+    selected_run_id: str | None,
+    since_seconds: float | None,
+) -> tuple[tuple[str, Path, Path, str], ...]:
+    """Discover current-format ``(session, db, workspace, run)`` sources.
+
+    This helper intentionally does not instantiate ``SessionManager``: stats is
+    a read command and must not create state roots, manifests, or databases.
+    """
+    from fa.stats import StatsSourceError
+
+    if selected_run_id is not None and not _valid_run_id(selected_run_id):
+        raise StatsSourceError("invalid_run_id", "run_id must match [A-Za-z0-9_.-]{1,128}")
+    sessions_root = state_root / "sessions"
+    legacy_root = state_root / "session-log"
+    if selected_session_id is not None:
+        if not _valid_run_id(selected_session_id):
+            raise StatsSourceError("invalid_session_id", "session_id must match [A-Za-z0-9_.-]{1,128}")
+        session_dirs = [sessions_root / selected_session_id]
+        if not (session_dirs[0] / "manifest.json").is_file():
+            raise StatsSourceError("unknown_session", f"session does not exist: {selected_session_id}")
+    elif sessions_root.is_dir():
+        session_dirs = sorted(
+            (path for path in sessions_root.iterdir() if path.is_dir()),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    else:
+        session_dirs = []
+
+    if not session_dirs:
+        has_legacy = legacy_root.is_dir() and any(
+            child.is_dir() and any(child.iterdir()) for child in legacy_root.iterdir()
+        )
+        if has_legacy:
+            raise StatsSourceError(
+                "legacy_trace_unsupported",
+                "current FA sessions require session.db under sessions/<session-id>; legacy JSONL/DB was not migrated",
+            )
+        return ()
+
+    sources: list[tuple[str, Path, Path, str]] = []
+    for session_dir in session_dirs:
+        manifest_path = session_dir / "manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise StatsSourceError("manifest_corrupt", f"cannot read {manifest_path}: {exc}") from exc
+        if not isinstance(manifest, dict) or manifest.get("status") != "active":
+            raise StatsSourceError("manifest_corrupt", f"inactive or malformed manifest: {manifest_path}")
+        session_id = manifest.get("session_id")
+        if not isinstance(session_id, str) or not _valid_run_id(session_id):
+            raise StatsSourceError("manifest_corrupt", f"invalid session_id: {manifest_path}")
+        if selected_session_id is not None and session_id != selected_session_id:
+            raise StatsSourceError("manifest_identity_mismatch", str(manifest_path))
+        db_path = Path(str(manifest.get("session_db_path", ""))).expanduser().resolve()
+        expected_db = (session_dir / "session.db").resolve()
+        if db_path != expected_db:
+            raise StatsSourceError("manifest_path_mismatch", str(manifest_path))
+        workspace_path = Path(str(manifest.get("workspace_path", ""))).expanduser().resolve()
+        try:
+            db = SessionDatabase.open_existing(db_path, session_id=session_id)
+            run_ids = (selected_run_id,) if selected_run_id is not None else db.list_run_ids()
+        except SessionDatabaseError as exc:
+            raise StatsSourceError(exc.code, str(exc)) from exc
+        if since_seconds is not None and selected_run_id is None:
+            if session_dir.stat().st_mtime < time.time() - since_seconds:
+                continue
+        for run_id in run_ids:
+            if db.get_run_binding(run_id) is None:
+                continue
+            sources.append((session_id, db_path, workspace_path, run_id))
+    return tuple(sources)
+
+
 def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
     """Analyze session logs — tool usage, file access, tokens, efficiency."""
     import time as _time
 
     from fa.stats import (
+        StatsSourceError,
         aggregate_sessions,
         find_dead_zones,
-        parse_session,
+        parse_session_db,
         render_aggregate,
         render_session,
         render_session_json,
@@ -2357,44 +2591,37 @@ def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
             return 1
 
     workspace = args.workspace.resolve()
-    runs_dir = Path.home() / ".fa" / "session-log"
-
-    if not runs_dir.exists():
-        print(f"fa stats: no runs found at {runs_dir}", file=sys.stderr)
-        return 1
-
-    # Discover sessions
-    session_dirs: list[Path] = []
-    if args.run_id:
-        target = runs_dir / args.run_id
-        if not target.exists():
-            print(f"fa stats: run {args.run_id!r} not found at {target}", file=sys.stderr)
-            return 1
-        session_dirs = [target]
-    else:
-        session_dirs = sorted(
-            [d for d in runs_dir.iterdir() if d.is_dir() and (d / "session.db").exists()],
-            key=lambda d: d.stat().st_mtime,
-            reverse=True,
+    state_root = Path.home() / ".fa"
+    since_seconds = _parse_since(args.since) if args.since and not args.run_id else None
+    try:
+        sources = _discover_stats_sources(
+            state_root=state_root,
+            selected_session_id=getattr(args, "session_id", None),
+            selected_run_id=args.run_id,
+            since_seconds=since_seconds,
         )
+    except StatsSourceError as exc:
+        print(f"fa stats: source error [{exc.code}]: {exc}", file=sys.stderr)
+        return 2
 
-    # Filter by --since (uses file mtime)
-    if args.since and not args.run_id:
-        since_s = _parse_since(args.since)
-        if since_s is not None:
-            cutoff = _time.time() - since_s
-            session_dirs = [d for d in session_dirs if d.stat().st_mtime >= cutoff]
-
-    if not session_dirs:
+    if args.run_id and not sources:
+        print(f"fa stats: run {args.run_id!r} not found in current session authorities", file=sys.stderr)
+        return 1
+    if not sources:
         print("fa stats: no matching sessions found", file=sys.stderr)
         return 1
 
-    # Parse sessions
     sessions = []
-    for d in session_dirs:
-        result = parse_session(d / "events.jsonl")
+    workspaces: list[Path] = []
+    for session_id, db_path, workspace_path, run_id in sources:
+        try:
+            result = parse_session_db(db_path, session_id=session_id, run_id=run_id)
+        except StatsSourceError as exc:
+            print(f"fa stats: source error [{exc.code}]: {exc}", file=sys.stderr)
+            return 2
         if result is not None:
             sessions.append(result)
+            workspaces.append(workspace_path)
 
     if not sessions:
         print("fa stats: no parseable sessions found", file=sys.stderr)
@@ -2420,7 +2647,7 @@ def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
 
     # Dead zones
     if getattr(args, "dead_zones", False):
-        dead = find_dead_zones(workspace, sessions)
+        dead = find_dead_zones(workspaces[0] if len(workspaces) == 1 else workspace, sessions)
         if dead:
             sys.stderr.write(f"\n🔍 Dead zones ({len(dead)} src/ files never accessed):\n")
             for p in dead[:15]:

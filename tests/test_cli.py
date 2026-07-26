@@ -11,7 +11,8 @@ from typing import Any
 import pytest
 from _pytest.capture import CaptureFixture
 
-from fa.cli import _cmd_run, build_parser
+from fa.cli import _cmd_run, _cmd_stats, build_parser
+from fa.inner_loop.session_db import SessionDatabase
 from fa.providers import SecretStore
 from fa.providers.base import TransportResponse
 
@@ -412,6 +413,94 @@ def test_fa_run_returns_zero_on_clean_stop(
     # The driver injects the system prompt as the first message.
     messages = transport.calls[0]["messages"]
     assert messages[0]["role"] == "system"
+
+
+@pytest.mark.parametrize(
+    ("debug_env", "capture_expected"),
+    [("1", True), ("0", False)],
+    ids=["enabled", "disabled"],
+)
+def test_fa_run_debug_body_capture_follows_exact_env_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    debug_env: str,
+    capture_expected: bool,
+) -> None:
+    """C2 producer proof for ``_cmd_run`` → provider → Transport.post.
+
+    Matrix: ``FA_DEBUG_LLM_BODIES=1`` / ``0`` with ``detail=debug`` in both
+    cases. Root: shipped ``_cmd_run``. Kill-check: removing the production
+    ``wrap_transport_for_debug_bodies(...)`` call in ``src/fa/cli.py`` makes
+    the enabled case fail because no ``llm_bodies.jsonl`` row is produced.
+    The disabled case proves ``--detail debug`` is not the capture gate.
+    """
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
+    monkeypatch.setenv("FA_DEBUG_LLM_BODIES", debug_env)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    run_id = f"debug-{debug_env}"
+    args = _make_run_args(workspace=tmp_path, config=config, run_id=run_id)
+    args.detail = "debug"
+    secret = _TEST_SECRETS["TEST_FA_RUN_KEY"]
+    transport = _ScriptedTransport([_stop_body(f"captured {secret}")])
+
+    assert _cmd_run(args, transport=transport, secrets=_TEST_SECRETS) == 0
+
+    body_path = home / ".fa" / "session-log" / run_id / "llm_bodies.jsonl"
+    if not capture_expected:
+        assert not body_path.exists()
+        return
+
+    raw_body = body_path.read_text(encoding="utf-8")
+    assert secret not in raw_body
+    assert "***REDACTED***" in raw_body
+    rows = [json.loads(line) for line in raw_body.splitlines() if line.strip()]
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "llm_body"
+    assert rows[0]["logical_call_id"]
+    assert rows[0]["provider"] == "openrouter"
+    assert rows[0]["slug"] == "test/model"
+    assert rows[0]["attempt_index"] == 0
+    assert rows[0]["request_body"]["model"] == "test/model"
+    assert rows[0]["response_body"]["choices"][0]["message"]["content"] == "captured ***REDACTED***"
+
+
+def test_fa_run_reports_session_db_initialization_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    """C2: authority init failure is reported before provider execution."""
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    def fail_event_log(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise RuntimeError("session_db_init_failed: disk unavailable")
+
+    monkeypatch.setattr("fa.cli.EventLog", fail_event_log)
+    transport = _ScriptedTransport([_stop_body("must not call provider")])
+
+    exit_code = _cmd_run(
+        _make_run_args(workspace=tmp_path, config=config, run_id="db-failure"),
+        transport=transport,
+        secrets=_TEST_SECRETS,
+    )
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "session database not available" in captured.err
+    assert str(home / ".fa" / "session-log" / "db-failure" / "session.db") in captured.err
+    assert "session_db_init_failed" in captured.err
+    assert transport.calls == []
 
 
 def test_fa_run_rejects_empty_task(
@@ -856,3 +945,137 @@ def test_fa_run_system_prompt_mentions_pr_prepare_before_mutation(
     system_message = transport.calls[0]["messages"][0]["content"]
     assert "pr.prepare" in system_message
     assert "Before your first mutation" in system_message
+
+
+def test_fa_run_session_manager_creates_and_attaches_with_fresh_run_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2 producer proof: real ``_cmd_run`` uses SessionManager + one session DB.
+
+    Matrix: default new session → explicit attach. Kill-check: removing the
+    SessionManager call from ``_cmd_run`` must make the manifest/DB assertions
+    fail. Provider I/O is deterministic and mocked at Transport only.
+    """
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    first_args = _make_run_args(workspace=tmp_path, config=config, run_id="")
+    first_args.session_id = None
+    first_args.resume = False
+    assert _cmd_run(first_args, transport=_ScriptedTransport([_stop_body("first")]), secrets=_TEST_SECRETS) == 0
+
+    manifests = sorted((home / ".fa" / "sessions").glob("*/manifest.json"))
+    assert len(manifests) == 1
+    session_id = json.loads(manifests[0].read_text(encoding="utf-8"))["session_id"]
+    run_dirs = sorted(d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir())
+    assert len(run_dirs) == 1
+    first_run_id = run_dirs[0].name
+
+    second_args = _make_run_args(workspace=tmp_path, config=config, run_id="")
+    second_args.session_id = session_id
+    second_args.resume = False
+    assert _cmd_run(second_args, transport=_ScriptedTransport([_stop_body("second")]), secrets=_TEST_SECRETS) == 0
+
+    run_dirs = sorted(d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir())
+    assert len(run_dirs) == 2
+    second_run_id = next(d.name for d in run_dirs if d.name != first_run_id)
+    assert second_run_id != first_run_id
+
+    db_path = home / ".fa" / "sessions" / session_id / "session.db"
+    db = SessionDatabase.open_existing(db_path, session_id=session_id)
+    assert db.read_event_rows(run_id=first_run_id)
+    assert db.read_event_rows(run_id=second_run_id)
+    assert all(row["session_id"] == session_id for row in db.read_event_rows())
+
+
+def test_fa_stats_reads_current_session_db_and_rejects_legacy_without_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    """C2/C3: stats is DB-only for current format and legacy is unsupported."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    session_id = "session-stats"
+    run_id = "run-stats"
+    session_dir = home / ".fa" / "sessions" / session_id
+    session_dir.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (session_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "v1",
+                "session_id": session_id,
+                "workspace_path": str(workspace),
+                "session_db_path": str(session_dir / "session.db"),
+                "created_at": "2026-06-21T14:00:00Z",
+                "last_used_at": "2026-06-21T14:00:00Z",
+                "status": "active",
+            }
+        ),
+        encoding="utf-8",
+    )
+    db = SessionDatabase(session_dir / "session.db", session_id=session_id)
+    db.reserve_run_binding(run_id, "2026-06-21T14:00:00Z")
+    db.append_event_row(
+        {
+            "event_id": "ev-1",
+            "session_id": session_id,
+            "ts": "2026-06-21T14:00:00Z",
+            "run_id": run_id,
+            "harness_id": "fa-inner-loop@0.1.0",
+            "actor": "runtime",
+            "kind": "session_summary",
+            "content": {"n_turns": 1, "input_tokens": 1, "output_tokens": 1},
+        }
+    )
+    args = argparse.Namespace(
+        run_id=run_id,
+        session_id=session_id,
+        since=None,
+        output="json",
+        workspace=workspace,
+        dead_zones=False,
+        global_history=False,
+    )
+    assert _cmd_stats(args) == 0
+    rendered = json.loads(capsys.readouterr().out)
+    assert rendered["run_id"] == run_id
+
+    legacy_home = tmp_path / "legacy-home"
+    monkeypatch.setenv("HOME", str(legacy_home))
+    legacy_dir = legacy_home / ".fa" / "session-log" / "old-run"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "events.jsonl").write_text("{}\n", encoding="utf-8")
+    legacy_args = argparse.Namespace(
+        run_id=None,
+        session_id=None,
+        since=None,
+        output="json",
+        workspace=workspace,
+        dead_zones=False,
+        global_history=False,
+    )
+    assert _cmd_stats(legacy_args) == 2
+    assert "legacy_trace_unsupported" in capsys.readouterr().err
+    assert not (legacy_dir / "session.db").exists()
+
+
+def test_fa_run_resume_without_session_id_fails_before_provider(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    transport = _ScriptedTransport([_stop_body("must not run")])
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="resume-run")
+    args.session_id = None
+    args.resume = True
+
+    assert _cmd_run(args, transport=transport, secrets=_TEST_SECRETS) == 2
+    assert transport.calls == []
+    assert "requires --session-id" in capsys.readouterr().err

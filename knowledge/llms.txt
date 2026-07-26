@@ -66,6 +66,14 @@ This section is deprecated as of ADR-14/15 (2026-07-11). Previously full per-fol
 **Maintained operator additions:**
 
 - [`knowledge/instructions/03-live-server-ci-governance-plan-ru.md`](./instructions/03-live-server-ci-governance-plan-ru.md): Russian live-server plan for CI/security simulation, shipped harness verification, GitHub governance, worktree review, and patch application.
+- [`worklogs/implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md`](../worklogs/implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md): DRAFT plan for source-verified CLI, trace authority, liveness, and direct-container hardening.
+- [`worklogs/implementation-plans/PLAN-cli-trace-S1-session-lifecycle.md`](../worklogs/implementation-plans/PLAN-cli-trace-S1-session-lifecycle.md): READY design/verification subplan for session lifecycle, session authority paths, run binding, and clean-format cutover.
+- [`worklogs/implementation-plans/cli-trace-S1-verification-report.md`](../worklogs/implementation-plans/cli-trace-S1-verification-report.md): S1 evidence report with source probes, frozen session/run decisions, and no-runtime-edit verification.
+- [`worklogs/implementation-plans/PLAN-cli-trace-S2-session-manager-and-authority.md`](../worklogs/implementation-plans/PLAN-cli-trace-S2-session-manager-and-authority.md): READY implementation subplan for SessionManager, session DB authority wiring, scoped EventLog/Blackboard, and DB-only stats.
+- [`worklogs/implementation-plans/cli-trace-S2-verification-report.md`](../worklogs/implementation-plans/cli-trace-S2-verification-report.md): S2 implementation evidence, targeted/full test results, static gates, kill-checks, and deferred production verification.
+- [`worklogs/implementation-plans/PLAN-cli-trace-S3-liveness-contract-audit.md`](../worklogs/implementation-plans/PLAN-cli-trace-S3-liveness-contract-audit.md): READY audit-only subplan for two-sided liveness, producer/consumer contracts, path matrices, failure policy, and verification hygiene.
+- [`worklogs/implementation-plans/cli-trace-S3-plan-review-report.md`](../worklogs/implementation-plans/cli-trace-S3-plan-review-report.md): S3 plan review evidence and READY verdict; runtime audit execution remains pending.
+- [`worklogs/pr-notes/PR_NOTE_CLI_TRACE_S2_IMPLEMENTATION_S3_READY.md`](../pr-notes/PR_NOTE_CLI_TRACE_S2_IMPLEMENTATION_S3_READY.md): comprehensive PR note for the main plan, S1/S2 artifacts, implemented S2 changes, and reviewed S3 plan.
 
 **What to use instead:**
 
@@ -86,4 +94,3 @@ find knowledge -type f -name "*.md" | sort
 ```
 
 **Future:** `fa generate-llms-txt` tool will auto-generate BY-DEMAND INDEX from blackboard, so manual update not needed.
-

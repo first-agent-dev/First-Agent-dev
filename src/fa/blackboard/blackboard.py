@@ -160,14 +160,28 @@ class Blackboard:
     per-run SessionDatabase when injected.
     """
 
-    def __init__(self, root: Path, *, session_db: SessionDatabase | None = None, run_id: str = ""):
+    def __init__(
+        self,
+        root: Path,
+        *,
+        session_db: SessionDatabase | None = None,
+        run_id: str = "",
+        session_id: str = "",
+    ):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "blackboard.jsonl"
         self.lock = threading.Lock()
         self.path.touch(exist_ok=True)
         self._run_id = run_id
+        self._injected_session_db = session_db is not None
         self._session_db = session_db if session_db is not None else SessionDatabase(self.root / "session.db")
+        self.session_id = session_id or self._session_db.session_id
+        if self.session_id and self._session_db.session_id and self.session_id != self._session_db.session_id:
+            raise ValueError(
+                "session_db_identity_mismatch: "
+                f"Blackboard session {self.session_id!r} != DB session {self._session_db.session_id!r}"
+            )
         self._init_db()
 
     def _init_db(self) -> None:
@@ -180,6 +194,7 @@ class Blackboard:
     def write(self, entry: BlackboardEntry) -> None:
         row = {
             "id": entry.id,
+            "session_id": self.session_id,
             "run_id": self._run_id,
             "type": entry.type,
             "content_hash": entry.content_hash,
@@ -223,8 +238,10 @@ class Blackboard:
                     timestamp=row["timestamp"],
                     payload=row["payload"],
                 )
-        except Exception as exc:  # noqa: BLE001 # legacy/degraded fallback
+        except Exception as exc:  # legacy/degraded fallback
             logger.warning("Failed to read Blackboard from authoritative SessionDatabase: %s", exc)
+            if self._injected_session_db:
+                raise
             with self.lock:
                 if not self.path.exists():
                     return None
@@ -264,8 +281,10 @@ class Blackboard:
                 )
                 for row in rows
             ]
-        except Exception as exc:  # noqa: BLE001 # fallback to JSONL query
+        except Exception as exc:  # fallback to JSONL query
             logger.warning("Failed to query Blackboard from authoritative SessionDatabase: %s", exc)
+            if self._injected_session_db:
+                raise
             results: list[BlackboardEntry] = []
             with self.lock:
                 if not self.path.exists():

@@ -87,10 +87,11 @@ class TraceEvent:
     tool_name: str = ""
     tool_call_id: str = ""
     parent_event_id: str = ""
+    session_id: str = ""
 
 
 class EventLog:
-    """Append-only JSONL writer for one ``run_id``.
+    """Per-run event facade with SQLite authority and a JSONL mirror.
 
     Thread-safe for Phase 2 tool batching: parallel read-only tools
     with Lock sequential log write.
@@ -102,63 +103,41 @@ class EventLog:
         *,
         run_id: str = "",
         redactor: SecretRedactor | None = None,
+        session_db: SessionDatabase | None = None,
+        session_id: str = "",
     ) -> None:
         self.path = Path(path)
         self.run_id = run_id
-        self._next_id = self._initial_next_id(path)
         self._redactor = redactor
         self._lock = threading.Lock()
+        self._injected_session_db = session_db is not None
+        self.session_db = session_db if session_db is not None else SessionDatabase(self.path.parent / "session.db")
+        self.session_id = session_id or self.session_db.session_id
+        if self.session_id and self.session_db.session_id and self.session_id != self.session_db.session_id:
+            raise RuntimeError(
+                "session_db_identity_mismatch: "
+                f"EventLog session {self.session_id!r} != DB session {self.session_db.session_id!r}"
+            )
         # S9: Incremental event counting for guardrail metrics (G9).
         # Updated inside append() under the existing _lock for thread safety.
         self.kind_counts: dict[str, int] = {}
         # S9: Dedicated counter for chain exhaustion events (user Q2:
         # not derived from kind_counts — precise metric for retry logic).
         self.chain_exhaustion_count: int = 0
-        try:
-            self.session_db: SessionDatabase | None = SessionDatabase(self.path.parent / "session.db")
-        except RuntimeError as exc:
-            logger.warning("EventLog authority database unavailable for %s: %s", self.path, exc)
-            self.session_db = None
-        self._init_db()
 
-    def _init_db(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        # SessionDatabase owns authoritative schema creation. Construction may
-        # intentionally degrade to None for non-writable/special paths used by
-        # tests; append() becomes the enforcement point.
+        # SessionDatabase owns both the directory/schema bootstrap and the
+        # authority identity. Construct/inject it before seeding the event id.
+        self._next_id = self._initial_next_id(self.session_db)
 
     @staticmethod
-    def _initial_next_id(path: Path) -> int:
-        """Seed _next_id from the authoritative DB, falling back to JSONL.
+    def _initial_next_id(session_db: SessionDatabase) -> int:
+        """Seed ``_next_id`` from the already-initialized DB authority.
 
-        Per the dual-write discipline (session.db = authority, JSONL = mirror),
-        the event_id counter must be seeded from session.db COUNT(*) rather
-        than the JSONL line count. If JSONL writes fail but DB writes succeed
-        (e.g. during a workflow where each stage creates a new EventLog on the
-        same session.db), the JSONL count would undercount and produce
-        duplicate event_id values (LOGIC-1).
+        JSONL is a best-effort mirror and therefore must never participate in
+        event-id correctness. Any authority read failure propagates instead of
+        silently creating a split-brain session.
         """
-        # Try DB first — it's the authority per dual-write discipline.
-        db_path = path.parent / "session.db"
-        try:
-            import sqlite3
-
-            conn = sqlite3.connect(str(db_path), timeout=5.0)
-            try:
-                cur = conn.execute("SELECT COUNT(*) FROM event_log")
-                count = int(cur.fetchone()[0])
-                return count + 1
-            finally:
-                conn.close()
-        except Exception as exc:  # noqa: BLE001 — DB bootstrap may be unavailable; JSONL fallback remains explicit
-            logger.warning("EventLog DB counter unavailable, using JSONL fallback: %s", exc)
-        # Fallback to JSONL mirror for brand-new sessions without a DB yet.
-        if not path.exists():
-            return 1
-        try:
-            return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line) + 1
-        except OSError:
-            return 1
+        return session_db.event_count() + 1
 
     def _redact_value(self, value: object) -> object:
         if self._redactor is None:
@@ -200,12 +179,11 @@ class EventLog:
                 tool_name=tool_name,
                 tool_call_id=tool_call_id,
                 parent_event_id=parent_event_id,
+                session_id=self.session_id,
             )
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
             # 1. Authoritative write to the per-run SessionDatabase.
-            if self.session_db is None:
-                raise RuntimeError(f"event_log_authority_unavailable: {self.path.parent / 'session.db'}")
             self.session_db.append_event_row(asdict(event))
 
             # 2. Advance logical id only after authoritative commit succeeds.
@@ -223,36 +201,41 @@ class EventLog:
 
     def read_all(self) -> tuple[TraceEvent, ...]:
         try:
-            if self.session_db is not None:
-                rows = self.session_db.read_event_rows()
-                if rows:
-                    return tuple(
-                        TraceEvent(
-                            event_id=str(row["event_id"]),
-                            ts=str(row["ts"]),
-                            run_id=str(row.get("run_id", "")),
-                            actor=str(row["actor"]),
-                            kind=str(row["kind"]),
-                            content=dict(row.get("content", {})),
-                            harness_id=str(row["harness_id"]),
-                            tool_name=str(row.get("tool_name", "")),
-                            tool_call_id=str(row.get("tool_call_id", "")),
-                            parent_event_id=str(row.get("parent_event_id", "")),
-                        )
-                        for row in rows
-                    )
-        except Exception as exc:  # noqa: BLE001 # legacy/degraded fallback
+            rows = self.session_db.read_event_rows(run_id=self.run_id or None)
+            db_events = tuple(
+                TraceEvent(
+                    event_id=str(row["event_id"]),
+                    ts=str(row["ts"]),
+                    run_id=str(row.get("run_id", "")),
+                    actor=str(row["actor"]),
+                    kind=str(row["kind"]),
+                    content=dict(row.get("content", {})),
+                    harness_id=str(row["harness_id"]),
+                    tool_name=str(row.get("tool_name", "")),
+                    tool_call_id=str(row.get("tool_call_id", "")),
+                    parent_event_id=str(row.get("parent_event_id", "")),
+                    session_id=str(row.get("session_id", "")),
+                )
+                for row in rows
+            )
+            # An injected session DB is the current-format authority. Empty or
+            # failed reads must not fall through to the mirror.
+            if self._injected_session_db or db_events:
+                return db_events
+        except Exception as exc:  # legacy/degraded fallback
             logger.warning("Failed to read events from authoritative SessionDatabase: %s", exc)
+            if self._injected_session_db:
+                raise
 
         if not self.path.exists():
             return ()
-        events = []
+        legacy_events: list[TraceEvent] = []
         try:
             for raw in self.path.read_text(encoding="utf-8").splitlines():
                 if not raw:
                     continue
                 parsed = json.loads(raw)
-                events.append(
+                legacy_events.append(
                     TraceEvent(
                         event_id=str(parsed["event_id"]),
                         ts=str(parsed["ts"]),
@@ -264,9 +247,10 @@ class EventLog:
                         tool_name=str(parsed.get("tool_name", "")),
                         tool_call_id=str(parsed.get("tool_call_id", "")),
                         parent_event_id=str(parsed.get("parent_event_id", "")),
+                        session_id=str(parsed.get("session_id", "")),
                     )
                 )
-            return tuple(events)
+            return tuple(legacy_events)
         except Exception as exc2:  # noqa: BLE001 - legacy JSONL fallback must not crash readers
             logger.warning("Fallback JSONL reading failed: %s", exc2)
             return ()
@@ -287,6 +271,7 @@ class SessionState:
     """
 
     workspace_root: Path
+    session_id: str = ""
     run_id: str = field(default_factory=lambda: f"run-{os.getpid()}")
     log: EventLog | None = None
     observations: list[str] = field(default_factory=list)
@@ -344,9 +329,18 @@ class SessionState:
         elif not self.log.run_id:
             self.log.run_id = self.run_id
 
-        # Unified per-run authority DB for hot-path runtime state.
+        # Unified session authority DB for hot-path runtime state.
         if self.session_db is None and self.log is not None:
             self.session_db = self.log.session_db
+        if self.log is not None and self.session_db is not None:
+            if self.log.session_db.path.resolve() != self.session_db.path.resolve():
+                raise ValueError("SessionState.log and SessionState.session_db must reference the same authority")
+            if self.session_id and self.log.session_id and self.session_id != self.log.session_id:
+                raise ValueError("SessionState.session_id does not match EventLog.session_id")
+            if self.session_id and self.session_db.session_id and self.session_id != self.session_db.session_id:
+                raise ValueError("SessionState.session_id does not match SessionDatabase.session_id")
+            if not self.session_id:
+                self.session_id = self.log.session_id or self.session_db.session_id
 
         # FeatureFlags loader with graceful degradation
         if self.feature_flags is None:
@@ -404,6 +398,7 @@ class SessionState:
                             self.workspace_root / ".fa" / "blackboard",
                             session_db=self.session_db,
                             run_id=self.run_id,
+                            session_id=self.session_id,
                         )
                     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                         logger.warning(f"Failed to init Blackboard: {exc}, continuing without")
