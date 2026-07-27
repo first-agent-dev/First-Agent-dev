@@ -77,19 +77,42 @@ Stop and report before continuing if:
 | 4 | No provider key inside the agent container | S4.5 verifies this |
 | 5 | Operator has a one-turn throwaway task | e.g. "Reply with the single word: pong" |
 
-**Host paths assumed** (adjust once and tell me if different):
+**Host paths — VERIFIED on fa-HP 2026-07-27:**
 
 ```text
-COMPOSE=/srv/first-agent/repo/First-Agent-dev/docker-compose.fa.yml
-SERVICE=first-agent
+compose project : first-agent-dev  (running, 2 services)
+COMPOSE         : /srv/first-agent/repo/First-Agent-dev/docker-compose.fa.yml
+SERVICE         : first-agent
+REPO_DIR        : /srv/first-agent/repo/First-Agent-dev
 ```
 
-Set them once per shell so every later command is copy-pasteable:
+Confirmed via `docker compose ls` and the container's own compose labels
+(`com.docker.compose.project.config_files` / `.service`), not assumed.
+
+Set them once per shell. **Every S4 command depends on these being exported —
+run this block first, in the same shell, before anything else:**
 
 ```bash
 export COMPOSE=/srv/first-agent/repo/First-Agent-dev/docker-compose.fa.yml
 export SERVICE=first-agent
+export REPO_DIR=/srv/first-agent/repo/First-Agent-dev
+
+# Guard: fail loudly instead of letting compose read the wrong path.
+# An unset $COMPOSE makes `-f ""` resolve to the CWD and produces the
+# confusing error `read /home/fa: is a directory`.
+[ -f "$COMPOSE" ] || { echo "COMPOSE not set or missing: '$COMPOSE'"; return 2>/dev/null || exit 1; }
+echo "COMPOSE=$COMPOSE"
+echo "SERVICE=$SERVICE"
 ```
+
+Round-trip check — if this prints a version, every later S4 command will work:
+
+```bash
+docker compose -f "$COMPOSE" exec -T "$SERVICE" fa --version
+```
+
+**If you open a new terminal, re-run the export block.** Shell variables do not
+survive across sessions, and the failure mode is misleading rather than obvious.
 
 ## 2. Expected topology (what "correct" looks like)
 
@@ -109,6 +132,19 @@ produces exactly this shape inside the container:
 **Key invariant under test:** `<session-id>` and `<run-id>` are different
 identities. Before S2 they were the same value (V26). If you see the run-id
 used as the session directory name, that is a V26 regression — stop.
+
+**State persistence (verified from `docker-compose.fa.yml:85-88`).**
+`/home/fa/.fa` is a **host bind mount** of `/srv/first-agent/state`, and
+`/sessions` binds `/srv/first-agent/sessions`. Two consequences for S4:
+
+1. Session/run artifacts **survive the rebuild** — pre-existing directories from
+   earlier runs are expected and are not a defect. S4.2's pre/post inventory is
+   therefore a *diff*, not an absolute-emptiness check.
+2. Anything S4 writes lands on the host. The §6 rollback removes exactly the
+   three S4 directories and nothing else.
+
+`/home/fa/.fa/models.yaml` is a nested **read-only** mount over that directory —
+if a step ever reports it as writable, that is an R2-2 violation; stop.
 
 ---
 
@@ -195,10 +231,15 @@ Traces-to: S4-G2, S4-G3. Depends-on: S4.1.
 This is matrix row **A** (`FA_DEBUG_LLM_BODIES=0`, provider success).
 
 ```bash
-# 2a. Pre-run inventory so we can diff afterwards
+# 2a. Pre-run inventory. /home/fa/.fa is a host bind mount, so PRE-EXISTING
+#     entries from earlier runs are normal. What matters is the DIFF in 2c.
 docker compose -f "$COMPOSE" exec -T "$SERVICE" sh -lc '
   echo "--- sessions before"; ls -1 /home/fa/.fa/sessions 2>/dev/null || echo none
   echo "--- runs before";     ls -1 /home/fa/.fa/session-log 2>/dev/null || echo none
+  echo "--- s4 ids must NOT already exist:"
+  for d in /home/fa/.fa/sessions/s4-baseline /home/fa/.fa/session-log/s4-run-a; do
+    [ -e "$d" ] && echo "  COLLISION: $d exists — run the section-6 rollback first" || echo "  clear: $d"
+  done
 '
 
 # 2b. THE RUN — explicit identities, debug disabled, one turn.
