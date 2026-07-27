@@ -1798,8 +1798,6 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     the resolved secrets file (strict, file-only — never ``os.environ``);
     tests inject a :class:`SecretStore`/mapping directly.
     """
-    if getattr(args, "no_color", False):
-        os.environ["NO_COLOR"] = "1"
     resolved = _resolve_task(getattr(args, "task_pos", None), getattr(args, "task", None))
     if resolved is None:
         print(
@@ -2102,6 +2100,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         output_bus.add(
             ConsoleRenderer(
                 detail=getattr(args, "detail", "standard") or "standard",
+                no_color=bool(getattr(args, "no_color", False)),
             )
         )
     elif output_mode == "quiet":

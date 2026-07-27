@@ -89,6 +89,47 @@ class TraceEvent:
     parent_event_id: str = ""
     session_id: str = ""
 
+    @classmethod
+    def from_row(
+        cls,
+        row: Mapping[str, object],
+        *,
+        default_run_id: str = "",
+        default_session_id: str = "",
+    ) -> TraceEvent:
+        """Project one ``event_log`` DB row into a typed ``TraceEvent``.
+
+        Both :meth:`EventLog.read_all` and :func:`fa.stats.parse_session_db`
+        materialise rows from the same ``session.db`` schema; the two copies of
+        this projection were byte-similar enough for pylint to flag R0801.
+        Keeping one constructor means a schema column added in one reader can
+        never be silently missing from the other.
+
+        The two call sites differ only in their fallbacks for absent
+        ``run_id`` / ``session_id`` (``EventLog`` uses the empty string, stats
+        substitutes the values it queried with), so those stay parameters
+        rather than being hard-coded here.
+        """
+        # ``content`` arrives as ``object`` from the row mapping. Validate it at
+        # this boundary instead of asserting a type: a malformed row yields an
+        # empty mapping rather than a TypeError deep inside a consumer, and the
+        # isinstance check narrows the type for the checker without an ignore.
+        raw_content = row.get("content")
+        content: Mapping[str, object] = raw_content if isinstance(raw_content, Mapping) else {}
+        return cls(
+            event_id=str(row["event_id"]),
+            ts=str(row["ts"]),
+            run_id=str(row.get("run_id", default_run_id)),
+            actor=str(row["actor"]),
+            kind=str(row["kind"]),
+            content=dict(content),
+            harness_id=str(row["harness_id"]),
+            tool_name=str(row.get("tool_name", "")),
+            tool_call_id=str(row.get("tool_call_id", "")),
+            parent_event_id=str(row.get("parent_event_id", "")),
+            session_id=str(row.get("session_id", default_session_id)),
+        )
+
 
 class EventLog:
     """Per-run event facade with SQLite authority and a JSONL mirror.
@@ -202,22 +243,7 @@ class EventLog:
     def read_all(self) -> tuple[TraceEvent, ...]:
         try:
             rows = self.session_db.read_event_rows(run_id=self.run_id or None)
-            db_events = tuple(
-                TraceEvent(
-                    event_id=str(row["event_id"]),
-                    ts=str(row["ts"]),
-                    run_id=str(row.get("run_id", "")),
-                    actor=str(row["actor"]),
-                    kind=str(row["kind"]),
-                    content=dict(row.get("content", {})),
-                    harness_id=str(row["harness_id"]),
-                    tool_name=str(row.get("tool_name", "")),
-                    tool_call_id=str(row.get("tool_call_id", "")),
-                    parent_event_id=str(row.get("parent_event_id", "")),
-                    session_id=str(row.get("session_id", "")),
-                )
-                for row in rows
-            )
+            db_events = tuple(TraceEvent.from_row(row) for row in rows)
             # An injected session DB is the current-format authority. Empty or
             # failed reads must not fall through to the mirror.
             if self._injected_session_db or db_events:

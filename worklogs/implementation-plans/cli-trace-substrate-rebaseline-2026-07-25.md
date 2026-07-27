@@ -1438,6 +1438,55 @@ Kill-check:
   producer call from a disposable copy. The audit itself must detect that
   producer absence.
 
+#### S3 execution record — 2026-07-27
+
+Status: **EXECUTED — PASS, no runtime edits.**
+
+Report: `worklogs/implementation-plans/cli-trace-substrate-liveness-audit-2026-07-25.md`
+
+Audited subject: commit `811502ee884aed556e075986ca4a1a09347848b6` on branch
+`formal-substrate++`. Note the provenance correction: S2 is committed, not an
+uncommitted worktree at `origin/main` as the S3 subplan §1.1 assumed. C0 is
+recorded UNAVAILABLE (candidate patch is host-local, per S3-Q2).
+
+Exit criteria: all five met — see report §12.
+
+Headline evidence:
+
+- Kill-check K1 (literal `tool_call` producer removed): AST inventory changed,
+  `check_producer_consumer_contract.py` flipped to FAIL, `test_tool_call_emitted`
+  failed. Producer proof is non-vacuous.
+- Kill-check K2 (dynamic `subagent_spawn_done` producer removed): C1 test failed,
+  but `check_log_kind_contract.py` output was **byte-identical** and still PASS.
+  The shipped LogKind checker is blind to producer deletion.
+- `check_producer_consumer_contract.py` reports `C1 tested: 20` against 16
+  EventType literals; five entries are not EventTypes.
+- CHECK 3 dual-write is file-level only: three `CONSOLE_MIRROR_KINDS` producer
+  sites (`loop.py:288`, `:420`, `:481`) have no `emit()` on any exit path from
+  `run_session`. Kill-check K4 confirmed behaviourally — durable `run_stopped`
+  row written, zero console events with a bus attached. A 4th suspected site
+  (`state.py:515`) was cleared: it pairs cross-function at `coder_loop.py:1557`.
+- `subagent_spawn_done` is a checker false negative — live producer at
+  `spawn_subagent.py:72`. `cost_alert` is genuinely dormant.
+- V-findings: 8 fixed (V3, V4, V5, V7, V13, V16, V26, V2-durable), 15 confirmed
+  open, 2 deferred (V14, V23), 1 partial (V2 `kind_counts`).
+- Full gate: 2014 passed, 15 skipped, zero tracked-file delta. V12 reproduces
+  only on the failure path (`test_hygiene_hooks_install.py:229` chmods tracked
+  source, restored without `try/finally`).
+- Path matrix: VERIFIED 5 · PARTIAL 27 · UNVERIFIED 1 (P25).
+
+New blocking question promoted per the S3 STOP RULE:
+
+- **Q12 — should `src/fa/inner_loop/loop.py` have a live output channel?**
+  Either `run_session` is intentionally console-silent (and the mirror contract
+  must record the exemption) or `loop.py` gains an `output_bus`. Must be
+  answered before S6 mirror work. Owner: S6.
+
+Selected next implementation slice: **S5**, scoped to V1 (atomic event-id
+allocation), V15/V17 (mutation-path conflict symmetry), and the worktree/subagent
+fail-open cluster (V18, V19, V21, V22, V24, V25). Checker defects are handed to a
+separate approved subplan and are explicitly out of S5 scope.
+
 ### Step S4: Establish the direct-container baseline
 
 Traces-to: G4, CT1, CT2, CT5, CT7, CT8.

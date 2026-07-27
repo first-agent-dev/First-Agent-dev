@@ -162,13 +162,125 @@ implementation.
   entrypoint handoff probe was therefore repeated with a disposable source
   revision containing the new files; the corrected handoff passed.
 
+## S3 liveness/contract audit — EXECUTED 2026-07-27
+
+Report: `worklogs/implementation-plans/cli-trace-substrate-liveness-audit-2026-07-25.md`
+
+Audited subject commit `811502ee884aed556e075986ca4a1a09347848b6`
+(branch `formal-substrate++`). Audit-only: no `src/`, `tests/`, or `scripts/`
+file was modified; all mutation probes ran in disposable `/tmp/fa-s3/` copies.
+C0 candidate comparator recorded UNAVAILABLE (host-local patch).
+
+Verdict: **PASS**. All five Step-S3 exit criteria met.
+
+Must-read consequences for the next session:
+
+- **Do not cite `check_log_kind_contract.py` PASS as evidence.** Kill-check K2
+  deleted the real `subagent_spawn_done` producer and the checker output was
+  byte-identical, still PASS. `check_producer_consumer_contract.py` also reports
+  `C1 tested: 20` against 16 EventType literals (five non-EventType strings).
+  Checker repair is a separate approved subplan, not part of S5.
+- The C1 test layer *is* trustworthy: both K1 and K2 failed the named C1 tests.
+- Three `CONSOLE_MIRROR_KINDS` producer sites are durable-only
+  (`loop.py:288`, `:420`, `:481`); `loop.py` has no output channel at all.
+  Kill-check K4 proved this behaviourally: a real `run_session` with an attached
+  bus wrote a durable `run_stopped` row and emitted **zero** console events.
+  A 4th suspected site (`state.py:515` `tool_call`) was **cleared** on
+  call-graph review — it pairs with `coder_loop.py:1557` at the `drive_session`
+  root. Do not "fix" it.
+- Fixed and closed by S2, confirmed by probe: V3, V4, V5, V7, V13, V16, V26 and
+  V2 on the durable path. Do not re-open these without source evidence.
+- Full gate: 2014 passed, 15 skipped, zero tracked-file delta.
+- V12 reproduces only on the failure path: `tests/test_hygiene_hooks_install.py:229`
+  chmods tracked source and restores it without `try/finally`.
+
+Second-pass re-verification (§12b of the report) added S3-F10..S3-F14 and
+corrected three findings:
+
+- **S3-F10 (P0)** — one git commit disables Blackboard conflict detection against
+  every pre-commit entry (`_should_check_conflict` skips differing `base_commit`).
+- **S3-F13 (P0)** — V3 is not fully closed: `tools/observability.py:42` builds an
+  EventLog with no `session_db`, so an agent-facing tool reads the JSONL mirror
+  and can report events absent from the authority.
+- **S3-F14 (P0)** — CHECK 3 stays green after every assertion in
+  `test_event_type_c1_producers.py` is neutralised.
+- **S3-F11/F12 (P1)** — bare `print()` to stdout in `worktree_manager.py:235`
+  corrupts `fa run > result.txt`; `ConsoleRenderer.on_event` silently drops
+  unknown event types.
+- **V1 downgraded to LATENT** — the per-instance lock holds; duplicates need a
+  stale long-lived handle, and `cli.py:1742` constructs after the stage loop.
+- **V12 blast radius upgraded** — the test chmods the *pip-installed* package
+  path, so a failure dirties the installed repo, not the copy under test.
+- **S3-F2 downgraded to cosmetic** — the stray strings never reach CHECK 3 logic.
+
+Load-bearing gate finding: on the K2 killed tree, all 4 checker tests and
+`test_s4_log_kind.py` passed; only 2 C1 wiring tests failed. The C1 wiring tests
+are the only real liveness gate.
+
+New blocking question:
+
+- **Q12 — should `src/fa/inner_loop/loop.py` have a live output channel?**
+  Answer before any S6 mirror work. S3 stopped rather than choosing the policy.
+
+## S3.5 gap closure — LANDED 2026-07-27
+
+Six CI/audit findings closed before S4. All verified on a green full gate.
+
+| Fix | Finding | Mechanism |
+|---|---|---|
+| CI mount topology | stale post-S2 contract | `advisory.yml` now passes `FA_SESSION_ID=ci-smoke` + `FA_RUN_ID=ci-run-1` and asserts both. **Plus a new negative case**: a run-id-only container must NOT create `/sessions/<run-id>` — this is the only thing that would detect a V26 regression. |
+| authoring-check HARD-BLOCK ×3 | public-looking names | `SCHEMA_META_KEY`/`SESSION_ID_META_KEY`/`SESSION_SCHEMA_VERSION` → `_`-prefixed. Zero external consumers (verified). Persisted string *values* unchanged, so existing DBs stay readable. |
+| pylint R0801 #1 | duplicate `_payload_matches_key` | Extracted to `fa.inner_loop._sqlite_common.payload_matches_key` (same module that already exists for this exact R0801 pattern). |
+| pylint R0801 #2 | duplicate TraceEvent projection | New `TraceEvent.from_row()` classmethod. The two call sites' differing fallbacks (`""` vs queried run/session id) are parameters, so semantics are preserved exactly. |
+| S3-F11 | stdout pollution | `worktree_manager.py:235` bare `print()` → `logger.warning`. Was writing 211 bytes into `fa run > result.txt`. Verified 0 stdout bytes after. |
+| S3-F8 / V12 | hygiene leak escaping the checkout | `test_hygiene_hooks_install.py` now chmods a `tmp_path` **copy**, not `Path(install_mod.__file__)` (the pip-installed package). Re-ran the negative fixture: mode stayed 755 through a forced mid-test failure. |
+| V11 | `NO_COLOR` process-global mutation | Removed entirely. `ConsoleRenderer(no_color=...)` is now an explicit parameter; env var still honoured for the no-color.org contract. Better than the try/finally restore I first wrote — that broke two `inspect.getsource` tests. |
+
+Deferred by decision: Codacy cyclomatic complexity (`_discover_stats_sources` 30,
+`_parse_events` 59). These need structural refactor and would change parsing
+semantics; not safe as "minor cleanup".
+
+Gate after all fixes:
+
+```text
+pytest            2014 passed, 15 skipped
+mypy --strict     Success: 137 source files
+pylint            10.00/10 (duplicate-code + cyclic-import gate)
+ruff check        clean (2 pre-existing RUF100 in untouched hooks/base.py, newer-ruff artifact)
+ruff format       297 files already formatted
+authoring-check   0 diagnostics, exit 0
+producer/consumer + logkind + no-mocked-dataclasses + dependency-contract: PASS
+check_doc_links   177 files OK
+git diff --check  PASS
+```
+
+`TEST-EDITS:` one test modified — `tests/test_hygiene_hooks_install.py`
+(S3-F8). Rationale: the test itself was the defect; it mutated tracked/installed
+source outside `tmp_path`. Assertion and coverage are unchanged.
+
+## S4 subplan — READY for operator execution
+
+`worklogs/implementation-plans/PLAN-cli-trace-S4-direct-container-baseline.md`
+
+Eight steps (S4.0–S4.7), copy-pasteable `docker compose exec` blocks, each with
+an explicit expectation. S4.3 carries the decision-relevant number: the live
+`duplicate event_id` count. S3 proved V1 **latent** locally; S4 determines
+whether it is live in production, which sets its rank in S5.
+
+Body-file safety is structural in the plan: counts and sizes only, never `cat`.
+
 ## Next bounded action
 
-1. Human-review the S2 diff and verification report on branch
-   `fa/20260725-session-authority-debug-wiring`.
-2. Do not commit, push, or deploy without explicit human approval.
-3. Execute the next approved slice in dependency order: S3 liveness/contract
-   audit, then direct-container S4/S7 verification as scheduled.
+1. Review and merge the S3 audit + S3.5 gap-closure PR.
+2. Rebuild the deployment from the merged commit (S4 Step S4.0).
+3. Execute `PLAN-cli-trace-S4-direct-container-baseline.md` on `fa@fa-HP` and
+   post each step's output for joint debugging.
+4. Then author the **S5** subplan from S3+S4 evidence: V1 atomic event-id
+   allocation, V15/V17 + **S3-F10** (a commit disables conflict detection),
+   **S3-F13** (observability tool reads the mirror), and the worktree/subagent
+   fail-open cluster (V18, V19, V21, V22, V24, V25).
+   Explicit S5 non-goals: checker edits, `loop.py` output channel (pending Q12),
+   V23, CLI extraction, Codacy complexity refactor.
 4. Before deployment, use direct invocation only:
 
    ```bash

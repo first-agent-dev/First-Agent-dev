@@ -127,13 +127,34 @@ jobs:
             -v /tmp/fa-ci-repo:/repo:ro \
             -v /tmp/fa-ci-sessions:/sessions \
             -v /tmp/fa-ci-state:/home/fa/.fa \
-            -e FA_RUN_ID=ci-smoke \
+            -e FA_SESSION_ID=ci-smoke \
+            -e FA_RUN_ID=ci-run-1 \
             fa-image:ci bash -c '
               set -euo pipefail
               test -d /sessions/ci-smoke/.git
               test -f /sessions/.active
               test "$PWD" = "/sessions/ci-smoke"
+              test "$FA_SESSION_ID" = "ci-smoke"
+              test "$FA_RUN_ID" = "ci-run-1"
               fa --version
               echo "Session workspace isolation OK"
+            '
+          # V26 regression guard: run_id MUST NOT select the session workspace.
+          # Before S2 the entrypoint used FA_RUN_ID as the session identity; if
+          # that behaviour ever returns, the positive test above would still
+          # pass. This negative case is the only thing that detects it.
+          docker run --rm --user 1000:1000 --read-only \
+            --tmpfs /tmp --tmpfs /home/fa/.cache --tmpfs /home/fa/.local \
+            -v /tmp/fa-ci-repo:/repo:ro \
+            -v /tmp/fa-ci-sessions:/sessions \
+            -v /tmp/fa-ci-state:/home/fa/.fa \
+            -e FA_RUN_ID=ci-runonly \
+            fa-image:ci bash -c '
+              set -euo pipefail
+              if [ -d /sessions/ci-runonly/.git ]; then
+                echo "V26 REGRESSION: FA_RUN_ID selected the session workspace" >&2
+                exit 1
+              fi
+              echo "run_id does not select session workspace OK"
             '
           sudo rm -rf /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state

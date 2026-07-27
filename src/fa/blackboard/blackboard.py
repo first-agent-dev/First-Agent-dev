@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from fa.inner_loop._sqlite_common import payload_matches_key
 from fa.inner_loop.session_db import SessionDatabase
 
 logger = logging.getLogger(__name__)
@@ -136,20 +137,6 @@ def _build_conflict_reason(ww: set[str], rw: set[str], wr: set[str], assump_viol
     if assump_viol:
         parts.append(f"assumption violated '{assump_viol}'")
     return "; ".join(parts) + " — concurrent without coordination"
-
-
-def _payload_matches_key(payload: Any, key: str | None) -> bool:
-    if key is None:
-        return True
-    if isinstance(payload, dict):
-        if key in payload or key in str(payload):
-            return True
-        if key in json.dumps(payload):
-            return True
-    else:
-        if key in json.dumps(payload):
-            return True
-    return False
 
 
 class Blackboard:
@@ -297,7 +284,7 @@ class Blackboard:
                                 if type is not None and data.get("type") != type:
                                     continue
                                 payload = data.get("payload", {})
-                                if not _payload_matches_key(payload, key):
+                                if not payload_matches_key(payload, key):
                                     continue
                                 results.append(BlackboardEntry(**data))
                             except json.JSONDecodeError as exc2:

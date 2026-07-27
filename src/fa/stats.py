@@ -295,20 +295,7 @@ def parse_session_db(
     if not rows:
         return None
     events = tuple(
-        TraceEvent(
-            event_id=str(row["event_id"]),
-            ts=str(row["ts"]),
-            run_id=str(row.get("run_id", run_id)),
-            actor=str(row["actor"]),
-            kind=str(row["kind"]),
-            content=dict(row.get("content", {})),
-            harness_id=str(row["harness_id"]),
-            tool_name=str(row.get("tool_name", "")),
-            tool_call_id=str(row.get("tool_call_id", "")),
-            parent_event_id=str(row.get("parent_event_id", "")),
-            session_id=str(row.get("session_id", session_id)),
-        )
-        for row in rows
+        TraceEvent.from_row(row, default_run_id=run_id or "", default_session_id=session_id or "") for row in rows
     )
     return _parse_events(events, run_id)
 

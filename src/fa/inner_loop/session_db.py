@@ -20,13 +20,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from fa.inner_loop._sqlite_common import create_sqlite_connection
+from fa.inner_loop._sqlite_common import create_sqlite_connection, payload_matches_key
 
 logger = logging.getLogger(__name__)
 
 CURRENT_SCHEMA_VERSION = "session-v1"
-SCHEMA_META_KEY = "__fa_schema__"
-SESSION_ID_META_KEY = "__fa_session_id__"
+_SCHEMA_META_KEY = "__fa_schema__"
+_SESSION_ID_META_KEY = "__fa_session_id__"
 _RUN_BINDING_PREFIX = "run_binding:"
 
 _EVENT_COLUMNS = {
@@ -227,7 +227,7 @@ class SessionDatabase:
                             INSERT OR IGNORE INTO session_meta(key, value, updated_at)
                             VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
                             """,
-                            (SCHEMA_META_KEY, json.dumps({"schema_version": CURRENT_SCHEMA_VERSION})),
+                            (_SCHEMA_META_KEY, json.dumps({"schema_version": CURRENT_SCHEMA_VERSION})),
                         )
                 finally:
                     conn.close()
@@ -249,11 +249,11 @@ class SessionDatabase:
                     raise SessionDatabaseError("session_db_schema_unsupported", f"event_log schema: {self.path}")
                 if not _BLACKBOARD_COLUMNS.issubset(self._columns(conn, "blackboard")):
                     raise SessionDatabaseError("session_db_schema_unsupported", f"blackboard schema: {self.path}")
-                schema = self._get_meta_from_connection(conn, SCHEMA_META_KEY)
+                schema = self._get_meta_from_connection(conn, _SCHEMA_META_KEY)
                 if not isinstance(schema, dict) or schema.get("schema_version") != CURRENT_SCHEMA_VERSION:
                     raise SessionDatabaseError("session_db_schema_unsupported", f"schema marker: {self.path}")
                 if require_identity:
-                    identity = self._get_meta_from_connection(conn, SESSION_ID_META_KEY)
+                    identity = self._get_meta_from_connection(conn, _SESSION_ID_META_KEY)
                     if identity != self.session_id:
                         raise SessionDatabaseError(
                             "session_db_identity_mismatch",
@@ -278,12 +278,12 @@ class SessionDatabase:
             conn = self._connect()
             try:
                 with conn:
-                    existing = self._get_meta_from_connection(conn, SESSION_ID_META_KEY)
+                    existing = self._get_meta_from_connection(conn, _SESSION_ID_META_KEY)
                     if existing is None:
                         conn.execute(
                             "INSERT INTO session_meta(key, value, updated_at) "
                             "VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-                            (SESSION_ID_META_KEY, json.dumps(self.session_id)),
+                            (_SESSION_ID_META_KEY, json.dumps(self.session_id)),
                         )
                     elif existing != self.session_id:
                         raise SessionDatabaseError(
@@ -658,7 +658,7 @@ class SessionDatabase:
     ) -> list[dict[str, Any]]:
         try:
             rows = [self._blackboard_row(row) for row in self._blackboard_select(entry_type=entry_type)]
-            return [row for row in rows if _payload_matches_key(row["payload"], key)]
+            return [row for row in rows if payload_matches_key(row["payload"], key)]
         except Exception as exc:
             logger.warning("Authoritative blackboard query failed for %s: %s", self.path, exc)
             raise RuntimeError(f"blackboard_query_failed: {exc}") from exc
@@ -729,20 +729,6 @@ class SessionDatabase:
             raise RuntimeError(f"run_binding_list_failed: {exc}") from exc
         finally:
             conn.close()
-
-
-def _payload_matches_key(payload: Any, key: str | None) -> bool:
-    if key is None:
-        return True
-    if isinstance(payload, dict):
-        if key in payload or key in str(payload):
-            return True
-        if key in json.dumps(payload):
-            return True
-    else:
-        if key in json.dumps(payload):
-            return True
-    return False
 
 
 __all__ = ["CURRENT_SCHEMA_VERSION", "SessionDatabase", "SessionDatabaseError"]

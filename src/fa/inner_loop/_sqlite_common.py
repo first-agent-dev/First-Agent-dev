@@ -12,8 +12,10 @@ vs runs), so each keeps its own ``_init_schema``.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 # Shared tuning constants. Both stores use the same values because they
 # run in the same process and contend on the same kind of short-lived
@@ -49,8 +51,33 @@ def create_sqlite_connection(
     return conn
 
 
+def payload_matches_key(payload: Any, key: str | None) -> bool:
+    """Return True when ``key`` appears anywhere in a JSON-serialisable payload.
+
+    Shared by :mod:`fa.inner_loop.session_db` and :mod:`fa.blackboard.blackboard`,
+    which both filter stored rows by a caller-supplied substring key. The two
+    call sites had byte-identical copies of this predicate, which pylint
+    correctly flagged as R0801 duplicate-code. Extracting it here keeps one
+    definition of "does this row match the query key" so the two stores cannot
+    drift apart silently.
+
+    ``key=None`` means "no filter" and matches everything.
+    """
+    if key is None:
+        return True
+    if isinstance(payload, dict):
+        if key in payload or key in str(payload):
+            return True
+        if key in json.dumps(payload):
+            return True
+    elif key in json.dumps(payload):
+        return True
+    return False
+
+
 __all__ = [
     "SQLITE_BUSY_TIMEOUT_MS",
     "SQLITE_TIMEOUT_SECONDS",
     "create_sqlite_connection",
+    "payload_matches_key",
 ]

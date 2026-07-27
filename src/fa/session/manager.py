@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
 
-SESSION_SCHEMA_VERSION = "v1"
+_SESSION_SCHEMA_VERSION = "v1"
 _SESSION_ID_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
 _RUN_ID_PATTERN = _SESSION_ID_PATTERN
 _REQUIRED_MANIFEST_KEYS = {
@@ -144,7 +144,7 @@ class SessionManager:
             raise SessionManagerError("manifest_corrupt", f"cannot read {path}: {exc}") from exc
         if not isinstance(data, dict) or not _REQUIRED_MANIFEST_KEYS.issubset(data):
             raise SessionManagerError("manifest_corrupt", f"missing required fields: {path}")
-        if data.get("schema_version") != SESSION_SCHEMA_VERSION:
+        if data.get("schema_version") != _SESSION_SCHEMA_VERSION:
             raise SessionManagerError("manifest_unsupported", f"unsupported schema at {path}")
         if data.get("session_id") != expected_session_id:
             raise SessionManagerError("manifest_identity_mismatch", f"session ID mismatch at {path}")
@@ -230,7 +230,7 @@ class SessionManager:
         status: str,
     ) -> dict[str, Any]:
         return {
-            "schema_version": SESSION_SCHEMA_VERSION,
+            "schema_version": _SESSION_SCHEMA_VERSION,
             "session_id": session_id,
             "workspace_path": str(workspace_path),
             "session_db_path": str(db_path),
