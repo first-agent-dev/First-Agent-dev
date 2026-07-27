@@ -136,3 +136,68 @@ def test_write_file_conflict_uses_per_run_blackboard_authority(tmp_path: Path) -
     assert result.error is not None
     assert result.error.code == "conflict_detected"
     assert not (tmp_path / "conflict.txt").exists()
+
+
+def test_injected_event_log_is_run_scoped_and_does_not_read_mirror(tmp_path: Path) -> None:
+    """C1/C3: injected production facade reads only its DB/run authority."""
+    from fa.inner_loop.session_db import SessionDatabase
+
+    db = SessionDatabase(tmp_path / "session.db", session_id="session-A")
+    first = EventLog(tmp_path / "run-1" / "events.jsonl", run_id="run-1", session_db=db, session_id="session-A")
+    second = EventLog(tmp_path / "run-2" / "events.jsonl", run_id="run-2", session_db=db, session_id="session-A")
+    first.append(actor="runtime", kind="tool_call", content={"run": 1})
+    second.append(actor="runtime", kind="tool_call", content={"run": 2})
+
+    assert [event.run_id for event in first.read_all()] == ["run-1"]
+    assert [event.run_id for event in second.read_all()] == ["run-2"]
+
+    empty = EventLog(tmp_path / "empty" / "events.jsonl", run_id="run-empty", session_db=db, session_id="session-A")
+    empty.path.parent.mkdir(parents=True, exist_ok=True)
+    empty.path.write_text(
+        '{"event_id":"legacy", "ts":"t", "run_id":"run-empty", "actor":"x", '
+        '"kind":"tool_call", "content":{}, "harness_id":"h"}\n',
+        encoding="utf-8",
+    )
+    assert empty.read_all() == ()
+
+
+def test_injected_blackboard_rejects_identity_mismatch_and_authority_fallback(tmp_path: Path) -> None:
+    """C3: injected Blackboard cannot substitute stale JSONL on DB failure."""
+    from fa.inner_loop.session_db import SessionDatabase
+
+    db = SessionDatabase(tmp_path / "session.db", session_id="session-A")
+    with pytest.raises(ValueError, match="session_db_identity_mismatch"):
+        Blackboard(
+            tmp_path / "blackboard-mismatch",
+            session_db=db,
+            session_id="session-B",
+        )
+
+    board = Blackboard(
+        tmp_path / "blackboard",
+        session_db=db,
+        run_id="run-1",
+        session_id="session-A",
+    )
+    entry = BlackboardEntry.create(id="entry-1", type="plan", payload={"ok": True})
+    board.write(entry)
+    board._session_db.read_blackboard_row = lambda _entry_id: (_ for _ in ()).throw(RuntimeError("db down"))  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="db down"):
+        board.read("entry-1")
+
+
+def test_session_state_rejects_mismatched_explicit_authority(tmp_path: Path) -> None:
+    """C3: SessionState cannot bind EventLog and Blackboard to different DBs."""
+    from fa.inner_loop.session_db import SessionDatabase
+
+    first_db = SessionDatabase(tmp_path / "first.db", session_id="session-A")
+    second_db = SessionDatabase(tmp_path / "second.db", session_id="session-A")
+    log = EventLog(tmp_path / "events.jsonl", run_id="run-1", session_db=first_db, session_id="session-A")
+    with pytest.raises(ValueError, match="same authority"):
+        SessionState(
+            workspace_root=tmp_path,
+            session_id="session-A",
+            run_id="run-1",
+            log=log,
+            session_db=second_db,
+        )

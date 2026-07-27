@@ -213,12 +213,21 @@ class ConsoleRenderer:
         detail: str = "standard",
         show_cost: bool = False,
         show_context_pct: bool = True,
+        no_color: bool = False,
     ) -> None:
         self.detail = detail
         self.show_cost = show_cost
         self.show_context_pct = show_context_pct
+        # ``no_color`` is the explicit caller-supplied form of the same
+        # decision the NO_COLOR env var expresses. It exists so ``fa run
+        # --no-color`` does not have to mutate ``os.environ`` to reach this
+        # constructor: writing process-global state from a command handler
+        # leaked colourless output into every later in-process invocation
+        # and into tests sharing the interpreter. The env var remains
+        # honoured for the no-color.org contract and for TERM=dumb.
         self._use_color = (
-            os.environ.get("NO_COLOR", "") == ""
+            not no_color
+            and os.environ.get("NO_COLOR", "") == ""
             and os.environ.get("TERM", "xterm") not in ("dumb", "")
             and sys.stderr.isatty()
         )

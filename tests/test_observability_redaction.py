@@ -101,8 +101,8 @@ def test_eventlog_redaction(tmp_path: Path) -> None:
     assert content["tuple"] == ["***REDACTED***"]
 
 
-def test_eventlog_no_redactor_passes_through() -> None:
-    log_path = Path("/dev/null")
+def test_eventlog_no_redactor_passes_through(tmp_path: Path) -> None:
+    log_path = tmp_path / "events.jsonl"
     log = EventLog(log_path, run_id="test", redactor=None)
     assert log._redact_value("plain text") == "plain text"
     assert log._redact_value({"a": 1}) == {"a": 1}

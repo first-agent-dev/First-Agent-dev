@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from fa.inner_loop.session_db import SessionDatabase
 from fa.stats import (
     SessionAnalytics,
+    StatsSourceError,
     aggregate_sessions,
     efficiency_warnings,
     find_dead_zones,
     parse_session,
+    parse_session_db,
     render_session_json,
 )
 
@@ -334,3 +337,61 @@ def test_render_json_serializable(tmp_path: Path) -> None:
     assert parsed["run_id"] == "test-run"
     assert parsed["role"] == "planner"
     assert len(parsed["tool_usage"]) >= 3
+
+
+def _write_current_session_db(path: Path, session_id: str, run_id: str) -> None:
+    db = SessionDatabase(path, session_id=session_id)
+    db.reserve_run_binding(run_id, "2026-06-21T14:00:00Z")
+    for index, event in enumerate(_minimal_session_events(), 1):
+        db.append_event_row(
+            {
+                "event_id": f"ev-{run_id}-{index}",
+                "session_id": session_id,
+                "ts": "2026-06-21T14:00:00Z",
+                "run_id": run_id,
+                "harness_id": "fa-inner-loop@0.1.0",
+                "actor": event.get("actor", "runtime"),
+                "kind": event.get("kind", ""),
+                "content": event.get("content", {}),
+                "tool_name": event.get("tool_name", ""),
+                "tool_call_id": event.get("tool_call_id", ""),
+                "parent_event_id": "",
+            }
+        )
+
+
+def test_parse_session_db_reads_current_authority_and_filters_run(tmp_path: Path) -> None:
+    db_path = tmp_path / "sessions" / "session-A" / "session.db"
+    _write_current_session_db(db_path, "session-A", "run-A")
+    db = SessionDatabase(db_path, session_id="session-A")
+    db.reserve_run_binding("run-B", "2026-06-21T14:00:00Z")
+    db.append_event_row(
+        {
+            "event_id": "ev-run-B",
+            "session_id": "session-A",
+            "ts": "2026-06-21T14:00:00Z",
+            "run_id": "run-B",
+            "harness_id": "fa-inner-loop@0.1.0",
+            "actor": "runtime",
+            "kind": "run_started",
+            "content": {"role": "eval"},
+        }
+    )
+
+    result = parse_session_db(db_path, session_id="session-A", run_id="run-A")
+    assert result is not None
+    assert result.run_id == "run-A"
+    assert result.role == "planner"
+    assert parse_session_db(db_path, session_id="session-A", run_id="run-B") is not None
+
+
+def test_parse_session_db_never_creates_missing_path(tmp_path: Path) -> None:
+    missing = tmp_path / "missing" / "session.db"
+    try:
+        parse_session_db(missing, session_id="session-A", run_id="run-A")
+    except StatsSourceError as exc:
+        assert exc.code == "session_db_not_found"
+    else:
+        raise AssertionError("missing DB was accepted")
+    assert not missing.exists()
+    assert not missing.parent.exists()

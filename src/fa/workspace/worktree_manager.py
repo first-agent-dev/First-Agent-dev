@@ -232,8 +232,12 @@ class WorktreeManagerFactory:
     def from_flags(flags: Any | None, session_root: Path, repo_root: Path, run_id: str = "") -> WorktreeManager:
         mode = getattr(flags, "worktree_mode", "shared") if flags else "shared"
         if mode == "isolated":
-            print(
-                "WARNING: worktree_mode=isolated requested but isolated deferred to branch "
+            # Must not use print(): stdout is reserved for the final answer so
+            # `fa run --task "..." > result.txt` stays parseable (see
+            # src/fa/output.py module docstring). A bare print here injected
+            # 211 bytes of warning text into redirected output.
+            logger.warning(
+                "worktree_mode=isolated requested but isolated deferred to branch "
                 "worktree-isolated for v0.1 minimal surface, using shared. See ADR-14/15 v3. "
                 "IsolatedWorktreeManager still importable directly for tests."
             )

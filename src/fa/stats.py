@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from fa.formatting import fmt_tokens as _fmt_tokens
-from fa.inner_loop.state import EventLog
+from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
+from fa.inner_loop.state import EventLog, TraceEvent
 from fa.output import LogKind
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     "GuardActivity",
     "ProviderHealth",
     "SessionAnalytics",
+    "StatsSourceError",
     "SubagentRecord",
     "ToolError",
     "ToolUsage",
@@ -45,6 +47,7 @@ __all__ = [
     "efficiency_warnings",
     "find_dead_zones",
     "parse_session",
+    "parse_session_db",
     "render_aggregate",
     "render_session",
     "render_session_json",
@@ -247,25 +250,62 @@ class SessionAnalytics:
 # ── Parsing ────────────────────────────────────────────────────────────────
 
 
-def parse_session(events_path: Path) -> SessionAnalytics | None:  # noqa: C901 — event dispatch
-    """Parse one events.jsonl into SessionAnalytics.
+class StatsSourceError(RuntimeError):
+    """Structured current-format stats source failure."""
 
-    Returns None if the file doesn't exist or is empty.
-    Uses EventLog.read_all() for robust JSONL parsing (reuse, not duplicate).
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(f"{code}: {message}")
+
+
+def parse_session(events_path: Path) -> SessionAnalytics | None:
+    """Parse a legacy JSONL path for direct compatibility/test callers only.
+
+    The production ``fa stats`` command does not call this function. It uses
+    :func:`parse_session_db`, which never creates a DB from a mirror path.
     """
     if not events_path.exists():
         return None
-
     log = EventLog(events_path)
     try:
         events = log.read_all()
-    except Exception:  # noqa: BLE001 — corrupt JSONL must not crash stats
+    except Exception:  # noqa: BLE001 — legacy JSONL compatibility must not crash stats
         return None
+    return _parse_events(events, events_path.parent.name)
+
+
+def parse_session_db(
+    db_path: Path,
+    *,
+    session_id: str,
+    run_id: str,
+) -> SessionAnalytics | None:
+    """Parse one current-format run from an existing session authority DB.
+
+    This function has no bootstrap side effect: ``open_existing`` rejects a
+    missing/legacy/mismatched DB without creating the file or parent directory.
+    """
+    try:
+        db = SessionDatabase.open_existing(db_path, session_id=session_id)
+        rows = db.read_event_rows(run_id=run_id)
+    except SessionDatabaseError as exc:
+        raise StatsSourceError(exc.code, str(exc)) from exc
+    except RuntimeError as exc:
+        raise StatsSourceError("session_db_read_failed", str(exc)) from exc
+    if not rows:
+        return None
+    events = tuple(
+        TraceEvent.from_row(row, default_run_id=run_id or "", default_session_id=session_id or "") for row in rows
+    )
+    return _parse_events(events, run_id)
+
+
+def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> SessionAnalytics | None:  # noqa: C901 — event dispatch
     if not events:
         return None
 
     # Extract metadata from run_started
-    run_id = events[0].run_id or events_path.parent.name
+    run_id = events[0].run_id or fallback_run_id
     role = ""
     start_ts = events[0].ts if events else ""
     stop_reason = "unknown"

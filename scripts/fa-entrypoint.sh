@@ -18,6 +18,7 @@ STATUS_FILE="${FA_STATUS_FILE:-${WORKSPACE}/.fa/entrypoint-status.txt}"
 TASK_TEXT=""
 TASK_SOURCE=""
 CHILD_PID=""
+ENTRYPOINT_MANAGED_SESSION=0
 
 log() {
   local ts
@@ -68,6 +69,7 @@ _write_status() {
     [[ -n "${FA_ROLE:-}" ]] && echo "role=${FA_ROLE}"
     [[ -n "${FA_CONFIG:-}" ]] && echo "config=${FA_CONFIG}"
     [[ -n "${FA_MAX_TURNS:-}" ]] && echo "max_turns=${FA_MAX_TURNS}"
+    [[ -n "${FA_SESSION_ID:-}" ]] && echo "session_id=${FA_SESSION_ID}"
     [[ -n "${FA_RUN_ID:-}" ]] && echo "run_id=${FA_RUN_ID}"
     [[ -n "${FA_RESUME:-}" ]] && echo "resume=${FA_RESUME}"
     [[ -n "$detail" ]] && echo "detail=$(printf '%s' "$detail" | _one_line)"
@@ -91,9 +93,14 @@ _fail_to_standby() {
   _standby
 }
 
+_validate_session_id() {
+  local value="$1"
+  [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]
+}
+
 _validate_run_id() {
   local value="$1"
-  [[ "$value" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]
+  [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]
 }
 
 _load_task() {
@@ -146,25 +153,28 @@ _on_term() {
 # Session workspace setup — runs once on container start.
 # Creates a git clone from /repo into /sessions/<id>.
 # When FA_WORKSPACE is set the caller owns the workspace — skip session clone.
+if [[ -n "${FA_SESSION_ID:-}" ]]; then
+    _validate_session_id "$FA_SESSION_ID" || _fail_to_standby       "FA_SESSION_ID must match [A-Za-z0-9][A-Za-z0-9_.-]{0,127}; got '${FA_SESSION_ID}'"
+fi
+
 if [[ -d "/repo/.git" ]] && [[ -z "${FA_WORKSPACE:-}" ]]; then
-    SESSION_ID="${FA_RUN_ID:-session-$(date -u +%Y%m%dT%H%M%S)-$$}"
-    export FA_RUN_ID="$SESSION_ID"
+    SESSION_ID="${FA_SESSION_ID:-session-$(date -u +%Y%m%dT%H%M%S)-$$}"
+    export FA_SESSION_ID="$SESSION_ID"
+    ENTRYPOINT_MANAGED_SESSION=1
     SESSION_DIR="/sessions/${SESSION_ID}"
 
     if [[ ! -d "$SESSION_DIR/.git" ]]; then
         # file:// protocol uses git's pack transport (not filesystem hardlinks).
-        # This avoids two classes of bugs that --local (the bare-path default) hits:
-        #   1. "dubious ownership" — safe.directory check on the source repo
-        #   2. "Invalid cross-device link" — hardlinks fail across mount boundaries
-        # Still local (no network), just uses the transport layer over pipes.
-        if git clone "file:///repo" "$SESSION_DIR"; then
+        # This avoids dubious-ownership and cross-device-link failures from
+        # bare-path --local clones while keeping the operation local.
+        if git clone "file:///repo" "$SESSION_DIR"             && (cd "$SESSION_DIR" && git checkout -b "agent/${SESSION_ID}"); then
             cd "$SESSION_DIR"
-            git checkout -b "agent/${SESSION_ID}"
             log "Created session workspace: $SESSION_DIR"
         else
-            # Clean up partial clone so it doesn't accumulate on restarts.
+            # Clean up partial clone so it doesn't accumulate on restarts, then
+            # stop before command override/auto-run can use an ambiguous path.
             rm -rf "$SESSION_DIR" 2>/dev/null || true
-            log "ERROR: git clone failed for $SESSION_DIR — cleaned up"
+            _fail_to_standby "git clone/checkout failed for $SESSION_DIR"
         fi
     else
         cd "$SESSION_DIR"
@@ -200,6 +210,26 @@ if [[ -n "$FA_VENV_BIN" && -d "$FA_VENV_BIN" ]]; then
 fi
 log "PYTHONPATH=${PYTHONPATH:-<image-default>}"
 
+_provision_entrypoint_session() {
+  local state_root="${FA_STATE_ROOT:-${HOME}/.fa}"
+  local python_bin="${PYTHON:-python3}"
+  if ! "$python_bin" -m fa.session.manager provision \
+      --state-root "$state_root" \
+      --workspace-root "/sessions" \
+      --session-id "$FA_SESSION_ID" \
+      --workspace "$WORKSPACE"; then
+    _fail_to_standby "SessionManager entrypoint provisioning failed for $FA_SESSION_ID"
+  fi
+}
+
+# Auto-run is the only entrypoint mode that starts a logical FA invocation.
+# Provision its manifest/DB through the canonical Python owner before launch;
+# command override remains a filesystem/debug adapter and does not invent a
+# second logical session authority.
+if [[ "$ENTRYPOINT_MANAGED_SESSION" == "1" ]] && _truthy "${FA_AUTO_RUN:-0}"; then
+  _provision_entrypoint_session
+fi
+
 # Explicit docker command overrides always win, even if FA_AUTO_RUN is set.
 if [[ $# -gt 0 ]]; then
   log "Command override mode: exec $*"
@@ -219,14 +249,17 @@ if _truthy "${FA_AUTO_RUN:-0}"; then
   FA_ROLE="${FA_ROLE:-coder}"
   export FA_ROLE
 
-  if [[ -z "${FA_RUN_ID:-}" ]]; then
-    FA_RUN_ID="docker-$(date -u '+%Y%m%dT%H%M%SZ')-$$"
-    export FA_RUN_ID
+  if [[ -n "${FA_RUN_ID:-}" ]]; then
+    _validate_run_id "$FA_RUN_ID" || _fail_to_standby \
+      "FA_RUN_ID must match [A-Za-z0-9][A-Za-z0-9_.-]{0,127}; got '${FA_RUN_ID}'"
   fi
-  _validate_run_id "$FA_RUN_ID" || _fail_to_standby \
-    "FA_RUN_ID must match [A-Za-z0-9_.-]{1,128}; got '${FA_RUN_ID}'"
+  if _truthy "${FA_RESUME:-0}" && [[ -z "${FA_SESSION_ID:-}" ]]; then
+    _fail_to_standby "FA_RESUME requires FA_SESSION_ID so the run attaches to a persistent session"
+  fi
 
-  FA_CMD=(fa run --task "$TASK_TEXT" --workspace "$WORKSPACE" --role "$FA_ROLE" --run-id "$FA_RUN_ID")
+  FA_CMD=(fa run --task "$TASK_TEXT" --workspace "$WORKSPACE" --role "$FA_ROLE")
+  [[ -n "${FA_SESSION_ID:-}" ]] && FA_CMD+=(--session-id "$FA_SESSION_ID")
+  [[ -n "${FA_RUN_ID:-}" ]] && FA_CMD+=(--run-id "$FA_RUN_ID")
   [[ -n "${FA_CONFIG:-}" ]] && FA_CMD+=(--config "$FA_CONFIG")
   [[ -n "${FA_MAX_TURNS:-}" ]] && FA_CMD+=(--max-turns "$FA_MAX_TURNS")
   _truthy "${FA_RESUME:-0}" && FA_CMD+=(--resume)
@@ -234,7 +267,8 @@ if _truthy "${FA_AUTO_RUN:-0}"; then
   log "Launching fa run as child process"
   log "  workspace=${WORKSPACE}"
   log "  role=${FA_ROLE:-coder}"
-  log "  run_id=${FA_RUN_ID}"
+  log "  session_id=${FA_SESSION_ID:-<cli-created>}"
+  log "  run_id=${FA_RUN_ID:-<allocated-by-cli>}"
   log "  task_source=${TASK_SOURCE}"
   log "  task_sha256=$(_task_sha256)"
   _write_status -1 "RUNNING" "fa run child process is active"

@@ -223,12 +223,24 @@ def test_install_one_copy_fallback_target_is_executable(tmp_path: Path, monkeypa
 
     root = _make_workspace(tmp_path)
     src_dir = Path(install_mod.__file__).resolve().parent
-    source = src_dir / HOOK_NAMES[0]
     target = root / ".git" / "hooks" / HOOK_NAMES[0]
 
+    # Operate on a tmp_path COPY, never on the shipped hook source.
+    #
+    # This test previously chmod'd ``src_dir / HOOK_NAMES[0]`` directly and
+    # restored the mode as a trailing statement with no try/finally. Two
+    # consequences, both observed:
+    #   1. any failure between chmod and restore leaked a tracked mode change
+    #      (100755 -> 100644) into the working tree;
+    #   2. ``install_mod.__file__`` resolves to the *pip-installed* package, so
+    #      the leak escaped the checkout under test and dirtied the installed
+    #      repo instead.
+    # A copy has identical semantics for _install_one (it only reads the source
+    # and writes the target) while making the mutation unreachable from git.
+    source = tmp_path / f"hook-source-{HOOK_NAMES[0]}"
+    shutil.copy2(src_dir / HOOK_NAMES[0], source)
     source.chmod(source.stat().st_mode & ~0o111)
 
-    original_symlink = install_mod.os.symlink
     monkeypatch.setattr(
         install_mod.os,
         "symlink",
@@ -238,9 +250,6 @@ def test_install_one_copy_fallback_target_is_executable(tmp_path: Path, monkeypa
     install_mod._install_one(source, target, force=True)
 
     assert target.stat().st_mode & 0o111, "copy-fallback target must be executable"
-
-    monkeypatch.setattr(install_mod.os, "symlink", original_symlink)
-    source.chmod(source.stat().st_mode | 0o111)
 
 
 def test_install_hooks_uses_worktree_gitdir(tmp_path: Path) -> None:
