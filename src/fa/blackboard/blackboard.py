@@ -39,6 +39,14 @@ class BlackboardEntry:
     version_dependencies: dict[str, str]
     timestamp: str
     payload: Any
+    # Writer identity (S5.4.1 / Q18). Persisted since the schema's first
+    # version in the ``blackboard.run_id`` column and always populated by
+    # ``Blackboard.write``, but previously discarded when rebuilding entries on
+    # the read path — which left ``detect_conflict`` unable to distinguish an
+    # agent's own prior entry from a genuine concurrent writer. Defaults to ""
+    # ("unknown writer") so legacy rows and external constructors keep working;
+    # unknown is deliberately NOT treated as self (see ``_is_same_writer``).
+    run_id: str = ""
 
     @classmethod
     def create(
@@ -85,16 +93,50 @@ class Conflict:
 
 
 def _should_check_conflict(new: BlackboardEntry, old: BlackboardEntry) -> bool:
-    """Q2 v0.1 linear chain: parent_id happens-before, same base_commit concurrent,
-    different base serialized.
+    """Decide whether ``new`` must be conflict-checked against ``old``.
+
+    Only an explicit ``parent_id`` link establishes happens-before. An entry that
+    names its predecessor is a linear successor by construction, so it cannot
+    conflict with it.
+
+    ``base_commit`` deliberately does NOT suppress the check. The previous
+    implementation returned ``new_base == old_base``, treating a differing base
+    as "serialized" and skipping detection entirely. That made the guarantee
+    expire: once any commit landed, every pre-commit entry became unenforceable,
+    and coding agents commit routinely. Measured in the S3 audit — agent B was
+    correctly blocked at HEAD1, one unrelated commit landed, and agent C writing
+    the same file was allowed through (finding S3-F10).
+
+    A different ``base_commit`` means *later*, not *safe*: two agents editing the
+    same path across a commit boundary is precisely the write/write overlap
+    ADR-16 I-6.3 requires to fail with ``conflict_detected``. Divergent bases are
+    still reported separately via :func:`_assumption_violated`, which is where
+    that signal belongs.
     """
-    if new.parent_id == old.id:
-        return False
-    new_base = new.version_dependencies.get("base_commit")
-    old_base = old.version_dependencies.get("base_commit")
-    if new_base and old_base:
-        return new_base == old_base
-    return True
+    return new.parent_id != old.id
+
+
+def _is_same_writer(writer_run_id: str, old: BlackboardEntry) -> bool:
+    """Return True when ``old`` was written by the agent now being checked.
+
+    ADR-16 I-6.3 exists to catch *"concurrent [writes] without coordination"* —
+    a **different** actor touching a path we are touching. An agent's own
+    earlier entry is its own history, not a conflict, and reporting it as one
+    makes iterative single-file editing impossible (measured: the second
+    ``write_file`` to a path was denied by the first one's entry, silently
+    dropping the later content).
+
+    Both ids must be non-empty. An empty ``run_id`` means *unknown writer*,
+    which cannot be **proven** to be self, so it stays conflict-eligible: rows
+    written before this field existed must keep failing closed rather than
+    silently becoming unguarded.
+
+    Scoping a concurrency guard by writer identity is the shape shipped agents
+    converge on — opencode keys its staleness guard by ``sessionID``
+    (``FileTime.read``/``FileTime.assert``), and the most-reported Claude Code
+    Edit defect is precisely a guard firing on the agent's own prior edit.
+    """
+    return bool(writer_run_id) and bool(old.run_id) and writer_run_id == old.run_id
 
 
 def _ww_overlap(a: set[str], b: set[str]) -> set[str]:
@@ -198,9 +240,13 @@ class Blackboard:
         # 1. Authoritative write to per-run DB.
         self._session_db.write_blackboard_row(row)
 
-        # 2. Best-effort JSONL mirror.
+        # 2. Best-effort JSONL mirror. Stamp the mirror with the SAME writer id
+        # the authority row was written under (``self._run_id``), not whatever
+        # the caller happened to leave on the entry — otherwise the mirror and
+        # the DB could disagree about who wrote a row, and the degraded read
+        # path would reach a different conflict verdict than the authority.
         try:
-            line = json.dumps(asdict(entry), ensure_ascii=False)
+            line = json.dumps({**asdict(entry), "run_id": self._run_id}, ensure_ascii=False)
             with self.lock:
                 with open(self.path, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
@@ -224,6 +270,7 @@ class Blackboard:
                     version_dependencies=row["version_dependencies"],
                     timestamp=row["timestamp"],
                     payload=row["payload"],
+                    run_id=row.get("run_id", ""),
                 )
         except Exception as exc:  # legacy/degraded fallback
             logger.warning("Failed to read Blackboard from authoritative SessionDatabase: %s", exc)
@@ -265,6 +312,7 @@ class Blackboard:
                     version_dependencies=row["version_dependencies"],
                     timestamp=row["timestamp"],
                     payload=row["payload"],
+                    run_id=row.get("run_id", ""),
                 )
                 for row in rows
             ]
@@ -305,6 +353,12 @@ class Blackboard:
 
         for old in existing:
             if old.id == new_entry.id:
+                continue
+            # S5.4.1 (Q18): never conflict with our own earlier entry. Checked
+            # against this Blackboard's writer id rather than ``new_entry``'s,
+            # because ``write()`` stamps the row from ``self._run_id`` — that
+            # is the identity the entry will actually be persisted under.
+            if _is_same_writer(self._run_id, old):
                 continue
             if not _should_check_conflict(new_entry, old):
                 continue

@@ -5,7 +5,8 @@ Senior refactor:
 - Single responsibility helpers: _parse_params, _read_text, _find_fuzzy, _write_with_transaction
 - Safety: resolve_workspace_path prevents symlink escape; blackboard ownership is checked
   to prevent session leakage.
-- Blackboard helpers shared with write_file via extracted module to avoid duplication
+- Pre-write conflict check and post-write record shared with write_file via
+  fa.inner_loop.tools.mutation_guard, so the two mutating tools cannot drift
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string, resolve_workspace_path
+from fa.inner_loop.tools.mutation_guard import check_mutation_allowed, record_mutation
 
 logger = logging.getLogger(__name__)
 
@@ -94,59 +96,6 @@ def _get_session_and_blackboard() -> tuple[Any | None, Any | None, Any | None]:
         return None, None, None
 
 
-def _write_blackboard_entry(
-    blackboard: Any,
-    rel_path: str,
-    root: Path,
-    is_edit: bool = True,
-) -> None:
-    if blackboard is None:
-        return
-    # Safety: check blackboard belongs to current root (leak protection)
-    try:
-        bb_root = Path(getattr(blackboard, "root", Path("/"))).resolve()
-        expected = (root.resolve() / ".fa" / "blackboard").resolve()
-        if bb_root != expected and not bb_root.is_relative_to(root.resolve()):
-            # Different workspace, ignore
-            return
-    except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
-        pass
-
-    try:
-        import subprocess
-        import uuid
-
-        from fa.blackboard.blackboard import BlackboardEntry
-
-        def base_commit(r: Path) -> str:
-            try:
-                res = subprocess.run(
-                    ["git", "rev-parse", "HEAD"],  # noqa: S607
-                    cwd=r,
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if res.returncode == 0:
-                    return res.stdout.strip()[:12]
-            except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
-                pass
-            return "unknown"
-
-        entry = BlackboardEntry.create(
-            id=f"edit-{uuid.uuid4().hex[:8]}",
-            type="file_version",
-            payload={"path": rel_path, "edit": is_edit},
-            read_set=[rel_path],
-            write_set=[rel_path],
-            assumptions=[],
-            version_dependencies={"base_commit": base_commit(root)},
-        )
-        blackboard.write(entry)
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        logger.warning(f"Blackboard write for edit_file failed: {exc}")
-
-
 def build_edit_file_tool(workspace_root: Path) -> ToolSpec:
     root = Path(workspace_root).resolve()
     if not root.is_dir():
@@ -185,21 +134,34 @@ def build_edit_file_tool(workspace_root: Path) -> ToolSpec:
         # Replace the matched segment with new_string (first occurrence only)
         new_text = text[:start] + new_string + text[end:]
 
-        # Transaction handling
         _session, blackboard, transaction = _get_session_and_blackboard()
+        rel_path = str(path.relative_to(root))
+
+        # S5.4: same pre-write contract write_file enforces. Runs AFTER the
+        # anchor match (a bad edit is a bad edit regardless of the substrate)
+        # but BEFORE any mutation, so a denial leaves the file untouched.
+        denial = check_mutation_allowed(blackboard, read_set=[rel_path], write_set=[rel_path], root=root)
+        if denial is not None:
+            return denial
+
         try:
             if transaction is not None:
-                rel = str(path.relative_to(root))
-                transaction.add_write(rel)
-        except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
-            pass
+                transaction.add_write(rel_path)
+        except Exception as exc:  # noqa: BLE001 # bookkeeping only, failure-observable WARNING
+            logger.warning("transaction.add_write failed in edit_file: %s", exc)
 
         try:
             path.write_text(new_text, encoding="utf-8")
         except (OSError, PermissionError, ValueError) as exc:
             return ToolResult.fail("write_failed", str(exc), retryable=True)
 
-        _write_blackboard_entry(blackboard, str(path.relative_to(root)), root, is_edit=True)
+        record_mutation(
+            blackboard,
+            read_set=[rel_path],
+            write_set=[rel_path],
+            root=root,
+            payload_extra={"edit": True},
+        )
 
         return ToolResult.ok(
             f"edited {path.relative_to(root)} (fuzzy matched {end - start} chars)",

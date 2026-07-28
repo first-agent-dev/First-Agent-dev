@@ -99,20 +99,33 @@ class SubagentRunner:
             session = None
 
         if session is not None:
-            count = session.subagent_spawns
             max_spawns = self._resolve_max_spawns()
-            if count >= max_spawns:
-                raise RuntimeError(
-                    f"Subagent spawn limit {max_spawns} reached (current {count}), "
-                    "1 subagent sequential limit for v0.1 pair over autonomy"
-                )
+            # V21: admission must be ONE atomic operation. The previous code
+            # read the counter, compared it, then incremented — three steps
+            # with no lock, so concurrent callers all observed the same
+            # pre-increment value and were all admitted. Measured with a
+            # counter whose read is not instantaneous (any DB- or IPC-backed
+            # counter): 12 of 12 racing threads admitted under a limit of 3.
+            #
+            # ``try_reserve_subagent_spawn`` does the compare and the increment
+            # while holding the session lock, so the decision and the effect
+            # cannot be separated.
             try:
-                if hasattr(session, "increment_subagent_spawns"):
-                    session.increment_subagent_spawns()
-                else:
-                    session.subagent_spawns = count + 1
-            except Exception as exc:  # noqa: BLE001 - increment best-effort
-                logger.warning("increment_subagent_spawns failed: %s", exc)
+                reserved = session.try_reserve_subagent_spawn(max_spawns)
+            except Exception as exc:
+                # A counter that cannot be updated is not permission to spawn:
+                # every later caller would read a stale count and be admitted,
+                # i.e. the limit silently stops existing. Deny instead (V21).
+                raise RuntimeError(
+                    f"spawn_admission_failed: cannot reserve a subagent slot ({exc}). "
+                    "Refusing the spawn rather than proceeding with an unenforced limit."
+                ) from exc
+            if not reserved:
+                raise RuntimeError(
+                    f"Subagent spawn limit {max_spawns} reached "
+                    f"(current {session.get_subagent_spawns()}), "
+                    "sequential subagent limit for v0.1 pair over autonomy"
+                )
             return
 
         max_spawns = self._resolve_max_spawns()

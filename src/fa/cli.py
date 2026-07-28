@@ -76,6 +76,7 @@ from fa.inner_loop.workflow_artifacts import (
 )
 from fa.observability import CostGuardian
 from fa.observability.redaction import SecretRedactor, SecretRedactorError
+from fa.paths import fa_session_log_root, fa_state_root
 from fa.providers import (
     DEFAULT_MODELS_YAML_PATH,
     ChainConfig,
@@ -125,7 +126,7 @@ def _session_manager_for_args(args: argparse.Namespace) -> SessionManager:
     else:
         source_workspace = Path("/repo") if Path("/repo").is_dir() else None
     return SessionManager(
-        state_root=Path.home() / ".fa",
+        state_root=fa_state_root(),
         workspace_root=workspace_root,
         source_workspace=source_workspace,
     )
@@ -256,7 +257,7 @@ def _resolve_secrets_path() -> Path:
     aio_default = Path("/run/secrets/fa.env")
     if aio_default.exists():
         return aio_default
-    return Path.home() / ".fa" / ".env"
+    return fa_state_root() / ".env"
 
 
 def _load_secret_store() -> SecretStore:
@@ -1011,7 +1012,7 @@ def _workflow_artifact_paths(run_id: str, *, base_dir: Path | None = None) -> _W
     human-readable draft remains ``pr_draft.md``; controller truth lives in
     separate JSON artifacts for eval verdicts and workflow state.
     """
-    base_dir = base_dir or (Path.home() / ".fa" / "session-log" / run_id)
+    base_dir = base_dir or (fa_session_log_root() / run_id)
     return _WorkflowArtifactPaths(
         base_dir=base_dir,
         eval_report=base_dir / "eval_report.json",
@@ -1737,7 +1738,7 @@ def _cmd_workflow(
         from fa.inner_loop.global_history import export_session_to_global_history
         from fa.inner_loop.state import EventLog as _EventLog
 
-        session_dir = Path.home() / ".fa" / "session-log" / run_id
+        session_dir = fa_session_log_root() / run_id
         log_path = session_dir / "events.jsonl"
         workflow_log = _EventLog(
             log_path,
@@ -1879,7 +1880,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         run_log_dir = run_context.run_log_dir
     else:
         run_id = args.run_id or f"run-{os.getpid()}"
-        run_log_dir = Path.home() / ".fa" / "session-log" / run_id
+        run_log_dir = fa_session_log_root() / run_id
     try:
         redactor = SecretRedactor.from_models_config(
             secrets,
@@ -2536,7 +2537,7 @@ def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
         try:
             from fa.inner_loop.global_history import GlobalHistoryStore
 
-            db_path = Path.home() / ".fa" / "global_history.db"
+            db_path = fa_state_root() / "global_history.db"
             store = GlobalHistoryStore(db_path=db_path)
             rows = store.read_all()
             if not rows:
@@ -2590,7 +2591,7 @@ def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
             return 1
 
     workspace = args.workspace.resolve()
-    state_root = Path.home() / ".fa"
+    state_root = fa_state_root()
     since_seconds = _parse_since(args.since) if args.since and not args.run_id else None
     try:
         sources = _discover_stats_sources(

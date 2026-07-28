@@ -25,6 +25,8 @@ import shlex
 from collections.abc import Iterable
 from pathlib import Path
 
+from fa.paths import fa_state_root
+
 __all__ = [
     "SECRET_PATH_PREFIXES",
     "command_reads_secret_path",
@@ -43,7 +45,7 @@ def default_secret_prefixes() -> frozenset[str]:
         "/srv/first-agent/secrets",
     }
     # WSL/dev fallback location of the private key file.
-    prefixes.add(str((Path.home() / ".fa").resolve()))
+    prefixes.add(str(fa_state_root().resolve()))
     return frozenset(prefixes)
 
 

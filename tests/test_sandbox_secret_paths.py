@@ -62,9 +62,26 @@ def test_unparseable_command_with_secret_prefix_fails_closed() -> None:
     assert command_reads_secret_path('cat "/etc/hostname') is False
 
 
-def test_home_fa_env_denied() -> None:
-    home_env = str(Path.home() / ".fa" / ".env")
-    assert command_reads_secret_path(f"cat {home_env}")
+def test_state_root_env_denied() -> None:
+    """The FA state directory holds secrets and must be denied.
+
+    S5.4.5: derived from ``fa_state_root()`` rather than hardcoding
+    ``Path.home() / ".fa"``. The state root is now relocatable via
+    ``FA_STATE_ROOT``, and the guard must protect wherever it actually is — a
+    test pinned to ``$HOME`` would pass while the real secrets sat unprotected
+    somewhere else.
+    """
+    from fa.paths import fa_state_root
+
+    assert command_reads_secret_path(f"cat {fa_state_root() / '.env'}")
+
+
+def test_state_root_env_denied_when_relocated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """C3: relocating the state root moves the protection with it."""
+    relocated = tmp_path / "relocated-state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(relocated))
+
+    assert command_reads_secret_path(f"cat {relocated / '.env'}")
 
 
 def test_extra_prefix_is_honored() -> None:

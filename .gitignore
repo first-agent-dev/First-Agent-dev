@@ -6,9 +6,14 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-.fa/
-!.fa/
+# Runtime FA state. Must be `.fa/*`, NOT `.fa/`: git cannot re-include a path
+# inside an excluded *directory*, so the previous `.fa/` + `!.fa/` pair silently
+# cancelled itself and left every runtime artifact (session.db, telemetry/,
+# blackboard/, smoke-events.jsonl, entrypoint-status.txt) showing as untracked
+# after each run. Excluding the directory *contents* keeps the allowlist working.
+.fa/*
 !.fa/dependency_contract.toml
+!.fa/host-bootstrap.json
 
 # Environment files (may contain secrets like B2 credentials)
 .env*
@@ -53,3 +58,6 @@ knowledge/trace/*
 !knowledge/trace/codebase_map.json
 !knowledge/trace/exploration_log.md
 !knowledge/trace/exploration_tree.yaml
+
+# Local slice patches — generated artifacts, not tracked source.
+patches/

@@ -60,6 +60,42 @@ def _sanitize_task_id(task_id: str, run_id: str = "") -> str:
     return f"task-{short_hash}"
 
 
+SUBAGENT_ARTIFACT_DIRNAME = "subagents"
+
+
+def subagent_artifact_root(session_workspace: Path, task_id: str, run_id: str = "") -> Path:
+    """Return the artifact directory for one subagent task (Q11-B Option A).
+
+    ``<session_workspace>/.fa/subagents/<sanitized_task_id>/``
+
+    **Single source of truth.** V24/V25 were two faces of one defect: the
+    sandbox gate and the executor each derived their own idea of where a
+    subagent may write, and disagreed. Every caller now goes through this
+    function, so the gate and the runner cannot drift apart — a
+    compliance-by-construction fix rather than a second guard.
+
+    The path is *derived*, not created; callers that need the directory to
+    exist call :func:`ensure_subagent_artifact_root`. Task ids are sanitized by
+    :func:`_sanitize_task_id`, which strips everything outside
+    ``[A-Za-z0-9-_]`` and falls back to a deterministic hash, so a hostile id
+    such as ``../../etc`` cannot traverse out of the subagents directory.
+    """
+    clean_id = _sanitize_task_id(task_id, run_id=run_id)
+    return Path(session_workspace).resolve() / ".fa" / SUBAGENT_ARTIFACT_DIRNAME / clean_id
+
+
+def ensure_subagent_artifact_root(session_workspace: Path, task_id: str, run_id: str = "") -> Path:
+    """Create and return the artifact root for a task.
+
+    Failure to create it must **deny the spawn** rather than fall back to the
+    session workspace (V18): a subagent that cannot get its own directory is
+    not a subagent that should be allowed to write into the main tree.
+    """
+    root = subagent_artifact_root(session_workspace, task_id, run_id=run_id)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 class WorktreeManager(ABC):
     @abstractmethod
     def create_subagent_workspace(self, task_id: str, base_branch: str = "main") -> Path:
@@ -82,6 +118,19 @@ class SharedDirWorktreeManager(WorktreeManager):
 
     @override
     def create_subagent_workspace(self, task_id: str, base_branch: str = "main") -> Path:
+        """Return the shared session root.
+
+        **Not the subagent write root.** Since S5.6 the subagent artifact
+        directory comes from :func:`subagent_artifact_root` via
+        ``SessionState.create_subagent_workspace``, which is the only
+        production caller on that path. This method is retained for the
+        ``WorktreeManager`` interface and for direct/legacy callers, and still
+        answers the question it was written for — *"where does shared mode put
+        work?"* — which is the session root by definition.
+
+        Do not route a subagent here: returning the session root as a write
+        root is precisely the V18 defect that S5.6 removed.
+        """
         _ = _sanitize_task_id(task_id, run_id=self.run_id)
         return self.session_root
 
@@ -230,21 +279,33 @@ class WorktreeManagerFactory:
 
     @staticmethod
     def from_flags(flags: Any | None, session_root: Path, repo_root: Path, run_id: str = "") -> WorktreeManager:
+        """Return the manager for the configured mode, or refuse (V19).
+
+        An unsupported mode raises instead of quietly returning ``SharedDir``.
+        Silently downgrading is the failure mode this project's own test header
+        cites as prior art (Claude Code #55708 / #47548 / #31546: an
+        ``isolation:worktree`` parameter that is accepted and ignored). The
+        operator asks for isolation, does not get it, and is never told — so
+        they reason about a boundary that is not there.
+
+        ``isolated`` is deferred by ADR-14/15 v3, not broken:
+        ``IsolatedWorktreeManager`` stays importable for tests and remains the
+        documented upgrade path. Refusing here says "not available", which is
+        true, rather than "done", which is not.
+        """
+        del repo_root  # SharedDir needs only the session root; kept for the isolated upgrade path.
         mode = getattr(flags, "worktree_mode", "shared") if flags else "shared"
-        if mode == "isolated":
-            # Must not use print(): stdout is reserved for the final answer so
-            # `fa run --task "..." > result.txt` stays parseable (see
-            # src/fa/output.py module docstring). A bare print here injected
-            # 211 bytes of warning text into redirected output.
-            logger.warning(
-                "worktree_mode=isolated requested but isolated deferred to branch "
-                "worktree-isolated for v0.1 minimal surface, using shared. See ADR-14/15 v3. "
-                "IsolatedWorktreeManager still importable directly for tests."
+        if mode != "shared":
+            raise ValueError(
+                f"worktree_mode={mode!r} is not supported; only 'shared' is available in v0.1. "
+                "Isolated worktrees are deferred (ADR-14/15 v3) — set worktree.mode: shared, "
+                "or construct IsolatedWorktreeManager directly if you are testing that path."
             )
         return SharedDirWorktreeManager(session_root, run_id=run_id)
 
 
 __all__ = [
+    "SUBAGENT_ARTIFACT_DIRNAME",
     "BranchAlreadyCheckedOutError",
     "CleanupFailedError",
     "IsolatedWorktreeManager",
@@ -252,4 +313,6 @@ __all__ = [
     "WorktreeManager",
     "WorktreeManagerFactory",
     "_sanitize_task_id",
+    "ensure_subagent_artifact_root",
+    "subagent_artifact_root",
 ]

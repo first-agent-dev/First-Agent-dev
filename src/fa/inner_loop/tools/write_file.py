@@ -1,155 +1,15 @@
 from __future__ import annotations
 
-import hashlib
 import logging
-import subprocess
-import uuid
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string, resolve_workspace_path
+from fa.inner_loop.tools.mutation_guard import check_mutation_allowed, record_mutation
 
 logger = logging.getLogger(__name__)
-
-
-def _base_commit(root: Path) -> str:
-    try:
-        res = subprocess.run(
-            ["git", "rev-parse", "HEAD"],  # noqa: S607
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if res.returncode == 0:
-            return res.stdout.strip()[:12]
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        logger.warning("_base_commit failed: %s", exc)
-    return "unknown"
-
-
-def _file_hash(p: Path) -> str:
-    try:
-        if p.exists():
-            return hashlib.sha256(p.read_bytes()).hexdigest()[:12]
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        logger.warning("_file_hash failed for %s: %s", p, exc)
-    return "missing"
-
-
-def _check_conflict(
-    blackboard: Any,
-    read_set: list[str],
-    write_set: list[str],
-    root: Path,
-    llms_path: Path,
-) -> ToolResult | None:
-    """Return fail if conflict, else None. Safety: ignore if blackboard from different workspace."""
-    if blackboard is None:
-        return None
-
-    # Safety check: blackboard must belong to current workspace_root,
-    # otherwise ignore (contextvar leak protection)
-    try:
-        bb_root = Path(getattr(blackboard, "root", Path("/"))).resolve()
-        # Initialize expected_root BEFORE the nested fallback so every exception
-        # path has a defined value (pyrefly PY6 closure).
-        expected_root = root.resolve()
-        # Expected: bb_root == root/.fa/blackboard, so parent.parent == root
-        # If not related, it's from different workspace (leaked contextvar) -> ignore
-        try:
-            # bb_root = <root>/.fa/blackboard
-            # Check if bb_root is inside expected_root/.fa
-            if not (bb_root == expected_root / ".fa" / "blackboard" or bb_root.is_relative_to(expected_root)):
-                # Also check if expected_root is parent of bb_root's parent.parent
-                if bb_root.parent.parent.resolve() != expected_root:
-                    # Different workspace, ignore conflict to avoid false positives from leaked session
-                    return None
-        except Exception:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            # If relative_to fails, do strict equality check only
-            if bb_root != (expected_root / ".fa" / "blackboard"):
-                # If roots differ, ignore
-                # Additional safety: if blackboard path not under root, ignore
-                try:
-                    blackboard_path = Path(getattr(blackboard, "path", bb_root / "blackboard.jsonl")).resolve()
-                    if not blackboard_path.is_relative_to(expected_root):
-                        return None
-                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
-                    pass
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable
-        logger.warning("safety check failed %s, ignoring", exc)
-
-    try:
-        from fa.blackboard.blackboard import BlackboardEntry
-
-        entry_id = f"write-{uuid.uuid4().hex[:8]}"
-        base = _base_commit(root)
-        lh = _file_hash(llms_path)
-
-        new_entry = BlackboardEntry.create(
-            id=entry_id,
-            type="file_version",
-            payload={"path": write_set[0] if write_set else "unknown"},
-            read_set=read_set,
-            write_set=write_set,
-            assumptions=[f"base_commit {base}"],
-            version_dependencies={"base_commit": base, "llms.txt": lh},
-        )
-        conflicts = blackboard.detect_conflict(new_entry)
-        if conflicts:
-            details = "; ".join([c.reason for c in conflicts])
-            ids = [c.conflicting_entry_id for c in conflicts]
-            return ToolResult.fail(
-                "conflict_detected",
-                f"Conflict for {write_set}: {details}. Conflicts: {ids}",
-                retryable=True,
-            )
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        logger.warning("Blackboard check failed: %s, allowing write", exc)
-    return None
-
-
-def _write_blackboard_ok(
-    blackboard: Any,
-    read_set: list[str],
-    write_set: list[str],
-    root: Path,
-    llms_path: Path,
-    content: str,
-) -> None:
-    if blackboard is None:
-        return
-    # Same safety check as above
-    try:
-        bb_root = Path(getattr(blackboard, "root", Path("/"))).resolve()
-        expected_root = root.resolve()
-        if not (bb_root == expected_root / ".fa" / "blackboard" or bb_root.is_relative_to(expected_root)):
-            if bb_root.parent.parent.resolve() != expected_root.resolve():
-                return
-    except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
-        pass
-
-    try:
-        from fa.blackboard.blackboard import BlackboardEntry
-
-        entry_id = f"write-ok-{uuid.uuid4().hex[:8]}"
-        base = _base_commit(root)
-        lh = _file_hash(llms_path)
-
-        ok_entry = BlackboardEntry.create(
-            id=entry_id,
-            type="file_version",
-            payload={"path": write_set[0], "bytes": len(content.encode())},
-            read_set=read_set,
-            write_set=write_set,
-            assumptions=[f"file {write_set[0]} exists after write"],
-            version_dependencies={"base_commit": base, "llms.txt": lh},
-        )
-        blackboard.write(ok_entry)
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-        logger.warning("Blackboard write failed: %s", exc)
 
 
 def build_write_file_tool(workspace_root: Path) -> ToolSpec:
@@ -189,13 +49,9 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             logger.warning("transaction.read_set failed: %s", exc)
 
-        llms_path = root / "knowledge" / "llms.txt"
-        if not llms_path.exists():
-            llms_path = root / "llms.txt"
-
-        conflict_res = _check_conflict(blackboard, read_set, write_set, root, llms_path)
-        if conflict_res is not None:
-            return conflict_res
+        denial = check_mutation_allowed(blackboard, read_set=read_set, write_set=write_set, root=root)
+        if denial is not None:
+            return denial
 
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,7 +65,13 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             logger.warning("transaction.add_write failed: %s", exc)
 
-        _write_blackboard_ok(blackboard, read_set, write_set, root, llms_path, content)
+        record_mutation(
+            blackboard,
+            read_set=read_set,
+            write_set=write_set,
+            root=root,
+            payload_extra={"bytes": len(content.encode())},
+        )
 
         return ToolResult.ok(
             f"wrote {path.relative_to(root)}",

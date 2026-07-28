@@ -19,10 +19,15 @@ def test_resolve_secrets_path_env_override(monkeypatch: pytest.MonkeyPatch, tmp_
 
 def test_resolve_secrets_path_wsl_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FA_SECRETS_FILE", raising=False)
-    # No /run/secrets/fa.env on a dev box → falls back to ~/.fa/.env
+    # No /run/secrets/fa.env on a dev box → falls back to <state root>/.env.
+    # S5.4.5: derived from fa_state_root() rather than hardcoding
+    # Path.home()/".fa", so the assertion stays true when FA_STATE_ROOT
+    # relocates the state tree (which is the whole point of the override).
+    from fa.paths import fa_state_root
+
     if Path("/run/secrets/fa.env").exists():  # pragma: no cover - env-specific
         return
-    assert _resolve_secrets_path() == Path.home() / ".fa" / ".env"
+    assert _resolve_secrets_path() == fa_state_root() / ".env"
 
 
 def test_load_secret_store_reads_file_not_environ(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

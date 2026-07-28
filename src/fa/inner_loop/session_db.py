@@ -16,6 +16,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,12 @@ from fa.inner_loop._sqlite_common import create_sqlite_connection, payload_match
 logger = logging.getLogger(__name__)
 
 CURRENT_SCHEMA_VERSION = "session-v1"
+
+# Bounded retry for BEGIN IMMEDIATE contention. busy_timeout already makes
+# SQLite wait internally; these attempts cover the residual case where the lock
+# could not be taken at all. Exhaustion raises — an event is never dropped.
+_WRITE_RETRY_ATTEMPTS = 5
+_WRITE_RETRY_SLEEP_SECONDS = 0.05
 _SCHEMA_META_KEY = "__fa_schema__"
 _SESSION_ID_META_KEY = "__fa_session_id__"
 _RUN_BINDING_PREFIX = "run_binding:"
@@ -180,6 +187,22 @@ class SessionDatabase:
                             );
                             """
                         )
+                        # S5.1 / V1 — event-id uniqueness is enforced by the
+                        # authority, not by the caller.
+                        #
+                        # Scope is (session_id, event_id), NOT event_id alone:
+                        # ``ev-000001`` legitimately exists in every session, so
+                        # a bare UNIQUE(event_id) would reject valid rows.
+                        #
+                        # This runs as CREATE UNIQUE INDEX rather than a table
+                        # constraint because ``CREATE TABLE IF NOT EXISTS`` is a
+                        # no-op on databases that already exist — a constraint
+                        # added to the DDL would silently never apply to them.
+                        # The index is applied here so pre-S5 databases gain the
+                        # guarantee on next open. A database that already holds
+                        # duplicates cannot take the index; that case fails
+                        # closed in ``_enforce_event_id_uniqueness``.
+                        self._enforce_event_id_uniqueness(conn)
                         conn.execute("CREATE INDEX IF NOT EXISTS idx_event_log_kind ON event_log(kind);")
                         conn.execute(
                             "CREATE INDEX IF NOT EXISTS idx_event_log_session_run_id_id "
@@ -293,6 +316,40 @@ class SessionDatabase:
             finally:
                 conn.close()
 
+    @staticmethod
+    def _enforce_event_id_uniqueness(conn: sqlite3.Connection) -> None:
+        """Add the (session_id, event_id) unique index, or fail closed.
+
+        Pre-S5 databases were written by an allocator that could produce
+        duplicate ``event_id`` values under concurrency (V1). Creating the index
+        on such a database raises ``IntegrityError``, which surfaces here as a
+        structured ``SessionDatabaseError`` rather than an opaque SQLite error.
+
+        Failing closed is deliberate (plan Q14): a session whose event ids
+        already collide has an ambiguous replay history. Repairing it would mean
+        renumbering committed rows — rewriting audit history to satisfy a
+        constraint — so the session is reported unsupported instead, matching
+        the Q2 clean-cutover policy for legacy artifacts.
+        """
+        try:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_event_log_session_event ON event_log(session_id, event_id);"
+            )
+        except sqlite3.IntegrityError as exc:
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM ("
+                "SELECT session_id, event_id FROM event_log "
+                "GROUP BY session_id, event_id HAVING COUNT(*) > 1)"
+            )
+            row = cur.fetchone()
+            duplicate_groups = int(row[0]) if row else -1
+            raise SessionDatabaseError(
+                "event_id_duplicates_present",
+                f"database holds {duplicate_groups} duplicated (session_id, event_id) group(s) "
+                "from a pre-S5 allocator; replay order is ambiguous and no automatic repair is "
+                "performed. Start a new session or remove the affected trace.",
+            ) from exc
+
     def event_count(self) -> int:
         """Return the authoritative number of persisted event rows."""
         conn = self._connect()
@@ -310,6 +367,132 @@ class SessionDatabase:
             raise RuntimeError(f"event_log_count_failed: {exc}") from exc
         finally:
             conn.close()
+
+    def append_event_row_allocating(self, row: Mapping[str, Any]) -> str:
+        """Allocate ``event_id`` and insert the row in one serialized transaction.
+
+        This is the V1 fix. The previous design read ``event_count()`` once when
+        an ``EventLog`` was constructed and counted upward in memory, so two
+        instances created before either wrote allocated the same ids.
+
+        Two properties are required and neither is sufficient alone:
+
+        * **uniqueness** — guaranteed by ``ux_event_log_session_event``.
+        * **no loss** — guaranteed by allocating *inside* the writing
+          transaction. A caller that allocates first and inserts second turns a
+          duplicate into an ``IntegrityError`` and drops the event, which is
+          strictly worse than the original defect.
+
+        ``BEGIN IMMEDIATE`` takes the write lock up front. SQLite's default
+        DEFERRED mode takes a read lock and upgrades on first write; if another
+        writer holds the lock that upgrade returns ``SQLITE_BUSY`` *without*
+        honouring ``busy_timeout``, because waiting would deadlock. Measured
+        across processes, the DEFERRED path lost events while IMMEDIATE did not.
+
+        Returns the allocated ``event_id``.
+        """
+        row_session_id = str(row.get("session_id", self.session_id))
+        if self.session_id and row_session_id != self.session_id:
+            raise SessionDatabaseError(
+                "session_db_identity_mismatch",
+                f"event row session {row_session_id!r} does not match {self.session_id!r}",
+            )
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                # Manual transaction control: sqlite3's implicit handling issues
+                # DEFERRED, which is the mode this method exists to avoid.
+                conn.isolation_level = None
+                last_busy: Exception | None = None
+                for _ in range(_WRITE_RETRY_ATTEMPTS):
+                    try:
+                        conn.execute("BEGIN IMMEDIATE")
+                    except sqlite3.OperationalError as exc:
+                        # Contention before any work was done: safe to retry.
+                        last_busy = exc
+                        time.sleep(_WRITE_RETRY_SLEEP_SECONDS)
+                        continue
+                    try:
+                        event_id = self._next_event_id(conn, row_session_id)
+                        self._insert_event_row(conn, row, row_session_id, event_id)
+                        conn.execute("COMMIT")
+                    except BaseException:
+                        conn.execute("ROLLBACK")
+                        raise
+                    return event_id
+                raise RuntimeError(f"event_log_write_busy: {last_busy}")
+            except SessionDatabaseError:
+                raise
+            except Exception as exc:
+                logger.warning("Authoritative event_log write failed for %s: %s", self.path, exc)
+                raise RuntimeError(f"event_log_write_failed: {exc}") from exc
+            finally:
+                conn.close()
+
+    def _next_event_id(self, conn: sqlite3.Connection, session_id: str) -> str:
+        """Derive the next ``ev-NNNNNN`` id. Caller MUST hold the write lock.
+
+        Gaps after a failed write are acceptable (Q6); duplicates are not.
+        """
+        if self._legacy_schema or not session_id:
+            cur = conn.execute("SELECT COUNT(*) FROM event_log")
+        else:
+            cur = conn.execute("SELECT COUNT(*) FROM event_log WHERE session_id = ?", (session_id,))
+        fetched = cur.fetchone()
+        count = int(fetched[0]) if fetched else 0
+        return f"ev-{count + 1:06d}"
+
+    def _insert_event_row(
+        self,
+        conn: sqlite3.Connection,
+        row: Mapping[str, Any],
+        row_session_id: str,
+        event_id: str,
+    ) -> None:
+        """Insert one event row. Caller owns the surrounding transaction."""
+        if self._legacy_schema:
+            conn.execute(
+                """
+                INSERT INTO event_log (
+                    event_id, ts, run_id, actor, kind, tool_name,
+                    tool_call_id, parent_event_id, content, harness_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    str(row["ts"]),
+                    str(row["run_id"]),
+                    str(row["actor"]),
+                    str(row["kind"]),
+                    str(row.get("tool_name", "")),
+                    str(row.get("tool_call_id", "")),
+                    str(row.get("parent_event_id", "")),
+                    json.dumps(row.get("content", {}), ensure_ascii=False),
+                    str(row["harness_id"]),
+                ),
+            )
+            return
+        conn.execute(
+            """
+            INSERT INTO event_log (
+                event_id, session_id, ts, run_id, actor, kind, tool_name,
+                tool_call_id, parent_event_id, content, harness_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                row_session_id,
+                str(row["ts"]),
+                str(row["run_id"]),
+                str(row["actor"]),
+                str(row["kind"]),
+                str(row.get("tool_name", "")),
+                str(row.get("tool_call_id", "")),
+                str(row.get("parent_event_id", "")),
+                json.dumps(row.get("content", {}), ensure_ascii=False),
+                str(row["harness_id"]),
+            ),
+        )
 
     def append_event_row(self, row: Mapping[str, Any]) -> None:
         row_session_id = str(row.get("session_id", self.session_id))
@@ -467,7 +650,7 @@ class SessionDatabase:
                     if self._legacy_schema:
                         conn.execute(
                             """
-                            INSERT OR REPLACE INTO blackboard (
+                            INSERT INTO blackboard (
                                 id, run_id, type, content_hash, toolchain_digest, schema_version,
                                 parent_id, read_set, write_set, assumptions,
                                 version_dependencies, timestamp, payload
@@ -492,7 +675,7 @@ class SessionDatabase:
                     else:
                         conn.execute(
                             """
-                            INSERT OR REPLACE INTO blackboard (
+                            INSERT INTO blackboard (
                                 id, session_id, run_id, type, content_hash, toolchain_digest, schema_version,
                                 parent_id, read_set, write_set, assumptions,
                                 version_dependencies, timestamp, payload
@@ -517,6 +700,21 @@ class SessionDatabase:
                         )
             except SessionDatabaseError:
                 raise
+            except sqlite3.IntegrityError as exc:
+                # ADR-16 I-6.3: the blackboard is append-only and must never
+                # silently overwrite. ``id`` is the table's PRIMARY KEY, so a
+                # repeat write raises here rather than replacing the prior row
+                # and erasing its content_hash, write_set and lineage.
+                #
+                # A duplicate id is a caller bug (or a genuine concurrent
+                # collision), never a routine update: a superseding entry
+                # declares ``parent_id`` and carries its own id.
+                raise SessionDatabaseError(
+                    "blackboard_duplicate_id",
+                    f"entry id {str(row.get('id', ''))!r} already exists in session "
+                    f"{row_session_id!r}; the blackboard is append-only, so write a new "
+                    "entry with its own id and set parent_id to supersede the existing one",
+                ) from exc
             except Exception as exc:
                 logger.warning("Authoritative blackboard write failed for %s: %s", self.path, exc)
                 raise RuntimeError(f"blackboard_write_failed: {exc}") from exc

@@ -115,6 +115,20 @@ def test_write_file_conflict_uses_per_run_blackboard_authority(tmp_path: Path) -
     state = SessionState(workspace_root=tmp_path, run_id="run-1")
     assert state.blackboard is not None
 
+    # S5.4.1: the pre-existing entry must belong to a DIFFERENT writer. It was
+    # previously written through this run's own Blackboard, so the denial this
+    # test asserted was the self-conflict defect (Q18), not the cross-writer
+    # conflict the test is named for. Writing it via a second Blackboard on the
+    # same authority DB keeps the assertion meaningful.
+    from fa.blackboard.blackboard import Blackboard as _Blackboard
+
+    other_writer = _Blackboard(
+        tmp_path / ".fa" / "blackboard",
+        session_db=state.session_db,
+        run_id="run-other",
+        session_id=state.session_id,
+    )
+
     existing = BlackboardEntry.create(
         id="existing-write",
         type="file_version",
@@ -124,7 +138,7 @@ def test_write_file_conflict_uses_per_run_blackboard_authority(tmp_path: Path) -
         assumptions=[],
         version_dependencies={"base_commit": "unknown"},
     )
-    state.blackboard.write(existing)
+    other_writer.write(existing)
 
     tool = build_write_file_tool(tmp_path)
     token = set_current_session(state)

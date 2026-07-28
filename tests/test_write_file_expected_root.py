@@ -1,87 +1,91 @@
-"""Tests for write_file._check_conflict expected_root initialization (PY6 closure).
+"""Blackboard ownership checks for the mutating tools (workspace-leak protection).
 
-These tests verify that expected_root is always defined in every exception path
-of the blackboard safety check, preventing unbound-name errors.
+History (plan §6.0.1 — legacy tests are inputs, not authority)
+--------------------------------------------------------------
+This file previously targeted ``write_file._check_conflict``, a private helper
+that S5.4 replaced with the shared ``fa.inner_loop.tools.mutation_guard``. Its
+genuine intent — *a Blackboard belonging to a different workspace must be
+ignored, and the ownership check must never raise* — is preserved here against
+the new seam.
+
+One test was dropped rather than ported: ``test_expected_root_always_resolved``
+asserted on the *source text* of the function via ``inspect.getsource``,
+checking that one assignment appeared before another. That is test theater: it
+pins an implementation detail, passes regardless of behaviour, and breaks under
+any refactor (including instrumentation that merely wraps the function). The
+property it was reaching for — no unbound name on any exception path — is
+covered behaviourally below, since ``belongs_to_workspace`` is exercised with
+inputs that drive every branch and must return a bool rather than raise.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from typing import Any
 
-from fa.inner_loop.tools.write_file import _check_conflict
+from fa.inner_loop.tools.mutation_guard import belongs_to_workspace, check_mutation_allowed
 
 
-class TestCheckConflictExpectedRoot:
-    """Verify expected_root is initialized before nested fallback."""
+class _FakeBlackboard:
+    """Minimal stand-in: ownership is decided by ``root`` alone."""
 
-    def test_blackboard_none_returns_none(self, tmp_path: Path) -> None:
-        """When blackboard is None, no conflict check is needed."""
-        result = _check_conflict(None, ["a.py"], ["b.py"], tmp_path, tmp_path / "llms.txt")
-        assert result is None
+    def __init__(self, root: Any) -> None:
+        self.root = root
 
-    def test_blackboard_from_same_workspace_proceeds(self, tmp_path: Path) -> None:
-        """When blackboard root matches workspace, conflict check proceeds normally."""
-        # Set up blackboard with root = tmp_path/.fa/blackboard
+    def detect_conflict(self, _entry: object) -> list[object]:
+        return []
+
+
+class TestBlackboardOwnership:
+    def test_blackboard_in_workspace_is_owned(self, tmp_path: Path) -> None:
         bb_dir = tmp_path / ".fa" / "blackboard"
         bb_dir.mkdir(parents=True)
-        blackboard = MagicMock()
-        blackboard.root = bb_dir
+        assert belongs_to_workspace(_FakeBlackboard(bb_dir), tmp_path) is True
 
-        llms = tmp_path / "llms.txt"
-        llms.write_text("test")
+    def test_blackboard_from_other_workspace_is_foreign(self, tmp_path: Path) -> None:
+        other = tmp_path.parent / "other_workspace" / ".fa" / "blackboard"
+        assert belongs_to_workspace(_FakeBlackboard(other), tmp_path) is False
 
-        # Should proceed to conflict check (may return None if no conflicts)
-        _check_conflict(blackboard, ["a.py"], ["b.py"], tmp_path, llms)
-        # No assertion needed: this verifies the code path completes without error
+    def test_unrelated_absolute_root_is_foreign(self, tmp_path: Path) -> None:
+        assert belongs_to_workspace(_FakeBlackboard(Path("/unrelated/path/blackboard")), tmp_path) is False
 
-    def test_blackboard_from_different_workspace_ignored(self, tmp_path: Path) -> None:
-        """When blackboard is from a different workspace, conflict check is skipped."""
-        # Blackboard from a DIFFERENT workspace
-        other_root = tmp_path.parent / "other_workspace"
-        bb_dir = other_root / ".fa" / "blackboard"
+    def test_unusable_root_is_foreign_not_an_exception(self, tmp_path: Path) -> None:
+        """An object whose ``root`` cannot be turned into a path must not raise.
 
-        blackboard = MagicMock()
-        blackboard.root = bb_dir  # different workspace
+        Replaces the old source-introspection test: every failure path returns
+        a bool, so no caller can hit an unbound name or an escaping error.
+        """
+        assert belongs_to_workspace(_FakeBlackboard(object()), tmp_path) is False
+        assert belongs_to_workspace(_FakeBlackboard(None), tmp_path) is False
 
-        llms = tmp_path / "llms.txt"
-        llms.write_text("test")
+    def test_missing_root_attribute_is_foreign(self, tmp_path: Path) -> None:
+        assert belongs_to_workspace(object(), tmp_path) is False
 
-        # Should return None (ignored because different workspace)
-        result = _check_conflict(blackboard, ["a.py"], ["b.py"], tmp_path, llms)
+
+class TestOwnershipGatesTheConflictCheck:
+    def test_absent_blackboard_permits(self, tmp_path: Path) -> None:
+        assert check_mutation_allowed(None, read_set=[], write_set=["b.py"], root=tmp_path) is None
+
+    def test_owned_blackboard_without_conflicts_permits(self, tmp_path: Path) -> None:
+        bb_dir = tmp_path / ".fa" / "blackboard"
+        bb_dir.mkdir(parents=True)
+        result = check_mutation_allowed(_FakeBlackboard(bb_dir), read_set=["a.py"], write_set=["b.py"], root=tmp_path)
         assert result is None
 
-    def test_expected_root_used_in_fallback_path(self, tmp_path: Path) -> None:
-        """When is_relative_to fails, the fallback path uses expected_root correctly."""
-        # Create a blackboard with a root that will cause is_relative_to to fail
-        # but where the fallback path still needs expected_root
-        blackboard = MagicMock()
-        # Use a path that's not relative to tmp_path
-        blackboard.root = Path("/unrelated/path/blackboard")
-        blackboard.path = Path("/unrelated/path/blackboard/blackboard.jsonl")
+    def test_foreign_blackboard_is_never_consulted(self, tmp_path: Path) -> None:
+        """A foreign Blackboard must be ignored outright, not queried.
 
-        llms = tmp_path / "llms.txt"
-        llms.write_text("test")
+        Querying it would let another workspace's entries decide this
+        workspace's writes — the leaked-contextvar hazard the check exists for.
+        """
+        queried = False
 
-        # Should return None (different workspace, ignored)
-        result = _check_conflict(blackboard, ["a.py"], ["b.py"], tmp_path, llms)
-        assert result is None
+        class _Tripwire(_FakeBlackboard):
+            def detect_conflict(self, _entry: object) -> list[object]:
+                nonlocal queried
+                queried = True
+                return []
 
-    def test_expected_root_always_resolved(self, tmp_path: Path) -> None:
-        """Verify expected_root is resolved exactly once (no redundant resolve calls)."""
-        import inspect
-
-        from fa.inner_loop.tools import write_file
-
-        source = inspect.getsource(write_file._check_conflict)
-
-        # expected_root should be assigned BEFORE the inner try block
-        # Find the position of expected_root assignment and inner try
-        expected_root_pos = source.find("expected_root = root.resolve()")
-        inner_try_pos = source.find("except Exception:", source.find("try:", expected_root_pos))
-
-        # expected_root should be assigned before the inner try's except
-        assert expected_root_pos > 0, "expected_root assignment not found"
-        assert expected_root_pos < inner_try_pos, (
-            "expected_root should be initialized BEFORE the inner try's except block"
-        )
+        foreign = _Tripwire(tmp_path.parent / "other_workspace" / ".fa" / "blackboard")
+        assert check_mutation_allowed(foreign, read_set=[], write_set=["b.py"], root=tmp_path) is None
+        assert queried is False, "a foreign workspace's blackboard was consulted"

@@ -15,8 +15,10 @@ from pathlib import Path
 from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
+from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
 from fa.inner_loop.state import EventLog
 from fa.inner_loop.tools.base import optional_int
+from fa.paths import fa_session_log_root
 
 
 def _as_int(value: object) -> int:
@@ -30,27 +32,64 @@ def _as_int(value: object) -> int:
     return 0
 
 
-def _resolve_event_log(params: Mapping[str, object]) -> tuple[EventLog | None, str | None]:
+def _resolve_event_log(
+    params: Mapping[str, object],
+) -> tuple[EventLog | None, str | None, str | None]:
+    """Resolve the authoritative log for a request.
+
+    Returns ``(log, error_code, error_message)``. The code is produced here
+    rather than inferred by the callers from the message text: a corrupt
+    authority and an absent session are different operator problems, and
+    substring-matching a human-readable string to tell them apart is exactly
+    the kind of coupling that silently degrades when wording changes.
+    """
     run_id_raw = params.get("run_id")
     if run_id_raw is not None:
         if not isinstance(run_id_raw, str) or not run_id_raw.strip():
-            return None, "run_id must be a non-empty string"
+            return None, "invalid_params", "run_id must be a non-empty string"
         run_id = run_id_raw.strip()
-        path = Path.home() / ".fa" / "session-log" / run_id / "events.jsonl"
-        if not path.exists() and not (path.parent / "session.db").exists():
-            return None, f"run_id not found: {run_id}"
-        return EventLog(path, run_id=run_id), None
+        path = fa_session_log_root() / run_id / "events.jsonl"
+        db_path = path.parent / "session.db"
+        # S5.5 (S3-F13): inject the authority explicitly. Without it,
+        # ``EventLog.read_all`` treats the DB as conclusive only when it
+        # returns rows, so an empty or failing authority silently falls back to
+        # the JSONL mirror — a best-effort text file any process can append to.
+        # Measured on the pre-fix path: an authority with zero rows plus one
+        # forged mirror line made ``fs.chronicle_search`` and ``fs.usage``
+        # report an ``fs.run_bash`` that never executed. Injecting makes the DB
+        # authoritative for both the empty and the error case (fail closed).
+        #
+        # A run is "found" only if it has an authority. A bare events.jsonl with
+        # no session.db is a mirror orphan: readable text, but nothing that can
+        # vouch for it, so it is reported as not found rather than answered.
+        if not db_path.exists():
+            return None, "no_active_session", f"run_id not found: {run_id}"
+        try:
+            # Plain constructor, not ``open_existing``: the caller supplies a
+            # run id, not a session id, so the reader must adopt whichever
+            # session owns the DB rather than pin one. The file already exists,
+            # so nothing is bootstrapped; a legacy or corrupt DB still raises.
+            session_db = SessionDatabase(db_path)
+        except SessionDatabaseError as exc:
+            # Present but unreadable. Fail closed with a code that says so —
+            # never substitute the mirror, and never call this "no session".
+            return None, "read_error", f"authority unavailable for run {run_id}: {exc}"
+        return (
+            EventLog(path, run_id=run_id, session_db=session_db, session_id=session_db.session_id),
+            None,
+            None,
+        )
 
     try:
         from fa.inner_loop.context import get_current_session
 
         session = get_current_session()
         if session is not None and session.log is not None:
-            return session.log, None
+            return session.log, None, None
     except Exception:  # noqa: BLE001, S110 # best-effort session DI
         pass
 
-    return None, "no active session; pass run_id explicitly"
+    return None, "no_active_session", "no active session; pass run_id explicitly"
 
 
 def _event_row_matches_query(row: Mapping[str, object], query: str) -> bool:
@@ -76,10 +115,9 @@ def build_chronicle_search_tool(_event_log_path: Path | None = None) -> ToolSpec
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
-        log, err = _resolve_event_log(data)
+        log, code, err = _resolve_event_log(data)
         if err is not None:
-            code = "invalid_params" if "run_id must" in err else "no_active_session"
-            return ToolResult.fail(code, err, retryable=False)
+            return ToolResult.fail(code or "no_active_session", err, retryable=False)
         assert log is not None  # noqa: S101
 
         try:
@@ -139,10 +177,9 @@ def build_chronicle_search_tool(_event_log_path: Path | None = None) -> ToolSpec
 def build_usage_tool(_event_log_path: Path | None = None) -> ToolSpec:
     def handler(params: Mapping[str, object]) -> ToolResult:
         data = dict(params)
-        log, err = _resolve_event_log(data)
+        log, code, err = _resolve_event_log(data)
         if err is not None:
-            code = "invalid_params" if "run_id must" in err else "no_active_session"
-            return ToolResult.fail(code, err, retryable=False)
+            return ToolResult.fail(code or "no_active_session", err, retryable=False)
         assert log is not None  # noqa: S101
 
         tool_calls: Counter[str] = Counter()

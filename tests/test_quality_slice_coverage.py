@@ -178,6 +178,13 @@ def test_subagent_limits_fallback_to_instance_after_session_error(tmp_path: Path
 
 
 def test_blackboard_conflict_matrix_and_linear_parent_policy(tmp_path: Path) -> None:
+    # S5.4.1: the prior entry must come from a DIFFERENT writer. This test
+    # covers the read/write overlap matrix and the parent_id linear-chain
+    # policy; it previously wrote both entries from one Blackboard, so the
+    # conflict it asserted was the agent colliding with itself (Q18) rather
+    # than the cross-writer overlap the matrix is about. Same root => same
+    # authority DB, so both writers share one blackboard table.
+    bb_other = Blackboard(tmp_path / ".fa" / "blackboard", run_id="other-agent")
     bb = Blackboard(tmp_path / ".fa" / "blackboard", run_id="conflict")
     old = BlackboardEntry.create(
         id="old",
@@ -187,7 +194,7 @@ def test_blackboard_conflict_matrix_and_linear_parent_policy(tmp_path: Path) -> 
         write_set=["shared.py"],
         version_dependencies={"base_commit": "abc"},
     )
-    bb.write(old)
+    bb_other.write(old)
 
     new = BlackboardEntry.create(
         id="new",

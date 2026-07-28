@@ -27,7 +27,7 @@ import logging
 import os
 import threading
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 from fa.inner_loop.registry import ToolCall, ToolResult
 from fa.inner_loop.session_db import SessionDatabase
 from fa.output import LogKind, OutputEvent
+from fa.paths import fa_session_log_root
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,26 @@ if TYPE_CHECKING:
 
 DEFAULT_STATE_ROOT = Path.home() / ".fa" / "session-log"
 HARNESS_ID = "fa-inner-loop@0.1.0"
+
+
+def default_state_root() -> Path:
+    """Resolve the session-log root at CALL time, not import time (V10).
+
+    ``DEFAULT_STATE_ROOT`` above is bound when this module is first imported, so
+    any later change to ``HOME`` — an embedder reconfiguring itself, or a test
+    isolating its filesystem — is silently ignored and writes land in the real
+    user's ``~/.fa``. That is how ten tests came to share
+    ``~/.fa/session-log/<run_id>/`` instead of their own ``tmp_path``: the leak
+    was invisible while the Blackboard used ``INSERT OR REPLACE`` (it overwrote
+    the previous run's row), and became a hard failure once S5.3 made writes
+    append-only.
+
+    Resolving here keeps one behaviour for production (``HOME`` is stable, so
+    the value is identical) while making the root honestly reconfigurable. The
+    module-level constant is retained for backward compatibility with any
+    caller that imports it (parent Do#9 — preserve public facades).
+    """
+    return fa_session_log_root()
 
 
 def _now_iso_z() -> str:
@@ -168,15 +189,25 @@ class EventLog:
 
         # SessionDatabase owns both the directory/schema bootstrap and the
         # authority identity. Construct/inject it before seeding the event id.
+        # Retained for backward compatibility with callers/tests that read it
+        # (parent Do#9 — preserve public facades). It is NO LONGER the
+        # allocator: as of S5.1 the authority allocates inside the writing
+        # transaction, because a per-instance counter cannot be correct when two
+        # EventLog instances share one session.db. Treat this as a diagnostic
+        # snapshot of "rows at construction + 1", not a source of truth.
         self._next_id = self._initial_next_id(self.session_db)
 
     @staticmethod
     def _initial_next_id(session_db: SessionDatabase) -> int:
-        """Seed ``_next_id`` from the already-initialized DB authority.
+        """Report the id the DB would allocate next, at construction time.
 
         JSONL is a best-effort mirror and therefore must never participate in
         event-id correctness. Any authority read failure propagates instead of
         silently creating a split-brain session.
+
+        Superseded as the allocator by
+        :meth:`SessionDatabase.append_event_row_allocating` (S5.1 / V1); kept
+        because external callers read ``_next_id`` for diagnostics.
         """
         return session_db.event_count() + 1
 
@@ -207,11 +238,14 @@ class EventLog:
         if content is not None:
             redacted_content = {k: self._redact_value(v) for k, v in content.items()}
         with self._lock:
-            # S9: Incremental kind counting under existing lock (thread-safe).
-            self.kind_counts[str(kind)] = self.kind_counts.get(str(kind), 0) + 1
-
-            event = TraceEvent(
-                event_id=f"ev-{self._next_id:06d}",
+            # S5.1 / V1 — the event id is allocated BY THE AUTHORITY, inside the
+            # same transaction that inserts the row. The previous design seeded
+            # a per-instance counter from ``event_count() + 1`` at construction,
+            # so two EventLog instances created before either wrote allocated
+            # identical ids. ``event_id`` is left empty here precisely so this
+            # object cannot express an opinion about it.
+            pending = TraceEvent(
+                event_id="",
                 ts=_now_iso_z(),
                 run_id=self.run_id,
                 actor=actor,
@@ -224,11 +258,16 @@ class EventLog:
             )
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
-            # 1. Authoritative write to the per-run SessionDatabase.
-            self.session_db.append_event_row(asdict(event))
+            # 1. Authoritative allocate-and-write. Raises on failure; an event
+            #    is never silently dropped.
+            allocated_id = self.session_db.append_event_row_allocating(asdict(pending))
+            event = replace(pending, event_id=allocated_id)
 
-            # 2. Advance logical id only after authoritative commit succeeds.
-            self._next_id += 1
+            # 2. S5.2 / V2-residual — counters advance only after the commit
+            #    succeeds. Incrementing before the write let a failed append
+            #    inflate ``kind_counts``, and ``coder_loop`` persists that map
+            #    into ``session_meta``, so the drift became durable.
+            self.kind_counts[str(kind)] = self.kind_counts.get(str(kind), 0) + 1
 
             # 3. Best-effort JSONL mirror for audit/diffability.
             try:
@@ -348,8 +387,12 @@ class SessionState:
     def __post_init__(self) -> None:  # noqa: C901 -- complexity from FeatureFlags + Transaction + Blackboard + Telemetry + WorktreeManager init, DI via SessionState, graceful degradation
         self.workspace_root = self.workspace_root.resolve()
         if self.log is None:
+            # Call-time resolution (V10): see ``default_state_root``. Using the
+            # import-time constant here made every ``SessionState`` built
+            # without an explicit ``log=`` write into the real ``~/.fa``,
+            # regardless of the caller's workspace.
             self.log = EventLog(
-                DEFAULT_STATE_ROOT / self.run_id / "events.jsonl",
+                default_state_root() / self.run_id / "events.jsonl",
                 run_id=self.run_id,
             )
         elif not self.log.run_id:
@@ -445,15 +488,24 @@ class SessionState:
 
         # WorktreeManager via Factory from flags (Phase 1)
         if self.worktree_manager is None:
-            try:
-                from fa.workspace.worktree_manager import WorktreeManagerFactory
+            from fa.workspace.worktree_manager import WorktreeManagerFactory
 
-                flags = self.feature_flags
+            flags = self.feature_flags
+            try:
                 # For v0.1, repo_root is workspace_root (assumes git repo)
                 # For Docker, workspace_root is /workspace which is git clone --local
                 self.worktree_manager = WorktreeManagerFactory.from_flags(
                     flags, session_root=self.workspace_root, repo_root=self.workspace_root, run_id=self.run_id
                 )
+            except ValueError as exc:
+                # V19: an unsupported worktree_mode is a CONFIG error, not a
+                # runtime hiccup. Falling back to SharedDir here would restore
+                # exactly the silent downgrade the factory now refuses — the
+                # operator would ask for isolation, receive shared, and never
+                # be told. Leave the manager unset and surface it where the
+                # operator actually looks (event log + console).
+                self.worktree_manager = None
+                self._record_config_warning(line_no=0, key="worktree.mode", detail=str(exc))
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 logger.warning(f"Failed to init WorktreeManager: {exc}, using SharedDir fallback")
                 try:
@@ -500,27 +552,86 @@ class SessionState:
         with self._subagent_lock:
             return self.subagent_spawns
 
+    def try_reserve_subagent_spawn(self, max_spawns: int) -> bool:
+        """Atomically claim one subagent slot. Returns False when exhausted.
+
+        Compare-and-increment under one lock (V21). Splitting the check from
+        the increment — as the caller used to — lets concurrent admissions all
+        observe the same pre-increment count and all succeed; measured at 12
+        admissions under a limit of 3 once the counter read was not
+        instantaneous. Doing both here makes over-admission unrepresentable
+        rather than unlikely.
+        """
+        with self._subagent_lock:
+            if self.subagent_spawns >= max_spawns:
+                return False
+            self.subagent_spawns += 1
+            return True
+
     def create_subagent_workspace(self, task_id: str, base_branch: str = "main") -> Path:
-        """Create subagent workspace via WorktreeManager, declares write_set for transaction."""
+        """Return the per-task artifact root, or fail closed (V18, Q11-B Option A).
+
+        ``<workspace_root>/.fa/subagents/<sanitized_task_id>/``.
+
+        The previous implementation caught every exception and returned
+        ``self.workspace_root``. That turned a failure on the isolation path
+        into a **permission-boundary change**: an artifact-only task silently
+        became a main-workspace mutator, on the code path least likely to be
+        exercised or noticed. A subagent that cannot get its own directory is
+        not one that should be allowed to write into the main tree, so this
+        now raises.
+
+        The path comes from :func:`subagent_artifact_root` so the sandbox gate
+        and the executor share one derivation (the V24/V25 defect was two).
+        """
+        del base_branch  # Reserved for the isolated-worktree upgrade path (Q11-B Option C).
+        from fa.workspace.worktree_manager import ensure_subagent_artifact_root
+
         try:
-            if self.worktree_manager is not None:
-                ws = self.worktree_manager.create_subagent_workspace(task_id, base_branch=base_branch)
-                # Declare transaction write for worktree path
-                try:
-                    self.add_write(str(ws))
-                except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
-                    pass
-                return ws
-        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            logger.warning(f"create_subagent_workspace failed for {task_id}: {exc}, fallback to session_root")
-        return self.workspace_root
+            workdir = ensure_subagent_artifact_root(self.workspace_root, task_id, run_id=self.run_id)
+        except Exception as exc:
+            raise RuntimeError(
+                f"subagent_workspace_unavailable: cannot create an artifact root for task {task_id!r} ({exc}). "
+                "Refusing the spawn rather than falling back to the main workspace."
+            ) from exc
+
+        try:
+            self.add_write(str(workdir))
+        except Exception as exc:  # noqa: BLE001 # bookkeeping only, failure-observable WARNING
+            logger.warning("transaction add_write failed for subagent workspace %s: %s", workdir, exc)
+        return workdir
 
     def cleanup_subagent_workspace(self, path: Path) -> None:
+        """Remove a subagent artifact dir; surface failure (V20).
+
+        A swallowed cleanup failure leaves the directory behind, and the next
+        task with the same id reuses it — silently mixing two subagents' output
+        into one artifact set. The caller needs to know.
+        """
+        import shutil
+
+        from fa.workspace.worktree_manager import SUBAGENT_ARTIFACT_DIRNAME
+
+        resolved = Path(path).resolve()
+        artifact_tree = (self.workspace_root / ".fa" / SUBAGENT_ARTIFACT_DIRNAME).resolve()
+        # Containment check first: cleanup takes a path, so it is the one place
+        # a wrong value could delete something that matters.
+        if resolved == artifact_tree or not resolved.is_relative_to(artifact_tree):
+            raise RuntimeError(
+                f"subagent_cleanup_refused: {resolved} is not a subagent artifact directory under {artifact_tree}"
+            )
+
+        # The artifact root is owned by this class, not by the WorktreeManager:
+        # SharedDirWorktreeManager.cleanup only accepts its own session_root and
+        # rejects anything else, so delegating here would fail on every call.
+        # The manager is consulted only once real worktrees exist (Q11-B
+        # Option C), at which point the write root becomes its path.
         try:
-            if self.worktree_manager is not None:
-                self.worktree_manager.cleanup(path)
-        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            logger.warning(f"cleanup_subagent_workspace failed for {path}: {exc}")
+            shutil.rmtree(resolved, ignore_errors=False)
+        except FileNotFoundError:
+            return
+        except Exception as exc:
+            raise RuntimeError(f"subagent_cleanup_failed: could not remove {resolved} ({exc})") from exc
 
     def record_tool_call(self, call: ToolCall) -> TraceEvent:
         assert self.log is not None  # noqa: S101
@@ -643,4 +754,5 @@ __all__ = [
     "EventLog",
     "SessionState",
     "TraceEvent",
+    "default_state_root",
 ]

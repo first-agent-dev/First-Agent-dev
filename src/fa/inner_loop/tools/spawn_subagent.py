@@ -122,10 +122,12 @@ def _handle_subagent_runner_error(
         )
     except Exception as emit_exc:  # noqa: BLE001 - best-effort observability
         logger.warning("Failed to emit subagent failure event: %s", emit_exc)
-    if session is not None and workdir != root:
+    if session is not None:
+        # Cleanup failure is surfaced by SessionState (V20) but must not mask
+        # the original runner error being reported here.
         try:
             session.cleanup_subagent_workspace(workdir)
-        except Exception as cleanup_exc:  # noqa: BLE001 - best-effort cleanup
+        except Exception as cleanup_exc:  # noqa: BLE001 - original error takes precedence
             logger.warning("Subagent workspace cleanup failed: %s", cleanup_exc)
     return ToolResult.fail("runner_failed", str(exc), retryable=False)
 
@@ -160,13 +162,21 @@ def _handle_spawn_subagent(root: Path, params: Mapping[str, object]) -> ToolResu
     role = request.role
     env_extra = request.env_extra
 
-    # 3. Create isolated Worktree via SessionState
-    workdir = root
-    if session is not None:
-        try:
-            workdir = session.create_subagent_workspace(task_id)
-        except Exception as exc:  # noqa: BLE001 # graceful fallback
-            logger.warning("Subagent workspace creation failed: %s, using session_root", exc)
+    # 3. Allocate the per-task artifact root (Q11-B Option A).
+    # V18: if it cannot be created the spawn is DENIED. The previous code
+    # logged the failure and fell back to ``root`` — the main workspace — which
+    # turned an isolation failure into a permission escalation.
+    if session is None:
+        return ToolResult.fail(
+            "no_active_session",
+            "Subagent spawning requires an active session to allocate an artifact root.",
+            retryable=False,
+        )
+    try:
+        workdir = session.create_subagent_workspace(task_id)
+    except Exception as exc:  # noqa: BLE001 - structured denial, never a fallback
+        logger.warning("Subagent artifact root unavailable for %s: %s", task_id, exc)
+        return ToolResult.fail("workspace_unavailable", str(exc), retryable=True)
 
     # 4. Log spawn start event (observability per Slice5)
     if session is not None and session.log is not None:
@@ -210,9 +220,9 @@ def _handle_spawn_subagent(root: Path, params: Mapping[str, object]) -> ToolResu
             env_extra=env_extra,
         )
 
-        # 6. Cleanup Worktree
-        if session is not None and workdir != root:
-            session.cleanup_subagent_workspace(workdir)
+        # 6. Remove the task artifact directory. A failure here raises (V20)
+        # rather than leaving a dir the next task with this id would reuse.
+        session.cleanup_subagent_workspace(workdir)
 
         # 7. Persist and display completion/failure.
         try:

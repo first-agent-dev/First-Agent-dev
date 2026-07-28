@@ -122,6 +122,31 @@ LogKind = Literal[
 # This ensures the operator sees these critical events in the console
 # (stderr) in addition to the audit trail (events.jsonl). The contract
 # check script (check_log_kind_contract.py) validates dual-write.
+#
+# SCOPE — the mirror contract binds the ``drive_session`` composition root
+# only (Q12, resolved 2026-07-28).
+#
+# ``fa.inner_loop.loop.run_session`` is the deterministic non-LLM root. It
+# holds no ``EventBus`` reference and emits nothing; it is intentionally
+# console-silent so the one pure path in the harness keeps no display
+# dependency. Three ``run_stopped`` producers live there — ``loop.py``
+# ``_execute_one_sequential``, ``_execute_batch_parallel``, and
+# ``run_session`` itself — on hook-denial branches that ``break``/``return``
+# without a mirroring emit.
+#
+# Consequence, measured rather than assumed: under ``fa run`` the operator
+# always gets the mirror, because ``drive_session`` wraps every execution.
+# Under a bare ``run_session`` (``fa inner-loop-smoke``, direct library
+# callers) a hook denial writes a durable ``run_stopped`` row and produces
+# no console output. Evidence: S3 kill-check K4 (bus attached, zero events
+# emitted) and S4.7 on the deployed container, where the smoke path narrated
+# itself through ``print()`` in ``_cmd_inner_loop_smoke`` — not through the
+# EventBus.
+#
+# This exemption is recorded so the contract stops asserting a guarantee the
+# code does not provide. Whether ``drive_session`` should emit on behalf of
+# ``run_session`` after it returns is a separate, still-open S6 question; do
+# not close it by wiring a bus into ``loop.py``.
 
 CONSOLE_MIRROR_KINDS: frozenset[LogKind] = frozenset(
     {

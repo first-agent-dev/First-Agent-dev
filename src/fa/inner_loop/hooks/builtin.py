@@ -110,6 +110,24 @@ class SandboxHook(GuardMiddleware):
         if call is None:
             return Decision.allow()
         if call.name in {"fs.run_bash", "fs.spawn_subagent"}:
+            # Q19: subagent spawns are NOT confined by this gate, and S5.6
+            # deliberately does not pretend otherwise.
+            #
+            # Measured during S5.6 preflight: pointing the gate (or the runner
+            # cwd) at a per-task artifact root does not contain anything —
+            # ``workspace_root`` is consulted only by the rm/chmod/git
+            # validators, so ``echo pwn > ../../../src/app.py`` classifies as
+            # GENERAL_WRITE and is allowed with no path check, and ``..`` walks
+            # straight out of any cwd.
+            #
+            # Denying general-write for spawns was implemented and measured to
+            # deny 8 of 10 realistic verifier commands (``pytest -q``,
+            # ``mypy src/``, ``make test`` ... are GENERAL_WRITE because a test
+            # run writes caches), i.e. it removes the role's entire purpose.
+            # Reverted; see plan §11 Q19.
+            #
+            # Real containment needs an OS-level boundary (one writable mount),
+            # tracked as Q19 option (c). V24/V25 remain OPEN.
             return self._handle_bash(call.params.get("command"))
         if call.name in _FS_PATH_TOOLS:
             return self._handle_path(call.params.get("path"))

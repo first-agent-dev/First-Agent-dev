@@ -1534,6 +1534,43 @@ Exit criteria:
 - [ ] source/image revision is recorded;
 - [ ] any mismatch is classified before code changes.
 
+#### S4 execution record — 2026-07-28
+
+Status: **EXECUTED — PASS WITH FINDINGS, no runtime edits.**
+
+Report: `worklogs/implementation-plans/cli-trace-S4-verification-report.md`
+
+Deployment: compose project `first-agent-dev`, service `first-agent`, both
+services healthy. S3.5 fixes confirmed present *inside the image* before any
+measurement. Session under test:
+`session-a400b6292e8b420693fcd71668032c67` (schema v1), runs `s4-run-a`
+(debug off) and `s4-run-b` (debug on).
+
+Verified on the deployed path: session/run identity split (V26 stays fixed),
+authority == mirror (7 = 7, 14 total), P33 multi-run-per-session on one
+authority, debug-body gate in both states, secret isolation two-sided (no
+provider key in the agent container **and** a live 200 through the proxy),
+derived-consumer agreement across three surfaces, deterministic root clean,
+read-only rootfs intact.
+
+**Material change — V1 reclassified.** S3 called duplicate event ids *latent*.
+Re-tested during S4: the real production root
+(`SessionManager.create_or_attach_session → begin_run → EventLog`) yields
+**6 duplicate ids** when two runs start concurrently against one session.
+Neither `reserve_run_binding` (unique run-ids only) nor any lock/pidfile
+prevents it. V1 is **reachable in production** and stays S5 rank 1.
+
+S4.4's `DUPLICATE event_id: 0` must **not** be cited as V1 evidence — the two
+runs were sequential processes, so that result was structurally guaranteed.
+
+New findings: S4-F1 (`inner-loop-smoke` creates a second session-less
+`session.db`, owner S6), S4-F2 (`.gitignore` negation bug — `!.fa/` cancels
+`.fa/`, owner pre-S5 hygiene), S4-F3 (`fa-update.sh:872` chmod drift dirties 12
+tracked files, owner pre-S5 hygiene), S4-F4 (six S4 plan defects, closed).
+
+Q12 evidence: the deterministic root narrates the happy path via `print()`, not
+EventBus. The gap is stop-path only. Supports (b)+(c), not (a).
+
 ### Step S5: Close remaining authority correctness after S2 wiring
 
 Traces-to: G2, G3, G5, CT2, CT4, CT9, CT10.

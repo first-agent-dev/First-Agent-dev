@@ -269,18 +269,140 @@ whether it is live in production, which sets its rank in S5.
 
 Body-file safety is structural in the plan: counts and sizes only, never `cat`.
 
+## S4 direct-container baseline — EXECUTED 2026-07-28
+
+Report: `worklogs/implementation-plans/cli-trace-S4-verification-report.md`
+
+Verdict: **PASS WITH FINDINGS.** All 9 steps ran on the live deployment; zero
+fixes applied during S4 per its non-goals.
+
+Verified on the deployed path (previously L2/local only): session/run identity
+split (V26 stays fixed), authority == mirror (7 = 7, 14 total), P33 multi-run
+on one authority, debug-body gate both states, secret isolation two-sided (no
+provider key in the agent container **and** a live 200 through the proxy),
+derived-consumer agreement across three surfaces, deterministic root clean,
+read-only rootfs intact.
+
+### Must-read for the next session
+
+- **V1 is reclassified: latent → REACHABLE IN PRODUCTION.** The real root
+  (`SessionManager.create_or_attach_session → begin_run → EventLog`) produced
+  **6 duplicate event ids** with two concurrent runs on one session. Neither
+  `reserve_run_binding` (unique run-ids only) nor any lock prevents it.
+- **Do not cite S4.4's `DUPLICATE event_id: 0` as V1 evidence.** Those two runs
+  were sequential processes, so 0 was structurally guaranteed. A concurrency
+  test without a synchronisation barrier passes by accident.
+- S3-F10 and S3-F13 must be named explicitly in the S5 file list; the parent
+  plan's S5 scope predates both findings.
+
+### Pre-S5 hygiene — LANDED
+
+- **S4-F2** `.gitignore`: `.fa/` → `.fa/*` plus `!.fa/host-bootstrap.json`.
+  `!.fa/` was cancelling `.fa/` outright — git cannot re-include a path inside
+  an excluded directory — so every runtime artifact showed as untracked after
+  each run. This was the real cause of the recurring post-update noise.
+- **S4-F3** `git update-index --chmod=+x` on the 12 `scripts/` files. Index had
+  them `100644` while `fa-update.sh:872` chmods them `+x` every run, producing
+  permanent mode drift. `tests/test_deploy_scripts.py:195` already *required*
+  the executable bit, so the index was the wrong side. One previously-skipped
+  test now runs (2015 passed, was 2014/15 skipped).
+
+**S4-F1** (`inner-loop-smoke` creates a second session-less `session.db` at
+`cli.py:874`) stays with **S6** — bundling it would dilute a P0 authority slice.
+
+Gate after hygiene fixes: pytest **2015 passed, 14 skipped** · mypy strict clean
+(137 files) · pylint 10.00/10 · ruff format clean · doc-links 178 OK.
+
+### Q12 evidence from S4.7
+
+The deterministic root narrates the happy path via `print()` in
+`_cmd_inner_loop_smoke`, **not** EventBus — `run_session` emitted nothing,
+confirming S3-F9 live. The gap is therefore **stop-path only**. Supports
+option (b) now + (c) in S6; does not support (a).
+
+## Q12 — RESOLVED 2026-07-28
+
+**Answer: option (b) — `run_session` is intentionally console-silent; the
+mirror contract binds `drive_session` only.** Recorded as a scope exemption in
+`src/fa/output.py` §Console-mirror kinds.
+
+Rationale from measurement, not preference: S3 kill-check K4 (bus attached,
+zero events emitted) plus S4.7 on the deployed container, where the smoke path
+narrated itself through `print()` in `_cmd_inner_loop_smoke` rather than the
+EventBus. Under `fa run` the operator always gets the mirror because
+`drive_session` wraps execution; the gap is **stop-path only** on bare
+`run_session`. Wiring an EventBus into `loop.py` (option a) was rejected — it
+would add a display dependency to the one pure path in the harness.
+
+Whether `drive_session` should emit on behalf of `run_session` after it returns
+(option c, ~10 lines) stays open for **S6**. The exemption comment says so
+explicitly so nobody closes it the wrong way.
+
+## S5 subplan — READY (v2, review passed)
+
+`worklogs/implementation-plans/PLAN-cli-trace-S5-authority-correctness.md`
+
+Scope (all in one slice per operator decision, landed **incrementally** — each
+step behind its own tests before the next starts):
+
+```text
+S5.1  V1      event identity: DB-serialized allocation + UNIQUE(event_id)
+S5.2  V2res   kind_counts must not lead the commit (consumer: coder_loop.py:573)
+S5.3  V6      Blackboard INSERT OR REPLACE -> explicit semantics
+      S3-F10  a commit must not disable conflict detection
+S5.4  V15/V17 edit_file/write_file share one pre-write contract
+S5.5  S3-F13  agent observability tools read the authority, not the mirror
+S5.6  V18-V22, V24, V25   isolation boundary denies instead of degrading
+```
+
+**The V1 test needs a barrier.** Two concurrent processes started naturally gave
+0 duplicates — startup jitter serialized them. Only a synchronisation barrier
+reproduces the 6-duplicate result. A concurrency test without one is vacuous.
+
+**Status: GO.** Three review rounds. All four open questions resolved:
+**Q6** keep `ev-NNNNNN`; **Q13** Blackboard is append-only (ADR-16 I-6.2/I-6.3);
+**Q14** fail closed on pre-existing duplicates, operator prunes state and
+re-runs S4 clean; **Q11-B** Option A — artifact dir at
+`<session_workspace>/.fa/subagents/<task_id>/`, one value shared by gate and
+executor (plan §3.2).
+
+Round 3 caught the most dangerous defect: the v2 mechanism ("serialized
+transaction under the existing `_write_lock`") is **process-local**, and the
+production shape is separate processes. Measured over 5 trials, 6 procs × 5
+appends: app-lock **lost 6/150 events**; `BEGIN IMMEDIATE` lost **0/150**. All
+six write paths in `session_db.py` currently use bare `with conn:` (DEFERRED),
+the documented SQLite footgun where a read→write upgrade returns `SQLITE_BUSY`
+*without honouring `busy_timeout`*. Plan now mandates `BEGIN IMMEDIATE` plus
+bounded retry, and adds a **mandatory multiprocess** no-loss test (S5-P22) —
+a threads-only test passes the wrong design.
+
+Rounds 1–2 closed **11 parent-trajectory gaps**, **3 SQLite logic errors**, and
+**4 missing §13 protocol sections**. Two errors were
+material: `UNIQUE(event_id)` would have rejected valid rows in other sessions
+(correct shape is `UNIQUE(session_id, event_id)`), and a DDL-only change is a
+**silent no-op on existing databases** while indexing a DB that already holds V1
+duplicates raises `IntegrityError` — i.e. the naive fix would either do nothing
+or brick a session. Both proven with live SQLite; see plan §3.1.
+
+No open question blocks execution. **Q15** is reserved as the only escalation,
+scoped to S5.6 if gate and executor cannot share one write root without a wider
+refactor. Execution begins at **Step S5.0** (preflight, no production edits):
+re-verify citations, audit for pre-existing duplicate event ids, confirm the
+clean-state precondition.
+
 ## Next bounded action
 
-1. Review and merge the S3 audit + S3.5 gap-closure PR.
-2. Rebuild the deployment from the merged commit (S4 Step S4.0).
-3. Execute `PLAN-cli-trace-S4-direct-container-baseline.md` on `fa@fa-HP` and
-   post each step's output for joint debugging.
-4. Then author the **S5** subplan from S3+S4 evidence: V1 atomic event-id
-   allocation, V15/V17 + **S3-F10** (a commit disables conflict detection),
-   **S3-F13** (observability tool reads the mirror), and the worktree/subagent
-   fail-open cluster (V18, V19, V21, V22, V24, V25).
-   Explicit S5 non-goals: checker edits, `loop.py` output channel (pending Q12),
-   V23, CLI extraction, Codacy complexity refactor.
+1. Review and merge the S4 report + pre-S5 hygiene PR.
+2. Author the **S5** subplan from S3+S4 evidence, scoped to:
+   V1 atomic event-id allocation (now production-reachable — the barrier-based
+   concurrency repro is the required kill-check), V2 residual `kind_counts`
+   drift, V15/V17 mutation-path conflict symmetry, **S3-F10** (one commit
+   disables Blackboard conflict detection), **S3-F13** (agent-facing
+   observability tool reads the unauthoritative mirror), and the
+   worktree/subagent fail-open cluster (V18, V19, V21, V22, V24, V25).
+3. Explicit S5 non-goals: checker edits, `loop.py` output channel (pending
+   Q12), V23, CLI extraction, Codacy complexity refactor, S4-F1 (S6).
+4. Then S6/S7 per the parent plan.
 4. Before deployment, use direct invocation only:
 
    ```bash
