@@ -47,6 +47,7 @@ def _elide_500_preview(value: Any, max_bytes: int) -> str:
     """Elide to 500-char preview + marker, for token efficiency."""
     return truncate_for_preview(value, preview_len=500)
 
+
 ToolSpec(..., max_context_bytes=8000, elide=_elide_500_preview)
 ```
 

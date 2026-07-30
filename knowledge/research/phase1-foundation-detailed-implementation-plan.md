@@ -58,7 +58,7 @@ tier: stable
 **Текущий код проблемы:**
 ```python
 # Сейчас два места санитайзят по-разному:
-safe_task_id = re.sub(r'[^a-zA-Z0-9-_]', '-', task_id)[:50].strip('-').lower() or "task"
+safe_task_id = re.sub(r"[^a-zA-Z0-9-_]", "-", task_id)[:50].strip("-").lower() or "task"
 branch = self._sanitize_branch(task_id)  # тоже re.sub но + "agent/" prefix + uuid fallback
 # Если task_id = "" после санитайза, safe_task_id = "task", branch = "agent/task-<uuid>" -> коллизия если два пустых task_id
 ```
@@ -100,10 +100,14 @@ class WorktreeManager(ABC):
     def create_subagent_workspace(self, task_id: str, base_branch: str = "main") -> Path: ...
     def cleanup(self, path: Path) -> None: ...
 
+
 def _sanitize_task_id(task_id: str) -> str:  # единый
     ...
 
+
 class SharedDirWorktreeManager(WorktreeManager): ...
+
+
 class IsolatedWorktreeManager(WorktreeManager): ...
 ```
 
@@ -181,7 +185,10 @@ def build_prompt_parts_v2(
 2. **Hash скиллов:**
 ```python
 def _hash_skills(skills: list[dict]) -> str:
-    stable = [{"name": s["name"], "globs": s.get("globs", []), "alwaysApply": s.get("alwaysApply", False)} for s in sorted(skills, key=lambda x: x["name"])]
+    stable = [
+        {"name": s["name"], "globs": s.get("globs", []), "alwaysApply": s.get("alwaysApply", False)}
+        for s in sorted(skills, key=lambda x: x["name"])
+    ]
     return _stable_hash(stable)
 ```
    - Теперь `cache_key = f"fa-{role_id}-{hash_tools}-{hash_map}-{hash_skills}"`
@@ -316,7 +323,7 @@ def should_load_skill(skill_path: Path, current_files: list[str], task_text: str
     globs = frontmatter.get("globs", [])
     if globs:
         for pattern in globs:
-            # использовать fnmatch или Path.match, с поддержкой ** 
+            # использовать fnmatch или Path.match, с поддержкой **
             for f in current_files:
                 if fnmatch.fnmatch(f, pattern) or Path(f).match(pattern):
                     return True
@@ -367,7 +374,7 @@ def should_load_skill(skill_path: Path, current_files: list[str], task_text: str
 
 **Граф зависимостей:**
 ```
-WorktreeManager (isolated) 
+WorktreeManager (isolated)
   -> SubagentRunner (needs worktree)
 
 PROFILES (static dict)

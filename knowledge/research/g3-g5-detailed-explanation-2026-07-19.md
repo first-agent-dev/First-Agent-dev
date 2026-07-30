@@ -122,20 +122,22 @@ import ast
 import sys
 from pathlib import Path
 
+
 def test_adr11_i1_kernel_is_stdlib_only():
     """ADR-11 I1: Level-0 kernel imports no third-party packages.
-    
+
     This is a compiled invariant — the ADR prose is the spec,
     this test is the compiled version. Drift is detected when
     this test fails.
-    
+
     ADR source: knowledge/adr/ADR-11-authoring-guardrails.md
     Invariant: "Level-0 kernel is frozen, stdlib-only"
     """
     import fa.authoring_tcb
+
     source = Path(fa.authoring_tcb.__file__).read_text()
     tree = ast.parse(source)
-    
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -146,8 +148,7 @@ def test_adr11_i1_kernel_is_stdlib_only():
                 )
         elif isinstance(node, ast.ImportFrom):
             if node.module and node.level == 0:  # absolute import
-                assert node.module in sys.stdlib_module_names or \
-                       node.module.split('.')[0] in sys.stdlib_module_names, (
+                assert node.module in sys.stdlib_module_names or node.module.split(".")[0] in sys.stdlib_module_names, (
                     f"ADR-11 I1 violation: authoring_tcb imports "
                     f"from third-party package '{node.module}'. "
                     f"Level-0 kernel must be stdlib-only."
@@ -355,26 +356,25 @@ FA **может** наблюдать паттерн «много коммито�
 
 import subprocess
 
+
 def count_consecutive_failures(branch: str, test_name: str) -> int:
     """Count how many consecutive commits on branch fail the same test."""
-    commits = subprocess.run(
-        ["git", "log", "--format=%H", branch],
-        capture_output=True, text=True
-    ).stdout.strip().split('\n')
-    
+    commits = (
+        subprocess.run(["git", "log", "--format=%H", branch], capture_output=True, text=True).stdout.strip().split("\n")
+    )
+
     consecutive = 0
     for commit in commits[:10]:  # look at last 10 commits
         result = subprocess.run(
-            ["git", "stash", "&&",
-             "git", "checkout", commit, "&&",
-             "uv", "run", "pytest", "-x", test_name],
-            capture_output=True, text=True
+            ["git", "stash", "&&", "git", "checkout", commit, "&&", "uv", "run", "pytest", "-x", test_name],
+            capture_output=True,
+            text=True,
         )
         if result.returncode != 0:
             consecutive += 1
         else:
             break  # test passed at some earlier commit
-    
+
     return consecutive
 ```
 
@@ -403,11 +403,11 @@ LLM видит это и думает: «Надо поменять stop_reason»
 AssertionError: test_context_budget_hard_stop failed:
   Expected stop_reason = "context_budget_hard_stop"
   Got stop_reason = "compaction_circuit_breaker"
-  
+
   DIAGNOSIS: The session continued to compaction instead of
   stopping at the hard-stop threshold. This means the budget
   check at coder_loop.py:690 did not trigger an early break.
-  
+
   LIKELY FIX: Check that getattr(state.feature_flags,
   "context_budget_enabled", True) returns True and that the
   budget.exceeded_hard_stop() condition is reached before

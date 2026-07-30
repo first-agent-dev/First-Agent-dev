@@ -83,6 +83,7 @@ add a single normalization point instead of scattering `getattr` everywhere:
 # In SessionState.__init__ or at the entry point:
 if self.feature_flags is None:
     from fa.feature_flags import FeatureFlags
+
     self.feature_flags = FeatureFlags()  # defaults = single source of truth
 ```
 
@@ -217,7 +218,7 @@ The skill says "thresholds from source" but the practice is inconsistent.
 ```python
 # In tests/fixtures/session_wiring.py
 DEFAULT_TEST_CONTEXT_LIMIT = 150000  # matches ChainConfig default
-SMALL_TEST_CONTEXT_LIMIT = 100000   # for budget/compaction tests
+SMALL_TEST_CONTEXT_LIMIT = 100000  # for budget/compaction tests
 SMALL_TEST_COMPACTION_THRESHOLD = 80000  # 80% of SMALL_TEST_CONTEXT_LIMIT
 ```
 

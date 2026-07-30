@@ -96,25 +96,27 @@ Per your earlier question "Что если ее закрепить рядом с
 
 # Use case 1: Structured websearch
 def spawn_websearch_subagent(query: str) -> SubagentEnvelope:
-  # Clean slate, no repo access, tools=[web_search] only
-  # Task: "websearch Stripe API v12 subscription cancellation, return JSON {urls, snippets, summary}"
-  # Output: JSON 500 tokens
-  pass
+    # Clean slate, no repo access, tools=[web_search] only
+    # Task: "websearch Stripe API v12 subscription cancellation, return JSON {urls, snippets, summary}"
+    # Output: JSON 500 tokens
+    pass
+
 
 # Use case 2: Simple function
 def spawn_function_subagent(spec: str) -> SubagentEnvelope:
-  # Clean slate, tools=[write_file, bash], scrubbed env, no main PTY state
-  # Task: "Write simple function def parse_auth_header(s: str) -> dict with tests, return JSON {file_path, test_result}"
-  # Output: JSON with file_path and test_result PASS/FAIL
-  pass
+    # Clean slate, tools=[write_file, bash], scrubbed env, no main PTY state
+    # Task: "Write simple function def parse_auth_header(s: str) -> dict with tests, return JSON {file_path, test_result}"
+    # Output: JSON with file_path and test_result PASS/FAIL
+    pass
+
 
 # Main loop at 180k context:
 if token_usage > 150000 and needs_websearch:
-  # Spawn cheap subagent instead of doing websearch in main loop
-  envelope = spawn_websearch_subagent("Stripe API v12 subscription cancellation")
-  # Main sees only envelope.summary 500 tokens, not 5k raw search results
-  # Main context stays 180.5k, not 185k
-  task_worklog.md += f"Websearch result: {envelope.summary}\n"
+    # Spawn cheap subagent instead of doing websearch in main loop
+    envelope = spawn_websearch_subagent("Stripe API v12 subscription cancellation")
+    # Main sees only envelope.summary 500 tokens, not 5k raw search results
+    # Main context stays 180.5k, not 185k
+    task_worklog.md += f"Websearch result: {envelope.summary}\n"
 ```
 
 **Measurement:**
@@ -135,4 +137,3 @@ if token_usage > 150000 and needs_websearch:
 **Reduction:** Remove from plan Phase 4 Remote Runtime Extraction and parallel 2-3 subagents — keep Phase 0 quick-win, Phase 0.5 blackboard + telemetry, Phase 1 foundation, Phase 2 batching+FTS5, Phase 3 in-process PTY pool with 1 subagent limit. That's it. No fleet, no async tree.
 
 **Next:** Update implementation plan v2 to reflect Pair over Autonomy principle and limit subagents to cheap deterministic 2 use cases.
-

@@ -424,11 +424,11 @@ regardless of which role triggered it.
 class CooldownRow:
     provider: str
     slug: str
-    started_at: float           # unix timestamp
-    expires_at: float           # max(started_at + cooldown_seconds, retry_after_unix)
-    trigger_status: int         # HTTP status that triggered cooldown; 0 for network failure
-    trigger_error: str          # short kind: "rate_limited" | "service_unavailable" | "timeout"
-    retry_after_hint_ms: int    # parsed Retry-After in ms; 0 if absent or malformed
+    started_at: float  # unix timestamp
+    expires_at: float  # max(started_at + cooldown_seconds, retry_after_unix)
+    trigger_status: int  # HTTP status that triggered cooldown; 0 for network failure
+    trigger_error: str  # short kind: "rate_limited" | "service_unavailable" | "timeout"
+    retry_after_hint_ms: int  # parsed Retry-After in ms; 0 if absent or malformed
 ```
 
 **Cooldown lifecycle:**
@@ -660,11 +660,13 @@ pattern but with FA-specific fail-fast behavior (Bifrost silently
 drops; FA raises at config-load time):
 
 ```python
-RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset({
-    "__internal__",
-    "__metadata__",
-    "__fallback_marker__",
-})
+RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset(
+    {
+        "__internal__",
+        "__metadata__",
+        "__fallback_marker__",
+    }
+)
 ```
 
 Config validator rejects chain entries with reserved `provider`

@@ -217,16 +217,17 @@ existing ones without an ADR-2 amendment.
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
+
 @dataclass(frozen=True)
 class ToolSpec:
-    name: str                                  # stable dotted string, e.g. "fs.read_file"
-    description: str                           # one-line model-facing summary (tier-2)
-    input_schema: dict                         # JSON Schema; loaded on demand (tier-3)
+    name: str  # stable dotted string, e.g. "fs.read_file"
+    description: str  # one-line model-facing summary (tier-2)
+    input_schema: dict  # JSON Schema; loaded on demand (tier-3)
     permission: Literal["read", "workspace", "full"]  # ADR-6 sandbox scope
-    handler: Callable[[dict], "ToolResult"]    # deterministic dispatcher entry
-    tags: tuple[str, ...] = ()                 # used by [tool_groups] allow-list (forward-compat)
-    output_schema: dict | None = None          # optional; documents ToolResult.result
-    defer_loading: bool = False                # forward-compat for Anthropic tool-search
+    handler: Callable[[dict], "ToolResult"]  # deterministic dispatcher entry
+    tags: tuple[str, ...] = ()  # used by [tool_groups] allow-list (forward-compat)
+    output_schema: dict | None = None  # optional; documents ToolResult.result
+    defer_loading: bool = False  # forward-compat for Anthropic tool-search
 ```
 
 The v0.1 registry loader (`src/fa/inner_loop/registry.py::register`)
@@ -243,24 +244,25 @@ the payload the dispatcher appends to the conversation:
 ```python
 @dataclass(frozen=True)
 class ToolError:
-    code: str          # stable domain identifier (internal); ergonomic strings — e.g.
-                       # "invalid_params", "sandbox_deny", "no_unique_match". Per
-                       # ADR-2 §Amendment 2026-05-01 §4 dual-mode, this internal `str`
-                       # maps to a JSON-RPC `int` code at the wire boundary; the
-                       # mapping table lives next to the dispatcher.
-    message: str       # human-readable; may include JSON-Schema error path
-    retryable: bool    # if true, the model is free to retry with corrected params
+    code: str  # stable domain identifier (internal); ergonomic strings — e.g.
+    # "invalid_params", "sandbox_deny", "no_unique_match". Per
+    # ADR-2 §Amendment 2026-05-01 §4 dual-mode, this internal `str`
+    # maps to a JSON-RPC `int` code at the wire boundary; the
+    # mapping table lives next to the dispatcher.
+    message: str  # human-readable; may include JSON-Schema error path
+    retryable: bool  # if true, the model is free to retry with corrected params
+
 
 @dataclass(frozen=True)
 class ToolResult:
-    summary: str                       # short model-facing text; ALWAYS present
-    result: Any | None = None          # structured payload (JSON-RPC-compatible per ADR-2 §Amendment
-                                       # 2026-05-01 §1 — `Any | None`; v0.1 in-process tools typically
-                                       # return dict, but the type stays `Any` for v0.2 MCP forward-compat
-                                       # where JSON-RPC results can be list / str / number / bool); when
-                                       # `ToolSpec.output_schema` is set, the dispatcher validates against it.
-    error: ToolError | None = None     # present iff the call failed; mutually exclusive with `result`
-    artifacts: tuple[str, ...] = ()    # paths to large outputs under ~/.fa/session-log/<run_id>/artifacts/
+    summary: str  # short model-facing text; ALWAYS present
+    result: Any | None = None  # structured payload (JSON-RPC-compatible per ADR-2 §Amendment
+    # 2026-05-01 §1 — `Any | None`; v0.1 in-process tools typically
+    # return dict, but the type stays `Any` for v0.2 MCP forward-compat
+    # where JSON-RPC results can be list / str / number / bool); when
+    # `ToolSpec.output_schema` is set, the dispatcher validates against it.
+    error: ToolError | None = None  # present iff the call failed; mutually exclusive with `result`
+    artifacts: tuple[str, ...] = ()  # paths to large outputs under ~/.fa/session-log/<run_id>/artifacts/
 ```
 
 The model sees `summary` + `artifacts[]` paths back from the loop

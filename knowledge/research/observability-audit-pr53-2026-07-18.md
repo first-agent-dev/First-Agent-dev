@@ -555,9 +555,9 @@ return finish(
 ```python
 for r in rows[:20]:
     print(
-        f"  {r.get('run_id',''):<20s} {r.get('role',''):<8s} {r.get('model',''):<20s} "
-        f"{r.get('stop_reason',''):<20s} turns={r.get('turns',0)} "
-        f"in={r.get('input_tokens',0)} out={r.get('output_tokens',0)}",
+        f"  {r.get('run_id', ''):<20s} {r.get('role', ''):<8s} {r.get('model', ''):<20s} "
+        f"{r.get('stop_reason', ''):<20s} turns={r.get('turns', 0)} "
+        f"in={r.get('input_tokens', 0)} out={r.get('output_tokens', 0)}",
         file=sys.stderr,
     )
 ```
@@ -576,10 +576,7 @@ for r in rows[:20]:
 
 **Code:**
 ```python
-session_dirs = sorted(
-    [d for d in runs_dir.iterdir() if d.is_dir() and (d / "events.jsonl").exists()],
-    ...
-)
+session_dirs = sorted([d for d in runs_dir.iterdir() if d.is_dir() and (d / "events.jsonl").exists()], ...)
 ```
 
 **Problem:** Session discovery checks for `events.jsonl` existence even though `session.db` is the authority. If JSONL mirror write fails but DB writes succeed, the session becomes invisible to `fa stats`.
@@ -687,7 +684,7 @@ The `_emit_warn` method in `LoopGuard`:
 ```python
 def _emit_warn(self, detector: str, message: str) -> None:
     if self._warn_sink is None:
-        return   # ← always returns in production!
+        return  # ← always returns in production!
     try:
         self._warn_sink(detector, message)
     except Exception:
@@ -709,6 +706,7 @@ def _loop_guard_warn_sink(detector: str, message: str) -> None:
             kind="loop_guard_warn",
             content={"detector": detector, "message": message},
         )
+
 
 hooks.register(
     LoopGuard(

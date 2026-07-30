@@ -401,6 +401,7 @@ or by exec'ing a shell script, follow these rules:
    ```python
    _SHADOW_DIR: Path | None = None
 
+
    def _shadow_dir() -> Path:
        global _SHADOW_DIR
        if _SHADOW_DIR is None:
@@ -408,15 +409,14 @@ or by exec'ing a shell script, follow these rules:
            for name in ("docker", "podman"):
                p = d / name
                p.write_text(
-                   '#!/bin/sh\n'
-                   'echo "docker: not found (test shim)" >&2\n'
-                   'exit 127\n',
+                   '#!/bin/sh\necho "docker: not found (test shim)" >&2\nexit 127\n',
                    encoding="utf-8",
                )
                p.chmod(0o755)
            atexit.register(lambda: shutil.rmtree(d, ignore_errors=True))
            _SHADOW_DIR = d
        return _SHADOW_DIR
+
 
    def _script_env() -> dict[str, str]:
        env = os.environ.copy()
@@ -513,8 +513,13 @@ def test_context_warn_emitted_at_budget_warn(tmp_path: Path) -> None:
     task = "A" * 300000  # ~75k tokens → triggers warn
 
     drive_session(
-        task, provider_chain=mock_chain, registry=ToolRegistry(),
-        hooks=HookRegistry(), state=state, max_turns=1, output=bus,
+        task,
+        provider_chain=mock_chain,
+        registry=ToolRegistry(),
+        hooks=HookRegistry(),
+        state=state,
+        max_turns=1,
+        output=bus,
     )
 
     warn_events = [e for e in capture.events if e.type == "context_warn"]
@@ -734,9 +739,12 @@ green mypy, pyrefly, ruff, pylint 10.00/10, and ~1900 passing tests).
 # max_bytes; the slot calls elider(value, max_context_bytes) POSITIONALLY.
 ToolSpec(..., max_context_bytes=8000, elide=truncate_for_preview)
 
+
 # Kept as a named adapter — RIGHT. The seam is the contract, not duplication.
 def _bash_run_elide(value: Any, _max_bytes: int) -> str:
     return truncate_for_preview(value, preview_len=500)
+
+
 ToolSpec(..., max_context_bytes=8000, elide=_bash_run_elide)
 ```
 

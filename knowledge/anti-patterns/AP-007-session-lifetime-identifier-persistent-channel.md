@@ -73,7 +73,7 @@ identifies the current call:
 
 ```python
 def _run_tmux(self, command, timeout):
-    call_id = uuid.uuid4().hex[:8]           # fresh per invocation
+    call_id = uuid.uuid4().hex[:8]  # fresh per invocation
     start_token = f"FA_START_{call_id}"
     exit_token = f"FA_EXIT_{call_id}"
     end_token = f"FA_END_{call_id}"
@@ -82,13 +82,13 @@ def _run_tmux(self, command, timeout):
     self.pane.send_keys(full)
     while ...:
         text = "\n".join(self.pane.cmd("capture-pane", "-S", "-", ...).stdout)
-        start_idx = text.rfind(start_token)      # anchor on THIS call's marker
+        start_idx = text.rfind(start_token)  # anchor on THIS call's marker
         if start_idx == -1:
             continue
-        remainder = text[text.find("\n", start_idx) + 1:]
+        remainder = text[text.find("\n", start_idx) + 1 :]
         if end_token in remainder:
             m = re.search(rf"{re.escape(exit_token)}:(\d+)", remainder)
-            output = remainder[:m.start()]        # slice by MATCH POSITION, not split()
+            output = remainder[: m.start()]  # slice by MATCH POSITION, not split()
 ```
 
 ## §Why the wrong shape dominates

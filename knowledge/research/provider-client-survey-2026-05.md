@@ -431,11 +431,11 @@ FA Option D adapts this как `ChainEntryState` row written to
 ```python
 @dataclass
 class ChainAttemptRecord:
-    provider: str         # "openrouter" | "fireworks" | ...
-    slug: str             # "deepseek/deepseek-chat-v3" | ...
-    status: int           # HTTP status if reached upstream; 0 for network failure
-    error: str | None     # short error kind; "rate_limited" | "timeout" | None for success
-    ms: float             # transport wallclock
+    provider: str  # "openrouter" | "fireworks" | ...
+    slug: str  # "deepseek/deepseek-chat-v3" | ...
+    status: int  # HTTP status if reached upstream; 0 for network failure
+    error: str | None  # short error kind; "rate_limited" | "timeout" | None for success
+    ms: float  # transport wallclock
 ```
 
 The cooldown-row stays at `{provider, slug, started_at, expires_at,
@@ -572,12 +572,12 @@ down tuple):
 ```python
 @dataclass
 class CooldownRow:
-    provider: str           # "openrouter"
-    slug:     str           # "deepseek/deepseek-chat-v3"
-    started_at: float       # unix timestamp
-    expires_at: float       # started_at + cooldown_seconds
-    trigger_status: int     # 429 | 503 | 0-for-network
-    trigger_error: str      # short kind: "rate_limited" | "service_unavailable" | "timeout"
+    provider: str  # "openrouter"
+    slug: str  # "deepseek/deepseek-chat-v3"
+    started_at: float  # unix timestamp
+    expires_at: float  # started_at + cooldown_seconds
+    trigger_status: int  # 429 | 503 | 0-for-network
+    trigger_error: str  # short kind: "rate_limited" | "service_unavailable" | "timeout"
 ```
 
 Default cooldown = 300s (5 min, matching kronos `PEER_REACTION_COOLDOWN`).
@@ -689,11 +689,13 @@ platform = new ~70 LOC adapter + registry row.
 Per §0 R-5 verdict (TAKE). Reserved provider names:
 
 ```python
-RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset({
-    "__internal__",
-    "__metadata__",
-    "__fallback_marker__",
-})
+RESERVED_PROVIDER_NAMES: frozenset[str] = frozenset(
+    {
+        "__internal__",
+        "__metadata__",
+        "__fallback_marker__",
+    }
+)
 ```
 
 Config validator rejects chain entries with reserved `provider`

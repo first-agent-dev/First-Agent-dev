@@ -61,23 +61,13 @@ DEFAULT_TIMEOUT_SECONDS = 300
 The loader applies them here:
 
 ```python
-cooldown_seconds=int(
-    row["cooldown_seconds"]
-    if row.get("cooldown_seconds") is not None
-    else DEFAULT_COOLDOWN_SECONDS
+cooldown_seconds = int(row["cooldown_seconds"] if row.get("cooldown_seconds") is not None else DEFAULT_COOLDOWN_SECONDS)
+transport_retries = int(
+    row["transport_retries"] if row.get("transport_retries") is not None else DEFAULT_TRANSPORT_RETRIES
 )
-transport_retries=int(
-    row["transport_retries"]
-    if row.get("transport_retries") is not None
-    else DEFAULT_TRANSPORT_RETRIES
-)
-timeout_seconds=int(
-    row["timeout_seconds"]
-    if row.get("timeout_seconds") is not None
-    else DEFAULT_TIMEOUT_SECONDS
-)
-extra_headers=dict(row.get("extra_headers") or {})
-provider_params=dict(row.get("provider_params") or {})
+timeout_seconds = int(row["timeout_seconds"] if row.get("timeout_seconds") is not None else DEFAULT_TIMEOUT_SECONDS)
+extra_headers = dict(row.get("extra_headers") or {})
+provider_params = dict(row.get("provider_params") or {})
 ```
 
 That means the YAML contract already accepts these fields today.

@@ -309,6 +309,7 @@ config = ChainConfig(compaction_threshold=None)
 class FeatureFlags:
     context_budget_enabled: bool = True
 
+
 flags = FeatureFlags()
 flags.context_budget_enabled = False  # FrozenInstanceError — правильно!
 
@@ -445,9 +446,10 @@ feature_flags: FeatureFlags | None = None  # только FeatureFlags или No
 
 **Инвариант:** Каждый флаг FeatureFlags входит ровно в один набор. Тест проверяет:
 ```python
-assert FAIL_CLOSED_FLAGS | FAIL_OPEN_FLAGS == {
-    f.name for f in fields(FeatureFlags)
-} - {"context_compaction_enabled", "max_retry"}
+assert FAIL_CLOSED_FLAGS | FAIL_OPEN_FLAGS == {f.name for f in fields(FeatureFlags)} - {
+    "context_compaction_enabled",
+    "max_retry",
+}
 ```
 
 ## CT6: Единый источник истины для компакции (SSoT)
@@ -764,6 +766,7 @@ LogKind = Literal[
 ```python
 from fa.output import LogKind
 import typing
+
 assert len(typing.get_args(LogKind)) == 30  # столько же, сколько grep нашёл
 ```
 
@@ -780,21 +783,23 @@ assert len(typing.get_args(LogKind)) == 30  # столько же, скольк�
 **Что добавить после LogKind:**
 
 ```python
-CONSOLE_MIRROR_KINDS: frozenset[LogKind] = frozenset({
-    "context_budget_warn",           # Предупреждение о бюджете → оператор должен видеть
-    "context_budget_hard_stop",      # Жёсткая остановка → критично для оператора
-    "compaction_stage2_start",       # Начало компакции Stage 2
-    "compaction_stage2_done",        # Компакция Stage 2 завершена
-    "compaction_stage2_error",       # Ошибка компакции Stage 2
-    "compaction_stage3_start",       # Начало компакции Stage 3
-    "compaction_stage3_done",        # Компакция Stage 3 завершена
-    "compaction_stage3_error",       # Ошибка компакции Stage 3
-    "compaction_circuit_breaker",    # Сработал circuit breaker
-    "tool_call",                     # Вызов инструмента → оператор видит, что делает агент
-    "subagent_spawn_done",           # Подагент завершил работу
-    "subagent_spawn_fail",           # Подагент упал
-    "run_stopped",                   # Сессия остановлена
-})
+CONSOLE_MIRROR_KINDS: frozenset[LogKind] = frozenset(
+    {
+        "context_budget_warn",  # Предупреждение о бюджете → оператор должен видеть
+        "context_budget_hard_stop",  # Жёсткая остановка → критично для оператора
+        "compaction_stage2_start",  # Начало компакции Stage 2
+        "compaction_stage2_done",  # Компакция Stage 2 завершена
+        "compaction_stage2_error",  # Ошибка компакции Stage 2
+        "compaction_stage3_start",  # Начало компакции Stage 3
+        "compaction_stage3_done",  # Компакция Stage 3 завершена
+        "compaction_stage3_error",  # Ошибка компакции Stage 3
+        "compaction_circuit_breaker",  # Сработал circuit breaker
+        "tool_call",  # Вызов инструмента → оператор видит, что делает агент
+        "subagent_spawn_done",  # Подагент завершил работу
+        "subagent_spawn_fail",  # Подагент упал
+        "run_stopped",  # Сессия остановлена
+    }
+)
 ```
 
 **Почему 13 из 30:** Остальные 17 видов — внутренние (telemetry, audit, usage) или стартовые (run_started, session_summary) — не критичны для оператора в реальном времени.
@@ -1000,24 +1005,28 @@ python scripts/check_producer_consumer_contract.py  # → exit 0
 
 1. Добавить в feature_flags.py после класса FeatureFlags:
 ```python
-FAIL_CLOSED_FLAGS: frozenset[str] = frozenset({
-    "context_budget_enabled",      # бюджет → по умолчанию ВКЛ (безопасно)
-    "context_compaction_enabled",  # компакция → по умолчанию ВКЛ
-    "subagent_spawning_enabled",   # подагенты → по умолчанию ВКЛ
-})
+FAIL_CLOSED_FLAGS: frozenset[str] = frozenset(
+    {
+        "context_budget_enabled",  # бюджет → по умолчанию ВКЛ (безопасно)
+        "context_compaction_enabled",  # компакция → по умолчанию ВКЛ
+        "subagent_spawning_enabled",  # подагенты → по умолчанию ВКЛ
+    }
+)
 
-FAIL_OPEN_FLAGS: frozenset[str] = frozenset({
-    "blackboard_enabled",          # чёрная доска → по умолчанию ВЫКЛ
-    "telemetry_enabled",           # телеметрия → по умолчанию ВЫКЛ
-    "tool_batching_enabled",       # батчинг → по умолчанию ВЫКЛ
-    "pty_pool_max_size",           # размер пула → не флаг, но в наборе
-    "worktree_mode",               # режим worktree → по умолчанию "shared"
-    "fts_db_path",                 # путь к FTS → по умолчанию ".fa/fts.db"
-    "prompt_caching",              # кэширование промптов → по умолчанию ВКЛ
-    "offload_threshold",           # порог оффлоада → по умолчанию 8000
-    "max_subagent_spawns_per_session",  # лимит подагентов → по умолчанию 3
-    "blackboard_filtered_history_include_plans",  # включение планов → по умолчанию ВЫКЛ
-})
+FAIL_OPEN_FLAGS: frozenset[str] = frozenset(
+    {
+        "blackboard_enabled",  # чёрная доска → по умолчанию ВЫКЛ
+        "telemetry_enabled",  # телеметрия → по умолчанию ВЫКЛ
+        "tool_batching_enabled",  # батчинг → по умолчанию ВЫКЛ
+        "pty_pool_max_size",  # размер пула → не флаг, но в наборе
+        "worktree_mode",  # режим worktree → по умолчанию "shared"
+        "fts_db_path",  # путь к FTS → по умолчанию ".fa/fts.db"
+        "prompt_caching",  # кэширование промптов → по умолчанию ВКЛ
+        "offload_threshold",  # порог оффлоада → по умолчанию 8000
+        "max_subagent_spawns_per_session",  # лимит подагентов → по умолчанию 3
+        "blackboard_filtered_history_include_plans",  # включение планов → по умолчанию ВЫКЛ
+    }
+)
 ```
 
 2. Заменить 12 getattr-вызовов на прямой доступ с None-проверкой:
@@ -1146,10 +1155,12 @@ def test_intent_guard_deny_no_provider_calls():
     # Запускаем сессию, где IntentGuard запрещает вызов инструмента
     # Утверждаем: provider_chain.request.call_count == 0 после запрета
 
+
 def test_hard_stop_no_tool_calls():
     """Если context_budget_hard_stop срабатывает — нет вызовов инструментов."""
     # Запускаем сессию до порога hard-stop
     # Утверждаем: нет tool_call событий после hard_stop события
+
 
 def test_loop_guard_exactly_one_warn():
     """Если loop_guard срабатывает — ровно одно loop_warn событие."""
@@ -1282,6 +1293,7 @@ output.emit(OutputEvent(type="loop_warn", data={"detector": "abnormal_stop", "me
 **check_tcb_stdlib.py:**
 ```python
 """Проверяет, что authoring_tcb.py импортирует только stdlib."""
+
 import sys, ast
 from pathlib import Path
 
@@ -1291,11 +1303,11 @@ tree = ast.parse(tcb_path.read_text())
 for node in ast.walk(tree):
     if isinstance(node, ast.Import):
         for alias in node.names:
-            if alias.name.split('.')[0] not in STDLIB:
+            if alias.name.split(".")[0] not in STDLIB:
                 print(f"FAIL: non-stdlib import '{alias.name}' in TCB")
                 sys.exit(1)
     elif isinstance(node, ast.ImportFrom):
-        if node.module and node.module.split('.')[0] not in STDLIB:
+        if node.module and node.module.split(".")[0] not in STDLIB:
             print(f"FAIL: non-stdlib import from '{node.module}' in TCB")
             sys.exit(1)
 print("PASS: all TCB imports are stdlib")
@@ -1327,13 +1339,15 @@ if attempt >= max_retry:
 
 **Что добавить:**
 ```python
-output.emit(OutputEvent(
-    type="loop_warn",
-    data={
-        "detector": "compaction_circuit_breaker",
-        "message": "Compaction circuit breaker triggered — context budget exceeded after compaction attempts"
-    },
-))
+output.emit(
+    OutputEvent(
+        type="loop_warn",
+        data={
+            "detector": "compaction_circuit_breaker",
+            "message": "Compaction circuit breaker triggered — context budget exceeded after compaction attempts",
+        },
+    )
+)
 ```
 
 **Зачем:** Раньше circuit breaker срабатывал, но оператор не получал конкретного сообщения. Теперь получает loop_warn с объяснением.

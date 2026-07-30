@@ -1207,7 +1207,8 @@
   an LLM that has read the rule) can bypass with:
   ```python
   from pytest import skip
-  skip("nope")          # not detected
+
+  skip("nope")  # not detected
   ```
   The decorator form (`@pytest.mark.skip`) is unaffected because the
   attribute chain is the same regardless of how `pytest` was imported.

@@ -947,11 +947,11 @@ Every rule should declare:
 ```python
 @dataclass(frozen=True)
 class RuleSpec:
-    code: str                          # e.g. "FA-AUTHORING-V2-EXPORTS"
+    code: str  # e.g. "FA-AUTHORING-V2-EXPORTS"
     severity: Literal["HARD-BLOCK", "ADVISORY", "INFO"]
-    rationale: str                     # Why this rule exists (ADR ref)
+    rationale: str  # Why this rule exists (ADR ref)
     owner: str = "ADR-11"
-    expires_on: str | None = None      # ISO date for ADVISORY expiry
+    expires_on: str | None = None  # ISO date for ADVISORY expiry
 ```
 
 `ADVISORY` without `expires_on` should itself be an ADVISORY finding so
@@ -1280,14 +1280,16 @@ numbered + named invariants in one ADR are not allowed.
   prefixes, resolved via `os.path.realpath()`.
 - **FA TCB denylist:**
   ```python
-  _TCB_PATHS = frozenset({
-      "src/fa/authoring_tcb.py",
-      "src/fa/authoring_rules/__init__.py",
-      ".fa/manifest.toml",  # if committed
-      ".github/workflows/authoring-guardrails.yml",
-      ".github/CODEOWNERS",
-      "scripts/check_protected_paths.py",
-  })
+  _TCB_PATHS = frozenset(
+      {
+          "src/fa/authoring_tcb.py",
+          "src/fa/authoring_rules/__init__.py",
+          ".fa/manifest.toml",  # if committed
+          ".github/workflows/authoring-guardrails.yml",
+          ".github/CODEOWNERS",
+          "scripts/check_protected_paths.py",
+      }
+  )
   _TCB_PREFIXES = ["src/fa/authoring_rules/"]
   ```
 - **Key Hermes lessons:**

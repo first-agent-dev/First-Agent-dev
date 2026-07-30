@@ -42,11 +42,12 @@ tier: stable
 ```python
 import hashlib
 
+
 def _sanitize_task_id(task_id: str, run_id: str = "") -> str:
     # Сохраняем оригинал для hash
     original = task_id
     # Основной санитайзер
-    sanitized = re.sub(r'[^a-zA-Z0-9-_]', '-', task_id)[:50].strip('-').lower()
+    sanitized = re.sub(r"[^a-zA-Z0-9-_]", "-", task_id)[:50].strip("-").lower()
     if sanitized:
         return sanitized
     # Fallback deterministic, не random — production-grade
@@ -60,8 +61,9 @@ def _sanitize_task_id(task_id: str, run_id: str = "") -> str:
     short_hash = hashlib.sha256(hash_input).hexdigest()[:8]
     return f"task-{short_hash}"
 
+
 # Использование — вызвать один раз, reuse для path и branch
-clean_id = _sanitize_task_id(task_id, run_id=self.run_id if hasattr(self, 'run_id') else "")
+clean_id = _sanitize_task_id(task_id, run_id=self.run_id if hasattr(self, "run_id") else "")
 worktree_path = worktrees_root / clean_id
 branch = f"agent/{clean_id}"
 ```

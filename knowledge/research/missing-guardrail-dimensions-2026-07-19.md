@@ -142,6 +142,7 @@
 # Behavioral contract for FA's own agent loop
 # (would live in src/fa/contracts/ if implemented)
 
+
 @contract(trigger="after_tool_call", predicate=lambda ctx: ctx.budget_exceeded)
 def no_tool_calls_after_hard_stop(ctx):
     """HARD-BLOCK: tool call after context_budget_hard_stop is a bug."""

@@ -248,6 +248,7 @@ is:
 class SandboxError(Exception):
     """Raised when a tool call attempts a path the policy denies."""
 
+
 class Sandbox:
     def check_read(self, path: str | os.PathLike) -> pathlib.Path:
         """Resolve and validate. Returns the resolved Path or raises."""

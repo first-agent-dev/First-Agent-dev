@@ -38,7 +38,8 @@ context_limit = provider_chain.config.context_limit
 if context_limit < MIN_CONTEXT_LIMIT:
     # Log and clamp, don't crash — the session can still run
     state.log.append(
-        actor="runtime", kind="context_budget_warn",
+        actor="runtime",
+        kind="context_budget_warn",
         content={"message": f"context_limit={context_limit} below floor {MIN_CONTEXT_LIMIT}, clamped"},
     )
     context_limit = MIN_CONTEXT_LIMIT
@@ -132,8 +133,8 @@ The CLI already references `knowledge/trace/codebase_map.json` and `knowledge/tr
 
 ```python
 # cli.py:838-839
-codebase_map_path=workspace / "knowledge" / "trace" / "codebase_map.json",
-gotchas_path=workspace / "knowledge" / "trace" / "gotchas.md",
+codebase_map_path = (workspace / "knowledge" / "trace" / "codebase_map.json",)
+gotchas_path = (workspace / "knowledge" / "trace" / "gotchas.md",)
 ```
 
 The plan proposes `.fa/corrections.jsonl` for TRACE but doesn't acknowledge the existing `knowledge/trace/` infrastructure. This could be a conflict or an opportunity for consolidation.
@@ -152,11 +153,13 @@ The plan lists 30 LogKind values (S4) but the count came from a grep for `kind="
 ### S4. Plan's FAIL_CLOSED_FLAGS puts subagent_spawning_enabled in wrong category
 
 ```python
-FAIL_CLOSED_FLAGS: frozenset[str] = frozenset({
-    "context_budget_enabled",      # ✓ safety-critical
-    "context_compaction_enabled",  # ✓ safety-critical
-    "subagent_spawning_enabled",   # ✗ WRONG — this is a convenience feature
-})
+FAIL_CLOSED_FLAGS: frozenset[str] = frozenset(
+    {
+        "context_budget_enabled",  # ✓ safety-critical
+        "context_compaction_enabled",  # ✓ safety-critical
+        "subagent_spawning_enabled",  # ✗ WRONG — this is a convenience feature
+    }
+)
 ```
 
 **Why it's wrong:** If `feature_flags is None` and `subagent_spawning_enabled` defaults to `True` (fail-closed), that means subagents are spawned when the system can't read its own configuration. This is DANGEROUS — unconfigured subagents could spawn uncontrollably.

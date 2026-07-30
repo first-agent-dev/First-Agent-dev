@@ -121,14 +121,16 @@ the diff added, and the PR is downgraded to `CLASS: WORKAROUND`
 
 ```python
 # src/fa/inner_loop/tools/move_file.py
-input_schema={
-    "type": "object",
-    "required": ["path", "overwrite"],
-    "properties": {
-        "path": {"type": "string"},
-        "overwrite": {"type": "boolean"},   # was "string"; the wrong-shape fix
-    },                                       # never touched this line.
-},
+input_schema = (
+    {
+        "type": "object",
+        "required": ["path", "overwrite"],
+        "properties": {
+            "path": {"type": "string"},
+            "overwrite": {"type": "boolean"},  # was "string"; the wrong-shape fix
+        },  # never touched this line.
+    },
+)
 ```
 
 PR description:
