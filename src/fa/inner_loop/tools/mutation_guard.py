@@ -48,7 +48,7 @@ CONFLICT_DETECTED = "conflict_detected"
 BLACKBOARD_UNAVAILABLE = "blackboard_unavailable"
 
 
-def base_commit(root: Path) -> str:
+def _base_commit(root: Path) -> str:
     """Short HEAD sha for version_dependencies, or ``"unknown"``.
 
     Degrading to ``"unknown"`` is intentional: a workspace need not be a git
@@ -65,21 +65,21 @@ def base_commit(root: Path) -> str:
         if res.returncode == 0:
             return res.stdout.strip()[:12]
     except Exception as exc:  # noqa: BLE001 # not the substrate; observable WARNING
-        logger.warning("base_commit failed: %s", exc)
+        logger.warning("base_commit lookup failed: %s", exc)
     return "unknown"
 
 
-def file_hash(path: Path) -> str:
+def _file_hash(path: Path) -> str:
     """Short content hash for version_dependencies, or ``"missing"``."""
     try:
         if path.exists():
             return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
     except Exception as exc:  # noqa: BLE001 # not the substrate; observable WARNING
-        logger.warning("file_hash failed for %s: %s", path, exc)
+        logger.warning("file hash failed for %s: %s", path, exc)
     return "missing"
 
 
-def llms_path_for(root: Path) -> Path:
+def _llms_path_for(root: Path) -> Path:
     """Locate ``llms.txt`` for the version-dependency stamp."""
     candidate = root / "knowledge" / "llms.txt"
     return candidate if candidate.exists() else root / "llms.txt"
@@ -112,7 +112,7 @@ def _entry_for(
 ) -> Any:
     from fa.blackboard.blackboard import BlackboardEntry
 
-    base = base_commit(root)
+    base = _base_commit(root)
     return BlackboardEntry.create(
         id=entry_id,
         type="file_version",
@@ -122,7 +122,7 @@ def _entry_for(
         assumptions=[f"base_commit {base}"],
         version_dependencies={
             "base_commit": base,
-            "llms.txt": file_hash(llms_path_for(root)),
+            "llms.txt": _file_hash(_llms_path_for(root)),
         },
     )
 
@@ -212,6 +212,7 @@ def record_mutation(
 __all__ = [
     "BLACKBOARD_UNAVAILABLE",
     "CONFLICT_DETECTED",
+    "belongs_to_workspace",
     "check_mutation_allowed",
     "record_mutation",
 ]

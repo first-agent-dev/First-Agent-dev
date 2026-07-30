@@ -186,8 +186,12 @@ class OutputEvent:
 class EventBus:
     """Sync fan-out: dispatches OutputEvent to registered listeners.
 
-    A listener that raises is caught and printed to stderr — it never
-    crashes the agent loop.
+    A listener that raises is caught, reported via ``logger.error`` (which
+    reaches stderr through logging's default handling), and skipped — it never
+    crashes the agent loop, and it never starves the *other* listeners. The
+    previous docstring said "printed to stderr", which described the effect but
+    not the mechanism; the distinction matters because a caller that configures
+    logging can route or suppress these deliberately.
     """
 
     def __init__(self) -> None:
@@ -440,7 +444,24 @@ class ConsoleRenderer:
 
 
 class QuietRenderer:
-    """Emits nothing. Final answer is printed by cli.py to stdout."""
+    """Emits nothing. Final answer is printed by cli.py to stdout.
+
+    **Contract (Q23, resolved 2026-07-28).** ``--output quiet`` guarantees:
+
+    * nothing on **stdout** — so ``fa run --task ... > result.txt`` stays
+      parseable, which is the reason the mode exists;
+    * nothing on the **happy path**, for any ``EventType``.
+
+    It does **not** suppress listener-failure diagnostics. If a renderer
+    raises, :meth:`EventBus.emit` still reports it via ``logger.error`` and the
+    traceback reaches stderr. That is deliberate: hiding a fault in the least
+    verbose mode is where it does the most damage, and stderr does not pollute
+    the parseable stdout stream. Measured at ~351 bytes for one raising
+    listener.
+
+    Both halves are asserted in ``tests/test_s6_renderers.py`` so the contract
+    cannot drift back into being an accident.
+    """
 
     def on_event(self, event: OutputEvent) -> None:
         pass

@@ -33,6 +33,9 @@ authoring-check:
 contract-check:
 	python scripts/check_producer_consumer_contract.py
 
+log-kind-check:
+	python scripts/check_log_kind_contract.py
+
 no-mocked-dataclasses:
 	python scripts/check_no_mocked_dataclasses.py
 

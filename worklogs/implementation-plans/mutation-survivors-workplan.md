@@ -45,6 +45,45 @@ Clearing order: smallest + most security-adjacent first.
 | 5 | `fa/sandbox/validators.py` | 70 | 0 | cleared |
 | | **Total** | **232** | **37** | |
 
+## Substrate scope (S6.6b, added 2026-07-29) — separate trigger
+
+> **Why this section is separate.** The table above is the BACKLOG I-23
+> trigger: when *it* reaches zero the file is deleted and `tests.yml` flips to
+> blocking. Widening the mutation scope must not move that goalpost, so
+> substrate survivors are tracked here instead of being merged into the sandbox
+> rows. Q26 option (c).
+
+Scope added to `[tool.mutmut] source_paths` and `[tool.pytest-gremlins] paths`:
+`src/fa/session`, `src/fa/inner_loop/state.py`, `subagent_envelope.py`,
+`subagent_runner.py`. Before this, mutation testing had **only ever** covered
+`src/fa/sandbox` — the CLI-trace substrate was never mutated, which is why a
+targeted sweep found 8 deletable security guards in `session/manager.py` with
+the full suite green.
+
+**Baseline — pytest-gremlins, measured 2026-07-29 against the real suite**
+(`2213 passed` confirmed on every run; see the verification note below):
+
+| Module | Gremlins | Zapped | Survived |
+| :--- | ---: | ---: | ---: |
+| `src/fa/session` | 120 | 119 | 0 (1 error) |
+| `subagent_envelope.py` + `subagent_runner.py` | 73 | 73 | 0 |
+| `src/fa/inner_loop/state.py` | 94 | 94 | 0 |
+| **full configured scope** | **517** | **517** | **0** |
+
+**Two tools, two mutation classes — do not treat either as covering the other.**
+`pytest-gremlins` mutates *expressions* (`comparison`, `arithmetic`, `boolean`,
+`boundary`, `return`); introspection confirms it ships **no statement-deletion
+operator**. `scripts/mutation_sweep.py` deletes whole guard statements. That is
+precisely why gremlins reports 0 survivors on the same `manager.py` where the
+sweep found 8 — the results are complementary, not contradictory, and a clean
+run from one is not evidence for the other's class.
+
+**Verification note (bites hard).** A gremlins run whose tests fail to
+*collect* still prints a kill percentage. An early run here reported
+`Zapped: 120 gremlins (100%)` while **zero tests executed** — the editable
+install had been left pointing at a deleted tempdir. Always confirm the
+`N passed` line before believing a score.
+
 ## Notes for the clearing sessions
 
 - `path_containment` survivors cluster in `is_contained` (mutants 17-20+) —

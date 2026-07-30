@@ -369,7 +369,10 @@ def test_concurrent_spawn_admission_is_atomic(tmp_path: Path) -> None:
         )
         assert state.get_subagent_spawns() == max_spawns
     finally:
-        type(state).subagent_spawns = original  # type: ignore[assignment]
+        # No ignore needed here: `original` was read from the same attribute,
+        # so restoring it is type-compatible. Only the _SlowCounter install
+        # above widens the type.
+        type(state).subagent_spawns = original
 
 
 def test_spawn_limit_allows_up_to_the_limit(tmp_path: Path) -> None:

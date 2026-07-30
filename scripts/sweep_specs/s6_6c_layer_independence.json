@@ -1,0 +1,20 @@
+{
+  "slice": "S6.6c-layer-probe",
+  "note": "S6.6c shape-A probe: error codes raised at 2+ sites are the risk shape \u2014 an assertion on the code can be satisfied by one layer while another is silently deletable. Enumerate multi-site codes, then delete ONE layer at a time. The sweep always runs the whole suite.",
+  "mutations": [
+    {
+      "id": "L1",
+      "file": "src/fa/inner_loop/session_db.py",
+      "old": "                            \"session_db_identity_mismatch\",",
+      "new": "                            \"session_db_identity_mismatch_LAYER1_DEAD\",",
+      "why": "session_db identity guard, first of 5 sites"
+    },
+    {
+      "id": "L2",
+      "file": "src/fa/inner_loop/session_db.py",
+      "old": "                \"session_db_schema_unsupported\",",
+      "new": "                \"session_db_schema_unsupported_LAYER_DEAD\",",
+      "why": "schema-version guard, first of 4 sites"
+    }
+  ]
+}

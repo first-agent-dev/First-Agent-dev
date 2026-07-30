@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import stat
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -195,7 +196,11 @@ def test_injected_blackboard_rejects_identity_mismatch_and_authority_fallback(tm
     )
     entry = BlackboardEntry.create(id="entry-1", type="plan", payload={"ok": True})
     board.write(entry)
-    board._session_db.read_blackboard_row = lambda _entry_id: (_ for _ in ()).throw(RuntimeError("db down"))  # type: ignore[method-assign]
+
+    def _boom(entry_id: str) -> dict[str, Any] | None:
+        raise RuntimeError("db down")
+
+    board._session_db.read_blackboard_row = _boom  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="db down"):
         board.read("entry-1")
 

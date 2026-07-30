@@ -864,6 +864,12 @@ def _chunk_to_dict(chunk: Chunk) -> dict[str, object]:
     return data  # pyrefly: ignore[bad-return] — asdict() erases to Any; mypy strict accepts
 
 
+# S7.5: one definition for the smoke identity. ``run_id`` and
+# ``session_id`` must agree — the S4-F1 defect was precisely that the run
+# was labelled while the session was left empty.
+_SMOKE_SESSION_ID = "cli-smoke"
+
+
 def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     workspace = args.workspace.resolve()
     limits = load_runtime_limits_from_path().limits
@@ -871,8 +877,30 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
         workspace,
         bash_timeout_seconds=limits.bash_timeout_seconds,
     )
-    log_path = workspace / ".fa" / "smoke-events.jsonl"
-    log = EventLog(log_path)
+    # S7.5 / S4-F1 (Q28 option b). This command is a provider-free smoke check
+    # of the M-1 registry + HookRegistry, so it is deliberately NOT part of the
+    # persistent session model — but it still needs an EventLog.
+    #
+    # Previously it called ``EventLog(log_path)`` with no ``session_db``, so
+    # ``SessionState.__post_init__`` defaulted one into existence at
+    # ``<workspace>/.fa/session.db`` with an EMPTY ``session_id`` — an artifact
+    # an operator cannot distinguish from the real authority.
+    #
+    # Empty is not inert: every identity guard is written
+    # ``if self.session_id and ...`` (``state.py``; ``session_db.py``), and
+    # ``event_count()`` drops its ``WHERE session_id = ?`` scoping. Measured,
+    # that DB accepted a row stamped for a *different* session. Naming the
+    # session re-arms those guards **by construction** rather than by adding a
+    # new check, and confines the artifact to a clearly-labelled directory.
+    smoke_root = workspace / ".fa" / "smoke"
+    smoke_root.mkdir(parents=True, exist_ok=True)
+    session_db = SessionDatabase(smoke_root / "session.db", session_id=_SMOKE_SESSION_ID)
+    log = EventLog(
+        smoke_root / "smoke-events.jsonl",
+        run_id=_SMOKE_SESSION_ID,
+        session_db=session_db,
+        session_id=_SMOKE_SESSION_ID,
+    )
     hooks = HookRegistry()
     hooks.register(SandboxHook(workspace))
 
@@ -968,7 +996,7 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
 
     state = SessionState(
         workspace_root=workspace,
-        run_id="cli-smoke",
+        run_id=_SMOKE_SESSION_ID,
         log=log,
         feature_flags=FeatureFlags(blackboard_enabled=False),
     )

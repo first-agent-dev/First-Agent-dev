@@ -352,7 +352,19 @@ was incomplete as well as inoperative.
 
 ### S4-F3 — `fa-update.sh` chmod drift dirties 12 tracked files permanently
 
-**Severity: P2. Owner: pre-S5 hygiene commit.**
+**Severity: P2. Owner: pre-S5 hygiene commit. — CLOSED 2026-07-29 (S7 §2).**
+
+> **Closure evidence.** Fixed by `57f574a` (S5), which is exactly the remedy
+> this finding proposed: `git show --stat 57f574a -- scripts/` lists those
+> **12 files, mode-only, 0 insertions**. Re-measured 2026-07-29 — index and
+> worktree agree at `755` for all 12, and `git status` is clean, so
+> `fa-update.sh:872`'s `chmod +x` is now the intended no-op.
+>
+> The analysis below (index at `100644`) is **stale**; it described the state
+> before S5. Recurring dirt seen in later sessions was sandbox filesystem
+> drift re-materialising modes on a fresh container — same symptom, different
+> cause. Re-verified rather than trusted, per the "notes are inputs, not
+> authority" rule; the original text is kept for the record.
 
 ```bash
 # scripts/fa-update.sh:872

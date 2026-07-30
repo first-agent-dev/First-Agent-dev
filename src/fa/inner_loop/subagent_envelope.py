@@ -37,6 +37,13 @@ SUBAGENT_ENVELOPE_SCHEMA = {
         "goal": {"type": "string"},
         "exit_code": {"type": "integer"},
         "summary": {"type": "string"},
+        # S6.5 / S5-F1: the subagent's own output, bounded by the runner's
+        # 8000-char cap. Declared here because the schema has no
+        # ``additionalProperties: false`` — an undeclared field would validate
+        # silently and leave the schema lying about the payload. Deliberately
+        # NOT in ``required`` so envelopes written before this slice still
+        # validate.
+        "stdout": {"type": "string"},
         "verification": {"type": "string"},
         "files_changed": {"type": "array", "items": {"type": "string"}},
         "patch_diff": {"type": "string"},
@@ -67,6 +74,17 @@ class SubagentEnvelope:
     token_usage: dict[str, Any]
     duration_ms: int
     next_action: str
+    # S6.5 / S5-F1. Defaulted so the ~6 existing construction sites that pass
+    # every field positionally/by keyword keep working unchanged.
+    #
+    # SECURITY (S6-F7, Q25 option (i)): this is arbitrary subprocess output and
+    # it is persisted — by ``write_envelope_artifact`` and, via ``summary``, by
+    # ``append_to_worklog``. ``SubagentRunner`` masks it at capture time when a
+    # ``SecretRedactor`` is configured. That masking covers *configured*
+    # secrets and their base64/URL-encoded forms; it CANNOT mask a credential
+    # the subagent's own command materialises (cat of a ``.env``, a cloud CLI
+    # printing a token). Treat this field as low-trust.
+    stdout: str = ""
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2, ensure_ascii=False)
@@ -103,6 +121,9 @@ class SubagentEnvelope:
             token_usage={},
             duration_ms=duration_ms,
             next_action="none" if passed else "needs-human",
+            # S5-F1: previously discarded, so a passing verifier returned the
+            # literal "PASS" and the parent never saw the test output.
+            stdout=stdout,
         )
 
     @classmethod
@@ -130,6 +151,7 @@ class SubagentEnvelope:
             token_usage={"urls": len(urls), "snippets": len(snippets)},
             duration_ms=duration_ms,
             next_action="none",
+            stdout=summary,
         )
 
 

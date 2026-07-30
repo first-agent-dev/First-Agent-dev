@@ -43,7 +43,7 @@ import pytest
 from fa.blackboard.blackboard import Blackboard, BlackboardEntry
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop.context import reset_current_session, set_current_session
-from fa.inner_loop.registry import ToolResult
+from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.state import SessionState
 from fa.inner_loop.tools.edit_file import build_edit_file_tool
 from fa.inner_loop.tools.write_file import build_write_file_tool
@@ -53,7 +53,7 @@ ORIGINAL = "original content\n"
 
 # Each tool is exercised through the same scenarios via a uniform adapter:
 # (build the ToolSpec, params that mutate TARGET, the content that results).
-ToolFactory = Callable[[Path], Any]
+ToolFactory = Callable[[Path], ToolSpec]
 
 
 def _write_params() -> Mapping[str, object]:
@@ -261,7 +261,11 @@ def test_blackboard_read_failure_denies_and_names_precondition(tool_case: Any, t
         def write(self, _entry: object) -> None:
             raise RuntimeError("blackboard_write_failed: disk on fire")
 
-    state.blackboard = _ExplodingBlackboard()
+    # Structural stand-in: check_mutation_allowed only touches .root and
+    # .detect_conflict. Typing it as Blackboard would require constructing a
+    # real one and then breaking it, which is a less direct test of "the
+    # substrate is present but raises".
+    state.blackboard = _ExplodingBlackboard()  # type: ignore[assignment]
 
     result = _run(tool_case, tmp_path, state)
 

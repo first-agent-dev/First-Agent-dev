@@ -2,8 +2,20 @@
 
 Plan-ID: `PLAN-cli-trace-S5-authority-correctness`
 
-Status: **READY FOR EXECUTION** — plan review passed (§12); runtime edits
-authorised step-by-step in the §5 order only.
+Status: **COMPLETE — merged as `57f574a`** (+ CI follow-up `211e8fb`), 2026-07-28.
+All seven implementation steps landed with execution records in §5; DoD verified
+in §8. **One item remains OPEN by decision: Q19 / V24 / V25** (subagent
+containment), carried as a strict `xfail` and tracked in
+[`BACKLOG.md` §I-34](../../knowledge/BACKLOG.md#i-34--subagent-containment-os-level-writable-mount-boundary-q19--v24v25).
+
+Post-merge review: **2026-07-29** (§13). Verdict **PASS** — all six parent
+kill-checks re-measured and biting; three defects found and closed here.
+
+> **Reading this plan after the merge.** §1–§4 describe the *pre-S5* tree, and
+> their `file:line` anchors have since drifted (S6/S6.6 edits moved
+> `state.py` by ~+59 lines). Anchors are preserved as the historical record;
+> **§13.3 carries the re-resolved current locations.** Per the plan-authoring
+> staleness rule, re-grep before trusting any line number here.
 
 Depth: **P2** — cross-module runtime change to the session authority, the
 Blackboard conflict contract, and the subagent isolation boundary.
@@ -115,7 +127,7 @@ re-verifies every one before any edit; drift is a stop condition.**
 | 7 | `session_db.py:672` | `session_meta` `INSERT OR REPLACE` — **intentional** last-write-wins, do not touch |
 | 8 | `blackboard.py:94` `_should_check_conflict` | `return new_base == old_base`; differing `base_commit` ⇒ skipped |
 | 9 | `tools/edit_file.py` handler | `write_text` then `_write_blackboard_entry`; **no conflict check at all** |
-| 10 | `tools/write_file.py:196` | `_check_conflict` before write — the correct shape |
+| 10 | `tools/write_file.py:196` *(pre-S5; the check now lives in `mutation_guard.check_mutation_allowed`, `mutation_guard.py:130` — §13.3)* | `_check_conflict` before write — the correct shape |
 | 11 | `tools/write_file.py:51,69,78,111` | four `return None` paths meaning "allow the write" on root mismatch / Blackboard error |
 | 12 | `tools/observability.py:42` | `EventLog(path, run_id=run_id)` with **no `session_db`** ⇒ mirror fallback live |
 | 13 | `state.py:514-516` | `create_subagent_workspace` returns `self.workspace_root` on manager failure |
@@ -1244,27 +1256,45 @@ output is pasted into the S5 verification report.
 
 Falsifiable, per parent §13. Every box needs a named artifact or command output.
 
-**Per-step (all six):**
+**Verification status — re-measured 2026-07-29 (§13), not carried over from the
+execution records.** Each box names the artifact that proves it.
 
-- [ ] every §5 step's own Exit list is checked with pasted command output;
-- [ ] every S5-CT has a named C1/C3 test and a producer kill-check;
-- [ ] each kill-check demonstrated: revert the fix in a disposable copy, show
-      the named test failing, restore.
+**Per-step (all seven):**
+
+- [x] every §5 step's own Exit list is checked with pasted command output
+      — see the seven execution records in §5;
+- [x] every S5-CT has a named C1/C3 test and a producer kill-check
+      — 8 `tests/test_s5_*.py` files, **82 passed + 1 xfailed** (§13.1);
+- [x] each kill-check demonstrated — **all six parent kill-checks re-run
+      2026-07-29 and all six bite** (§13.2).
 
 **Slice-level:**
 
-- [ ] barrier concurrency test green; `COUNT(*)+1` revert fails it;
-- [ ] concurrent appends lose no events (constraint is a backstop, not the fix);
-- [ ] `kind_counts` cannot advance on a failed append; no drifted rollup;
-- [ ] `write_file`/`edit_file` verified by **one parametrised** case;
-- [ ] cross-commit conflict denied (S3-F10 closed);
-- [ ] agent observability reads the authority (S3-F13 closed);
-- [ ] no path returns the main workspace as a subagent fallback;
-- [ ] spawn admission atomic under barrier;
-- [ ] all seven §1.2 regression pins green (S5-G7), including
-      EventLog/Blackboard single-authority identity;
-- [ ] public facade APIs unchanged, or each change listed with its callers;
-- [ ] full gate green at every step, output recorded.
+- [x] barrier concurrency test green; `BEGIN IMMEDIATE`→`BEGIN` revert fails it
+      — `test_s5_event_identity.py` (3 `Barrier` uses); KC3 = CAUGHT (1 failed);
+- [x] concurrent appends lose no events, threads **and** processes
+      — `test_concurrent_appends_lose_no_events` + `..._across_processes_...`;
+- [x] `kind_counts` cannot advance on a failed append
+      — KC4 (`pass` for the counter increment) = CAUGHT (3 failed); the
+      last-write-wins rollup is separately pinned by
+      `test_session_meta_last_write_wins_unchanged`;
+- [x] `write_file`/`edit_file` verified by **one parametrised** case
+      — the `tool_case` fixture (`test_s5_tool_conflict_symmetry.py:75`) drives
+      7 of the file's 8 tests across both tools;
+- [x] cross-commit conflict denied (S3-F10 closed) — `test_s5_blackboard_contract.py`;
+- [x] agent observability reads the authority (S3-F13 closed)
+      — `test_s5_observability_authority.py`, 10 tests; KC2 (drop the
+      Blackboard `session_db` injection) = CAUGHT (6 failed);
+- [x] no path returns the main workspace as a subagent fallback
+      — `test_s5_isolation_boundary.py`, 20 tests;
+- [x] spawn admission atomic under barrier — same file;
+- [x] all seven §1.2 regression pins green (S5-G7) — re-verified individually in
+      §13.3, including the EventLog/Blackboard single-authority identity pin;
+- [x] public facade APIs unchanged, or each change listed with its callers
+      — the `mutation_guard.py` export decision is recorded in the S5.4 record;
+- [x] full gate green — `just check` equivalent re-run 2026-07-29:
+      **2215 passed**, coverage 81.28 %, `mypy`/`pyrefly`/`ruff` clean,
+      `pylint src/fa` 10.00/10, `deptry` clean, 9/9 contract scripts.
 
 **Negative proof.** S5 is invalid if any fix is verified only by a checker PASS,
 if a concurrency test lacks a barrier, if reverting a fix leaves its test green,
@@ -1495,7 +1525,9 @@ The executing agent must, for every step:
   final content: 'v0\n'                   <- writes #1,#2 silently lost
   ```
 
-  **Mechanism (source-verified).** `_write_blackboard_ok` (`write_file.py:114`)
+  **Mechanism (source-verified).** `_write_blackboard_ok`
+  (`write_file.py:114` *pre-S5; now `mutation_guard.record_mutation`,
+  `mutation_guard.py:182` — §13.3*)
   appends a `file_version` entry with `write_set=[rel_path]` and
   `parent_id=None` after every successful write. `detect_conflict`
   (`blackboard.py:309`) queries **all** `file_version` entries via
@@ -1881,3 +1913,144 @@ files, named tests, and exit criteria.
 
 Execution begins at **Step S5.0** (preflight, no production edits). Q15 is the
 only reserved escalation, and it is scoped to S5.6 alone.
+
+---
+
+## 13. Post-merge review — 2026-07-29
+
+Fourth review round, run **after** the merge with a different question from
+§12's three: *does the shipped code still satisfy this plan, and can a reader
+execute from it today?* §12 reviewed the plan before execution; this reviews
+plan-versus-reality.
+
+**Verdict: PASS with three defects, all closed below.** The plan is
+production-grade in structure — all seven implementation steps carry Intent ·
+Mechanism · Production rationale · Failure behaviour · Files · named tests
+mapped to `S5-P` rows · concrete Exit criteria. The 25-row path matrix gives
+every row a kill-check target, and every row is referenced at least twice.
+
+### 13.1 Parent-trajectory check
+
+The parent (§Step S5, line 1574) names **14 exit criteria** and **6
+kill-checks**. Mapped against this plan and the merged tree:
+
+* all 14 exit criteria are represented — the seven that S3/S4 had already
+  confirmed fixed are carried as §1.2 *regression pins* (S5-G7) rather than
+  re-implemented, which is the correct treatment;
+* the parent's four §Do-not items are honoured: no telemetry migration, no
+  second session DB under `workspace/.fa/blackboard`, no hidden JSONL
+  authority (KC5 proves it), and the candidate patch was not blindly applied.
+
+Suite state: `tests/test_s5_*.py` → **82 passed, 1 xfailed** (the xfail is the
+Q19 record, by design).
+
+### 13.2 Parent kill-checks re-measured — all six bite
+
+Not carried over from the execution records; re-run against the current tree
+with `scripts/mutation_sweep.py` (whole suite as the oracle):
+
+| Parent kill-check | Mutation applied | Result |
+|---|---|---|
+| remove the authoritative DB write | `append_event_row_allocating` → literal id | **CAUGHT** (15 failed) |
+| remove same-DB Blackboard injection | drop the `session_db` parameter | **CAUGHT** (6 failed) |
+| replace DB allocation semantics | `BEGIN IMMEDIATE` → `BEGIN` | **CAUGHT** (1 failed) |
+| move counters before commit | delete the `kind_counts` increment | **CAUGHT** (3 failed) |
+| restore hidden JSONL fallback | drop `self._injected_session_db or` | **CAUGHT** (3 failed) |
+| restore `INSERT OR REPLACE` | on the **live** blackboard insert | **CAUGHT** (1 failed) |
+
+**Method note worth keeping.** The first `INSERT OR REPLACE` attempt reported
+SURVIVED — because `str.replace(..., 1)` hit the **legacy-schema** branch
+(`session_db.py:653`), not the live one (`:678`). The mutation was wrong, not
+the code. A first-occurrence textual mutation on a file with a
+legacy/current branch pair silently tests the dead path; anchor such mutations
+on a column list or another branch-unique token.
+
+### 13.3 R1 — file:line anchors have drifted *(closed: re-resolved below)*
+
+**Severity: material for executability.** The plan carries **79** `file:line`
+references. None points past EOF, but the `state.py` anchors have moved by up
+to **+59 lines** since the merge (S6 added `EventLog.redactor`; S6.6 added
+tests). A reader following §1.2 lands in a docstring.
+
+Re-resolved by content, 2026-07-29:
+
+| §1.2 pin | Plan says | Actual now | Test that pins it |
+|---|---|---|---|
+| mismatched explicit `session_db` rejected | `state.py:157-161` | `state.py:180` | `test_session_db_authority.py` |
+| EventLog/Blackboard one authority | `state.py:358-361` | `state.py:417` | `test_s5_observability_authority.py` |
+| run-scoped reads | `state.py:245` | `state.py:295` | `test_cli.py` |
+| mirror failure ⇒ no mirror-ahead | `state.py:192-198` | `state.py:288` | `test_s5_observability_authority.py:131` |
+| stats: no DB creation on read | `stats.py:289` | `stats.py:285` | `test_cli.py:996` |
+| clean-cutover legacy rejection | `cli.py:2483` **`legacy_unsupported`** | `cli.py:2482` **`legacy_trace_unsupported`** | `test_cli.py:996` |
+| run-id reuse rejected | `manager.py:394,401` | unchanged | `test_session_lifecycle.py` |
+
+Two things this surfaced. The plan's `legacy_unsupported` identifier **never
+existed** in the shipped code — the real code is `legacy_trace_unsupported`, so
+§1.2's "existing test: none found" was searching for the wrong string; the
+behaviour *is* tested at `test_cli.py:996`, including the no-write property.
+And all seven pins have tests, so S5-G7 is genuinely met.
+
+### 13.4 R2 — the R3-2 finding was only partly acted on *(new defect, scoped)*
+
+§12 R3-2 recorded that **all six** write paths use bare `with conn:`
+(DEFERRED), and that a DEFERRED read→write upgrade returns `SQLITE_BUSY`
+*without honouring* `busy_timeout`. S5 then fixed **one** path
+(`append_event_row_allocating`, `session_db.py:409`). The review text does not
+say the other five were assessed, so this reads as an unfinished finding.
+
+Measured, rather than assumed:
+
+* four of the remaining five are **write-only** transactions
+  (`write_blackboard_row`, `append_event_row`, `set_meta`,
+  `reserve_run_binding`) — no read→write upgrade, so the footgun does not
+  apply. Probe: 6 processes × 5 `write_blackboard_row` = **30 attempted, 30
+  persisted, 0 lost**;
+* `_ensure_identity` (`session_db.py:303`) **does** read-then-write inside a
+  DEFERRED transaction — the exact shape R3-2 describes;
+* `_init_current_schema` (`:262`) is the DDL creator and is the one that
+  actually fails: **6 of 30 concurrent first-opens** of a *fresh* DB raise
+  `session_db_init_failed: database is locked`.
+
+**Correctly bounded, and this is why it is not a P1.** Once the DB exists,
+concurrent opens are clean: **0 failures in 40**. Production never hits the
+window, because `SessionManager._new_session` serialises creation with
+`session_dir.mkdir(parents=True, exist_ok=False)` (`manager.py:252`) — an
+atomic filesystem primitive, so exactly one process creates a session
+namespace.
+
+A partial fix was prototyped (an `_immediate_transaction` helper on
+`_ensure_identity`) and **reverted**: it reduced failures 6→3 but did not
+eliminate them, which proved `_ensure_identity` was a symptom and
+`_init_current_schema` the source. Shipping it would have been treating the
+wrong site. **Filed as BACKLOG I-35**, scoped to the three *unserialised*
+construction sites (`blackboard.py:207`, `state.py:176`,
+`observability.py:72`) — the same set as S7 Q29, so the two should be resolved
+together.
+
+### 13.5 R3 — status/DoD did not survive the merge *(closed)*
+
+The header still read *"READY FOR EXECUTION"* and **all 23 DoD boxes were
+unchecked**, on a plan merged as `57f574a` with seven execution records in it.
+A reader could not tell whether S5 was pending, partially applied, or done —
+and an unchecked DoD on merged work is indistinguishable from an unmet one.
+
+Closed: the header now records the merge commit and the one open item, and
+every DoD box is ticked **with the artifact that proves it** (§8), each
+re-measured today rather than copied from the execution records.
+
+This is a **house-wide pattern**, not an S5 quirk: `S1`, `S2`, `S4` and `S6`
+all still read "READY" while merged. Recommend a convention — a plan's status
+line names its merge commit once landed. Not applied to the other plans here;
+that is a separate doc-hygiene pass.
+
+### 13.6 Not defects — checked and dismissed
+
+* **Q19 left open.** Correct. It is a *measured* negative result (the bash gate
+  cannot contain a subagent), carried as a strict `xfail` whose message is the
+  evidence, and it blocks only S5-P16. Now also in BACKLOG (I-34) — previously
+  it lived only in plans and PR notes, which is where open security gaps go to
+  be forgotten.
+* **The 25-row matrix.** Every row carries a kill-check target and is
+  referenced ≥2×. No orphan rows.
+* **Step granularity.** Seven steps, none exceeding three production files,
+  matching the declared SIZE budget.

@@ -18,12 +18,33 @@ repos:
         args: [--fix=lf]
       - id: check-executables-have-shebangs
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.18
+  # Ruff runs from the PROJECT environment, not a pre-commit-managed clone.
+  #
+  # The mirror repo (astral-sh/ruff-pre-commit) requires an immutable `rev`, so
+  # it pins a ruff version independently of `pyproject.toml`'s `ruff>=0.5`. That
+  # split bit us: ruff 0.16 exempts a broad `except` that logs with `exc_info=`
+  # from BLE001, the pinned v0.15.18 did not, and `ruff check --fix` under the
+  # newer local version stripped two `# noqa: BLE001` directives that the hook
+  # then demanded back. One tool, two versions, contradictory verdicts.
+  #
+  # `language: system` runs whatever ruff `uv sync` installed, so the hook, the
+  # `just check` gate and CI are always the same binary and always the latest
+  # ruff the lockfile resolves. Upgrading is now `uv lock --upgrade-package ruff`
+  # — no second place to bump, and no way for the two to disagree again.
+  - repo: local
     hooks:
       - id: ruff
-        args: [--fix]
+        name: ruff (project env)
+        entry: ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
       - id: ruff-format
+        name: ruff-format (project env)
+        entry: ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.41.0

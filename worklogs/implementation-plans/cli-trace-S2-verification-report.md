@@ -325,11 +325,30 @@ The three kill-checks prove the tests are not consumer-only or vacuous.
 | explicit reused run ID | PASS C3 |
 | public `--resume` without selector | PASS C2, rejected before provider |
 | workflow internal continuation | PASS existing workflow matrix |
-| workspace mismatch/path escape | PASS C3 |
-| corrupt/missing manifest | PASS C3 |
+| workspace mismatch/path escape | PASS C3 — outer layer only at the time; see note ¹ |
+| corrupt/missing manifest | PASS C3 — unreadable JSON only at the time; see note ¹ |
 | failed clone/checkout | PASS shell C2 |
 | current DB-only stats | PASS C2 |
 | legacy JSONL/old DB stats | PASS C2/C3, unsupported/no-write |
+
+¹ **Amended 2026-07-29 (S6.6d).** Both rows were accurate about what was *run*
+and over-broad about what it *proved*. A mutation sweep of `session/manager.py`
+later showed 8 of 9 guards could be deleted with the whole suite green:
+
+* *workspace mismatch/path escape* — `workspace_escape` is raised at two sites
+  (`manager.py:182` and `:248`). The assertion was on the error **code** at the
+  API boundary, which the outer site satisfies alone, so the inner validator was
+  deletable invisibly. Untested redundancy is not redundancy.
+* *corrupt/missing manifest* — exercised only unreadable JSON. Manifest
+  **tampering** (identity, `schema_version`, `status`, non-canonical DB path)
+  was unverified, though each guard was later confirmed live.
+
+Closed by `tests/test_session_manifest_guards.py`, which drives the public
+`create_or_attach_session` against a tampered on-disk manifest per field and
+asserts the specific error code, plus a registry guard that fails when a new
+`SessionManagerError` code has no test. Post-fix the same sweep reports
+`caught=9 survived=0`. See
+[`PLAN-cli-trace-S6.6-mutation-gap-closure.md`](./PLAN-cli-trace-S6.6-mutation-gap-closure.md).
 
 ## 7. Deferred and follow-up work
 

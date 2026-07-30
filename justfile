@@ -91,6 +91,13 @@ dependency-contract-check:
 contract-check:
     uv run python scripts/check_producer_consumer_contract.py
 
+# LogKind contract gate (S6.1 / S6-F6): every LogKind member has a producer or
+# a reasoned KNOWN_DORMANT_KINDS entry, dynamic kinds resolve, and
+# CONSOLE_MIRROR_KINDS dual-write holds. Previously this script existed but was
+# invoked by NOTHING, so its exit code was decorative.
+log-kind-check:
+    uv run python scripts/check_log_kind_contract.py
+
 # Guard: no MagicMock(spec=<frozen_dataclass>) in tests. Frozen dataclasses
 # are pure data — mock them and every new field becomes a latent regression.
 # Use real instances (make_test_chain_config, etc.) instead.
@@ -121,4 +128,4 @@ mutation:
 lock-check:
     uv lock --locked
 
-check: lock-check dependency-contract-check lint typecheck authoring-check contract-check no-mocked-dataclasses test
+check: lock-check dependency-contract-check lint typecheck authoring-check contract-check log-kind-check no-mocked-dataclasses test

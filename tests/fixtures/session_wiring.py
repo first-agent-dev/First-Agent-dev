@@ -42,6 +42,7 @@ from unittest.mock import MagicMock
 
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState
+from fa.observability.redaction import SecretRedactor
 from fa.providers import ChainConfig, ChainEntry, ProviderChain
 from fa.providers.base import ResponseInfo
 
@@ -198,10 +199,16 @@ def make_session_state(
     run_id: str,
     feature_flags: FeatureFlags | None = None,
     log_path: Path | None = None,
+    redactor: SecretRedactor | None = None,
 ) -> SessionState:
-    """Create SessionState with EventLog attached — for C1 tests."""
+    """Create SessionState with EventLog attached — for C1 tests.
+
+    ``redactor`` (S6.5) is threaded into the ``EventLog`` exactly as
+    ``cli.py`` does, so tests that need masking behaviour reuse this factory
+    instead of hand-rolling a SessionState.
+    """
     lp = log_path or (tmp_path / "events.jsonl")
-    log = EventLog(lp, run_id=run_id)
+    log = EventLog(lp, run_id=run_id, redactor=redactor)
     flags = feature_flags if feature_flags is not None else FeatureFlags()
     return SessionState(
         workspace_root=tmp_path,

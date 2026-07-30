@@ -72,7 +72,7 @@ from typing import Any
 
 from fa.inner_loop.artifacts import ArtifactStore
 from fa.inner_loop.hooks.base import HookPayload, HookRegistry, LifecyclePoint
-from fa.inner_loop.loop import run_session
+from fa.inner_loop.loop import SessionRun, run_session
 from fa.inner_loop.projection import project_for_model
 from fa.inner_loop.prompt import (
     render_tool_specs,
@@ -1513,6 +1513,34 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             acting_family=acting_family,
             limits=effective_limits,
         )
+        # S6.2 (S6-F4): honour an inner stop. A guard denial at
+        # AFTER_TOOL_EXEC / BETWEEN_ROUNDS returns a FULL result set, so the
+        # `missing > 0` padding branch below never fires and the outer loop
+        # used to continue to the next turn — calling the model again after a
+        # guard had already stopped the run. Measured: 3 provider calls after a
+        # denial that should have produced 1.
+        #
+        # The stop now arrives in-band on the returned SessionRun, so no log
+        # re-reading is needed to discover it.
+        # Scope note (verified, not assumed): only AFTER_TOOL_EXEC is the
+        # S6-F4 defect. A BETWEEN_ROUNDS denial (PauseGuard, LoopGuard) already
+        # shortens the result list, so the `missing > 0` padding branch below
+        # fires and the session continues *by design* — LoopGuard's circuit
+        # breaker needs several rounds to trip. Breaking here on every stop
+        # point silently changed that behaviour and was caught by
+        # test_loop_guard_circuit_breaker_works_without_sink.
+        if turn_results.stop is not None and turn_results.stop.point == LifecyclePoint.AFTER_TOOL_EXEC.value:
+            stop_info = turn_results.stop
+            if output is not None:
+                output.emit(
+                    OutputEvent(
+                        type="hook_deny",
+                        data={"point": stop_info.point, "reason": stop_info.reason},
+                    )
+                )
+            state.observations.append(f"run stopped at {stop_info.point}: {stop_info.reason}")
+            break
+
         # ``run_session`` enforces ``max_iterations`` per invocation.
         # If the LLM emitted more tool calls than the cap, the loop
         # breaks early and returns fewer results. We MUST pad the
@@ -1542,7 +1570,13 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 stop_reason_detail,
                 retryable=True,
             )
-            turn_results = (*turn_results, *([synthetic] * missing))
+            # Rebuild as a SessionRun so the stop signal survives padding —
+            # a bare tuple here would silently drop `.stop` and re-open S6-F4
+            # for any code reading it after this point.
+            turn_results = SessionRun(
+                results=(*turn_results.results, *([synthetic] * missing)),
+                stop=turn_results.stop,
+            )
             # Record synthetic tool results in the audit trail so
             # replay sees a complete paired ``tool_call`` / ``tool_result``
             # row set per ADR-7 §10 Acceptance criterion 8.

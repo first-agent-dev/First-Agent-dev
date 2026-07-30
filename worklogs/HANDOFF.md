@@ -5,6 +5,12 @@
 
 ## Current state
 
+> **Superseded 2026-07-30 — read [§S7 handoff](#s7-handoff--2026-07-30) first.**
+> Everything below this line describes the tree as of **2026-07-27** (pre-S5)
+> and is kept as the historical record. S5, S6, S6.6 and the local half of S7
+> have landed since; the base SHA, branch and "next bounded action" in this
+> section are all stale.
+
 **As of:** 2026-07-27 — S2 SessionManager/session-authority wiring complete for
 local verification, with S4/S5 follow-up explicitly pending.
 
@@ -390,7 +396,67 @@ refactor. Execution begins at **Step S5.0** (preflight, no production edits):
 re-verify citations, audit for pre-existing duplicate event ids, confirm the
 clean-state precondition.
 
-## Next bounded action
+## S7 handoff — 2026-07-30
+
+**State.** S5 (upstream `fc957f3`), S6, S6.6 and the **local half of S7** are
+landed. Gate on the rebased branch: **2227 passed** / 14 skipped / 1 xfailed,
+coverage **81.30 %**, `mypy` + `pyrefly` + `ruff` clean, `pylint src/fa`
+10.00/10, `deptry` clean, 9/9 contract scripts, `fa authoring-check` 0
+diagnostics.
+
+```text
+base   = fc957f3  (origin main, "s5")
+patch  = patches/S7-stack-from-fc957f3.patch   (git am; sha256 in SHA256SUMS)
+```
+
+**Rebase note.** Upstream landed S5 as `fc957f3`, a *sibling* of the local
+`57f574a` — both children of `adc29d1`. The two are byte-identical in
+`state.py`, `session_db.py`, `output.py` and `cli.py`, so replaying 31 commits
+was conflict-free. Three things upstream's S5 lacks were carried forward, each
+found by **running the gate**, not reading the diff: `mutation_guard` exports
+(`authoring-check` exit 1), five S5 test typing fixes (pyrefly
+`bad-assignment`), and **S4-F3** (12 deploy scripts at `100644`, including
+`scripts/fa`). Note that the S5 post-merge review closed S4-F3 as "already
+fixed" — correct for `57f574a`, wrong for `fc957f3`. *A finding's status is a
+property of a base, not of the finding.*
+
+**Next bounded action — S7 container half.** Run
+[`PLAN-cli-trace-S7-container-verification.md`](./implementation-plans/PLAN-cli-trace-S7-container-verification.md)
+after deploying this branch: eight steps (S7.C0–S7.C7) with exact
+`docker compose exec` commands and EXPECT lines. **Order matters** — S7.C6 is
+the regression check for the S7.5 fix, so it must run *after* deployment; the
+rest are order-independent after S7.C0. Never print `llm_bodies.jsonl`
+contents: counts, byte sizes and identifiers only. Return the §2 evidence
+blocks and they fold into the S7 plan §11.
+
+S7 stays **complete-local / deployment-pending** until then — the parent's
+§Do-not forbids an L3 claim on fake transport alone. **S8 unblocks after that.**
+
+**Toolchain change to be aware of.** The pre-commit ruff hook is no longer the
+pinned mirror; it is `repo: local` / `language: system`, so it runs the ruff
+`uv sync` installed. The mirror pinned v0.15.18 independently of
+`pyproject.toml`'s `ruff>=0.5`, and the two disagreed: 0.16 exempts a broad
+`except` that logs with `exc_info=`, v0.15.18 did not, and a local `--fix`
+stripped two waivers the hook then demanded back. Upgrading is now
+`uv lock --upgrade-package ruff` — one place, no drift.
+
+**New backlog items opened this session:**
+
+- [`PLAN-ble001-waiver-reduction.md`](./implementation-plans/PLAN-ble001-waiver-reduction.md)
+  — **DRAFT, needs Q30.** Measured: **197** broad catches are waived vs **37**
+  that satisfy BLE001, i.e. 84 % waived, so the rule no longer carries
+  information. Classified A/B/E with the conversion traps recorded (notably:
+  category B is only mechanical while the ruff floor stays ≥0.16, and raising a
+  log level is a product decision). Recommendation is option (c) — ratchet
+  first, then the one mechanical batch.
+- `BACKLOG I-34` — Q19/V24/V25 subagent containment (open security gap; strict
+  `xfail` is its executable record).
+- `BACKLOG I-35` — `SessionDatabase` first-create is not concurrency-safe under
+  a DEFERRED DDL transaction. P3: production serialises creation via
+  `mkdir(exist_ok=False)`. Resolve with S7 **Q29** — both touch the same three
+  unserialised construction sites.
+
+## Next bounded action (2026-07-27 — superseded, see above)
 
 1. Review and merge the S4 report + pre-S5 hygiene PR.
 2. Author the **S5** subplan from S3+S4 evidence, scoped to:

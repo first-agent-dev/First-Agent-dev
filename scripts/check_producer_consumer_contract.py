@@ -52,6 +52,36 @@ def extract_handler_events() -> set[str]:
     return set(re.findall(r"def _handle_([a-z_]+)\(", source))
 
 
+# ── 2b. Per-site producer floor (S6-F2) ────────────────────────────────
+# Counting only "does this type have >=1 producer" made site-level rot
+# invisible: `api_retry` has four emit sites, and deleting one left the output
+# byte-identical with exit 0 — three of four could disappear undetected.
+#
+# This is the expected number of emit sites per EventType. Fewer than the floor
+# fails. MORE than the floor also fails, because an unrecorded new producer is
+# a path nobody enumerated (skill §3.14 path inventory) — update the floor in
+# the same commit that adds the emit.
+PRODUCER_SITE_FLOOR: dict[str, int] = {
+    "api_retry": 4,
+    "compaction_end": 5,
+    "compaction_start": 2,
+    "compaction_warning": 1,
+    "config_warning": 2,
+    "context_warn": 5,
+    # S6.2 raised this from 2 -> 3: drive_session now emits hook_deny when an
+    # AFTER_TOOL_EXEC denial stops the outer loop (S6-F4).
+    "hook_deny": 3,
+    "llm_response": 1,
+    "loop_warn": 3,
+    "session_end": 1,
+    "session_start": 1,
+    "subagent_end": 1,
+    "subagent_start": 1,
+    "tool_call": 1,
+    "turn_start": 1,
+}
+
+
 # ── 3. Check output.emit() calls in production code (producers) ─────────
 
 PRODUCER_FILES = [
@@ -125,10 +155,113 @@ def extract_c1_tested_events() -> set[str]:
 
 # ── 5. Main check ──────────────────────────────────────────────────────
 
-# EventTypes that are intentionally dormant (no producer expected)
-DORMANT_TYPES = {
-    "cost_alert",  # CostGuardian dormant by design
+# ── Deliberately-dormant EventTypes ────────────────────────────────────
+# An EventType with a handler and no producer is a contract gap by default
+# (S3-F5: a renderer that looks wired and is dead). An entry here is an
+# explicit, reviewed exception and MUST carry a reason.
+#
+# Shape deliberately mirrors ``KNOWN_DORMANT_KINDS`` in
+# check_log_kind_contract.py so the two checkers agree on what an exemption
+# looks like. Previously this was a bare ``set`` with an inline comment, which
+# meant one unjustified line could silence a real gap — measured: adding a name
+# with no reason took the checker from exit 1 to exit 0.
+#
+# An entry is a claim that "no producer is expected YET". When a producer
+# lands, the claim is false and the entry must be removed — enforced below, so
+# a stale exemption cannot keep the type exempt from the C1-coverage check.
+DORMANT_TYPES: dict[str, str] = {
+    "cost_alert": (
+        "blocked on upstream, not abandoned: CostGuardian is registered on both "
+        "production paths (cli.py:922, cli.py:2045), writes cost_observation audit "
+        "rows and denies over budget, but emits no OutputEvent until the T-2 LLM "
+        "driver lands the cost=… artifact (cli.py:918-921). Handler and guardian "
+        "are both live; only the emit is missing. Q20 (2026-07-28): keep the type."
+    ),
 }
+
+
+def _check_consumer_without_producer(
+    event_types: list[str],
+    handlers: set[str],
+    producers: dict[str, list[str]],
+) -> bool:
+    """CHECK 1 — a handler with no producer is a dead renderer (S3-F5).
+
+    Extracted from ``main`` to stay under the complexity budget once CHECK 4
+    was added; the block is self-contained and answers one question.
+    """
+    print("CHECK 1: Handler exists but NO producer emit()")
+    print("-" * 72)
+    gaps = False
+    for et in sorted(event_types):
+        if et not in handlers or et in producers:
+            continue
+        if et in DORMANT_TYPES:
+            print(f"  💤 {et:<22s} DORMANT (no producer expected)")
+            continue
+        print(f"  ❌ {et:<22s} CONSUMER ONLY — handler exists, NO emit() in production code")
+        print(f'     → Add output.emit(OutputEvent(type="{et}")) in the appropriate module')
+        gaps = True
+    if not gaps:
+        print("  ✅ All non-dormant handlers have producers")
+    print()
+    return gaps
+
+
+def _check_dormant_allowlist(producers: dict[str, list[str]]) -> bool:
+    """CHECK 4 — the allowlist itself must stay honest. True if gaps.
+
+    Two ways an allowlist rots, both checked here:
+
+    * an entry with no reason — a mute button rather than a decision;
+    * an entry whose producer has since landed — a stale exemption that keeps
+      the type out of the C1-coverage check forever.
+    """
+    print("CHECK 4: dormancy allowlist is justified and current")
+    print("-" * 72)
+    gaps = False
+    for name, reason in sorted(DORMANT_TYPES.items()):
+        if not reason.strip():
+            print(f"  ❌ {name:<22s} allowlisted with NO reason")
+            print("     → state why no producer is expected, or remove the entry")
+            gaps = True
+            continue
+        if name in producers:
+            sites = ", ".join(producers[name])
+            print(f"  ❌ {name:<22s} STALE — allowlisted as dormant but now produced at {sites}")
+            print("     → remove it from DORMANT_TYPES so it is held to the same checks as its peers")
+            gaps = True
+        else:
+            print(f"  💤 {name:<22s} dormant: {reason[:60]}...")
+    if not gaps:
+        print("  ✅ Every dormancy entry is justified and still accurate")
+    print()
+    return gaps
+
+
+def _check_producer_site_floor(producers: dict[str, list[str]]) -> bool:
+    """CHECK 0 — compare emit-site counts to the recorded floor. True if gaps.
+
+    Extracted from ``main`` to keep it under the complexity budget; the block
+    is self-contained and has one output (did anything drift?).
+    """
+    print("CHECK 0: producer emit-site counts match the recorded floor")
+    print("-" * 72)
+    gaps = False
+    for et in sorted(PRODUCER_SITE_FLOOR):
+        expected = PRODUCER_SITE_FLOOR[et]
+        actual = len(producers.get(et, []))
+        if actual == expected:
+            continue
+        drift = "a producer was removed" if actual < expected else "new producer not in the inventory"
+        print(f"  ❌ {et:<22s} {actual} emit site(s), expected {expected} — {drift}")
+        if actual > expected:
+            print("     → add the path to the inventory and raise PRODUCER_SITE_FLOOR in the same commit")
+        gaps = True
+    if not gaps:
+        print("  ✅ All producer emit-site counts match")
+    print()
+    return gaps
 
 
 def main() -> int:
@@ -147,26 +280,17 @@ def main() -> int:
     print(f"C1 tested: {len(c1_tested)} types")
     print()
 
+    # Check 0: per-site producer floor (S6-F2)
+    if _check_producer_site_floor(producers):
+        gaps_found = True
+
+    # Check 4: the dormancy allowlist itself (S6.4 / S6-CT4)
+    if _check_dormant_allowlist(producers):
+        gaps_found = True
+
     # Check 1: Consumer without producer
-    print("CHECK 1: Handler exists but NO producer emit()")
-    print("-" * 72)
-    for et in sorted(event_types):
-        has_handler = et in handlers
-        has_producer = et in producers
-        is_dormant = et in DORMANT_TYPES
-
-        if has_handler and not has_producer:
-            if is_dormant:
-                print(f"  💤 {et:<22s} DORMANT (no producer expected)")
-            else:
-                print(f"  ❌ {et:<22s} CONSUMER ONLY — handler exists, NO emit() in production code")
-                print(f'     → Add output.emit(OutputEvent(type="{et}")) in the appropriate module')
-                gaps_found = True
-
-    if not any(et in handlers and et not in producers and et not in DORMANT_TYPES for et in event_types):
-        print("  ✅ All non-dormant handlers have producers")
-
-    print()
+    if _check_consumer_without_producer(event_types, handlers, producers):
+        gaps_found = True
 
     # Check 2: Producer without consumer
     print("CHECK 2: Producer emit() exists but NO handler")

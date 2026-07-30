@@ -44,6 +44,15 @@ Thumbs.db
 # Coverage / mutation artifacts
 .coverage
 coverage.xml
+# pytest-gremlins HTML mutation report (S6.6b); regenerated per run.
+coverage/
+# coverage.py parallel mode writes .coverage.<host>.<pid>.<rand>, which the
+# bare `.coverage` entry above does NOT match. Without this a --cov run
+# leaves a multi-MB artifact that is easy to commit by accident (S7 review).
+.coverage.*
+# pytest-gremlins incremental cache: a mutation run rewrites it, so it
+# dirties the tree on every scan.
+.gremlins_cache/
 # mutmut 3.x writes a full mutated source tree at repo root during `just mutation`
 mutants/
 htmlcov/
