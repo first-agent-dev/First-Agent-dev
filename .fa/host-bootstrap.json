@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "ready": true,
-  "python": "3.14.6",
-  "platform": "linux",
+  "python": "3.13.13",
+  "platform": "win32",
   "just_package": "rust-just==1.57.0",
-  "fingerprint": "51ad097dbf617b6e27e93eeba6500ca03f18d222fe3cb323a835d9ccd7da7a6d"
+  "fingerprint": "e314f173b097a4343fce1949b39d61f587d87616f05ebf14037de4176bd30cd1"
 }

@@ -46,6 +46,16 @@ alwaysApply: false
 > **Central law (path sensitivity):** *A single EventType may be emitted from
 > multiple code paths. Testing one path does not prove the others work.
 > Enumerate all paths; test each.*
+>
+> **Central law (deterministic enforcement):** *For spec-bearing behavior,
+> tests prove the deterministic mechanism, not model intent: schema,
+> validator, closed enum, DB constraint, exit code, state machine, deny
+> gate, typed error, or other code-owned authority. Removing that
+> mechanism must fail the test.*
+>
+> **Central law (failure-observable):** *No silent skip. Every denied,
+> partial, unsupported, precondition-missing, or degraded path returns or
+> emits a structured warning/error/result that tests assert.*
 
 ---
 
@@ -66,6 +76,14 @@ alwaysApply: false
 13. **Early-stop?** Assert low/zero `request.call_count` when a gate fires first.
 14. **AI-authored?** Anti-theater + `TEST-EDITS` under FIX; hand off to `mutation-clearing` after C1.
 15. **Third copy of same mocks?** Extract shared fixture module.
+16. **Failure observable?** Assert structured warning/error/result when a
+    gate cannot run, preconditions are partial, or support is unavailable.
+17. **FIX regression?** Name the degree of freedom closed, exercise the
+    shared deterministic mechanism, and check sibling callers where relevant.
+18. **State authority?** Assert source of truth first, then mirrors/projections
+    and conflict winner where the system has them.
+19. **New component/topology?** Test disabled/fallback, invocation, failure,
+    value signal, and structured output/merge semantics before it is trusted.
 
 | Priority | Prescription |
 | :--- | :--- |
@@ -267,11 +285,32 @@ JSONL, and **EventBus** (`output.emit`) → ConsoleRenderer. Every code path
 that writes to one MUST also write to the other. Missing `output.emit()` =
 operator sees nothing at the console.
 
+General state authority rule: for any stateful feature, name the source of
+truth, mirrors, derived projections, standalone artifacts, and conflict winner.
+Assert the source of truth first; then assert mirror/projection consistency
+where required. If layers disagree, tests prove the declared authority wins.
+
 **Verify:** For every `log.append()` in a code path, check that a
 corresponding `output.emit(OutputEvent(type="X"))` exists in the same
 `if`/`elif`/`except` block.
 
 ---
+
+### 9.1 FIX regression / anti-shallow-fix proof
+
+A bug-fix test must prove the named degree of freedom is closed, not only that
+the reported symptom disappeared. Exercise the shared producer/gate/root that
+owns the decision; a call-site-only regression is incomplete when sibling
+callers can still trigger the bad state.
+
+Docstring fields for FIX tests:
+
+```text
+degree-of-freedom-closed: <what could vary before>
+deterministic-mechanism: <file:symbol schema/gate/constraint/validator>
+sibling-callers-checked: <grep/callers or N/A with reason>
+mutation: removing <mechanism> fails <test>
+```
 
 ### 10. C0 consumer-only: the false-confidence trap
 
@@ -320,6 +359,15 @@ Gate merges on A; promote B judges only when calibrated.
 | :--- | :--- |
 | Live path proven | Load `mutation-clearing` |
 | Coverage high, mutants live | Strengthen oracles |
+
+Manual mutation minimum when no mutation tool exists:
+1. remove/disable producer call, write, render branch, or gate;
+2. invert key branch or validation;
+3. remove security deny gate if applicable;
+4. remove consumer handler/render branch if applicable;
+5. rerun the named tests;
+6. restore code;
+7. report which tests failed. A survivor means weak oracle or non-live path.
 
 | Prefer | Instead of |
 | :--- | :--- |
@@ -590,6 +638,16 @@ feature flags, or quality-gate configuration. A green command is not enough;
 the test must prove the intended contract and fail when the producer/config
 source is removed.
 
+### 16.0 New component / topology proof
+
+If a change adds a dependency, cache, service, LLM step, retrieval layer,
+queue, worker, subagent, parallel topology, or dynamic workflow, tests must
+cover disabled/fallback, invocation, failure, and the claimed value signal
+(call_count, latency, token/query count, duplicate-work reduction, or another
+measurable contract). For subagents/topology, also assert structured output
+schema, bounded output size, state isolation/no parent leakage, read/write-set
+or conflict behavior, deterministic merge, and timeout/failure semantics.
+
 ### 16.1 Strict typing: type the boundary, not the symptom
 
 Prefer a typed adapter or a narrowed composition-root value over a broad
@@ -696,6 +754,10 @@ For every new or changed gate, add:
 - a test proving a global suppression does not hide the violation, unless the
   suppression is an explicit reviewed policy decision;
 - a report of advisory versus blocking semantics.
+
+If adding an authoring guardrail, linter, or policy check, classify severity as
+HARD-BLOCK / ADVISORY / INFO and add at least one true-positive fixture plus one
+false-positive fixture before promotion.
 
 Do not turn a blocking finding into an ignore without recording the lost
 capability and a replacement signal.

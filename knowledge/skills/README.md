@@ -107,6 +107,7 @@ skill is forcing-against.>
 | [`skill-writing/SKILL.md`](./skill-writing/SKILL.md) | active | When writing or modifying skills / harness mutation change contracts. |
 | [`tests-writing/SKILL.md`](./tests-writing/SKILL.md) | active | When writing or changing tests, or when IMPLEMENT/FIX under `src/fa/` claims product/session behavior — live-path (composition-root) Definition-of-Done, anti-theater rules, flag matrices (ADR-11-I9). |
 | [`plan-authoring/SKILL.md`](./plan-authoring/SKILL.md) | active | When authoring an implementation plan — converts intent, research notes, and codebase state into a grounded, falsifiable, READY-gated plan with contracts, path inventory, step cards, and verification spec. |
+| [`planning/SKILL.md`](./feature-planning/SKILL.md) | active | For large feature implementation or new-project work — source-grounded plan + execution discipline with deterministic authority, live-path tests, producer kill-checks, mutation, and minimal-code gates. |
 
 ## Forward direction
 

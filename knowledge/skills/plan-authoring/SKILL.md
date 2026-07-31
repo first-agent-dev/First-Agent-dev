@@ -79,6 +79,13 @@ the intent over speculative architecture. Non-goals exist to stop scope
 creep, not to be apologized for. If a "nice to have" isn't in the intent,
 it isn't in the plan.
 
+Central law (deterministic authority): Spec-bearing decisions belong in
+code, schema, state, or gates — not in LLM judgment. Prefer deterministic
+validators, closed enums, DB constraints, exit codes, state machines, or
+policy gates. If a mechanism cannot decide, the plan must surface a
+structured warning/error/result that tests can assert; silent skips are
+planning defects.
+
 Central law (assume theater): Treat every step as skippable and every
 claim as possibly gamed until proven otherwise. Force compliance with
 existence pre-checks, explicit file:symbol sites, ranked oracles, matrix
@@ -151,21 +158,32 @@ close a duplicate-code (or similar lint) finding?      test at the REAL call
 Every plan uses these ID prefixes consistently so sections can cross-
 reference each other without ambiguity:
 
-  G#    Goal / intent item           (from Executive Intent, §3)
+  G#   Goal / intent item           (from Executive Intent, §3)
 
-  CT#   Contract                     (function, signal, data, or invariant)
+  GAP# Verified current→target gap     (§4)
 
-  S#    Step / task card             (§8)
+  CT#  Contract                       (function, signal, data, or invariant)
 
-  Q#    Open question                (§10)
+  A#   Artifact                       (file, module, table, route, config, doc, migration)
 
-  RN#   Research-note disposition row (§11a)
+  P#   Runtime path / edge condition  (§7)
 
-  RK#   Risk                         (§10... risks table)
+  M#   Matrix row                     (flag, env, provider, backend, role, browser, OS)
+
+  S#   Step / task card               (§8)
+
+  T#   Verification item              (test, static check, mutation, monitor, manual proxy)
+
+  Q#   Open question                  (§10)
+
+  RN#  Research-note disposition row  (§11a)
+
+  RK#  Risk                           (§10... risks table)
 
 Rule (plan self-lint): every ID referenced anywhere in the plan MUST
 resolve to a row that actually exists. Dangling references (a step citing
 CT7 that was never defined) are a planning defect — fix before READY.
+Every G# must map to ≥1 GAP#, CT#, S#, T#, and A# or explicit non-goal.
 
 ═══════════════════════════════════════════════════════════════════════
 2. PREFLIGHT (mandatory, recorded, run before drafting steps)
@@ -273,6 +291,8 @@ TO-BE (machine-checkable facts, not adjectives):
 
   - New/changed types, fields, EventTypes, APIs, CLI flags
 
+  - GAP# ledger: each verified current→target gap with owner S#/T#
+
   - State transitions (STATE: <name> — AS-IS: ... → TO-BE: ...)
 
   - Operator-visible behavior change
@@ -292,6 +312,20 @@ TO-BE (machine-checkable facts, not adjectives):
   - For each design choice: could a smaller change satisfy the same
     intent? If yes and rejected, say why (P2+/P3 requires this; P0/P1
     may state "trivially minimal").
+
+  - New component gate: before adding a service, dependency, tool, LLM
+    step, retrieval layer, cache, queue, worker, subagent, or topology,
+    state what evidence or verified product behavior proves need, what
+    breaks if omitted, why existing code/config/stdlib/native platform
+    cannot replace it, whether deterministic code can do it without an
+    LLM call, and which test/metric proves it pays for itself. Weak
+    answer → reject or defer.
+
+  - Topology gate: before adding subagents, DAGs, worker pools,
+    parallel orchestration, or workflow mutation, prove a simple chain
+    cannot work and that shared state is queryable/versioned enough
+    (read/write sets or equivalent conflict behavior, structured
+    outputs, reproducible artifacts). Topology is last resort.
 
 ═══════════════════════════════════════════════════════════════════════
 6. CONTRACTS (hard center of the plan) — every applicable subtype, IDed CT#
@@ -329,6 +363,15 @@ TO-BE (machine-checkable facts, not adjectives):
 
   CT#: schema name, shape, additive vs breaking, Optional-narrowing rules
        mirrored in fixtures/tests
+
+  AUTHORITY: source of truth / mirrors / derived projections / conflict
+  winner if they disagree
+
+  DETERMINISTIC MECHANISM: schema, validator, constraint, migration,
+  state machine, or gate that enforces the contract
+
+  FAILURE SURFACE: structured warning/error/result/operator signal when
+  validation cannot pass or preconditions are partial
 
 6.4 Invariant (plan-local, distinct from skill invariants below)
 
@@ -386,7 +429,7 @@ Template — use for every step, no exceptions:
 
 ### Step S#: <title>
 
-Traces-to: G# (intent), CT# (contract(s))
+Traces-to: G# (intent), GAP# (verified gap), CT# (contract(s))
 
 Depends-on: S# | none          Parallelizable-with: S# | none
 
@@ -395,6 +438,15 @@ Target liveness: L?→L?
 Edit:
 
   - path: <file>      symbol: <fn/class>      change: <precise, one line>
+
+Degree of freedom closed (required for FIX/security/data-boundary work):
+
+  - <what could vary before and cause the bug/risk/scope leak>
+
+Deterministic mechanism:
+
+  - <file:symbol code/schema/gate/constraint that now makes the bad
+    state impossible or observable>
 
 Do:
 
@@ -455,6 +507,11 @@ the tests themselves:
               deny-reason code > free text (never sole oracle)
 
   Kill-check target: exact PRODUCER call site whose removal must fail it
+
+  C4 / mutation handoff: for non-trivial logic after C1/C2 green, name
+  the mutation target (producer removal, branch inversion, validator
+  removal, security gate removal, consumer removal) and the test that
+  must fail. A surviving mutation blocks shipped status.
 
   Two-sided: producer test AND paired consumer test both named
 
@@ -868,6 +925,11 @@ TASK:
 ═══════════════════════════════════════════════════════════════════════
 
 - Follow steps in S# order; honor Depends-on and Parallelizable-with.
+
+- For P2/P3 or risky data/security changes, work as a pair partner:
+  checkpoint before destructive edits, surface diffs frequently, and
+  require human approval for permission/security/data-boundary changes.
+  Subagents may collect bounded structured facts, not own implementation.
 
 - After each step, run its Exit criteria; never mark a step complete on
   a partial pass.

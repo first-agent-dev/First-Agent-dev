@@ -65,6 +65,7 @@ This section is deprecated as of ADR-14/15 (2026-07-11). Previously full per-fol
 
 **Maintained operator additions:**
 
+- [`knowledge/skills/feature-planning/SKILL.md`](./skills/feature-planning/SKILL.md): Large-feature and new-project orchestration skill combining source-grounded planning, deterministic authority, live-path tests, mutation, and minimal-code gates.
 - [`knowledge/instructions/03-live-server-ci-governance-plan-ru.md`](./instructions/03-live-server-ci-governance-plan-ru.md): Russian live-server plan for CI/security simulation, shipped harness verification, GitHub governance, worktree review, and patch application.
 - [`worklogs/implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md`](../worklogs/implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md): DRAFT plan for source-verified CLI, trace authority, liveness, and direct-container hardening.
 - [`worklogs/implementation-plans/PLAN-cli-trace-S1-session-lifecycle.md`](../worklogs/implementation-plans/PLAN-cli-trace-S1-session-lifecycle.md): READY design/verification subplan for session lifecycle, session authority paths, run binding, and clean-format cutover.
