@@ -344,6 +344,7 @@ C-библиотеки, привязки на десятки языков. Од�
   Один import даёт all-languages access:
   ```python
   from tree_sitter_language_pack import get_parser
+
   parser = get_parser("powershell")
   tree = parser.parse(b"function Foo { ... }")
   ```
@@ -629,16 +630,16 @@ callers, фиксируем абстракцию:
 ```python
 @dataclass(frozen=True)
 class Chunk:
-    path: str          # relative to repo root
-    anchor: str        # symbol name or heading slug or filename
-    lang: str          # detected language tag
-    body: str          # the chunk text
-    line_start: int    # 1-based, inclusive
-    line_end: int      # 1-based, inclusive
+    path: str  # relative to repo root
+    anchor: str  # symbol name or heading slug or filename
+    lang: str  # detected language tag
+    body: str  # the chunk text
+    line_start: int  # 1-based, inclusive
+    line_end: int  # 1-based, inclusive
+
 
 class Chunker(Protocol):
-    def chunk_file(self, path: pathlib.Path) -> list[Chunk]:
-        ...
+    def chunk_file(self, path: pathlib.Path) -> list[Chunk]: ...
 ```
 
 Implementation в v0.1 — `CompositeChunker` с per-language

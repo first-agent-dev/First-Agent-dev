@@ -216,13 +216,18 @@ class HookRegistry:
                         ),
                         current,
                     )
-                # Waiver: observer middleware must never break the tool
-                # pipeline; failure is logged.
-                except Exception as exc:  # noqa: BLE001  # pragma: no cover
-                    LOGGER.debug(
-                        "observer middleware failed: %s",
+                # An observer must never break the tool pipeline, so the catch
+                # is intentionally broad. It is reported at ERROR with the
+                # traceback attached, which is BLE001's documented contract for
+                # a legitimate broad catch ("exceptions that are logged with
+                # exc_info enabled will not be flagged") — so no waiver is
+                # needed. Same shape as ``EventBus.emit`` (output.py, Q23).
+                except Exception as exc:  # pragma: no cover
+                    LOGGER.error(
+                        "observer middleware %s raised: %s",
                         middleware.middleware_name,
-                        exc_info=exc,
+                        exc,
+                        exc_info=True,
                     )
                     self._record(
                         DispatchRecord(
@@ -245,10 +250,11 @@ class HookRegistry:
             return
         try:
             self._event_sink(record, payload)
-        # Waiver: event sink is observability, not control flow; failure
-        # is logged.
-        except Exception as exc:  # noqa: BLE001  # pragma: no cover
-            LOGGER.debug("hook_decision sink failed: %s", exc, exc_info=exc)
+        # The event sink is observability, not control flow: a failing sink
+        # must not abort dispatch. Reported at ERROR with the traceback, per
+        # the same BLE001 contract as the observer catch above.
+        except Exception as exc:  # pragma: no cover
+            LOGGER.error("hook_decision sink raised: %s", exc, exc_info=True)
 
     def _validate_middleware(self, middleware: Middleware, *, acting_family: str) -> None:
         is_guard = isinstance(middleware, GuardMiddleware)

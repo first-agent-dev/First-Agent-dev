@@ -268,7 +268,7 @@ def test_subagent_events_emitted_via_output_bus(tmp_path: Path) -> None:
     Tests the FIX-3 wiring: subagent_start and subagent_end must be emitted
     on the output_bus, not just logged to EventLog.
     """
-    from fa.inner_loop.context import set_current_session
+    from fa.inner_loop.context import reset_current_session, set_current_session
     from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
 
     log = EventLog(tmp_path / "events.jsonl", run_id="test-sub-c1")
@@ -288,42 +288,48 @@ def test_subagent_events_emitted_via_output_bus(tmp_path: Path) -> None:
     )
 
     # Set session context so spawn_subagent can find it
-    set_current_session(state)
+    token = set_current_session(state)
+    try:
+        # Mock SubagentRunner to avoid needing a real one
+        # It's imported locally inside the handler, so patch at the source module
+        with patch("fa.inner_loop.subagent_runner.SubagentRunner") as mock_runner_class:
+            from fa.inner_loop.subagent_envelope import SubagentEnvelope
 
-    # Mock SubagentRunner to avoid needing a real one
-    # It's imported locally inside the handler, so patch at the source module
-    with patch("fa.inner_loop.subagent_runner.SubagentRunner") as mock_runner_class:
-        from fa.inner_loop.subagent_envelope import SubagentEnvelope
+            mock_runner = MagicMock()
+            mock_envelope = SubagentEnvelope.from_verifier(
+                task_id="task-1",
+                exit_code=0,
+                stdout="verification passed",
+                duration_ms=150,
+                role="verifier",
+            )
+            mock_runner.run_stateless.return_value = mock_envelope
+            mock_runner_class.return_value = mock_runner
 
-        mock_runner = MagicMock()
-        mock_envelope = SubagentEnvelope.from_verifier(
-            task_id="task-1",
-            exit_code=0,
-            stdout="verification passed",
-            duration_ms=150,
-            role="verifier",
-        )
-        mock_runner.run_stateless.return_value = mock_envelope
-        mock_runner_class.return_value = mock_runner
+            tool = build_spawn_subagent_tool(tmp_path)
+            result = tool.handler(
+                {
+                    "task_id": "task-1",
+                    "command": "echo hello",
+                    "role": "verifier",
+                }
+            )
 
-        tool = build_spawn_subagent_tool(tmp_path)
-        result = tool.handler(
-            {
-                "task_id": "task-1",
-                "command": "echo hello",
-                "role": "verifier",
-            }
-        )
+        assert result.error is None, f"Subagent tool should succeed: {result}"
 
-    assert result.error is None, f"Subagent tool should succeed: {result}"
+        # Verify subagent_start was emitted
+        start_events = [e for e in capture.events if e.type == "subagent_start"]
+        assert len(start_events) >= 1, f"Expected subagent_start event. Types: {[e.type for e in capture.events]}"
+        assert start_events[0].data["task_id"] == "task-1"
 
-    # Verify subagent_start was emitted
-    start_events = [e for e in capture.events if e.type == "subagent_start"]
-    assert len(start_events) >= 1, f"Expected subagent_start event. Types: {[e.type for e in capture.events]}"
-    assert start_events[0].data["task_id"] == "task-1"
-
-    # Verify subagent_end was emitted
-    end_events = [e for e in capture.events if e.type == "subagent_end"]
-    assert len(end_events) >= 1, f"Expected subagent_end event. Types: {[e.type for e in capture.events]}"
-    assert end_events[0].data["task_id"] == "task-1"
-    assert end_events[0].data["ok"] is True
+        # Verify subagent_end was emitted
+        end_events = [e for e in capture.events if e.type == "subagent_end"]
+        assert len(end_events) >= 1, f"Expected subagent_end event. Types: {[e.type for e in capture.events]}"
+        assert end_events[0].data["task_id"] == "task-1"
+        assert end_events[0].data["ok"] is True
+    finally:
+        # The contextvar is process-global: without this reset the ambient
+        # SessionState leaks into every later test in the session. Found by
+        # tests/test_s7_cli_run_paths.py's invocation-isolation check (S7 Do #9),
+        # which failed in the full suite while passing alone.
+        reset_current_session(token)

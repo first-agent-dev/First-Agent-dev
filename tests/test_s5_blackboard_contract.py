@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -194,7 +195,7 @@ def test_blackboard_table_has_no_replace_semantics(tmp_path: Path) -> None:
     explicit pre-check raises before SQLite is asked to insert.
     """
     db = SessionDatabase(tmp_path / "session.db", session_id=_SESSION)
-    row = {
+    row: dict[str, Any] = {
         "id": "raw-dup",
         "session_id": _SESSION,
         "run_id": "",

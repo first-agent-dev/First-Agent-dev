@@ -1,6 +1,6 @@
 # PR #53 Edge-Case Audit — Shipped Code vs. Implementation Plan
 
-> **Created:** 2026-07-18  
+> **Created:** 2026-07-18
 > **Purpose:** Systematic comparison of the observability-fix implementation plan against the actual shipped code. Identifies gaps where the plan was only partially implemented, introduces new findings not in the original three-pass audit, and surfaces edge cases that arise from the interaction of multiple fixes.
 > **Method:** Read every modified source file, trace every code path, compare against the plan document.
 
@@ -36,7 +36,7 @@
 ## 2. New Findings — Not in Original Audit
 
 ### NEW-1: Compaction-enabled hard-stop paths missing `context_warn` console event
-**Severity:** Medium  
+**Severity:** Medium
 **Category:** Asymmetry bug — operator with compaction ON gets LESS console signal than with compaction OFF
 
 **Evidence:** In `coder_loop.py`, the non-compaction `stage3` path emits:
@@ -58,7 +58,7 @@ Both go directly to `finish()` without a console warning. The operator sees only
 ---
 
 ### NEW-2: Compaction circuit breaker has no console event
-**Severity:** Low-Medium  
+**Severity:** Low-Medium
 **Category:** Missing console signal for rare but important event
 
 **Evidence:** The `compaction_circuit_breaker` event is written to EventLog:
@@ -72,7 +72,7 @@ But no `OutputEvent` is emitted. The operator sees only `FAIL: context_budget_ha
 ---
 
 ### NEW-3: LOGIC-8 fix incomplete — `event_log_write_failed` RuntimeError not caught
-**Severity:** Medium  
+**Severity:** Medium
 **Category:** Logic error in existing fix
 
 **Evidence:** `SessionDatabase.append_event_row()` wraps ALL write failures:
@@ -100,7 +100,7 @@ if any(s in str(exc) for s in ("event_log_authority_unavailable", "event_log_wri
 ---
 
 ### NEW-4: Workflow aggregate export has `turns=0` in global_history
-**Severity:** Medium  
+**Severity:** Medium
 **Category:** Data accuracy — `fa stats --global-history` shows wrong turns for workflows
 
 **Evidence:** The aggregate export creates:
@@ -125,7 +125,7 @@ aggregate_outcome = _SO(
 ---
 
 ### NEW-5: `fa stats` doesn't parse `compaction_circuit_breaker` events
-**Severity:** Low  
+**Severity:** Low
 **Category:** Missing stats coverage
 
 The circuit breaker event is written to session.db but invisible in `fa stats`. An operator whose session died from the circuit breaker won't see it in the compaction section.
@@ -135,7 +135,7 @@ The circuit breaker event is written to session.db but invisible in `fa stats`. 
 ---
 
 ### NEW-6: `fa stats` doesn't parse `compaction_stage{2,3}_start` events
-**Severity:** Low  
+**Severity:** Low
 **Category:** Missing stats coverage — can't detect incomplete compactions
 
 Currently only `done/error` events are parsed. A `start` without a matching `done/error` indicates compaction crashed mid-way, but `fa stats` can't detect this.
@@ -145,12 +145,12 @@ Currently only `done/error` events are parsed. A `start` without a matching `don
 ---
 
 ### NEW-7: `fa stats --global-history` display truncates workflow role string
-**Severity:** Trivial  
+**Severity:** Trivial
 **Category:** Formatting
 
 `"planner→coder→eval"` overflows the 8-character `role` column:
 ```python
-f"{r.get('role',''):<8s}"
+f"{r.get('role', ''):<8s}"
 ```
 
 **Fix:** Increase column width or truncate with ellipsis.
@@ -158,7 +158,7 @@ f"{r.get('role',''):<8s}"
 ---
 
 ### NEW-8: `import sqlite3` inside `_initial_next_id` instead of top of state.py
-**Severity:** Trivial  
+**Severity:** Trivial
 **Category:** Style deviation from plan
 
 The implementation plan specified adding `import sqlite3` at the top of `state.py`. The actual code imports it inside the method. Functionally equivalent, but inconsistent.
@@ -166,7 +166,7 @@ The implementation plan specified adding `import sqlite3` at the top of `state.p
 ---
 
 ### NEW-9: `state.output_bus` is set after state creation, leaving a window where it's None
-**Severity:** Low (design concern, not current bug)  
+**Severity:** Low (design concern, not current bug)
 **Category:** Ordering risk
 
 `state = SessionState(...)` creates state with `output_bus=None`. Then `state.output_bus = output_bus` sets it later. Any code running between these two lines would see `output_bus=None`. Currently no such code exists, but future code could trip on this.
@@ -174,7 +174,7 @@ The implementation plan specified adding `import sqlite3` at the top of `state.p
 ---
 
 ### NEW-10: `spawn_subagent.py` doesn't emit `subagent_start`/`subagent_end` OutputEvents via `state.output_bus`
-**Severity:** Low (FIX-3 explicitly deferred in plan)  
+**Severity:** Low (FIX-3 explicitly deferred in plan)
 **Category:** Partially implemented feature
 
 The EventType literals and ConsoleRenderer handlers exist, but `spawn_subagent.py` doesn't call `state.output_bus.emit()`. The `state.output_bus` field is wired and available; the emit calls just need to be added.

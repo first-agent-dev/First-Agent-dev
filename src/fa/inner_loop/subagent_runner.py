@@ -20,7 +20,7 @@ import subprocess
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import fastjsonschema  # type: ignore[import-untyped]
 
@@ -29,6 +29,9 @@ from fa.inner_loop.subagent_envelope import (
     validate_envelope,
     write_envelope_artifact,
 )
+
+if TYPE_CHECKING:
+    from fa.observability.redaction import SecretRedactor
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +50,57 @@ class SubagentRunner:
         proxy_token: str | None = None,
         timeout: int = 30,
         limits: Any | None = None,  # RuntimeLimits
+        redactor: SecretRedactor | None = None,
     ):
         self.session_root = Path(session_root).resolve()
         self.proxy_token = proxy_token
         self.timeout = timeout
         self.validator = validate_envelope
         self.limits = limits
+        # S6.5 / S6-F7 (Q25 option (i)). Optional: an unconfigured caller
+        # degrades to "no masking", never to a crash.
+        self.redactor = redactor
         self._instance_spawn_count = 0
+
+    def _mask(self, text: str) -> str:
+        """Mask configured secrets in captured subagent output.
+
+        Applied ONCE, at the capture boundary in :meth:`run_stateless`, because
+        every downstream writer derives from that single string: ``summary``,
+        the ``stdout`` field, the ``.fa/subagents/<id>.json`` artifact,
+        ``worklog.md``, ``.fa/worklog-detailed.md``, and the ``EventLog`` trace
+        (via ``ToolResult.result = envelope.to_json()``). Masking here fixes all
+        of them at once and makes it structurally hard for a new writer to
+        reopen the hole; masking per-writer would leave some uncovered.
+
+        ``worklog.md`` matters most: it is **not** gitignored (``.gitignore:14``
+        is ``.fa/*``, which covers the artifact and ``worklog-detailed.md`` but
+        not ``worklog.md``), so before this slice a failing subagent that
+        printed a token wrote it into a committable file.
+
+        Limit, stated plainly rather than implied away: this masks *configured*
+        secrets and their base64/URL-encoded forms. It cannot mask a credential
+        the subagent's command itself materialises. Masking is a safety net,
+        not a containment boundary.
+
+        Relation to ADR-12. That ADR is explicit that ``SecretRedactor`` is a
+        best-effort filter and **not** the boundary — the boundary is container
+        separation (egress proxy) plus the scrubbed child env
+        (``bash_env.build_scrubbed_env``), which is why the subagent does not
+        inherit FA's provider keys at all. The model-facing channel has its own
+        chokepoint (``coder_loop._redact``, ADR-12 B2), verified still to mask
+        this payload independently of the call here. This masking therefore adds
+        the *persistence* layer ADR-12 left uncovered — artifact, worklogs, trace
+        — and is defense-in-depth on top of both, not a replacement for either.
+        """
+        if self.redactor is None:
+            return text
+        try:
+            return self.redactor.redact(text)
+        except Exception as exc:  # noqa: BLE001 # never let masking break the run
+            # Fail CLOSED: if masking failed we cannot prove the text is clean.
+            logger.warning("Subagent output redaction failed, withholding output: %s", exc)
+            return "[output withheld: redaction failed]"
 
     def _get_limits(self) -> Any:
         if self.limits is not None:
@@ -313,6 +360,12 @@ class SubagentRunner:
             stdout = raw_stdout if e.stdout else ""
             exit_code = -1
             output = f"Timeout {self.timeout}s, partial:\n{stdout[:8000]}"
+
+        # S6.5 / S6-F7 (Q25 option (i)): mask BEFORE the string reaches the
+        # envelope, so every downstream writer inherits it. Both branches above
+        # feed this — the timeout branch carries partial output and can leak
+        # just as easily as the normal one.
+        output = self._mask(output)
         duration_ms = int((time.time() - start) * 1000)
 
         envelope = SubagentEnvelope.from_verifier(

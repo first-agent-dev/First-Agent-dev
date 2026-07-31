@@ -56,6 +56,7 @@ hooks.register(
     )
 )
 
+
 # After:
 def _loop_guard_warn_sink(detector: str, message: str) -> None:
     """Emit loop_guard_warn event to EventLog."""
@@ -68,6 +69,7 @@ def _loop_guard_warn_sink(detector: str, message: str) -> None:
             )
         except Exception:  # noqa: BLE001 — observer must never block
             pass
+
 
 hooks.register(
     LoopGuard(
@@ -210,16 +212,10 @@ pyramid: A
 **Fix:**
 ```python
 # Before:
-session_dirs = sorted(
-    [d for d in runs_dir.iterdir() if d.is_dir() and (d / "events.jsonl").exists()],
-    ...
-)
+session_dirs = sorted([d for d in runs_dir.iterdir() if d.is_dir() and (d / "events.jsonl").exists()], ...)
 
 # After:
-session_dirs = sorted(
-    [d for d in runs_dir.iterdir() if d.is_dir() and (d / "session.db").exists()],
-    ...
-)
+session_dirs = sorted([d for d in runs_dir.iterdir() if d.is_dir() and (d / "session.db").exists()], ...)
 ```
 
 **Test plan:**
@@ -308,7 +304,7 @@ pyramid: A
    # After workflow completes:
    try:
        from fa.inner_loop.global_history import export_session_to_global_history
-       
+
        # Build aggregate row from all stages
        # Read ALL events from the shared session.db for telemetry
        log = EventLog(...)
@@ -365,13 +361,13 @@ EventType = Literal[
     "hook_deny",
     "api_retry",
     "session_end",
-    "context_warn",       # NEW — context budget approaching limit
-    "compaction_start",   # NEW — compaction stage starting
-    "compaction_end",     # NEW — compaction stage completed/failed
-    "subagent_start",     # NEW — subagent spawned
-    "subagent_end",       # NEW — subagent done/failed
-    "cost_alert",         # NEW — cost guardian threshold hit
-    "loop_warn",          # NEW — loop guard warning
+    "context_warn",  # NEW — context budget approaching limit
+    "compaction_start",  # NEW — compaction stage starting
+    "compaction_end",  # NEW — compaction stage completed/failed
+    "subagent_start",  # NEW — subagent spawned
+    "subagent_end",  # NEW — subagent done/failed
+    "cost_alert",  # NEW — cost guardian threshold hit
+    "loop_warn",  # NEW — loop guard warning
 ]
 ```
 
@@ -463,19 +459,25 @@ def _handle_context_warn(self, e: OutputEvent) -> None:
 ```python
 # After state.log.append(kind="compaction_stage2_start"):
 if output is not None:
-    output.emit(OutputEvent(
-        type="compaction_start",
-        turn=turn, max_turns=max_turns,
-        data={"stage": 2, "tokens_before": usage},
-    ))
+    output.emit(
+        OutputEvent(
+            type="compaction_start",
+            turn=turn,
+            max_turns=max_turns,
+            data={"stage": 2, "tokens_before": usage},
+        )
+    )
 
 # After state.log.append(kind="compaction_stage2_done"):
 if output is not None:
-    output.emit(OutputEvent(
-        type="compaction_end",
-        turn=turn, max_turns=max_turns,
-        data={"stage": 2, "tokens_before": usage, "tokens_after": post_mask_usage, "ok": True},
-    ))
+    output.emit(
+        OutputEvent(
+            type="compaction_end",
+            turn=turn,
+            max_turns=max_turns,
+            data={"stage": 2, "tokens_before": usage, "tokens_after": post_mask_usage, "ok": True},
+        )
+    )
 
 # Similarly for stage3 and error cases.
 ```
@@ -486,6 +488,7 @@ def _handle_compaction_start(self, e: OutputEvent) -> None:
     d = e.data
     stage = d.get("stage", "?")
     self._write(f"  {self._c('36', '🗜️')} compaction stage{stage}: context at {d.get('tokens_before', 0)} tokens")
+
 
 def _handle_compaction_end(self, e: OutputEvent) -> None:
     d = e.data
@@ -551,12 +554,15 @@ def _loop_guard_warn_sink(detector: str, message: str) -> None:
             pass
     if output_bus is not None:
         try:
-            output_bus.emit(OutputEvent(
-                type="loop_warn",
-                data={"detector": detector, "message": message},
-            ))
+            output_bus.emit(
+                OutputEvent(
+                    type="loop_warn",
+                    data={"detector": detector, "message": message},
+                )
+            )
         except Exception:
             pass
+
 
 hooks.register(LoopGuard(..., warn_sink=_loop_guard_warn_sink))
 ```
@@ -653,15 +659,18 @@ if budget_enabled:
     usage = estimate_tokens(messages_payload, tool_payload)
     decision = budget.check(usage)
     last_budget_ratio = decision.get("ratio", 0.0)
-    
+
     # Always emit per-turn context percentage at verbose+ (even without warn)
     if output is not None and self.detail in ("verbose", "debug"):
         if decision["action"] == "ok" and last_budget_ratio > 0.5:
-            output.emit(OutputEvent(
-                type="context_warn",
-                turn=turn, max_turns=max_turns,
-                data={"pct": round(last_budget_ratio * 100), "action": "ok", "message": ""},
-            ))
+            output.emit(
+                OutputEvent(
+                    type="context_warn",
+                    turn=turn,
+                    max_turns=max_turns,
+                    data={"pct": round(last_budget_ratio * 100), "action": "ok", "message": ""},
+                )
+            )
 ```
 
 Wait — `detail` is not available in `coder_loop.py`. It's a `ConsoleRenderer` attribute. The correct approach is to always emit the event, and let the renderer decide whether to display it:
@@ -669,11 +678,18 @@ Wait — `detail` is not available in `coder_loop.py`. It's a `ConsoleRenderer` 
 ```python
 # In coder_loop.py, after budget.check() every turn:
 if budget_enabled and output is not None:
-    output.emit(OutputEvent(
-        type="context_warn",
-        turn=turn, max_turns=max_turns,
-        data={"pct": round(last_budget_ratio * 100), "action": decision["action"], "message": decision.get("message", "")},
-    ))
+    output.emit(
+        OutputEvent(
+            type="context_warn",
+            turn=turn,
+            max_turns=max_turns,
+            data={
+                "pct": round(last_budget_ratio * 100),
+                "action": decision["action"],
+                "message": decision.get("message", ""),
+            },
+        )
+    )
 ```
 
 Then in `_handle_context_warn`, show `action=="ok"` only at `--detail verbose+`.

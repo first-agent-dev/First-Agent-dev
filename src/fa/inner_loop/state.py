@@ -211,6 +211,17 @@ class EventLog:
         """
         return session_db.event_count() + 1
 
+    @property
+    def redactor(self) -> SecretRedactor | None:
+        """The configured secret redactor, or ``None``.
+
+        Read-only accessor (S6.5): ``spawn_subagent`` needs the *same* redactor
+        the trace already uses so subagent output is masked by the same policy,
+        without constructing a second one or adding a new config surface. The
+        setter is deliberately absent — the redactor is fixed at construction.
+        """
+        return self._redactor
+
     def _redact_value(self, value: object) -> object:
         if self._redactor is None:
             return value

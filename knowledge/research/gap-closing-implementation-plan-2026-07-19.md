@@ -86,6 +86,7 @@ class FullLLMCompactor:
 ```python
 from fa.providers.chain import ProviderChain
 
+
 class FullLLMCompactor:
     def __init__(self, compactor_chain: ProviderChain | None = None):
         self.compactor_chain = compactor_chain
@@ -184,21 +185,23 @@ LogKind = Literal[
 # Rationale: EventLog is the audit trail (30 kinds, machine-readable).
 # EventBus is the console display (14 types, human-readable).
 # Only these log kinds require dual-write; the rest are audit-only.
-CONSOLE_MIRROR_KINDS: frozenset[LogKind] = frozenset({
-    "context_budget_warn",        # → context_warn
-    "context_budget_hard_stop",   # → context_warn (critical)
-    "compaction_stage2_start",    # → compaction_start
-    "compaction_stage2_done",     # → compaction_end
-    "compaction_stage2_error",    # → compaction_end (error)
-    "compaction_stage3_start",    # → compaction_start
-    "compaction_stage3_done",     # → compaction_end
-    "compaction_stage3_error",    # → compaction_end (error)
-    "compaction_circuit_breaker", # → compaction_end (circuit_breaker)
-    "tool_call",                  # → tool_call (shared name)
-    "subagent_spawn_done",        # → subagent_end
-    "subagent_spawn_fail",        # → subagent_end
-    "run_stopped",                # → session_end / hook_deny / api_retry
-})
+CONSOLE_MIRROR_KINDS: frozenset[LogKind] = frozenset(
+    {
+        "context_budget_warn",  # → context_warn
+        "context_budget_hard_stop",  # → context_warn (critical)
+        "compaction_stage2_start",  # → compaction_start
+        "compaction_stage2_done",  # → compaction_end
+        "compaction_stage2_error",  # → compaction_end (error)
+        "compaction_stage3_start",  # → compaction_start
+        "compaction_stage3_done",  # → compaction_end
+        "compaction_stage3_error",  # → compaction_end (error)
+        "compaction_circuit_breaker",  # → compaction_end (circuit_breaker)
+        "tool_call",  # → tool_call (shared name)
+        "subagent_spawn_done",  # → subagent_end
+        "subagent_spawn_fail",  # → subagent_end
+        "run_stopped",  # → session_end / hook_deny / api_retry
+    }
+)
 ```
 
 This replaces the vague I-TW-17 invariant with a precise, auditable enumeration.
@@ -397,27 +400,31 @@ All must pass. Commit.
 # Fail-closed safety flags: if the flag cannot be read, assume the
 # RESTRICTIVE setting. These flags control resource limits or safety
 # boundaries — a misread should err on the side of caution.
-FAIL_CLOSED_FLAGS: frozenset[str] = frozenset({
-    "context_budget_enabled",        # If unreadable, budget IS enabled → restrictive
-    "context_compaction_enabled",    # If unreadable, compaction OFF → restrictive (see F-10)
-    "subagent_spawning_enabled",     # If unreadable, spawning OFF → restrictive
-})
+FAIL_CLOSED_FLAGS: frozenset[str] = frozenset(
+    {
+        "context_budget_enabled",  # If unreadable, budget IS enabled → restrictive
+        "context_compaction_enabled",  # If unreadable, compaction OFF → restrictive (see F-10)
+        "subagent_spawning_enabled",  # If unreadable, spawning OFF → restrictive
+    }
+)
 
 # Fail-open convenience flags: if the flag cannot be read, assume the
 # PERMISSIVE setting. These flags control optional features — a misread
 # should not break functionality.
-FAIL_OPEN_FLAGS: frozenset[str] = frozenset({
-    "blackboard_enabled",            # If unreadable, blackboard ON → permissive
-    "telemetry_enabled",             # If unreadable, telemetry ON → permissive
-    "tool_batching_enabled",         # If unreadable, batching ON → permissive
-    "pty_pool_max_size",             # If unreadable, default size → permissive
-    "offload_threshold",             # If unreadable, default threshold → permissive
-    "worktree_mode",                 # If unreadable, shared mode → permissive
-    "fts_db_path",                   # If unreadable, default path → permissive
-    "prompt_caching",                # If unreadable, caching ON → permissive
-    "max_subagent_spawns_per_session",  # If unreadable, default limit → permissive
-    "blackboard_filtered_history_include_plans",  # If unreadable, no plans → permissive
-})
+FAIL_OPEN_FLAGS: frozenset[str] = frozenset(
+    {
+        "blackboard_enabled",  # If unreadable, blackboard ON → permissive
+        "telemetry_enabled",  # If unreadable, telemetry ON → permissive
+        "tool_batching_enabled",  # If unreadable, batching ON → permissive
+        "pty_pool_max_size",  # If unreadable, default size → permissive
+        "offload_threshold",  # If unreadable, default threshold → permissive
+        "worktree_mode",  # If unreadable, shared mode → permissive
+        "fts_db_path",  # If unreadable, default path → permissive
+        "prompt_caching",  # If unreadable, caching ON → permissive
+        "max_subagent_spawns_per_session",  # If unreadable, default limit → permissive
+        "blackboard_filtered_history_include_plans",  # If unreadable, no plans → permissive
+    }
+)
 ```
 
 ### Step 4.2: Create `read_flag()` helper
@@ -552,6 +559,7 @@ Add parsing for 12 currently-invisible log kinds. Add new dataclasses for ones t
 @dataclass(frozen=True)
 class CompactionTiming:
     """Start-to-done timing for a compaction stage."""
+
     stage: int
     start_ts: str = ""
     done_ts: str = ""
@@ -560,55 +568,71 @@ class CompactionTiming:
     tokens_after: int = 0
     error: str = ""
 
+
 @dataclass(frozen=True)
 class CircuitBreakerEvent:
     """Compaction circuit breaker trigger."""
+
     message: str = ""
+
 
 @dataclass(frozen=True)
 class RecoveryAction:
     """Recovery action taken by FailureClassifierObserver."""
+
     tool: str = ""
     error_type: str = ""
     action: str = ""
 
+
 @dataclass(frozen=True)
 class VerificationEvent:
     """Verifier result from VerifierObserver."""
+
     tool: str = ""
     verdict: str = ""
     detail: str = ""
 
+
 @dataclass(frozen=True)
 class CostObservation:
     """Cost tracking observation from CostGuardian."""
+
     cumulative_usd: float = 0.0
     budget_usd: float = 0.0
     pct: float = 0.0
 
+
 @dataclass(frozen=True)
 class ModelMessage:
     """Per-turn model I/O record."""
+
     turn: int
     in_tokens: int = 0
     out_tokens: int = 0
     finish_reason: str = ""
     text_preview: str = ""  # First 200 chars
 
+
 @dataclass(frozen=True)
 class UserMessage:
     """User message record."""
+
     text_preview: str = ""  # First 200 chars
+
 
 @dataclass(frozen=True)
 class AuditEvent:
     """Hook audit observation."""
+
     hook: str = ""
     decision: str = ""
+
 
 @dataclass(frozen=True)
 class TelemetryEvent:
     """Telemetry logging event."""
+
     tool_name: str = ""
     ok: bool = True
 ```
@@ -684,6 +708,7 @@ def count(self) -> int:
             pass
     # Fallback: count JSONL lines
     ...
+
 
 def tail(self, n: int = 5) -> tuple[TraceEvent, ...]:
     """Return the last n events efficiently."""
@@ -774,11 +799,13 @@ When an AI agent adds a new log kind, it MUST:
 Pylance flags omissions in steps 2 and 3. The contract check validates
 the full lifecycle (producer → consumer → test coverage).
 """
+
 from __future__ import annotations
 from typing import Annotated, Any, Literal, Union
 from pydantic import BaseModel, Field
 
 # ── Session lifecycle ──────────────────────────────────────────────────
+
 
 class RunStartedPayload(BaseModel):
     kind: Literal["run_started"]
@@ -786,11 +813,13 @@ class RunStartedPayload(BaseModel):
     max_turns: int
     temperature: float
 
+
 class RunStoppedPayload(BaseModel):
     kind: Literal["run_stopped"]
     reason: str
     turns: int = 0
     detail: str = ""
+
 
 class SessionSummaryPayload(BaseModel):
     kind: Literal["session_summary"]
@@ -802,11 +831,14 @@ class SessionSummaryPayload(BaseModel):
     output_tokens: int = 0
     cache_hit_ratio: float = 0.0
 
+
 # ── LLM I/O ────────────────────────────────────────────────────────────
+
 
 class UserMsgPayload(BaseModel):
     kind: Literal["user_msg"]
     text: str = ""
+
 
 class ModelMsgPayload(BaseModel):
     kind: Literal["model_msg"]
@@ -818,12 +850,14 @@ class ModelMsgPayload(BaseModel):
     cache_creation_input_tokens: int = 0
     out_tokens: int = 0
 
+
 class UsagePayload(BaseModel):
     kind: Literal["usage"]
     input_tokens: int
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
     output_tokens: int = 0
+
 
 class ProviderAttemptPayload(BaseModel):
     kind: Literal["provider_attempt"]
@@ -834,11 +868,14 @@ class ProviderAttemptPayload(BaseModel):
     error: str | None = None
     logical_call_id: str = ""
 
+
 # ── Tool I/O ───────────────────────────────────────────────────────────
+
 
 class ToolCallPayload(BaseModel):
     kind: Literal["tool_call"]
     params: dict[str, Any] = {}
+
 
 class ToolResultPayload(BaseModel):
     kind: Literal["tool_result"]
@@ -846,7 +883,9 @@ class ToolResultPayload(BaseModel):
     ok: bool = True
     error: dict[str, Any] | None = None
 
+
 # ── Hooks / guards ─────────────────────────────────────────────────────
+
 
 class HookDecisionPayload(BaseModel):
     kind: Literal["hook_decision"]
@@ -855,23 +894,28 @@ class HookDecisionPayload(BaseModel):
     decision: str = ""
     reason: str = ""
 
+
 class LoopGuardWarnPayload(BaseModel):
     kind: Literal["loop_guard_warn"]
     detector: str = ""
     message: str = ""
+
 
 class AuditPayload(BaseModel):
     kind: Literal["audit"]
     # Content varies by hook — keep flexible
     content: dict[str, Any] = {}
 
+
 # ── Context budget ─────────────────────────────────────────────────────
+
 
 class ContextBudgetWarnPayload(BaseModel):
     kind: Literal["context_budget_warn"]
     action: str = ""
     ratio: float = 0.0
     message: str = ""
+
 
 class ContextBudgetHardStopPayload(BaseModel):
     kind: Literal["context_budget_hard_stop"]
@@ -880,34 +924,42 @@ class ContextBudgetHardStopPayload(BaseModel):
     limit_tokens: int = 0
     threshold: int = 0
 
+
 # ── Compaction ─────────────────────────────────────────────────────────
+
 
 class CompactionWarningPayload(BaseModel):
     kind: Literal["compaction_warning"]
     message: str = ""
 
+
 class CompactionCircuitBreakerPayload(BaseModel):
     kind: Literal["compaction_circuit_breaker"]
     message: str = ""
+
 
 class CompactionStage2StartPayload(BaseModel):
     kind: Literal["compaction_stage2_start"]
     tokens_before: int = 0
     threshold: int = 0
 
+
 class CompactionStage2DonePayload(BaseModel):
     kind: Literal["compaction_stage2_done"]
     tokens_before: int = 0
     tokens_after: int = 0
 
+
 class CompactionStage2ErrorPayload(BaseModel):
     kind: Literal["compaction_stage2_error"]
     error: str = ""
+
 
 class CompactionStage3StartPayload(BaseModel):
     kind: Literal["compaction_stage3_start"]
     tokens_before: int = 0
     threshold: int = 0
+
 
 class CompactionStage3DonePayload(BaseModel):
     kind: Literal["compaction_stage3_done"]
@@ -915,11 +967,14 @@ class CompactionStage3DonePayload(BaseModel):
     tokens_after: int = 0
     summary: str = ""
 
+
 class CompactionStage3ErrorPayload(BaseModel):
     kind: Literal["compaction_stage3_error"]
     error: str = ""
 
+
 # ── Subagent ───────────────────────────────────────────────────────────
+
 
 class SubagentSpawnStartPayload(BaseModel):
     kind: Literal["subagent_spawn_start"]
@@ -929,6 +984,7 @@ class SubagentSpawnStartPayload(BaseModel):
     workdir: str = ""
     env_keys: list[str] = []
 
+
 class SubagentSpawnDonePayload(BaseModel):
     kind: Literal["subagent_spawn_done"]
     task_id: str = ""
@@ -937,26 +993,32 @@ class SubagentSpawnDonePayload(BaseModel):
     duration_ms: int = 0
     verification: str = ""
 
+
 class SubagentSpawnFailPayload(BaseModel):
     kind: Literal["subagent_spawn_fail"]
     task_id: str = ""
     role: str = ""
     error: str = ""
 
+
 # ── Observability / recovery ──────────────────────────────────────────
+
 
 class RecoveryActionPayload(BaseModel):
     kind: Literal["recovery_action"]
     # Content varies by recovery type
     content: dict[str, Any] = {}
 
+
 class VerificationPayload(BaseModel):
     kind: Literal["verification"]
     content: dict[str, Any] = {}
 
+
 class CostObservationPayload(BaseModel):
     kind: Literal["cost_observation"]
     content: dict[str, Any] = {}
+
 
 class TelemetryPayload(BaseModel):
     kind: Literal["telemetry"]
@@ -965,22 +1027,29 @@ class TelemetryPayload(BaseModel):
     artifact_id: str = ""
     turn: int = 0
 
+
 # ── Infrastructure ─────────────────────────────────────────────────────
+
 
 class ServiceUnavailablePayload(BaseModel):
     kind: Literal["service_unavailable"]
     content: dict[str, Any] = {}
 
+
 class TimeoutPayload(BaseModel):
     kind: Literal["timeout"]
     content: dict[str, Any] = {}
 
+
 # ── Fallback for unknown/future kinds ─────────────────────────────────
+
 
 class UnknownLogPayload(BaseModel):
     """Catch-all for kinds not yet in the typed schema."""
+
     kind: str  # unconstrained
     content: dict[str, Any] = {}
+
 
 # ── The discriminated unions ──────────────────────────────────────────
 
@@ -1034,21 +1103,23 @@ LogEvent = Annotated[
 # Which kinds MUST also emit an OutputEvent. Defined here as a
 # ClassVar on each payload class so the contract check can read
 # it from the type definition — single source of truth.
-CONSOLE_MIRROR_KINDS: frozenset[str] = frozenset({
-    "context_budget_warn",
-    "context_budget_hard_stop",
-    "compaction_stage2_start",
-    "compaction_stage2_done",
-    "compaction_stage2_error",
-    "compaction_stage3_start",
-    "compaction_stage3_done",
-    "compaction_stage3_error",
-    "compaction_circuit_breaker",
-    "tool_call",
-    "subagent_spawn_done",
-    "subagent_spawn_fail",
-    "run_stopped",
-})
+CONSOLE_MIRROR_KINDS: frozenset[str] = frozenset(
+    {
+        "context_budget_warn",
+        "context_budget_hard_stop",
+        "compaction_stage2_start",
+        "compaction_stage2_done",
+        "compaction_stage2_error",
+        "compaction_stage3_start",
+        "compaction_stage3_done",
+        "compaction_stage3_error",
+        "compaction_circuit_breaker",
+        "tool_call",
+        "subagent_spawn_done",
+        "subagent_spawn_fail",
+        "run_stopped",
+    }
+)
 ```
 
 ### Step 6.2: Add `parse_trace_event()` boundary function
@@ -1057,6 +1128,7 @@ CONSOLE_MIRROR_KINDS: frozenset[str] = frozenset({
 # In src/fa/events.py
 
 from fa.inner_loop.state import TraceEvent
+
 
 def parse_trace_event(raw: TraceEvent) -> LogEvent:
     """Parse a raw TraceEvent into a typed LogEvent variant.
@@ -1125,6 +1197,7 @@ Benefits:
 @dataclass
 class _SessionExtensions:
     """Internal holder — None until __post_init__ fills them."""
+
     feature_flags: FeatureFlags | None = None
     output_bus: EventBus | None = None
     transaction: Transaction | None = None
@@ -1134,6 +1207,7 @@ class _SessionExtensions:
     pty_pool: Any | None = None  # PtyPool — optional module
     worktree_manager: WorktreeManager | None = None
     session_db: SessionDatabase | None = None
+
 
 @dataclass
 class SessionState:
@@ -1200,7 +1274,9 @@ class CompactionEndData(BaseModel):
     tokens_after: int = 0
     error: str = ""
 
+
 # ... one per EventType ...
+
 
 class ConsoleRenderer:
     def on_event(self, event: OutputEvent) -> None:

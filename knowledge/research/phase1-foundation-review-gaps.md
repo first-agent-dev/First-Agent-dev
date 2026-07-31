@@ -26,8 +26,11 @@ tier: stable
 **Current plan:**
 ```python
 def _sanitize_task_id(task_id) -> str:
-    sanitized = re.sub(..., task_id)[:50].strip('-').lower()
-    if not sanitized: return f"task-{uuid4().hex[:8]}"  # random each call
+    sanitized = re.sub(..., task_id)[:50].strip("-").lower()
+    if not sanitized:
+        return f"task-{uuid4().hex[:8]}"  # random each call
+
+
 worktree_path = root / _sanitize_task_id(task_id)
 branch = f"agent/{_sanitize_task_id(task_id)}"  # calls twice -> two different uuids!
 ```

@@ -359,15 +359,15 @@ Restricted tools (`git_add`, `git_commit`, `git_init`) require explicit firewall
 ```python
 @dataclass
 class FileMeta:
-    last_accessed: str       # ISO timestamp
+    last_accessed: str  # ISO timestamp
     access_count: int
-    last_verified: str       # ISO timestamp of last fact-check
+    last_verified: str  # ISO timestamp of last fact-check
     tags: List[str]
-    summary: str             # ≤200 chars
-    source_layer: str        # L0-L7
+    summary: str  # ≤200 chars
+    source_layer: str  # L0-L7
     project: Optional[str]
     embedding: Optional[List[float]]  # cached 1024d (BGE-M3)
-    stale: bool              # set by staleness detector
+    stale: bool  # set by staleness detector
 ```
 
 `backfill_meta()` bootstraps `_meta.json` for existing knowledge dirs. `update_access()` is called on every `knowledge_read` tool call. The 384d/1024d cached embedding column avoids re-embedding the same file every retrieval.
@@ -441,6 +441,7 @@ class FileMeta:
 ```python
 _GLINER_MODEL: Any = None
 _GLINER_LOAD_LOCK = threading.Lock()
+
 
 def _get_gliner_model():
     global _GLINER_MODEL

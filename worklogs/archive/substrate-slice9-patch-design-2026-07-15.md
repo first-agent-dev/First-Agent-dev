@@ -210,6 +210,7 @@ CREATE INDEX IF NOT EXISTS idx_runs_updated_at ON runs(updated_at);
 ```python
 try:
     from fa.inner_loop.global_history import export_session_to_global_history
+
     export_session_to_global_history(
         run_id=run_id,
         outcome=outcome,

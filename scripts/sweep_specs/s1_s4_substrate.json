@@ -1,0 +1,69 @@
+{
+  "slice": "S1-S4",
+  "note": "Session manager, session_db authority, stats. Every mutation below neutralises a guard that a plan or ADR claims is enforced. Tests are the full suite: the question is whether ANY test notices, not whether a chosen file does.",
+  "mutations": [
+    {
+      "id": "S1-M1",
+      "file": "src/fa/session/manager.py",
+      "old": "        if not self._under(resolved, root):\n            raise SessionManagerError(\"path_escape\", f\"{label} path escapes approved root: {resolved}\")",
+      "new": "        pass",
+      "why": "path-escape guard on manifest-declared paths: a manifest pointing outside the approved root would be accepted"
+    },
+    {
+      "id": "S1-M2",
+      "file": "src/fa/session/manager.py",
+      "old": "        if not self._under(path, self.workspace_root):\n            raise SessionManagerError(\"workspace_escape\", f\"workspace escapes approved root: {path}\")",
+      "new": "        pass",
+      "why": "workspace-override escape guard: --workspace outside the root would be accepted"
+    },
+    {
+      "id": "S1-M3",
+      "file": "src/fa/session/manager.py",
+      "old": "        if data.get(\"session_id\") != expected_session_id:\n            raise SessionManagerError(\"manifest_identity_mismatch\", f\"session ID mismatch at {path}\")",
+      "new": "        pass",
+      "why": "manifest identity binding: a manifest could claim another session's id"
+    },
+    {
+      "id": "S1-M4",
+      "file": "src/fa/session/manager.py",
+      "old": "        if db_path != expected_db:\n            raise SessionManagerError(\"manifest_path_mismatch\", f\"session DB path is not canonical: {path}\")",
+      "new": "        pass",
+      "why": "canonical DB-path binding: a manifest could redirect the session DB to another session's file"
+    },
+    {
+      "id": "S1-M5",
+      "file": "src/fa/session/manager.py",
+      "old": "            if owner_workspace == workspace_path:\n                raise SessionManagerError(\n                    \"workspace_already_owned\",\n                    f\"workspace {workspace_path} already belongs to session {owner_id}\",\n                )",
+      "new": "            pass",
+      "why": "reverse workspace-ownership check: two sessions could co-own one workspace"
+    },
+    {
+      "id": "S1-M6",
+      "file": "src/fa/session/manager.py",
+      "old": "        if data.get(\"status\") != \"active\":",
+      "new": "        if False:",
+      "why": "archived/closed sessions would be resumable as active"
+    },
+    {
+      "id": "S1-M7",
+      "file": "src/fa/session/manager.py",
+      "old": "        if data.get(\"schema_version\") != _SESSION_SCHEMA_VERSION:",
+      "new": "        if False:",
+      "why": "schema-version gate: a future/older manifest shape would be read as current"
+    },
+    {
+      "id": "S1-M8",
+      "file": "src/fa/session/manager.py",
+      "old": "        if not isinstance(value, str) or fullmatch(_SESSION_ID_PATTERN, value) is None:",
+      "new": "        if False:",
+      "why": "session-id validation: path-traversal-shaped ids ('../x') would reach the filesystem"
+    },
+    {
+      "id": "S1-M9",
+      "file": "src/fa/session/manager.py",
+      "old": "        if not isinstance(value, str) or fullmatch(_RUN_ID_PATTERN, value) is None:",
+      "new": "        if False:",
+      "why": "run-id validation, same traversal surface as the session id"
+    }
+  ]
+}

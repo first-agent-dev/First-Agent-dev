@@ -86,14 +86,17 @@ The [Pydantic discriminated unions](https://docs.pydantic.dev/latest/concepts/un
 from typing import Literal, Annotated, Union
 from pydantic import BaseModel, Field
 
+
 class CompactionStage2Done(BaseModel):
     kind: Literal["compaction_stage2_done"]
     tokens_before: int
     tokens_after: int
 
+
 class CompactionStage2Error(BaseModel):
     kind: Literal["compaction_stage2_error"]
     error: str
+
 
 # The discriminator field routes parsing automatically
 LogEvent = Annotated[
@@ -119,10 +122,11 @@ class KnownLogEvent(BaseModel):
     kind: str  # unconstrained — catches unknown kinds
     content: dict[str, Any]
 
+
 LogEvent = Annotated[
     Union[
         KnownDiscriminatedEvents,  # typed variants with Literal kinds
-        KnownLogEvent,             # fallback for unknown kinds
+        KnownLogEvent,  # fallback for unknown kinds
     ],
     Field(union_mode="left_to_right"),
 ]
@@ -140,8 +144,8 @@ This gives you **type safety for known events AND graceful degradation for new/u
 ```python
 @dataclass(frozen=True, slots=True)
 class TraceEvent:
-    kind: str                          # 30 possible values, untyped
-    content: Mapping[str, object]      # open schema, untyped
+    kind: str  # 30 possible values, untyped
+    content: Mapping[str, object]  # open schema, untyped
 ```
 
 **Target state** (discriminated union with typed payloads):
@@ -154,11 +158,13 @@ from pydantic import BaseModel, Field
 
 # ── Typed event payloads (one per log kind) ──────────────────────────
 
+
 class RunStartedPayload(BaseModel):
     kind: Literal["run_started"]
     role: str
     max_turns: int
     temperature: float
+
 
 class UsagePayload(BaseModel):
     kind: Literal["usage"]
@@ -167,14 +173,17 @@ class UsagePayload(BaseModel):
     cache_creation_input_tokens: int
     output_tokens: int
 
+
 class CompactionStage2DonePayload(BaseModel):
     kind: Literal["compaction_stage2_done"]
     tokens_before: int
     tokens_after: int
 
+
 class CompactionStage2ErrorPayload(BaseModel):
     kind: Literal["compaction_stage2_error"]
     error: str
+
 
 class ContextBudgetWarnPayload(BaseModel):
     kind: Literal["context_budget_warn"]
@@ -182,13 +191,16 @@ class ContextBudgetWarnPayload(BaseModel):
     ratio: float
     message: str
 
+
 # ... one class per log kind (30 total) ...
 
 # ── Fallback for unknown/future kinds ────────────────────────────────
 
+
 class UnknownLogPayload(BaseModel):
     kind: str  # unconstrained
     content: dict[str, Any]
+
 
 # ── The discriminated union ──────────────────────────────────────────
 
@@ -206,8 +218,8 @@ KnownLogEvent = Annotated[
 
 LogEvent = Annotated[
     Union[
-        KnownLogEvent,        # typed — validates payload shape
-        UnknownLogPayload,    # fallback — unknown kinds still parse
+        KnownLogEvent,  # typed — validates payload shape
+        UnknownLogPayload,  # fallback — unknown kinds still parse
     ],
     Field(union_mode="left_to_right"),
 ]
@@ -236,6 +248,7 @@ class SessionStartData(BaseModel):
     role: str
     family: str = ""
 
+
 class CompactionEndData(BaseModel):
     type: Literal["compaction_end"]
     stage: int
@@ -243,6 +256,7 @@ class CompactionEndData(BaseModel):
     tokens_before: int = 0
     tokens_after: int = 0
     error: str = ""
+
 
 # ... one class per EventType ...
 
@@ -298,6 +312,7 @@ from typing import Protocol, TYPE_CHECKING
 
 # ── Phase 1: Raw state (what tests construct) ────────────────────────
 
+
 @dataclass
 class SessionState:
     """Immutable-core + lazy-extensions pattern.
@@ -305,6 +320,7 @@ class SessionState:
     Core fields are always present. Extensions are phased in
     during construction by cli.py or the test factory.
     """
+
     workspace_root: Path
     run_id: str
     log: EventLog
@@ -333,10 +349,7 @@ class SessionState:
         """Always available — factory guarantees initialization."""
         val = self._extensions.output_bus
         if val is None:
-            raise RuntimeError(
-                "output_bus not initialized — set via state.output_bus = bus "
-                "or pass in constructor"
-            )
+            raise RuntimeError("output_bus not initialized — set via state.output_bus = bus or pass in constructor")
         return val
 
     # ... same pattern for all 9 fields ...
@@ -345,6 +358,7 @@ class SessionState:
 @dataclass
 class _SessionExtensions:
     """Internal holder for lazily-initialized extensions."""
+
     feature_flags: FeatureFlags | None = None
     output_bus: EventBus | None = None
     transaction: Transaction | None = None

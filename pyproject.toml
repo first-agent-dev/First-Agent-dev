@@ -225,15 +225,45 @@ exclude_lines = [
 # mutmut 3.x key names (the 2.x `paths_to_mutate` / `tests_dir` keys are
 # deprecated aliases and the 2.x CLI flags were REMOVED — passing
 # `--paths-to-mutate` errors out; see tests.yml history note).
-# Scope: high-risk sandbox modules first; expand as modules are hardened.
 # Survivor-clearing tracker: knowledge/mutation-survivors-workplan.md
-source_paths = ["src/fa/sandbox"]
+#
+# Scope (S6.6b, Q26 option (c) — operator decision 2026-07-29): sandbox PLUS
+# the guard-dense CLI-trace substrate. Until S6.6 the scope was sandbox-only,
+# so the substrate had NEVER been mutation tested; a targeted sweep then found
+# 8 deletable security guards in `session/manager.py` with the whole suite
+# green. These four paths are where that sweep found real defects.
+#
+# Deliberately NOT the whole `src` tree. Measured: `src/fa` is ~42x the AST
+# nodes of the sandbox (~26,600 mutants); at the 124 s suite time that is
+# ~916 h, and even an optimistic 1 s/mutant exceeds the 6 h GitHub job cap
+# (`tests.yml` sets no `timeout-minutes`). Whole-`src` therefore needs the
+# sharded design recorded as Q26 option (d), not a config edit.
+#
+# Substrate survivors are tracked in their OWN section of the workplan so the
+# sandbox table — whose emptying is the BACKLOG I-23 trigger that flips
+# `tests.yml` to blocking — keeps its original meaning.
+source_paths = [
+  "src/fa/sandbox",
+  "src/fa/session",
+  "src/fa/inner_loop/state.py",
+  "src/fa/inner_loop/subagent_envelope.py",
+  "src/fa/inner_loop/subagent_runner.py",
+]
+# Test selection is per-scope: the sandbox suites cannot exercise the substrate
+# modules, so the substrate's own suites are listed alongside them. A mutant in
+# `state.py` run against sandbox-only tests would "survive" vacuously.
 pytest_add_cli_args_test_selection = [
   "tests/test_sandbox_classifier.py",
   "tests/test_sandbox_validators.py",
   "tests/test_sandbox_bash_gate.py",
   "tests/test_sandbox_path_containment.py",
   "tests/test_sandbox_secret_paths.py",
+  "tests/test_session_lifecycle.py",
+  "tests/test_session_manifest_guards.py",
+  "tests/test_s5_event_identity.py",
+  "tests/test_s5_state_root_contract.py",
+  "tests/test_s6_subagent_fidelity.py",
+  "tests/test_subagent_runner.py",
 ]
 
 # ---------------------------------------------------------------------------
@@ -294,7 +324,28 @@ ignore-signatures = true   # similar function signatures are not duplication
 # CI keeps using mutmut on Linux (tests.yml); this is the Windows-dev mirror.
 # ---------------------------------------------------------------------------
 [tool.pytest-gremlins]
-paths = ["src/fa/sandbox"]
+# Scope mirrors [tool.mutmut] (S6.6b). Measured 2026-07-29 against the real
+# suite — `src/fa/session` 119/120 zapped (1 error, 0 survived),
+# subagent_envelope+subagent_runner 73/73, `state.py` 94/94.
+#
+# gremlins and `scripts/mutation_sweep.py` are COMPLEMENTARY, not redundant:
+# the operator set below mutates expressions (flip a comparison, negate a
+# boolean), while the sweep DELETES whole guard statements. Introspecting the
+# plugin confirms it ships no statement-deletion operator, which is why it
+# reports 0 survivors on the same `manager.py` where the sweep found 8. Neither
+# tool's clean run is evidence for the other's mutation class.
+#
+# Verification note: a gremlins run whose tests fail to COLLECT still prints a
+# kill percentage — an earlier run here reported "Zapped: 120 gremlins (100%)"
+# with zero tests executed. Always confirm the "N passed" line before believing
+# a score.
+paths = [
+  "src/fa/sandbox",
+  "src/fa/session",
+  "src/fa/inner_loop/state.py",
+  "src/fa/inner_loop/subagent_envelope.py",
+  "src/fa/inner_loop/subagent_runner.py",
+]
 operators = ["comparison", "arithmetic", "boolean", "boundary", "return"]
 exclude = ["**/test_*", "**/__init__.py"]
 report = ["console", "html"]

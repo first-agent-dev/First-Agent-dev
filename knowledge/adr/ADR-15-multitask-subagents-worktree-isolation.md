@@ -69,9 +69,13 @@ We will choose **Option B — Full Cursor-like but phased: v0.1 SharedDir + 1 su
 2. **Profiles Dynamic Toolset:**
    ```python
    PROFILES = {
-     "researcher": {"tools": ["fs.glob","fs.grep","fs.read_file","fs.instant_grep"], "max_tokens":600, "stateless":True},
-     "verifier": {"tools": ["fs.run_bash"], "max_tokens":200, "stateless":True},
-     "code-reviewer": {"tools": ["fs.read_file","fs.grep"]},
+       "researcher": {
+           "tools": ["fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep"],
+           "max_tokens": 600,
+           "stateless": True,
+       },
+       "verifier": {"tools": ["fs.run_bash"], "max_tokens": 200, "stateless": True},
+       "code-reviewer": {"tools": ["fs.read_file", "fs.grep"]},
    }
    ```
    Main chooses at spawn, ToolRegistry per subagent only 1-4 tools, cache-key = role_id + hash(tool_defs) solves internal contradiction.
@@ -131,4 +135,3 @@ We will choose **Option B — Full Cursor-like but phased: v0.1 SharedDir + 1 su
 - Claude Code worktree isolation bugs #55708, #47548, #31546 + defensive checks
 - final-review-gaps-high-roi-metaharnesses-july2026.md Gaps 4,6,8,10,11
 - metaharness-phase1-decisions.md Q&A
-

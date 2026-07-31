@@ -211,7 +211,14 @@ def _handle_spawn_subagent(root: Path, params: Mapping[str, object]) -> ToolResu
     try:
         from fa.inner_loop.subagent_runner import SubagentRunner
 
-        runner = SubagentRunner(session_root=root, timeout=60)
+        # S6.5 / Q25(i): reuse the redactor the EventLog already applies, so
+        # subagent output is masked by the same policy as the trace. None is a
+        # supported configuration and degrades to no masking.
+        runner = SubagentRunner(
+            session_root=root,
+            timeout=60,
+            redactor=session.log.redactor if session.log is not None else None,
+        )
         envelope = runner.run_stateless(
             task_id=task_id,
             command=command,

@@ -710,9 +710,7 @@ def _sanitize_single_tool(tool: dict) -> dict:
         if "properties" not in top or not isinstance(top.get("properties"), dict):
             top["properties"] = {}
     fn["parameters"] = strip_nullable_unions(fn["parameters"], keep_nullable_hint=True)
-    fn["parameters"] = _strip_top_level_combinators(
-        fn["parameters"], path=fn.get("name", "<tool>")
-    )
+    fn["parameters"] = _strip_top_level_combinators(fn["parameters"], path=fn.get("name", "<tool>"))
     return out
 ```
 
@@ -1358,7 +1356,9 @@ def check_budget(self, session_id: str = "") -> tuple[bool, str]:
     if daily_cost >= self.daily_limit * 0.8:
         log.info(
             "Cost guardian: daily budget at %.0f%% ($%.2f / $%.2f)",
-            (daily_cost / self.daily_limit) * 100, daily_cost, self.daily_limit,
+            (daily_cost / self.daily_limit) * 100,
+            daily_cost,
+            self.daily_limit,
         )
 
     return True, ""
@@ -1546,10 +1546,7 @@ A-tier pattern: stable `stop_message()` prefixes.
 ```python
 # dpc-messenger/.../guards.py:40–44 (RoundLimitGuard)
 def stop_message(self) -> str:
-    return (
-        f"[ROUND_LIMIT] Task exceeded MAX_ROUNDS ({self._max_rounds}). "
-        "Consider breaking into smaller tasks."
-    )
+    return f"[ROUND_LIMIT] Task exceeded MAX_ROUNDS ({self._max_rounds}). Consider breaking into smaller tasks."
 ```
 
 ```python

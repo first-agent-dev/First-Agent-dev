@@ -9,9 +9,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, wait
+from dataclasses import dataclass
 from pathlib import Path
+from typing import overload, override
 
 from fa.inner_loop.context import reset_current_session, set_current_session
 from fa.inner_loop.hooks.base import (
@@ -247,11 +249,13 @@ def _execute_one_sequential(
     state: SessionState,
     role: str,
     acting_family: str,
-) -> tuple[ToolResult, bool]:
+) -> tuple[ToolResult, StopInfo | None]:
     """Execute single call sequential with BEFORE/AFTER hooks.
 
-    Returns (result, should_stop). should_stop True when AFTER_TOOL_EXEC denies.
-    Result is always returned (paired rows) even when should_stop.
+    Returns ``(result, stop)``. ``stop`` is a :class:`StopInfo` when
+    AFTER_TOOL_EXEC denies, else ``None``. The result is always returned
+    (paired rows) even when stopping — the denial is about what happens *next*,
+    not about discarding what already ran.
     """
     log = state.require_log()
     state.record_tool_call(call)
@@ -264,7 +268,7 @@ def _execute_one_sequential(
         result = default_tool_result_for_denial(str(exc))
         state.record_tool_result(call, result)
         state.observations.append(result.summary)
-        return result, False
+        return result, None
 
     effective_call = payload.tool_call
     if effective_call is None:
@@ -278,7 +282,7 @@ def _execute_one_sequential(
             pass
         state.record_tool_result(call, result)
         state.observations.append(result.summary)
-        return result, False
+        return result, None
 
     result = registry.dispatch(effective_call)
     payload = payload.with_tool_result(result)
@@ -292,11 +296,13 @@ def _execute_one_sequential(
         )
         state.record_tool_result(effective_call, result)
         state.observations.append(result.summary)
-        return result, True  # Signal stop but result preserved
+        # Result preserved; the stop reason travels back in-band so the caller
+        # does not have to re-read the log to discover it (S6-F4).
+        return result, StopInfo(point=LifecyclePoint.AFTER_TOOL_EXEC.value, reason=str(exc))
 
     state.record_tool_result(effective_call, result)
     state.observations.append(result.summary)
-    return result, False
+    return result, None
 
 
 def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain graceful degradation, documented, will split Phase 3 per Paper 2 §4.4
@@ -306,8 +312,11 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
     state: SessionState,
     role: str,
     acting_family: str,
-) -> list[ToolResult] | None:
+) -> tuple[list[ToolResult] | None, StopInfo | None]:
     """Execute read-only batch in parallel, preserve order, synthetic error for orphaned.
+
+    Returns ``(results, stop)``. The stop is returned rather than left for the
+    caller to infer from the log (S6-F4).
 
     Fixed for FIND-012: denied results must be preserved in returned tuple in original order.
     """
@@ -425,10 +434,82 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
                 "reason": str(post_exec_denied),
             },
         )
-        # Preserve denied results; run_session detects the run_stopped log.
-        return ordered_results
+        # Preserve denied results; the stop travels back in-band.
+        return ordered_results, StopInfo(point=LifecyclePoint.AFTER_TOOL_EXEC.value, reason=str(post_exec_denied))
 
-    return ordered_results
+    return ordered_results, None
+
+
+@dataclass(frozen=True)
+class StopInfo:
+    """Why a session stopped early — explicit, in-band, and typed.
+
+    Plain data on purpose. ``loop.py`` is the deterministic non-LLM root and
+    must not acquire a display dependency (Q12, ``output.py:126-149``), so the
+    stop travels as a *value* and the composition root decides whether to
+    render it.
+    """
+
+    point: str
+    reason: str
+
+
+@dataclass(frozen=True, eq=False)
+class SessionRun(Sequence[ToolResult]):
+    """The results of one ``run_session`` call, plus why it stopped.
+
+    **Sequence-compatible by design.** This follows CPython's ``os.stat_result``
+    / ``time.struct_time`` pattern: the object *is* the results sequence
+    (``len``, indexing and iteration all measure ``results``) and *carries* the
+    new field as a named attribute. ``os.stat()`` grew fields for decades
+    without breaking ``st[0]`` or ``len(st)``; the same property is what makes
+    this change safe here.
+
+    A bare ``(results, stop)`` tuple was measured and rejected: an existing
+    ``assert len(results) == 2`` in a two-call test would have kept passing
+    while silently measuring the pair instead of the results (Q24). A test that
+    stays green while it stops testing what it claims is worse than one that
+    breaks.
+    """
+
+    results: tuple[ToolResult, ...]
+    stop: StopInfo | None = None
+
+    @override
+    def __len__(self) -> int:
+        return len(self.results)
+
+    @overload
+    def __getitem__(self, index: int) -> ToolResult: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[ToolResult]: ...
+
+    @override
+    def __getitem__(self, index: int | slice) -> ToolResult | Sequence[ToolResult]:
+        return self.results[index]
+
+    @override
+    def __iter__(self) -> Iterator[ToolResult]:
+        return iter(self.results)
+
+    def __eq__(self, other: object) -> bool:
+        """Compare equal to the results tuple, like CPython's structseq.
+
+        ``os.stat_result == tuple(os.stat_result)`` is ``True`` and
+        ``time.struct_time`` behaves the same way; fidelity to that precedent
+        is what lets existing ``assert results == ()`` call sites keep their
+        meaning. Comparing against another ``SessionRun`` also compares the
+        stop, so the extra field is not silently ignored where it matters.
+        """
+        if isinstance(other, SessionRun):
+            return self.results == other.results and self.stop == other.stop
+        if isinstance(other, tuple):
+            return self.results == other
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash((self.results, self.stop))
 
 
 def run_session(
@@ -440,7 +521,7 @@ def run_session(
     role: str = "coder",
     acting_family: str = "",
     limits: RuntimeLimits | None = None,
-) -> tuple[ToolResult, ...]:
+) -> SessionRun:
     effective_limits = limits if limits is not None else RuntimeLimits.anchored_defaults()
     log = state.require_log()
     token = set_current_session(state)
@@ -454,6 +535,7 @@ def run_session(
     hooks.set_event_sink(_make_hook_decision_sink(log))
 
     results: list[ToolResult] = []
+    stop: StopInfo | None = None
     calls_list = list(calls)
 
     if tool_batching_enabled:
@@ -483,49 +565,49 @@ def run_session(
                     kind="run_stopped",
                     content={"point": LifecyclePoint.BETWEEN_ROUNDS.value, "reason": str(exc)},
                 )
+                stop = StopInfo(point=LifecyclePoint.BETWEEN_ROUNDS.value, reason=str(exc))
                 break
 
             # Decide sequential vs parallel
             if len(batch) == 1 or not _should_parallelize_tool_batch(batch, registry):
                 # Sequential path
-                should_stop_outer = False
                 for call in batch:
-                    result, should_stop = _execute_one_sequential(call, registry, hooks, state, role, acting_family)
+                    result, call_stop = _execute_one_sequential(call, registry, hooks, state, role, acting_family)
                     results.append(result)
-                    if should_stop:
-                        should_stop_outer = True
+                    if call_stop is not None:
+                        stop = call_stop
                         break
-                if should_stop_outer:
+                if stop is not None:
                     break
             else:
                 # Parallel safe batch — always returns list (FIND-012 fix preserves denied)
-                batch_results = _execute_batch_parallel(batch, registry, hooks, state, role, acting_family)
+                batch_results, batch_stop = _execute_batch_parallel(batch, registry, hooks, state, role, acting_family)
                 if batch_results is None:
                     # Legacy None path (should not happen after fix) — treat as stop
+                    stop = StopInfo(point="parallel_batch", reason="batch returned no results")
                     break
                 results.extend(batch_results)
-                # Detect AFTER_TOOL_EXEC denial that was logged during parallel batch
-                try:
-                    if state.log is not None:
-                        recent = state.log.read_all()[-5:]
-                        if any(
-                            ev.kind == "run_stopped" and ev.content.get("point") == LifecyclePoint.AFTER_TOOL_EXEC.value
-                            for ev in recent
-                        ):
-                            # Sequential path uses should_stop flag; parallel uses log signal
-                            break
-                except Exception as exc:  # noqa: BLE001 # best-effort log scan for parallel stop signal
-                    import logging
-
-                    logging.getLogger(__name__).warning(
-                        "Failed to scan log for parallel AFTER_TOOL_EXEC stop signal: %s", exc
-                    )
+                # S6.2: the parallel path used to re-read the last five log rows
+                # to guess whether AFTER_TOOL_EXEC had denied. That is inference
+                # about our own control flow — it could match a stale row from an
+                # earlier turn, and it silently degraded when the read failed.
+                # The stop now comes back in-band, like the sequential path.
+                if batch_stop is not None:
+                    stop = batch_stop
+                    break
 
     finally:
         hooks.set_event_sink(None)
         reset_current_session(token)
 
-    return tuple(results)
+    return SessionRun(results=tuple(results), stop=stop)
 
 
-__all__ = ["READ_ONLY_TOOLS", "classify_batches", "is_parallelizable", "run_session"]
+__all__ = [
+    "READ_ONLY_TOOLS",
+    "SessionRun",
+    "StopInfo",
+    "classify_batches",
+    "is_parallelizable",
+    "run_session",
+]

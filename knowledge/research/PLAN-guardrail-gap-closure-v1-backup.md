@@ -331,8 +331,8 @@ Target liveness per signal: ALL must be L3 (kill-checkable from composition root
 ### ── PHASE 1: Logic Error Fixes ────────────────────────────────────
 
 ### Step S1: Fix `or 150000` logic trap
-Traces-to: G1, CT4 (SessionState typed fields)  
-Depends-on: none | Parallelizable-with: S2  
+Traces-to: G1, CT4 (SessionState typed fields)
+Depends-on: none | Parallelizable-with: S2
 Target liveness: L2→L3
 
 Edit:
@@ -362,8 +362,8 @@ Exit criteria:
 Kill-check: set `context_limit=0` in a test ChainConfig → test asserts budget.limit_tokens == 0 (not 150000)
 
 ### Step S2: Fix compactor_chain type erasure + double-getattr
-Traces-to: G2, CT4  
-Depends-on: none | Parallelizable-with: S1  
+Traces-to: G2, CT4
+Depends-on: none | Parallelizable-with: S1
 Target liveness: L2→L3
 
 Edit:
@@ -377,7 +377,7 @@ Do:
      with:
      ```python
      from fa.providers.chain import ProviderChain
-     
+
      def __init__(self, compactor_chain: ProviderChain | None = None):
      ```
   2. At line 156, replace:
@@ -401,8 +401,8 @@ Exit criteria:
 Kill-check: pass `compactor_chain=None` to FullLLMCompactor → compact() returns _local_fallback_truncate result (not crash)
 
 ### Step S3: Verify Phase 1
-Traces-to: G1, G2  
-Depends-on: S1, S2 | Parallelizable-with: none  
+Traces-to: G1, G2
+Depends-on: S1, S2 | Parallelizable-with: none
 Target liveness: L3
 
 Do:
@@ -418,8 +418,8 @@ Exit criteria:
 ### ── PHASE 2: LogKind + Console-Mirror + Contract Check + G9 Metrics ──
 
 ### Step S4: Add `LogKind = Literal[...]` to output.py
-Traces-to: G3, CT1  
-Depends-on: S1 (clean diff) | Parallelizable-with: S9  
+Traces-to: G3, CT1
+Depends-on: S1 (clean diff) | Parallelizable-with: S9
 Target liveness: L0→L1
 
 Edit:
@@ -484,8 +484,8 @@ Exit criteria:
 Kill-check: remove one Literal member → pyright fails on the `log.append(kind="...")` call site using that member
 
 ### Step S5: Add `CONSOLE_MIRROR_KINDS` to output.py
-Traces-to: G3, CT2  
-Depends-on: S4 | Parallelizable-with: none  
+Traces-to: G3, CT2
+Depends-on: S4 | Parallelizable-with: none
 Target liveness: L0→L1
 
 Edit:
@@ -494,21 +494,23 @@ Edit:
 Do:
   1. After LogKind, add:
      ```python
-     CONSOLE_MIRROR_KINDS: frozenset[LogKind] = frozenset({
-         "context_budget_warn",
-         "context_budget_hard_stop",
-         "compaction_stage2_start",
-         "compaction_stage2_done",
-         "compaction_stage2_error",
-         "compaction_stage3_start",
-         "compaction_stage3_done",
-         "compaction_stage3_error",
-         "compaction_circuit_breaker",
-         "tool_call",
-         "subagent_spawn_done",
-         "subagent_spawn_fail",
-         "run_stopped",
-     })
+     CONSOLE_MIRROR_KINDS: frozenset[LogKind] = frozenset(
+         {
+             "context_budget_warn",
+             "context_budget_hard_stop",
+             "compaction_stage2_start",
+             "compaction_stage2_done",
+             "compaction_stage2_error",
+             "compaction_stage3_start",
+             "compaction_stage3_done",
+             "compaction_stage3_error",
+             "compaction_circuit_breaker",
+             "tool_call",
+             "subagent_spawn_done",
+             "subagent_spawn_fail",
+             "run_stopped",
+         }
+     )
      ```
   2. Add `"CONSOLE_MIRROR_KINDS"` to `__all__`.
 
@@ -517,8 +519,8 @@ Exit criteria:
   - [ ] Every member is also in LogKind (type-checked)
 
 ### Step S6: Type `EventLog.append(kind: LogKind)`
-Traces-to: G3, CT1  
-Depends-on: S4 | Parallelizable-with: S5  
+Traces-to: G3, CT1
+Depends-on: S4 | Parallelizable-with: S5
 Target liveness: L1→L2
 
 Edit:
@@ -540,8 +542,8 @@ Exit criteria:
 Kill-check: change one `kind="typo_value"` in a producer → pyright fails
 
 ### Step S7: Create `scripts/check_log_kind_contract.py`
-Traces-to: G3, CT3  
-Depends-on: S4, S5 | Parallelizable-with: S6  
+Traces-to: G3, CT3
+Depends-on: S4, S5 | Parallelizable-with: S6
 Target liveness: L0→L3
 
 Edit:
@@ -569,8 +571,8 @@ Exit criteria:
 Kill-check: remove a `log.append(kind=...)` producer → contract check exits 1
 
 ### Step S8: Update SKILL.md I-TW-17
-Traces-to: G3, CT2  
-Depends-on: S5 | Parallelizable-with: S7  
+Traces-to: G3, CT2
+Depends-on: S5 | Parallelizable-with: S7
 Target liveness: L3
 
 Edit:
@@ -589,8 +591,8 @@ Exit criteria:
   - [ ] grep finds "CONSOLE_MIRROR_KINDS" in SKILL.md
 
 ### Step S9: Extend session_meta with guardrail metrics (G9)
-Traces-to: G9, CT9  
-Depends-on: none | Parallelizable-with: S4–S8  
+Traces-to: G9, CT9
+Depends-on: none | Parallelizable-with: S4–S8
 Target liveness: L2→L3
 
 Edit:
@@ -623,8 +625,8 @@ Exit criteria:
 Kill-check: remove set_meta calls → test_session_meta_guardrail_metrics fails
 
 ### Step S10: Verify Phase 2
-Traces-to: G3, G9  
-Depends-on: S4–S9 | Parallelizable-with: none  
+Traces-to: G3, G9
+Depends-on: S4–S9 | Parallelizable-with: none
 Target liveness: L3
 
 Do:
@@ -641,8 +643,8 @@ Exit criteria:
 ### ── PHASE 3: Type SessionState Fields ─────────────────────────────
 
 ### Step S11: Type 9 `Any | None` fields
-Traces-to: G4, CT4  
-Depends-on: S6 (LogKind type needed for EventLog import) | Parallelizable-with: none  
+Traces-to: G4, CT4
+Depends-on: S6 (LogKind type needed for EventLog import) | Parallelizable-with: none
 Target liveness: L1→L2
 
 Edit:
@@ -700,8 +702,8 @@ Exit criteria:
 ### ── PHASE 4: Fail-Closed/Open + Compaction SSoT + G12 + G13 ────────
 
 ### Step S13: Add FAIL_CLOSED_FLAGS / FAIL_OPEN_FLAGS + replace getattr
-Traces-to: G5, CT5  
-Depends-on: S11 | Parallelizable-with: S14  
+Traces-to: G5, CT5
+Depends-on: S11 | Parallelizable-with: S14
 Target liveness: L0→L3
 
 Edit:
@@ -711,23 +713,27 @@ Edit:
 Do:
   1. Add to feature_flags.py after FeatureFlags class:
      ```python
-     FAIL_CLOSED_FLAGS: frozenset[str] = frozenset({
-         "context_budget_enabled",
-         "context_compaction_enabled",
-         "subagent_spawning_enabled",
-     })
-     FAIL_OPEN_FLAGS: frozenset[str] = frozenset({
-         "blackboard_enabled",
-         "telemetry_enabled",
-         "tool_batching_enabled",
-         "pty_pool_max_size",
-         "worktree_mode",
-         "fts_db_path",
-         "prompt_caching",
-         "offload_threshold",
-         "max_subagent_spawns_per_session",
-         "blackboard_filtered_history_include_plans",
-     })
+     FAIL_CLOSED_FLAGS: frozenset[str] = frozenset(
+         {
+             "context_budget_enabled",
+             "context_compaction_enabled",
+             "subagent_spawning_enabled",
+         }
+     )
+     FAIL_OPEN_FLAGS: frozenset[str] = frozenset(
+         {
+             "blackboard_enabled",
+             "telemetry_enabled",
+             "tool_batching_enabled",
+             "pty_pool_max_size",
+             "worktree_mode",
+             "fts_db_path",
+             "prompt_caching",
+             "offload_threshold",
+             "max_subagent_spawns_per_session",
+             "blackboard_filtered_history_include_plans",
+         }
+     )
      ```
   2. Replace 12 getattr sites with direct access + explicit None checks:
      - Safety-critical flags: `state.feature_flags.context_budget_enabled if state.feature_flags is not None else True` (fail-closed = restrictive default)
@@ -744,8 +750,8 @@ Exit criteria:
 Kill-check: set feature_flags=None → safety-critical flag defaults to restrictive value
 
 ### Step S14: Remove compaction_enabled flag gate (F-10 / G6)
-Traces-to: G6, CT6  
-Depends-on: S13 | Parallelizable-with: S15  
+Traces-to: G6, CT6
+Depends-on: S13 | Parallelizable-with: S15
 Target liveness: L2→L3
 
 Edit:
@@ -770,8 +776,8 @@ Exit criteria:
 Kill-check: set `compaction_threshold=None` → compaction disabled; set `compaction_threshold=50000` → compaction enabled
 
 ### Step S15: Create dependency_contract.toml + check_dependency_contract.py (G12)
-Traces-to: G7, CT7, CT8  
-Depends-on: none | Parallelizable-with: S13, S14  
+Traces-to: G7, CT7, CT8
+Depends-on: none | Parallelizable-with: S13, S14
 Target liveness: L0→L3
 
 Edit:
@@ -784,7 +790,7 @@ Do:
      ```toml
      [kernel]
      version = "0.1"
-     
+
      [packages.core]
      markdown-it-py = ">=3.0"
      fastjsonschema = ">=2.21"
@@ -792,10 +798,10 @@ Do:
      bashlex = ">=0.18"
      libtmux = ">=0.40"
      pexpect = ">=4.9"
-     
+
      [packages.security_critical]
      pyyaml = ">=6.0"  # yaml.safe_load only, per ADR-9
-     
+
      [registries]
      default = "pypi"
      ```
@@ -825,8 +831,8 @@ Exit criteria:
 Kill-check: add `requests = ">=2.0"` to pyproject.toml → check exits 1 (not in contract)
 
 ### Step S16: Add behavioral assertions to loop_guard tests (G13)
-Traces-to: G8, CT2 (signal)  
-Depends-on: S13 | Parallelizable-with: S15  
+Traces-to: G8, CT2 (signal)
+Depends-on: S13 | Parallelizable-with: S15
 Target liveness: L2→L3
 
 Edit:
@@ -839,12 +845,14 @@ Do:
          """If IntentGuard denies, no provider calls made after denial."""
          # Drive session where IntentGuard denies a tool call
          # Assert: provider_chain.request.call_count == 0 after denial
-     
+
+
      def test_hard_stop_no_tool_calls():
          """If context_budget_hard_stop fires, no tool calls within 50ms."""
          # Drive session to hard-stop threshold
          # Assert: no tool_call events after hard_stop event
-     
+
+
      def test_loop_guard_exactly_one_warn():
          """If loop_guard triggers, exactly one loop_warn event emitted."""
          # Drive session with repeated identical tool calls
@@ -861,8 +869,8 @@ Exit criteria:
 Kill-check: remove IntentGuard deny logic → test_intent_guard_deny_no_provider_calls fails
 
 ### Step S17: Add LOGIC-10 actionable console guidance for abnormal_stop
-Traces-to: G12 (implementation plan), CT2  
-Depends-on: none | Parallelizable-with: S16  
+Traces-to: G12 (implementation plan), CT2
+Depends-on: none | Parallelizable-with: S16
 Target liveness: L1→L3
 
 Edit:
@@ -901,8 +909,8 @@ Exit criteria:
 ### ── PHASE 5: Coverage + TRACE + Audit + Guards ────────────────────
 
 ### Step S19: Add missing log-kind parsers to fa stats (F-7)
-Traces-to: G12, CT1  
-Depends-on: S4 (LogKind defines the canonical set) | Parallelizable-with: S20–S23  
+Traces-to: G12, CT1
+Depends-on: S4 (LogKind defines the canonical set) | Parallelizable-with: S20–S23
 Target liveness: L2→L3
 
 Edit:
@@ -919,8 +927,8 @@ Exit criteria:
   - [ ] `fa stats` output includes compaction timing data
 
 ### Step S20: Create TRACE mechanism (G2)
-Traces-to: G10, CT10  
-Depends-on: none | Parallelizable-with: S19, S21–S23  
+Traces-to: G10, CT10
+Depends-on: none | Parallelizable-with: S19, S21–S23
 Target liveness: L0→L3
 
 Edit:
@@ -953,8 +961,8 @@ Exit criteria:
 Kill-check: empty corrections.jsonl → compile_corrections.py produces empty summary
 
 ### Step S21: Create frozen integrity guard (N-G1/N-G2)
-Traces-to: G11, CT11  
-Depends-on: none | Parallelizable-with: S19, S20, S22, S23  
+Traces-to: G11, CT11
+Depends-on: none | Parallelizable-with: S19, S20, S22, S23
 Target liveness: L0→L3
 
 Edit:
@@ -979,8 +987,8 @@ Exit criteria:
 Kill-check: add `object.__setattr__(self, 'x', 1)` to a TCB file → guard exits 1
 
 ### Step S22: Add ADR-11-I1 stdlib-only check (G3) + max_retry (G5)
-Traces-to: G3 (G3 quick win), G5, CT12, CT13  
-Depends-on: none | Parallelizable-with: S19–S21, S23  
+Traces-to: G3 (G3 quick win), G5, CT12, CT13
+Depends-on: none | Parallelizable-with: S19–S21, S23
 Target liveness: L0→L3
 
 Edit:
@@ -1010,8 +1018,8 @@ Exit criteria:
 Kill-check: add `import requests` to authoring_tcb.py → check_tcb_stdlib.py exits 1
 
 ### Step S23: Add compaction_end circuit-breaker visibility (G11)
-Traces-to: G11, CT2  
-Depends-on: none | Parallelizable-with: S19–S22  
+Traces-to: G11, CT2
+Depends-on: none | Parallelizable-with: S19–S22
 Target liveness: L2→L3
 
 Edit:
@@ -1020,10 +1028,15 @@ Edit:
 Do:
   1. In the circuit-breaker path (where compaction fails repeatedly), add:
      ```python
-     output.emit(OutputEvent(
-         type="loop_warn",
-         data={"detector": "compaction_circuit_breaker", "message": "Compaction circuit breaker triggered — context budget exceeded after compaction attempts"},
-     ))
+     output.emit(
+         OutputEvent(
+             type="loop_warn",
+             data={
+                 "detector": "compaction_circuit_breaker",
+                 "message": "Compaction circuit breaker triggered — context budget exceeded after compaction attempts",
+             },
+         )
+     )
      ```
 
 Exit criteria:
@@ -1032,8 +1045,8 @@ Exit criteria:
 Kill-check: remove the emit → test asserting loop_warn on circuit breaker fails
 
 ### Step S24: Error message audit for non-RuleResult code paths (G6)
-Traces-to: G6 (reframed), CT4  
-Depends-on: none | Parallelizable-with: S19–S23  
+Traces-to: G6 (reframed), CT4
+Depends-on: none | Parallelizable-with: S19–S23
 Target liveness: L2→L3
 
 Edit:
@@ -1051,7 +1064,7 @@ Exit criteria:
   - [ ] Re-running the audit grep returns significantly fewer hits (target: 0 for critical paths)
 
 ### Step S25: Update SKILL.md I-TW-20 + document output_bus None window
-Traces-to: G12  
+Traces-to: G12
 Depends-on: S11 | Parallelizable-with: S24
 
 Edit:

@@ -1,0 +1,55 @@
+{
+  "slice": "S5-S6",
+  "note": "Authority, identity, mutation-symmetry and observability guards that S5/S6 claim to enforce. Run against the whole suite: the question is whether ANY test notices. The sweep always runs the whole suite.",
+  "mutations": [
+    {
+      "id": "S5-M1",
+      "file": "src/fa/inner_loop/state.py",
+      "old": "        if self.session_id and self.session_db.session_id and self.session_id != self.session_db.session_id:",
+      "new": "        if False:",
+      "why": "S5.1 writer identity: an EventLog could bind to another session's DB"
+    },
+    {
+      "id": "S5-M2",
+      "file": "src/fa/inner_loop/session_db.py",
+      "old": "                        conn.execute(\"BEGIN IMMEDIATE\")",
+      "new": "                        conn.execute(\"BEGIN\")",
+      "why": "S5.1 no-loss allocation: DEFERRED was measured to LOSE events under contention"
+    },
+    {
+      "id": "S5-M3",
+      "file": "src/fa/blackboard/blackboard.py",
+      "old": "            if _is_same_writer(self._run_id, old):\n                continue",
+      "new": "            pass",
+      "why": "S5.4.1 / Q18: self-conflict suppression keyed on the persisting writer id"
+    },
+    {
+      "id": "S5-M4",
+      "file": "src/fa/inner_loop/state.py",
+      "old": "            self.kind_counts[str(kind)] = self.kind_counts.get(str(kind), 0) + 1",
+      "new": "            pass",
+      "why": "S5.2 / V2: counters must advance only after a successful commit; dropping them entirely should be visible"
+    },
+    {
+      "id": "S6-M1",
+      "file": "src/fa/inner_loop/subagent_runner.py",
+      "old": "            return \"[output withheld: redaction failed]\"",
+      "new": "            return text",
+      "why": "S6.5 fail-closed masking (regression guard for the mutant found in the S6 sweep)"
+    },
+    {
+      "id": "S6-M2",
+      "file": "src/fa/inner_loop/coder_loop.py",
+      "old": "        if turn_results.stop is not None and turn_results.stop.point == LifecyclePoint.AFTER_TOOL_EXEC.value:",
+      "new": "        if turn_results.stop is not None:",
+      "why": "S6.2 stop scope (regression guard)"
+    },
+    {
+      "id": "S6-M3",
+      "file": "src/fa/output.py",
+      "old": "        for listener in self._listeners:",
+      "new": "        for listener in self._listeners[:1]:",
+      "why": "S6.3: a raising/extra listener must not stop other listeners receiving the event"
+    }
+  ]
+}

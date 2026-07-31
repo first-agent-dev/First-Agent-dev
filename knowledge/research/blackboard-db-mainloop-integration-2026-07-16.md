@@ -1,6 +1,6 @@
 # Blackboard, SQLite Session DB, and Global History DB — Integration with the Main Loop
 
-> Research date: 2026-07-16  
+> Research date: 2026-07-16
 > Scope: Deep technical explanation of how blackboard, SQLite databases, and the main loop are integrated, and how existing artifacts map onto this system.
 
 ---
@@ -41,8 +41,8 @@ fa run
 
 ## 2. SessionDatabase — The Per-Run Authority
 
-**Location:** `~/.fa/session-log/<run_id>/session.db`  
-**Source:** `src/fa/inner_loop/session_db.py`  
+**Location:** `~/.fa/session-log/<run_id>/session.db`
+**Source:** `src/fa/inner_loop/session_db.py`
 **Concurrency model:** `threading.Lock` + short-lived connections + `busy_timeout=15000ms`
 
 ### Schema (3 tables)
@@ -84,7 +84,7 @@ EventLog.append()
 
 ## 4. Blackboard — Typed Append-Only Content-Hashed Store
 
-**Source:** `src/fa/blackboard/blackboard.py`  
+**Source:** `src/fa/blackboard/blackboard.py`
 **Workspace mirror:** `<workspace>/.fa/blackboard/blackboard.jsonl`
 
 ### Construction
@@ -92,7 +92,7 @@ EventLog.append()
 ```python
 Blackboard(
     path=workspace_root / ".fa" / "blackboard",
-    session_db=self.session_db,   # SAME instance as EventLog
+    session_db=self.session_db,  # SAME instance as EventLog
     run_id=self.run_id,
 )
 ```
@@ -104,18 +104,18 @@ The Blackboard **cannot exist** without a `SessionDatabase`. If `session_db is N
 ```python
 @dataclass
 class BlackboardEntry:
-    id: str                          # unique entry identifier
-    type: str                        # entry type (e.g., "file_edit", "file_write")
-    content_hash: str                # SHA-256 hash of payload content
-    toolchain_digest: str            # hash of the tool chain that produced this
-    schema_version: str              # schema versioning for migration safety
-    parent_id: str | None            # links to parent entry (provenance chain)
-    read_set: list[str]              # paths/resources read before this write
-    write_set: list[str]             # paths/resources written by this entry
-    assumptions: list[str]           # stated assumptions at write time
-    version_dependencies: dict       # version constraints
-    timestamp: str                   # ISO-8601 UTC
-    payload: Any                     # the actual entry data
+    id: str  # unique entry identifier
+    type: str  # entry type (e.g., "file_edit", "file_write")
+    content_hash: str  # SHA-256 hash of payload content
+    toolchain_digest: str  # hash of the tool chain that produced this
+    schema_version: str  # schema versioning for migration safety
+    parent_id: str | None  # links to parent entry (provenance chain)
+    read_set: list[str]  # paths/resources read before this write
+    write_set: list[str]  # paths/resources written by this entry
+    assumptions: list[str]  # stated assumptions at write time
+    version_dependencies: dict  # version constraints
+    timestamp: str  # ISO-8601 UTC
+    payload: Any  # the actual entry data
 ```
 
 ### Write path (same dual-write as EventLog)
@@ -178,8 +178,8 @@ Both tool handlers:
 
 ## 7. GlobalHistoryStore — Derived Cross-Run Analytics Projection
 
-**Source:** `src/fa/inner_loop/global_history.py`  
-**Location:** `~/.fa/global_history.db` (separate database!)  
+**Source:** `src/fa/inner_loop/global_history.py`
+**Location:** `~/.fa/global_history.db` (separate database!)
 **Key principle:** This is a **derived projection**, NOT hot-path authority.
 
 ### Schema (1 table)
@@ -232,7 +232,7 @@ except Exception as exc:
 
 ## 8. ArtifactStore — Content-Addressed Tool Result Offloads
 
-**Source:** `src/fa/inner_loop/artifacts.py`  
+**Source:** `src/fa/inner_loop/artifacts.py`
 **Location:** `<workspace>/.fa/artifacts/`
 
 When tool results are too large to keep in the event stream, they're offloaded to the artifact store:
@@ -350,8 +350,10 @@ Tool handlers never receive `SessionState` as a parameter. Instead, they use:
 # src/fa/inner_loop/context.py
 _current_session: ContextVar[SessionState | None] = ContextVar("current_session", default=None)
 
+
 def set_current_session(session: SessionState) -> Token[...]:
     return _current_session.set(session)
+
 
 def get_current_session() -> SessionState | None:
     return _current_session.get()
@@ -369,9 +371,9 @@ finally:
 Tool handlers then access:
 ```python
 session = get_current_session()
-blackboard = session.blackboard       # may be None if disabled
-session_db = session.session_db       # may be None if degraded
-transaction = session.transaction     # always initialized
+blackboard = session.blackboard  # may be None if disabled
+session_db = session.session_db  # may be None if degraded
+transaction = session.transaction  # always initialized
 artifact_store = session.artifact_store
 ```
 

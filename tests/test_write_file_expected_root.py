@@ -21,7 +21,7 @@ inputs that drive every branch and must return a bool rather than raise.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 from fa.inner_loop.tools.mutation_guard import belongs_to_workspace, check_mutation_allowed
 
@@ -81,6 +81,7 @@ class TestOwnershipGatesTheConflictCheck:
         queried = False
 
         class _Tripwire(_FakeBlackboard):
+            @override
             def detect_conflict(self, _entry: object) -> list[object]:
                 nonlocal queried
                 queried = True

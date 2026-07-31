@@ -1207,7 +1207,8 @@
   an LLM that has read the rule) can bypass with:
   ```python
   from pytest import skip
-  skip("nope")          # not detected
+
+  skip("nope")  # not detected
   ```
   The decorator form (`@pytest.mark.skip`) is unaffected because the
   attribute chain is the same regardless of how `pytest` was imported.
@@ -1685,6 +1686,78 @@ implementation without first reading this entry.
 **Unblock-trigger:** cost/budget accounting becomes a requirement for an
 eval harness or a per-session spend cap (operator's own stated "maybe later
 for evals" framing).
+
+## I-34 — Subagent containment: OS-level writable-mount boundary (Q19 / V24+V25)
+
+**Origin:** raised 2026-07-28 by the S5.6 preflight
+([`PLAN-cli-trace-S5-authority-correctness.md`](../worklogs/implementation-plans/PLAN-cli-trace-S5-authority-correctness.md)
+§11 Q19); re-confirmed 2026-07-29 during the S5 post-merge review, which found
+it was tracked **only** in plans and PR notes — i.e. nowhere a future session
+would look. This entry exists so an open *security* boundary cannot be lost
+when its plan is archived.
+
+**The gap, measured (not inferred).** The Q11-B enforcement mechanism does not
+enforce. `SandboxHook` was pointed at the subagent artifact root and the runner
+`cwd` moved to match; both were then measured **not to contain anything**:
+
+- `workspace_root` is consulted only by the `rm` / `chmod` / `git` validators,
+  so a shell redirect (`echo x > /outside/path`) classifies as `GENERAL_WRITE`
+  and passes unchecked under *either* root;
+- `cwd` is not a boundary — the subagent runs a real shell and can use absolute
+  paths.
+
+Denying `GENERAL_WRITE` for spawns *was* implemented and measured to deny
+**8 of 10** realistic verifier commands (`pytest`, `mypy`, `make test`), so it
+was reverted: it trades a security hole for an unusable feature.
+
+**Why this is not "just" a missing test.** ADR-12's conclusion applies —
+lexical filters are best-effort, not boundaries. Real containment needs an
+OS-level writable-mount boundary (Q19 option (c)): a mount namespace or
+read-only bind with a single writable artifact dir, the same shape the ADR-12
+egress proxy uses for keys.
+
+**Executable record.** `tests/test_s5_isolation_boundary.py::test_subagent_write_outside_artifact_root_denied`
+is a **strict `xfail`** whose message carries the evidence above. It should
+start **passing** when containment lands — that is the acceptance signal;
+delete nothing.
+
+**Related:** S7 Q29 (empty `session_id` as an "unscoped" sentinel) touches the
+same subagent/session isolation surface.
+
+## I-35 — `SessionDatabase` first-create is not concurrency-safe (DEFERRED DDL)
+
+**Origin:** found 2026-07-29 by the S5 post-merge review (§13.4), following up
+S5 §12 R3-2 — which recorded that all six write paths use bare `with conn:`
+(DEFERRED) but was only acted on for one of them.
+
+**Measured.** Of the five remaining paths, four are **write-only**
+(`write_blackboard_row`, `append_event_row`, `set_meta`,
+`reserve_run_binding`) and therefore safe — 6 processes × 5 writes gave
+**30 attempted / 30 persisted / 0 lost**. Two do a read→write upgrade inside a
+DEFERRED transaction, which SQLite answers with `SQLITE_BUSY` *without*
+honouring `busy_timeout`:
+
+- `_ensure_identity` (`session_db.py:303`);
+- `_init_current_schema` (`:262`) — the actual failure site.
+
+Concurrent **first-create** of a fresh DB: **6 of 30 opens** raise
+`session_db_init_failed: database is locked`. Once the DB exists, concurrent
+opens are clean: **0 of 40**.
+
+**Severity: P3, deliberately.** Production does not reach the window.
+`SessionManager._new_session` serialises creation with
+`session_dir.mkdir(parents=True, exist_ok=False)` (`manager.py:252`), an atomic
+filesystem primitive — exactly one process can create a session namespace. The
+exposure is limited to the three sites that build a DB **without** that
+serializer: `blackboard.py:207`, `state.py:176`,
+`tools/observability.py:72`.
+
+**Do not fix by patching `_ensure_identity` alone.** That was prototyped during
+the review and reverted: it moved failures 6→3, proving `_ensure_identity` is a
+symptom and the DDL path is the source. The fix belongs with **S7 Q29**, which
+already proposes auditing those same three unserialised construction sites —
+resolve them together, with a multiprocess barrier test as the oracle
+(threads alone cannot falsify this; see S5 §12 R3-3).
 
 ## See also
 

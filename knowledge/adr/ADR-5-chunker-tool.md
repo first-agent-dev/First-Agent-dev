@@ -113,6 +113,7 @@ class Chunk:
     line_start: int
     line_end: int
 
+
 class Chunker(Protocol):
     def chunk_file(self, path: pathlib.Path) -> list[Chunk]: ...
 ```
@@ -202,15 +203,15 @@ ignore the new fields continue to work.
 class Chunk:
     path: str
     anchor: str
-    parent_title: str            # H1 / frontmatter title / filename
+    parent_title: str  # H1 / frontmatter title / filename
     breadcrumb: tuple[str, ...]  # section-heading path; () for code or single-chunk files
     lang: str
     body: str
     line_start: int
     line_end: int
-    byte_start: int              # 0-based, inclusive
-    byte_end: int                # 0-based, exclusive
-    topic: str | None = None     # frontmatter `topic:`; None if absent
+    byte_start: int  # 0-based, inclusive
+    byte_end: int  # 0-based, exclusive
+    topic: str | None = None  # frontmatter `topic:`; None if absent
 ```
 
 **Per-extension semantics.**
