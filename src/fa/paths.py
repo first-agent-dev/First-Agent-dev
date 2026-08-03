@@ -32,6 +32,7 @@ different, empty state tree), and ignoring them follows the XDG convention.
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 STATE_ROOT_ENV_VAR = "FA_STATE_ROOT"
@@ -64,4 +65,80 @@ def fa_session_log_root() -> Path:
     return fa_state_root() / "session-log"
 
 
-__all__ = ["STATE_ROOT_ENV_VAR", "fa_session_log_root", "fa_state_root"]
+# Artifact posture (S10c.3 / I-36). The FA state root holds the most sensitive
+# data the system writes — `llm_bodies.jsonl` carries raw prompt and response
+# prose, and `session.db` stores the same content as event rows. `SecretRedactor`
+# masks known key *values*; it cannot mask prose. Under the default `umask 0022`
+# every one of those was created `0644` while the session manifest was already
+# `0600`, i.e. the most sensitive artifacts were the most permissive.
+PRIVATE_FILE_MODE = 0o600
+PRIVATE_DIR_MODE = 0o700
+
+
+def private_opener(path: str, flags: int) -> int:
+    """``open()`` opener that creates files `0600`, with no world-readable window.
+
+    Pass to the **builtin** ``open()``, not ``Path.open()`` — the pathlib method
+    does not accept ``opener`` and raises ``TypeError`` (measured on 3.13).
+
+    Setting the mode in the ``os.open`` syscall is what makes this correct:
+    ``chmod``-ing after creation leaves a window in which the file exists and is
+    world-readable, which is the defect, not the fix. The mode applies only when
+    this call *creates* the file; an existing file keeps its mode, which is why
+    :func:`tighten_fa_artifact_modes` exists.
+    """
+    return os.open(path, flags, PRIVATE_FILE_MODE)
+
+
+def tighten_fa_artifact_modes(root: Path) -> int:
+    """Tighten over-permissive modes under an existing FA state root. Returns the count.
+
+    Retroactive half of I-36 (operator decision Q56: *"do tighten pre-existing
+    0644 artifacts — comprehensive tightening pass"*). Creating new files
+    privately does nothing for deployments that already have `0644` artifacts on
+    disk, and claiming the item is resolved while those files sit there would be
+    false.
+
+    Three properties are load-bearing, each verified by a test:
+
+    * **Symlinks are skipped.** ``os.chmod`` FOLLOWS symlinks, and
+      ``follow_symlinks=False`` raises ``NotImplementedError`` on Linux
+      (``os.chmod not in os.supports_follow_symlinks``). Without an explicit
+      skip, a crafted ``session-log/x/evil -> /etc/passwd`` inside the root
+      would have its *target's* mode rewritten.
+    * **Directories get `0700`, not `0600`.** Stripping the execute bit from a
+      directory makes it untraversable and would lock the agent out of its own
+      state root.
+    * **Tighten only, never widen.** A deliberately stricter mode (e.g. `0400`)
+      is preserved; only the group/other bits are cleared.
+
+    Best-effort by design: a mode we cannot change is not worth failing a run
+    over, and the caller is a normal command, not a security tool.
+    """
+    if not root.is_dir():
+        return 0
+    tightened = 0
+    for path in root.rglob("*"):
+        # Skipped BEFORE any stat/chmod: see the symlink note above.
+        if path.is_symlink():
+            continue
+        try:
+            current = stat.S_IMODE(path.lstat().st_mode)
+            if not current & 0o077:
+                continue
+            path.chmod(current & ~0o077)
+            tightened += 1
+        except OSError:  # pragma: no cover - unreadable/vanished entries are not fatal
+            continue
+    return tightened
+
+
+__all__ = [
+    "PRIVATE_DIR_MODE",
+    "PRIVATE_FILE_MODE",
+    "STATE_ROOT_ENV_VAR",
+    "fa_session_log_root",
+    "fa_state_root",
+    "private_opener",
+    "tighten_fa_artifact_modes",
+]

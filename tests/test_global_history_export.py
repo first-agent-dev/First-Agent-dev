@@ -16,6 +16,7 @@ Oracle: DB row count, row fields, no exception on failure, grep no hot-path impo
 
 from __future__ import annotations
 
+import ast
 import threading
 from pathlib import Path
 from typing import Any
@@ -342,40 +343,73 @@ def test_global_history_export_failure_policy(tmp_path: Path, caplog: Any) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_global_history_is_projection_only() -> None:
-    """LIVE-PATH PROOF:
-    - root: grep source files
-    - test: projection-only
-    - matrix: C-defaults
-    - oracle: no hot-path file imports global_history
-    - kill-check: adding import to state.py would make this fail
+_PROJECTION_IMPORT_ALLOWLIST = frozenset({"cli.py", "stats.py"})
+"""Modules permitted to import ``global_history``.
 
-    Product claim: global_history is derived, not hot-path authority.
+An **allowlist**, deliberately. The predecessor of this test named seven
+forbidden files; ``src/fa`` has 139 modules, so 132 were silently exempt and a
+new hot-path module importing the projection was invisible to CI. A closed
+invariant needs an allowlist — a denylist exempts everything nobody thought of.
+
+``global_history.py`` itself is absent because a module cannot import itself.
+``stats.py`` is listed as *permitted*, not *required*: it references the
+projection zero times today (the CLI is the consumer), which is why the
+assertion below is a subset and not an equality.
+"""
+
+
+def _projection_importers() -> tuple[set[str], int]:
+    """AST-scan ``src/fa`` for real imports of ``global_history``.
+
+    **AST, not string matching.** ``output.py`` contains the literal
+    ``global_history`` inside a docstring; a substring scan reports it as an
+    importer and the guard becomes noise the team learns to ignore. Measured:
+    string scan → 3 files, AST scan → 1.
+
+    Returns ``(importer_basenames, modules_scanned)``; the count is the
+    liveness control for the caller.
     """
-    forbidden_importers = [
-        "src/fa/inner_loop/state.py",
-        "src/fa/inner_loop/session_db.py",
-        "src/fa/blackboard/blackboard.py",
-        "src/fa/memory/context_budget.py",
-        "src/fa/inner_loop/coder_loop.py",
-        "src/fa/inner_loop/loop.py",
-        "src/fa/inner_loop/compaction/compactor.py",
-    ]
-    for fp in forbidden_importers:
-        p = Path(fp)
-        if not p.exists():
+    modules = sorted(Path("src/fa").rglob("*.py"))
+    importers: set[str] = set()
+    for path in modules:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:  # pragma: no cover — a syntax error fails other gates first
             continue
-        content = p.read_text(encoding="utf-8")
-        assert "global_history" not in content, f"{fp} should not import global_history — projection-only D8"
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module and "global_history" in node.module:
+                importers.add(path.name)
+            elif isinstance(node, ast.Import) and any("global_history" in a.name for a in node.names):
+                importers.add(path.name)
+    return importers, len(modules)
 
-    # Allowed importers: cli.py, stats.py may contain global_history
-    allowed = ["src/fa/cli.py"]
-    found_allowed = False
-    for fp in allowed:
-        p = Path(fp)
-        if p.exists() and "global_history" in p.read_text(encoding="utf-8"):
-            found_allowed = True
-    assert found_allowed, "cli.py should import global_history for export trigger"
+
+def test_global_history_is_projection_only() -> None:
+    """C1 (S9.3 / CT3): no hot-path module imports the derived projection.
+
+    - root: AST scan of every module under ``src/fa``
+    - oracle: the importer set, as a **subset** of the allowlist
+    - kill-check: add ``from fa.inner_loop.global_history import GlobalHistoryStore``
+      to ``state.py`` → this fails, naming the file
+
+    Product claim: ``global_history`` is a derived projection, never hot-path
+    authority. S9 replaced a 7-name denylist with this scan; see
+    ``_PROJECTION_IMPORT_ALLOWLIST``.
+    """
+    importers, scanned = _projection_importers()
+
+    # Liveness controls FIRST. A subset assertion is satisfied by the empty
+    # set, so without these the test passes when the glob matches nothing or
+    # the AST walk silently breaks — the exact failure mode S7.C4 was built to
+    # prevent.
+    assert scanned > 100, f"the scan only saw {scanned} modules; the glob is broken"
+    assert "cli.py" in importers, "the scan found no importer at all, so it proves nothing"
+
+    offenders = importers - _PROJECTION_IMPORT_ALLOWLIST
+    assert not offenders, (
+        f"{sorted(offenders)} import global_history; it is a derived projection "
+        f"and must not be reachable from hot-path correctness code"
+    )
 
 
 # ---------------------------------------------------------------------------

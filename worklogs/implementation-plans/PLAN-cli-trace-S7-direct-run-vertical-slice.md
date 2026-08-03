@@ -1,10 +1,16 @@
 # PLAN — S7: close the direct `fa run` vertical slice
 
-- **Status:** **COMPLETE-LOCAL / deployment-pending** (2026-07-29). S7.0–S7.6
-  implemented and verified (§11); S7.7 container half awaits the operator.
-  Q27 resolved (operator runs the container half —
-  sheet delivered as [`PLAN-cli-trace-S7-container-verification.md`](./PLAN-cli-trace-S7-container-verification.md));
-  Q28 resolved (option b). Q29 raised, non-blocking.
+- **Status:** **COMPLETE** (2026-07-30). S7.0–S7.6 implemented and verified
+  locally (§11); the **container half S7.C0–S7.C7 was executed by the operator
+  on deployment `6262e7d`** — all steps MATCH except S7.C5, whose *trace*
+  contract matched while its *stdout* contract did not (→ Q31 / I-38). The
+  parent's §Do-not ("do not mark the slice L3 based on local fake transport
+  alone") is therefore satisfied with real-deployment evidence. Evidence:
+  [`PLAN-cli-trace-S7-container-verification.md`](./PLAN-cli-trace-S7-container-verification.md) §3.
+  Q27 resolved (operator runs the container half); Q28 resolved (option b).
+  **Q29 and Q31 raised, both non-blocking and deferred by operator decision to
+  after the main workplan.** Container findings: **I-36, I-37, I-38, I-39** —
+  recorded, zero fixes applied, per the sheet's stop rule.
 - **Date:** 2026-07-29
 - **Parent:** [`cli-trace-substrate-rebaseline-2026-07-25.md`](./cli-trace-substrate-rebaseline-2026-07-25.md) §Step S7 (line 1703)
 - **Depends-on:** S5 (`57f574a`) and S6 (`6bdd85f`) — both complete
@@ -465,6 +471,27 @@ write-identity enforcement and un-scopes `event_count()`. Three production
 sites still construct DBs that way. Options: forbid it at construction; keep it
 but make it explicit (`session_id="__unscoped__"`); or leave and document.
 Needs its own slice — the change alters a repo-wide sentinel's meaning.
+
+### Q31 — what does `--output-mode quiet` guarantee on stdout? *(new, raised by S7.C5, not blocking S7)*
+
+S7.C5 measured **stdout 34 bytes** under `--output-mode quiet`, while
+`QuietRenderer`'s docstring (`output.py:449`) says the mode guarantees
+*"nothing on stdout — so `fa run --task ... > result.txt` stays parseable,
+which is the reason the mode exists."*
+
+The renderer is innocent: `on_event` is a `pass` and
+`tests/test_s6_renderers.py:149` proves it for every `EventType`. The 34 bytes
+come from two `print()` calls in `_cmd_run` that bypass the `EventBus`
+entirely — `cli.py:2212` (status line, 29 B) and `cli.py:2214` (`final_text`,
+5 B). No renderer-level test can observe them, which is why the local suite
+passed while the live contract is violated.
+
+This is a **policy fork, not a defect with an obvious fix** — per the stop
+rule, promoted rather than decided. Options and recommendation are recorded in
+**BACKLOG I-38**; the recommendation is (a) *quiet emits only `final_text` on
+stdout, status line to stderr*, since it is the only option that makes the
+existing docstring true. Resolve before S9 (stats/projections), which is the
+next consumer of machine-parseable CLI output.
 
 ---
 

@@ -35,12 +35,14 @@ from pathlib import Path
 import pytest
 
 from fa.paths import fa_state_root
+from tests._capabilities import requires_posix_paths, requires_posix_shell
 
 # ---------------------------------------------------------------------------
 # C0 — resolver semantics
 # ---------------------------------------------------------------------------
 
 
+@requires_posix_paths
 def test_defaults_to_home_dot_fa(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """C0: unset behaviour is exactly today's behaviour."""
     monkeypatch.delenv("FA_STATE_ROOT", raising=False)
@@ -58,6 +60,7 @@ def test_honours_absolute_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert fa_state_root() == override
 
 
+@requires_posix_paths
 @pytest.mark.parametrize(
     "override",
     ["relative/state", ".", "..", "", "   "],
@@ -140,6 +143,7 @@ def _run_cli_state_root(env_override: str | None, home: Path) -> str:
     return proc.stdout.strip()
 
 
+@requires_posix_shell
 def test_entrypoint_and_cli_agree_on_state_root(tmp_path: Path) -> None:
     """C2 (S5-P23): the entrypoint's shell expression and Python must match.
 

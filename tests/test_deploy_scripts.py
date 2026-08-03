@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._capabilities import requires_posix_modes, requires_posix_paths, requires_stable_tmpdir
+
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 # Host-side shell scripts that operators run directly or that ship in the image.
@@ -174,6 +176,7 @@ def test_shell_script_passes_shellcheck(script: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@requires_posix_modes
 @pytest.mark.skipif(not os.access(_SCRIPTS / "fa", os.X_OK), reason="Filesystem does not support executable bits")
 def test_executable_script_modes_are_pinned() -> None:
     """Scripts invoked directly by operators/git must keep executable mode."""
@@ -263,6 +266,7 @@ def test_fa_wrapper_unknown_help_topic_delegates_to_container() -> None:
     assert any(term in result.stderr for term in ("exec: docker", "docker:", 'service "first-agent" is not running'))
 
 
+@requires_stable_tmpdir
 def test_wrapper_env_preserves_host_binaries_and_shadows_docker() -> None:
     """Regression guard for the env builder.
 
@@ -678,6 +682,7 @@ def test_legacy_routing_migration_blocks_have_sunset_notes() -> None:
         assert "SUNSET (remove after" in text, f"{name} needs a sunset note"
 
 
+@requires_posix_paths
 def test_fa_update_extract_active_fa_vars_survives_commented_only_template(
     tmp_path: Path,
 ) -> None:
@@ -754,6 +759,7 @@ def test_backup_script_does_not_source_env_file() -> None:
     assert "_load_backup_env" in text, "must define a _load_backup_env function"
 
 
+@requires_posix_paths
 def test_backup_env_parser_whitelists_only_b2_vars(tmp_path: Path) -> None:
     """The parser must export only B2_KEY_ID/B2_APPLICATION_KEY/B2_BUCKET,
     ignore comments/blanks, strip surrounding quotes, and NEVER expand

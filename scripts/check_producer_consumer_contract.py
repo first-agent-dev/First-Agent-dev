@@ -19,13 +19,22 @@ import re
 import sys
 from pathlib import Path
 
+# UTF-8 console: this script prints non-ASCII (checkmarks / box drawing) and
+# crashed with UnicodeEncodeError on a Windows host whose console was cp1251 —
+# while REPORTING SUCCESS. See scripts/_console.py for the full rationale.
+if __package__ in (None, ""):  # invoked as a file, not as scripts.<name>
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts._console import force_utf8_stdio
+
+force_utf8_stdio()
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # ── 1. Extract EventType literals from output.py ─────────────────────────
 
 
 def extract_event_types() -> list[str]:
-    source = (REPO_ROOT / "src" / "fa" / "output.py").read_text()
+    source = (REPO_ROOT / "src" / "fa" / "output.py").read_text(encoding="utf-8")
     # Parse the Literal[...] type annotation
     match = re.search(r"EventType = Literal\[(.*?)\]", source, re.DOTALL)
     if not match:
@@ -47,7 +56,7 @@ def extract_event_types() -> list[str]:
 
 
 def extract_handler_events() -> set[str]:
-    source = (REPO_ROOT / "src" / "fa" / "output.py").read_text()
+    source = (REPO_ROOT / "src" / "fa" / "output.py").read_text(encoding="utf-8")
     # Match def _handle_<event_type>(self, e: OutputEvent)
     return set(re.findall(r"def _handle_([a-z_]+)\(", source))
 
@@ -100,7 +109,7 @@ def extract_producer_events() -> dict[str, list[str]]:
         full = REPO_ROOT / fpath
         if not full.exists():
             continue
-        source = full.read_text()
+        source = full.read_text(encoding="utf-8")
         for match in re.finditer(r'type="([a-z_]+)"', source):
             et = match.group(1)
             # Only count if it's inside an OutputEvent() or output.emit() context
@@ -134,7 +143,7 @@ def extract_c1_tested_events() -> set[str]:
         if not test_path.exists():
             continue
         for py_file in test_path.rglob("test_*.py"):
-            source = py_file.read_text()
+            source = py_file.read_text(encoding="utf-8")
             # Most product signals use drive_session as the composition root.
             # Bootstrap/config warnings are produced by SessionState before
             # drive_session exists, so their C1 root is the real SessionState

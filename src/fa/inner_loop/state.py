@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 from fa.inner_loop.registry import ToolCall, ToolResult
 from fa.inner_loop.session_db import SessionDatabase
 from fa.output import LogKind, OutputEvent
-from fa.paths import fa_session_log_root
+from fa.paths import fa_session_log_root, private_opener
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +283,10 @@ class EventLog:
             # 3. Best-effort JSONL mirror for audit/diffability.
             try:
                 line = json.dumps(asdict(event), ensure_ascii=False, sort_keys=True)
-                with self.path.open("a", encoding="utf-8") as handle:
+                # Builtin ``open`` + ``private_opener`` (I-36): event content is
+                # the same prose the bodies file holds. ``Path.open`` rejects
+                # ``opener``, so this must stay the builtin.
+                with open(self.path, "a", encoding="utf-8", opener=private_opener) as handle:
                     handle.write(line + "\n")
             except Exception as exc:  # noqa: BLE001 # mirror-only degradation
                 logger.warning("Failed to write EventLog JSONL mirror: %s", exc)

@@ -248,6 +248,12 @@ source_paths = [
   "src/fa/inner_loop/state.py",
   "src/fa/inner_loop/subagent_envelope.py",
   "src/fa/inner_loop/subagent_runner.py",
+  # S8.5: pure parse/serialise + the verdict->status mapping the workflow
+  # controller treats as authority. Never mutation tested before S8.
+  "src/fa/inner_loop/workflow_artifacts.py",
+  # S9.6: 887 lines of pure parse/aggregate logic — the largest module in the
+  # trace substrate that had never been mutation tested.
+  "src/fa/stats.py",
 ]
 # Test selection is per-scope: the sandbox suites cannot exercise the substrate
 # modules, so the substrate's own suites are listed alongside them. A mutant in
@@ -345,6 +351,10 @@ paths = [
   "src/fa/inner_loop/state.py",
   "src/fa/inner_loop/subagent_envelope.py",
   "src/fa/inner_loop/subagent_runner.py",
+  # S8.5: mirrors [tool.mutmut] source_paths.
+  "src/fa/inner_loop/workflow_artifacts.py",
+  # S9.6: mirrors [tool.mutmut] source_paths.
+  "src/fa/stats.py",
 ]
 operators = ["comparison", "arithmetic", "boolean", "boundary", "return"]
 exclude = ["**/test_*", "**/__init__.py"]
@@ -364,9 +374,23 @@ preset = "strict"
 # and scripts importable at runtime, but pyrefly does not consume pytest config.
 # Add "." so pyrefly resolves tests.fixtures.* and scripts.* the same way.
 search-path = ["src", "."]
-# Advisory-only: suppress pyrefly-specific strictness rules that mypy does not
-# enforce, to avoid noise on a codebase written for mypy strict.
-# Revisit when migrating from mypy to pyrefly as primary type checker.
+#
+# STATUS: BLOCKING (Q50, resolved 2026-08-01). pyrefly is a SECOND type checker
+# alongside mypy strict, and `tests/test_pyrefly_import_topology.py` asserts it
+# reports zero errors. That test runs inside `just test`, hence inside
+# `just check`, so a pyrefly error fails the build.
+#
+# This comment previously read "Advisory-only", which contradicted the code for
+# several slices. The contradiction was not harmless: because nothing named
+# pyrefly as blocking, nobody noticed the gate itself had been passing
+# vacuously (it scored a MISSING pyrefly as zero errors), and four real type
+# errors accumulated. If pyrefly is ever demoted to advisory, delete that test
+# in the same commit — do not leave the two seats disagreeing again.
+#
+# The rule-level suppressions below remain scoped and deliberate: they silence
+# pyrefly-specific strictness that mypy does not enforce, so the two checkers
+# agree on what "clean" means instead of the stricter one being ignored
+# wholesale. Revisit when/if pyrefly becomes the primary type checker.
 [tool.pyrefly.errors]
 implicit-any-empty-container = false
 

@@ -13,9 +13,12 @@ vs runs), so each keeps its own ``_init_schema``.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
+
+from fa.paths import PRIVATE_FILE_MODE
 
 # Shared tuning constants. Both stores use the same values because they
 # run in the same process and contend on the same kind of short-lived
@@ -46,6 +49,24 @@ def create_sqlite_connection(
     Returns:
         An open :class:`sqlite3.Connection` with busy_timeout applied.
     """
+    # Create the file privately BEFORE sqlite3 does (S10c.3 / I-36).
+    #
+    # `sqlite3.connect` creates a missing database with `0666 & ~umask` — `0644`
+    # under the default umask — and `session.db` stores full event `content`,
+    # i.e. the same prompt/response prose that makes `llm_bodies.jsonl` opt-in.
+    # Pre-creating with an explicit mode closes that without a chmod window, and
+    # measured: SQLite's `-wal` / `-shm` sidecars inherit `0600` from it.
+    #
+    # `O_CREAT` without `O_EXCL` is deliberate and idempotent: an existing
+    # database is opened, never truncated, and keeps its current mode — which is
+    # why `tighten_fa_artifact_modes` handles already-deployed files.
+    #
+    # Both databases route through here, so this one site covers `session.db`
+    # and `global_history.db`.
+    try:
+        os.close(os.open(db_path, os.O_CREAT | os.O_RDWR, PRIVATE_FILE_MODE))
+    except OSError:  # pragma: no cover - let sqlite3 raise the actionable error
+        pass
     conn = sqlite3.connect(str(db_path), timeout=timeout_seconds)
     conn.execute(f"PRAGMA busy_timeout={busy_timeout_ms};")
     return conn

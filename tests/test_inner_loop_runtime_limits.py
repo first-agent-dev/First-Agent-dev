@@ -10,10 +10,7 @@ Covers F-6 + F-7 from the PR #24 must-fix block:
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
-
-import pytest
 
 from fa.inner_loop import (
     DEFAULT_BASH_TIMEOUT_SECONDS,
@@ -29,6 +26,7 @@ from fa.inner_loop import (
 from fa.inner_loop.hooks import HookRegistry, SandboxHook
 from fa.inner_loop.runtime_limits import DEFAULT_COST_BUDGET_USD
 from fa.inner_loop.tools import build_baseline_registry
+from tests._capabilities import requires_pty_backend
 
 
 def test_anchored_defaults_match_amendment() -> None:
@@ -329,7 +327,7 @@ def test_max_iterations_truncates_run_session(tmp_path: Path) -> None:
     assert all(result.error is None for result in results)
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_pty_backend
 def test_bash_timeout_is_plumbed_into_tool(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path, bash_timeout_seconds=1)
     hooks = HookRegistry()

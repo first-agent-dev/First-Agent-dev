@@ -23,6 +23,15 @@ import sys
 from pathlib import Path
 from typing import override
 
+# UTF-8 console: this script prints non-ASCII (checkmarks / box drawing) and
+# crashed with UnicodeEncodeError on a Windows host whose console was cp1251 —
+# while REPORTING SUCCESS. See scripts/_console.py for the full rationale.
+if __package__ in (None, ""):  # invoked as a file, not as scripts.<name>
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts._console import force_utf8_stdio
+
+force_utf8_stdio()
+
 # Dataclasses that should NEVER be mocked with MagicMock(spec=...).
 # These are pure value objects — use real instances instead.
 PROTECTED_DATACLASSES = frozenset(

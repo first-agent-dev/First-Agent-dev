@@ -1,0 +1,48 @@
+{
+  "slice": "S9",
+  "note": "Statement-deletion sweep over the guards S9 added. gremlins mutates expressions and ships NO statement-deletion operator, so these are exactly the mutations its 164/164 run over stats.py could not produce. Each row asks: if this line simply vanished, would ANY test notice? The sweep always runs the whole suite.",
+  "mutations": [
+    {
+      "id": "S9-M1",
+      "file": "src/fa/cli.py",
+      "old": "    if not math.isfinite(seconds) or seconds <= 0:\n        return None",
+      "new": "    pass",
+      "why": "S9.2 / F6: '-5d' would parse to -432000.0 again, pushing the --since cutoff into the future so every session is filtered out and the operator sees 'no matching sessions' instead of an error"
+    },
+    {
+      "id": "S9-M2",
+      "file": "src/fa/cli.py",
+      "old": "    if _since_raw and not getattr(args, \"run_id\", None) and _parse_since(_since_raw) is None:",
+      "new": "    if False:",
+      "why": "S9.2 / CT2: the pre-dispatch usage guard disappears, so an invalid --since silently degrades to 'no filter' on BOTH call sites"
+    },
+    {
+      "id": "S9-M3",
+      "file": "src/fa/stats.py",
+      "old": "        db = SessionDatabase.open_existing(db_path, session_id=session_id)",
+      "new": "        db = SessionDatabase(db_path, session_id=session_id)",
+      "why": "parse_session_db must never CREATE a database from a stats read. open_existing rejects a missing/legacy/mismatched DB; the plain constructor would bootstrap one, turning a read command into a writer"
+    },
+    {
+      "id": "S9-M4",
+      "file": "src/fa/cli.py",
+      "old": "        if db_path != expected_db:\n            raise StatsSourceError(\"manifest_path_mismatch\", str(manifest_path))",
+      "new": "        pass",
+      "why": "S9 Do#1: discovery would trust a manifest pointing at an arbitrary session_db_path, reading a DB that does not belong to the session directory it was found in"
+    },
+    {
+      "id": "S9-M5",
+      "file": "src/fa/cli.py",
+      "old": "        if not isinstance(manifest, dict) or manifest.get(\"status\") != \"active\":\n            raise StatsSourceError(\"manifest_corrupt\", f\"inactive or malformed manifest: {manifest_path}\")",
+      "new": "        pass",
+      "why": "S9 Do#1: an inactive or malformed session would be silently included in stats output"
+    },
+    {
+      "id": "S9-M6",
+      "file": "src/fa/cli.py",
+      "old": "        if has_legacy:\n            raise StatsSourceError(\n                \"legacy_trace_unsupported\",\n                \"current FA sessions require session.db under sessions/<session-id>; legacy JSONL/DB was not migrated\",\n            )",
+      "new": "        pass",
+      "why": "parent Do-not: old-session compatibility must not change silently. Deleting this turns an explicit coded refusal into a bare 'no sessions found'"
+    }
+  ]
+}

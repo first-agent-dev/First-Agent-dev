@@ -19,6 +19,15 @@ import sys
 from pathlib import Path
 from typing import override
 
+# UTF-8 console: this script prints non-ASCII (checkmarks / box drawing) and
+# crashed with UnicodeEncodeError on a Windows host whose console was cp1251 —
+# while REPORTING SUCCESS. See scripts/_console.py for the full rationale.
+if __package__ in (None, ""):  # invoked as a file, not as scripts.<name>
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts._console import force_utf8_stdio
+
+force_utf8_stdio()
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_FA = REPO_ROOT / "src" / "fa"
 
@@ -44,7 +53,7 @@ KNOWN_DORMANT_KINDS: dict[str, str] = {
 
 
 def extract_log_kinds() -> list[str]:
-    source = (REPO_ROOT / "src" / "fa" / "output.py").read_text()
+    source = (REPO_ROOT / "src" / "fa" / "output.py").read_text(encoding="utf-8")
     match = re.search(r"LogKind = Literal\[(.*?)\]", source, re.DOTALL)
     if not match:
         print("FAIL: Could not find LogKind definition in output.py")
@@ -64,7 +73,7 @@ def extract_log_kinds() -> list[str]:
 
 
 def extract_console_mirror_kinds() -> set[str]:
-    source = (REPO_ROOT / "src" / "fa" / "output.py").read_text()
+    source = (REPO_ROOT / "src" / "fa" / "output.py").read_text(encoding="utf-8")
     # Find the CONSOLE_MIRROR_KINDS frozenset
     match = re.search(
         r"CONSOLE_MIRROR_KINDS.*?frozenset(?:\[[^\]]+\])?\(\s*\{(.*?)\}\s*\)",
@@ -248,7 +257,9 @@ def check_console_mirror_dual_write(console_mirror_kinds: set[str]) -> list[str]
         # spawn_subagent centralizes its two event emissions through a typed
         # helper; prove the helper is typed and the expected event literal is
         # present rather than requiring a duplicated constructor at each call.
-        spawn_source = (REPO_ROOT / "src" / "fa" / "inner_loop" / "tools" / "spawn_subagent.py").read_text()
+        spawn_source = (REPO_ROOT / "src" / "fa" / "inner_loop" / "tools" / "spawn_subagent.py").read_text(
+            encoding="utf-8"
+        )
         if (
             kind in {"subagent_spawn_done", "subagent_spawn_fail"}
             and "def _emit_subagent_event" in spawn_source

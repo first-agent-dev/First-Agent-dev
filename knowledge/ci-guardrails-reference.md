@@ -35,6 +35,7 @@ must not have that bypass permission.
 | ruff lint `B,BLE,C4,C90,E,F,I,N,PGH,PYI,RUF,S,UP,W` | `just lint` → `ruff check .` | bugs (B/F), blind-except swallow (BLE), complexity >15 ratchet (C901, 4 baseline waivers), security floor / bandit (S; tests exempt), blanket-suppression guard (PGH003/004), style+imports (auto-fixed via `just fix`) | blocking |
 | ruff format | `just lint` → `--check` | canonical formatting (zero agent context cost via `just fix` = `--fix-only` → `format` → `check`) | blocking |
 | mypy `--strict` | `just typecheck` | type errors at integration seams (138 files) | blocking |
+| pyrefly `preset = "strict"` | `just test` → `tests/test_pyrefly_import_topology.py` | second-opinion type errors mypy does not model (e.g. missing `@override`, heterogeneous-dict narrowing); also asserts pyrefly is installed and actually ran, so an absent tool fails instead of reading as zero errors | blocking (Q50) |
 | pylint gap-profile | `just lint` → `pylint src/fa` | ONLY `duplicate-code` (R0801, cross-file copy-paste — #1 LLM smell) + `cyclic-import` (R0401); `disable=all` + explicit `fail-on` (binary gate, score-independent) | blocking |
 | deptry | `just lint` | unused / missing / misplaced dependencies | blocking |
 | pytest + coverage | `just test` (cov flags here, NOT in addopts — bare `pytest` is iteration-friendly) | regressions; branch coverage `fail_under = 90` | blocking |
@@ -143,7 +144,7 @@ The script parses YAML (ignoring comments) and only flags actual
 | `pylint` | (deleted — runs inside `just lint`) | — |
 | `tests.yml` | weekly mutation run; stats → job summary + artifact | advisory (promotion trigger above) |
 | `semgrep.yml` | weekly OWASP/python SAST | advisory |
-| `pyrefly` (in advisory.yml) | second type-checker signal | advisory |
+| `pyrefly` (in advisory.yml) | second type-checker signal | **duplicate** — the gate is blocking, in `just test` (Q50) |
 
 **`check_protected_paths.py` — three annotation tiers** (exit 0; loud
 `::warning` annotations the human merge-gate acts on):

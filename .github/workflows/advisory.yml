@@ -7,7 +7,12 @@ name: Advisory CI
 # gate. If it fails, run `uv lock` locally and commit the updated lockfile.
 #
 # Blocking gates: sanity-check (just check), audit (pip-audit), gitleaks.
-# Advisory jobs: pyrefly (type-checking signal).
+#
+# NOTE on pyrefly: the job below is `continue-on-error: true` and is a
+# fast-feedback DUPLICATE, not the gate. pyrefly is BLOCKING (Q50) and is
+# enforced by tests/test_pyrefly_import_topology.py inside `just test`, which
+# the blocking sanity-check job runs. Keeping this job non-fatal only avoids
+# reporting the same failure twice; it does not weaken the gate.
 
 on:
   pull_request:
@@ -79,7 +84,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - run: uv sync --frozen --extra dev
-      - name: Run pyrefly (advisory type-checking signal)
+      # Fast standalone signal. NOT the gate — pyrefly is blocking via
+      # `just test` (Q50); see the note in this file's header.
+      - name: Run pyrefly (fast duplicate of the blocking in-suite gate)
         run: uv run pyrefly check
 
   # Build the runtime image and smoke-test it AS THE NON-ROOT RUNTIME USER.

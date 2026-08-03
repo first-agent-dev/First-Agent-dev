@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -22,6 +23,7 @@ import urllib.request
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from fa import __version__
 from fa.authoring_rules import RULE_ALLOWLIST
@@ -59,6 +61,8 @@ from fa.inner_loop.hooks import (
 )
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
+from fa.inner_loop.registry import ToolRegistry
+from fa.inner_loop.runtime_limits import RuntimeLimits
 from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
 from fa.inner_loop.tools import (
     build_baseline_registry,
@@ -70,17 +74,19 @@ from fa.inner_loop.workflow_artifacts import (
     EvalReport,
     FlowState,
     FlowStatus,
+    load_flow_state,
     parse_eval_report,
     write_eval_report,
     write_flow_state,
 )
 from fa.observability import CostGuardian
 from fa.observability.redaction import SecretRedactor, SecretRedactorError
-from fa.paths import fa_session_log_root, fa_state_root
+from fa.paths import fa_session_log_root, fa_state_root, tighten_fa_artifact_modes
 from fa.providers import (
     DEFAULT_MODELS_YAML_PATH,
     ChainConfig,
     ChainEntry,
+    ModelsConfig,
     ProviderChain,
     SecretStore,
     UrllibTransport,
@@ -95,6 +101,15 @@ from fa.providers.errors import (
     ProviderRequestShapeError,
 )
 from fa.providers.routing_lint import lint_models_config
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # fa.output is imported lazily inside _cmd_run (module-level import kept out
+    # of the CLI's import path deliberately); these names are needed for
+    # annotations only, so they are declared here rather than promoted to a
+    # runtime import that would change startup behaviour.
+    from fa.output import EventBus
+    from fa.runtime import PtyPool
+    from fa.stats import SessionAnalytics
 from fa.roles import EvalFamilyConflictError
 from fa.session.manager import RunContext, SessionContext, SessionManager, SessionManagerError
 from fa.verifier import load_contracts_from_dir
@@ -568,6 +583,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=_WORKFLOW_MODES,
         default="linear",
         help=COMMANDS["workflow"]["args"]["--mode/-m"]["en"],
+    )
+    # S8.4: mirrors ``run``'s flag so one workflow invocation can be made
+    # machine-parseable. Forwarded to every stage in ``_run_stage``.
+    workflow_parser.add_argument(
+        "--output-mode",
+        choices=("console", "quiet"),
+        default="console",
+        help=COMMANDS["workflow"]["args"]["--output-mode"]["en"],
     )
     workflow_parser.add_argument(
         "--max-repairs",
@@ -1081,6 +1104,28 @@ _EVAL_VERDICT_TO_TERMINAL_STATUS: dict[str, FlowStatus] = {
     "BLOCKED": "FAILED",
 }
 
+# S8.7 — the aggregate ``global_history`` row's ``stop_reason`` is a SEMANTIC
+# outcome, so it must be derived from the semantic authority (the terminal
+# ``FlowState.status``) and not from ``result_code``.
+#
+# Why this mapping exists: every mode returns 0 when the pipeline merely RAN TO
+# COMPLETION, regardless of the eval verdict (``_run_linear`` and
+# ``_run_repair``/``_run_adaptive`` all ``return 0``). The previous
+# ``"workflow_complete" if result_code == 0 else "workflow_failed"`` therefore
+# recorded a BLOCKED run as ``workflow_complete`` — measured, three artifacts
+# disagreeing about one run. Cross-run projections (``fa history``, S9) read
+# this column, so a rejected run was counted as a success.
+#
+# ``exit_code`` is deliberately NOT changed here: that is a separate
+# operator-visible contract (S8 plan Q35). Keeping them separate means this
+# mapping fixes the projection without silently altering shell semantics.
+_WORKFLOW_STATUS_TO_STOP_REASON: dict[str, str] = {
+    "DONE": "workflow_complete",
+    "FAILED": "workflow_failed",
+    "REPAIR_REQUIRED": "workflow_repair_required",
+    "REPLAN_REQUIRED": "workflow_replan_required",
+}
+
 # Repair-loop budget defaults (workflow plan §4.6: 2 rounds, hard max 3).
 DEFAULT_MAX_REPAIRS = 2
 MAX_REPAIRS_CEILING = 3
@@ -1201,7 +1246,10 @@ def _run_stage(
         "max_turns": ctx.args.max_turns,
         "run_id": ctx.run_id,
         "resume": not fresh,
-        "output_mode": "console",
+        # S8.4: forward the operator's choice instead of hardcoding "console".
+        # ``getattr`` default keeps legacy direct-Namespace callers (tests that
+        # predate the flag) working unchanged.
+        "output_mode": getattr(ctx.args, "output_mode", None) or "console",
         "detail": "standard",
         "no_color": False,
     }
@@ -1303,6 +1351,45 @@ def _write_terminal_state(
             blocked_reason=blocked,
         ),
     )
+
+
+def _read_back_terminal_state(flow_state_path: Path, run_id: str) -> FlowState | None:
+    """Re-read the terminal ``FlowState`` this invocation just persisted (S8.3).
+
+    This is the production consumer of ``flow_state.json``. Before S8.3 the
+    artifact was write-only: ``load_flow_state`` had zero callers outside its
+    defining module, while the ``global_history`` export synthesised a semantic
+    outcome from an exit code. Reading the artifact back makes the persisted
+    state the single source of terminal truth and lets the projection agree
+    with it (see ``_WORKFLOW_STATUS_TO_STOP_REASON``).
+
+    The ``run_id`` check is what makes this a *verification* rather than a
+    decorative read: a stale or foreign ``flow_state.json`` left in the run
+    directory is rejected instead of silently trusted, mirroring
+    ``SessionManager._read_manifest``'s ``manifest_identity_mismatch`` guard.
+
+    Fail-soft by contract. The workflow has already finished by the time this
+    runs, so a projection read must never change the exit code or raise; every
+    failure degrades to ``None`` and the caller keeps its previous behaviour.
+    """
+    try:
+        state = load_flow_state(flow_state_path)
+    except (OSError, ValueError, KeyError, TypeError):
+        logger.warning(
+            "workflow terminal-state read-back failed for %s; falling back to exit-code semantics",
+            run_id,
+            exc_info=True,
+        )
+        return None
+    if state.run_id != run_id:
+        logger.warning(
+            "workflow terminal-state identity mismatch at %s: artifact says %r, expected %r",
+            flow_state_path,
+            state.run_id,
+            run_id,
+        )
+        return None
+    return state
 
 
 def _print_terminal_summary(
@@ -1638,6 +1725,34 @@ def _run_repair(ctx: _WorkflowContext, roles: list[str], max_repairs: int) -> in
     return 0
 
 
+def _workflow_exit_code(result_code: int, terminal_state: FlowState | None) -> int:
+    """Map a workflow run to its process exit code (S10c.2 / Q35b).
+
+    The exit code REPORTS THE VERDICT, not merely that the pipeline ran. Every
+    mode returns 0 once its stages complete regardless of what the evaluator
+    decided, so ``fa workflow && deploy`` used to proceed on BLOCKED code and
+    any CI gate reading ``$?`` saw success.
+
+    * ``0`` — terminal status ``DONE``: the work was accepted.
+    * ``1`` — any other terminal status: it ran, it was not accepted.
+    * ``result_code`` passthrough — a usage/configuration error (**2**) is a
+      DIFFERENT contract and must stay distinguishable. "I invoked this
+      wrongly" and "the code was rejected" have different fixes.
+
+    ``terminal_state is None`` means the artifact was missing, corrupt, or
+    belonged to another run. That keeps the pipeline's own answer rather than
+    inventing a verdict; ``_read_back_terminal_state`` has already logged why.
+
+    Pure and separately testable on purpose: the caller derives BOTH this and
+    the aggregate row's ``stop_reason`` from one artifact read, and extracting
+    the branch keeps ``_cmd_workflow`` under the C901 threshold — the ratchet
+    flagged it at 16 the moment this logic was added inline.
+    """
+    if result_code != 0 or terminal_state is None:
+        return result_code
+    return 0 if terminal_state.status == "DONE" else 1
+
+
 def _cmd_workflow(
     args: argparse.Namespace,
     *,
@@ -1711,6 +1826,12 @@ def _cmd_workflow(
             )
             return 2
 
+    # S8.2 — wall time for the whole invocation. Anchored BEFORE session
+    # lifecycle resolution because session setup is part of what an operator
+    # waits for. ``monotonic`` (not ``time.time``) so a wall-clock adjustment
+    # mid-run cannot produce a negative or inflated duration; same pattern as
+    # ``_cmd_run`` (``_run_start_mono``).
+    _wf_start_mono = time.monotonic()
     try:
         run_id, session_context, run_context, session_db = _resolve_workflow_lifecycle(args, run_id)
     except SessionManagerError as exc:
@@ -1757,6 +1878,24 @@ def _cmd_workflow(
     else:
         result_code = _run_linear(ctx, roles)
 
+    # S10c.2 / Q35b — read the persisted terminal state ONCE, here, and derive
+    # two things from it: the aggregate row's ``stop_reason`` (S8.7, below) and
+    # this command's exit code (at the terminal return).
+    #
+    # **Read it OUTSIDE the try block deliberately.** The export below is
+    # best-effort and swallows every exception so telemetry can never break a
+    # workflow. Binding this inside that block would make the exit code depend
+    # on the export succeeding: an early failure (EventLog construction, a bad
+    # import) is swallowed, execution reaches the return, and the name is
+    # unbound -> UnboundLocalError escaping from the one place written never to
+    # fail. One artifact read, two derived contracts, neither able to break the
+    # other.
+    terminal_state = _read_back_terminal_state(artifact_paths.flow_state, run_id)
+
+    # Computed HERE, before the export, so the aggregate row's ``exit_code``
+    # column and the process's own status are the same number by construction.
+    exit_code = _workflow_exit_code(result_code, terminal_state)
+
     # LOGIC-11: Export single aggregate row to global_history.db after
     # workflow completes. Per-stage exports are skipped in _cmd_run when
     # outcome_sink is non-None, so each stage doesn't overwrite the previous
@@ -1777,9 +1916,19 @@ def _cmd_workflow(
         # Build a synthetic outcome for the aggregate row.
         # Token totals and tool breakdown come from _extract_telemetry_from_log
         # which reads the shared session.db correctly.
+        # S8.3 / S8.7 — derive the semantic outcome from the persisted terminal
+        # FlowState, not from result_code. Falls back to the historical
+        # exit-code rule when the artifact is missing, corrupt, or belongs to
+        # another run, so the export can never become less reliable than before.
+        _fallback_stop_reason = "workflow_complete" if result_code == 0 else "workflow_failed"
+        _stop_reason = (
+            _WORKFLOW_STATUS_TO_STOP_REASON.get(terminal_state.status, _fallback_stop_reason)
+            if terminal_state is not None
+            else _fallback_stop_reason
+        )
         aggregate_outcome = SessionOutcome(
-            exit_code=result_code,
-            stop_reason="workflow_complete" if result_code == 0 else "workflow_failed",
+            exit_code=exit_code,
+            stop_reason=_stop_reason,
             turns=0,  # turns in global_history come from telemetry, not outcome
             final_text="",
             tool_results=(),
@@ -1799,17 +1948,406 @@ def _cmd_workflow(
             model=_last_model,
             family=_last_family,
             workspace_root=ctx.args.workspace,
-            duration_ms=0,  # not tracked at workflow level yet
+            duration_ms=int((time.monotonic() - _wf_start_mono) * 1000),
         )
     except Exception as exc:  # noqa: BLE001 — best-effort, never crash workflow
         import logging
 
         logging.getLogger(__name__).warning("workflow global_history export failed for %s: %s", run_id, exc)
 
-    return result_code
+    return exit_code
 
 
-def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→proxy→loop)
+def _validate_run_args(args: argparse.Namespace) -> str | None:
+    """Validate ``fa run``'s arguments; return the operator message, or ``None`` if valid.
+
+    Extracted from ``_cmd_run`` (S10b.2). Pure apart from one documented
+    mutation — see below — so it is unit-testable without a session, a config
+    file, or a transport.
+
+    **Returns a message rather than printing one.** The caller owns the stream
+    and the exit code, which keeps every ``return 2`` in ``_cmd_run`` visible
+    at one place instead of scattered through a helper. It also makes the
+    guard order assertable directly: the message identifies which guard fired.
+
+    **The one impurity, stated because hiding it would be worse:** a resolved
+    task is written back to ``args.task``. ``_resolve_task`` merges the
+    positional argument, ``--task`` and stdin, and the rest of ``_cmd_run``
+    reads ``args.task``. Threading the resolved value out separately would
+    change the call contract of everything downstream for no behavioural gain.
+
+    Guard ORDER is part of the contract, not an implementation detail: the
+    first failing guard decides the message an operator sees, and
+    ``test_s10b_parity_validation_prologue`` pins each one by its unique
+    wording (plan RK4).
+    """
+    resolved = _resolve_task(getattr(args, "task_pos", None), getattr(args, "task", None))
+    if resolved is None:
+        return "fa run: provide a task — positional (fa run \"...\"), --task, or '-' for stdin"
+    args.task = resolved
+    if not str(args.task).strip():
+        return "fa run: task must be non-empty"
+    if args.max_turns < 1:
+        return "fa run: --max-turns must be a positive integer"
+    if args.run_id and not _valid_run_id(args.run_id):
+        return "fa run: --run-id must match [A-Za-z0-9_.-]{1,128}"
+    if (
+        getattr(args, "resume", False)
+        and hasattr(args, "session_id")
+        and not getattr(args, "session_id", None)
+        and getattr(args, "_run_context", None) is None
+    ):
+        return "fa run: --resume requires --session-id and starts a new run"
+    return None
+
+
+def _resolve_run_models(
+    *,
+    config_path: Path,
+    role: str,
+    secrets: Mapping[str, str],
+    proxy_url: str,
+) -> tuple[ModelsConfig, ChainConfig] | str:
+    """Load the models config and select ``role``'s chain, rewriting it for proxy mode.
+
+    Extracted from ``_cmd_run`` (S10b.2). Returns ``(models, chain_config)`` on
+    success, or the operator-facing error message as a ``str``.
+
+    **Why a union return rather than raising.** These three failures are not
+    exceptional — they are the ordinary "you configured it wrong" paths, and
+    all three already produced ``return 2`` inline. Raising and re-catching at
+    the call site would add a control-flow layer that changes nothing an
+    operator sees. ``isinstance(result, str)`` at the caller keeps the exit
+    code where the other exit codes live.
+
+    The three failure modes stay distinct because
+    ``test_s10b_parity_config_error`` and ``test_s10b_parity_unknown_role``
+    assert branch-unique wording; collapsing them into one message would pass
+    an exit-code-only test and fail those.
+
+    **Known gap, pinned not fixed (I-40).** The ``except`` clause below does
+    not catch ``yaml.YAMLError``, so a *malformed* config still escapes as a
+    traceback rather than becoming a message here. That behaviour is unchanged
+    by this extraction and is pinned by
+    ``test_s10b_parity_unparseable_yaml_crashes``; fixing it is a product
+    change and belongs to whichever slice owns I-40, not to a
+    behaviour-invariance refactor.
+    """
+    proxy_mode = bool(proxy_url)
+    try:
+        models = load_models_config_from_path(config_path, env=secrets, require_api_keys=not proxy_mode)
+    except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
+        return f"fa run: configuration error: {exc}"
+
+    chain_config = models.roles.get(role)
+    if chain_config is None:
+        known = sorted(models.roles)
+        return f"fa run: role {role!r} not found in {config_path}; known: {known}"
+
+    if proxy_mode:
+        rewritten, proxy_err = _proxy_rewrite_chain(chain_config, proxy_url)
+        if proxy_err:
+            return f"fa run: {proxy_err}"
+        chain_config = rewritten
+
+    return models, chain_config
+
+
+def _build_compactor_chain(
+    models: ModelsConfig,
+    *,
+    transport: Transport,
+    secrets: Mapping[str, str],
+    proxy_url: str,
+) -> ProviderChain | None:
+    """Build the optional ``compactor`` provider chain; ``None`` if unconfigured.
+
+    Extracted from ``_cmd_run`` (S10b.2).
+
+    **The swallowed proxy error is deliberate and is preserved exactly.** If
+    the proxy rewrite fails for the compactor, the original (un-rewritten)
+    config is used rather than aborting the run — unlike the *primary* chain,
+    where the same failure returns exit 2. That asymmetry is intentional:
+    compaction is an optional capability, and losing it should degrade the run
+    rather than kill it.
+
+    It is called out here because it reads like a bug at a glance (``if not
+    proxy_err:`` with no ``else``), and a future reader "fixing" it would turn
+    a degraded run into a hard failure — a behaviour change no exit-code test
+    on the happy path would catch. Pinned by
+    ``test_s10b_parity_proxy_mode_builds_compactor_chain``.
+    """
+    compactor_config = models.roles.get("compactor")
+    if compactor_config is None:
+        return None
+    if proxy_url:
+        rewritten, proxy_err = _proxy_rewrite_chain(compactor_config, proxy_url)
+        if not proxy_err:
+            compactor_config = rewritten
+    return _build_provider_chain(compactor_config, transport=transport, secrets=secrets)
+
+
+def _build_role_registry(role: str, workspace: Path, *, bash_timeout_seconds: int) -> ToolRegistry:
+    """Select the role-appropriate tool registry.
+
+    Extracted from ``_cmd_run`` (S10b.2). Role-aware capability scoping:
+    ``planner`` and ``eval`` get read-only tools; everything else gets the full
+    baseline (read + write + bash).
+
+    **This is a security boundary, not a convenience switch.** The ``else``
+    branch is deliberately the permissive one, so an unrecognised role gets the
+    baseline registry rather than failing closed — matching the pre-extraction
+    behaviour exactly. Do not "tidy" this into an explicit allow-list without
+    treating it as a product change: ``fa run --role <typo>`` currently gets
+    write+bash tools, and that is what the shipped CLI does today.
+    """
+    if role == "planner":
+        return build_planner_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
+    if role == "eval":
+        return build_eval_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
+    return build_baseline_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
+
+
+def _build_run_hook_registry(
+    *,
+    workspace: Path,
+    log: EventLog,
+    limits: RuntimeLimits,
+    redactor: SecretRedactor | None,
+    draft_store: PrDraftStore,
+    run_log_dir: Path,
+    output_bus_ref: list[EventBus],
+) -> HookRegistry:
+    """Assemble the guard/observer stack for a ``fa run`` session.
+
+    Extracted from ``_cmd_run`` (S10b.2). Registration ORDER is behavioural,
+    not cosmetic: ``SandboxHook`` is registered first so only
+    workspace-contained paths reach ``IntentGuard``'s classifier, and the
+    original ordering is preserved exactly.
+
+    **``output_bus_ref`` is a one-element list, and that is on purpose.** In
+    the pre-extraction code, ``_loop_guard_warn_sink`` was a closure over
+    ``output_bus`` — a local that is not assigned until roughly 90 lines
+    *later*, well after the hooks are registered. Python resolves closure
+    variables at call time, so the sink saw the bus even though it did not
+    exist at registration time.
+
+    Passing ``output_bus`` by value here would silently break that: the
+    parameter would bind ``None`` (or fail with ``UnboundLocalError``) and
+    ``loop_warn`` console events would stop appearing — a *silent* observability
+    regression, invisible to exit-code tests, in code whose entire purpose is
+    operator visibility. A one-element list preserves the late binding
+    explicitly, so the deferred read is a visible part of the signature
+    instead of an accident of scoping that the next refactor deletes.
+    """
+
+    def _loop_guard_warn_sink(detector: str, message: str) -> None:
+        try:
+            log.append(
+                actor="hook",
+                kind="loop_guard_warn",
+                content={"detector": detector, "message": message},
+            )
+        except Exception as exc:  # noqa: BLE001 — observer must never block
+            logger.warning("loop guard observer failed: %s", exc)
+        # FIX-5: emit loop_warn for console visibility.
+        #
+        # ``OutputEvent`` is imported HERE, at call time, not from module scope.
+        # ``fa.output`` is deliberately not a module-level import in this file,
+        # and annotating it under ``TYPE_CHECKING`` alone made this line raise
+        # ``NameError`` at runtime — which the broad ``except`` below then
+        # swallowed, silently killing every console ``loop_warn``. Caught by a
+        # direct functional probe of this sink; no exit-code test would have
+        # seen it. Keep the import inside the function.
+        try:
+            from fa.output import OutputEvent
+
+            if output_bus_ref:
+                output_bus_ref[0].emit(
+                    OutputEvent(
+                        type="loop_warn",
+                        data={"detector": detector, "message": message},
+                    )
+                )
+        except Exception as exc:  # noqa: BLE001 — observer must never block
+            logger.warning("loop guard observer failed: %s", exc)
+
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(workspace))
+    hooks.register(
+        LoopGuard(
+            repeat_warn=limits.loop_guard_repeat_warn,
+            circuit_breaker=limits.loop_guard_circuit_breaker,
+            window=limits.loop_guard_window,
+            warn_sink=_loop_guard_warn_sink,
+        )
+    )
+    hooks.register(RateLimitBlocker(suppression_seconds=limits.rate_limit_suppression_seconds))
+    hooks.register(LockfileBlocker(suppression_seconds=limits.lockfile_suppression_seconds))
+    hooks.register(AuthExpiredBlocker(suppression_seconds=limits.auth_expired_suppression_seconds))
+    # M-7 IntentGuard: reads the per-session PR draft at
+    # ~/.fa/session-log/<run_id>/pr_draft.md (populated by the M-7 §Q-N
+    # ``pr.prepare`` tool). Registered after SandboxHook so only
+    # workspace-contained paths reach the intent classifier.
+    hooks.register(IntentGuard(repo_root=workspace, draft_store=draft_store))
+    hooks.register(AuditHook(event_log=log))
+    hooks.register(SecretGuard(secrets=redactor.secrets if redactor is not None else frozenset()))
+    hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
+    # R-3 FailureClassifierObserver + R-6 AttemptHistoryObserver: classify tool
+    # failures and write recovery history so the coder-recovery prompt can read
+    # it. These were defined but never registered (LOGIC-15), which made the
+    # `recovery_action` event kind dead code in production.
+    hooks.register(FailureClassifierObserver(event_log=log))
+    hooks.register(AttemptHistoryObserver(history=AttemptHistory(run_log_dir / "attempt_history.json")))
+    hooks.register(
+        LearningObserver(
+            codebase_map_path=workspace / "knowledge" / "trace" / "codebase_map.json",
+            gotchas_path=workspace / "knowledge" / "trace" / "gotchas.md",
+            redactor=redactor,
+        )
+    )
+    contracts = load_contracts_from_dir(workspace / "verifiers")
+    if contracts:
+        hooks.register(VerifierObserver(contracts=contracts, event_log=log))
+    return hooks
+
+
+def _build_pty_pool(*, workspace: Path, run_id: str) -> PtyPool | None:
+    """Build the stateful PTY pool, or ``None`` if it cannot be initialised.
+
+    Extracted from ``_cmd_run`` (S10b.2). FIND-007: the live CLI harness owns
+    the pool, wired to the ``pty_pool_max_size`` feature flag.
+
+    **Failure is not fatal by design.** Any error degrades to ``None``, and the
+    bash tool falls back to stateless subprocess execution. That is why the
+    broad ``except`` is correct here rather than sloppy — a PTY is an
+    optimisation, and an environment without one (a container without a tty, a
+    platform without ``pty``) must still run.
+
+    ``os`` is read from module scope on purpose. Re-importing it inside the
+    function shadows the module-level import and produces
+    ``UnboundLocalError`` on the earlier ``os.getpid()`` reference in
+    ``_cmd_run`` — a real bug that was fixed once already; the comment survives
+    the extraction so it is not reintroduced.
+    """
+    try:
+        from fa.runtime import PtyPool as _PtyPool
+
+        try:
+            max_size = int(os.environ.get("FA_PTY_POOL_MAX_SIZE", "2"))
+        except (TypeError, ValueError):
+            max_size = 2
+        return _PtyPool(max_size=max_size, base_cwd=workspace, run_id=run_id)
+    except Exception as exc:  # noqa: BLE001 - graceful degradation, fallback to subprocess
+        logger.warning("Failed to init PtyPool for live CLI: %s, fallback stateless", exc)
+        return None
+
+
+def _build_output_bus(args: argparse.Namespace, output_mode: str) -> EventBus:
+    """Build the console/quiet output bus for a run.
+
+    Extracted from ``_cmd_run`` (S10b.2).
+
+    ``fa.output`` is imported inside the function, preserving the pre-existing
+    lazy-import decision rather than quietly promoting it to module scope: this
+    module is the CLI entry point and its import cost is on every ``fa``
+    invocation, including ``--help``.
+
+    An unrecognised ``output_mode`` deliberately yields a bus with **no**
+    renderer attached (``json`` mode is Phase 2). Events are still emitted and
+    still reach the durable log; only the console rendering is absent. That is
+    the shipped behaviour and is preserved exactly.
+    """
+    from fa.output import ConsoleRenderer, EventBus, QuietRenderer
+
+    output_bus = EventBus()
+    if output_mode == "console":
+        output_bus.add(
+            ConsoleRenderer(
+                detail=getattr(args, "detail", "standard") or "standard",
+                no_color=bool(getattr(args, "no_color", False)),
+            )
+        )
+    elif output_mode == "quiet":
+        output_bus.add(QuietRenderer())
+    return output_bus
+
+
+def _prepare_pr_draft(
+    draft_store: PrDraftStore,
+    draft_path: Path,
+    *,
+    resume: bool,
+) -> tuple[str, str | None]:
+    """Read any resumable PR draft and reset the store. Returns ``(text, error)``.
+
+    Extracted from ``_cmd_run`` (S10b.2). ``error`` is ``None`` on success; a
+    non-``None`` error is fatal (exit 2) at the call site.
+
+    **Two failures, two different severities — and the asymmetry is the point.**
+
+    * Failing to *read* an existing draft is a **warning**: the run continues
+      with empty resume context. The operator loses continuity, not the run.
+    * Failing to *clear* the draft store is **fatal**: M-7's ``IntentGuard``
+      trusts the draft's provenance, so continuing with a stale or
+      externally-fabricated draft would let a mutating tool run against
+      intent the current session never established. Failing closed is the
+      security-correct behaviour.
+
+    Both are preserved exactly as they were inline. The warning is printed here
+    rather than returned because it is not the caller's decision — there is no
+    exit code attached to it, and returning "a message that is not an error"
+    would invite a caller to treat it as one.
+    """
+    resume_draft_text = ""
+    if resume and draft_path.is_file():
+        try:
+            resume_draft_text = draft_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(
+                f"fa run: warning — could not read existing draft at {draft_path}: {exc}",
+                file=sys.stderr,
+            )
+
+    try:
+        draft_store.clear(remove_file=not resume)
+    except OSError as exc:
+        return resume_draft_text, f"fa run: failed to reset PR draft path {draft_store.path}: {exc}"
+
+    return resume_draft_text, None
+
+
+def _session_db_runtime_error_message(exc: RuntimeError, db_path: Path) -> str | None:
+    """Map a session-database ``RuntimeError`` to an operator message.
+
+    Extracted from ``_cmd_run`` (S10b.2). Returns ``None`` for a
+    ``RuntimeError`` this function does not recognise, which the caller must
+    treat as "re-raise" rather than "no error".
+
+    LOGIC-8 + NEW-3: both ``SessionDatabase.append_event_row``
+    (``event_log_write_failed``) and ``EventLog.append``
+    (``event_log_authority_unavailable``) raise ``RuntimeError``, and they are
+    distinguished by a marker in the message text. The two get distinct
+    diagnostics because they mean different things to an operator: one is "the
+    database is not reachable", the other is "it is reachable and rejected a
+    write".
+
+    **Returning ``None`` rather than a generic message is deliberate.** An
+    unrecognised ``RuntimeError`` is a bug, not a misconfiguration, and it must
+    surface as a traceback with its original stack. Collapsing it into a
+    friendly string here would hide real defects behind a plausible-looking
+    diagnostic — the exact failure mode this codebase's BLE001 rule exists to
+    prevent.
+    """
+    exc_str = str(exc)
+    if "event_log_authority_unavailable" in exc_str:
+        return f"fa run: session database not available at {db_path}: {exc}"
+    if "event_log_write_failed" in exc_str:
+        return f"fa run: failed to write event to session database at {db_path}: {exc}"
+    return None
+
+
+def _cmd_run(
     args: argparse.Namespace,
     *,
     transport: Transport | None = None,
@@ -1827,33 +2365,9 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     the resolved secrets file (strict, file-only — never ``os.environ``);
     tests inject a :class:`SecretStore`/mapping directly.
     """
-    resolved = _resolve_task(getattr(args, "task_pos", None), getattr(args, "task", None))
-    if resolved is None:
-        print(
-            "fa run: provide a task — positional (fa run \"...\"), --task, or '-' for stdin",
-            file=sys.stderr,
-        )
-        return 2
-    args.task = resolved
-    if not str(args.task).strip():
-        print("fa run: task must be non-empty", file=sys.stderr)
-        return 2
-    if args.max_turns < 1:
-        print("fa run: --max-turns must be a positive integer", file=sys.stderr)
-        return 2
-    if args.run_id and not _valid_run_id(args.run_id):
-        print(
-            "fa run: --run-id must match [A-Za-z0-9_.-]{1,128}",
-            file=sys.stderr,
-        )
-        return 2
-    if (
-        getattr(args, "resume", False)
-        and hasattr(args, "session_id")
-        and not getattr(args, "session_id", None)
-        and getattr(args, "_run_context", None) is None
-    ):
-        print("fa run: --resume requires --session-id and starts a new run", file=sys.stderr)
+    prologue_error = _validate_run_args(args)
+    if prologue_error is not None:
+        print(prologue_error, file=sys.stderr)
         return 2
 
     workspace_override = getattr(args, "workspace", None)
@@ -1869,26 +2383,16 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         # chain's key store is intentionally empty; only the deploy key / proxy
         # token are tracked (for the redactor). Legacy mode: strict-file store.
         secrets = SecretStore({}) if proxy_mode else _load_secret_store()
-    try:
-        models = load_models_config_from_path(config_path, env=secrets, require_api_keys=not proxy_mode)
-    except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
-        print(f"fa run: configuration error: {exc}", file=sys.stderr)
+    resolved_models = _resolve_run_models(
+        config_path=config_path,
+        role=args.role,
+        secrets=secrets,
+        proxy_url=proxy_url,
+    )
+    if isinstance(resolved_models, str):
+        print(resolved_models, file=sys.stderr)
         return 2
-    chain_config = models.roles.get(args.role)
-    if chain_config is None:
-        known = sorted(models.roles)
-        print(
-            f"fa run: role {args.role!r} not found in {config_path}; known: {known}",
-            file=sys.stderr,
-        )
-        return 2
-
-    if proxy_mode:
-        rewritten, proxy_err = _proxy_rewrite_chain(chain_config, proxy_url)
-        if proxy_err:
-            print(f"fa run: {proxy_err}", file=sys.stderr)
-            return 2
-        chain_config = rewritten
+    models, chain_config = resolved_models
 
     # Resolve session/run context before transport wrapping and provider-chain
     # construction. The legacy branch is retained only for direct unit
@@ -1909,6 +2413,15 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     else:
         run_id = args.run_id or f"run-{os.getpid()}"
         run_log_dir = fa_session_log_root() / run_id
+
+    # I-36 retroactive half (S10c.3 / Q56). New artifacts are created 0600 by
+    # `private_opener` and the SQLite pre-create, but an already-deployed tree
+    # still holds 0644 files and 0755 directories from before that fix. Repair
+    # them once per run, here, where the state root is known and before any new
+    # artifact is written. Best-effort and idempotent; see the helper for why
+    # symlinks are skipped and directories get 0700.
+    tighten_fa_artifact_modes(fa_state_root())
+
     try:
         redactor = SecretRedactor.from_models_config(
             secrets,
@@ -1928,14 +2441,12 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     )
     chain = _build_provider_chain(chain_config, transport=effective_transport, secrets=secrets)
 
-    compactor_chain = None
-    compactor_config = models.roles.get("compactor")
-    if compactor_config is not None:
-        if proxy_mode:
-            rewritten, proxy_err = _proxy_rewrite_chain(compactor_config, proxy_url)
-            if not proxy_err:
-                compactor_config = rewritten
-        compactor_chain = _build_provider_chain(compactor_config, transport=effective_transport, secrets=secrets)
+    compactor_chain = _build_compactor_chain(
+        models,
+        transport=effective_transport,
+        secrets=secrets,
+        proxy_url=proxy_url,
+    )
 
     limits = load_runtime_limits_from_path().limits
     # Role-aware registry: planner/eval get read-only tools, coder gets
@@ -1946,21 +2457,7 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     # stable, reproducible planning/judgement. (ADR-7's T=1.0-on-retry is a
     # separate retry-policy concern handled by the FailureClassifierObserver.)
     session_temperature = DEFAULT_CODER_TEMPERATURE if role == "coder" else DEFAULT_TEMPERATURE
-    if role == "planner":
-        registry = build_planner_registry(
-            workspace,
-            bash_timeout_seconds=limits.bash_timeout_seconds,
-        )
-    elif role == "eval":
-        registry = build_eval_registry(
-            workspace,
-            bash_timeout_seconds=limits.bash_timeout_seconds,
-        )
-    else:
-        registry = build_baseline_registry(
-            workspace,
-            bash_timeout_seconds=limits.bash_timeout_seconds,
-        )
+    registry = _build_role_registry(role, workspace, bash_timeout_seconds=limits.bash_timeout_seconds)
 
     # M-7 §Q-N: ``pr.prepare`` is the producer side of the
     # IntentGuard read seam. The shared ``PrDraftStore`` binds the
@@ -1981,23 +2478,9 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     # plan/work-log from turn 1 without promoting it into pinned
     # standing governance. The draft lives under ~/.fa/session-log/
     # (not /workspace) so fs.read_file cannot reach it directly.
-    resume_draft_text: str = ""
-    if resume and draft_path.is_file():
-        try:
-            resume_draft_text = draft_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            print(
-                f"fa run: warning — could not read existing draft at {draft_path}: {exc}",
-                file=sys.stderr,
-            )
-
-    try:
-        draft_store.clear(remove_file=not resume)
-    except OSError as exc:
-        print(
-            f"fa run: failed to reset PR draft path {draft_store.path}: {exc}",
-            file=sys.stderr,
-        )
+    resume_draft_text, draft_error = _prepare_pr_draft(draft_store, draft_path, resume=resume)
+    if draft_error is not None:
+        print(draft_error, file=sys.stderr)
         return 2
     registry.register(build_prepare_pr_tool(draft_store))
     log_path = run_log_dir / "events.jsonl"
@@ -2018,98 +2501,22 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
             file=sys.stderr,
         )
         return 2
-    hooks = HookRegistry()
-    hooks.register(SandboxHook(workspace))
-
-    # LoopGuard warn_sink: emit loop_guard_warn event to EventLog so the
-    # early-warning signal (repeat_warn threshold) reaches session.db and
-    # the operator gets console visibility. Without warn_sink, the _emit_warn
-    # method short-circuits and the event kind is dead code (LOGIC-14).
-    def _loop_guard_warn_sink(detector: str, message: str) -> None:
-        try:
-            log.append(
-                actor="hook",
-                kind="loop_guard_warn",
-                content={"detector": detector, "message": message},
-            )
-        except Exception as exc:  # noqa: BLE001 — observer must never block
-            logger.warning("loop guard observer failed: %s", exc)
-        # FIX-5: emit loop_warn for console visibility
-        try:
-            if output_bus is not None:
-                output_bus.emit(
-                    OutputEvent(
-                        type="loop_warn",
-                        data={"detector": detector, "message": message},
-                    )
-                )
-        except Exception as exc:  # noqa: BLE001 — observer must never block
-            logger.warning("loop guard observer failed: %s", exc)
-
-    hooks.register(
-        LoopGuard(
-            repeat_warn=limits.loop_guard_repeat_warn,
-            circuit_breaker=limits.loop_guard_circuit_breaker,
-            window=limits.loop_guard_window,
-            warn_sink=_loop_guard_warn_sink,
-        )
+    # Late-binding seam for the LoopGuard warn sink: the EventBus is not
+    # constructed until the output section below, but the sink closes over it
+    # and is invoked only during drive_session, i.e. after it exists. See
+    # _build_run_hook_registry for why this is a list and not a value.
+    output_bus_ref: list[EventBus] = []
+    hooks = _build_run_hook_registry(
+        workspace=workspace,
+        log=log,
+        limits=limits,
+        redactor=redactor,
+        draft_store=draft_store,
+        run_log_dir=run_log_dir,
+        output_bus_ref=output_bus_ref,
     )
-    hooks.register(RateLimitBlocker(suppression_seconds=limits.rate_limit_suppression_seconds))
-    hooks.register(LockfileBlocker(suppression_seconds=limits.lockfile_suppression_seconds))
-    hooks.register(AuthExpiredBlocker(suppression_seconds=limits.auth_expired_suppression_seconds))
-    # M-7 IntentGuard: reads the per-session PR draft at
-    # ~/.fa/session-log/<run_id>/pr_draft.md (populated by the M-7 §Q-N
-    # ``pr.prepare`` tool registered above) and enforces the same
-    # classify_intent + validate_commit_msg rules as the M-6 git hooks.
-    # Placed after SandboxHook so only workspace-contained paths reach
-    # the intent classifier.
-    hooks.register(IntentGuard(repo_root=workspace, draft_store=draft_store))
-    hooks.register(AuditHook(event_log=log))
-    hooks.register(
-        SecretGuard(
-            secrets=redactor.secrets if redactor is not None else frozenset(),
-        )
-    )
-    hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
-    # R-3 FailureClassifierObserver + R-6 AttemptHistoryObserver: classify
-    # tool failures and write recovery history so the coder-recovery prompt
-    # can read it. These were defined but never registered (LOGIC-15),
-    # making `recovery_action` event kind dead code in production.
-    attempt_history = AttemptHistory(run_log_dir / "attempt_history.json")
-    hooks.register(FailureClassifierObserver(event_log=log))
-    hooks.register(AttemptHistoryObserver(history=attempt_history))
-    hooks.register(
-        LearningObserver(
-            codebase_map_path=workspace / "knowledge" / "trace" / "codebase_map.json",
-            gotchas_path=workspace / "knowledge" / "trace" / "gotchas.md",
-            redactor=redactor,
-        )
-    )
-    contracts = load_contracts_from_dir(workspace / "verifiers")
-    if contracts:
-        hooks.register(VerifierObserver(contracts=contracts, event_log=log))
 
-    # Stateful PTY wiring — FIND-007 fix: live CLI harness now owns PtyPool
-    # Wired to feature flag pty_pool_max_size (was dead flag, now active)
-    pty_pool = None
-    try:
-        from fa.runtime import PtyPool
-
-        max_size = 2
-        try:
-            # Override via env FA_PTY_POOL_MAX_SIZE (module-level os import;
-            # do NOT re-import os here — it shadows the module-level import
-            # and causes UnboundLocalError on earlier os.environ/os.getpid()
-            # references in this function).
-            max_size = int(os.environ.get("FA_PTY_POOL_MAX_SIZE", "2"))
-        except (TypeError, ValueError):
-            max_size = 2
-        pty_pool = PtyPool(max_size=max_size, base_cwd=workspace, run_id=run_id)
-    except Exception as exc:  # noqa: BLE001 - graceful degradation, fallback to subprocess
-        import logging
-
-        logging.getLogger(__name__).warning("Failed to init PtyPool for live CLI: %s, fallback stateless", exc)
-        pty_pool = None
+    pty_pool = _build_pty_pool(workspace=workspace, run_id=run_id)
 
     state = SessionState(
         workspace_root=workspace,
@@ -2120,21 +2527,9 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         pty_pool=pty_pool,
     )
 
-    # ── Live output ─────────────────────────────────────────────────────────
-    from fa.output import ConsoleRenderer, EventBus, OutputEvent, QuietRenderer
-
-    output_bus = EventBus()
     output_mode = getattr(args, "output_mode", None) or "console"
-    if output_mode == "console":
-        output_bus.add(
-            ConsoleRenderer(
-                detail=getattr(args, "detail", "standard") or "standard",
-                no_color=bool(getattr(args, "no_color", False)),
-            )
-        )
-    elif output_mode == "quiet":
-        output_bus.add(QuietRenderer())
-    # json mode: Phase 2
+    output_bus = _build_output_bus(args, output_mode)
+    output_bus_ref.append(output_bus)
 
     # Wire output_bus to state so bootstrap warnings and runtime hooks emit console events.
     state.attach_output_bus(output_bus)
@@ -2164,21 +2559,11 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
         # EventLog.append (event_log_authority_unavailable) can raise
         # RuntimeError. Catch both with explicit messages so the operator
         # sees a clear diagnostic instead of a raw Python traceback.
-        exc_str = str(exc)
-        db_path = log.path.parent / "session.db"
-        if "event_log_authority_unavailable" in exc_str:
-            print(
-                f"fa run: session database not available at {db_path}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if "event_log_write_failed" in exc_str:
-            print(
-                f"fa run: failed to write event to session database at {db_path}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        raise  # Re-raise unexpected RuntimeErrors
+        message = _session_db_runtime_error_message(exc, log.path.parent / "session.db")
+        if message is None:
+            raise  # Re-raise unexpected RuntimeErrors
+        print(message, file=sys.stderr)
+        return 2
     _run_duration_ms = int((time.monotonic() - _run_start_mono) * 1000)
     # Slice 9: export to global_history.db as derived projection (best-effort, never crashes main)
     # LOGIC-11: skip per-stage export when called from _cmd_workflow (outcome_sink
@@ -2209,7 +2594,21 @@ def _cmd_run(  # noqa: C901 - top-level run orchestration (config→chain→prox
     if outcome_sink is not None:
         outcome_sink.append(outcome)
     status = "OK" if outcome.exit_code == 0 else "ERROR"
-    print(f"{status}: {outcome.stop_reason} (turns={outcome.turns})")
+    # S8.4 / I-38 (Q32 option a, scoped to quiet). ``--output-mode quiet``
+    # exists so ``fa run --task ... > result.txt`` yields a parseable artifact
+    # — the contract ``QuietRenderer``'s docstring already promised and the CLI
+    # did not keep: measured 34 bytes of status line on stdout under quiet, and
+    # 102 bytes across a three-stage ``fa workflow``.
+    #
+    # Scoped deliberately. ``quiet`` is a console-verbosity control, so only it
+    # moves the human status line to stderr; default ``console`` output is
+    # byte-for-byte unchanged. Durable side effects (session.db rows, workflow
+    # artifacts, the global_history row) are identical in both modes — quiet
+    # never changes what is processed, only what is displayed.
+    #
+    # ``final_text`` stays on stdout in BOTH modes: it is the payload.
+    status_stream = sys.stderr if output_mode == "quiet" else sys.stdout
+    print(f"{status}: {outcome.stop_reason} (turns={outcome.turns})", file=status_stream)
     if outcome.final_text:
         print(outcome.final_text)
     return outcome.exit_code
@@ -2230,12 +2629,31 @@ def _cmd_routing_check(args: argparse.Namespace) -> int:
     config_path = args.config.expanduser().resolve()
     print(f"fa routing-check: {config_path}")
 
+    # A gate that cannot read its input must FAIL, not pass (S10c.1 / I-40).
+    #
+    # ``load_models_config_from_path`` returns an EMPTY config for a missing
+    # file by documented policy ("caller decides if absence is fatal",
+    # config.py:323-326) — correct for `fa run`, wrong here. Without this
+    # check a typo in the path fell through to the "no roles declared" branch
+    # below and returned 0. `scripts/fa-clean-rebuild.sh:471` uses this exit
+    # code as a pre-build deploy gate, so it logged "Routing lint: OK" and
+    # proceeded to build having validated nothing.
+    #
+    # Absence is checked here, in the caller, precisely BECAUSE the loader's
+    # policy is deliberate; a *parse* failure is different and is raised as
+    # ConfigurationError by the loader itself.
+    if not config_path.is_file():
+        print(f"ERROR: config not found: {config_path}")
+        return 2
+
     try:
         models = load_models_config_from_path(config_path, require_api_keys=False)
     except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
         print(f"ERROR: models config error: {exc}")
         return 2
 
+    # Reached only when the file EXISTS and parsed: an empty-but-present
+    # config is a legitimately clean state, so it stays exit 0.
     if not models.roles:
         print("WARNING: no roles declared; nothing to check.")
         return 0
@@ -2251,7 +2669,146 @@ def _cmd_routing_check(args: argparse.Namespace) -> int:
     return 1
 
 
-def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic flow
+def _selfcheck_proxy_preflight(proxy_url: str) -> tuple[str, str | None]:
+    """Validate proxy configuration before any network call. Returns ``(token, error)``.
+
+    Extracted from ``_cmd_selfcheck`` (S10b.5). ``error`` is ``None`` when the
+    local configuration is usable; otherwise it is the operator-facing message
+    and the caller exits **2**.
+
+    **All three failures here are exit 2 ("your configuration is wrong"), which
+    is deliberately distinct from the exit 1 the probing phase returns ("the
+    proxy is wrong").** Keeping the phases separate is what keeps that
+    distinction honest: nothing in this function can produce a 1.
+
+    The token check runs *before* the first request on purpose — issuing an
+    unauthenticated call and reporting the resulting 401/403 would blame the
+    proxy for a local omission.
+    """
+    if not proxy_url:
+        return "", (
+            "ERROR: FA_EGRESS_PROXY_URL is not set; the agent is not in proxy mode.\n"
+            "Hint: in Docker deployment it should point to http://fa-egress-proxy:8080."
+        )
+
+    proxy_url_error = _validate_proxy_url(proxy_url)
+    if proxy_url_error:
+        return "", f"ERROR: invalid FA_EGRESS_PROXY_URL: {proxy_url_error}"
+
+    proxy_token = _resolve_proxy_token()
+    if not proxy_token:
+        return "", ("ERROR: proxy token is missing; set FA_PROXY_TOKEN_FILE or mount /run/secrets/fa_proxy_token.")
+
+    return proxy_token, None
+
+
+def _selfcheck_fetch_proxy_routes(proxy_url: str, proxy_token: str) -> dict[str, bool] | None:
+    """Probe ``/healthz`` and ``/routes``; return the route table, or ``None`` on failure.
+
+    Extracted from ``_cmd_selfcheck`` (S10b.5). Prints its own progress and
+    diagnostics — the output *is* the product of a diagnostic command — and
+    returns ``None`` to mean "the caller should exit 1".
+
+    **Every failure branch has distinct wording, and that is load-bearing.**
+    They all produce exit 1, so the message is the only thing telling an
+    operator what to do next: ``403`` means reconcile the token files, a non-200
+    means read the proxy logs, a malformed body means the proxy is returning
+    something unexpected. S10a's mutation sweep proved that asserting only the
+    exit code lets a deleted branch fall through to the next one undetected,
+    so each is pinned by its own string in the S10b.5 parity cells.
+
+    The ``/routes`` body is untrusted input from across a process boundary: it
+    is decoded, JSON-parsed and shape-validated defensively, and any failure
+    becomes a diagnostic rather than a traceback.
+    """
+    health_url = _proxy_endpoint(proxy_url, "/healthz")
+    try:
+        health_status, _health_body = _selfcheck_http_get(health_url)
+    except _SelfcheckNetworkError as exc:
+        print(f"ERROR: proxy is not reachable at {health_url}: {exc}")
+        print("Hint: check `docker compose logs fa-egress-proxy` and container health.")
+        return None
+    if health_status != 200:
+        print(f"ERROR: proxy /healthz returned HTTP {health_status}.")
+        print("Hint: check `docker compose logs fa-egress-proxy`.")
+        return None
+    print("OK: proxy /healthz reachable")
+
+    routes_url = _proxy_endpoint(proxy_url, "/routes")
+    try:
+        routes_status, routes_body = _selfcheck_http_get(routes_url, headers={_PROXY_TOKEN_HEADER: proxy_token})
+    except _SelfcheckNetworkError as exc:
+        print(f"ERROR: proxy /routes is not reachable at {routes_url}: {exc}")
+        print("Hint: check `docker compose logs fa-egress-proxy`.")
+        return None
+    if routes_status == 403:
+        print("ERROR: proxy /routes rejected the fa→proxy token (HTTP 403).")
+        print("Hint: verify FA_PROXY_TOKEN_FILE and /run/secrets/fa_proxy_token match the proxy.")
+        return None
+    if routes_status != 200:
+        print(f"ERROR: proxy /routes returned HTTP {routes_status}.")
+        print("Hint: check `docker compose logs fa-egress-proxy`.")
+        return None
+
+    try:
+        routes_payload = json.loads(routes_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        print("ERROR: proxy /routes returned non-JSON or malformed JSON.")
+        return None
+    proxy_routes, payload_error = _selfcheck_parse_routes_payload(routes_payload)
+    if payload_error:
+        print(f"ERROR: unsafe or malformed proxy /routes payload: {payload_error}")
+        return None
+    print(f"OK: proxy /routes returned {len(proxy_routes)} route(s)")
+    return proxy_routes
+
+
+def _selfcheck_route_problems(
+    expected_routes: Mapping[str, str],
+    proxy_routes: Mapping[str, bool],
+    *,
+    config_path: Path,
+    role_name: str,
+) -> list[str]:
+    """Compare the agent's expected routes against the proxy's table.
+
+    Extracted from ``_cmd_selfcheck`` (S10b.5). Pure: takes two mappings,
+    returns the list of human-readable problems. This is the actual purpose of
+    ``fa selfcheck``, and being pure makes it directly testable without a proxy.
+
+    Two distinct faults, two distinct remedies — do not merge them:
+
+    * **absent** — the route is in ``models.yaml`` but not in the proxy's
+      table, which means the proxy is running an older config and must be
+      recreated.
+    * **present but keyless** — the proxy knows the route but has no API key
+      for it, which means ``fa.env`` is missing an entry.
+
+    The remediation text is part of the contract; an operator follows it
+    verbatim.
+    """
+    problems: list[str] = []
+    for route_name, api_key_env in expected_routes.items():
+        has_key = proxy_routes.get(route_name)
+        if has_key is None:
+            problems.append(
+                f"route {route_name!r} is in {config_path} for role {role_name!r}, "
+                "but is absent from proxy /routes — agent and proxy should read "
+                "/srv/first-agent/routing/models.yaml; after editing it, "
+                "restart/recreate the proxy (for example: scripts/fa-update.sh, or "
+                "docker compose -f docker-compose.fa.yml up -d --force-recreate "
+                "fa-egress-proxy)."
+            )
+        elif not has_key:
+            problems.append(
+                f"route {route_name!r}: key for {api_key_env} is absent in "
+                "/srv/first-agent/secrets/fa.env (mounted as /run/secrets/fa.env "
+                "in fa-egress-proxy)."
+            )
+    return problems
+
+
+def _cmd_selfcheck(args: argparse.Namespace) -> int:
     """Diagnose the fa→egress-proxy→provider routing seam (ADR-12)."""
     proxy_url = _resolve_proxy_url()
     config_path = args.config.expanduser().resolve()
@@ -2262,60 +2819,14 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
     print(f"- config: {config_path}")
     print(f"- role: {role_name}")
 
-    if not proxy_url:
-        print("ERROR: FA_EGRESS_PROXY_URL is not set; the agent is not in proxy mode.")
-        print("Hint: in Docker deployment it should point to http://fa-egress-proxy:8080.")
+    proxy_token, preflight_error = _selfcheck_proxy_preflight(proxy_url)
+    if preflight_error is not None:
+        print(preflight_error)
         return 2
 
-    proxy_url_error = _validate_proxy_url(proxy_url)
-    if proxy_url_error:
-        print(f"ERROR: invalid FA_EGRESS_PROXY_URL: {proxy_url_error}")
-        return 2
-
-    proxy_token = _resolve_proxy_token()
-    if not proxy_token:
-        print("ERROR: proxy token is missing; set FA_PROXY_TOKEN_FILE or mount /run/secrets/fa_proxy_token.")
-        return 2
-
-    health_url = _proxy_endpoint(proxy_url, "/healthz")
-    try:
-        health_status, _health_body = _selfcheck_http_get(health_url)
-    except _SelfcheckNetworkError as exc:
-        print(f"ERROR: proxy is not reachable at {health_url}: {exc}")
-        print("Hint: check `docker compose logs fa-egress-proxy` and container health.")
+    proxy_routes = _selfcheck_fetch_proxy_routes(proxy_url, proxy_token)
+    if proxy_routes is None:
         return 1
-    if health_status != 200:
-        print(f"ERROR: proxy /healthz returned HTTP {health_status}.")
-        print("Hint: check `docker compose logs fa-egress-proxy`.")
-        return 1
-    print("OK: proxy /healthz reachable")
-
-    routes_url = _proxy_endpoint(proxy_url, "/routes")
-    try:
-        routes_status, routes_body = _selfcheck_http_get(routes_url, headers={_PROXY_TOKEN_HEADER: proxy_token})
-    except _SelfcheckNetworkError as exc:
-        print(f"ERROR: proxy /routes is not reachable at {routes_url}: {exc}")
-        print("Hint: check `docker compose logs fa-egress-proxy`.")
-        return 1
-    if routes_status == 403:
-        print("ERROR: proxy /routes rejected the fa→proxy token (HTTP 403).")
-        print("Hint: verify FA_PROXY_TOKEN_FILE and /run/secrets/fa_proxy_token match the proxy.")
-        return 1
-    if routes_status != 200:
-        print(f"ERROR: proxy /routes returned HTTP {routes_status}.")
-        print("Hint: check `docker compose logs fa-egress-proxy`.")
-        return 1
-
-    try:
-        routes_payload = json.loads(routes_body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        print("ERROR: proxy /routes returned non-JSON or malformed JSON.")
-        return 1
-    proxy_routes, payload_error = _selfcheck_parse_routes_payload(routes_payload)
-    if payload_error:
-        print(f"ERROR: unsafe or malformed proxy /routes payload: {payload_error}")
-        return 1
-    print(f"OK: proxy /routes returned {len(proxy_routes)} route(s)")
 
     try:
         models = load_models_config_from_path(config_path, require_api_keys=False)
@@ -2336,24 +2847,7 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
         print(f"ERROR: could not compute agent route names: {exc}")
         return 2
 
-    problems: list[str] = []
-    for route_name, api_key_env in expected_routes.items():
-        has_key = proxy_routes.get(route_name)
-        if has_key is None:
-            problems.append(
-                f"route {route_name!r} is in {config_path} for role {role_name!r}, "
-                "but is absent from proxy /routes — agent and proxy should read "
-                "/srv/first-agent/routing/models.yaml; after editing it, "
-                "restart/recreate the proxy (for example: scripts/fa-update.sh, or "
-                "docker compose -f docker-compose.fa.yml up -d --force-recreate "
-                "fa-egress-proxy)."
-            )
-        elif not has_key:
-            problems.append(
-                f"route {route_name!r}: key for {api_key_env} is absent in "
-                "/srv/first-agent/secrets/fa.env (mounted as /run/secrets/fa.env "
-                "in fa-egress-proxy)."
-            )
+    problems = _selfcheck_route_problems(expected_routes, proxy_routes, config_path=config_path, role_name=role_name)
 
     if problems:
         print("fa selfcheck: ERROR")
@@ -2366,7 +2860,12 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:  # noqa: C901 - diagnostic 
     return 0
 
 
-def _cmd_probe(args: argparse.Namespace) -> int:
+def _cmd_probe(
+    args: argparse.Namespace,
+    *,
+    transport: Transport | None = None,
+    secrets: Mapping[str, str] | None = None,
+) -> int:
     """Liveness-test the LLM provider chain with a minimal real API call.
 
     Sends ``{"messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}``
@@ -2374,16 +2873,31 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     inner loop — pure provider connectivity and key-validity test.
 
     Cost: ~10 input tokens + 1 output token per chain entry probed.
+
+    ``transport`` / ``secrets`` are optional injection seams (S10a.4), added so
+    this command is testable at all: before them it built a live
+    ``UrllibTransport`` internally and sat at **2%** coverage. Both default to
+    ``None`` and resolve to exactly the previous collaborators, so an operator
+    invocation is byte-identical to before.
+
+    This mirrors ``_cmd_run`` (``transport``/``secrets``/``outcome_sink``) and
+    ``_cmd_workflow``, which use the same keyword-only, default-to-real idiom
+    and are production-used — ``_run_stage`` forwards ``transport=ctx.transport``
+    on the real workflow path. Adopting the house pattern rather than inventing
+    a second one; the two commands that already had it are also the two
+    best-covered in this module.
     """
     config_path = args.config.expanduser().resolve()
     probe_timeout = int(args.timeout)
 
     proxy_url = _resolve_proxy_url()
     proxy_mode = bool(proxy_url)
-    secrets: Mapping[str, str] = SecretStore({}) if proxy_mode else _load_secret_store()
+    effective_secrets: Mapping[str, str] = (
+        secrets if secrets is not None else (SecretStore({}) if proxy_mode else _load_secret_store())
+    )
 
     try:
-        models = load_models_config_from_path(config_path, env=secrets, require_api_keys=not proxy_mode)
+        models = load_models_config_from_path(config_path, env=effective_secrets, require_api_keys=not proxy_mode)
     except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
         print(f"fa probe: configuration error: {exc}", file=sys.stderr)
         return 2
@@ -2397,7 +2911,7 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     else:
         role_names = [args.role]
 
-    transport: Transport = UrllibTransport()
+    effective_transport: Transport = transport if transport is not None else UrllibTransport()
     any_failure = False
 
     for role_name in role_names:
@@ -2419,7 +2933,7 @@ def _cmd_probe(args: argparse.Namespace) -> int:
         probed_entries = tuple(replace(entry, timeout_seconds=probe_timeout) for entry in chain_config.chain)
         chain_config = replace(chain_config, chain=probed_entries)
 
-        chain = _build_provider_chain(chain_config, transport=transport, secrets=secrets)
+        chain = _build_provider_chain(chain_config, transport=effective_transport, secrets=effective_secrets)
 
         print(f"\nfa probe: role={role_name} (model={chain_config.name}, family={chain_config.family})")
 
@@ -2468,7 +2982,102 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     return 1 if any_failure else 0
 
 
-def _discover_stats_sources(  # noqa: C901 — source validation matrix
+def _resolve_stats_session_dirs(state_root: Path, selected_session_id: str | None) -> list[Path]:
+    """Resolve which session directories ``fa stats`` should read.
+
+    Extracted from ``_discover_stats_sources`` (S10b.4). Returns newest-first
+    when scanning, or the single selected session.
+
+    **An empty list and an error are different answers, deliberately.** No
+    sessions at all returns ``[]`` (the caller reports "no matching sessions"),
+    but an unmigrated ``session-log/`` tree raises ``legacy_trace_unsupported``.
+    Collapsing the two would tell an operator holding legacy data that they
+    simply have none — pinned by
+    ``test_s10b_discover_legacy_layout_is_rejected_explicitly`` and its
+    empty-state positive control.
+
+    Read-only by contract: stats must never create a state root, manifest, or
+    database, which is why this resolves paths by hand instead of going through
+    ``SessionManager``.
+    """
+    from fa.stats import StatsSourceError
+
+    sessions_root = state_root / "sessions"
+    legacy_root = state_root / "session-log"
+
+    if selected_session_id is not None:
+        if not _valid_run_id(selected_session_id):
+            raise StatsSourceError("invalid_session_id", "session_id must match [A-Za-z0-9_.-]{1,128}")
+        session_dir = sessions_root / selected_session_id
+        if not (session_dir / "manifest.json").is_file():
+            raise StatsSourceError("unknown_session", f"session does not exist: {selected_session_id}")
+        return [session_dir]
+
+    if sessions_root.is_dir():
+        session_dirs = sorted(
+            (path for path in sessions_root.iterdir() if path.is_dir()),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if session_dirs:
+            return session_dirs
+
+    has_legacy = legacy_root.is_dir() and any(
+        child.is_dir() and any(child.iterdir()) for child in legacy_root.iterdir()
+    )
+    if has_legacy:
+        raise StatsSourceError(
+            "legacy_trace_unsupported",
+            "current FA sessions require session.db under sessions/<session-id>; legacy JSONL/DB was not migrated",
+        )
+    return []
+
+
+def _validate_session_manifest(session_dir: Path, selected_session_id: str | None) -> tuple[str, Path, Path]:
+    """Validate one session manifest; return ``(session_id, db_path, workspace_path)``.
+
+    Extracted from ``_discover_stats_sources`` (S10b.4).
+
+    **Every rejection carries a distinct ``StatsSourceError`` code, and the code
+    is the operator contract** — the CLI prints it verbatim
+    (``fa stats: source error [<code>]: ...``), so it is what a script greps
+    and what a bug report quotes. All of these reach the operator as the same
+    exit status, so the code is the *only* thing distinguishing them. Do not
+    merge two of them for tidiness; each is pinned by name in
+    ``test_s10b_discover_manifest_validation_codes``.
+
+    ``manifest_path_mismatch`` is the security-relevant check: it refuses a
+    manifest whose ``session_db_path`` points outside its own session
+    directory, which is how a crafted or relocated manifest would redirect
+    ``fa stats`` at a different session's database. Both sides are resolved
+    before comparison so symlinks and ``..`` cannot slip past.
+    """
+    from fa.stats import StatsSourceError
+
+    manifest_path = session_dir / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise StatsSourceError("manifest_corrupt", f"cannot read {manifest_path}: {exc}") from exc
+
+    if not isinstance(manifest, dict) or manifest.get("status") != "active":
+        raise StatsSourceError("manifest_corrupt", f"inactive or malformed manifest: {manifest_path}")
+
+    session_id = manifest.get("session_id")
+    if not isinstance(session_id, str) or not _valid_run_id(session_id):
+        raise StatsSourceError("manifest_corrupt", f"invalid session_id: {manifest_path}")
+    if selected_session_id is not None and session_id != selected_session_id:
+        raise StatsSourceError("manifest_identity_mismatch", str(manifest_path))
+
+    db_path = Path(str(manifest.get("session_db_path", ""))).expanduser().resolve()
+    if db_path != (session_dir / "session.db").resolve():
+        raise StatsSourceError("manifest_path_mismatch", str(manifest_path))
+
+    workspace_path = Path(str(manifest.get("workspace_path", ""))).expanduser().resolve()
+    return session_id, db_path, workspace_path
+
+
+def _discover_stats_sources(
     *,
     state_root: Path,
     selected_session_id: str | None,
@@ -2484,53 +3093,13 @@ def _discover_stats_sources(  # noqa: C901 — source validation matrix
 
     if selected_run_id is not None and not _valid_run_id(selected_run_id):
         raise StatsSourceError("invalid_run_id", "run_id must match [A-Za-z0-9_.-]{1,128}")
-    sessions_root = state_root / "sessions"
-    legacy_root = state_root / "session-log"
-    if selected_session_id is not None:
-        if not _valid_run_id(selected_session_id):
-            raise StatsSourceError("invalid_session_id", "session_id must match [A-Za-z0-9_.-]{1,128}")
-        session_dirs = [sessions_root / selected_session_id]
-        if not (session_dirs[0] / "manifest.json").is_file():
-            raise StatsSourceError("unknown_session", f"session does not exist: {selected_session_id}")
-    elif sessions_root.is_dir():
-        session_dirs = sorted(
-            (path for path in sessions_root.iterdir() if path.is_dir()),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
-    else:
-        session_dirs = []
-
+    session_dirs = _resolve_stats_session_dirs(state_root, selected_session_id)
     if not session_dirs:
-        has_legacy = legacy_root.is_dir() and any(
-            child.is_dir() and any(child.iterdir()) for child in legacy_root.iterdir()
-        )
-        if has_legacy:
-            raise StatsSourceError(
-                "legacy_trace_unsupported",
-                "current FA sessions require session.db under sessions/<session-id>; legacy JSONL/DB was not migrated",
-            )
         return ()
 
     sources: list[tuple[str, Path, Path, str]] = []
     for session_dir in session_dirs:
-        manifest_path = session_dir / "manifest.json"
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise StatsSourceError("manifest_corrupt", f"cannot read {manifest_path}: {exc}") from exc
-        if not isinstance(manifest, dict) or manifest.get("status") != "active":
-            raise StatsSourceError("manifest_corrupt", f"inactive or malformed manifest: {manifest_path}")
-        session_id = manifest.get("session_id")
-        if not isinstance(session_id, str) or not _valid_run_id(session_id):
-            raise StatsSourceError("manifest_corrupt", f"invalid session_id: {manifest_path}")
-        if selected_session_id is not None and session_id != selected_session_id:
-            raise StatsSourceError("manifest_identity_mismatch", str(manifest_path))
-        db_path = Path(str(manifest.get("session_db_path", ""))).expanduser().resolve()
-        expected_db = (session_dir / "session.db").resolve()
-        if db_path != expected_db:
-            raise StatsSourceError("manifest_path_mismatch", str(manifest_path))
-        workspace_path = Path(str(manifest.get("workspace_path", ""))).expanduser().resolve()
+        session_id, db_path, workspace_path = _validate_session_manifest(session_dir, selected_session_id)
         try:
             db = SessionDatabase.open_existing(db_path, session_id=session_id)
             run_ids = (selected_run_id,) if selected_run_id is not None else db.list_run_ids()
@@ -2546,77 +3115,149 @@ def _discover_stats_sources(  # noqa: C901 — source validation matrix
     return tuple(sources)
 
 
-def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
-    """Analyze session logs — tool usage, file access, tokens, efficiency."""
+def _cmd_stats_global_history(args: argparse.Namespace) -> int:
+    """Render the ``global_history.db`` projection (``fa stats --global-history``).
+
+    Extracted from ``_cmd_stats`` (S10b.3). This is one of three independent
+    renderers the command dispatches between; it reads the cross-run projection
+    rather than per-session authority databases.
+
+    **Stream split is the contract, not a detail.** ``--output json`` goes to
+    **stdout** so the command composes in a pipeline; the human report goes to
+    **stderr** so it never pollutes that stdout. Both directions are pinned by
+    ``test_s10b_stats_parity_global_history_{json_goes_to_stdout,console_goes_to_stderr}``
+    — an extraction that merged the renderers would still exit 0 and still
+    print something.
+
+    **The broad ``except`` is deliberate and stays.** A stats read is a
+    diagnostic; any failure must become "exit 1 with a message" rather than a
+    traceback. Note this is also why ``--since`` is validated by the CALLER,
+    before dispatch: a usage error routed through here would surface as exit 1
+    instead of exit 2 (S9.2/F6).
+    """
     import time as _time
 
+    try:
+        from fa.inner_loop.global_history import GlobalHistoryStore, default_global_history_path
+
+        # S8.8: one definition of the projection path, shared with the
+        # writer. Reader and writer previously computed it independently,
+        # which is how they came to disagree under FA_STATE_ROOT.
+        db_path = default_global_history_path()
+        store = GlobalHistoryStore(db_path=db_path)
+        rows = store.read_all()
+        if not rows:
+            print(f"fa stats: no global history found at {db_path}", file=sys.stderr)
+            return 1
+        # Filter by --run-id if provided
+        if getattr(args, "run_id", None):
+            run_id = args.run_id
+            rows = [r for r in rows if r.get("run_id") == run_id]
+            if not rows:
+                print(f"fa stats: run {run_id!r} not found in global history", file=sys.stderr)
+                return 1
+        # Filter by --since if provided (updated_at)
+        if getattr(args, "since", None) and not getattr(args, "run_id", None):
+            since_s = _parse_since(args.since)
+            if since_s is not None:
+                cutoff = _time.time() - since_s
+                # updated_at is ISO, parse roughly? For simplicity, skip if can't parse
+                filtered = []
+                for r in rows:
+                    try:
+                        # Try to parse ISO, if fails keep
+                        from datetime import datetime
+
+                        dt = datetime.fromisoformat(r.get("updated_at", "").replace("Z", "+00:00"))
+                        if dt.timestamp() >= cutoff:
+                            filtered.append(r)
+                    except (TypeError, ValueError, AttributeError):
+                        filtered.append(r)
+                rows = filtered
+        if args.output == "json":
+            import json as _json
+
+            print(_json.dumps(rows, indent=2, default=str))
+            return 0
+        # Console rendering for global history
+        print(f"\n{'═' * 50}\n📊 Global history: {len(rows)} runs\n{'═' * 50}\n", file=sys.stderr)
+        for r in rows[:20]:
+            print(
+                f"  {r.get('run_id', ''):<20s} {r.get('role', ''):<8s} {r.get('model', ''):<20s} "
+                f"{r.get('stop_reason', ''):<20s} turns={r.get('turns', 0)} "
+                f"in={r.get('input_tokens', 0)} out={r.get('output_tokens', 0)}",
+                file=sys.stderr,
+            )
+        if len(rows) > 20:
+            print(f"  ... and {len(rows) - 20} more", file=sys.stderr)
+        return 0
+    except Exception as exc:  # CLI must report stats failure, never crash with traceback
+        logger.error("fa stats: failed to read global history: %s", exc, exc_info=True)
+        print(f"fa stats: failed to read global history: {exc}", file=sys.stderr)
+        return 1
+
+
+def _render_dead_zones(workspace: Path, sessions: list[SessionAnalytics]) -> None:
+    """Append the ``--dead-zones`` report (``src/`` files no session touched) to stderr.
+
+    Extracted from ``_cmd_stats`` (S10b.3). Writes nothing when there are no
+    dead zones — silence means "full coverage", not "the check did not run".
+
+    Reports to **stderr** and returns ``None`` rather than an exit code: an
+    empty result is not an error, and the caller's exit status must not depend
+    on it. S10a's mutation sweep found that deleting this whole block survives
+    an exit-code-only assertion (0 either way), which is why
+    ``test_s10b_stats_parity_dead_zones_report`` asserts the report *text*.
+    """
+    from fa.stats import find_dead_zones
+
+    dead = find_dead_zones(workspace, sessions)
+    if not dead:
+        return
+    sys.stderr.write(f"\n🔍 Dead zones ({len(dead)} src/ files never accessed):\n")
+    for path in dead[:15]:
+        sys.stderr.write(f"   {path}\n")
+    if len(dead) > 15:
+        sys.stderr.write(f"   ... and {len(dead) - 15} more\n")
+    sys.stderr.flush()
+
+
+def _cmd_stats(args: argparse.Namespace) -> int:
+    """Analyze session logs — tool usage, file access, tokens, efficiency."""
     from fa.stats import (
         StatsSourceError,
         aggregate_sessions,
-        find_dead_zones,
         parse_session_db,
         render_aggregate,
         render_session,
         render_session_json,
     )
 
+    # S9.2 / F6 — validate --since ONCE, before either branch consumes it.
+    #
+    # One guard, not two: the --global-history filter below lives inside a
+    # broad ``try/except Exception`` that returns 1, which is the wrong home
+    # for a usage check, and two guards is two places to drift. Placing it
+    # here also means invalid input is rejected before any DB work.
+    #
+    # ``getattr`` rather than ``args.since``: the two downstream call sites
+    # disagree (one uses getattr, one a bare attribute), and this guard runs
+    # ahead of both, so it must tolerate the loosest Namespace a caller builds.
+    #
+    # The ``run_id`` condition mirrors the existing precedence exactly —
+    # --run-id overrides --since, so an unused --since is not validated
+    # (S9 plan Q39: deliberate, pinned by test).
+    _since_raw = getattr(args, "since", None)
+    if _since_raw and not getattr(args, "run_id", None) and _parse_since(_since_raw) is None:
+        print(
+            f"fa stats: invalid --since value {_since_raw!r}; expected a positive duration like 7d, 24h or 30m",
+            file=sys.stderr,
+        )
+        return 2
+
     # --global-history: active consumer for global_history.db projection (Slice 9)
     if getattr(args, "global_history", False):
-        try:
-            from fa.inner_loop.global_history import GlobalHistoryStore
-
-            db_path = fa_state_root() / "global_history.db"
-            store = GlobalHistoryStore(db_path=db_path)
-            rows = store.read_all()
-            if not rows:
-                print(f"fa stats: no global history found at {db_path}", file=sys.stderr)
-                return 1
-            # Filter by --run-id if provided
-            if getattr(args, "run_id", None):
-                run_id = args.run_id
-                rows = [r for r in rows if r.get("run_id") == run_id]
-                if not rows:
-                    print(f"fa stats: run {run_id!r} not found in global history", file=sys.stderr)
-                    return 1
-            # Filter by --since if provided (updated_at)
-            if getattr(args, "since", None) and not getattr(args, "run_id", None):
-                since_s = _parse_since(args.since)
-                if since_s is not None:
-                    cutoff = _time.time() - since_s
-                    # updated_at is ISO, parse roughly? For simplicity, skip if can't parse
-                    filtered = []
-                    for r in rows:
-                        try:
-                            # Try to parse ISO, if fails keep
-                            from datetime import datetime
-
-                            dt = datetime.fromisoformat(r.get("updated_at", "").replace("Z", "+00:00"))
-                            if dt.timestamp() >= cutoff:
-                                filtered.append(r)
-                        except (TypeError, ValueError, AttributeError):
-                            filtered.append(r)
-                    rows = filtered
-            if args.output == "json":
-                import json as _json
-
-                print(_json.dumps(rows, indent=2, default=str))
-                return 0
-            # Console rendering for global history
-            print(f"\n{'═' * 50}\n📊 Global history: {len(rows)} runs\n{'═' * 50}\n", file=sys.stderr)
-            for r in rows[:20]:
-                print(
-                    f"  {r.get('run_id', ''):<20s} {r.get('role', ''):<8s} {r.get('model', ''):<20s} "
-                    f"{r.get('stop_reason', ''):<20s} turns={r.get('turns', 0)} "
-                    f"in={r.get('input_tokens', 0)} out={r.get('output_tokens', 0)}",
-                    file=sys.stderr,
-                )
-            if len(rows) > 20:
-                print(f"  ... and {len(rows) - 20} more", file=sys.stderr)
-            return 0
-        except Exception as exc:  # CLI must report stats failure, never crash with traceback
-            logger.error("fa stats: failed to read global history: %s", exc, exc_info=True)
-            print(f"fa stats: failed to read global history: {exc}", file=sys.stderr)
-            return 1
+        return _cmd_stats_global_history(args)
 
     workspace = args.workspace.resolve()
     state_root = fa_state_root()
@@ -2655,51 +3296,62 @@ def _cmd_stats(args: argparse.Namespace) -> int:  # noqa: C901 — CLI dispatch
         print("fa stats: no parseable sessions found", file=sys.stderr)
         return 1
 
-    # Render
+    single = bool(args.run_id) and len(sessions) == 1
     if args.output == "json":
         import json as _json
 
-        if args.run_id and len(sessions) == 1:
-            print(_json.dumps(render_session_json(sessions[0]), indent=2, default=str))
+        if single:
+            payload: Any = render_session_json(sessions[0])
         else:
-            agg = aggregate_sessions(sessions)
-            agg["sessions_detail"] = [render_session_json(s) for s in sessions]
-            print(_json.dumps(agg, indent=2, default=str))
+            payload = aggregate_sessions(sessions)
+            payload["sessions_detail"] = [render_session_json(s) for s in sessions]
+        print(_json.dumps(payload, indent=2, default=str))
         return 0
 
-    # Console
-    if args.run_id and len(sessions) == 1:
+    if single:
         render_session(sessions[0])
     else:
         render_aggregate(sessions)
 
-    # Dead zones
     if getattr(args, "dead_zones", False):
-        dead = find_dead_zones(workspaces[0] if len(workspaces) == 1 else workspace, sessions)
-        if dead:
-            sys.stderr.write(f"\n🔍 Dead zones ({len(dead)} src/ files never accessed):\n")
-            for p in dead[:15]:
-                sys.stderr.write(f"   {p}\n")
-            if len(dead) > 15:
-                sys.stderr.write(f"   ... and {len(dead) - 15} more\n")
-            sys.stderr.flush()
+        _render_dead_zones(workspaces[0] if len(workspaces) == 1 else workspace, sessions)
 
     return 0
 
 
 def _parse_since(value: str) -> float | None:
-    """Parse '7d', '24h', '1h' into seconds."""
+    """Parse ``'7d'`` / ``'24h'`` / ``'30m'`` into a positive number of seconds.
+
+    Returns ``None`` for anything that is not a usable window: no suffix, an
+    unknown suffix, non-numeric, empty, **negative**, **zero**, or non-finite.
+    Never raises — the caller decides whether ``None`` is a usage error.
+
+    **Why the sign check exists (S9 / F6).** Without it ``-5d`` parsed to
+    ``-432000.0``. Both call sites compute ``cutoff = time.time() - since``,
+    so a negative window pushed the cutoff into the *future* and filtered out
+    every session; the operator saw ``no matching sessions found`` — a wrong
+    answer indistinguishable from a legitimately empty result. Zero is
+    rejected on the same principle: a zero-width window is never what anyone
+    typed on purpose.
+
+    ``float()`` also accepts scientific notation (``1e3h``) and that is
+    deliberately kept — it is unusual input, not wrong input.
+    """
     value = value.strip().lower()
     try:
         if value.endswith("d"):
-            return float(value[:-1]) * 86400
-        if value.endswith("h"):
-            return float(value[:-1]) * 3600
-        if value.endswith("m"):
-            return float(value[:-1]) * 60
+            seconds = float(value[:-1]) * 86400
+        elif value.endswith("h"):
+            seconds = float(value[:-1]) * 3600
+        elif value.endswith("m"):
+            seconds = float(value[:-1]) * 60
+        else:
+            return None
     except ValueError:
         return None
-    return None
+    if not math.isfinite(seconds) or seconds <= 0:
+        return None
+    return seconds
 
 
 def _proxy_endpoint(proxy_url: str, path: str) -> str:

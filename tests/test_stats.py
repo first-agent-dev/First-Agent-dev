@@ -16,6 +16,7 @@ from fa.stats import (
     parse_session_db,
     render_session_json,
 )
+from tests._capabilities import requires_posix_paths
 
 
 def _write_events(path: Path, events: list[dict[str, object]]) -> None:
@@ -304,6 +305,7 @@ def test_aggregate_two_sessions(tmp_path: Path) -> None:
 # ── find_dead_zones ───────────────────────────────────────────────────────
 
 
+@requires_posix_paths
 def test_dead_zones(tmp_path: Path) -> None:
     # Create fake src/ tree
     (tmp_path / "src" / "fa").mkdir(parents=True)

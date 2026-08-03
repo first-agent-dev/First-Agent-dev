@@ -6,6 +6,7 @@ from typing import Any
 from fa.inner_loop.context import reset_current_session, set_current_session
 from fa.inner_loop.state import EventLog, SessionState
 from fa.inner_loop.tools.observability import build_chronicle_search_tool, build_usage_tool
+from tests._capabilities import requires_posix_paths
 
 
 def test_usage_defaults_to_current_run_authority(tmp_path: Path) -> None:
@@ -88,6 +89,7 @@ def test_chronicle_search_requires_explicit_target_without_active_session() -> N
     assert result.error.code == "no_active_session"
 
 
+@requires_posix_paths
 def test_usage_explicit_run_id_reads_run_authority(tmp_path: Path, monkeypatch: Any) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))

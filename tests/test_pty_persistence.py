@@ -4,10 +4,13 @@ Tests for ADR-13: StatefulPtyManager persistence, ANSI stripping, Ctrl+C, defens
 
 from pathlib import Path
 
+from tests._capabilities import requires_pty_backend
+
 # These tests require fa-runtime-server running or pexpect fallback
 # For unit tests without tmux, PtyPool falls back to pexpect
 
 
+@requires_pty_backend
 def test_pty_persistence_cd() -> None:
     from fa.runtime.pty_pool import PtyPool
 
@@ -22,6 +25,7 @@ def test_pty_persistence_cd() -> None:
     pool.kill("test_cd")
 
 
+@requires_pty_backend
 def test_pty_env_persistence() -> None:
     from fa.runtime.pty_pool import PtyPool
 
@@ -33,6 +37,7 @@ def test_pty_env_persistence() -> None:
     pool.kill("test_env")
 
 
+@requires_pty_backend
 def test_ansi_strip() -> None:
     from fa.runtime.pty_pool import PtyPool
 
@@ -51,6 +56,7 @@ def test_resolve_cr_basic() -> None:
     assert resolve_cr("12%\r34%\r56%") == "56%"
 
 
+@requires_pty_backend
 def test_carriage_returns_cleaned_in_session_output() -> None:
     from fa.runtime.pty_pool import PtyPool
 
@@ -86,6 +92,7 @@ def test_helper_tmux_without_pane_returns_structured_failure(tmp_path: Path) -> 
     assert result.stdout == "No pane available"
 
 
+@requires_pty_backend
 def test_ctrl_c() -> None:
     from fa.runtime.pty_pool import PtyPool
 
@@ -109,6 +116,7 @@ def test_ctrl_c() -> None:
     pool.kill("test_ctrlc")
 
 
+@requires_pty_backend
 def test_sequential_commands_do_not_bleed_into_each_other() -> None:
     """C1 regression: PtySession._run_tmux must not return a PRIOR command's
     output for the current invocation.
@@ -137,6 +145,7 @@ def test_sequential_commands_do_not_bleed_into_each_other() -> None:
         pool.kill("test_no_bleed")
 
 
+@requires_pty_backend
 def test_slow_command_does_not_return_stale_prior_result() -> None:
     """C1 regression: a slow command must not complete-early with a PRIOR
     command's (already-satisfied) end-of-command marker.
@@ -174,6 +183,7 @@ def test_slow_command_does_not_return_stale_prior_result() -> None:
         pool.kill("test_no_stale_race")
 
 
+@requires_pty_backend
 def test_heredoc_command_completes_via_active_backend() -> None:
     """C1 regression: a command containing a heredoc (`<<'WORD' ... WORD`)
     must complete, not hang until the caller's timeout — on WHICHEVER
@@ -216,6 +226,7 @@ def test_heredoc_command_completes_via_active_backend() -> None:
         pool.kill("test_heredoc")
 
 
+@requires_pty_backend
 def test_heredoc_command_completes_via_pexpect_fallback() -> None:
     """C1 regression, pexpect-path SPECIFIC: same claim as
     test_heredoc_command_completes_via_active_backend, but calls
@@ -238,6 +249,7 @@ def test_heredoc_command_completes_via_pexpect_fallback() -> None:
     assert "heredoc-marker-9001" in result.stdout
 
 
+@requires_pty_backend
 def test_timed_out_field_distinguishes_timeout_from_other_failures() -> None:
     """C1 regression: PtyResult.timed_out must be True only for an actual
     timeout, not for every -1 exit_code failure mode.

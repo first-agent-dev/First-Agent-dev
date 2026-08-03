@@ -38,6 +38,7 @@ from fa.inner_loop.subagent_envelope import (
 )
 from fa.inner_loop.subagent_runner import SubagentRunner
 from fa.observability.redaction import SecretRedactor
+from tests._capabilities import requires_posix_shell, requires_python3_executable
 
 # A token-shaped value long enough to clear SecretRedactor._MIN_LEN (8).
 KNOWN_SECRET = "sk-live-Q25KNOWNSECRET0123456789"
@@ -153,9 +154,14 @@ def test_persisted_envelope_does_not_contain_raw_secrets(tmp_path: Path) -> None
         role="verifier",
     )
     artifact = write_envelope_artifact(env, tmp_path)
-    assert KNOWN_SECRET not in artifact.read_text(encoding="utf-8")
+    body = artifact.read_text(encoding="utf-8")
+    # Positive control (S12 review RS8): the assertion below is satisfied by an
+    # empty artifact, so prove the subprocess ran and its output was captured.
+    assert "***REDACTED***" in body, f"probe did not run; the leak check would be vacuous. body={body[:200]!r}"
+    assert KNOWN_SECRET not in body
 
 
+@requires_posix_shell
 def test_failing_subagent_does_not_leak_secret_into_tracked_worklog(tmp_path: Path) -> None:
     """The leak found during the S6.5 preflight, and the reason Q25 was folded:
 
@@ -190,6 +196,8 @@ def test_researcher_role_output_is_also_masked(tmp_path: Path) -> None:
         command=f"echo 'token={KNOWN_SECRET}'",
         role="researcher",
     )
+    # Positive control (RS8): an empty summary would satisfy both assertions.
+    assert "***REDACTED***" in env.summary, f"probe did not run; leak checks vacuous. summary={env.summary!r}"
     assert KNOWN_SECRET not in env.summary
     assert KNOWN_SECRET not in env.to_json()
 
@@ -369,6 +377,7 @@ def test_spawn_subagent_wires_the_session_redactor_into_the_runner(
 # --------------------------------------------------------------------------
 
 
+@requires_python3_executable
 def test_oversized_stdout_is_truncated_with_marker(tmp_path: Path) -> None:
     """Q25: reuse the runner's existing 8000-char cap; truncation must be
     explicit so a reader can tell output was cut, never silent."""

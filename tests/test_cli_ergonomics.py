@@ -258,7 +258,9 @@ def test_workflow_session_manager_uses_one_invocation_run_context(
     monkeypatch.setenv("USERPROFILE", str(home))
     args = _workflow_args(tmp_path, config, run_id="", session_id=None)
 
-    assert _cmd_workflow(args, transport=_ScriptedTransport(), secrets=_TEST_SECRETS) == 0
+    # Q35b (S10c.2): the eval verdict here is BLOCKED, so the exit code is 1.
+    # The assertion below is about session/run identity, which is unaffected.
+    assert _cmd_workflow(args, transport=_ScriptedTransport(), secrets=_TEST_SECRETS) == 1
 
     manifests = sorted((home / ".fa" / "sessions").glob("*/manifest.json"))
     assert len(manifests) == 1
@@ -286,7 +288,10 @@ def test_workflow_drives_all_stages(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
 
-    assert code == 0
+    # Q35b (S10c.2): all three stages RAN, but the eval verdict is BLOCKED, so
+    # the exit code is 1. "the pipeline ran" and "the code was accepted" are now
+    # different questions; this test asks the first, via transport.calls.
+    assert code == 1
     # Three roles → three driven sessions (at least one transport call each).
     assert len(transport.calls) >= 3
 
@@ -310,7 +315,9 @@ def test_workflow_emits_eval_report_and_records_route(tmp_path: Path, monkeypatc
     args = _workflow_args(tmp_path, config)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
-    assert code == 0
+    # Q35b (S10c.2): terminal status is REPAIR_REQUIRED, not DONE, so the
+    # exit code is now 1. The loop/budget assertions below are unchanged.
+    assert code == 1
 
     session_dir = home / ".fa" / "session-log" / "wf-test"
     report = load_eval_report(session_dir / "eval_report.json")
@@ -366,7 +373,9 @@ def test_repair_mode_enforces_budget(tmp_path: Path, monkeypatch: pytest.MonkeyP
     args = _workflow_args(tmp_path, config, mode="repair", max_repairs=2)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
-    assert code == 0  # linear/repair baseline does not fail the process
+    # Q35b (S10c.2): terminal status is REPAIR_REQUIRED, not DONE, so the
+    # exit code is now 1. The loop/budget assertions below are unchanged.
+    assert code == 1
     # 1 initial eval + 2 repair evals = 3; coders: 1 initial + 2 repair = 3.
     assert transport.eval_calls == 3
     assert transport.coder_calls == 3
@@ -385,7 +394,9 @@ def test_repair_mode_zero_budget_behaves_like_one_eval(tmp_path: Path, monkeypat
     args = _workflow_args(tmp_path, config, mode="repair", max_repairs=0)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
-    assert code == 0
+    # Q35b (S10c.2): terminal status is REPAIR_REQUIRED, not DONE, so the
+    # exit code is now 1. The loop/budget assertions below are unchanged.
+    assert code == 1
     # No repair rounds: only the initial coder + initial eval.
     assert transport.coder_calls == 1
     assert transport.eval_calls == 1
@@ -402,7 +413,9 @@ def test_repair_mode_does_not_loop_on_return_to_planner(tmp_path: Path, monkeypa
     args = _workflow_args(tmp_path, config, mode="repair", max_repairs=2)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
-    assert code == 0
+    # Q35b (S10c.2): terminal status is REPLAN_REQUIRED, not DONE, so the
+    # exit code is now 1. The loop/budget assertions below are unchanged.
+    assert code == 1
     assert transport.coder_calls == 1  # no repair coder round
     assert transport.eval_calls == 1
     state = load_flow_state(session_dir / "flow_state.json")
@@ -528,7 +541,9 @@ def test_adaptive_mode_enforces_replan_budget(tmp_path: Path, monkeypatch: pytes
     args = _workflow_args(tmp_path, config, mode="adaptive", max_repairs=2, max_replans=1)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
-    assert code == 0
+    # Q35b (S10c.2): terminal status is REPLAN_REQUIRED, not DONE, so the
+    # exit code is now 1. The loop/budget assertions below are unchanged.
+    assert code == 1
     assert transport.planner_calls == 2
     assert transport.coder_calls == 2
     assert transport.eval_calls == 2

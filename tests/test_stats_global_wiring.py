@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Any
 
 from fa.inner_loop.global_history import GlobalHistoryStore
+from tests._capabilities import requires_posix_paths
 
 
+@requires_posix_paths
 def test_stats_global_history_cli_reads_projection(tmp_path: Path, monkeypatch: Any) -> None:
     """C2: fa stats --global-history reads derived projection.
 
@@ -89,11 +91,16 @@ def test_stats_global_history_cli_reads_projection(tmp_path: Path, monkeypatch: 
     assert "run-global-1" in run_ids
 
 
-def test_stats_global_history_projection_only() -> None:
-    """C2: global_history is read only by stats and cli, not by hot-path."""
-    # Already covered in test_global_history_export.py::test_global_history_is_projection_only
-    # Here we just assert that cli.py contains global_history string (active consumer)
-    cli_path = Path("src/fa/cli.py")
-    assert cli_path.exists()
-    content = cli_path.read_text(encoding="utf-8")
-    assert "global_history" in content, "cli.py should import global_history as an active consumer"
+# NOTE (S9.3, 2026-07-31): ``test_stats_global_history_projection_only`` was
+# DELETED here rather than repaired.
+#
+# Despite its name it asserted ``"global_history" in cli.py`` — a *presence*
+# check that cannot detect a hot-path import and that passes for 17 unrelated
+# reasons (measured occurrences of the string in ``cli.py``). Its own comment
+# conceded it deferred to the real check. A test that cannot fail is worse than
+# no test: it occupies the name of a guarantee nobody is actually making.
+#
+# The invariant it claimed now lives in
+# ``tests/test_global_history_export.py::test_global_history_is_projection_only``,
+# which AST-scans all 139 modules under ``src/fa`` against an allowlist and
+# carries two liveness controls.

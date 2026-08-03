@@ -444,13 +444,31 @@ class ConsoleRenderer:
 
 
 class QuietRenderer:
-    """Emits nothing. Final answer is printed by cli.py to stdout.
+    """Emits nothing. The final answer is printed by ``cli.py`` to stdout.
 
-    **Contract (Q23, resolved 2026-07-28).** ``--output quiet`` guarantees:
+    **Contract (Q23 2026-07-28; corrected by S8.4 / I-38 2026-07-30).**
+    ``--output-mode quiet`` guarantees:
 
-    * nothing on **stdout** — so ``fa run --task ... > result.txt`` stays
-      parseable, which is the reason the mode exists;
-    * nothing on the **happy path**, for any ``EventType``.
+    * this renderer emits **nothing at all**, on any stream, for any
+      ``EventType`` on the happy path;
+    * ``fa run``'s stdout carries **only** ``outcome.final_text`` — the human
+      status line (``OK: <stop_reason> (turns=N)``) is routed to stderr in this
+      mode, so ``fa run --task ... > result.txt`` yields a parseable artifact.
+      That is the reason the mode exists.
+
+    **This docstring previously overstated the guarantee.** It claimed "nothing
+    on stdout", but the two ``print`` calls that emit the status line and the
+    final text live in ``_cmd_run`` and bypass the ``EventBus`` entirely, so no
+    renderer-level test could observe them. S7's container run measured **34
+    bytes** on stdout under quiet (29 status + 5 payload) and **102 bytes**
+    across a three-stage ``fa workflow``. S8.4 made the status line
+    mode-conditional; the promise is now kept by the CLI, not just by this
+    class.
+
+    Scope note: under the default ``console`` mode the status line stays on
+    stdout, unchanged. ``quiet`` is a console-verbosity control — it never
+    alters what is processed or persisted (session.db rows, workflow
+    artifacts and the ``global_history`` row are identical in both modes).
 
     It does **not** suppress listener-failure diagnostics. If a renderer
     raises, :meth:`EventBus.emit` still reports it via ``logger.error`` and the
@@ -459,8 +477,9 @@ class QuietRenderer:
     the parseable stdout stream. Measured at ~351 bytes for one raising
     listener.
 
-    Both halves are asserted in ``tests/test_s6_renderers.py`` so the contract
-    cannot drift back into being an accident.
+    Asserted in ``tests/test_s6_renderers.py`` (renderer silence) and
+    ``tests/test_s8_workflow_controller.py`` (the CLI-level stdout contract),
+    so neither half can drift back into being an accident.
     """
 
     def on_event(self, event: OutputEvent) -> None:

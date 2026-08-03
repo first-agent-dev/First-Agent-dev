@@ -15,6 +15,7 @@ import pytest
 from fa.sandbox.bash_gate import BashGateDecision, evaluate_bash
 from fa.sandbox.classifier import BashCategory
 from fa.sandbox.validators import ValidationResult
+from tests._capabilities import requires_posix_paths
 
 
 def test_read_only_command_is_allowed(tmp_path: Path) -> None:
@@ -174,6 +175,7 @@ def test_general_write_rm_dispatched_to_validator(tmp_path: Path) -> None:
     )
 
 
+@requires_posix_paths
 def test_general_write_rm_outside_workspace_denied(tmp_path: Path) -> None:
     decision = evaluate_bash("rm /opt/foo", workspace_root=tmp_path)
     base_str = str(tmp_path.resolve())

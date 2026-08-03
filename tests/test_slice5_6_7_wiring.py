@@ -27,6 +27,7 @@ from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.tools import build_baseline_registry
 from fa.providers import ProviderChain
+from tests._capabilities import requires_pty_backend
 from tests.fixtures.session_wiring import (
     make_test_chain_config,
     make_tool_call,
@@ -40,6 +41,7 @@ from tests.fixtures.session_wiring import (
 # ---------------------------------------------------------------------------
 
 
+@requires_pty_backend
 def test_pr6_wiring_bash_large_output_offloads_artifact_via_live_path(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
     - root: drive_session
@@ -231,6 +233,7 @@ def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@requires_pty_backend
 def test_pr6_wiring_pty_persistence_via_session(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
     - root: drive_session with real PtyPool DI
@@ -296,6 +299,7 @@ def test_pr6_wiring_pty_persistence_via_session(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@requires_pty_backend
 def test_pr6_wiring_cr_cleaning_via_bash(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
     - root: drive_session

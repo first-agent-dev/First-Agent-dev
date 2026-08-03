@@ -73,6 +73,13 @@ format: fix
 typecheck:
     uv run mypy
 
+# Convenience runner for a fast, standalone pyrefly report.
+#
+# The leading `-` makes THIS RECIPE non-fatal so an agent can eyeball the full
+# error list without the runner aborting. It does NOT make pyrefly advisory:
+# pyrefly is a BLOCKING gate (Q50), enforced inside `just test` by
+# tests/test_pyrefly_import_topology.py::test_pyrefly_check_passes. The recipe
+# name is kept for back-compat with existing docs and muscle memory.
 typecheck-advisory:
     -uv run pyrefly check
 
@@ -107,7 +114,7 @@ no-mocked-dataclasses:
 # Full suite with the coverage gate (fail_under in pyproject). For a quick
 # single-file iteration loop use plain `pytest tests/test_x.py` — no gate.
 test:
-    uv run pytest --cov=fa --cov-report=term-missing --cov-report=xml
+    uv run pytest --cov=fa --cov-report=term-missing --cov-report=xml --cov-report=json
 
 # Vulnerability scanning (Dependencies + SAST)
 audit:
@@ -128,4 +135,11 @@ mutation:
 lock-check:
     uv lock --locked
 
-check: lock-check dependency-contract-check lint typecheck authoring-check contract-check log-kind-check no-mocked-dataclasses test
+# Guard: per-function coverage floors for src/fa/cli.py (S10a). Reads the
+# JSON report `just test` writes. Deliberately NOT a pytest test: coverage
+# flags are excluded from addopts so a bare `pytest tests/test_x.py` works,
+# which means a test reading coverage.json would fail on every bare run.
+cli-coverage-floor:
+    uv run python scripts/check_cli_coverage_floor.py
+
+check: lock-check dependency-contract-check lint typecheck authoring-check contract-check log-kind-check no-mocked-dataclasses test cli-coverage-floor

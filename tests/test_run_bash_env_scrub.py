@@ -20,6 +20,29 @@ def _stdout(res: ToolResult) -> str:
     return str(res.result.get("stdout", ""))
 
 
+def _assert_env_probe_ran(res: ToolResult, sentinel: str) -> None:
+    """Positive control: prove the probe command actually executed.
+
+    Every scrub test below asserts a secret is **absent** from the output. A
+    negative assertion is satisfied by an empty string, so if the probe command
+    does not exist on the host — ``printenv``, ``env`` and ``/proc/self/environ``
+    are all POSIX-only, and each is written with ``|| true`` so the shell still
+    exits 0 — the test passes while verifying nothing at all.
+
+    Measured on the operator's Windows box (S12 review, RS8): all four scrub
+    tests reported PASS there. Reproduced locally by pointing the probe at a
+    non-existent binary — the assertion held with scrubbing entirely bypassed.
+
+    Every command therefore echoes a sentinel that only appears if the shell
+    genuinely ran it. Board lesson: *a check that cannot fail is not a check.*
+    """
+    assert sentinel in _stdout(res), (
+        f"probe did not run: sentinel {sentinel!r} missing from stdout. "
+        f"The 'secret is absent' assertion below would pass vacuously. "
+        f"stdout={_stdout(res)!r}"
+    )
+
+
 def _stderr(res: ToolResult) -> str:
     assert res.result is not None
     return str(res.result.get("stderr") or "")
@@ -67,7 +90,8 @@ def test_extra_allow_cannot_re_expose_a_secret_name() -> None:
 def test_run_bash_printenv_returns_no_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FIREWORKS_API_KEY", "fw-LEAK-12345")
     tool = build_run_bash_tool(tmp_path)
-    res = _run(tool, "printenv FIREWORKS_API_KEY || true")
+    res = _run(tool, "printenv FIREWORKS_API_KEY || true; echo __FA_PROBE_RAN__")
+    _assert_env_probe_ran(res, "__FA_PROBE_RAN__")
     assert "fw-LEAK-12345" not in _stdout(res)
     assert "fw-LEAK-12345" not in _stderr(res)
 
@@ -75,14 +99,16 @@ def test_run_bash_printenv_returns_no_secret(tmp_path: Path, monkeypatch: pytest
 def test_run_bash_env_dump_returns_no_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-LEAK-99")
     tool = build_run_bash_tool(tmp_path)
-    res = _run(tool, "env")
+    res = _run(tool, "env; echo __FA_PROBE_RAN__")
+    _assert_env_probe_ran(res, "__FA_PROBE_RAN__")
     assert "or-LEAK-99" not in _stdout(res)
 
 
 def test_run_bash_proc_self_environ_no_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "ak-LEAK-77")
     tool = build_run_bash_tool(tmp_path)
-    res = _run(tool, "cat /proc/self/environ | tr '\\0' '\\n' || true")
+    res = _run(tool, "cat /proc/self/environ | tr '\\0' '\\n' || true; echo __FA_PROBE_RAN__")
+    _assert_env_probe_ran(res, "__FA_PROBE_RAN__")
     assert "ak-LEAK-77" not in _stdout(res)
 
 
@@ -91,8 +117,9 @@ def test_run_bash_python_environ_no_secret(tmp_path: Path, monkeypatch: pytest.M
     tool = build_run_bash_tool(tmp_path)
     res = _run(
         tool,
-        "python3 -c \"import os;print(os.environ.get('FIREWORKS_API_KEY',''))\" || true",
+        "python3 -c \"import os;print(os.environ.get('FIREWORKS_API_KEY',''))\" || true; echo __FA_PROBE_RAN__",
     )
+    _assert_env_probe_ran(res, "__FA_PROBE_RAN__")
     assert "fw-LEAK-py" not in _stdout(res)
 
 

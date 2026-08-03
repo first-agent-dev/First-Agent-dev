@@ -95,7 +95,17 @@ def build_prompt_parts_v2(
     cacheable = [
         {"role": "system", "content": base_system},
         {"role": "system", "content": f"AGENTS.md map:\n{agents_md_map}"},
-        {"role": "system", "content": f"Tools for role {role_id}:\n{json.dumps(tool_defs, indent=2)}"},
+        # Compact separators, not ``indent=2`` (S10c.5 / I-37 option 4).
+        # Measured on the 15-tool baseline registry: 10,619 -> 7,471 bytes,
+        # a 29.6% saving on EVERY request, with byte-identical semantics —
+        # only whitespace changes. This block is one of the largest fixed
+        # costs in the request and it is paid on every call.
+        #
+        # Scope note: the AlwaysSkills / ConditionalSkills blocks below keep
+        # ``indent=2`` deliberately. They are a separate measurement and are
+        # not covered by I-37 — do not "consistently" compact them without
+        # measuring first.
+        {"role": "system", "content": f"Tools for role {role_id}:\n{json.dumps(tool_defs, separators=(',', ':'))}"},
     ]
     if skills_always:
         cacheable.append({"role": "system", "content": f"AlwaysSkills:\n{json.dumps(skills_always, indent=2)}"})
@@ -179,6 +189,18 @@ def to_anthropic_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any
 
 def to_anthropic_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
     return to_anthropic_request_v2(*args, **kwargs)
+
+
+# The keys this composer injects into ``extra_body`` on every request (S10c.4 /
+# I-39). Exported as a constant so the contract test can compare it against each
+# adapter's recognised-key set without scraping source — the producer owns the
+# fact, mirroring how each provider adapter owns its own recognised set.
+#
+# A key here that the destination adapter does not recognise is silently
+# dropped: it costs request bytes and teaches readers a hint is active when it
+# is not. ``tests/test_s10c_composer_extras_contract.py`` makes that impossible
+# to introduce unnoticed.
+COMPOSER_EXTRA_BODY_KEYS: frozenset[str] = frozenset({"prompt_cache_key", "prompt_cache_retention"})
 
 
 def to_openai_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any]:

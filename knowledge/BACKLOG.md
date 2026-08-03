@@ -1128,7 +1128,17 @@
 
 ## I-11 — Cross-platform test suite (Windows without bash / Developer Mode)
 
-- **Status:** deferred from test audit (2026-06-04).
+- **Status:** PARTIALLY RESOLVED by S12 (2026-08-02). The unblock-trigger fired
+  ("first user reports running FA on native Windows without WSL"). S12 made the
+  suite *honest* on Windows: 85 tests now carry capability markers
+  (`tests/_capabilities.py`) that probe an effect rather than asking whether a
+  binary is installed. **Still open:** FA has no Windows shell backend
+  (`fs.run_cmd`), so those 85 remain unverified on native Windows. That is the
+  ADR-scale half of this item.
+- **Superseded detail:** the old `shutil.which("bash")` guard was itself the
+  bug — Git Bash satisfies it and then answers `/c/...` for `C:\...`. 11 of the
+  24 guards were *correct* and were kept; 13 were replaced.
+- **Status (original):** deferred from test audit (2026-06-04).
 - **Idea:** Three categories of tests fail on vanilla Windows:
   1. **Bash-dependent tests** (6 in `test_cli.py`, 1 in
      `test_inner_loop_runtime.py`, 1 in `test_inner_loop_runtime_limits.py`,
@@ -1169,6 +1179,96 @@
   - `tests/test_sandbox_path_containment.py` — symlink escape tests.
   - `tests/test_chunker_plaintext.py::test_anchor_falls_back_to_chunk_for_dot_only_name`.
   - `tests/test_hygiene_hooks_install.py` — hook symlink installation.
+
+## I-42 — `test_pty_persistence.py` shares a hardcoded global `/tmp`
+
+- **Status:** open (found during S12, 2026-08-02). P3.
+- **Idea:** 11 tests construct `PtyPool(max_size=1, base_cwd=Path("/tmp"))`
+  instead of using the `tmp_path` fixture. They share one global directory, so
+  parallel or repeated runs can collide. Unrelated to platform: `pty_pool.py`
+  itself is correct (its default is `/workspace`, and the `RuntimeError` at
+  line 630 is a deliberate Gap-6 fail-fast).
+- **Repro:** `grep -c 'Path("/tmp")' tests/test_pty_persistence.py` -> 11.
+- **First concrete step:** replace with `tmp_path`; the tests do not depend on
+  the directory being `/tmp`.
+
+## I-43 — the suite writes into the developer's real `~/.fa` on Windows
+
+- **Status:** open (found during S12, 2026-08-02). P2.
+- **Idea:** several tests isolate state with
+  `monkeypatch.setenv("HOME", str(tmp_path/"home"))`. On POSIX
+  `Path.home()` reads `HOME`, so this works. On Windows `ntpath.expanduser`
+  prefers **`USERPROFILE`**, so the override is ignored and the run writes to
+  the operator's real `~/.fa`. Measured: `ntpath.expanduser('~')` returns
+  `C:\Users\Real` even with `HOME=/fake/home`.
+- **Evidence:** this produced 7 of the 85 Windows failures (they looked like a
+  missing `events.jsonl`, i.e. a product defect, until root-caused). Confirmed
+  independently by `test_s10c_no_artifact_is_group_or_world_accessible`
+  reporting the operator's real artifacts (`'session-log\\posture\\events.jsonl':
+  '0o666'`).
+- **Why not fixed in S12:** S12 is `tests/`-scoped and marker-only; the correct
+  fix is a `conftest.py` seam that also sets `USERPROFILE`, which touches the
+  deliberately narrow `_isolate_fa_session_log_root` fixture (its docstring
+  records that patching `Path.home` globally broke 25 tests). Needs its own
+  slice.
+- **First concrete step:** in `tests/conftest.py`, set `USERPROFILE` alongside
+  `HOME` in the autouse isolation fixture; re-run the Windows gate.
+
+## I-44 — `ruff format --check .` fails on 39 markdown files
+
+- **Status:** open (observed during S12, 2026-08-02; pre-existing). P3.
+- **Idea:** `just lint` runs `ruff format --check .`, which formats fenced
+  Python blocks inside `.md`. 39 documentation files under `knowledge/` and
+  `worklogs/` fail. All 353 tracked `.py` files are clean. Present at
+  `cf1a980`, before S12 began.
+- **Note:** the operator's Windows run reported `643 files already formatted`,
+  so the failure is environment-dependent (file discovery differs). Decide
+  whether docs should be format-gated at all, or excluded via
+  `extend-exclude`.
+- **Repro:** `uv run ruff format --check .` vs
+  `uv run ruff format --check $(git ls-files '*.py')`.
+
+## I-45 — `install_hooks` is not idempotent on Windows
+
+- **Status:** open (found during S12 Windows verification, 2026-08-02). P2.
+- **Idea:** `_install_one` (`src/fa/hygiene/hooks/install.py:55`) treats an
+  existing target as replaceable only when `target.is_symlink()`. But
+  `install.py:63` forces `shutil.copy2` on `win32` — deliberately, because Git
+  for Windows does not reliably execute a symlinked hook — so the installed
+  target is **always a real file** there. The second `install_hooks()` call
+  therefore raises `FileExistsError` instead of refreshing the hook.
+- **Impact:** an operator re-running `fa hooks install` after a `git pull` gets
+  a hard error on Windows, and the hook silently keeps the **old** content
+  until they pass `force=True`. On POSIX the symlink keeps it current
+  automatically, so the platforms disagree about whether hooks self-update.
+- **Evidence:** `test_install_hooks_is_idempotent_replacing_own_symlinks` failed
+  on a Windows box with Developer Mode enabled (symlink creation available, yet
+  the install still copied). Marked `requires_symlink_hook_installs` in S12 so
+  the suite is honest; the product behaviour is unchanged and still wrong.
+- **First concrete step:** in `_install_one`, treat a target whose content
+  matches the source as replaceable on `win32` (or pass `force=True` from
+  `install_hooks` when the existing file is one of ours). Then drop the marker.
+
+## I-46 — 12 remaining hardcoded `python3` invocations in tests
+
+- **Status:** open (found during the S12 proactive audit, 2026-08-02). P3.
+- **Idea:** Windows ships an App Execution Alias at `python3.exe` that prints a
+  Microsoft Store notice and exits 9009. `shutil.which("python3")` finds it, so
+  presence checks do not help. S12 added `requires_python3_executable` (which
+  runs it and requires real output) and applied it to the one test that
+  surfaced. Twelve other call sites remain, in
+  `test_bash_intent.py`, `test_pty_persistence.py`, `test_sandbox_secret_paths.py`,
+  `test_slice5_6_7_wiring.py`, `test_run_bash_tool_projection.py`,
+  `test_inner_loop_tools.py`, `test_deploy_scripts.py`.
+- **Why not urgent:** each currently sits inside a test already gated by
+  `requires_pty_backend` or `requires_stable_tmpdir`, or is pure string
+  analysis with no subprocess. They cannot bite on Windows today.
+- **Why it still matters:** the protection is *incidental*. Removing an
+  unrelated marker later re-exposes the hazard silently.
+- **First concrete step:** apply `requires_python3_executable` to every test
+  that actually spawns `python3`, or introduce a `PYTHON3` constant resolved
+  once via `sys.executable`.
+- **Repro:** `grep -rn 'python3' tests/*.py | grep -v _capabilities`
 
 ## I-12 — Authoring rules: scope coverage gap (`scripts/`, `verifiers/`)
 
@@ -1758,6 +1858,491 @@ symptom and the DDL path is the source. The fix belongs with **S7 Q29**, which
 already proposes auditing those same three unserialised construction sites —
 resolve them together, with a multiprocess barrier test as the oracle
 (threads alone cannot falsify this; see S5 §12 R3-3).
+
+## I-36 — RESOLVED 2026-08-01 (S10c.3) — artifact permissions
+
+**Resolution.** Every artifact a run writes under `~/.fa` is now created
+`0600`, every directory `0700`, and an existing over-permissive tree is
+repaired.
+
+**The entry's scope was too narrow — measured.** It named bodies and events; a
+real run left **four** world-readable files. The missing one was
+`sessions/<sid>/session.db`, which stores full event `content`
+(`session_db.py:185`) — the same prose that makes `llm_bodies.jsonl` opt-in.
+Fixing the JSONL files alone would have closed the documented hole and left the
+larger one open.
+
+**The entry's prescribed fix does not compile.** It specified
+`Path.open(..., opener=...)`; `pathlib` rejects `opener` with `TypeError`
+(verified on 3.13, and mypy reports it as `call-overload`). The builtin
+`open()` accepts it. A test asserts the `TypeError` so the wrong shape cannot
+come back.
+
+Mechanisms: `private_opener` (`fa/paths.py`) for JSONL appends; an
+`os.open(..., 0o600)` pre-create inside `create_sqlite_connection` for both
+databases — one site, and the WAL `-wal`/`-shm` sidecars inherit the mode.
+Both set the mode in the syscall, so there is no chmod window.
+
+**Retroactive half (Q56, operator).** `tighten_fa_artifact_modes()` repairs an
+existing tree once per run. Three properties are load-bearing, each with a
+test: symlinks are **skipped** (`os.chmod` follows them and
+`follow_symlinks=False` raises `NotImplementedError` on Linux, so a crafted
+link inside `~/.fa` would otherwise have its *target* rewritten); directories
+get `0700`, not `0600`, or the state root becomes untraversable; and the pass
+tightens only, so a deliberate `0400` survives.
+
+Pinned by `tests/test_s10c_artifact_posture.py` (13 tests). The headline one is
+a **whole-tree sweep** rather than named files, because a fixed list is how the
+`session.db` omission happened in the first place.
+
+---
+
+**Original report — Tier-3 `llm_bodies.jsonl` is world-readable (0644) while the session manifest is 0600**
+
+**Found:** S7.C4 step 4d, on the live container, 2026-07-30.
+
+Measured in the deployment (`umask 0022`):
+
+```text
+644 fa:fa /home/fa/.fa/session-log/s7-run-b/llm_bodies.jsonl
+755 fa:fa /home/fa/.fa/session-log/s7-run-b
+600 fa:fa /home/fa/.fa/sessions/<sid>/manifest.json
+```
+
+`DebugBodyTransport._write` (`providers/debug_bodies.py:167`) opens the file
+with a plain `self._path.open("a", ...)`, so the mode is whatever `0666 & ~umask`
+yields — `0644` here. `SessionManager._atomic_write_json` deliberately does
+`os.chmod(temp_path, 0o600)` (`session/manager.py:133`) for the manifest.
+
+**Why it matters.** The module's own docstring says bodies "may carry
+UC5-sensitive context". `SecretRedactor` masks *known key values* — it does not
+and cannot mask prompt or response prose, which is exactly what these files are
+for. So the most sensitive artifact the system writes is the most permissive
+one. On the current single-user container the practical exposure is nil; it
+matters for multi-tenant hosts, for shared CI runners, and for any `docker cp`
+or volume snapshot that carries the directory somewhere with other readers.
+
+**The same applies to `events.jsonl`** — measured `0644` locally. Tier-1 content
+is redacted per ADR-7, so the severity is lower, but the two writers should not
+disagree about the policy.
+
+**Fix shape (do not paper over with `chmod` after the fact — there is a window
+between create and chmod where the file is readable):** pass an `opener` to
+`Path.open`, which is the stdlib-supported way to set creation mode:
+
+```python
+def _private_opener(path: str, flags: int) -> int:
+    return os.open(path, flags, 0o600)
+
+
+with self._path.open("a", encoding="utf-8", opener=_private_opener) as handle:
+    ...
+```
+
+Verified locally: `open(..., "a")` under `umask 0022` gives `0o644`; the
+`os.open(..., 0o600)` opener gives `0o600` with no window. Directory creation
+should likewise use `mkdir(mode=0o700)`.
+
+**Severity: P2.** Not a correctness bug and not exploitable in the current
+single-user deployment, but it is a security-posture defect in the exact
+subsystem whose reason for existing is "this data is sensitive, so it is
+opt-in". Should be fixed before any multi-tenant or shared-host deployment.
+
+**Scope when picked up:** `providers/debug_bodies.py` (bodies),
+`inner_loop/state.py` (`events.jsonl`), and the run-dir `mkdir` in
+`session/manager.py:398`. Needs a test asserting `stat.S_IMODE(...) == 0o600`
+on a real written file — a mode assertion is trivially falsifiable and belongs
+in the C2 producer class.
+
+---
+
+## I-37 — Tool schemas are sent to the provider twice in every request (~43% of request bytes)
+
+**Found:** while explaining the 58 KB body file recorded in S7.C4, 2026-07-30.
+Measured from a real captured `llm_bodies.jsonl` row for a one-word task.
+
+A single `pong` request decomposes as:
+
+```text
+total request bytes : 28,531   (58,095 on the container with its live tool set)
+  base system prompt:  5,924  (21%)
+  INLINE tool json  : 12,130  (43%)   <- system message #2
+  NATIVE tools array:  8,762  (31%)   <- OpenAI `tools` parameter
+  actual task       :     16  (0.06%)
+```
+
+The **same 16 tool schemas are transmitted twice**: once JSON-dumped with
+`indent=2` into a system message by
+`prompt_composer.build_prompt_parts_v2` (`prompt_composer.py:98`), and once as
+the provider-native `tools` array via `RequestInfo(tools=tool_payload)`
+(`coder_loop.py:1124`). Both derive from the same `render_tool_specs(...)`
+result (`coder_loop.py:409-410`) — `tool_defs_for_prompt` is literally a copy
+of `tool_payload`. Together they are **73% of the request**.
+
+The inline copy is also the *more expensive* of the two at 12,130 vs 8,762
+bytes, because `indent=2` pretty-printing inflates it ~38%.
+
+**Is the duplication deliberate?** Nothing in the source says so. The docstring
+for `build_prompt_parts_v2` describes the tool block only as a cacheable part;
+there is no comment claiming the inline listing improves tool-selection
+accuracy. Some 2023-era prompting practice did restate tools in the system
+prompt for models with weak native tool support — if that is the reason, it
+should be a documented, per-model decision, not an unconditional default.
+
+**Why it is not free even with prompt caching.** The container run showed
+`cache=100%` on the third call, so a warm cache does absorb much of the cost.
+But: (a) the first call of every session pays full price; (b) cache hits are
+still billed, typically at ~10% of input rate, so 43% waste becomes ~4.3%
+permanent waste; (c) it consumes context window — the run reported "Context: 9%
+of window" for a one-word task; (d) `_hash_tool_defs_stable` excludes
+`description` from the cache key precisely because descriptions contain dates,
+so a description change silently invalidates nothing while still shipping new
+bytes.
+
+**Do not "just delete the inline block".** That is a behavior change to prompt
+composition and must be measured, not assumed:
+
+1. Add an A/B under the existing `FeatureFlags` mechanism
+   (`prompt.inline_tool_listing`, default ON to preserve current behavior).
+2. Measure tool-selection accuracy on the eval corpus with it OFF.
+3. If accuracy holds, flip the default and delete the branch.
+4. Independently, if the block is kept, drop `indent=2` — that is a pure
+   ~38% saving on that block with zero semantic change.
+
+> **PARTIALLY RESOLVED 2026-08-01 (S10c.5) — option 4 shipped.** The
+> `indent=2` pretty-printing is gone: measured **10,619 → 7,471 bytes**, a
+> **29.6% saving on every request**, whitespace-only. (This entry estimated
+> ~38%; re-measured directly against the 15-tool baseline registry.) The
+> `AlwaysSkills` / `ConditionalSkills` blocks keep `indent=2` deliberately —
+> separate measurement, not covered by this item.
+>
+> **Options 1-3 remain OPEN**: deleting the inline listing still needs the
+> `FeatureFlags` A/B on the eval corpus. Note this entry's own container
+> measurement — the `AGENTS.md` map is **48.4%** of a live request versus this
+> block's 21% — so *"fixing 21% while ignoring 48% is backwards"* still stands.
+
+**Severity: P2**, cost/performance rather than correctness. Worth doing: it is
+one of the few changes that reduces spend on *every single call* the system
+makes.
+
+**Related:** I-33 (cost accounting stubs) — I-37 is the kind of regression that
+proper per-call cost accounting would have surfaced automatically.
+
+### Container measurement (S7.C4b, 2026-07-30) — the live picture is worse
+
+The local capture above used an empty `AGENTS.md` map. On the real deployment
+(`mistral-small-2603`, live pinned buffer) the same one-word task is **57,853
+bytes**:
+
+```text
+  [0] system  base prompt      :  5,924  10.2%
+  [1] system  AGENTS.md map    : 28,015  48.4%   <- largest single component
+  [2] system  INLINE tool json : 12,130  21.0%
+  [3] user    the actual task  :     38   0.1%
+      native tools array       :  8,762  15.1%
+      tool schemas sent TWICE  : 20,892  36%
+```
+
+Two corrections to the local estimate:
+
+1. The duplicated tool schemas are **36% of the live request**, not 43% — the
+   share fell only because a much larger `AGENTS.md` map diluted it. The
+   absolute waste (12,130 bytes/call) is **identical**; it is a fixed cost.
+2. **The `AGENTS.md` map is now the single biggest component at 48.4%**, and it
+   is *larger than `AGENTS.md` itself* (28,015 vs 17,127 bytes on disk). The
+   pinned buffer is assembling more than one document into that slot. Nobody
+   has ever measured what goes in there. Worth a follow-up of its own before
+   anyone optimises the tool block: fixing 21% while ignoring 48% is
+   backwards.
+
+**Combined:** 84.5% of every live request is standing context. The task itself
+is 0.1%.
+
+---
+
+## I-38 — RESOLVED 2026-07-30 (S8.4) — `--output-mode quiet` stdout contract
+
+**Found:** S7.C5 on the live container, 2026-07-30.
+
+`QuietRenderer`'s docstring (`output.py:449`) states the contract as:
+
+> *nothing on **stdout** — so `fa run --task ... > result.txt` stays parseable,
+> which is the reason the mode exists*
+
+Measured on the deployment: **stdout 34 bytes, stderr 0 bytes.** Reconstructed
+exactly from source — `cli.py:2212` prints `OK: stopped_by_llm (turns=1)\n`
+(29 bytes) unconditionally, then `cli.py:2214` prints `outcome.final_text`
+(`pong\n`, 5 bytes). 29 + 5 = 34. Exact match, no ambiguity about what wrote
+those bytes.
+
+**The renderer honours its contract; the command does not.** `QuietRenderer.on_event`
+really is a `pass`, and `tests/test_s6_renderers.py:149` proves it for every
+`EventType`. But those two `print()` calls in `_cmd_run` sit *outside* the
+`EventBus` entirely, so no renderer-level test can see them — which is exactly
+why a local unit suite passed while the live behaviour contradicts the
+docstring.
+
+**Why it is not cosmetic.** The stated purpose of the mode is that
+`fa run ... > result.txt` yields a parseable artifact. It does not: the file
+gets a human status line prepended to the payload. Any caller doing
+`result = subprocess.check_output(...)` gets `"OK: stopped_by_llm (turns=1)\npong"`
+and must strip a line whose format is undocumented and unversioned. The
+docstring's own justification is falsified by the shipped behaviour.
+
+**This is a policy fork, not a bug with an obvious fix.** Promote to a Q# before
+touching it. The options:
+
+- **(a)** Quiet means *only* `final_text` on stdout; status line moves to
+  stderr. Best matches the docstring and normal Unix practice (data on stdout,
+  status on stderr). Changes observable output for anyone parsing today.
+- **(b)** Keep the behaviour, fix the docstring to say "quiet suppresses the
+  live renderer; the status line and final text still go to stdout." Zero risk,
+  but concedes that `> result.txt` is not clean.
+- **(c)** Add `--output-mode raw` for payload-only, leave `quiet` as-is.
+  Additive and safe; grows the surface.
+
+Recommend **(a)**, with a C2 test asserting stdout is byte-identical to
+`final_text` under quiet. It is the only option that makes the docstring true.
+
+**Severity: P2.** Contract/documentation mismatch on a mode whose entire reason
+for existing is machine-parseable output.
+
+### RESOLVED — S8.4, 2026-07-30
+
+Adopted **option (a), scoped to `quiet`** (operator decision, S8 plan Q32:
+*"quiet mode outputs less info per turn, all info is processed as usual"*).
+
+* Under `--output-mode quiet`, `_cmd_run`'s status line goes to **stderr** and
+  stdout is byte-exactly `outcome.final_text`.
+* Default `console` output is **unchanged** — the change is mode-scoped, not
+  unconditional, so no existing console user is affected.
+* `fa workflow` gained `--output-mode` and forwards it to every stage (this is
+  where the defect compounded: 102 bytes across three stages).
+* `QuietRenderer`'s docstring corrected in the same commit, and now states the
+  contract the CLI actually keeps.
+* Durable equivalence asserted: DB rows, workflow artifacts and the
+  `global_history` row are identical in both modes.
+
+Kill-checks bite in **both** directions (force-stdout fails the quiet tests;
+force-stderr fails the console tests), which is what pins a conditional rather
+than a constant.
+
+---
+
+## I-39 — RESOLVED 2026-08-01 (S10c.4 / Q55) — composer extras are no longer dropped *silently*
+
+**Resolution.** The drop remains; the **silence** does not — which was the
+actual complaint ("a key the composer invents and an adapter silently drops is
+invisible to every existing check").
+
+**Q55 (operator): Mistral is a temporary test provider, best-effort only.** So
+the key was neither added to the recognised set (that would claim API support
+nobody verified) nor removed from the composer (it works on
+openai-compatible routes, asserted in `test_providers_openai_compat.py:139`).
+It is recorded in a reviewed `_KNOWN_UNRECOGNISED` allow-list that a contract
+test asserts, keeping the gate binary: a *second*, unplanned silent drop still
+fails.
+
+`COMPOSER_EXTRA_BODY_KEYS` is exported from `prompt_composer` so the test
+compares constants instead of scraping source, and a companion test asserts the
+constant equals what the function actually emits — otherwise the contract would
+validate a fiction.
+
+**The gate found a third instance on its first run.** This entry documented
+`mistral`; `mistral_agents` has the identical gap (recognises
+`prompt_cache_key`, not `prompt_cache_retention`), verified against
+`MISTRAL_CONVERSATIONS_RECOGNIZED_PROVIDER_PARAMS_KEYS` rather than assumed
+from the family name. A further test asserts every allow-list row still
+describes a *real* mismatch, so a row cannot outlive its reason.
+
+Pinned by `tests/test_s10c_composer_extras_contract.py`.
+
+---
+
+**Original report — `prompt_cache_retention` is silently dropped for every Mistral route**
+
+**Found:** while reading the S7.C4b container output, 2026-07-30.
+
+`prompt_composer.to_openai_request_v2` (`prompt_composer.py:188`)
+unconditionally emits `extra_body = {"prompt_cache_key": ..., "prompt_cache_retention": "1h"}`.
+The container body shows `prompt_cache_key` **present** and
+`prompt_cache_retention` **absent**.
+
+Confirmed by direct call, not inference — `_build_request_body` with both keys
+in `extras` returns a body containing `prompt_cache_key` and not
+`prompt_cache_retention`. Cause: `MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS`
+(`mistral.py:77`) lists 7 keys and `prompt_cache_retention` is not among them,
+so the `if key not in ...: continue` filter drops it. `openai_compat` does pass
+it through (`tests/test_providers_openai_compat.py:139` asserts so).
+
+So the retention hint reaches OpenAI-compatible routes and never reaches
+Mistral routes. The system asks for 1-hour cache retention and, on the route it
+actually runs in production, gets provider-default retention instead.
+
+**The existing test documents the drop without justifying it.**
+`tests/test_mistral_provider.py:626` asserts `"prompt_cache_retention" not in body`
+with the docstring *"Unrecognized extras ... are filtered out."* That pins the
+filter's mechanics, but nowhere is it recorded whether Mistral genuinely
+rejects the field or whether it was simply never added to the set. Those need
+different fixes and the test cannot tell them apart.
+
+**Also a gap in the routing lint.** `routing_lint.py` check 3 flags unknown
+`provider_params` keys from `models.yaml` — good — but composer-injected
+`extras` never pass through that lint. A key the composer invents and an
+adapter silently drops is invisible to every existing check.
+
+**Action:** confirm against Mistral's current API docs whether
+`prompt_cache_retention` is supported. If yes, add it to the recognised set. If
+no, stop emitting it for Mistral routes rather than emitting-then-dropping, and
+say so in the composer. Either way, extend the lint (or add a startup
+assertion) so composer-emitted extras are checked against the destination
+adapter's recognised set.
+
+**Severity: P3.** Cost/performance only; no correctness impact. Cheap to fix.
+
+
+
+---
+
+## I-40 — RESOLVED 2026-08-01 (S10c.1) — the config gate fails when it cannot validate
+
+**Resolution, both halves.**
+
+*Missing config.* `_cmd_routing_check` now stats the path and exits **2**
+naming it. `scripts/fa-clean-rebuild.sh:471` therefore aborts instead of
+logging "Routing lint: OK" on a typo. The loader's missing-file policy is
+**unchanged** — it is documented and correct for other callers
+(`config.py:323-326`, "caller decides if absence is fatal"); the command is the
+caller that has decided absence is fatal. An empty-but-present config still
+exits 0, which is a legitimately clean state.
+
+*Unparseable YAML — wider than this entry recorded.* Executing each command
+showed **five** leaked a raw traceback: `routing-check`, `run`, `selfcheck`,
+`probe` and `egress-proxy` (the last loads this config at **container start**).
+Fixed once at the single `yaml.safe_load` in `load_models_config`, which
+converts `yaml.YAMLError` to `ConfigurationError` — the exception every one of
+those callers already handles, and the same one raised two lines below for a
+bad root type. All 19 `load_models_config*` call sites inherit it; adding the
+exception to five `except` tuples would have fixed the ones an author
+remembered.
+
+Two pinned tests were **inverted**, each with a docstring recording why —
+including S10b's parity cell, whose own docstring predicted it: *"this test
+INVERTS when I-40 is fixed — that is its purpose."*
+
+Pinned by `tests/test_s10c_config_error_contract.py` (all five commands get
+their own test, plus a C0p on the loader so a command regression is
+distinguishable from a loader regression).
+
+---
+
+**Original report — `fa routing-check` passes green on a config path that does not exist**
+
+**Found:** S10a.2, 2026-07-31, by a test written to assert exit 2 that failed.
+
+`fa routing-check --config /path/that/does/not/exist` returns **0** and prints
+`WARNING: no roles declared; nothing to check.`
+
+Cause: `load_models_config_from_path` returns an empty `roles` mapping for a
+missing file rather than raising, so `_cmd_routing_check` takes its
+"no roles declared" branch (`cli.py`) and reports success.
+
+**Why this is not cosmetic.** `scripts/fa-clean-rebuild.sh:471` runs this
+command as a **pre-build deploy gate**:
+
+```bash
+if uv run --project "${REPO_DIR}" fa routing-check --config "${ROUTING_MODELS_FILE}"; then
+    log_info "Routing lint: OK."
+else
+    log_error "... Aborting before build."
+```
+
+A typo in `ROUTING_MODELS_FILE` therefore logs **"Routing lint: OK"** and
+proceeds to build, having validated nothing. The command's own docstring calls
+it a gate that "fails in well under a second, before a Docker image build" —
+which is exactly what does not happen.
+
+**Second, smaller defect in the same handler.** `_cmd_routing_check` catches
+`(ConfigurationError, EvalFamilyConflictError, OSError)`. **Unparseable YAML
+raises `yaml.ParserError`**, which is none of those, so a syntactically broken
+`models.yaml` escapes as an unhandled traceback instead of the structured
+`ERROR: models config error` the command promises. Measured.
+
+**Fix shape.** Distinguish *absent* from *empty*: stat the path first and
+return **2** with a structured message when it does not exist, keeping 0 for a
+genuinely empty-but-present config. Add `yaml.YAMLError` to the caught tuple.
+Both are one-line changes, but both alter an operator-visible exit code, so
+they belong in a slice that owns the CLI contract — **not** in a coverage
+slice.
+
+**Severity: P2.** Silent failure of a deploy gate. Today's behaviour is pinned
+by `test_s10a_routing_check_missing_config_reports_no_roles` so the eventual
+fix is a visible diff rather than drift.
+
+---
+
+## I-41 — RESOLVED 2026-08-01 (S10b.3 / Q53) — `fa stats` renderers bound `sys.stderr` at import time
+
+**Resolution.** `render_session` / `render_aggregate` now take
+`stream: TextIO | None = None` and resolve `sys.stderr` **inside the body**, so
+the current stream is used on every call. Confirmed as a *live* defect while
+writing the S10b.3 parity cells, not merely a smell: it surfaced as
+`ValueError: I/O operation on closed file` (`stats.py:663`) when a renderer ran
+after another test whose captured stderr had since been closed.
+
+Fixing `.write` alone was insufficient — both functions also call
+`stream.flush()`, which the first patch turned into `None.flush()`. The stream
+is now resolved **once** into a local (`out`) so write and flush cannot
+diverge. A repo-wide grep for `= sys.stderr` / `= sys.stdout` on `def` lines
+confirms these were the only two sites in `src/fa`.
+
+Pinned by three FIX-regression tests in `tests/test_s19_stats_parsers.py`
+(`test_i41_*`), red before the fix, including a positive control asserting an
+explicit `stream=` still wins — so a "fix" that ignored the argument and always
+wrote to `sys.stderr` is also caught. Mutations verified: restoring the
+import-time default fails the call-time test; ignoring the argument fails the
+positive control.
+
+---
+
+**Original report — Found:** S10a.6, 2026-07-31, by a test that passed alone
+and failed in the suite.
+
+`fa.stats.render_session` and `render_aggregate` declare
+`*, stream: TextIO = sys.stderr`. A default argument is evaluated **once, at
+import**, so both functions write to whatever `sys.stderr` was bound to when
+`fa.stats` was first imported — not to the current one.
+
+**Symptom.** Under `pytest`, any test that runs after a test which replaced
+`sys.stderr` gets `ValueError: I/O operation on closed file` from
+`cli.py:2822`. Measured: `test_s10a_stats_console_render_and_dead_zones`
+passes in isolation and fails in the full module.
+
+**Why it is not only a test problem.** Any embedder that reassigns
+`sys.stderr` — a TUI, a log-capture harness, a subprocess wrapper, `fa` running
+inside another tool — silently loses the renderer's output or writes to a dead
+handle. The CLI's own quiet/console stream contract (S8.4) assumes writes go to
+the *current* stream.
+
+**This is the third instance of one defect class in this codebase:**
+
+| where | fixed by |
+|---|---|
+| `state.py` `DEFAULT_STATE_ROOT` | V10 — `default_state_root()` resolves at call time |
+| `global_history.py` `DEFAULT_GLOBAL_HISTORY_PATH` | S8.8 — `default_global_history_path()` |
+| **`stats.py` renderer `stream=` defaults** | **open (this item)** |
+
+**Fix shape** (mirrors the two precedents): default to `None` and resolve
+inside the body — `stream = stream if stream is not None else sys.stderr`.
+Both call sites in `cli.py` already omit the argument, so nothing else changes.
+
+**Severity: P3.** No production data is wrong; output can land on a stale
+stream in embedded use. Deliberately **not** fixed in S10a — that slice's DoD
+allows exactly one production edit (the `_cmd_probe` seam), and this is a
+different module. The S10a test works around it by passing an explicit stream,
+with a comment pointing here.
+
+---
 
 ## See also
 

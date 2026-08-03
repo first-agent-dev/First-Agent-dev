@@ -1,0 +1,111 @@
+{
+  "slice": "S10c",
+  "note": "Statement-deletion sweep over the guards S10c.1-S10c.5 added. Each row asks: if this line vanished, would ANY test notice? Two classes matter here. (1) Contract guards whose absence restores a SILENT failure -- a deploy gate that passes while validating nothing, an exit code that reports success on rejected code. (2) Security-posture guards whose absence is invisible to every functional test, because a 0644 file behaves exactly like a 0600 one until someone else reads it. gremlins mutates expressions and ships no statement-deletion operator, so these are mutations it cannot produce.",
+  "mutations": [
+    {
+      "id": "S10C-M1",
+      "file": "src/fa/cli.py",
+      "old": "    if not config_path.is_file():\n        print(f\"ERROR: config not found: {config_path}\")\n        return 2",
+      "new": "    pass",
+      "why": "I-40: a typo'd --config falls through to 'no roles declared' and exits 0, so fa-clean-rebuild.sh:471 logs 'Routing lint: OK' and builds having validated nothing."
+    },
+    {
+      "id": "S10C-M2",
+      "file": "src/fa/providers/config.py",
+      "old": "    try:\n        raw_root: Any = yaml.safe_load(text)\n    except yaml.YAMLError as exc:\n        raise ConfigurationError(\n            f\"models.yaml is not valid YAML: {exc}. Fix: correct the syntax error above, then re-run.\"\n        ) from exc",
+      "new": "    raw_root: Any = yaml.safe_load(text)",
+      "why": "I-40 second half: malformed YAML escapes as a raw traceback from all five commands that load this config, including egress-proxy at container start."
+    },
+    {
+      "id": "S10C-M3",
+      "file": "src/fa/cli.py",
+      "old": "    if result_code != 0 or terminal_state is None:\n        return result_code\n    return 0 if terminal_state.status == \"DONE\" else 1",
+      "new": "    return result_code",
+      "why": "Q35b: fa workflow reports success on a BLOCKED verdict again, so `fa workflow && deploy` proceeds on rejected code."
+    },
+    {
+      "id": "S10C-M4",
+      "file": "src/fa/cli.py",
+      "old": "    if result_code != 0 or terminal_state is None:\n        return result_code\n    return 0 if terminal_state.status == \"DONE\" else 1",
+      "new": "    return 0 if terminal_state is not None and terminal_state.status == \"DONE\" else 1",
+      "why": "Q35b 1-vs-2 split: a usage/config error (exit 2) would be reported as a rejected verdict (exit 1), conflating 'you invoked this wrongly' with 'the code was rejected'."
+    },
+    {
+      "id": "S10C-M5",
+      "file": "src/fa/cli.py",
+      "old": "    terminal_state = _read_back_terminal_state(artifact_paths.flow_state, run_id)",
+      "new": "    terminal_state = None",
+      "why": "Q35b authority: the exit code stops consulting the persisted FlowState and always falls back, so every verdict reports success again."
+    },
+    {
+      "id": "S10C-M6",
+      "file": "src/fa/providers/debug_bodies.py",
+      "old": "                with open(self._path, \"a\", encoding=\"utf-8\", opener=private_opener) as handle:",
+      "new": "                with open(self._path, \"a\", encoding=\"utf-8\") as handle:",
+      "why": "I-36: llm_bodies.jsonl -- raw prompt/response prose -- goes back to 0644. Invisible to every functional test; the file's CONTENT is unchanged."
+    },
+    {
+      "id": "S10C-M7",
+      "file": "src/fa/inner_loop/state.py",
+      "old": "                with open(self.path, \"a\", encoding=\"utf-8\", opener=private_opener) as handle:",
+      "new": "                with open(self.path, \"a\", encoding=\"utf-8\") as handle:",
+      "why": "I-36: events.jsonl goes back to 0644."
+    },
+    {
+      "id": "S10C-M8",
+      "file": "src/fa/inner_loop/_sqlite_common.py",
+      "old": "        os.close(os.open(db_path, os.O_CREAT | os.O_RDWR, PRIVATE_FILE_MODE))",
+      "new": "        pass",
+      "why": "I-36: session.db AND global_history.db go back to 0644, taking their WAL sidecars with them. session.db stores the same event content as the bodies file."
+    },
+    {
+      "id": "S10C-M9",
+      "file": "src/fa/paths.py",
+      "old": "        if path.is_symlink():\n            continue",
+      "new": "        pass",
+      "why": "RK11: os.chmod FOLLOWS symlinks and follow_symlinks=False raises NotImplementedError on Linux, so the housekeeping pass would rewrite the mode of whatever a symlink inside ~/.fa points at."
+    },
+    {
+      "id": "S10C-M10",
+      "file": "src/fa/paths.py",
+      "old": "            if not current & 0o077:\n                continue",
+      "new": "            pass",
+      "why": "RK5: the pass stops being tighten-only. Combined with the chmod below it would rewrite already-correct modes on every run and could widen a deliberate 0400."
+    },
+    {
+      "id": "S10C-M11",
+      "file": "src/fa/paths.py",
+      "old": "    return os.open(path, flags, PRIVATE_FILE_MODE)",
+      "new": "    return os.open(path, flags, 0o644)",
+      "why": "I-36 at the root: every JSONL artifact is created world-readable again, with no window to observe -- the mode is simply wrong from birth."
+    },
+    {
+      "id": "S10C-M12",
+      "file": "src/fa/session/manager.py",
+      "old": "        session_dir.mkdir(parents=True, exist_ok=False, mode=PRIVATE_DIR_MODE)",
+      "new": "        session_dir.mkdir(parents=True, exist_ok=False)",
+      "why": "I-36: the session dir returns to 0755, so a private session.db still leaks its directory listing -- names, sizes, mtimes."
+    },
+    {
+      "id": "S10C-M13",
+      "file": "src/fa/inner_loop/prompt_composer.py",
+      "old": "COMPOSER_EXTRA_BODY_KEYS: frozenset[str] = frozenset({\"prompt_cache_key\", \"prompt_cache_retention\"})",
+      "new": "COMPOSER_EXTRA_BODY_KEYS: frozenset[str] = frozenset({\"prompt_cache_key\"})",
+      "why": "CT4/RK10: the exported constant drifts from the dict the composer emits, so the contract test validates a fiction and a real silent drop goes unchecked."
+    },
+    {
+      "id": "S10C-M14",
+      "file": "src/fa/inner_loop/prompt_composer.py",
+      "old": "json.dumps(tool_defs, separators=(',', ':'))",
+      "new": "json.dumps(tool_defs, indent=2)",
+      "why": "I-37 option 4: 3,148 bytes of pure whitespace return to every single request."
+    },
+    {
+      "id": "S10C-M15",
+      "file": "src/fa/cli.py",
+      "old": "    tighten_fa_artifact_modes(fa_state_root())",
+      "new": "    pass",
+      "why": "Q56: the retroactive half disappears, so already-deployed 0644 artifacts stay world-readable forever while new ones are private -- the fix would look complete and not be."
+    }
+  ]
+}

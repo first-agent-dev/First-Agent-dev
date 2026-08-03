@@ -23,6 +23,7 @@ from pathlib import Path
 from fa.inner_loop.artifacts import ArtifactStore
 from fa.inner_loop.projection import project_for_model
 from fa.inner_loop.tools.run_bash import build_run_bash_tool
+from tests._capabilities import requires_posix_shell
 
 _HEAD_MARKER = "HEAD_MARKER"
 _TAIL_MARKER = "TAIL_MARKER"
@@ -33,6 +34,7 @@ def _large_output_command(filler_len: int) -> str:
     return f"python3 -c \"print('{_HEAD_MARKER}' + 'x' * {filler_len} + '{_TAIL_MARKER}')\""
 
 
+@requires_posix_shell
 def test_run_bash_elide_preserves_fixed_preview_shape_over_budget(tmp_path: Path) -> None:
     """root=build_run_bash_tool (composition root: real ToolSpec.elide wiring)
 

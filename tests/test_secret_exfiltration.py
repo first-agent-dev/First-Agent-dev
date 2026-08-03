@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from fa.inner_loop.tools.run_bash import build_run_bash_tool
+from tests._capabilities import requires_posix_shell
 
 _FAKE_KEY = "sk-REDTEAM-fireworks-0xDEADBEEF-1234567890"
 _VAR = "FIREWORKS_API_KEY"
@@ -40,8 +41,16 @@ def test_bash_cannot_exfiltrate_key(command: str, tmp_path: Path, monkeypatch: p
     # must still keep it out of the agent shell.
     monkeypatch.setenv(_VAR, _FAKE_KEY)
     tool = build_run_bash_tool(tmp_path)
-    res = tool.handler({"command": command})
+    res = tool.handler({"command": f"{command}; echo __FA_PROBE_RAN__"})
     blob = (res.result or {}).get("stdout", "") + (res.result or {}).get("stderr", "")
+    # Positive control (S12 review RS8). Every command above ends in `|| true`
+    # and most are POSIX-only, so on a host lacking them the shell exits 0 with
+    # empty output and the "key is absent" assertions below hold vacuously.
+    # The sentinel proves the shell actually ran the probe.
+    assert "__FA_PROBE_RAN__" in blob, (
+        f"probe did not run: {command!r} produced no sentinel, so the "
+        f"exfiltration assertions below would pass vacuously. blob={blob!r}"
+    )
     # raw key
     assert _FAKE_KEY not in blob, f"key leaked via: {command}"
     # base64 of key
@@ -57,9 +66,12 @@ def test_bash_env_has_no_credential_named_vars(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setenv("GITHUB_TOKEN", "gh-x")
     monkeypatch.setenv("DB_PASSWORD", "pw-x")
     tool = build_run_bash_tool(tmp_path)
-    res = tool.handler({"command": "env"})
+    res = tool.handler({"command": "env; echo __FA_PROBE_RAN__"})
     assert res.result is not None
     out = res.result["stdout"]
+    # Positive control (RS8): `env` is POSIX-only; without this the loop below
+    # passes vacuously on a host that has no `env`.
+    assert "__FA_PROBE_RAN__" in out, f"probe did not run; leak assertions would be vacuous. out={out!r}"
     for leaked in ("or-x", "gh-x", "pw-x"):
         assert leaked not in out
 
@@ -110,6 +122,7 @@ def test_model_channel_masks_a_leaked_key() -> None:
     assert key not in _redact(redactor, f"b64={enc}")
 
 
+@requires_posix_shell
 def test_workspace_env_files_are_not_present(tmp_path: Path) -> None:
     """`.env.fa` must not be a readable file inside the workspace anymore.
 

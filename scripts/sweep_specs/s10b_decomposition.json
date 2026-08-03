@@ -1,0 +1,111 @@
+{
+  "slice": "S10b",
+  "note": "Statement-deletion sweep over the guards S10b.2-S10b.5 moved out of _cmd_run / _cmd_stats / _discover_stats_sources / _cmd_selfcheck into extracted helpers. The question each row asks is the one that matters for a DECOMPOSITION: after the code moved, does anything still notice if this line vanishes? A guard that was covered inline but is dead after extraction is exactly the silent regression this slice is designed to catch (see the loop_warn NameError found during S10b.2). gremlins mutates expressions and ships no statement-deletion operator, so these mutations are ones it cannot produce.",
+  "mutations": [
+    {
+      "id": "S10B-M1",
+      "file": "src/fa/cli.py",
+      "old": "    if args.max_turns < 1:\n        return \"fa run: --max-turns must be a positive integer\"",
+      "new": "    pass",
+      "why": "_validate_run_args: a non-positive --max-turns would reach drive_session instead of being rejected with exit 2. Guard ORDER is contract here; the parity cell asserts this branch's unique wording."
+    },
+    {
+      "id": "S10B-M2",
+      "file": "src/fa/cli.py",
+      "old": "    if args.run_id and not _valid_run_id(args.run_id):\n        return \"fa run: --run-id must match [A-Za-z0-9_.-]{1,128}\"",
+      "new": "    pass",
+      "why": "_validate_run_args: path traversal via --run-id ('../escape') would reach the session-log path join. Security-relevant: run_id becomes a directory name."
+    },
+    {
+      "id": "S10B-M3",
+      "file": "src/fa/cli.py",
+      "old": "    if chain_config is None:\n        known = sorted(models.roles)\n        return f\"fa run: role {role!r} not found in {config_path}; known: {known}\"",
+      "new": "    pass",
+      "why": "_resolve_run_models: an unknown --role would return None as a chain config instead of exit 2 with the known-role list."
+    },
+    {
+      "id": "S10B-M4",
+      "file": "src/fa/cli.py",
+      "old": "        if proxy_err:\n            return f\"fa run: {proxy_err}\"",
+      "new": "        pass",
+      "why": "_resolve_run_models: a failed proxy rewrite of the PRIMARY chain must abort (exit 2), unlike the compactor chain which degrades. This asymmetry is documented and easy to 'unify' by mistake."
+    },
+    {
+      "id": "S10B-M5",
+      "file": "src/fa/cli.py",
+      "old": "            if output_bus_ref:\n                output_bus_ref[0].emit(",
+      "new": "            if False:\n                output_bus_ref[0].emit(",
+      "why": "_build_run_hook_registry: the late-binding seam. If this stops emitting, every console loop_warn disappears with NO exit-code change and NO artifact change -- the silent observability regression this slice actually hit."
+    },
+    {
+      "id": "S10B-M6",
+      "file": "src/fa/cli.py",
+      "old": "    try:\n        draft_store.clear(remove_file=not resume)\n    except OSError as exc:\n        return resume_draft_text, f\"fa run: failed to reset PR draft path {draft_store.path}: {exc}\"",
+      "new": "    draft_store.clear(remove_file=not resume)",
+      "why": "_prepare_pr_draft: an unclearable draft store must be FATAL (M-7 IntentGuard provenance), not an unhandled OSError traceback. Severity asymmetry vs the read path, which only warns."
+    },
+    {
+      "id": "S10B-M7",
+      "file": "src/fa/cli.py",
+      "old": "    if \"event_log_write_failed\" in exc_str:\n        return f\"fa run: failed to write event to session database at {db_path}: {exc}\"",
+      "new": "    pass",
+      "why": "_session_db_runtime_error_message: this failure would fall through to None and be re-raised as a traceback instead of the operator diagnostic. Distinct remedy from event_log_authority_unavailable."
+    },
+    {
+      "id": "S10B-M8",
+      "file": "src/fa/cli.py",
+      "old": "    if getattr(args, \"global_history\", False):\n        return _cmd_stats_global_history(args)",
+      "new": "    pass",
+      "why": "_cmd_stats dispatch: --global-history would silently fall through to per-session discovery, reading the wrong data source and reporting 'no matching sessions'."
+    },
+    {
+      "id": "S10B-M9",
+      "file": "src/fa/cli.py",
+      "old": "        if args.output == \"json\":\n            import json as _json\n\n            print(_json.dumps(rows, indent=2, default=str))\n            return 0",
+      "new": "        pass",
+      "why": "_cmd_stats_global_history: --output json would fall through to the human renderer, which writes to STDERR -- so `fa stats --global-history --output json > runs.json` yields an empty file. Exit stays 0."
+    },
+    {
+      "id": "S10B-M10",
+      "file": "src/fa/cli.py",
+      "old": "    if db_path != (session_dir / \"session.db\").resolve():\n        raise StatsSourceError(\"manifest_path_mismatch\", str(manifest_path))",
+      "new": "    pass",
+      "why": "_validate_session_manifest: discovery would trust a manifest pointing at an arbitrary session_db_path, reading a database that does not belong to its session directory. Security-relevant."
+    },
+    {
+      "id": "S10B-M11",
+      "file": "src/fa/cli.py",
+      "old": "    if not isinstance(manifest, dict) or manifest.get(\"status\") != \"active\":\n        raise StatsSourceError(\"manifest_corrupt\", f\"inactive or malformed manifest: {manifest_path}\")",
+      "new": "    pass",
+      "why": "_validate_session_manifest: an inactive or malformed session would be silently included in stats output."
+    },
+    {
+      "id": "S10B-M12",
+      "file": "src/fa/cli.py",
+      "old": "    if has_legacy:\n        raise StatsSourceError(\n            \"legacy_trace_unsupported\",\n            \"current FA sessions require session.db under sessions/<session-id>; legacy JSONL/DB was not migrated\",\n        )",
+      "new": "    pass",
+      "why": "_resolve_stats_session_dirs: an operator with unmigrated legacy data would be told they simply have no sessions. Empty-vs-error is the distinction this helper exists to preserve."
+    },
+    {
+      "id": "S10B-M13",
+      "file": "src/fa/cli.py",
+      "old": "    proxy_token = _resolve_proxy_token()\n    if not proxy_token:\n        return \"\", (\"ERROR: proxy token is missing; set FA_PROXY_TOKEN_FILE or mount /run/secrets/fa_proxy_token.\")",
+      "new": "    proxy_token = _resolve_proxy_token()",
+      "why": "_selfcheck_proxy_preflight: selfcheck would issue an unauthenticated /routes call and blame the proxy (exit 1) for a local omission that should be exit 2."
+    },
+    {
+      "id": "S10B-M14",
+      "file": "src/fa/cli.py",
+      "old": "    if routes_status == 403:\n        print(\"ERROR: proxy /routes rejected the fa→proxy token (HTTP 403).\")\n        print(\"Hint: verify FA_PROXY_TOKEN_FILE and /run/secrets/fa_proxy_token match the proxy.\")\n        return None",
+      "new": "    pass",
+      "why": "_selfcheck_fetch_proxy_routes: falls through to the generic !=200 handler -- SAME exit code 1, wrong remediation. S10a's sweep proved an exit-code-only assertion survives this exact mutation."
+    },
+    {
+      "id": "S10B-M15",
+      "file": "src/fa/cli.py",
+      "old": "        if has_key is None:",
+      "new": "        if False:",
+      "why": "_selfcheck_route_problems: a route present in models.yaml but ABSENT from the proxy would be reported as healthy -- the precise misconfiguration fa selfcheck exists to detect."
+    }
+  ]
+}

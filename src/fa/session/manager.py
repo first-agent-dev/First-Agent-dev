@@ -21,6 +21,7 @@ from typing import Any
 from uuid import uuid4
 
 from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
+from fa.paths import PRIVATE_DIR_MODE
 
 _SESSION_SCHEMA_VERSION = "v1"
 _SESSION_ID_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
@@ -80,7 +81,7 @@ class SessionManager:
         self.source_workspace = Path(source_workspace).expanduser().resolve() if source_workspace is not None else None
         self.sessions_root = self.state_root / "sessions"
         self.run_root = self.state_root / "session-log"
-        self.sessions_root.mkdir(parents=True, exist_ok=True)
+        self.sessions_root.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIR_MODE)
         self.workspace_root.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
@@ -249,7 +250,8 @@ class SessionManager:
         self._check_reverse_workspace_ownership(workspace_path, except_session_id=None)
         db_path = (session_dir / "session.db").resolve()
         created_at = self._now()
-        session_dir.mkdir(parents=True, exist_ok=False)
+        # 0700: the session dir holds session.db and the manifest (I-36).
+        session_dir.mkdir(parents=True, exist_ok=False, mode=PRIVATE_DIR_MODE)
         # Record ownership before provisioning so a partial copytree failure
         # is still cleaned up; an explicit pre-existing workspace remains
         # caller-owned and is never removed by this manager.
@@ -395,7 +397,8 @@ class SessionManager:
                 continue
             run_log_dir = self.run_root / run_id
             try:
-                run_log_dir.mkdir(parents=True, exist_ok=False)
+                # 0700: the run dir holds events.jsonl and llm_bodies.jsonl (I-36).
+                run_log_dir.mkdir(parents=True, exist_ok=False, mode=PRIVATE_DIR_MODE)
             except FileExistsError as exc:
                 if requested_run_id:
                     raise SessionManagerError("run_id_reused", f"run namespace already exists: {run_id}") from exc

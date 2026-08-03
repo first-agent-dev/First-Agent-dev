@@ -44,6 +44,7 @@ Thumbs.db
 # Coverage / mutation artifacts
 .coverage
 coverage.xml
+coverage.json
 # pytest-gremlins HTML mutation report (S6.6b); regenerated per run.
 coverage/
 # coverage.py parallel mode writes .coverage.<host>.<pid>.<rand>, which the

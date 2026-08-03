@@ -17,6 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests._capabilities import requires_posix_paths
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CHECKER = _REPO_ROOT / "scripts" / "check_doc_links.py"
 _INSTRUCTIONS = _REPO_ROOT / "knowledge" / "instructions"
@@ -32,6 +34,7 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@requires_posix_paths
 def test_repo_has_no_broken_internal_file_links() -> None:
     result = _run()  # whole-repo, legacy trees excluded, file-existence only
     assert result.returncode == 0, result.stdout + result.stderr
@@ -65,6 +68,7 @@ def test_checker_detects_broken_link_with_title(tmp_path: Path) -> None:
     assert "nope-missing.md" in result.stderr
 
 
+@requires_posix_paths
 def test_explicit_legacy_file_is_skipped_unless_all(tmp_path: Path) -> None:
     """The pre-commit hook passes filenames; touching a known-debt doc must not
     block the commit on pre-existing breakage. ``--all`` overrides.

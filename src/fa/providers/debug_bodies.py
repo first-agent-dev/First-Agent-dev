@@ -46,6 +46,8 @@ if TYPE_CHECKING:
 
     from fa.observability.redaction import SecretRedactor
 
+from fa.paths import PRIVATE_DIR_MODE, private_opener
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -165,8 +167,12 @@ class DebugBodyTransport(Transport):
             row = self._redact(row)
         try:
             with self._lock:
-                self._path.parent.mkdir(parents=True, exist_ok=True)
-                with self._path.open("a", encoding="utf-8") as handle:
+                self._path.parent.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIR_MODE)
+                # Builtin ``open`` + ``private_opener``, NOT ``Path.open`` — the
+                # pathlib method rejects ``opener``. This file carries raw prompt
+                # and response prose (I-36), so it must never exist world-readable,
+                # not even briefly; the mode is set in the ``os.open`` syscall.
+                with open(self._path, "a", encoding="utf-8", opener=private_opener) as handle:
                     handle.write(json.dumps(row, ensure_ascii=False, default=str, sort_keys=True) + "\n")
         except OSError as exc:
             logger.warning("Failed to write llm_bodies.jsonl row: %s", exc)

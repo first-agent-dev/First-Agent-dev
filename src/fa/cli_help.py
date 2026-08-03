@@ -152,6 +152,12 @@ COMMANDS: dict[str, CommandHelp] = {
                 "ru": "Макс. число planner re-entry раундов в adaptive (по умолчанию 1, жёсткий потолок 2).",
                 "en": "Max planner re-entry rounds in adaptive (default 1, hard ceiling 2).",
             },
+            "--output-mode": {
+                "ru": "Режим вывода для всех стадий: console (прогресс на stderr) или quiet "
+                "(только итоговый текст на stdout). На запись в БД и артефакты не влияет.",
+                "en": "Output mode for every stage: console (progress to stderr) or quiet "
+                "(final text only on stdout). Does not affect DB writes or artifacts.",
+            },
         },
         "examples": [
             'fa workflow planner,coder,eval "Реализуй фичу X"',

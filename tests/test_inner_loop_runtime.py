@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -32,9 +31,10 @@ from fa.inner_loop.hooks import (
 from fa.inner_loop.state import TraceEvent
 from fa.inner_loop.tools import build_baseline_registry
 from fa.orchestration.pause import PauseKind, write_pause
+from tests._capabilities import requires_pty_backend
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_pty_backend
 def test_run_session_executes_tool_through_hooks(tmp_path: Path) -> None:
     (tmp_path / "input.txt").write_text("hello\n", encoding="utf-8")
     registry = build_baseline_registry(tmp_path)
@@ -112,7 +112,7 @@ def test_run_session_executes_tool_through_hooks(tmp_path: Path) -> None:
     assert all(event.ts.endswith("Z") for event in events)
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_pty_backend
 def test_run_session_run_bash_is_stateful_when_pty_runtime_is_available(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path)
     hooks = HookRegistry()

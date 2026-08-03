@@ -19,6 +19,7 @@ from fa.sandbox.validators import (
     validate_git,
     validate_rm,
 )
+from tests._capabilities import requires_posix_paths
 
 # ---------- validate_rm ----------
 
@@ -45,6 +46,7 @@ def test_validate_rm_denies_root(tmp_path: Path) -> None:
     )
 
 
+@requires_posix_paths
 def test_validate_rm_denies_etc(tmp_path: Path) -> None:
     result = validate_rm("rm /etc/passwd", workspace_root=tmp_path)
     base_str = str(tmp_path.resolve())
@@ -58,6 +60,7 @@ def test_validate_rm_denies_etc(tmp_path: Path) -> None:
     )
 
 
+@requires_posix_paths
 def test_validate_rm_denies_home(tmp_path: Path) -> None:
     result = validate_rm("rm ~", workspace_root=tmp_path)
     assert result == ValidationResult(
@@ -199,6 +202,7 @@ def test_validate_chmod_allows_non_world_write(mode: str, tmp_path: Path) -> Non
     assert result == ValidationResult(allow=True, reason="validator_chmod: ok")
 
 
+@requires_posix_paths
 def test_validate_chmod_denies_outside_workspace(tmp_path: Path) -> None:
     result = validate_chmod("chmod 644 /etc/passwd", workspace_root=tmp_path)
     base_str = str(tmp_path.resolve())
@@ -311,6 +315,7 @@ def test_validate_git_rejects_wrong_head(tmp_path: Path) -> None:
 # ---------- validate_command dispatcher ----------
 
 
+@requires_posix_paths
 def test_validate_command_dispatches_rm(tmp_path: Path) -> None:
     result = validate_command("rm /etc/passwd", workspace_root=tmp_path)
     base_str = str(tmp_path.resolve())

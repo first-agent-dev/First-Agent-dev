@@ -14,6 +14,7 @@ import pytest
 
 from fa.sandbox.bash_gate import evaluate_bash
 from fa.sandbox.secret_paths import command_reads_secret_path
+from tests._capabilities import requires_posix_paths
 
 _WS = Path("/workspace")
 
@@ -124,6 +125,7 @@ def test_within_prefix_matching() -> None:
     assert _within("/run/sec", "/run/secrets") is False
 
 
+@requires_posix_paths
 def test_lexical_abs_path_collapsing() -> None:
     from pathlib import Path
 
@@ -134,6 +136,7 @@ def test_lexical_abs_path_collapsing() -> None:
     assert _lexical_abs(Path("/../a")) == "/a"
 
 
+@requires_posix_paths
 def test_normalize_proc_and_relative() -> None:
     from fa.sandbox.secret_paths import _normalize
 
@@ -148,6 +151,7 @@ def test_normalize_proc_and_relative() -> None:
     assert _normalize("~/secret") == str(Path("~/secret").expanduser())
 
 
+@requires_posix_paths
 def test_command_reads_secret_path_normalized_traversal() -> None:
     assert command_reads_secret_path("cat /run/secret_dir/../secrets/fa.env") is True
     assert command_reads_secret_path('cat "/run/secret_dir/../secrets/fa.env"') is True

@@ -19,7 +19,7 @@ import sys
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, get_args
 
 from fa.formatting import fmt_tokens as _fmt_tokens
 from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
@@ -27,6 +27,7 @@ from fa.inner_loop.state import EventLog, TraceEvent
 from fa.output import LogKind
 
 __all__ = [
+    "PARSED_KINDS",
     "UNPARSED_KINDS",
     "BashCommand",
     "CircuitBreakerRecord",
@@ -79,6 +80,43 @@ UNPARSED_KINDS: frozenset[LogKind] = frozenset(
         "verification",  # captured by tool_result
     }
 )
+
+# ── Parsed kinds ────────────────────────────────────────────────────────────
+# The LogKinds ``_parse_events`` dispatches on, DERIVED as the complement of
+# ``UNPARSED_KINDS`` over ``LogKind`` rather than restated as a literal.
+#
+# Why derived (F3, 2026-08-01). S9.4's commit is titled "derived kind
+# contract", and it did derive the *test* from the module — but it left the
+# module itself holding a 23-name literal that re-stated 23 of the 33 names in
+# ``output.LogKind``. Eight of those lines (the ``compaction_stage2/3_*``
+# block) matched ``output.py`` closely enough that pylint ``R0801`` flagged
+# them, and because ``[tool.pylint.main] fail-on = ["duplicate-code"]`` makes
+# that finding a BINARY gate, ``just lint`` exited non-zero from S9 onward
+# while still printing "rated at 10.00/10". Every execution record that cited
+# the score rather than the exit code read it as a pass.
+#
+# The duplication was not incidental: two independent lists had to be edited
+# in lockstep for one fact ("which kinds does fa stats parse"). Deriving makes
+# the invariant structural — a new ``LogKind`` is parsed unless it is
+# explicitly excused, so the failure mode becomes "declare your intent",
+# not "silently forget one of two lists".
+#
+# NOTE ON AP-006. This repo records an anti-pattern about deleting code to
+# silence ``R0801``. It does not apply here, and the distinction is worth
+# stating because it is subtle: AP-006 protects a *behavioural seam* — a thin
+# adapter whose duplication IS an interface contract, whose removal changes
+# what the program does, and which no type checker can see. This is the
+# opposite case: a pure data restatement with no behaviour, whose removal is
+# provably identity-preserving (``set(LogKind) - UNPARSED_KINDS`` was verified
+# equal to the old literal, symmetric difference empty), and whose continued
+# duplication had already caused a real defect — a CI gate that had been red
+# and unread for several slices.
+#
+# What holds the line instead of the literal: ``_parse_events`` is AST-walked
+# and asserted equal to this set (``test_s9_parsed_kinds_matches_dispatch``),
+# so deleting an ``elif`` branch still fails. That test — not the literal —
+# was always the real guard.
+PARSED_KINDS: frozenset[LogKind] = frozenset(get_args(LogKind)) - UNPARSED_KINDS
 
 # ── Data model ─────────────────────────────────────────────────────────────
 
@@ -617,10 +655,29 @@ def _bar(count: int, max_count: int, width: int = 16) -> str:
 # ── Rendering ──────────────────────────────────────────────────────────────
 
 
-def render_session(analytics: SessionAnalytics, *, stream: TextIO = sys.stderr) -> None:  # noqa: C901 — section renderer
-    """Render single-session report to stream."""
+def render_session(analytics: SessionAnalytics, *, stream: TextIO | None = None) -> None:  # noqa: C901 — section renderer
+    """Render single-session report to ``stream`` (default: the CURRENT ``sys.stderr``).
+
+    ``stream`` defaults to ``None`` and resolves inside the body **on purpose**
+    (I-41). The previous signature was ``stream: TextIO = sys.stderr``, and
+    Python evaluates default arguments once, at **import** time — so this
+    module captured whichever object ``sys.stderr`` was when ``fa.stats`` was
+    first imported and wrote there forever after, ignoring every later
+    rebinding.
+
+    That was a live defect, not a style point: it surfaced as
+    ``ValueError: I/O operation on closed file`` when the renderer ran after a
+    test whose captured stderr had since been closed. The same shape breaks any
+    caller that redirects output — a harness, a daemon reopening its logs, a
+    CLI capturing a subcommand.
+
+    **Third instance of this class** in this codebase, after V10 (``state.py``)
+    and S8.8 (``global_history.py``). If you add a parameter whose default is a
+    mutable global or a stream, resolve it in the body.
+    """
     a = analytics
-    w = stream.write
+    out = stream if stream is not None else sys.stderr
+    w = out.write
 
     w(f"\n{'═' * 50}\n")
     w(f"📊 Session: {a.run_id}\n")
@@ -755,7 +812,7 @@ def render_session(analytics: SessionAnalytics, *, stream: TextIO = sys.stderr) 
             w(f"   {warning}\n")
         w("\n")
 
-    stream.flush()
+    out.flush()
 
 
 def render_session_json(analytics: SessionAnalytics) -> dict[str, Any]:
@@ -813,10 +870,15 @@ def aggregate_sessions(sessions: list[SessionAnalytics]) -> dict[str, Any]:
     }
 
 
-def render_aggregate(sessions: list[SessionAnalytics], *, stream: TextIO = sys.stderr) -> None:
-    """Render cross-session aggregate report."""
+def render_aggregate(sessions: list[SessionAnalytics], *, stream: TextIO | None = None) -> None:
+    """Render cross-session aggregate report to ``stream`` (default: current ``sys.stderr``).
+
+    Same late-binding fix as :func:`render_session` — see its docstring for why
+    the default is ``None`` rather than ``sys.stderr`` (I-41).
+    """
     agg = aggregate_sessions(sessions)
-    w = stream.write
+    out = stream if stream is not None else sys.stderr
+    w = out.write
 
     w(f"\n{'═' * 50}\n")
     w(f"📊 {agg['sessions']} sessions\n")
@@ -839,7 +901,7 @@ def render_aggregate(sessions: list[SessionAnalytics], *, stream: TextIO = sys.s
             w(f"   {path:<45s} {count}x\n")
         w("\n")
 
-    stream.flush()
+    out.flush()
 
 
 # ── Dead zones ─────────────────────────────────────────────────────────────

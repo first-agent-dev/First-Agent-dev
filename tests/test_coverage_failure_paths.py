@@ -27,6 +27,7 @@ from fa.stats import (
     render_aggregate,
     render_session,
 )
+from tests._capabilities import requires_posix_paths
 
 
 def test_profile_builder_optional_import_failure_is_observable(caplog: Any, tmp_path: Path) -> None:
@@ -139,6 +140,7 @@ def test_stats_aggregate_and_render_edge_paths(tmp_path: Path) -> None:
     assert any("cache miss" in warning.lower() for warning in warnings)
 
 
+@requires_posix_paths
 def test_stats_dead_zone_detection_handles_missing_and_unread_files(tmp_path: Path) -> None:
     """C2: dead-zone projection is deterministic and excludes cache files."""
     (tmp_path / "src" / "fa").mkdir(parents=True)

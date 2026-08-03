@@ -35,6 +35,7 @@ import pytest
 
 from fa.cli import _cmd_inner_loop_smoke, _cmd_run
 from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
+from tests._capabilities import requires_pty_backend
 from tests.test_cli import (
     _FAKE_MODELS_YAML,
     _TEST_SECRETS,
@@ -104,7 +105,19 @@ def test_output_mode_never_suppresses_the_durable_trace(
     assert rows, f"{output_mode}: the durable trace must be written regardless of output mode"
 
     if output_mode == "quiet":
-        assert captured.err == "", f"quiet mode wrote to stderr: {captured.err[:200]!r}"
+        # S8.4 / I-38 revised this cell deliberately. Quiet's guarantee is a
+        # clean **stdout** (so ``> result.txt`` is parseable), not a silent
+        # stderr — S6 §Q23 already carved out listener-failure diagnostics for
+        # the same reason. S8.4 moved the one-line human status there too, so
+        # stderr now legitimately carries it while the live renderer stays off.
+        #
+        # The claim this cell defends is unchanged and asserted above: the
+        # durable trace is written regardless of output mode. What is pinned
+        # here is that quiet still suppresses the *live renderer* — the
+        # multi-line per-turn progress — rather than that stderr is empty.
+        assert "OK: stopped_by_llm" in captured.err
+        assert "[turn " not in captured.err, f"quiet mode ran the live renderer: {captured.err[:200]!r}"
+        assert captured.out == "ok\n", f"quiet mode must leave stdout as the payload: {captured.out!r}"
     else:
         assert captured.err != "", "console mode produced no live output at all"
 
@@ -176,6 +189,7 @@ def _smoke(tmp_path: Path) -> int:
     return _cmd_inner_loop_smoke(args)
 
 
+@requires_pty_backend
 def test_smoke_creates_no_session_less_authority_at_the_fa_root(tmp_path: Path) -> None:
     """C2 (S4-F1): the misleading artifact is gone.
 
@@ -190,6 +204,7 @@ def test_smoke_creates_no_session_less_authority_at_the_fa_root(tmp_path: Path) 
     )
 
 
+@requires_pty_backend
 def test_smoke_authority_is_labelled_and_scoped(tmp_path: Path) -> None:
     """C2 (S4-F1 / Q28b): the smoke DB exists, is labelled, and is confined.
 
@@ -208,6 +223,7 @@ def test_smoke_authority_is_labelled_and_scoped(tmp_path: Path) -> None:
     )
 
 
+@requires_pty_backend
 def test_smoke_authority_rejects_a_foreign_session_row(tmp_path: Path) -> None:
     """C3: the guards are live again — this is *why* the label matters.
 
@@ -241,6 +257,7 @@ def test_smoke_authority_rejects_a_foreign_session_row(tmp_path: Path) -> None:
     assert exc.value.code == "session_db_identity_mismatch"
 
 
+@requires_pty_backend
 def test_smoke_still_reports_success_and_writes_its_output(tmp_path: Path) -> None:
     """C2 happy-path control for the two guard tests above.
 

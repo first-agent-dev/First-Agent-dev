@@ -28,10 +28,48 @@ from pathlib import Path
 from typing import Any
 
 from fa.inner_loop._sqlite_common import create_sqlite_connection
+from fa.paths import fa_state_root
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_GLOBAL_HISTORY_PATH = Path.home() / ".fa" / "global_history.db"
+
+
+def default_global_history_path() -> Path:
+    """Resolve the projection DB path at CALL time, not import time (S8.8).
+
+    ``DEFAULT_GLOBAL_HISTORY_PATH`` above is bound when this module is first
+    imported, so it captures whatever ``HOME`` happened to be at that instant
+    and ignores ``FA_STATE_ROOT`` entirely. Two concrete consequences, both
+    measured rather than hypothesised:
+
+    * **Split brain.** The reader already resolves at call time —
+      ``fa stats --global-history`` builds ``fa_state_root() / "global_history.db"``
+      (``cli.py``). With ``FA_STATE_ROOT=/srv/fa`` the reader looks in
+      ``/srv/fa/global_history.db`` while this writer keeps appending to
+      ``~/.fa/global_history.db``. The operator sees an empty history and the
+      rows are silently accumulating somewhere else.
+    * **Test isolation.** A test that repoints ``HOME`` after import — which is
+      what ``monkeypatch.setenv`` does — is ignored, so exports leak into the
+      real user's ``~/.fa``.
+
+    This is the same defect class as V10 in :mod:`fa.inner_loop.state`, whose
+    ``default_state_root`` docstring records how an import-time constant made
+    ten tests share one directory. That fix was never swept across the other
+    path constants; this is the second instance.
+
+    Production behaviour is unchanged: ``HOME`` is stable in a real process, so
+    the resolved value is byte-identical to the old constant unless the
+    operator deliberately sets ``FA_STATE_ROOT`` — in which case honouring it
+    is the entire point of that variable
+    (:func:`fa.paths.fa_state_root` promises resolution "on every call ... so a
+    caller that reconfigures its environment is honoured rather than silently
+    ignored").
+
+    The module-level constant is retained as a deprecated alias so any external
+    importer keeps working; nothing in this repository reads it any more.
+    """
+    return fa_state_root() / "global_history.db"
 
 
 def _now_iso_z() -> str:
@@ -71,7 +109,9 @@ class GlobalHistoryStore:
     """
 
     def __init__(self, db_path: Path | None = None) -> None:
-        self.path = Path(db_path) if db_path is not None else DEFAULT_GLOBAL_HISTORY_PATH
+        # S8.8: call-time resolution. An explicit ``db_path`` still wins, so
+        # every existing caller that injects a path is unaffected.
+        self.path = Path(db_path) if db_path is not None else default_global_history_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._write_lock = threading.Lock()
         self._init_schema()
@@ -352,5 +392,6 @@ __all__ = [
     "GlobalHistoryStore",
     "GlobalRunRow",
     "build_export_row",
+    "default_global_history_path",
     "export_session_to_global_history",
 ]

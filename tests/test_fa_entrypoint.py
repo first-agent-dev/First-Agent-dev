@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._capabilities import requires_posix_paths
+
 _ENTRYPOINT = Path(__file__).resolve().parents[1] / "scripts" / "fa-entrypoint.sh"
 
 
@@ -184,6 +186,7 @@ def test_entrypoint_autorun_accepts_task_file_inside_workspace(tmp_path: Path) -
     assert calls.exists()
 
 
+@requires_posix_paths
 def test_entrypoint_task_file_must_stay_inside_workspace(tmp_path: Path) -> None:
     env, status, bin_dir = _base_env(tmp_path)
     calls = _write_fa_stub(bin_dir, env)
@@ -207,6 +210,7 @@ def test_entrypoint_task_file_must_stay_inside_workspace(tmp_path: Path) -> None
     assert not calls.exists()
 
 
+@requires_posix_paths
 def test_entrypoint_creates_session_clone(tmp_path: Path) -> None:
     env, status, _bin_dir = _base_env(tmp_path)
     # Session-clone tests must NOT set FA_WORKSPACE — its absence is what
@@ -290,6 +294,7 @@ def test_entrypoint_failed_clone_does_not_launch_override_or_child(tmp_path: Pat
     assert not (sessions_dir / "failed-clone").exists()
 
 
+@requires_posix_paths
 def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
     env, status, _bin_dir = _base_env(tmp_path)
     env.pop("FA_WORKSPACE", None)
@@ -337,6 +342,7 @@ def test_entrypoint_resumes_session_clone(tmp_path: Path) -> None:
     assert active_file.read_text(encoding="utf-8").strip() == str(session_workspace)
 
 
+@requires_posix_paths
 def test_entrypoint_command_override_executes_inside_session_clone(tmp_path: Path) -> None:
     env, _status, _bin_dir = _base_env(tmp_path)
     env.pop("FA_WORKSPACE", None)

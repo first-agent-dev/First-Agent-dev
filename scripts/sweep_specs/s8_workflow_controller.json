@@ -1,0 +1,55 @@
+{
+  "slice": "S8",
+  "note": "Statement-deletion sweep over the guards S8 introduced or repaired. gremlins ships no statement-deletion operator (it mutates expressions), so these are exactly the mutations the gremlins run over workflow_artifacts.py cannot produce. The question each row asks is: if this line simply vanished, would ANY test notice? The sweep always runs the whole suite.",
+  "mutations": [
+    {
+      "id": "S8-M1",
+      "file": "src/fa/cli.py",
+      "old": "        _stop_reason = (\n            _WORKFLOW_STATUS_TO_STOP_REASON.get(_terminal_state.status, _fallback_stop_reason)\n            if _terminal_state is not None\n            else _fallback_stop_reason\n        )",
+      "new": "        _stop_reason = _fallback_stop_reason",
+      "why": "S8.7 / RV4: the projection would silently go back to deriving a semantic outcome from an exit code, recording a BLOCKED run as workflow_complete"
+    },
+    {
+      "id": "S8-M2",
+      "file": "src/fa/cli.py",
+      "old": "    if state.run_id != run_id:",
+      "new": "    if False:",
+      "why": "S8.3: the identity check is what makes the read-back a verification rather than a decorative load; without it a stale or foreign flow_state.json is trusted"
+    },
+    {
+      "id": "S8-M3",
+      "file": "src/fa/cli.py",
+      "old": "    status_stream = sys.stderr if output_mode == \"quiet\" else sys.stdout",
+      "new": "    status_stream = sys.stdout",
+      "why": "S8.4 / I-38: quiet mode's stdout would carry the human status line again, so `fa run ... > result.txt` stops being parseable"
+    },
+    {
+      "id": "S8-M4",
+      "file": "src/fa/cli.py",
+      "old": "        \"output_mode\": getattr(ctx.args, \"output_mode\", None) or \"console\",",
+      "new": "        \"output_mode\": \"console\",",
+      "why": "S8.4: the workflow would ignore --output-mode and every stage would print a status line to stdout (measured 102 bytes over three stages)"
+    },
+    {
+      "id": "S8-M5",
+      "file": "src/fa/cli.py",
+      "old": "            duration_ms=int((time.monotonic() - _wf_start_mono) * 1000),",
+      "new": "            duration_ms=0,",
+      "why": "S8.2 / G3: the projection's duration column would go back to a constant, which S9 analytics would read as 'every workflow took no time'"
+    },
+    {
+      "id": "S8-M6",
+      "file": "src/fa/inner_loop/global_history.py",
+      "old": "    return fa_state_root() / \"global_history.db\"",
+      "new": "    return DEFAULT_GLOBAL_HISTORY_PATH",
+      "why": "S8.8: writer would ignore FA_STATE_ROOT while the reader honours it — the split brain that made `fa stats --global-history` show an empty history"
+    },
+    {
+      "id": "S8-M7",
+      "file": "src/fa/cli.py",
+      "old": "            _write_stage_failure_state(ctx, \"eval\", eval_result.exit_code, progress=progress)",
+      "new": "            pass",
+      "why": "S8.6 / CT6: a re-eval dying mid repair round would leave no FAILED terminal state, so the run's own artifact would not record why it stopped"
+    }
+  ]
+}

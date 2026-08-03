@@ -7,7 +7,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from tests._capabilities import requires_posix_paths, requires_stable_tmpdir
 
+
+@requires_stable_tmpdir
 def test_shared_dir_manager() -> None:
     from fa.workspace.worktree_manager import SharedDirWorktreeManager
 
@@ -26,6 +29,7 @@ def test_shared_dir_manager() -> None:
             pass
 
 
+@requires_posix_paths
 def test_isolated_manager_branch_already_checked_out() -> None:
     from fa.workspace.worktree_manager import IsolatedWorktreeManager
 
@@ -67,6 +71,7 @@ def test_isolated_manager_branch_already_checked_out() -> None:
         assert not ws1.exists()
 
 
+@requires_posix_paths
 def test_worktree_defensive_exists() -> None:
     from fa.workspace.worktree_manager import IsolatedWorktreeManager
 

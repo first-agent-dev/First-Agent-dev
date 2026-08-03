@@ -16,6 +16,7 @@ from fa.inner_loop.context import set_current_session
 from fa.inner_loop.state import SessionState
 from fa.inner_loop.subagent_envelope import SubagentEnvelope
 from fa.inner_loop.subagent_runner import SubagentRunner
+from tests._capabilities import requires_posix_shell
 
 
 @pytest.fixture
@@ -134,6 +135,7 @@ def test_append_to_worklog(tmp_path: Path) -> None:
     assert "Full envelope:" in detailed_content
 
 
+@requires_posix_shell
 def test_run_stateless(tmp_path: Path, mock_session_state: SessionState) -> None:
     runner = SubagentRunner(session_root=tmp_path, timeout=5)
     env_extra = {"TEST_VAR": "hello-subagent"}

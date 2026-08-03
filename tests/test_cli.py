@@ -15,6 +15,7 @@ from fa.cli import _cmd_run, _cmd_stats, build_parser
 from fa.inner_loop.session_db import SessionDatabase
 from fa.providers import SecretStore
 from fa.providers.base import TransportResponse
+from tests._capabilities import requires_posix_shell, requires_pty_backend
 
 # Injected via the _cmd_run(secrets=...) seam (ADR-12): tests supply keys through
 # the private store instead of os.environ, matching production's file-only model.
@@ -56,7 +57,7 @@ def test_cli_has_inner_loop_smoke_command() -> None:
     assert "inner-loop-smoke" in help_text
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_pty_backend
 def test_inner_loop_smoke_command_runs(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
     (tmp_path / "README.md").write_text("# sample\n", encoding="utf-8")
     parser = build_parser()
@@ -81,7 +82,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SEED_BASELINE = _REPO_ROOT / "knowledge" / "trace" / "codebase_map.json"
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_pty_backend
 def test_inner_loop_smoke_wires_learning_observer(tmp_path: Path) -> None:
     """LearningObserver is registered in the smoke CLI and writes
     path-keyed discovery entries to the canonical ``knowledge/trace/``
@@ -124,7 +125,7 @@ def test_inner_loop_smoke_wires_learning_observer(tmp_path: Path) -> None:
         assert entry["recorded_at"] == "2026-05-21T00:00:00Z"
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_pty_backend
 def test_inner_loop_smoke_canon_snapshot_matches_seed_baseline(tmp_path: Path) -> None:
     """Snapshot regression: smoke output equals the seed baseline
     ``knowledge/trace/codebase_map.json`` byte-for-byte.
@@ -192,7 +193,7 @@ def test_inner_loop_smoke_records_gotcha_on_tool_failure(tmp_path: Path) -> None
     assert "2026-05-21T00:00:00Z" in body
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_pty_backend
 def test_inner_loop_smoke_gotcha_dedups_across_repeated_runs(tmp_path: Path) -> None:
     """Repeated smoke runs against the same failing tool call must
     not pile up byte-identical sections in ``gotchas.md``.
@@ -710,7 +711,7 @@ def test_fa_run_clears_stale_pr_draft_on_startup(
     assert not stale.exists()
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_posix_shell
 def test_fa_run_verify_only_bash_allowed_before_pr_prepare(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -834,7 +835,7 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
     assert "call `pr.prepare`" in bash_result["content"]["error"]["message"]
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_pty_backend
 def test_fa_run_opaque_exec_bash_allowed_after_pr_prepare(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -880,7 +881,7 @@ def test_fa_run_opaque_exec_bash_allowed_after_pr_prepare(
     assert (tmp_path / "opaque.py").read_text(encoding="utf-8") == "x"
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_posix_shell
 def test_fa_run_repo_write_bash_allowed_after_pr_prepare(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -993,6 +994,7 @@ def test_fa_run_session_manager_creates_and_attaches_with_fresh_run_ids(
     assert all(row["session_id"] == session_id for row in db.read_event_rows())
 
 
+@requires_posix_shell
 def test_fa_stats_reads_current_session_db_and_rejects_legacy_without_writes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

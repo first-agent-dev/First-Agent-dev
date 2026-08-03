@@ -235,7 +235,29 @@ def load_models_config(
     # loader contract is data-only; arbitrary Python tag execution
     # is a remote-code-execution footgun on a user-edited config
     # file. The pyproject dependency comment pins this.
-    raw_root: Any = yaml.safe_load(text)
+    #
+    # A parse failure is a CONFIGURATION error, not an exception the caller
+    # should have to know about (S10c.1 / I-40). Before this wrap, a malformed
+    # ``models.yaml`` escaped as a raw ``yaml.YAMLError`` from **five**
+    # commands — ``routing-check``, ``run``, ``selfcheck``, ``probe`` and
+    # ``egress-proxy`` — each of which already catches ``ConfigurationError``
+    # and reports it as a structured exit-2 diagnostic. Measured: all five
+    # printed a Python traceback instead.
+    #
+    # Converting here rather than at each call site is deliberate: there are
+    # 19 ``load_models_config*`` callers, the sibling failure two lines below
+    # (bad root type) already raises ``ConfigurationError``, and any future
+    # caller inherits the fix. Adding the exception to five ``except`` tuples
+    # would fix the ones an author remembers.
+    #
+    # ``exc`` carries PyYAML's own line/column text, which is the actionable
+    # part for an operator, so it is preserved verbatim in the message.
+    try:
+        raw_root: Any = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ConfigurationError(
+            f"models.yaml is not valid YAML: {exc}. Fix: correct the syntax error above, then re-run."
+        ) from exc
     if raw_root is None:
         return ModelsConfig(roles={})
     if not isinstance(raw_root, Mapping):

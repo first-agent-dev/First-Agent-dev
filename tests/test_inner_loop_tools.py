@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, cast
@@ -11,6 +10,7 @@ from pytest import MonkeyPatch
 from fa.inner_loop import ToolCall
 from fa.inner_loop.tools import build_baseline_registry
 from fa.inner_loop.tools.run_bash import build_run_bash_tool
+from tests._capabilities import requires_posix_shell, requires_pty_backend
 
 
 def test_read_file_tool_reads_line_window(tmp_path: Path) -> None:
@@ -47,7 +47,7 @@ def test_workspace_path_escape_is_rejected(tmp_path: Path) -> None:
     assert result.error.code == "write_failed"
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_posix_shell
 def test_run_bash_tool_runs_in_workspace(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path)
 
@@ -73,7 +73,7 @@ def test_run_bash_tool_returns_timeout_error(tmp_path: Path, monkeypatch: Monkey
     assert result.error.retryable is True
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_pty_backend
 def test_run_bash_large_output_offloads_artifact_without_internal_error(tmp_path: Path) -> None:
     from fa.inner_loop.context import reset_current_session, set_current_session
     from fa.inner_loop.state import SessionState
@@ -138,7 +138,7 @@ def test_write_file_tolerates_unresolved_workspace_root(tmp_path: Path) -> None:
     assert result.summary == "wrote out.txt"
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@requires_posix_shell
 def test_run_bash_tool_preserves_failure_diagnostics(tmp_path: Path) -> None:
     registry = build_baseline_registry(tmp_path)
 

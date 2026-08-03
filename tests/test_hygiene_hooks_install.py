@@ -24,6 +24,11 @@ import pytest
 import fa.hygiene.hooks as hooks_pkg
 import fa.hygiene.hooks.install as install_mod
 import fa.hygiene.hooks.status as status_mod
+from tests._capabilities import (
+    requires_posix_modes,
+    requires_posix_paths,
+    requires_symlink_hook_installs,
+)
 
 
 def _can_execute() -> bool:
@@ -89,6 +94,7 @@ def test_install_hooks_happy_path(tmp_path: Path) -> None:
         assert path.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
 
 
+@requires_symlink_hook_installs
 def test_install_hooks_is_idempotent_replacing_own_symlinks(tmp_path: Path) -> None:
     root = _make_workspace(tmp_path)
 
@@ -218,6 +224,7 @@ def test_install_one_symlink_fallback_to_copy(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(install_mod.os, "symlink", original_symlink)
 
 
+@requires_posix_modes
 def test_install_one_copy_fallback_target_is_executable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Copy-fallback target must have the execute bit set (git requirement)."""
 
@@ -537,6 +544,7 @@ exit 0
     assert "git add -- unrelated.py" not in log
 
 
+@requires_posix_paths
 def test_resolve_hooks_dir_respects_core_hookspath(tmp_path: Path) -> None:
     """Git-configured core.hooksPath wins over the default hooks directory."""
 

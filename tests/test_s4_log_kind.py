@@ -16,6 +16,7 @@ import typing
 from pathlib import Path
 
 from fa.output import LogKind
+from tests._capabilities import requires_posix_paths
 
 # ── Constants ────────────────────────────────────────────────────────
 
@@ -34,6 +35,7 @@ def test_log_kind_defined_and_nonempty() -> None:
 # ── Kill-check 2: Member count matches source kind= literals ────────
 
 
+@requires_posix_paths
 def test_log_kind_member_count_matches_source() -> None:
     """The number of LogKind members must match the number of unique kind=
     string literals found in src/fa/ (including dynamically constructed kinds)."""

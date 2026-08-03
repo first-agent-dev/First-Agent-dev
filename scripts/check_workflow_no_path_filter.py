@@ -31,6 +31,15 @@ from typing import Any
 
 import yaml
 
+# UTF-8 console: this script prints non-ASCII (checkmarks / box drawing) and
+# crashed with UnicodeEncodeError on a Windows host whose console was cp1251 —
+# while REPORTING SUCCESS. See scripts/_console.py for the full rationale.
+if __package__ in (None, ""):  # invoked as a file, not as scripts.<name>
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts._console import force_utf8_stdio
+
+force_utf8_stdio()
+
 # Keys that constitute path filtering at the trigger level.
 _PATH_FILTER_KEYS = frozenset({"paths", "paths-ignore"})
 
