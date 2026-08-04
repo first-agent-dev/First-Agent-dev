@@ -46,8 +46,14 @@ print(owner or fallback)
 PYSID
 )
 
+# --- DEPLOY_SHA: R25. The sheet's 10a prints "(expected $DEPLOY_SHA)" and it
+# came out EMPTY in a fresh terminal, because only S11.0 ever set it. Recover
+# it from the evidence dir, which is the durable record, not shell memory.
+export DEPLOY_SHA=$(cat "$EVID/00-deploy-sha.txt" 2>/dev/null | tr -d '\r\n')
+
 echo "EVID    = $EVID"
 echo "SID     = ${SID:-<EMPTY>}"
+echo "DEPLOY  = ${DEPLOY_SHA:-<EMPTY - 00-deploy-sha.txt missing>}"
 echo "entries = $(ls -1 "$EVID" 2>/dev/null | wc -l)"
 
 # --- HARD GUARDS. Each of these silently corrupted a step in this sheet.

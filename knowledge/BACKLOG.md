@@ -1441,6 +1441,43 @@
 - **Repro:** run `fa workflow planner,coder,eval`, then inspect the coder
   stage's outgoing body — no `user` message from the planner stage appears.
 
+## I-53 — RESOLVED (2026-08-04): pre-S7.5 S4-F1 residue, not a live defect
+
+- **Status:** **RESOLVED — no code change required.** Kept as a record because
+  the diagnosis is reusable.
+- **What it was:** `/sessions/session-20260728T075426-7/.fa/session.db`,
+  **69,632 bytes**, found by S11.8a's stray-authority scan. Opened read-only:
+
+  | field | value |
+  |---|---|
+  | `run_id` | `('cli-smoke',)` — sole value |
+  | rows | 63 |
+  | `session_id` | `('',)` — **empty** |
+  | `session_meta` | `schema-version session-v1`, `2026-07-28T09:28:05.729Z` |
+
+- **Diagnosis.** `cli-smoke` is `_SMOKE_SESSION_ID` (`cli.py:893`), written by
+  `fa inner-loop-smoke`. The **empty `session_id` alongside a populated
+  `run_id` is the exact S4-F1 signature** — `cli.py:890-892` records it
+  verbatim: *"the S4-F1 defect was precisely that the run was labelled while the
+  session was left empty."*
+- **Dated conclusively.** Artifact written **2026-07-28T09:28Z**; S4-F1 fixed in
+  `16145b9` on **2026-07-29** ("S7.0-S7.6 … fix S4-F1 (Q28b)"). The file
+  pre-dates its own fix by one day.
+- **The fix is already regression-locked.**
+  `tests/test_s7_cli_run_paths.py:193
+  test_smoke_creates_no_session_less_authority_at_the_fa_root` asserts
+  `<workspace>/.fa/session.db` is never recreated, with a documented kill-check.
+  So the defect cannot return silently.
+- **Why the size was misleading.** 69 KB looked like an active misroute. It is
+  63 rows of smoke-run events from a single pre-fix invocation — large because
+  SQLite pages, not because traffic is still flowing.
+- **Disposition:** delete the file, or leave it as a dated artifact. Either is
+  safe. **Do not** treat it as evidence of a current routing bug.
+- **Method note:** the 8a scan classified it `STRAY` correctly and the
+  *classification was right while the initial interpretation was wrong*. Size
+  alone suggested severity; only `run_id` + `session_id` + the timestamp
+  identified it. Three cheap fields beat one expensive assumption.
+
 ## I-12 — Authoring rules: scope coverage gap (`scripts/`, `verifiers/`)
 
 - **Status:** deferred from ADR-11 PR-2 self-review (2026-06-06).
@@ -2219,6 +2256,29 @@ Two corrections to the local estimate:
 1. The duplicated tool schemas are **36% of the live request**, not 43% — the
    share fell only because a much larger `AGENTS.md` map diluted it. The
    absolute waste (12,130 bytes/call) is **identical**; it is a fixed cost.
+> **RE-MEASURED LIVE 2026-08-04 (S11.8c), post-S10c.5, on the deployed box.**
+> A real `fa run` request, `mistral-small-2603`, 16 tools:
+>
+> | component | bytes | share |
+> |---|---:|---:|
+> | **`AGENTS.md` map** | **28,665** | **55.4%** |
+> | `Tools for role` (system text) | 8,396 | 16.2% |
+> | native `tools` array | 8,762 | 16.9% |
+> | base system prompt | 5,924 | 11.4% |
+> | **the actual task** | **38** | **0.1%** |
+> | total | 51,785 | |
+>
+> Two updates to the record. **(a)** The map has **grown**: 48.4% → **55.4%**.
+> **(b)** The tool-schema duplication is confirmed *at source*, not inferred:
+> `coder_loop.py:408` builds `tool_payload` once, `:409` renders it into system
+> text and `:1124` passes the same object as the native `tools=` array — one
+> source, two wire encodings, **33.1% combined**, every request.
+>
+> S10c.5 shipped and is vindicated (inline block 10,619 → 7,471 B); today's
+> 8,396 B reflects registry growth to 16 tools. But it optimised the 16% while
+> the 55% grew — the *"fixing 21% while ignoring 48% is backwards"* note in this
+> item, now with harder numbers. **0.1% of a 51.8 KB request is the work.**
+
 2. **The `AGENTS.md` map is now the single biggest component at 48.4%**, and it
    is *larger than `AGENTS.md` itself* (28,015 vs 17,127 bytes on disk). The
    pinned buffer is assembling more than one document into that slot. Nobody

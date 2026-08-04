@@ -1269,7 +1269,7 @@ for CASE in both-tasks bad-task-file empty-task bad-session-id; do
       kill -0 $EP 2>/dev/null && echo "ALIVE -> reached standby (CORRECT)" \
                               || echo "EXITED -> did NOT reach standby"
       echo "--- did it start an fa run anyway? (it must NOT) ---"
-      pgrep -af "fa run" || echo "no fa run process (CORRECT)"
+      pgrep -af "f[a] run" || echo "no fa run process (CORRECT)"
     '
   echo "--- (a 120s timeout here also indicates standby, which is correct)"
 done 2>&1 | tee "$EVID/09b-entrypoint-failures.txt"
@@ -1526,10 +1526,13 @@ prompt or response prose, redact it.
 ```bash
 # Remove ONLY this sheet's artifacts. Never a blanket state wipe.
 docker compose -f "$COMPOSE" exec -T "$SERVICE" sh -lc '
-  for r in s11-run-a s11-run-b s11-run-c s11-run-d \
-           s11-wf-linear s11-wf-repair s11-wf-quiet \
-           s11-autorun s11-yamlprobe; do
-    rm -rf "/home/fa/.fa/session-log/$r" && echo "removed run dir: $r"
+  # R26: the original static list missed run-ids invented DURING execution
+  # (s11-wf-linear-2/-3, s11-wf-diag were created to dodge run_id_reused).
+  # Glob instead of enumerating, so rollback cannot leave orphans behind.
+  for d in /home/fa/.fa/session-log/s11-*; do
+    [ -e "$d" ] || continue
+    r=$(basename "$d")
+    rm -rf "$d" && echo "removed run dir: $r"
   done
   rm -f /tmp/s11-*.yaml /tmp/s11-*.txt /tmp/s11-*.json
 '
@@ -2489,3 +2492,506 @@ stray file): the old rule returns `0e145f`, the new rule returns `e4120b0a`.
 Left in place deliberately: S11.8a's "stray authorities" check is designed to
 find precisely this, and leaving it gives that check a real positive instead of
 a vacuous pass.
+
+
+---
+
+## Execution note — S11.8a result + R21 (2026-08-04)
+
+### Core integrity: PASS
+
+| check | result |
+|---|---|
+| rows per run | `s11-run-a..d`, **7 each**, `runs found: 4` |
+| authority vs JSONL mirror | **4/4 MATCH** (db=7, jsonl=7) |
+| orphans | **0**, against a positive control of **28 total rows** |
+| `session_id` stamping (S4-F1) | exactly **one** distinct id — no cross-session bleed |
+
+Both positive controls did their job: `runs found: 4` and `total rows: 28` mean
+"0 orphans" is a measurement, not an empty read.
+
+### `with tool_call_id: 0` — expected, not a defect
+
+All four S11.5 cells ran `--max-turns 1` on *"Reply with the single word:
+pong"*, and every one ended `stopped_by_llm` on turn 1 with **no tool calls**.
+Zero correlated rows is the arithmetically correct answer.
+
+**But the check is therefore vacuous on this data** — it would print `0` whether
+correlation works or is entirely broken. It is **not** evidence that
+`tool_call_id` stamping functions. The S11.7 workflow session (`0e145f`) *does*
+contain tool calls (`fs.glob`, `fs.grep`, reads), so correlation should be
+re-checked there once I-50 unblocks. Recorded as a gap, not a tick.
+
+### R21 (MED) — the stray-authority check truncated away the strays
+
+```
+/home/fa: 12 session.db      <- count
+   ...10 lines listed...     <- list
+```
+
+`hits[:10]` capped the output. `sorted()` places `session.db` **after** every
+`session-<hex>/` (`.` = 0x2E > `-` = 0x2D), so the two suppressed entries were
+the last alphabetically — including the R16 stray the preflight had reported
+seconds earlier at `sessions/session.db`, 0 bytes.
+
+**A stray-authority check that hides strays is worse than no check.** The count
+was right and the list lied — the same family as R10 (gawk) and RS8 (vacuous
+secret tests), and the third time in this sheet an instrument produced a
+confident, incomplete answer.
+
+**Fix:** no truncation, and each hit is **classified** rather than dumped —
+legitimate is exactly `<state>/sessions/session-<id>/session.db`; anything else
+is tagged `STRAY` with its byte size, followed by an explicit
+`N legitimate, M STRAY` summary. Verified against a fixture reproducing the live
+12-hit layout.
+
+### The other finding: `/sessions: 1 session.db`
+
+```
+/sessions/session-20260728T075426-7/.fa/session.db
+```
+
+A **session-clone-local** authority inside a workspace clone, distinct from the
+state-root sessions. Not necessarily wrong — a clone can carry its own `.fa` —
+but it is a second authority location and only *one* of eighteen clones has one.
+Worth explaining before it is dismissed. → **I-53**.
+
+
+---
+
+## Execution note — S11.8 results, 2026-08-04
+
+### 8a — PASS, and R21 worked
+
+Untruncated listing found the two hidden entries:
+
+| stray | size | verdict |
+|---|---|---|
+| `/home/fa/.fa/sessions/session.db` | **0 bytes** | **R16 residue** — confirmed, safe to delete |
+| `/sessions/session-20260728T075426-7/.fa/session.db` | **69,632 bytes** | **I-53 — not empty.** Real data in a clone-local authority |
+
+Also note the count moved 12 → 12 but the legit set grew to **11**: a *new*
+session (`f3927131…`) appeared between runs, i.e. the container is still
+creating sessions. Expected, but it confirms "newest session" was never a safe
+`SID` heuristic (R20).
+
+**I-53 is now more interesting, not less.** 69 KB is not a stub — something wrote
+a substantial event log into a workspace clone rather than the state root.
+
+### 8b — projections OK; **two defects in my own harness**
+
+Working: per-run JSON `EXIT=0`, 929 bytes, `run_id=s11-run-b turns=1`,
+`in/out = 13,113/39` — matching the S11.5 console exactly. Global history
+`EXIT=0`, **22 rows**.
+
+**R22 (my bug) — I printed the OLDEST rows.** `global_history.py:223` is
+`ORDER BY updated_at DESC`, so `rows[-8:]` is the *tail of a descending list* —
+the oldest 8. That is why the sample shows `s4-run-a` and `smoke-coder-*` from
+earlier slices and **none of the S11 runs**. The S11 rows are at `rows[:8]`.
+The check I actually wanted — do the `s11-wf-*` rows carry `exit=2`? — was never
+performed.
+
+**R23 (my bug) — the stdout-contract check was vacuous.** I invoked
+`fa stats --output text`, but `cli.py:757` declares `choices=("console",
+"json")`. Argparse rejected it: `EXIT=2`, 0 stdout, 288 bytes of usage on
+stderr. My verdict line only tested `len(err) > len(out)`, so it printed
+**"OK (console on stderr)"** while measuring an argparse error message.
+The I-38/S8.4 contract was **not** tested. Third instance of this family in the
+sheet (R21, RS8).
+
+### 8c — the headline: I-37 re-measured on live post-S10c.5 data
+
+| component | bytes | share |
+|---|---:|---:|
+| **`AGENTS.md` map** | **28,665** | **55.4%** |
+| `Tools for role coder` (system text) | 8,396 | 16.2% |
+| native `tools` array | 8,762 | 16.9% |
+| base system prompt | 5,924 | 11.4% |
+| **the actual task** | **38** | **0.1%** |
+| total | 51,785 | |
+
+Two findings, both confirmed at source:
+
+1. **`AGENTS.md` is 55.4%, worse than I-37's recorded 48.4%.** It is the single
+   largest cost in every request and it has grown.
+2. **The 16 tool schemas are sent twice, 33.1% combined.**
+   `coder_loop.py:408` builds `tool_payload` once, then `:409` renders it into
+   system text *and* `:1124` passes the same object as the native `tools=`
+   array. One source, two wire encodings, every request.
+
+**S10c.5 is vindicated and shown to be the smaller half.** It cut the inline
+block 10,619 → 7,471 B; today's 8,396 B reflects registry growth to 16 tools.
+But it optimised the 16% while the 55% grew — exactly the *"fixing 21% while
+ignoring 48% is backwards"* note already in I-37.
+
+**0.1% of a 51.8 KB request is the work.** That is the number to put in front of
+anyone deciding whether context engineering is worth a slice.
+
+
+---
+
+## S11.8 CLOSE-OUT — 2026-08-04
+
+### Q35b: the exit-code contract is proven on live data
+
+The corrected DESC query surfaced what R22 had hidden:
+
+```
+s11-wf-diag       stop=workflow_failed  exit=2
+s11-wf-linear-3   stop=workflow_failed  exit=2
+s11-wf-linear-2   stop=workflow_failed  exit=2
+s11-wf-linear     stop=workflow_failed  exit=2
+s11-run-d/c/b/a   stop=stopped_by_llm   exit=0
+```
+
+**Three independent artifacts agree**, which is the point of the check:
+
+| source | workflow runs | `fa run` cells |
+|---|---|---|
+| process exit code (S11.7) | 2 | 0 |
+| `global_history.runs.exit_code` | **2** | **0** |
+| `stop_reason` | `workflow_failed` | `stopped_by_llm` |
+
+This is precisely the drift S10c hunted — *"deriving one fact twice is how
+artifacts drift"*, where a BLOCKED run once reported `code==1` with
+`row["exit_code"]==0`. **On live infrastructure the row now matches the
+process.** 8/8 S11 rows correct.
+
+**Q35b status upgraded.** Non-zero exit on a non-`DONE` workflow is **proven
+end-to-end** — process, durable row, and stop_reason all agree. What remains
+unproven is only the narrower `exit == 1` case for a pipeline that *completes*
+with a non-`DONE` verdict; every live failure so far exits 2 at a stage. That
+distinction is now a documented residual, not a gap in the contract.
+
+### I-38 / S8.4 stdout contract: PASS
+
+With the correct flag (`--output console`): `EXIT=0`, **stdout 0 bytes**,
+stderr 385 bytes. The human render goes to stderr and stdout stays parseable —
+the contract R23 failed to test.
+
+### I-53: RESOLVED — pre-S7.5 residue, not a live defect
+
+| field | value |
+|---|---|
+| `run_id` | `cli-smoke` (= `_SMOKE_SESSION_ID`, `cli.py:893`) |
+| `session_id` | **empty** — the S4-F1 signature |
+| written | **2026-07-28T09:28Z** |
+| S4-F1 fixed | **2026-07-29** (`16145b9`) |
+
+The artifact pre-dates its own fix by one day, and the fix is regression-locked
+by `test_smoke_creates_no_session_less_authority_at_the_fa_root`
+(7/7 passing). Safe to delete or keep as a dated artifact.
+
+**Method note worth carrying:** 69 KB *looked* like an active misroute and I
+raised it to P2 on size alone. Three cheap fields — `run_id`, `session_id`,
+`session_meta` timestamp — settled it in seconds. The 8a scan's
+**classification** was right throughout; only my **interpretation** was wrong.
+
+### S11.8 verdict: PASS
+
+| cell | result |
+|---|---|
+| 8a trace integrity | 4/4 MATCH · 0 orphans / 28 rows · 1 session_id · strays classified |
+| 8b projections | per-run JSON valid · 22 global rows · exit codes agree 3 ways |
+| 8b I-38 contract | stdout clean, render on stderr |
+| 8c request anatomy | **`AGENTS.md` 55.4%**, tools duplicated 33.1%, task **0.1%** |
+
+Ready for **S11.9** (entrypoint failure modes).
+
+
+---
+
+## Q35b — full context capture (2026-08-04)
+
+**Captured now, deliberately.** S11.9/9a–9e, S11.10 and S11.11 contain **zero**
+`fa workflow` invocations — verified by grep; all nine matches in those steps are
+references inside these execution notes, not commands. Finishing S11 therefore
+adds **no** new Q35b evidence. Everything that can be known from this deployment
+is already on disk, so it is recorded here rather than deferred.
+
+### The contract, in three lines of source
+
+`cli.py:1751-1753`:
+
+```python
+if result_code != 0 or terminal_state is None:
+    return result_code
+return 0 if terminal_state.status == "DONE" else 1
+```
+
+Three distinct outcomes, deliberately not collapsed (`cli.py:1736-1740`):
+
+| exit | meaning | fix belongs to |
+|---:|---|---|
+| **0** | terminal status `DONE` — work accepted | — |
+| **1** | ran to completion, **not** accepted | the code under review |
+| **2** | usage/config error, `result_code` passthrough | the invocation |
+
+*"'I invoked this wrongly' and 'the code was rejected' have different fixes."*
+
+### What S11 proved
+
+| claim | evidence | status |
+|---|---|---|
+| a stage error exits **2** and fail-fast halts the pipeline | S11.7a, four consecutive runs | ✅ **proven live** |
+| the durable row's `exit_code` matches the process | S11.8b: 8/8 S11 rows | ✅ **proven live** |
+| `stop_reason` matches the same verdict | S11.8b: `workflow_failed` ×4, `stopped_by_llm` ×4 | ✅ **proven live** |
+| a **completed** pipeline with a non-`DONE` verdict exits **1** | — | ❌ **unproven** |
+
+The three-way agreement is the substantive result. S10c's motivating defect was
+a BLOCKED run reporting `code==1` while `row["exit_code"]==0` — three artifacts
+disagreeing about one run. On live infrastructure they now agree on every row.
+
+### Precisely what remains unproven, and why
+
+Reaching `return … else 1` requires **all** of:
+
+1. `result_code == 0` — every stage completed; **no stage may exit non-zero**;
+2. `terminal_state is not None` — `flow_state.json` readable and owned by this run;
+3. `terminal_state.status != "DONE"` — the evaluator rejected the work.
+
+Every live workflow so far fails at **(1)**: the coder stage dies with
+`request_shape` (I-50), `result_code` becomes 2, and the function returns 2 via
+the passthrough before the verdict branch is ever evaluated. **The exit-1 path
+is unreachable while I-50 stands** — not because the contract is weak, but
+because the pipeline cannot yet complete.
+
+### Why the gap is narrow, not alarming
+
+- The branch is **pure and unit-tested** — `_workflow_exit_code` was extracted
+  specifically to be testable in isolation (`cli.py:1746-1749`), and
+  `tests/test_s10c_workflow_exit_contract.py` covers it (7 tests, passing).
+- The **hard half is proven**: that the process, the durable row and
+  `stop_reason` all derive from one artifact read and agree. That was the actual
+  S10c defect.
+- What is missing is one *value* on an already-exercised path, not an
+  unexercised mechanism.
+
+### Two ways to close it
+
+1. **After S13** — fix I-50, re-run S11.7a with a task the evaluator will
+   reject. Highest fidelity, gated on S13.
+2. **Independently, cheaper** — run a workflow whose stages all succeed but whose
+   eval returns non-`DONE`. Needs a task that is *completable but wrong*, e.g.
+   "add a docstring" answered with a behaviour change. Still blocked by I-50
+   today, since the coder stage cannot complete at all.
+
+**Both require I-50. There is no S11-only route**, which is the concrete reason
+this is captured rather than chased.
+
+### Residual risk if it ships unproven
+
+**Low, and bounded.** The failure mode would be `fa workflow && deploy`
+proceeding on a completed-but-rejected run. Mitigating facts: the durable
+`exit_code` column is proven correct, so a CI gate reading `global_history`
+rather than `$?` is already safe; and any *stage* failure — by far the common
+case — correctly exits 2. The unproven case is the narrow one where the
+pipeline completes and the evaluator says no.
+
+**Recorded as a residual with a named unblock trigger (I-50), not as a pass.**
+
+
+---
+
+## Copy/paste readiness audit — S11.9 → S11.11 (2026-08-04)
+
+Audited the remaining steps against the three transport defects this sheet hit
+(R15 `jq` absent, R18 long-heredoc fragility, R3 unquoted heredocs).
+
+**Result: 9a–9e, 10 and 11 are already paste-safe. No rewrite needed.**
+
+| hazard | 9a–11 |
+|---|---|
+| `jq` (absent from the image, R15) | **0 uses** — pure `sh`, `cat`, `ls`, `comm`, `pgrep`, `du`, `stat` |
+| nested `python - <<"PY"` (R18) | **0** — the only Python is a one-line `python -c "import fa; …"` in 9d |
+| unquoted `<<PY` (R3) | **0** — no heredocs at all in these steps |
+| `$?` after a pipe (R12) | **0** — no exit captures across a `tee` |
+
+The Python-heavy cells were 8a/8b/8c, which is why R15–R18 all landed there.
+S11.9 onward is shell-native and can be pasted directly from the sheet.
+
+**Two hazards already handled in-sheet, worth re-reading before running 9b:**
+
+- **R7** — `FA_STATUS_FILE=/tmp/s11-entrypoint-status.txt` is set explicitly.
+  Without it, `_write_status` targets `${WORKSPACE}/.fa/...` with
+  `WORKSPACE=/workspace`, which has no mount on a read-only rootfs, and the
+  bad-session-id case writes **nothing** — the step would look like a product
+  failure.
+- **R8** — `docker compose run` inherits the real binds and **will** overwrite
+  `/sessions/.active` (read by `scripts/fa:39`). 9a snapshots it, 9e restores it
+  byte-for-byte and deletes only clones created by this step, via
+  `comm -13 before after`.
+
+**One correction to the earlier plan.** I previously called S11.9 "the first
+destructive step". Re-reading §9e: the live service is **never stopped**.
+`docker compose run` exercises the identical entrypoint with identical mounts,
+so stopping the 24/7 container adds no fidelity and only creates a downtime
+window. The step perturbs `/sessions/.active` and creates throwaway clones —
+both snapshotted and restored. Destructive to *state*, not to *service*.
+
+
+---
+
+## S11.9 RESULT — PASS, with one unsound assertion of my own (2026-08-04)
+
+### The contracts held, all four cases
+
+| cell | result |
+|---|---|
+| 9b `both-tasks` | `Invalid auto-run configuration: Set only one of FA_TASK or FA_TASK_FILE` · status `exit_code=2 / INVALID_CONFIG` with `detail=` · **ALIVE → standby** |
+| 9c clone failure | `git clone/checkout failed` · `exit_code=2 / INVALID_CONFIG` · partial clone **cleaned up** · **ALIVE → standby** |
+| 9d positive control | `exit_code=0 / SUCCESS` · `task_sha256` + `task_preview` + `run_id=s11-autorun` · **`events.jsonl` produced** |
+| 9e restore | 2 clones removed (exactly those created) · `.active` restored to `/sessions/session-20260804T070318-7` · both containers **healthy** · `fa 0.1.0` |
+
+**Parent Do #8 is answered:** on an invalid auto-run configuration the entrypoint
+transitions to an explicit failed/standby state rather than continuing with an
+ambiguous workspace.
+
+**9d is what makes 9b/9c meaningful.** R9 flagged that a *valid* auto-run also
+ends in `_standby`, so "reached standby" alone does not discriminate. 9d keys on
+the status **label** (`SUCCESS` vs `INVALID_CONFIG`) and the **run dir** —
+`events.jsonl` exists for the valid case and not for the invalid ones. Without
+it, 9b/9c would be consistent with an entrypoint that always stands by.
+
+### R24 (my bug) — the `pgrep` check could never have passed
+
+```
+--- did it start an fa run anyway? (it must NOT) ---
+1 /sbin/docker-init -- sh -lc  <the entire poll script>
+7 sh -lc                       <the entire poll script>
+```
+
+`pgrep -af "fa run"` matched **its own wrapper**: the literal text `fa run`
+appears inside the script (in the `pgrep` line itself), so the shell running the
+check matches the pattern it is searching for. Reproduced locally in one line.
+
+**The contract still held** — neither PID is an `fa run`: no
+`/opt/fa-venv/bin/fa`, no `--task`/`--role`/`--run-id`; PID 1 is `docker-init`
+and PID 7 is the shell that backgrounded the entrypoint. But the assertion was
+**unfalsifiable**: it could not have printed `no fa run process (CORRECT)` even
+on a perfect run.
+
+**Fix — the classic `[f]a` trick:** `pgrep -af "f[a] run"`. The regex
+`f[a] run` matches the string `fa run` but **not** the literal text `f[a] run`
+that appears in the command line, so the wrapper excludes itself. Verified:
+wrapper → no match, a real `fa run` cmdline → match.
+
+Fourth self-matching/vacuity defect in this sheet (R10 gawk, R21 truncation,
+R23 wrong flag, now R24). All four produced output that *looked* like a result.
+
+### Two observations that are correct, not defects
+
+**9c reports `workspace=/workspace`, 9b reports the session path.** Correct.
+`fa-entrypoint.sh:188` sets `WORKSPACE="$SESSION_DIR"` only **after** a
+successful clone; 9c fails *during* the clone, so `WORKSPACE` is still the
+`/workspace` default. This is exactly the R7 mechanism, and it confirms the
+explicit `FA_STATUS_FILE` was necessary — without it, 9c could not have written
+a status file at all.
+
+**The ~2-minute hang was the design working.** Standby is `sleep infinity`, so
+the container never exits; the `timeout 120` in the loop is what ends it. The
+sheet says so — *"a 120s timeout here also indicates standby, which is
+correct"* — but the operator reasonably read a hang as a fault. Worth stating
+up front rather than in a trailing note.
+
+### Corrected 9b/9c process check, for any re-run
+
+```bash
+pgrep -af "f[a] run" || echo "no fa run process (CORRECT)"
+```
+
+
+---
+
+## S11.10 / S11.11 RESULT — PASS, and S11 CLOSE-OUT (2026-08-04)
+
+### 10a–10e
+
+| cell | result |
+|---|---|
+| 10a repo hygiene | `clean` — the bind-mounted repo untouched by everything above |
+| 10b identity re-check | host `35068c6` == container `35068c6`; `fa.__file__` = `/opt/first-agent/src/fa/__init__.py` |
+| 10c keyless re-check | `OK: still keyless` — no provider key reached the agent across the whole session |
+| 10d logs | **0** traceback-ish lines in agent **and** proxy |
+| 10e footprint | `/home/fa/.fa` = 1.9 MB total |
+
+**10c is the quiet one.** The proxy boundary held from S11.4a through eleven
+steps, four `fa run`s, four workflow attempts and four throwaway containers.
+That is the security claim of the whole deployment, re-verified at the end
+rather than assumed from the start.
+
+### The deployed SHA changed mid-sheet — and that is not drift
+
+| | S11.3 (anchor) | S11.10 (now) |
+|---|---|---|
+| host | `23468cb` | `35068c6` |
+| container | `23468cb` | `35068c6` |
+| verdict | MATCH | **MATCH** |
+
+The operator merged the S12/S13 patches and ran `fa clean-rebuild` during the
+sheet. **S11-G10 asks whether host and container disagree, not whether the repo
+stood still.** Both views moved together to the same new revision, which is the
+property the check actually tests. Recorded explicitly so a future reader does
+not mistake a deliberate redeploy for drift.
+
+### R25 (my bug) — `10a` printed `(expected )`
+
+`DEPLOY_SHA` is set only in S11.0 and was lost when the terminal was replaced.
+The measured half (`HEAD still: 35068c6`) was real; the expectation was empty,
+so the line **could not have failed**. Fifth vacuity defect in this sheet.
+
+Fixed in the preflight: `DEPLOY_SHA` is now recovered from
+`$EVID/00-deploy-sha.txt` — the durable record — and printed alongside `EVID`
+and `SID` so an empty value is visible before any step runs.
+
+### R26 (my bug) — the rollback list was stale
+
+Both the `du` loop and, more seriously, the **rollback** loop enumerate a static
+run-id list written before execution. Three run-ids were invented *during* the
+sheet to dodge `run_id_reused` — `s11-wf-linear-2`, `-3`, `s11-wf-diag` — so
+rollback would have left three orphaned run dirs behind while reporting success.
+Changed to `for d in /home/fa/.fa/session-log/s11-*`, which cannot miss one.
+
+10e's listing is therefore *accurate for what it asked* but incomplete: it shows
+`s11-wf-linear` (the first attempt, which died on the deleted `models.yaml`) and
+omits the three later attempts. `s11-wf-repair` / `s11-wf-quiet` are correctly
+absent — 7b/7d never ran.
+
+### S11.11 — evidence bundled
+
+`/tmp/s11-evidence-20260803T111449Z.tar.gz`, 16 KB, **54 files**, spanning
+`00-*` through `10e-*`. Complete for every step executed.
+
+---
+
+## S11 FINAL VERDICT
+
+| step | goal | verdict |
+|---|---|---|
+| S11.0 preflight | Do #1 | ✅ |
+| S11.1 census | G5 before | ✅ 11/15 permissive |
+| S11.2 build/deploy | Do #2, G1 | ✅ both healthy |
+| S11.3 identity ×4 | Do #7, G1 | ✅ no drift |
+| S11.4a–4d proxy + config gates | Do #3, G2, G3 | ✅ keyless; I-40 + YAML gates hold |
+| S11.4e probe | G2 | ⚠️ coder/eval 200; planner 400 → **I-48** |
+| S11.5 `fa run` matrix | Do #4–6, G6 | ✅ 9/9 incl. parent Do #4 |
+| S11.6 posture | G5, I-36 | ✅ **repaired 10, predicted 10** |
+| S11.6d RK11 | G5 | ✅ symlink guard proven live |
+| S11.7a workflow | Q35b, G4 | ⚠️ blocked → **I-50 (P1)** |
+| S11.7b/c/d | Q35b | ❌ blocked by I-50 |
+| S11.8 trace/stats/anatomy | G7, G9, I-37 | ✅ + **`AGENTS.md` = 55.4%** |
+| S11.9 entrypoint failures | Do #8, G8 | ✅ parent Do #8 answered |
+| S11.10 hygiene/drift | Do #9, G10 | ✅ |
+| S11.11 bundle | — | ✅ 54 files |
+
+**10 of 12 steps pass. Two blocked by one root cause (I-50), now root-caused to
+two source lines with S13 planned.**
+
+**Findings converted to BACKLOG, not fixed in-sheet** (per the standing rule):
+I-46, I-48, I-50 (P1), I-51, I-52, I-53 (resolved), plus R10–R26 as sheet
+defects. **Six of those — R10, R21, R23, R24, R25, and the 8a `SID` guard —
+were instruments that produced confident wrong answers.** That is the dominant
+failure mode of this sheet and the single most transferable lesson from it.
+
+**Remaining parent action:** Do #10 — commit/push through the PR workflow, only
+after human approval.

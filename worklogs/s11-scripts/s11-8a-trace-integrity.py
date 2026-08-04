@@ -96,7 +96,13 @@ def main() -> int:
     ).fetchone()[0]
     print(f"  with tool_call_id: {correlated}")
 
+    # R21: NO truncation here. The first run printed "12 session.db" and then
+    # listed 10 - and because `sorted()` puts "session.db" after every
+    # "session-<hex>/", the two suppressed entries were exactly the anomalies
+    # this check exists to surface, including the R16 stray. A stray-authority
+    # check that hides strays is worse than no check.
     print("=== stray authorities on disk ===")
+    expected = _STATE / "sessions"
     for base in _SCAN_ROOTS:
         root = pathlib.Path(base)
         if not root.is_dir():
@@ -104,8 +110,14 @@ def main() -> int:
             continue
         hits = sorted(root.rglob("session.db"))
         print(f"  {base}: {len(hits)} session.db")
-        for hit in hits[:10]:
-            print(f"    {hit}")
+        for hit in hits:
+            # Legitimate = exactly <state>/sessions/session-<id>/session.db.
+            legit = hit.parent.parent == expected and hit.parent.name.startswith("session-")
+            size = hit.stat().st_size if hit.exists() else -1
+            tag = "ok  " if legit else "STRAY"
+            print(f"    [{tag}] {hit}  ({size} bytes)")
+        strays = [h for h in hits if not (h.parent.parent == expected and h.parent.name.startswith("session-"))]
+        print(f"    -> {len(hits) - len(strays)} legitimate, {len(strays)} STRAY")
 
     return 0
 

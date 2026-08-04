@@ -179,12 +179,52 @@ CONF-3  resumed transcript            (the I-50 shape: history then new task)
 CONF-4  multi-turn tool chain         (2+ sequential calls)
 CONF-5  trailing-assistant tolerance  (records the capability, does not require it)
 CONF-6  user-after-tool tolerance     (Mistral 3230's other half)
-CONF-7  prompt-cache behaviour        (records hit rate; no pass/fail)
+CONF-7  prompt-cache + composition   (hit rate AND per-component request
+                                       sizes; recorded, never pass/fail)
+CONF-8  DEPLOYED sampling profile     (the role's real temperature/top_p/
+                                       provider_params, not defaults)  <- I-48
+CONF-9  oversized / truncation        (behaviour at the context limit)
 ```
+
+**CONF-8 exists because of a measured near-miss.** I-48 is a live 400 from
+`mistral-medium-2604`: *"top_p must be 1 when using greedy sampling"*. It needs
+`temperature=0.0` **and** the model's server-side `top_p` default **and**
+`provider_params: {reasoning_effort: "high"}` acting together. CONF-1's "minimal
+completion" uses default sampling, so **the matrix as first written would have
+marked that model green on CONF-1…7 while it remains unusable in production.**
+
+A conformance suite that does not exercise the configuration the deployment
+actually runs proves nothing about the deployment — the same error as S8's
+scripted transport accepting any message order. CONF-8 therefore replays each
+role's **real `models.yaml` entry**, including `provider_params`.
 
 Output is a **capability matrix**, not a pass/fail verdict. A provider that
 fails CONF-5 is not broken — it has a rule, and the rule goes in its
 `MessageRules`.
+
+### D5a — Harness discipline: the instrument is the likeliest defect
+
+**S13 builds a new measuring instrument, and S11 just demonstrated what that
+costs.** Of the ~26 defects S11 surfaced, **six were the instruments, not the
+product**: R10 (gawk `strtonum` silently printed 0), R21 (`hits[:10]` truncated
+away the strays the check existed to find), R23 (wrong `--output` flag made a
+contract check pass on an argparse error), R24 (`pgrep "fa run"` matched its own
+wrapper), R25 (`(expected )` — an empty comparand that could not fail), and the
+8a `SID` guard (an empty variable fabricated an empty database).
+
+**Every one produced confident, well-formed, wrong output.** None crashed. A
+conformance matrix has exactly this shape — it prints a grid of green cells —
+so three rules are binding on S13's harness:
+
+1. **Every CONF case carries a positive control.** A case that cannot
+   distinguish "passed" from "never ran" is not admitted. CONF-1 must assert a
+   non-empty completion, not merely a 200.
+2. **Every CONF case must be shown to FAIL before it is trusted.** S13.1 already
+   requires this for the ordering oracle; it extends to all nine. If a case
+   cannot be made to fail against a deliberately broken input, it is measuring
+   nothing.
+3. **No truncation in any output the matrix produces.** R21 is the direct
+   precedent: the count was right and the list lied.
 
 ### D5 — Every conformance probe runs offline first
 
@@ -247,6 +287,39 @@ Task message emitted **after** observations when history is non-empty.
 
 **DoD:** `git diff` touches only `providers/`; K1–K6 green; suite unchanged.
 **Class:** C1 + C0p.
+
+### S13.4b2 — I-48: sampling-shape conformance
+
+**Source-verified.** FA never sends `top_p`: `RequestInfo.top_p` defaults to
+`None` (`base.py:52`), `chain.py:332` fills it only from an explicit `sampling`
+block, and every adapter emits it only when not-None. The operator's config has
+no `sampling` block. So the `top_p` in the 400 is **server-side**, most likely
+`reasoning_effort: "high"` putting the model into a greedy mode that conflicts
+with the `temperature=0.0` FA sends.
+
+**Why it belongs in S13 and not its own slice:** it is the same class as I-50 —
+a provider-specific request-shape rule FA cannot know centrally — and it is
+enforced at the same chokepoint by the same `MessageRules` mechanism, extended
+to sampling.
+
+**Mechanism.** Add to `MessageRules`:
+
+```python
+requires_top_p_one_when_greedy: bool = False   # Mistral reasoning models
+```
+
+When set and `temperature == 0`, the conformance pass sends `top_p=1` explicitly
+rather than letting the server apply a conflicting default.
+
+**Do NOT "fix" this by omitting `top_p` in `mistral.py`** — FA already omits it.
+That would patch code that is not at fault.
+
+**DoD:** CONF-8 reproduces the 400 against `mistral-medium-2604` **before** the
+rule is applied (negative proof), and passes after. The three discriminating
+probes in I-48 are run first to confirm the mechanism rather than assume it.
+**Class:** C1. **Kill-check:** clear the flag → CONF-8 fails again.
+
+---
 
 ### S13.4c — Eval independence: blocking → adversarial
 
@@ -320,7 +393,15 @@ plus `fa conformance --provider <name>` for live runs.
 At 30 RPM a full matrix will 429 (already observed in S11.4e). The runner needs
 per-provider RPM config, sequential execution with backoff, and **resumability**
 so a 429 does not discard completed results.
-**DoD:** a matrix run survives an induced 429 without losing prior rows.
+**Run identity.** S11 hit `run_id_reused` twice and the operator had to invent
+`-2`, `-3` suffixes mid-run — which then defeated the sheet's static rollback
+list (R26). The matrix runner must mint run-ids itself
+(`conf-<provider>-<case>-<utc>`), never reuse, and clean up by **glob**, never
+by an enumerated list.
+
+**DoD:** a matrix run survives an induced 429 without losing prior rows; a
+second run of the same matrix does not collide with the first; cleanup removes
+every `conf-*` dir it created and nothing else.
 **Class:** C1.
 
 ### S13.7 — Onboard registry-known-but-unexercised providers
@@ -424,6 +505,30 @@ want per-provider `sampling`. The current schema supports it via chain entries;
 S13.9 will show whether that is ergonomic. Defer until measured.
 
 ---
+
+**Q65 — does I-37 (context cost) belong in S13, or its own slice?**
+S11.8c measured `AGENTS.md` at **55.4%** of a live request and the tool schemas
+duplicated at **33.1%**, against a task payload of **0.1%**. That is the largest
+single efficiency finding of the whole workplan, and the operator's stated goal
+is *"a token-efficient chain suitable for many providers"* — so it is squarely
+on-goal.
+
+**Recommendation: keep it OUT of S13.** Reasons, in order of weight:
+1. **It changes the cacheable prefix.** S13 already touches message ordering and
+   must prove the 74–99% cache-hit rate survives (CT4/R1). Changing *what is in*
+   the prompt at the same time as *what order it is in* makes a cache regression
+   un-attributable to either.
+2. **Different risk profile.** S13 is mechanical (ordering, capability flags);
+   trimming `AGENTS.md` is a **behavioural** change — the agent may get worse at
+   tasks. That needs task-quality measurement, which S13 has no apparatus for.
+3. **S13 provides the instrument.** CONF-7 records cache behaviour and CONF-8
+   replays real deployed configs. Running the context slice *after* S13 means it
+   inherits a working multi-provider measurement harness instead of building one.
+
+**But S13 should leave a hook:** CONF-7 must record **request composition sizes
+per provider**, not just the cache-hit rate. Different providers may bill and
+cache the same prompt differently, and that data is nearly free to collect while
+the matrix is running. → folded into CONF-7's definition.
 
 **Q64 — should the adversarial stance also apply to *cross-family* eval?**
 Arguably an adversarial eval is better in general, and only its *necessity*
