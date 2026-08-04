@@ -1918,6 +1918,72 @@ Exit criteria:
 
 ---
 
+### Step S13: Multi-provider conformance (added 2026-08-03, open scope)
+
+Traces-to: G4, CT2, **ADR-2 eval-independence**. Depends-on: **S11.7 findings**.
+
+**Why this step exists.** S11.7 ran the workflow verdict matrix against a real
+provider for the first time and found the `planner→coder→eval` pipeline cannot
+complete: a resumed stage sends a trailing `assistant` message and Mistral
+rejects it (`400 code=3230`). Local S8 tests never caught it because their
+scripted transport accepts any ordering — precisely the gap this workplan
+exists to surface.
+
+**Why it is open-scope.** Two further facts turned a bug fix into a slice:
+
+1. **Eval independence moves from blocking to adversarial** (operator decision,
+   2026-08-03). `roles.py:186 check_eval_disjoint` currently *raises* when the
+   eval family matches planner or coder (ADR-2: ~+0.6 same-family vs ~−0.05
+   cross-family ensemble-error correlation). The live box passes that gate while
+   running `mistral-small` in all three roles, because the YAML says
+   `family: "mistral"` for coder and `"mistral_eval"` for eval — **a gate a
+   string edit defeats is not protecting anything.** It also blocks legitimate
+   free-tier setups, since Groq / Cerebras / NVIDIA NIM largely serve the same
+   open-weight families. S13 replaces refusal with a loud recorded warning plus
+   an **adversarial eval stance** when families overlap, and records the stance
+   in `eval_report.json` so a correlated verdict stays auditable.
+2. `registry.py` maps 18 provider names onto 4 adapters, 14 of them sharing
+   `openai_compat`. That claims compatibility; S11 proved compatibility is not
+   uniform. Only a conformance run distinguishes the two.
+
+Do:
+
+1. **Fix the emitter first** — faithful history replay (I-52) and correct
+   ordering (I-50). New providers are only informative once FA stops emitting
+   a known-bad shape.
+2. Add a strict scripted transport that enforces real ordering rules, and prove
+   it reproduces the 400 **before** the fix.
+3. Add per-adapter `MessageRules` enforced at the single provider chokepoint
+   (`chain.py:368`).
+4. Build a provider-agnostic conformance protocol (CONF-1…7) producing a
+   **capability matrix**, then exercise providers with no config presence.
+
+Do-not:
+
+- do not adopt a lowest-common-denominator message shape (costs prompt caching,
+  measured 74–99% live);
+- do not branch on provider *names* — use capability flags;
+- do not silently repair a dangling `tool_call_id` — that is a real state bug;
+- do not grow a new adapter beyond ~200 lines inside this slice — promote it;
+- do not relax **family validation** — only the eval *disjointness* rule
+  changes; an unknown/malformed family still raises.
+
+Exit criteria:
+
+- [ ] strict transport reproduces the 400 before the fix;
+- [ ] `fa workflow` completes past stage 2 on live infrastructure;
+- [ ] live prompt-cache hit rate ≥ 74%;
+- [ ] Q35b exit-1 path re-attempted (S11.7);
+- [ ] ≥3 providers carry a measured capability matrix;
+- [ ] ≥1 cross-family workflow completes end to end;
+- [ ] same-family eval loads with a warning and an adversarial stance; disjoint
+      eval stays silent and neutral;
+- [ ] ADR-2 amended in the same commit as the behaviour change.
+
+Subplan: `PLAN-cli-trace-S13-multi-provider-conformance.md`.
+
+---
+
 ## 6. Verification plan
 
 ### CT1 — CLI roots

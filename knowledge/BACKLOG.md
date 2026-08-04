@@ -1270,6 +1270,177 @@
   once via `sys.executable`.
 - **Repro:** `grep -rn 'python3' tests/*.py | grep -v _capabilities`
 
+## I-47 — stale session clones accumulate without bound
+
+- **Status:** open (observed during live S11.3, 2026-08-03). P3.
+- **Idea:** `/sessions/<id>/` holds a full repo clone per session. The
+  production box carried **18**, the oldest from 2026-07-01. Nothing prunes
+  them. Each is a complete checkout, so disk grows linearly with sessions run.
+- **Not a correctness issue:** they are only importable when the entrypoint puts
+  the *current* session's `src` on `PYTHONPATH`
+  (`scripts/fa-entrypoint.sh:199`); historical clones are inert.
+- **First concrete step:** decide a retention policy (keep N most recent, or age
+  out past D days) and implement it in the entrypoint or a `fa` housekeeping
+  subcommand. Confirm nothing reads a historical clone before deleting.
+- **Repro:** `docker compose exec -T first-agent sh -lc 'ls -d /sessions/*/src/fa | wc -l'`
+
+## I-48 — `mistral-medium-2604` rejects FA's request shape (greedy sampling)
+
+- **Status:** open (found S11.4e, **re-diagnosed** 2026-08-03 after an operator
+  model swap). P2 — the model is unusable in any role.
+- **Corrected diagnosis.** The first reading blamed the *planner role*. The
+  operator then swapped models between roles, which isolated the variable:
+
+  | run | `mistral-medium-2604` | `mistral-small-2603` |
+  |---|---|---|
+  | initial | planner → **400** | coder → 200, eval → 200 |
+  | after swap | coder → **400** | planner → 200, eval → 200 |
+
+  The fault follows the **model**, not the role. Any role configured with
+  `mistral-medium-2604` fails; every role on `mistral-small-2603` succeeds.
+- **Error:** HTTP 400 `{"message": "top_p must be 1 when using greedy sampling",
+  "type": "invalid_request_greedy_sampling", "code": "3054"}`.
+- **FA does not send `top_p`.** Verified by reading every emit site:
+  `RequestInfo.top_p` defaults to `None` (`base.py:52`), `chain.py:332` only
+  fills it from an explicit `sampling.top_p`, and `mistral.py:150` /
+  `openai_compat.py:61` emit it **only when not None**. The operator's
+  `models.yaml` sets no `sampling` block at all — the only active provider param
+  is `reasoning_effort: "high"`.
+- **Therefore the `top_p` is server-side.** `mistral-medium-2604` appears to
+  apply its own default `top_p` (≠ 1) and then reject the combination with the
+  `temperature=0.0` FA sends, most likely tied to `reasoning_effort: "high"`
+  putting the model in a reasoning/greedy mode.
+- **Candidate next steps (needs one experiment, not a code change yet):**
+  1. probe `mistral-medium-2604` **without** `reasoning_effort` — if it passes,
+     the interaction is confirmed and the fix is config;
+  2. probe it with an explicit `sampling: {top_p: 1}` — if it passes, FA should
+     send `top_p: 1` whenever `temperature == 0` for this family;
+  3. probe with `temperature` unset — isolates the greedy trigger.
+- **Do NOT "fix" by omitting `top_p` in `mistral.py`:** FA already omits it. A
+  change there would be a fix to code that is not at fault.
+- **Repro:** `docker compose exec -T first-agent fa probe --role <any-role-set-to-mistral-medium-2604> --timeout 30`
+- **Related but distinct:** **I-50** is a *different* `request_shape` failure —
+  same HTTP 400 family, but on `mistral-small-2603` inside a workflow stage
+  transition, with `in=0`. Do not merge them: I-48 reproduces on a bare `probe`
+  with one model; I-50 reproduces on a model that passes that same probe.
+
+## I-49 — `state/models.yaml` is a REQUIRED mountpoint stub, not dead state
+
+- **Status:** open, **re-diagnosed 2026-08-03 after the earlier advice caused a
+  live outage.** P3 (documentation/robustness, not correctness).
+- **CORRECTION.** The first write-up called
+  `/srv/first-agent/state/models.yaml` "dead state ... delete it". The operator
+  did, and the agent immediately reported
+  `role 'planner' not found in /home/fa/.fa/models.yaml; known: []`.
+  Restoring the file fixed it. **The advice was wrong.**
+- **Mechanism.** `docker-compose.fa.yml` performs two *nested* binds:
+  `/srv/first-agent/state` → `/home/fa/.fa` (rw), then
+  `/srv/first-agent/routing/models.yaml` → `/home/fa/.fa/models.yaml` (ro).
+  The second target lives **inside** the first bind, so the kernel needs a file
+  to exist at that path in the parent filesystem to attach the mount onto.
+  The state-dir file **is that mountpoint stub**. Remove it and the nested
+  mount has nothing to cover, so the agent reads an absent config.
+- **So the `644` is on a stub whose content is never read** — the ro mount
+  covers it. That is why the S10c.3 pass can never repair it, and why the
+  count will show 1 forever. Both observations from S11.6 stand; only the
+  *remedy* was wrong.
+- **Real (small) improvements, none of which is "delete it":**
+  1. rename the host file to something self-describing, e.g.
+     `state/models.yaml` → keep, but add `state/README-mountpoints.md`
+     explaining that it must exist and its content is ignored;
+  2. have `fa-clean-rebuild.sh` `touch` it if missing, so a well-meaning
+     cleanup cannot break the deployment;
+  3. add the same note as a comment in `docker-compose.fa.yml` next to the
+     nested mount (the existing comment says the mount "hides any legacy
+     state/models.yaml", which is what misled the analysis).
+- **Repro of the failure mode:** `sudo rm /srv/first-agent/state/models.yaml`,
+  recreate the container, then `fa run --role planner "hi"` → `known: []`.
+
+## I-50 — resumed workflow stage sends an assistant message last; provider 400s
+
+- **Status:** open, **ROOT-CAUSED 2026-08-03** from the live error body.
+  **P1 — the `planner→coder→eval` pipeline cannot complete against Mistral.**
+- **The provider's own words** (recovered from `events.jsonl`, not the console):
+
+  ```
+  status=400 code=3230 type=invalid_request_message_order
+  "Expected last role User or Tool (or Assistant with prefix True)
+   for serving but got assistant"
+  ```
+
+- **Mechanism, confirmed in source:**
+  1. `prompt_composer.py:123-125` appends the task as a `user` message and then
+     `non_cacheable.extend(observations)` — **observations come after the task**;
+  2. `coder_loop.py:450-490` rebuilds `observations` from the session DB,
+     appending only `model_msg` → `{"role": "assistant"}` and `tool_result` →
+     `{"role": "tool"}`. It **never replays `user_msg` rows**;
+  3. `_run_stage` (`cli.py:1248`) passes `"resume": not fresh`, so stage 2
+     inherits stage 1's transcript;
+  4. the planner ended `stopped_by_llm` on a plain text turn — a `model_msg`
+     with **no** trailing tool call.
+
+  Net message order: `[system, system, system, user "Task: …", …history…,
+  assistant]`. The final element is an assistant message, which Mistral rejects
+  for a non-prefix completion.
+
+- **Explains every observation** (why it looked model-specific and role-specific
+  and was neither):
+
+  | scenario | rebuilt history | last role | result |
+  |---|---|---|---|
+  | standalone `fa run` | empty | `user` | **200** |
+  | planner, stage 1 (`fresh`) | empty | `user` | **200** |
+  | coder, stage 2 (`resume`) | planner's turns | **`assistant`** | **400** |
+  | turn 2+ inside one session | ends in tool result | `tool` | **200** |
+
+- **Not provider-exotic.** OpenAI tolerates a trailing assistant message;
+  Mistral and Anthropic do not. FA supports all three, so the ordering must be
+  normalised by FA, not left to the provider.
+- **Why local tests missed it:** S8 drives the workflow through a scripted
+  transport that accepts any message order. `_assert_tool_pairing_invariant`
+  (`coder_loop.py:176`) checks tool-call/result **pairing** but says nothing
+  about the **final role** — the invariant that actually matters here.
+- **Candidate fixes (needs a decision → Q#):**
+  1. **append the task last** for a resumed session, i.e. put
+     `{"role": "user", "content": f"Task: {task}"}` *after* `observations`.
+     Smallest change; also more natural — the new instruction should follow the
+     inherited context rather than precede it. Risk: alters prompt-cache key
+     ordering, so measure the cache-hit impact (currently 74–99%).
+  2. **replay `user_msg` rows** in the rebuild so history is faithful. More
+     correct in principle, larger blast radius, and still ends on an assistant
+     message unless combined with (1).
+  3. **normalise in the provider adapter** — append a minimal continuation user
+     message when the last role is `assistant`. Localised, but hides the real
+     ordering bug from every other caller.
+  Recommend **(1)** plus a new ordering invariant asserting the last
+  provider-visible message is `user` or `tool`, with a kill-check.
+- **Repro:** `fa workflow planner,coder,eval "<any task>" --mode linear`
+  — fails at stage 2, turn 1, `in=0`. Three consecutive reproductions with
+  different transcripts and targets.
+
+## I-52 — resumed history is not a faithful replay (`user_msg` rows dropped)
+
+- **Status:** open (found while root-causing I-50, 2026-08-03). P2.
+- **Idea:** `coder_loop.py:450-490` rebuilds `conversation_history` from the
+  session DB by translating **only** `model_msg` → `assistant` and
+  `tool_result` → `tool`. `user_msg` rows are written (`coder_loop.py:493`) but
+  **never replayed**.
+- **Consequence:** a resumed stage sees the previous stage's assistant turns and
+  tool output, but not the instruction those turns were responding to. The model
+  is asked to continue work whose stated goal is missing from its context.
+- **Relationship to I-50:** S13's normalization makes the request *valid*
+  (message ordering). It does not make the history *complete*. These are
+  separate defects and fixing the first does not fix the second.
+- **Why not fixed in S13:** replaying `user_msg` changes the token cost and the
+  cache key of every resumed request, and interacts with compaction
+  (`latest_comp_idx` windowing at `coder_loop.py:455-463`). It needs its own
+  measurement, not a rider on an ordering fix.
+- **First concrete step:** add a C1 test asserting a resumed transcript contains
+  the prior stage's user instruction; then decide whether to replay verbatim or
+  to summarise prior stages into the task text.
+- **Repro:** run `fa workflow planner,coder,eval`, then inspect the coder
+  stage's outgoing body — no `user` message from the planner stage appears.
+
 ## I-12 — Authoring rules: scope coverage gap (`scripts/`, `verifiers/`)
 
 - **Status:** deferred from ADR-11 PR-2 self-review (2026-06-06).
