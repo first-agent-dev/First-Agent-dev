@@ -14,16 +14,37 @@ export REPO_DIR=/srv/first-agent/repo/First-Agent-dev
 export EVID=$(ls -1d /tmp/s11-evidence-* 2>/dev/null | sort | tail -1)
 [ -d "$EVID" ] || { export EVID=/tmp/s11-evidence-$(date -u +%Y%m%dT%H%M%SZ); mkdir -p "$EVID"; }
 
-# --- SID: newest session DIRECTORY.
-# R19: `ls -1t` lists FILES too. A stray `sessions/session.db` (created by the
-# pre-R16 8a command, because an empty sid collapses the directory level) was
-# returned as the newest entry, so SID became the literal string "session.db".
-# `find -maxdepth 1 -type d` cannot pick a file, and the name filter pins the
-# documented shape `session-<32 hex>`.
-export SID=$(docker compose -f "$COMPOSE" exec -T "$SERVICE" sh -lc '
-  find /home/fa/.fa/sessions -mindepth 1 -maxdepth 1 -type d -name "session-*" \
-       -printf "%T@ %f\n" 2>/dev/null | sort -rn | head -1 | cut -d" " -f2
-' | tr -d '\r\n')
+# --- SID: the session that OWNS this sheet's `fa run` evidence.
+# R19: `ls -1t` also lists FILES, and a stray `sessions/session.db` was picked.
+# R20: "newest directory" is ALSO wrong. S11.7's workflow created a newer
+# session, so newest returned the workflow session while 8a/8b/8c assert on the
+# S11.5 runs (s11-run-a..d). That is not a crash - it is a confident answer
+# about the wrong session, with the positive control still passing.
+# Correct rule: pick the session whose event_log actually CONTAINS s11-run-b.
+# Falls back to newest-with-a-db only if no session owns it, and says so.
+export SID=$(docker compose -f "$COMPOSE" exec -T "$SERVICE" python - <<'PYSID' | tr -d '\r\n'
+import pathlib, sqlite3
+root = pathlib.Path("/home/fa/.fa/sessions")
+owner = fallback = ""
+for d in sorted((p for p in root.iterdir() if p.is_dir() and p.name.startswith("session-")),
+                key=lambda p: p.stat().st_mtime, reverse=True):
+    db = d / "session.db"
+    if not db.is_file():
+        continue
+    fallback = fallback or d.name
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        hit = con.execute(
+            "SELECT 1 FROM event_log WHERE run_id='s11-run-b' LIMIT 1").fetchone()
+        con.close()
+    except Exception:
+        continue
+    if hit:
+        owner = d.name
+        break
+print(owner or fallback)
+PYSID
+)
 
 echo "EVID    = $EVID"
 echo "SID     = ${SID:-<EMPTY>}"

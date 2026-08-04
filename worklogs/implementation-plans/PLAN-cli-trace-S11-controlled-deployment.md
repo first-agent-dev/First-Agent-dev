@@ -2442,3 +2442,50 @@ anything else before it can be used.
 authority ever lives. It reports rather than deletes: removing a database on a
 deployed box is an operator decision, and S11.8a's "stray authorities" check is
 independently designed to catch exactly this.
+
+
+---
+
+## Execution note — R20, found before running S11.8a (2026-08-04)
+
+The R19 preflight returned a **valid** session that was the **wrong** one:
+
+```
+SID = session-0e145f4970314d92bcc9e1aacf63dbf7
+OK: session.db exists for SID=...
+STRAY (R16 residue): /home/fa/.fa/sessions/session.db  0 bytes
+```
+
+`0e145f` is the **workflow** session created by S11.7 — identifiable in the
+operator's own 7a output:
+
+```
+FTS5 db not exists at /sessions/session-0e145f4970314d92bcc9e1aacf63dbf7/.fa/fts.db
+```
+
+S11.5 ran all four `fa run` cells against `session-e4120b0a…` (`--session-id
+"$SID"` on 5c/5d/5e). S11.7 then created a *newer* session, so
+"newest directory" started resolving to the workflow session.
+
+**Why this was dangerous rather than merely wrong.** 8a would have opened
+`0e145f`, found `s11-wf-*` runs, printed a non-zero `runs found:` — **the
+positive control passes** — and reported db/jsonl parity for a session the step
+was never about. 8b/8c would then disagree when they queried `s11-run-b`. A
+confident, well-formed answer about the wrong subject is worse than a crash.
+
+**Third iteration of the same root cause.** `SID` recovery has now been wrong
+three ways: a **file** instead of a directory (R19), an **empty** string (R16),
+and a **valid-but-unrelated** directory (R20). The pattern is that each fix
+tightened the *shape* of the answer without checking its *meaning*.
+
+**R20 fix — select by content, not by metadata.** The preflight now picks the
+session whose `event_log` actually contains `s11-run-b`, falling back to
+newest-with-a-database only if no session owns it. Verified against a fixture
+reproducing the live layout (older owner + newer workflow session + the R16
+stray file): the old rule returns `0e145f`, the new rule returns `e4120b0a`.
+
+**`STRAY … 0 bytes` confirms R16 exactly** — a zero-row database at
+`sessions/session.db`, created by `sqlite3.connect()` on the collapsed path.
+Left in place deliberately: S11.8a's "stray authorities" check is designed to
+find precisely this, and leaving it gives that check a real positive instead of
+a vacuous pass.
