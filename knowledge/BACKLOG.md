@@ -1441,6 +1441,10 @@
 - **Repro:** run `fa workflow planner,coder,eval`, then inspect the coder
   stage's outgoing body — no `user` message from the planner stage appears.
 
+<<<<<<< ours
+<<<<<<< ours
+=======
+>>>>>>> theirs
 ## I-53 — RESOLVED (2026-08-04): pre-S7.5 S4-F1 residue, not a live defect
 
 - **Status:** **RESOLVED — no code change required.** Kept as a record because
@@ -1477,6 +1481,75 @@
   *classification was right while the initial interpretation was wrong*. Size
   alone suggested severity; only `run_id` + `session_id` + the timestamp
   identified it. Three cheap fields beat one expensive assumption.
+<<<<<<< ours
+=======
+## I-53 — a session-clone-local `session.db` under `/sessions`
+
+- **Status:** open (found during live S11.8a, 2026-08-04). P3 — explain before
+  dismissing.
+- **Observation:** the stray-authority scan found
+  `/sessions/session-20260728T075426-7/.fa/session.db` — an authority database
+  inside a *workspace clone*, not under the state root
+  (`/home/fa/.fa/sessions/`). Exactly **one** of the ~18 historical clones has
+  one.
+- **Why it matters:** S5 made the state-root session DB the single authority.
+  A second database inside a clone is either (a) legitimate clone-local state,
+  (b) a leftover from a pre-S5 layout, or (c) a run that wrote its authority to
+  the wrong root. Only (c) is a defect, but all three look identical from a
+  file listing.
+- **Why only one clone:** that is the discriminating question. If it were the
+  normal layout, all 18 would have one; if it were pre-S5 residue, the *oldest*
+  clones would have one and this is dated 2026-07-28, mid-range.
+- **First concrete step:** open it read-only and read `session_meta` +
+  `SELECT DISTINCT run_id FROM event_log`. A run_id matching a known S11 or
+  earlier run identifies which run wrote it and when.
+- **Repro:** `docker compose exec -T first-agent find /sessions -name session.db`
+<<<<<<< ours
+>>>>>>> theirs
+=======
+- **UPDATE 2026-08-04 (live S11.8a):** the file is **69,632 bytes**, not a stub.
+  Something wrote a substantial event log into a workspace clone instead of the
+  state root. That removes the "harmless leftover" reading and makes option (c)
+  — a run whose authority went to the wrong root — the leading hypothesis.
+  Raise to **P2** and read `session_meta` + `SELECT DISTINCT run_id` first.
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+
+## I-51 — `request_shape` console output discards the provider's error
+
+- **Status:** open (found while diagnosing I-50 live, 2026-08-03). P2 —
+  observability; it is what made I-50 hard to diagnose.
+- **Symptom:** a 400/422 from the provider renders as
+
+  ```
+  ⏳ retry in 0s (unknown/0)
+  FAIL: request_shape (turns=1)
+  ```
+
+  `unknown/0` is a placeholder. The operator gets **no** indication of why the
+  provider rejected the request.
+- **Mechanism.** `coder_loop.py:1367-1379` builds the `api_retry` event with
+  `provider="unknown"` and `status=0` **hardcoded**, discarding both values from
+  the exception. The real detail is placed in a `reason` key —
+  `f"request_shape_error: {exc}"` — but `ConsoleRenderer._handle_api_retry`
+  (`output.py:347-352`) renders only `retry_after_s`, `provider` and `status`.
+  **`reason` is never printed.**
+- **Contrast:** `fa probe` prints the same exception directly
+  (`cli.py:2978`) and shows the full body:
+  `status=400 body={'message': 'top_p must be 1 ...', 'code': '3054'}`.
+  Two paths, the same error class, radically different diagnosability.
+- **The data is not lost** — `coder_loop.py:1363` writes
+  `{"reason": "request_shape", "detail": str(exc)}` to `events.jsonl`, so the
+  cause is recoverable post-hoc. Only the live console is blind.
+- **Fix (small, two sites):**
+  1. carry the real provider/status on the event instead of the placeholders —
+     `ProviderRequestShapeError` already has `.status`;
+  2. render `reason` in `_handle_api_retry` when present.
+  Add a C1 test asserting the rendered line contains the provider's message,
+  and a kill-check that reverting either half loses it.
+- **Repro:** any workflow stage that 400s; compare console output against
+  `jq -r 'select(.kind=="run_stopped")|.content.detail' events.jsonl`.
 
 ## I-12 — Authoring rules: scope coverage gap (`scripts/`, `verifiers/`)
 
@@ -2592,3 +2665,27 @@ with a comment pointing here.
 - [`research/bootstrap-cost-baseline-2026-05.md`](./research/bootstrap-cost-baseline-2026-05.md)
   §9 re-measurement triggers items 5 and 6 reference I-7 and
   I-8 here.
+
+## Method note — a slice-and-splice edit silently deleted a BACKLOG item (2026-08-04)
+
+**I-51 vanished from this file for six commits and nobody noticed.**
+
+Sequence: `0d12ec3` added I-51 correctly (35 lines). `eb99724` then rewrote I-50
+using a start/end splice — `s[:s.index('## I-50')] + new + s[s.index('## I-12'):]`
+— which is correct only if nothing sits between the two anchors. I-51 did. It
+was deleted with no diff conflict, no test failure, and no gate complaint,
+because BACKLOG is prose and nothing validates its contents.
+
+It surfaced only when a claim in the S13 session-start prompt ("I-46 through
+I-53") was verified item by item against the file.
+
+**Two transferable points:**
+
+1. **Anchor-to-anchor splices are unsafe on append-ordered documents.** Replace
+   a section by locating *its own* end (the next `^## ` heading), never by
+   assuming the next known heading is adjacent.
+2. **The prompt-verification pass paid for itself immediately.** Every other
+   claim checked out — line numbers, file paths, CT/K ranges, the 553-line
+   count. The one that did not was a silent data loss in the project's own
+   findings ledger, and it was found by checking a claim rather than by reading
+   the file.

@@ -45,6 +45,14 @@ for d in sorted((p for p in root.iterdir() if p.is_dir() and p.name.startswith("
 print(owner or fallback)
 PYSID
 )
+<<<<<<< ours
+
+# --- DEPLOY_SHA: R25. The sheet's 10a prints "(expected $DEPLOY_SHA)" and it
+# came out EMPTY in a fresh terminal, because only S11.0 ever set it. Recover
+# it from the evidence dir, which is the durable record, not shell memory.
+export DEPLOY_SHA=$(cat "$EVID/00-deploy-sha.txt" 2>/dev/null | tr -d '\r\n')
+=======
+>>>>>>> theirs
 
 # --- DEPLOY_SHA: R25. The sheet's 10a prints "(expected $DEPLOY_SHA)" and it
 # came out EMPTY in a fresh terminal, because only S11.0 ever set it. Recover

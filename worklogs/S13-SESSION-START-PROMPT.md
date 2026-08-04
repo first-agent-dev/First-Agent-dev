@@ -68,7 +68,7 @@ resets. Restore with `git checkout -- scripts/ src/fa/hygiene/hooks/`.
 1. `worklogs/implementation-plans/PLAN-cli-trace-S13-multi-provider-conformance.md`
    — **553 lines, the slice you are executing.** Closed core S13.0–S13.4c,
    open exploration S13.5–S13.9, contracts CT1–CT8, kill-checks K1–K10,
-   open questions Q59–Q65.
+   open questions **Q61–Q65** (Q59/Q60 are already answered — see below).
 2. `worklogs/implementation-plans/PLAN-cli-trace-S11-controlled-deployment.md`
    — the live evidence S13 is built on. Read the execution notes at the end
    (R10–R26 and the step results); they are the empirical basis for the design.
