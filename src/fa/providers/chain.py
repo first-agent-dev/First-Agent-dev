@@ -46,6 +46,7 @@ from fa.providers.errors import (
     ProviderTransientError,
     ReservedProviderError,
 )
+from fa.providers.message_rules import MessageRulesError, validate_and_normalize
 from fa.providers.registry import PROVIDERS
 from fa.providers.types import ChainAttemptRecord
 from fa.roles import FamilyExtractionError, extract_family
@@ -358,6 +359,33 @@ class ProviderChain:
                 top_p=effective_top_p,
                 extras=entry_extras,
             )
+            # S13.4 / D2 conformance finalizer — the single unbypassable
+            # chokepoint before the wire. Validates the provider-visible message
+            # list against the entry's MessageRules and minimally normalises
+            # sampling (I-48 top_p). A violation fails locally (CT5) BEFORE any
+            # HTTP round-trip.
+            rules = PROVIDERS[entry.provider].rules
+            try:
+                entry_request = validate_and_normalize(
+                    entry_request,
+                    rules,
+                    effective_temperature=effective_temperature,
+                    effective_top_p=effective_top_p,
+                )
+            except MessageRulesError as exc:
+                elapsed_ms = int((self._clock() - start) * 1000)
+                attempts.append(
+                    ChainAttemptRecord(
+                        provider=entry.provider,
+                        slug=entry.model,
+                        status=exc.status,
+                        ms=elapsed_ms,
+                        error="request_shape",
+                    )
+                )
+                exc.logical_call_id = logical_call_id
+                exc.provider = entry.provider  # I-51 / S13.4a
+                raise
             try:
                 with debug_body_context(
                     logical_call_id=logical_call_id,
@@ -387,6 +415,7 @@ class ProviderChain:
                 # Stamp the call-scoped UUID so the Tier-2 row carries
                 # the correlation id per ADR-9 §4.
                 exc.logical_call_id = logical_call_id
+                exc.provider = entry.provider  # I-51 / S13.4a
                 raise
             except ProviderAuthError as exc:
                 elapsed_ms = int((self._clock() - start) * 1000)

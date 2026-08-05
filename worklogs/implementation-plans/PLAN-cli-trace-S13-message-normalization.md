@@ -136,8 +136,8 @@ caller changes; no role, session or CLI code is touched.
 ```python
 @dataclass(frozen=True)
 class MessageRules:
-    allows_trailing_assistant: bool = True   # OpenAI-style prefill tolerated
-    allows_user_after_tool: bool = True      # Mistral rejects this too (3230)
+    allows_trailing_assistant: bool = True  # OpenAI-style prefill tolerated
+    allows_user_after_tool: bool = True  # Mistral rejects this too (3230)
     requires_tool_result_pairing: bool = True
 ```
 

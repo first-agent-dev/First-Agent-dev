@@ -16,6 +16,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from fa.providers.message_rules import MessageRulesError
+
 
 @dataclass
 class PromptParts:
@@ -120,9 +122,38 @@ def build_prompt_parts_v2(
         )
     if memory_summary:
         non_cacheable.append({"role": "system", "content": f"Memory summary:\n{memory_summary}"})
-    if task:
-        non_cacheable.append({"role": "user", "content": f"Task: {task}"})
-    non_cacheable.extend(observations)
+
+    # I-50 (S13.3): terminal-role-conditional task placement.
+    #
+    # A resumed stage inherits the prior stage's history. The final
+    # provider-visible message must be `user` or `tool` (Mistral/Anthropic reject
+    # a trailing `assistant` for a non-prefix completion, 400/3230). A blanket
+    # "task after observations" would instead place a `user` directly after a
+    # `tool` on turn 2+ within a stage (CONF-6). So we place the task last ONLY
+    # when the history ends on a plain-text `assistant`; otherwise it stays first
+    # (empty / tool-final / user-final requests remain valid).
+    #
+    # A trailing `assistant` that still carries `tool_calls` is a dangling tool
+    # (CT5/K4): it is not something to "repair" by reordering — the request would
+    # be sent with missing tool results. Fail locally rather than mask it.
+    last_obs = observations[-1] if observations else None
+    task_msg = {"role": "user", "content": f"Task: {task}"} if task else None
+    if last_obs is not None and last_obs.get("role") == "assistant":
+        if last_obs.get("tool_calls"):
+            raise MessageRulesError(
+                "dangling tool (CT5/K4): trailing assistant message carries unresolved "
+                "tool_calls and tool results are missing from history"
+            )
+        # assistant-final (plain) → task last so the final provider-visible role
+        # becomes `user` (fixes the I-50 resumed-stage 400).
+        non_cacheable.extend(observations)
+        if task_msg is not None:
+            non_cacheable.append(task_msg)
+    else:
+        # fresh / tool-final / user-final → task first (unchanged behaviour).
+        if task_msg is not None:
+            non_cacheable.append(task_msg)
+        non_cacheable.extend(observations)
 
     return PromptParts(cacheable=cacheable, non_cacheable=non_cacheable), cache_key
 

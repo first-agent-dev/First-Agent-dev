@@ -39,6 +39,8 @@ References:
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from typing import Literal
 
 # Families recognised by the regex extractor. The set is closed at the
 # training-distribution level per ADR-2 §Amendment 2026-05-20 rule 1
@@ -134,11 +136,14 @@ class FamilyExtractionError(ValueError):
 
 
 class EvalFamilyConflictError(ValueError):
-    """Raised when the eval-role family overlaps planner or coder family.
+    """DEPRECATED — retained for backward compatibility (S13.4c).
 
-    Message includes both colliding roles so the user knows which
-    override would fix the config (e.g. «eval=glm conflicts with
-    coder=glm — set eval to a non-glm model»).
+    Was raised when the eval-role family overlapped planner or coder
+    family. Since S13.4c the loader no longer raises this: same-family
+    eval loads with a warning and an adversarial stance instead. The
+    class is still exported and the four ``cli.py`` handlers still catch
+    it, so any external caller that relied on the raise keeps working;
+    it just no longer fires from the config loader.
     """
 
 
@@ -189,12 +194,12 @@ def check_eval_disjoint(
     coder_family: str,
     eval_family: str,
 ) -> None:
-    """Verify the eval-role family is disjoint from planner and coder.
+    """DEPRECATED — use :func:`assess_eval_independence` (S13.4c).
 
-    Per ADR-2 §Amendment 2026-05-20 rule 1: same-family eval replicates
-    the acting-role's training-distribution bias (Cornell P-1 / Simula
-    P-2 - see ADR-2 amendment text for the ensemble-error correlation
-    figures: ~+0.6 same-family vs ~-0.05 cross-family).
+    Retained as a thin wrapper that raises :class:`EvalFamilyConflictError`
+    when families overlap, for callers that predate S13.4c. The config loader
+    now calls :func:`assess_eval_independence`, which does NOT raise: a
+    same-family eval loads with a warning and an adversarial eval stance.
 
     Args:
         planner_family: Planner-role family (already extracted).
@@ -203,32 +208,100 @@ def check_eval_disjoint(
 
     Raises:
         EvalFamilyConflictError: When ``eval_family`` matches either
-            ``planner_family`` or ``coder_family``. Note: planner and
-            coder MAY share a family (ADR-2 §Decision routing table
-            allows a single «coder-tier» model to back both roles);
-            only the eval-vs-actor disjointness is enforced here.
+            ``planner_family`` or ``coder_family``.
+    """
+    indep = assess_eval_independence(
+        planner_family=planner_family,
+        coder_family=coder_family,
+        eval_family=eval_family,
+    )
+    if not indep.disjoint:
+        raise EvalFamilyConflictError(indep.reason)
+
+
+@dataclass(frozen=True)
+class EvalIndependence:
+    """Result of the ADR-2 §Amendment 2026-05-20 rule-1 independence check.
+
+    ``disjoint`` is True when the eval-role family differs from both
+    planner and coder families. ``reason`` explains the outcome (the
+    correlated-error risk when not disjoint). ``stance`` is the eval
+    posture the workflow should adopt: ``"neutral"`` for a disjoint eval
+    (today's behaviour), ``"adversarial"`` for a same-family eval, where
+    correlated priors are countered by actively seeking disconfirming
+    evidence (S13.4c).
+    """
+
+    disjoint: bool
+    reason: str
+    stance: Literal["neutral", "adversarial"]
+
+
+def assess_eval_independence(
+    *,
+    planner_family: str,
+    coder_family: str,
+    eval_family: str,
+) -> EvalIndependence:
+    """Assess whether the eval-role family is disjoint from planner and coder.
+
+    Per ADR-2 §Amendment 2026-05-20 rule 1: same-family eval replicates
+    the acting-role's training-distribution bias (Cornell P-1 / Simula
+    P-2 - see the ADR-2 amendment text for the ensemble-error
+    correlation figures: ~+0.6 same-family vs ~-0.05 cross-family).
+
+    Unlike the deprecated :func:`check_eval_disjoint`, this does NOT raise:
+    a same-family eval is no longer a config error. It is a *recorded risk*
+    plus an *adversarial eval stance* (S13.4c). The loader surfaces the risk
+    as a warning and the workflow adopts the returned stance.
+
+    Args:
+        planner_family: Planner-role family (already extracted).
+        coder_family: Coder-role family (already extracted).
+        eval_family: Eval-role family (already extracted).
+
+    Returns:
+        :class:`EvalIndependence` with ``disjoint``, ``reason`` and ``stance``.
     """
 
     if eval_family == planner_family:
-        raise EvalFamilyConflictError(
-            f"eval-role family {eval_family!r} conflicts with planner-role "
-            f"family {planner_family!r} — ADR-2 §Amendment 2026-05-20 "
-            "requires eval be from a disjoint training distribution; "
-            "override eval to a different family."
+        return EvalIndependence(
+            disjoint=False,
+            reason=(
+                f"eval-role family {eval_family!r} matches planner-role family "
+                f"{planner_family!r} — ADR-2 §Amendment 2026-05-20 rule 1 measures "
+                "~+0.6 correlated ensemble errors for same-family eval; the eval "
+                "role will load with an ADVERSARIAL stance to counter that."
+            ),
+            stance="adversarial",
         )
     if eval_family == coder_family:
-        raise EvalFamilyConflictError(
-            f"eval-role family {eval_family!r} conflicts with coder-role "
-            f"family {coder_family!r} — ADR-2 §Amendment 2026-05-20 "
-            "requires eval be from a disjoint training distribution; "
-            "override eval to a different family."
+        return EvalIndependence(
+            disjoint=False,
+            reason=(
+                f"eval-role family {eval_family!r} matches coder-role family "
+                f"{coder_family!r} — ADR-2 §Amendment 2026-05-20 rule 1 measures "
+                "~+0.6 correlated ensemble errors for same-family eval; the eval "
+                "role will load with an ADVERSARIAL stance to counter that."
+            ),
+            stance="adversarial",
         )
+    return EvalIndependence(
+        disjoint=True,
+        reason=(
+            f"eval-role family {eval_family!r} is disjoint from planner "
+            f"({planner_family!r}) and coder ({coder_family!r}) — neutral eval stance."
+        ),
+        stance="neutral",
+    )
 
 
 __all__ = [
     "KNOWN_FAMILIES",
     "EvalFamilyConflictError",
+    "EvalIndependence",
     "FamilyExtractionError",
+    "assess_eval_independence",
     "check_eval_disjoint",
     "extract_family",
 ]

@@ -22,7 +22,6 @@ from fa.providers.config import (
     load_models_config_from_path,
 )
 from fa.providers.errors import ConfigurationError
-from fa.roles import EvalFamilyConflictError
 
 
 def _env_with_keys(*key_names: str) -> dict[str, str]:
@@ -359,22 +358,53 @@ def _make_three_role_text(*, planner_family: str, coder_family: str, eval_family
     )
 
 
-def test_load_models_config_rejects_eval_family_matching_planner() -> None:
+def test_load_models_config_same_family_eval_loads_with_warning_and_adversarial() -> None:
+    """S13.4c — a same-family eval no longer raises; it loads, warns, and is adversarial.
+
+    K9: same-family config loads (no exit-2), emits exactly one warning naming
+    both roles, and carries an adversarial stance on ModelsConfig.eval_independence.
+    """
     text = _make_three_role_text(planner_family="kimi", coder_family="deepseek", eval_family="kimi")
-    with pytest.raises(EvalFamilyConflictError) as info:
-        load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
-    msg = str(info.value)
-    assert "planner" in msg
-    assert "kimi" in msg
+    config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    # loads (no exception)
+    assert config.roles["eval"] is not None
+    # exactly one warning naming both roles
+    assert len(config.warnings) == 1
+    warning = config.warnings[0]
+    assert "kimi" in warning  # both roles named
+    assert "planner" in warning
+    # adversarial stance carried
+    assert config.eval_independence is not None
+    assert config.eval_independence.disjoint is False
+    assert config.eval_independence.stance == "adversarial"
 
 
-def test_load_models_config_rejects_eval_family_matching_coder() -> None:
+def test_load_models_config_same_family_eval_warns_on_coder() -> None:
+    """S13.4c — same-family eval vs coder: loads, warns, adversarial stance."""
     text = _make_three_role_text(planner_family="kimi", coder_family="deepseek", eval_family="deepseek")
-    with pytest.raises(EvalFamilyConflictError) as info:
-        load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
-    msg = str(info.value)
-    assert "coder" in msg
-    assert "deepseek" in msg
+    config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    assert len(config.warnings) == 1
+    warning = config.warnings[0]
+    assert "deepseek" in warning
+    assert "coder" in warning
+    assert config.eval_independence is not None
+    assert config.eval_independence.stance == "adversarial"
+
+
+def test_load_models_config_disjoint_eval_warns_zero_and_neutral() -> None:
+    """S13.4c K10 — a disjoint eval emits zero eval-disjoint warnings and is neutral.
+
+    Proves the same-family K9 warning is not vacuous: a disjoint three-role
+    config produces no warning from the independence check and a neutral stance.
+    """
+    text = _make_three_role_text(planner_family="kimi", coder_family="deepseek", eval_family="qwen")
+    config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    assert config.eval_independence is not None
+    assert config.eval_independence.disjoint is True
+    assert config.eval_independence.stance == "neutral"
+    # zero eval-disjoint warnings (the partial-config warnings do not apply
+    # because all three roles are declared)
+    assert not any("eval-role family" in w for w in config.warnings), config.warnings
 
 
 def test_load_models_config_normalises_family_case_for_disjoint_check() -> None:
@@ -415,15 +445,17 @@ def test_load_models_config_normalises_family_case_for_disjoint_check() -> None:
               api_key_env: OPENROUTER_API_KEY
         """
     )
-    with pytest.raises(EvalFamilyConflictError) as info:
-        load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
-    msg = str(info.value)
-    assert "planner" in msg
-    # The error must surface the conflict even though the raw YAML
-    # families differ in case. The normalised value (lowercase)
-    # appears in the error message because the loader passes the
-    # lowercased forms to ``check_eval_disjoint``.
-    assert "deepseek" in msg
+    config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    # The mixed-case pair MUST still be detected as same-family: disjoint=False,
+    # adversarial stance. The `.strip().lower()` normalisation is what prevents a
+    # casing typo from silently defeating the *detection* (the outcome is now a
+    # warning, not a raise, but detection must not regress — S13.4c).
+    assert config.eval_independence is not None
+    assert config.eval_independence.disjoint is False
+    assert config.eval_independence.stance == "adversarial"
+    assert len(config.warnings) == 1
+    assert "planner" in config.warnings[0]
+    assert "deepseek" in config.warnings[0]
 
 
 def test_load_models_config_normalises_whitespace_for_disjoint_check() -> None:
@@ -460,8 +492,12 @@ def test_load_models_config_normalises_whitespace_for_disjoint_check() -> None:
               api_key_env: OPENROUTER_API_KEY
         """
     )
-    with pytest.raises(EvalFamilyConflictError):
-        load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    config = load_models_config(text, env=_env_with_keys("OPENROUTER_API_KEY"))
+    # Whitespace padding must not defeat same-family detection either: the
+    # strip() half of .strip().lower() is pinned here (S13.4c).
+    assert config.eval_independence is not None
+    assert config.eval_independence.disjoint is False
+    assert config.eval_independence.stance == "adversarial"
 
 
 def test_load_models_config_allows_planner_and_coder_same_family() -> None:

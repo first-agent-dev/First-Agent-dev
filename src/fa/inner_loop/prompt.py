@@ -892,6 +892,25 @@ A poor evaluation re-runs tests, narrates vague quality opinions, or
 sends ordinary code defects back to the planner.
 """
 
+# S13.4c: adversarial eval stance preamble.
+# A same-family eval shares the acting-role's training-distribution bias
+# (ADR-2 §Amendment 2026-05-20 rule 1, ~+0.6 correlated ensemble errors).
+# Instead of refusing to load (the old blocking behaviour), the eval role
+# adopts this stance: actively seek disconfirming evidence rather than
+# ratify. It is appended to the eval system prompt (via system_prompt_extra)
+# ONLY when the eval family is not disjoint from planner/coder.
+ADVERSARIAL_EVAL_STANCE_PREAMBLE = (
+    "## Adversarial evaluation stance (S13.4c)\n"
+    "The eval-role model family overlaps the planner/coder family, so your "
+    "priors are correlated with the work under review (ADR-2 measures ~+0.6 "
+    "correlated ensemble errors for same-family eval). Compensate by actively "
+    "seeking DISCONFIRMING evidence: attempt to break the coder's claims, "
+    "try the verification steps yourself, and give weight to failures you "
+    "would otherwise rationalise away. A PASS requires the evidence to survive "
+    "this adversarial scrutiny; a border-line result should not be waived."
+)
+
+
 _ROLE_PROMPTS: dict[str, str] = {
     "planner": PLANNER_SYSTEM_PROMPT,
     "coder": CODER_SYSTEM_PROMPT,
@@ -985,6 +1004,7 @@ def build_system_message_from_role(
 
 
 __all__ = [
+    "ADVERSARIAL_EVAL_STANCE_PREAMBLE",
     "CODER_SYSTEM_PROMPT",
     "EVAL_SYSTEM_PROMPT",
     "PLANNER_SYSTEM_PROMPT",

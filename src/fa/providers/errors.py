@@ -94,6 +94,12 @@ class ProviderRequestShapeError(Exception):
     chain's call-scoped UUID just before re-raising so the Tier-2
     ``llm_chain_exhausted`` row with ``terminal: "request_shape"``
     carries the correlation id per ADR-9 §4.
+
+    ``provider`` is stamped by :class:`fa.providers.chain.ProviderChain`
+    (which knows the chain entry in scope) so the coder-loop can render the
+    real provider instead of a placeholder (I-51 / S13.4a). It is None at
+    construction time because the adapter does not know the chain-level
+    provider name.
     """
 
     def __init__(
@@ -102,10 +108,12 @@ class ProviderRequestShapeError(Exception):
         *,
         status: int = 400,
         logical_call_id: str = "",
+        provider: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.logical_call_id = logical_call_id
+        self.provider = provider
 
 
 class ProviderChainExhaustedError(Exception):

@@ -34,7 +34,7 @@ from fa.providers.errors import (
     ProviderTransientError,
     ReservedProviderError,
 )
-from fa.roles import EvalFamilyConflictError, check_eval_disjoint
+from fa.roles import assess_eval_independence
 
 
 @dataclass
@@ -1051,12 +1051,15 @@ def test_invariant_adr2_eval_disjoint_uncircumventable_by_family_case() -> None:
     """
     planner = chain_from_mapping("planner", {"family": "DeepSeek"})
     eval_role = chain_from_mapping("eval", {"family": "deepseek"})
-    with pytest.raises(EvalFamilyConflictError):
-        check_eval_disjoint(
-            planner_family=planner.family,
-            coder_family=planner.family,
-            eval_family=eval_role.family,
-        )
+    indep = assess_eval_independence(
+        planner_family=planner.family,
+        coder_family=planner.family,
+        eval_family=eval_role.family,
+    )
+    # S13.4c: detection must not regress even though the outcome is now a
+    # recorded risk + adversarial stance instead of a raise.
+    assert indep.disjoint is False
+    assert indep.stance == "adversarial"
 
 
 # ----- ADR-9 §Amendment 2026-07-23: hard-cutover rejection of old field names ---

@@ -60,6 +60,7 @@ from fa.inner_loop.hooks import (
     VerifierObserver,
 )
 from fa.inner_loop.pr_draft import PrDraftStore
+from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
 from fa.inner_loop.registry import ToolRegistry
 from fa.inner_loop.runtime_limits import RuntimeLimits
@@ -725,6 +726,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     probe_parser.set_defaults(func=_cmd_probe)
 
+    conformance_parser = subparsers.add_parser(
+        "conformance",
+        help=COMMANDS["conformance"]["summary_en"],
+        description=(
+            "Run the provider conformance matrix (CONF-1..7) and print a "
+            "capability matrix. By default it runs OFFLINE (no API key): it drives "
+            "FA's own composer + validator and records whether FA emits "
+            "provider-valid request shapes, plus per-component composition sizes "
+            "(CONF-7). Pass `--provider <name>` for a live run against a real "
+            "provider (requires the provider's API key to be configured)."
+        ),
+        epilog=render_command_help_ru("conformance"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    conformance_parser.add_argument(
+        "--provider",
+        default=None,
+        help=COMMANDS["conformance"]["args"]["--provider"]["en"],
+    )
+    conformance_parser.add_argument(
+        "--config",
+        "-c",
+        type=Path,
+        default=DEFAULT_MODELS_YAML_PATH,
+        help="Path to models.yaml (default ~/.fa/models.yaml).",
+    )
+    conformance_parser.add_argument(
+        "--json",
+        action="store_true",
+        help=COMMANDS["conformance"]["args"]["--json"]["en"],
+    )
+    conformance_parser.set_defaults(func=_cmd_conformance)
+
     stats_parser = subparsers.add_parser(
         "stats",
         help=COMMANDS["stats"]["summary_en"],
@@ -1142,12 +1176,17 @@ def _emit_eval_report(
     run_id: str,
     plan_id: str,
     plan_version: int,
+    eval_independence: Mapping[str, object] | None = None,
 ) -> EvalReport:
     """Parse the eval role's final message and persist ``eval_report.json``.
 
     The narrative draft (``pr_draft.md``) stays human-readable; this JSON is
     the controller's machine-readable source of truth for the eval verdict and
     route decision.
+
+    ``eval_independence`` (S13.4c) records which stance produced the verdict so a
+    same-family adversarial ``DONE`` is distinguishable from a disjoint neutral
+    ``DONE`` in ``eval_report.json``.
     """
     report = parse_eval_report(
         final_text,
@@ -1155,6 +1194,7 @@ def _emit_eval_report(
         plan_id=plan_id,
         evaluation_id=f"{run_id}-eval",
         plan_version=plan_version,
+        eval_independence=eval_independence,
     )
     write_eval_report(report_path, report)
     return report
@@ -1205,6 +1245,34 @@ def _status_for_role(role: str) -> FlowStatus:
     if role == "eval":
         return "EVALUATING"
     return "CODING"
+
+
+def _eval_system_prompt_extra(role: str, models: ModelsConfig) -> str:
+    """Return the eval system-prompt extra for a role based on independence.
+
+    S13.4c stance threading: when the role is ``eval`` and the loaded config
+    reports a non-disjoint (same-family) eval, return the adversarial preamble
+    so ``drive_session`` composes an adversarial eval stance. Every other role
+    (and a disjoint eval) returns ``""``. The stance is derived from the config
+    object, never from a flag smuggled through the CLI.
+    """
+    if role != "eval" or models.eval_independence is None:
+        return ""
+    if models.eval_independence.stance != "adversarial":
+        return ""
+    return ADVERSARIAL_EVAL_STANCE_PREAMBLE
+
+
+def _eval_independence_mapping(models: ModelsConfig) -> Mapping[str, object] | None:
+    """Project the config's ``EvalIndependence`` to a serialisable mapping (S13.4c).
+
+    Returns ``None`` for a partial config (assessment undefined) so
+    ``eval_report.json`` simply omits the field for non-three-role configs.
+    """
+    indep = models.eval_independence
+    if indep is None:
+        return None
+    return {"disjoint": indep.disjoint, "stance": indep.stance}
 
 
 def _run_stage(
@@ -1272,12 +1340,18 @@ def _run_stage(
     )
     report: EvalReport | None = None
     if role == "eval" and code == 0 and sink:
+        # S13.4c: record which independence stance produced this verdict so a
+        # same-family adversarial DONE is auditable against a disjoint neutral
+        # DONE. Loaded from the same config the stage used; a partial config
+        # yields None and the field is omitted.
+        _eval_models = load_models_config_from_path(ctx.args.config.expanduser().resolve(), require_api_keys=False)
         report = _emit_eval_report(
             report_path=ctx.artifact_paths.eval_report,
             final_text=sink[-1].final_text,
             run_id=ctx.run_id,
             plan_id=ctx.run_id,
             plan_version=progress.plan_version,
+            eval_independence=_eval_independence_mapping(_eval_models),
         )
         print(
             f"fa workflow: eval verdict={report.verdict} "
@@ -2547,7 +2621,7 @@ def _cmd_run(
             acting_family=chain_config.family,
             limits=limits,
             max_turns=args.max_turns,
-            system_prompt_extra="",
+            system_prompt_extra=_eval_system_prompt_extra(role, models),
             initial_memory_summary=resume_draft_text,
             temperature=session_temperature,
             redactor=redactor,
@@ -2857,6 +2931,107 @@ def _cmd_selfcheck(args: argparse.Namespace) -> int:
 
     print("fa selfcheck: OK")
     print(f"- checked role routes: {len(expected_routes)}")
+    return 0
+
+
+def _cmd_conformance(
+    args: argparse.Namespace,
+    *,
+    transport: Transport | None = None,
+    secrets: Mapping[str, str] | None = None,
+) -> int:
+    """Run the provider conformance matrix (S13.5) and print a capability matrix.
+
+    Offline by default: drives FA's real composer + production validator over the
+    CONF-1..7 scenarios and records whether FA emits provider-valid request shapes,
+    plus per-component composition sizes (CONF-7).
+
+    With ``--provider <name>``, runs the LIVE matrix (S13.6): composes each CONF
+    case to a real request and drives it through the provider chain (needs the
+    provider's API key). 429s are paced/backed-off by the live runner and prior
+    rows are preserved across a resume. ``--json`` emits the matrix as JSON.
+    """
+    import json as _json
+
+    provider = getattr(args, "provider", None)
+    if provider:
+        return _run_live_conformance(args, provider, transport=transport, secrets=secrets)
+
+    from fa.providers.conformance import matrix_to_text, run_conformance_matrix
+
+    rows = run_conformance_matrix()
+    if getattr(args, "json", False):
+        print(_json.dumps(rows, ensure_ascii=False, indent=2))
+    else:
+        print(matrix_to_text(rows))
+    return 0
+
+
+def _run_live_conformance(
+    args: argparse.Namespace,
+    provider: str,
+    *,
+    transport: Transport | None,
+    secrets: Mapping[str, str] | None,
+) -> int:
+    """Run the live conformance matrix against ``provider`` (S13.6)."""
+    from fa.providers.conformance import default_cases, make_live_executor
+    from fa.providers.live_runner import RunnerConfig, run_matrix
+
+    config_path = args.config.expanduser().resolve()
+    proxy_url = _resolve_proxy_url()
+    proxy_mode = bool(proxy_url)
+    effective_secrets: Mapping[str, str] = (
+        secrets if secrets is not None else (SecretStore({}) if proxy_mode else _load_secret_store())
+    )
+    try:
+        models = load_models_config_from_path(config_path, env=effective_secrets, require_api_keys=not proxy_mode)
+    except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
+        print(f"fa conformance: configuration error: {exc}", file=sys.stderr)
+        return 2
+
+    chain_config = models.roles.get("coder")
+    if chain_config is None:
+        print(
+            f"fa conformance: role 'coder' not found in {config_path}; known: {sorted(models.roles)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    effective_transport: Transport = transport if transport is not None else UrllibTransport()
+    chain = _build_provider_chain(chain_config, transport=effective_transport, secrets=effective_secrets)
+
+    base_dir = fa_session_log_root() / "conformance"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    config = RunnerConfig(provider=provider, rpm_limit=20, base_dir=base_dir)
+    execute = make_live_executor(chain)
+
+    result = run_matrix(default_cases(), config=config, execute=execute)
+    if getattr(args, "json", False):
+        import json as _json
+
+        print(
+            _json.dumps(
+                {
+                    "run_id": result.run_id,
+                    "provider": provider,
+                    "rows": result.rows,
+                    "resumed": result.resumed,
+                    "rate_limited": result.rate_limited,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        print(f"fa conformance: live run {result.run_id} (provider={provider})")
+        for row in result.rows:
+            status = "OK" if row.get("ok") else "FAIL"
+            print(f"  CONF-{row['case']}: {status} model={row.get('model', '?')}")
+        if result.rate_limited:
+            print("fa conformance: stopped early on a rate limit (429); rows preserved for resume.")
+        if result.resumed:
+            print(f"fa conformance: resumed prior run {result.run_id}.")
     return 0
 
 

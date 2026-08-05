@@ -216,6 +216,25 @@ COMMANDS: dict[str, CommandHelp] = {
         },
         "examples": ["fa probe", "fa probe --all-roles", "fa probe -r planner --timeout 60"],
     },
+    "conformance": {
+        "summary_ru": "Матрица совместимости провайдеров (CONF-1..7); offline-прогон по умолчанию.",
+        "summary_en": "Provider conformance matrix (CONF-1..7); offline run by default.",
+        "args": {
+            "--provider": {
+                "ru": "Провайдер для live-прогона (требует ключ API; иначе offline).",
+                "en": "Provider for a live run (requires an API key; default is offline).",
+            },
+            "--config/-c": {
+                "ru": "Путь к models.yaml (по умолчанию ~/.fa/models.yaml).",
+                "en": "Path to models.yaml (default ~/.fa/models.yaml).",
+            },
+            "--json": {
+                "ru": "Вывести матрицу как JSON.",
+                "en": "Emit the matrix as JSON.",
+            },
+        },
+        "examples": ["fa conformance", "fa conformance --json", "fa conformance --provider mistral"],
+    },
     "stats": {
         "summary_ru": "Аналитика сессий: использование инструментов, файлы, токены, эффективность.",
         "summary_en": "Session analytics: tool usage, file access, tokens, efficiency.",

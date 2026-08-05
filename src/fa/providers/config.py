@@ -61,10 +61,12 @@ Errors raised at load time (fail-fast, never lazy):
   invalid ``base_url`` scheme, missing ``api_key_env`` env var,
   etc. (see :meth:`fa.providers.chain.ChainConfig.validate` for
   the full taxonomy).
-- :class:`fa.roles.EvalFamilyConflictError` — eval-role family
-  matches planner or coder family (ADR-2 §Amendment 2026-05-20
-  rule 1; same-family ensembles correlate at ~+0.6 per the
-  Cornell P-1 / Simula P-2 study cited there).
+- S13.4c — a same-family eval is no longer an error: the loader emits
+  a warning naming both roles and the ADR-2 §Amendment 2026-05-20
+  rule-1 correlation figures (~+0.6 same-family), and the eval role
+  runs with an adversarial stance. Family *validation* (unknown /
+  malformed family still raises ``FamilyExtractionError``) is
+  unchanged; only *disjointness* relaxed.
 
 References:
 
@@ -91,7 +93,7 @@ import yaml
 
 from fa.providers.chain import ChainConfig, chain_from_mapping
 from fa.providers.errors import ConfigurationError
-from fa.roles import check_eval_disjoint
+from fa.roles import EvalIndependence, assess_eval_independence
 
 DEFAULT_MODELS_YAML_PATH: Path = Path.home() / ".fa" / "models.yaml"
 
@@ -175,6 +177,11 @@ class ModelsConfig:
 
     roles: Mapping[str, ChainConfig]
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    # S13.4c: the ADR-2 independence assessment for a full three-role config.
+    # ``None`` when planner/coder/eval are not all declared (the assessment is
+    # undefined for a partial config). The eval role's stance is derived from
+    # this so the workflow can adopt an adversarial posture when not disjoint.
+    eval_independence: EvalIndependence | None = None
 
 
 def load_models_config(
@@ -210,10 +217,15 @@ def load_models_config(
             missing from ``env``, or when any other config-load
             invariant from :meth:`ChainConfig.validate` is
             violated.
-        EvalFamilyConflictError: When ``planner``, ``coder``, and
-            ``eval`` are all declared and the eval-role family
-            matches planner or coder family (ADR-2 §Amendment
-            2026-05-20 rule 1).
+
+    S13.4c — same-family eval no longer raises:
+        When ``planner``, ``coder``, and ``eval`` are all declared and
+        the eval-role family matches planner or coder family (ADR-2
+        §Amendment 2026-05-20 rule 1), the config **loads** (no
+        exception), emits exactly one warning naming both roles and the
+        correlation figures, and ``ModelsConfig.eval_independence``
+        carries the result with an adversarial stance. Only family
+        *validation* (unknown/malformed) still raises.
 
     Partial-config gap (PR-#13 follow-up «F1»):
         When ``eval`` is declared alongside *exactly one* actor
@@ -313,12 +325,15 @@ def load_models_config(
     # if a future refactor of ``chain_from_mapping`` drops the
     # producer-side normalisation, the safety-critical check at
     # this call site still holds.
+    eval_independence: EvalIndependence | None = None
     if _FAMILY_DISJOINT_ROLES.issubset(roles.keys()):
-        check_eval_disjoint(
+        eval_independence = assess_eval_independence(
             planner_family=roles["planner"].family.strip().lower(),
             coder_family=roles["coder"].family.strip().lower(),
             eval_family=roles["eval"].family.strip().lower(),
         )
+        if not eval_independence.disjoint:
+            warnings.append(eval_independence.reason)
 
     # Partial-config gap surface (PR-#13 follow-up «F1»). The hard
     # gate above fires only when all three roles are declared; the
@@ -331,7 +346,11 @@ def load_models_config(
     if partial_warning is not None:
         warnings.append(partial_warning)
 
-    return ModelsConfig(roles=roles, warnings=tuple(warnings))
+    return ModelsConfig(
+        roles=roles,
+        warnings=tuple(warnings),
+        eval_independence=eval_independence,
+    )
 
 
 def load_models_config_from_path(

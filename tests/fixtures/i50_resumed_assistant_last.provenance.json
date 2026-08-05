@@ -1,0 +1,19 @@
+{
+  "source": "llm_bodies.json entry[6] from live s11-wf-diag",
+  "run_id": "s11-wf-diag",
+  "session_id": "session-0e145f4970314d92bcc9e1aacf63dbf7",
+  "provider": "mistral",
+  "slug": "mistral-small-2603",
+  "description": "The coder-stage request whose response_body is code=3230. Reproduces I-50: a resumed stage sends an assistant message last.",
+  "response_error": {
+    "code": "3230",
+    "message": "Expected last role User or Tool (or Assistant with prefix True) for serving but got assistant",
+    "object": "error",
+    "param": null,
+    "raw_status_code": 400,
+    "type": "invalid_request_message_order"
+  },
+  "extraction": "content truncated to first/last 60 chars; tool_calls ids and tool_call_id kept verbatim; role order preserved.",
+  "slice": "S13.0",
+  "plan": "worklogs/implementation-plans/PLAN-cli-trace-S13-multi-provider-conformance.md"
+}

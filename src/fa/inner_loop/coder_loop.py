@@ -202,6 +202,21 @@ def _assert_tool_pairing_invariant(messages: Sequence[Mapping[str, Any]]) -> Non
         )
 
 
+def _assert_final_role_invariant(messages: Sequence[Mapping[str, Any]]) -> None:
+    """Assert the final provider-visible message is a serving-valid role.
+
+    I-50 (S13.3) production hardening: Mistral/Anthropic reject a trailing
+    ``assistant`` for a non-prefix completion (400/3230). This dev-time assertion
+    makes the loop fail fast if the emitter ever regresses, regardless of which
+    transport or provider is in use.
+    """
+    if not messages:
+        return
+    last_role = messages[-1].get("role")
+    if last_role not in ("user", "tool"):
+        raise AssertionError(f"final provider-visible role must be user or tool for serving, got {last_role!r}")
+
+
 def _fallback_projection_handler(_params: Mapping[str, object]) -> ToolResult:
     return ToolResult.ok("projection fallback")
 
@@ -462,7 +477,15 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             memory_summary = _merge_memory_summary_context(initial_memory_summary, rebuilt_summary)
             relevant_events = events[latest_comp_idx + 1 :] if latest_comp_idx != -1 else events
             for ev in relevant_events:
-                if ev.kind == "model_msg":
+                if ev.kind == "user_msg":
+                    # I-52: replay the prior instruction so a resumed stage sees
+                    # the user turn its inherited assistant/tool turns were
+                    # answering. `user_msg` rows appear chronologically before the
+                    # `model_msg` they provoked, so log-order replay cannot create
+                    # a user-after-tool transition.
+                    text = ev.content.get("text")
+                    conversation_history.append({"role": "user", "content": str(text or "")})
+                elif ev.kind == "model_msg":
                     text = ev.content.get("text")
                     calls = ev.content.get("tool_calls")
                     assistant_msg: dict[str, Any] = {
@@ -582,6 +605,46 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
         return outcome
 
+    def _request_shape_failure(exc: ProviderRequestShapeError) -> SessionOutcome:
+        """Log + emit + finish a request-shape failure (CT5 / I-50 / I-51).
+
+        Shared by both the composition-time path (a dangling-tool or invalid
+        message order raised locally before HTTP) and the provider-returned
+        400/422 path, so an operator sees the same graceful `request_shape`
+        exit-2 and the real provider/reason either way. Previously a
+        composition-time failure (e.g. dangling tool_calls on resume) escaped as
+        an uncaught ValueError traceback because it happened outside the
+        provider-request try block.
+        """
+        log.append(
+            actor="runtime",
+            kind="run_stopped",
+            content={"reason": "request_shape", "detail": str(exc)},
+        )
+        if output is not None:
+            output.emit(
+                OutputEvent(
+                    type="api_retry",
+                    turn=turn,
+                    max_turns=max_turns,
+                    data={
+                        "provider": getattr(exc, "provider", None) or "unknown",
+                        "status": exc.status,
+                        "retry_after_s": 0,
+                        "reason": f"request_shape_error: {exc}",
+                    },
+                )
+            )
+        return finish(
+            SessionOutcome(
+                exit_code=2,
+                stop_reason="request_shape",
+                turns=turn,
+                final_text="",
+                tool_results=tuple(collected_results),
+            )
+        )
+
     while turn < max_turns:
         turn += 1
         # ── Output: turn_start ─────────────────────────────────────────────
@@ -627,7 +690,21 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 )
             )
         if __debug__:
-            _assert_tool_pairing_invariant(conversation_history)
+            try:
+                _assert_tool_pairing_invariant(conversation_history)
+            except AssertionError:
+                # A malformed *data* state (e.g. an interrupted prior stage whose
+                # tool_call has no persisted tool_result) is a request-shape error,
+                # not a code bug: fail gracefully as `request_shape` instead of
+                # letting a dev-only assertion crash the CLI with a traceback. The
+                # chain conformance (S13.4) is the authoritative pairing gate; this
+                # catch keeps the dev assertion loud but non-fatal on bad data.
+                return _request_shape_failure(
+                    ProviderRequestShapeError(
+                        "history pairing invariant violated: orphaned/duplicate tool calls in conversation history",
+                        status=400,
+                    )
+                )
 
         # ── PinnedBuffer Every Turn (Phase 2 / PR 2) ────────────────────────
         try:
@@ -665,16 +742,29 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             )
             if provider_chain.config.family == "anthropic":
                 request_body = to_anthropic_request_v2(parts, cache_key)
-                return request_body, list(request_body["messages"]), {}
+                messages_payload = list(request_body["messages"])
+                if __debug__:
+                    _assert_final_role_invariant(messages_payload)
+                return request_body, messages_payload, {}
             request_body = to_openai_request_v2(parts, cache_key)
             extra_body = request_body.get("extra_body", {})
             request_extras = dict(extra_body) if isinstance(extra_body, Mapping) else {}
-            return request_body, list(request_body["messages"]), request_extras
+            messages_payload = list(request_body["messages"])
+            if __debug__:
+                _assert_final_role_invariant(messages_payload)
+            return request_body, messages_payload, request_extras
 
-        _request_body, messages_payload, request_extras = _compose_request_payload(
-            active_summary=memory_summary,
-            observations=conversation_history,
-        )
+        try:
+            _request_body, messages_payload, request_extras = _compose_request_payload(
+                active_summary=memory_summary,
+                observations=conversation_history,
+            )
+        except ProviderRequestShapeError as exc:
+            # S13.4: a local conformance/composition failure (e.g. a dangling-tool
+            # assistant-final history on resume, which used to escape as an uncaught
+            # traceback) is a request-shape error: fail locally, before HTTP, as the
+            # same graceful exit-2 the provider-returned 400 path produces.
+            return _request_shape_failure(exc)
 
         # ── ContextBudget Gating (Phase 1 / PR 1) ───────────────────────────
         # S13: FAIL-CLOSED — context_budget_enabled defaults to True when flags unavailable
@@ -1357,35 +1447,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 )
             )
         except ProviderRequestShapeError as exc:
-            log.append(
-                actor="runtime",
-                kind="run_stopped",
-                content={"reason": "request_shape", "detail": str(exc)},
-            )
-            # LOGIC-9: emit console event for request shape error
-            if output is not None:
-                output.emit(
-                    OutputEvent(
-                        type="api_retry",
-                        turn=turn,
-                        max_turns=max_turns,
-                        data={
-                            "provider": "unknown",
-                            "status": 0,
-                            "retry_after_s": 0,
-                            "reason": f"request_shape_error: {exc}",
-                        },
-                    )
-                )
-            return finish(
-                SessionOutcome(
-                    exit_code=2,
-                    stop_reason="request_shape",
-                    turns=turn,
-                    final_text="",
-                    tool_results=tuple(collected_results),
-                )
-            )
+            return _request_shape_failure(exc)
         try:
             hooks.dispatch(
                 LifecyclePoint.AFTER_LLM_CALL,

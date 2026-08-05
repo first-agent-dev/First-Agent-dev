@@ -1,18 +1,18 @@
 """Tests for :mod:`fa.roles` — R-19 role-layer family-disjoint check.
 
-Five-test scope (per the approved Wave-3 plan §M1.2):
+Family-disjoint coverage (per the approved Wave-3 plan §M1.2 + S13.4c):
+
 1. ``extract_family`` infers the correct family for each entry in
-   :data:`KNOWN_FAMILIES` (one parametrised case per family per shape:
-   bare slug + OpenRouter-style provider/slug).
+   :data:`KNOWN_FAMILIES`.
 2. ``extract_family`` raises :class:`FamilyExtractionError` on
-   ambiguous slugs (matches ADR-2 §Amendment 2026-05-20 rule 2
-   «default-deny when family unknown»).
-3. ``extract_family`` honours an explicit ``override=...`` when
-   supplied; rejects override values not in :data:`KNOWN_FAMILIES`.
-4. ``check_eval_disjoint`` raises :class:`EvalFamilyConflictError` when
-   eval matches planner or coder family.
-5. ``check_eval_disjoint`` allows planner+coder sharing a family
-   (per ADR-2 §Decision — a single coder-tier model may back both).
+   ambiguous slugs.
+3. ``extract_family`` honours an explicit ``override=...``.
+4. ``assess_eval_independence`` (S13.4c) — the non-raising assessor:
+   a same-family eval yields ``disjoint=False`` / ``stance="adversarial"``;
+   a disjoint eval yields ``disjoint=True`` / ``stance="neutral"``.
+5. ``check_eval_disjoint`` (deprecated) still raises
+   :class:`EvalFamilyConflictError` on overlap, and allows
+   planner+coder sharing a family.
 
 Plus one sync invariant: every regex row in ``_FAMILY_PATTERNS``
 maps to a family already in :data:`KNOWN_FAMILIES`.
@@ -26,7 +26,9 @@ from fa.roles import (
     _FAMILY_PATTERNS,
     KNOWN_FAMILIES,
     EvalFamilyConflictError,
+    EvalIndependence,
     FamilyExtractionError,
+    assess_eval_independence,
     check_eval_disjoint,
     extract_family,
 )
@@ -205,3 +207,37 @@ def test_check_eval_disjoint_rejects_eval_matching_coder() -> None:
             coder_family="qwen",
             eval_family="qwen",
         )
+
+
+# --- assess_eval_independence (S13.4c, non-raising) -------------------------
+
+
+def test_assess_eval_disjoint_neutral() -> None:
+    """S13.4c — a disjoint eval is neutral and does not warn."""
+    indep = assess_eval_independence(planner_family="glm", coder_family="qwen", eval_family="kimi")
+    assert isinstance(indep, EvalIndependence)
+    assert indep.disjoint is True
+    assert indep.stance == "neutral"
+
+
+def test_assess_eval_planner_shared_adversarial() -> None:
+    """S13.4c — eval matching planner is not disjoint and adversarial."""
+    indep = assess_eval_independence(planner_family="glm", coder_family="qwen", eval_family="glm")
+    assert indep.disjoint is False
+    assert indep.stance == "adversarial"
+    assert "planner" in indep.reason
+
+
+def test_assess_eval_coder_shared_adversarial() -> None:
+    """S13.4c — eval matching coder is not disjoint and adversarial."""
+    indep = assess_eval_independence(planner_family="glm", coder_family="qwen", eval_family="qwen")
+    assert indep.disjoint is False
+    assert indep.stance == "adversarial"
+    assert "coder" in indep.reason
+
+
+def test_assess_eval_planner_and_coder_share_is_fine() -> None:
+    """S13.4c — planner==coder is allowed; only eval-vs-actor matters."""
+    indep = assess_eval_independence(planner_family="qwen", coder_family="qwen", eval_family="kimi")
+    assert indep.disjoint is True
+    assert indep.stance == "neutral"

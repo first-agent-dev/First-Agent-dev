@@ -17,6 +17,7 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -197,9 +198,16 @@ class EvalReport:
     integration_checks: tuple[str, ...] = ()
     regression_checks: tuple[str, ...] = ()
     confidence: str = ""
+    # S13.4c: which eval independence stance produced this verdict — e.g.
+    # {"disjoint": False, "stance": "adversarial"}. Lets a same-family
+    # (correlated) adversarial DONE be auditable against a disjoint neutral
+    # DONE. Absent (None) for pre-S13.4c reports / when the eval is disjoint
+    # and neutral. Serialised as a plain mapping (not the roles.EvalIndependence
+    # dataclass) to keep this module free of a roles dependency.
+    eval_independence: Mapping[str, object] | None = None
 
     def to_json_dict(self) -> dict[str, object]:
-        return {
+        d: dict[str, object] = {
             "run_id": self.run_id,
             "plan_id": self.plan_id,
             "plan_version": self.plan_version,
@@ -213,6 +221,9 @@ class EvalReport:
             "regression_checks": list(self.regression_checks),
             "confidence": self.confidence,
         }
+        if self.eval_independence is not None:
+            d["eval_independence"] = dict(self.eval_independence)
+        return d
 
     @classmethod
     def from_json_dict(cls, data: dict[str, object]) -> EvalReport:
@@ -231,6 +242,7 @@ class EvalReport:
             integration_checks=_as_str_tuple(data.get("integration_checks", [])),
             regression_checks=_as_str_tuple(data.get("regression_checks", [])),
             confidence=_as_str(data.get("confidence", "")),
+            eval_independence=(dict(item) if isinstance((item := data.get("eval_independence")), Mapping) else None),
         )
 
 
@@ -425,6 +437,7 @@ def parse_eval_report(
     plan_id: str,
     evaluation_id: str,
     plan_version: int = 1,
+    eval_independence: Mapping[str, object] | None = None,
 ) -> EvalReport:
     """Translate the evaluator's final message into an :class:`EvalReport`.
 
@@ -453,6 +466,7 @@ def parse_eval_report(
             summary="eval output did not contain a recognizable verdict token",
             step_results=step_results,
             confidence="parsed:none",
+            eval_independence=eval_independence,
         )
 
     default_route = default_route_for_verdict(verdict)
@@ -473,6 +487,7 @@ def parse_eval_report(
         summary=_first_summary_line(text, verdict),
         step_results=step_results,
         confidence="parsed:contract" if parsed_route is not None else "parsed:verdict",
+        eval_independence=eval_independence,
     )
 
 

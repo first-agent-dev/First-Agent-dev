@@ -709,6 +709,44 @@ audit trail tied to one file is the whole point.
   → add a row to `tool-shapes.yaml` and amend this section
   in the same PR.
 
+### Amendment 2026-08-04 (S13.4c) — Eval family-disjoint: blocking → adversarial
+
+**Decision.** Same-family eval is no longer a configuration error. The loader no
+longer raises `EvalFamilyConflictError`; instead it records the risk and the eval
+role runs with an **adversarial stance**.
+
+**Why.** The blocking rule enforced a proxy for the real goal (independence), and
+the proxy was trivially defeated by a `family:` string edit — the live deployment
+ran `mistral-small` in all three roles and passed the gate because the YAML said
+`family: "mistral"` for coder and `"mistral_eval"` for eval. A gate a string edit
+defeats is not protecting anything. It also blocked legitimate free-tier
+multi-provider setups (Groq / Cerebras / NVIDIA NIM largely serve the same
+open-weight families).
+
+**Replacement mechanism (both required).**
+1. **Declared risk, not refusal.** A same-family eval loads, emits exactly one
+   warning naming both roles and this amendment's correlation figures (~+0.6
+   same-family), and the run proceeds.
+2. **Adversarial eval stance.** The eval role composes an adversarial system
+   stance (seek disconfirming evidence) when not disjoint; a disjoint eval keeps
+   today's neutral stance. The stance is asserted on the composed prompt, not on
+   a flag. `eval_report.json` records `eval_independence: {disjoint, stance}` so a
+   same-family adversarial `DONE` is auditable against a disjoint neutral `DONE`.
+
+**What is NOT relaxed.** Family *validation* (unknown / malformed family still
+raises `FamilyExtractionError`) is unchanged; only the *disjointness* rule
+relaxes. The same-family **detection** (including `.strip().lower()` case
+normalisation) must not regress — a casing typo must still surface as
+non-disjoint, it just now produces a warning + adversarial stance instead of a
+raise. `EvalFamilyConflictError` is deprecated but kept exported, and the four
+`cli.py` handlers are retained.
+
+**Mechanism sites.** `fa.roles.assess_eval_independence` (value object
+`EvalIndependence{disjoint, reason, stance}`); `fa.providers.config.load_models_config`
+(carries `ModelsConfig.eval_independence`, appends warning when not disjoint);
+`fa.inner_loop.prompt.eval_system_prompt` + `ADVERSARIAL_EVAL_STANCE_PREAMBLE`;
+`fa.cli._eval_system_prompt_extra` + `_emit_eval_report`.
+
 ## References
 
 - [`project-overview.md`](../project-overview.md) §6 (key constraints — LLM providers).

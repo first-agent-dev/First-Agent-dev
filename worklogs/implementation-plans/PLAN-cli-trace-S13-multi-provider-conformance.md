@@ -253,42 +253,190 @@ stance produced it.
 
 ## 4. Steps — CLOSED CORE (must land)
 
+**Execution order.** S13.0 → S13.1 → S13.2 → S13.3 → S13.4, then the sub-steps in
+dependency order: **S13.4a (I-51)** → **S13.4b (I-48)** → **S13.4c (eval
+adversarial)** → **S13.4d (MessageRules hard gate)** as listed under S13.4. Do NOT
+start S13.5+ until the closed core is green. S13.4c may proceed independently of
+S13.4a/4b (they touch disjoint modules), but must land before the live matrix.
+
 ### S13.0 — Pin the failure (no edits)
 
-Commit the live failing message shape from `events.jsonl` as a fixture.
-**DoD:** fixture committed; documented as the I-50 reproduction. **Class:** C0.
+Commit the live failing message shape as a fixture. **Source (verified):**
+`llm_bodies.json` entry `[6]` from live `s11-wf-diag` — the coder-stage request
+whose `response_body` is `code=3230`. `events.jsonl` carries only the error string
+(`run_stopped`, reason `request_shape`); the **full 15-message array is in
+`llm_bodies.json`**, not `events.jsonl`.
+
+The fixture: a valid JSON array of **15 messages** with role sequence
+`[system×3, user, assistant, tool, …, assistant]` ending on a **plain-text
+`assistant`** (no `tool_calls`). Structure preserved; long content truncated to
+first/last 60 chars; `tool_call_id`s and `tool_calls` ids kept verbatim so the
+pairing invariant is testable.
+
+**DoD:** fixture committed at `tests/fixtures/i50_resumed_assistant_last.json`;
+a provenance record (source, run_id, session_id, provider/slug, the 3230 body) sits
+beside it; the file parses as JSON and its last element's role is `assistant`.
+**Class:** C0.
 
 ### S13.1 — `StrictScriptedTransport` — fix the oracle first
 
 **The reason the suite missed a P1 defect:** S8's transport accepts any message
-order. New transport enforces: last role ∈ {user, tool}; no `user` after `tool`;
-every `tool` message resolves to a declared `tool_call_id`.
+order. New transport enforces: **last role ∈ {user, tool}**; **no `user` whose
+immediate predecessor is a `tool`** (Mistral 3230's other half); **every `tool`
+message resolves to a declared `tool_call_id`**; and a trailing `assistant` that
+carries unresolved `tool_calls` is treated as a **dangling-tool** failure (CT5),
+not an ordering fix.
 
-**DoD (negative proof):** pointed at **today's** code it **reproduces the 400**.
-If it passes before the fix, the oracle is wrong and the slice stops.
-**Class:** C1. **Kill-check:** revert S13.2/S13.3 → this fails.
+**Transport contract.** A drop-in `post(url, *, headers, json_body,
+timeout_seconds, transport_retries) -> TransportResponse` (same signature as
+`_ScriptedTransport` in `tests/test_cli.py:315`), recording each outbound
+`json_body` and exposing a validator over its `messages` list. Lives in
+`tests/test_s13_*` as a helper (Class C1 test substrate), not in production.
+
+**DoD (negative proof + positive control):**
+- **Negative:** pointed at **today's** unmodified composition path, feeding the
+  S13.0 fixture as observations, the strict transport flags the **assistant-last**
+  violation and the test **fails** (the offline stand-in for the 400). If it passes
+  before the fix, the oracle is wrong and the slice stops.
+- **Positive (D5a rule 1):** a **valid tool-final transcript passes unchanged**
+  (the identity / K3 case) — proving the transport can distinguish "passed" from
+  "never ran".
+- **Live (per Q-C decision):** the same shape is verified by manual copy/paste on
+  the live box (paste-safe block, positive control included) — see S13.5 harness.
+
+**Class:** C1. **Kill-check:** revert S13.2/S13.3 → the negative test fails; set
+`allows_trailing_assistant=True` on Mistral's rules → the strict transport still
+flags assistant-last (a wrong config cannot override the provider's truth).
 
 ### S13.2 — I-52: faithful history rebuild
 
-Replay `user_msg` rows in `coder_loop.py:450-490`.
-**Interaction to measure, not assume:** the compaction window
-(`latest_comp_idx`, `coder_loop.py:455-463`) and the token/cache cost of extra
-messages.
+Replay `user_msg` rows in `coder_loop.py:450-490`, **chronologically** (each
+`user_msg` precedes the `model_msg` it provoked in the event stream), so replay
+cannot itself create a user-after-tool transition.
+
+**Interactions, measured not assumed:**
+- **Compaction:** replay is bounded by `latest_comp_idx` — `user_msg` rows written
+  before a `compaction_stage3_done` live only inside the compaction summary and are
+  **not** replayed (by design). The CT1 faithfulness test MUST use a
+  **compaction-free fixture** so the prior stage's instruction is present and
+  deterministic.
+- **Token/cache cost:** extra messages per resumed request are measured and
+  recorded (the workflow-propagated task is ~38 bytes per I-37, so duplication is
+  negligible).
+
+**Interaction with S13.3 (accepted, do not over-engineer):** in a workflow the
+replayed prior-stage `user_msg` and S13.3's task-last carry the **same task text**.
+That duplication is acceptable and intended — the replayed copy is the *prior
+stage's* framing (satisfies CT1), the appended copy is the *current stage's*
+directive (satisfies CT2). Do not try to dedupe; it would couple the two fixes.
+
 **DoD:** C1 test asserts a resumed transcript contains the prior stage's user
-instruction; token delta measured and recorded. **Class:** C1.
+instruction (compaction-free fixture); token delta measured and recorded.
+**Class:** C1. **Kill-check:** revert replay → CT1 faithfulness test fails (K7).
 
 ### S13.3 — I-50: correct ordering at composition
 
-Task message emitted **after** observations when history is non-empty.
-**DoD:** S13.1's transport passes; CT4 proven (cacheable prefix unchanged).
-**Class:** C1.
+**Target (terminal-role-conditional, NOT "task after history when non-empty"):**
+in `build_prompt_parts_v2` (`prompt_composer.py:123-125`), emit the task message
+**last iff the last observation is an `assistant` message with no unresolved
+`tool_calls`**; otherwise emit it first. Rationale: a blanket "task after
+observations" would place a `user` directly after a `tool` on turn 2+ within a
+stage (history ends `tool`) — the second half of Mistral 3230 (CONF-6). The
+terminal-role rule makes the final provider-visible message `user` in the I-50
+resume case and leaves the already-valid tool-final/fresh cases untouched.
+
+| last observation | placement | final role |
+|---|---|---|
+| none (fresh) | task first | `user` |
+| `assistant`, no tool_calls (I-50 resume) | **task last** | `user` |
+| `tool` (turn 2+ after a tool round) | task first | `tool` |
+| `assistant` WITH unresolved tool_calls | **do not append task** — this is a dangling-tool (CT5/K4); fail locally | n/a |
+
+**CT4 rationale (prove, don't assume):** the task and `observations` are **both**
+in `non_cacheable`; moving the task within `non_cacheable` leaves `cacheable`
+byte-identical, and the cache key (`role + hash_tools + hash_map + hash_always`)
+does not include task/observations. CT4 therefore holds structurally; assert it
+with a byte-equality test on the cacheable slice.
+
+**Production hardening:** extend the `__debug__` invariant at `coder_loop.py:176`
+to also assert, after `_compose_request_payload`, that the **composed** payload's
+last role is `user` or `tool` (the current `_assert_tool_pairing_invariant` checks
+pairing only; add a `_assert_final_role_invariant` on `messages_payload`). This
+makes the loop fail fast in dev if the emitter regresses.
+
+**DoD:** S13.1's transport passes the S13.0 fixture after the fix (last role
+`user`); C1 test matrix covers assistant-final→task-last, tool-final→task-first,
+empty→task-first, dangling-assistant→CT5 local-fail; CT4 byte-equality asserted.
+**Class:** C1. **Kill-check:** revert → S13.1 negative test fails (K1).
 
 ### S13.4 — `MessageRules` + conformance pass at `chain.py:368`
 
-**DoD:** `git diff` touches only `providers/`; K1–K6 green; suite unchanged.
-**Class:** C1 + C0p.
+**Design (concrete).**
+- New module `src/fa/providers/message_rules.py` owning a frozen dataclass
+  `MessageRules` with capability fields, defaulting to the strict-safe values:
+  ```python
+  @dataclass(frozen=True)
+  class MessageRules:
+      allows_trailing_assistant: bool = False  # OpenAI tolerates; Mistral/Anthropic do not
+      requires_user_after_tool: bool = False  # False = reject user immediately after tool
+      requires_top_p_one_when_greedy: bool = False  # Mistral reasoning models (I-48)
+      # (tool-pairing validation is unconditional, not a flag — see CT5)
+  ```
+- `ProviderSpec` (`registry.py:25`) gains a `rules: MessageRules` field. Defaults
+  (strict, `allows_trailing_assistant=False`) apply when unspecified (K6). Set per
+  provider: `_OPENAI_COMPAT` gets `allows_trailing_assistant=True` (OpenAI-shaped
+  endpoints tolerate a trailing assistant), `_MISTRAL`/`_ANTHROPIC` stay strict.
+- The conformance pass is a pure function in `message_rules.py`:
+  `validate_and_normalize(request_body: Mapping, rules: MessageRules, *, temperature: float|None)`
+  → returns an (immutable) normalized body or raises a local
+  `MessageRulesViolation` (before HTTP, per CT5). It **validates** ordering/pairing
+  and **minimally normalises** sampling (the S13.4b `top_p` case). It never invents
+  content (CT3) and never rewrites the cacheable prefix (CT4).
+- `chain.py:368`, immediately before `provider.request(...)`, looks up the entry's
+  `MessageRules` (via `PROVIDERS[entry.provider].rules`) and calls
+  `validate_and_normalize(...)`. This is the single unbypassable chokepoint.
 
-### S13.4b2 — I-48: sampling-shape conformance
+**DoD:** `MessageRules` module + `ProviderSpec.rules` + chain call-site land with
+C0p unit tests (each flag's default and effect) and a C1 test that a strict-rule
+provider **fails locally** on an assistant-last / dangling-tool request **before**
+`provider.request` (assert no HTTP via a raising transport); production diff
+touches only `providers/`; tests in `tests/test_s13_*`; K1–K6 green; suite
+unchanged. **Class:** C1 + C0p.
+
+**S13.4a — I-51: surface the provider's error (see section below).**
+**S13.4b — I-48: sampling-shape conformance (see section below).**
+**S13.4c — Eval independence: blocking → adversarial (see section below).**
+**S13.4d — MessageRules hard gate:** once S13.4 + 4a + 4b are green, assert the
+strict transport's rules and `MessageRules` for the same provider **agree** (the
+S13.1 transport enforces Mistral-truth; the registry rules must not contradict it).
+This is what makes K2 non-vacuous.
+
+### S13.4a — I-51: surface the provider's error
+
+**Source-verified (two sites).** `ProviderRequestShapeError`
+(`errors.py:88-107`) has `.status` but **no `.provider`**; it is raised at
+`base.py:126` and re-raised by `chain.py:376` (which stamps `.logical_call_id` but
+not the provider, even though `entry.provider` is in scope). `coder_loop.py:1367-1379`
+hardcodes `provider="unknown"`, `status=0` on the `api_retry` event, and
+`output.py:347-352 _handle_api_retry` renders only `retry_after_s`, `provider`,
+`status` — the real error sits in the event's `reason` and is **never printed**.
+
+**Mechanism (two edits).**
+1. Add `provider: str | None = None` to `ProviderRequestShapeError`; set it in
+   `chain.py:376` (`exc.provider = entry.provider`) alongside the existing
+   `logical_call_id` stamp.
+2. `coder_loop.py:1373-1374` emit `exc.provider` / `exc.status` instead of
+   `"unknown"`/`0`; and `output.py:_handle_api_retry` renders `reason` when
+   present (append `d.get("reason")` to the line).
+
+**DoD:** C1 test asserts the rendered console line contains the provider's message
+(e.g. the `code=3230` detail) and the real provider/status, not `unknown/0`.
+**Class:** C1. **Kill-check:** revert either half → the rendered line loses the
+provider message (K5).
+
+---
+
+### S13.4b — I-48: sampling-shape conformance
 
 **Source-verified.** FA never sends `top_p`: `RequestInfo.top_p` defaults to
 `None` (`base.py:52`), `chain.py:332` fills it only from an explicit `sampling`
@@ -305,19 +453,30 @@ to sampling.
 **Mechanism.** Add to `MessageRules`:
 
 ```python
-requires_top_p_one_when_greedy: bool = False   # Mistral reasoning models
+requires_top_p_one_when_greedy: bool = False  # Mistral reasoning models
 ```
 
-When set and `temperature == 0`, the conformance pass sends `top_p=1` explicitly
-rather than letting the server apply a conflicting default.
+When set and `temperature == 0`, the conformance pass (S13.4's
+`validate_and_normalize`) sets `top_p=1` on the outgoing body **at the chain
+chokepoint** (`chain.py:368`, before `provider.request`), rather than letting the
+server apply a conflicting default.
 
 **Do NOT "fix" this by omitting `top_p` in `mistral.py`** — FA already omits it.
 That would patch code that is not at fault.
 
-**DoD:** CONF-8 reproduces the 400 against `mistral-medium-2604` **before** the
-rule is applied (negative proof), and passes after. The three discriminating
-probes in I-48 are run first to confirm the mechanism rather than assume it.
-**Class:** C1. **Kill-check:** clear the flag → CONF-8 fails again.
+**DoD — offline mechanism test (required for closed-core independence, R3), plus
+live confirmation:**
+- **Offline (C1):** a unit test drives a request with `temperature=0` through
+  `validate_and_normalize` with `requires_top_p_one_when_greedy=True` and asserts
+  `top_p == 1` on the emitted body; a second case (flag False, or temperature≠0)
+  asserts `top_p` is left absent. **Kill-check:** clear the flag → the offline
+  test fails.
+- **Live (CONF-8, verification not gate):** `mistral-medium-2604` reproduces the
+  400 **before** the rule and passes after; the three discriminating probes in
+  I-48 are run first to confirm the mechanism rather than assume it.
+
+**Class:** C1. **Kill-check:** clear the flag → CONF-8 (live) and the offline
+mechanism test both fail.
 
 ---
 
@@ -331,8 +490,11 @@ raises `EvalFamilyConflictError`; called at `config.py:316-321`; caught at
 `test_s10c_config_error_contract.py`.
 
 **Files allowed to change:** `src/fa/roles.py`, `src/fa/providers/config.py`,
-`src/fa/inner_loop/profiles.py` (eval stance), `knowledge/adr/ADR-2-*.md`,
-plus the six test modules above.
+`src/fa/inner_loop/prompt.py` (**the eval system prompt `EVAL_SYSTEM_PROMPT` lives
+here, `prompt.py:680`, and `_ROLE_PROMPTS` at `:895-898`** — NOT `profiles.py`;
+`profiles.py` builds the tool registry and is out of scope), `src/fa/cli.py` (to
+thread the stance / write `eval_report.json`), `knowledge/adr/ADR-2-*.md`, plus
+the six test modules above.
 
 **Mechanism.**
 
@@ -341,8 +503,13 @@ plus the six test modules above.
    "adversarial"`). **It no longer raises.**
 2. `config.py:316` appends to `ModelsConfig.warnings` when not disjoint —
    reusing the existing soft channel rather than inventing one.
-3. The eval role composes an **adversarial** system stance when
-   `stance == "adversarial"`.
+3. **Stance threading (concrete):** the eval role's `ModelsConfig` carries the
+   computed `stance`. At the point the workflow invokes the eval stage
+   (`cli.py` → `_run_stage` → `drive_session(role="eval")`), the stance is
+   appended to the eval system prompt via the existing `system_prompt_extra`
+   parameter of `drive_session` (a standing directive added to the role prompt),
+   e.g. an adversarial preamble instructing the evaluator to seek disconfirming
+   evidence. It must be asserted on the **composed prompt**, not on a flag.
 4. `eval_report.json` records `eval_independence: {disjoint, stance}` so a
    verdict carries its own provenance.
 
@@ -354,6 +521,16 @@ family validation. Do not widen it into "any family string is fine".
 the four `cli.py` handlers: removing a public exception is a separate breaking
 change, and the handlers cost nothing. Mark it deprecated in the docstring.
 
+**Test-update note (critical invariant preserved):**
+`test_providers_chain.py:1035 test_invariant_adr2_eval_disjoint_uncircumventable_by_family_case`
+asserts `check_eval_disjoint` **raises** on mixed-case families
+(`"DeepSeek"`/`"deepseek"`) after `.strip().lower()`. Under the new contract its
+target changes from "raises" to **"records non-disjoint despite case tricks"** —
+i.e. the mixed-case pair must still be **detected as same-family** and yield
+`disjoint=False` + adversarial stance. The family **normalisation** (`.strip()
+.lower()`, `chain_from_mapping`) is what must not regress; update the assertion
+target, not the invariant.
+
 **DoD.**
 - same-family config **loads**, emits exactly one warning naming both roles and
   the ADR-2 figures, and the run proceeds;
@@ -362,20 +539,13 @@ change, and the handlers cost nothing. Mark it deprecated in the docstring.
   not on a flag;
 - `eval_report.json` carries `eval_independence`;
 - the six pinning test modules are updated to assert the **new** contract, not
-  deleted;
+  deleted; the `test_providers_chain` invariant test target is changed per the
+  note above;
 - ADR-2 amended in the same commit.
 
 **Tests-writing class:** C1 + C0p (contract change).
 **Producer kill-check:** force `stance="neutral"` on a same-family config → the
 adversarial-prompt assertion fails, naming the missing stance.
-
----
-
-### S13.4b — I-51: surface the provider's error
-
-Carry real `provider`/`status`; render `reason`.
-**DoD:** C1 test asserts the rendered line contains the provider's message.
-**Class:** C1.
 
 ---
 
@@ -435,10 +605,10 @@ recorded. **Class:** C3.
 | # | force | expected |
 |---|---|---|
 | K1 | revert S13.3 | strict transport fails with the 3230 shape |
-| K2 | `allows_trailing_assistant=True` for Mistral | strict transport fails |
+| K2 | flip `allows_trailing_assistant=True` for Mistral | strict transport still fails — a wrong config cannot override the provider's truth (S13.4d) |
 | K3 | already-valid list | normalization is a **no-op** (identity) |
 | K4 | dangling `tool_call_id` | raises locally, before HTTP |
-| K5 | revert either half of S13.4b | rendered line loses the provider message |
+| K5 | revert either half of S13.4a | rendered line loses the provider message |
 | K6 | new `ProviderSpec`, no rules | defaults apply, suite green |
 | K7 | revert S13.2 | the CT1 faithfulness test fails |
 | K8 | induced 429 mid-matrix | runner resumes, prior rows intact |
@@ -469,9 +639,13 @@ silently invalidate every prompt-cache entry.
 
 **Closed core (blocking):**
 
-- [ ] S13.1 reproduces the 400 on unfixed code
+- [ ] S13.1 negative-proof (assistant-last) **fails on unfixed code**, and its
+      positive-control (tool-final) passes
 - [ ] K1–K7 executed with real output
-- [ ] Linux suite green; coverage ≥ 83.22%
+- [ ] Linux suite green; coverage ≥ 83.22% (new terminal-role branches have
+      explicit C1 tests, not incidental coverage)
+- [ ] CT4 asserted offline (cacheable prefix byte-identical) — the offline gate;
+      the **live ≥74%** check is the confirmation, not the only gate
 - [ ] Zero `noqa`
 - [ ] **Live:** `fa workflow planner,coder,eval` completes past stage 2
 - [ ] **Live:** cache-hit ≥ 74%

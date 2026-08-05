@@ -77,6 +77,10 @@ _FLOORS: dict[str, float] = {
     "_cmd_stats_global_history": 90.0,
     "_render_dead_zones": 75.0,
     "_cmd_probe": 80.0,
+    # S13.5 conformance matrix CLI. Text + JSON branches are C2-tested in
+    # tests/test_s13_message_rules.py; the live `--provider` path is a separate
+    # S13.6 step and is not floored here.
+    "_cmd_conformance": 90.0,
     "_cmd_routing_check": 80.0,
     "_cmd_chunk": 80.0,
     "_cmd_authoring_check": 80.0,

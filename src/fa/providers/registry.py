@@ -14,11 +14,12 @@ transport, so the factory only matters at production wiring time.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fa.providers.anthropic import AnthropicProvider
 from fa.providers.base import Provider, Transport
 from fa.providers.errors import ConfigurationError
+from fa.providers.message_rules import MessageRules
 from fa.providers.mistral import MistralProvider
 from fa.providers.mistral_conversations import MistralConversationsProvider
 from fa.providers.openai_compat import OpenAICompatProvider
@@ -26,15 +27,38 @@ from fa.providers.openai_compat import OpenAICompatProvider
 
 @dataclass(frozen=True)
 class ProviderSpec:
-    """Static metadata for one named provider — adapter class + category name."""
+    """Static metadata for one named provider — adapter class + category name.
+
+    ``rules`` is the per-provider :class:`~fa.providers.message_rules.MessageRules`
+    capability record (S13.4 / D2). It defaults to the strict-safe values so an
+    unspecified provider is treated as a strict validator (K6); it is the "add a
+    provider = one line; add a quirk = one field" seam (CT6).
+    """
 
     factory: Callable[[Transport], Provider]
     adapter: str
+    rules: MessageRules = field(default_factory=MessageRules)
 
 
-_OPENAI_COMPAT = ProviderSpec(factory=OpenAICompatProvider, adapter="openai_compat")
+# OpenAI-shaped endpoints tolerate a trailing assistant (the shape the S13.3
+# emitter no longer produces, but which OpenAI accepts); Mistral/Anthropic do
+# not. All 14 OpenAI-compatible names share this rule set.
+_OPENAI_COMPAT = ProviderSpec(
+    factory=OpenAICompatProvider,
+    adapter="openai_compat",
+    rules=MessageRules(allows_trailing_assistant=True),
+)
 _ANTHROPIC = ProviderSpec(factory=AnthropicProvider, adapter="anthropic")
-_MISTRAL = ProviderSpec(factory=MistralProvider, adapter="mistral")
+# Mistral's serving surface requires top_p=1 when greedy (temperature==0),
+# otherwise it rejects the request (I-48: `top_p must be 1 when using greedy
+# sampling`, code 3054). This is a platform capability, not a per-model quirk,
+# so it lives on the whole `mistral` adapter. `allows_trailing_assistant`
+# stays strict (Mistral rejects a trailing assistant, 3230).
+_MISTRAL = ProviderSpec(
+    factory=MistralProvider,
+    adapter="mistral",
+    rules=MessageRules(requires_top_p_one_when_greedy=True),
+)
 _MISTRAL_AGENTS = ProviderSpec(factory=MistralConversationsProvider, adapter="mistral_agents")
 
 PROVIDERS: Mapping[str, ProviderSpec] = {

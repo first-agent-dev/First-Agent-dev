@@ -346,9 +346,14 @@ class ConsoleRenderer:
 
     def _handle_api_retry(self, e: OutputEvent) -> None:
         d = e.data
+        # I-51 / S13.4a: render `reason` when present so the operator sees the
+        # provider's actual rejection message (e.g. `code=3230 ... got assistant`),
+        # not just an opaque provider/status pair. R21 precedent: never truncate.
+        reason = d.get("reason")
+        suffix = f" — {reason}" if reason else ""
         self._write(
             f"  {self._c('33', '⏳')} retry in {d.get('retry_after_s', '?')}s "
-            f"({d.get('provider', '?')}/{d.get('status', '?')})"
+            f"({d.get('provider', '?')}/{d.get('status', '?')}){suffix}"
         )
 
     def _handle_session_end(self, e: OutputEvent) -> None:
