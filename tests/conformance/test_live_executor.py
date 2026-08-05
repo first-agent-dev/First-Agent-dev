@@ -176,3 +176,48 @@ def test_live_executor_re_raises_unknown_infra_error() -> None:
     execute = make_live_executor(chain)
     with pytest.raises(ProviderAuthError):
         execute(_mk_case(1), "run-1")
+
+
+def test_cmd_conformance_live_renders_fail_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """C2 — a live FAIL row is rendered with its reason, so it is diagnosable.
+
+    Regression for the user's run: all 7 CONF cases FAILed against nvidia_build
+    but the CLI printed only "FAIL model=..." with no reason. The reason must be
+    surfaced so an operator can see WHY a case failed (e.g. a provider 400).
+    """
+    from fa.cli import _cmd_conformance, build_parser
+    from fa.providers.base import TransportResponse
+    from fa.providers.errors import ProviderRequestShapeError
+
+    models = tmp_path / "models.yaml"
+    models.write_text(
+        """coder:
+  name: "test-model"
+  family: "mistral"
+  chain:
+    - provider: openrouter
+      model: "test-model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: TEST_KEY
+""",
+        encoding="utf-8",
+    )
+
+    class _FakeTransport:
+        def post(self, url: str, **kw: Any) -> TransportResponse:
+            del url, kw
+            # A 400 that the chain maps to ProviderRequestShapeError.
+            raise ProviderRequestShapeError(
+                "request_shape_error: status=400 body={'error': {'message': 'Unsupported parameter(s)'}}",
+                status=400,
+            )
+
+    buf = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", buf)
+    args = build_parser().parse_args(["conformance", "--provider", "openrouter", "--config", str(models)])
+    code = _cmd_conformance(args, transport=_FakeTransport(), secrets={"TEST_KEY": "k"})
+    assert code == 0
+    out = buf.getvalue()
+    # The FAIL reason is surfaced, not an opaque "FAIL".
+    assert "FAIL" in out
+    assert "Unsupported parameter(s)" in out

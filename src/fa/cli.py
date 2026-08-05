@@ -3027,7 +3027,11 @@ def _run_live_conformance(
         print(f"fa conformance: live run {result.run_id} (provider={provider})")
         for row in result.rows:
             status = "OK" if row.get("ok") else "FAIL"
-            print(f"  CONF-{row['case']}: {status} model={row.get('model', '?')}")
+            # Surface the recorded per-case reason (request_shape / chain_exhausted /
+            # raw provider body) so a FAIL is diagnosable, not an opaque "FAIL".
+            reason = row.get("error")
+            suffix = f" — {reason}" if reason else ""
+            print(f"  CONF-{row['case']}: {status} model={row.get('model', '?')}{suffix}")
         if result.rate_limited:
             print("fa conformance: stopped early on a rate limit (429); rows preserved for resume.")
         if result.resumed:
