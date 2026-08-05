@@ -48,6 +48,14 @@ _OPENAI_COMPAT = ProviderSpec(
     adapter="openai_compat",
     rules=MessageRules(allows_trailing_assistant=True),
 )
+# NVIDIA build rejects the composer's prompt-cache keys (`prompt_cache_key`,
+# `prompt_cache_retention`) with a 400 — a measured divergence (S13.7), not a
+# silent drop. Same OpenAI-compat shape otherwise (allows a trailing assistant).
+_NVIDIA_BUILD = ProviderSpec(
+    factory=OpenAICompatProvider,
+    adapter="openai_compat",
+    rules=MessageRules(allows_trailing_assistant=True, supports_prompt_cache=False),
+)
 _ANTHROPIC = ProviderSpec(factory=AnthropicProvider, adapter="anthropic")
 # Mistral's serving surface requires top_p=1 when greedy (temperature==0),
 # otherwise it rejects the request (I-48: `top_p must be 1 when using greedy
@@ -64,7 +72,7 @@ _MISTRAL_AGENTS = ProviderSpec(factory=MistralConversationsProvider, adapter="mi
 PROVIDERS: Mapping[str, ProviderSpec] = {
     "openrouter": _OPENAI_COMPAT,
     "fireworks": _OPENAI_COMPAT,
-    "nvidia_build": _OPENAI_COMPAT,
+    "nvidia_build": _NVIDIA_BUILD,
     "groq": _OPENAI_COMPAT,
     "github_models": _OPENAI_COMPAT,
     "modal": _OPENAI_COMPAT,

@@ -377,8 +377,8 @@ empty→task-first, dangling-assistant→CT5 local-fail; CT4 byte-equality asser
   ```python
   @dataclass(frozen=True)
   class MessageRules:
-      allows_trailing_assistant: bool = False  # OpenAI tolerates; Mistral/Anthropic do not
-      requires_user_after_tool: bool = False  # False = reject user immediately after tool
+      allows_trailing_assistant: bool = False      # OpenAI tolerates; Mistral/Anthropic do not
+      requires_user_after_tool: bool = False        # False = reject user immediately after tool
       requires_top_p_one_when_greedy: bool = False  # Mistral reasoning models (I-48)
       # (tool-pairing validation is unconditional, not a flag — see CT5)
   ```
@@ -453,7 +453,7 @@ to sampling.
 **Mechanism.** Add to `MessageRules`:
 
 ```python
-requires_top_p_one_when_greedy: bool = False  # Mistral reasoning models
+requires_top_p_one_when_greedy: bool = False   # Mistral reasoning models
 ```
 
 When set and `temperature == 0`, the conformance pass (S13.4's

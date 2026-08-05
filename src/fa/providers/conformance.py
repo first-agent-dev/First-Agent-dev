@@ -29,7 +29,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from fa.inner_loop.prompt_composer import build_prompt_parts_v2
+from fa.inner_loop.prompt_composer import build_prompt_parts_v2, to_openai_request_v2
 from fa.providers.base import RequestInfo
 from fa.providers.live_runner import RateLimitError
 from fa.providers.message_rules import validate_message_order
@@ -237,8 +237,16 @@ def matrix_to_text(rows: list[dict[str, Any]]) -> str:
 def _case_to_request(case: ConfCase, model_slug: str) -> RequestInfo:
     """Compose a ConfCase into a provider RequestInfo for a live call.
 
-    Uses the REAL composer, so a live run exercises the exact request FA would
-    send in production (CONF-8 discipline: replay the real request shape).
+    Mirrors the REAL production driver (CONF-8 discipline: replay the exact
+    request shape FA sends in production), NOT a bare RequestInfo. That means:
+    - compose via ``build_prompt_parts_v2`` (the real composer),
+    - then run through ``to_openai_request_v2`` so the composer's
+      ``prompt_cache_key`` / ``prompt_cache_retention`` extras are present — a
+      live run must exercise whether the provider accepts them (this is exactly
+      how NVIDIA's rejection surfaced),
+    - set the driver's real ``temperature`` (0.0 non-coder, 0.2 coder) and
+      ``max_tokens`` (64000) defaults, which every provider-visible request
+      carries.
     """
     parts, _key = build_prompt_parts_v2(
         base_system=f"base system for {case.role}",
@@ -248,8 +256,17 @@ def _case_to_request(case: ConfCase, model_slug: str) -> RequestInfo:
         task=case.task,
         observations=case.observations,
     )
-    messages = tuple(parts.cacheable) + tuple(parts.non_cacheable)
-    return RequestInfo(model_slug=model_slug, messages=messages)
+    openai_request = to_openai_request_v2(parts, _key)
+    messages = tuple(openai_request["messages"])
+    extras = dict(openai_request.get("extra_body") or {})
+    temperature = 0.2 if case.role == "coder" else 0.0
+    return RequestInfo(
+        model_slug=model_slug,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=64000,
+        extras=extras,
+    )
 
 
 def make_live_executor(chain: Any) -> Callable[[ConfCase, str], dict[str, Any]]:
@@ -275,8 +292,8 @@ def make_live_executor(chain: Any) -> Callable[[ConfCase, str], dict[str, Any]]:
             # ProviderRequestShapeError) is a RECORDED capability result, not a
             # crash: the provider's strict validator rejects this shape. Return a
             # row with ok=False + the reason so the matrix completes and documents
-            # it (CONF-6/5 style). Anything else propagates (a real infra error).
-            from fa.providers.errors import ProviderRequestShapeError
+            # it (CONF-6/5 style).
+            from fa.providers.errors import ProviderChainExhaustedError, ProviderRequestShapeError
 
             if isinstance(exc, ProviderRequestShapeError):
                 return {
@@ -287,6 +304,21 @@ def make_live_executor(chain: Any) -> Callable[[ConfCase, str], dict[str, Any]]:
                     "in_tokens": None,
                     "out_tokens": None,
                 }
+            # A chain exhaustion is a per-case failure too, not a matrix crash: the
+            # provider (or every fallback) failed for this case. Record it so the
+            # matrix completes and the operator sees WHICH case failed and why,
+            # instead of a raw traceback aborting the whole run.
+            if isinstance(exc, ProviderChainExhaustedError):
+                return {
+                    "case": case.case,
+                    "ok": False,
+                    "model": model_slug,
+                    "error": f"chain_exhausted: {exc}",
+                    "in_tokens": None,
+                    "out_tokens": None,
+                }
+            # Anything else is a real infra error (network, auth, unexpected): let
+            # it propagate so it is not silently swallowed as a case result.
             raise
         return {
             "case": case.case,

@@ -1551,6 +1551,69 @@
 - **Repro:** any workflow stage that 400s; compare console output against
   `jq -r 'select(.kind=="run_stopped")|.content.detail' events.jsonl`.
 
+## I-54 — prompt caching: replace universal `prompt_cache_key` with a capability-driven model
+
+- **Status:** open (found S13, 2026-08-05). P2 — affects cost and multi-provider
+  compatibility; a *transition*, not a one-line bugfix.
+- **Observation.** `prompt_composer.to_openai_request_v2` sends
+  `prompt_cache_key` + `prompt_cache_retention` in **every** OpenAI-compatible
+  request, unconditionally (`prompt_composer.py:241`). These are **not a
+  universal standard**: OpenAI-style proxies accept them, Mistral accepts
+  `prompt_cache_key` but drops `retention`, and **NVIDIA build rejects both with
+  400 "Unsupported parameter(s)"** (the live breakage this backlog item records).
+  The key is also **never read back** — FA only *measures* the provider-reported
+  `cache_hit_ratio` (`coder_loop.py:144-164`), so the emitted key does not itself
+  drive caching.
+- **Source-verified context (2026-08-05).** No mainstream harness sends these two
+  params universally:
+  - **Hermes (Nous)** — read `agent/prompt_caching.py`: uses Anthropic
+    `cache_control` **breakpoints** on a stable prefix (4 blocks: static system
+    prefix + end of system + last 2 messages), with a frozen-snapshot stable
+    prefix. Does **not** use `prompt_cache_key`. Handles envelope-vs-native
+    wire-format differences (and tracks bug #20957 where caching silently does
+    nothing on the OpenAI-compat wire path).
+  - **opencode (sst)** — read `packages/opencode/src/provider/transform.ts`:
+    sets `promptCacheKey` **gated** (`if providerID==="openai" ||
+    setCacheKey`), uses AI-SDK `providerOptions.anthropic.cacheControl` for
+    Anthropic breakpoints. Does not set it for all providers (issue #25984 shows
+    proxies can ignore it; `pi-opencode-go-cache` table confirms opencode CLI
+    sends neither `prompt_cache_key` nor `prompt_cache_retention` by default).
+  - **pi agent** (pi.dev / `pi-opencode-go-cache`) — explicitly gates
+    `prompt_cache_key`/`retention`/`cache_control` per model, skips providers
+    that reject them (e.g. GLM), i.e. a capability-driven approach like our S13
+    `MessageRules.supports_prompt_cache`.
+- **Consequence for aggregate providers.** The operator plans one-key-many-models
+  aggregate routing (OpenRouter-style, and NVIDIA's endpoint is an aggregator
+  too). There, caching is whatever the **upstream** supports; `prompt_cache_key`
+  may be honored, ignored, or rejected. Two wire formats matter (OpenAI-compat
+  vs Anthropic-compat `cache_control`), and Anthropic breakpoints only work on
+  the native wire.
+- **Needed transition (proposal).** Move from a single unconditional key to a
+  **per-provider capability-driven cache model**, applied at the single
+  chokepoint (`validate_and_normalize`), e.g. a richer `MessageRules` cache-style
+  (`auto` / `keyed` / `breakpoints` / `none`):
+  1. default **automatic prefix caching** (OpenAI/DeepSeek-style, no key) for
+     OpenAI-compat upstreams;
+  2. **gate `prompt_cache_key`** to providers that actually support it (OpenAI,
+     Mistral), never send it unconditionally;
+  3. **Anthropic `cache_control` breakpoints** on the already byte-stable
+     cacheable prefix (Hermes' proven approach) for the Anthropic wire path.
+- **⚠️ Re-research needed to update the baseline** (this item is a *start*, not
+  the final design): before implementing, re-verify against the **latest**
+  releases of opencode, Hermes, and the **pi** agent, and re-read the provider
+  docs (OpenAI prompt-cache options incl. newer `prompt_cache_options` for
+  GPT-5.6+; Mistral `prompt_cache_key`; NVIDIA/NIM). Confirm current wire shapes
+  and cache-hit pricing per provider — the research above is dated 2026-08-05.
+- **Do NOT** keep the assumption that "sending `prompt_cache_key` universally =
+  good caching." The S13 `supports_prompt_cache` flag is correct **containment**;
+  the capability-driven model is the follow-up transition.
+- **First concrete step:** extend `MessageRules` with a cache-style capability;
+  wire it in `validate_and_normalize`; add per-provider live measurement of
+  `cache_hit_ratio` (already computed) before/after; keep the live ≥74% cache-hit
+  gate per provider.
+- **Repro:** `fa workflow` on a provider that rejects `prompt_cache_key` (e.g.
+  NVIDIA) → 400 "Unsupported parameter(s): prompt_cache_key, prompt_cache_retention".
+
 ## I-12 — Authoring rules: scope coverage gap (`scripts/`, `verifiers/`)
 
 - **Status:** deferred from ADR-11 PR-2 self-review (2026-06-06).

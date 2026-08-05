@@ -502,3 +502,115 @@ def test_cmd_conformance_json_output() -> None:
     rows = _json.loads(buf.getvalue())
     assert len(rows) == 7
     assert all("ran" in r and "final_role" in r for r in rows)
+
+
+# --- S13.7: NVIDIA prompt-cache capability (measured divergence) --------------
+
+
+def test_nvidia_build_does_not_support_prompt_cache() -> None:
+    """C0p — NVIDIA build rejects prompt-cache keys; it must be flagged.
+
+    The registry records `supports_prompt_cache=False` for nvidia_build (a
+    measured 400: `Unsupported parameter(s): prompt_cache_retention,
+    prompt_cache_key`), unlike OpenRouter which shares openai_compat but accepts
+    them. Capability flag, not a provider-name branch (D2).
+    """
+    from fa.providers.message_rules import MessageRules
+
+    nvidia_rules = PROVIDERS["nvidia_build"].rules
+    openrouter_rules = PROVIDERS["openrouter"].rules
+    assert isinstance(nvidia_rules, MessageRules)
+    assert nvidia_rules.supports_prompt_cache is False
+    assert openrouter_rules.supports_prompt_cache is True
+
+
+def test_validate_and_normalize_strips_prompt_cache_for_nvidia() -> None:
+    """C0p — the conformance pass strips prompt-cache keys for a non-supporting provider.
+
+    The composer always injects `prompt_cache_key`/`prompt_cache_retention`; for a
+    provider that rejects them (NVIDIA), they must be removed before the wire,
+    while everything else (e.g. provider_params) is preserved.
+    """
+    from fa.providers.message_rules import MessageRules, validate_and_normalize
+
+    rules = MessageRules(supports_prompt_cache=False)
+    request = RequestInfo(
+        model_slug="nvidia/nemotron-3-ultra-550b-a55b",
+        messages=(
+            {"role": "user", "content": "t"},
+            {"role": "assistant", "content": "p"},
+            {"role": "user", "content": "c"},
+        ),
+        extras={
+            "prompt_cache_key": "fa-coder-abc",
+            "prompt_cache_retention": "1h",
+            "reasoning_budget": 16384,  # a provider_param that MUST survive
+        },
+    )
+    out = validate_and_normalize(request, rules)
+    assert "prompt_cache_key" not in out.extras
+    assert "prompt_cache_retention" not in out.extras
+    assert out.extras["reasoning_budget"] == 16384  # provider_params preserved
+
+
+def test_validate_and_normalize_keeps_prompt_cache_for_openai_compat() -> None:
+    """C0p — prompt-cache keys are preserved for supporting providers (cache-hit)."""
+    from fa.providers.message_rules import MessageRules, validate_and_normalize
+
+    rules = MessageRules(supports_prompt_cache=True)
+    request = RequestInfo(
+        model_slug="openrouter/model",
+        messages=(
+            {"role": "user", "content": "t"},
+            {"role": "assistant", "content": "p"},
+            {"role": "user", "content": "c"},
+        ),
+        extras={"prompt_cache_key": "fa-coder-abc", "prompt_cache_retention": "1h"},
+    )
+    out = validate_and_normalize(request, rules)
+    assert out.extras["prompt_cache_key"] == "fa-coder-abc"
+    assert out.extras["prompt_cache_retention"] == "1h"
+
+
+def test_nvidia_wire_body_omits_prompt_cache_keys() -> None:
+    """C1 — a real nvidia_build chain request reaches the wire WITHOUT prompt-cache keys.
+
+    End-to-end through ProviderChain + OpenAICompatProvider (recording transport):
+    the composer's prompt_cache_key/retention (which the chain merges into
+    extras) must be stripped by the conformance pass before the body is built —
+    this is the exact 400 NVIDIA returns when they are present.
+    """
+    from fa.providers.openai_compat import OpenAICompatProvider
+
+    transport = _RecordingTransport()
+    entry = ChainEntry(
+        provider="nvidia_build",
+        model="nvidia/nemotron-3-ultra-550b-a55b",
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key_env="K",
+        cooldown_seconds=0,
+    )
+    config = ChainConfig(role="coder", name="nemotron-3-ultra-550b", family="nemotron", chain=(entry,))
+    chain = ProviderChain(config, provider_factory=lambda _e: OpenAICompatProvider(transport), env={"K": "k"})
+
+    request = RequestInfo(
+        model_slug="nemotron-3-ultra-550b",
+        messages=(
+            {"role": "user", "content": "t"},
+            {"role": "assistant", "content": "p"},
+            {"role": "user", "content": "c"},
+        ),
+        extras={
+            "prompt_cache_key": "fa-coder-abc",
+            "prompt_cache_retention": "1h",
+            "reasoning_budget": 16384,  # a provider_param that must survive
+        },
+    )
+    chain.request(request)
+
+    assert len(transport.bodies) == 1
+    body = transport.bodies[0]
+    assert "prompt_cache_key" not in body, body
+    assert "prompt_cache_retention" not in body, body
+    assert body["reasoning_budget"] == 16384  # provider_param preserved
+    assert body["model"] == "nvidia/nemotron-3-ultra-550b-a55b"

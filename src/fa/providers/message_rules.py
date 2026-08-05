@@ -59,6 +59,14 @@ class MessageRules:
     allows_trailing_assistant: bool = False
     requires_user_after_tool: bool = False
     requires_top_p_one_when_greedy: bool = False
+    # S13.7: whether the provider accepts the composer's prompt-cache keys
+    # (`prompt_cache_key`, `prompt_cache_retention`). Default True (OpenAI-compat
+    # routes like OpenRouter/Together accept them and rely on the 74-99% live
+    # cache-hit rate). Some OpenAI-compatible providers (e.g. NVIDIA build)
+    # REJECT these keys with a 400 — a measured divergence, not a silent drop —
+    # so they must be stripped before the wire for those routes. Capability flag,
+    # never a provider-name branch (D2 / CT6).
+    supports_prompt_cache: bool = True
 
 
 class MessageRulesError(ProviderRequestShapeError):
@@ -164,4 +172,15 @@ def validate_and_normalize(
         top_p = effective_top_p if effective_top_p is not None else request.top_p
         if temp == 0 and top_p is None:
             normalized = replace(normalized, top_p=1.0)
+    if not rules.supports_prompt_cache:
+        # S13.7: this provider rejects the composer's prompt-cache keys (a 400,
+        # not a silent drop). Strip them so they never reach the wire; everything
+        # else (including provider_params) is preserved. Minimal normalization,
+        # never invents content (CT3).
+        cache_keys = {"prompt_cache_key", "prompt_cache_retention"}
+        if cache_keys & normalized.extras.keys():
+            normalized = replace(
+                normalized,
+                extras={k: v for k, v in normalized.extras.items() if k not in cache_keys},
+            )
     return normalized

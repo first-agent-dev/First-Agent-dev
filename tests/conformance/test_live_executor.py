@@ -29,9 +29,16 @@ from fa.providers.live_runner import RateLimitError
 class _FakeChain:
     """Minimal ProviderChain stand-in: records requests, returns a canned response."""
 
-    def __init__(self, *, raise_429: bool = False, text: str = "ok") -> None:
+    def __init__(
+        self,
+        *,
+        raise_429: bool = False,
+        raise_exhausted: bool = False,
+        text: str = "ok",
+    ) -> None:
         self.requests: list[Any] = []
         self._raise_429 = raise_429
+        self._raise_exhausted = raise_exhausted
         self._text = text
         self.config = SimpleNamespace(name="test-model")
 
@@ -41,6 +48,10 @@ class _FakeChain:
             from fa.providers.errors import ProviderTransientError
 
             raise ProviderTransientError("429 rate limited", status=429, kind="rate_limited")
+        if self._raise_exhausted:
+            from fa.providers.errors import ProviderChainExhaustedError
+
+            raise ProviderChainExhaustedError("all chain entries failed", attempts=[], logical_call_id="x")
         return SimpleNamespace(text=self._text, in_tokens=10, out_tokens=5), "logical-1", []
 
 
@@ -49,12 +60,23 @@ def _mk_case(case: int) -> ConfCase:
 
 
 def test_case_to_request_uses_composer() -> None:
-    """C1 — a ConfCase becomes a RequestInfo with the composed messages."""
+    """C1 — a ConfCase becomes a RequestInfo that mirrors the real production request.
+
+    CONF-8 discipline: a live run must exercise the EXACT request FA sends, so the
+    composer's prompt-cache extras and the driver's temperature/max_tokens defaults
+    are present — not a bare RequestInfo.
+    """
     case = _mk_case(1)
     req = _case_to_request(case, model_slug="test-model")
     assert req.model_slug == "test-model"
-    # ends on a user message (valid for a strict provider)
     assert req.messages[-1]["role"] == "user"
+    # The composer's prompt-cache extras are present (so a live run exercises
+    # whether the provider accepts them — this is how NVIDIA's 400 surfaced).
+    assert "prompt_cache_key" in req.extras
+    assert "prompt_cache_retention" in req.extras
+    # Driver defaults mirror production (coder role => 0.2, matching the CLI).
+    assert req.max_tokens == 64000
+    assert req.temperature == 0.2
 
 
 def test_live_executor_drives_chain_and_reports_tokens() -> None:
@@ -122,3 +144,35 @@ def test_cmd_conformance_live_provider_with_injected_secrets(
     out = buf.getvalue()
     assert "live run" in out
     assert "CONF-1" in out or "CONF-" in out
+
+
+def test_live_executor_records_chain_exhaustion_as_case_failure() -> None:
+    """C1 — a chain-exhausted case is recorded, not a matrix crash.
+
+    This is the user's `fa conformance --provider` failure mode: all chain entries
+    failed for a case, and the executor used to re-raise ProviderChainExhaustedError,
+    aborting the whole matrix with a traceback. It must instead record a per-case
+    ok=False row so the matrix completes and shows WHICH case failed.
+    """
+    chain = _FakeChain(raise_exhausted=True)
+    execute = make_live_executor(chain)
+    row = execute(_mk_case(1), "run-1")
+    assert row["ok"] is False
+    assert "chain_exhausted" in row["error"]
+    assert row["case"] == 1
+
+
+def test_live_executor_re_raises_unknown_infra_error() -> None:
+    """C1 — a non-request-shape, non-exhaustion error still propagates (not swallowed)."""
+    from fa.providers.errors import ProviderAuthError
+
+    chain = _FakeChain()
+
+    def boom(request: Any) -> tuple[Any, str, list[Any]]:
+        del request
+        raise ProviderAuthError("401", status=401)
+
+    chain.request = boom  # type: ignore[method-assign]
+    execute = make_live_executor(chain)
+    with pytest.raises(ProviderAuthError):
+        execute(_mk_case(1), "run-1")
