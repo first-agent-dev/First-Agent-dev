@@ -28,8 +28,8 @@
   LLM-driven M-8 bridge), `state.py` (`events.jsonl`), and the hook
   pipeline `hooks/` (`HookRegistry`, `GuardMiddleware` /
   `ObserverMiddleware`, `SandboxHook`, `LoopGuard`, blockers,
-  `IntentGuard`). Baseline tools: `fs.read_file` / `fs.write_file` /
-  `fs.run_bash` + `pr.prepare`.
+  `IntentGuard`). Baseline tools: `fs_read_file` / `fs_write_file` /
+  `fs_run_bash` + `pr_prepare`.
 - **Integration Layer →** `src/fa/providers/` (ADR-9 provider chain,
   `UrllibTransport`), `src/fa/sandbox/` (ADR-6 bash gate), and the
   PR-intent enforcement loop (`src/fa/hygiene/pr_intent.py` git hook

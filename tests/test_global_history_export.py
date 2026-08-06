@@ -84,7 +84,7 @@ def test_global_history_export_idempotent(tmp_path: Path) -> None:
         "cache_creation_input_tokens": 0,
         "cache_hit_ratio": 0.0,
         "tool_calls_total": 1,
-        "tool_calls_breakdown_json": '{"fs.read_file": 1}',
+        "tool_calls_breakdown_json": '{"fs_read_file": 1}',
         "has_compaction_summary": 0,
         "workspace_root": str(tmp_path),
         "duration_ms": 123,
@@ -232,16 +232,16 @@ def test_global_history_export_completeness(tmp_path: Path) -> None:
     )
 
     # Simulate events: 2 tool_calls (read, write), 1 usage, 1 compaction_stage3_done
-    log.append(actor="coder", kind="tool_call", content={"params": {}}, tool_name="fs.read_file", tool_call_id="tc-1")
+    log.append(actor="coder", kind="tool_call", content={"params": {}}, tool_name="fs_read_file", tool_call_id="tc-1")
     log.append(
-        actor="tool", kind="tool_result", content={"summary": "read ok"}, tool_name="fs.read_file", tool_call_id="tc-1"
+        actor="tool", kind="tool_result", content={"summary": "read ok"}, tool_name="fs_read_file", tool_call_id="tc-1"
     )
-    log.append(actor="coder", kind="tool_call", content={"params": {}}, tool_name="fs.write_file", tool_call_id="tc-2")
+    log.append(actor="coder", kind="tool_call", content={"params": {}}, tool_name="fs_write_file", tool_call_id="tc-2")
     log.append(
         actor="tool",
         kind="tool_result",
         content={"summary": "write ok"},
-        tool_name="fs.write_file",
+        tool_name="fs_write_file",
         tool_call_id="tc-2",
     )
     log.append(
@@ -291,8 +291,8 @@ def test_global_history_export_completeness(tmp_path: Path) -> None:
     assert row["cache_read_input_tokens"] == 20
     assert row["cache_creation_input_tokens"] == 5
     assert row["tool_calls_total"] == 2
-    assert "fs.read_file" in row["tool_calls_breakdown_json"]
-    assert "fs.write_file" in row["tool_calls_breakdown_json"]
+    assert "fs_read_file" in row["tool_calls_breakdown_json"]
+    assert "fs_write_file" in row["tool_calls_breakdown_json"]
     assert row["has_compaction_summary"] == 1
     assert row["workspace_root"] == str(tmp_path)
     assert row["duration_ms"] == 456
@@ -445,7 +445,7 @@ def test_global_history_export_via_drive_session(tmp_path: Path) -> None:
         name="test-model-live",
     )
 
-    tc1 = make_tool_call("fs.read_file", {"path": "a.txt"}, "tc-1")
+    tc1 = make_tool_call("fs_read_file", {"path": "a.txt"}, "tc-1")
     (tmp_path / "a.txt").write_text("hello")
 
     mock_chain.request.side_effect = [

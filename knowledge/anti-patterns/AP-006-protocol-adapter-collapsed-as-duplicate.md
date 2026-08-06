@@ -175,7 +175,7 @@ silence the finding.
   broader pylint-R0801 closure pass; PR description claims "Pylint
   Rating: 10.00/10", "mypy strict passes (0 errors)", "1906 tests
   pass" — all true, none of which caught the regression.
-- `7cd362f` "fix(pylint-work): repair fs.run_bash elide contract +
+- `7cd362f` "fix(pylint-work): repair fs_run_bash elide contract +
   close sqlite dedup test gap" — reproduction: `truncate_for_preview(value, 8000)`
   (simulating the real positional call) returns an 8286-char preview
   with no tail marker and no truncation notice, vs. the intended

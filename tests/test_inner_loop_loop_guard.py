@@ -26,7 +26,7 @@ from fa.inner_loop.tools import build_baseline_registry
 
 def _make_call(path: str, content: str = "x\n", call_id: str = "tc") -> ToolCall:
     return ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": path, "content": content},
         call_id=call_id,
     )
@@ -151,7 +151,7 @@ def test_loop_guard_path_thrash_fires_for_non_dict_mapping_params() -> None:
         guard.handle(
             LifecyclePoint.BEFORE_TOOL_EXEC,
             HookPayload(
-                tool_call=ToolCall(name="fs.write_file", params=params, call_id=f"tc-{i}"),
+                tool_call=ToolCall(name="fs_write_file", params=params, call_id=f"tc-{i}"),
             ),
         )
     decision = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())

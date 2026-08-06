@@ -38,7 +38,7 @@ class RoleProfile:
 PROFILES_RAW: dict[str, dict[str, Any]] = {
     "researcher": {
         "description": "Read-only researcher, finds files, no writes",
-        "tools": ["fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep"],
+        "tools": ["fs_glob", "fs_grep", "fs_read_file", "fs_instant_grep"],
         "max_context_bytes": 4096,
         "max_tokens": 600,
         "stateless": True,
@@ -48,7 +48,7 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
     },
     "verifier": {
         "description": "Run single verification command, return PASS/FAIL JSON",
-        "tools": ["fs.run_bash"],
+        "tools": ["fs_run_bash"],
         "max_context_bytes": 2048,
         "max_tokens": 200,
         "stateless": True,
@@ -57,20 +57,21 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
     },
     "code-reviewer": {
         "description": "Review diff, return issues list",
-        "tools": ["fs.read_file", "fs.grep", "fs.instant_grep"],
+        "tools": ["fs_read_file", "fs_grep", "fs_instant_grep"],
         "max_tokens": 600,
         "stateless": True,
     },
     "implementer": {
         "description": "Main coder, needs stateful PTY for cd/venv persistence",
         "tools": [
-            "fs.read_file",
-            "fs.write_file",
-            "fs.edit_file",
-            "fs.run_bash",
-            "fs.glob",
-            "fs.grep",
-            "fs.instant_grep",
+            "fs_read_file",
+            "fs_write_file",
+            "fs_edit_file",
+            "fs_run_bash",
+            "fs_glob",
+            "fs_grep",
+            "fs_instant_grep",
+            "fs_blackboard_query",
         ],
         "stateless": False,
         "bash_impl": "stateful",
@@ -79,7 +80,7 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
         "description": (
             "Architect/Planner, read-only analysis + limited write to research docs for filesystem-canon plans"
         ),
-        "tools": ["fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep", "fs.write_file"],
+        "tools": ["fs_glob", "fs_grep", "fs_read_file", "fs_instant_grep", "fs_write_file", "fs_blackboard_query"],
         "max_tokens": 1000,
         "stateless": True,
         "write_allowlist": ["knowledge/research/", ".fa/"],
@@ -110,7 +111,7 @@ def _add_optional_tool_builders(builders: dict[str, Callable[[], ToolSpec]], roo
         # Try to import if exists in future
         from fa.inner_loop.tools.edit_file import build_edit_file_tool
 
-        builders["fs.edit_file"] = lambda: build_edit_file_tool(root)
+        builders["fs_edit_file"] = lambda: build_edit_file_tool(root)
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable, edit_file optional
         logger.warning(f"edit_file builder not available: {exc}")
 
@@ -122,9 +123,9 @@ def _add_optional_tool_builders(builders: dict[str, Callable[[], ToolSpec]], roo
             build_usage_tool,
         )
 
-        builders["fs.chronicle_search"] = lambda: build_chronicle_search_tool()
-        builders["fs.usage"] = lambda: build_usage_tool()
-        builders["fs.list_tasks"] = lambda: build_list_tasks_tool()
+        builders["fs_chronicle_search"] = lambda: build_chronicle_search_tool()
+        builders["fs_usage"] = lambda: build_usage_tool()
+        builders["fs_list_tasks"] = lambda: build_list_tasks_tool()
     except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
         pass
 
@@ -136,10 +137,10 @@ def _add_optional_tool_builders(builders: dict[str, Callable[[], ToolSpec]], roo
             build_undo_tool,
         )
 
-        builders["fs.checkpoint"] = lambda: build_checkpoint_tool(root)
-        builders["fs.undo"] = lambda: build_undo_tool(root)
-        builders["fs.diff"] = lambda: build_diff_tool(root)
-        builders["fs.send_ctrl_c"] = lambda: build_send_ctrl_c_tool()
+        builders["fs_checkpoint"] = lambda: build_checkpoint_tool(root)
+        builders["fs_undo"] = lambda: build_undo_tool(root)
+        builders["fs_diff"] = lambda: build_diff_tool(root)
+        builders["fs_send_ctrl_c"] = lambda: build_send_ctrl_c_tool()
     except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
         pass
 
@@ -158,14 +159,14 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
     try:
         from fa.inner_loop.tools.read_file import build_read_file_tool
 
-        builders["fs.read_file"] = lambda: build_read_file_tool(root)
+        builders["fs_read_file"] = lambda: build_read_file_tool(root)
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Failed to setup builder fs.read_file: {exc}")
+        logger.warning(f"Failed to setup builder fs_read_file: {exc}")
 
     try:
         from fa.inner_loop.tools.write_file import build_write_file_tool
 
-        builders["fs.write_file"] = lambda: build_write_file_tool(root)
+        builders["fs_write_file"] = lambda: build_write_file_tool(root)
 
         # Limited write for planner: allowlist knowledge/research/ + .fa/
         def _build_limited_write() -> ToolSpec:
@@ -213,31 +214,31 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
                 elide=base_spec.elide,
             )
 
-        builders["fs.write_file_limited"] = _build_limited_write
+        builders["fs_write_file_limited"] = _build_limited_write
 
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Failed to setup builder fs.write_file: {exc}")
+        logger.warning(f"Failed to setup builder fs_write_file: {exc}")
 
     try:
         from fa.inner_loop.tools.run_bash import build_run_bash_tool
 
-        builders["fs.run_bash"] = lambda: build_run_bash_tool(root, timeout_seconds=bash_timeout)
+        builders["fs_run_bash"] = lambda: build_run_bash_tool(root, timeout_seconds=bash_timeout)
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Failed to setup builder fs.run_bash: {exc}")
+        logger.warning(f"Failed to setup builder fs_run_bash: {exc}")
 
     try:
         from fa.inner_loop.tools.glob import build_glob_tool
 
-        builders["fs.glob"] = lambda: build_glob_tool(root)
+        builders["fs_glob"] = lambda: build_glob_tool(root)
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Failed to setup builder fs.glob: {exc}")
+        logger.warning(f"Failed to setup builder fs_glob: {exc}")
 
     try:
         from fa.inner_loop.tools.grep import build_grep_tool
 
-        builders["fs.grep"] = lambda: build_grep_tool(root)
+        builders["fs_grep"] = lambda: build_grep_tool(root)
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Failed to setup builder fs.grep: {exc}")
+        logger.warning(f"Failed to setup builder fs_grep: {exc}")
 
     try:
         from fa.inner_loop.tools.instant_grep import build_instant_grep_tool
@@ -251,9 +252,16 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
         except Exception as exc:  # noqa: BLE001 — missing optional FTS config uses deterministic default
             logger.warning("Feature-flag FTS path unavailable: %s; using .fa/fts.db", exc)
             fts_path = ".fa/fts.db"
-        builders["fs.instant_grep"] = lambda: build_instant_grep_tool(root / fts_path, root)
+        builders["fs_instant_grep"] = lambda: build_instant_grep_tool(root / fts_path, root)
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Failed to setup builder fs.instant_grep: {exc}")
+        logger.warning(f"Failed to setup builder fs_instant_grep: {exc}")
+
+    try:
+        from fa.inner_loop.tools.blackboard_query import build_blackboard_query_tool
+
+        builders["fs_blackboard_query"] = lambda: build_blackboard_query_tool()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Failed to setup builder fs_blackboard_query: {exc}")
 
     _add_optional_tool_builders(builders, root)
 
@@ -281,8 +289,8 @@ def build_registry_for_role(
     registry = ToolRegistry()
     for tool_name in wanted:
         # For planner, use limited write_file if requested
-        if role == "planner" and tool_name == "fs.write_file":
-            builder = builders.get("fs.write_file_limited") or builders.get(tool_name)
+        if role == "planner" and tool_name == "fs_write_file":
+            builder = builders.get("fs_write_file_limited") or builders.get(tool_name)
         else:
             builder = builders.get(tool_name)
         if builder is None:

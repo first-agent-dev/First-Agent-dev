@@ -57,7 +57,7 @@ feature_flags:
   offload_threshold: 8000            # default: 8000
 
   # ── PTY pool ──────────────────────────────────────────────────────────
-  # Maximum concurrent stateful PTY sessions (for `fs.run_bash` commands
+  # Maximum concurrent stateful PTY sessions (for `fs_run_bash` commands
   # that need `cd` / `env` state persistence across calls).
   pty_pool.max_size: 2               # default: 2
 

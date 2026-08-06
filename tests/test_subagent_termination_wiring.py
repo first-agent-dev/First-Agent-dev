@@ -16,19 +16,19 @@ Skill: knowledge/skills/tests-writing/SKILL.md
 Architecture note (per ADR-15):
 SubagentRunner uses subprocess.run(timeout=...) — there is no SIGTERM/SIGINT
 sent to the subprocess. Python kills it on timeout. The "termination" path is
-subprocess.TimeoutExpired. The PTY ctrl_c (fs.send_ctrl_c) operates on the
+subprocess.TimeoutExpired. The PTY ctrl_c (fs_send_ctrl_c) operates on the
 main agent's PtyPool sessions, NOT on subprocess-based subagents. These are
 separate product claims tested separately.
 
 Wiring note:
-build_baseline_registry() registers fs.send_ctrl_c via
+build_baseline_registry() registers fs_send_ctrl_c via
 build_send_ctrl_c_tool() WITHOUT pty_pool — the tool's closure pty_pool is
-None. This means drive_session dispatch of fs.send_ctrl_c returns "no-pool"
+None. This means drive_session dispatch of fs_send_ctrl_c returns "no-pool"
 unless the tool is replaced with a properly-wired version. The C1 test below
 replaces the unwired tool in the registry to achieve C1 coverage. A product
 gap exists: build_baseline_registry should accept pty_pool and forward it
 to build_send_ctrl_c_tool (or the tool should use get_current_session() DI
-like fs.run_bash does).
+like fs_run_bash does).
 """
 
 from __future__ import annotations
@@ -128,7 +128,7 @@ def test_ctrl_c_tool_handler_works_with_wired_pty_pool(tmp_path: Path) -> None:
     - oracle: ToolResult does NOT contain "no-pool"; status indicates ctrl_c sent or session-not-found
     - kill-check: removing pty_pool arg from build_send_ctrl_c_tool makes handler return "no-pool"
 
-    Product claim: fs.send_ctrl_c handler works correctly when pty_pool is wired
+    Product claim: fs_send_ctrl_c handler works correctly when pty_pool is wired
     at construction time. This is a C2 test proving the tool logic is sound;
     the C1 test (3b) proves the composition-root wiring.
     """
@@ -162,20 +162,20 @@ def test_ctrl_c_tool_handler_works_with_wired_pty_pool(tmp_path: Path) -> None:
 
 def test_ctrl_c_interrupts_pty_session_via_drive_session(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
-    - root: drive_session with real PtyPool + fs.send_ctrl_c (manually wired)
+    - root: drive_session with real PtyPool + fs_send_ctrl_c (manually wired)
     - test: tests/test_subagent_termination_wiring.py::test_ctrl_c_interrupts_pty_session_via_drive_session
     - matrix: A-gates-only
-    - oracle: tool_result for fs.send_ctrl_c does NOT contain "no-pool"
+    - oracle: tool_result for fs_send_ctrl_c does NOT contain "no-pool"
     - kill-check: removing the registry rewiring makes send_ctrl_c return "no-pool"
 
-    Product claim: fs.send_ctrl_c works on PtyPool sessions (main agent PTY lifecycle)
+    Product claim: fs_send_ctrl_c works on PtyPool sessions (main agent PTY lifecycle)
     when properly wired into the registry.
 
-    NOTE: build_baseline_registry() registers fs.send_ctrl_c WITHOUT pty_pool,
+    NOTE: build_baseline_registry() registers fs_send_ctrl_c WITHOUT pty_pool,
     so we must replace the unwired tool with a properly-wired one. This is a
     known product gap — the registry builder should accept pty_pool and forward
     it to build_send_ctrl_c_tool (or the tool should use get_current_session()
-    DI like fs.run_bash does). See module docstring for wiring note.
+    DI like fs_run_bash does). See module docstring for wiring note.
     """
     from fa.inner_loop.tools.pair_tools import build_send_ctrl_c_tool
     from fa.runtime import PtyPool
@@ -190,11 +190,11 @@ def test_ctrl_c_interrupts_pty_session_via_drive_session(tmp_path: Path) -> None
         feature_flags=FeatureFlags(),
     )
 
-    # Build baseline registry, then replace fs.send_ctrl_c with properly-wired version
+    # Build baseline registry, then replace fs_send_ctrl_c with properly-wired version
     registry = build_baseline_registry(tmp_path)
-    if "fs.send_ctrl_c" in registry._tools:
-        del registry._tools["fs.send_ctrl_c"]
-        del registry._validators["fs.send_ctrl_c"]
+    if "fs_send_ctrl_c" in registry._tools:
+        del registry._tools["fs_send_ctrl_c"]
+        del registry._validators["fs_send_ctrl_c"]
     registry.register(build_send_ctrl_c_tool(pty_pool=pty_pool))
 
     hooks = HookRegistry()
@@ -205,9 +205,9 @@ def test_ctrl_c_interrupts_pty_session_via_drive_session(tmp_path: Path) -> None
     )
 
     # Turn 1: start a long-running bash
-    tc1 = make_tool_call("fs.run_bash", {"command": "sleep 60"}, "tc-1")
+    tc1 = make_tool_call("fs_run_bash", {"command": "sleep 60"}, "tc-1")
     # Turn 2: send ctrl_c
-    tc2 = make_tool_call("fs.send_ctrl_c", {"session_id": "main"}, "tc-2")
+    tc2 = make_tool_call("fs_send_ctrl_c", {"session_id": "main"}, "tc-2")
     # Turn 3: stop
     mock_chain.request.side_effect = [
         mock_response_with_tools([tc1]),
@@ -227,8 +227,8 @@ def test_ctrl_c_interrupts_pty_session_via_drive_session(tmp_path: Path) -> None
     assert outcome.exit_code == 0
 
     events = require_log(state).read_all()
-    ctrl_c_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.send_ctrl_c"]
-    assert len(ctrl_c_results) == 1, "Expected exactly one fs.send_ctrl_c tool_result"
+    ctrl_c_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs_send_ctrl_c"]
+    assert len(ctrl_c_results) == 1, "Expected exactly one fs_send_ctrl_c tool_result"
 
     content = ctrl_c_results[0].content
     # The key assertion: it didn't fail with "no-pool" — the tool found the pty_pool
@@ -242,7 +242,7 @@ def test_ctrl_c_interrupts_pty_session_via_drive_session(tmp_path: Path) -> None
 
 def test_subagent_spawn_and_cleanup_via_drive_session(tmp_path: Path) -> None:
     """LIVE-PATH PROOF:
-    - root: drive_session with fs.spawn_subagent
+    - root: drive_session with fs_spawn_subagent
     - test: tests/test_subagent_termination_wiring.py::test_subagent_spawn_and_cleanup_via_drive_session
     - matrix: A-gates-only with subagent_spawning_enabled=True
     - oracle: events contain spawn_start + spawn_done, artifact .fa/subagents/t-1.json exists
@@ -266,7 +266,7 @@ def test_subagent_spawn_and_cleanup_via_drive_session(tmp_path: Path) -> None:
     )
 
     tc1 = make_tool_call(
-        "fs.spawn_subagent",
+        "fs_spawn_subagent",
         {"task_id": "t-1", "command": "echo done", "role": "verifier"},
         "tc-1",
     )

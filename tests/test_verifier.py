@@ -165,7 +165,7 @@ def test_load_contract_parses_inline_empty_list() -> None:
     list parsing explicit.
     """
     yaml = """
-target_action: fs.read_file
+target_action: fs_read_file
 required_trace_events: []
 failure_conditions:
   - read_failed
@@ -221,18 +221,18 @@ def test_load_contracts_from_dir_indexes_by_target_action(tmp_path: Path) -> Non
     """
 
     (tmp_path / "alpha.yaml").write_text(
-        "target_action: fs.read_file\nrequired_trace_events: []\nfailure_conditions:\n  - read_failed\n",
+        "target_action: fs_read_file\nrequired_trace_events: []\nfailure_conditions:\n  - read_failed\n",
         encoding="utf-8",
     )
     (tmp_path / "beta.yaml").write_text(
-        "target_action: fs.write_file\nrequired_trace_events: []\nfailure_conditions:\n  - write_failed\n",
+        "target_action: fs_write_file\nrequired_trace_events: []\nfailure_conditions:\n  - write_failed\n",
         encoding="utf-8",
     )
 
     contracts = load_contracts_from_dir(tmp_path)
 
-    assert set(contracts) == {"fs.read_file", "fs.write_file"}
-    assert contracts["fs.read_file"].failure_conditions == ("read_failed",)
+    assert set(contracts) == {"fs_read_file", "fs_write_file"}
+    assert contracts["fs_read_file"].failure_conditions == ("read_failed",)
 
 
 def test_load_contracts_from_dir_returns_empty_for_missing_directory(
@@ -265,10 +265,10 @@ def test_load_contracts_from_dir_skips_non_yaml_files(tmp_path: Path) -> None:
     """Only ``*.yaml`` files are loaded; sibling files are ignored."""
 
     (tmp_path / "noise.md").write_text("# README\n", encoding="utf-8")
-    (tmp_path / "fs.read_file.yaml").write_text(
-        "target_action: fs.read_file\nrequired_trace_events: []\nfailure_conditions:\n  - read_failed\n",
+    (tmp_path / "fs_read_file.yaml").write_text(
+        "target_action: fs_read_file\nrequired_trace_events: []\nfailure_conditions:\n  - read_failed\n",
         encoding="utf-8",
     )
 
     contracts = load_contracts_from_dir(tmp_path)
-    assert set(contracts) == {"fs.read_file"}
+    assert set(contracts) == {"fs_read_file"}

@@ -13,7 +13,7 @@ Stage 0 quick-win and Stage 0.5 formal blackboard + structured telemetry were pr
 implemented as skeletons + tests (20 passed) but NOT fully wired into SessionState.
 This session closes all high-ROI gaps listed in final review:
 
-- Blackboard integrated into SessionState and fs.write_file handler via contextvar DI
+- Blackboard integrated into SessionState and fs_write_file handler via contextvar DI
 - Telemetry integrated into EventBus/OutputEvent with structured TelemetryEvent + artifact offload
 - Transaction object implemented with add_read/add_write accumulated via SessionState
 - FeatureFlags loader from ~/.fa/config.yaml with nested + flat dotted keys support
@@ -48,7 +48,7 @@ This session closes all high-ROI gaps listed in final review:
 
 ### Previous Status (2026-07-11)
 
-> DONE as skeletons + tests, but NOT fully wired for LLM harness — Blackboard and Telemetry files exist and tests pass, but SessionState does not yet hold blackboard and telemetry via DI, fs.write_file does not yet declare read_set/write_set and call detect_conflict(), Telemetry not yet integrated into EventBus/OutputEvent, change contract template exists in telemetry.py but not yet copied to knowledge/skills/skill-writing/SKILL.md, FeatureFlags loader not yet in ~/.fa/config.yaml, Transaction object read_set/write_set accumulated during execution not yet implemented.
+> DONE as skeletons + tests, but NOT fully wired for LLM harness — Blackboard and Telemetry files exist and tests pass, but SessionState does not yet hold blackboard and telemetry via DI, fs_write_file does not yet declare read_set/write_set and call detect_conflict(), Telemetry not yet integrated into EventBus/OutputEvent, change contract template exists in telemetry.py but not yet copied to knowledge/skills/skill-writing/SKILL.md, FeatureFlags loader not yet in ~/.fa/config.yaml, Transaction object read_set/write_set accumulated during execution not yet implemented.
 
 ### New Implementation (2026-07-12) — Closes All Gaps
 
@@ -99,7 +99,7 @@ This session closes all high-ROI gaps listed in final review:
   - __post_init__: loads feature_flags via load_feature_flags_from_path(), init transaction, artifact_store (.fa/artifacts), blackboard (.fa/blackboard) if enabled, telemetry (.fa/telemetry) if enabled, all with WARNING graceful degradation not crash
   - EventLog thread-safe: added Lock for append (Phase 2 parallel read-only with Lock sequential log write)
   - add_read/add_write delegating to transaction
-  - record_tool_call: increments turn, tracks read for fs.read_file, write for write_file via add_read/add_write, offloads to transaction
+  - record_tool_call: increments turn, tracks read for fs_read_file, write for write_file via add_read/add_write, offloads to transaction
   - record_tool_result: offload full output > threshold (8000 from feature_flags.offload_threshold) to ArtifactStore content-addressed, keeps artifact_id + preview, logs structured TelemetryEvent with run_id, turn, tool_name, tool_args sanitized, permission_tier, edited_files, test_result, artifact_id, plus writes kind=telemetry to EventLog for audit, plus original tool_result paired row
   - Verified via manual loop integration: telemetry.jsonl written, blackboard.jsonl written, transaction read_set/write_set accumulated
 

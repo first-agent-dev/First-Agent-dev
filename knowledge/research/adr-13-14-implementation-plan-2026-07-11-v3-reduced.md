@@ -41,9 +41,9 @@ tier: stable
 
 **Deliverables:**
 - Cap output 8000 in projection.py with artifact_id + 500-char preview + ArtifactStore content-addressed
-- Warning in fs.run_bash description: "STATEFUL for main (via PtyPool), stateless for cheap subagents (websearch, simple function) output capped 8000"
-- fs.chronicle_search, fs.usage, fs.list_tasks skeletons (read EventLog, no new deps)
-- fs.send_ctrl_c, fs.checkpoint, fs.undo, fs.diff skeletons (pair over autonomy) — checkpoint creates git commit/stash, undo git reset --hard HEAD~1, diff git diff
+- Warning in fs_run_bash description: "STATEFUL for main (via PtyPool), stateless for cheap subagents (websearch, simple function) output capped 8000"
+- fs_chronicle_search, fs_usage, fs_list_tasks skeletons (read EventLog, no new deps)
+- fs_send_ctrl_c, fs_checkpoint, fs_undo, fs_diff skeletons (pair over autonomy) — checkpoint creates git commit/stash, undo git reset --hard HEAD~1, diff git diff
 - Update llms.txt, DIGEST.md, HANDOFF.md§Next per MAINTENANCE.md
 
 **Acceptance:**
@@ -64,7 +64,7 @@ tier: stable
 - File `src/fa/blackboard/blackboard.py` with BlackboardEntry id, type, content_hash sha256, toolchain_digest (python version, model id), schema_version, parent_id, read_set, write_set, assumptions, version_dependencies (base_commit, llms.txt hash), timestamp, payload
 - Methods write append-only never overwrite content-addressed, read, query(type,key) queryable, detect_conflict where read_set overlaps write_set of concurrent entry or assumption violated
 - Store `.fa/blackboard/blackboard.jsonl` append-only, Control Unit managing reads/writes, each entry stamped with digests for reproducibility (MACOG blackboard)
-- Integration: fs.write_file declares read_set (files read via instant_grep), write_set, assumptions (base commit git rev-parse HEAD, llms.txt hash), version_dependencies; WorktreeManager declares transaction read_set/write_set; Metrics merge success, belief divergence |Bk-Sk|
+- Integration: fs_write_file declares read_set (files read via instant_grep), write_set, assumptions (base commit git rev-parse HEAD, llms.txt hash), version_dependencies; WorktreeManager declares transaction read_set/write_set; Metrics merge success, belief divergence |Bk-Sk|
 - Defensive: thread-safe with Lock, graceful degradation WARNING not crash, backward compatible additive
 
 **Subtasks 0.5b Telemetry:**
@@ -108,7 +108,7 @@ tier: stable
 **Subtasks:**
 - Tool batching: group read-only (glob,grep,read,instant_grep) → ThreadPoolExecutor max 5 parallel, writes sequential, log write sequential with Lock, EventLog thread-safe, ToolPermission read vs workspace to decide parallelizable, plus IntentGuard effect REPO_READ → parallelizable
 - InstantGrepIndex FTS5 trigram: CREATE VIRTUAL TABLE USING fts5(path, content, tokenize='trigram'), DELETE then INSERT, track mtime file→last indexed, delete stale entries where file not exists, clear and reindex if DB older than 24h, fallback porter with WARNING log, exclude .fa/, node_modules/, .venv/, __pycache__/, .git/, sessions/, .gremlins_cache
-- Tool fs.instant_grep handler using index, returns paths not content <50ms, substring search
+- Tool fs_instant_grep handler using index, returns paths not content <50ms, substring search
 - Subagent cheap deterministic minimal system prompt <500 tokens, not full BASE+map: websearch agent "You are websearch agent, tools=[web_search], input query, output JSON {urls, snippets, summary}" and function writer "You are function writer, tools=[write_file,bash], input spec, output JSON {file_path, test_result}"
 
 **Acceptance:**
@@ -129,7 +129,7 @@ tier: stable
 - run_bash.py thin client depends on BashExecutor protocol, not concrete PtyPool, injected via SessionState, fallback to subprocess.run if pool not available with WARNING
 - Dockerfile: apt-get install tmux, pip install libtmux, feature flag runtime.mode=in_process
 - SubagentRunner scrubbed env extra_allow X_FA_PROXY_TOKEN foundation for future per-subagent random, filtered history (task + relevant files from instant_grep, not full parent 124 steps), JSON validation cached at module load, artifact write .fa/subagents/<id>.json, 1 subagent limit enforced via RuntimeLimits.max_subagent_spawns_per_session=3
-- Task worklog.md Goal, Evidence, Steps, Verification aggregated from JSONs, for PR → PR body, not only pr.prepare
+- Task worklog.md Goal, Evidence, Steps, Verification aggregated from JSONs, for PR → PR body, not only pr_prepare
 - Mini eval-harness 5 tasks, concrete repro fa run --role planner --task "Read repository and tell what you found", metrics median tokens/tool-calls/USD, before/after 124→30-40, trajectory efficiency, verification strength, state consistency, safety compliance, replayability (from open problem 5.2.1 Harness-Level Evaluation)
 - Update DIGEST.md, HANDOFF.md, llms.txt BY-DEMAND INDEX per MAINTENANCE.md link integrity, markdown-link-check, no shell=True without # nosemgrep + ADR-6, no Level-0 TCB import external lib per ADR-11
 

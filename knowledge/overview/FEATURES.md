@@ -25,11 +25,11 @@ fa run --role coder --task "Implement Workspace Isolation (ADR-13)" --detail ver
 [fa] ⚙️  Workspace: /sessions/session-20260626T1410-123 (Isolated clone)
 [fa] 🤖 Model: deepseek/deepseek-chat-v3 (via openrouter)
 ...
-[fa] 🔍 fs.grep       | searching for 'mkdir -p /workspace' in Dockerfile.fa
+[fa] 🔍 fs_grep       | searching for 'mkdir -p /workspace' in Dockerfile.fa
 [fa] ⚡ LLM Turn 1    | ⏱ 4.2s | In: 12.4k (Cache hit: 98.1%) | Out: 420 | Cost: $0.003
-[fa] 📝 fs.edit_file  | editing Dockerfile.fa (added /repo and /sessions)
+[fa] 📝 fs_edit_file  | editing Dockerfile.fa (added /repo and /sessions)
 [fa] 🛡️ IntentGuard   | AST Bash Check: READ_ONLY -> Allowed
-[fa] 🖥️ fs.run_bash   | running `pytest tests/test_fa_entrypoint.py`
+[fa] 🖥️ fs_run_bash   | running `pytest tests/test_fa_entrypoint.py`
 [fa] ⚡ LLM Turn 2    | ⏱ 6.1s | In: 14.1k (Cache hit: 99.0%) | Out: 815 | Cost: $0.004
 [fa] ✅ Session end   | Total time: 10.3s | Turns: 2 | Total Cost: $0.007
 ```
@@ -82,7 +82,7 @@ First-Agent спроектирован для автономной работы 
 ## 5. 🔍 Анализ намерений Bash (Bash Intent Analyzer)
 
 Большинство агентов дают LLM доступ к тулзе `run_bash` и молятся, чтобы она не выполнила `rm -rf`. 
-В First-Agent тулза `fs.run_bash` пропускается через встроенный парсер **`bashlex`**.
+В First-Agent тулза `fs_run_bash` пропускается через встроенный парсер **`bashlex`**.
 
 1. Команда разбивается на AST.
 2. Харнесс классифицирует команду: это `READ_ONLY` (`ls`, `cat`), `INDEX_WRITE` (`git add`) или `REPO_WRITE` / `DANGEROUS`.

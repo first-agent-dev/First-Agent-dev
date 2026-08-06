@@ -57,12 +57,12 @@ def test_stats_parses_tool_result_errors(tmp_path: Path) -> None:
         tmp_path,
         [
             ("runtime", "run_started", {"role": "coder"}, "", ""),
-            ("coder", "tool_call", {"params": {"path": "/tmp/a.txt"}}, "fs.read_file", "tc-1"),
+            ("coder", "tool_call", {"params": {"path": "/tmp/a.txt"}}, "fs_read_file", "tc-1"),
             (
                 "tool",
                 "tool_result",
                 {"summary": "failed", "ok": False, "error": {"code": "file_not_found", "message": "No such file"}},
-                "fs.read_file",
+                "fs_read_file",
                 "tc-1",
             ),
             _summary_event(),
@@ -71,7 +71,7 @@ def test_stats_parses_tool_result_errors(tmp_path: Path) -> None:
     result = parse_session(jsonl_path)
     assert result is not None
     assert len(result.tool_errors) == 1
-    assert result.tool_errors[0].tool == "fs.read_file"
+    assert result.tool_errors[0].tool == "fs_read_file"
     assert result.tool_errors[0].code == "file_not_found"
 
 
@@ -81,8 +81,8 @@ def test_stats_tool_result_ok_not_in_errors(tmp_path: Path) -> None:
         tmp_path,
         [
             ("runtime", "run_started", {"role": "coder"}, "", ""),
-            ("coder", "tool_call", {"params": {"path": "/tmp/a.txt"}}, "fs.read_file", "tc-1"),
-            ("tool", "tool_result", {"summary": "ok", "ok": True}, "fs.read_file", "tc-1"),
+            ("coder", "tool_call", {"params": {"path": "/tmp/a.txt"}}, "fs_read_file", "tc-1"),
+            ("tool", "tool_result", {"summary": "ok", "ok": True}, "fs_read_file", "tc-1"),
             _summary_event(),
         ],
     )
@@ -193,13 +193,13 @@ def test_stats_renders_tool_errors_section(tmp_path: Path) -> None:
         stop_reason="stopped_by_llm",
         ok=True,
         turns=1,
-        tool_errors=[ToolError(tool="fs.read_file", code="not_found", message="No such file")],
+        tool_errors=[ToolError(tool="fs_read_file", code="not_found", message="No such file")],
     )
     stream = io.StringIO()
     render_session(analytics, stream=stream)
     output = stream.getvalue()
     assert "Tool errors" in output
-    assert "fs.read_file" in output
+    assert "fs_read_file" in output
 
 
 def test_stats_renders_compaction_section(tmp_path: Path) -> None:

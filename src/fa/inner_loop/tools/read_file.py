@@ -146,7 +146,7 @@ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
         )
 
     return ToolSpec(
-        name="fs.read_file",
+        name="fs_read_file",
         description=(
             "Read UTF-8 files or PDFs inside the workspace, using pymupdf/pdfminer fallback. "
             "Declares read_set for blackboard/transaction and extracts PDF text per page."

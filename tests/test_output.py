@@ -98,7 +98,7 @@ def test_console_tool_call_success() -> None:
         r.on_event(
             _event(
                 "tool_call",
-                tool="fs.read_file",
+                tool="fs_read_file",
                 params={"path": "src/fa/cli.py"},
                 summary="505 lines",
                 ok=True,
@@ -117,7 +117,7 @@ def test_console_tool_call_failure() -> None:
         r.on_event(
             _event(
                 "tool_call",
-                tool="fs.run_bash",
+                tool="fs_run_bash",
                 params={"command": "sudo rm -rf /"},
                 summary="",
                 ok=False,

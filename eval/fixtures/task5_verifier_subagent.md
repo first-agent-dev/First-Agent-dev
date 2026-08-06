@@ -8,7 +8,7 @@ expected: "Verifier subagent pytest returns JSON PASS/FAIL, main sees only summa
 # Task: Verifier subagent
 
 ## Goal
-Run cheap deterministic verifier subagent with minimal prompt <500 tokens, not full BASE+map: "You are verifier agent, tools=[fs.run_bash], input spec, output JSON {file_path, test_result PASS/FAIL, summary, risks}"
+Run cheap deterministic verifier subagent with minimal prompt <500 tokens, not full BASE+map: "You are verifier agent, tools=[fs_run_bash], input spec, output JSON {file_path, test_result PASS/FAIL, summary, risks}"
 
 ## Acceptance
 - Subagent cheap deterministic minimal system prompt <500 tokens, not full BASE

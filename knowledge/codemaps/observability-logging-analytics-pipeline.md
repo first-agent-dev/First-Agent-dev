@@ -280,7 +280,7 @@ CostGuardian <-- cost_guardian.py:175
 │   └── rollup.usd > budget_usd → deny <-- 5j
 │
 └── Dormant on M-1 baseline tools <-- 5k
-    └── fs.read_file/write_file/run_bash emit no cost= artifacts
+    └── fs_read_file/write_file/run_bash emit no cost= artifacts
 ```
 
 | Location | Title | Description | File:Line |

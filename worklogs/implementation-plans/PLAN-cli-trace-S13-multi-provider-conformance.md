@@ -1,6 +1,7 @@
 # PLAN: S13 — multi-provider conformance (open-scope)
 
-**Status:** DRAFT — awaiting review
+**Status:** DRAFT — awaiting review (live-sheet surface expanded 2026-08-06: S13.3b sampling-omission,
+S13.7b/7c/7d deploy-gate/observability, S13.9b/9c error-surfacing + 429-resume — see worklogs/S13-live-sheet.md)
 **Author:** agent, 2026-08-03 (v2, restructured after operator scope decision)
 **Parent:** `cli-trace-substrate-rebaseline-2026-07-25.md`
 **Closes:** **I-50 (P1)**, **I-52 (P2)**, **I-51 (P2)**. Unblocks S11.7 / Q35b.
@@ -377,8 +378,8 @@ empty→task-first, dangling-assistant→CT5 local-fail; CT4 byte-equality asser
   ```python
   @dataclass(frozen=True)
   class MessageRules:
-      allows_trailing_assistant: bool = False      # OpenAI tolerates; Mistral/Anthropic do not
-      requires_user_after_tool: bool = False        # False = reject user immediately after tool
+      allows_trailing_assistant: bool = False  # OpenAI tolerates; Mistral/Anthropic do not
+      requires_user_after_tool: bool = False  # False = reject user immediately after tool
       requires_top_p_one_when_greedy: bool = False  # Mistral reasoning models (I-48)
       # (tool-pairing validation is unconditional, not a flag — see CT5)
   ```
@@ -453,7 +454,7 @@ to sampling.
 **Mechanism.** Add to `MessageRules`:
 
 ```python
-requires_top_p_one_when_greedy: bool = False   # Mistral reasoning models
+requires_top_p_one_when_greedy: bool = False  # Mistral reasoning models
 ```
 
 When set and `temperature == 0`, the conformance pass (S13.4's
@@ -598,6 +599,31 @@ is what `check_eval_disjoint` was written for.
 **DoD:** one full workflow completes across ≥2 providers; ensemble behaviour
 recorded. **Class:** C3.
 
+### S13.9b — Live error-surfacing (I-51) + 429 resume (K8) confirmation
+
+The closed-core I-51 fix (provider/status/reason surfacing on a `request_shape` failure) and the
+S13.6 runner's K8 resume are **offline-tested only** (K5/K8). Live confirmation is folded into the
+S13 live sheet (worklogs/S13-live-sheet.md), which splits them into two steps:
+- **sheet S13.9b** — provoke/observe a `request_shape` failure → the rendered line must carry the real
+  provider + message (not `provider=unknown status=0`);
+- **sheet S13.9c** — induce a 429 mid-matrix and re-run → `resumed prior run`, prior rows preserved,
+  no run-id collision.
+**Class:** C2/C3 (live).
+
+### S13.9c — Live sampling-omission + deploy-gate + observability surface
+
+Three surfaces S13 touches that the original live DoD did not name explicitly, now covered by the live
+sheet (each maps to its own sheet step):
+- **Sampling omission on the wire** (the thinking-first default) — **sheet S13.3b**: capture a real
+  request body via `FA_DEBUG_LLM_BODIES=1` and assert no `temperature`/`top_p` key. This is the
+  strongest unverified S13 live claim (offline CONF-7/8 only).
+- **`fa routing-check`** (S10c.1 gate) — **sheet S13.7b**: confirms the S13 `providers/config.py`
+  changes load on the box (exit 0).
+- **`fa stats --run-id`** (**sheet S13.7c**) + **`fa selfcheck --role`** (**sheet S13.7d**): exercise
+  the `stats.py`/proxy surfaces S13 touches, providing a second view of usage and isolating proxy vs
+  provider failures.
+**Class:** C2/C3 (live).
+
 ---
 
 ## 6. Kill-checks
@@ -661,6 +687,14 @@ silently invalidate every prompt-cache entry.
 - [ ] ≥1 non-OpenAI-shaped adapter, with measured line count
 - [ ] ≥1 cross-family workflow completed
 - [ ] Every divergence found → BACKLOG with repro
+- [ ] **Live sampling-omission** (sheet S13.3b): a captured request body carries no `temperature`/`top_p`
+- [ ] **Live error-surfacing** (sheet S13.9b): a `request_shape` failure renders the real provider + message
+- [ ] **Live 429 resume** (sheet S13.9c): induced 429 → `resumed prior run`, rows preserved
+- [ ] **Live deploy-gate + observability** (sheet S13.7b/7c/7d): `fa routing-check` exit 0; `fa stats --run-id`
+      and `fa selfcheck --role` succeed on the box
+
+> These live items are executed via `worklogs/S13-live-sheet.md` (S11-style sheet). They are
+> "reported, not gated" because they need a live provider + keys (Q61) and the deployed box.
 
 ---
 

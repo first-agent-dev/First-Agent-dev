@@ -59,10 +59,10 @@ still emits the wrong shape.
 
 **Hypothetical scenario.** ADR-7 §5 declares: «`ToolRegistry.dispatch`
 returns `ToolResult.fail("invalid_params", ...)` on JSON-Schema
-validation failure with `retryable=true`». A new tool `fs.move_file`
+validation failure with `retryable=true`». A new tool `fs_move_file`
 ships with an `overwrite: bool` parameter mistakenly typed in the
 schema as `string` (`{"type": "string"}`). At runtime,
-`fs.move_file({"path": "...", "overwrite": "yes"})` passes validation
+`fs_move_file({"path": "...", "overwrite": "yes"})` passes validation
 (string is a string) but the handler then does `if params["overwrite"]
 == True:` which is always `False` for any string — so `overwrite=yes`
 is silently treated as `overwrite=false`. The tool succeeds
@@ -83,7 +83,7 @@ PR description:
 ```text
 INTENT: FIX
 CLASS: REPAIR
-INVARIANT: Affects: ADR-7 §5 fs.move_file overwrite semantics
+INVARIANT: Affects: ADR-7 §5 fs_move_file overwrite semantics
 DEGREE-OF-FREEDOM CLOSED: handler now coerces string-ish overwrite values to bool
 DETERMINISTIC MECHANISM: in-tuple membership check at src/fa/inner_loop/tools/move_file.py:42
 ```
@@ -138,7 +138,7 @@ PR description:
 ```text
 INTENT: FIX
 CLASS: REPAIR
-INVARIANT: Affects: ADR-7 §5 fs.move_file overwrite type contract
+INVARIANT: Affects: ADR-7 §5 fs_move_file overwrite type contract
 DEGREE-OF-FREEDOM CLOSED: schema accepted any string for overwrite; handler had
   to choose between truth-string sets, which is a spec-bearing decision the
   LLM should not make.
@@ -284,7 +284,7 @@ documentary and review-time.
 > replace the synthetic example above with a verifiable commit SHA /
 > PR number / worked-history paragraph.
 
-- **Synthetic wrong-shape example:** the `fs.move_file` schema-vs-
+- **Synthetic wrong-shape example:** the `fs_move_file` schema-vs-
   handler-coercion scenario above (§Wrong shape). No commit SHA;
   the example exists only in this file.
 - **Synthetic right-shape repair:** the corresponding schema-typing

@@ -1,4 +1,4 @@
-"""Phase A (ADR-12): fs.run_bash must not read known secret paths.
+"""Phase A (ADR-12): fs_run_bash must not read known secret paths.
 
 These prove the bash gate denies the V1-relocated vector — reading the secrets
 file / deploy key out of /run/secrets (or the dev ~/.fa/.env) via any read

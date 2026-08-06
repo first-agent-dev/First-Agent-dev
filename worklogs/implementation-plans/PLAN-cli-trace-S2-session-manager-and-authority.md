@@ -98,7 +98,7 @@ IDs would require a separately approved workflow identity contract.
 
 - No event allocator redesign beyond preserving a clear seam for S5.
 - No Blackboard conflict-policy redesign beyond session-scope wiring.
-- No `fs.spawn_subagent` implementation; Q11-B is a later slice.
+- No `fs_spawn_subagent` implementation; Q11-B is a later slice.
 - No EventBus redaction change; V23 remains deferred.
 - No workflow repair/adaptive redesign.
 - No automatic migration of old JSONL or per-run DBs.

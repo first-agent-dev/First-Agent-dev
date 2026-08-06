@@ -45,7 +45,7 @@ Instead of verbose feature list, this note points to the workplans that schedule
 ## What shipped (high level, not verbose)
 
 - Unified per-run DB authority `session.db` (event_log + blackboard + session_meta), JSONL mirror-only, split-brain fixed
-- Observability `fs.usage` / `fs.chronicle_search` read active authority via DI + run_id, no path guessing
+- Observability `fs_usage` / `fs_chronicle_search` read active authority via DI + run_id, no path guessing
 - Stage C: explicit warn/stage2/stage3 ladder (70/80/90), dynamic threshold, compactor model reaches provider body, fallback 4-header, cache-control preserved for Anthropic (structured system) and OpenAI (extras)
 - Governance: PinnedBuffer wholesale refresh (no stale), resume draft → mutable summary not pinned, prompt order contract
 - Subagent: role preserved (researcher vs verifier), spawn limit respects FeatureFlags > RuntimeLimits, env injection with secret filter, safety via hooks, spawn_start/done/fail events
@@ -76,10 +76,10 @@ No STATUS enums, no wiring-allowlist.toml, no new fs.* wiring-check tools, no Co
 ## Active consumers per AGENTS rule #3
 
 - EventLog → `fa stats` + `fa stats --global-history` (global_history.db) + `GlobalHistoryStore`
-- Blackboard → `fs.write_file` / `edit_file` conflict detection
-- ArtifactStore → `fs.run_bash` large output offload
+- Blackboard → `fs_write_file` / `edit_file` conflict detection
+- ArtifactStore → `fs_run_bash` large output offload
 - Global history write → `fa stats --global-history` read (new active consumer)
-- PtyPool → `fs.run_bash` stateful
+- PtyPool → `fs_run_bash` stateful
 
 ---
 

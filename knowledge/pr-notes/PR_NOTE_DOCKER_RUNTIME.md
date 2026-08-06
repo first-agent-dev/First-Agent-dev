@@ -22,7 +22,7 @@ This PR finalizes the Dockerized FA runtime so it is usable for real coding work
 ### What was already good
 
 - Role-aware prompts already existed and `drive_session()` already passes `role` into `build_system_message(system_prompt_extra, role=role)`.
-- Planner/eval registries already correctly expose read-only operational tools (`fs.read_file`, `fs.run_bash`) while `pr.prepare` is still registered later by the CLI for work-log updates.
+- Planner/eval registries already correctly expose read-only operational tools (`fs_read_file`, `fs_run_bash`) while `pr_prepare` is still registered later by the CLI for work-log updates.
 - `fa run --resume` already preserves a prior PR draft, injects it into the system prompt, and uses `getattr(args, "resume", False)` for older tests.
 
 ### Blockers found and fixed
@@ -241,7 +241,7 @@ fa run --role coder   --run-id feature-x --resume --task "implement the planner 
 fa run --role eval    --run-id feature-x --resume --task "verify the implementation" --workspace /workspace
 ```
 
-Planner/eval have read-only filesystem registries plus `pr.prepare`; coder has the mutating baseline registry plus `pr.prepare`.
+Planner/eval have read-only filesystem registries plus `pr_prepare`; coder has the mutating baseline registry plus `pr_prepare`.
 
 ## Follow-ups / Out of Scope
 

@@ -139,7 +139,7 @@ def build_checkpoint_tool(workspace_root: Path) -> ToolSpec:
             return ToolResult.fail("checkpoint_error", f"Checkpoint failed: {exc}", retryable=False)
 
     return ToolSpec(
-        name="fs.checkpoint",
+        name="fs_checkpoint",
         description=(
             "Create a checkpoint with git add/commit and an ephemeral local branch. "
             "Falls back to a stash; undo restores it. Merges remain manual."
@@ -211,7 +211,7 @@ def build_undo_tool(workspace_root: Path) -> ToolSpec:
             return ToolResult.fail("undo_error", f"Undo failed: {exc}", retryable=False)
 
     return ToolSpec(
-        name="fs.undo",
+        name="fs_undo",
         description=(
             "Undo the last checkpoint via its branch, reset, or stash pop. "
             "Checkpoint branches are local and merges remain manual."
@@ -291,7 +291,7 @@ def build_diff_tool(workspace_root: Path) -> ToolSpec:
             return ToolResult.fail("diff_error", f"Diff failed: {exc}", retryable=False)
 
     return ToolSpec(
-        name="fs.diff",
+        name="fs_diff",
         description=(
             "Return a structured git diff between base and target with a stat summary and "
             "truncated preview for pair review; merges remain manual."
@@ -333,7 +333,7 @@ def build_send_ctrl_c_tool(pty_pool: object | None = None) -> ToolSpec:
             return ToolResult.fail("ctrl_c_error", f"Ctrl+C error: {exc}", retryable=False)
 
     return ToolSpec(
-        name="fs.send_ctrl_c",
+        name="fs_send_ctrl_c",
         description="Send Ctrl+C to a PTY session to interrupt a hanging command.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}}},
         permission="workspace",

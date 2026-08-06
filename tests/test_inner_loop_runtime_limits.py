@@ -318,7 +318,7 @@ def test_max_iterations_truncates_run_session(tmp_path: Path) -> None:
 
     limits = RuntimeLimits(max_iterations=2, bash_timeout_seconds=10)
     calls = tuple(
-        ToolCall(name="fs.read_file", params={"path": p}, call_id=f"tc-{p}") for p in ("a.txt", "b.txt", "c.txt")
+        ToolCall(name="fs_read_file", params={"path": p}, call_id=f"tc-{p}") for p in ("a.txt", "b.txt", "c.txt")
     )
     results = run_session(calls, registry=registry, hooks=hooks, state=state, limits=limits)
 
@@ -335,7 +335,7 @@ def test_bash_timeout_is_plumbed_into_tool(tmp_path: Path) -> None:
     state = SessionState(workspace_root=tmp_path, run_id="t-timeout", log=EventLog(tmp_path / "ev.jsonl"))
 
     results = run_session(
-        (ToolCall(name="fs.run_bash", params={"command": "sleep 3"}, call_id="tc-1"),),
+        (ToolCall(name="fs_run_bash", params={"command": "sleep 3"}, call_id="tc-1"),),
         registry=registry,
         hooks=hooks,
         state=state,

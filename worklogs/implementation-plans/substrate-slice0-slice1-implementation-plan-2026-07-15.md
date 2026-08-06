@@ -21,7 +21,7 @@ Locked operator decisions already accepted:
    Previous PR draft / resume text is mutable non-cacheable summary/history.
 
 3. **Subagent scope**  
-   `fs.spawn_subagent` is narrow-scope, role-bounded, stateless, limited-function, and must not bypass parent shell/tool safety.
+   `fs_spawn_subagent` is narrow-scope, role-bounded, stateless, limited-function, and must not bypass parent shell/tool safety.
 
 This document plans only Slice 0/1. It intentionally does **not** implement Slice 3/4/5 logic here.
 

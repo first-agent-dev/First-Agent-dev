@@ -183,7 +183,7 @@ def test_dangling_tool_resume_returns_request_shape_not_traceback(tmp_path: Path
         kind="model_msg",
         content={
             "text": "",
-            "tool_calls": [{"id": "tc-orphan", "function": {"name": "fs.read", "arguments": "{}"}}],
+            "tool_calls": [{"id": "tc-orphan", "function": {"name": "fs_read", "arguments": "{}"}}],
             "finish_reason": "tool_calls",
             "in_tokens": 1,
             "out_tokens": 1,

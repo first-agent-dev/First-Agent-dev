@@ -1,4 +1,4 @@
-# Verifier contract for ``fs.read_file`` (R-5).
+# Verifier contract for ``fs_read_file`` (R-5).
 #
 # Schema documented in ``src/fa/verifier/verify_action.py`` top
 # docstring and in ``knowledge/research/borrow-roadmap-2026-05.md`` §R-5.
@@ -15,7 +15,7 @@
 # Failure conditions match the canonical ``ToolResult.error.code``
 # values emitted by the handler + hook + registry layers (see the
 # table in ``knowledge/llms.txt`` §Inner-loop runtime):
-target_action: fs.read_file
+target_action: fs_read_file
 required_trace_events: []
 failure_conditions:
   - hook_deny         # any GuardMiddleware denial (SandboxHook, Approval, …)

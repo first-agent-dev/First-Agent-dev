@@ -58,7 +58,7 @@ Phase 1 Foundation per global plan v3 required:
 - Implemented `TOOL_BUILDERS` dict mapping tool name → builder lambda with graceful WARNING fallback
 - Implemented `build_registry_for_role(role, workspace_root)` filtering via builders, failure-observable WARNING if missing
 - Implemented `estimate_tokens(registry)` chars/4 heuristic (Pi agent, Kon)
-- Added missing tools `fs.glob` and `fs.grep` per user decision `add_glob_grep_now`:
+- Added missing tools `fs_glob` and `fs_grep` per user decision `add_glob_grep_now`:
   - `glob.py`: `git ls-files` + `fnmatch` + `Path.match` for `**`, fallback rglob pruning, returns paths
   - `grep.py`: `rg -l`, `git grep -l`, fallback python search via `git ls-files`, returns paths
 - Wired into registry builders:
@@ -73,7 +73,7 @@ Phase 1 Foundation per global plan v3 required:
 
 **Verification:**
 - Manual: researcher 403 tokens, planner 519, implementer 1104 vs old 3000
-- `fs.glob` and `fs.grep` registered, LLM can call them
+- `fs_glob` and `fs_grep` registered, LLM can call them
 - `PYTHONPATH=src pytest tests/test_prompt_caching_per_role.py -v` → still pass
 
 ### 3. PromptComposer — two-level caching, stable hash, Flag integration
@@ -169,10 +169,10 @@ Phase 1 Foundation per global plan v3 required:
 | Blackboard | Yes | Yes | `write_file` calls `detect_conflict` before write, fails `conflict_detected`, writes entry after |
 | Telemetry | Yes | Yes | `state.py` record_tool_result logs TelemetryEvent + artifact offload + kind=telemetry |
 | FeatureFlags | Yes | Yes | `state.py` __post_init__ loads from ~/.fa/config.yaml, flags used for blackboard/telemetry/offloadthreshold |
-| Glob/Grep tools | Yes | Yes | `tools/__init__.py` _register_extra_tools includes glob/grep for baseline/planner, LLM can call fs.glob/fs.grep, verified via manual |
+| Glob/Grep tools | Yes | Yes | `tools/__init__.py` _register_extra_tools includes glob/grep for baseline/planner, LLM can call fs_glob/fs_grep, verified via manual |
 | PROFILES builder | Yes | Yes (now) | `build_baseline_registry` etc now use `build_registry_for_role`, LLM gets filtered toolset 403-1104 tokens vs old 3000 |
 | WorktreeManager | Yes (partial) | Partial | `SessionState.worktree_manager` via Factory, `create_subagent_workspace` method exists, SharedDir returns session_root, LLM doesn't directly call but via SessionState indirect |
-| Edit_file | Yes | Yes | `fs.edit_file` registered via TOOL_BUILDERS, implementer has it |
+| Edit_file | Yes | Yes | `fs_edit_file` registered via TOOL_BUILDERS, implementer has it |
 
 ### Not yet fully wired (deferred to Phase 2/3, acceptable for Phase 1 closure)
 
@@ -180,7 +180,7 @@ Phase 1 Foundation per global plan v3 required:
 |--------|--------|-----------------|
 | PromptComposer two-level | Helper exists, flag check exists, but not used in `coder_loop.py` | Coder loop refactor to use composer requires provider chain changes, Phase 2 |
 | Skill loader → PromptComposer | Loader exists, `get_current_files_for_skill_loader` exists, but PromptComposer not yet calls it for real skills in `knowledge/skills/` | Needs integration with `load_skills_for_prompt()` helper, Phase 2 |
-| SubagentRunner spawn tool | Runner + Envelope + spawn limit via SessionState ready, but no `fs.spawn_subagent` tool exposed to LLM | Orchestration hybrid planner writes spawn in Plan, coder executes as step — tool to be added Phase 2/3 |
+| SubagentRunner spawn tool | Runner + Envelope + spawn limit via SessionState ready, but no `fs_spawn_subagent` tool exposed to LLM | Orchestration hybrid planner writes spawn in Plan, coder executes as step — tool to be added Phase 2/3 |
 | WorktreeManager Isolated | Factory exists, but SessionState uses SharedDir for v0.1 (shared mode), Isolated not tested in prod loop | Isolated requires real git repo worktree add, tested in unit tests, prod use Phase 3 |
 
 **Conclusion on wiring:** For Phase 1 Foundation acceptance criteria (SharedDir returns session_root, PROFILES 600 vs 3000, SubagentEnvelope round-trip, cache keys differ, branch sanitization, transaction accumulated) — **all wired and verified**. For full harness Pillar 3 token/tool-call efficient, PromptComposer caching and Skill loader need Phase 2 wiring, which is planned and foundation ready.
@@ -241,9 +241,9 @@ Phase 1 Foundation per global plan v3 required:
 **Files Changed Phase 1:**
 
 New (5):
-- `src/fa/inner_loop/tools/glob.py` — fs.glob
-- `src/fa/inner_loop/tools/grep.py` — fs.grep
-- `src/fa/inner_loop/tools/edit_file.py` — fs.edit_file stub
+- `src/fa/inner_loop/tools/glob.py` — fs_glob
+- `src/fa/inner_loop/tools/grep.py` — fs_grep
+- `src/fa/inner_loop/tools/edit_file.py` — fs_edit_file stub
 - `src/fa/skills/loader.py` — skill globs loader
 - `src/fa/inner_loop/subagent_envelope.py` — extracted envelope
 

@@ -52,9 +52,9 @@ Resume / PR draft text must **not** be:
 
 ---
 
-## D10 — `fs.spawn_subagent` contract
+## D10 — `fs_spawn_subagent` contract
 
-`fs.spawn_subagent` is locked as:
+`fs_spawn_subagent` is locked as:
 - **narrow-scope**
 - **role-bounded**
 - **stateless**
@@ -68,7 +68,7 @@ Resume / PR draft text must **not** be:
 - shared-workspace mode is acceptable only if safety semantics remain explicit.
 
 ### Anti-goal
-`fs.spawn_subagent` must **not** remain a generic arbitrary-shell nested executor.
+`fs_spawn_subagent` must **not** remain a generic arbitrary-shell nested executor.
 
 ---
 

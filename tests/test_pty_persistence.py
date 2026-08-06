@@ -154,7 +154,7 @@ def test_slow_command_does_not_return_stale_prior_result() -> None:
     right after a fast command matched the fast command's already-present
     end_token in the pane's persistent scrollback and returned immediately
     (observed: <0.05s) with the PRIOR command's stdout — before the sleep
-    even started. This is not just a display bug: the caller (fs.run_bash)
+    even started. This is not just a display bug: the caller (fs_run_bash)
     would report a not-yet-executed command as complete. Per-invocation
     unique markers make stale matches impossible; assert elapsed time
     proves the harness actually waited for the real command to finish.

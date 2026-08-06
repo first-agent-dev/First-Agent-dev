@@ -16,7 +16,7 @@ def test_usage_defaults_to_current_run_authority(tmp_path: Path) -> None:
         actor="coder",
         kind="tool_call",
         content={"params": {}},
-        tool_name="fs.read_file",
+        tool_name="fs_read_file",
         tool_call_id="tc-1",
     )
     log.append(
@@ -43,7 +43,7 @@ def test_usage_defaults_to_current_run_authority(tmp_path: Path) -> None:
     assert result.result["input_tokens"] == 120
     assert result.result["output_tokens"] == 30
     assert result.result["cache_read_input_tokens"] == 20
-    assert result.result["tool_calls_breakdown"] == {"fs.read_file": 1}
+    assert result.result["tool_calls_breakdown"] == {"fs_read_file": 1}
 
 
 def test_chronicle_search_defaults_to_current_run_authority(tmp_path: Path) -> None:
@@ -99,7 +99,7 @@ def test_usage_explicit_run_id_reads_run_authority(tmp_path: Path, monkeypatch: 
         actor="coder",
         kind="tool_call",
         content={"params": {}},
-        tool_name="fs.grep",
+        tool_name="fs_grep",
         tool_call_id="tc-1",
     )
     log.append(
@@ -124,7 +124,7 @@ def test_usage_explicit_run_id_reads_run_authority(tmp_path: Path, monkeypatch: 
     assert result.result is not None
     assert result.result["run_id"] == "run-42"
     assert result.result["input_tokens"] == 500
-    assert result.result["tool_calls_breakdown"] == {"fs.grep": 1}
+    assert result.result["tool_calls_breakdown"] == {"fs_grep": 1}
 
 
 def test_chronicle_search_does_not_guess_workspace_events_path(tmp_path: Path) -> None:

@@ -1,4 +1,4 @@
-"""Tests for the ``pr.prepare`` tool (M-7 §Q-N producer).
+"""Tests for the ``pr_prepare`` tool (M-7 §Q-N producer).
 
 The tool writes the per-session PR-description draft IntentGuard reads;
 ADR-10 I-1 says it must share validators with the M-6 git hook and the
@@ -55,7 +55,7 @@ def _invoke(draft_store: PrDraftStore, params: dict[str, object]) -> ToolResult:
 def _dispatch(draft_store: PrDraftStore, params: dict[str, object]) -> ToolResult:
     registry = ToolRegistry()
     registry.register(build_prepare_pr_tool(draft_store))
-    return registry.dispatch(ToolCall(name="pr.prepare", params=params, call_id="tc-pr-prepare"))
+    return registry.dispatch(ToolCall(name="pr_prepare", params=params, call_id="tc-pr-prepare"))
 
 
 def test_happy_path_implement_writes_canonical_headers(draft_store: PrDraftStore, draft_path: Path) -> None:
@@ -306,7 +306,7 @@ def test_atomic_write_failure_preserves_existing_draft_and_cleans_temp_files(
 def test_tool_spec_metadata_is_stable(draft_store: PrDraftStore) -> None:
     """Schema / permission / tags drift would silently break the registry."""
     spec = build_prepare_pr_tool(draft_store)
-    assert spec.name == "pr.prepare"
+    assert spec.name == "pr_prepare"
     assert spec.permission == "workspace"
     assert "draft" in spec.tags
     schema = spec.input_schema

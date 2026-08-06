@@ -100,7 +100,7 @@ All 6 fixes preserve existing control flow (best-effort fallback patterns) while
 
 ---
 
-## Item 2 — `fs.list_tasks` C1 wiring tests ✅ DONE
+## Item 2 — `fs_list_tasks` C1 wiring tests ✅ DONE
 
 ### Artifacts created:
 
@@ -136,13 +136,13 @@ All 6 fixes preserve existing control flow (best-effort fallback patterns) while
 |---|---|---|---|
 | `test_subagent_timeout_produces_exit_code_minus_one` | C0 | SubagentRunner respects timeout | exit_code=-1, "Timeout" in output |
 | `test_subagent_timeout_envelope_is_valid` | C0 | Timeout envelopes pass schema validation | validate_envelope does not raise |
-| `test_ctrl_c_tool_handler_works_with_wired_pty_pool` | C2 | fs.send_ctrl_c works when pty_pool is wired | No "no-pool" in result |
-| `test_ctrl_c_interrupts_pty_session_via_drive_session` | C1 | fs.send_ctrl_c works via drive_session | No "no-pool" in event log |
+| `test_ctrl_c_tool_handler_works_with_wired_pty_pool` | C2 | fs_send_ctrl_c works when pty_pool is wired | No "no-pool" in result |
+| `test_ctrl_c_interrupts_pty_session_via_drive_session` | C1 | fs_send_ctrl_c works via drive_session | No "no-pool" in event log |
 | `test_subagent_spawn_and_cleanup_via_drive_session` | C1 | Subagent spawn creates artifact | spawn_start/done events + .fa/subagents/t-1.json |
 
 ### Product gap documented:
 
-`build_baseline_registry()` registers `fs.send_ctrl_c` via `build_send_ctrl_c_tool()` WITHOUT `pty_pool`. The C1 test works around this by replacing the unwired tool with a properly-wired version. A product gap exists: either `build_baseline_registry` should accept `pty_pool` and forward it, or `build_send_ctrl_c_tool` should use `get_current_session()` DI like `fs.run_bash` does.
+`build_baseline_registry()` registers `fs_send_ctrl_c` via `build_send_ctrl_c_tool()` WITHOUT `pty_pool`. The C1 test works around this by replacing the unwired tool with a properly-wired version. A product gap exists: either `build_baseline_registry` should accept `pty_pool` and forward it, or `build_send_ctrl_c_tool` should use `get_current_session()` DI like `fs_run_bash` does.
 
 ### Verification:
 - `pytest tests/test_subagent_termination_wiring.py -v` → 5 passed
@@ -156,7 +156,7 @@ All 6 fixes preserve existing control flow (best-effort fallback patterns) while
 |---|---|---|
 | 1 | authoring-check 0 diagnostics | ✅ PASS |
 | 2 | C2 test for authoring allowlist wiring | ✅ PASS |
-| 3 | C1 tests for every product surface | ✅ PASS — fs.list_tasks (4 tests), subagent termination (5 tests) |
+| 3 | C1 tests for every product surface | ✅ PASS — fs_list_tasks (4 tests), subagent termination (5 tests) |
 | 5 | shared fixture extracted | ✅ PASS — 0 local copies |
 | 6 | no dead flags | ✅ PASS — 0 dead, 1 phantom (documented) |
 | 7 | fa stats --global-history active consumer | ✅ PASS |

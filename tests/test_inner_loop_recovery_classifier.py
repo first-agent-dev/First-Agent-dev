@@ -108,11 +108,11 @@ def test_classify_result_returns_action_for_failure() -> None:
     """Failure result → :class:`RecoveryAction` with the same fields."""
 
     failure = ToolResult.fail("invalid_params", "missing field", retryable=True)
-    action = classify_result(failure, target="fs.read_file")
+    action = classify_result(failure, target="fs_read_file")
     assert isinstance(action, RecoveryAction)
     assert action.category == FailureCategory.INVALID_ARGUMENTS
     assert action.kind == RecoveryActionKind.RETRY
-    assert action.target == "fs.read_file"
+    assert action.target == "fs_read_file"
     assert action.reason == "missing field"
     assert action.retryable is True
 

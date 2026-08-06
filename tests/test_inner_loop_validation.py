@@ -6,8 +6,8 @@ Covers F-1..F-3 and F-12 from the PR #24 must-fix block:
   ``error.code = "invalid_params"`` before the handler runs.
 - F-2 / \u00a78: a ``Decision.modify`` cannot bypass schema validation \u2014
   ``ToolRegistry.dispatch`` re-validates the mutated payload.
-- F-3 / \u00a78: ``SandboxHook`` denies ``fs.read_file`` / ``fs.write_file``
-  paths that escape the workspace root, not only ``fs.run_bash``.
+- F-3 / \u00a78: ``SandboxHook`` denies ``fs_read_file`` / ``fs_write_file``
+  paths that escape the workspace root, not only ``fs_run_bash``.
 - F-12 / \u00a78: a Decision.modify that mutates ``path`` to escape the
   workspace triggers the sandbox replay and is denied.
 """
@@ -168,7 +168,7 @@ def test_modify_does_not_bypass_schema_revalidation(tmp_path: Path) -> None:
 
 
 def test_sandbox_blocks_read_file_escape(tmp_path: Path) -> None:
-    """F-3: SandboxHook denies an out-of-workspace fs.read_file path
+    """F-3: SandboxHook denies an out-of-workspace fs_read_file path
     BEFORE the tool's own ``resolve_workspace_path`` runs."""
 
     workspace = tmp_path / "ws"
@@ -182,7 +182,7 @@ def test_sandbox_blocks_read_file_escape(tmp_path: Path) -> None:
     state = SessionState(workspace_root=workspace, run_id="t-read", log=EventLog(workspace / "ev.jsonl"))
 
     results = run_session(
-        (ToolCall(name="fs.read_file", params={"path": str(outside)}, call_id="tc-1"),),
+        (ToolCall(name="fs_read_file", params={"path": str(outside)}, call_id="tc-1"),),
         registry=registry,
         hooks=hooks,
         state=state,
@@ -194,7 +194,7 @@ def test_sandbox_blocks_read_file_escape(tmp_path: Path) -> None:
 
 
 def test_sandbox_blocks_write_file_escape(tmp_path: Path) -> None:
-    """F-3: SandboxHook denies an out-of-workspace fs.write_file path."""
+    """F-3: SandboxHook denies an out-of-workspace fs_write_file path."""
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -208,7 +208,7 @@ def test_sandbox_blocks_write_file_escape(tmp_path: Path) -> None:
     results = run_session(
         (
             ToolCall(
-                name="fs.write_file",
+                name="fs_write_file",
                 params={"path": str(escape_target), "content": "boom"},
                 call_id="tc-1",
             ),
@@ -243,7 +243,7 @@ def test_modify_to_escape_is_caught_by_sandbox_replay(tmp_path: Path) -> None:
     results = run_session(
         (
             ToolCall(
-                name="fs.write_file",
+                name="fs_write_file",
                 params={"path": "in-ws.txt", "content": "ok"},
                 call_id="tc-1",
             ),
@@ -301,7 +301,7 @@ def test_dispatch_trace_records_sandbox_replay(tmp_path: Path) -> None:
     results = run_session(
         (
             ToolCall(
-                name="fs.write_file",
+                name="fs_write_file",
                 params={"path": "original.txt", "content": "ok"},
                 call_id="tc-1",
             ),

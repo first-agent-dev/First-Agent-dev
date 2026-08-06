@@ -25,7 +25,7 @@ fa stats --since 7d               # filter by age
 
 ## What it shows
 
-- **Tool usage**: fs.read_file 14x, fs.run_bash 6x, ...
+- **Tool usage**: fs_read_file 14x, fs_run_bash 6x, ...
 - **File access**: which files read/written, how many times, ⚠ redundant reads
 - **Bash commands**: which commands run, repeated ones flagged
 - **Token timeline**: per-turn in/out/cache_read + cache hit ratio

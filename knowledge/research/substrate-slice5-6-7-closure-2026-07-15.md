@@ -101,7 +101,7 @@ test_run_bash_large_output_offloads_artifact_without_internal_error FAILED
 
 ## 5. Micro-slice E — FIND-002 Subagent safety bypass
 
-**Problem:** fs.spawn_subagent previously could bypass shell safety if hooks not enforced; also lacked observability.
+**Problem:** fs_spawn_subagent previously could bypass shell safety if hooks not enforced; also lacked observability.
 
 **Evidence:** test_spawn_subagent_obeys_sandbox_and_secret_guards existed and passed (hooks already check spawn_subagent same as run_bash via SandboxHook, SecretGuard, IntentGuard). But defense-in-depth missing in runner itself.
 

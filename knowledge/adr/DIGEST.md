@@ -198,8 +198,8 @@ config; path-level guard is loud, fast, stoppable; symmetric to
 **Decision.** Formal inner-loop boundary for v0.1 with six pinned
 surfaces: (1) MCP-shaped `ToolSpec` / `ToolResult` registry inheriting
 the ADR-2 §Amendment 2026-05-01 JSON-RPC convention; (2) five-tool
-v0.1 catalog (`fs.read_file`, `fs.list_files`, `fs.edit_file`,
-`fs.write_file`, `fs.grep`) matching ADR-6 §Tool wiring;
+v0.1 catalog (`fs_read_file`, `fs_list_files`, `fs_edit_file`,
+`fs_write_file`, `fs_grep`) matching ADR-6 §Tool wiring;
 (3) two edit-shapes — `edit_file` string-replace default,
 `apply_patch` unified-diff off by default (R-3 fixture pins the
 flip); (4) JSON-Schema input validation per tool; (5) three-tier
@@ -692,7 +692,7 @@ holds no key in any file/env/memory and reaches providers via the proxy
 Container separation (mount/PID namespaces) is the boundary, so it holds with the
 agent as unprivileged `fa` (no root). A compromised agent can *use* a key but
 never *read* it. Defense-in-depth + deploy-key protection (the deploy key still
-lives in the agent for git push): (1) `fs.run_bash` reads of secret paths
+lives in the agent for git push): (1) `fs_run_bash` reads of secret paths
 (`/run/secrets`, `/srv/first-agent/secrets`, `~/.fa/.env`) are denied fail-closed
 (`sandbox/secret_paths.py`); (2) the model-facing tool-result channel is redacted
 at one chokepoint (`coder_loop._redact`: raw/base64/hex/url/reversed); (3) private

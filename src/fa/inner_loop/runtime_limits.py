@@ -5,7 +5,7 @@ Two caps live on the loop driver, not in hook code:
 - ``max_iterations`` — hard cap on the deterministic loop (ADR-7 §1
   step 8 + Amendment 2026-05-20 rule 2: default = 6 per R-30/YT-4
   empirical anchor).
-- ``bash_timeout_seconds`` — wall-clock timeout for ``fs.run_bash``
+- ``bash_timeout_seconds`` — wall-clock timeout for ``fs_run_bash``
   (anchored at 30s in v0.1; raise via config, never via a code constant).
 
 Amendment 2026-05-20 rule 1 says «every retry loop reads its hard cap

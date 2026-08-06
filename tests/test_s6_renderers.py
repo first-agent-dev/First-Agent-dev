@@ -53,7 +53,7 @@ _PAYLOADS: dict[str, dict[str, object]] = {
     "session_start": {"task": "demo", "model": "test/model"},
     "turn_start": {"turn": 1, "max_turns": 3},
     "llm_response": {"text": "hello", "in_tokens": 10, "out_tokens": 2},
-    "tool_call": {"name": "fs.read_file", "params": {"path": "a.txt"}, "ok": True},
+    "tool_call": {"name": "fs_read_file", "params": {"path": "a.txt"}, "ok": True},
     "hook_deny": {"point": "after_tool_exec", "reason": "policy stop"},
     "api_retry": {"attempt": 2, "max_attempts": 3, "reason": "429"},
     "session_end": {"outcome": "done", "turns": 2},

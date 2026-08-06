@@ -46,13 +46,13 @@ def test_run_session_executes_tool_through_hooks(tmp_path: Path) -> None:
 
     results = run_session(
         (
-            ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),
+            ToolCall(name="fs_read_file", params={"path": "input.txt"}, call_id="tc-1"),
             ToolCall(
-                name="fs.write_file",
+                name="fs_write_file",
                 params={"path": "out.txt", "content": "ok\n"},
                 call_id="tc-2",
             ),
-            ToolCall(name="fs.run_bash", params={"command": "test -f out.txt"}, call_id="tc-3"),
+            ToolCall(name="fs_run_bash", params={"command": "test -f out.txt"}, call_id="tc-3"),
         ),
         registry=registry,
         hooks=hooks,
@@ -62,9 +62,9 @@ def test_run_session_executes_tool_through_hooks(tmp_path: Path) -> None:
     assert [result.error for result in results] == [None, None, None]
     assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "ok\n"
     assert [event["tool"] for event in audit.events] == [
-        "fs.read_file",
-        "fs.write_file",
-        "fs.run_bash",
+        "fs_read_file",
+        "fs_write_file",
+        "fs_run_bash",
     ]
     assert state.log is not None
     events = state.log.read_all()
@@ -125,8 +125,8 @@ def test_run_session_run_bash_is_stateful_when_pty_runtime_is_available(tmp_path
 
     results = run_session(
         (
-            ToolCall(name="fs.run_bash", params={"command": "export FOO=bar"}, call_id="tc-1"),
-            ToolCall(name="fs.run_bash", params={"command": 'printf %s "$FOO"'}, call_id="tc-2"),
+            ToolCall(name="fs_run_bash", params={"command": "export FOO=bar"}, call_id="tc-1"),
+            ToolCall(name="fs_run_bash", params={"command": 'printf %s "$FOO"'}, call_id="tc-2"),
         ),
         registry=registry,
         hooks=hooks,
@@ -147,7 +147,7 @@ def test_run_session_records_hook_denial(tmp_path: Path) -> None:
     state = SessionState(workspace_root=tmp_path, run_id="test-deny", log=EventLog(tmp_path / "deny.jsonl"))
 
     results = run_session(
-        (ToolCall(name="fs.run_bash", params={"command": "sudo rm -rf /"}, call_id="tc-1"),),
+        (ToolCall(name="fs_run_bash", params={"command": "sudo rm -rf /"}, call_id="tc-1"),),
         registry=registry,
         hooks=hooks,
         state=state,
@@ -190,7 +190,7 @@ def test_run_session_handles_pause_guard_denial_cleanly(tmp_path: Path) -> None:
 
     # Should not raise -- BUG-0001 made this propagate PermissionError.
     results = run_session(
-        (ToolCall(name="fs.read_file", params={"path": "untouched.txt"}, call_id="tc-1"),),
+        (ToolCall(name="fs_read_file", params={"path": "untouched.txt"}, call_id="tc-1"),),
         registry=registry,
         hooks=hooks,
         state=state,
@@ -261,8 +261,8 @@ def test_run_session_handles_after_tool_exec_denial_cleanly(tmp_path: Path) -> N
     # must break the loop, leaving the second untouched.
     results = run_session(
         (
-            ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),
-            ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-2"),
+            ToolCall(name="fs_read_file", params={"path": "input.txt"}, call_id="tc-1"),
+            ToolCall(name="fs_read_file", params={"path": "input.txt"}, call_id="tc-2"),
         ),
         registry=registry,
         hooks=hooks,
@@ -320,7 +320,7 @@ def test_run_session_requires_session_log_with_explicit_valueerror(tmp_path: Pat
 
     with pytest.raises(ValueError, match=r"SessionState\.log"):
         run_session(
-            (ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),),
+            (ToolCall(name="fs_read_file", params={"path": "input.txt"}, call_id="tc-1"),),
             registry=registry,
             hooks=hooks,
             state=state,
@@ -376,7 +376,7 @@ def test_run_session_records_swallowed_observer_errors(tmp_path: Path) -> None:
     )
 
     results = run_session(
-        (ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),),
+        (ToolCall(name="fs_read_file", params={"path": "input.txt"}, call_id="tc-1"),),
         registry=registry,
         hooks=hooks,
         state=state,
@@ -431,7 +431,7 @@ def test_learning_observer_write_failure_audited(tmp_path: Path) -> None:
         )
 
         results = run_session(
-            (ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),),
+            (ToolCall(name="fs_read_file", params={"path": "input.txt"}, call_id="tc-1"),),
             registry=registry,
             hooks=hooks,
             state=state,
@@ -481,8 +481,8 @@ def test_between_rounds_fires_on_iteration_1(tmp_path: Path) -> None:
     # dispatches, not 1 (which would be the case if iter=1 were skipped).
     run_session(
         (
-            ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),
-            ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-2"),
+            ToolCall(name="fs_read_file", params={"path": "input.txt"}, call_id="tc-1"),
+            ToolCall(name="fs_read_file", params={"path": "input.txt"}, call_id="tc-2"),
         ),
         registry=registry,
         hooks=hooks,

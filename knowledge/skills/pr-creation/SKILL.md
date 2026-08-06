@@ -557,7 +557,7 @@ violation; the reviewer enforces the split.
 ## Worked example
 
 See [`AP-003-shallow-fix-no-mechanism.md`](../../anti-patterns/AP-003-shallow-fix-no-mechanism.md)
-§Wrong shape vs §Right shape — a `fs.move_file` schema bug
+§Wrong shape vs §Right shape — a `fs_move_file` schema bug
 worked-history showing both the shallow `try / except FileNotFoundError`
 WORKAROUND and the producer-site schema-fix REPAIR; the
 DEGREE-OF-FREEDOM CLOSED / DETERMINISTIC MECHANISM clauses make

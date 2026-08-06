@@ -76,7 +76,7 @@ def test_analyze_bash_verify_only_commands(command: str, repo_root: Path) -> Non
         # VERIFY_ONLY (regression guard: previously ``_is_python_interpreter``
         # matched the raw argv[0] exactly, so ``/usr/bin/python3 -m pytest``
         # was mis-classified as OPAQUE_EXEC and incorrectly tripped the
-        # pr.prepare gate before read-only test commands).
+        # pr_prepare gate before read-only test commands).
         "/usr/bin/python3 -m pytest --version",
         "/usr/local/bin/python -m mypy src",
         "/opt/py312/bin/python3 -m ruff format --check .",

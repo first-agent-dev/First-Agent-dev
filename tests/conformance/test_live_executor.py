@@ -74,9 +74,11 @@ def test_case_to_request_uses_composer() -> None:
     # whether the provider accepts them — this is how NVIDIA's 400 surfaced).
     assert "prompt_cache_key" in req.extras
     assert "prompt_cache_retention" in req.extras
-    # Driver defaults mirror production (coder role => 0.2, matching the CLI).
+    # Driver defaults mirror production: max_tokens present, temperature/top_p
+    # omitted (the thinking-model default — no forced sampling on the wire).
     assert req.max_tokens == 64000
-    assert req.temperature == 0.2
+    assert req.temperature is None
+    assert req.top_p is None
 
 
 def test_live_executor_drives_chain_and_reports_tokens() -> None:

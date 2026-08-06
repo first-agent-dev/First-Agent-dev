@@ -7,8 +7,8 @@
 ## Context
 
 The AIO runs the LLM agent inside the *same* container that holds the LLM
-provider API keys. The agent has a `fs.run_bash` tool and `fs.read_file`/
-`fs.write_file`, so a prompt-injected or misbehaving agent could try to read the
+provider API keys. The agent has a `fs_run_bash` tool and `fs_read_file`/
+`fs_write_file`, so a prompt-injected or misbehaving agent could try to read the
 keys and exfiltrate them. The user requirement is concrete: *"no LLM can sniff
 out my keys"* — asking the agent "remind me my Fireworks key" must yield only the
 variable name, never the value; while legitimate questions about roles / request
@@ -17,8 +17,8 @@ schema must keep working.
 Two exfiltration vectors existed before this ADR (verified in code):
 
 - **V1 — file in sandbox:** `.env.fa` lived at the repo root, which is mounted as
-  `/workspace`, so `fs.read_file /workspace/.env.fa` passed path-containment.
-- **V2 — inherited env:** `fs.run_bash` ran `subprocess.run(...)` with no `env=`,
+  `/workspace`, so `fs_read_file /workspace/.env.fa` passed path-containment.
+- **V2 — inherited env:** `fs_run_bash` ran `subprocess.run(...)` with no `env=`,
   inheriting the parent process environment, into which Docker Compose `env_file`
   had injected every key. `printenv`, `cat /proc/self/environ`, `python -c
   "os.environ"` all returned live keys.
@@ -57,11 +57,11 @@ the PR note.
 ## Decision update (2026-06-16): Option C brought forward to v0.1
 
 A blocking security review of the Option-B implementation found the boundary was
-not airtight: `fs.run_bash` READ_ONLY commands (`cat`/`grep`/`dd`/…) bypassed
+not airtight: `fs_run_bash` READ_ONLY commands (`cat`/`grep`/`dd`/…) bypassed
 sandbox path-containment and could read `/run/secrets/fa.env` and the deploy key
 directly, and the model-facing tool-result channel was not redacted (only the
-trace was). Moving the file out of `/workspace` defeats `fs.read_file` but not
-`fs.run_bash`, which shares the agent's uid — file permissions cannot separate
+trace was). Moving the file out of `/workspace` defeats `fs_read_file` but not
+`fs_run_bash`, which shares the agent's uid — file permissions cannot separate
 "the `fa` process reading via SecretStore" from "the `fa` process reading via
 `cat` in run_bash".
 
@@ -71,7 +71,7 @@ defense-in-depth and as the boundary for the GitHub deploy key.
 
 ```text
  first-agent container (USER fa)                 fa-egress-proxy container (USER fa)
- ── agent + fs.run_bash ──                        ── reads /run/secrets/fa.env (ro) ──
+ ── agent + fs_run_bash ──                        ── reads /run/secrets/fa.env (ro) ──
    ProviderChain.base_url = ───── HTTP ─────────►  injects real Authorization / x-api-key
      http://fa-egress-proxy:8080/route/<name>      forwards to the real provider
    carries X-FA-Proxy-Token (NOT a key)  ◄───────  returns provider JSON
@@ -109,13 +109,13 @@ We choose **Option B** for the in-process / deploy-key layers. Concretely
 
 1. **Keys live only in `/srv/first-agent/secrets/fa.env`** (host, `0600`),
    mounted **read-only** at `/run/secrets/fa.env` — *outside* `/workspace`, so the
-   sandbox path-containment denies `fs.read_file`/`bash` access.
+   sandbox path-containment denies `fs_read_file`/`bash` access.
 2. **Keys are read once into a private `SecretStore`** (`Mapping[str, str]`,
    `fa.providers.secret_store`) and never written to `os.environ`. All three
    key-readers (`load_models_config`, `ProviderChain`, `SecretRedactor`) take the
    store via their existing injectable `env=` seam. Strict file-only — no
    `os.environ` fallback (`docker run -e` does not feed provider auth).
-3. **`fs.run_bash` runs with an allowlist-scrubbed child env** (`bash_env.py`)
+3. **`fs_run_bash` runs with an allowlist-scrubbed child env** (`bash_env.py`)
    with a fail-closed secret-name filter applied after the allowlist, so even a
    re-introduced or operator-added key-named var cannot reach the shell.
 4. Backstops: encoding-aware `SecretRedactor` (base64/hex + decoded-window scan)

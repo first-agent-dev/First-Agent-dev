@@ -347,7 +347,7 @@ Source files and what to take:
 |-------|--------|
 | Where is session state? | `~/.fa/session-log/<run_id>/session.db` (SQLite authority). JSONL mirrors are best-effort. |
 | How to read events programmatically? | `session.session_db.read_event_rows()` — never parse JSONL directly for correctness. |
-| How to find artifacts? | `blackboard.query(type="skill")` or `fs.instant_grep(query="auth", limit=10)`. See AGENTS.md §Querying Artifacts. |
+| How to find artifacts? | `blackboard.query(type="skill")` or `fs_instant_grep(query="auth", limit=10)`. See AGENTS.md §Querying Artifacts. |
 | How to see cross-run stats? | `fa stats --global-history` reads `~/.fa/global_history.db`. |
 | Is JSONL authoritative? | No. If JSONL and session.db disagree, session.db wins. JSONL is human-readability surface. |
 
@@ -397,7 +397,7 @@ Two-tier authoring TCB: frozen stdlib-only Level-0 kernel + allowlisted Level-1 
 
 ### Bash Intent Analysis
 
-`fs.run_bash` is parsed through `bashlex` AST. IntentGuard classifies: `READ_ONLY`, `INDEX_WRITE`, `REPO_WRITE`, `DANGEROUS`. REPO_WRITE blocked without authorized PR draft.
+`fs_run_bash` is parsed through `bashlex` AST. IntentGuard classifies: `READ_ONLY`, `INDEX_WRITE`, `REPO_WRITE`, `DANGEROUS`. REPO_WRITE blocked without authorized PR draft.
 
 ### Token-Efficient Retrieval
 

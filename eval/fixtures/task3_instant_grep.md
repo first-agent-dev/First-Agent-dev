@@ -8,7 +8,7 @@ expected: "instant_grep 'auth' finds Authentication substring in <50ms"
 # Task: Instant grep auth
 
 ## Goal
-fs.instant_grep "auth" should find "Authentication" substring via FTS5 trigram <50ms, returns paths not content
+fs_instant_grep "auth" should find "Authentication" substring via FTS5 trigram <50ms, returns paths not content
 
 ## Acceptance
 - instant_grep "auth" → ["AuthMiddleware", "Authentication"] <50ms (0.1ms)

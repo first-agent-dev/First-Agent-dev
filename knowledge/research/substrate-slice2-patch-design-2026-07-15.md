@@ -10,10 +10,10 @@
 
 These are already accepted and binding for implementation.
 
-1. `fs.usage` and `fs.chronicle_search` default to **current run only** when an active session exists.
+1. `fs_usage` and `fs_chronicle_search` default to **current run only** when an active session exists.
 2. When there is **no active session**, runtime observability tools require an **explicit target**.
 3. `fa stats` remains **out of Slice 2**.
-4. `fs.usage` must rely on authoritative **`usage` event rows only**.
+4. `fs_usage` must rely on authoritative **`usage` event rows only**.
 5. Telemetry remains a separate derived surface for now.
 
 ---
@@ -39,7 +39,7 @@ Relevant files:
 - `src/fa/inner_loop/tools/__init__.py`
 - `src/fa/inner_loop/profiles.py`
 
-### D2 — `fs.usage` parses the wrong schema
+### D2 — `fs_usage` parses the wrong schema
 Current implementation still searches for:
 - `prompt_tokens`
 - `total_tokens`
@@ -97,7 +97,7 @@ for runtime observability default behavior.
 
 ## 4.3 API surface changes
 
-### `fs.chronicle_search`
+### `fs_chronicle_search`
 Current required fields:
 - `query`
 
@@ -109,7 +109,7 @@ Behavior:
 - if `run_id`: search that run
 - otherwise: `no_active_session`
 
-### `fs.usage`
+### `fs_usage`
 Current schema: empty object
 
 Add optional field:
@@ -124,12 +124,12 @@ Behavior:
 
 ## 4.4 Data source policy
 
-### `fs.chronicle_search`
+### `fs_chronicle_search`
 Use:
 - `EventLog.read_all()`
 - search across serialized event content / event metadata in-memory
 
-### `fs.usage`
+### `fs_usage`
 Use only:
 - `kind == "usage"` rows
 - `kind == "tool_call"` rows for tool breakdown
@@ -201,21 +201,21 @@ to stop passing guessed event-log paths as if they were authoritative runtime de
 
 1. create active `SessionState`
 2. append real rows via `EventLog`
-3. dispatch `fs.usage` with no `run_id`
+3. dispatch `fs_usage` with no `run_id`
 4. assert it reads the current run and returns real usage totals
 
-### V2 — `fs.chronicle_search` active run proof
+### V2 — `fs_chronicle_search` active run proof
 
 1. active session with known rows
-2. dispatch `fs.chronicle_search` with query only
+2. dispatch `fs_chronicle_search` with query only
 3. assert current run rows returned
 
 ### V3 — No active session failure proof
 
 1. no current session
-2. dispatch `fs.usage` without `run_id`
+2. dispatch `fs_usage` without `run_id`
 3. assert structured `no_active_session` failure
-4. same for `fs.chronicle_search`
+4. same for `fs_chronicle_search`
 
 ### V4 — Explicit run-id proof
 
@@ -266,6 +266,6 @@ At least one test per tool must go through:
 Slice 2 is done when:
 1. runtime observability tools default to current run only,
 2. no active session requires explicit `run_id`,
-3. `fs.usage` reads authoritative `usage` rows correctly,
-4. `fs.chronicle_search` reads authority via `EventLog`,
+3. `fs_usage` reads authoritative `usage` rows correctly,
+4. `fs_chronicle_search` reads authority via `EventLog`,
 5. path guessing is removed from the runtime observability default path.

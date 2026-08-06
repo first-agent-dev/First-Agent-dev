@@ -1,4 +1,4 @@
-"""fs.edit_file — string-replace edit with fuzzy matching tolerating whitespace/indentation.
+"""fs_edit_file — string-replace edit with fuzzy matching tolerating whitespace/indentation.
 
 Senior refactor:
 - Fuzzy matching: exact → stripped → line-stripped sequence search
@@ -169,7 +169,7 @@ def build_edit_file_tool(workspace_root: Path) -> ToolSpec:
         )
 
     return ToolSpec(
-        name="fs.edit_file",
+        name="fs_edit_file",
         description=(
             "Edit file via string replacement with fuzzy whitespace/indentation matching "
             "(exact, stripped, then line-stripped sequence). Declares blackboard read/write sets."

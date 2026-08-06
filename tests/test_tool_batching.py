@@ -7,14 +7,14 @@ from __future__ import annotations
 
 
 def test_batching_grouping() -> None:
-    read_only = {"fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep"}
+    read_only = {"fs_glob", "fs_grep", "fs_read_file", "fs_instant_grep"}
 
     calls = [
-        {"name": "fs.glob"},
-        {"name": "fs.read_file"},
-        {"name": "fs.write_file"},
-        {"name": "fs.run_bash"},
-        {"name": "fs.grep"},
+        {"name": "fs_glob"},
+        {"name": "fs_read_file"},
+        {"name": "fs_write_file"},
+        {"name": "fs_run_bash"},
+        {"name": "fs_grep"},
     ]
 
     parallel = [c for c in calls if c["name"] in read_only]
@@ -33,7 +33,7 @@ def test_threadpool_parallel() -> None:
         time.sleep(0.1)
         return f"result {name}"
 
-    calls = ["fs.glob", "fs.grep", "fs.read_file"]
+    calls = ["fs_glob", "fs_grep", "fs_read_file"]
 
     start = time.time()
     with ThreadPoolExecutor(max_workers=5) as ex:

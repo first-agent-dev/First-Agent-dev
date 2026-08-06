@@ -103,7 +103,7 @@ bureaucracy theming:
 - **Layer 2 (conductor):** Node.js daemon (`conductor/`) orchestrating
   **9 specialised departments** that communicate **only via
   `.md` files in `inbox/` / `outbox/` / `processed/` directories**. A
-  fs.watch debounced dispatcher spawns `claude -p --resume <session_id>
+  fs_watch debounced dispatcher spawns `claude -p --resume <session_id>
   --model <tier> --allowedTools <whitelist> --add-dir <allowlist>` per
   tick.
 
@@ -146,7 +146,7 @@ soviet-code/
 ├── conductor/                ── Layer 2: multi-agent orchestrator ──
 │   ├── src/
 │   │   ├── index.ts          systemd-friendly bootstrap, PID file
-│   │   ├── dispatcher.ts  ⭐  per-dept spawn, fs.watch, session resume
+│   │   ├── dispatcher.ts  ⭐  per-dept spawn, fs_watch, session resume
 │   │   ├── watcher.ts     ⭐  debounced inbox watch + heartbeats
 │   │   ├── bridge.ts         Telegram ↔ outbox/inbox bridge
 │   │   ├── config.ts         gosplan.yaml load + atomic session_id rewrite
@@ -217,12 +217,12 @@ Key design properties:
 ### Layer 2: Госплан/conductor (`conductor/`)
 
 A **separate** Node daemon. Reads `gosplan.yaml`, watches each
-department's `inbox/` directory via `fs.watch`, and on file create
+department's `inbox/` directory via `fs_watch`, and on file create
 spawns a Claude session:
 
 ```text
 inbox/<file>.md (created by another dept)
-   ↓ fs.watch (debounced 2s)
+   ↓ fs_watch (debounced 2s)
    ↓ dispatcher.dispatch(dept)
    ↓ read role.md + handoff.md + optional dossier/backstory/self-profile
    ↓ build prompt = role + handoff + "New tick triggered by: <files>"
@@ -245,7 +245,7 @@ References:
 Auxiliary mechanisms:
 
 - **`fullInboxScan` every 5 min** — safety-net against missed
-  `fs.watch` events (network FS, container quirks).
+  `fs_watch` events (network FS, container quirks).
 - **`gensekHeartbeat` every 30 min** — anti-idle tick on the
   coordinator; if `dept.heartbeat_model` (Haiku) is set, the heartbeat
   uses cheap-model with reduced tool set and **no `--resume`**
@@ -318,7 +318,7 @@ gets «tool not available» from the harness.
 
 This is **exactly the contract ADR-7 §6 / R-7 / R-9 calls for, made
 declarative.** FA today does this in prose (AGENTS.md) and per-script
-(`fs.read_file` in tool catalog); soviet-code does it once, per agent,
+(`fs_read_file` in tool catalog); soviet-code does it once, per agent,
 declaratively, in a YAML registry.
 
 ### Pattern 2 — mandatory 3-model tribunal  ⭐⭐⭐
@@ -612,7 +612,7 @@ gated / content autonomous» concept from cross-ref §3.2.
 | EnoxBackend + LocalBackend pluggable | Graceful degradation when remote KG down | ADR-3/4 should consider this when external KG lands; not now |
 | Telegram bridge as principal channel | External-chat agent pattern | FA principal is human-in-CLI; out of scope |
 | Detector specialists (Кукуцкий for kukuruzization, Фасадов for Potemkin) | On-demand anti-pattern detector summoned by main loop | Interesting for future ADR-anti-pattern catalog, but not v0.1 |
-| 5-min `fullInboxScan` safety net | Defensive against missed fs.watch events | FA doesn't have a runner yet; add only when runner lands |
+| 5-min `fullInboxScan` safety net | Defensive against missed fs_watch events | FA doesn't have a runner yet; add only when runner lands |
 | Dashboard on :8109 | Observability nice-to-have | Out of scope for FA v0.1 |
 | Detector specialists | Anti-pattern catalog + on-demand summoner | FA has anti-pattern notes but no orchestration |
 | Strict JSON output + regex extract + fail-closed default | Brittle but bounded contract | FA prefers Markdown-canon — diverges philosophically |

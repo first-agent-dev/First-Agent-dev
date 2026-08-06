@@ -228,7 +228,7 @@ These do **not** all need to become separate physical files in Phase 1. But they
 | Execution Artifact | Coder | PARTIAL | YES | What was changed, what was run, deviations, unresolved issues |
 | Evaluation Artifact | Eval | PARTIAL | YES | Verdict, findings, route decision |
 | FlowState Artifact | Workflow controller | OPTIONAL | YES | Current state, budgets, next actor, transition audit |
-| `pr.prepare` draft / work log | Shared narrative surface | YES | NO (controller must not treat it as authoritative) | Human-readable session story and operator review |
+| `pr_prepare` draft / work log | Shared narrative surface | YES | NO (controller must not treat it as authoritative) | Human-readable session story and operator review |
 
 ### 4.3.2 Temporary physical representation (first landing recommendation)
 
@@ -419,7 +419,7 @@ The plan below is intentionally phased so each session can stop on a clean bound
 **Subtasks:**
 1. Freeze source-of-truth ownership per artefact.
 2. Freeze temporary JSON-vs-Markdown placement.
-3. Clarify how `pr.prepare` remains a narrative surface without becoming controller truth.
+3. Clarify how `pr_prepare` remains a narrative surface without becoming controller truth.
 4. Capture any compatibility constraints from the current session-log layout.
 
 **Primary files:**
@@ -545,7 +545,7 @@ The plan below is intentionally phased so each session can stop on a clean bound
 
 - Record the controller-vs-narrative source-of-truth hierarchy.
 - Freeze the temporary JSON/Markdown placement for Plan / Execution / Eval / FlowState.
-- Confirm `pr.prepare` remains narrative-only for controller purposes.
+- Confirm `pr_prepare` remains narrative-only for controller purposes.
 
 ### Session C — Prompt-contract rewrite pass
 

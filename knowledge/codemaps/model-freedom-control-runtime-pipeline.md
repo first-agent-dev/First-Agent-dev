@@ -6,7 +6,7 @@
 
 - **контрактов** (`SKILL.md`, `pr_intent.py`),
 - **человеческого git-hook seat** (`pre-commit`, `prepare-commit-msg`, `commit-msg`),
-- **агентного producer seat** (`pr.prepare`),
+- **агентного producer seat** (`pr_prepare`),
 - **trust boundary** (`PrDraftStore`),
 - **runtime enforcement seat** (`IntentGuard` + `bash_intent` + role-scoped registries),
 - **локальных/CI guardrails** (`just check`, `fa authoring-check`, CI workflows),
@@ -23,7 +23,7 @@
 1. **Contract source** — человеко- и агентно-читаемый canonical contract в `knowledge/skills/pr-creation/SKILL.md`.
 2. **Semantic core** — детерминированный модуль `src/fa/hygiene/pr_intent.py`, который превращает контракт в код: классификатор staged diff, набор обязательных полей, валидатор commit/draft metadata, защиту от test-gaming.
 3. **Human hook seat** — `prepare-commit-msg` / `commit-msg` / `pre-commit`. Это seat быстрого локального feedback, намеренно bypassable через `--no-verify`, и потому не считается authority.
-4. **Agent producer seat** — tool `pr.prepare`, который заставляет модель явно записывать intent/invariant/work log в процессе сессии.
+4. **Agent producer seat** — tool `pr_prepare`, который заставляет модель явно записывать intent/invariant/work log в процессе сессии.
 5. **Runtime enforcement seat** — `PrDraftStore` + `IntentGuard` + `bash_intent`, которые не дают мутировать workspace и staged tree, пока в текущей сессии не создан trusted draft.
 6. **Authoritative guardrail + merge seat** — `just check`, `fa authoring-check`, CI workflows и human merge gate. Это не seat управления текущим tool call, а seat принятия/отклонения изменений в репозиторий.
 
@@ -58,13 +58,13 @@
 | `install_hooks()` | `hooks/install.py:90` | Function | Hook infra | Установка всех hook seats |
 | `check_hooks()` | `hooks/status.py:38` | Function | Hook infra | Статус installed/stale/non-executable hooks |
 | `PrDraftStore` | `src/fa/inner_loop/pr_draft.py:44` | Class | Trust boundary | Current-session trust wrapper вокруг `pr_draft.md` |
-| `build_prepare_pr_tool()` | `src/fa/inner_loop/tools/prepare_pr.py:173` | Factory | Agent producer seat | Tool `pr.prepare` |
+| `build_prepare_pr_tool()` | `src/fa/inner_loop/tools/prepare_pr.py:173` | Factory | Agent producer seat | Tool `pr_prepare` |
 | `_render_draft()` | `prepare_pr.py:88` | Function | Agent producer seat | Канонический рендер draft body |
 | `_validate_fix_fields()` | `prepare_pr.py:124` | Function | Agent producer seat | Fail-fast checks для FIX-only fields |
 | `_validate_invariant_prefix()` | `prepare_pr.py:162` | Function | Agent producer seat | Prefix-check для `INVARIANT:` |
 | `IntentGuard` | `src/fa/inner_loop/hooks/intent_guard.py:227` | `GuardMiddleware` | Runtime enforcement seat | Блокирует mutation без trusted draft |
 | `_parse_typed_intent()` | `intent_guard.py:134` | Function | Runtime enforcement seat | D-5 override path |
-| `_project_call()` | `intent_guard.py:156` | Function | Runtime enforcement seat | Проекция `fs.write_file`/`edit` в synthetic staged snapshot |
+| `_project_call()` | `intent_guard.py:156` | Function | Runtime enforcement seat | Проекция `fs_write_file`/`edit` в synthetic staged snapshot |
 | `_bash_analysis_for_call()` | `intent_guard.py:209` | Function | Runtime enforcement seat | Связка с bash-effect classifier |
 | `_requires_draft()` | `intent_guard.py:218` | Function | Runtime enforcement seat | Решение, требует ли call trusted draft |
 | `BashIntentEffect` | `src/fa/inner_loop/bash_intent.py:46` | `StrEnum` | Runtime enforcement seat | `READ_ONLY / VERIFY_ONLY / INDEX_WRITE / REPO_WRITE / OPAQUE_EXEC` |
@@ -75,7 +75,7 @@
 | `build_planner_registry()` | `tools/__init__.py:32` | Factory | Tool surface | Planner read-only tool set |
 | `build_eval_registry()` | `tools/__init__.py:49` | Factory | Tool surface | Eval read-only tool set |
 | `_cmd_run()` registry/hook wiring | `src/fa/cli.py:630,726-797` | CLI orchestration | Runtime seat wiring | Собирает runtime seat из registry + hooks + draft store |
-| Coder prompt `Declare intent` step | `src/fa/inner_loop/prompt.py:533-546` | Prompt contract | Prompt seat | Наталкивает модель вызвать `pr.prepare` до первой mutation |
+| Coder prompt `Declare intent` step | `src/fa/inner_loop/prompt.py:533-546` | Prompt contract | Prompt seat | Наталкивает модель вызвать `pr_prepare` до первой mutation |
 | Local gates | `knowledge/ci-guardrails-reference.md:18-36` | Process layer | Local authority | `just check`, `fa authoring-check`, tests |
 | Runtime hook pipeline | `ci-guardrails-reference.md:50-69` | Process layer | Runtime authority | `SandboxHook -> LoopGuard -> blockers -> IntentGuard -> AuditHook -> SecretGuard -> CostGuardian` |
 | Hook seat reference | `ci-guardrails-reference.md:71-99` | Process layer | Human hook seat | Документирует narrowed hook-seat semantics |
@@ -89,9 +89,9 @@
 
 | Seat | Trigger | Strictness | Why it exists | Why it is not enough alone |
 | --- | --- | --- | --- | --- |
-| **Prompt seat** | модель читает `CODER_SYSTEM_PROMPT` | мягкий | заранее встраивает workflow и требование `pr.prepare` в reasoning path | модель может не послушаться; нет deterministic enforcement |
+| **Prompt seat** | модель читает `CODER_SYSTEM_PROMPT` | мягкий | заранее встраивает workflow и требование `pr_prepare` в reasoning path | модель может не послушаться; нет deterministic enforcement |
 | **Human hook seat** | локальный `git commit` | средний | быстрый feedback человеку, если он явно использует rich metadata | bypassable (`--no-verify`), не должен ломать обычный manual flow |
-| **Agent producer seat** | `pr.prepare` tool call | строгий | заставляет модель materialize intent/invariant/work log в machine-readable form | сам по себе не блокирует mutation, если никто не проверяет existence/trust |
+| **Agent producer seat** | `pr_prepare` tool call | строгий | заставляет модель materialize intent/invariant/work log в machine-readable form | сам по себе не блокирует mutation, если никто не проверяет existence/trust |
 | **Trust boundary seat** | `PrDraftStore` | строгий | отличает “draft из этой сессии” от stale/external file | не знает про staged diff и mutation semantics |
 | **Runtime enforcement seat** | mutating tool call | очень строгий | реальный gate перед mutation; связывает draft + projected staged snapshot + shell effect class | не защищает human local git workflow |
 | **Local authority seat** | `just check` / `fa authoring-check` | строгий | deterministic repo acceptance locally | не управляет каждым tool call в живой сессии |
@@ -121,14 +121,14 @@
 - runtime `IntentGuard` reuses the same rule so the same policy applies both in hook seat and in tool-execution seat (`intent_guard.py:303-307`; `ci-guardrails-reference.md:58-69`).
 
 ### 4.4 Draft trust closure
-- `PrDraftStore.write_text()` records digest of exact bytes produced by `pr.prepare` (`pr_draft.py:67-72`).
+- `PrDraftStore.write_text()` records digest of exact bytes produced by `pr_prepare` (`pr_draft.py:67-72`).
 - `read_current_text()` trusts file only if on-disk bytes still match current-session digest (`pr_draft.py:74-91`).
 - `clear(remove_file=...)` resets stale trust at session start / resume boundary (`pr_draft.py:56-64`; `cli.py:755-763`).
 
 ### 4.5 Mutation gating
 - `IntentGuard` denies mutation when no trusted draft exists (`intent_guard.py:129-130`, `275-281`).
 - `build_baseline_registry` / `build_planner_registry` / `build_eval_registry` narrow available tool set by role (`tools/__init__.py:13-64`).
-- only coder gets `fs.write_file`; planner/eval are read-only plus `fs.run_bash` for reconnaissance/verification.
+- only coder gets `fs_write_file`; planner/eval are read-only plus `fs_run_bash` for reconnaissance/verification.
 
 ### 4.6 Shell-effect narrowing
 - `bash_intent.py` classifies shell commands into five effect classes (`bash_intent.py:1-25`, `46-58`).
@@ -137,7 +137,7 @@
 - `REPO_WRITE` projects touched paths into synthetic `StagedPath` rows, so runtime classification sees the about-to-be-produced snapshot (`intent_guard.py:156-194`, `290-299`).
 
 ### 4.7 Environment narrowing
-- `build_scrubbed_env()` passes only allowlisted env vars to `fs.run_bash`, then drops any credential-looking names fail-closed (`bash_env.py:28-89`).
+- `build_scrubbed_env()` passes only allowlisted env vars to `fs_run_bash`, then drops any credential-looking names fail-closed (`bash_env.py:28-89`).
 - this reduces model freedom to exfiltrate secrets via child processes.
 
 ### 4.8 Hook-seat narrowing
@@ -223,13 +223,13 @@ git commit
 
 ---
 
-## 7. Trace 3 — Agent producer seat (`pr.prepare`)
+## 7. Trace 3 — Agent producer seat (`pr_prepare`)
 
 Это seat, где модель явно materialize-ит intent и work log **до mutation**.
 
 ```text
 LLM decides to mutate workspace
-└── call pr.prepare <-- [3a]
+└── call pr_prepare <-- [3a]
     ├── parse params (intent, invariant, optional FIX fields, body) <-- [3b]
     ├── validate invariant prefix <-- [3c]
     ├── validate FIX-only fields presence/shape <-- [3d]
@@ -241,7 +241,7 @@ LLM decides to mutate workspace
 
 | Location | Title | Description | File:Line |
 | :--- | :--- | :--- | :--- |
-| `3a` | Tool registration | `pr.prepare` registered by CLI into per-run registry | `cli.py:763` |
+| `3a` | Tool registration | `pr_prepare` registered by CLI into per-run registry | `cli.py:763` |
 | `3b` | Param parsing | Required `intent` / `invariant`, optional FIX-only fields | `prepare_pr.py:181-188` |
 | `3c` | Invariant prefix check | Mirror of core validator’s intent-prefix logic | `prepare_pr.py:162-170`, `199-201` |
 | `3d` | FIX field gate | `fix_class` / `dof` / `mechanism` required only for FIX | `prepare_pr.py:124-160`, `203-207` |
@@ -254,10 +254,10 @@ LLM decides to mutate workspace
 
 ## 8. Trace 4 — Trust boundary (`PrDraftStore`)
 
-Этот слой отрезает cheap bypass, где модель или shell просто пишет файл по правильному пути без прохождения через `pr.prepare`.
+Этот слой отрезает cheap bypass, где модель или shell просто пишет файл по правильному пути без прохождения через `pr_prepare`.
 
 ```text
-pr.prepare writes draft <-- [4a]
+pr_prepare writes draft <-- [4a]
 └── PrDraftStore.write_text()
     ├── atomic write to stable path <-- [4b]
     └── record current-session digest <-- [4c]
@@ -272,7 +272,7 @@ Later mutation check
 
 | Location | Title | Description | File:Line |
 | :--- | :--- | :--- | :--- |
-| `4a` | Producer-side write | `pr.prepare` is the only trusted writer | `prepare_pr.py:243-249` |
+| `4a` | Producer-side write | `pr_prepare` is the only trusted writer | `prepare_pr.py:243-249` |
 | `4b` | Atomic file write | temp file + `os.replace` | `pr_draft.py:95-117` |
 | `4c` | Session digest | `sha256(text)` cached in memory | `pr_draft.py:39-40`, `67-72` |
 | `4d` | Trusted read path | Returns text only when current-session digest still matches | `pr_draft.py:74-91` |
@@ -310,7 +310,7 @@ Tool call about to execute
 | :--- | :--- | :--- | :--- |
 | `5a` | Guard entry | Runtime gate attaches only to `BEFORE_TOOL_EXEC` | `intent_guard.py:227-274` |
 | `5b` | Draft requirement routing | `_requires_draft()` decides whether this call needs trusted draft | `intent_guard.py:218-224`, `275-277` |
-| `5b1` | Direct mutators | `fs.write_file`, `fs.edit_file`, `fs.apply_patch` always require draft | `intent_guard.py:112-118`, `218-220` |
+| `5b1` | Direct mutators | `fs_write_file`, `fs_edit_file`, `fs_apply_patch` always require draft | `intent_guard.py:112-118`, `218-220` |
 | `5b2` | Bash-mediated mutators | `bash_intent` decides `READ_ONLY / VERIFY_ONLY / INDEX_WRITE / REPO_WRITE / OPAQUE_EXEC` | `intent_guard.py:209-224`; `bash_intent.py:127-148` |
 | `5c` | Trusted draft read | `draft_store.read_current_text()` | `intent_guard.py:279` |
 | `5d` | Hard deny on missing/untrusted draft | same-session trust required | `intent_guard.py:280-281` |
@@ -318,7 +318,7 @@ Tool call about to execute
 | `5f` | Mutation projection | direct or bash-mediated path projection into synthetic staged set | `intent_guard.py:289-299` |
 | `5g` | Classifier over projected view | shared classifier sees about-to-be-produced snapshot | `intent_guard.py:300` |
 | `5h` | Typed intent override | `INTENT:` in draft can override classifier for shape-validation | `intent_guard.py:134-149`, `301-302` |
-| `5i` | Shared semantic validator | same core validator as hook seat and `pr.prepare` | `intent_guard.py:303-308` |
+| `5i` | Shared semantic validator | same core validator as hook seat and `pr_prepare` | `intent_guard.py:303-308` |
 | `5j` | Shared test-protection rule | classifier intent remains authoritative for test-edit policy | `intent_guard.py:309-312` |
 | `5k` | Hook-like denial message | same semantic rule surface, different runtime seat | `intent_guard.py:313-318` |
 
@@ -326,10 +326,10 @@ Tool call about to execute
 
 ## 10. Trace 6 — Bash effect classification and shell narrowing
 
-`IntentGuard` would be too blunt if every `fs.run_bash` call required the same treatment. `bash_intent.py` narrows shell freedom before that point.
+`IntentGuard` would be too blunt if every `fs_run_bash` call required the same treatment. `bash_intent.py` narrows shell freedom before that point.
 
 ```text
-fs.run_bash command
+fs_run_bash command
 └── analyze_bash_for_intent(command) <-- [6a]
     ├── parse shell AST via bashlex <-- [6b]
     │   └── parse failure → OPAQUE_EXEC <-- [6c]
@@ -366,7 +366,7 @@ Prompting is not authority, but it is the first line of friction reduction. The 
 CODER_SYSTEM_PROMPT
 ├── planner → coder → evaluator chain context <-- [7a]
 ├── declare intent before first mutation <-- [7b]
-├── for each step: read → write → verify → pr.prepare update <-- [7c]
+├── for each step: read → write → verify → pr_prepare update <-- [7c]
 ├── if harness blocks your call: read deny reason and adapt <-- [7d]
 └── maintain living work log in draft body <-- [7e]
 ```
@@ -374,7 +374,7 @@ CODER_SYSTEM_PROMPT
 | Location | Title | Description | File:Line |
 | :--- | :--- | :--- | :--- |
 | `7a` | Role chain framing | coder knows it is middle seat in planner→coder→evaluator pipeline | `prompt.py:506-518` |
-| `7b` | Declare intent first | explicit `pr.prepare` before first mutation | `prompt.py:533-536` |
+| `7b` | Declare intent first | explicit `pr_prepare` before first mutation | `prompt.py:533-536` |
 | `7c` | Step protocol | read, mutate, verify, update work log | `prompt.py:538-547` |
 | `7d` | Harness deny semantics | prompt tells model deny reason is a real constraint | `prompt.py:609-613` |
 | `7e` | Living work log | draft body as operational memory surface | `prompt.py:592-599` |
@@ -438,7 +438,7 @@ just install <-- [8a]
          ┌───────────┘                    └───────────────┐
          ▼                                                ▼
  Human hook seat                                  Agent producer seat
- prepare-commit-msg / commit-msg                  pr.prepare tool
+ prepare-commit-msg / commit-msg                  pr_prepare tool
          │                                                │
          │                             writes canonical draft bytes
          ▼                                                ▼
@@ -471,7 +471,7 @@ just install <-- [8a]
 | Cite fake mechanism | `resolve_citation()` | Semantic core |
 | Make tautological explanation | DOF vs MECHANISM anti-tautology check | Semantic core |
 | Delete or rewrite tests to escape failing code | `validate_test_edits()` | Semantic core + Runtime seat |
-| Mutate workspace before declaring intent | `IntentGuard` requires trusted `pr.prepare` draft | Runtime seat |
+| Mutate workspace before declaring intent | `IntentGuard` requires trusted `pr_prepare` draft | Runtime seat |
 | Fake a draft by writing the file directly | `PrDraftStore` session digest trust | Trust boundary |
 | Hide shell-side writes inside opaque command | `bash_intent` fail-closed `OPAQUE_EXEC` | Runtime seat |
 | Exfiltrate env secrets from bash | `build_scrubbed_env()` allowlist + secret filter | Tool surface |
@@ -486,13 +486,13 @@ just install <-- [8a]
 Ordinary human commits with no metadata are allowed through. This is not a bug; it is a boundary decision. The strict anti-cheap-workaround semantics belong primarily to the runtime seat, not to every human commit.
 
 ### 15.2 Shared validator is intentionally stronger than hook seat
-`validate_commit_msg(...)` remains strict even though `_cli_validate(...)` now allows a manual no-header path. This is deliberate: the same validator powers `pr.prepare` and `IntentGuard`, where strictness is required.
+`validate_commit_msg(...)` remains strict even though `_cli_validate(...)` now allows a manual no-header path. This is deliberate: the same validator powers `pr_prepare` and `IntentGuard`, where strictness is required.
 
 ### 15.3 `TEST-EDITS` authority is classifier-based, not typed-intent-based
 The D-5 typed `INTENT:` override can affect shape-validation, but `validate_test_edits()` remains keyed on classifier intent. This prevents an agent from disarming test protection by editing its own declared intent.
 
 ### 15.4 Prompt seat reduces friction, not authority
-The coder prompt tells the model to call `pr.prepare` before first mutation, but the actual authority is `IntentGuard`. Prompting nudges; runtime enforces.
+The coder prompt tells the model to call `pr_prepare` before first mutation, but the actual authority is `IntentGuard`. Prompting nudges; runtime enforces.
 
 ---
 
@@ -508,7 +508,7 @@ The coder prompt tells the model to call `pr.prepare` before first mutation, but
 
 ## 17. High-ROI follow-up improvements
 
-1. **Dedicated agent commit tool.** The cleanest long-term narrowing of model freedom would be a first-party commit tool (for example `git.commit_prepared`) that consumes the trusted current-session draft, appends the `AI-Session:` trailer deterministically, and avoids raw `git commit` through `fs.run_bash`.
+1. **Dedicated agent commit tool.** The cleanest long-term narrowing of model freedom would be a first-party commit tool (for example `git.commit_prepared`) that consumes the trusted current-session draft, appends the `AI-Session:` trailer deterministically, and avoids raw `git commit` through `fs_run_bash`.
 2. **Explicit agent-mode signal for hook behavior.** If later you want stricter hook-seat behavior for agent-executed commits but not for humans, prefer an explicit runtime signal over heuristics on branch names or `COMMIT_SOURCE`.
 3. **Clearer prefill policy.** The current `prepare-commit-msg` logic is intentionally narrow, but not obviously so from first read. A future simplification is to make prefill opt-in by an explicit env flag and document that policy directly.
 4. **Shared-hooks operational note.** In git worktree layouts, hooks live in the common git dir and are therefore shared across sibling worktrees. This is correct for Git, but worth documenting for operators because reinstalling hooks in one worktree affects the others.

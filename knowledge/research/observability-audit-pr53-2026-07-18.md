@@ -411,7 +411,7 @@ Or simpler: track the last `budget.check()` result and pass its ratio.
 
 **Location:** `src/fa/observability/cost_guardian.py` + tool implementations
 
-**Problem:** `default_cost_extractor` looks for `cost=...` artifact in `ToolResult.artifacts`. Baseline tools (`fs.read_file`, `fs.write_file`, `fs.run_bash`) do NOT emit this artifact. Only a future T-2 LLM driver will emit it.
+**Problem:** `default_cost_extractor` looks for `cost=...` artifact in `ToolResult.artifacts`. Baseline tools (`fs_read_file`, `fs_write_file`, `fs_run_bash`) do NOT emit this artifact. Only a future T-2 LLM driver will emit it.
 
 **Impact:** The `cost_observation` event kind exists but will never fire with current tools. CostGuardian is fully wired but produces zero observations in production today. The feature is structurally complete but operationally dormant.
 

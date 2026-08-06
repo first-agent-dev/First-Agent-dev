@@ -39,7 +39,7 @@ none of ``hook_deny`` / ``read_failed`` / ``write_failed`` /
 patterns (``could not get lock``, ``unable to create *.lock``,
 ``blocking waiting for file lock``, ``resource temporarily
 unavailable``, ``another (instance|process) ... (lock|running)``)
-rather than bare ``.lock`` substrings, so a baseline ``fs.run_bash``
+rather than bare ``.lock`` substrings, so a baseline ``fs_run_bash``
 error like ``No such file or directory: Cargo.lock`` does **not**
 trigger gating. They activate when the LLM driver T-2 wires API /
 browser / git tools that emit rate-limit / lockfile / auth error
@@ -193,7 +193,7 @@ _RATE_LIMIT_MESSAGE = re.compile(
 )
 _LOCKFILE_MESSAGE = re.compile(
     # Match only *contention-specific* lockfile signatures so a baseline
-    # ``fs.run_bash`` failure that merely mentions a ``.lock`` filename
+    # ``fs_run_bash`` failure that merely mentions a ``.lock`` filename
     # (``No such file or directory: Cargo.lock``, ``Permission denied:
     # package-lock.json``, ``Cargo.lock not found``) does not falsely
     # trip the gate. Earlier versions of this regex included a bare

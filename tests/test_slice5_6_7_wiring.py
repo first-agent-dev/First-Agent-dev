@@ -50,7 +50,7 @@ def test_pr6_wiring_bash_large_output_offloads_artifact_via_live_path(tmp_path: 
     - oracle: event tool_result with artifact_id + truncated
     - kill-check: removing put() in run_bash.py makes artifact_id None and fails
 
-    Product claim: fs.run_bash large output >8000 offloads to ArtifactStore and returns truncated preview.
+    Product claim: fs_run_bash large output >8000 offloads to ArtifactStore and returns truncated preview.
     """
     log = EventLog(tmp_path / "events.jsonl", run_id="pr6-artifact")
     state = SessionState(
@@ -67,7 +67,7 @@ def test_pr6_wiring_bash_large_output_offloads_artifact_via_live_path(tmp_path: 
 
     # Turn 1: LLM asks to run bash printing 9001 A's
     large_cmd = "python3 - <<'PY'\nprint('A' * 9001)\nPY"
-    tc1 = make_tool_call("fs.run_bash", {"command": large_cmd}, "tc-1")
+    tc1 = make_tool_call("fs_run_bash", {"command": large_cmd}, "tc-1")
     # Turn 2: stop
     mock_chain.request.side_effect = [
         mock_response_with_tools([tc1], text="run large"),
@@ -88,7 +88,7 @@ def test_pr6_wiring_bash_large_output_offloads_artifact_via_live_path(tmp_path: 
     assert mock_chain.request.call_count == 2
 
     events = require_log(state).read_all()
-    tool_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.run_bash"]
+    tool_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs_run_bash"]
     assert len(tool_results) == 1
     content = tool_results[0].content
     result = cast(dict[str, Any], content.get("result") or {})
@@ -130,8 +130,8 @@ def test_pr6_wiring_parallel_denied_preserved_order(tmp_path: Path) -> None:
         name="test",
     )
 
-    tc1 = make_tool_call("fs.read_file", {"path": "a.txt"}, "tc-1")
-    tc2 = make_tool_call("fs.read_file", {"path": "../../etc/passwd"}, "tc-2")
+    tc1 = make_tool_call("fs_read_file", {"path": "a.txt"}, "tc-1")
+    tc2 = make_tool_call("fs_read_file", {"path": "../../etc/passwd"}, "tc-2")
 
     mock_chain.request.side_effect = [
         mock_response_with_tools([tc1, tc2], text="read both"),
@@ -173,7 +173,7 @@ def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
     - oracle: FTS db not created during query, result method fallback, not fts5 when empty
     - kill-check: reintroducing index_repo() in _fts_search creates db file -> test fails on not exists
 
-    Product claim: fs.instant_grep is read-only, does not auto-index.
+    Product claim: fs_instant_grep is read-only, does not auto-index.
     """
     # Ensure no fts.db exists
     fts_db = tmp_path / ".fa" / "fts.db"
@@ -192,7 +192,7 @@ def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
         name="test",
     )
 
-    tc1 = make_tool_call("fs.instant_grep", {"query": "needle"}, "tc-1")
+    tc1 = make_tool_call("fs_instant_grep", {"query": "needle"}, "tc-1")
 
     mock_chain.request.side_effect = [
         mock_response_with_tools([tc1]),
@@ -215,7 +215,7 @@ def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
 
     # Tool result should be via fallback, not fts5 when empty
     events = require_log(state).read_all()
-    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.instant_grep"]
+    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs_instant_grep"]
     assert len(tr) == 1
     result = cast(dict[str, Any], tr[0].content.get("result") or {})
     # method should be git_ls_files or fallback_walk, not fts5 alone when empty
@@ -264,8 +264,8 @@ def test_pr6_wiring_pty_persistence_via_session(tmp_path: Path) -> None:
         name="test",
     )
 
-    tc1 = make_tool_call("fs.run_bash", {"command": "cd /tmp && pwd"}, "tc-1")
-    tc2 = make_tool_call("fs.run_bash", {"command": "pwd"}, "tc-2")
+    tc1 = make_tool_call("fs_run_bash", {"command": "cd /tmp && pwd"}, "tc-1")
+    tc2 = make_tool_call("fs_run_bash", {"command": "pwd"}, "tc-2")
 
     mock_chain.request.side_effect = [
         mock_response_with_tools([tc1], text="cd"),
@@ -284,7 +284,7 @@ def test_pr6_wiring_pty_persistence_via_session(tmp_path: Path) -> None:
 
     assert outcome.exit_code == 0
     events = require_log(state).read_all()
-    tool_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.run_bash"]
+    tool_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs_run_bash"]
     assert len(tool_results) == 2
     # Second result should still be /tmp if stateful
     second_result = cast(dict[str, Any], tool_results[1].content.get("result", {}) or {})
@@ -319,7 +319,7 @@ def test_pr6_wiring_cr_cleaning_via_bash(tmp_path: Path) -> None:
     )
 
     # printf with \r
-    tc1 = make_tool_call("fs.run_bash", {"command": "printf 'foo\\rbar\\n'"}, "tc-1")
+    tc1 = make_tool_call("fs_run_bash", {"command": "printf 'foo\\rbar\\n'"}, "tc-1")
 
     mock_chain.request.side_effect = [
         mock_response_with_tools([tc1]),
@@ -336,7 +336,7 @@ def test_pr6_wiring_cr_cleaning_via_bash(tmp_path: Path) -> None:
     )
 
     events = require_log(state).read_all()
-    tr = next(e for e in events if e.kind == "tool_result" and e.tool_name == "fs.run_bash")
+    tr = next(e for e in events if e.kind == "tool_result" and e.tool_name == "fs_run_bash")
     tr_result = cast(dict[str, Any], tr.content.get("result", {}) or {})
     stdout = str(tr_result.get("stdout", ""))
     assert "\r" not in stdout, f"CR not cleaned: {stdout!r}"
@@ -357,7 +357,7 @@ def test_pr6_wiring_subagent_role_env_and_events(tmp_path: Path) -> None:
     - oracle: subagent_spawn_start/done events, envelope type researcher, env propagated, artifact exists
     - kill-check: removing spawn_start log in spawn_subagent.py fails event check
 
-    Product claim: fs.spawn_subagent is role-bounded, env-aware, observable.
+    Product claim: fs_spawn_subagent is role-bounded, env-aware, observable.
     """
     log = EventLog(tmp_path / "events.jsonl", run_id="pr6-subagent")
     state = SessionState(
@@ -375,7 +375,7 @@ def test_pr6_wiring_subagent_role_env_and_events(tmp_path: Path) -> None:
     )
 
     tc1 = make_tool_call(
-        "fs.spawn_subagent",
+        "fs_spawn_subagent",
         {"task_id": "t-1", "command": "echo hello", "role": "researcher", "env": {"MYVAR": "ok"}},
         "tc-1",
     )
@@ -401,7 +401,7 @@ def test_pr6_wiring_subagent_role_env_and_events(tmp_path: Path) -> None:
     assert "subagent_spawn_done" in kinds
 
     # Check envelope type preserved
-    tr = next(e for e in events if e.kind == "tool_result" and e.tool_name == "fs.spawn_subagent")
+    tr = next(e for e in events if e.kind == "tool_result" and e.tool_name == "fs_spawn_subagent")
     result_json = tr.content.get("result") or {}
     # result field is JSON string of envelope
     import json as _json
@@ -433,7 +433,7 @@ def test_pr6_wiring_subagent_sandbox_deny(tmp_path: Path) -> None:
     - oracle: outcome has hook_deny, provider call_count ==1 (early stop), no spawn event
     - kill-check: removing SandboxHook registration allows malicious command -> fails
 
-    Product claim: fs.spawn_subagent respects same sandbox safety as parent shell.
+    Product claim: fs_spawn_subagent respects same sandbox safety as parent shell.
     """
     from fa.inner_loop.hooks import SandboxHook, SecretGuard
 
@@ -456,7 +456,7 @@ def test_pr6_wiring_subagent_sandbox_deny(tmp_path: Path) -> None:
 
     # Malicious command should be denied by sandbox
     tc1 = make_tool_call(
-        "fs.spawn_subagent", {"task_id": "evil", "command": "sudo rm -rf /", "role": "verifier"}, "tc-1"
+        "fs_spawn_subagent", {"task_id": "evil", "command": "sudo rm -rf /", "role": "verifier"}, "tc-1"
     )
 
     mock_chain.request.side_effect = [
@@ -478,7 +478,7 @@ def test_pr6_wiring_subagent_sandbox_deny(tmp_path: Path) -> None:
     assert mock_chain.request.call_count >= 1
     events = require_log(state).read_all()
     # Check for hook_decision deny or tool_result with hook_deny
-    tool_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.spawn_subagent"]
+    tool_results = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs_spawn_subagent"]
     assert len(tool_results) == 1
     assert tool_results[0].content.get("error") is not None or "hook_deny" in str(tool_results[0].content)
     # No spawn_start should be logged because denied before handler

@@ -36,7 +36,7 @@ You are right on both counts:
 
 Scenario: main loop 180k tokens in context window (near limit), needs to do websearch "Stripe API v12 subscription cancellation".
 
-- Option A (no subagent): main does `fs.web_search` tool call → tool result 5k tokens added to main context → 185k → next turn 185k input, costs $X, risks context overflow → needs compaction LLM summary $Y.
+- Option A (no subagent): main does `fs_web_search` tool call → tool result 5k tokens added to main context → 185k → next turn 185k input, costs $X, risks context overflow → needs compaction LLM summary $Y.
 - Option B (cheap stateless subagent): main spawns subagent with task "websearch Stripe API v12 subscription cancellation, return JSON {urls, snippets, summary}" — subagent context clean slate 1k, does websearch 5k, returns JSON 500 tokens via envelope. Main sees only 500 tokens summary, not 5k. Main context stays 180.5k, not 185k. Saves $ and prevents compaction.
 
 **Calculation:** If main 180k input, output 1k, at $5/M input, $15/M output (GPT-5 pricing), one call costs ~$0.90 input + $0.015 output. Adding 5k websearch result makes next call $0.925 input. With subagent, subagent call costs 1k input + 5k tool result + 0.5k output = ~6.5k tokens ~$0.04, plus main 0.5k extra = $0.0025, total $0.0425 vs $0.025 extra if done in main but with context bloat risk. More importantly, avoids compaction LLM call which costs $0.10-0.50 and risks quality degradation.

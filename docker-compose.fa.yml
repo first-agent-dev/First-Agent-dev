@@ -157,7 +157,7 @@ services:
   # ---------------------------------------------------------------------------
   # Egress-injection proxy (ADR-12 Option C) — the LLM-key boundary.
   # This is the ONLY place LLM provider keys exist. It runs in a SEPARATE
-  # container: the agent's fs.run_bash cannot read this container's filesystem
+  # container: the agent's fs_run_bash cannot read this container's filesystem
   # or process memory (separate mount/PID namespaces), so a fully compromised
   # agent can *use* a key (call through the proxy) but never *read* it.
   # No /workspace mount, no agent code reachable by the agent.

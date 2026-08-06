@@ -44,16 +44,16 @@ def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path
     )
     original = {name: getattr(tool_module, name) for name in names}
     try:
-        tool_module.build_glob_tool = lambda _: _spec("fs.glob")
+        tool_module.build_glob_tool = lambda _: _spec("fs_glob")
         tool_module.build_grep_tool = lambda _: (_ for _ in ()).throw(RuntimeError("grep broken"))
-        tool_module.build_chronicle_search_tool = lambda: _spec("fs.chronicle_search")
+        tool_module.build_chronicle_search_tool = lambda: _spec("fs_chronicle_search")
         tool_module.build_usage_tool = lambda: (_ for _ in ()).throw(RuntimeError("usage broken"))
-        tool_module.build_list_tasks_tool = lambda: _spec("fs.list_tasks")
-        tool_module.build_checkpoint_tool = lambda _: _spec("fs.checkpoint")
-        tool_module.build_undo_tool = lambda _: _spec("fs.undo")
-        tool_module.build_diff_tool = lambda _: _spec("fs.diff")
-        tool_module.build_send_ctrl_c_tool = lambda: _spec("fs.send_ctrl_c")
-        tool_module.build_instant_grep_tool = lambda *_: _spec("fs.instant_grep")
+        tool_module.build_list_tasks_tool = lambda: _spec("fs_list_tasks")
+        tool_module.build_checkpoint_tool = lambda _: _spec("fs_checkpoint")
+        tool_module.build_undo_tool = lambda _: _spec("fs_undo")
+        tool_module.build_diff_tool = lambda _: _spec("fs_diff")
+        tool_module.build_send_ctrl_c_tool = lambda: _spec("fs_send_ctrl_c")
+        tool_module.build_instant_grep_tool = lambda *_: _spec("fs_instant_grep")
         tool_module.build_spawn_subagent_tool = lambda _: (_ for _ in ()).throw(RuntimeError("spawn broken"))
 
         registry = ToolRegistry()
@@ -79,18 +79,18 @@ def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path
 
     registered = set(registry.names())
     assert {
-        "fs.glob",
-        "fs.chronicle_search",
-        "fs.list_tasks",
-        "fs.checkpoint",
-        "fs.undo",
-        "fs.diff",
-        "fs.send_ctrl_c",
-        "fs.instant_grep",
+        "fs_glob",
+        "fs_chronicle_search",
+        "fs_list_tasks",
+        "fs_checkpoint",
+        "fs_undo",
+        "fs_diff",
+        "fs_send_ctrl_c",
+        "fs_instant_grep",
     } <= registered
-    assert "fs.grep" not in registered
-    assert "fs.usage" not in registered
-    assert "fs.spawn_subagent" not in registered
+    assert "fs_grep" not in registered
+    assert "fs_usage" not in registered
+    assert "fs_spawn_subagent" not in registered
     assert len(registry.names()) == len(registered)
     assert any("grep" in record.message.lower() for record in caplog.records)
     assert any("spawn" in record.message.lower() for record in caplog.records)
@@ -103,7 +103,7 @@ def test_baseline_registry_fallback_is_live_when_profiles_fail(tmp_path: Path, c
     ):
         registry = tool_module.build_baseline_registry(tmp_path)
 
-    assert {"fs.read_file", "fs.write_file", "fs.run_bash"} <= set(registry.names())
+    assert {"fs_read_file", "fs_write_file", "fs_run_bash"} <= set(registry.names())
     assert any("fallback baseline" in record.message for record in caplog.records)
 
 
@@ -255,7 +255,7 @@ def _event(path: Path, kind: str, content: dict[str, Any] | None = None) -> None
         "actor": "runtime",
         "kind": kind,
         "content": content or {},
-        "tool_name": "fs.read_file" if kind in {"tool_call", "tool_result"} else "",
+        "tool_name": "fs_read_file" if kind in {"tool_call", "tool_result"} else "",
         "tool_call_id": "",
         "parent_event_id": "",
     }
@@ -282,7 +282,7 @@ def test_stats_empty_malformed_and_mixed_event_streams(tmp_path: Path) -> None:
     assert parsed is not None
     assert parsed.run_id == "stats-edge"
     assert parsed.turns == 1
-    assert parsed.tool_usage[0].name == "fs.read_file"
+    assert parsed.tool_usage[0].name == "fs_read_file"
     assert render_session_json(parsed)["run_id"] == "stats-edge"
     aggregate = aggregate_sessions([parsed])
     assert aggregate["sessions"] == 1

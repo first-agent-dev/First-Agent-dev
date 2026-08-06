@@ -5,7 +5,7 @@ Security contract (see ``knowledge/adr/ADR-12-secret-isolation.md``):
 * API-key VALUES are loaded from a file (``/run/secrets/fa.env`` in the AIO
   container, ``~/.fa/.env`` in WSL dev) into THIS object only.
 * The store NEVER writes into ``os.environ``. Keeping keys out of the process
-  environment means child processes (notably ``fs.run_bash`` and any interpreter
+  environment means child processes (notably ``fs_run_bash`` and any interpreter
   it spawns) inherit nothing to exfiltrate.
 * ``__repr__`` / ``__str__`` never render values, so an accidental log/traceback
   of the object cannot leak a key.

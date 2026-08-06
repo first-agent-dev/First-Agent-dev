@@ -79,7 +79,7 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
         )
 
     return ToolSpec(
-        name="fs.write_file",
+        name="fs_write_file",
         description=(
             "Write UTF-8 file inside workspace. Declares read_set/write_set "
             "for blackboard conflict detection (Phase 0.5), fails with "

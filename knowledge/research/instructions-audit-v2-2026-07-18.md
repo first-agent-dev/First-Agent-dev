@@ -214,7 +214,7 @@ After all edits:
 (Reaffirmed from v1 audit)
 
 - Do NOT add `blackboard.query()` API details to operator instructions — that's an agent API
-- Do NOT add `fs.instant_grep` to instructions — same reason
+- Do NOT add `fs_instant_grep` to instructions — same reason
 - Do NOT rewrite 01-install.md — it's solid
 - Do NOT add ADR details to instructions — that's what knowledge/ is for
 - Do NOT add internal/ops commands (`inner-loop-smoke`, `chunk`) to the main cheat sheet — put them in diagnostics or script reference
@@ -254,7 +254,7 @@ All Phase A (HIGH ROI), Phase B (MEDIUM ROI), and Phase C (LOW ROI) items execut
 (Reaffirmed from v1 audit)
 
 - Do NOT add `blackboard.query()` API details to operator instructions — that's an agent API
-- Do NOT add `fs.instant_grep` to instructions — same reason
+- Do NOT add `fs_instant_grep` to instructions — same reason
 - Do NOT rewrite 01-install.md — it's solid
 - Do NOT add ADR details to instructions — that's what knowledge/ is for
 - Do NOT add internal/ops commands (`inner-loop-smoke`, `chunk`) to the main cheat sheet — put them in diagnostics or script reference

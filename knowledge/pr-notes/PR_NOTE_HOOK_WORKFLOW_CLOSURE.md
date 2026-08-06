@@ -10,7 +10,7 @@ The original hook-workflow patch fixed the first-order bootstrap problem, but de
 
 First, the new `pre-commit` hook claimed it would auto-restage hook-made autofixes and retry once, but the implementation placed `uv run pre-commit run "$@"` under `set -e` without wrapping it in a conditional. A non-zero exit terminated the script before the retry branch could run, so the flagship UX improvement was dead code.
 
-Second, the M-6 PR-intent hook seat still applied the rich `INTENT / INVARIANT / FIX-only` metadata discipline too broadly. The semantic core itself is correct and valuable — the same validator powers `pr.prepare` and `IntentGuard`, which is exactly the seat where the model's degrees of freedom should be closed. But the `commit-msg` adapter still blocked ordinary human manual commits unless they used project-specific uppercase prefixes. That was the wrong boundary: hook seat should be fast local feedback, while the strict anti-cheap-workaround contract belongs primarily to `pr.prepare` + `PrDraftStore` + `IntentGuard` at runtime.
+Second, the M-6 PR-intent hook seat still applied the rich `INTENT / INVARIANT / FIX-only` metadata discipline too broadly. The semantic core itself is correct and valuable — the same validator powers `pr_prepare` and `IntentGuard`, which is exactly the seat where the model's degrees of freedom should be closed. But the `commit-msg` adapter still blocked ordinary human manual commits unless they used project-specific uppercase prefixes. That was the wrong boundary: hook seat should be fast local feedback, while the strict anti-cheap-workaround contract belongs primarily to `pr_prepare` + `PrDraftStore` + `IntentGuard` at runtime.
 
 Third, the operational layer around the hooks was not yet trustworthy enough. The accepted bot fixes reintroduced a `RuntimeWarning` on `python -m fa.hygiene.hooks.install`, left real test failures behind, `hooks-status` could report success even for non-executable hooks on POSIX, and installer/status were not git-worktree-safe because they assumed `.git/` was always a directory rather than a file pointing at a worktree gitdir. A follow-up review also found two correctness gaps: the new `pre-commit` retry path discarded non-1 exit codes (`127`, `130`, etc.), and the pure-Python hook-dir resolver ignored `core.hooksPath` even though Git itself resolves hooks through that configuration via `git rev-parse --git-path hooks`.
 
@@ -20,7 +20,7 @@ This PR closes those gaps while preserving the strong semantic core of the model
 
 ### `src/fa/hygiene/pr_intent.py`
 
-- **Preserved the strict semantic core** — `validate_commit_msg(...)`, `validate_test_edits(...)`, FIX-only fields, citation resolution, and anti-tautology checks were deliberately **not** weakened globally because they are reused by `pr.prepare` and `IntentGuard`, the real anti-cheap-workaround runtime seat.
+- **Preserved the strict semantic core** — `validate_commit_msg(...)`, `validate_test_edits(...)`, FIX-only fields, citation resolution, and anti-tautology checks were deliberately **not** weakened globally because they are reused by `pr_prepare` and `IntentGuard`, the real anti-cheap-workaround runtime seat.
 - Added `has_pr_intent_headers()` — a detector for **any** PR-intent metadata header (`INTENT:`, `CLASS:`, `INVARIANT:`, `TEST-EDITS:`, `DEGREE-OF-FREEDOM CLOSED:`, `DETERMINISTIC MECHANISM:`). This closes the subtle hole where a partial malformed metadata block (for example a lone `INVARIANT:` line) could otherwise be treated as an ordinary manual commit.
 - Narrowed `_cli_validate()` only at the **hook adapter layer**: if a commit message contains **no PR-intent metadata headers at all**, it is treated as an ordinary human/manual commit and allowed through. If **any** metadata header is present, the full strict validator runs. This keeps the semantic core strong while fixing the seat boundary.
 - Kept the existing git-generated-message skips (`merge`, `cherry-pick`, `revert`, `amend`) unchanged.
@@ -97,7 +97,7 @@ This PR closes those gaps while preserving the strong semantic core of the model
   - component inventory,
   - seat separation,
   - catalog of freedom-closing mechanisms,
-  - traces for contract → semantic core, human hook seat, `pr.prepare`, `PrDraftStore`, `IntentGuard`, `bash_intent`, and hook bootstrap infrastructure,
+  - traces for contract → semantic core, human hook seat, `pr_prepare`, `PrDraftStore`, `IntentGuard`, `bash_intent`, and hook bootstrap infrastructure,
   - data-flow diagram,
   - freedom-closure matrix,
   - important asymmetries,
@@ -112,7 +112,7 @@ It intentionally preserves:
 
 - `validate_commit_msg(...)` as a strict shared semantic core;
 - `validate_test_edits(...)` as the same anti-test-gaming rule at hook and runtime seats;
-- `pr.prepare` as the explicit producer of intent/invariant/work-log state;
+- `pr_prepare` as the explicit producer of intent/invariant/work-log state;
 - `PrDraftStore` as the current-session trust boundary;
 - `IntentGuard` as the primary runtime mutation gate.
 
@@ -132,7 +132,7 @@ Per scope discipline, this PR still does **not**:
 2. `pre-commit` auto-restage/retry path works under `set -e` and does **not** stage unrelated changes.
 3. Ordinary manual commits with **no** PR-intent metadata headers are not blocked by the hook seat.
 4. Partial malformed metadata blocks do **not** silently pass — they still trigger strict validation.
-5. `pr.prepare` + `PrDraftStore` + `IntentGuard` remain the primary anti-cheap-workaround runtime seat.
+5. `pr_prepare` + `PrDraftStore` + `IntentGuard` remain the primary anti-cheap-workaround runtime seat.
 6. Hook installer/status work in both normal clones and git worktrees.
 7. `hooks-status` detects missing, stale, and non-executable hooks correctly.
 8. No `RuntimeWarning` on `python -m fa.hygiene.hooks.install` or `status`.
@@ -160,5 +160,5 @@ Verified against branch head `92dabcb5e16fa2916dee86b2ad411a2cdef95d6f` plus the
 - Rigorous branch analysis: `pr46-rigorous-code-analysis-2026-06-28.md`
 - Updated implementation plan: `pr46-updated-plan-ready-for-implementation-2026-06-28.md`
 - ADR-11-I6: hook seat is bypassable, CI is authority
-- ADR-10 I-1: single validator across git hook / middleware / `pr.prepare`
+- ADR-10 I-1: single validator across git hook / middleware / `pr_prepare`
 - Codemap: `knowledge/codemaps/model-freedom-control-runtime-pipeline.md`

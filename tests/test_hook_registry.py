@@ -88,7 +88,7 @@ def test_hook_registry_preserves_registration_order() -> None:
 
     registry.dispatch(
         LifecyclePoint.BEFORE_TOOL_EXEC,
-        HookPayload(tool_call=ToolCall(name="fs.read_file", params={"path": "README.md"})),
+        HookPayload(tool_call=ToolCall(name="fs_read_file", params={"path": "README.md"})),
     )
 
     assert calls == ["first", "second"]
@@ -103,7 +103,7 @@ def test_first_deny_short_circuits_chain() -> None:
     with pytest.raises(PermissionError, match="blocked"):
         registry.dispatch(
             LifecyclePoint.BEFORE_TOOL_EXEC,
-            HookPayload(tool_call=ToolCall(name="fs.write_file", params={"path": "x"})),
+            HookPayload(tool_call=ToolCall(name="fs_write_file", params={"path": "x"})),
         )
 
     assert calls == []
@@ -114,7 +114,7 @@ def test_observer_errors_are_swallowed() -> None:
     registry = HookRegistry()
     registry.register(ExplodingObserver())
 
-    payload = HookPayload(tool_call=ToolCall(name="fs.read_file", params={"path": "README.md"}))
+    payload = HookPayload(tool_call=ToolCall(name="fs_read_file", params={"path": "README.md"}))
     returned = registry.dispatch(LifecyclePoint.AFTER_TOOL_EXEC, payload)
 
     assert returned == payload
@@ -129,7 +129,7 @@ def test_double_mutation_is_hard_error() -> None:
     with pytest.raises(RuntimeError, match="hook_double_mutation"):
         registry.dispatch(
             LifecyclePoint.BEFORE_TOOL_EXEC,
-            HookPayload(tool_call=ToolCall(name="fs.read_file", params={"path": "README.md"})),
+            HookPayload(tool_call=ToolCall(name="fs_read_file", params={"path": "README.md"})),
         )
 
 

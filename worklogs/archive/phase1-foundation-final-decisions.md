@@ -19,7 +19,7 @@ tier: stable
 | Вопрос | Ответ пользователя | Наше финальное решение |
 |--------|-------------------|------------------------|
 | Worktree sanitize fallback | Custom: elegant wise solution, production-grade | **Детерминированный hash fallback + fail-fast** — см. ниже H1 elegant solution |
-| Profiles toolset scope | add_glob_grep_now | Добавляем fs.glob и fs.grep сейчас, в Phase 1, как обертки над git ls-files + instant_grep, чтобы researcher реально имел [glob,grep,read,instant_grep] |
+| Profiles toolset scope | add_glob_grep_now | Добавляем fs_glob и fs_grep сейчас, в Phase 1, как обертки над git ls-files + instant_grep, чтобы researcher реально имел [glob,grep,read,instant_grep] |
 | PromptComposer cache-key | two_level_caching | Двухуровневый: alwaysApply скиллы в cacheable (хеш в ключ), conditional globs скиллы в non-cacheable (не ломают кэш, корректно) |
 | SubagentEnvelope extraction | Custom: cleanly close all phases 0-3, value codebase maintenance | **Вынести сейчас** в отдельный модуль `subagent_envelope.py` с validator кэширован, dataclass, artifact write. Ранняя сепарация — чистый фундамент для Phase 2/3, соответствует Cursor 3.2 архитектуре |
 | Skill loader parsing | yaml_and_transaction_plus_grep | Используем yaml.safe_load (pyyaml уже зависимость), fallback WARNING. current_files = transaction.read_set+write_set + instant_grep(task, limit=10) точные 5-10 файлов, word boundary regex для triggers |
@@ -108,21 +108,21 @@ src/fa/inner_loop/
 
 **Реализация — обертки, не новая логика:**
 
-- `fs.glob` — `git ls-files` + `fnmatch` + fallback `rglob` с pruning (как instant_grep fallback). Pattern может быть `**/*.py`, `src/**/*.md`. Используем `pathspec`? Нет, stdlib `fnmatch` + `Path.match` уже делает `**` в Python 3.10+? Проверим: `Path.match` поддерживает `**`. Используем его.
+- `fs_glob` — `git ls-files` + `fnmatch` + fallback `rglob` с pruning (как instant_grep fallback). Pattern может быть `**/*.py`, `src/**/*.md`. Используем `pathspec`? Нет, stdlib `fnmatch` + `Path.match` уже делает `**` в Python 3.10+? Проверим: `Path.match` поддерживает `**`. Используем его.
 
-- `fs.grep` — `instant_grep` index если есть, иначе `git grep -l <query>` или `rg -l` если установлен, fallback python search по `git ls-files`. Возвращает paths, не content, токен-эффективно.
+- `fs_grep` — `instant_grep` index если есть, иначе `git grep -l <query>` или `rg -l` если установлен, fallback python search по `git ls-files`. Возвращает paths, не content, токен-эффективно.
 
 - `TOOL_BUILDERS` dict:
 ```python
 TOOL_BUILDERS = {
-    "fs.read_file": lambda root: build_read_file_tool(root),
-    "fs.write_file": lambda root: build_write_file_tool(root),
-    "fs.run_bash": lambda root: build_run_bash_tool(root),
-    "fs.glob": lambda root: build_glob_tool(root),
-    "fs.grep": lambda root: build_grep_tool(root),
-    "fs.instant_grep": lambda root: build_instant_grep_tool(root / ".fa/fts.db", root),
-    "fs.chronicle_search": ...,
-    "fs.usage": ...,
+    "fs_read_file": lambda root: build_read_file_tool(root),
+    "fs_write_file": lambda root: build_write_file_tool(root),
+    "fs_run_bash": lambda root: build_run_bash_tool(root),
+    "fs_glob": lambda root: build_glob_tool(root),
+    "fs_grep": lambda root: build_grep_tool(root),
+    "fs_instant_grep": lambda root: build_instant_grep_tool(root / ".fa/fts.db", root),
+    "fs_chronicle_search": ...,
+    "fs_usage": ...,
 }
 ```
 

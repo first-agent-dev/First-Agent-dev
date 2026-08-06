@@ -63,7 +63,7 @@ def _bash_run_elide(value: Any, _max_bytes: int) -> str:
     tests/test_run_bash_tool_projection.py for the kill-check).
 
     ``_max_bytes`` (the tool's ``max_context_bytes``) is intentionally
-    unused here: fs.run_bash's preview length is a fixed token-budget
+    unused here: fs_run_bash's preview length is a fixed token-budget
     constant (500+200), not proportional to the tool's overall budget.
     """
     return truncate_for_preview(value, preview_len=500)
@@ -339,15 +339,15 @@ def build_run_bash_tool(
         return _run_subprocess_fallback(command, root, timeout_seconds, extra_allow, artifact_store, transaction)
 
     return ToolSpec(
-        name="fs.run_bash",
+        name="fs_run_bash",
         description="""Run a bash command in the workspace after sandbox hooks allow it.
 
 STATEFUL for main agent (via PtyPool EventStream Runtime, ADR-14): cwd, env, venv persist
 across calls (cd, export, source .venv/bin/activate survive). Stateless for cheap subagents
 (structured websearch, simple function) with isolated context.
 
-Background processes: use fs.run_bash_background for long-running commands (dev servers),
-then fs.read_terminal, fs.list_tasks, fs.kill_task, fs.send_ctrl_c.
+Background processes: use fs_run_bash_background for long-running commands (dev servers),
+then fs_read_terminal, fs_list_tasks, fs_kill_task, fs_send_ctrl_c.
 
 Output capped 8000 chars with artifact_id + 500-char preview (ADR-13/14). For large outputs,
 chain with | head -n 100 or | tail -n 100 or grep.

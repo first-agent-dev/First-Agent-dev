@@ -1,7 +1,7 @@
 """Red-team acceptance test (ADR-12): no agent tool can read an API key.
 
 Executable encoding of the success criterion "no LLM can sniff out my keys".
-Runs the REAL fs.run_bash tool with a fake key present in os.environ (the worst
+Runs the REAL fs_run_bash tool with a fake key present in os.environ (the worst
 case — even if Phase-2 isolation regressed and a key leaked back into the env,
 Phase-3 bash-scrubbing must still block every exfil path).
 """
@@ -77,7 +77,7 @@ def test_bash_env_has_no_credential_named_vars(tmp_path: Path, monkeypatch: pyte
 
 
 def test_bash_gate_denies_reading_secret_files() -> None:
-    """The real SandboxHook must DENY fs.run_bash reads of the secret paths.
+    """The real SandboxHook must DENY fs_run_bash reads of the secret paths.
 
     This is the vector the previous design left open (READ_ONLY commands bypass
     path-containment). Before Phase A this assertion would FAIL — that is the
@@ -97,7 +97,7 @@ def test_bash_gate_denies_reading_secret_files() -> None:
         "cat /proc/self/root/run/secrets/fa.env",
     ]
     for cmd in blocked:
-        call = ToolCall(name="fs.run_bash", params={"command": cmd}, call_id="c")
+        call = ToolCall(name="fs_run_bash", params={"command": cmd}, call_id="c")
         decision = sand.handle(
             LifecyclePoint.BEFORE_TOOL_EXEC,
             HookPayload(tool_call=call, role="coder", acting_family="x"),

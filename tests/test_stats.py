@@ -46,56 +46,56 @@ def _minimal_session_events() -> list[dict[str, object]]:
         {
             "kind": "tool_call",
             "actor": "coder",
-            "tool_name": "fs.read_file",
+            "tool_name": "fs_read_file",
             "tool_call_id": "tc-1",
             "content": {"params": {"path": "src/fa/cli.py"}},
         },
         {
             "kind": "tool_result",
             "actor": "tool",
-            "tool_name": "fs.read_file",
+            "tool_name": "fs_read_file",
             "tool_call_id": "tc-1",
             "content": {"summary": "505 lines", "ok": True},
         },
         {
             "kind": "tool_call",
             "actor": "coder",
-            "tool_name": "fs.read_file",
+            "tool_name": "fs_read_file",
             "tool_call_id": "tc-2",
             "content": {"params": {"path": "src/fa/cli.py"}},
         },
         {
             "kind": "tool_result",
             "actor": "tool",
-            "tool_name": "fs.read_file",
+            "tool_name": "fs_read_file",
             "tool_call_id": "tc-2",
             "content": {"summary": "505 lines", "ok": True},
         },
         {
             "kind": "tool_call",
             "actor": "coder",
-            "tool_name": "fs.run_bash",
+            "tool_name": "fs_run_bash",
             "tool_call_id": "tc-3",
             "content": {"params": {"command": "ruff check src/fa/cli.py"}},
         },
         {
             "kind": "tool_result",
             "actor": "tool",
-            "tool_name": "fs.run_bash",
+            "tool_name": "fs_run_bash",
             "tool_call_id": "tc-3",
             "content": {"summary": "exit=0", "ok": True},
         },
         {
             "kind": "tool_call",
             "actor": "coder",
-            "tool_name": "fs.write_file",
+            "tool_name": "fs_write_file",
             "tool_call_id": "tc-4",
             "content": {"params": {"path": "src/fa/output.py", "content": "..."}},
         },
         {
             "kind": "tool_result",
             "actor": "tool",
-            "tool_name": "fs.write_file",
+            "tool_name": "fs_write_file",
             "tool_call_id": "tc-4",
             "content": {"summary": "wrote file", "ok": True},
         },
@@ -171,9 +171,9 @@ def test_parse_session_tool_counts(tmp_path: Path) -> None:
     assert result is not None
 
     tool_dict = {t.name: t.count for t in result.tool_usage}
-    assert tool_dict["fs.read_file"] == 2
-    assert tool_dict["fs.run_bash"] == 1
-    assert tool_dict["fs.write_file"] == 1
+    assert tool_dict["fs_read_file"] == 2
+    assert tool_dict["fs_run_bash"] == 1
+    assert tool_dict["fs_write_file"] == 1
 
 
 def test_parse_session_file_access(tmp_path: Path) -> None:

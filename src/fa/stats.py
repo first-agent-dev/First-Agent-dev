@@ -396,11 +396,11 @@ def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> Sessi
             tool_counter[tool_name] += 1
             params = content.get("params", {})
             if isinstance(params, dict):
-                if tool_name == "fs.read_file" and "path" in params:
+                if tool_name == "fs_read_file" and "path" in params:
                     reads[str(params["path"])] += 1
-                elif tool_name == "fs.write_file" and "path" in params:
+                elif tool_name == "fs_write_file" and "path" in params:
                     writes[str(params["path"])] += 1
-                elif tool_name == "fs.run_bash" and "command" in params:
+                elif tool_name == "fs_run_bash" and "command" in params:
                     bash_counter[str(params["command"])] += 1
 
         elif kind == "usage":

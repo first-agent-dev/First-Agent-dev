@@ -1,6 +1,6 @@
 """ContextVar for current SessionState — tool handlers DI via contextvar.
 
-Phase 0.5 integration: fs.write_file handler can declare read_set/write_set
+Phase 0.5 integration: fs_write_file handler can declare read_set/write_set
 and call detect_conflict() without changing ToolSpec signature.
 Uses Python contextvars so thread-safe and works with ThreadPool in Phase 2.
 """

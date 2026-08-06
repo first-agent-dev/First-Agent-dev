@@ -55,8 +55,8 @@ def _resolve_event_log(
         # returns rows, so an empty or failing authority silently falls back to
         # the JSONL mirror — a best-effort text file any process can append to.
         # Measured on the pre-fix path: an authority with zero rows plus one
-        # forged mirror line made ``fs.chronicle_search`` and ``fs.usage``
-        # report an ``fs.run_bash`` that never executed. Injecting makes the DB
+        # forged mirror line made ``fs_chronicle_search`` and ``fs_usage``
+        # report an ``fs_run_bash`` that never executed. Injecting makes the DB
         # authoritative for both the empty and the error case (fail closed).
         #
         # A run is "found" only if it has an authority. A bare events.jsonl with
@@ -150,7 +150,7 @@ def build_chronicle_search_tool(_event_log_path: Path | None = None) -> ToolSpec
         )
 
     return ToolSpec(
-        name="fs.chronicle_search",
+        name="fs_chronicle_search",
         description=(
             "Search the current run EventLog by keyword. Defaults to the active session only; "
             "without an active session, pass run_id explicitly. Returns matching timeline entries."
@@ -228,7 +228,7 @@ def build_usage_tool(_event_log_path: Path | None = None) -> ToolSpec:
         )
 
     return ToolSpec(
-        name="fs.usage",
+        name="fs_usage",
         description=(
             "Show current-run usage from authoritative usage event rows. Defaults to the active session only; "
             "without an active session, pass run_id explicitly."
@@ -308,7 +308,7 @@ def build_list_tasks_tool(  # noqa: C901 -- complexity from fallback chain grace
         return ToolResult.ok(summary, result={"tasks": tasks})
 
     return ToolSpec(
-        name="fs.list_tasks",
+        name="fs_list_tasks",
         description=(
             "List active PTY sessions + worktree tasks + subagent tasks — for observability. "
             "Gets pool/manager via DI from current session if not passed."

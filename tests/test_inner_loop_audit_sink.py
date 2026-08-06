@@ -50,7 +50,7 @@ def test_audit_hook_writes_to_event_log(tmp_path: Path) -> None:
     state = SessionState(workspace_root=tmp_path, run_id="t-audit", log=log)
 
     run_session(
-        (ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),),
+        (ToolCall(name="fs_read_file", params={"path": "input.txt"}, call_id="tc-1"),),
         registry=registry,
         hooks=hooks,
         state=state,
@@ -59,6 +59,6 @@ def test_audit_hook_writes_to_event_log(tmp_path: Path) -> None:
     audit_rows = [event for event in log.read_all() if event.kind == "audit"]
     assert len(audit_rows) == 1
     assert audit_rows[0].actor == "hook"
-    assert audit_rows[0].tool_name == "fs.read_file"
+    assert audit_rows[0].tool_name == "fs_read_file"
     assert audit_rows[0].tool_call_id == "tc-1"
     assert audit_rows[0].content.get("ok") is True

@@ -108,7 +108,7 @@ governance are precisely the right counters. Gaps were (2), (4), (5).
 
 - **What:** ImpossibleBench shows read-only test access eliminates most
   test-modification cheating without hurting task performance. FA's
-  IntentGuard/sandbox could deny `fs.write_file` to `tests/**` for
+  IntentGuard/sandbox could deny `fs_write_file` to `tests/**` for
   IMPLEMENT/FIX intents (allow for test-authoring intents).
 - **Verdict:** DEFER — requires intent-conditional sandbox policy (ADR-6
   amendment), not a CI change. Filed as the highest-value next guardrail.

@@ -105,17 +105,14 @@ DEFAULT_MAX_TURNS = 16
 # :data:`fa.providers.anthropic._STOP_REASON_MAP`.
 _TERMINAL_FINISH_REASONS: frozenset[str] = frozenset({"stop", "end_turn"})
 
-# Default sampling temperature. T=0.0 keeps the v0.1 loop deterministic for
-# replay; ADR-7 §Amendment 2026-05-20 rule 3's T=1.0-on-retry is a *retry*
-# policy, not a first-attempt policy, and only applies once the
-# FailureClassifierObserver fires. The CLI overrides this per role (the coder
-# role uses DEFAULT_CODER_TEMPERATURE for slightly less rigid edits).
-DEFAULT_TEMPERATURE = 0.0
-
-# Coder-role first-attempt temperature. A small amount of sampling (0.2) gives
-# the coder room for non-degenerate edits while staying close to deterministic.
-# Planner/eval keep T=0.0. See fa.cli._cmd_run for the per-role selection.
-DEFAULT_CODER_TEMPERATURE = 0.2
+# No default sampling temperature is forced. Modern reasoning/thinking models
+# lock temperature/top_p (they are rejected or silently ignored), so FA omits
+# them from the wire by default. A role that wants explicit sampling opts in via
+# `sampling: {temperature, top_p}` in models.yaml (ADR-9 §Amendment 2026-07-23);
+# the chain resolves those per-role defaults and the adapter omits the fields
+# when they are None (see openai_compat.py). Retry-time T=1.0 is a *retry*
+# policy owned by the FailureClassifierObserver (ADR-7 rule 3), not a first-attempt
+# default.
 
 # Default max output tokens per turn. Sized for modern long-context reasoning
 # models (e.g. the Fireworks lineup in models.yaml.example) so multi-tool-call
@@ -312,7 +309,7 @@ def drive_session(
     max_turns: int = DEFAULT_MAX_TURNS,
     system_prompt_extra: str = "",
     initial_memory_summary: str = "",
-    temperature: float = DEFAULT_TEMPERATURE,
+    temperature: float | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     redactor: SecretRedactor | None = None,
     output: EventBus | None = None,
@@ -353,8 +350,9 @@ def drive_session(
             pinned governance block. Not for mutable resume/session context.
         initial_memory_summary: Optional mutable summary/history injected into
             the memory-summary plane before provider calls.
-        temperature: Sampling temperature; default 0.0 keeps replay
-            byte-deterministic against a deterministic provider stub.
+        temperature: Sampling temperature; ``None`` (default) means "omit" —
+            the adapter sends no temperature/top_p, matching the thinking-model
+            default. Pass an explicit value (or set role ``sampling:``) to opt in.
         max_tokens: Per-turn output token cap.
 
     Returns:
@@ -413,7 +411,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     max_turns: int = DEFAULT_MAX_TURNS,
     system_prompt_extra: str = "",
     initial_memory_summary: str = "",
-    temperature: float = DEFAULT_TEMPERATURE,
+    temperature: float | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     redactor: SecretRedactor | None = None,
     output: EventBus | None = None,
@@ -1738,10 +1736,8 @@ def _build_tool_calls(raw_calls: Sequence[Mapping[str, Any]]) -> tuple[ToolCall,
 
 
 __all__ = [
-    "DEFAULT_CODER_TEMPERATURE",
     "DEFAULT_MAX_TOKENS",
     "DEFAULT_MAX_TURNS",
-    "DEFAULT_TEMPERATURE",
     "SessionOutcome",
     "drive_session",
 ]

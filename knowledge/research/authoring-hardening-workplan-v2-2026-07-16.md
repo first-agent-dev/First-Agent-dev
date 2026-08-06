@@ -171,22 +171,22 @@ rg -n "_require_log|mock_success_response|make_tool_call" tests/*.py | wc -l
 | Slice | Promised symbol/file:line | Present file:line | C1 coverage | Gap |
 |---|---|---|---|---|
 | 1 | `SessionDatabase` `src/fa/inner_loop/session_db.py:26` + `EventLog.append` DB-first `state.py:110` | Present, same file | `test_session_db_authority.py` (C1? actually C0 with real DB) + need C1 via `drive_session` forcing SQLite failure | Missing C1 that forces DB write failure and proves no stale read |
-| 2 | `build_chronicle_search_tool` `observability.py:30` DI via contextvar + run_id | Present | `test_observability_runtime_authority.py` 6 tests C1 via contextvar, but not via `drive_session` | Add C1 via drive_session that appends usage row and asserts `fs.usage` returns non-TBD |
+| 2 | `build_chronicle_search_tool` `observability.py:30` DI via contextvar + run_id | Present | `test_observability_runtime_authority.py` 6 tests C1 via contextvar, but not via `drive_session` | Add C1 via drive_session that appends usage row and asserts `fs_usage` returns non-TBD |
 | 3 | `ContextBudget.check` returns warn/stage2/stage3 `context_budget.py:70`, `compactor_chain.config.model` used `compactor.py:100`, cache_control preserved `prompt_composer.py:80` | Present | `test_compaction_sota.py` + `test_pr1/3/5_wiring.py` have C1 for ladder and compactor model and cache_control | Done, but need matrix B vs C documented in docstring |
 | 4 | `PinnedBuffer.refresh` replaces cache wholesale `pinned_buffer.py:30`, resume draft → mutable summary `cli.py:1802` | Present | `test_pr2_wiring.py` has C1 for reload/missing file, but missing test that resume draft appears in `Memory summary:` not in `STANDING PROFILE` | Add C1 for resume mutable |
 | 5 | `SubagentRunner._check_spawn_limit` respects FF `subagent_runner.py:79`, `from_verifier(..., role=)` `subagent_envelope.py:76`, env injection with secret filter, spawn_start/done events `spawn_subagent.py:60` | Present after our fixes | We added C1 in `test_slice5_6_7_wiring.py` for role/env/limit, but missing lifecycle termination test (SIGTERM) and shared-workspace audit trail | Add `test_subagent_termination_wiring.py` C1 with `send_ctrl_c` or timeout |
 
 **Plus B/C gaps:**
 
-- `fs.list_tasks` — DI via contextvar for pty_pool/worktree_manager, no C1 that proves active tasks listing via live session. Add C1.
-- `fs.chronicle_search` already C1 via observability_runtime_authority.
+- `fs_list_tasks` — DI via contextvar for pty_pool/worktree_manager, no C1 that proves active tasks listing via live session. Add C1.
+- `fs_chronicle_search` already C1 via observability_runtime_authority.
 - `global_history` CLI reading — see Task 6.
 
 **Translation:**
 
 - Create `tests/test_slice1_5_additional_wiring.py` with 5 new C1:
   - `test_slice1_split_brain_no_stale_read_via_drive_session` — forces DB failure via monkeypatch `SessionDatabase.append_event_row` to raise, asserts `drive_session` does not silently succeed
-  - `test_slice2_usage_via_drive_session` — appends usage row via EventLog, dispatches `fs.usage` via drive_session, asserts token totals
+  - `test_slice2_usage_via_drive_session` — appends usage row via EventLog, dispatches `fs_usage` via drive_session, asserts token totals
   - `test_slice4_resume_mutable_not_pinned` — passes `initial_memory_summary` to drive_session, inspects provider request messages for `Memory summary:` contains resume text and not in `STANDING PROFILE`
   - `test_slice5_termination_wiring` — spawns subagent with sleep, sends ctrl_c, asserts cleanup
   - `test_list_tasks_wiring` — creates PtyPool session, acquires, calls list_tasks via drive_session, asserts task listed

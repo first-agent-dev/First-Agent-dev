@@ -119,7 +119,7 @@ Copy this template into PR description when mutating harness:
 
 1. **Read MUST READ FIRST 5** per AGENTS.md pre-flight
 2. **Grep glossary** for canonical definitions
-3. **Check existing skills** via `blackboard.query(type="skill")` or `fs.instant_grep`
+3. **Check existing skills** via `blackboard.query(type="skill")` or `fs_instant_grep`
 4. **Draft frontmatter** with name, description, triggers, globs, alwaysApply
 5. **Write body** with Trigger, Reference, Workflow, Invariants sections
 6. **Add change contract** if modifying harness component

@@ -2,7 +2,7 @@
 
 Contract under test (S5-CT4)
 ----------------------------
-``fs.write_file`` and ``fs.edit_file`` behave identically at the substrate
+``fs_write_file`` and ``fs_edit_file`` behave identically at the substrate
 boundary: a conflicting Blackboard entry denies the mutation **before** the file
 is touched, and the denial names *which* precondition failed.
 
@@ -21,7 +21,7 @@ Design constraints proven before writing these tests
   ``fa inner-loop-smoke``. A deliberately disabled substrate must keep
   permitting writes, or this slice breaks a shipped command (S5-P24).
 * Tools are routinely invoked with **no session bound** (measured: 5 write_file
-  and 2 edit_file calls across the suite). ``fs.write_file``/``fs.edit_file``
+  and 2 edit_file calls across the suite). ``fs_write_file``/``fs_edit_file``
   are both in ``_NEVER_PARALLEL_TOOLS``, so this is never a lost-contextvar
   race — it is legitimate direct use. Denying it would be a gratuitous
   behaviour break, so "no session" stays permitted (S5-P24).
@@ -172,7 +172,7 @@ def test_repeated_mutation_by_same_writer_allowed(tool_case: Any, tmp_path: Path
 
     token = set_current_session(state)
     try:
-        if tool.name == "fs.write_file":
+        if tool.name == "fs_write_file":
             results = [tool.handler({"path": TARGET, "content": f"v{i}\n"}) for i in range(3)]
             expected = "v2\n"
         else:

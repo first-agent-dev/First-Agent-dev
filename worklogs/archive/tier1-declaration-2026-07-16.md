@@ -39,7 +39,7 @@ that aren't declared in the `FeatureFlags` dataclass.
 
 ### Intent
 
-Prove `fs.list_tasks` works via live session through `drive_session`. Three code paths:
+Prove `fs_list_tasks` works via live session through `drive_session`. Three code paths:
 (1) PTY sessions from pool.list_sessions(), (2) worktree dirs, (3) subagent artifacts.
 All three must be exercised as C1 per tests-writing skill §3 (live-path proof).
 
@@ -58,14 +58,14 @@ Per tests-writing skill:
 **Test functions:**
 
 1. `test_list_tasks_finds_pty_session` — Create PtyPool, acquire session, call
-   `fs.list_tasks` via drive_session, assert result contains `{"type": "pty", "id": "main"}`
+   `fs_list_tasks` via drive_session, assert result contains `{"type": "pty", "id": "main"}`
 2. `test_list_tasks_finds_subagent_artifact` — Spawn subagent first (creates .fa/subagents/t-1.json),
-   then call `fs.list_tasks` via drive_session, assert result contains
+   then call `fs_list_tasks` via drive_session, assert result contains
    `{"type": "subagent", "id": "t-1", "status": "done"}`
 3. `test_list_tasks_finds_worktree_dir` — Create worktree dir structure,
-   call `fs.list_tasks` via drive_session with worktree_manager, assert worktree entry
+   call `fs_list_tasks` via drive_session with worktree_manager, assert worktree entry
 4. `test_list_tasks_empty_when_no_pool_or_manager` — No pty_pool, no worktree_manager,
-   call `fs.list_tasks` via drive_session, assert empty task list returned
+   call `fs_list_tasks` via drive_session, assert empty task list returned
 
 ### How to verify
 
@@ -87,7 +87,7 @@ Prove subagent lifecycle operates as designed — specifically:
    `exit_code=-1` and timeout output. This is the real termination path for
    stateless subagents (per ADR-15: "sub stateless subprocess.run isolated").
 
-2. **PTY ctrl_c lifecycle for main agent**: `fs.send_ctrl_c` works on PtyPool
+2. **PTY ctrl_c lifecycle for main agent**: `fs_send_ctrl_c` works on PtyPool
    sessions. This is a SEPARATE product claim from subagent termination —
    it's about the main agent's PTY being interruptible.
 
@@ -113,12 +113,12 @@ Per tests-writing skill:
    has `exit_code=-1` and output contains "Timeout"
 
 2. `test_ctrl_c_interrupts_pty_session_via_drive_session` — C1:
-   Create PtyPool, start a long-running bash via `fs.run_bash`,
-   then send ctrl_c via `fs.send_ctrl_c` through drive_session,
+   Create PtyPool, start a long-running bash via `fs_run_bash`,
+   then send ctrl_c via `fs_send_ctrl_c` through drive_session,
    assert tool_result confirms "Ctrl+C ready"
 
 3. `test_subagent_spawn_and_cleanup_via_drive_session` — C1:
-   Spawn subagent via `fs.spawn_subagent`, assert spawn_start/spawn_done events,
+   Spawn subagent via `fs_spawn_subagent`, assert spawn_start/spawn_done events,
    assert .fa/subagents/<id>.json artifact exists, assert workspace cleanup
 
 4. `test_subagent_timeout_envelope_is_valid` — C0:

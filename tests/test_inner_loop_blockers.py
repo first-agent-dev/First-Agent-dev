@@ -146,7 +146,7 @@ def test_rate_limit_blocker_does_not_affect_other_tools() -> None:
         _payload("api.fetch", error_code="rate_limited", error_message="429"),
     )
     other = HookPayload(
-        tool_call=RegistryToolCall(name="fs.read_file", params={}, call_id="tc-2"),
+        tool_call=RegistryToolCall(name="fs_read_file", params={}, call_id="tc-2"),
     )
     decision = blocker.handle(LifecyclePoint.BEFORE_TOOL_EXEC, other)
     assert decision.action == "allow"
@@ -176,14 +176,14 @@ def test_lockfile_blocker_detects_apt_pattern() -> None:
     blocker = LockfileBlocker(suppression_seconds=5.0, time_source=clock)
 
     observed = _payload(
-        "fs.run_bash",
+        "fs_run_bash",
         error_code="command_failed",
         error_message="E: Could not get lock /var/lib/dpkg/lock-frontend",
     )
     blocker.handle(LifecyclePoint.AFTER_TOOL_EXEC, observed)
     decision = blocker.handle(
         LifecyclePoint.BEFORE_TOOL_EXEC,
-        HookPayload(tool_call=RegistryToolCall(name="fs.run_bash", params={}, call_id="tc-2")),
+        HookPayload(tool_call=RegistryToolCall(name="fs_run_bash", params={}, call_id="tc-2")),
     )
     assert decision.action == "deny"
     assert "lockfile" in decision.reason
@@ -196,14 +196,14 @@ def test_lockfile_blocker_detects_git_lockfile() -> None:
     blocker = LockfileBlocker(suppression_seconds=5.0, time_source=clock)
 
     observed = _payload(
-        "fs.run_bash",
+        "fs_run_bash",
         error_code="command_failed",
         error_message="fatal: Unable to create '/repo/.git/index.lock': File exists",
     )
     blocker.handle(LifecyclePoint.AFTER_TOOL_EXEC, observed)
     decision = blocker.handle(
         LifecyclePoint.BEFORE_TOOL_EXEC,
-        HookPayload(tool_call=RegistryToolCall(name="fs.run_bash", params={}, call_id="tc-2")),
+        HookPayload(tool_call=RegistryToolCall(name="fs_run_bash", params={}, call_id="tc-2")),
     )
     assert decision.action == "deny"
 
@@ -215,14 +215,14 @@ def test_lockfile_blocker_ignores_unrelated_failures() -> None:
     blocker = LockfileBlocker(suppression_seconds=5.0, time_source=clock)
 
     observed = _payload(
-        "fs.run_bash",
+        "fs_run_bash",
         error_code="command_failed",
         error_message="bash: command not found: foo",
     )
     blocker.handle(LifecyclePoint.AFTER_TOOL_EXEC, observed)
     decision = blocker.handle(
         LifecyclePoint.BEFORE_TOOL_EXEC,
-        HookPayload(tool_call=RegistryToolCall(name="fs.run_bash", params={}, call_id="tc-2")),
+        HookPayload(tool_call=RegistryToolCall(name="fs_run_bash", params={}, call_id="tc-2")),
     )
     assert decision.action == "allow"
 
@@ -256,11 +256,11 @@ def test_lockfile_blocker_does_not_false_positive_on_lock_filenames(message: str
     clock = _FakeClock(start=100.0)
     blocker = LockfileBlocker(suppression_seconds=5.0, time_source=clock)
 
-    observed = _payload("fs.run_bash", error_code="command_failed", error_message=message)
+    observed = _payload("fs_run_bash", error_code="command_failed", error_message=message)
     blocker.handle(LifecyclePoint.AFTER_TOOL_EXEC, observed)
     decision = blocker.handle(
         LifecyclePoint.BEFORE_TOOL_EXEC,
-        HookPayload(tool_call=RegistryToolCall(name="fs.run_bash", params={}, call_id="tc-2")),
+        HookPayload(tool_call=RegistryToolCall(name="fs_run_bash", params={}, call_id="tc-2")),
     )
     assert decision.action == "allow", f"Lockfile blocker false-positive on non-contention message: {message!r}"
 
@@ -291,11 +291,11 @@ def test_lockfile_blocker_catches_contention_specific_signatures(message: str) -
     clock = _FakeClock(start=100.0)
     blocker = LockfileBlocker(suppression_seconds=5.0, time_source=clock)
 
-    observed = _payload("fs.run_bash", error_code="command_failed", error_message=message)
+    observed = _payload("fs_run_bash", error_code="command_failed", error_message=message)
     blocker.handle(LifecyclePoint.AFTER_TOOL_EXEC, observed)
     decision = blocker.handle(
         LifecyclePoint.BEFORE_TOOL_EXEC,
-        HookPayload(tool_call=RegistryToolCall(name="fs.run_bash", params={}, call_id="tc-2")),
+        HookPayload(tool_call=RegistryToolCall(name="fs_run_bash", params={}, call_id="tc-2")),
     )
     assert decision.action == "deny", f"Lockfile blocker missed contention-specific signature: {message!r}"
     assert "lockfile" in decision.reason
@@ -398,9 +398,9 @@ def test_blockers_are_dormant_on_baseline_smoke(tmp_path: Path) -> None:
     hooks.register(AuthExpiredBlocker())
     state = SessionState(workspace_root=workspace, run_id="t", log=log)
     calls = (
-        ToolCall(name="fs.read_file", params={"path": "input.txt"}, call_id="tc-1"),
+        ToolCall(name="fs_read_file", params={"path": "input.txt"}, call_id="tc-1"),
         ToolCall(
-            name="fs.write_file",
+            name="fs_write_file",
             params={"path": "out.txt", "content": "x\n"},
             call_id="tc-2",
         ),
@@ -437,7 +437,7 @@ def test_lockfile_blocker_denies_second_run_after_lockfile_failure(tmp_path: Pat
     workspace = tmp_path
     log = EventLog(workspace / ".fa" / "events.jsonl")
     registry = build_baseline_registry(workspace)
-    # Replace the ``fs.run_bash`` handler with one that emits a
+    # Replace the ``fs_run_bash`` handler with one that emits a
     # lockfile signature — the baseline ``apt-get update`` is hard
     # to trigger reliably inside a unit test, and the blocker
     # operates on ``ToolResult.error.message`` regardless of the
@@ -461,15 +461,15 @@ def test_lockfile_blocker_denies_second_run_after_lockfile_failure(tmp_path: Pat
             ),
         )
 
-    spec = registry._tools["fs.run_bash"]
-    registry._tools["fs.run_bash"] = dataclasses.replace(spec, handler=_failing_handler)
+    spec = registry._tools["fs_run_bash"]
+    registry._tools["fs_run_bash"] = dataclasses.replace(spec, handler=_failing_handler)
 
     hooks = HookRegistry()
     hooks.register(LockfileBlocker(suppression_seconds=5.0))
     state = SessionState(workspace_root=workspace, run_id="t", log=log)
     calls = (
-        ToolCall(name="fs.run_bash", params={"command": "apt-get update"}, call_id="tc-1"),
-        ToolCall(name="fs.run_bash", params={"command": "apt-get update"}, call_id="tc-2"),
+        ToolCall(name="fs_run_bash", params={"command": "apt-get update"}, call_id="tc-1"),
+        ToolCall(name="fs_run_bash", params={"command": "apt-get update"}, call_id="tc-2"),
     )
 
     results = run_session(calls, registry=registry, hooks=hooks, state=state)

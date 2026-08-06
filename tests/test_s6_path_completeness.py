@@ -167,14 +167,14 @@ def test_tool_call_path_logs_and_emits(tmp_path: pathlib.Path) -> None:
     assert log is not None
     before = len(log.read_all())
 
-    state.record_tool_call(ToolCall(name="fs.read_file", params={"path": "a.txt"}, call_id="tc-1"))
+    state.record_tool_call(ToolCall(name="fs_read_file", params={"path": "a.txt"}, call_id="tc-1"))
 
     rows = [e for e in log.read_all()[before:] if e.kind == "tool_call"]
     assert len(rows) == 1, "durable tool_call row missing"
-    assert rows[0].tool_name == "fs.read_file"
+    assert rows[0].tool_name == "fs_read_file"
 
     # The console half is emitted by the composition root, not by record_tool_call.
-    bus.emit(OutputEvent(type="tool_call", data={"tool": "fs.read_file", "ok": True}))
+    bus.emit(OutputEvent(type="tool_call", data={"tool": "fs_read_file", "ok": True}))
     assert "tool_call" in recorder.types()
 
 

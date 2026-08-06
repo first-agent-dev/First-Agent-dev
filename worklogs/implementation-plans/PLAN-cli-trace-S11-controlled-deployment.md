@@ -957,7 +957,7 @@ for run in ("s11-wf-linear", "s11-wf-repair", "s11-wf-quiet"):
         print(f"{run}: NO RUN DIR"); continue
     fs = d / "flow_state.json"
     er = d / "eval_report.json"
-    status  = json.loads(fs.read_text())["status"] if fs.is_file() else "NO_FLOW_STATE"
+    status  = json.loads(fs_read_text())["status"] if fs_is_file() else "NO_FLOW_STATE"
     verdict = json.loads(er.read_text()).get("verdict") if er.is_file() else "NO_EVAL_REPORT"
     row = "NO_GLOBAL_HISTORY_DB"
     if gh.is_file():
@@ -2012,7 +2012,7 @@ S11.5 and as `planner` in this very workflow — so the discriminator is the
 **stage transition**, not the model (I-48) and not the role.
 
 `_run_stage` passes `"resume": not fresh` (`cli.py:1210`), so the coder resumes
-the planner's transcript, which ends in `fs.glob` / `fs.grep` / read tool calls.
+the planner's transcript, which ends in `fs_glob` / `fs_grep` / read tool calls.
 A resumed transcript replayed under a *different* role's tool allowlist can
 carry `tool_calls` referencing absent tools, or `tool` messages whose
 `tool_call_id` no longer resolves — both are 400s. **Hypothesis, not yet
@@ -2050,8 +2050,8 @@ on turns 2–4 show prompt caching working (`cache=74%` overall).
 ## Execution note — I-50 diagnostic round 1, 2026-08-03
 
 The body-capture run **reproduced I-50 exactly** — third consecutive
-reproduction, now with a different planner transcript (`fs.instant_grep`,
-`fs.glob`, three reads, 6 turns) and a different target file. The coder still
+reproduction, now with a different planner transcript (`fs_instant_grep`,
+`fs_glob`, three reads, 6 turns) and a different target file. The coder still
 dies at turn 1 with `in=0`.
 
 **Reproducibility is now established.** Not a flake, not rate-limiting, not
@@ -2519,7 +2519,7 @@ Zero correlated rows is the arithmetically correct answer.
 **But the check is therefore vacuous on this data** — it would print `0` whether
 correlation works or is entirely broken. It is **not** evidence that
 `tool_call_id` stamping functions. The S11.7 workflow session (`0e145f`) *does*
-contain tool calls (`fs.glob`, `fs.grep`, reads), so correlation should be
+contain tool calls (`fs_glob`, `fs_grep`, reads), so correlation should be
 re-checked there once I-50 unblocks. Recorded as a gap, not a tick.
 
 ### R21 (MED) — the stray-authority check truncated away the strays

@@ -1,7 +1,7 @@
-"""Allowlist-scrubbed environment for ``fs.run_bash`` (secret-isolation, ADR-12).
+"""Allowlist-scrubbed environment for ``fs_run_bash`` (secret-isolation, ADR-12).
 
 Defense-in-depth layer 3: even though API keys are no longer placed in
-``os.environ`` (Phase 2), the ``fs.run_bash`` child process is given an
+``os.environ`` (Phase 2), the ``fs_run_bash`` child process is given an
 **allowlisted** environment so that, should any secret-bearing variable ever
 re-enter the parent environment, the agent's shell (and anything it spawns)
 still inherits nothing sensitive.

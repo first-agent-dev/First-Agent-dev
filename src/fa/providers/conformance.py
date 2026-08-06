@@ -133,7 +133,7 @@ def default_cases() -> list[ConfCase]:
                 {
                     "role": "assistant",
                     "content": "",
-                    "tool_calls": [{"id": "c1", "function": {"name": "fs.read", "arguments": "{}"}}],
+                    "tool_calls": [{"id": "c1", "function": {"name": "fs_read", "arguments": "{}"}}],
                 },
                 {"role": "tool", "tool_call_id": "c1", "content": "file contents"},
             ],
@@ -244,9 +244,9 @@ def _case_to_request(case: ConfCase, model_slug: str) -> RequestInfo:
       ``prompt_cache_key`` / ``prompt_cache_retention`` extras are present — a
       live run must exercise whether the provider accepts them (this is exactly
       how NVIDIA's rejection surfaced),
-    - set the driver's real ``temperature`` (0.0 non-coder, 0.2 coder) and
-      ``max_tokens`` (64000) defaults, which every provider-visible request
-      carries.
+    - carry the driver's ``max_tokens`` (64000) default and omit
+      ``temperature``/``top_p`` (the thinking-model default), which every
+      provider-visible request does.
     """
     parts, _key = build_prompt_parts_v2(
         base_system=f"base system for {case.role}",
@@ -259,11 +259,9 @@ def _case_to_request(case: ConfCase, model_slug: str) -> RequestInfo:
     openai_request = to_openai_request_v2(parts, _key)
     messages = tuple(openai_request["messages"])
     extras = dict(openai_request.get("extra_body") or {})
-    temperature = 0.2 if case.role == "coder" else 0.0
     return RequestInfo(
         model_slug=model_slug,
         messages=messages,
-        temperature=temperature,
         max_tokens=64000,
         extras=extras,
     )
@@ -309,11 +307,15 @@ def make_live_executor(chain: Any) -> Callable[[ConfCase, str], dict[str, Any]]:
             # matrix completes and the operator sees WHICH case failed and why,
             # instead of a raw traceback aborting the whole run.
             if isinstance(exc, ProviderChainExhaustedError):
+                # The generic message is "all N entries failed" — useless alone.
+                # Surface the per-attempt provider status/error so the real cause
+                # (e.g. a 400 body, a 429, a timeout) is diagnosable.
+                detail = "; ".join(f"{a.provider}:{a.status} {a.error or ''}".strip() for a in exc.attempts)
                 return {
                     "case": case.case,
                     "ok": False,
                     "model": model_slug,
-                    "error": f"chain_exhausted: {exc}",
+                    "error": f"chain_exhausted: {exc} [{detail}]",
                     "in_tokens": None,
                     "out_tokens": None,
                 }

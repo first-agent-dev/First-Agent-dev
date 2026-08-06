@@ -15,39 +15,39 @@
 **Planned:**
 
 - Cap output 8000 in projection.py with artifact_id + 500-char preview + ArtifactStore content-addressed
-- Warning in fs.run_bash description: STATEFUL for main (via PtyPool), stateless for cheap subagents, output capped 8000, background processes, chain with &&
-- fs.chronicle_search, fs.usage, fs.list_tasks skeletons (read EventLog, no new deps)
-- fs.send_ctrl_c, fs.checkpoint, fs.undo, fs.diff skeletons (pair over autonomy)
+- Warning in fs_run_bash description: STATEFUL for main (via PtyPool), stateless for cheap subagents, output capped 8000, background processes, chain with &&
+- fs_chronicle_search, fs_usage, fs_list_tasks skeletons (read EventLog, no new deps)
+- fs_send_ctrl_c, fs_checkpoint, fs_undo, fs_diff skeletons (pair over autonomy)
 
 **Actual Code Landed — Verification via `grep` and `PYTHONPATH=src pytest`:**
 
 - **Cap output 8000:** File `src/fa/inner_loop/tools/run_bash.py`
-  - `max_context_bytes=8000` ✅ Verified via `reg.lookup('fs.run_bash').max_context_bytes == 8000`
+  - `max_context_bytes=8000` ✅ Verified via `reg.lookup('fs_run_bash').max_context_bytes == 8000`
   - `_elide_500_preview(value, max_bytes)` returns first 500 + marker + last 200 + truncated notice + full in artifact ✅
   - `projection.py` already had artifact_id logic: `project_for_model()` writes artifact via `ArtifactStore.put()` and returns summary + elided + `[artifact: id]` ✅
   - **Wired for LLM harness?** Yes: ToolSpec elide is called by `projection.py` which is sole chokepoint between audit-complete ToolResult and LLM message stream (ADR-7 §10). So cap is enforced for LLM, not just for audit log. Verified.
 
-- **Warning in fs.run_bash description:** Description now contains:
+- **Warning in fs_run_bash description:** Description now contains:
   ```
   STATEFUL for main agent (via PtyPool EventStream Runtime, ADR-14): cwd, env, venv persist...
   Stateless for cheap subagents (structured websearch, simple function)...
-  Background processes: use fs.run_bash_background...
+  Background processes: use fs_run_bash_background...
   Output capped 8000 chars with artifact_id + 500-char preview...
   Chain commands with && for atomicity
   ```
-  ✅ Verified via `reg.lookup('fs.run_bash').description` contains STATEFUL and 8000
+  ✅ Verified via `reg.lookup('fs_run_bash').description` contains STATEFUL and 8000
 
 - **Observability tools:**
   - `src/fa/inner_loop/tools/observability.py` — 3 builders: `build_chronicle_search_tool(event_log_path)`, `build_usage_tool`, `build_list_tasks_tool(pty_pool, worktree_manager)` ✅
   - Registered in `build_baseline_registry()` with try/except so no breaking if EventLog not found — graceful degradation ✅
-  - `reg.names()` now 11 vs 3 before: includes `fs.chronicle_search`, `fs.usage`, `fs.list_tasks` ✅
-  - Verified: `fs.chronicle_search` returns "EventLog not found" when no log, or entries matching query when log exists. `fs.usage` returns steps, total_tokens, cache_hit_ratio, breakdown. `fs.list_tasks` returns list.
+  - `reg.names()` now 11 vs 3 before: includes `fs_chronicle_search`, `fs_usage`, `fs_list_tasks` ✅
+  - Verified: `fs_chronicle_search` returns "EventLog not found" when no log, or entries matching query when log exists. `fs_usage` returns steps, total_tokens, cache_hit_ratio, breakdown. `fs_list_tasks` returns list.
 
 - **Pair tools:**
   - `src/fa/inner_loop/tools/pair_tools.py` — 4 builders: `build_checkpoint_tool`, `build_undo_tool`, `build_diff_tool`, `build_send_ctrl_c_tool` ✅
   - Deterministic Python, not LLM, passes minimalism Q4 (can deterministic function do it? Yes, git commit/stash, reset --hard, diff)
   - Registered in baseline registry ✅
-  - Verified: `fs.checkpoint` creates stash when no changes? Actually creates commit -A and commit -m checkpoint: message, fallback to stash. `fs.diff` returns diff truncated preview if >8000. `fs.send_ctrl_c` sends Ctrl+C to PTY session.
+  - Verified: `fs_checkpoint` creates stash when no changes? Actually creates commit -A and commit -m checkpoint: message, fallback to stash. `fs_diff` returns diff truncated preview if >8000. `fs_send_ctrl_c` sends Ctrl+C to PTY session.
 
 - **Instant grep:**
   - `src/fa/inner_loop/tools/instant_grep.py` — `build_instant_grep_tool(db_path, workspace_root)` with FTS5 trigram fallback to glob grep, returns paths not content, token efficient, excludes .fa/, node_modules/, etc. ✅
@@ -84,14 +84,14 @@
 - `src/fa/blackboard/__init__.py` + `blackboard.py` ✅ — Dataclass BlackboardEntry with all fields, methods write (thread-safe Lock, graceful WARNING not crash), read, query, detect_conflict where write_set overlaps write_set + read_set overlaps write_set, store .fa/blackboard/blackboard.jsonl append-only, Control Unit, metrics
 - `src/fa/telemetry/__init__.py` + `telemetry.py` ✅ — TelemetryEvent with all fields, log() append-only thread-safe Lock, sanitizes secrets ***REDACTED***, <1k chars per line, offload full to ArtifactStore, artifact_id, CHANGE_CONTRACT_TEMPLATE with which component, failure mode, improvement predicted, invariants preserved, evaluation that can falsify, rollback, HITL
 - Tests: `tests/test_blackboard_conflict.py` 3 tests passed, `tests/test_telemetry_structured.py` 3 tests passed ✅
-- **Integration into SessionState:** NOT YET — Blackboard and Telemetry are skeletons, not yet injected via SessionState, not yet used by fs.write_file to declare read_set/write_set. That's planned for Phase 1 Foundation.
+- **Integration into SessionState:** NOT YET — Blackboard and Telemetry are skeletons, not yet injected via SessionState, not yet used by fs_write_file to declare read_set/write_set. That's planned for Phase 1 Foundation.
 - **Feature flags:** Not yet in `~/.fa/config.yaml`, but interface ready, graceful degradation implemented
 - **Change contract template:** Exists in telemetry.py as `CHANGE_CONTRACT_TEMPLATE`, but not yet copied to `knowledge/skills/skill-writing/SKILL.md` — need to create skill file in Phase 1
 
 **Stage 0.5 Acceptance from Plan:**
 
 - [x] Blackboard append-only, content-hashed, queryable, detects conflict when read_set overlaps write_set — Verified via tests
-- [x] No silent overwrite: second subagent writing same file without coordination → Conflict detected, returns fail code conflict_detected (implemented in detect_conflict(), to be integrated into fs.write_file handler in Phase 1)
+- [x] No silent overwrite: second subagent writing same file without coordination → Conflict detected, returns fail code conflict_detected (implemented in detect_conflict(), to be integrated into fs_write_file handler in Phase 1)
 - [x] Telemetry structured <1k per line, artifact_id present, no 100k drowning, sanitizes secrets — Verified via tests
 - [x] No 100k token drowning: active model context contains compact summaries + artifact_id, not full tool outputs — Verified via projection.py + telemetry offload
 - [ ] Change contract template exists in `knowledge/skills/skill-writing/SKILL.md` — Currently only in telemetry.py, not in skill file. TODO Phase 1.
@@ -175,7 +175,7 @@ Check .gitignore for `.fa/`:
 
 **Fix:** Use `fnmatch` or `pathspec` to exclude early, or use `os.walk` with pruning.
 
-**High ROI Improvement:** Use `fs.glob` tool pattern or reuse existing `glob` logic, or use `git ls-files` to list only tracked files, faster.
+**High ROI Improvement:** Use `fs_glob` tool pattern or reuse existing `glob` logic, or use `git ls-files` to list only tracked files, faster.
 
 ### Gap 7: `src/fa/telemetry/telemetry.py` Sanitizes Secrets by Checking `if "key" in k.lower()` — Too Broad, May Redact Non-Secret Fields Like `keyboard`
 
@@ -199,7 +199,7 @@ Check .gitignore for `.fa/`:
 
 **Fix:** Already have lock around sessions dict, but server.new_session may need lock too. Add lock around server creation.
 
-### Gap 10: Missing `fs.instant_grep` Tool Registration in Baseline Registry Was Previously Failing Silently Due to Bare Except Pass
+### Gap 10: Missing `fs_instant_grep` Tool Registration in Baseline Registry Was Previously Failing Silently Due to Bare Except Pass
 
 We fixed by ensuring file exists and import works, but earlier it failed silently and tool not registered, with no warning. Now fixed, but need to ensure future tools don't fail silently.
 
@@ -232,7 +232,7 @@ files = result.stdout.splitlines()
 
 **ROI:** High, faster, respects .gitignore, token efficient.
 
-### Improvement 3: Add `fs.checkpoint` Auto-Cleanup Old Checkpoints
+### Improvement 3: Add `fs_checkpoint` Auto-Cleanup Old Checkpoints
 
 **Current:** checkpoint creates commit or stash each time, no cleanup, history bloat.
 
@@ -240,7 +240,7 @@ files = result.stdout.splitlines()
 
 **ROI:** Prevents repo bloat, high for pair work where checkpoint used often.
 
-### Improvement 4: Add `fs.diff` Structured Diff with File-Level Summary, Not Just Raw Diff
+### Improvement 4: Add `fs_diff` Structured Diff with File-Level Summary, Not Just Raw Diff
 
 **Current:** diff returns raw `git diff` truncated preview.
 
@@ -278,7 +278,7 @@ except ImportError:
 
 ---
 
-## 4. Check Against AGENTS.md, pr.prepare, CI Hooks — Up to Standards?
+## 4. Check Against AGENTS.md, pr_prepare, CI Hooks — Up to Standards?
 
 ### AGENTS.md Compliance
 
@@ -289,7 +289,7 @@ except ImportError:
 
 **Rule: Loadable skills — per-task discipline on demand, not session-start.**
 
-- New tools `fs.chronicle_search`, `fs.usage`, etc. are baseline registry, not skill. Should they be skill? No, they are observability, okay as baseline.
+- New tools `fs_chronicle_search`, `fs_usage`, etc. are baseline registry, not skill. Should they be skill? No, they are observability, okay as baseline.
 
 **Rule: Context-budget discipline — any single LLM call total input must stay below ~100k tokens for >=9/10 invocations.**
 
@@ -298,14 +298,14 @@ except ImportError:
 
 **Rule: Industry-proven rules — Keep system human-curated, estimate tasks by files touched, every write target must have active consumer, every new ADR requires Prior Art section, build runtime model before fixing infra errors.**
 
-- Every write target has active consumer? Blackboard `.fa/blackboard/blackboard.jsonl` has consumer? Currently no automated consumer, only human. Need to add consumer: e.g., `fs.chronicle_search` or `fs.usage` reads blackboard? Not yet. For Stage 0.5, blackboard consumer is future WorktreeManager detect_conflict, but not yet active consumer in baseline? Should add consumer in same PR per rule 3? Might need to add simple consumer tool `fs.blackboard_query` that reads blackboard.
+- Every write target has active consumer? Blackboard `.fa/blackboard/blackboard.jsonl` has consumer? Currently no automated consumer, only human. Need to add consumer: e.g., `fs_chronicle_search` or `fs_usage` reads blackboard? Not yet. For Stage 0.5, blackboard consumer is future WorktreeManager detect_conflict, but not yet active consumer in baseline? Should add consumer in same PR per rule 3? Might need to add simple consumer tool `fs_blackboard_query` that reads blackboard.
 - Every new ADR requires Prior Art section — ADR-14 and ADR-15 have Prior Art? Check: they have References, Prior art in Context? Need to ensure Prior Art section exists.
 
 **Rule: Pre-flight checklist — git log -n 5, grep glossary, grep research, subtraction-check, goal-lens declaration — must be done in analysis openly.**
 
 - This review does subtraction-check and goal-lens declaration in analysis? Should.
 
-### pr.prepare (pr-creation Skill) Compliance
+### pr_prepare (pr-creation Skill) Compliance
 
 **Skill:** `knowledge/skills/pr-creation/SKILL.md` — 5-intent classifier + PR Checklist + anti-shallow-fix gate.
 
@@ -360,7 +360,7 @@ except ImportError:
 
 **Gaps Remaining for Prod Stage 0.5 Ready:**
 
-- [ ] Integrate Blackboard into SessionState and fs.write_file handler to declare read_set/write_set and call detect_conflict() before allowing write (not just skeleton)
+- [ ] Integrate Blackboard into SessionState and fs_write_file handler to declare read_set/write_set and call detect_conflict() before allowing write (not just skeleton)
 - [ ] Integrate Telemetry into EventBus and OutputEvent to log structured TelemetryEvent on each tool call, offload full outputs to ArtifactStore (currently only skeleton)
 - [ ] Change contract template copy from telemetry.py to knowledge/skills/skill-writing/SKILL.md
 - [ ] FeatureFlags loader from ~/.fa/config.yaml for blackboard.enabled, telemetry.enabled, etc.

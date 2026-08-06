@@ -1,4 +1,4 @@
-"""fs.grep — high-speed code search, returns matched lines with numbers.
+"""fs_grep — high-speed code search, returns matched lines with numbers.
 
 Optimized SOTA Inspection tool:
 - Fast path: git grep -n --no-color (runs natively in C, bypasses Python I/O)
@@ -180,7 +180,7 @@ def build_grep_tool(workspace_root: Path) -> ToolSpec:  # noqa: C901 -- complexi
         )
 
     return ToolSpec(
-        name="fs.grep",
+        name="fs_grep",
         description=(
             "Grep files containing query (e.g., 'auth'), returns matching lines with numbers. "
             "Respects .gitignore natively via git grep, with a streaming fallback. "

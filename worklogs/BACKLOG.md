@@ -392,7 +392,7 @@
   `src/fa/inner_loop/` with the full ADR-7 §1–§10 + ADR-8 contract:
   JSON-Schema validation on every dispatch (§5), modify→re-validate +
   sandbox replay on every `Decision.modify` (§8), `SandboxHook` gating
-  `fs.read_file` / `fs.write_file` paths in addition to `fs.run_bash`,
+  `fs_read_file` / `fs_write_file` paths in addition to `fs_run_bash`,
   `events.jsonl` with `ts` + `run_id` per §7 schema, `hook_decision`
   rows persisted through `HookRegistry` event-sink, `RuntimeLimits`
   for `max_iterations` (default 6) and `bash_timeout_seconds`
@@ -527,8 +527,8 @@
     adds `load_contracts_from_dir(directory)` batch-loader. The smoke CLI
     seeds `VerifierObserver` from
     [`verifiers/*.yaml`](../verifiers/), which now ships canonical
-    contracts for the three M-1 tools (`fs.read_file`, `fs.write_file`,
-    `fs.run_bash`) plus the documentation-anchor `edit_file.yaml`.
+    contracts for the three M-1 tools (`fs_read_file`, `fs_write_file`,
+    `fs_run_bash`) plus the documentation-anchor `edit_file.yaml`.
     Contracts are keyed by in-file `target_action`, not filename.
     `required_trace_events` is empty in M-1 — tool bodies don't yet emit
     per-step trace events; T-2 lands observation-event projection.
@@ -871,16 +871,16 @@
   identity-test for ADR-10 I-1 single-source-of-truth, deny
   reason echoes hook wording). **Both former follow-ups are now
   closed:** the `prepare-pr` producer shipped in PR #24
-  (`pr.prepare`, see §Q-N below) and `IntentGuard` is wired into
+  (`pr_prepare`, see §Q-N below) and `IntentGuard` is wired into
   the `fa run` bootstrap (`cli.py` `_cmd_run`, landed in PR #23
   final-review). **Scope expanded post-#24 (commit 78ced94):**
-  `IntentGuard` now also gates `fs.run_bash` via a dedicated
+  `IntentGuard` now also gates `fs_run_bash` via a dedicated
   AST analyzer ([`bash_intent.py`](../src/fa/inner_loop/bash_intent.py),
   READ_ONLY / VERIFY_ONLY / INDEX_WRITE / REPO_WRITE /
   OPAQUE_EXEC) and trusts only current-session drafts via the
   [`PrDraftStore`](../src/fa/inner_loop/pr_draft.py) (stale /
   externally-fabricated drafts rejected) — closing the remaining
-  `fs.run_bash` bypass of the draft-first contract.
+  `fs_run_bash` bypass of the draft-first contract.
 - **Why milestone, not idea:** the `HookRegistry` substrate is
   landed (M-1 closed by PR #24; verified by the session-start
   audit at [`src/fa/inner_loop/hooks/base.py`](../src/fa/inner_loop/hooks/base.py)
@@ -899,8 +899,8 @@
   - `src/fa/inner_loop/hooks/intent_guard.py` (~50 LOC) —
     `IntentGuard(GuardMiddleware)` attached to
     `BEFORE_TOOL_EXEC`. On tool calls that mutate the staged
-    tree (`fs.write_file`, `edit_file` shapes,
-    `git add` / `git commit` via `fs.run_bash`), re-runs
+    tree (`fs_write_file`, `edit_file` shapes,
+    `git add` / `git commit` via `fs_run_bash`), re-runs
     `fa.hygiene.pr_intent.classify_intent` over the staged-diff
     snapshot the call is about to produce; if the resulting
     intent or required-field shape would violate the skill's
@@ -934,7 +934,7 @@
     a known location under `~/.fa/session-log/<run_id>/pr_draft.md`
     populated by the agent itself; agent populates it on
     session start via a new `prepare-pr` tool or sub-agent.
-    **Closed by PR E (2026-05-28):** `pr.prepare` tool ships in
+    **Closed by PR E (2026-05-28):** `pr_prepare` tool ships in
     [`src/fa/inner_loop/tools/prepare_pr.py`](../src/fa/inner_loop/tools/prepare_pr.py)
     and is registered by `_cmd_run` alongside the baseline
     filesystem tools; closure-bound to the same `draft_path` the
@@ -1132,7 +1132,7 @@
 - **Idea:** Three categories of tests fail on vanilla Windows:
   1. **Bash-dependent tests** (6 in `test_cli.py`, 1 in
      `test_inner_loop_runtime.py`, 1 in `test_inner_loop_runtime_limits.py`,
-     2 in `test_inner_loop_tools.py`). They invoke `fs.run_bash` which spawns
+     2 in `test_inner_loop_tools.py`). They invoke `fs_run_bash` which spawns
      `bash` — not installed by default on Windows. Currently mitigated with
      `@pytest.mark.skipif(shutil.which("bash") is None)` but this skips
      silently; a better solution would use `cmd.exe` as a fallback shell on
@@ -1147,8 +1147,8 @@
      creating files named `...` (path traversal pattern), so the test fixture
      cannot be constructed. The chunker logic itself is fine; this is a test
      construction limitation.
-- **Worth fixing?** The bash tests reveal the real gap: `fs.run_bash` is a
-  POSIX shell tool. A Windows-native agent would need `fs.run_cmd` or a shell
+- **Worth fixing?** The bash tests reveal the real gap: `fs_run_bash` is a
+  POSIX shell tool. A Windows-native agent would need `fs_run_cmd` or a shell
   abstraction. The symlink tests are security-critical (sandbox escape
   detection) — skipping them on Windows means the Windows dev never validates
   the containment boundary locally.

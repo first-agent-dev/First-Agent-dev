@@ -1,4 +1,4 @@
-"""fs.spawn_subagent — spawns a cheap, isolated, stateless subagent.
+"""fs_spawn_subagent — spawns a cheap, isolated, stateless subagent.
 
 ADR-14, ADR-15 Phase 3:
 - Strictly gated by feature_flags.subagent_spawning_enabled
@@ -79,7 +79,7 @@ def _record_subagent_completion(session: Any, task_id: str, role: str, envelope:
                 "duration_ms": envelope.duration_ms,
                 "verification": envelope.verification,
             },
-            tool_name="fs.spawn_subagent",
+            tool_name="fs_spawn_subagent",
         )
     _emit_subagent_event(
         session,
@@ -110,7 +110,7 @@ def _handle_subagent_runner_error(
                 actor="tool",
                 kind="subagent_spawn_fail",
                 content={"task_id": task_id, "role": role, "error": str(exc)},
-                tool_name="fs.spawn_subagent",
+                tool_name="fs_spawn_subagent",
             )
         except Exception as log_exc:  # noqa: BLE001 - best-effort observability logging
             logger.warning("Failed to log subagent failure: %s", log_exc)
@@ -191,7 +191,7 @@ def _handle_spawn_subagent(root: Path, params: Mapping[str, object]) -> ToolResu
                     "workdir": str(workdir),
                     "env_keys": list((env_extra or {}).keys()),
                 },
-                tool_name="fs.spawn_subagent",
+                tool_name="fs_spawn_subagent",
             )
         except Exception as exc:  # noqa: BLE001 - best-effort observability
             logger.warning("Failed to log subagent_spawn_start: %s", exc)
@@ -259,7 +259,7 @@ def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:
     root = Path(session_root).resolve()
 
     return ToolSpec(
-        name="fs.spawn_subagent",
+        name="fs_spawn_subagent",
         description=(
             "Spawns an isolated, cheap, stateless subagent in a separate workspace worktree. "
             "Role-bounded (verifier=verification, researcher=read-only+web search future), "

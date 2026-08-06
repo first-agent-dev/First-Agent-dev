@@ -55,7 +55,7 @@ This workplan hardens authoring module itself (old main module developed before 
 | Slice | Promised (workplan) | Present now | Gap |
 |---|---|---|---|
 | Slice 1 unified DB authority | EventLog DB-first, Blackboard same DB, JSONL mirror-only, split-brain tests, no dual authority | `session_db.py` exists, EventLog append DB-first then mirror, read DB-first, Blackboard facade over same DB, `tests/test_session_db_authority.py` 13 tests, concurrent write test | Done, but verify no remaining `workspace/.fa/blackboard/session.db` hot-path creation — search shows only fallback compatibility in Blackboard.__init__ when session_db=None |
-| Slice 2 observability | fs.usage/chronicle_search read active authority, no path guessing, explicit run_id | `observability.py` now DI via contextvar + run_id, `test_observability_runtime_authority.py` 6 tests | Done |
+| Slice 2 observability | fs_usage/chronicle_search read active authority, no path guessing, explicit run_id | `observability.py` now DI via contextvar + run_id, `test_observability_runtime_authority.py` 6 tests | Done |
 | Slice 3 Stage C | warn/stage2/stage3 distinct, dynamic threshold, compactor model reaches provider body, fallback 4-header, cache-control truth | `context_budget.py` has stage2_threshold, stage3_threshold distinct, warn 70%, `coder_loop.py` composes request_extras, anthropic system hoisting preserves cache_control structured, openai_compat forwards extras, compactor uses config.model, fallback returns 4 headers, `test_compaction_sota.py` + pr1/3/5 | Done, flag honesty: compaction_enabled defaults False, so Stage3 tests use matrix B full cascade, not C defaults — documented |
 | Slice 4 governance | PinnedBuffer vs mutable resume, stale pin cleared, hash honest | `cli.py` routes resume to initial_memory_summary, `pinned_buffer.py` refresh replaces cache wholesale + warns on disappearance/change, `coder_loop.py` merges resume + rebuilt summary | Done |
 | Slice 5 subagent | role fidelity, spawn limit, env, safety equivalence, lifecycle, observability | `subagent_runner.py` role preserved (researcher vs verifier), spawn limit respects FF > RuntimeLimits, env injection with secret filter, sandbox checks via HookRegistry (SandboxHook, SecretGuard, IntentGuard) dispatched BEFORE tool, spawn_start/done/fail events logged, worklog aggregation, PtyPool not used for subagent (stateless) | Partial: lifecycle termination (SIGTERM) test missing, shared-workspace conflict semantics not fully proven via audit trail test — need C1 test for termination |
@@ -67,7 +67,7 @@ This workplan hardens authoring module itself (old main module developed before 
 
 ### 1.4 More C1 for Stage B/C gaps
 
-- `fs.list_tasks`, `fs.chronicle_search` — chronicle_search has C1 via observability_runtime_authority, list_tasks maybe only C0 (check). `fs.list_tasks` is observability, should have C1.
+- `fs_list_tasks`, `fs_chronicle_search` — chronicle_search has C1 via observability_runtime_authority, list_tasks maybe only C0 (check). `fs_list_tasks` is observability, should have C1.
 - `global_history` export has C1 via `test_global_history_export.py` (6 tests) but CLI reading `fa stats --global` absent — no derived consumer yet, violates AGENTS rule "every write target must have active consumer".
 
 ### 1.5 Dead flags sweep — FIND-018
@@ -179,15 +179,15 @@ Many are outdated relative to new substrate features.
 **Assessment already done in §1.2:**
 
 - Slice 1: Already has `test_session_db_authority.py` 13 tests, but need C1 via drive_session that proves DB-first read? Existing pr tests maybe cover. Add C1 if missing: `test_slice1_wiring.py` that forces SQLite write failure and proves no stale authority.
-- Slice 2: Has `test_observability_runtime_authority.py` 6 tests C1 via contextvar + EventLog, but need C1 via drive_session that appends usage row and checks `fs.usage` returns non-TBD? Could add.
+- Slice 2: Has `test_observability_runtime_authority.py` 6 tests C1 via contextvar + EventLog, but need C1 via drive_session that appends usage row and checks `fs_usage` returns non-TBD? Could add.
 - Slice 3: Has `test_compaction_sota.py` + pr1/3/5, but need provider-body cache-control test that inspects `RequestInfo.extras` reaches outbound JSON body — already in pr3? Check. Add if missing.
 - Slice 4: Has pr2 wiring for pinned buffer reload, but need test that resume draft appears in mutable segment not pinned.
 - Slice 5: We added C1 for role/env/limit but missing lifecycle termination test (parent SIGTERM → child cleanup) and shared-workspace audit trail test.
 
 **Plus B/C gaps:**
 
-- `fs.list_tasks` — currently only via observability tools, no C1 that proves DI via contextvar + active tasks listing.
-- `fs.chronicle_search` — already C1.
+- `fs_list_tasks` — currently only via observability tools, no C1 that proves DI via contextvar + active tasks listing.
+- `fs_chronicle_search` — already C1.
 - `global_history` CLI reading — see Task 6
 
 **Translation:**
@@ -434,7 +434,7 @@ Next session with other agent:
 - Remaining open from workplan:
   - Slice 10 literal task 6 dead flags sweep — inventory done partially, removal not started (FIND-018)
   - More C1 for slices 1-5 (code present vs promised assessment done in §1.2, but additional C1 not yet added beyond existing)
-  - fs.list_tasks C1 missing
+  - fs_list_tasks C1 missing
   - fa stats --global not implemented (Task 6)
   - Blueprint PR3 parity/docs rules not implemented (Task 7 explanation done, code not)
   - Doc cleanup enormous (Task 8) — not started

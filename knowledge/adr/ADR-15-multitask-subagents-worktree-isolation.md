@@ -9,7 +9,7 @@
 
 After ADR-13 Main agent becomes stateful PTY via EventStream Runtime, need to enable Cursor 3.2 /multitask pattern: main breaks task into chunks, async subagents each in git worktree isolated, each with restricted tools and structured JSON result.
 
-Current workflow roles planner/coder/eval share same toolset (~18 tools, ~3000 tokens), no skill globs, no instant grep, `pr.prepare` only for PR tasks. Task "прочитай репозиторий" → 124 steps due to repeated `grep -ril` scanning all files, no fast search, no tool call batching, no restricted toolset, no structured output.
+Current workflow roles planner/coder/eval share same toolset (~18 tools, ~3000 tokens), no skill globs, no instant grep, `pr_prepare` only for PR tasks. Task "прочитай репозиторий" → 124 steps due to repeated `grep -ril` scanning all files, no fast search, no tool call batching, no restricted toolset, no structured output.
 
 Top-tier trends July 2026:
 - Cursor 3.2 /multitask: main breaks into chunks, async subagents each git worktree, 8 parallel, no hard tool call limit.
@@ -70,12 +70,12 @@ We will choose **Option B — Full Cursor-like but phased: v0.1 SharedDir + 1 su
    ```python
    PROFILES = {
        "researcher": {
-           "tools": ["fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep"],
+           "tools": ["fs_glob", "fs_grep", "fs_read_file", "fs_instant_grep"],
            "max_tokens": 600,
            "stateless": True,
        },
-       "verifier": {"tools": ["fs.run_bash"], "max_tokens": 200, "stateless": True},
-       "code-reviewer": {"tools": ["fs.read_file", "fs.grep"]},
+       "verifier": {"tools": ["fs_run_bash"], "max_tokens": 200, "stateless": True},
+       "code-reviewer": {"tools": ["fs_read_file", "fs_grep"]},
    }
    ```
    Main chooses at spawn, ToolRegistry per subagent only 1-4 tools, cache-key = role_id + hash(tool_defs) solves internal contradiction.
@@ -83,7 +83,7 @@ We will choose **Option B — Full Cursor-like but phased: v0.1 SharedDir + 1 su
 3. **Instant Grep FTS5 Trigram:**
    - `src/fa/memory/fts_index.py` with `CREATE VIRTUAL TABLE files_fts USING fts5(path, content, tokenize='trigram')`
    - Index `knowledge/` + `src/` at session start, DB `.fa/fts.db`, incremental
-   - Tool `fs.instant_grep(query, limit)` → list paths <50ms substring search "auth"→"AuthMiddleware", not content → token efficient.
+   - Tool `fs_instant_grep(query, limit)` → list paths <50ms substring search "auth"→"AuthMiddleware", not content → token efficient.
    - Existing SQLite FTS5 for Mechanical Wiki, sqlite3 stdlib, 0 external deps.
 
 4. **JSON Envelope Full Schema:**

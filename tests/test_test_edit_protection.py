@@ -176,7 +176,7 @@ def test_guard_denies_undeclared_test_write_under_fix(tmp_path: Path) -> None:
         draft_text=_VALID_FIX_DRAFT,
         git_output="M\tsrc/fa/x.py\n",
     )
-    call = ToolCall(name="fs.write_file", params={"path": "tests/test_x.py", "content": "x"})
+    call = ToolCall(name="fs_write_file", params={"path": "tests/test_x.py", "content": "x"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "deny"
     assert "test_edit_undeclared" not in decision.reason  # message text, not code
@@ -189,7 +189,7 @@ def test_guard_allows_declared_test_write_under_fix(tmp_path: Path) -> None:
         draft_text=_VALID_FIX_DRAFT_WITH_DECLARATION,
         git_output="M\tsrc/fa/x.py\n",
     )
-    call = ToolCall(name="fs.write_file", params={"path": "tests/test_x.py", "content": "x"})
+    call = ToolCall(name="fs_write_file", params={"path": "tests/test_x.py", "content": "x"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "allow"
 
@@ -201,7 +201,7 @@ def test_guard_denies_bash_rm_of_test_under_any_intent(tmp_path: Path) -> None:
         draft_text=_VALID_FIX_DRAFT_WITH_DECLARATION,  # declared — D still blocked
         git_output="M\tsrc/fa/x.py\n",
     )
-    call = ToolCall(name="fs.run_bash", params={"command": "rm tests/test_x.py"})
+    call = ToolCall(name="fs_run_bash", params={"command": "rm tests/test_x.py"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "deny"
     assert "deleting/renaming an existing test is blocked" in decision.reason
@@ -213,7 +213,7 @@ def test_guard_allows_new_test_file_write(tmp_path: Path) -> None:
         draft_text=_VALID_FIX_DRAFT,
         git_output="M\tsrc/fa/x.py\n",
     )
-    call = ToolCall(name="fs.write_file", params={"path": "tests/test_new.py", "content": "x"})
+    call = ToolCall(name="fs_write_file", params={"path": "tests/test_new.py", "content": "x"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "allow"  # status A — adding tests is always fine
 
@@ -232,7 +232,7 @@ def test_guard_typed_implement_override_does_not_disarm(tmp_path: Path) -> None:
         draft_text=_VALID_IMPLEMENT_DRAFT,
         git_output="M\tsrc/fa/x.py\n",  # M-only diff → classifier says FIX
     )
-    call = ToolCall(name="fs.write_file", params={"path": "tests/test_x.py", "content": "x"})
+    call = ToolCall(name="fs_write_file", params={"path": "tests/test_x.py", "content": "x"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "deny"
     assert "TEST-EDITS" in decision.reason
@@ -252,7 +252,7 @@ def test_two_seat_closure_index_write_sees_staged_delete(tmp_path: Path) -> None
         draft_text=_VALID_FIX_DRAFT_WITH_DECLARATION,
         git_output="D\ttests/test_x.py\nM\tsrc/fa/x.py\n",  # post-deletion stage
     )
-    call = ToolCall(name="fs.run_bash", params={"command": "git commit -m wip"})
+    call = ToolCall(name="fs_run_bash", params={"command": "git commit -m wip"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "deny"
     assert "deleting/renaming an existing test is blocked" in decision.reason

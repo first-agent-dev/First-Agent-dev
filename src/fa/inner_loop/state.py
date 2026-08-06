@@ -652,11 +652,11 @@ class SessionState:
         self.turn += 1
         # Track read for transaction if read_file
         try:
-            if call.name == "fs.read_file":
+            if call.name == "fs_read_file":
                 p = call.params.get("path")
                 if isinstance(p, str):
                     self.add_read(p)
-            elif call.name in ("fs.write_file", "fs.edit_file"):
+            elif call.name in ("fs_write_file", "fs_edit_file"):
                 p = call.params.get("path")
                 if isinstance(p, str):
                     self.add_write(p)

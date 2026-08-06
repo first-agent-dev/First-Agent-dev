@@ -17,11 +17,11 @@ UUIDs that the chain stamps).
 
 Role prompts:
 - ``PLANNER_SYSTEM_PROMPT`` — Architect/Planner: read-only analysis,
-  plan generation, work-log creation via ``pr.prepare``.
+  plan generation, work-log creation via ``pr_prepare``.
 - ``CODER_SYSTEM_PROMPT`` — Coder: workspace mutation, step execution,
-  work-log maintenance via ``pr.prepare``.
+  work-log maintenance via ``pr_prepare``.
 - ``EVAL_SYSTEM_PROMPT`` — Evaluator: read-only verification, review
-  of completed work, work-log appending via ``pr.prepare``.
+  of completed work, work-log appending via ``pr_prepare``.
 
 References:
 - knowledge/research/fa-abc-synthesis-deep-dive-2026-05.md §3 I-2.
@@ -518,9 +518,9 @@ S2. run focused tests
 
 ## Tool usage
 
-- Use `fs.read_file` and `fs.run_bash` (read-only commands) for
+- Use `fs_read_file` and `fs_run_bash` (read-only commands) for
   bounded reconnaissance.
-- Use `pr.prepare` to write the plan. Declare:
+- Use `pr_prepare` to write the plan. Declare:
   `intent: IMPLEMENT` and `invariant: Implements: <one-line summary>`.
   Include the full plan in the `body` field.
 - You read the codebase. You plan. You write the work log.
@@ -566,14 +566,14 @@ Key commands:
    orient yourself — do not invent a replacement plan if the planner has
    already specified one.
 
-2. **Declare intent.** Before your first mutation, call `pr.prepare`
+2. **Declare intent.** Before your first mutation, call `pr_prepare`
    with the correct `intent` and `invariant`. This establishes the
    human-readable work log and satisfies the IntentGuard.
 
 3. **For each plan step, in order:**
-   a. Read the target file(s) with `fs.read_file`.
-   b. Implement the change via `fs.write_file`.
-   c. Run the step's `verify` command via `fs.run_bash`.
+   a. Read the target file(s) with `fs_read_file`.
+   b. Implement the change via `fs_write_file`.
+   c. Run the step's `verify` command via `fs_run_bash`.
    d. If verify fails and the defect is implementation-local, fix and
       re-verify.
    e. Update the work log with execution evidence.
@@ -630,14 +630,14 @@ Follow these standards — they match the project's CI gates:
 
 ## Working with files
 
-- `fs.write_file` replaces the entire file. Always read first, then
+- `fs_write_file` replaces the entire file. Always read first, then
   write the full updated content.
-- `fs.read_file` can read slices of large files.
-- `fs.run_bash` runs in the workspace root and is sandboxed.
+- `fs_read_file` can read slices of large files.
+- `fs_run_bash` runs in the workspace root and is sandboxed.
 
 ## Work log convention
 
-Call `pr.prepare` to maintain a human-readable work log in the draft
+Call `pr_prepare` to maintain a human-readable work log in the draft
 body:
 - Before your first mutation: declare intent and initial status.
 - After completing a step: mark it `[x]` / `[>]` / `[ ]` and append the
@@ -757,7 +757,7 @@ first; use broader repo-native checks when needed to confirm a finding.
 
 For each plan step (S1, S2, ...), verify in this order:
 
-1. **Read the target file(s)** with `fs.read_file`. Confirm the change
+1. **Read the target file(s)** with `fs_read_file`. Confirm the change
    described in the step's `do:` field actually landed in the correct
    file / symbol / region.
 
@@ -814,7 +814,7 @@ Do not escalate to the planner for ordinary code defects.
 
 ## Recording findings
 
-Use `pr.prepare` only as a human-readable review surface. Do not assume
+Use `pr_prepare` only as a human-readable review surface. Do not assume
 it is the controller's source of truth.
 
 When recording results, structure them so they can later map cleanly to
@@ -844,9 +844,9 @@ made every field first-class:
 
 ## Tool usage
 
-- `fs.read_file` to inspect changed files and relevant plan targets.
-- `fs.run_bash` for repo-native verification commands.
-- `pr.prepare` to append a human-readable review summary.
+- `fs_read_file` to inspect changed files and relevant plan targets.
+- `fs_run_bash` for repo-native verification commands.
+- `pr_prepare` to append a human-readable review summary.
 - File mutation is NOT your job.
 
 ## Final output contract

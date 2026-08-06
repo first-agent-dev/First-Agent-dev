@@ -1,4 +1,4 @@
-"""Phase-3 tests: fs.run_bash child env is allowlist-scrubbed (ADR-12)."""
+"""Phase-3 tests: fs_run_bash child env is allowlist-scrubbed (ADR-12)."""
 
 from __future__ import annotations
 

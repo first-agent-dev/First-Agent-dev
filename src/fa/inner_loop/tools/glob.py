@@ -1,4 +1,4 @@
-"""fs.glob — token-efficient file glob, respects .gitignore via git ls-files.
+"""fs_glob — token-efficient file glob, respects .gitignore via git ls-files.
 
 Senior refactor (v3 review):
 - Single responsibility helpers, deterministic pure functions
@@ -176,7 +176,7 @@ def build_glob_tool(workspace_root: Path) -> ToolSpec:
             return ToolResult.fail("glob_failed", f"Glob failed: {exc}", retryable=False)
 
     return ToolSpec(
-        name="fs.glob",
+        name="fs_glob",
         description=(
             "Glob files by pattern, respecting .gitignore via git ls-files; returns paths "
             "rather than content with a default limit of 50 and maximum of 200."

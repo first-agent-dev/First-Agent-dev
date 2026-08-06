@@ -205,7 +205,7 @@ def build_instant_grep_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
             )
 
     return ToolSpec(
-        name="fs.instant_grep",
+        name="fs_instant_grep",
         description=(
             "Instant substring search via FTS5 trigram index (Cursor-like), under 50ms, "
             "returns paths rather than content; "

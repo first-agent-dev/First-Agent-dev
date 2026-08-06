@@ -31,33 +31,33 @@ from fa.inner_loop.state import EventLog, SessionState
 # Hermes pattern — senior production approach
 _NEVER_PARALLEL_TOOLS = frozenset(
     {
-        "fs.checkpoint",
-        "fs.undo",
-        "fs.send_ctrl_c",
-        "fs.write_file",
-        "fs.edit_file",
-        "fs.run_bash",
+        "fs_checkpoint",
+        "fs_undo",
+        "fs_send_ctrl_c",
+        "fs_write_file",
+        "fs_edit_file",
+        "fs_run_bash",
     }
 )
 
 _PARALLEL_SAFE_TOOLS = frozenset(
     {
-        "fs.glob",
-        "fs.grep",
-        "fs.read_file",
-        "fs.instant_grep",
-        "fs.chronicle_search",
-        "fs.usage",
-        "fs.list_tasks",
-        "fs.diff",
+        "fs_glob",
+        "fs_grep",
+        "fs_read_file",
+        "fs_instant_grep",
+        "fs_chronicle_search",
+        "fs_usage",
+        "fs_list_tasks",
+        "fs_diff",
     }
 )
 
 _PATH_SCOPED_TOOLS = frozenset(
     {
-        "fs.read_file",
-        "fs.write_file",
-        "fs.edit_file",
+        "fs_read_file",
+        "fs_write_file",
+        "fs_edit_file",
     }
 )
 

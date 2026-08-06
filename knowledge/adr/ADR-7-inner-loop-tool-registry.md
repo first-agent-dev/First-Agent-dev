@@ -220,7 +220,7 @@ from typing import Any, Callable, Literal
 
 @dataclass(frozen=True)
 class ToolSpec:
-    name: str  # stable dotted string, e.g. "fs.read_file"
+    name: str  # stable dotted string, e.g. "fs_read_file"
     description: str  # one-line model-facing summary (tier-2)
     input_schema: dict  # JSON Schema; loaded on demand (tier-3)
     permission: Literal["read", "workspace", "full"]  # ADR-6 sandbox scope
@@ -270,8 +270,8 @@ The model sees `summary` + `artifacts[]` paths back from the loop
 invariant). Empty output is explicit (`result = None` or
 `result = {}`), never silent.
 
-**Naming.** Tool `name` uses dotted namespaces (`fs.read_file`,
-`fs.list_files`, `fs.edit_file`, `fs.write_file`, `fs.grep`).
+**Naming.** Tool `name` uses dotted namespaces (`fs_read_file`,
+`fs_list_files`, `fs_edit_file`, `fs_write_file`, `fs_grep`).
 The namespace prefix is the group used by R-4 forward-compat
 extension to ADR-6 (`[tool_groups] fs = ["read", "workspace"]`).
 Renaming a tool requires an ADR-7 amendment because Coder
@@ -285,19 +285,19 @@ registered at startup; **no other tools in v0.1**:
 
 | name | permission | gate | edit-shape |
 |---|---|---|---|
-| `fs.read_file(path, start_line?, end_line?)` | read | `check_read` | n/a |
-| `fs.list_files(path)` | read | `check_read` + filter | n/a |
-| `fs.edit_file(path, old_string, new_string)` | workspace | `check_write` (implies `check_read` per ADR-6 §6) | string-replace |
-| `fs.write_file(path, content)` | workspace | `check_write` | full-file |
-| `fs.grep(pattern, path)` | read | `check_read` recursive | n/a |
+| `fs_read_file(path, start_line?, end_line?)` | read | `check_read` | n/a |
+| `fs_list_files(path)` | read | `check_read` + filter | n/a |
+| `fs_edit_file(path, old_string, new_string)` | workspace | `check_write` (implies `check_read` per ADR-6 §6) | string-replace |
+| `fs_write_file(path, content)` | workspace | `check_write` | full-file |
+| `fs_grep(pattern, path)` | read | `check_read` recursive | n/a |
 
-A sixth, `fs.apply_patch(path, unified_diff)`, is **registered
+A sixth, `fs_apply_patch(path, unified_diff)`, is **registered
 but feature-flagged off by default** in v0.1; see §4. No
 `run_command` tool, no `network.*` tool, no MCP transport in
 v0.1 (ADR-6 §Re-evaluation triggers + ADR-2 §Amendment
 2026-05-01 §"No `mcp` package dependency in v0.1").
 
-`fs.read_file` accepts the optional `start_line` / `end_line`
+`fs_read_file` accepts the optional `start_line` / `end_line`
 window pattern from semi-autonomous-agents §8.4 (two-stage read
 for files > a chunker-store-estimated threshold). v0.1 default
 threshold: 4 000 lines (~80 KB) — small files round-trip in one
@@ -306,10 +306,10 @@ overridable in `~/.fa/inner_loop.toml`.
 
 ### 4. Edit-shapes (string-replace and apply_patch)
 
-Two shapes are accepted; default is `fs.edit_file` (string-replace)
+Two shapes are accepted; default is `fs_edit_file` (string-replace)
 per cross-reference §10 R-3 and semi-autonomous §7.3.
 
-1. **`fs.edit_file(path, old_string, new_string)` — single-edit
+1. **`fs_edit_file(path, old_string, new_string)` — single-edit
    string-replace.** Ampcode-style; simple mental model for the
    model. `old_string` must match **exactly once** in the
    target file (whitespace included); otherwise the call
@@ -318,7 +318,7 @@ per cross-reference §10 R-3 and semi-autonomous §7.3.
    This is the default because cross-reference §10 R-3 already
    pinned it after the 5-10-edit fixture sweep across all five
    ADR-2 models.
-2. **`fs.apply_patch(path, unified_diff)` — multi-edit
+2. **`fs_apply_patch(path, unified_diff)` — multi-edit
    unified-diff.** Atomic; validated through `git apply
    --check` before write. Off by default in v0.1; enabled per
    `~/.fa/inner_loop.toml` `[edit] apply_patch = true`. Reserved
@@ -329,10 +329,10 @@ per cross-reference §10 R-3 and semi-autonomous §7.3.
    on each ADR-2 model) determines whether the default flips in
    ADR-7 §Amendment after the next sweep.
 
-`fs.write_file` is full-file overwrite. Used only when the
+`fs_write_file` is full-file overwrite. Used only when the
 caller deliberately replaces the file (new file, large
 re-write). Not the default edit primitive; the model should
-prefer `fs.edit_file`.
+prefer `fs_edit_file`.
 
 ### 5. Input validation
 
@@ -394,7 +394,7 @@ uses the first two and reserves the third for v0.2.
    `input_schema` is **not** in the system prompt. Instead the
    model receives schemas the first time it calls a tool in
    the session (lazy hydration), or via an explicit
-   `fs.describe_tool(name)` tool that v0.1 does **not** ship
+   `fs_describe_tool(name)` tool that v0.1 does **not** ship
    but registers a placeholder for. Forward-compat for
    Anthropic `tool_search_tool_*_20251119` and BM25-based
    lookup (R-3 reuses SQLite FTS5) once the catalog grows
@@ -438,7 +438,7 @@ Every state transition emits one event; the schema is:
   "harness_id": "fa-inner-loop@0.1.0",
   "actor": "coder|tool|hook|user",
   "kind": "user_msg|model_msg|tool_call|tool_result|hook_decision|approval|error|stop",
-  "tool_name": "fs.edit_file",
+  "tool_name": "fs_edit_file",
   "tool_call_id": "tc-001",
   "parent_event_id": "ev-007",
   "content": { ... }
@@ -599,7 +599,7 @@ following MUST hold:
    (§1 step 5 + §5 re-validation invariant).
 5. ADR-6 `Sandbox.check_*` runs before any filesystem I/O
    inside every `fs.*` handler (§3 + ADR-6 §Tool wiring).
-6. `fs.apply_patch` runs `git apply --check` before any
+6. `fs_apply_patch` runs `git apply --check` before any
    filesystem write (§4 point 2).
 7. Tool results with payload size > the artifact threshold
    (default 32 KiB) return paths in `ToolResult.artifacts`,
@@ -607,10 +607,10 @@ following MUST hold:
 8. `events.jsonl` records **both** successful and failed tool
    calls — `tool_call` always emitted; `tool_result` always
    emitted (with `error != None` on failure).
-9. `fs.read_file` exposes the `start_line` / `end_line`
+9. `fs_read_file` exposes the `start_line` / `end_line`
    bounded-window pattern (§3 — semi-autonomous-agents §8.4).
-10. Both edit-shapes (`fs.edit_file` string-replace +
-    `fs.apply_patch` unified-diff) are registered; the
+10. Both edit-shapes (`fs_edit_file` string-replace +
+    `fs_apply_patch` unified-diff) are registered; the
     default is configurable via `~/.fa/inner_loop.toml`
     (§4).
 
@@ -662,13 +662,13 @@ shape is pinned so the migration is config-only:
 
 - **R-3 SQLite FTS5 reuse for tool-search BM25.** When the
   v0.1 tool catalog passes ~10 tools, an
-  `fs.describe_tool(name)` / `fs.search_tools(query)` pair can
+  `fs_describe_tool(name)` / `fs_search_tools(query)` pair can
   be added; the BM25 index reuses
   [ADR-4](./ADR-4-storage-backend.md) FTS5 with no new
   dependency. ADR-7 amendment.
 - **R-4 `[tool_groups]` extension to ADR-6.** Add a
   `[tool_groups]` block to `~/.fa/sandbox.toml` so the user
-  can disable a whole group (`fs.allow = false`) without
+  can disable a whole group (`fs_allow = false`) without
   editing the per-path allow-list. Lands as an ADR-6
   amendment in the same PR as the second tool group (`git.*`
   or `gh.*`). **Status 2026-05-13:** finer-grained variant
@@ -706,7 +706,7 @@ shape is pinned so the migration is config-only:
   consumes the contract verbatim — `src/fa/inner_loop/registry.py`,
   `loop.py`, `hooks/`, `tools/`, `trace.py` — and item 2
   (chunker indexer end-to-end) is the first downstream consumer of
-  `fs.read_file` / `fs.list_files`. Subsequent PRs (search, edit,
+  `fs_read_file` / `fs_list_files`. Subsequent PRs (search, edit,
   future `git.*`) cite ADR-7 §2-§4 instead of re-deriving shape.
 - **Positive — closes two open amendments.** ADR-2 §Amendment
   2026-05-01 (MCP-shape convention) and ADR-6 §Tool wiring
@@ -753,7 +753,7 @@ shape is pinned so the migration is config-only:
     `apply_patch` over `edit_file`. Action: ADR-7 §Amendment
     flipping the default edit-shape.
   - **Tool catalog passes 10 tools.** Action: implement
-    `fs.search_tools` (R-3 BM25 reuse).
+    `fs_search_tools` (R-3 BM25 reuse).
   - **Approval / HITL friction.** If the optional `ApprovalHook`
     is consistently set to `ask` and the user reports
     cognitive overhead, evaluate moving to a write-batching
@@ -914,20 +914,20 @@ invoke:
 
 ```toml
 [roles.planner]
-allowed_tools = ["fs.read_file", "fs.list_files", "fs.grep"]
+allowed_tools = ["fs_read_file", "fs_list_files", "fs_grep"]
 allowed_dirs  = []  # empty = inherit ADR-6 sandbox-root
 
 [roles.coder]
-allowed_tools = ["fs.read_file", "fs.list_files", "fs.grep",
-                 "fs.write_file", "fs.edit_file"]
+allowed_tools = ["fs_read_file", "fs_list_files", "fs_grep",
+                 "fs_write_file", "fs_edit_file"]
 allowed_dirs  = []
 
 [roles.debug]
-allowed_tools = ["fs.read_file", "fs.list_files", "fs.grep"]
+allowed_tools = ["fs_read_file", "fs_list_files", "fs_grep"]
 allowed_dirs  = []
 
 [roles.eval]
-allowed_tools = ["fs.read_file", "fs.list_files"]
+allowed_tools = ["fs_read_file", "fs_list_files"]
 allowed_dirs  = []
 ```
 
@@ -938,8 +938,8 @@ role-to-tier mapping is the ADR-2 contract, not this amendment.
 
 **Backward-compat default.** If `[roles.<active_role>]` is
 absent, the role inherits the full §3 tool catalog
-(`fs.read_file`, `fs.list_files`, `fs.edit_file`, `fs.write_file`,
-`fs.grep`). Existing `sandbox.toml` files without `[roles]`
+(`fs_read_file`, `fs_list_files`, `fs_edit_file`, `fs_write_file`,
+`fs_grep`). Existing `sandbox.toml` files without `[roles]`
 blocks continue to work unchanged.
 
 **Enforcement point.** The dispatcher
@@ -974,7 +974,7 @@ ADR amendment instead of two coordinated ones.
 **Why not prompt-only.** Status quo enforces "Planner does not
 write files" through prompt instructions to the Planner role.
 This is not mechanically verifiable: any hallucinated
-`fs.write_file` call from the Planner is currently caught only
+`fs_write_file` call from the Planner is currently caught only
 by §8 `SandboxHook` (which guards the **path**, not the
 **role-tool pairing**). Declarative role whitelist adds the
 mechanical pairing check the prompt-only approach cannot.
@@ -1199,8 +1199,8 @@ enumeration).**
    post-add `{rollup_tokens_in, rollup_tokens_out,
    rollup_usd, rollup_samples}` snapshot so a reader can
    reconstruct the budget trajectory without replaying.
-2. **Baseline M-1 dormancy.** Baseline `fs.read_file` /
-   `fs.write_file` / `fs.run_bash` never emit the
+2. **Baseline M-1 dormancy.** Baseline `fs_read_file` /
+   `fs_write_file` / `fs_run_bash` never emit the
    `cost=…` artifact, so the kind is dormant until the T-2
    LLM driver lands the artifact emitter. The CostGuardian
    itself is wired into the smoke entrypoint (`fa
@@ -1356,10 +1356,10 @@ under a workspace-canon root, not new event rows.
 
    - If `call.params["path"]` is a non-empty string —
      `"{tool/slug}/{path}"` (e.g. `fs/read_file/README.md`). This is
-     the natural shape for `fs.read_file` / `fs.write_file` and any
+     the natural shape for `fs_read_file` / `fs_write_file` and any
      future tool that touches a workspace path.
    - Else — `"{tool/slug}/{call_id}"` (e.g. `fs/run_bash/tc-bash`).
-     Coarse but cumulative; used by `fs.run_bash` and any tool
+     Coarse but cumulative; used by `fs_run_bash` and any tool
      without a workspace anchor.
 
    The previous tool-name-only slug (`fs/read_file`) made

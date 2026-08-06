@@ -392,7 +392,7 @@
   `src/fa/inner_loop/` with the full ADR-7 §1–§10 + ADR-8 contract:
   JSON-Schema validation on every dispatch (§5), modify→re-validate +
   sandbox replay on every `Decision.modify` (§8), `SandboxHook` gating
-  `fs.read_file` / `fs.write_file` paths in addition to `fs.run_bash`,
+  `fs_read_file` / `fs_write_file` paths in addition to `fs_run_bash`,
   `events.jsonl` with `ts` + `run_id` per §7 schema, `hook_decision`
   rows persisted through `HookRegistry` event-sink, `RuntimeLimits`
   for `max_iterations` (default 6) and `bash_timeout_seconds`
@@ -527,8 +527,8 @@
     adds `load_contracts_from_dir(directory)` batch-loader. The smoke CLI
     seeds `VerifierObserver` from
     [`verifiers/*.yaml`](../verifiers/), which now ships canonical
-    contracts for the three M-1 tools (`fs.read_file`, `fs.write_file`,
-    `fs.run_bash`) plus the documentation-anchor `edit_file.yaml`.
+    contracts for the three M-1 tools (`fs_read_file`, `fs_write_file`,
+    `fs_run_bash`) plus the documentation-anchor `edit_file.yaml`.
     Contracts are keyed by in-file `target_action`, not filename.
     `required_trace_events` is empty in M-1 — tool bodies don't yet emit
     per-step trace events; T-2 lands observation-event projection.
@@ -871,16 +871,16 @@
   identity-test for ADR-10 I-1 single-source-of-truth, deny
   reason echoes hook wording). **Both former follow-ups are now
   closed:** the `prepare-pr` producer shipped in PR #24
-  (`pr.prepare`, see §Q-N below) and `IntentGuard` is wired into
+  (`pr_prepare`, see §Q-N below) and `IntentGuard` is wired into
   the `fa run` bootstrap (`cli.py` `_cmd_run`, landed in PR #23
   final-review). **Scope expanded post-#24 (commit 78ced94):**
-  `IntentGuard` now also gates `fs.run_bash` via a dedicated
+  `IntentGuard` now also gates `fs_run_bash` via a dedicated
   AST analyzer ([`bash_intent.py`](../src/fa/inner_loop/bash_intent.py),
   READ_ONLY / VERIFY_ONLY / INDEX_WRITE / REPO_WRITE /
   OPAQUE_EXEC) and trusts only current-session drafts via the
   [`PrDraftStore`](../src/fa/inner_loop/pr_draft.py) (stale /
   externally-fabricated drafts rejected) — closing the remaining
-  `fs.run_bash` bypass of the draft-first contract.
+  `fs_run_bash` bypass of the draft-first contract.
 - **Why milestone, not idea:** the `HookRegistry` substrate is
   landed (M-1 closed by PR #24; verified by the session-start
   audit at [`src/fa/inner_loop/hooks/base.py`](../src/fa/inner_loop/hooks/base.py)
@@ -899,8 +899,8 @@
   - `src/fa/inner_loop/hooks/intent_guard.py` (~50 LOC) —
     `IntentGuard(GuardMiddleware)` attached to
     `BEFORE_TOOL_EXEC`. On tool calls that mutate the staged
-    tree (`fs.write_file`, `edit_file` shapes,
-    `git add` / `git commit` via `fs.run_bash`), re-runs
+    tree (`fs_write_file`, `edit_file` shapes,
+    `git add` / `git commit` via `fs_run_bash`), re-runs
     `fa.hygiene.pr_intent.classify_intent` over the staged-diff
     snapshot the call is about to produce; if the resulting
     intent or required-field shape would violate the skill's
@@ -934,7 +934,7 @@
     a known location under `~/.fa/session-log/<run_id>/pr_draft.md`
     populated by the agent itself; agent populates it on
     session start via a new `prepare-pr` tool or sub-agent.
-    **Closed by PR E (2026-05-28):** `pr.prepare` tool ships in
+    **Closed by PR E (2026-05-28):** `pr_prepare` tool ships in
     [`src/fa/inner_loop/tools/prepare_pr.py`](../src/fa/inner_loop/tools/prepare_pr.py)
     and is registered by `_cmd_run` alongside the baseline
     filesystem tools; closure-bound to the same `draft_path` the
@@ -1133,7 +1133,7 @@
   suite *honest* on Windows: 85 tests now carry capability markers
   (`tests/_capabilities.py`) that probe an effect rather than asking whether a
   binary is installed. **Still open:** FA has no Windows shell backend
-  (`fs.run_cmd`), so those 85 remain unverified on native Windows. That is the
+  (`fs_run_cmd`), so those 85 remain unverified on native Windows. That is the
   ADR-scale half of this item.
 - **Superseded detail:** the old `shutil.which("bash")` guard was itself the
   bug — Git Bash satisfies it and then answers `/c/...` for `C:\...`. 11 of the
@@ -1142,7 +1142,7 @@
 - **Idea:** Three categories of tests fail on vanilla Windows:
   1. **Bash-dependent tests** (6 in `test_cli.py`, 1 in
      `test_inner_loop_runtime.py`, 1 in `test_inner_loop_runtime_limits.py`,
-     2 in `test_inner_loop_tools.py`). They invoke `fs.run_bash` which spawns
+     2 in `test_inner_loop_tools.py`). They invoke `fs_run_bash` which spawns
      `bash` — not installed by default on Windows. Currently mitigated with
      `@pytest.mark.skipif(shutil.which("bash") is None)` but this skips
      silently; a better solution would use `cmd.exe` as a fallback shell on
@@ -1157,8 +1157,8 @@
      creating files named `...` (path traversal pattern), so the test fixture
      cannot be constructed. The chunker logic itself is fine; this is a test
      construction limitation.
-- **Worth fixing?** The bash tests reveal the real gap: `fs.run_bash` is a
-  POSIX shell tool. A Windows-native agent would need `fs.run_cmd` or a shell
+- **Worth fixing?** The bash tests reveal the real gap: `fs_run_bash` is a
+  POSIX shell tool. A Windows-native agent would need `fs_run_cmd` or a shell
   abstraction. The symlink tests are security-critical (sandbox escape
   detection) — skipping them on Windows means the Windows dev never validates
   the containment boundary locally.
@@ -2708,6 +2708,125 @@ stream in embedded use. Deliberately **not** fixed in S10a — that slice's DoD
 allows exactly one production edit (the `_cmd_probe` seam), and this is a
 different module. The S10a test works around it by passing an explicit stream,
 with a comment pointing here.
+
+---
+
+## I-55 — subagent capability is WIP/unfinished/untested: complete it before relying on it
+
+- **Status:** open (assessed 2026-08-06). P2 — subagent is a declared feature with
+  several unfinished/contradictory seams; it must be completed or explicitly
+  scoped-down before it is treated as a production capability.
+- **Assessment source:** verified by grep/read in the repo (not assumed).
+  Subagent = `fa.inner_loop.subagent_runner` + `fa.inner_loop.tools.spawn_subagent` +
+  `fa.inner_loop.subagent_envelope` + `fa.inner_loop.subagent_prompts`, plus the
+  `researcher`/`verifier`/`code-reviewer`/`implementer`/`planner` role profiles in
+  `profiles.py::PROFILES_RAW` and the `SubagentEnvelope.type` schema enum
+  (`subagent_envelope.py:35`).
+- **Why it is unfinished (verified):**
+  1. **No per-role tool registry is ever built for a subagent.** `SubagentRunner.run_stateless`
+     (`subagent_runner.py:302-343`) runs a raw `subprocess.run(command)` with a scrubbed env and
+     **never constructs a `ToolRegistry`**. The `role` argument only sets the envelope `type`
+     (`subagent_envelope.py:100`); it does **not** select a tool surface.
+  2. **`build_registry_for_role("researcher")` is never called** anywhere in `src/`. Only
+     `"implementer"` / `"planner"` / `"verifier"` are built (`tools/__init__.py:198,229,256`), and
+     those feed the *main* loop (baseline/planner/eval registries), not subagents.
+  3. **The `researcher` role is declared-but-unwired.** `PROFILES_RAW` defines `researcher`
+     (`[glob,grep,read,instant_grep]`, 600-token profile, `profiles.py:39`), and `subagent_prompts.py:38`
+     / `subagent_envelope.py:139` describe it as a "structured websearch agent." But no code path
+     builds its registry or runs it as an LLM tool-user. Today `researcher` behaves like a bash/command
+     subagent (same as verifier).
+  4. **Docs overstate the blackboard-backed discovery.** AGENTS.md / llms.txt / reference.md instruct
+     the agent to use `blackboard.query(...)` for artifact discovery (`type="skill"/"research"/"adr"`),
+     but the blackboard only ever holds `type="file_version"` rows (writer = `mutation_guard.py:118,207`);
+     no code writes skill/research/adr entries, and there is **no `rank` field** anywhere in
+     `BlackboardEntry`/`Blackboard.query`/`session_db` (verified grep = zero). The subagent
+     "researcher"/"websearch" capability that would consume such an index is therefore also unrealized.
+- **Design intent (from docs):** `project-overview.md` §1.2.7 Pair-over-Autonomy + I-7.1..I-7.5:
+  subagents are **cheap, deterministic, isolated puzzle-piece providers** (structured websearch,
+  simple function) when main context is near limit (~180k). I-7.2: subagent task must be solvable with
+  **<600 tokens tool defs** and **<8000 chars output**, returning structured JSON. I-7.3: stateless,
+  scrubbed env, isolated via WorktreeManager. ADR-15 / I-6.3: simple chain planner→coder→eval is
+  default; parallel subagents only when substrate is formal and the task is embarrassingly parallel
+  with non-overlapping write_sets.
+- **Known partial implementations / contradictions to resolve:**
+  - `spawn_subagent` tool allows `role` ∈ `["verifier","researcher"]` (spawn_subagent.py:277) but only
+    `run_stateless` (bash) exists — the `researcher` path is not implemented.
+  - `subagent_envelope` mentions `from_researcher` (websearch) and `from_verifier` (bash); only
+    `from_verifier` is wired into `run_stateless`.
+  - The "filtered history" for a researcher subagent is logged but "would be injected as prompt" for
+    future use (`subagent_runner.py:314-315`) — i.e. not actually used yet.
+- **Unblock-trigger:** subagents become a required path — either (a) main context approaches the
+  180k limit and needs a cheap isolated puzzle-piece (websearch/verification), or (b) an eval/benchmark
+  task genuinely needs an isolated subagent and a simple chain is proven insufficient (I-7.4 / I-6.3).
+- **First concrete step when picked up:** decide the minimal honest scope first —
+  1. Either **finish the researcher path**: build a real per-role `ToolRegistry` for subagents (a
+     `build_subagent_registry(role)` that constructs `[glob,grep,read,instant_grep]` for `researcher`,
+     `[bash]` for `verifier`) and run the subagent as a real drive_session-like loop with that registry,
+     OR
+  2. **narrow the claim**: rename/deprecate the unimplemented `researcher` websearch path so docs do not
+     promise a capability that does not exist, and keep subagent = bash-only verifier for now.
+  Then close the doc-reality gap (blackboard skill/research index + `rank` either built or the docs
+  corrected to not assert them).
+- **Do NOT** treat `build_registry_for_role("researcher")` as "dead code to delete" without this
+  decision — it is the intended seam for a real researcher subagent, not garbage. But do NOT claim
+  subagent researcher works until its registry + loop + index are built and tested.
+
+---
+
+## I-56 — blackboard is a WIP/unfinished capability (same class as subagent): complete it as the next slice
+
+- **Status:** open (assessed 2026-08-06). P2 — the blackboard is a declared, SQLite-backed substrate
+  feature that is only partially realized; completing it (the `fs_blackboard_query` tool + an actual
+  artifact index + docs-reality fix) is the next slice after the current tool plan.
+- **Assessment source:** verified by grep/read in the repo, not assumed. The blackboard subsystem =
+  `src/fa/blackboard/blackboard.py` + `src/fa/inner_loop/session_db.py` (`blackboard` table) +
+  `src/fa/inner_loop/_sqlite_common.py` + writer `src/fa/inner_loop/tools/mutation_guard.py`.
+- **Related research artifacts created (this session, 2026-08-06):**
+  - `/home/user/research-blackboard-query-tool-gap.md` — the full gap analysis: `blackboard.query` is
+    documented-but-never-built as an agent tool; the capability exists but no ToolSpec/builder exposes it.
+  - `/home/user/wire-search-lost-capabilities.md` — repo-wide wire-search: `blackboard.query` is the ONE
+    genuine dead-instruction tool; all other referenced tools/commands are real or illustrative.
+  - `worklogs/implementation-plans/PLAN-fs-blackboard-query.md` — the DRAFT plan for building
+    `fs_blackboard_query` (the concrete next slice).
+- **Why it is unfinished (verified):**
+  1. **The blackboard is only a conflict-detection log today, not an artifact index.** It holds ONLY
+     `type="file_version"` rows (writer = `mutation_guard.py:118,207`), used for write-conflict detection
+     (read_set/write_set). No code writes `type="skill"/"research"/"adr"/"role"/"tool_spec"` entries —
+     the artifact-index intent from `knowledge/research/substrate-formalization-and-reduction.md`
+     (`load_artifacts(type, query)` index over markdown files) is NOT implemented.
+  2. **No `rank` field exists anywhere** in `BlackboardEntry`/`Blackboard.query`/`session_db` (verified
+     grep = zero). AGENTS.md:265,269 + llms.txt:42,44,89 advertise `blackboard.query(...)` returning
+     "rank" — a FALSE claim; the rank feature was never built.
+  3. **`blackboard.query` is not an agent tool.** It is a Python method on `Blackboard`
+     (blackboard.py:297) and a `query_blackboard_rows` on `SessionDatabase`, but there is **no
+     ToolSpec/builder/registration** exposing it to the LLM. AGENTS.md:7,265,271 + llms.txt:42-89 +
+     reference.md:14 instruct the agent to "use `blackboard.query`" — a dead instruction (the tool that
+     would satisfy it does not exist).
+  4. **`Blackboard.query` has no `limit` and no `rank` ordering.** It returns all matching rows ordered
+     `timestamp ASC` (session_db.py:852-862). A real artifact-discovery tool must add an output cap and
+     decide ordering.
+- **Design intent (from docs):** `project-overview.md` §1.2.6 Substrate Formality + I-6.2 (blackboard
+  append-only, content-hashed, queryable, detect_conflict()), I-6.4 (content-hash/toolchain-digest/
+  schema-version stamps). The substrate-formalization research note describes the blackboard as a
+  **queryable index over markdown files** (skills/ADRs/research/roles/tool_specs), with a unified
+  `load_artifacts(type, query)` loader "sorted by rank", filesystem-canon markdown remaining the source
+  of truth. This is the *target*; only the conflict-detection slice exists today.
+- **Unblock-trigger / why now:** the dead `blackboard.query` instruction in the agent-facing docs
+  (AGENTS.md/llms.txt/reference.md) actively misleads the model (it would call a non-existent tool).
+  Building `fs_blackboard_query` (the PLAN) closes the tool gap; building the artifact index + rank is a
+  larger follow-up that makes the tool actually return useful skill/research/adr rows.
+- **First concrete step when picked up (the PLAN):**
+  1. Build `fs_blackboard_query` — a read-only tool wrapping `Blackboard.query()` that returns compact
+     metadata rows (id, type, content_hash, read/write sets, timestamp) with a `limit` output cap,
+     registered in implementer + planner profiles, added to canonical `TOOL_NAMES` (direct frozenset;
+     prune `LEGACY_TO_NEW`).
+  2. Add a blackboard artifact index/writer so `type="skill"/"research"/"adr"` rows exist to query
+     (deferred sub-slice — a real index builder, mirroring `index_repo()`/FTS).
+  3. Fix the docs-reality gap: correct the false "rank" claims; align `blackboard.query` →
+     `fs_blackboard_query` in agent-facing docs.
+- **Do NOT** treat `Blackboard.query` as "complete" just because it is tested — it is tested only for
+  the conflict-detection path, not as an artifact index or an agent tool. Do NOT propagate the docs'
+  "rank" claim until a real rank/index feature lands.
 
 ---
 

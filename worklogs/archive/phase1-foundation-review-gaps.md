@@ -54,7 +54,7 @@ branch = f"agent/{clean_id}"
 
 #### Gap H2: PROFILES filtering from wrong base registry
 
-**Current plan:** `build_registry_for_role(role, base_registry)` filters from `build_baseline_registry()` which has 11 tools (read, write, bash, observability, pair, instant_grep) but **no** `fs.glob`, `fs.grep`, `fs.edit_file`.
+**Current plan:** `build_registry_for_role(role, base_registry)` filters from `build_baseline_registry()` which has 11 tools (read, write, bash, observability, pair, instant_grep) but **no** `fs_glob`, `fs_grep`, `fs_edit_file`.
 
 **Problem:** Researcher needs `[glob,grep,read,instant_grep]` — `glob`/`grep` not in baseline → filtered registry will be missing tools → researcher fails to find files → 124 steps not fixed.
 
@@ -64,17 +64,17 @@ branch = f"agent/{clean_id}"
 - Create `TOOL_BUILDERS` dict mapping name → builder function:
 ```python
 TOOL_BUILDERS = {
-    "fs.read_file": lambda root: build_read_file_tool(root),
-    "fs.write_file": lambda root: build_write_file_tool(root),
-    "fs.glob": lambda root: build_glob_tool(root),  # existing?
-    "fs.grep": lambda root: build_grep_tool(root),
-    "fs.instant_grep": lambda root: build_instant_grep_tool(db_path, root),
+    "fs_read_file": lambda root: build_read_file_tool(root),
+    "fs_write_file": lambda root: build_write_file_tool(root),
+    "fs_glob": lambda root: build_glob_tool(root),  # existing?
+    "fs_grep": lambda root: build_grep_tool(root),
+    "fs_instant_grep": lambda root: build_instant_grep_tool(db_path, root),
     ...
 }
 ```
 - Or reuse `build_all_tools_registry` that includes all tools (including glob/grep). Check if `glob`/`grep` tools exist in codebase: `src/fa/inner_loop/tools/` currently has read, write, bash, observability, pair, instant_grep, prepare_pr — no glob/grep. They might be in older code or need to be added? Need to check `registry.py` or `AGENTS.md`.
 
-- For Phase 1, keep researcher to only tools that exist: `["fs.read_file", "fs.instant_grep", "fs.chronicle_search", "fs.usage"]` — all exist. Or add stub glob/grep builders that wrap `git ls-files` + `instant_grep`.
+- For Phase 1, keep researcher to only tools that exist: `["fs_read_file", "fs_instant_grep", "fs_chronicle_search", "fs_usage"]` — all exist. Or add stub glob/grep builders that wrap `git ls-files` + `instant_grep`.
 
 **Decision needed:** Do we add glob/grep tools now, or restrict PROFILES to existing tools for Phase 1?
 
@@ -179,7 +179,7 @@ It will treat `- "src/..."` as unknown. If we use pyyaml, we add dependency on y
 
 1. **WorktreeManager:** Unified `_sanitize_task_id` deterministic "task" fallback, call once, reuse for path and branch. Add `WorktreeManagerFactory`. Parse worktree list exact.
 
-2. **PROFILES:** Don't filter from baseline. Create `TOOL_BUILDERS` dict with builders that exist. For Phase 1, restrict researcher to existing tools: `["fs.read_file", "fs.instant_grep", "fs.chronicle_search", "fs.usage"]` (all exist). Defer glob/grep tool creation to Phase 2 when we add them.
+2. **PROFILES:** Don't filter from baseline. Create `TOOL_BUILDERS` dict with builders that exist. For Phase 1, restrict researcher to existing tools: `["fs_read_file", "fs_instant_grep", "fs_chronicle_search", "fs_usage"]` (all exist). Defer glob/grep tool creation to Phase 2 when we add them.
 
 3. **PromptComposer:** Two-level caching: stable alwaysApply skills in cacheable, conditional globs skills in non-cacheable. Hash only stable part for cache_key. Single breakpoint for Phase 1.
 

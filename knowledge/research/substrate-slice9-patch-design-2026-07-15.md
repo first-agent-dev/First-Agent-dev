@@ -273,7 +273,7 @@ Uses `threading.Thread`, real SQLite file (no mock), real GlobalHistoryStore (no
   - tool_calls_total == 2
   - has_compaction_summary ==1
   - workspace_root present
-  - tool_calls_breakdown_json contains fs.read_file etc
+  - tool_calls_breakdown_json contains fs_read_file etc
 
 #### Test 4 — `test_global_history_export_failure_policy`
 

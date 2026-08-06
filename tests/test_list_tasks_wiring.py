@@ -1,4 +1,4 @@
-"""C1 composition-root wiring tests for fs.list_tasks — observability + pair lifecycle.
+"""C1 composition-root wiring tests for fs_list_tasks — observability + pair lifecycle.
 
 Covers:
 - PTY session listing via live session (C1)
@@ -46,7 +46,7 @@ def test_list_tasks_finds_pty_session(tmp_path: Path) -> None:
     - oracle: tool_result result["tasks"] contains {"type": "pty", "id": "main"}
     - kill-check: removing pty_pool from SessionState makes list_tasks return no PTY tasks
 
-    Product claim: fs.list_tasks finds active PTY sessions via pool.list_sessions().
+    Product claim: fs_list_tasks finds active PTY sessions via pool.list_sessions().
     """
     from fa.runtime import PtyPool
 
@@ -70,7 +70,7 @@ def test_list_tasks_finds_pty_session(tmp_path: Path) -> None:
         name="test",
     )
 
-    tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
+    tc1 = make_tool_call("fs_list_tasks", {}, "tc-1")
 
     mock_chain.request.side_effect = [
         mock_response_with_tools([tc1]),
@@ -88,10 +88,10 @@ def test_list_tasks_finds_pty_session(tmp_path: Path) -> None:
 
     assert outcome.exit_code == 0
 
-    # Find the tool_result event for fs.list_tasks
+    # Find the tool_result event for fs_list_tasks
     events = require_log(state).read_all()
-    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.list_tasks"]
-    assert len(tr) == 1, "Expected exactly one fs.list_tasks tool_result event"
+    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs_list_tasks"]
+    assert len(tr) == 1, "Expected exactly one fs_list_tasks tool_result event"
 
     result = cast(dict[str, Any], tr[0].content.get("result") or {})
     tasks = result.get("tasks", [])
@@ -113,7 +113,7 @@ def test_list_tasks_finds_subagent_artifact(tmp_path: Path) -> None:
     - oracle: tool_result result["tasks"] contains {"type": "subagent", "id": "t-1"}
     - kill-check: removing .fa/subagents/ dir makes no subagent tasks appear
 
-    Product claim: fs.list_tasks discovers subagent artifacts in .fa/subagents/.
+    Product claim: fs_list_tasks discovers subagent artifacts in .fa/subagents/.
     """
     # Pre-create a subagent artifact
     subagents_dir = tmp_path / ".fa" / "subagents"
@@ -135,7 +135,7 @@ def test_list_tasks_finds_subagent_artifact(tmp_path: Path) -> None:
         name="test",
     )
 
-    tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
+    tc1 = make_tool_call("fs_list_tasks", {}, "tc-1")
 
     mock_chain.request.side_effect = [
         mock_response_with_tools([tc1]),
@@ -154,7 +154,7 @@ def test_list_tasks_finds_subagent_artifact(tmp_path: Path) -> None:
     assert outcome.exit_code == 0
 
     events = require_log(state).read_all()
-    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.list_tasks"]
+    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs_list_tasks"]
     assert len(tr) == 1
 
     result = cast(dict[str, Any], tr[0].content.get("result") or {})
@@ -177,7 +177,7 @@ def test_list_tasks_finds_worktree_dir(tmp_path: Path) -> None:
     - oracle: tool_result result["tasks"] contains {"type": "worktree", "id": "agent-1"}
     - kill-check: removing worktree dir makes no worktree tasks appear
 
-    Product claim: fs.list_tasks discovers worktree directories via worktree_manager.
+    Product claim: fs_list_tasks discovers worktree directories via worktree_manager.
     """
     # Create a mock worktree_manager with worktrees_root pointing to a dir
     worktrees_root = tmp_path / "worktrees"
@@ -194,7 +194,7 @@ def test_list_tasks_finds_worktree_dir(tmp_path: Path) -> None:
         log=log,
         feature_flags=FeatureFlags(),
     )
-    # Attach worktree_manager to session so fs.list_tasks can find it
+    # Attach worktree_manager to session so fs_list_tasks can find it
     state.worktree_manager = mock_wm
 
     registry = build_baseline_registry(tmp_path)
@@ -205,7 +205,7 @@ def test_list_tasks_finds_worktree_dir(tmp_path: Path) -> None:
         name="test",
     )
 
-    tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
+    tc1 = make_tool_call("fs_list_tasks", {}, "tc-1")
 
     mock_chain.request.side_effect = [
         mock_response_with_tools([tc1]),
@@ -224,7 +224,7 @@ def test_list_tasks_finds_worktree_dir(tmp_path: Path) -> None:
     assert outcome.exit_code == 0
 
     events = require_log(state).read_all()
-    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.list_tasks"]
+    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs_list_tasks"]
     assert len(tr) == 1
 
     result = cast(dict[str, Any], tr[0].content.get("result") or {})
@@ -249,7 +249,7 @@ def test_list_tasks_empty_when_no_pool_or_manager(tmp_path: Path) -> None:
     - oracle: tool_result result["tasks"] is empty list
     - kill-check: N/A (this tests the fallback/degradation path)
 
-    Product claim: fs.list_tasks gracefully returns empty when no pool or manager available.
+    Product claim: fs_list_tasks gracefully returns empty when no pool or manager available.
     """
     log = EventLog(tmp_path / "events.jsonl", run_id="list-tasks-empty")
     state = SessionState(
@@ -266,7 +266,7 @@ def test_list_tasks_empty_when_no_pool_or_manager(tmp_path: Path) -> None:
         name="test",
     )
 
-    tc1 = make_tool_call("fs.list_tasks", {}, "tc-1")
+    tc1 = make_tool_call("fs_list_tasks", {}, "tc-1")
 
     mock_chain.request.side_effect = [
         mock_response_with_tools([tc1]),
@@ -285,7 +285,7 @@ def test_list_tasks_empty_when_no_pool_or_manager(tmp_path: Path) -> None:
     assert outcome.exit_code == 0
 
     events = require_log(state).read_all()
-    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs.list_tasks"]
+    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs_list_tasks"]
     assert len(tr) == 1
 
     result = cast(dict[str, Any], tr[0].content.get("result") or {})

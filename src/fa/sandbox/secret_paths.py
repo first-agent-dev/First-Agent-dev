@@ -1,4 +1,4 @@
-"""Fail-closed tripwire: deny ``fs.run_bash`` reads of known secret paths (ADR-12).
+"""Fail-closed tripwire: deny ``fs_run_bash`` reads of known secret paths (ADR-12).
 
 Security posture (read this before changing anything):
 
@@ -10,7 +10,7 @@ Security posture (read this before changing anything):
 * It is deliberately fail-closed: an unparseable command that *mentions* a
   secret prefix anywhere is denied rather than allowed.
 
-Why a tripwire and not a hard guarantee: ``fs.run_bash`` runs ``shell=True`` as
+Why a tripwire and not a hard guarantee: ``fs_run_bash`` runs ``shell=True`` as
 the same uid as the agent, so a sufficiently creative command (``cd`` into the
 directory, shell variable indirection, etc.) can read a file the process can
 open. We catch the direct and common indirect forms here and rely on the

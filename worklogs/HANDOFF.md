@@ -67,7 +67,7 @@ state directory is worth fixing on its own.
 ### BACKLOG delta
 
 - **I-11** — PARTIALLY RESOLVED. The suite is now honest on Windows; FA still
-  has no Windows shell backend (`fs.run_cmd`), so the 85 stay unverified there.
+  has no Windows shell backend (`fs_run_cmd`), so the 85 stay unverified there.
 - **I-42** (P3) — 11 PTY tests share a hardcoded global `/tmp`.
 - **I-43** (P2) — the suite writes into the real `~/.fa` on Windows.
 - **I-44** (P3) — `ruff format --check .` fails on 39 pre-existing `.md` files

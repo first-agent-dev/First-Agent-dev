@@ -136,7 +136,7 @@ class RoleProfile:
 ```python
 global_reg = build_baseline_registry(root)  # 11 tools ~3000 tokens
 researcher_reg = build_registry_for_role("researcher", global_reg)
-# researcher_reg.names() = ["fs.glob", "fs.grep", "fs.read_file", "fs.instant_grep"] -> ~600 tokens
+# researcher_reg.names() = ["fs_glob", "fs_grep", "fs_read_file", "fs_instant_grep"] -> ~600 tokens
 ```
 
 3. **Подсчет токенов — эвристика chars/4 (как Pi agent, Kon):**
@@ -151,7 +151,7 @@ def estimate_tokens(registry: ToolRegistry) -> int:
 
 5. **Тесты:**
    - `test_profiles_researcher_600_vs_full_3000` — уже есть частично в `test_prompt_caching_per_role.py`, расширить.
-   - `test_build_registry_for_role_filters` — проверить что `researcher` не имеет `fs.write_file`.
+   - `test_build_registry_for_role_filters` — проверить что `researcher` не имеет `fs_write_file`.
 
 **ROI:** Не переписывать модуль, добавить 2 функции и dataclass — 50 строк, высокий ROI токен-экономии -60%.
 

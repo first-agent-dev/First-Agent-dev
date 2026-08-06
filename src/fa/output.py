@@ -216,10 +216,10 @@ class EventBus:
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 _ACTION_VERBS: dict[str, str] = {
-    "fs.read_file": "Read",
-    "fs.write_file": "Write",
-    "fs.run_bash": "Bash",
-    "pr.prepare": "Draft",
+    "fs_read_file": "Read",
+    "fs_write_file": "Write",
+    "fs_run_bash": "Bash",
+    "pr_prepare": "Draft",
 }
 
 

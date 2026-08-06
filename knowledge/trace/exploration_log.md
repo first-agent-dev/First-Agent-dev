@@ -281,8 +281,8 @@
   routing, §9 ≤100 K context-budget, §7 `harness_id` motivation, and
   re-evaluation trigger 5 (= BACKLOG I-8, FA's own harness re-test).
 - **Chosen:** Formal inner-loop ADR — MCP-shaped `ToolSpec` /
-  `ToolResult` registry; five-tool v0.1 catalog (`fs.read_file`,
-  `fs.list_files`, `fs.edit_file`, `fs.write_file`, `fs.grep`); two
+  `ToolResult` registry; five-tool v0.1 catalog (`fs_read_file`,
+  `fs_list_files`, `fs_edit_file`, `fs_write_file`, `fs_grep`); two
   edit-shapes (`edit_file` string-replace default + `apply_patch`
   unified-diff off by default, R-3 fixture pins the flip);
   JSON-Schema input validation; three-tier tool disclosure;
@@ -1807,7 +1807,7 @@
 
 - **Closed by:** [ADR-12](../adr/ADR-12-secret-isolation.md). Three independent
   barriers (file outside `/workspace`; private in-memory `SecretStore` so keys
-  never enter `os.environ`; allowlist-scrubbed `fs.run_bash` child env), with
+  never enter `os.environ`; allowlist-scrubbed `fs_run_bash` child env), with
   encoding-aware redaction + broadened SecretGuard as backstops.
 - **Chosen:** Option B (private SecretStore + out-of-workspace file + bash scrub).
   Reason: `ProviderChain` was already injectable (`env=`), so the strongest design
@@ -1827,14 +1827,14 @@
 ## Q-18 — Why did Option B not hold, and why is the proxy the real boundary? (2026-06-16)
 
 - **Trigger:** a blocking security review of the Q-17 / Option-B implementation
-  found two holes: (1) `fs.run_bash` READ_ONLY commands (`cat`/`grep`/`dd`/…)
+  found two holes: (1) `fs_run_bash` READ_ONLY commands (`cat`/`grep`/`dd`/…)
   bypass sandbox path-containment, so `cat /run/secrets/fa.env` and the deploy
   key were readable; (2) the model-facing tool-result channel went through
   `project_for_model` with NO redaction (only the trace was redacted).
 - **Root cause (POSIX):** `run_bash` is a subprocess of `fa` at the SAME uid, so
   file permissions cannot grant "fa may read F via SecretStore" while denying
   "fa may read F via cat". Moving the file out of `/workspace` only defeats
-  `fs.read_file`, never `fs.run_bash`.
+  `fs_read_file`, never `fs_run_bash`.
 - **Closed by:** [ADR-12 §Decision update](../adr/ADR-12-secret-isolation.md).
   Brought Option C (egress-injection proxy) forward to v0.1: LLM keys live only
   in a separate `fa-egress-proxy` container; the agent holds no key in file/env/

@@ -98,7 +98,7 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(tmp_path: Path, mock_ses
     registry = ToolRegistry()
     registry.register(
         ToolSpec(
-            name="fs.read_file",
+            name="fs_read_file",
             description="read",
             input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
             permission="read",
@@ -109,7 +109,7 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(tmp_path: Path, mock_ses
     # Pre-populate session log:
     # First 2 turns: extremely bulky (outside protected window, eligible for compaction)
     for i in range(1, 3):
-        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}]
         _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
@@ -119,13 +119,13 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(tmp_path: Path, mock_ses
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
-            tool_name="fs.read_file",
+            tool_name="fs_read_file",
             tool_call_id=f"tc-{i}",
         )
 
     # Remaining 5 turns: small (inside protected window, or just additional turns)
     for i in range(3, 8):
-        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}]
         _require_log(mock_session_state).append(
             actor="model", kind="model_msg", content={"text": f"Step content {i}", "tool_calls": t_calls}
         )
@@ -133,7 +133,7 @@ def test_stage3_compaction_triggers_and_rebuilds_prompt(tmp_path: Path, mock_ses
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
-            tool_name="fs.read_file",
+            tool_name="fs_read_file",
             tool_call_id=f"tc-{i}",
         )
 
@@ -183,7 +183,7 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
     registry = ToolRegistry()
     registry.register(
         ToolSpec(
-            name="fs.read_file",
+            name="fs_read_file",
             description="read",
             input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
             permission="read",
@@ -193,7 +193,7 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
 
     # Create five turns so the first one sits outside the protected tail and can be masked.
     for i in range(1, 6):
-        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}]
         _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
@@ -204,7 +204,7 @@ def test_stage2_can_avoid_stage3_when_usage_drops_below_stage3_threshold(
             actor="tool",
             kind="tool_result",
             content={"summary": "bulk output", "result": {"stdout": stdout}, "ok": True},
-            tool_name="fs.read_file",
+            tool_name="fs_read_file",
             tool_call_id=f"tc-{i}",
         )
 
@@ -263,7 +263,7 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
 
     # First few turns after the summary: extremely bulky
     for i in range(1, 3):
-        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}]
         _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
@@ -273,13 +273,13 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
-            tool_name="fs.read_file",
+            tool_name="fs_read_file",
             tool_call_id=f"tc-{i}",
         )
 
     # Last few turns: small
     for i in range(3, 8):
-        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}]
         _require_log(mock_session_state).append(
             actor="model", kind="model_msg", content={"text": f"Step content {i}", "tool_calls": t_calls}
         )
@@ -287,7 +287,7 @@ def test_previous_summary_carried_forward(tmp_path: Path, mock_session_state: Se
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
-            tool_name="fs.read_file",
+            tool_name="fs_read_file",
             tool_call_id=f"tc-{i}",
         )
 
@@ -382,7 +382,7 @@ def test_circuit_breaker_logs_terminal_events_in_live_loop(
     )
 
     for i in range(1, 8):
-        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}]
         _require_log(mock_session_state).append(
             actor="model",
             kind="model_msg",
@@ -392,7 +392,7 @@ def test_circuit_breaker_logs_terminal_events_in_live_loop(
             actor="tool",
             kind="tool_result",
             content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
-            tool_name="fs.read_file",
+            tool_name="fs_read_file",
             tool_call_id=f"tc-{i}",
         )
 

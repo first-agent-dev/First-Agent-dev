@@ -278,7 +278,7 @@ def test_extract_telemetry_counts_turns_from_usage_events(tmp_path: Path) -> Non
     # Write 3 usage events + some other events
     log.append(actor="runtime", kind="run_started", content={"role": "coder"})
     log.append(actor="runtime", kind="usage", content={"input_tokens": 100, "output_tokens": 10})
-    log.append(actor="coder", kind="tool_call", content={}, tool_name="fs.read_file")
+    log.append(actor="coder", kind="tool_call", content={}, tool_name="fs_read_file")
     log.append(actor="runtime", kind="usage", content={"input_tokens": 200, "output_tokens": 20})
     log.append(actor="runtime", kind="usage", content={"input_tokens": 150, "output_tokens": 15})
     log.append(actor="runtime", kind="session_summary", content={"n_turns": 3})
@@ -382,8 +382,8 @@ def test_workflow_global_history_has_correct_turns(tmp_path: Path) -> None:
     log.append(actor="runtime", kind="usage", content={"input_tokens": 6000, "output_tokens": 600})
     log.append(actor="runtime", kind="run_started", content={"role": "eval"})
     log.append(actor="runtime", kind="usage", content={"input_tokens": 1000, "output_tokens": 100})
-    log.append(actor="coder", kind="tool_call", content={}, tool_name="fs.read_file")
-    log.append(actor="coder", kind="tool_call", content={}, tool_name="fs.write_file")
+    log.append(actor="coder", kind="tool_call", content={}, tool_name="fs_read_file")
+    log.append(actor="coder", kind="tool_call", content={}, tool_name="fs_write_file")
 
     # Simulate workflow aggregate outcome (turns=0 as in _cmd_workflow)
     outcome = SessionOutcome(

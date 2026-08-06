@@ -85,11 +85,11 @@ tier: stable
 
 #### Medium M1: Glob/Grep tools added but edit_file still missing for implementer
 
-**Current:** PROFILES implementer wants [read,write,edit_file,bash,glob,grep,instant_grep] 7 tools, but `fs.edit_file` builder not found → warning skip, implementer gets 6 tools.
+**Current:** PROFILES implementer wants [read,write,edit_file,bash,glob,grep,instant_grep] 7 tools, but `fs_edit_file` builder not found → warning skip, implementer gets 6 tools.
 
 **Impact:** Implementer cannot do string-replace edit, only full write_file → more tokens, less efficient, but not critical for Phase 1.
 
-**Fix:** Either implement `fs.edit_file` as wrapper around write_file with simple replace, or remove edit_file from implementer profile for Phase 1 and document.
+**Fix:** Either implement `fs_edit_file` as wrapper around write_file with simple replace, or remove edit_file from implementer profile for Phase 1 and document.
 
 #### Medium M2: Transaction read_set/write_set accumulation works, but WorktreeManager does not declare read_set/write_set
 
@@ -133,7 +133,7 @@ if not skills_always and skills_all:
 
 ### What is wired and works now (Stage 0, 0.5, Phase 1 partial)
 
-- **Transaction:** Wired via contextvar in loop.py set_current_session, read_file/write_file add_read/add_write, state.py add_read/add_write, record_tool_call tracks. LLM loop **does** invoke it — every fs.read_file adds to read_set, every fs.write_file adds to write_set. Verified via integration tests.
+- **Transaction:** Wired via contextvar in loop.py set_current_session, read_file/write_file add_read/add_write, state.py add_read/add_write, record_tool_call tracks. LLM loop **does** invoke it — every fs_read_file adds to read_set, every fs_write_file adds to write_set. Verified via integration tests.
 
 - **Blackboard:** Wired via write_file handler calling detect_conflict before write, writing entry after. LLM loop **does** invoke — second write same file fails conflict_detected. Verified.
 
@@ -141,7 +141,7 @@ if not skills_always and skills_all:
 
 - **FeatureFlags:** Wired via SessionState __post_init__ loading from ~/.fa/config.yaml. LLM loop **does** use flags for blackboard.enabled, telemetry.enabled, offload_threshold. Verified.
 
-- **Glob/Grep tools:** Wired via tools/__init__.py _register_stage0_tools include_glob_grep=True for baseline and planner, so LLM **can** call fs.glob and fs.grep. Verified via manual test.
+- **Glob/Grep tools:** Wired via tools/__init__.py _register_stage0_tools include_glob_grep=True for baseline and planner, so LLM **can** call fs_glob and fs_grep. Verified via manual test.
 
 - **WorktreeManager SharedDir:** Wired? No, not in SessionState, but SharedDir returns session_root so effectively no isolation, LLM doesn't call it explicitly, so no invocation needed for v0.1.
 
@@ -153,7 +153,7 @@ if not skills_always and skills_all:
 
 - **Skill loader:** Exists but not used by PromptComposer, so skills not loaded conditionally, token bloat remains.
 
-- **SubagentRunner + Envelope:** Runner exists, envelope extracted, spawn limit via SessionState works when called directly, but no tool exposes spawn to LLM (no fs.spawn_subagent tool). So LLM cannot spawn subagent as intended for cheap deterministic puzzle piece.
+- **SubagentRunner + Envelope:** Runner exists, envelope extracted, spawn limit via SessionState works when called directly, but no tool exposes spawn to LLM (no fs_spawn_subagent tool). So LLM cannot spawn subagent as intended for cheap deterministic puzzle piece.
 
 - **WorktreeManager Isolated + Factory:** Factory exists but not in SessionState, Isolated not used, so isolation not tested in prod.
 
@@ -176,13 +176,13 @@ if not skills_always and skills_all:
 
 5. **Wire Skill loader into PromptComposer helper:** Create `load_skills_for_prompt()` that uses `get_current_files_for_skill_loader` + `should_load_skill`, split always vs conditional.
 
-6. **Add edit_file tool stub for implementer:** Implement simple `fs.edit_file` as string replace (read file, replace old_string with new_string, write), so implementer profile complete.
+6. **Add edit_file tool stub for implementer:** Implement simple `fs_edit_file` as string replace (read file, replace old_string with new_string, write), so implementer profile complete.
 
 ### Can defer to Phase 2 (Medium, not blocking closure)
 
 - Full PromptComposer integration into provider chain (Anthropic cache_control 4+1 breakpoints)
 - Skill loader integration into full prompt (conditional skills in non-cacheable)
-- Subagent spawn tool `fs.spawn_subagent` for LLM to call
+- Subagent spawn tool `fs_spawn_subagent` for LLM to call
 - WorktreeManager Isolated tested with real git repo in prod loop
 - Transaction read_set/write_set for WorktreeManager
 

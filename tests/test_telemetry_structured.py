@@ -21,7 +21,7 @@ def test_telemetry_structured_fields() -> None:
             completion_tokens=200,
             cost_usd=0.01,
             model_id="claude-opus-4",
-            tool_name="fs.read_file",
+            tool_name="fs_read_file",
             tool_args={"path": "src/auth.py"},
             permission_tier="read",
             edited_files=[],
@@ -37,7 +37,7 @@ def test_telemetry_structured_fields() -> None:
         logger.log(event)
 
         # Read back
-        queried = logger.query(tool_name="fs.read_file")
+        queried = logger.query(tool_name="fs_read_file")
         assert len(queried) == 1
         assert queried[0].run_id == "test-run-1"
         assert queried[0].artifact_id == "tool-result-abc123"
@@ -62,7 +62,7 @@ def test_telemetry_no_raw_logs_drowning() -> None:
             completion_tokens=1000,
             cost_usd=0.05,
             model_id="gpt-5",
-            tool_name="fs.run_bash",
+            tool_name="fs_run_bash",
             tool_args={"command": "cat large_file.txt"},
             permission_tier="workspace",
             edited_files=[],
@@ -101,7 +101,7 @@ def test_telemetry_sanitizes_secrets() -> None:
             completion_tokens=50,
             cost_usd=0.001,
             model_id="test",
-            tool_name="fs.run_bash",
+            tool_name="fs_run_bash",
             tool_args={"command": "echo $API_KEY", "api_key": "sk-secret123"},
             permission_tier="workspace",
             edited_files=[],

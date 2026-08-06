@@ -1,4 +1,4 @@
-"""C1 composition-root kill-check: fs.run_bash elide-callable regression.
+"""C1 composition-root kill-check: fs_run_bash elide-callable regression.
 
 Context (regression history): PR #58's pylint-dedup follow-up commit
 removed the ``_elide_500_preview`` wrapper in both ``run_bash.py`` files
@@ -38,7 +38,7 @@ def _large_output_command(filler_len: int) -> str:
 def test_run_bash_elide_preserves_fixed_preview_shape_over_budget(tmp_path: Path) -> None:
     """root=build_run_bash_tool (composition root: real ToolSpec.elide wiring)
 
-    claim: fs.run_bash previews large stdout as a FIXED 500+200-char shape
+    claim: fs_run_bash previews large stdout as a FIXED 500+200-char shape
     with a truncation notice, regardless of the tool's max_context_bytes
     budget (8000) — the promise stated in the tool's own description
     ("500-character preview").

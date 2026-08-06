@@ -389,9 +389,9 @@ sandbox-root path scope. Backward-compatible by construction.
 
 **Two checks, two scopes.** This amendment adds the (role, tool)
 pairing check; the §Policy semantics path check remains unchanged.
-A `fs.write_file` call from a role with `allowed_tools` containing
+A `fs_write_file` call from a role with `allowed_tools` containing
 it still goes through `check_write(path)` before exec. A
-`fs.write_file` call from a role whose `allowed_tools` does NOT
+`fs_write_file` call from a role whose `allowed_tools` does NOT
 contain it returns `E_ROLE_WHITELIST` before the path check fires
 (per ADR-7 §Amendment 2026-05-13 enforcement-point spec).
 

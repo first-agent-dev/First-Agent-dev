@@ -1,6 +1,6 @@
 """Shared pre-write conflict contract for the mutating filesystem tools (S5.4).
 
-Both ``fs.write_file`` and ``fs.edit_file`` must answer one question the same
+Both ``fs_write_file`` and ``fs_edit_file`` must answer one question the same
 way before touching a file: *may this agent mutate this path right now?* This
 module owns that decision so the two tools cannot drift apart — ``edit_file``
 previously had no check at all while claiming in its docstring to share one

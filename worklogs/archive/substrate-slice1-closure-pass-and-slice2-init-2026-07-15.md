@@ -73,8 +73,8 @@ Current search of `Blackboard(` across `src/fa` shows:
 These remain open by design.
 
 1. **Observability query-plane correctness**
-   - `fs.usage`
-   - `fs.chronicle_search`
+   - `fs_usage`
+   - `fs_chronicle_search`
    - path guessing / stale file binding
 
 2. **Telemetry storage unification**
@@ -147,8 +147,8 @@ But **done enough to unlock Slice 2 without violating scope discipline**.
 Slice 2 should fix the **observability query plane** so that runtime observability tools consume the **active authoritative session state**, not guessed/stale JSONL paths.
 
 ### Slice 2 primary targets
-- `fs.chronicle_search`
-- `fs.usage`
+- `fs_chronicle_search`
+- `fs_usage`
 - registry builder path binding for those tools
 - possibly `fa stats` scope decision (depending on locked product decision)
 
@@ -164,7 +164,7 @@ Current builder logic still wires:
 
 rather than active run authority.
 
-### O2 — `fs.usage` parses the wrong schema
+### O2 — `fs_usage` parses the wrong schema
 It still looks for fields like:
 - `prompt_tokens`
 - `total_tokens`
@@ -176,7 +176,7 @@ while live loop usage writes authoritative fields like:
 - `cache_creation_input_tokens`
 
 ### O3 — Runtime tools still read JSONL directly
-`fs.chronicle_search` and `fs.usage` still open JSONL files directly.
+`fs_chronicle_search` and `fs_usage` still open JSONL files directly.
 
 ### O4 — Tool semantics are ambiguous outside active session context
 When no active session exists, current behavior guesses file paths rather than surfacing explicit context requirements.
@@ -217,7 +217,7 @@ choose one of:
 
 This requires product locking.
 
-### Recommendation D — `fs.usage` should derive from authoritative event semantics
+### Recommendation D — `fs_usage` should derive from authoritative event semantics
 At minimum, it should understand the real `usage` rows already emitted by the loop.
 
 ---
@@ -228,8 +228,8 @@ These need operator confirmation.
 
 ### Q1 — Default scope of runtime observability tools
 When current session exists, should:
-- `fs.chronicle_search`
-- `fs.usage`
+- `fs_chronicle_search`
+- `fs_usage`
 
 default to **current run only**?
 
@@ -254,7 +254,7 @@ or should Slice 2 begin making it DB-first too?
 ### Q4 — Telemetry in Slice 2
 Should Slice 2:
 - keep telemetry as separate derived surface,
-- and make `fs.usage` rely on authoritative `usage` event rows only?
+- and make `fs_usage` rely on authoritative `usage` event rows only?
 
 **Recommended:** yes.
 
@@ -275,8 +275,8 @@ Should Slice 2:
 
 ## 7.7 Proposed Slice 2 verification targets
 
-1. active run → `fs.usage` returns real values from live authority
-2. active run → `fs.chronicle_search` returns rows from live authority
+1. active run → `fs_usage` returns real values from live authority
+2. active run → `fs_chronicle_search` returns rows from live authority
 3. no active session + no explicit target → behavior matches locked decision
 4. no stale workspace path guessing in runtime path
 5. existing stats/CLI surfaces do not regress unexpectedly

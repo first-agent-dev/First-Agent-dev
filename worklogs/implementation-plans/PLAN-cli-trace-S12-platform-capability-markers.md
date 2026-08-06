@@ -302,7 +302,7 @@ named by S12.1, and two new meta-tests.
 
 **Explicit non-goals.**
 - **No `src/` change.** Enforced as a DoD assertion, not an intention (§1.5).
-- **No Windows shell backend** (`fs.run_cmd`). That is the real I-11 fix and is
+- **No Windows shell backend** (`fs_run_cmd`). That is the real I-11 fix and is
   ADR-scale; S12 makes the suite honest, it does not make FA Windows-native.
 - **No fixing of the tests that skip.** A skipped test is a recorded gap, not a
   solved one.
@@ -609,7 +609,7 @@ BACKLOG I-11 flagged; recording it is a requirement of this slice, not a
 footnote.
 
 **I-11 closes only partially.** S12 makes the suite *honest* on Windows. It does
-not give FA a Windows-native shell backend (`fs.run_cmd`). If native Windows
+not give FA a Windows-native shell backend (`fs_run_cmd`). If native Windows
 ever becomes a *product* target, that work is separate and ADR-scale.
 
 **NEW → I-42 (P3):** 11 tests in `test_pty_persistence.py` share a hardcoded

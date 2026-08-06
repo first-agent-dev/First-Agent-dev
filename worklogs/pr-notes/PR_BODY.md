@@ -2,7 +2,7 @@ INTENT: FIX
 CLASS: REPAIR
 INVARIANT: Affects: ADR-7 §7 event schema audit trail must not contain plaintext secrets; ADR-9 §1 config-load validation requires API keys referenced via env vars, not inline values.
 
-DEGREE-OF-FREEDOM CLOSED: The agent previously had no automated defense against embedding API keys in `fs.write_file` content or `fs.run_bash` commands; SecretGuard now denies such tool calls deterministically before execution.
+DEGREE-OF-FREEDOM CLOSED: The agent previously had no automated defense against embedding API keys in `fs_write_file` content or `fs_run_bash` commands; SecretGuard now denies such tool calls deterministically before execution.
 
 DETERMINISTIC MECHANISM: SecretGuard.handle inspects `tool_call.params["content"]` and `tool_call.params["command"]` for exact-match, base64-encoded, URL-encoded, and shell-interpolated secret substrings, returning `Decision.deny("secret leak detected...")` when found: `src/fa/inner_loop/hooks/builtin.py:435`
 
@@ -44,7 +44,7 @@ Comprehensive secrets-handling hardening closing gaps A–Q (original audit) and
 
 ### Agent self-protection (Step 15–16)
 
-- `src/fa/inner_loop/hooks/builtin.py` — `SecretGuard` hook (`GuardMiddleware`) blocks `fs.write_file` and `fs.run_bash` containing verbatim, base64-encoded, URL-encoded, or shell-interpolated secret strings
+- `src/fa/inner_loop/hooks/builtin.py` — `SecretGuard` hook (`GuardMiddleware`) blocks `fs_write_file` and `fs_run_bash` containing verbatim, base64-encoded, URL-encoded, or shell-interpolated secret strings
 - Registered in both `_cmd_smoke` (empty secrets, no-op) and `_cmd_run` (actual secrets from redactor)
 
 ### README (Step 15)

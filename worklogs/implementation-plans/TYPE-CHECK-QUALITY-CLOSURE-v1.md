@@ -286,7 +286,7 @@ kill-check must fail; coverage alone is not sufficient.
 
 ### CT7 — Test-edit exception contract
 
-**Producer:** `pr.prepare` trusted draft with `TEST-EDITS`; classifier derives
+**Producer:** `pr_prepare` trusted draft with `TEST-EDITS`; classifier derives
 intent; `IntentGuard.handle` and commit hook call validator.
 **Consumer:** mutation tool admission and commit admission.
 **Target:** justified test modifications remain possible; delete/rename cannot
@@ -542,7 +542,7 @@ claims, a producer kill-check.
 
 1. fresh workspace setup via `just agent-bootstrap`; require
    `FA_AGENT_READY=1`;
-2. simulate agent edit with `pr.prepare` and `TEST-EDITS` where needed;
+2. simulate agent edit with `pr_prepare` and `TEST-EDITS` where needed;
 3. run `just fix` only for changed slices;
 4. run `uv run just check`;
 5. verify pre-commit/pre-push/commit hooks and hook status;
@@ -1491,7 +1491,7 @@ The compaction foundation dead loop was removed, mutable class state was typed,
 remaining long production strings were bounded, and the final exception/style
 boundaries were narrowed. Source mypy remains clean (`129` files).
 
-Coverage batch 3 used live `fs.read_file`/`fs.edit_file` handlers, real role
+Coverage batch 3 used live `fs_read_file`/`fs_edit_file` handlers, real role
 registries, and the authoritative SessionDatabase. The containment test found
 and drove a real `PermissionError` boundary fix in edit/read tools. Deferred
 FastAPI endpoint tests also cover the optional runtime when installed.

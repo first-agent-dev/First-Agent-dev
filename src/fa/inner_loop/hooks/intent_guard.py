@@ -18,11 +18,11 @@ The middleware:
   pre-injection is deferred to a Q-N amendment.
 - Fires only on tool calls that can mutate the workspace or staged tree:
 
-  * ``fs.write_file`` / ``fs.edit_file`` / ``fs.apply_patch`` —
+  * ``fs_write_file`` / ``fs_edit_file`` / ``fs_apply_patch`` —
     projects the touched path into the staged set (status ``A``
     if the file does not yet exist on disk, otherwise ``M``) so
     :func:`classify_intent` sees the about-to-be-produced snapshot;
-  * ``fs.run_bash`` — analysed by :mod:`fa.inner_loop.bash_intent` into
+  * ``fs_run_bash`` — analysed by :mod:`fa.inner_loop.bash_intent` into
     ``READ_ONLY`` / ``VERIFY_ONLY`` / ``INDEX_WRITE`` / ``REPO_WRITE`` /
     ``OPAQUE_EXEC``. Only the first two stay outside the draft-first
     gate. ``INDEX_WRITE`` reuses the current staged snapshot;
@@ -31,7 +31,7 @@ The middleware:
     touched-path claims.
 
 - Trusts the session's working PR-description draft only when it was
-  produced by ``pr.prepare`` in the current process. The stable file
+  produced by ``pr_prepare`` in the current process. The stable file
   path remains ``~/.fa/session-log/<run_id>/pr_draft.md``, but the
   shared :class:`fa.inner_loop.pr_draft.PrDraftStore` rejects stale or
   externally fabricated files.
@@ -112,7 +112,7 @@ __all__ = [
 GitRunner = Callable[[], str]
 
 # Tool names that directly mutate the workspace / staged tree.
-_MUTATING_TOOL_NAMES: frozenset[str] = frozenset({"fs.write_file", "fs.edit_file", "fs.apply_patch"})
+_MUTATING_TOOL_NAMES: frozenset[str] = frozenset({"fs_write_file", "fs_edit_file", "fs_apply_patch"})
 
 _DRAFT_REQUIRED_BASH_EFFECTS: frozenset[BashIntentEffect] = frozenset(
     {
@@ -125,7 +125,7 @@ _DRAFT_REQUIRED_BASH_EFFECTS: frozenset[BashIntentEffect] = frozenset(
 
 _MISSING_DRAFT_REASON = (
     "IntentGuard: missing or untrusted current-session PR draft; call "
-    "`pr.prepare` before mutating the workspace or staged tree"
+    "`pr_prepare` before mutating the workspace or staged tree"
 )
 
 
@@ -154,7 +154,7 @@ def _parse_typed_intent(draft_text: str) -> Intent | None:
 def _project_call(call: ToolCall, staged: list[StagedPath], repo_root: Path) -> list[StagedPath]:
     """Project a direct filesystem mutation into the staged-diff set.
 
-    Used for ``fs.write_file`` / ``fs.edit_file`` / ``fs.apply_patch``.
+    Used for ``fs_write_file`` / ``fs_edit_file`` / ``fs_apply_patch``.
     Appends the touched path as a staged entry so :func:`classify_intent`
     sees the about-to-be-produced snapshot. Status letter is ``A``
     (new file) when the path does not yet exist on disk, otherwise ``M``
@@ -203,7 +203,7 @@ def _merge_projected_paths(staged: list[StagedPath], projected: tuple[StagedPath
 
 
 def _bash_analysis_for_call(call: ToolCall, repo_root: Path) -> BashIntentAnalysis | None:
-    if call.name not in {"fs.run_bash", "fs.spawn_subagent"}:
+    if call.name not in {"fs_run_bash", "fs_spawn_subagent"}:
         return None
     command = call.params.get("command")
     if not isinstance(command, str) or not command.strip():
@@ -229,7 +229,7 @@ class IntentGuard(GuardMiddleware):
       :func:`resolve_citation` and the subprocess fallback ``cwd``).
     - ``draft_store`` — session-local trust wrapper around the stable
       ``~/.fa/session-log/<run_id>/pr_draft.md`` path. Only text written
-      via ``pr.prepare`` in the current process is trusted.
+      via ``pr_prepare`` in the current process is trusted.
     - ``git_runner`` — optional injection point for the
       ``git diff --cached --name-status`` invocation. Defaults to
       the subprocess fallback. Tests inject a closure over a

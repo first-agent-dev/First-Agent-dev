@@ -46,8 +46,8 @@ def test_pins_present_each_turn_no_compaction(tmp_path: Path, mock_session_state
     )
 
     mock_chain.request.side_effect = [
-        mock_tool_call_response("tc-1", "fs.read_file", {"path": "test.txt"}),
-        mock_tool_call_response("tc-2", "fs.read_file", {"path": "test.txt"}),
+        mock_tool_call_response("tc-1", "fs_read_file", {"path": "test.txt"}),
+        mock_tool_call_response("tc-2", "fs_read_file", {"path": "test.txt"}),
         mock_success_response("all done"),
     ]
 
@@ -55,7 +55,7 @@ def test_pins_present_each_turn_no_compaction(tmp_path: Path, mock_session_state
 
     registry.register(
         ToolSpec(
-            name="fs.read_file",
+            name="fs_read_file",
             description="read",
             input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
             permission="read",
@@ -130,7 +130,7 @@ def test_mid_session_file_change_reloads(tmp_path: Path, mock_session_state: Ses
         call_count = len(captured_prompts)
         if call_count == 1:
             agents_file.write_text("Rule V2: Updated guideline mid-run", encoding="utf-8")
-            return mock_tool_call_response("tc-1", "fs.read_file", {"path": "test.txt"})
+            return mock_tool_call_response("tc-1", "fs_read_file", {"path": "test.txt"})
         return mock_success_response("turn done")
 
     mock_chain.request.side_effect = _side_effect
@@ -139,7 +139,7 @@ def test_mid_session_file_change_reloads(tmp_path: Path, mock_session_state: Ses
 
     registry.register(
         ToolSpec(
-            name="fs.read_file",
+            name="fs_read_file",
             description="read",
             input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
             permission="read",

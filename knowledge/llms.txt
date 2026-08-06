@@ -39,9 +39,9 @@ Task type → primary entrypoint, then secondary:
 
 **Session data authority:** `session.db` is per-run SQLite authority (3 tables: event_log, blackboard, session_meta). JSONL files are best-effort mirrors — if they disagree with session.db, session.db wins. Full schema: knowledge/reference.md §Session Data Layout.
 
-- **For finding artifacts (skills, ADRs, research, files):** Use `blackboard.query(type="skill", key="api")` or `fs.instant_grep(query="auth", limit=10)` → list paths <50ms, content-hashed, with read_set/write_set, rank, token efficient. Do NOT use `grep -ril` scanning all files each time (slow, no rank, no content hash, token heavy, caused 124 steps timeout).
+- **For finding artifacts (skills, ADRs, research, files):** Use `fs_blackboard_query(type="skill", key="api")` or `fs_instant_grep(query="auth", limit=10)` → list entries, content-hashed, with read_set/write_set, token efficient. Do NOT use `grep -ril` scanning all files each time (slow, no content hash, token heavy, caused 124 steps timeout).
 
-- **For full file list:** Query blackboard: `blackboard.query(type="research")` returns all research notes with path, content_hash, rank. Or `fs.glob("knowledge/**/*.md")` but prefer blackboard query. Blackboard is single entry point for artifact search.
+- **For full file list:** Query blackboard: `fs_blackboard_query(type="research")` returns matching blackboard entries with path, content_hash. Or `fs_glob("knowledge/**/*.md")` but prefer blackboard query. Blackboard is single entry point for artifact search.
 
 - **For bootstrap, you already have MUST READ FIRST 5 files. For anything else, query.**
 
@@ -82,11 +82,11 @@ This section is deprecated as of ADR-14/15 (2026-07-11). Previously full per-fol
 
 **What to use instead:**
 
-- `blackboard.query(type="research")` → all research notes
-- `blackboard.query(type="adr")` → all ADRs
-- `blackboard.query(type="skill", key="api")` → skill for API security
-- `fs.instant_grep(query="auth", limit=10)` → files containing auth
-- `fs.glob("knowledge/**/*.md")` → but prefer blackboard for rank
+- `fs_blackboard_query(type="research")` → all research-note blackboard entries
+- `fs_blackboard_query(type="adr")` → all ADR blackboard entries
+- `fs_blackboard_query(type="skill", key="api")` → skill entries matching key api
+- `fs_instant_grep(query="auth", limit=10)` → files containing auth
+- `fs_glob("knowledge/**/*.md")` → but prefer blackboard query
 
 **Old full list removed to reduce maintenance burden. If you need old list for backwards compatibility, run:**
 

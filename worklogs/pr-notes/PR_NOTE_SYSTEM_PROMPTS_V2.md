@@ -39,7 +39,7 @@ Rewritten with concrete, actionable sections:
   declare intent → implement steps → regression → final message).
 - **Writing code:** Type hints, `__all__`, tests, `require_string` pattern
   from the codebase, `just fix` after edits.
-- **Working with files:** `fs.write_file` replaces entire file (read first),
+- **Working with files:** `fs_write_file` replaces entire file (read first),
   `start_line`/`end_line` for large files, sandbox limits.
 - **When things go wrong:** Classified by failure type (simple fix, test
   failure, plan-level issue, harness deny).
@@ -68,7 +68,7 @@ handles them well; they're inherited from the reviewed architect-fa.md).
 |------|--------|
 | `src/fa/inner_loop/prompt.py` | All three prompt constants rewritten |
 | `tests/test_prompt.py` | Assertions updated for new opening text |
-| `tests/test_cli.py` | pr.prepare assertion updated for new wording |
+| `tests/test_cli.py` | pr_prepare assertion updated for new wording |
 
 ## Subtraction check
 

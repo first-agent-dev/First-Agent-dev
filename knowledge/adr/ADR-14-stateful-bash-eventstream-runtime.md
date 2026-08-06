@@ -7,7 +7,7 @@
 
 ## Context
 
-Current `fs.run_bash` = `subprocess.run(cwd=root, shell=True, capture_output=True, env=scrubbed)` stateless. Task "прочитай репозиторий и расскажи что нашел" → 124 steps → timeout, context accumulates. `cd`, `export`, `source .venv` do not persist. Agent not warned in tool description → hallucinations, token waste.
+Current `fs_run_bash` = `subprocess.run(cwd=root, shell=True, capture_output=True, env=scrubbed)` stateless. Task "прочитай репозиторий и расскажи что нашел" → 124 steps → timeout, context accumulates. `cd`, `export`, `source .venv` do not persist. Agent not warned in tool description → hallucinations, token waste.
 
 Production agents:
 - OpenHands EventStream Runtime: Docker container runs FastAPI Action Execution Server with persistent tmux bash session, IPython kernel, browser. Backend sends `CmdRunAction` via REST, receives `CmdOutputObservation`. OpenHands PR #4881 replaced pexpect with libtmux for stability.

@@ -1232,7 +1232,7 @@ path + line-range фильтру.
 явно** в R-1 ADR (when written) — что tool-implementation
 **не** читает файл-fs напрямую, а **обращается к chunk-
 store + post-fetch fs-read для byte_start/end window'a**.
-Это даёт consistent results vs ad-hoc fs.read и автоматически
+Это даёт consistent results vs ad-hoc fs_read и автоматически
 inherit-ит sandbox-policy (chunk-store не индексирует
 запрещённые pаths).
 

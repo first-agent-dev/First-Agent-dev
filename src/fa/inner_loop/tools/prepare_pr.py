@@ -1,4 +1,4 @@
-"""``pr.prepare`` — write the per-session PR-description draft (M-7 §Q-N).
+"""``pr_prepare`` — write the per-session PR-description draft (M-7 §Q-N).
 
 Producer side of the
 :class:`fa.inner_loop.hooks.intent_guard.IntentGuard` read seam landed in
@@ -167,7 +167,7 @@ def _validate_invariant_prefix(intent: Intent, invariant: str) -> str | None:
 
 
 def build_prepare_pr_tool(draft_store: PrDraftStore) -> ToolSpec:
-    """Return the ``pr.prepare`` :class:`ToolSpec` bound to ``draft_store``.
+    """Return the ``pr_prepare`` :class:`ToolSpec` bound to ``draft_store``.
 
     ``draft_store`` carries both the stable on-disk path and the
     current-session trust marker shared with :class:`IntentGuard`.
@@ -249,7 +249,7 @@ def build_prepare_pr_tool(draft_store: PrDraftStore) -> ToolSpec:
         )
 
     return ToolSpec(
-        name="pr.prepare",
+        name="pr_prepare",
         description=(
             "Write the per-session PR-description draft to "
             "~/.fa/session-log/<run_id>/pr_draft.md so the IntentGuard "

@@ -66,7 +66,7 @@ gitleaks mirrors at commit/CI) → CostGuardian (budget). Role-aware tool
 registries: planner/eval get read-only tools; only coder can write.
 
 **IntentGuard** re-runs the M-6 classifier over the projected staged set per
-mutating tool call; requires a trusted same-session `pr.prepare` draft; and
+mutating tool call; requires a trusted same-session `pr_prepare` draft; and
 enforces **existing-test protection** (R-6, ImpossibleBench counter):
 
 - `D`/`R`/`C` on `tests/**.py` → denied under every intent. No escape field.

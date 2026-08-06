@@ -413,7 +413,7 @@ def test_drive_session_renders_tool_specs_into_request(tmp_path: Path) -> None:
 
     request = provider.calls[0]
     tool_names = {tool["function"]["name"] for tool in request.tools}
-    assert {"fs.read_file", "fs.write_file", "fs.run_bash"}.issubset(tool_names)
+    assert {"fs_read_file", "fs_write_file", "fs_run_bash"}.issubset(tool_names)
     # Every projected tool keeps its schema verbatim from ToolSpec.
     for tool in request.tools:
         assert tool["type"] == "function"

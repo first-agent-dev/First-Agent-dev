@@ -13,7 +13,7 @@ runner ``cwd`` at the artifact root would *confine* the subagent. That was
 measured during S5.6 preflight and **does not hold**::
 
     evaluate_bash 'echo pwn > ../../../src/app.py'  artifact_root -> ALLOW
-    SandboxHook   fs.spawn_subagent, same command   artifact_root -> ALLOW
+    SandboxHook   fs_spawn_subagent, same command   artifact_root -> ALLOW
     subprocess.run(..., cwd=artifact_root)          parent file after: 'pwn'
 
 ``workspace_root`` is only consulted by the ``rm`` / ``chmod`` / ``git``
@@ -410,7 +410,7 @@ def _spawn_decision(command: str, root: Path) -> Any:
     return SandboxHook(root).handle(
         LifecyclePoint.BEFORE_TOOL_EXEC,
         HookPayload(
-            tool_call=ToolCall(name="fs.spawn_subagent", params={"command": command}, call_id="c1"),
+            tool_call=ToolCall(name="fs_spawn_subagent", params={"command": command}, call_id="c1"),
             role="coder",
             acting_family="",
         ),

@@ -10,12 +10,12 @@ def test_cache_key_per_role() -> None:
 
     base = "BASE SYSTEM"
     map_md = "AGENTS.md map"
-    researcher_tools = [{"name": "fs.grep"}, {"name": "fs.read_file"}]
+    researcher_tools = [{"name": "fs_grep"}, {"name": "fs_read_file"}]
     coder_tools = [
-        {"name": "fs.read_file"},
-        {"name": "fs.write_file"},
-        {"name": "fs.edit_file"},
-        {"name": "fs.run_bash"},
+        {"name": "fs_read_file"},
+        {"name": "fs_write_file"},
+        {"name": "fs_edit_file"},
+        {"name": "fs_run_bash"},
     ]
 
     _parts_r, key_r = build_prompt_parts(base, map_md, researcher_tools, role_id="researcher", task="find auth")
@@ -31,7 +31,7 @@ def test_cacheable_split() -> None:
 
     base = "BASE"
     map_md = "MAP"
-    tools: list[dict[str, str]] = [{"name": "fs.read_file"}]
+    tools: list[dict[str, str]] = [{"name": "fs_read_file"}]
 
     parts, key = build_prompt_parts(
         base, map_md, tools, role_id="researcher", task="do something", memory_summary="summary"

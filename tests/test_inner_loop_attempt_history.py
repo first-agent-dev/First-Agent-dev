@@ -30,7 +30,7 @@ from fa.inner_loop.tools import build_baseline_registry
 def _entry(
     *,
     ts: float,
-    tool_name: str = "fs.read_file",
+    tool_name: str = "fs_read_file",
     params_hash: str = "deadbeef",
     error_code: str = "read_failed",
     error_message: str = "ENOENT",
@@ -51,9 +51,9 @@ def _entry(
 def test_canonical_params_hash_is_stable_and_order_insensitive() -> None:
     """Same payload → same hash. Key order in dict does not matter."""
 
-    a = canonical_params_hash("fs.read_file", {"path": "x", "n": 1})
-    b = canonical_params_hash("fs.read_file", {"n": 1, "path": "x"})
-    c = canonical_params_hash("fs.read_file", {"path": "y", "n": 1})
+    a = canonical_params_hash("fs_read_file", {"path": "x", "n": 1})
+    b = canonical_params_hash("fs_read_file", {"n": 1, "path": "x"})
+    c = canonical_params_hash("fs_read_file", {"path": "y", "n": 1})
     assert a == b, "params hash must be order-independent"
     assert a != c, "different params must produce different hashes"
 
@@ -62,7 +62,7 @@ def test_attempt_history_append_writes_disk_atomically(tmp_path: Path) -> None:
     history_path = tmp_path / "attempt_history.json"
     history = AttemptHistory(path=history_path, max_entries=5, max_age_seconds=60)
     history.append(
-        tool_name="fs.read_file",
+        tool_name="fs_read_file",
         params_hash="abc",
         error_code="read_failed",
         error_message="missing",
@@ -74,7 +74,7 @@ def test_attempt_history_append_writes_disk_atomically(tmp_path: Path) -> None:
     raw = json.loads(history_path.read_text(encoding="utf-8"))
     assert isinstance(raw, list)
     assert len(raw) == 1
-    assert raw[0]["tool_name"] == "fs.read_file"
+    assert raw[0]["tool_name"] == "fs_read_file"
     assert raw[0]["ts"] == 100.0
     # Round-trip via :meth:`open` recovers the entry.
     reloaded = AttemptHistory.open(history_path, max_entries=5, max_age_seconds=60)
@@ -96,7 +96,7 @@ def test_attempt_history_prunes_by_max_age(tmp_path: Path) -> None:
         ]
     )
     history.append(
-        tool_name="fs.read_file",
+        tool_name="fs_read_file",
         params_hash="new",
         error_code="read_failed",
         error_message="x",
@@ -117,7 +117,7 @@ def test_attempt_history_enforces_cap(tmp_path: Path) -> None:
     base_ts = 1000.0
     for i in range(5):
         history.append(
-            tool_name="fs.read_file",
+            tool_name="fs_read_file",
             params_hash=f"h{i}",
             error_code="read_failed",
             error_message="x",
@@ -150,7 +150,7 @@ def test_attempt_count_lookup_drives_prompt_thresholds(tmp_path: Path) -> None:
     # Three failed attempts of the SAME call.
     for i in range(3):
         history.append(
-            tool_name="fs.write_file",
+            tool_name="fs_write_file",
             params_hash="same",
             error_code="write_failed",
             error_message="EACCES",
@@ -160,7 +160,7 @@ def test_attempt_count_lookup_drives_prompt_thresholds(tmp_path: Path) -> None:
         )
     # One unrelated entry must not count.
     history.append(
-        tool_name="fs.write_file",
+        tool_name="fs_write_file",
         params_hash="other",
         error_code="write_failed",
         error_message="",
@@ -168,8 +168,8 @@ def test_attempt_count_lookup_drives_prompt_thresholds(tmp_path: Path) -> None:
         recovery_category="unexpected_environments",
         ts=200.0,
     )
-    assert history.attempt_count(tool_name="fs.write_file", params_hash="same") == 3
-    assert history.attempt_count(tool_name="fs.write_file", params_hash="missing") == 0
+    assert history.attempt_count(tool_name="fs_write_file", params_hash="same") == 3
+    assert history.attempt_count(tool_name="fs_write_file", params_hash="missing") == 0
 
 
 def test_attempt_history_observer_skips_successful_results(tmp_path: Path) -> None:
@@ -178,7 +178,7 @@ def test_attempt_history_observer_skips_successful_results(tmp_path: Path) -> No
     observer.observe(
         LifecyclePoint.AFTER_TOOL_EXEC,
         HookPayload(
-            tool_call=ToolCall(name="fs.read_file", params={"path": "x"}, call_id="tc"),
+            tool_call=ToolCall(name="fs_read_file", params={"path": "x"}, call_id="tc"),
             tool_result=ToolResult.ok("ok"),
         ),
     )
@@ -195,13 +195,13 @@ def test_attempt_history_observer_records_failed_result(tmp_path: Path) -> None:
     observer.observe(
         LifecyclePoint.AFTER_TOOL_EXEC,
         HookPayload(
-            tool_call=ToolCall(name="fs.read_file", params={"path": "x.txt"}, call_id="tc-1"),
+            tool_call=ToolCall(name="fs_read_file", params={"path": "x.txt"}, call_id="tc-1"),
             tool_result=failed,
         ),
     )
     assert len(history.entries) == 1
     entry = history.entries[0]
-    assert entry.tool_name == "fs.read_file"
+    assert entry.tool_name == "fs_read_file"
     assert entry.error_code == "invalid_params"
     assert entry.recovery_action == "retry"
     assert entry.recovery_category == "invalid_arguments"
@@ -221,7 +221,7 @@ def test_failure_classifier_observer_emits_recovery_action_event(tmp_path: Path)
     observer.observe(
         LifecyclePoint.AFTER_TOOL_EXEC,
         HookPayload(
-            tool_call=ToolCall(name="fs.run_bash", params={"command": "rm -rf /"}, call_id="tc-1"),
+            tool_call=ToolCall(name="fs_run_bash", params={"command": "rm -rf /"}, call_id="tc-1"),
             tool_result=failed,
         ),
     )
@@ -231,7 +231,7 @@ def test_failure_classifier_observer_emits_recovery_action_event(tmp_path: Path)
     row = recovery_rows[0]
     assert row.content["category"] == "policy_denied"
     assert row.content["action"] == "escalate"
-    assert row.content["target"] == "fs.run_bash"
+    assert row.content["target"] == "fs_run_bash"
     assert row.content["error_code"] == "hook_deny"
     assert row.tool_call_id == "tc-1"
     # In-memory trail mirrors the event log.
@@ -253,7 +253,7 @@ def test_observers_in_run_session_record_failed_write(tmp_path: Path) -> None:
 
     # Missing required field ``content`` → invalid_params, retryable.
     results = run_session(
-        (ToolCall(name="fs.write_file", params={"path": "x.txt"}, call_id="tc-1"),),
+        (ToolCall(name="fs_write_file", params={"path": "x.txt"}, call_id="tc-1"),),
         registry=registry,
         hooks=hooks,
         state=state,

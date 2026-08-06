@@ -61,11 +61,11 @@ def test_edit_file_live_handler_exact_fuzzy_and_containment(tmp_path: Path) -> N
 
 def test_profiles_build_real_role_registries_and_planner_allowlist(tmp_path: Path) -> None:
     researcher = build_registry_for_role("researcher", tmp_path)
-    assert {"fs.read_file", "fs.glob", "fs.grep"}.issubset(set(researcher.names()))
-    assert "fs.run_bash" not in researcher.names()
+    assert {"fs_read_file", "fs_glob", "fs_grep"}.issubset(set(researcher.names()))
+    assert "fs_run_bash" not in researcher.names()
 
     planner = build_registry_for_role("planner", tmp_path)
-    write_tool = planner.lookup("fs.write_file")
+    write_tool = planner.lookup("fs_write_file")
     assert write_tool is not None
     denied = write_tool.handler({"path": "src/nope.py", "content": "x"})
     assert denied.error is not None
@@ -88,7 +88,7 @@ def test_session_database_all_authority_facades_and_queries(tmp_path: Path) -> N
         "run_id": "run-1",
         "actor": "runtime",
         "kind": "tool_call",
-        "tool_name": "fs.read_file",
+        "tool_name": "fs_read_file",
         "tool_call_id": "call-1",
         "parent_event_id": "",
         "content": {"path": "a.py"},

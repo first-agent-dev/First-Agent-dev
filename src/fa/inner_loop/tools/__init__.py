@@ -100,68 +100,68 @@ def _register_extra_tools(  # noqa: C901 -- complexity from fallback chain grace
         if build_glob_tool:
             try:
                 # Avoid duplicate if already in registry
-                if "fs.glob" not in registry.names():
+                if "fs_glob" not in registry.names():
                     registry.register(build_glob_tool(workspace_root))
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs.glob: {exc}")
+                logger.warning(f"Failed to register fs_glob: {exc}")
         if build_grep_tool:
             try:
-                if "fs.grep" not in registry.names():
+                if "fs_grep" not in registry.names():
                     registry.register(build_grep_tool(workspace_root))
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs.grep: {exc}")
+                logger.warning(f"Failed to register fs_grep: {exc}")
 
     if include_observability:
         if build_chronicle_search_tool:
             try:
-                if "fs.chronicle_search" not in registry.names():
+                if "fs_chronicle_search" not in registry.names():
                     registry.register(build_chronicle_search_tool())
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs.chronicle_search: {exc}")
+                logger.warning(f"Failed to register fs_chronicle_search: {exc}")
 
         if build_usage_tool:
             try:
-                if "fs.usage" not in registry.names():
+                if "fs_usage" not in registry.names():
                     registry.register(build_usage_tool())
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs.usage: {exc}")
+                logger.warning(f"Failed to register fs_usage: {exc}")
 
         if build_list_tasks_tool and include_pair:
             try:
-                if "fs.list_tasks" not in registry.names():
+                if "fs_list_tasks" not in registry.names():
                     registry.register(build_list_tasks_tool())
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs.list_tasks: {exc}")
+                logger.warning(f"Failed to register fs_list_tasks: {exc}")
 
     if include_pair:
         if build_checkpoint_tool:
             try:
-                if "fs.checkpoint" not in registry.names():
+                if "fs_checkpoint" not in registry.names():
                     registry.register(build_checkpoint_tool(workspace_root))
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs.checkpoint: {exc}")
+                logger.warning(f"Failed to register fs_checkpoint: {exc}")
         if build_undo_tool:
             try:
-                if "fs.undo" not in registry.names():
+                if "fs_undo" not in registry.names():
                     registry.register(build_undo_tool(workspace_root))
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs.undo: {exc}")
+                logger.warning(f"Failed to register fs_undo: {exc}")
         if build_diff_tool:
             try:
-                if "fs.diff" not in registry.names():
+                if "fs_diff" not in registry.names():
                     registry.register(build_diff_tool(workspace_root))
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs.diff: {exc}")
+                logger.warning(f"Failed to register fs_diff: {exc}")
         if build_send_ctrl_c_tool:
             try:
-                if "fs.send_ctrl_c" not in registry.names():
+                if "fs_send_ctrl_c" not in registry.names():
                     registry.register(build_send_ctrl_c_tool())
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs.send_ctrl_c: {exc}")
+                logger.warning(f"Failed to register fs_send_ctrl_c: {exc}")
 
     if include_instant_grep and build_instant_grep_tool:
         try:
-            if "fs.instant_grep" not in registry.names():
+            if "fs_instant_grep" not in registry.names():
                 # Wired to feature flag fts_db_path (was dead flag, now active per FIND-018 sweep)
                 try:
                     from fa.feature_flags import load_feature_flags_from_path
@@ -173,14 +173,14 @@ def _register_extra_tools(  # noqa: C901 -- complexity from fallback chain grace
                 db_path = workspace_root / fts_path
                 registry.register(build_instant_grep_tool(db_path, workspace_root))
         except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            logger.warning(f"Failed to register fs.instant_grep: {exc}")
+            logger.warning(f"Failed to register fs_instant_grep: {exc}")
 
     if build_spawn_subagent_tool:
         try:
-            if "fs.spawn_subagent" not in registry.names():
+            if "fs_spawn_subagent" not in registry.names():
                 registry.register(build_spawn_subagent_tool(workspace_root))
         except Exception as exc:  # noqa: BLE001 # graceful degradation
-            logger.warning(f"Failed to register fs.spawn_subagent: {exc}")
+            logger.warning(f"Failed to register fs_spawn_subagent: {exc}")
 
 
 def build_baseline_registry(

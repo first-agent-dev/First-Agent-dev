@@ -155,7 +155,7 @@ def classify(error: ToolError, *, target: str = "") -> RecoveryAction:
     """Map a :class:`ToolError` to a :class:`RecoveryAction`.
 
     ``target`` is the subject the action operates on — typically the
-    tool name (``"fs.run_bash"``) or a file path. The caller supplies
+    tool name (``"fs_run_bash"``) or a file path. The caller supplies
     it because the classifier only sees the error, not the call shape.
     A blank target is valid; coder-recovery handles that gracefully.
     """

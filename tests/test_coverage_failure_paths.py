@@ -43,9 +43,9 @@ def test_profile_builder_optional_import_failure_is_observable(caplog: Any, tmp_
         registry = build_registry_for_role("researcher", tmp_path)
 
     names = {spec.name for spec in registry.specs()}
-    assert "fs.read_file" in names
-    assert "fs.grep" in names
-    assert "fs.glob" not in names
+    assert "fs_read_file" in names
+    assert "fs_grep" in names
+    assert "fs_glob" not in names
     assert any("glob" in record.message.lower() for record in caplog.records)
 
 
@@ -93,7 +93,7 @@ def test_stats_aggregate_and_render_edge_paths(tmp_path: Path) -> None:
         stop_reason="stopped_by_llm",
         ok=True,
         turns=3,
-        tool_usage=[ToolUsage(name="fs.read_file", count=3)],
+        tool_usage=[ToolUsage(name="fs_read_file", count=3)],
         file_access=[FileAccess(path="src/fa/cli.py", reads=3)],
         token_timeline=[
             TurnTokens(turn=i, in_tokens=100, out_tokens=20, cache_read=0, cache_creation=0) for i in range(1, 5)
@@ -125,7 +125,7 @@ def test_stats_aggregate_and_render_edge_paths(tmp_path: Path) -> None:
     render_session(first, stream=session_stream)
     rendered = session_stream.getvalue()
     assert "run-1" in rendered
-    assert "fs.read_file" in rendered
+    assert "fs_read_file" in rendered
     assert "redundant" in rendered.lower()
 
     aggregate_stream = io.StringIO()

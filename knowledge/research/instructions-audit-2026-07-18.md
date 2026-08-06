@@ -153,6 +153,6 @@ The `fa` wrapper script (`scripts/fa`) exposes these host-side verbs that 02-ope
 ## 6. What NOT to do
 
 - Do NOT add `blackboard.query()` API details to operator instructions — that's an agent API, not operator-facing
-- Do NOT add `fs.instant_grep` to instructions — same reason
+- Do NOT add `fs_instant_grep` to instructions — same reason
 - Do NOT rewrite 01-install.md — it's solid and the refactoring didn't change deployment
 - Do NOT add ADR details to instructions — that's what knowledge/ is for

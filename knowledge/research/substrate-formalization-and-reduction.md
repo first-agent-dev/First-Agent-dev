@@ -26,8 +26,8 @@ But your planned ADR-13/14 adds topology complexity to fix token efficiency and 
 
 **Outside-the-box senior question:** Do we need parallel subagents tree if shared state were formally queryable?
 
-- Researcher subagent's job: "find files mentioning AuthMiddleware" — that's exactly what `fs.instant_grep` FTS5 trigram does, <50ms, substring search, returns paths not content. If substrate is queryable (instant grep index), no need separate agent, just tool call.
-- Verifier subagent's job: "run pytest -k test_login -x" — that's deterministic sensor, not agent. Could be tool `fs.verify` with structured JSON result, not separate agent.
+- Researcher subagent's job: "find files mentioning AuthMiddleware" — that's exactly what `fs_instant_grep` FTS5 trigram does, <50ms, substring search, returns paths not content. If substrate is queryable (instant grep index), no need separate agent, just tool call.
+- Verifier subagent's job: "run pytest -k test_login -x" — that's deterministic sensor, not agent. Could be tool `fs_verify` with structured JSON result, not separate agent.
 - Code-reviewer subagent: could be static analysis tool with structured output.
 
 **Thus:** Adding subagents is workaround for missing formal substrate (instant grep index, verification sensors, blackboard with read_set/write_set). If substrate were formal, simple chain planner→coder→eval could stay simple.
@@ -107,7 +107,7 @@ From `knowledge/README.md` layout + `src/fa/inner_loop/`:
 
 **Layer 2: Execution Feedback (Deterministic Sensors, Not LLM)**
 
-- `fs.run_bash` → subprocess.run with scrubbed env, timeout
+- `fs_run_bash` → subprocess.run with scrubbed env, timeout
 - Test execution pytest, cargo test, npm test (via bash)
 - Static analysis: mypy, ruff, semgrep (via bash)
 - Cost Guardian (planned), SecretGuard, SecretRedactor, Sandbox secret_paths
@@ -151,7 +151,7 @@ From `adr-13-14-implementation-plan-2026-07-11-v2-production.md` + skeletons:
 
 **Layer 4: Index and Memory (Enhanced)**
 
-- `src/fa/memory/fts_index.py` — InstantGrepIndex FTS5 trigram with DELETE then INSERT, mtime tracking, stale cleanup, fallback porter with WARNING. Tool `fs.instant_grep` returns paths <50ms substring search "auth"→"AuthMiddleware", not content, token efficient
+- `src/fa/memory/fts_index.py` — InstantGrepIndex FTS5 trigram with DELETE then INSERT, mtime tracking, stale cleanup, fallback porter with WARNING. Tool `fs_instant_grep` returns paths <50ms substring search "auth"→"AuthMiddleware", not content, token efficient
 - `src/fa/memory/__init__.py`
 - Semantic Memory: repository-specific program-structured evidence (class definitions, function impls, call relations) via glob, grep, instant_grep, future ast_grep
 - Experiential Memory: `attempt_history.py` sliding-window JSON writer + `RecoveryActionObserver` + governed experience replay (MemGovern quality-controlled, not scale)
@@ -164,7 +164,7 @@ From `adr-13-14-implementation-plan-2026-07-11-v2-production.md` + skeletons:
 - PromptComposer with cacheable split BASE+AGENTS.md map+tool defs per role + non_cacheable task+memory_summary+observations, cache-key = role_id + hash(names+schemas) + hash(agents_map), to_anthropic cache_control ephemeral, to_openai prompt_cache_key retention 1h
 - Profiles dynamic toolset: researcher [glob,grep,read,instant_grep] 600 tokens vs full 3000, verifier [bash], main full
 - SubagentRunner with scrubbed env extra_allow X_FA_PROXY_TOKEN foundation for Gap 7 arbiter, filtered history (task + relevant files from instant_grep, not full parent 124 steps), JSON validation cached via fastjsonschema, artifact write `.fa/subagents/<id>.json`
-- Task worklog `task_worklog.md` per task Goal, Evidence, Steps, Verification aggregated from JSONs, for PR → PR body, not only pr.prepare
+- Task worklog `task_worklog.md` per task Goal, Evidence, Steps, Verification aggregated from JSONs, for PR → PR body, not only pr_prepare
 - SubagentEnvelope full schema Goal, Verification, Risks, token_usage, duration_ms, next_action, validation
 - Tool batching parallel read-only via ThreadPoolExecutor max 5, writes sequential, log write sequential with Lock, EventLog thread-safe
 - FlowState MVP, EvalReport with verdict + route decision return_to_coder/return_to_planner/complete/blocked, retry budgets, adaptive routing
@@ -172,8 +172,8 @@ From `adr-13-14-implementation-plan-2026-07-11-v2-production.md` + skeletons:
 **Layer 6: Observability, Governance, Evolution**
 
 - EventBus + OutputEvent + ConsoleRenderer per-turn progress to stderr timing, tokens, cache hit ratio, tool actions with verbs
-- `fs.chronicle_search`, `fs.usage`, `fs.list_tasks` tools for Pillar 3 KPI
-- `fs.send_ctrl_c` tool
+- `fs_chronicle_search`, `fs_usage`, `fs_list_tasks` tools for Pillar 3 KPI
+- `fs_send_ctrl_c` tool
 - HookRegistry: GuardMiddleware, ObserverMiddleware, Decision, lifecycle dispatch BEFORE_TOOL_EXEC, AFTER_TOOL_EXEC, BETWEEN_ROUNDS
 - Builtin guards: PauseGuard, CapabilityGuard, SandboxHook, ApprovalHook, AuditHook, VerifierObserver, LearningObserver, LoopGuard identical-call repeat + same-path thrash, RateLimitBlocker, LockfileBlocker, AuthExpiredBlocker, IntentGuard bashlex AST → BashIntentEffect
 - Change contract template for Evolution Agent: which component modified, failure mode targeted, improvement predicted, invariants preserved, evaluation that can falsify, rollback plan, HITL required for permission boundaries

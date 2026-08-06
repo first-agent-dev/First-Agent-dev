@@ -30,11 +30,11 @@ prefers `USERPROFILE`. They are reclassified B4.
 | test | evidence |
 |---|---|
 | `test_cli.py::test_fa_run_repo_write_bash_allowed_after_pr_prepare` | bash never wrote src/fa/x.py -> FileNotFoundError; shell write did not happen |
-| `test_cli.py::test_fa_run_verify_only_bash_allowed_before_pr_prepare` | fs.run_bash returned no result: bash gate could not execute the command |
+| `test_cli.py::test_fa_run_verify_only_bash_allowed_before_pr_prepare` | fs_run_bash returned no result: bash gate could not execute the command |
 | `test_cli.py::test_fa_stats_reads_current_session_db_and_rejects_legacy_without_writes` | 0 == 2 rows: the run that should populate the DB used bash and failed |
-| `test_inner_loop_tools.py::test_run_bash_tool_preserves_failure_diagnostics` | fs.run_bash result is None: no working shell backend |
+| `test_inner_loop_tools.py::test_run_bash_tool_preserves_failure_diagnostics` | fs_run_bash result is None: no working shell backend |
 | `test_inner_loop_tools.py::test_run_bash_tool_runs_in_workspace` | MSYS path dialect: shell answered /c/... where Python asked C:\... |
-| `test_run_bash_tool_projection.py::test_run_bash_elide_preserves_fixed_preview_shape_over_budget` | artifact never produced; depends on fs.run_bash output |
+| `test_run_bash_tool_projection.py::test_run_bash_elide_preserves_fixed_preview_shape_over_budget` | artifact never produced; depends on fs_run_bash output |
 | `test_s5_state_root_contract.py::test_entrypoint_and_cli_agree_on_state_root` | MSYS path dialect: shell answered /c/... where Python asked C:\... |
 | `test_s6_subagent_fidelity.py::test_failing_subagent_does_not_leak_secret_into_tracked_worklog` | FAIL branch not taken: subagent shell command did not run |
 | `test_secret_exfiltration.py::test_workspace_env_files_are_not_present` | bash exited 1 with mojibake stderr through the Git Bash pipe |

@@ -94,8 +94,8 @@ def test_inner_loop_smoke_wires_learning_observer(tmp_path: Path) -> None:
     - canon root is ``<workspace>/knowledge/trace/`` (the same path
       the T-2 real runtime will use; the earlier ``.fa/`` relocation
       was rejected 2026-05-22 as a spec-bypassing workaround).
-    - discovery key is path-keyed for ``fs.*`` tools and call-id-keyed
-      for ``fs.run_bash`` (BUG-2 fix: a flat tool-name key collapsed
+    - discovery key is path-keyed for ``fs_*`` tools and call-id-keyed
+      for ``fs_run_bash`` (BUG-2 fix: a flat tool-name key collapsed
       every call onto a single slot).
     - every ``recorded_at`` equals ``2026-05-21T00:00:00Z`` (fixed-
       clock injection makes the artifact byte-stable across runs).
@@ -116,11 +116,11 @@ def test_inner_loop_smoke_wires_learning_observer(tmp_path: Path) -> None:
 
     data = json.loads(codebase_map.read_text(encoding="utf-8"))
     # Path-keyed: a second call against a different ``path`` no longer
-    # overwrites the first.
-    assert "fs/read_file/README.md" in data
-    assert "fs/write_file/.fa/inner-loop-smoke.txt" in data
-    # ``fs.run_bash`` has no ``path`` param — falls back to call_id.
-    assert "fs/run_bash/tc-bash" in data
+    # overwrites the first. (S13.10: tool names use underscore, e.g. fs_read_file.)
+    assert "fs_read_file/README.md" in data
+    assert "fs_write_file/.fa/inner-loop-smoke.txt" in data
+    # ``fs_run_bash`` has no ``path`` param — falls back to call_id.
+    assert "fs_run_bash/tc-bash" in data
     for entry in data.values():
         assert entry["recorded_at"] == "2026-05-21T00:00:00Z"
 
@@ -162,7 +162,7 @@ def test_inner_loop_smoke_canon_snapshot_matches_seed_baseline(tmp_path: Path) -
 def test_inner_loop_smoke_records_gotcha_on_tool_failure(tmp_path: Path) -> None:
     """LearningObserver appends to ``gotchas.md`` when a tool fails.
 
-    Pointing ``--input`` at a non-existent file forces ``fs.read_file``
+    Pointing ``--input`` at a non-existent file forces ``fs_read_file``
     to return ``read_failed``; the observer's failure branch must call
     ``record_gotcha`` so the failure is durable under
     ``knowledge/trace/gotchas.md`` at the canonical root
@@ -188,7 +188,7 @@ def test_inner_loop_smoke_records_gotcha_on_tool_failure(tmp_path: Path) -> None
     gotchas = tmp_path / "knowledge" / "trace" / "gotchas.md"
     assert gotchas.exists(), "LearningObserver did not create gotchas.md on failure"
     body = gotchas.read_text(encoding="utf-8")
-    assert "fs.read_file failed" in body
+    assert "fs_read_file failed" in body
     assert "does-not-exist.md" in body
     assert "2026-05-21T00:00:00Z" in body
 
@@ -606,7 +606,7 @@ def test_fa_run_hits_turn_cap(
                             "id": "tc-loop",
                             "type": "function",
                             "function": {
-                                "name": "fs.read_file",
+                                "name": "fs_read_file",
                                 "arguments": '{"path": "missing.txt"}',
                             },
                         }
@@ -641,9 +641,9 @@ def test_fa_run_registers_pr_prepare_tool(
     assert exit_code == 0
     tools = transport.calls[0]["tools"]
     names = [tool["function"]["name"] for tool in tools]
-    for expected_name in ["fs.read_file", "fs.run_bash", "fs.write_file", "pr.prepare"]:
+    for expected_name in ["fs_read_file", "fs_run_bash", "fs_write_file", "pr_prepare"]:
         assert expected_name in names
-    prepare = next(tool for tool in tools if tool["function"]["name"] == "pr.prepare")
+    prepare = next(tool for tool in tools if tool["function"]["name"] == "pr_prepare")
     assert "pr_draft.md" in prepare["function"]["description"]
     assert prepare["function"]["parameters"]["required"] == ["intent", "invariant"]
 
@@ -661,8 +661,8 @@ def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
-                _tool_call("tc-write", "fs.write_file", '{"path": "src/fa/x.py", "content": "x\\n"}'),
-                _tool_call("tc-prepare", "pr.prepare", '{"intent": "CHORE", "invariant": "n/a"}'),
+                _tool_call("tc-write", "fs_write_file", '{"path": "src/fa/x.py", "content": "x\\n"}'),
+                _tool_call("tc-prepare", "pr_prepare", '{"intent": "CHORE", "invariant": "n/a"}'),
             ),
             _stop_body("done"),
         ]
@@ -686,7 +686,7 @@ def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
         event for event in events if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-write"
     )
     assert write_result["content"]["error"]["code"] == "hook_deny"
-    assert "call `pr.prepare`" in write_result["content"]["error"]["message"]
+    assert "call `pr_prepare`" in write_result["content"]["error"]["message"]
 
 
 def test_fa_run_clears_stale_pr_draft_on_startup(
@@ -727,7 +727,7 @@ def test_fa_run_verify_only_bash_allowed_before_pr_prepare(
             _tool_calls_body(
                 _tool_call(
                     "tc-bash",
-                    "fs.run_bash",
+                    "fs_run_bash",
                     json.dumps({"command": f"{_PYTHON} -m pytest --version"}),
                 ),
             ),
@@ -768,7 +768,7 @@ def test_fa_run_repo_write_bash_requires_pr_prepare(
             _tool_calls_body(
                 _tool_call(
                     "tc-bash",
-                    "fs.run_bash",
+                    "fs_run_bash",
                     json.dumps({"command": "mkdir -p src/fa && printf 'x\\n' > src/fa/x.py"}),
                 ),
             ),
@@ -792,7 +792,7 @@ def test_fa_run_repo_write_bash_requires_pr_prepare(
         event for event in events if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-bash"
     )
     assert bash_result["content"]["error"]["code"] == "hook_deny"
-    assert "call `pr.prepare`" in bash_result["content"]["error"]["message"]
+    assert "call `pr_prepare`" in bash_result["content"]["error"]["message"]
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
@@ -810,7 +810,7 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
-                _tool_call("tc-bash", "fs.run_bash", json.dumps({"command": command})),
+                _tool_call("tc-bash", "fs_run_bash", json.dumps({"command": command})),
             ),
             _stop_body("done"),
         ]
@@ -832,7 +832,7 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
         event for event in events if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-bash"
     )
     assert bash_result["content"]["error"]["code"] == "hook_deny"
-    assert "call `pr.prepare`" in bash_result["content"]["error"]["message"]
+    assert "call `pr_prepare`" in bash_result["content"]["error"]["message"]
 
 
 @requires_pty_backend
@@ -852,10 +852,10 @@ def test_fa_run_opaque_exec_bash_allowed_after_pr_prepare(
             _tool_calls_body(
                 _tool_call(
                     "tc-prepare",
-                    "pr.prepare",
+                    "pr_prepare",
                     '{"intent": "CHORE", "invariant": "n/a"}',
                 ),
-                _tool_call("tc-bash", "fs.run_bash", json.dumps({"command": command})),
+                _tool_call("tc-bash", "fs_run_bash", json.dumps({"command": command})),
             ),
             _stop_body("done"),
         ]
@@ -897,12 +897,12 @@ def test_fa_run_repo_write_bash_allowed_after_pr_prepare(
             _tool_calls_body(
                 _tool_call(
                     "tc-prepare",
-                    "pr.prepare",
+                    "pr_prepare",
                     '{"intent": "IMPLEMENT", "invariant": "Implements: src/fa/x.py"}',
                 ),
                 _tool_call(
                     "tc-bash",
-                    "fs.run_bash",
+                    "fs_run_bash",
                     json.dumps({"command": "mkdir -p src/fa && printf 'x\n' > src/fa/x.py"}),
                 ),
             ),
@@ -944,7 +944,7 @@ def test_fa_run_system_prompt_mentions_pr_prepare_before_mutation(
 
     assert exit_code == 0
     system_message = transport.calls[0]["messages"][0]["content"]
-    assert "pr.prepare" in system_message
+    assert "pr_prepare" in system_message
     assert "Before your first mutation" in system_message
 
 

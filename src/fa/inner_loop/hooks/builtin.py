@@ -29,11 +29,11 @@ from fa.verifier import TraceEvent as VerifierTraceEvent
 from fa.verifier import VerifierContract, verify_action
 
 # ADR-7 §3 + §8 baseline filesystem tools that the SandboxHook arbitrates
-# under the workspace root. ``fs.run_bash`` keeps the three-layer bash gate
-# (classifier + validators + path containment); ``fs.read_file`` /
-# ``fs.write_file`` use the path-containment layer directly because the
+# under the workspace root. ``fs_run_bash`` keeps the three-layer bash gate
+# (classifier + validators + path containment); ``fs_read_file`` /
+# ``fs_write_file`` use the path-containment layer directly because the
 # bash gate is shaped around shell commands.
-_FS_PATH_TOOLS: frozenset[str] = frozenset({"fs.read_file", "fs.write_file"})
+_FS_PATH_TOOLS: frozenset[str] = frozenset({"fs_read_file", "fs_write_file"})
 
 
 @dataclass
@@ -70,7 +70,7 @@ class CapabilityGuard(GuardMiddleware):
             return Decision.deny("ENABLE_MCP_GATEWAY_MANAGEMENT is false")
         if call.name.startswith("mcp.server.") and not caps.ENABLE_DYNAMIC_MCP_SERVERS:
             return Decision.deny("ENABLE_DYNAMIC_MCP_SERVERS is false")
-        if call.name in {"fs.run_bash", "fs.spawn_subagent"}:
+        if call.name in {"fs_run_bash", "fs_spawn_subagent"}:
             command = call.params.get("command")
             if isinstance(command, str):
                 # Cache the split once \u2014 the prior code called
@@ -88,8 +88,8 @@ class SandboxHook(GuardMiddleware):
     """ADR-6 §Policy gate at the ``BEFORE_TOOL_EXEC`` hook point.
 
     Routes each baseline ``fs.*`` tool through the appropriate sandbox
-    layer: ``fs.run_bash`` enters the three-layer bash gate; ``fs.read_file``
-    and ``fs.write_file`` go through the workspace-root path-containment
+    layer: ``fs_run_bash`` enters the three-layer bash gate; ``fs_read_file``
+    and ``fs_write_file`` go through the workspace-root path-containment
     check (ADR-6 §Path containment / Aperant port). Opts in to
     ``revalidates_after_modify`` so that a ``Decision.modify`` returned by
     any earlier guard cannot bypass the sandbox by mutating ``path`` /
@@ -109,7 +109,7 @@ class SandboxHook(GuardMiddleware):
         call = payload.tool_call
         if call is None:
             return Decision.allow()
-        if call.name in {"fs.run_bash", "fs.spawn_subagent"}:
+        if call.name in {"fs_run_bash", "fs_spawn_subagent"}:
             # Q19: subagent spawns are NOT confined by this gate, and S5.6
             # deliberately does not pretend otherwise.
             #
@@ -167,7 +167,7 @@ class ApprovalHook(GuardMiddleware):
         call = payload.tool_call
         if not self.require_write_approval or call is None:
             return Decision.allow()
-        if call.name in {"fs.write_file", "fs.run_bash", "fs.spawn_subagent"}:
+        if call.name in {"fs_write_file", "fs_run_bash", "fs_spawn_subagent"}:
             return Decision.deny("write approval required")
         return Decision.allow()
 
@@ -303,10 +303,10 @@ def _learning_observer_key(call_name: str, params: Mapping[str, object], call_id
     ADR-7 §Sub-amendment 2026-05-21b «path-keyed discovery key».
 
     1. If ``params["path"]`` is a string: ``"{tool/slug}/{path}"``
-       — the natural shape for ``fs.read_file`` / ``fs.write_file``
+       — the natural shape for ``fs_read_file`` / ``fs_write_file``
        and any future tool that touches a workspace path.
     2. Else: ``"{tool/slug}/{call_id}"`` — coarse but cumulative,
-       used by ``fs.run_bash`` and any tool without a workspace
+       used by ``fs_run_bash`` and any tool without a workspace
        anchor.
     """
 
@@ -381,7 +381,7 @@ class LearningObserver(ObserverMiddleware):
 
 @dataclass
 class SecretGuard(GuardMiddleware):
-    """Prevent API key leakage via fs.write_file or fs.run_bash.
+    """Prevent API key leakage via fs_write_file or fs_run_bash.
 
     Detects raw secrets, base64-encoded secrets, URL-encoded secrets,
     and common shell/env variable interpolation patterns.
@@ -445,11 +445,11 @@ class SecretGuard(GuardMiddleware):
         call = payload.tool_call
         if call is None:
             return Decision.allow()
-        if call.name == "fs.write_file":
+        if call.name == "fs_write_file":
             content = call.params.get("content", "")
             if isinstance(content, str) and self._check_text(content):
-                return Decision.deny("secret leak detected in fs.write_file content")
-        if call.name in {"fs.run_bash", "fs.spawn_subagent"}:
+                return Decision.deny("secret leak detected in fs_write_file content")
+        if call.name in {"fs_run_bash", "fs_spawn_subagent"}:
             command = call.params.get("command", "")
             if isinstance(command, str):
                 # Encoded / interpolated detection applies to ALL commands

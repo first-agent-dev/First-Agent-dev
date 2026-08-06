@@ -164,7 +164,7 @@ def _stop_body(text: str = "done") -> Mapping[str, Any]:
     }
 
 
-def _tool_call(call_id: str, name: str = "fs.read") -> Mapping[str, Any]:
+def _tool_call(call_id: str, name: str = "fs_read") -> Mapping[str, Any]:
     return {
         "id": call_id,
         "type": "function",

@@ -110,7 +110,7 @@ choice, not an implementation detail**, so per the stop rule it is promoted to
 
 Current evidence that FA is POSIX-only *by design*: the product ships as a Linux
 container; `scripts/fa-entrypoint.sh`, `scripts/fa`, `scripts/fa-clean-rebuild.sh`
-are bash; `fs.run_bash` is the only shell tool; the S11 deployment target is
+are bash; `fs_run_bash` is the only shell tool; the S11 deployment target is
 docker-compose with `read_only: true` rootfs.
 
 ---
@@ -124,7 +124,7 @@ Windows pre-push hook do?**
 |---|---|---|---|
 | **1** | **Operator develops in WSL2** — clone inside the WSL filesystem, run the gate there. Zero code change; the gate becomes a true CI mirror. | ~30 min, one-time | ✅ fully |
 | **2** | **Capability-gate the suite** — add `tests/conftest.py` autouse markers: `requires_bash`, `requires_posix_modes`, `requires_symlinks`, `requires_posix_paths`. ~92 tests SKIP on Windows. Gate goes green. | ~1 slice | ⚠️ Windows dev never validates containment locally — I-11 flags this as the real cost |
-| **3** | **Port the suite to be path/mode agnostic** — `Path.as_posix()` everywhere, `os.stat` shims, `cmd.exe` backend for `fs.run_bash`. | multi-slice, ADR-scale | ✅ but large, and buys nothing for a Linux-only product |
+| **3** | **Port the suite to be path/mode agnostic** — `Path.as_posix()` everywhere, `os.stat` shims, `cmd.exe` backend for `fs_run_bash`. | multi-slice, ADR-scale | ✅ but large, and buys nothing for a Linux-only product |
 | **4** | **Scope the hook** — pre-push runs the full gate on POSIX; on Windows it runs everything *except* `test` and prints a loud "full suite runs in CI / WSL" notice. | ~small | ⚠️ weakens the local gate |
 
 **My recommendation: option 1 now, option 2 only if you must stay native.**

@@ -581,7 +581,7 @@ this distinction explicitly.
 ### Existing-test edits
 
 The supported exception is the existing `TEST-EDITS:` declaration in the
-trusted current-session `pr.prepare` draft:
+trusted current-session `pr_prepare` draft:
 
 ```text
 TEST-EDITS: tests/test_pty_persistence.py — add worker-liveness assertion for Ctrl+C race
@@ -598,7 +598,7 @@ Rules remain:
 - both IntentGuard and the git hook consume the same validator.
 
 The current maintenance edits were operator-level edits, not simulated agent
-calls; future agent simulations must use `pr.prepare` + `TEST-EDITS`.
+calls; future agent simulations must use `pr_prepare` + `TEST-EDITS`.
 
 ### Deterministic readiness
 
@@ -888,7 +888,7 @@ Added live handler/authority tests in `tests/test_coverage_tools_batch.py`:
 - real researcher/planner registries, planner write allowlist, token estimate;
 - SessionDatabase event, blackboard, query, metadata, and write-failure paths.
 
-The adversarial containment test initially exposed a product defect: `fs.edit_file`
+The adversarial containment test initially exposed a product defect: `fs_edit_file`
 allowed `PermissionError` from `resolve_workspace_path` to escape instead of
 returning its structured `invalid_params` failure. The production handler now
 maps both `ValueError` and `PermissionError` to that contract; the read handler

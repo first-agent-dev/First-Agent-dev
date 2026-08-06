@@ -98,7 +98,7 @@ deploy, multi-tenancy, billing, web UI.
   Level-0 kernel + allowlisted Level-1 rules. LLM as Untrusted Compiler threat
   model. Test-decay lock prevents `pytest.skip` / `assert True` gaming.
 
-- **Bash Intent Analysis** — `fs.run_bash` is parsed through `bashlex` AST.
+- **Bash Intent Analysis** — `fs_run_bash` is parsed through `bashlex` AST.
   IntentGuard classifies: `READ_ONLY`, `INDEX_WRITE`, `REPO_WRITE`, `DANGEROUS`.
   REPO_WRITE blocked without authorized PR draft.
 

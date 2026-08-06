@@ -38,9 +38,7 @@ from fa.inner_loop import (
     run_session,
 )
 from fa.inner_loop.coder_loop import (
-    DEFAULT_CODER_TEMPERATURE,
     DEFAULT_MAX_TURNS,
-    DEFAULT_TEMPERATURE,
     SessionOutcome,
     drive_session,
 )
@@ -260,7 +258,7 @@ def _resolve_secrets_path() -> Path:
     """Locate the API-key file (secret-isolation invariant, ADR-12).
 
     Strict, file-only — keys are NEVER read from ``os.environ`` (so child
-    processes such as ``fs.run_bash`` inherit nothing to exfiltrate). Resolution
+    processes such as ``fs_run_bash`` inherit nothing to exfiltrate). Resolution
     order:
 
     1. ``$FA_SECRETS_FILE`` (set by docker-compose to ``/run/secrets/fa.env``),
@@ -1058,14 +1056,14 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
         feature_flags=FeatureFlags(blackboard_enabled=False),
     )
     calls = (
-        ToolCall(name="fs.read_file", params={"path": args.input}, call_id="tc-read"),
+        ToolCall(name="fs_read_file", params={"path": args.input}, call_id="tc-read"),
         ToolCall(
-            name="fs.write_file",
+            name="fs_write_file",
             params={"path": args.output, "content": "inner-loop smoke\n"},
             call_id="tc-write",
         ),
         ToolCall(
-            name="fs.run_bash",
+            name="fs_run_bash",
             params={"command": f"test -f {shlex.quote(args.output)}"},
             call_id="tc-bash",
         ),
@@ -1344,14 +1342,27 @@ def _run_stage(
         # same-family adversarial DONE is auditable against a disjoint neutral
         # DONE. Loaded from the same config the stage used; a partial config
         # yields None and the field is omitted.
-        _eval_models = load_models_config_from_path(ctx.args.config.expanduser().resolve(), require_api_keys=False)
+        #
+        # Fail-soft: this is an ADVISORY provenance record. A malformed config
+        # (ConfigurationError) or an unreadable path must NOT crash the workflow
+        # after a successful eval verdict — degrade to None (field omitted) and
+        # let the verdict persist.
+        try:
+            _eval_models = load_models_config_from_path(ctx.args.config.expanduser().resolve(), require_api_keys=False)
+            _eval_independence = _eval_independence_mapping(_eval_models)
+        except (ConfigurationError, OSError):
+            logger.warning(
+                "workflow eval-report: could not load config for eval_independence record; omitting field (run=%s)",
+                ctx.run_id,
+            )
+            _eval_independence = None
         report = _emit_eval_report(
             report_path=ctx.artifact_paths.eval_report,
             final_text=sink[-1].final_text,
             run_id=ctx.run_id,
             plan_id=ctx.run_id,
             plan_version=progress.plan_version,
-            eval_independence=_eval_independence_mapping(_eval_models),
+            eval_independence=_eval_independence,
         )
         print(
             f"fa workflow: eval verdict={report.verdict} "
@@ -2261,7 +2272,7 @@ def _build_run_hook_registry(
     hooks.register(AuthExpiredBlocker(suppression_seconds=limits.auth_expired_suppression_seconds))
     # M-7 IntentGuard: reads the per-session PR draft at
     # ~/.fa/session-log/<run_id>/pr_draft.md (populated by the M-7 §Q-N
-    # ``pr.prepare`` tool). Registered after SandboxHook so only
+    # ``pr_prepare`` tool). Registered after SandboxHook so only
     # workspace-contained paths reach the intent classifier.
     hooks.register(IntentGuard(repo_root=workspace, draft_store=draft_store))
     hooks.register(AuditHook(event_log=log))
@@ -2526,14 +2537,15 @@ def _cmd_run(
     # Role-aware registry: planner/eval get read-only tools, coder gets
     # the full baseline (read + write + bash).
     role = args.role
-    # Per-role first-attempt sampling temperature. The coder gets a small amount
-    # of sampling (0.2) for non-degenerate edits; planner/eval stay at 0.0 for
-    # stable, reproducible planning/judgement. (ADR-7's T=1.0-on-retry is a
-    # separate retry-policy concern handled by the FailureClassifierObserver.)
-    session_temperature = DEFAULT_CODER_TEMPERATURE if role == "coder" else DEFAULT_TEMPERATURE
+    # No per-role sampling temperature is forced: modern reasoning/thinking models
+    # lock temperature/top_p, so FA omits them from the wire by default. A role
+    # that wants explicit sampling opts in via `sampling:` in models.yaml; the
+    # chain resolves those per-role defaults and the adapter omits the fields when
+    # they are None. (ADR-7's T=1.0-on-retry is a retry-policy concern owned by the
+    # FailureClassifierObserver, not a first-attempt default.)
     registry = _build_role_registry(role, workspace, bash_timeout_seconds=limits.bash_timeout_seconds)
 
-    # M-7 §Q-N: ``pr.prepare`` is the producer side of the
+    # M-7 §Q-N: ``pr_prepare`` is the producer side of the
     # IntentGuard read seam. The shared ``PrDraftStore`` binds the
     # stable on-disk path to current-session provenance so stale or
     # externally-fabricated drafts are not trusted by the guard.
@@ -2542,7 +2554,7 @@ def _cmd_run(
 
     # --resume preserves the on-disk draft for the next role to read;
     # only the in-memory SHA-256 digest is reset, which forces the
-    # current session to re-establish trust via a fresh ``pr.prepare``
+    # current session to re-establish trust via a fresh ``pr_prepare``
     # call before any mutating tool is allowed (IntentGuard contract).
     # ``getattr`` fallback keeps pre-``--resume`` tests working.
     resume = getattr(args, "resume", False)
@@ -2551,7 +2563,7 @@ def _cmd_run(
     # mutable memory-summary context so the LLM sees the existing
     # plan/work-log from turn 1 without promoting it into pinned
     # standing governance. The draft lives under ~/.fa/session-log/
-    # (not /workspace) so fs.read_file cannot reach it directly.
+    # (not /workspace) so fs_read_file cannot reach it directly.
     resume_draft_text, draft_error = _prepare_pr_draft(draft_store, draft_path, resume=resume)
     if draft_error is not None:
         print(draft_error, file=sys.stderr)
@@ -2623,7 +2635,7 @@ def _cmd_run(
             max_turns=args.max_turns,
             system_prompt_extra=_eval_system_prompt_extra(role, models),
             initial_memory_summary=resume_draft_text,
-            temperature=session_temperature,
+            temperature=None,
             redactor=redactor,
             output=output_bus,
         )
@@ -3119,7 +3131,6 @@ def _cmd_probe(
         request = RequestInfo(
             model_slug=chain_config.name,
             messages=({"role": "user", "content": "hi"},),
-            temperature=0.0,
             max_tokens=1,
             tools=(),
         )

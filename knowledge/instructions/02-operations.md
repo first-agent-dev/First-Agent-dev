@@ -177,7 +177,7 @@ LLM API-ключи хранятся **только** в `/srv/first-agent/secret
 получает. Архитектура (ADR-12, Option C — egress-injection proxy):
 
 ```text
-first-agent (агент + fs.run_bash)            fa-egress-proxy (ОТДЕЛЬНЫЙ контейнер)
+first-agent (агент + fs_run_bash)            fa-egress-proxy (ОТДЕЛЬНЫЙ контейнер)
   ProviderChain.base_url = ──── HTTP ───────►  читает /run/secrets/fa.env (ro)
     http://fa-egress-proxy:8080/route/<имя>    подставляет реальный ключ в заголовок
   шлёт X-FA-Proxy-Token (НЕ ключ)   ◄────────  форвардит провайдеру, отдаёт ответ
@@ -187,14 +187,14 @@ first-agent (агент + fs.run_bash)            fa-egress-proxy (ОТДЕЛЬ�
 Почему это надёжно (барьеры, каждый закреплён тестом):
 
 1. **LLM-ключи отсутствуют у агента (основной барьер).** Ключ есть только в
-   памяти процесса `fa-egress-proxy` — в **другом контейнере**. `fs.run_bash`
+   памяти процесса `fa-egress-proxy` — в **другом контейнере**. `fs_run_bash`
    агента не может прочитать ни файловую систему, ни память другого контейнера
    (разные mount/PID-неймспейсы). Даже полностью скомпрометированный агент может
    *воспользоваться* ключом (сделать запрос через прокси), но не может его
    *прочитать*. Граница — это изоляция контейнеров, а не трюк с uid, поэтому
    агенту не нужен root.
 2. **Запрет на чтение секретных путей в bash (защита deploy-ключа + DiD).**
-   `fs.read_file` ограничен path-containment. Для `fs.run_bash` read-команды
+   `fs_read_file` ограничен path-containment. Для `fs_run_bash` read-команды
    (`cat`/`grep`/`dd`/`xxd`/…) раньше обходили containment — теперь bash-gate
    fail-closed отклоняет любую команду, читающую `/run/secrets`,
    `/srv/first-agent/secrets` или `~/.fa/.env` (`src/fa/sandbox/secret_paths.py`).
@@ -203,7 +203,7 @@ first-agent (агент + fs.run_bash)            fa-egress-proxy (ОТДЕЛЬ�
    (`coder_loop._redact`) — известное секретное значение маскируется в сыром,
    base64, hex, url- и реверс-виде. Если модель его не видит, она не сможет его
    повторить.
-4. **Очищенное окружение bash.** `fs.run_bash` запускается с allowlist-окружением
+4. **Очищенное окружение bash.** `fs_run_bash` запускается с allowlist-окружением
    (без любых `*_API_KEY`/`*_TOKEN`/…), так что дочерние процессы ничего не
    наследуют.
 

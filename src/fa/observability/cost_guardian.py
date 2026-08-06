@@ -36,7 +36,7 @@ A single :class:`GuardMiddleware` that mirrors the
 :func:`default_cost_extractor` looks for a ``cost=...`` artifact
 in :attr:`ToolResult.artifacts` (the artifact shape the T-2 LLM
 driver will produce when wrapping provider calls). Baseline
-``fs.read_file`` / ``fs.write_file`` / ``fs.run_bash`` results
+``fs_read_file`` / ``fs_write_file`` / ``fs_run_bash`` results
 do not emit such an artifact, so ``_observe`` exits cleanly and
 no rollup row lands. Wiring the guardian into the inner-loop
 smoke entrypoint now keeps the chain stable for T-2 without

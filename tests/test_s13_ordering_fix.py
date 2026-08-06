@@ -169,7 +169,7 @@ def test_ct4_cacheable_prefix_byte_identical() -> None:
     parts_a, key_a = build_prompt_parts_v2(
         base_system=_BASE,
         agents_md_map=_MAP,
-        tool_defs=[{"name": "fs.read"}],
+        tool_defs=[{"name": "fs_read"}],
         role_id="coder",
         task="alpha",
         observations=[_obs("assistant", "history text")],
@@ -177,7 +177,7 @@ def test_ct4_cacheable_prefix_byte_identical() -> None:
     parts_b, key_b = build_prompt_parts_v2(
         base_system=_BASE,
         agents_md_map=_MAP,
-        tool_defs=[{"name": "fs.read"}],
+        tool_defs=[{"name": "fs_read"}],
         role_id="coder",
         task="beta",  # different task text
         observations=[],  # different history

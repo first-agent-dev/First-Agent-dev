@@ -113,19 +113,19 @@ HookRegistry Middleware Dispatch Chain
 
 ## Trace 3: SandboxHook Workspace Containment Validation
 
-**Built-in guard in `src/fa/inner_loop/hooks/builtin.py`** — enforces workspace boundaries for `fs.run_bash`, `fs.read_file`, `fs.write_file` with revalidation after param mutations.
+**Built-in guard in `src/fa/inner_loop/hooks/builtin.py`** — enforces workspace boundaries for `fs_run_bash`, `fs_read_file`, `fs_write_file` with revalidation after param mutations.
 
 ```text
 SandboxHook Workspace Containment Validation <-- builtin.py:86
 ├── handle() entry point <-- 3a
 │   ├── Route by tool name
-│   │   ├── fs.run_bash path <-- 3b
+│   │   ├── fs_run_bash path <-- 3b
 │   │   │   └── _handle_bash() <-- builtin.py:117
 │   │   │       └── evaluate_bash() <-- 3c
 │   │   │           ├── bash_gate classifier
 │   │   │           ├── validators
 │   │   │           └── path containment
-│   │   └── fs.read_file/write_file path <-- builtin.py:113
+│   │   └── fs_read_file/write_file path <-- builtin.py:113
 │   │       └── _handle_path() <-- builtin.py:130
 │   │           └── is_contained() <-- 3d
 │   │               └── workspace boundary check
@@ -141,7 +141,7 @@ SandboxHook Workspace Containment Validation <-- builtin.py:86
 | `3a` | SandboxHook handle entry | Routes to bash gate or path containment check based on tool name | `builtin.py:106` |
 | `3b` | Bash command routing | Three-layer bash gate evaluates command safety | `builtin.py:111` |
 | `3c` | Bash gate evaluation | Classifier + validators + path containment for shell commands | `builtin.py:120` |
-| `3d` | Path containment check | Validates `fs.read_file`/`fs.write_file` paths stay within workspace | `builtin.py:133` |
+| `3d` | Path containment check | Validates `fs_read_file`/`fs_write_file` paths stay within workspace | `builtin.py:133` |
 | `3e` | Revalidation flag set | Ensures sandbox re-runs after any `Decision.modify` mutation | `builtin.py:103` |
 
 ---

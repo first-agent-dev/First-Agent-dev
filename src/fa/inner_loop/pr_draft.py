@@ -1,5 +1,5 @@
 # pylint: disable=duplicate-code  # Atomic-write cleanup mirrors workflow_artifacts intentionally.
-"""Per-session PR-draft store shared by ``pr.prepare`` and ``IntentGuard``.
+"""Per-session PR-draft store shared by ``pr_prepare`` and ``IntentGuard``.
 
 The initial M-7 implementation treated ``~/.fa/session-log/<run_id>/pr_draft.md``
 as the entire trust boundary: if the file existed, :class:`IntentGuard`
@@ -7,8 +7,8 @@ trusted it. That left three gaps:
 
 1. the first mutating tool call still passed when no draft had been
    prepared yet (``allow-on-no-draft``);
-2. ``fs.run_bash`` could fabricate the file directly, bypassing the
-   ``pr.prepare`` tool's schema + renderer validation; and
+2. ``fs_run_bash`` could fabricate the file directly, bypassing the
+   ``pr_prepare`` tool's schema + renderer validation; and
 3. a stale file from a previous session using the same ``run_id`` could
    poison a later run.
 
@@ -16,14 +16,14 @@ This store closes those gaps by tracking *current-session provenance* in
 memory while still persisting the human-readable draft on disk:
 
 - :meth:`write_text` performs an atomic write and records the digest of
-  the exact bytes that ``pr.prepare`` produced in this process;
+  the exact bytes that ``pr_prepare`` produced in this process;
 - :meth:`read_current_text` returns text only when the on-disk file both
   exists and still matches the current-session digest; and
 - :meth:`clear` resets the in-memory trust marker and optionally removes
   any stale on-disk draft before a new session starts.
 
 Result: the draft remains inspectable at the stable path, but only
-``pr.prepare`` writes from *this* session are trusted by the guard.
+``pr_prepare`` writes from *this* session are trusted by the guard.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ class PrDraftStore:
 
     ``path`` is the stable filesystem location used for human inspection.
     ``_current_digest`` is the in-memory proof that the current process
-    wrote the draft via ``pr.prepare`` and that the file has not been
+    wrote the draft via ``pr_prepare`` and that the file has not been
     modified since.
     """
 
@@ -77,7 +77,7 @@ class PrDraftStore:
 
         ``None`` covers all untrusted states: never prepared in this
         session, stale file from a previous run, external tampering after
-        ``pr.prepare``, or an unreadable/missing file.
+        ``pr_prepare``, or an unreadable/missing file.
         """
 
         if self._current_digest is None:

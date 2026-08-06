@@ -60,7 +60,7 @@ Implications:
 
 ### D10 — Subagent scope contract
 
-`fs.spawn_subagent` is locked as:
+`fs_spawn_subagent` is locked as:
 - **narrow-scope**
 - **role-bounded**
 - **stateless**
@@ -68,7 +68,7 @@ Implications:
 - **not a bypass around main-agent shell/tool safety**
 
 Implications:
-- subagent command execution must not create a weaker policy domain than `fs.run_bash`;
+- subagent command execution must not create a weaker policy domain than `fs_run_bash`;
 - shared-workspace mode is acceptable only if safety and write coordination remain explicit;
 - generic arbitrary-shell nested execution is **out of contract**.
 
@@ -118,18 +118,18 @@ This is the operative closure ledger for Round 2.
 | ID | Sev | Area | Summary |
 |---|---|---|---|
 | FIND-001 | P0 | DB | EventLog/Blackboard dual-write split-brain under partial SQLite failure |
-| FIND-002 | P0 | Subagent/Security | `fs.spawn_subagent` bypasses shell safety domain in shared workspace |
+| FIND-002 | P0 | Subagent/Security | `fs_spawn_subagent` bypasses shell safety domain in shared workspace |
 | FIND-003 | P1 | Cache | Prompt caching metadata dies before provider boundary |
 | FIND-004 | P1 | Stage3 | Compactor role loaded but configured model not actually used in request |
-| FIND-005 | P1 | Observability | `fs.usage` / `fs.chronicle_search` wired to wrong log path and wrong schema |
-| FIND-006 | P1 | Bash | `fs.run_bash` large-output path uses nonexistent artifact API and fails with `internal_error` |
+| FIND-005 | P1 | Observability | `fs_usage` / `fs_chronicle_search` wired to wrong log path and wrong schema |
+| FIND-006 | P1 | Bash | `fs_run_bash` large-output path uses nonexistent artifact API and fails with `internal_error` |
 | FIND-007 | P1 | PTY | Stateful shell is not wired into live CLI harness |
 | FIND-008 | P1 | Budget/Compaction | Stage machine collapses 80% mask / compact / hard-stop semantics |
 | FIND-009 | P1 | Hybrid | `global_history.db` export absent |
 | FIND-010 | P1 | Subagent | role/env/configured spawn limit contract is ignored or partially ignored |
 | FIND-011 | P1 | DB topology | “Unified SQLite substrate” claim false; multiple hot-path authorities remain |
 | FIND-012 | P1 | Scheduler | parallel batching drops denied results from returned tuple/order |
-| FIND-013 | P1 | Search/Scheduler | `fs.instant_grep` is classified read-only but performs writes |
+| FIND-013 | P1 | Search/Scheduler | `fs_instant_grep` is classified read-only but performs writes |
 | FIND-014 | P1 | Governance | PinnedBuffer guarantee incomplete; stale pins persist; mutable resume text is pinned |
 | FIND-015 | P2 | Logging | logging migration incomplete; runtime warning paths still use raw `print` |
 | FIND-016 | P2 | PTY | `\r` resolution absent on capture paths |
@@ -177,7 +177,7 @@ Where:
 
 ### 4.4 Subagent plane
 
-`fs.spawn_subagent` should become:
+`fs_spawn_subagent` should become:
 - bounded by role,
 - safety-equivalent to parent command policy,
 - explicit in outputs,
@@ -290,7 +290,7 @@ must no longer reproduce.
 ## Slice 2 — Runtime observability surfaces must read the active authority
 
 ### Purpose
-Make `fs.usage`, `fs.chronicle_search`, and similar runtime observability tools actually reflect the active run.
+Make `fs_usage`, `fs_chronicle_search`, and similar runtime observability tools actually reflect the active run.
 
 ### Closes
 - FIND-005
@@ -304,13 +304,13 @@ Make `fs.usage`, `fs.chronicle_search`, and similar runtime observability tools 
 ### Concrete tasks
 1. Rework event-log path resolution for observability tools.
 2. Prefer session DI or run-id-based DB access over `workspace/.fa/events.jsonl` guesses.
-3. Update `fs.usage` to parse the usage schema the loop really writes.
+3. Update `fs_usage` to parse the usage schema the loop really writes.
 4. Decide whether `fa stats` remains post-hoc JSONL parser or also grows a DB-aware path.
 5. Align descriptions/docs with real data source.
 
 ### Required tests
-1. live one-turn session → `fs.usage` returns non-TBD usage
-2. active run with known event rows → `fs.chronicle_search` returns them from authority path
+1. live one-turn session → `fs_usage` returns non-TBD usage
+2. active run with known event rows → `fs_chronicle_search` returns them from authority path
 3. path resolution test proves active session log is used, not stale workspace path
 
 ### Anti-theater requirements
@@ -412,7 +412,7 @@ Governance and mutable session memory are cleanly separated and reproducible.
 ## Slice 5 — Subagent hardening to intended narrow contract
 
 ### Purpose
-Convert `fs.spawn_subagent` from a loosely bounded nested shell surface into the intended limited-function tool.
+Convert `fs_spawn_subagent` from a loosely bounded nested shell surface into the intended limited-function tool.
 
 ### Closes
 - FIND-002
@@ -448,7 +448,7 @@ Convert `fs.spawn_subagent` from a loosely bounded nested shell surface into the
 - tests must prove role, limit, and safety semantics
 
 ### Done definition
-`fs.spawn_subagent` is no longer a bypass path and matches its limited-function contract.
+`fs_spawn_subagent` is no longer a bypass path and matches its limited-function contract.
 
 ---
 
@@ -513,8 +513,8 @@ Make tool batching and search classification true to their safety assumptions.
 
 ### Concrete tasks
 1. Fix `_execute_batch_parallel()` return ordering/arity so denied results are preserved.
-2. Remove or isolate hidden writes from `fs.instant_grep` query path.
-3. Reclassify `fs.instant_grep` if necessary until truly read-only.
+2. Remove or isolate hidden writes from `fs_instant_grep` query path.
+3. Reclassify `fs_instant_grep` if necessary until truly read-only.
 4. Add git fast-path grep integration tests inside a temp git repo.
 5. Evaluate colon/content parsing robustness explicitly.
 
@@ -678,7 +678,7 @@ Minimum ship bar:
 4. configured compactor model reaches provider boundary
 5. prompt caching claim is either true end-to-end or removed
 6. pins are governance only; resume draft is mutable session memory
-7. `fs.spawn_subagent` is no longer a bypass around shell safety
+7. `fs_spawn_subagent` is no longer a bypass around shell safety
 8. bash large-output and CR handling are correct
 9. observability tools read live authority
 10. critical anti-theater tests exist and fail on unwiring

@@ -496,7 +496,7 @@ failure mode:
 
 | What existing seats already catch | What they do **not** catch |
 |---|---|
-| Intent before mutation (`pr.prepare` / IntentGuard) | Feature never called from `drive_session` |
+| Intent before mutation (`pr_prepare` / IntentGuard) | Feature never called from `drive_session` |
 | Test delete/rename gaming (`validate_test_edits`) | New **unit** tests that never boot the session path |
 | Style / types / coverage floor (`just check`) | Coverage of isolated helpers ≠ live-path execution |
 | ADR-11-I5 skip/`assert True` decay | A thorough unit suite that never imports the loop |

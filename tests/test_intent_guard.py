@@ -115,20 +115,20 @@ def test_intent_guard_uses_skill_classifier_directly() -> None:
 
 
 def test_intent_guard_allows_non_mutating_call(tmp_path: Path) -> None:
-    """``fs.read_file`` does not touch the staged tree → middleware is silent."""
+    """``fs_read_file`` does not touch the staged tree → middleware is silent."""
 
     guard, _ = _make_guard(
         tmp_path,
         draft_text=_VALID_IMPLEMENT_DRAFT,
         git_output="M\tsrc/fa/x.py\n",
     )
-    call = ToolCall(name="fs.read_file", params={"path": "src/fa/x.py"})
+    call = ToolCall(name="fs_read_file", params={"path": "src/fa/x.py"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "allow"
 
 
 def test_intent_guard_allows_when_draft_passes_validation(tmp_path: Path) -> None:
-    """``fs.write_file`` to ``src/fa/`` → IMPLEMENT-bucket; matching draft passes."""
+    """``fs_write_file`` to ``src/fa/`` → IMPLEMENT-bucket; matching draft passes."""
 
     guard, _ = _make_guard(
         tmp_path,
@@ -136,7 +136,7 @@ def test_intent_guard_allows_when_draft_passes_validation(tmp_path: Path) -> Non
         git_output="A\tsrc/fa/x.py\n",
     )
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/y.py", "content": "y"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -151,7 +151,7 @@ def test_intent_guard_allows_on_unrelated_bash(tmp_path: Path) -> None:
         draft_text=_BAD_FIX_DRAFT,
         git_output="M\tsrc/fa/x.py\n",
     )
-    call = ToolCall(name="fs.run_bash", params={"command": "ls -la"})
+    call = ToolCall(name="fs_run_bash", params={"command": "ls -la"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "allow"
 
@@ -164,7 +164,7 @@ def test_intent_guard_allows_verify_only_bash_without_draft(tmp_path: Path) -> N
         draft_text=None,
         git_output="",
     )
-    call = ToolCall(name="fs.run_bash", params={"command": "python -m pytest --version"})
+    call = ToolCall(name="fs_run_bash", params={"command": "python -m pytest --version"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "allow"
 
@@ -177,7 +177,7 @@ def test_intent_guard_allows_non_repo_redirection_without_draft(tmp_path: Path) 
         draft_text=None,
         git_output="",
     )
-    call = ToolCall(name="fs.run_bash", params={"command": "echo hello > /dev/null"})
+    call = ToolCall(name="fs_run_bash", params={"command": "echo hello > /dev/null"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "allow"
 
@@ -191,7 +191,7 @@ def test_intent_guard_other_lifecycle_points_allow(tmp_path: Path) -> None:
         git_output="M\tsrc/fa/x.py\n",
     )
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/x.py", "content": "x"},
     )
     after = guard.handle(LifecyclePoint.AFTER_TOOL_EXEC, HookPayload(tool_call=call))
@@ -216,7 +216,7 @@ def test_intent_guard_silently_allows_when_git_fails(tmp_path: Path) -> None:
         git_runner=failing_git,
     )
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/x.py", "content": "x"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -237,7 +237,7 @@ def test_intent_guard_denies_when_no_pr_draft_has_been_prepared(tmp_path: Path) 
         git_output="A\tsrc/fa/x.py\n",
     )
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/x.py", "content": "x"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -254,7 +254,7 @@ def test_intent_guard_denies_repo_write_bash_without_draft(tmp_path: Path) -> No
         draft_text=None,
         git_output="",
     )
-    call = ToolCall(name="fs.run_bash", params={"command": "printf 'x\n' > src/fa/x.py"})
+    call = ToolCall(name="fs_run_bash", params={"command": "printf 'x\n' > src/fa/x.py"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "deny"
     assert _MISSING_DRAFT_SNIPPET in decision.reason
@@ -270,7 +270,7 @@ def test_intent_guard_denies_opaque_exec_bash_without_draft(tmp_path: Path) -> N
         git_output="",
     )
     call = ToolCall(
-        name="fs.run_bash",
+        name="fs_run_bash",
         params={"command": ('python -c "import pathlib; pathlib.Path("src/fa/x.py").write_text("x")"')},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -287,21 +287,21 @@ def test_intent_guard_denies_mutating_ruff_check_without_draft(tmp_path: Path) -
         draft_text=None,
         git_output="",
     )
-    call = ToolCall(name="fs.run_bash", params={"command": "ruff check --fix ."})
+    call = ToolCall(name="fs_run_bash", params={"command": "ruff check --fix ."})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "deny"
     assert _MISSING_DRAFT_SNIPPET in decision.reason
 
 
 def test_intent_guard_allows_repo_write_bash_after_trusted_draft(tmp_path: Path) -> None:
-    """After `pr.prepare`, high-confidence repo writes pass the presence gate."""
+    """After `pr_prepare`, high-confidence repo writes pass the presence gate."""
 
     guard, _ = _make_guard(
         tmp_path,
         draft_text="INTENT: IMPLEMENT\nINVARIANT: Implements: src/fa/new.py\n",
         git_output="",
     )
-    call = ToolCall(name="fs.run_bash", params={"command": "printf 'x\n' > src/fa/new.py"})
+    call = ToolCall(name="fs_run_bash", params={"command": "printf 'x\n' > src/fa/new.py"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "allow"
 
@@ -319,7 +319,7 @@ def test_intent_guard_denies_when_on_disk_draft_was_not_prepared_this_session(
     )
     assert store.path.is_file()
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/x.py", "content": "x"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -328,7 +328,7 @@ def test_intent_guard_denies_when_on_disk_draft_was_not_prepared_this_session(
 
 
 def test_intent_guard_denies_when_trusted_draft_is_tampered_after_prepare(tmp_path: Path) -> None:
-    """Current-session trust is revoked if the file changes after ``pr.prepare``."""
+    """Current-session trust is revoked if the file changes after ``pr_prepare``."""
 
     guard, store = _make_guard(
         tmp_path,
@@ -337,7 +337,7 @@ def test_intent_guard_denies_when_trusted_draft_is_tampered_after_prepare(tmp_pa
     )
     store.path.write_text("INTENT: CHORE\nINVARIANT: n/a\n\nmodified\n", encoding="utf-8")
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/x.py", "content": "x"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -360,7 +360,7 @@ def test_intent_guard_denies_on_invariant_shape_mismatch(tmp_path: Path) -> None
         git_output="M\tsrc/fa/x.py\n",
     )
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/x.py", "content": "x"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -378,7 +378,7 @@ def test_intent_guard_denies_when_fix_lacks_mechanism(tmp_path: Path) -> None:
         git_output="M\tsrc/fa/x.py\n",
     )
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/x.py", "content": "x"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -388,7 +388,7 @@ def test_intent_guard_denies_when_fix_lacks_mechanism(tmp_path: Path) -> None:
 
 
 def test_intent_guard_denies_on_git_add_via_run_bash(tmp_path: Path) -> None:
-    """``git add`` via ``fs.run_bash`` is a staged-tree mutation → middleware fires."""
+    """``git add`` via ``fs_run_bash`` is a staged-tree mutation → middleware fires."""
 
     bad_draft = "INTENT: IMPLEMENT\nINVARIANT: Affects: src/fa/x.py\n"
     guard, _ = _make_guard(
@@ -396,14 +396,14 @@ def test_intent_guard_denies_on_git_add_via_run_bash(tmp_path: Path) -> None:
         draft_text=bad_draft,
         git_output="M\tsrc/fa/x.py\n",
     )
-    call = ToolCall(name="fs.run_bash", params={"command": "git add ."})
+    call = ToolCall(name="fs_run_bash", params={"command": "git add ."})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "deny"
     assert "INVARIANT" in decision.reason
 
 
 def test_intent_guard_denies_on_git_commit_via_run_bash(tmp_path: Path) -> None:
-    """``git commit`` via ``fs.run_bash`` is also a staged-tree mutation."""
+    """``git commit`` via ``fs_run_bash`` is also a staged-tree mutation."""
 
     bad_draft = "INTENT: IMPLEMENT\nINVARIANT: Affects: src/fa/x.py\n"
     guard, _ = _make_guard(
@@ -411,7 +411,7 @@ def test_intent_guard_denies_on_git_commit_via_run_bash(tmp_path: Path) -> None:
         draft_text=bad_draft,
         git_output="M\tsrc/fa/x.py\n",
     )
-    call = ToolCall(name="fs.run_bash", params={"command": "git commit -m 'wip'"})
+    call = ToolCall(name="fs_run_bash", params={"command": "git commit -m 'wip'"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "deny"
 
@@ -425,7 +425,7 @@ def test_intent_guard_deny_reason_echoes_validator_wording(tmp_path: Path) -> No
         git_output="M\tsrc/fa/x.py\n",
     )
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/x.py", "content": "x"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -461,7 +461,7 @@ def test_intent_guard_respects_user_intent_override(tmp_path: Path) -> None:
         git_output="M\tsrc/fa/x.py\n",
     )
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/x.py", "content": "x"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -480,7 +480,7 @@ def test_intent_guard_invalid_typed_intent_falls_back_to_classifier(tmp_path: Pa
         git_output="M\tsrc/fa/x.py\n",
     )
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/x.py", "content": "x"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -497,7 +497,7 @@ def test_intent_guard_path_projection_for_fs_write_file(tmp_path: Path) -> None:
         git_output="",
     )
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/new.py", "content": "x"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -505,7 +505,7 @@ def test_intent_guard_path_projection_for_fs_write_file(tmp_path: Path) -> None:
 
 
 def test_intent_guard_path_projection_research_only_diff(tmp_path: Path) -> None:
-    """``fs.write_file`` to ``knowledge/research/`` → RESEARCH intent."""
+    """``fs_write_file`` to ``knowledge/research/`` → RESEARCH intent."""
 
     research_draft = "INTENT: RESEARCH\nINVARIANT: n/a\n"
     guard, _ = _make_guard(
@@ -514,7 +514,7 @@ def test_intent_guard_path_projection_research_only_diff(tmp_path: Path) -> None
         git_output="",
     )
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "knowledge/research/note.md", "content": "x"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -545,7 +545,7 @@ def test_intent_guard_decision_factory_used(tmp_path: Path) -> None:
         git_output="M\tsrc/fa/x.py\n",
     )
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/x.py", "content": "x"},
     )
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
@@ -572,13 +572,13 @@ def test_intent_guard_exported_from_hooks_package() -> None:
 
 
 def test_intent_guard_mutating_call_includes_edit_file(tmp_path: Path) -> None:
-    """``fs.edit_file`` is an edit shape per ADR-7 §4 and must trigger the guard."""
+    """``fs_edit_file`` is an edit shape per ADR-7 §4 and must trigger the guard."""
     guard, _ = _make_guard(
         tmp_path,
         draft_text=_BAD_FIX_DRAFT,
         git_output="M\tsrc/fa/x.py\n",
     )
-    call = ToolCall(name="fs.edit_file", params={"path": "src/fa/x.py", "old_string": "a", "new_string": "b"})
+    call = ToolCall(name="fs_edit_file", params={"path": "src/fa/x.py", "old_string": "a", "new_string": "b"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     # Draft is FIX-shaped but lacks DOF/MECHANISM → deny regardless of
     # whether the classifier or the user typed the intent.
@@ -586,13 +586,13 @@ def test_intent_guard_mutating_call_includes_edit_file(tmp_path: Path) -> None:
 
 
 def test_intent_guard_mutating_call_includes_apply_patch(tmp_path: Path) -> None:
-    """``fs.apply_patch`` is the second edit shape per ADR-7 §4 and must trigger the guard."""
+    """``fs_apply_patch`` is the second edit shape per ADR-7 §4 and must trigger the guard."""
     guard, _ = _make_guard(
         tmp_path,
         draft_text=_BAD_FIX_DRAFT,
         git_output="M\tsrc/fa/x.py\n",
     )
-    call = ToolCall(name="fs.apply_patch", params={"path": "src/fa/x.py", "unified_diff": "diff"})
+    call = ToolCall(name="fs_apply_patch", params={"path": "src/fa/x.py", "unified_diff": "diff"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "deny"
 
@@ -606,9 +606,9 @@ def test_intent_guard_git_add_prefix_exact_match(tmp_path: Path) -> None:
         draft_text=_BAD_FIX_DRAFT,
         git_output="M\tsrc/fa/x.py\n",
     )
-    exact_call = ToolCall(name="fs.run_bash", params={"command": "git add"})
+    exact_call = ToolCall(name="fs_run_bash", params={"command": "git add"})
     assert guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=exact_call)).action == "deny"
-    space_call = ToolCall(name="fs.run_bash", params={"command": "git add src/fa/x.py"})
+    space_call = ToolCall(name="fs_run_bash", params={"command": "git add src/fa/x.py"})
     assert guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=space_call)).action == "deny"
 
     valid_tmp = tmp_path / "valid"
@@ -618,7 +618,7 @@ def test_intent_guard_git_add_prefix_exact_match(tmp_path: Path) -> None:
         draft_text=_VALID_IMPLEMENT_DRAFT,
         git_output="M\tsrc/fa/x.py\n",
     )
-    fallback_call = ToolCall(name="fs.run_bash", params={"command": "git add--interactive"})
+    fallback_call = ToolCall(name="fs_run_bash", params={"command": "git add--interactive"})
     assert valid_guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)).action == "allow"
 
 
@@ -631,9 +631,9 @@ def test_intent_guard_git_commit_prefix_exact_match(tmp_path: Path) -> None:
         draft_text=_BAD_FIX_DRAFT,
         git_output="M\tsrc/fa/x.py\n",
     )
-    exact_call = ToolCall(name="fs.run_bash", params={"command": "git commit"})
+    exact_call = ToolCall(name="fs_run_bash", params={"command": "git commit"})
     assert guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=exact_call)).action == "deny"
-    space_call = ToolCall(name="fs.run_bash", params={"command": "git commit -m 'wip'"})
+    space_call = ToolCall(name="fs_run_bash", params={"command": "git commit -m 'wip'"})
     assert guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=space_call)).action == "deny"
 
     valid_tmp = tmp_path / "valid"
@@ -643,12 +643,12 @@ def test_intent_guard_git_commit_prefix_exact_match(tmp_path: Path) -> None:
         draft_text=_VALID_IMPLEMENT_DRAFT,
         git_output="M\tsrc/fa/x.py\n",
     )
-    fallback_call = ToolCall(name="fs.run_bash", params={"command": "git commit-tree"})
+    fallback_call = ToolCall(name="fs_run_bash", params={"command": "git commit-tree"})
     assert valid_guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=fallback_call)).action == "allow"
 
 
 def test_intent_guard_path_projection_for_existing_file_uses_modify_status(tmp_path: Path) -> None:
-    """If ``fs.write_file`` targets a file that already exists on disk,
+    """If ``fs_write_file`` targets a file that already exists on disk,
     the projection should use status ``M`` (modified), not ``A`` (added).
     """
     from fa.inner_loop.hooks.intent_guard import _project_call
@@ -659,7 +659,7 @@ def test_intent_guard_path_projection_for_existing_file_uses_modify_status(tmp_p
     existing.write_text("old\n", encoding="utf-8")
 
     call = ToolCall(
-        name="fs.write_file",
+        name="fs_write_file",
         params={"path": "src/fa/existing.py", "content": "new\n"},
     )
     projected = _project_call(call, [], repo_root)
@@ -681,7 +681,7 @@ def test_intent_guard_path_projection_normalizes_absolute_path(tmp_path: Path) -
         git_runner=lambda: "",
     )
     abs_path = str(repo_root / "src" / "fa" / "new.py")
-    call = ToolCall(name="fs.write_file", params={"path": abs_path, "content": "x"})
+    call = ToolCall(name="fs_write_file", params={"path": abs_path, "content": "x"})
     decision = guard.handle(LifecyclePoint.BEFORE_TOOL_EXEC, HookPayload(tool_call=call))
     assert decision.action == "allow"
 

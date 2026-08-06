@@ -52,7 +52,7 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
     registry = ToolRegistry()
     registry.register(
         ToolSpec(
-            name="fs.read_file",
+            name="fs_read_file",
             description="read",
             input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
             permission="read",
@@ -63,7 +63,7 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
     # Pre-populate session log history to trigger 80% threshold and Stage 2 masking
     # Turn 1 to 4: bulky (eligible for masking)
     for i in range(1, 5):
-        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
+        t_calls = [{"id": f"tc-{i}", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}]
         require_log(mock_session_state).append(
             actor="model", kind="model_msg", content={"text": f"Step {i}", "tool_calls": t_calls}
         )
@@ -71,12 +71,12 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
             actor="tool",
             kind="tool_result",
             content={"summary": "bulk output", "result": {"stdout": "A" * 100000}, "ok": True},
-            tool_name="fs.read_file",
+            tool_name="fs_read_file",
             tool_call_id=f"tc-{i}",
         )
 
     # Turn 5: recent window (protected) - keep small
-    tool_calls_5 = [{"id": "tc-5", "type": "function", "function": {"name": "fs.read_file", "arguments": "{}"}}]
+    tool_calls_5 = [{"id": "tc-5", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}]
     require_log(mock_session_state).append(
         actor="model", kind="model_msg", content={"text": "Step 5", "tool_calls": tool_calls_5}
     )
@@ -84,7 +84,7 @@ def test_stage2_triggers_at_80_percent(tmp_path: Path, mock_session_state: Sessi
         actor="tool",
         kind="tool_result",
         content={"summary": "bulk output", "result": {"stdout": "A" * 1000}, "ok": True},
-        tool_name="fs.read_file",
+        tool_name="fs_read_file",
         tool_call_id="tc-5",
     )
 

@@ -376,7 +376,7 @@ _INVARIANT_REQUIRED_PREFIXES: dict[Intent, tuple[str, ...]] = {
     Intent.FIX: ("Affects:",),
     Intent.CHORE: ("n/a",),
 }
-# Public read-only view so M-7 §Q-N consumers (e.g., the ``pr.prepare``
+# Public read-only view so M-7 §Q-N consumers (e.g., the ``pr_prepare``
 # tool) can validate against the same table without duplicating it.
 # Exporting a live dict alias would let external code mutate global
 # validation behaviour at runtime; the mapping-proxy keeps ADR-10 I-1's
@@ -945,7 +945,7 @@ def _cli_validate(commit_msg_file: Path, repo_root: Path) -> int:
     # Ordinary human/manual commits are allowed through the hook seat when
     # they contain no PR-intent metadata at all. The rich PR-intent contract
     # is enforced when a metadata block is explicitly present and in the
-    # agent runtime via `pr.prepare` + `IntentGuard`.
+    # agent runtime via `pr_prepare` + `IntentGuard`.
     if not has_pr_intent_headers(text):
         return 0
     name_status = _run_git(["diff", "--cached", "--name-status"], cwd=repo_root)

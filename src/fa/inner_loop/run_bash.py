@@ -77,15 +77,15 @@ def build_run_bash_tool(
         return ToolResult.ok(summary, result=result)
 
     return ToolSpec(
-        name="fs.run_bash",
+        name="fs_run_bash",
         description="""Run a bash command in the workspace after sandbox hooks allow it.
 
 STATEFUL for main agent (via PtyPool EventStream Runtime, ADR-14): cwd, env, and venv
 persist across calls (cd, export, and source .venv/bin/activate survive). Stateless for cheap
 subagents (structured websearch, simple function) with isolated context.
 
-Background processes: use fs.run_bash_background for long-running commands (dev servers),
-then fs.read_terminal, fs.list_tasks, fs.kill_task, and fs.send_ctrl_c.
+Background processes: use fs_run_bash_background for long-running commands (dev servers),
+then fs_read_terminal, fs_list_tasks, fs_kill_task, and fs_send_ctrl_c.
 
 Output capped at 8000 chars with artifact_id plus a 500-character preview (ADR-13/14).
 For large outputs, chain with | head -n 100, | tail -n 100, or grep.

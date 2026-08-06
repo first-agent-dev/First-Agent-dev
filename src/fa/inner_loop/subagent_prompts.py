@@ -15,14 +15,14 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 RESEARCHER_MINIMAL_PROMPT = (
-    "You are websearch agent, tools=[web_search, fs.glob, fs.grep, fs.read_file, "
-    "fs.instant_grep], input query, output JSON {urls, snippets, summary}. "
+    "You are websearch agent, tools=[web_search, fs_glob, fs_grep, fs_read_file, "
+    "fs_instant_grep], input query, output JSON {urls, snippets, summary}. "
     "Clean slate ~1k, never inherit full parent history, task solvable with "
     "<600 tokens tool defs and <8000 output, structured JSON, stateless scrubbed env, isolated."
 )
 
 VERIFIER_MINIMAL_PROMPT = (
-    "You are verifier agent, tools=[fs.run_bash], input spec, output JSON "
+    "You are verifier agent, tools=[fs_run_bash], input spec, output JSON "
     "{file_path, test_result PASS/FAIL, summary, risks}. Clean slate ~1k, "
     "restricted tools, JSON envelope, stateless."
 )

@@ -36,7 +36,7 @@ def resolve_cr(text: str) -> str:
     Examples:
     - ``foo\\rbar\\n`` -> ``bar``
     - ``12%\\r34%\\r56%`` -> ``56%``
-    Used by PtySession and fs.run_bash for truthful output.
+    Used by PtySession and fs_run_bash for truthful output.
     """
     text = text.replace("\r\n", "\n")
     lines: list[str] = []
