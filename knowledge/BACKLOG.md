@@ -2788,6 +2788,11 @@ with a comment pointing here.
     genuine dead-instruction tool; all other referenced tools/commands are real or illustrative.
   - `worklogs/implementation-plans/PLAN-fs-blackboard-query.md` — the DRAFT plan for building
     `fs_blackboard_query` (the concrete next slice).
+  - `knowledge/research/blackboard-audit-as-planned-vs-as-built-2026-08-07.md` — **"NOTE — Blackboard
+    module: complete audit (as-planned vs as-built vs remaining)"** — full source-verified audit:
+    storage (complete) + conflict-detection (complete+wired) are DONE; the artifact-index role
+    (G1-G7) is unbuilt; docs still advertise it (G10). This is the authoritative gap reference for
+    this item.
 - **Why it is unfinished (verified):**
   1. **The blackboard is only a conflict-detection log today, not an artifact index.** It holds ONLY
      `type="file_version"` rows (writer = `mutation_guard.py:118,207`), used for write-conflict detection
