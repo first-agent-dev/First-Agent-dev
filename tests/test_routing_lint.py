@@ -269,6 +269,10 @@ coder:
         assert "alistaitsacle" not in CANONICAL_PROVIDER_BASE_URLS
         assert lint_models_config(models) == []
 
+    def test_aigate_and_anymodel_canonical_base_urls(self) -> None:
+        assert CANONICAL_PROVIDER_BASE_URLS["aigate"] == ("https://api.aigate.shop/v1",)
+        assert CANONICAL_PROVIDER_BASE_URLS["anymodel"] == ("https://anymodel.org/v1",)
+
 
 class TestUnknownProviderParamsKey:
     """Catches a typo'd provider_params key (e.g. reasoning_efort) that
