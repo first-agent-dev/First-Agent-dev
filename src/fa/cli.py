@@ -3015,7 +3015,9 @@ def _run_live_conformance(
 
     base_dir = fa_session_log_root() / "conformance"
     base_dir.mkdir(parents=True, exist_ok=True)
-    config = RunnerConfig(provider=provider, rpm_limit=20, base_dir=base_dir)
+    # Pacing: 3.0s (20 RPM) for real network calls; 0.0s for unit tests injecting a transport.
+    pace_seconds = 3.0 if transport is None else 0.0
+    config = RunnerConfig(provider=provider, rpm_limit=20, base_dir=base_dir, pace_seconds=pace_seconds)
     execute = make_live_executor(chain)
 
     result = run_matrix(default_cases(), config=config, execute=execute)
@@ -3130,8 +3132,8 @@ def _cmd_probe(
 
         request = RequestInfo(
             model_slug=chain_config.name,
-            messages=({"role": "user", "content": "hi"},),
-            max_tokens=1,
+            messages=({"role": "user", "content": "respond with: hi"},),
+            max_tokens=100,
             tools=(),
         )
 

@@ -25,6 +25,7 @@ byte counts) and are *recorded*, never pass/fail (D4).
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -267,7 +268,7 @@ def _case_to_request(case: ConfCase, model_slug: str) -> RequestInfo:
     )
 
 
-def make_live_executor(chain: Any) -> Callable[[ConfCase, str], dict[str, Any]]:
+def make_live_executor(chain: Any, *, transient_sleep: float = 2.0) -> Callable[[ConfCase, str], dict[str, Any]]:
     """Build an ``execute`` callable for :func:`live_runner.run_matrix`.
 
     ``chain`` is a ``ProviderChain`` (or any object with a ``request(RequestInfo)``
@@ -281,47 +282,75 @@ def make_live_executor(chain: Any) -> Callable[[ConfCase, str], dict[str, Any]]:
         del run_id
         model_slug = chain.config.name if hasattr(chain, "config") else "model"
         request = _case_to_request(case, model_slug)
-        try:
-            response, _logical, _attempts = chain.request(request)
-        except Exception as exc:
-            if getattr(exc, "status", None) == 429 or getattr(exc, "kind", "") == "rate_limited":
-                raise RateLimitError(f"429: {exc}") from exc
-            # A local conformance rejection (MessageRulesError, a
-            # ProviderRequestShapeError) is a RECORDED capability result, not a
-            # crash: the provider's strict validator rejects this shape. Return a
-            # row with ok=False + the reason so the matrix completes and documents
-            # it (CONF-6/5 style).
-            from fa.providers.errors import ProviderChainExhaustedError, ProviderRequestShapeError
+        from fa.providers.errors import ProviderChainExhaustedError, ProviderRequestShapeError
 
-            if isinstance(exc, ProviderRequestShapeError):
-                return {
-                    "case": case.case,
-                    "ok": False,
-                    "model": model_slug,
-                    "error": f"request_shape: {exc}",
-                    "in_tokens": None,
-                    "out_tokens": None,
-                }
+        last_exc: Exception | None = None
+        response: Any = None
+        for attempt_idx in range(3):
+            try:
+                response, _logical, _attempts = chain.request(request)
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                is_429 = (
+                    getattr(exc, "status", None) == 429
+                    or getattr(exc, "kind", "") == "rate_limited"
+                    or (
+                        isinstance(exc, ProviderChainExhaustedError)
+                        and any(
+                            getattr(a, "status", None) == 429 or getattr(a, "error", "") == "rate_limited"
+                            for a in getattr(exc, "attempts", ())
+                        )
+                    )
+                )
+                if is_429:
+                    raise RateLimitError(f"429: {exc}") from exc
+                is_transient = getattr(exc, "status", 0) in {500, 502, 503, 504} or (
+                    isinstance(exc, ProviderChainExhaustedError)
+                    and any(getattr(a, "status", 0) in {500, 502, 503, 504} for a in getattr(exc, "attempts", ()))
+                )
+                if is_transient and attempt_idx < 2:
+                    if transient_sleep > 0:
+                        time.sleep(transient_sleep * (attempt_idx + 1))
+                    continue
+                # A local conformance rejection (MessageRulesError, a
+                # ProviderRequestShapeError) is a RECORDED capability result, not a
+                # crash: the provider's strict validator rejects this shape. Return a
+                # row with ok=False + the reason so the matrix completes and documents
+                # it (CONF-6/5 style).
+                if isinstance(exc, ProviderRequestShapeError):
+                    return {
+                        "case": case.case,
+                        "ok": False,
+                        "model": model_slug,
+                        "error": f"request_shape: {exc}",
+                        "in_tokens": None,
+                        "out_tokens": None,
+                    }
+                break
+
+        if last_exc is not None:
             # A chain exhaustion is a per-case failure too, not a matrix crash: the
             # provider (or every fallback) failed for this case. Record it so the
             # matrix completes and the operator sees WHICH case failed and why,
             # instead of a raw traceback aborting the whole run.
-            if isinstance(exc, ProviderChainExhaustedError):
+            if isinstance(last_exc, ProviderChainExhaustedError):
                 # The generic message is "all N entries failed" — useless alone.
                 # Surface the per-attempt provider status/error so the real cause
                 # (e.g. a 400 body, a 429, a timeout) is diagnosable.
-                detail = "; ".join(f"{a.provider}:{a.status} {a.error or ''}".strip() for a in exc.attempts)
+                detail = "; ".join(f"{a.provider}:{a.status} {a.error or ''}".strip() for a in last_exc.attempts)
                 return {
                     "case": case.case,
                     "ok": False,
                     "model": model_slug,
-                    "error": f"chain_exhausted: {exc} [{detail}]",
+                    "error": f"chain_exhausted: {last_exc} [{detail}]",
                     "in_tokens": None,
                     "out_tokens": None,
                 }
             # Anything else is a real infra error (network, auth, unexpected): let
             # it propagate so it is not silently swallowed as a case result.
-            raise
+            raise last_exc
         return {
             "case": case.case,
             "ok": bool(getattr(response, "text", None)),
