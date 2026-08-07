@@ -84,6 +84,8 @@ CANONICAL_PROVIDER_BASE_URLS: Mapping[str, tuple[str, ...]] = {
     "anthropic": ("https://api.anthropic.com",),
     "mistral": ("https://api.mistral.ai/v1",),
     "mistral_agents": ("https://api.mistral.ai",),
+    "aigate": ("https://api.aigate.shop/v1",),
+    "anymodel": ("https://anymodel.org/v1",),
 }
 
 # Provider -> the set of provider_params keys THAT provider's adapter

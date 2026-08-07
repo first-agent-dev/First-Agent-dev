@@ -3,6 +3,15 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > This file records the verified state and the next bounded action.
 
+## S13.5 & S13.6 BASELINE + S13.7 NEW PROVIDER ONBOARDING (`aigate` & `anymodel`) (2026-08-07)
+
+**Source-Verified Baseline for S13.5 & S13.6:**
+- **S13.5 (`fa conformance` offline matrix):** Verified `CONF-1..7` run offline with real production composer + validator (`tests/conformance/test_offline_matrix.py`, 5 tests passed). `CONF-6` (user-after-tool) recorded as tolerance (`ok=False`, `ran=True`).
+- **S13.6 (Rate-limit-aware live runner):** Verified sequential execution, unique `run_id` minting (`conf-<provider>-<case>-<utc>`), 429 backoff/resume without losing prior rows, and glob-based cleanup (`tests/conformance/test_live_runner.py`, 6 tests passed).
+- **S13.7 New Providers Onboarded:** Added `"aigate"` (`https://api.aigate.shop/v1`) and `"anymodel"` (`https://anymodel.org/v1`) to `PROVIDERS` (`_OPENAI_COMPAT` adapter category) in `src/fa/providers/registry.py` and `CANONICAL_PROVIDER_BASE_URLS` in `src/fa/providers/routing_lint.py` per attached API documentation.
+- **Suite Status:** `just check` green — **2577 passed, 15 skipped, 1 xfailed** (0 failed). Zero `noqa` waivers added.
+- **Patch:** `/home/user/s13-aigate-anymodel-registry.patch`.
+
 ## S12 COMPLETE — platform capability markers (2026-08-02)
 
 The operator's native-Windows `just check` reached `test` for the first time

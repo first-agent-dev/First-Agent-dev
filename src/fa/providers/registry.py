@@ -42,7 +42,7 @@ class ProviderSpec:
 
 # OpenAI-shaped endpoints tolerate a trailing assistant (the shape the S13.3
 # emitter no longer produces, but which OpenAI accepts); Mistral/Anthropic do
-# not. All 14 OpenAI-compatible names share this rule set.
+# not. All 16 OpenAI-compatible names share this rule set.
 _OPENAI_COMPAT = ProviderSpec(
     factory=OpenAICompatProvider,
     adapter="openai_compat",
@@ -84,6 +84,8 @@ PROVIDERS: Mapping[str, ProviderSpec] = {
     "alistaitsacle": _OPENAI_COMPAT,
     "apertis": _OPENAI_COMPAT,
     "llm7": _OPENAI_COMPAT,
+    "aigate": _OPENAI_COMPAT,
+    "anymodel": _OPENAI_COMPAT,
     "openmodel": _ANTHROPIC,
     "anthropic": _ANTHROPIC,
     "mistral": _MISTRAL,

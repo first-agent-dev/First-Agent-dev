@@ -42,6 +42,14 @@ def test_anthropic_resolves_to_anthropic_adapter() -> None:
     assert isinstance(instance, AnthropicProvider)
 
 
+def test_aigate_and_anymodel_resolve_to_openai_compat_adapter() -> None:
+    for name in ("aigate", "anymodel"):
+        spec = PROVIDERS[name]
+        assert spec.adapter == "openai_compat"
+        instance = build_provider(name, transport=_NullTransport())
+        assert isinstance(instance, OpenAICompatProvider)
+
+
 def test_unknown_provider_raises_configuration_error_with_known_list() -> None:
     with pytest.raises(ConfigurationError, match="unknown provider 'mystery'"):
         build_provider("mystery", transport=_NullTransport())
