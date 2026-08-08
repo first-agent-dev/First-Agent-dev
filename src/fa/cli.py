@@ -3010,17 +3010,85 @@ def _run_live_conformance(
         )
         return 2
 
+    # S13 live-fix: proxy mode must rewrite the chain to target the egress
+    # proxy (same rewrite _cmd_probe and _cmd_run apply). Without this block
+    # the runner targets the vendor URL directly with an empty SecretStore (by
+    # ADR-12 design), which is guaranteed to 401 — the exact symptom seen
+    # live (aigate:401 auth_failed on every CONF case).
+    if proxy_mode:
+        rewritten, proxy_err = _proxy_rewrite_chain(chain_config, proxy_url)
+        if proxy_err:
+            print(f"fa conformance: {proxy_err}", file=sys.stderr)
+            return 2
+        chain_config = rewritten
+
+    # Build a per-run log directory so DebugBodyTransport can write
+    # llm_bodies.jsonl alongside the runner's results (same shape as `fa run`:
+    # one dir per run_id, both durable files co-located). The live runner
+    # writes its manifest/results into its own `base_dir`; the debug-body
+    # transport needs a dedicated per-run directory, not a shared one.
+    run_id_stub = f"conf-{provider}-preflight"
+    run_log_dir = fa_session_log_root() / run_id_stub
+    run_log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Secret redactor for debug-body capture. In proxy mode the redactor is
+    # built allow_empty=True (matches _cmd_run); in legacy mode use the
+    # SecretStore-based redactor.
+    try:
+        redactor = SecretRedactor.from_models_config(
+            effective_secrets,
+            models,
+            extra_values=_proxy_redactor_extra() if proxy_mode else (),
+            allow_empty=proxy_mode,
+        )
+    except SecretRedactorError as exc:
+        print(f"fa conformance: secret redactor configuration error: {exc}", file=sys.stderr)
+        return 2
+
     effective_transport: Transport = transport if transport is not None else UrllibTransport()
+    # Wrap transport for debug-body capture (mirrors _cmd_run) so
+    # FA_DEBUG_LLM_BODIES=1 honours the opt-in and writes llm_bodies.jsonl
+    # under the per-run directory.
+    effective_transport = wrap_transport_for_debug_bodies(
+        effective_transport,
+        run_log_dir=run_log_dir,
+        redactor=redactor,
+    )
     chain = _build_provider_chain(chain_config, transport=effective_transport, secrets=effective_secrets)
 
     base_dir = fa_session_log_root() / "conformance"
     base_dir.mkdir(parents=True, exist_ok=True)
     # Pacing: 3.0s (20 RPM) for real network calls; 0.0s for unit tests injecting a transport.
     pace_seconds = 3.0 if transport is None else 0.0
-    config = RunnerConfig(provider=provider, rpm_limit=20, base_dir=base_dir, pace_seconds=pace_seconds)
+    runner_cfg = RunnerConfig(provider=provider, rpm_limit=20, base_dir=base_dir, pace_seconds=pace_seconds)
     execute = make_live_executor(chain)
 
-    result = run_matrix(default_cases(), config=config, execute=execute)
+    result = run_matrix(default_cases(), config=runner_cfg, execute=execute)
+    # Re-point llm_bodies.jsonl from the preflight dir into the actual conf
+    # run dir so it lives alongside results.jsonl/manifest.json (one directory
+    # per run_id). Best-effort; never crash the matrix if the move fails.
+    try:
+        target_dir = base_dir / result.run_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        src_body = run_log_dir / "llm_bodies.jsonl"
+        dst_body = target_dir / "llm_bodies.jsonl"
+        if src_body.exists():
+            if dst_body.exists():
+                # Append: live runner may resume, so preserve prior rows.
+                with src_body.open("rb") as sf, dst_body.open("ab") as df:
+                    df.write(sf.read())
+                src_body.unlink()
+            else:
+                src_body.replace(dst_body)
+        # Drop the preflight stub dir if empty.
+        try:
+            run_log_dir.rmdir()
+        except OSError:
+            pass
+    except Exception as exc:  # noqa: BLE001 — best-effort artefact relocation
+        logger.warning("fa conformance: debug-body relocation failed: %s", exc)
+
+    any_fail = any(not row.get("ok", False) for row in result.rows)
     if getattr(args, "json", False):
         import json as _json
 
@@ -3032,6 +3100,7 @@ def _run_live_conformance(
                     "rows": result.rows,
                     "resumed": result.resumed,
                     "rate_limited": result.rate_limited,
+                    "ok": not any_fail,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -3050,7 +3119,13 @@ def _run_live_conformance(
             print("fa conformance: stopped early on a rate limit (429); rows preserved for resume.")
         if result.resumed:
             print(f"fa conformance: resumed prior run {result.run_id}.")
-    return 0
+    # S13 live-fix: propagate case failure as a non-zero exit code (matches
+    # `fa probe` semantics: a per-chain-entry failure returns 1 so scripts
+    # and the deploy gate can detect FAIL cells instead of seeing 0 from a
+    # red matrix). CONF-7 is never pass/fail (sizes only) so it does not
+    # force failure on its own; the live executor already records ok=True
+    # for CONF-7 unconditionally.
+    return 1 if any_fail else 0
 
 
 def _cmd_probe(

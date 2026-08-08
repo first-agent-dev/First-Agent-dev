@@ -184,11 +184,27 @@ def default_cases() -> list[ConfCase]:
             allow_trailing=True,
         ),
         # CONF-6 user-after-tool tolerance (recorded, not required).
+        #
+        # S13 live-fix: observations must not themselves contain a `user`
+        # immediately after a `tool`. The composer's terminal-role rule
+        # (S13.3) only reorders the TASK relative to observations; it does
+        # not rewrite the caller-supplied observation sequence. CONF-6 is
+        # intended to record whether the PROVIDER tolerates a `user` message
+        # placed directly after a `tool` result; the composer's task-first
+        # branch does exactly that when the last observation is a `tool`
+        # (it inserts the task user-message FIRST in non_cacheable then
+        # appends observations, which ends the list on `tool` — NOT on
+        # `user`). So we instead build a tool round-trip followed by an
+        # assistant turn, so the composer's terminal-role rule (assistant
+        # plain-text final → task last) appends the new user task AFTER the
+        # tool/assistant history, producing the exact user-after-tool
+        # shape this case exists to exercise: [system…, assistant(tool_call),
+        # tool, assistant, user(new task)].
         ConfCase(
             case=6,
             name="CONF-6 user-after-tool tolerance (recorded)",
             role="coder",
-            task="",
+            task="another instruction",
             observations=[
                 {
                     "role": "assistant",
@@ -196,7 +212,7 @@ def default_cases() -> list[ConfCase]:
                     "tool_calls": [{"id": "x", "function": {"name": "f", "arguments": "{}"}}],
                 },
                 {"role": "tool", "tool_call_id": "x", "content": "r"},
-                {"role": "user", "content": "another instruction"},
+                {"role": "assistant", "content": "intermediate reply"},
             ],
         ),
         # CONF-7 prompt-cache + composition: record sizes, never pass/fail.
