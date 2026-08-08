@@ -110,65 +110,99 @@ _FA_UPDATE_REEXEC="${_FA_UPDATE_REEXEC:-0}"
 _FA_UPDATE_REEXEC_HEAD_CHANGED="${_FA_UPDATE_REEXEC_HEAD_CHANGED:-0}"
 # _FA_LOCK_FD carries the inherited lock fd across re-exec (integer, e.g. "9").
 # When set, the lock is ALREADY held by this process tree; we dup it onto fd 9
-# and do NOT re-flock. This closes the re-exec race where a sibling invocation
-# could grab the lock in the window between `exec 9>&-` and the new script's
-# own `flock -w 600 9`.
+# and do NOT re-flock. Closes the re-exec race where a concurrent invocation
+# could grab the lock between `exec 9>&-` and the new script's own flock.
 _FA_LOCK_FD="${_FA_LOCK_FD:-}"
 
 # ═══════════════════════════════════════════════════════════════
-#  Logging / Locking / Error handling
+#  Logging / Locking / Error handling — helpers
 # ═══════════════════════════════════════════════════════════════
 
-# Print to the operator's terminal bypassing both tee and buffering. Used for
-# "acquiring lock" / "another instance running" messages that MUST appear even
-# if stdout is a buffered pipe to tee. Falls back to stdout when no controlling
-# tty exists (cron, backgrounded subshells, CI).
+# Print a line to the operator's terminal bypassing tee/buffering. Used for
+# "acquiring lock" / "another instance running" diagnostics so the message
+# appears even if stdout is a buffered pipe. Falls back to stdout when no
+# controlling tty exists (cron, CI, background subshells).
 _say() {
   if [[ -c /dev/tty ]] && [[ -w /dev/tty ]]; then
-    printf '%s\n' "$*" > /dev/tty 2>&1 || printf '%s\n' "$*"
+    printf '%s\n' "$*" >/dev/tty 2>&1 || printf '%s\n' "$*"
   elif [[ -t 1 ]]; then
     printf '%s\n' "$*"
   else
-    # tee has already taken over stdout; writing to fd 1 lands in both tee's
-    # file AND its pipe to the terminal. That's fine for non-tty mode.
     printf '%s\n' "$*"
   fi
 }
 
-# NOTE: we deliberately do NOT use `set -m` (job-control new process group)
-# here. Early versions of this hardening did, but placing fa-update.sh in
-# its own pgroup while sudo is attached to the same controlling tty caused
-# sudo's password prompt to be SIGTSTP'd / re-issued and the EXIT trap's
-# `kill -KILL -- -$$` would kill the top-level bash itself (manifesting as
-# "Убито" mid-run with repeated sudo prompts). Instead we track direct
-# long-running children explicitly (DOCKER_PID, etc.) and clean them up by
-# PID in the EXIT trap. That kills orphaned docker/tee children on SIGHUP
-# without disturbing the foreground pgroup that sudo/readline need.
+# Tracked-child bookkeeping. We do NOT use `set -m` + `kill -- -$$` (that
+# placed sudo in a separate pgroup and caused the "Убито" symptom: sudo was
+# SIGTSTP'd, then the EXIT trap KILLed the top-level bash itself). Instead
+# we explicitly wrap long-running commands (docker compose build/up, pytest,
+# uv) with run_tracked, collect their PIDs, and TERM/KILL them by PID on
+# SIGHUP/INT/TERM/EXIT. tee exits on its own when our stdout pipe closes,
+# so it does not need to be tracked.
+_CLEANUP_DONE=0
+_CHILD_PIDS=()
 
-# Tee to log file. Use line-buffered tee (stdbuf -oL) so output appears as it
-# is emitted rather than in 4–8 KiB blocks — this is why the script previously
-# appeared to "hang silently" for the first several seconds.
+run_tracked() {
+  "$@" &
+  local _pid=$!
+  _CHILD_PIDS+=("${_pid}")
+  wait "${_pid}"
+}
+
+_cleanup() {
+  local sig="$1"
+  if [[ "${_CLEANUP_DONE}" == "1" ]]; then return; fi
+  _CLEANUP_DONE=1
+  if [[ -n "${sig}" && "${sig}" != "EXIT" ]]; then
+    echo ""
+    echo "⚠ Caught ${sig} — cleaning up child processes..."
+  fi
+  local _pid
+  for _pid in "${_CHILD_PIDS[@]:-}"; do
+    [[ -z "${_pid}" ]] && continue
+    if kill -0 "${_pid}" 2>/dev/null; then
+      kill -TERM "${_pid}" 2>/dev/null || true
+    fi
+  done
+  sleep 1
+  for _pid in "${_CHILD_PIDS[@]:-}"; do
+    [[ -z "${_pid}" ]] && continue
+    if kill -0 "${_pid}" 2>/dev/null; then
+      kill -KILL "${_pid}" 2>/dev/null || true
+    fi
+  done
+  # Release the advisory lock.
+  if [[ -z "${_FA_LOCK_FD}" ]]; then
+    : > "${LOCK_FILE}" 2>/dev/null || true
+  fi
+  exec 9>&- 2>/dev/null || true
+}
+trap '_cleanup HUP'   HUP
+trap '_cleanup INT'   INT
+trap '_cleanup TERM'  TERM
+trap '_cleanup EXIT'  EXIT
+
+# ═══════════════════════════════════════════════════════════════
+#  Tee redirection + flock (helpers above must be defined first).
+#  Tee is started via process substitution; it receives EOF and
+#  exits automatically when this shell closes its stdout pipe,
+#  so no explicit tee-PID tracking is needed.
+# ═══════════════════════════════════════════════════════════════
+
 if [[ "${_FA_UPDATE_REEXEC}" != "1" ]]; then
+  # stdbuf -oL makes tee line-buffered so output appears line-by-line
+  # rather than in 4–8 KiB blocks (the "silent hang" symptom).
   if command -v stdbuf >/dev/null 2>&1; then
     exec > >(stdbuf -oL -eL tee -a "${LOG_FILE}") 2>&1
   else
     exec > >(tee -a "${LOG_FILE}") 2>&1
   fi
-  _capture_tee_pid
 fi
 
-# Lock file: write our PID on first acquisition so diagnostics can name the
-# holder. Re-exec passes the fd through _FA_LOCK_FD so the lock is never
-# released between parent and child (no race window).
 if [[ -n "${_FA_LOCK_FD}" ]]; then
-  # Inherit the held lock: dup the passed fd number onto 9 and verify it is
-  # the lock file (sanity). Do NOT re-open or re-flock.
+  # Inherit the already-held flock from our parent (re-exec path).
   eval "exec 9>&${_FA_LOCK_FD}"
-  # PID staleness check: the inherited fd already carries the exclusive lock.
 else
-  # First acquisition. Open + non-blocking flock. If the lock is held we
-  # report the HOLDER (PID + command line read from the lock file's PID
-  # record) instead of silently waiting 600 seconds.
   exec 9>"${LOCK_FILE}"
   _say "  … acquiring update lock (${LOCK_FILE}) …"
   if ! flock -n 9; then
@@ -188,91 +222,15 @@ else
       _say "       # if that doesn't stop it within a few seconds:"
       _say "       kill -KILL ${_holder_pid} && rm -f ${LOCK_FILE}"
     else
-      _say "   Lock file exists but no live holder recorded. The previous run likely"
-      _say "   crashed without cleaning up. Remove the stale lock with:"
+      _say "   Lock file exists but no live holder recorded. The previous run"
+      _say "   likely crashed without cleanup. Remove the stale lock with:"
       _say "       rm -f ${LOCK_FILE}"
     fi
     _say ""
     exit 1
   fi
-  # Record PID in the lock file (best-effort, advisory only).
   printf '%s\n' "$$" >&9 || true
 fi
-# FD_CLOEXEC would drop the lock on exec; bash keeps fds 0..9 open across
-# exec by default so the re-exec'd child inherits fd 9 with the lock held.
-
-# Process group bookkeeping so signal cleanup takes down the long-running
-# children we spawn (tee, docker compose build/up, uv) on SIGHUP/SIGINT/TERM
-# without leaving orphans. We do NOT `kill -- -$$` (whole process group):
-# under some tty/sudo combinations that kills the top-level bash itself and
-# produces the "Убито" symptom seen when job-control set -m was enabled.
-# Instead:
-#   1. TEE_PID is captured from the process substitution that backs the log
-#      tee (started just above), and we TERM it last so final output flushes.
-#   2. docker compose / pytest / uv calls are wrapped by run_tracked() which
-#      records the direct child PID so cleanup can TERM/KILL it.
-_CLEANUP_DONE=0
-_TEE_PID=""
-_CHILD_PIDS=()
-
-# Capture the tee subshell PID right after we start it. We need this because
-# the process substitution outlives main() via the exec redirection; without
-# explicit cleanup tee holds the log file open and (with some pipe setups)
-# keeps the tty in a weird state after exit.
-_capture_tee_pid() {
-  # `jobs -p` lists the process-substitution child(ren) of this shell.
-  # shellcheck disable=SC2009
-  _TEE_PID="$(jobs -p 2>/dev/null | head -n1 || true)"
-}
-
-run_tracked() {
-  # Run "$@" in the foreground and remember its PID so _cleanup can reap it
-  # if we get SIGHUP/INT/TERM before it exits on its own.
-  "$@" &
-  local _pid=$!
-  _CHILD_PIDS+=("${_pid}")
-  wait "${_pid}"
-}
-
-_cleanup() {
-  local sig="$1"
-  if [[ "${_CLEANUP_DONE}" == "1" ]]; then return; fi
-  _CLEANUP_DONE=1
-  if [[ -n "${sig}" ]]; then
-    echo ""
-    echo "⚠ Caught ${sig} — cleaning up child processes..."
-  fi
-  # TERM any direct long-running children we launched (docker compose, uv, pytest).
-  for _pid in "${_CHILD_PIDS[@]:-}"; do
-    [[ -z "${_pid}" ]] && continue
-    if kill -0 "${_pid}" 2>/dev/null; then
-      kill -TERM "${_pid}" 2>/dev/null || true
-    fi
-  done
-  sleep 1
-  for _pid in "${_CHILD_PIDS[@]:-}"; do
-    [[ -z "${_pid}" ]] && continue
-    if kill -0 "${_pid}" 2>/dev/null; then
-      kill -KILL "${_pid}" 2>/dev/null || true
-    fi
-  done
-  # Close the tee subshell last so it can flush any final lines.
-  if [[ -n "${_TEE_PID}" ]] && kill -0 "${_TEE_PID}" 2>/dev/null; then
-    kill -TERM "${_TEE_PID}" 2>/dev/null || true
-    sleep 0.2
-    kill -KILL "${_TEE_PID}" 2>/dev/null || true
-  fi
-  # Release the advisory lock by closing fd 9 and clearing the PID record so
-  # a future non-blocking flock doesn't see a stale PID.
-  if [[ -z "${_FA_LOCK_FD}" ]]; then
-    : > "${LOCK_FILE}" 2>/dev/null || true
-  fi
-  exec 9>&- 2>/dev/null || true
-}
-trap '_cleanup HUP'   HUP
-trap '_cleanup INT'   INT
-trap '_cleanup TERM'  TERM
-trap '_cleanup EXIT'  EXIT
 
 # shellcheck disable=SC2154  # rc IS assigned (rc=$?) inside this same trap string.
 trap_err() {
@@ -1060,12 +1018,10 @@ main() {
     echo "  → Re-executing updated fa-update.sh so deploy uses the new script logic..."
     export _FA_UPDATE_REEXEC=1
     export _FA_UPDATE_REEXEC_HEAD_CHANGED=1
-    # Carry the held flock across re-exec by passing fd 9 to the child.
-    # Previously we closed fd 9 before exec and re-took the lock — that created
-    # a race window where a concurrent `fa update` in another tty could grab the
-    # lock and leave the re-exec'd parent blocked on flock -w 600 for ten
-    # silent minutes. We never release the lock: fd 9 is inherited and
-    # _FA_LOCK_FD tells the child to dup it back.
+    # Carry the held flock across re-exec via fd 9. We never close the lock:
+    # bash keeps fds 0..9 open across exec by default, and _FA_LOCK_FD tells
+    # the child the fd is already locked. Closes the race where a concurrent
+    # invocation could grab the lock between exec 9>&- and the child's flock.
     export _FA_LOCK_FD=9
     export REPO_DIR COMPOSE_FILE ENV_TEMPLATE ENV_FA ENV_HASH_FILE SECRETS_ENV \
            PROXY_TOKEN_FILE MODELS_YAML_FILE ROUTING_DIR LEGACY_STATE_MODELS \
