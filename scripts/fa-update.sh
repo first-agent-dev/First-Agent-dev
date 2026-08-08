@@ -135,12 +135,15 @@ _say() {
   fi
 }
 
-# Enable job control (set -m) so the script runs in its own process group.
-# Combined with `kill -- -$$` in the cleanup trap this ensures SIGHUP/Ctrl-C
-# reaches every child (docker compose build/up, tee, uv) instead of leaving
-# orphaned grand-children that would keep /tmp/fa-update.lock held after the
-# operator closes the SSH window.
-set -m
+# NOTE: we deliberately do NOT use `set -m` (job-control new process group)
+# here. Early versions of this hardening did, but placing fa-update.sh in
+# its own pgroup while sudo is attached to the same controlling tty caused
+# sudo's password prompt to be SIGTSTP'd / re-issued and the EXIT trap's
+# `kill -KILL -- -$$` would kill the top-level bash itself (manifesting as
+# "Убито" mid-run with repeated sudo prompts). Instead we track direct
+# long-running children explicitly (DOCKER_PID, etc.) and clean them up by
+# PID in the EXIT trap. That kills orphaned docker/tee children on SIGHUP
+# without disturbing the foreground pgroup that sudo/readline need.
 
 # Tee to log file. Use line-buffered tee (stdbuf -oL) so output appears as it
 # is emitted rather than in 4–8 KiB blocks — this is why the script previously
@@ -151,6 +154,7 @@ if [[ "${_FA_UPDATE_REEXEC}" != "1" ]]; then
   else
     exec > >(tee -a "${LOG_FILE}") 2>&1
   fi
+  _capture_tee_pid
 fi
 
 # Lock file: write our PID on first acquisition so diagnostics can name the
@@ -197,10 +201,39 @@ fi
 # FD_CLOEXEC would drop the lock on exec; bash keeps fds 0..9 open across
 # exec by default so the re-exec'd child inherits fd 9 with the lock held.
 
-# Process group bookkeeping so signal cleanup can take down our entire
-# subtree (docker compose, tee, children) on SIGHUP/SIGINT/SIGTERM — otherwise
-# a docker build child can orphan itself and hold the lock on the next run.
+# Process group bookkeeping so signal cleanup takes down the long-running
+# children we spawn (tee, docker compose build/up, uv) on SIGHUP/SIGINT/TERM
+# without leaving orphans. We do NOT `kill -- -$$` (whole process group):
+# under some tty/sudo combinations that kills the top-level bash itself and
+# produces the "Убито" symptom seen when job-control set -m was enabled.
+# Instead:
+#   1. TEE_PID is captured from the process substitution that backs the log
+#      tee (started just above), and we TERM it last so final output flushes.
+#   2. docker compose / pytest / uv calls are wrapped by run_tracked() which
+#      records the direct child PID so cleanup can TERM/KILL it.
 _CLEANUP_DONE=0
+_TEE_PID=""
+_CHILD_PIDS=()
+
+# Capture the tee subshell PID right after we start it. We need this because
+# the process substitution outlives main() via the exec redirection; without
+# explicit cleanup tee holds the log file open and (with some pipe setups)
+# keeps the tty in a weird state after exit.
+_capture_tee_pid() {
+  # `jobs -p` lists the process-substitution child(ren) of this shell.
+  # shellcheck disable=SC2009
+  _TEE_PID="$(jobs -p 2>/dev/null | head -n1 || true)"
+}
+
+run_tracked() {
+  # Run "$@" in the foreground and remember its PID so _cleanup can reap it
+  # if we get SIGHUP/INT/TERM before it exits on its own.
+  "$@" &
+  local _pid=$!
+  _CHILD_PIDS+=("${_pid}")
+  wait "${_pid}"
+}
+
 _cleanup() {
   local sig="$1"
   if [[ "${_CLEANUP_DONE}" == "1" ]]; then return; fi
@@ -209,18 +242,29 @@ _cleanup() {
     echo ""
     echo "⚠ Caught ${sig} — cleaning up child processes..."
   fi
-  # Send TERM to our entire process group (negative PID) so docker compose
-  # and any other child get the signal, not just the top-level bash.
-  if [[ -n "${$:-}" ]] && kill -0 -- "-$$" 2>/dev/null; then
-    kill -TERM -- "-$$" 2>/dev/null || true
-    sleep 1
-    kill -KILL -- "-$$" 2>/dev/null || true
+  # TERM any direct long-running children we launched (docker compose, uv, pytest).
+  for _pid in "${_CHILD_PIDS[@]:-}"; do
+    [[ -z "${_pid}" ]] && continue
+    if kill -0 "${_pid}" 2>/dev/null; then
+      kill -TERM "${_pid}" 2>/dev/null || true
+    fi
+  done
+  sleep 1
+  for _pid in "${_CHILD_PIDS[@]:-}"; do
+    [[ -z "${_pid}" ]] && continue
+    if kill -0 "${_pid}" 2>/dev/null; then
+      kill -KILL "${_pid}" 2>/dev/null || true
+    fi
+  done
+  # Close the tee subshell last so it can flush any final lines.
+  if [[ -n "${_TEE_PID}" ]] && kill -0 "${_TEE_PID}" 2>/dev/null; then
+    kill -TERM "${_TEE_PID}" 2>/dev/null || true
+    sleep 0.2
+    kill -KILL "${_TEE_PID}" 2>/dev/null || true
   fi
-  # Release the advisory lock by closing fd 9 if we own it, and wipe the
-  # PID record so a future non-blocking flock doesn't see a stale PID.
+  # Release the advisory lock by closing fd 9 and clearing the PID record so
+  # a future non-blocking flock doesn't see a stale PID.
   if [[ -z "${_FA_LOCK_FD}" ]]; then
-    # Only the original lock-holder truncates the file; re-exec children
-    # that inherited the fd leave cleanup to the session leader.
     : > "${LOCK_FILE}" 2>/dev/null || true
   fi
   exec 9>&- 2>/dev/null || true
