@@ -31,11 +31,12 @@ from fa.blackboard.artifact_index import (
     _title_from_content,
     ensure_artifacts_indexed,
 )
-from fa.blackboard.blackboard import BlackboardEntry
+from fa.blackboard.blackboard import Blackboard, BlackboardEntry
 from fa.inner_loop import SessionState, ToolCall
 from fa.inner_loop.context import reset_current_session, set_current_session
 from fa.inner_loop.registry import ToolRegistry, ToolResult
 from fa.inner_loop.tools.blackboard_query import build_blackboard_query_tool
+from tests._capabilities import requires_symlinks
 
 # --- fixtures ------------------------------------------------------------------
 
@@ -95,8 +96,14 @@ def test_artifact_roots_layout_matches_live_tree() -> None:
     """
     repo_root = Path(__file__).resolve().parents[1]
     knowledge_root = repo_root / "knowledge"
-    if not knowledge_root.is_dir():
-        pytest.skip("knowledge/ not present (running outside repo tree)")
+    # This test only makes sense running against the live checkout (it
+    # asserts the constants match the repo layout). Running the suite from
+    # outside a First-Agent checkout is not a supported configuration;
+    # fail loudly instead of silently skipping so a truncated checkout is
+    # visible.
+    assert knowledge_root.is_dir(), (
+        f"knowledge/ directory not found at {knowledge_root}; tests must run inside a First-Agent checkout"
+    )
     for _type, sub in ARTIFACT_ROOTS.items():
         assert (knowledge_root / sub).is_dir(), f"ARTIFACT_ROOTS[{_type!r}]={sub!r} but knowledge/{sub} is missing"
 
@@ -263,13 +270,18 @@ def test_query_tool_does_not_index_on_file_version_query(tmp_path: Path) -> None
             write_set=["src/foo.py"],
         )
     )
-    # Spy on ensure_artifacts_indexed.
+    # Spy on ensure_artifacts_indexed. Signature matches the target so
+    # mypy/pyrefly strict do not widen *a/**k to object.
     calls = {"n": 0}
     original = artifact_index.ensure_artifacts_indexed
 
-    def _spy(*a: object, **k: object) -> ArtifactIndexStats:
+    def _spy(
+        blackboard: Blackboard,
+        workspace_root: Path,
+        types: set[str] | None = None,
+    ) -> ArtifactIndexStats:
         calls["n"] += 1
-        return original(*a, **k)
+        return original(blackboard, workspace_root, types)
 
     from fa.blackboard import artifact_index as ai_mod
 
@@ -398,6 +410,7 @@ def test_query_tool_fail_degraded_when_indexer_raises(tmp_path: Path, monkeypatc
     assert "rows" in result.result
 
 
+@requires_symlinks
 def test_indexer_respects_symlink_escape(tmp_path: Path) -> None:
     """C1 T9b — _is_within blocks a symlink pointing outside knowledge/.
     Recorded as 'escape' error; other files indexed normally."""
@@ -405,10 +418,7 @@ def test_indexer_respects_symlink_escape(tmp_path: Path) -> None:
     outside = tmp_path / "outside.txt"
     outside.write_text("# ESCAPED\nsecret content", encoding="utf-8")
     link = tmp_path / "knowledge" / "skills" / "evil.md"
-    try:
-        link.symlink_to(outside)
-    except OSError:
-        pytest.skip("symlinks not supported here")
+    link.symlink_to(outside)
     state = SessionState(workspace_root=tmp_path, run_id="run-1")
     assert state.blackboard is not None
     stats = ensure_artifacts_indexed(state.blackboard, tmp_path)

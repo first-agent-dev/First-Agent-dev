@@ -1,8 +1,8 @@
 # Substrate Gap-Closure Workplan — Round 2 (Post-Audit, Decision-Locked)
 
-**Date:** 2026-07-15  
-**Scope:** Close all currently surfaced Stage A/B/C substrate gaps in verifiable slices  
-**Status:** Active execution plan  
+**Date:** 2026-07-15
+**Scope:** Close all currently surfaced Stage A/B/C substrate gaps in verifiable slices
+**Status:** Active execution plan
 **Source inputs:**
 - `knowledge/research/substrate-modernization-plan-2026-07-14.md`
 - hostile audit round 2 over current working tree
@@ -36,7 +36,7 @@ These are now binding and supersede prior ambiguity.
 
 ### D8 — Unified per-run DB authority
 
-**Authoritative truth should be one unified per-run DB.**  
+**Authoritative truth should be one unified per-run DB.**
 **Workspace/global databases should be derived projections, not hot-path authority.**
 
 Implications:
@@ -654,16 +654,16 @@ If yes, the test is not sufficient.
 
 Risk-first order:
 
-1. **Slice 0** — contract freeze  
-2. **Slice 1** — unified authority / split-brain removal  
-3. **Slice 5** — subagent hardening  
-4. **Slice 3** — Stage C correctness  
-5. **Slice 4** — governance plane repair  
-6. **Slice 6** — bash + PTY truthfulness  
-7. **Slice 2** — observability tool rewiring  
-8. **Slice 7** — scheduler/search residuals  
-9. **Slice 8** — logging standardization  
-10. **Slice 9** — global export  
+1. **Slice 0** — contract freeze
+2. **Slice 1** — unified authority / split-brain removal
+3. **Slice 5** — subagent hardening
+4. **Slice 3** — Stage C correctness
+5. **Slice 4** — governance plane repair
+6. **Slice 6** — bash + PTY truthfulness
+7. **Slice 2** — observability tool rewiring
+8. **Slice 7** — scheduler/search residuals
+9. **Slice 8** — logging standardization
+10. **Slice 9** — global export
 11. **Slice 10** — anti-theater hardening and final hostile re-audit
 
 ---

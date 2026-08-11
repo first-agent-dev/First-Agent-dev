@@ -389,17 +389,28 @@ def test_log_kind_checker_is_wired_into_the_check_target() -> None:
     which is the exact shape of the original defect. The Makefile is asserted
     too so the local convenience path does not silently diverge.
     """
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.test_dependency_contract_wiring import _recipe_body
+
     justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
     assert "check_log_kind_contract.py" in justfile, "no justfile recipe invokes the log-kind checker"
-    assert "check_log_kind_contract.py" in makefile, "Makefile has drifted from the justfile"
-
-    check_target = next(
-        (line for line in justfile.splitlines() if line.startswith("check:")),
-        "",
+    # Makefile is now a thin shim over just (match-anything `%:` rule forwarding
+    # to `just $@`). Assert only that the shim exists; the justfile assertion
+    # above is the load-bearing wiring check.
+    assert "$(JUST)" in makefile and '"$@"' in makefile, (
+        "Makefile must forward targets to just via a match-anything shim"
     )
-    assert check_target, "aggregate `check` target not found in justfile"
-    assert "log-kind-check" in check_target, (
-        f"log-kind-check is not part of the aggregate target CI runs: {check_target!r}"
+
+    # The aggregate `check` target MUST ultimately invoke every checker script.
+    # Individual gates are bundled under the `_contracts` private recipe.
+    check_body = _recipe_body(justfile, "check")
+    assert check_body, "aggregate `check` target not found or empty"
+    assert "_contracts" in check_body, f"check does not invoke the contracts bundle:\n{check_body}"
+    contracts_body = _recipe_body(justfile, "_contracts")
+    assert "check_log_kind_contract.py" in contracts_body, (
+        f"_contracts bundle does not invoke check_log_kind_contract.py:\n{contracts_body}"
     )

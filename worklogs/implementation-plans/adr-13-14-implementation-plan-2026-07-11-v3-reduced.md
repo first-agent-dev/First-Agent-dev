@@ -176,4 +176,3 @@ tier: stable
 - Blog.fsck.com July 5 2026 arbiter pattern verified
 - Claude Code worktree bugs #55708 #47548 #31546
 - User philosophy: pair over autonomy, 100k logs about nothing, enough to silently think and do one task together
-

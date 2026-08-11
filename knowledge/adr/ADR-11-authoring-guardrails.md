@@ -649,7 +649,7 @@ Wired ≠ Correct (hostile authoring audits); in-repo gold
 
 #### Worked examples (normative shape)
 
-**Compliant (C1) — budget warn on live path.**  
+**Compliant (C1) — budget warn on live path.**
 `tests/test_pr1_wiring.py::test_drive_session_budget_warn_event` boots
 `drive_session`, forces usage into the warn band (implementation thresholds — today
 ~70% warn / ~80% require_compaction of `limit_tokens`; do not hardcode
@@ -657,12 +657,12 @@ mythical 90% if the code differs), asserts `context_budget_warn` on the
 session log. Removing the budget check
 from `_drive_session_inner` breaks the test.
 
-**Compliant (C1) — hard-stop without LLM call.**  
+**Compliant (C1) — hard-stop without LLM call.**
 Same file: `test_drive_session_budget_hard_stop` asserts
 `stop_reason == context_budget_hard_stop` and
 `provider_chain.request.call_count == 0`.
 
-**Compliant (C1) — Stage 3 uses `compactor_chain`.**  
+**Compliant (C1) — Stage 3 uses `compactor_chain`.**
 `tests/test_pr5_wiring.py::test_stage3_compaction_triggers_and_rebuilds_prompt`
 with compaction enabled asserts stage3 events and
 `mock_compactor_chain.request.call_count == 1`.

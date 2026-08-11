@@ -135,4 +135,3 @@ From final Q&A round (6 questions):
 - All files listed in By-Demand Index above are PR-ready skeletons, need to be moved from workspace root /home/user/ to actual repo paths and adapted to existing code style (ATX headings, short lines ~150 chars, fenced code blocks with language tag)
 - Tests are skeletons, need to import from actual src/fa/... paths
 - Implementation plan v2 production is superset of v1, includes senior eng principles
-

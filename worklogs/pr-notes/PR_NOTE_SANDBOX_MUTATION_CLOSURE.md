@@ -1,7 +1,7 @@
 # PR Note — Complete Sandbox Mutation Testing Closure (100% Cleared)
 
-**Дата:** 2026-07-01  
-**Тема:** Полная верификация и закрытие выживших мутантов `mutmut` для TCB песочницы (`src/fa/sandbox/`)  
+**Дата:** 2026-07-01
+**Тема:** Полная верификация и закрытие выживших мутантов `mutmut` для TCB песочницы (`src/fa/sandbox/`)
 **Связанные задачи:** [`BACKLOG.md I-23`](../BACKLOG.md#i-23--mutation-testing-promotion-to-blocking-gate), [`worklogs/implementation-plans/mutation-survivors-workplan.md`](../implementation-plans/mutation-survivors-workplan.md)
 
 ---

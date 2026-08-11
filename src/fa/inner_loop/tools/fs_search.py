@@ -668,4 +668,14 @@ def build_fs_search_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
     )
 
 
-__all__ = ["build_fs_search_tool"]
+__all__ = [
+    "DEFAULT_CONTEXT_LINES",
+    "DEFAULT_LIMIT",
+    "DEFAULT_MAX_FILE_SIZE",
+    "HARD_MAX_CONTEXT_LINES",
+    "HARD_MAX_LIMIT",
+    "MAX_RESPONSE_BYTES",
+    "VALID_ORDERS",
+    "VALID_OUTPUT_MODES",
+    "build_fs_search_tool",
+]

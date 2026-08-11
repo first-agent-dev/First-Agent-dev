@@ -43,7 +43,7 @@ def _isolated_fa_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             except AttributeError:
                 pass
     # Ensure fa.paths resolves to the tmp HOME on next access.
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
 
 
 class _FakeChain:

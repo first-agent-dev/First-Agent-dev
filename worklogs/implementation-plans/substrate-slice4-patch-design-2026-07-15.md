@@ -1,7 +1,7 @@
 # Slice 4 Patch Design — Governance Plane Repair
 
-**Date:** 2026-07-15  
-**Scope:** Slice 4 only  
+**Date:** 2026-07-15
+**Scope:** Slice 4 only
 **Purpose:** separate standing governance from mutable session context and repair `PinnedBuffer` semantics.
 
 ---

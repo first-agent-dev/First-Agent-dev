@@ -1,27 +1,34 @@
 #!/usr/bin/env bash
 # pre-push — run the repo-native CI gate before an agent pushes a branch.
 #
-# The pre-commit hook is intentionally optimized for fast, safe mechanical
-# cleanup (ruff --fix, ruff format, whitespace, uv-lock) plus fast static
-# checks (ruff full-tree, deptry, pylint gap-checks). This pre-push hook is
-# the local CI parity gate: it runs `uv run just check` — every BLOCKING
-# gate including mypy, authoring-check, contract checks, pytest with
-# coverage — after commits are formed but before an LLM agent publishes
-# the branch/PR. Targeted mutmut/semgrep on changed files run after the
-# main gate for defense-in-depth. GitHub CI remains the final authority;
+# The pre-commit hook runs ~90% of checks (ruff, format, deptry, pylint-gap,
+# mypy strict, pyrefly, shell-syntax, gitleaks, markdownlint, doc-links,
+# whitespace, uv-lock) in under a minute. This pre-push hook is the final
+# blocking layer: it runs `uv run just check-deep`, which includes the full
+# non-mutational `just check` chain PLUS targeted-mutmut and targeted-semgrep
+# on files changed vs merge-base. GitHub CI remains the final authority;
 # this hook is a convenience net for honest mistakes.
+#
+# Targeted gates (not full-repo): mutmut and semgrep run against changed
+# Python files only. Full-repo mutmut and full-repo semgrep remain on
+# weekly scheduled CI, not on the push critical path.
 #
 # Escape hatch for exceptional operator cases:
 #   FA_HOOK_SKIP_FULL_CHECK=1 git push
 #
-# Do not use the escape hatch in normal agent runs. If this hook fails, fix
+# Narrower escape hatches (skip only the heavy targeted gates but still
+# run the rest of `just check`):
+#   FA_SKIP_TARGETED_MUTATION=1 git push
+#   FA_SKIP_TARGETED_SEMGREP=1 git push
+#
+# Do not use escape hatches in normal agent runs. If this hook fails, fix
 # the code or push only when you intentionally want CI/review to surface
 # the failure.
 
 set -euo pipefail
 
 if [[ "${FA_HOOK_SKIP_FULL_CHECK:-0}" == "1" ]]; then
-    echo "pre-push: skipping uv run just check (FA_HOOK_SKIP_FULL_CHECK=1)" >&2
+    echo "pre-push: skipping uv run just check-deep (FA_HOOK_SKIP_FULL_CHECK=1)" >&2
     exit 0
 fi
 
@@ -35,12 +42,8 @@ if ! command -v just >/dev/null 2>&1; then
     exit 127
 fi
 
-echo "pre-push: running uv run just check" >&2
+echo "pre-push: running uv run just check-deep" >&2
 # Redirect stdout to stderr (1>&2) so that Git GUI clients (like VS Code)
 # reliably display the full lint/test output in their error dialogs,
 # rather than swallowing the stdout and only showing the justfile exit code.
-# `just check` itself invokes `just doctor` first as a preflight, then runs
-# every blocking gate (lint, deptry, pylint, mypy, authoring-check,
-# contract checks, pytest --cov, cli-coverage-floor, targeted-mutmut,
-# targeted-semgrep).
-uv run just check 1>&2
+uv run just check-deep 1>&2

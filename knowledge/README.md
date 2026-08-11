@@ -1,8 +1,8 @@
 # Knowledge
 
 
-> **State:** First-Agent is actively developed by itself. 
-> The agent lives in a containerized AIO host, reads this immutable knowledge base, 
+> **State:** First-Agent is actively developed by itself.
+> The agent lives in a containerized AIO host, reads this immutable knowledge base,
 > works in an isolated `Workspace Clone` and issues PRs to its own repository.
 > The architectural decisions below are mechanically enforced by the agent.
 

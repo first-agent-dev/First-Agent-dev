@@ -8,7 +8,7 @@
 # reviewer acts on the protected-path flag.
 #
 # Keep this list in sync with scripts/check_protected_paths.py ::_TCB_PATHS.
- 
+
 /src/fa/authoring_tcb.py            @MondayInRussian
 /src/fa/authoring_rules/            @MondayInRussian
 /.github/workflows/authoring-guardrails.yml @MondayInRussian

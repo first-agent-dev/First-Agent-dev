@@ -1,7 +1,7 @@
 # Substrate Decision Freeze — 2026-07-15
 
-**Status:** Locked for gap-closure execution  
-**Applies to:** Stage A/B/C substrate closure work  
+**Status:** Locked for gap-closure execution
+**Applies to:** Stage A/B/C substrate closure work
 **Parent plans:**
 - `knowledge/research/substrate-modernization-plan-2026-07-14.md`
 - `knowledge/research/substrate-gap-closure-workplan-round2-2026-07-15.md`
@@ -10,7 +10,7 @@
 
 ## D8 — Unified per-run DB authority
 
-**Authoritative truth should be one unified per-run DB.**  
+**Authoritative truth should be one unified per-run DB.**
 **Workspace/global databases should be derived projections, not hot-path authority.**
 
 ### Meaning
@@ -74,7 +74,7 @@ Resume / PR draft text must **not** be:
 
 ## D11 — Slice 1 scope discipline
 
-**Do not try to solve all DB-related problems inside Slice 1.**  
+**Do not try to solve all DB-related problems inside Slice 1.**
 **Slice 1 is for hot-path authority and split-brain removal.**
 
 ### Meaning

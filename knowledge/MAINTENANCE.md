@@ -1,6 +1,6 @@
 # Maintenance — files agents touch when archiving, superseding, or amending
 
-> **Purpose.** Single canonical list of «touch these files when doing X» rules. 
+> **Purpose.** Single canonical list of «touch these files when doing X» rules.
 > **Maintenance rule for this file.** When a new artefact joins
 > the cross-reference web (e.g. a new index file, a new tier of
 > `DIGEST.md`, a new prompt template registered in `RESOLVER.md`),
@@ -79,7 +79,7 @@ Add a row in knowledge/llms.txt BY-DEMAND INDEX
 under the matching folder section. Row format:
 [path/to/file.md]: description.
 
-For files >1200 LoC add 'Large' size tag [path/to/file.md] (Large);	 
+For files >1200 LoC add 'Large' size tag [path/to/file.md] (Large);
 such files are chunked / sectional read only.
 Crossing a boundary triggers a prefix update.
 

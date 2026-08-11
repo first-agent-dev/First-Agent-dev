@@ -1,7 +1,7 @@
 # Slice 2 Patch Design — Runtime Observability on Live Authority
 
-**Date:** 2026-07-15  
-**Scope:** Slice 2 only  
+**Date:** 2026-07-15
+**Scope:** Slice 2 only
 **Parent:** `knowledge/research/substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md`
 
 ---
@@ -25,7 +25,7 @@ Make runtime observability tools consume the **active authoritative session stat
 - stale home paths,
 - mismatched event schemas.
 
-Slice 2 is not a DB migration slice.  
+Slice 2 is not a DB migration slice.
 Slice 2 is a **tool wiring + schema correctness** slice.
 
 ---

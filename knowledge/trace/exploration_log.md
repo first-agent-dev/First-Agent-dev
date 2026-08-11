@@ -1903,4 +1903,3 @@
   - **(b) No new principles, keep minimalism-first only.** Reason: minimalism-first 4-question test insufficient for topology vs substrate tradeoff. Substrate Formality and Pair over Autonomy are distinct principles that govern harness-state formality, not just file touch count. Lesson: principles added per user approval, enforceable via invariants.
 - **Coupling:** Q-20, Q-21, Paper 2 §4.4 topology complexity inversely correlates with harness-state formality: explicit formal substrates use simple topologies (L2MAC), §5.1.1 Harness as Distillation Surface, user philosophy pair programming.
 - **Source:** [project-overview.md §1.2.6, §1.2.7](../../../project-overview.md), [Substrate Formalization](../../research/substrate-formalization-and-reduction.md), [Philosophy Subagents](../../research/philosophy-subagents-cheap-deterministic.md), MACOG blackboard with content hashes + toolchain digests, L2MAC file store D persistent, implementation-plan v3 reduced.
-

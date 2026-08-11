@@ -5,7 +5,7 @@
 
 ## Summary
 
-This PR fortifies `src/fa/sandbox/secret_paths.py` against string obfuscation and execution wrappers (e.g., Python scripts). 
+This PR fortifies `src/fa/sandbox/secret_paths.py` against string obfuscation and execution wrappers (e.g., Python scripts).
 
 ## Changes
 
@@ -17,5 +17,5 @@ This PR fortifies `src/fa/sandbox/secret_paths.py` against string obfuscation an
 
 ## Subtraction Evaluated
 - Removing what makes this redundant: none.
-- What capability is lost: unrestricted Python scripts directly addressing `/run/secrets`. 
+- What capability is lost: unrestricted Python scripts directly addressing `/run/secrets`.
 - Open-source agent-stack precedent: standard string validation against protected namespaces.

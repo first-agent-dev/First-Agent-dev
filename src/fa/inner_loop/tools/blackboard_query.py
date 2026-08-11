@@ -143,7 +143,7 @@ def build_blackboard_query_tool() -> ToolSpec:
             try:
                 from fa.blackboard import artifact_index
 
-                ws_root = getattr(session, "workspace_root", None)
+                ws_root = session.workspace_root
                 if ws_root is not None:
                     target_types: set[str] | None = None if type_ is None else {str(type_)}
                     index_stats = artifact_index.ensure_artifacts_indexed(

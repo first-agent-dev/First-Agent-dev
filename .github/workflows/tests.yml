@@ -1,14 +1,12 @@
 name: Mutation testing
 
-# Coverage runs live in `.github/workflows/advisory.yml` sanity-check
-# (the single source of truth, read by GitHub's Code coverage analysis
-# feature). This workflow ONLY runs mutation
-# testing, which is a different question: not "did tests run?" but "would the
-# tests actually FAIL if the code were wrong?" — the key guard against
-# LLM-written tests that look thorough but assert nothing.
+# Weekly full-scope mutation testing. Advisory (continue-on-error) until the
+# survivor workplan is cleared; on push/PR, targeted-mutmut in advisory.yml
+# covers changed files. This workflow runs mutmut against the full
+# [tool.mutmut] source_paths (sandbox + substrate).
 
 on:
-  workflow_dispatch:  # run on demand from the Actions tab
+  workflow_dispatch:
   schedule:
     - cron: "0 6 * * 1"  # weekly, Monday 06:00 UTC
 
@@ -21,26 +19,19 @@ concurrency:
 
 jobs:
   mutation:
-    name: mutation testing (advisory)
+    name: mutation testing (weekly, advisory)
     runs-on: ubuntu-latest
-    # Mutation runs are slow (the suite reruns per mutant), so they are NOT on
-    # the PR critical path. Promotion to blocking is gated on the survivor
-    # workplan: when knowledge/mutation-survivors-workplan.md is DELETED
-    # (all baseline survivors cleared), flip continue-on-error to false and
-    # gate on survived == 0. See BACKLOG I-23.
     continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+      - name: Install just
+        uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
       - name: Install dependencies
         run: uv sync --frozen --extra dev
       - name: Sanity — fa resolves to the checked-out tree (editable install)
-        # mutmut mutates a copy under mutants/ and relies on import-path
-        # shadowing; a non-editable site-packages install would silently
-        # mutate the WRONG tree and report nonsense numbers.
         run: |
           uv run python - <<'PYEOF'
           import pathlib
@@ -51,24 +42,21 @@ jobs:
           print("fa ->", p)
           PYEOF
       - name: Run mutation testing (scope = pyproject [tool.mutmut])
-        # HISTORY NOTE: until 2026-06 this step passed --paths-to-mutate,
-        # a mutmut 2.x flag REMOVED in 3.x. The command errored instantly
-        # and `|| true` swallowed it — every prior weekly run tested
-        # nothing. Scope now lives in pyproject [tool.mutmut] only.
+        # NOTE: mutmut 3.x removed --paths-to-mutate; scope lives only in pyproject.
         run: uv run mutmut run
       - name: Export stats to job summary
         if: always()
         run: |
           uv run mutmut export-cicd-stats || true
           {
-            echo '## Mutation testing (src/fa/sandbox)'
+            echo '## Mutation testing (src/fa/sandbox + substrate)'
             echo '```json'
             cat mutants/mutmut-cicd-stats.json 2>/dev/null || echo '{"error": "stats file missing"}'
             echo ''
             echo '```'
             echo 'Survivor-clearing tracker: knowledge/mutation-survivors-workplan.md'
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: List survivors (log surface)
+      - name: List survivors
         if: always()
         run: uv run mutmut results || true
       - name: Upload stats artifact

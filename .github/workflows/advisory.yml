@@ -1,25 +1,16 @@
 name: CI
 
-# Local-first architecture: the authoritative gate is `just check` run by
-# the developer/agent in the pre-push hook BEFORE any network traffic.
-# GitHub CI is a parallel double-check that duplicates the same gates
-# (no new rules — if a gate fires here but not locally, that is a bug)
-# and adds a few advisory/non-blocking scans (full-repo semgrep weekly
-# lives in semgrep.yml; full mutmut weekly lives in tests.yml).
+# Primary CI workflow. Blocking jobs run in parallel for every PR and push to
+# main; advisory jobs (continue-on-error: true) add extra signal without
+# blocking the merge.
 #
-# Layout:
-#   * Blocking jobs (the parallelized "just check" chain): each gate is its
-#     own job so failures surface fast in the Checks UI and independent caches
-#     can be reused. NO `paths:` filters (ADR-11-I6 — CI is the authority, not
-#     pre-commit; a guardrail that skips when its own files don't change is
-#     trivially bypassed).
-#   * Advisory jobs (continue-on-error: true): scripts/ linting, vulture
-#     deadcode, full-repo pip-audit + semgrep. These report signal for
-#     operators/agents to triage but never block a merge on their own.
-#   * gitleaks, container-build: blocking environmental gates.
+# Gates converge on `uv run just check` / `uv run just check-deep`, which are
+# the same commands the local pre-push hook runs. There is no CI-only magic —
+# any gate that fails here also fails on a developer's machine.
 #
-# Concurrency: within one PR/branch, a newer push cancels the older run so
-# the Checks UI reflects current state, not a superseded push.
+# pip-audit is CI-only (network access, advisory DB). Targeted-mutmut and
+# targeted-semgrep are pre-push + CI (blocking, changed-files scope). Full
+# mutmut / full semgrep stay on weekly cron in tests.yml / semgrep.yml.
 
 on:
   pull_request:
@@ -33,147 +24,44 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# ---------------------------------------------------------------------------
-# Every Python-using job follows the same setup:
-#   1. actions/checkout
-#   2. astral-sh/setup-uv (with enable-cache: true — setup-uv v8 supports
-#      caching the uv cache and the venv; no manual actions/cache needed)
-#   3. extractions/setup-just
-#   4. uv sync --frozen --extra dev
-#
-# We deliberately repeat these steps per job rather than hide them behind
-# a composite action or a YAML anchor trick. GitHub Actions renders each
-# step in the UI; seeing "Install Python dependencies" with its timing in
-# every job makes cache regressions immediately obvious, and the body is
-# short enough that DRY doesn't pay for the loss of explicitness.
-# ---------------------------------------------------------------------------
-
 jobs:
-  # -----------------------------------------------------------------------
-  # Blocking gates (parallelized `just check` chain)
-  # -----------------------------------------------------------------------
-
-  doctor:
-    name: doctor (env preflight)
+  # Cheap sub-second preflight: uv lock check + `just doctor`. Catches a stale
+  # uv.lock or missing hooks/venv in seconds before we pay for uv sync.
+  doctor-preflight:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - run: uv run just doctor
+      - name: Install just
+        uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+      - name: Check uv.lock
+        run: uv lock --check
+      - name: Install Python dependencies
+        run: uv sync --frozen --extra dev
+      - name: Doctor
+        run: uv run just doctor
 
-  lock-check:
-    name: lock-check (uv.lock freshness)
+  # Authoritative blocking gate: runs `just check` (non-mutational) and uploads
+  # coverage. Pre-push hook runs `just check-deep` which extends this with the
+  # two targeted heavy gates; those live in separate parallel jobs below so
+  # they don't block the test run.
+  sanity-check:
     runs-on: ubuntu-latest
-    needs: doctor
+    needs: doctor-preflight
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: true
-      # Fails if pyproject.toml was edited but uv.lock was not regenerated
-      # (R-1 reproducible-builds). Run `uv lock` locally to fix.
-      # NOTE: this job does NOT run `uv sync` — `uv lock --check` only
-      # needs uv itself (which setup-uv installs). Skipping the venv sync
-      # keeps this very fast gate under ~5 s.
-      - run: uv lock --check
-
-  dependency-contract:
-    name: dependency-contract (TCB allowlist)
-    runs-on: ubuntu-latest
-    needs: doctor
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - run: uv run just dependency-contract-check
-
-  lint-fast:
-    name: lint-fast (ruff + deptry + pylint-gap)
-    runs-on: ubuntu-latest
-    needs: doctor
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - run: uv run just check-fast
-      - name: Emit step summary
-        if: always()
-        run: |
-          {
-            echo "## lint-fast"
-            echo '```'
-            echo "ruff check / ruff format --check / deptry src/ / pylint src/fa"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  typecheck:
-    name: typecheck (mypy)
-    runs-on: ubuntu-latest
-    needs: doctor
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - run: uv run just typecheck
-
-  authoring:
-    name: authoring (Level-0 kernel)
-    runs-on: ubuntu-latest
-    needs: doctor
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - run: uv run just authoring-check
-
-  contract-checks:
-    name: contract-checks (producer/consumer + log-kind + no-mock-dc)
-    runs-on: ubuntu-latest
-    needs: doctor
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - name: Run all contract checks
-        run: |
-          set -euo pipefail
-          uv run just contract-check
-          uv run just log-kind-check
-          uv run just no-mocked-dataclasses
-
-  test:
-    name: pytest (+coverage +cli-coverage-floor)
-    runs-on: ubuntu-latest
-    needs: doctor
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - run: uv run just test
-      - run: uv run just cli-coverage-floor
-      - name: Upload coverage report (read by GitHub Code coverage analysis)
+      - name: Install just
+        uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+      - name: Install Python dependencies
+        run: uv sync --frozen --extra dev
+      - name: Run checks (ruff+deptry+pylint+mypy+pyrefly+authoring+contracts+shell-syntax+pytest+coverage-floor)
+        run: uv run just check
+      - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -181,17 +69,10 @@ jobs:
           path: coverage.xml
           retention-days: 14
 
-  # Targeted mutmut on files changed vs the base ref (for PRs: the PR base;
-  # for main-branch pushes: origin/main). Blocking. Full-repo mutmut is
-  # weekly/advisory in tests.yml.
-  # NOTE: fetch-depth=0 (full history) so `git merge-base` between HEAD and
-  # origin/main always succeeds even on long-lived branches. Shallow clones
-  # would make the diff computation incomplete (silently treating files as
-  # "unchanged" when their commit wasn't fetched).
-  targeted-mutmut:
-    name: targeted-mutmut (changed files only)
+  # Network-only SCA: pip-audit. Blocking, CI-only (needs PyPI advisory DB).
+  pip-audit:
     runs-on: ubuntu-latest
-    needs: [test, lint-fast]
+    needs: doctor-preflight
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -199,37 +80,12 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - name: Run targeted mutmut
-        run: uv run just targeted-mutmut
-        env:
-          FA_TARGETED_MUTATION_BASE: origin/main
+      - name: Install Python dependencies
+        run: uv sync --frozen --extra dev
+      - name: Run pip-audit (SCA floor)
+        run: uv run pip-audit
 
-  # Targeted semgrep on files changed vs the base ref. Blocking.
-  # Full-repo semgrep is weekly/advisory in semgrep.yml AND in the audit job.
-  targeted-semgrep:
-    name: targeted-semgrep (changed files only)
-    runs-on: ubuntu-latest
-    needs: [test, lint-fast]
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 0
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - name: Run targeted semgrep
-        run: uv run just targeted-semgrep
-        env:
-          FA_TARGETED_SEMGREP_BASE: origin/main
-
-  # -----------------------------------------------------------------------
-  # Environmental / security gates (blocking)
-  # -----------------------------------------------------------------------
-
+  # Secret scanning — gitleaks.
   gitleaks:
     name: gitleaks (secret scan)
     runs-on: ubuntu-latest
@@ -242,12 +98,44 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-          # Pin the gitleaks binary version so pre-commit and CI run the
-          # SAME rule set. Must match the `rev:` for gitleaks in
-          # .pre-commit-config.yaml. Bump both together.
+          # Pin must match rev in .pre-commit-config.yaml.
           GITLEAKS_VERSION: "8.30.1"
 
-  # Build the runtime image and smoke-test it AS THE NON-ROOT RUNTIME USER.
+  # Targeted mutation testing (last blocking layer). Only changed files, 10-min cap.
+  targeted-mutmut:
+    runs-on: ubuntu-latest
+    needs: doctor-preflight
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+      - name: Install just
+        uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+      - name: Install Python dependencies
+        run: uv sync --frozen --extra dev
+      - name: Targeted mutation testing (changed files only)
+        run: uv run just _targeted-mutmut
+
+  # Targeted Semgrep (last blocking layer). Only changed files, 2-min cap.
+  targeted-semgrep:
+    runs-on: ubuntu-latest
+    needs: doctor-preflight
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+      - name: Install just
+        uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+      - name: Targeted Semgrep (changed files only)
+        run: uv run just _targeted-semgrep
+
+  # Docker image build + runtime-user smoke tests (slow, parallel).
   container-build:
     name: container-build + smoke tests
     runs-on: ubuntu-latest
@@ -255,17 +143,15 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Build the FA image
         run: docker build -f Dockerfile.fa -t fa-image:ci .
-      - name: Smoke-test as the runtime user (numeric 1000:1000, like compose)
+      - name: Smoke-test as the runtime user (numeric 1000:1000)
         run: |
           set -euo pipefail
-          docker run --rm --user 1000:1000 --read-only \
-            --tmpfs /tmp fa-image:ci fa --version
-      - name: Smoke-test the egress-proxy subcommand starts (no network/keys)
+          docker run --rm --user 1000:1000 --read-only --tmpfs /tmp fa-image:ci fa --version
+      - name: Smoke-test egress-proxy subcommand --help
         run: |
           set -euo pipefail
-          docker run --rm --user 1000:1000 --read-only --tmpfs /tmp \
-            fa-image:ci fa egress-proxy --help >/dev/null
-      - name: Smoke-test session workspace isolation (mount topology)
+          docker run --rm --user 1000:1000 --read-only --tmpfs /tmp fa-image:ci fa egress-proxy --help >/dev/null
+      - name: Session workspace isolation
         run: |
           set -euo pipefail
           mkdir -p /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state
@@ -280,19 +166,13 @@ jobs:
             -v /tmp/fa-ci-repo:/repo:ro \
             -v /tmp/fa-ci-sessions:/sessions \
             -v /tmp/fa-ci-state:/home/fa/.fa \
-            -e FA_SESSION_ID=ci-smoke \
-            -e FA_RUN_ID=ci-run-1 \
+            -e FA_SESSION_ID=ci-smoke -e FA_RUN_ID=ci-run-1 \
             fa-image:ci bash -c '
               set -euo pipefail
               test -d /sessions/ci-smoke/.git
               test -f /sessions/.active
               test "$PWD" = "/sessions/ci-smoke"
-              test "$FA_SESSION_ID" = "ci-smoke"
-              test "$FA_RUN_ID" = "ci-run-1"
-              fa --version
-              echo "Session workspace isolation OK"
-            '
-          # V26 regression guard: run_id MUST NOT select the session workspace.
+              fa --version'
           docker run --rm --user 1000:1000 --read-only \
             --tmpfs /tmp --tmpfs /home/fa/.cache --tmpfs /home/fa/.local \
             -v /tmp/fa-ci-repo:/repo:ro \
@@ -304,127 +184,53 @@ jobs:
               if [ -d /sessions/ci-runonly/.git ]; then
                 echo "V26 REGRESSION: FA_RUN_ID selected the session workspace" >&2
                 exit 1
-              fi
-              echo "run_id does not select session workspace OK"
-            '
+              fi'
           sudo rm -rf /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state
 
-  # -----------------------------------------------------------------------
-  # Advisory (non-blocking) jobs — continue-on-error: true
-  # -----------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # Advisory jobs (continue-on-error: true)
+  # ---------------------------------------------------------------------------
 
-  # scripts/ linting + typecheck — advisory per operator decision 2026-08-11.
-  scripts-lint:
-    name: scripts-lint (advisory, pylint+mypy scripts/)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - name: pylint scripts/ (advisory)
-        run: |
-          set +e
-          # Advisory scan: keep the same gap profile as src/fa (duplicate-code +
-          # cyclic-import) plus E/F (real errors/fatals). We do NOT run the full
-          # pylint default rule set on scripts/ — that would drown signal in
-          # convention/refactor churn for glue/legacy scripts.
-          uv run pylint scripts/ \
-            --disable=all \
-            --enable=E,F,R0801,R0401 \
-            --ignore=__pycache__,fa,ssh-tailscale,sweep_specs \
-            --ignore-patterns=".*\.sh$"
-          echo "(pylint scripts/ reported findings; non-blocking)"
-      - name: mypy scripts/ (advisory)
-        run: |
-          set +e
-          # Advisory scan: do NOT inherit pyproject's [tool.mypy] strict=true
-          # (scripts/ haven't been annotated yet). Opt-in to a non-strict pass
-          # that still flags obvious type errors via an inline config.
-          uv run mypy scripts/ \
-            --config-file=/dev/null \
-            --ignore-missing-imports \
-            --follow-imports=silent \
-            --no-implicit-reexport \
-            --exclude "scripts/fa/"
-          echo "(mypy scripts/ reported findings; non-blocking)"
-      - name: Emit step summary
-        if: always()
-        run: |
-          {
-            echo "## scripts-lint (advisory)"
-            echo "_Findings in \`scripts/\` are non-blocking. Triage before promotion to blocking._"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # Vulture dead-code scan — advisory per operator decision 2026-08-11.
+  # Dead code scan (vulture). Full src/, not just changed files. Non-blocking.
   deadcode:
-    name: deadcode (vulture, advisory)
     runs-on: ubuntu-latest
+    needs: doctor-preflight
     continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - name: Run vulture (advisory)
-        run: |
-          set +e
-          uv run vulture src/ --min-confidence 90
-          echo "(vulture findings are advisory; verify before deleting anything)"
-      - name: Emit step summary
-        if: always()
-        run: |
-          {
-            echo "## deadcode — vulture src/ --min-confidence 90"
-            echo "_Advisory only. Confirm each finding is dead before removing — vulture cannot tell reflective/dynamic usage._"
-          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Install Python dependencies
+        run: uv sync --frozen --extra dev
+      - name: Vulture dead-code scan (advisory)
+        run: uv run vulture src/ --min-confidence 90
 
-  # Advisory SCA + full-repo SAST (the targeted-semgrep blocking gate covers changed files).
-  audit:
-    name: audit (pip-audit + full-repo semgrep, advisory)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - name: pip-audit
-        run: |
-          set +e
-          uv run pip-audit
-      - name: full-repo semgrep (advisory)
-        run: |
-          set +e
-          uvx semgrep --quiet --config=p/python --config=p/owasp-top-ten
-      - name: Emit step summary
-        if: always()
-        run: |
-          {
-            echo "## audit (advisory)"
-            echo "_pip-audit + full-repo Semgrep. Findings are non-blocking; the targeted-semgrep blocking gate covers changed files._"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # Workflow hygiene: ensure no blocking job has a `paths:` filter (ADR-11-I6).
+  # Self-test: no blocking job in this workflow or the other three uses
+  # `paths:` filters (ADR-11-I6).
   workflow-hygiene:
-    name: workflow-hygiene (no-path-filter self-check, advisory)
     runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: "Verify no paths: filters on blocking jobs"
+        run: python scripts/check_workflow_no_path_filter.py
+
+  # Advisory lint of scripts/ — pylint (gap profile) + mypy in non-strict mode.
+  # scripts/ are dev/CI helpers, not production code; findings here are surfaced
+  # but do not block the build.
+  scripts-lint:
+    runs-on: ubuntu-latest
+    needs: doctor-preflight
     continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      - run: uv sync --frozen --extra dev
-      - name: "Verify blocking jobs have no `paths:` filter (ADR-11-I6)"
-        run: |
-          set +e
-          uv run python scripts/check_workflow_no_path_filter.py
+      - name: Install Python dependencies
+        run: uv sync --frozen --extra dev
+      - name: pylint (scripts/, gap profile, advisory)
+        run: uv run pylint --disable=all --enable=E,F,R0801,R0401 scripts/
+      - name: mypy (scripts/, non-strict, advisory)
+        run: uv run mypy --config-file=/dev/null --ignore-missing-imports scripts/

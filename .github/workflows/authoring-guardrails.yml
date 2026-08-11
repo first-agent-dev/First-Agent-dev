@@ -1,11 +1,7 @@
 name: Authoring Guardrails
 
-# Level-0 authoring kernel (ADR-11 two-tier TCB). This workflow is
-# ALWAYS-RUN: it has no `paths:` filter (ADR-11-I6 — CI is the authority,
-# not pre-commit; a guardrail that only runs when its own files change is
-# trivially bypassed). On a clean tree with an empty Level-1 allowlist
-# (v0.1 / PR 1) the kernel reports zero diagnostics and exits 0, so the
-# check always reports a status.
+# Level-0 authoring kernel (ADR-11 two-tier TCB). Always-run (no paths: filter
+# per ADR-11-I6 — CI is the authority, not pre-commit). Blocking.
 
 on:
   pull_request:
@@ -25,24 +21,16 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          # Full history so the protected-path diff-check can reach the
-          # PR base ref's merge-base.
           fetch-depth: 0
-
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: true
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-
+      - name: Install just
+        uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
       - name: Install package
-        # Runtime deps only: the Level-0 kernel is stdlib-only, but the
-        # `fa` CLI entry point imports the wider package.
-        run: |
-          uv sync --frozen --extra dev
-
+        run: uv sync --frozen --extra dev
       - name: Run Level-0 authoring kernel (always reports)
         run: uv run fa authoring-check --output json
-
       - name: Surface protected-path edits (flag for human review)
         if: github.event_name == 'pull_request'
         env:

@@ -449,4 +449,3 @@ Shortest path to trustworthy substrate and authoring guardrails that prevent rec
 - Provide active consumer for global_history (HR4)
 - Provide copy-paste C1 template (HR5)
 - Enforce shared fixture usage (HR6)
-

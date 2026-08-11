@@ -350,7 +350,10 @@ def test_dispatch_applies_role_sampling_defaults_to_every_entry() -> None:
         clock=_StubClock(),
         id_factory=ItertoolsId("call"),
     )
-    chain.request(RequestInfo(model_slug=config.name, messages=()))
+    # --thinking-mode=no-thinking is required for role-level sampling knobs
+    # to reach the wire; the default ("thinking") mode intentionally drops
+    # temperature/top_p for reasoning-first providers (S13.x chokepoint).
+    chain.request(RequestInfo(model_slug=config.name, messages=(), thinking_mode="no-thinking"))
     sent = stub.received_requests[0]
     assert sent.temperature == 0.2
     assert sent.max_tokens == 8000
@@ -378,7 +381,15 @@ def test_dispatch_explicit_caller_override_beats_role_sampling_default() -> None
         clock=_StubClock(),
         id_factory=ItertoolsId("call"),
     )
-    chain.request(RequestInfo(model_slug=config.name, messages=(), temperature=0.0, max_tokens=1))
+    chain.request(
+        RequestInfo(
+            model_slug=config.name,
+            messages=(),
+            temperature=0.0,
+            max_tokens=1,
+            thinking_mode="no-thinking",
+        )
+    )
     sent = stub.received_requests[0]
     assert sent.temperature == 0.0
     assert sent.max_tokens == 1

@@ -1,15 +1,13 @@
 name: Semgrep
 
-# SAST advisory scan (R-5). Weekly + manual dispatch; NOT on the PR critical
-# path. Intra-procedural only (Semgrep OSS free tier). If signal proves clean
-# after 4 weekly runs, consider promoting to blocking with a .semgrepignore.
-#
-# Windows devs: local Semgrep is optional; primary run is Linux CI.
+# Weekly full-repo Semgrep OSS scan. Advisory (continue-on-error: true).
+# Intra-procedural only (Semgrep OSS free tier). Blocking push-time Semgrep
+# is handled by targeted-semgrep in advisory.yml (changed files only).
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 0 * * 0"
+    - cron: "0 0 * * 0"  # weekly, Sunday 00:00 UTC
 
 permissions:
   contents: read
@@ -20,15 +18,14 @@ concurrency:
 
 jobs:
   semgrep:
-    name: semgrep-oss
+    name: semgrep-oss (weekly, advisory)
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+      # uvx does not require uv sync; semgrep resolves via one-shot download.
       - name: Run Semgrep (advisory SAST)
-        # Semgrep is installed via uvx (one-shot, no project deps needed).
-        # Registry: p/python (general Python anti-patterns),
-        # p/owasp-top-ten (OWASP top-ten coverage).
-        # See research note in knowledge/research/ for rationale vs Bandit.
-        run: uvx semgrep scan --config=p/python --config=p/owasp-top-ten
+        run: uvx semgrep scan --quiet --config=p/python --config=p/owasp-top-ten

@@ -131,6 +131,20 @@ select = [
   # on every PR, not weekly-advisory Semgrep alone. Intentional sites carry
   # `# noqa: S###` + rationale; tests are exempt via per-file-ignores.
   "S",
+  # Explicit TRY-family selects:
+  #   TRY201: flags `raise exc` where bare `raise` preserves the traceback
+  #           (common LLM-agent mistake when wrapping exceptions).
+  #   TRY203: flags useless try/except that immediately re-raises verbatim
+  #           (dead catch clause).
+  #   TRY401: flags redundant `{exc}` interpolation inside logger.exception
+  #           (logger.exception already formats the exception with traceback;
+  #           adding `{exc}` double-prints and loses the stack for re-raise).
+  # Broader TRY rules (TRY002/003/300/301/400) are intentionally NOT selected:
+  # BLE001 already requires a reviewer anchor for broad catches, and the
+  # raise-from / long-exception-message rules are stylistic, not safety.
+  "TRY201",
+  "TRY203",
+  "TRY401",
   "UP",
   "W",
 ]
@@ -146,10 +160,11 @@ max-complexity = 15
 # Tests: `assert` IS the framework; fake tokens / subprocess fixtures /
 # tmp paths are test scaffolding, not production attack surface.
 "tests/**" = ["S"]
-# Dev/CI scripts in scripts/ legitimately shell out to git/uvx/mutmut
-# via argv lists (shell=False). S603 ("check for execution of untrusted
-# input") is not actionable here — binaries are resolved via shutil.which
-# and argv is hardcoded, never user-controlled. Do NOT extend this to src/.
+# repo-management scripts intentionally spawn git/uv/etc. with hardcoded
+# argument vectors (not shell-injection surfaces). S603 (subprocess.run
+# without check=False/timeout paranoia) and S607 (start-process-with-partial-
+# path) do not apply here; waiving per-file is cleaner than per-line noqa
+# markers that RUF100 would demand be kept in lockstep with every change.
 "scripts/**" = ["S603", "S607"]
 
 [tool.ruff.lint.isort]

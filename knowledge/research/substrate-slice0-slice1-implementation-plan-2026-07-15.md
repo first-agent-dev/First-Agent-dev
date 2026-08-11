@@ -1,8 +1,8 @@
 # Slice 0 / Slice 1 Implementation Plan — Code-Facing Detail
 
-**Date:** 2026-07-15  
-**Parent plan:** `knowledge/research/substrate-gap-closure-workplan-round2-2026-07-15.md`  
-**Purpose:** implementation planning only, no code changes  
+**Date:** 2026-07-15
+**Parent plan:** `knowledge/research/substrate-gap-closure-workplan-round2-2026-07-15.md`
+**Purpose:** implementation planning only, no code changes
 **Scope:**
 - Slice 0 — contract freeze
 - Slice 1 — unified per-run DB authority and split-brain removal
@@ -13,14 +13,14 @@
 
 Locked operator decisions already accepted:
 
-1. **DB authority**  
-   One unified per-run authoritative DB.  
+1. **DB authority**
+   One unified per-run authoritative DB.
    Workspace/global DBs are derived projections, not hot-path authority.
 
-2. **Resume/PR-draft semantics**  
+2. **Resume/PR-draft semantics**
    Previous PR draft / resume text is mutable non-cacheable summary/history.
 
-3. **Subagent scope**  
+3. **Subagent scope**
    `fs_spawn_subagent` is narrow-scope, role-bounded, stateless, limited-function, and must not bypass parent shell/tool safety.
 
 This document plans only Slice 0/1. It intentionally does **not** implement Slice 3/4/5 logic here.
@@ -33,11 +33,11 @@ This document plans only Slice 0/1. It intentionally does **not** implement Slic
 
 Hot-path state currently spans at least three write surfaces:
 
-- `EventLog` JSONL mirror + per-run SQLite DB  
+- `EventLog` JSONL mirror + per-run SQLite DB
   `src/fa/inner_loop/state.py`
-- `Blackboard` JSONL mirror + workspace SQLite DB  
+- `Blackboard` JSONL mirror + workspace SQLite DB
   `src/fa/blackboard/blackboard.py`
-- telemetry JSONL  
+- telemetry JSONL
   `src/fa/telemetry/telemetry.py`
 
 ### 1.2 EventLog path
@@ -681,16 +681,16 @@ But document them as:
 
 ## 3.12 Risks to watch while implementing Slice 1
 
-1. **Call-site churn explosion**  
+1. **Call-site churn explosion**
    Mitigation: keep `EventLog` and `Blackboard` public APIs stable.
 
-2. **Accidental cross-run coordination regression**  
+2. **Accidental cross-run coordination regression**
    Mitigation: explicitly state that cross-run workspace coordination is not promised by Slice 1 and will be revisited under subagent/shared-workspace hardening.
 
-3. **Stats/CLI breakage because JSONL assumptions leak everywhere**  
+3. **Stats/CLI breakage because JSONL assumptions leak everywhere**
    Mitigation: keep mirrors during transition; keep `EventLog.read_all()` stable.
 
-4. **Scope creep into telemetry migration**  
+4. **Scope creep into telemetry migration**
    Mitigation: telemetry stays derived for Slice 1 unless it blocks authority cleanup.
 
 ---

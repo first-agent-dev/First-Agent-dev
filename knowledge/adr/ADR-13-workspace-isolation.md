@@ -6,7 +6,7 @@
 
 ## Context
 
-The agent container bind-mounts the host git checkout (`/srv/first-agent/repo/First-Agent-dev/`) as `/workspace` (read-write). Agent sessions write code and trace artifacts into the host checkout, dirtying the worktree. 
+The agent container bind-mounts the host git checkout (`/srv/first-agent/repo/First-Agent-dev/`) as `/workspace` (read-write). Agent sessions write code and trace artifacts into the host checkout, dirtying the worktree.
 
 This causes a direct architectural conflict:
 - The operator runs `fa update`, which requires a pristine git worktree to execute `git pull --ff-only`.
@@ -18,7 +18,7 @@ We need a way to isolate agent modifications from the main checkout while allowi
 
 As detailed in our research (`knowledge/research/workspace-isolation-research.md`), several open-source agent stacks have converged on workspace isolation patterns:
 - **Clone-in-Sandbox:** (Open SWE, Stripe, Coinbase) Each task gets an isolated VM/container; repo is cloned in. High isolation but large disk overhead and slower start.
-- **Docker AI Sandbox:** Host repo mounted read-only; container entrypoint creates a private clone. 
+- **Docker AI Sandbox:** Host repo mounted read-only; container entrypoint creates a private clone.
 - **SWE-Next:** Copy-on-start mounting. Snapshot mounted read-only, copied to writable workspace. No git history.
 
 ## Options considered

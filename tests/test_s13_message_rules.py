@@ -321,6 +321,12 @@ def test_mistral_temp_zero_sends_top_p_one_on_wire() -> None:
             {"role": "user", "content": "continue"},
         ),
         temperature=0.0,
+        # Default thinking_mode ("thinking") drops sampling knobs at the
+        # chain chokepoint before the Mistral greedy rule can fire; the
+        # greedy-top_p rule only applies when the operator has explicitly
+        # disabled reasoning. Use no-thinking so the chain retains the
+        # temperature and the rule is exercised end-to-end.
+        thinking_mode="no-thinking",
     )
     chain.request(request)
 

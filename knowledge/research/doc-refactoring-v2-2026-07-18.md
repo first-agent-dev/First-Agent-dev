@@ -1,9 +1,9 @@
 # Documentation Refactoring Implementation Plan — v2
 
-> **Created:** 2026-07-18  
-> **Supersedes:** doc-refactoring-implementation-plan-2026-07-16.md (v1)  
-> **Purpose:** Criterion #8 — docs update for authoring-hardening workplan  
-> **Scope:** Restructure agent-facing docs to reflect session_db authority, create `worklogs/`, condense core docs, convert MAINTENANCE to skill  
+> **Created:** 2026-07-18
+> **Supersedes:** doc-refactoring-implementation-plan-2026-07-16.md (v1)
+> **Purpose:** Criterion #8 — docs update for authoring-hardening workplan
+> **Scope:** Restructure agent-facing docs to reflect session_db authority, create `worklogs/`, condense core docs, convert MAINTENANCE to skill
 > **Verifiable:** Every step has a verification command
 
 ---

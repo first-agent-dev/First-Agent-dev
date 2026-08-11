@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Targeted semgrep run on files changed vs origin/main (or $BASE_REF).
+"""Targeted Semgrep gate (pre-push / CI).
 
-Semgrep OSS scans for python anti-patterns (p/python) and OWASP top-10
-(p/owasp-top-ten). Full-repo semgrep is weekly/advisory (semgrep.yml)
-because it pulls rule sets from the internet on first run and takes
-non-trivial time. For the pre-push gate we scan only files the branch
-changes, which keeps the wall time to seconds on small diffs.
+Runs Semgrep OSS (p/python + p/owasp-top-ten) against the Python files
+changed vs merge-base. Full-repo Semgrep is slow and lives in the weekly
+CI workflow (semgrep.yml); the push-time gate scopes to the diff to stay
+under a couple of minutes.
 
-Gate semantics:
-- Blocking (exit 1) if semgrep reports findings in changed .py files.
-- Skip (exit 0) if semgrep is not installed, the base ref is missing,
-  or there are no changed .py files. Use `FA_SKIP_TARGETED_SEMGREP=1`
-  for the emergency bypass (intentionally separate from the general
-  full-check bypass so operators can diagnose which layer is firing).
+Uses ``uvx semgrep`` so the semgrep binary does not need to be in the
+project dev dependencies.
+
+Fail-open: if uvx is unavailable, semgrep cannot be installed, the diff is
+empty/too large, or ``FA_SKIP_TARGETED_SEMGREP=1`` is set, exit 0 with a
+note. Real Semgrep findings exit non-zero.
 """
 
 from __future__ import annotations
@@ -21,90 +20,115 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-SEMGREP_CONFIGS = ["p/python", "p/owasp-top-ten"]
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 MAX_FILES = 50
-# Per-run timeout (seconds). Semgrep pulls rule packs over the network on
-# first run; cap so a wedged network call can't hang pre-push forever.
 RUN_TIMEOUT_SECONDS = 120
 
 
-def _base_ref() -> str:
-    return os.environ.get("FA_TARGETED_SEMGREP_BASE", "origin/main")
+def _log(msg: str) -> None:
+    print(f"[targeted-semgrep] {msg}", file=sys.stderr, flush=True)
 
 
-def _changed_py_files(base: str) -> list[Path]:
-    def _run(cmd: list[str]) -> str:
+def _changed_python_files() -> list[Path]:
+    git = shutil.which("git")
+    if git is None:
+        _log("git not found on PATH; skipping (fail-open)")
+        return []
+    base: str | None = None
+    for ref in ("origin/main", "main", "HEAD~1"):
+        r = subprocess.run(
+            [git, "merge-base", "HEAD", ref],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            base = r.stdout.strip()
+            break
+    if base is None:
+        _log("no merge-base found; skipping (fail-open)")
+        return []
+    r = subprocess.run(
+        [git, "diff", "--name-only", "--diff-filter=ACMR", f"{base}...HEAD"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    files: list[Path] = []
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        if not line.endswith(".py"):
+            continue
+        p = (REPO_ROOT / line).resolve()
         try:
-            return subprocess.check_output(cmd, cwd=REPO_ROOT, text=True, stderr=subprocess.DEVNULL)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return ""
+            rel = p.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            continue
+        if p.is_file() and (rel.startswith("src/") or rel.startswith("tests/") or rel.startswith("scripts/")):
+            files.append(p)
+    return files
 
-    names: set[str] = set()
-    for out in (
-        _run(["git", "diff", "--name-only", "--diff-filter=ACMRT", f"{base}...HEAD"]),
-        _run(["git", "diff", "--name-only", "--diff-filter=ACMRT", "HEAD"]),
-    ):
-        for line in out.splitlines():
-            line = line.strip()
-            if line:
-                names.add(line)
 
-    py_files: list[Path] = []
-    for name in sorted(names):
-        p = REPO_ROOT / name
-        if p.is_file() and p.suffix == ".py" and "/__pycache__/" not in name.replace("\\", "/"):
-            py_files.append(p)
-    return py_files[:MAX_FILES]
+def _resolve_uvx() -> str | None:
+    uvx = shutil.which("uvx")
+    if uvx:
+        return uvx
+    uv = shutil.which("uv")
+    if uv:
+        return f"{uv} tool run"  # fall back; uvx is preferred
+    return None
 
 
 def main() -> int:
     if os.environ.get("FA_SKIP_TARGETED_SEMGREP") == "1":
-        print("targeted-semgrep: skipped (FA_SKIP_TARGETED_SEMGREP=1)")
+        _log("skipping (FA_SKIP_TARGETED_SEMGREP=1)")
         return 0
 
-    if not shutil.which("uvx"):
-        print("targeted-semgrep: uvx not found; skipping")
+    uvx = _resolve_uvx()
+    if uvx is None:
+        _log("uvx not found; skipping targeted semgrep (fail-open)")
         return 0
 
-    if not (REPO_ROOT / ".git").is_dir():
-        print("targeted-semgrep: not a git checkout; skipping")
-        return 0
-
-    base = _base_ref()
-    changed = _changed_py_files(base)
+    changed = _changed_python_files()
     if not changed:
-        print("targeted-semgrep: no .py files changed; skipping")
+        _log("no changed Python files vs merge-base; nothing to scan")
+        return 0
+    if len(changed) > MAX_FILES:
+        _log(f"{len(changed)} changed files > MAX_FILES={MAX_FILES}; skipping (weekly full-semgrep covers large diffs)")
         return 0
 
-    rels = [str(p.relative_to(REPO_ROOT)) for p in changed]
-    print(f"targeted-semgrep: scanning {len(rels)} changed file(s)")
+    _log(f"scanning {len(changed)} file(s):")
+    for p in changed:
+        _log(f"  - {p.relative_to(REPO_ROOT).as_posix()}")
 
-    cmd = ["uvx", "semgrep", "scan", "--quiet"]
-    for cfg in SEMGREP_CONFIGS:
-        cmd.extend(["--config", cfg])
-    cmd.extend(rels)
-
+    pos_args = [str(p) for p in changed]
+    cmd = [
+        "uvx",
+        "semgrep",
+        "scan",
+        "--quiet",
+        "--config=p/python",
+        "--config=p/owasp-top-ten",
+        *pos_args,
+    ]
+    # NOTE: no --no-git-ignore. That flag was tried and reverted — it causes
+    # semgrep to descend into .venv, mutants, .mypy_cache, etc. The regular
+    # gitignore-honouring scan is the production-default behaviour.
+    start = time.monotonic()
     try:
-        result = subprocess.run(cmd, cwd=REPO_ROOT, text=True, timeout=RUN_TIMEOUT_SECONDS)
+        r = subprocess.run(cmd, cwd=REPO_ROOT, check=False, timeout=RUN_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        print(
-            f"targeted-semgrep: timed out after {RUN_TIMEOUT_SECONDS}s; skipping",
-            file=sys.stderr,
-        )
+        _log(f"semgrep timed out after {RUN_TIMEOUT_SECONDS}s; skipping (fail-open)")
         return 0
-    except (OSError, subprocess.SubprocessError) as exc:
-        print(f"targeted-semgrep: failed to invoke semgrep ({exc}); skipping")
-        return 0
-
-    if result.returncode != 0:
-        print("targeted-semgrep: findings in changed files (see above)", file=sys.stderr)
-        return 1
-    print("targeted-semgrep: clean")
-    return 0
+    _log(f"finished in {time.monotonic() - start:.1f}s (rc={r.returncode})")
+    return r.returncode
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

@@ -1,8 +1,8 @@
 # Documentation Refactoring Implementation Plan
 
-> **Created:** 2026-07-18  
-> **Purpose:** Criterion #8 — docs update for authoring-hardening workplan  
-> **Scope:** Restructure agent-facing documentation to reflect session_db authority model, create `worklogs/`, condense core docs, convert MAINTENANCE to skill  
+> **Created:** 2026-07-18
+> **Purpose:** Criterion #8 — docs update for authoring-hardening workplan
+> **Scope:** Restructure agent-facing documentation to reflect session_db authority model, create `worklogs/`, condense core docs, convert MAINTENANCE to skill
 > **Verifiable:** Every step has a verification command
 
 ---
@@ -262,9 +262,9 @@ fa run → _cmd_run() → EventLog(path, run_id) → SessionDatabase(session.db)
 
 ### Step 1.2: Update AGENTS.md references to point to reference.md
 
-Replace all `knowledge/glossary.md` → `knowledge/reference.md` §Terms  
-Replace all `knowledge/architecture.md` → `knowledge/reference.md` §Patterns  
-Remove `knowledge/overview/FEATURES.md` references → `knowledge/reference.md` §Features  
+Replace all `knowledge/glossary.md` → `knowledge/reference.md` §Terms
+Replace all `knowledge/architecture.md` → `knowledge/reference.md` §Patterns
+Remove `knowledge/overview/FEATURES.md` references → `knowledge/reference.md` §Features
 Update §Query Routing table, §Pre-flight Step 2, §Session close
 
 **Verification:** `grep -rn 'glossary\.md\|architecture\.md\|FEATURES\.md' AGENTS.md` returns 0
@@ -290,7 +290,7 @@ Specific edits:
 
 ### Step 2.2: Update project-overview.md (consider rename)
 
-User wants "short and sound name." Candidates: `conventions.md`, `vision.md`, `charter.md`.  
+User wants "short and sound name." Candidates: `conventions.md`, `vision.md`, `charter.md`.
 **Decision needed from user on name.** For now, plan edits regardless of filename.
 
 Specific edits:

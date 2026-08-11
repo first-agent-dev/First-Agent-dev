@@ -189,24 +189,58 @@ New skills land as `knowledge/skills/<name>/SKILL.md` with a row added to this t
 - Branch: `fa/<timestamp>-<slug>` from `main`.
 - All changes via Pull Request.
 - You focus on logic implementation. Harness tool does styling.
-- **After cloning, run `just install`.** This single command syncs the
-  Python environment (including dev extras), installs the autofix-first
-  `pre-commit` hook, installs the `pre-push` `uv run just check` gate,
-  and installs the custom `prepare-commit-msg` / `commit-msg` hooks.
-  Verify it with `just hooks-status`. CI will still checks the PR.
+## Just recipes (public surface)
+
+Agents and humans use the **six public recipes** below. Underscore-prefixed
+recipes (e.g. `_lint`, `_targeted-mutmut`) are INTERNAL; they exist for
+composition and are hidden from `just --list`. Do not rely on them as a
+stable surface — invoke them only when debugging a single gate.
+
+| Recipe   | Purpose |
+|----------|---------|
+| `just doctor` | Sub-second preflight (uv/just/python≥3.13/.venv/hooks/uv.lock). Read-only. |
+| `just install` | One-shot bootstrap on a fresh clone: `uv sync --frozen --extra dev` + hook install. |
+| `just fix` | Auto-fix every mechanical finding: `ruff check --fix-only` → `ruff format` → trailing `ruff check`. |
+| `just test` | Pytest with branch coverage + CLI coverage-floor gate. |
+| `just check` | Full blocking gate chain (no fail-fast, collects ALL errors): lock-check, lint, mypy strict, pyrefly, authoring, contracts, shell-syntax, test+coverage. Advisory vulture prints at the end and does NOT fail the run. |
+| `just check-deep` | `just check` + targeted-mutmut + targeted-semgrep on changed files. This is what `pre-push` runs. |
+
+Harness-facing alias: `just agent-bootstrap` (one-shot idempotent bootstrap
+that writes `.fa/host-bootstrap.json`).
+
+## Development Workflow
+
+- Branch: `fa/<timestamp>-<slug>` from `main`.
+- All changes via Pull Request.
+- You focus on logic implementation. Harness tool does styling.
+- **After cloning, run `just install`.** Syncs the Python environment
+  (frozen lockfile, dev extras), installs the four git hooks
+  (pre-commit, pre-push, prepare-commit-msg, commit-msg). Verify any
+  time with `just doctor`.
 - **Lint is autofix-first.** Run `just fix` after editing code — it
   handles formatting (import order, `__all__` sorting, quoting, line
-  wrapping). The installed `pre-commit` hook does safe mechanical cleanup.
-- **Before opening a PR for review**, run `just check` — PR-readiness gate.
-  The installed `pre-push` hook also runs `uv run just check` before publishing a branch.
-  Use `FA_HOOK_FULL_CHECK=1` to run the full gate at commit time too.
-  For an intentional operator bypass only - `FA_HOOK_SKIP_FULL_CHECK=1 git push`.
-  Commit-time is fast and bypassable; CI is authoritative.
-- **Judgment rules** (`S`, `BLE001`, `C901`, pylint `duplicate-code`):
-  these signal a design problem — fix the design that caused the
-  finding. Waive with `# noqa: <code> — <reason>` only when you can
-  explain why the flagged pattern is intentional (e.g. a fail-closed
-  boundary, a sandboxed `shell=True`).
+  wrapping). The pre-commit hook also applies these safe fixes.
+- **pre-commit (per commit):** runs ruff/format/deptry/pylint-gap/mypy/
+  pyrefly/shell-syntax/gitleaks/markdownlint/doc-links/uv-lock/whitespace.
+  Budget: ~60 seconds on the operator's i5-1235U (much faster on warm cache).
+- **pre-push (per push):** runs `just check-deep` which is `just check`
+  plus targeted-mutmut and targeted-semgrep on changed files. pip-audit
+  runs ONLY in CI (network access). Full-repo mutmut/semgrep run weekly,
+  not on the push path.
+- **Escape hatches:** `FA_HOOK_SKIP_FULL_CHECK=1 git push` skips the entire
+  pre-push gate (operator-only). Narrower: `FA_SKIP_TARGETED_MUTATION=1`
+  or `FA_SKIP_TARGETED_SEMGREP=1`.
+- **Before opening a PR for review**, `just check-deep` should be green.
+  The pre-push hook enforces this; CI duplicates in parallel for
+  cross-machine confirmation.
+- **Judgment rules** (`S`, `BLE001`, `C901`, pylint `duplicate-code`/
+  `cyclic-import`, TRY201/203/401, RUF012/013/015): these signal a
+  design problem — fix the design that caused the finding. Waive with
+  `# noqa: <code> — <reason>` only when you can explain why the flagged
+  pattern is intentional (e.g. a fail-closed boundary, a sandboxed
+  `shell=True`, an observer that must never throw). Every waiver MUST
+  carry a one-line rationale; the CI surface treats a bare `# noqa: XXX`
+  without explanation as a failing finding.
 - **Type-checker errors** (mypy strict, pyrefly): fix by writing
   code that validates data at the boundary — the type checker error
   disappears because the logic is genuinely correct, not silenced.

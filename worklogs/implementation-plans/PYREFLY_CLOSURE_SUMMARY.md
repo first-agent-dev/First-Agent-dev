@@ -72,7 +72,7 @@ if HAS_FASTAPI:
     # Local reference for type checker - the module-level HTTPException may be
     # narrowed to Exception by the fallback branch above
     _HTTPException: Any = HTTPException
-    
+
     @app.post("/execute")
     def execute(req):
         try:
@@ -100,7 +100,7 @@ Fixed missing type parameters in `check_dependency_contract.py`:
 # Before
 def extract_contract_packages(contract: dict) -> set[str]:
 
-# After  
+# After
 def extract_contract_packages(contract: dict[str, Any]) -> set[str]:
 ```
 

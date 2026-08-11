@@ -218,4 +218,3 @@ code state after PR #53 merge (HEAD `8f3b35d`):
 
 - **Dockerfile WORKDIR `/workspace`** — kept for backward compat. The entrypoint `cd`s to the session dir; the `fa` wrapper passes `-w` for `docker exec`.
 - **fa-entrypoint.sh default `FA_WORKSPACE=/workspace`** — correct: overridden to `/sessions/<id>` by the session creation block. The default is only used when `FA_WORKSPACE` is explicitly set (dev/test override).
-

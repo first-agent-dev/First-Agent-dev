@@ -470,4 +470,3 @@ Next session with other agent:
 This workplan is intentionally heavier than normal feature plan because failure mode is partial reality: features exist just enough to look landed while failing under live boundary.
 
 Optimize for fewer moving parts, stronger authority boundaries, honest contracts, end-to-end proofs. That is shortest path to trustworthy substrate and authoring guardrails that prevent recurrence.
-

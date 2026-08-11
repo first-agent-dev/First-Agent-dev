@@ -1405,7 +1405,11 @@ class SearchIndex:
 
 
 __all__ = [
+    "BINARY_SNIFF_BYTES",
+    "MAX_CONTENT_BYTES_INDEXED",
+    "REFRESH_THROTTLE_SECONDS",
     "SCHEMA_VERSION",
+    "SNIPPET_MAX_BYTES",
     "SearchIndex",
     "SearchParams",
     "SearchResult",

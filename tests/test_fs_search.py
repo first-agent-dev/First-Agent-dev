@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from tests._capabilities import requires_symlinks
+
 # ---------------------------------------------------------------------------
 # Fixture helpers
 # ---------------------------------------------------------------------------
@@ -231,15 +233,13 @@ def test_fs_search_excludes_node_modules(tmp_path: Path) -> None:
     assert not any(p.startswith("node_modules") for p in paths), f"node_modules should be excluded; got {paths}"
 
 
+@requires_symlinks
 def test_fs_search_symlink_escape_blocked(tmp_path: Path) -> None:
     """A symlink pointing outside the root must not be followed or returned."""
     _populate_sample_repo(tmp_path)
     # Create a symlink inside the tree pointing to /etc/passwd.
     link = tmp_path / "src" / "escape_link"
-    try:
-        link.symlink_to("/etc/passwd")
-    except OSError:
-        pytest.skip("symlink not available (e.g. running as non-POSIX or without permission)")
+    link.symlink_to("/etc/passwd")
     tool = _mk_tool(tmp_path)
     # A search for a string that exists in /etc/passwd but NOT in our sample
     # must not return the symlink path (and certainly not its content).
@@ -775,6 +775,7 @@ def test_resolve_subdir_accepts_subdir(tmp_path: Path) -> None:
     assert sub.is_relative_to(tmp_path / "ws")
 
 
+@requires_symlinks
 def test_resolve_subdir_rejects_symlink_escape(tmp_path: Path) -> None:
     """Symlink pointing outside root must be rejected by resolve+is_relative_to."""
     from fa.inner_loop.tools.fs_search import _resolve_subdir
@@ -782,10 +783,7 @@ def test_resolve_subdir_rejects_symlink_escape(tmp_path: Path) -> None:
     (tmp_path / "ws").mkdir()
     (tmp_path / "outside").mkdir()
     link = tmp_path / "ws" / "link"
-    try:
-        link.symlink_to(tmp_path / "outside")
-    except OSError:
-        pytest.skip("symlink not available")
+    link.symlink_to(tmp_path / "outside")
     with pytest.raises(PermissionError):
         _resolve_subdir(tmp_path / "ws", "link")
 

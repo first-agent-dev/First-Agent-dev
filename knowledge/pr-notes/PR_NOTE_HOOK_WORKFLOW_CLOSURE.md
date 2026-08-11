@@ -1,7 +1,7 @@
 # PR Note: Hook workflow closure — bootstrap reliability, seat boundaries, and model-freedom control
 
-**Intent:** CHORE  
-**Date:** 2026-06-28  
+**Intent:** CHORE
+**Date:** 2026-06-28
 **Scope:** `justfile`, `src/fa/hygiene/hooks/`, `src/fa/hygiene/pr_intent.py`, `tests/`, `knowledge/`
 
 ## Problem

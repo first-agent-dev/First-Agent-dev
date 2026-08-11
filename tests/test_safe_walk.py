@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from fa.memory._safe_walk import (
     DEFAULT_PATTERNS,
     EXCLUDE_DIR_GLOBS,
     EXTRA_EXCLUDE_DIRS,
     iter_searchable_files,
 )
+from tests._capabilities import requires_symlinks
 
 
 def _mk(root: Path, rel: str, content: str = "x", size: int | None = None) -> Path:
@@ -99,21 +98,20 @@ def test_iter_searchable_files_size_cap(tmp_path: Path) -> None:
     assert rels == ["src/small.py"]
 
 
+@requires_symlinks
 def test_iter_searchable_files_symlink_escape_blocked(tmp_path: Path) -> None:
     _mk(tmp_path, "src/a.py", "x")
     outside = tmp_path.parent / "outside.txt"
     outside.write_text("SECRET", encoding="utf-8")
     link = tmp_path / "src" / "escape.py"
-    try:
-        link.symlink_to(outside)
-    except OSError:
-        pytest.skip("symlinks unavailable")
+    link.symlink_to(outside)
     rels = sorted(rel for _, rel, _, _ in iter_searchable_files(tmp_path, DEFAULT_PATTERNS))
     # escape.py is a symlink resolving outside root → must be skipped
     assert "src/escape.py" not in rels
     assert rels == ["src/a.py"]
 
 
+@requires_symlinks
 def test_iter_searchable_files_symlink_inside_root_deduped(tmp_path: Path) -> None:
     """Symlinks pointing inside the root are allowed, but we deduplicate by
     resolved path so the same underlying inode is not yielded twice
@@ -122,10 +120,7 @@ def test_iter_searchable_files_symlink_inside_root_deduped(tmp_path: Path) -> No
     inode, and containment is enforced."""
     real = _mk(tmp_path, "src/real.py", "x")
     link = tmp_path / "src" / "link.py"
-    try:
-        link.symlink_to(real)
-    except OSError:
-        pytest.skip("symlinks unavailable")
+    link.symlink_to(real)
     rels = sorted(rel for _, rel, _, _ in iter_searchable_files(tmp_path, DEFAULT_PATTERNS))
     # Exactly one entry (dedup) — and it must be a .py file under src/.
     assert len(rels) == 1, f"expected exactly one deduped entry; got {rels}"

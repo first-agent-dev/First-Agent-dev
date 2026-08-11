@@ -1,7 +1,7 @@
 # Slice 3 Patch Design — Stage C Correctness Pass
 
-**Date:** 2026-07-15  
-**Scope:** Slice 3 only  
+**Date:** 2026-07-15
+**Scope:** Slice 3 only
 **Purpose:** make Stage C semantically correct at runtime and truthful at the provider boundary.
 
 ---

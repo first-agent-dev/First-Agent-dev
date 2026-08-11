@@ -1,6 +1,6 @@
 # Slice 1 Closure Pass and Slice 2 Initialization
 
-**Date:** 2026-07-15  
+**Date:** 2026-07-15
 **Purpose:**
 - confirm what Slice 1 has actually closed,
 - record what remains intentionally deferred,
@@ -12,7 +12,7 @@
 
 ### Slice 1 motto held
 
-> Do not try to solve all DB-related problems inside Slice 1.  
+> Do not try to solve all DB-related problems inside Slice 1.
 > Slice 1 is for hot-path authority and split-brain removal.
 
 This closure pass confirms that the implementation stayed within that scope.
@@ -135,7 +135,7 @@ These comments reference workspace ownership/safety checks, not authority DB tru
 ### Closure-pass verdict
 **Slice 1 is functionally complete enough to move on, with explicit residuals recorded.**
 
-Not “final substrate done”.  
+Not “final substrate done”.
 But **done enough to unlock Slice 2 without violating scope discipline**.
 
 ---

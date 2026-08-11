@@ -285,6 +285,7 @@ def _index_one_file(
 
 
 __all__ = [
+    "ARTIFACT_ROOTS",
     "ARTIFACT_TYPES",
     "ArtifactIndexStats",
     "ensure_artifacts_indexed",

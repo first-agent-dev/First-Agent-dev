@@ -284,9 +284,9 @@ def load_artifacts(type: str, query: str, current_files: List[Path]) -> List[Bla
 **Add to project-overview.md §1.2.6:**
 
 > **Substrate Formality Principle — formal substrate before topology complexity**
-> 
+>
 > When you feel need to add parallel agents, dynamic DAGs, workflow mutation, agent pool scaling, fleet, or elaborate adaptive topologies to fix token efficiency, context window, or coordination problems, first check if missing formal shared substrate would allow simple chain to work.
-> 
+>
 > Topology complexity is symptom of missing formal substrate.
 
 **Invariants:**
@@ -300,4 +300,3 @@ def load_artifacts(type: str, query: str, current_files: List[Path]) -> List[Bla
 
 - Implement Phase 0.5 Formal Blackboard + Structured Telemetry first (1.5 days), before Phase 1 foundation abstractions, because it reduces complexity and enables simple chain to stay simple, avoiding need for elaborate topology.
 - Then evaluate if parallel subagents tree still needed: if instant_grep + verification sensors + blackboard queryable can answer researcher/verifier tasks without separate agent, you can keep simple chain and save 2-3 days of parallel implementation.
-

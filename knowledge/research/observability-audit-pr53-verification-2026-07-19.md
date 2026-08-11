@@ -53,7 +53,7 @@ All 38 observability tests pass:
 
 ### FINDING-V1: `import os` inside `_cmd_run` shadows module-level `os` — **CRITICAL PRODUCTION BUG**
 
-**Severity:** CRITICAL  
+**Severity:** CRITICAL
 **Category:** Variable shadowing causes UnboundLocalError at runtime
 
 **Evidence:**
@@ -75,7 +75,7 @@ All 38 observability tests pass:
 
 ### FINDING-V2: `_cmd_inner_loop_smoke` warn_sink doesn't emit loop_warn OutputEvent
 
-**Severity:** Low (asymmetry, not data loss)  
+**Severity:** Low (asymmetry, not data loss)
 **Category:** Same as noted in previous session's summary — confirmed still open
 
 **Evidence:** The `_smoke_loop_guard_warn_sink` in `_cmd_inner_loop_smoke` only writes to EventLog, not to output_bus. The `_loop_guard_warn_sink` in `_cmd_run` writes to both. This asymmetry means the smoke entry point has less console visibility than `fa run`.

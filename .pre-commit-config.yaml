@@ -1,6 +1,21 @@
-# Use the Python interpreter running pre-commit (the project .venv). uv sync
-# pins that environment to the project's supported Python version without
-# requiring a system-level `python3.13` executable on PATH.
+# Pre-commit hooks for First-Agent-dev.
+#
+# Philosophy (operator decision, 2026-08-11): ~90% of checks run here on
+# every commit, on an i5-1235U-class machine within ~60 seconds. Only
+# targeted mutation testing stays on pre-push (it depends on tests
+# passing and is the last blocking layer). pip-audit runs in CI only
+# (needs network, advisory DB).
+#
+# Ruff (check+format) runs via `language: system` so the hook uses the
+# SAME binary as the .venv — two versions (mirror repo pin + uv lock)
+# disagreeing previously flipped BLE001 waivers back and forth between
+# `ruff check --fix` and the hook. See the comment below.
+#
+# All "_full-tree" hooks use `always_run: true` + `pass_filenames: false`
+# so they scan the relevant scope regardless of which files changed.
+# Fast per-file hooks (ruff, ruff-format, doc-links) use staged-files
+# from pre-commit for speed.
+
 default_language_version:
   python: python
 
@@ -18,19 +33,8 @@ repos:
         args: [--fix=lf]
       - id: check-executables-have-shebangs
 
-  # Ruff runs from the PROJECT environment, not a pre-commit-managed clone.
-  #
-  # The mirror repo (astral-sh/ruff-pre-commit) requires an immutable `rev`, so
-  # it pins a ruff version independently of `pyproject.toml`'s `ruff>=0.5`. That
-  # split bit us: ruff 0.16 exempts a broad `except` that logs with `exc_info=`
-  # from BLE001, the pinned v0.15.18 did not, and `ruff check --fix` under the
-  # newer local version stripped two `# noqa: BLE001` directives that the hook
-  # then demanded back. One tool, two versions, contradictory verdicts.
-  #
-  # `language: system` runs whatever ruff `uv sync` installed, so the hook, the
-  # `just check` gate and CI are always the same binary and always the latest
-  # ruff the lockfile resolves. Upgrading is now `uv lock --upgrade-package ruff`
-  # — no second place to bump, and no way for the two to disagree again.
+  # Ruff (lint) + Ruff (format) from the PROJECT environment, not a
+  # pre-commit-managed mirror clone. Rationale is at the top of this file.
   - repo: local
     hooks:
       # Per-file autofix (fast, modifies staged files and restages via
@@ -49,42 +53,56 @@ repos:
         types_or: [python, pyi]
         require_serial: true
 
-      # Full-tree static gates that are fast enough (<1s for ruff/deptry,
-      # ~18s for pylint gap-checks) to run on every commit. These match
-      # `just check-fast` and deliberately do NOT run mypy / pytest /
-      # authoring-check (those are pre-push only). They use `always_run:
-      # true` + `pass_filenames: false` so the check runs against the
-      # full repo regardless of which files are staged — per-file scoping
-      # here would miss a cross-file problem (unused import in one file,
-      # duplicate-code between two files).
-      - id: ruff-full-check
-        name: ruff check (full tree, no fix)
-        entry: ruff check --force-exclude .
-        language: system
-        pass_filenames: false
-        require_serial: true
-        always_run: true
-      - id: ruff-format-check
-        name: ruff format --check (full tree)
-        entry: ruff format --check --force-exclude .
-        language: system
-        pass_filenames: false
-        require_serial: true
-        always_run: true
+  # Full-tree fast gates (~<1s combined). deptry is src/ only by design.
+  - repo: local
+    hooks:
       - id: deptry
-        name: deptry src/
+        name: deptry (src/ dependency hygiene)
         entry: deptry src/
         language: system
         pass_filenames: false
-        require_serial: true
         always_run: true
+        require_serial: true
+
+  # Full-tree mid-weight gates (~25s combined on i5-1235U).
+  - repo: local
+    hooks:
       - id: pylint-gap
-        name: pylint (duplicate-code + cyclic-import, src/fa)
+        name: pylint src/fa (duplicate-code + cyclic-import gap)
         entry: pylint src/fa
         language: system
         pass_filenames: false
-        require_serial: true
         always_run: true
+        require_serial: true
+        description: >-
+          Gap profile: disable=all, enable=duplicate-code,cyclic-import only.
+          Ruff does not cover cross-file copy-paste (R0801) or import-graph
+          cycles (R0401).
+      - id: mypy-strict
+        name: mypy strict (src + tests)
+        entry: mypy
+        language: system
+        pass_filenames: false
+        always_run: true
+        require_serial: true
+      - id: pyrefly
+        name: pyrefly (second type checker)
+        entry: pyrefly check
+        language: system
+        pass_filenames: false
+        always_run: true
+        require_serial: true
+
+  # Shell syntax: bash -n every *.sh + git hook scripts. <100 ms.
+  - repo: local
+    hooks:
+      - id: shell-syntax
+        name: shell-syntax (bash -n)
+        entry: scripts/check_shell_syntax.sh
+        language: system
+        pass_filenames: true
+        files: (\.sh$|^src/fa/hygiene/hooks/(pre-commit|pre-push|prepare-commit-msg|commit-msg)$)
+        require_serial: true
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.41.0
@@ -92,13 +110,10 @@ repos:
       - id: markdownlint
         args: [--disable, MD013]
 
-  # Internal-link integrity: catches dangling *relative* markdown links when
-  # docs are moved/pruned (enforces knowledge/skills/doc-maintenance/SKILL.md §When moving or
-  # pruning a doc). Dependency-free, offline, deterministic — checks that local
-  # file targets exist (anchor validation is opt-in via --anchors, off here to
-  # avoid slug-algorithm noise). Pre-commit passes only the changed .md files,
-  # so the hook judges only what a commit touches. The whole-repo gate runs in
-  # CI via tests/test_doc_links.py, mirroring check_protected_paths.py.
+  # Internal-link integrity: catches dangling *relative* markdown links
+  # when docs move. Dependency-free, offline, deterministic. Pre-commit
+  # passes only the changed .md files; the whole-repo gate runs in CI
+  # via tests/test_doc_links.py.
   - repo: local
     hooks:
       - id: check-doc-links

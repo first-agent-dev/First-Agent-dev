@@ -27,5 +27,5 @@ This PR fortifies `src/fa/sandbox/classifier.py` and `src/fa/sandbox/secret_path
 
 ## Subtraction Evaluated
 - Removing what makes this redundant: none.
-- What capability is lost: Agent reconnaissance via `/proc` reading; unrestricted Python scripts directly addressing `/run/secrets`. 
+- What capability is lost: Agent reconnaissance via `/proc` reading; unrestricted Python scripts directly addressing `/run/secrets`.
 - Open-source agent-stack precedent: AppArmor/SELinux profiles typically deny procfs enumerations to untrusted processes; we enforce it deterministically at the AST/sandbox layer.

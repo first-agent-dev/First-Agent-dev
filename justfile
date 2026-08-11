@@ -1,5 +1,10 @@
-# Cross-platform task runner for First-Agent-dev
-# Install: cargo install just  (or download binary from GitHub releases)
+# Cross-platform task runner for First-Agent-dev.
+#
+# Public interface (see AGENTS.md §Just recipes): six core recipes —
+# `doctor`, `install`, `fix`, `test`, `check`, `check-deep` — plus a
+# harness-facing alias `agent-bootstrap`. Underscore-prefixed recipes are
+# INTERNAL; they exist for composition but are hidden from `just --list`
+# and are NOT a stable surface.
 
 set dotenv-load := false
 set windows-shell := ["powershell.exe", "-Command"]
@@ -7,213 +12,277 @@ set windows-shell := ["powershell.exe", "-Command"]
 _default:
     just --list
 
-install:
-    uv sync --frozen --extra dev
-    just install-hooks
-    just hooks-status
-    @echo ""
-    @echo "Bootstrap complete:"
-    @echo "  - Python env synced (with dev extras)"
-    @echo "  - pre-commit / pre-push hooks installed"
-    @echo "  - prepare-commit-msg / commit-msg hooks installed"
-    @echo "  - Local commits are now guarded by hook chain"
-    @echo "  - Run 'just hooks-status' to verify at any time"
+# ---------------------------------------------------------------------------
+# Public: environment / bootstrap
+# ---------------------------------------------------------------------------
 
-# Canonical agent-environment bootstrap. The harness must invoke this recipe
-# before declaring the workspace ready. It fails closed if dependency sync,
-# hook installation, or hook status fails; the final marker is emitted only
-# after all three steps succeed.
+# Sub-second preflight: uv, just, python>=3.13, .venv, hooks, uv.lock.
+#
+# Read-only: never installs anything, never runs `uv sync`, never touches
+# hooks. One-shot bootstrap lives in `just install` (and the harness-facing
+# `just agent-bootstrap`); `doctor` is the cheap "is this shell pointed at
+# a healthy clone?" probe called by humans, by the pre-push hook on skip
+# paths, and by CI's doctor-preflight job.
+doctor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail=0
+    ok()    { printf '✓ %s\n' "$*"; }
+    bad()   { printf '✗ %s\n' "$*" >&2; fail=1; }
+    have()  { command -v "$1" >/dev/null 2>&1; }
+
+    if have uv;        then ok "uv ($(uv --version | awk '{print $2}'))"
+    else                    bad "uv not found on PATH (install: https://docs.astral.sh/uv/getting-started/installation/)"; fi
+
+    if have just;      then ok "just ($(just --version | awk '{print $2}'))"
+    else                    bad "just not found on PATH (install: uv tool install rust-just==1.57.0)"; fi
+
+    py=""
+    for cand in python3.13 python3 python; do
+        if have "$cand"; then py="$cand"; break; fi
+    done
+    if [[ -z "$py" ]]; then
+        bad "no python3 interpreter found on PATH"
+    else
+        py_ver=$("$py" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+        if [[ "$py_ver" == "3.13" || "$py_ver" == "3.14" ]]; then
+            ok "python ($py_ver, $(command -v "$py"))"
+        else
+            bad "python >=3.13 required (found $py_ver at $(command -v "$py"))"
+        fi
+    fi
+
+    if [[ -d ".venv" ]]; then ok ".venv present"
+    else                       bad ".venv missing — run: just install"; fi
+
+    if [[ -f "uv.lock" ]]; then
+        if have uv && uv lock --locked >/dev/null 2>&1; then ok "uv.lock in sync with pyproject.toml"
+        else bad "uv.lock out of date — run: uv lock"; fi
+    else
+        bad "uv.lock missing"
+    fi
+
+    if have uv && [[ -x ".venv/bin/python" || -x ".venv/Scripts/python.exe" ]]; then
+        if uv run python -m fa.hygiene.hooks.status >/dev/null 2>&1; then
+            ok "git hooks installed (verified via fa.hygiene.hooks.status)"
+        else
+            bad "git hooks missing/stale — run: just install"
+        fi
+    else
+        bad "cannot verify hooks (.venv not ready)"
+    fi
+
+    if [[ $fail -eq 0 ]]; then echo "doctor: OK (uv, just, python>=3.13, .venv, hooks, lock)"; fi
+    exit $fail
+
+# One-shot host bootstrap: uv sync (frozen, dev extras) + install hooks.
+#
+# Run on a fresh clone or after `git clean -fdx`. Idempotent: re-running is
+# safe and fast with a warm uv cache. NOT a preflight — that's `just doctor`.
+install:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv sync --frozen --extra dev
+    just _install-hooks
+    just _hooks-status
+    echo ""
+    echo "Bootstrap complete:"
+    echo "  - Python env synced (frozen lockfile, dev extras)"
+    echo "  - pre-commit / pre-push hooks installed"
+    echo "  - prepare-commit-msg / commit-msg hooks installed"
+    echo "  - Local commits and pushes are now guarded by the hook chain"
+    echo "  - Run 'just doctor' any time to reverify; 'just fix' auto-fixes mechanical findings."
+
+# Harness/agent one-shot bootstrap; writes .fa/host-bootstrap.json marker.
+#
+# Thin wrapper over scripts/bootstrap/host_bootstrap.py. Kept under a
+# public name because external harnesses call `just agent-bootstrap` by
+# name; do NOT rename.
 agent-bootstrap:
     uv run python scripts/bootstrap/host_bootstrap.py
 
-# Install the M-6 commit-message hooks (prepare-commit-msg / commit-msg)
-# into .git/hooks via the tested Python installer. Without this the
-# git-hook seat of pr_intent + validate_test_edits is INERT —
-# pre-commit does not manage the commit-msg stage in this repo.
-# Idempotent (force-overwrites).  Delegates to the same installer
-# that ``python -m fa.hygiene.hooks.install`` uses, so just and
-# direct invocation share one code path.
+# ---------------------------------------------------------------------------
+# Public: fix / test
+# ---------------------------------------------------------------------------
+
+# Auto-fix mechanical lint/format findings, then report what still needs judgment.
 #
-# NOTE: do NOT set core.hooksPath here.  The default (.git/hooks)
-# is already correct, and pre-commit install explicitly refuses to
-# work when core.hooksPath is set (even to the default).  The old
-# `git config core.hooksPath .git/hooks` line from the previous
-# justfile caused "Cowardly refusing to install hooks" errors.
-install-hooks:
-    uv run python -m fa.hygiene.hooks.install --force
-
-# Verify that local commit hooks are installed and active.
-# Deterministic, zero-API-call status probe for all four hook seats
-# (pre-commit, pre-push, prepare-commit-msg, commit-msg).  Run after
-# ``just install`` or at any time to confirm the local hook chain.
-hooks-status:
-    uv run python -m fa.hygiene.hooks.status
-
-# Back-compat alias: `just lint` is the old name for `just check-fast`.
-# Kept for muscle memory and existing docs (knowledge/ references it).
-lint: check-fast
-
-# Agents: run `just fix` after editing; it auto-resolves every mechanical
-# lint/format finding (incl. RUF022 __all__ sorting) so none of it needs
-# to be done by hand or held in context. Sequencing matters: `--fix-only`
-# exits 0 even when judgment findings (S/BLE/C901/...) remain, so the
-# format pass ALWAYS runs; the final `ruff check` then reports what needs
-# an actual design decision (fix the code or add `# noqa: <code>` + a
-# rationale comment — see AGENTS.md §Judgment rules).
+# Sequencing: `ruff check --fix-only` → `ruff format` → trailing plain
+# `ruff check` so any finding fix-only couldn't resolve (BLE001 / C901 /
+# S / ...) surfaces for a human decision. See AGENTS.md §Judgment rules
+# for how to handle a remaining finding (fix the code; add a rationale'd
+# waiver only when unavoidable).
 fix:
     uv run ruff check --fix-only .
     uv run ruff format .
     uv run ruff check .
 
-# Back-compat alias for `just fix`.
-format: fix
-
-typecheck:
-    uv run mypy
-
-# Convenience runner for a fast, standalone pyrefly report.
+# Full pytest suite with branch coverage on src/fa, plus CLI coverage floor.
 #
-# The leading `-` makes THIS RECIPE non-fatal so an agent can eyeball the full
-# error list without the runner aborting. It does NOT make pyrefly advisory:
-# pyrefly is a BLOCKING gate (Q50), enforced inside `just test` by
-# tests/test_pyrefly_import_topology.py::test_pyrefly_check_passes. The recipe
-# name is kept for back-compat with existing docs and muscle memory.
-typecheck-advisory:
-    -uv run pyrefly check
-
-authoring-check:
-    uv run fa authoring-check
-
-# Dependency allowlist gate: verifies every direct pyproject dependency is
-# covered by the tracked TCB contract.
-dependency-contract-check:
-    uv run python scripts/check_dependency_contract.py
-
-# Producer-consumer contract gate: verifies every EventType has both a
-# producer (emit call in production code) and a consumer (handler in
-# ConsoleRenderer). Prevents "not wired / partial implementation" gaps.
-# See: knowledge/research/root-cause-analysis-not-wired-gaps-2026-07-19.md
-contract-check:
-    uv run python scripts/check_producer_consumer_contract.py
-
-# LogKind contract gate (S6.1 / S6-F6): every LogKind member has a producer or
-# a reasoned KNOWN_DORMANT_KINDS entry, dynamic kinds resolve, and
-# CONSOLE_MIRROR_KINDS dual-write holds. Previously this script existed but was
-# invoked by NOTHING, so its exit code was decorative.
-log-kind-check:
-    uv run python scripts/check_log_kind_contract.py
-
-# Guard: no MagicMock(spec=<frozen_dataclass>) in tests. Frozen dataclasses
-# are pure data — mock them and every new field becomes a latent regression.
-# Use real instances (make_test_chain_config, etc.) instead.
-no-mocked-dataclasses:
-    uv run python scripts/check_no_mocked_dataclasses.py
-
-# Full suite with the coverage gate (fail_under in pyproject). For a quick
-# single-file iteration loop use plain `pytest tests/test_x.py` — no gate.
+# Writes term/XML/JSON coverage reports (JSON feeds the CLI coverage-floor
+# check). For rapid single-file iteration, call pytest directly — addopts
+# stay strict-config/strict-markers, but --cov flags are intentionally
+# NOT in addopts so a bare `pytest tests/test_x.py` stays green.
 test:
-    uv run pytest --cov=fa --cov-report=term-missing --cov-report=xml --cov-report=json
-
-# Targeted mutation testing against files changed vs origin/main. Blocking
-# gate for the LLM-agent loop: if any mutant survives in code the agent
-# touched, tests are not strong enough. Runs mutmut on a scoped
-# source_paths derived from `git diff origin/main...HEAD`, restores
-# pyproject.toml after. Advisory in CI (full weekly) is in tests.yml.
-targeted-mutmut:
-    uv run python scripts/run_targeted_mutmut.py
-
-# Targeted semgrep SAST scan against files changed vs origin/main.
-# Blocking gate in pre-push/CI; full-repo scan runs weekly (semgrep.yml).
-targeted-semgrep:
-    uv run python scripts/run_targeted_semgrep.py
-
-# Vulnerability scanning (Dependencies + SAST)
-audit:
-    uv run pip-audit
-    uvx semgrep scan --config=p/python --config=p/owasp-top-ten
-
-deadcode:
-    -uv run vulture src/ --min-confidence 90
-
-# Mutation testing on the high-risk sandbox scope ([tool.mutmut] in
-# pyproject). Slow (~1 min): runs the sandbox test files per mutant.
-# Survivor-clearing tracker: knowledge/mutation-survivors-workplan.md
-mutation:
-    uv run mutmut run
-    uv run mutmut results
-    uv run mutmut export-cicd-stats
-
-lock-check:
-    uv lock --locked
-
-# Guard: per-function coverage floors for src/fa/cli.py (S10a). Reads the
-# JSON report `just test` writes. Deliberately NOT a pytest test: coverage
-# flags are excluded from addopts so a bare `pytest tests/test_x.py` works,
-# which means a test reading coverage.json would fail on every bare run.
-cli-coverage-floor:
-    uv run python scripts/check_cli_coverage_floor.py
-
-# Lightweight environment readiness probe — verifies uv/just are on PATH,
-# the active Python satisfies requires-python (>=3.13), the venv exists,
-# and the four git hooks are installed/current. This is meant to run
-# in seconds (no sync, no test execution) as a preflight for `pre-push`,
-# NOT as a substitute for `just install`/`just agent-bootstrap`. It does
-# NOT attempt to fix anything — a nonzero exit tells the caller (human
-# or agent) exactly what prerequisite is missing.
-doctor:
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! command -v uv >/dev/null 2>&1; then
-        echo "doctor: uv not found on PATH — install uv (https://docs.astral.sh/uv/getting-started/installation/)" >&2; exit 127
-    fi
-    if ! command -v just >/dev/null 2>&1; then
-        echo "doctor: just not found on PATH — run 'uv tool install rust-just>=1.57' or 'just install'" >&2; exit 127
-    fi
-    pyv=$(uv run python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    case "$pyv" in
-      3.13|3.14|3.1[3-9]|3.[2-9][0-9]) : ;;
-      *) echo "doctor: Python $pyv found; project requires >=3.13" >&2; exit 2 ;;
-    esac
-    if [ ! -d .venv ]; then
-        echo "doctor: .venv missing — run 'just install' or 'uv sync --frozen --extra dev'" >&2; exit 2
-    fi
-    if ! uv run python -m fa.hygiene.hooks.status; then
-        echo "doctor: git hooks are not correctly installed — run 'just install-hooks'" >&2; exit 2
-    fi
-    echo "doctor: OK (uv, just, python>=$pyv, .venv, hooks)"
+    uv run pytest --cov=fa --cov-report=term-missing --cov-report=xml --cov-report=json
+    just _cli-cov-floor
 
-# Fast static gates (no tests, no authoring-check that walks knowledge/).
-# Runs in seconds; suitable as a pre-commit full-tree check after the
-# staged-only autofix pass. Anything that needs network, filesystem
-# walks of knowledge/, or pytest goes into `check` instead.
-check-fast:
+# ---------------------------------------------------------------------------
+# Public: check / check-deep
+# ---------------------------------------------------------------------------
+
+# Full blocking gate chain: run everything non-mutational; collect ALL errors.
+#
+# Does NOT fail-fast: every gate runs to completion so an agent sees the
+# FULL error list in one pass (instead of iterating "one error per push",
+# which the operator measured at ~5 minutes per cycle). Advisory vulture
+# (dead-code scan) runs LAST with a leading `-` so it reports but never
+# blocks. Pre-commit and CI sanity-check both converge here.
+check:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    rc=0
+    gate() {
+        local name="$1"; shift
+        printf '\n══════ %s ══════\n' "$name" >&2
+        if "$@"; then
+            printf '✓ %s\n' "$name" >&2
+        else
+            local g_rc=$?
+            printf '✗ %s FAILED (rc=%s)\n' "$name" "$g_rc" >&2
+            rc=$(( rc == 0 ? g_rc : rc ))
+        fi
+    }
+
+    gate "lock-check"                               just _lock-check
+    gate "lint (ruff+format+deptry+pylint-gap)"     just _lint
+    gate "typecheck (mypy strict)"                  just _mypy
+    gate "typecheck (pyrefly)"                      just _pyrefly
+    gate "authoring-check"                          just _authoring
+    gate "contracts (dep+pc+log-kind+no-mock-dc)"   just _contracts
+    gate "shell-syntax (bash -n)"                   just _shell-syntax
+    gate "test+coverage+cli-cov-floor"              just test
+    printf '\n══════ deadcode (vulture, advisory — non-blocking) ══════\n' >&2
+    just _deadcode || echo "  (vulture reported findings; advisory only, not failing the gate)" >&2
+    printf '\n══════ summary ══════\n' >&2
+    if [[ $rc -eq 0 ]]; then
+        echo "check: all blocking gates passed" >&2
+    else
+        echo "check: ONE OR MORE GATES FAILED (first non-zero rc=$rc)" >&2
+    fi
+    exit $rc
+
+# `check` + last-resort blocking gates: targeted mutmut and targeted semgrep.
+#
+# Pre-push hook and CI run this; local inner loops can use plain `just check`
+# for speed. Targeted scope = Python files changed vs merge-base (or vs HEAD
+# for uncommitted work), not the whole repo.
+check-deep:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just check
+    just _targeted-semgrep
+    just _targeted-mutmut
+
+# ---------------------------------------------------------------------------
+# Private gates (_-prefixed → hidden from `just --list`)
+# ---------------------------------------------------------------------------
+
+# Install all four git hooks (pre-commit, pre-push, prepare-commit-msg, commit-msg).
+#
+# Order matters: pre-commit's generated shim overwrites our custom seats if it
+# runs second, and our custom pre-commit/pre-push wrappers shell INTO
+# `pre-commit run` (so they need to be the outer layer). Install pre-commit's
+# hook environments first (for markdownlint/gitleaks/etc.), then force-install
+# our own bash wrappers over pre-commit/pre-push with --force.
+# NOTE: do NOT set core.hooksPath; default .git/hooks is correct.
+_install-hooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Let pre-commit lay down its shim template and install hook environments
+    # (this also picks up new hooks added to .pre-commit-config.yaml).
+    uv run pre-commit install --install-hooks
+    uv run pre-commit install --install-hooks --hook-type pre-push
+    # Overwrite pre-commit/pre-push with our custom wrappers (which call
+    # `pre-commit run` internally and add the NO_PROXY / auto-restage /
+    # check-deep logic). Also installs prepare-commit-msg and commit-msg
+    # (which pre-commit does not manage).
+    uv run python -m fa.hygiene.hooks.install --force
+
+_hooks-status:
+    uv run python -m fa.hygiene.hooks.status
+
+_lock-check:
+    uv lock --locked
+
+# Fast deterministic lint: ruff check, ruff format --check, deptry src/, pylint-gap src/fa.
+#
+# pylint gap-profile = duplicate-code (R0801) + cyclic-import (R0401), disable=all.
+# Measured ~20 s on operator i5-1235U; fits the ~1 minute pre-commit budget.
+_lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
     uv run ruff check .
     uv run ruff format --check .
     uv run deptry src/
     uv run pylint src/fa
 
-# Full local CI parity — all BLOCKING gates, short-circuits on the first
-# failure (mirrors pre-push hook behaviour for a tight iteration loop).
-# For "run everything and collect all failures" use check-all.
-check: doctor lock-check dependency-contract-check check-fast typecheck authoring-check contract-check log-kind-check no-mocked-dataclasses test cli-coverage-floor targeted-mutmut targeted-semgrep
-    @echo "check: all blocking gates passed"
+_mypy:
+    uv run mypy
 
-# Full gate with NO short-circuit: runs every check and reports
-# ALL failures in one pass. Use this when you want the entire error
-# list at once (e.g. after a large refactor, or for an agent that
-# consumes all failures in one LLM turn). Exits 0 iff every sub-check
-# passed.
-check-all: doctor
-    @( set +e; rc=0; \
-       for step in lock-check dependency-contract-check check-fast typecheck \
-                   authoring-check contract-check log-kind-check \
-                   no-mocked-dataclasses test cli-coverage-floor \
-                   targeted-mutmut targeted-semgrep; do \
-         echo ""; echo "══════ just $$step ══════"; \
-         just $$step; s_rc=$$?; \
-         if [ $$s_rc -ne 0 ]; then rc=$$s_rc; echo "^^^ $$step FAILED (rc=$$s_rc)"; fi; \
-       done; \
-       echo ""; echo "══════ summary ══════"; \
-       if [ $$rc -eq 0 ]; then echo "check-all: all blocking gates passed"; \
-                       else echo "check-all: ONE OR MORE GATES FAILED (last rc=$$rc)"; fi; \
-       exit $$rc )
+_pyrefly:
+    uv run pyrefly check
+
+_authoring:
+    uv run fa authoring-check
+
+# Four contract guards bundled: dependency-allowlist + producer-consumer + LogKind + no-mock-dc.
+_contracts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run python scripts/check_dependency_contract.py
+    uv run python scripts/check_producer_consumer_contract.py
+    uv run python scripts/check_log_kind_contract.py
+    uv run python scripts/check_no_mocked_dataclasses.py
+
+_cli-cov-floor:
+    uv run python scripts/check_cli_coverage_floor.py
+
+# Shell-syntax preflight: bash -n every *.sh and every shipped git-hook shell script.
+# Delegates to scripts/check_shell_syntax.sh (also used directly by pre-commit).
+_shell-syntax:
+    ./scripts/check_shell_syntax.sh
+
+# Advisory dead-code scan (vulture). Called from `just check` with `-` so never blocks.
+_deadcode:
+    uv run vulture src/ --min-confidence 90
+
+# Targeted mutation testing: mutmut on Python files changed vs merge-base.
+#
+# Last blocking gate in check-deep / pre-push. Full-repo mutmut scope runs
+# weekly in CI (tests.yml), not here. Fail-open if mutmut is missing or
+# FA_SKIP_TARGETED_MUTATION=1; timeout 600s; MAX_FILES=20.
+_targeted-mutmut:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "${FA_SKIP_TARGETED_MUTATION:-0}" == "1" ]]; then
+        echo "targeted-mutmut: skipped (FA_SKIP_TARGETED_MUTATION=1)" >&2
+        exit 0
+    fi
+    uv run python scripts/run_targeted_mutmut.py
+
+# Targeted semgrep: Semgrep OSS (p/python + p/owasp-top-ten) on changed Python files.
+#
+# Last blocking gate alongside targeted-mutmut in check-deep / pre-push.
+# Full-repo semgrep runs weekly in CI (semgrep.yml). Fail-open if uvx is
+# unavailable or FA_SKIP_TARGETED_SEMGREP=1; timeout 120s; MAX_FILES=50.
+_targeted-semgrep:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "${FA_SKIP_TARGETED_SEMGREP:-0}" == "1" ]]; then
+        echo "targeted-semgrep: skipped (FA_SKIP_TARGETED_SEMGREP=1)" >&2
+        exit 0
+    fi
+    uv run python scripts/run_targeted_semgrep.py

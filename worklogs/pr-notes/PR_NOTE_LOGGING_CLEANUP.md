@@ -1,6 +1,6 @@
 # PR: Logging module cleanup — dedup + dead code + docs
 
-**Intent:** REFACTOR  
+**Intent:** REFACTOR
 **Invariant:** Zero behaviour change; eliminates copy-paste duplication and dead code.
 
 ## Problem
@@ -39,7 +39,7 @@ Post `fa stats` + `fa run --output-mode` landing, three minor issues:
 
 ## Verification
 
-- 1284 tests pass (excl. `test_deploy_scripts.py` executable-bit check — 
+- 1284 tests pass (excl. `test_deploy_scripts.py` executable-bit check —
   pre-existing sandbox artifact, not related).
 - `fa authoring-check` clean (0 diagnostics).
 - All imports verified: `fa.formatting`, `fa.output`, `fa.stats`,

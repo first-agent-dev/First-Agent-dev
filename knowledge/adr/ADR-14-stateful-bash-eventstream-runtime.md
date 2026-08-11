@@ -39,7 +39,7 @@ Research: knowledge/research/stateful-bash-pty-2026-07.md + final-review-gaps-hi
 
 ### Option C — EventStream Runtime FastAPI + PTY Pool libtmux (chosen, direct)
 
-- Pros: 
+- Pros:
   - Stability: PTY pool lives in separate process/server, survives main crash, can kill/recreate hanging PTY without killing main loop (OpenHands pattern).
   - Testability: `curl -X POST http://fa-runtime:8001/execute -d '{"command":"cd /tmp && pwd"}'` unit testable.
   - Parallelism: Pool maxSize=3 acquire/release ready for 2-3 parallel subagents (Cursor 3.2 /multitask).
@@ -125,4 +125,3 @@ Host: fa run
 - Provider caching comparison aioutlooks.com/prompt-caching-guide + litellm docs + lubulabs.com
 - Blog.fsck.com 2026-07-05 new patterns Security Arbiter + MITM proxy random rewriting
 - final-review-gaps-high-roi-metaharnesses-july2026.md Gap 2,3,6,8
-
