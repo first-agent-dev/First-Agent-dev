@@ -38,10 +38,16 @@ jobs:
         uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
       - name: Check uv.lock
         run: uv lock --check
-      - name: Install Python dependencies
-        run: uv sync --frozen --extra dev
+      # NOTE: no `uv sync` here — doctor is a READ-ONLY preflight. It requires
+      # only uv + just + python (all on PATH after setup-uv / setup-just /
+      # the runner image); in CI mode it skips the hook-presence check and
+      # treats a missing .venv as OK (each parallel downstream job performs
+      # its own `uv sync`). CI=true is exported so just doctor knows to relax
+      # the local-only hooks/venv requirements.
       - name: Doctor
-        run: uv run just doctor
+        run: just doctor
+        env:
+          CI: "true"
 
   # Authoritative blocking gate: runs `just check` (non-mutational) and uploads
   # coverage. Pre-push hook runs `just check-deep` which extends this with the

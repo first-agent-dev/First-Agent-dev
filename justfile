@@ -52,8 +52,17 @@ doctor:
         fi
     fi
 
-    if [[ -d ".venv" ]]; then ok ".venv present"
-    else                       bad ".venv missing — run: just install"; fi
+    # .venv: required locally (nothing else works without it), optional in CI
+    # (each parallel CI job does its own `uv sync`; doctor is the cheap
+    # preflight that runs BEFORE any sync, and uv lock --locked works without
+    # a populated venv).
+    if [[ -d ".venv" ]]; then
+        ok ".venv present"
+    elif [[ "${CI:-}" == "true" ]]; then
+        ok ".venv: will be created by per-job uv sync"
+    else
+        bad ".venv missing — run: just install"
+    fi
 
     if [[ -f "uv.lock" ]]; then
         if have uv && uv lock --locked >/dev/null 2>&1; then ok "uv.lock in sync with pyproject.toml"
@@ -62,14 +71,30 @@ doctor:
         bad "uv.lock missing"
     fi
 
-    if have uv && [[ -x ".venv/bin/python" || -x ".venv/Scripts/python.exe" ]]; then
+    # Hooks: the local commit/push hook chain is meaningless on CI runners
+    # (nobody commits or pushes from an Actions job; the CI jobs themselves
+    # are the gate). Detect CI via the de-facto `CI=true` env var that
+    # GitHub Actions / GitLab CI / CircleCI / Buildkite / Jenkins all set,
+    # and skip the hook-presence probe in that environment. On local machines
+    # we still require the hooks to be installed.
+    if [[ "${CI:-}" == "true" ]]; then
+        ok "git hooks: not applicable (CI environment)"
+    elif have uv && [[ -x ".venv/bin/python" || -x ".venv/Scripts/python.exe" ]]; then
         if uv run python -m fa.hygiene.hooks.status >/dev/null 2>&1; then
             ok "git hooks installed (verified via fa.hygiene.hooks.status)"
         else
             bad "git hooks missing/stale — run: just install"
         fi
     else
-        bad "cannot verify hooks (.venv not ready)"
+        # No .venv yet on a local box — that's fine for a bare `doctor`
+        # probe (doctor is read-only and cannot run `uv run` without a venv).
+        # Surface a soft note rather than a hard failure so `just doctor`
+        # stays usable from a fresh clone before `just install`.
+        if [[ -d ".venv" ]]; then
+            bad "cannot verify hooks (.venv present but not runnable)"
+        else
+            ok "git hooks: will be installed by 'just install'"
+        fi
     fi
 
     if [[ $fail -eq 0 ]]; then echo "doctor: OK (uv, just, python>=3.13, .venv, hooks, lock)"; fi
@@ -217,7 +242,16 @@ _hooks-status:
 _lock-check:
     uv lock --locked
 
-# Fast deterministic lint: ruff check, ruff format --check, deptry src/, pylint-gap src/fa.
+# Fast deterministic lint: ruff check, ruff format --check, deptry (src+scripts),
+# pylint-gap src/fa.
+#
+# scripts/ are included in the deptry scan so an agent cannot smuggle an
+# unused or hallucinated dependency into a CI/dev helper without deptry
+# flagging it. Both source trees are passed as ROOTs in ONE invocation
+# so scripts/ (which imports `fa` from src/) don't trigger false-positive
+# DEP001 "imported but missing" errors.
+# (src/fa stays under pylint gap-profile; scripts/ are advisory-linted
+# in the CI scripts-lint job.)
 #
 # pylint gap-profile = duplicate-code (R0801) + cyclic-import (R0401), disable=all.
 # Measured ~20 s on operator i5-1235U; fits the ~1 minute pre-commit budget.
@@ -226,7 +260,7 @@ _lint:
     set -euo pipefail
     uv run ruff check .
     uv run ruff format --check .
-    uv run deptry src/
+    uv run deptry src/ scripts/
     uv run pylint src/fa
 
 _mypy:

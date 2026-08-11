@@ -2,17 +2,32 @@
 #
 # Governance bundle (ADR-11-I7 + blueprint R-15): this file + branch
 # protection + the CI diff-check (scripts/check_protected_paths.py) make
-# any edit to a Level-0 TCB path require an explicit owner review. Per the
+# any edit to a TCB path require an explicit owner review. Per the
 # ADR enforcement-ceiling, CODEOWNERS is one of three layers and is not
 # load-bearing on its own — the residual requirement is that a human
 # reviewer acts on the protected-path flag.
 #
-# Keep this list in sync with scripts/check_protected_paths.py ::_TCB_PATHS.
+# Keep this list in sync with scripts/check_protected_paths.py ::
+# _TCB_PATHS and _TCB_PREFIXES. Order matters: last matching pattern
+# wins in GitHub CODEOWNERS.
 
+# --- Level-0 authoring kernel ---
 /src/fa/authoring_tcb.py            @MondayInRussian
 /src/fa/authoring_rules/            @MondayInRussian
-/.github/workflows/authoring-guardrails.yml @MondayInRussian
+
+# --- Gate / hook surface (agents MUST NOT silently disable gates) ---
+/justfile                           @MondayInRussian
+/Makefile                           @MondayInRussian
+/.pre-commit-config.yaml            @MondayInRussian
 /.github/CODEOWNERS                 @MondayInRussian
-/scripts/check_protected_paths.py   @MondayInRussian
+/.github/workflows/                 @MondayInRussian
+/src/fa/hygiene/hooks/              @MondayInRussian
+/scripts/check_shell_syntax.sh      @MondayInRussian
+/scripts/run_targeted_mutmut.py     @MondayInRussian
+/scripts/run_targeted_semgrep.py    @MondayInRussian
+/scripts/check_*.py                 @MondayInRussian
+/scripts/check_*.sh                 @MondayInRussian
+
+# --- Supply-chain / contract enforcement ---
 /.fa/dependency_contract.toml       @MondayInRussian
 /scripts/check_dependency_contract.py @MondayInRussian

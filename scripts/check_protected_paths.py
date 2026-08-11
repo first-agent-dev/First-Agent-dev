@@ -28,19 +28,44 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 # Exact protected paths (repo-relative POSIX). Blueprint R-15 / ADR-11-I7.
+#
+# Classified into three tiers of sensitivity:
+#   * Level-0 authoring kernel (frozen by ADR-11-I1): no third-party imports,
+#     no plugin discovery, no network.
+#   * Gate/hook configuration: agents/LLMs must not be able to silently
+#     disable or weaken a blocking gate by editing the CI surface, the
+#     justfile surface, or the hook scripts themselves.
+#   * Supply-chain TCB: files that control which code runs in CI / on the
+#     developer's machine and what the dependency contract is.
+#
+# Files under a prefix in _TCB_PREFIXES do NOT need to be listed here;
+# listing them here is only for clarity or for files OUTSIDE those
+# prefixes. Keep this list in sync with .github/CODEOWNERS.
 _TCB_PATHS = frozenset(
     {
+        # --- Level-0 authoring kernel ---
         "src/fa/authoring_tcb.py",
         "src/fa/authoring_rules/__init__.py",
-        ".github/workflows/authoring-guardrails.yml",
+        # --- Gate/hook surface (agents MUST NOT silently disable gates) ---
+        "justfile",
+        "Makefile",
+        ".pre-commit-config.yaml",
         ".github/CODEOWNERS",
-        "scripts/check_protected_paths.py",
+        "scripts/check_shell_syntax.sh",
+        "scripts/run_targeted_mutmut.py",
+        "scripts/run_targeted_semgrep.py",
+        # --- Supply-chain / contract enforcement ---
         ".fa/dependency_contract.toml",  # S15: supply-chain TCB (ADR-11-I7)
         "scripts/check_dependency_contract.py",  # S15: contract enforcement
     }
 )
-# Any path beneath these prefixes is protected (the whole rule pack).
-_TCB_PREFIXES: tuple[str, ...] = ("src/fa/authoring_rules/",)
+# Any path beneath these prefixes is protected (the whole subtree).
+_TCB_PREFIXES: tuple[str, ...] = (
+    "src/fa/authoring_rules/",
+    "src/fa/hygiene/hooks/",  # entire hook seat directory = TCB
+    ".github/workflows/",    # all CI workflows (not just authoring-guardrails)
+    "scripts/check_",        # gate/contract scripts (check_* pattern)
+)
 
 # Dependency manifests (supply-chain review tier). LLM authors hallucinate
 # package names at a measurable rate and attackers register them
