@@ -108,7 +108,7 @@ Confirmed: no other type producer exists in `src/` outside test fixtures.
 
 ```python
 # blackboard.py:348
-existing = self.query(type=new_entry.type)   # ← type-scoped
+existing = self.query(type=new_entry.type)  # ← type-scoped
 ```
 
 So `detect_conflict(new_entry of type=file_version)` iterates **only** `file_version` rows. Adding rows of other types cannot trigger false conflicts. Verified.
@@ -280,6 +280,7 @@ Design choices (see PLAN-cli-trace-S14-... §0, §4, §11):
   top-level errors accumulate in ArtifactIndexStats.errors and are logged.
 - Path-contained: rejects symlinks escaping knowledge/ via is_relative_to.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -387,9 +388,7 @@ def _is_within(child: Path, parent: Path) -> bool:
         return False
 
 
-def _latest_by_logical_id(
-    blackboard: Blackboard, types: set[str]
-) -> dict[str, BlackboardEntry]:
+def _latest_by_logical_id(blackboard: Blackboard, types: set[str]) -> dict[str, BlackboardEntry]:
     """Build ``{logical_id: latest_entry}`` across all artifact types.
 
     v1 rows have ``id == logical_id`` and no ``logical_id`` in payload.
@@ -573,17 +572,18 @@ Executor writes the final code to match this structure; any deviation requires u
    # still works (returning file_version rows) if the artifact_index module
    # fails to import for any reason (fail-degraded, same pattern as
    # get_current_session below).
-   if session.blackboard is not None and (
-       type_ is None or (isinstance(type_, str))
-   ):
+   if session.blackboard is not None and (type_ is None or (isinstance(type_, str))):
        try:
            from fa.blackboard import artifact_index
+
            if type_ is None or type_ in artifact_index.ARTIFACT_TYPES:
                ws_root = getattr(session, "workspace_root", None)
                if ws_root is not None:
                    target_types = None if type_ is None else {type_}
                    index_stats = artifact_index.ensure_artifacts_indexed(
-                       session.blackboard, ws_root, types=target_types,
+                       session.blackboard,
+                       ws_root,
+                       types=target_types,
                    )
        except Exception as exc:  # noqa: BLE001  fail-degraded per Phase-0.5
            logger.warning("fs_blackboard_query: artifact index unavailable: %s", exc)

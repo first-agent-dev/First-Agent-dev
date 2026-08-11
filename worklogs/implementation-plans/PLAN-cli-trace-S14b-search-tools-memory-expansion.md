@@ -898,8 +898,10 @@ The registration surface in v2 code is split across TWO modules; both must be up
       ```python
       try:
           from fa.inner_loop.tools.fs_search import build_fs_search_tool
+
           try:
               from fa.feature_flags import load_feature_flags_from_path
+
               ff = load_feature_flags_from_path().flags
               fts_path = getattr(ff, "fts_db_path", ".fa/fts.db")
           except Exception:  # noqa: BLE001
@@ -929,6 +931,7 @@ The registration surface in v2 code is split across TWO modules; both must be up
                 # resolve fts_path via feature flags same as profiles.py
                 try:
                     from fa.feature_flags import load_feature_flags_from_path
+
                     ff = load_feature_flags_from_path().flags
                     fts_path = getattr(ff, "fts_db_path", ".fa/fts.db")
                 except Exception:  # noqa: BLE001

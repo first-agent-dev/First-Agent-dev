@@ -76,13 +76,13 @@
 ```python
 # search_index.py module-level
 SCHEMA_VERSION = 1
-MAX_CONTENT_BYTES_INDEXED = 100_000     # cap for FTS content
-MAX_MATCH_DISPLAY_BYTES = 1_000_000     # cap when reading for matches/regions snippets
+MAX_CONTENT_BYTES_INDEXED = 100_000  # cap for FTS content
+MAX_MATCH_DISPLAY_BYTES = 1_000_000  # cap when reading for matches/regions snippets
 SNIPPET_MAX_BYTES = 400
-REFRESH_THROTTLE_SECONDS = 5.0          # at most one walk per (db,root) per 5s
+REFRESH_THROTTLE_SECONDS = 5.0  # at most one walk per (db,root) per 5s
 BINARY_SNIFF_BYTES = 8192
 _INDEX_CANARY_FILES = (".git/index", ".git/FETCH_HEAD")  # relative to root
-_refresh_state: dict[str, dict] = {}    # key: f"{db_path}::{root}"; value: {last_mono, last_canary}
+_refresh_state: dict[str, dict] = {}  # key: f"{db_path}::{root}"; value: {last_mono, last_canary}
 _indexed_for_process: set[str] = set()  # sentinel: full build done in this process for this key
 ```
 
@@ -176,7 +176,7 @@ def _escape_like(text: str, esc: str = "\\") -> str:
 def _passes_filters(
     rel: str,
     *,
-    subdir_rel: str,                 # "" or "dir/dir/" with trailing "/"
+    subdir_rel: str,  # "" or "dir/dir/" with trailing "/"
     glob_pat: str | None,
     include_tests: bool,
     exclude_set: frozenset[str],
@@ -196,7 +196,8 @@ def _passes_filters(
 
 ### CT4 — ensure_indexed + canary/throttle (G4)
 ```python
-def ensure_indexed(self,
+def ensure_indexed(
+    self,
     root: Path,
     *,
     patterns: tuple[str, ...] = DEFAULT_PATTERNS,
@@ -273,9 +274,11 @@ def _is_binary(sample: bytes) -> bool:
     """Return True if the byte sample contains a NUL (binary file heuristic)."""
     return b"\x00" in sample
 
+
 @staticmethod
 def _read_bytes(fp: Path, max_bytes: int) -> bytes | None:
     """Read up to max_bytes; return None on OSError."""
+
 
 @staticmethod
 def _read_text_for_index(fp: Path) -> str | None:
@@ -284,6 +287,7 @@ def _read_text_for_index(fp: Path) -> str | None:
     - Decodes UTF-8 strict; on failure falls back to Latin-1 (never fails).
     - Returns None only on binary detection or IO error.
     """
+
 
 @staticmethod
 def _read_text_for_match(fp: Path, max_bytes: int) -> str:
@@ -370,7 +374,7 @@ def _ensure_index(holder, root, max_file_size, warnings):
     try:
         stats = index.ensure_indexed(
             root,
-            include_tests=True,     # index superset; query-time filter in _passes_filters
+            include_tests=True,  # index superset; query-time filter in _passes_filters
             max_file_size=max_file_size,
         )
         holder._indexed = True
@@ -586,8 +590,9 @@ subpath_arg = subdir.relative_to(root).as_posix() or "."
 2. Изменить сигнатуры `_search_bm25(self, query, *, limit, subdir_rel, glob_pat, include_tests, exclude_set)` и `_search_trigram(...)` — добавить `include_tests: bool, exclude_set: frozenset[str]`.
 3. Внутри них: убрать инлайн-проверки поддиректории и glob; после fetch каждой строки:
    ```python
-   if not self._passes_filters(rel, subdir_rel=subdir_rel, glob_pat=glob_pat,
-                                include_tests=include_tests, exclude_set=exclude_set):
+   if not self._passes_filters(
+       rel, subdir_rel=subdir_rel, glob_pat=glob_pat, include_tests=include_tests, exclude_set=exclude_set
+   ):
        continue
    ```
 4. Убрать include_tests фильтрацию из `search()` (которая сейчас дублируется на строках ~498-510).
@@ -626,6 +631,7 @@ def _path_matches(rel: str, glob_pat: str | None) -> bool:
     if not glob_pat:
         return True
     from pathlib import PurePosixPath
+
     rel_path = PurePosixPath(rel)
     if rel_path.match(glob_pat):
         return True
