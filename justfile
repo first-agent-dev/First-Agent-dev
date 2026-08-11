@@ -49,11 +49,9 @@ install-hooks:
 hooks-status:
     uv run python -m fa.hygiene.hooks.status
 
-lint:
-    uv run ruff check .
-    uv run ruff format --check .
-    uv run deptry src/
-    uv run pylint src/fa
+# Back-compat alias: `just lint` is the old name for `just check-fast`.
+# Kept for muscle memory and existing docs (knowledge/ references it).
+lint: check-fast
 
 # Agents: run `just fix` after editing; it auto-resolves every mechanical
 # lint/format finding (incl. RUF022 __all__ sorting) so none of it needs
@@ -116,10 +114,23 @@ no-mocked-dataclasses:
 test:
     uv run pytest --cov=fa --cov-report=term-missing --cov-report=xml --cov-report=json
 
+# Targeted mutation testing against files changed vs origin/main. Blocking
+# gate for the LLM-agent loop: if any mutant survives in code the agent
+# touched, tests are not strong enough. Runs mutmut on a scoped
+# source_paths derived from `git diff origin/main...HEAD`, restores
+# pyproject.toml after. Advisory in CI (full weekly) is in tests.yml.
+targeted-mutmut:
+    uv run python scripts/run_targeted_mutmut.py
+
+# Targeted semgrep SAST scan against files changed vs origin/main.
+# Blocking gate in pre-push/CI; full-repo scan runs weekly (semgrep.yml).
+targeted-semgrep:
+    uv run python scripts/run_targeted_semgrep.py
+
 # Vulnerability scanning (Dependencies + SAST)
 audit:
     uv run pip-audit
-    uvx semgrep --config=p/python --config=p/owasp-top-ten
+    uvx semgrep scan --config=p/python --config=p/owasp-top-ten
 
 deadcode:
     -uv run vulture src/ --min-confidence 90
@@ -142,4 +153,67 @@ lock-check:
 cli-coverage-floor:
     uv run python scripts/check_cli_coverage_floor.py
 
-check: lock-check dependency-contract-check lint typecheck authoring-check contract-check log-kind-check no-mocked-dataclasses test cli-coverage-floor
+# Lightweight environment readiness probe — verifies uv/just are on PATH,
+# the active Python satisfies requires-python (>=3.13), the venv exists,
+# and the four git hooks are installed/current. This is meant to run
+# in seconds (no sync, no test execution) as a preflight for `pre-push`,
+# NOT as a substitute for `just install`/`just agent-bootstrap`. It does
+# NOT attempt to fix anything — a nonzero exit tells the caller (human
+# or agent) exactly what prerequisite is missing.
+doctor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v uv >/dev/null 2>&1; then
+        echo "doctor: uv not found on PATH — install uv (https://docs.astral.sh/uv/getting-started/installation/)" >&2; exit 127
+    fi
+    if ! command -v just >/dev/null 2>&1; then
+        echo "doctor: just not found on PATH — run 'uv tool install rust-just>=1.57' or 'just install'" >&2; exit 127
+    fi
+    pyv=$(uv run python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    case "$pyv" in
+      3.13|3.14|3.1[3-9]|3.[2-9][0-9]) : ;;
+      *) echo "doctor: Python $pyv found; project requires >=3.13" >&2; exit 2 ;;
+    esac
+    if [ ! -d .venv ]; then
+        echo "doctor: .venv missing — run 'just install' or 'uv sync --frozen --extra dev'" >&2; exit 2
+    fi
+    if ! uv run python -m fa.hygiene.hooks.status; then
+        echo "doctor: git hooks are not correctly installed — run 'just install-hooks'" >&2; exit 2
+    fi
+    echo "doctor: OK (uv, just, python>=$pyv, .venv, hooks)"
+
+# Fast static gates (no tests, no authoring-check that walks knowledge/).
+# Runs in seconds; suitable as a pre-commit full-tree check after the
+# staged-only autofix pass. Anything that needs network, filesystem
+# walks of knowledge/, or pytest goes into `check` instead.
+check-fast:
+    uv run ruff check .
+    uv run ruff format --check .
+    uv run deptry src/
+    uv run pylint src/fa
+
+# Full local CI parity — all BLOCKING gates, short-circuits on the first
+# failure (mirrors pre-push hook behaviour for a tight iteration loop).
+# For "run everything and collect all failures" use check-all.
+check: doctor lock-check dependency-contract-check check-fast typecheck authoring-check contract-check log-kind-check no-mocked-dataclasses test cli-coverage-floor targeted-mutmut targeted-semgrep
+    @echo "check: all blocking gates passed"
+
+# Full gate with NO short-circuit: runs every check and reports
+# ALL failures in one pass. Use this when you want the entire error
+# list at once (e.g. after a large refactor, or for an agent that
+# consumes all failures in one LLM turn). Exits 0 iff every sub-check
+# passed.
+check-all: doctor
+    @( set +e; rc=0; \
+       for step in lock-check dependency-contract-check check-fast typecheck \
+                   authoring-check contract-check log-kind-check \
+                   no-mocked-dataclasses test cli-coverage-floor \
+                   targeted-mutmut targeted-semgrep; do \
+         echo ""; echo "══════ just $$step ══════"; \
+         just $$step; s_rc=$$?; \
+         if [ $$s_rc -ne 0 ]; then rc=$$s_rc; echo "^^^ $$step FAILED (rc=$$s_rc)"; fi; \
+       done; \
+       echo ""; echo "══════ summary ══════"; \
+       if [ $$rc -eq 0 ]; then echo "check-all: all blocking gates passed"; \
+                       else echo "check-all: ONE OR MORE GATES FAILED (last rc=$$rc)"; fi; \
+       exit $$rc )

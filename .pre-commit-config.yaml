@@ -33,8 +33,11 @@ repos:
   # — no second place to bump, and no way for the two to disagree again.
   - repo: local
     hooks:
+      # Per-file autofix (fast, modifies staged files and restages via
+      # our pre-commit shell wrapper). Ruff `--fix` resolves import
+      # sorting and mechanical lint rules deterministically.
       - id: ruff
-        name: ruff (project env)
+        name: ruff --fix (project env)
         entry: ruff check --fix --force-exclude
         language: system
         types_or: [python, pyi]
@@ -45,6 +48,43 @@ repos:
         language: system
         types_or: [python, pyi]
         require_serial: true
+
+      # Full-tree static gates that are fast enough (<1s for ruff/deptry,
+      # ~18s for pylint gap-checks) to run on every commit. These match
+      # `just check-fast` and deliberately do NOT run mypy / pytest /
+      # authoring-check (those are pre-push only). They use `always_run:
+      # true` + `pass_filenames: false` so the check runs against the
+      # full repo regardless of which files are staged — per-file scoping
+      # here would miss a cross-file problem (unused import in one file,
+      # duplicate-code between two files).
+      - id: ruff-full-check
+        name: ruff check (full tree, no fix)
+        entry: ruff check --force-exclude .
+        language: system
+        pass_filenames: false
+        require_serial: true
+        always_run: true
+      - id: ruff-format-check
+        name: ruff format --check (full tree)
+        entry: ruff format --check --force-exclude .
+        language: system
+        pass_filenames: false
+        require_serial: true
+        always_run: true
+      - id: deptry
+        name: deptry src/
+        entry: deptry src/
+        language: system
+        pass_filenames: false
+        require_serial: true
+        always_run: true
+      - id: pylint-gap
+        name: pylint (duplicate-code + cyclic-import, src/fa)
+        entry: pylint src/fa
+        language: system
+        pass_filenames: false
+        require_serial: true
+        always_run: true
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.41.0

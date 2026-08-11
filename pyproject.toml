@@ -146,6 +146,11 @@ max-complexity = 15
 # Tests: `assert` IS the framework; fake tokens / subprocess fixtures /
 # tmp paths are test scaffolding, not production attack surface.
 "tests/**" = ["S"]
+# Dev/CI scripts in scripts/ legitimately shell out to git/uvx/mutmut
+# via argv lists (shell=False). S603 ("check for execution of untrusted
+# input") is not actionable here — binaries are resolved via shutil.which
+# and argv is hardcoded, never user-controlled. Do NOT extend this to src/.
+"scripts/**" = ["S603", "S607"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["fa"]

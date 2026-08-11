@@ -18,7 +18,7 @@ MARKER_PATH = Path(".fa") / "host-bootstrap.json"
 def _run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
     print("+", " ".join(command), flush=True)
     # Command is assembled from repository constants and the resolved uv path.
-    return subprocess.run(command, check=check, text=True)  # noqa: S603
+    return subprocess.run(command, check=check, text=True)
 
 
 def _repo_root() -> Path:

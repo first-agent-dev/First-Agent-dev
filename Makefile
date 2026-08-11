@@ -1,62 +1,37 @@
-.PHONY: install lint fix format typecheck authoring-check contract-check no-mocked-dataclasses test lock-check check run audit deadcode mutation install-hooks
+# Thin backward-compat shim — delegates every target to `just`.
+#
+# History note (2026-08-11): the previous Makefile shipped its OWN copies of
+# each recipe (lint / test / check / install-hooks / ...). Those copies
+# drifted from the justfile: they missed dependency-contract-check,
+# log-kind-check, cli-coverage-floor, targeted-mutmut/semgrep; they ran
+# `git config core.hooksPath .git/hooks` (documented upstream as harmful —
+# `pre-commit install` refuses to work when core.hooksPath is set); and
+# `make audit` was pip-audit only while `just audit` also ran semgrep.
+# The result was that CI/local parity was silently broken whenever an
+# operator typed `make` out of muscle memory.
+#
+# This shim forwards all targets to just, so the justfile is the single
+# source of truth. `make check` continues to work for any existing docs,
+# CI scripts, or muscle memory.
 
-install:
-	uv sync
-	pre-commit install
-	$(MAKE) install-hooks
+# List every target that anything is known to call so tab-completion and
+# `make <target>` work. Unknown targets fall through to the % match-anything
+# rule which also forwards to just.
+.PHONY: install install-hooks hooks-status doctor lint fix format typecheck \
+        typecheck-advisory authoring-check dependency-contract-check \
+        contract-check log-kind-check no-mocked-dataclasses test check-fast \
+        check check-all audit deadcode mutation lock-check cli-coverage-floor \
+        targeted-mutmut targeted-semgrep agent-bootstrap run help
 
-install-hooks:
-	git config core.hooksPath .git/hooks
-	cp -f src/fa/hygiene/hooks/prepare-commit-msg .git/hooks/prepare-commit-msg
-	cp -f src/fa/hygiene/hooks/commit-msg .git/hooks/commit-msg
-	chmod +x .git/hooks/prepare-commit-msg .git/hooks/commit-msg
+# Default goal (what you get when you type bare `make`): show just's help.
+.DEFAULT_GOAL := help
 
-lint:
-	ruff check .
-	ruff format --check .
-	deptry src/
-	pylint src/fa
+help:
+	@just --list
 
-fix:
-	ruff check --fix-only .
-	ruff format .
-	ruff check .
-
-format: fix
-
-typecheck:
-	mypy
-
-authoring-check:
-	fa authoring-check
-
-contract-check:
-	python scripts/check_producer_consumer_contract.py
-
-log-kind-check:
-	python scripts/check_log_kind_contract.py
-
-no-mocked-dataclasses:
-	python scripts/check_no_mocked_dataclasses.py
-
-test:
-	pytest --cov=fa --cov-report=term-missing --cov-report=xml
-
-lock-check:
-	uv lock --locked
-
-check: lock-check lint typecheck authoring-check contract-check no-mocked-dataclasses test
-
-run:
-	fa --help
-
-audit:
-	pip-audit
-
-deadcode:
-	vulture src/ --min-confidence 90 || true
-
-mutation:
-	mutmut run
-	mutmut results
-	mutmut export-cicd-stats
+# Match-anything rule: forward to just. GNU make will try built-in implicit
+# rules (%.o, etc.) first; those will fail because there is no source file
+# to compile, so it falls through here. `@` silences the command echo so
+# the output matches what just would print directly.
+%:
+	@just $@

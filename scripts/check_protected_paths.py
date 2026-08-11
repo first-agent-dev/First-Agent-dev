@@ -109,8 +109,8 @@ def added_suppressions(base_ref: str, repo_root: Path) -> list[tuple[str, str]]:
     re-flag; only NEW suppressions surface on the PR.
     """
     # Waiver: fixed argv, no shell; base_ref comes from the CI-provided ref.
-    result = subprocess.run(  # noqa: S603
-        ["git", "diff", "--unified=0", f"{base_ref}...HEAD"],  # noqa: S607
+    result = subprocess.run(
+        ["git", "diff", "--unified=0", f"{base_ref}...HEAD"],
         cwd=repo_root,
         capture_output=True,
         text=True,
@@ -141,8 +141,8 @@ def changed_paths(base_ref: str, repo_root: Path) -> list[str]:
     """Return files changed between ``base_ref`` and ``HEAD`` (merge-base diff)."""
     # Waiver: fixed argv, no shell; base_ref comes from the CI-provided ref;
     # bare "git" resolved via PATH is the portable convention.
-    result = subprocess.run(  # noqa: S603
-        ["git", "diff", "--name-only", f"{base_ref}...HEAD"],  # noqa: S607
+    result = subprocess.run(
+        ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
         cwd=repo_root,
         capture_output=True,
         text=True,

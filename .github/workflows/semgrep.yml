@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   semgrep:
     name: semgrep-oss
@@ -27,4 +31,4 @@ jobs:
         # Registry: p/python (general Python anti-patterns),
         # p/owasp-top-ten (OWASP top-ten coverage).
         # See research note in knowledge/research/ for rationale vs Bandit.
-        run: uvx semgrep --config=p/python --config=p/owasp-top-ten
+        run: uvx semgrep scan --config=p/python --config=p/owasp-top-ten

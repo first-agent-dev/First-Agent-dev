@@ -2,16 +2,21 @@
 # pre-push — run the repo-native CI gate before an agent pushes a branch.
 #
 # The pre-commit hook is intentionally optimized for fast, safe mechanical
-# cleanup (ruff --fix, ruff format, whitespace, uv-lock).  This pre-push hook is
-# the local CI parity gate: it runs `uv run just check` after commits are formed
-# but before an LLM agent publishes the branch/PR.  GitHub CI remains the final
-# authority; this hook is a convenience net for honest mistakes.
+# cleanup (ruff --fix, ruff format, whitespace, uv-lock) plus fast static
+# checks (ruff full-tree, deptry, pylint gap-checks). This pre-push hook is
+# the local CI parity gate: it runs `uv run just check` — every BLOCKING
+# gate including mypy, authoring-check, contract checks, pytest with
+# coverage — after commits are formed but before an LLM agent publishes
+# the branch/PR. Targeted mutmut/semgrep on changed files run after the
+# main gate for defense-in-depth. GitHub CI remains the final authority;
+# this hook is a convenience net for honest mistakes.
 #
 # Escape hatch for exceptional operator cases:
 #   FA_HOOK_SKIP_FULL_CHECK=1 git push
 #
-# Do not use the escape hatch in normal agent runs.  If this hook fails, fix the
-# code or push only when you intentionally want CI/review to surface the failure.
+# Do not use the escape hatch in normal agent runs. If this hook fails, fix
+# the code or push only when you intentionally want CI/review to surface
+# the failure.
 
 set -euo pipefail
 
@@ -34,4 +39,8 @@ echo "pre-push: running uv run just check" >&2
 # Redirect stdout to stderr (1>&2) so that Git GUI clients (like VS Code)
 # reliably display the full lint/test output in their error dialogs,
 # rather than swallowing the stdout and only showing the justfile exit code.
+# `just check` itself invokes `just doctor` first as a preflight, then runs
+# every blocking gate (lint, deptry, pylint, mypy, authoring-check,
+# contract checks, pytest --cov, cli-coverage-floor, targeted-mutmut,
+# targeted-semgrep).
 uv run just check 1>&2
