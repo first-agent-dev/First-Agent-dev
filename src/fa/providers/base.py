@@ -52,6 +52,9 @@ class RequestInfo:
     top_p: float | None = None
     tools: tuple[Mapping[str, Any], ...] = ()
     extras: Mapping[str, Any] = field(default_factory=dict)
+    # S13.x --thinking_mode toggle. Literal is enforced at the CLI/chain parser;
+    # the field is a plain str so dataclass replace() stays cheap.
+    thinking_mode: str = "thinking"
 
 
 @dataclass(frozen=True)

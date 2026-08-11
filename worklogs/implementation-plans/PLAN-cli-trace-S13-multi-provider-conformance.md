@@ -1,7 +1,14 @@
 # PLAN: S13 — multi-provider conformance (open-scope)
 
-**Status:** DRAFT — awaiting review (live-sheet surface expanded 2026-08-06: S13.3b sampling-omission,
-S13.7b/7c/7d deploy-gate/observability, S13.9b/9c error-surfacing + 429-resume — see worklogs/S13-live-sheet.md)
+**Status:** CLOSED-CORE LIVE-VERIFIED (2026-08-09); OPEN EXPLORATION IN PROGRESS — closed-core
+(S13.0–S13.4, S13.3b/4a/4b/4c/4d) shipped and live-verified on `fa@fa-HP` with aigate 7/7 CONF-OK,
+sampling omission verified (0/7 bodies contain temperature/top_p), prompt-cache 7/7, cache-hit 89%
+warm/72% multi-turn, workflow 3/3 stages (s13-7-wf3-*), eval_independence neutral/disjoint.
+S13.5/13.6/13.7 (aigate onboarded; anymodel 404 deferred provider-side) DONE.
+**Remaining:** S13.8 Gemini adapter backlogged per operator 2026-08-10; S13.9 cross-family workflow
+(current slice — planner=nvidia/nemotron-3-ultra-550b, coder=gemini/gemini-3-flash-preview,
+eval=mistral/mistral-small-2603, three families); S13.9c live 429-resume (offline-tested only).
+Live sheet: `worklogs/S13-live-sheet.md`.
 **Author:** agent, 2026-08-03 (v2, restructured after operator scope decision)
 **Parent:** `cli-trace-substrate-rebaseline-2026-07-25.md`
 **Closes:** **I-50 (P1)**, **I-52 (P2)**, **I-51 (P2)**. Unblocks S11.7 / Q35b.

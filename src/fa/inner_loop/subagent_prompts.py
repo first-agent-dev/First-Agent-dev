@@ -15,8 +15,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 RESEARCHER_MINIMAL_PROMPT = (
-    "You are websearch agent, tools=[web_search, fs_glob, fs_grep, fs_read_file, "
-    "fs_instant_grep], input query, output JSON {urls, snippets, summary}. "
+    "You are websearch agent, tools=[web_search, fs_search, fs_read_file], "
+    "input query, output JSON {urls, snippets, summary}. "
     "Clean slate ~1k, never inherit full parent history, task solvable with "
     "<600 tokens tool defs and <8000 output, structured JSON, stateless scrubbed env, isolated."
 )
@@ -59,32 +59,58 @@ def _get_transaction_files(session_state: Any | None, limit: int) -> list[str]:
 
 
 def _get_fts_files(workspace_root: Path, task: str, limit: int) -> list[str]:
-    """Get relevant files via FTS5 trigram <50ms, graceful degradation."""
+    """Get relevant files via fs_search FTS (BM25+trigram), graceful degradation.
+
+    S14b.1: replaced InstantGrepIndex (trigram-only, path-only) with SearchIndex
+    (BM25 + trigram + streaming fallback). We invoke .search with output_mode=
+    "files" which returns ranked paths with optional first-match snippets.
+    Best-effort: any failure returns [] so caller falls through to transaction
+    files and static fallbacks.
+    """
     try:
         db_path = workspace_root / ".fa" / "fts.db"
-        if not db_path.exists():
-            return []
-        # Import locally to avoid circular and allow fallback if not available
+        # Import locally to avoid circular imports and allow graceful fallback
+        # if the search module is unavailable.
         try:
-            from fa.memory.fts_index import InstantGrepIndex
+            from fa.memory.search_index import SearchIndex, SearchParams
         except ImportError as exc:
-            logger.warning(f"InstantGrepIndex import failed: {exc}")
+            logger.warning("SearchIndex import failed: %s", exc)
             return []
 
-        index = InstantGrepIndex(db_path)
+        index = SearchIndex(db_path)
         try:
-            paths = index.instant_grep(task, limit=limit)
-            return paths
+            # Ensure the full index is built (always include_tests=True at
+            # index time so the per-process sentinel isn't poisoned; query-
+            # time include_tests=False below filters test paths out of
+            # results). The mtime/size-incremental check makes this a no-op
+            # on subsequent calls.
+            try:
+                index.ensure_indexed(
+                    workspace_root,
+                    include_tests=True,
+                    max_file_size=200_000,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("SearchIndex.ensure_indexed failed: %s", exc)
+                return []
+            params = SearchParams(
+                query=task,
+                output_mode="files",
+                include_tests=False,
+                limit=limit,
+            )
+            sr = index.search(params, root=workspace_root)
+            return [f["path"] for f in (sr.files or []) if isinstance(f.get("path"), str)]
         finally:
             try:
                 index.close()
             except (OSError, AttributeError) as exc:
-                logger.warning(f"FTS index close failed: {exc}")
+                logger.warning("SearchIndex close failed: %s", exc)
     except (OSError, ValueError, RuntimeError) as exc:
-        logger.warning(f"FTS files failed: {exc}")
+        logger.warning("FTS files failed: %s", exc)
         return []
     except Exception as exc:  # noqa: BLE001 # best-effort for unexpected
-        logger.warning(f"FTS files unexpected failed: {exc}")
+        logger.warning("FTS files unexpected failed: %s", exc)
         return []
 
 
@@ -147,8 +173,9 @@ def build_filtered_history(
     """Filtered history: task + relevant files, not full parent 124 steps.
 
     Returns list of messages with total <8000 chars.
-    Fallback chain: transaction read/write sets first, then instant_grep,
-    then glob llms.txt, AGENTS.md, README.md if instant_grep <3 results.
+    Fallback chain: transaction read/write sets first, then fs_search FTS
+    (BM25 + trigram) for relevant files, then static fallbacks (llms.txt,
+    AGENTS.md, README.md, HANDOFF.md) if FTS returned <3 results.
     File-based minimal surface for v0.1 per Q2, optional blackboard plans
     behind flag blackboard.filtered_history_include_plans for v0.2.
     """

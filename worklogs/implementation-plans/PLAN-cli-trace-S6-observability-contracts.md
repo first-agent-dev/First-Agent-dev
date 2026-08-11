@@ -1,6 +1,7 @@
 # PLAN: S6 — EventLog/EventBus two-sided and path-complete contracts
 
-Status: **READY (v2 — adversarial review applied 2026-07-28)** · Parent: `cli-trace-substrate-rebaseline-2026-07-25.md` §Step S6
+Status: **COMPLETE (2026-07-29)** — S6.1–S6.5 + post-completion audit + mutation sweep landed; gate 2197 passed / 14 skipped / 1 xfailed; all §8 DoD checkboxes ticked; parent S6 exit criteria met. Subagent stdout masking (S6-F7/Q25) shipped in commit `c2c79f2`.
+Parent: `cli-trace-substrate-rebaseline-2026-07-25.md` §Step S6
 Traces-to: G3, G5, CT3 · Depends-on: S3, S5 (both merged) · Base: `main` after the S5 merge
 
 ---

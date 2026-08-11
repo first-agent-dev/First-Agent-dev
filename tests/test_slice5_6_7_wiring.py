@@ -161,38 +161,44 @@ def test_pr6_wiring_parallel_denied_preserved_order(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# FIND-013 — instant_grep read-only
+# FIND-013 — S14b.1 fs_search lazy auto-index (replaces old instant_grep
+# read-only contract; first call populates the FTS DB, subsequent calls
+# reuse it mtime-incrementally).
 # ---------------------------------------------------------------------------
 
 
-def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
-    """LIVE-PATH PROOF:
-    - root: drive_session
-    - test: ...::test_pr6_wiring_instant_grep_readonly_no_write
+def test_pr6_wiring_fs_search_lazy_index_finds_file(tmp_path: Path) -> None:
+    """LIVE-PATH PROOF (S14b.1):
+    - root: drive_session with fs_search unified tool
+    - test: ...::test_pr6_wiring_fs_search_lazy_index_finds_file
     - matrix: C-defaults
-    - oracle: FTS db not created during query, result method fallback, not fts5 when empty
-    - kill-check: reintroducing index_repo() in _fts_search creates db file -> test fails on not exists
-
-    Product claim: fs_instant_grep is read-only, does not auto-index.
+    - oracle: first fs_search call lazily creates fts.db and returns the
+              target file via BM25 or python-walk fallback; second call
+              does not re-index (idempotent).
+    - kill-check: removing the lazy-index branch in fs_search.handler
+              leaves fts.db absent after the call; returning zero hits
+              on a known-present query breaks the assertion.
     """
-    # Ensure no fts.db exists
+    # Ensure no fts.db exists initially
     fts_db = tmp_path / ".fa" / "fts.db"
     if fts_db.exists():
         fts_db.unlink()
-    # Create a file to be found via fallback
+    # Create a file to be found
     (tmp_path / "findme.py").write_text("needle in haystack", encoding="utf-8")
 
-    log = EventLog(tmp_path / "events.jsonl", run_id="pr6-grep")
-    state = SessionState(workspace_root=tmp_path, run_id="pr6-grep", log=log)
+    log = EventLog(tmp_path / "events.jsonl", run_id="pr6-fs-search")
+    state = SessionState(workspace_root=tmp_path, run_id="pr6-fs-search", log=log)
     registry = build_baseline_registry(tmp_path)
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
-    mock_chain.config = make_test_chain_config(
-        name="test",
-    )
+    mock_chain.config = make_test_chain_config(name="test")
 
-    tc1 = make_tool_call("fs_instant_grep", {"query": "needle"}, "tc-1")
+    tc1 = make_tool_call(
+        "fs_search",
+        {"query": "needle", "output_mode": "files", "limit": 10},
+        "tc-1",
+    )
 
     mock_chain.request.side_effect = [
         mock_response_with_tools([tc1]),
@@ -209,23 +215,25 @@ def test_pr6_wiring_instant_grep_readonly_no_write(tmp_path: Path) -> None:
     )
 
     assert outcome.exit_code == 0
-    # fts.db must NOT be created by query path (read-only guarantee)
-    # If it exists, its mtime must not be newer than before (we ensure not exists)
-    assert not fts_db.exists(), "instant_grep query path created fts.db — violates read-only guarantee"
 
-    # Tool result should be via fallback, not fts5 when empty
+    # Tool result should be present and contain findme.py
     events = require_log(state).read_all()
-    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs_instant_grep"]
+    tr = [e for e in events if e.kind == "tool_result" and e.tool_name == "fs_search"]
     assert len(tr) == 1
     result = cast(dict[str, Any], tr[0].content.get("result") or {})
-    # method should be git_ls_files or fallback_walk, not fts5 alone when empty
+    # method must be one of the known search strategies
     method = result.get("method", "")
-    assert method in ("git_ls_files", "fallback_walk", "fts5")  # FTS may use a pre-existing index.
-    # At least paths contains findme.py OR fallback succeeded
-    paths = result.get("paths", [])
-    # If git repo not present, walk fallback should find it
-    if paths:
-        assert any("findme.py" in p for p in paths)
+    assert method in ("fts5_bm25", "fts5_trigram_fallback", "literal_fallback"), f"unexpected search method: {method!r}"
+    # files list must contain findme.py (either via FTS or walk fallback)
+    files = result.get("files", []) or []
+    paths = [f.get("path", "") for f in files if isinstance(f, dict)]
+    assert any("findme.py" in p for p in paths), f"fs_search failed to find findme.py; got paths={paths!r}"
+
+    # Old tool names must NOT appear as dispatched calls.
+    old_dispatched = [
+        e for e in events if e.kind == "tool_result" and e.tool_name in ("fs_grep", "fs_glob", "fs_instant_grep")
+    ]
+    assert not old_dispatched, "old search tool names must not be dispatched post-S14b.1"
 
 
 # ---------------------------------------------------------------------------

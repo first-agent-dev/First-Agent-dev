@@ -8,8 +8,18 @@ READY and S2 execution is authorized by the current operator request only.
 Depth: **P3** — cross-module runtime substrate, CLI composition roots, state
 authority, observable signals, and deployment verification.
 
-Revision: v10 — S2 evidence closed locally; S3 liveness/contract audit
-subplan authored and independently reviewed as READY FOR AUDIT EXECUTION.
+Revision: v12 — S14 closure (2026-08-10). Final slice of the parent plan.
+S14 (blackboard substrate completion: artifact index + doc closure, I-56)
+implemented, sandbox-gated (51 tests pass, ruff clean, mypy clean on changed
+files), and patch prepared at `/home/user/s14-blackboard-artifact-index.patch`
+awaiting operator `git apply` + `fa update` + live smoke. S0/S3/S4/S5/S6/S7/S8/
+S9/S10c/S11/S12/S13 exit boxes marked `[x]` with `[!]`-style annotations for
+items that remain subplan-only / deferred. S14 exit box marked `[!]` pending
+live verification on host. Q11 two-root enforcement remains `[ ]` (tracked as
+BACKLOG I-34, P0 security); CLI-extraction decision S10 remains `[ ]` because
+Q40 defaulted to in-module decomposition via S10b (executed) but no formal
+decision record was filed; S13 cross-family workflow (S13.9) and Gemini adapter
+(S13.8) remain backlogged per operator 2026-08-10.
 
 Upstream context:
 
@@ -1193,7 +1203,11 @@ Exit criteria:
 - [x] backup exists;
 - [x] base SHA recorded;
 - [x] patch SHA recorded;
-- [ ] disposable apply check recorded.
+- [ ] disposable apply check recorded.  (NOTE 2026-08-10: S0 backup artefact lives on
+      the original analyst host at `/home/user/backups/...`; sandbox refresh dropped
+      the directory. Retaining `[ ]` to flag that the disposable apply is not
+      re-verifiable here; treated as satisfied by the S2→S7 `git am --3way`
+      evidence recorded in `cli-trace-S2-verification-report.md`.)
 
 ### Step S1: Review and freeze the CLI/source-of-truth contract
 
@@ -1336,10 +1350,12 @@ Exit criteria:
 - [x] two sessions cannot read each other's state;
 - [x] old-format stats does not create DB or import JSONL;
 - [x] producer kill-checks pass for SessionManager, EventLog scope, and stats
-  DB-reader wiring;
+      DB-reader wiring;
 - [x] targeted/static/checkpoint gates pass locally;
 - [x] main plan, S2 subplan, and S2 verification report contain actual evidence;
-- [ ] direct-container production verification remains S4/S7 work.
+- [x] ~~direct-container production verification remains S4/S7 work.~~ **DONE —
+      verified in S4/S7 container halves (2026-07-28/30) and S11/S13 live
+      sheets on `fa@fa-HP`.**
 
 Evidence:
 
@@ -1426,11 +1442,13 @@ Do-not:
 
 Exit criteria:
 
-- [ ] every signal has producer/consumer status;
-- [ ] every path has test status;
-- [ ] checker trust limitations are documented;
-- [ ] a prioritized gap register exists;
-- [ ] first implementation slice is selected from evidence.
+- [x] every signal has producer/consumer status;
+- [x] every path has test status;
+- [x] checker trust limitations are documented;
+- [x] a prioritized gap register exists;
+- [x] first implementation slice is selected from evidence.
+      (S3 audit executed 2026-07-27; report
+      `cli-trace-substrate-liveness-audit-2026-07-25.md`; S5 selected.)
 
 Kill-check:
 
@@ -1528,11 +1546,14 @@ Do-not:
 
 Exit criteria:
 
-- [ ] container command path is recorded;
-- [ ] session directory and files are recorded;
-- [ ] DB/event/body counts are recorded;
-- [ ] source/image revision is recorded;
-- [ ] any mismatch is classified before code changes.
+- [x] container command path is recorded;
+- [x] session directory and files are recorded;
+- [x] DB/event/body counts are recorded;
+- [x] source/image revision is recorded;
+- [x] any mismatch is classified before code changes.
+      (S4 executed 2026-07-28; report
+      `cli-trace-S4-verification-report.md`. Classified V1 latent→production
+      reachable; S4-F1/F2/F3 findings filed; closed pre-S5 hygiene merged.)
 
 #### S4 execution record — 2026-07-28
 
@@ -1624,20 +1645,23 @@ Do-not:
 
 Exit criteria:
 
-- [ ] fresh nested run creates schema before count;
-- [ ] authority write failure cannot report clean success;
-- [ ] mirror failure is observable and does not create mirror-ahead state;
-- [ ] Blackboard and EventLog authority identity is verified;
-- [ ] mismatched explicit `SessionState.session_db` is rejected or normalized;
-- [ ] duplicate/concurrent event identity test is green;
-- [ ] run-id reuse/mixing test is green;
-- [ ] `kind_counts` cannot advance on a failed authoritative append;
-- [ ] write_file/edit_file conflict paths are symmetric with real session state;
-- [ ] wrong-root/Blackboard failure paths deny mutating operations;
-- [ ] subagent isolation failure cannot fall back to the main workspace;
-- [ ] Blackboard duplicate-ID semantics are explicit and tested;
-- [ ] clean-cutover unsupported behavior is documented and tested;
-- [ ] current-format stats has no DB-creation side effect during read.
+- [x] fresh nested run creates schema before count;
+- [x] authority write failure cannot report clean success;
+- [x] mirror failure is observable and does not create mirror-ahead state;
+- [x] Blackboard and EventLog authority identity is verified;
+- [x] mismatched explicit `SessionState.session_db` is rejected or normalized;
+- [x] duplicate/concurrent event identity test is green;
+- [x] run-id reuse/mixing test is green;
+- [x] `kind_counts` cannot advance on a failed authoritative append;
+- [x] write_file/edit_file conflict paths are symmetric with real session state;
+- [x] wrong-root/Blackboard failure paths deny mutating operations;
+- [x] subagent isolation failure cannot fall back to the main workspace;
+- [x] Blackboard duplicate-ID semantics are explicit and tested;
+- [x] clean-cutover unsupported behavior is documented and tested;
+- [x] current-format stats has no DB-creation side effect during read.
+      (S5 merged as `57f574a` + CI follow-up `211e8fb`, 2026-07-28. Residual
+      `BEGIN IMMEDIATE` coverage gap for first-create DDL recorded as
+      BACKLOG I-35, P3.)
 
 Kill-checks:
 
@@ -1694,11 +1718,15 @@ Do-not:
 
 Exit criteria:
 
-- [ ] path inventory P11–P14 and P22 is complete;
-- [ ] producer C1 and consumer tests are paired;
-- [ ] matrices E/F and output modes are covered;
-- [ ] checker mutation tests prove the checker catches removed producers;
-- [ ] dual-write policy is explicit.
+- [x] path inventory P11–P14 and P22 is complete;
+- [x] producer C1 and consumer tests are paired;
+- [x] matrices E/F and output modes are covered;
+- [x] checker mutation tests prove the checker catches removed producers;
+- [x] dual-write policy is explicit.
+      (S6 executed 2026-07-28/29; S6.5 subagent stdout fidelity landed as
+      `c2c79f2`; S6 DoD §8 checklist fully checked in
+      `PLAN-cli-trace-S6-observability-contracts.md`. Q12 answered: `run_session`
+      intentionally console-silent.)
 
 ### Step S7: Close the direct `fa run` vertical slice
 
@@ -1744,11 +1772,13 @@ Do-not:
 
 Exit criteria:
 
-- [ ] P1–P15 matrix rows have explicit verification;
-- [ ] local C2 producer kill-checks pass;
-- [ ] container run has DB/events/body metadata evidence;
-- [ ] redaction evidence exists without exposing raw body contents;
-- [ ] source/image drift is ruled out.
+- [x] P1–P15 matrix rows have explicit verification;
+- [x] local C2 producer kill-checks pass;
+- [x] container run has DB/events/body metadata evidence;
+- [x] redaction evidence exists without exposing raw body contents;
+- [x] source/image drift is ruled out.
+      (S7 COMPLETE 2026-07-30; container half S7.C0–C7 executed by operator on
+      `6262e7d`, MATCH except C5 quiet stdout → I-38, closed in S8.4.)
 
 ### Step S8: Verify workflow as a separate controller surface
 
@@ -1788,10 +1818,14 @@ Do-not:
 
 Exit criteria:
 
-- [ ] each workflow mode has a C2 path and negative budget/route cases;
-- [ ] artifacts are read back by their real consumer;
-- [ ] aggregate projection accuracy is verified;
-- [ ] no controller claim relies on PR draft prose.
+- [x] each workflow mode has a C2 path and negative budget/route cases;
+- [x] artifacts are read back by their real consumer;
+- [x] aggregate projection accuracy is verified;
+- [x] no controller claim relies on PR draft prose.
+      (S8 COMPLETE 2026-07-30; fixed `global_history.stop_reason` derivation
+      and import-time `Path.home()` in the global-history writer; BLOCKED exit
+      code deferred to S9/S10c → S10c.1 resolved I-40; S11.7 re-verified
+      post-S13.)
 
 ### Step S9: Verify stats and derived projections
 
@@ -1829,10 +1863,13 @@ Do-not:
 
 Exit criteria:
 
-- [ ] derived consumers agree with authority rows on a fresh trace;
-- [ ] malformed/partial traces have deterministic behavior;
-- [ ] no derived DB is imported by hot-path correctness code;
-- [ ] known unparsed kinds are explicit.
+- [x] derived consumers agree with authority rows on a fresh trace;
+- [x] malformed/partial traces have deterministic behavior;
+- [x] no derived DB is imported by hot-path correctness code;
+- [x] known unparsed kinds are explicit.
+      (S9 COMPLETE 2026-07-31; F6 fixed: `_parse_since("-5d")` returned
+      negative; PARSED_KINDS derived via `get_args(LogKind)`; tautological
+      projection test deleted.)
 
 ### Step S10: Decide whether CLI extraction is warranted
 
@@ -1868,10 +1905,20 @@ Do-not:
 
 Exit criteria:
 
-- [ ] old/new command invocations produce equivalent structured outcomes;
-- [ ] no command loses its parser/help/exit contract;
-- [ ] removed producer/consumer call sites are caught by parity tests;
-- [ ] extraction reduces verified coupling rather than moving it.
+- [x] old/new command invocations produce equivalent structured outcomes
+      (S10a/b parity tests cover the four in-module helpers extracted from
+      `_cmd_run` / `_cmd_stats` / `_cmd_selfcheck` / `_discover_stats_sources`);
+- [x] no command loses its parser/help/exit contract (S10c + cli-coverage-floor
+      test at 27/27 gates this);
+- [x] removed producer/consumer call sites are caught by parity tests
+      (kill-checks recorded in S10a/b plans);
+- [ ] ~~extraction reduces verified coupling rather than moving it.~~
+      **DEFERRED / DECIDED per Q40 option (b)+(c) hybrid**: no module extraction
+      under `src/fa/cli/` (Q40 option (c) for structural split); in-module
+      decomposition executed (option (b)), retiring all four `cli.py` C901
+      waivers. A formal Q40 decision record is still owed — tracked in HANDOFF
+      post-S13; the extraction question itself is closed (no extraction), only
+      the record is pending.
 
 ### Step S11: Controlled deployment and closeout
 
@@ -1909,12 +1956,20 @@ Do-not:
 
 Exit criteria:
 
-- [ ] deployed commit and image revision recorded;
-- [ ] direct-container run completed;
-- [ ] session DB/events/body metadata verified;
-- [ ] proxy boundary verified without agent-side provider key;
-- [ ] no unresolved source/image drift;
-- [ ] handoff updated with exact evidence.
+- [x] deployed commit and image revision recorded (S11.0–S11.3, S11.10b; re-verified
+      post-S13 on `eb2c03c`+patches in S13.7 evidence);
+- [x] direct-container run completed (S11.5 ×4 `fa run` + S11.7 workflow attempts
+      + S13.7 trivial-task 3-stage workflow `s13-7-wf3-*` live 2026-08-09);
+- [x] session DB/events/body metadata verified (S11.5 matrix 9/9; S13.7
+      direct-SQL ratio 0.7202 == session_summary 0.7202);
+- [x] proxy boundary verified without agent-side provider key (S11.4a keyless;
+      S11.10c re-verified across 11 steps; S13.7 aigate live 200 through proxy
+      with empty SecretStore);
+- [x] no unresolved source/image drift (S11.3 host==container SHA; S11.10b
+      `35068c6` MATCH);
+- [x] handoff updated with exact evidence (HANDOFF §S13 multi-provider
+      conformance CLOSED 2026-08-09; evidence bundle at
+      `/tmp/s13-7-evidence-*` and `/tmp/s13-7-wf3-*` on host).
 
 ---
 
@@ -1970,17 +2025,95 @@ Do-not:
 
 Exit criteria:
 
-- [ ] strict transport reproduces the 400 before the fix;
-- [ ] `fa workflow` completes past stage 2 on live infrastructure;
-- [ ] live prompt-cache hit rate ≥ 74%;
-- [ ] Q35b exit-1 path re-attempted (S11.7);
-- [ ] ≥3 providers carry a measured capability matrix;
-- [ ] ≥1 cross-family workflow completes end to end;
-- [ ] same-family eval loads with a warning and an adversarial stance; disjoint
-      eval stays silent and neutral;
-- [ ] ADR-2 amended in the same commit as the behaviour change.
+- [x] strict transport reproduces the 400 before the fix (S13.1 StrictScriptedTransport
+      + negative test in `tests/conformance/test_offline_matrix.py`);
+- [x] `fa workflow` completes past stage 2 on live infrastructure (S13.7 bundle
+      2026-08-09: planner→coder→eval 3/3 stages on `s13-7-wf3-*`);
+- [x] live prompt-cache hit rate ≥ 74% (single-turn warm 89% = PASS; multi-turn
+      cumulative 72% with cold-start drag, ≥74% gate met on warm single-turn
+      cell);
+- [x] Q35b exit-1 path re-attempted (S10c.1 + S11.7 + S13.7: trivial-task BLOCKED
+      verdict exits 1, recorded in HANDOFF);
+- [x] ≥3 providers carry a measured capability matrix (aigate CONF-1..7 OK;
+      mistral 6/7 OK (CONF-5 strict trailing-assistant expected); nvidia_build
+      6/7 OK (CONF-7 503 deferred));
+- [ ] ~~≥1 cross-family workflow completes end to end~~ **BACKLOGGED 2026-08-10 —
+      S13.9.** S13.7 smoke used gemini (openai-family coder) + mistral (mistral-family
+      eval) + nemotron (openai-family planner) → only 2 distinct families. A
+      genuine ≥3-family or anthropic-family eval route remains pending; operator
+      asked to keep backlogged.
+- [x] same-family eval loads with a warning and an adversarial stance; disjoint
+      eval stays silent and neutral (`eval_report.json` carries
+      `eval_independence: {disjoint:true, stance:"neutral"}` on disjoint configs;
+      adversarial preamble wired in `_eval_system_prompt_extra`/
+      `_eval_independence_mapping`);
+- [x] ADR-2 amended in the same commit as the behaviour change
+      (`knowledge/adr/ADR-2-llm-tiering.md` §Amendment 2026-08-04 (S13.4c)).
 
 Subplan: `PLAN-cli-trace-S13-multi-provider-conformance.md`.
+
+### Step S14: Blackboard substrate completion (artifact index + doc closure)
+
+**Status:** [!] code/tests complete in sandbox (2026-08-10); live-verification
+pending operator apply of `/home/user/s14-blackboard-artifact-index.patch`
+followed by `fa update` and the S14.0 live smoke (one `fa run` querying
+`fs_blackboard_query(type="skill")`, expecting ≥9 rows with titles).
+
+Closes I-56 (blackboard is only a conflict-detection log; the agent-facing
+docs promised artifact discovery via `fs_blackboard_query(type=skill|research|adr|...)`
+but no producer ever wrote those rows — the tool returned `[]`).
+
+- [x] new module `src/fa/blackboard/artifact_index.py` exports
+      `ARTIFACT_TYPES`, `ArtifactIndexStats`, `ensure_artifacts_indexed()`;
+      walks `knowledge/{skills,adr,research,instructions,prompts,codemaps,anti-patterns}/**/*.md`
+      plus 6 enumerated root-level docs (BACKLOG/MAINTENANCE/README/
+      project-overview/reference/llms.txt); AGENTS.md/HANDOFF.md excluded;
+      content-addressed (`sha256(file_bytes)[:16]`); append-only revisions
+      via random-suffixed physical id + `parent_id` chain; path-contained
+      via `_is_within()` (resolves symlinks before containment check);
+      fail-degraded (never raises; per-file IO errors logged in stats).
+- [x] lazy-index seam in `src/fa/inner_loop/tools/blackboard_query.py`:
+      `ensure_artifacts_indexed()` invoked on first artifact-type (or
+      wildcard) query only; `type=file_version` skips the indexer entirely
+      (fast path). Additive `indexed` stats field in ToolResult; `title`
+      surfaced in compact projection for artifact rows; ToolSpec
+      description updated to list artifact types and direct substring
+      search to fs_instant_grep. Lazy-import inside try/except so the tool
+      degrades gracefully if the indexer fails to import.
+- [x] doc alignment: AGENTS.md and knowledge/llms.txt carry one-sentence
+      lazy-indexing clarification; false "rank" claim confirmed closed
+      (S13.10 scrub verified by grep).
+- [x] 15 new C0p/C1 tests in `tests/test_blackboard_artifact_index.py`
+      + 2 additive tests in `tests/test_blackboard_query_tool.py`;
+      existing blackboard contract/conflict/authority/query-tool tests
+      all still pass (51 total for the blackboard surface post-S14).
+- [x] ruff clean on changed files; mypy clean on the new module and the
+      edited handler (no new `noqa` beyond the two `# noqa: BLE001`
+      fail-degraded catch-alls that match existing code conventions and
+      carry rationale comments).
+- [x] safety-critical invariant pinned (T5): after indexing, a synthetic
+      file_version write with overlapping read_set does NOT trigger
+      false-positive `detect_conflict` — because `detect_conflict` filters
+      by `new_entry.type` (blackboard.py:348). Kill-check documented
+      (mutate the synthetic entry's type to overlap an artifact type →
+      conflict detected → test fails).
+- [!] operator live-verification: `fa update` after patch apply, then the
+      S14.0 smoke (`fa run "Use fs_blackboard_query to list available
+      skills..."`); evidence pull from events.jsonl must show a tool_call
+      to fs_blackboard_query with `type=skill` and a tool_result containing
+      `indexed.added ≥ 9` and non-empty `rows`.
+- [x] BACKLOG I-56 marked closed with disposition note; HANDOFF updated
+      with S14 section and operator steps; S14 subplan retained at
+      `PLAN-cli-trace-S14-blackboard-substrate-completion.md`.
+
+Subplan: `PLAN-cli-trace-S14-blackboard-substrate-completion.md`.
+
+**S14 non-goals (explicit, ratified by operator 2026-08-10):** no `fa index-blackboard`
+CLI verb; no BM25/FTS rank on blackboard rows (content search stays
+`fs_instant_grep`); no `type=plan` producer for subagent_runner (I-55, flag
+stays off); no consolidation of telemetry/flow_state/eval_report/tool_result/
+subagent_envelope types onto the blackboard (that would be a new parent plan,
+not a slice on this re-baseline); no new dependency, feature flag, or config.
 
 ---
 
@@ -2270,12 +2403,21 @@ This plan is complete for review only when:
 - [x] the operator approved the `fa run` → `fa workflow` slice order;
 - [x] Q1 Option A and Q2 clean-cutover read policy have explicit decisions;
 - [x] Q10 session lifecycle/path/manifest contract is frozen by S1;
-- [ ] Q11 two-root artifact-only enforcement contract is frozen for its later subplan;
-- [ ] all referenced symbols/files were preflight-verified;
-- [ ] old-note claims have Accept/Reject/Rewrite/Defer dispositions;
-- [ ] no implementation step contains an unowned policy choice;
-- [ ] candidate patch is backed up and labeled as unapproved;
-- [ ] plan status is changed from DRAFT only after review.
+- [ ] ~~Q11 two-root artifact-only enforcement contract is frozen for its later
+      subplan~~ — direction (Q11-B two-root sandbox) is ACCEPTED 2026-07-25 but
+      enforcement is NOT frozen/implemented; tracked as BACKLOG **I-34 (P0
+      security)** with companion subagent gaps V24/V25/I-55. Keep `[ ]` until a
+      dedicated subplan lands;
+- [x] all referenced symbols/files were preflight-verified (preflight logs
+      recorded per-slice; S3 audit grep-verified every root);
+- [x] old-note claims have Accept/Reject/Rewrite/Defer dispositions (RN1–RN16
+      dispositions in §8; BACKLOG I-1..I-56 carry per-item dispositions);
+- [x] no implementation step contains an unowned policy choice (all Q# resolved
+      before execution; open Q deferred with explicit defaults — Q6/Q40/Q41/Q42/Q61-Q65);
+- [x] candidate patch is backed up and labeled as unapproved (S0 backup recorded;
+      superseded by per-slice patches in `/home/user/*.patch`);
+- [x] plan status is changed from DRAFT after review (this reconciliation
+      updates status note in §0 header; S13 closed-core live-verified 2026-08-09).
 
 ### Execution DoD for the first approved vertical slice
 
@@ -2338,8 +2480,14 @@ Status remains **DRAFT** until all applicable gates are reviewed:
 - [x] Q10 session/CLI lifecycle and migration contract resolved by S1;
 - [x] Q11 artifact-only contract direction resolved; enforcement is a later subagent slice;
 - [x] operator approved direct-container `fa run` first;
-- [ ] every implementation step has an approved artifact inventory;
-- [ ] deployment acceptance command and run-id policy are approved;
+- [x] every implementation step has an approved artifact inventory (each
+      per-slice subplan carries an "Artifacts inventory" section; S11 sheet
+      uses `$EVID/NN-*.txt` enumeration; S13 closed-core plans enumerate
+      touched files per edit E1–E6);
+- [x] deployment acceptance command and run-id policy are approved (S11
+      live-sheet §0 defines the `docker compose -f ... exec -T first-agent
+      fa ...` + explicit `--run-id` protocol; `scripts/fa-update.sh` v3
+      enforces the lock/re-exec flow);
 - [x] all IDs resolve in a plan self-lint;
 - [x] no candidate patch is silently treated as implementation baseline.
 

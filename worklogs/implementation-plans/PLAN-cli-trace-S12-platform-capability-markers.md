@@ -1,6 +1,10 @@
 # PLAN: S12 — platform capability markers (native-Windows dev parity)
 
-**Status:** DRAFT — awaiting review
+**Status:** COMPLETE (2026-08-02) — `tests/_capabilities.py` shipped with six cached
+probes; 85 tests marked; `test_s12_marker_hygiene.py` enforces named reasons.
+Linux gate 2460 passed / 15 skipped; Windows simulated 2362 / 104 skipped;
+coverage floor 82.27% maintained. All I-42/I-43 follow-ups filed to BACKLOG.
+HANDOFF §S12 COMPLETE records full gate numbers.
 **Author:** agent, 2026-08-02
 **Parent:** `cli-trace-substrate-rebaseline-2026-07-25.md`
 **Closes:** BACKLOG **I-11** (partially — see §10), resolves **Q58**

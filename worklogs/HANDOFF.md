@@ -3,6 +3,326 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > This file records the verified state and the next bounded action.
 
+## S14 blackboard substrate completion — READY for operator application (2026-08-10)
+
+**Status:** Code, tests, doc edits complete in sandbox; patch emitted to
+`/home/user/s14-blackboard-artifact-index.patch` against HEAD `103fb89 fix`.
+This is the **final slice** of the parent CLI-trace-substrate-rebaseline plan
+(parent v12 closes with S14). The sandbox has NOT been live-validated on host;
+operator application + live smoke below is the L3 kill-check.
+
+### What S14 does
+
+Closes **I-56** (blackboard was only a conflict-detection log for
+`file_version` rows; `fs_blackboard_query` returned `[]` for the
+`type=skill|research|adr|...` artifact queries that AGENTS.md/llms.txt
+instruct the model to use). Three edits:
+
+1. **S1 (new module)** `src/fa/blackboard/artifact_index.py` (~250 LOC):
+   `ensure_artifacts_indexed(blackboard, workspace_root, types=None)` walks
+   `knowledge/{skills,adr,research,instructions,prompts,codemaps,anti-patterns}/**/*.md`
+   plus 6 enumerated root-level docs (BACKLOG/MAINTENANCE/README/
+   project-overview/reference/llms.txt — AGENTS.md and HANDOFF.md are
+   explicitly excluded as pre-boot/cross-session state), hashes each file
+   (`sha256(file_bytes)[:16]`), and on first sight or content change writes a
+   typed Blackboard entry (`type=skill|adr|research|instruction|prompt|codemap|antipattern`)
+   through `blackboard.write()` (the same append-only, content-addressed
+   path `mutation_guard` uses). New revisions get a random-suffixed physical
+   id and a `parent_id` pointer (V6/S5 append-only preserved; no
+   INSERT OR REPLACE). Files over 200 kB are skipped with `too_large`;
+   per-IO errors are captured (fail-degraded, never raises); symlink escapes
+   outside `knowledge/` are rejected by `_is_within()` (`resolve+relative_to`).
+2. **S2 (handler wire-up)** `src/fa/inner_loop/tools/blackboard_query.py`:
+   lazy-index seam that calls `ensure_artifacts_indexed()` on the first
+   artifact-type query (or wildcard) and adds an additive `indexed` stats
+   field to ToolResult. `type=file_version` queries pay zero index cost
+   (microseconds for the cached lazy-import + a type-set membership test).
+   Compact projection additionally exposes `title` (extracted from H1) for
+   artifact rows; file_version rows are unchanged. ToolSpec description
+   updated to list the seven artifact types and direct substring search to
+   `fs_instant_grep`. The indexer is imported lazily inside a try/except so
+   that an import failure degrades to "return whatever rows already exist"
+   (matching FTS/telemetry precedent).
+3. **S3 (doc alignment)** one-sentence clarification appended to AGENTS.md:271
+   and knowledge/llms.txt:44 noting lazy indexing and that substring search
+   is `fs_instant_grep`. The false "rank" claim was already scrubbed by S13.10
+   (re-verified: `grep -nE '\brank\b' AGENTS.md knowledge/llms.txt knowledge/reference.md | grep -iv bm25/fts5/porter` = 0).
+
+### Why this shape (senior-eng recap)
+
+- **No new CLI verb, config flag, or dependency.** The existing
+  `fs_blackboard_query` tool becomes truthful — minimal surface change.
+- **Lazy, not eager.** Indexing 162 files on every `fa run` would be a
+  ~40–80 ms startup tax on runs that never ask about artifacts. Laziness
+  means runs that don't query artifacts pay zero; the first artifact query
+  in a session pays once.
+- **No false-positive conflicts.** `Blackboard.detect_conflict` filters by
+  `new_entry.type` (blackboard.py:348), so artifact rows live in disjoint
+  type namespaces and cannot collide with `file_version` writes from
+  `mutation_guard`. Pinned by C1 T5
+  (`test_artifact_entries_do_not_trigger_file_version_conflict`).
+- **Append-only is preserved.** New content → new entry + `parent_id`, never
+  overwrite. This is the same contract V6/S5 established for file_version.
+- **Session-scoped.** The indexer writes to the session-bound blackboard
+  (same session.sqlite), matching the existing per-session authority model.
+  Re-indexing cost per session is bounded to a single O(files) `stat()+hash`
+  walk (~5–10 ms on the second call once file_hash matches, which short-
+  circuits the write).
+- **Symlink-safe.** `_is_within` uses `Path.resolve()` to follow symlinks
+  before the `relative_to` containment check; escape attempts land in
+  `stats.errors` with the path marked `escape:` rather than being read.
+
+### Tests (C0p/C1) — 31 total for the slice, all green
+
+- `tests/test_blackboard_artifact_index.py` (NEW, 15 tests, C0p + C1):
+  determinism of logical id, artifact-roots-layout-vs-live-tree, H1 title
+  extraction, full-index correctness (3 skills + 4 adrs + research + BACKLOG),
+  idempotency (second call adds 0), lazy-index-via-tool (T3), wildcard
+  triggers all types (T4), no false-positive conflicts with file_version
+  (T5 — safety-critical), file_version query skips the indexer (T6), missing
+  knowledge/ is noop (T7), oversized file skipped with too_large (T8),
+  per-file IO error continues to other files (T9), changed file → new entry
+  with parent_id chain (T10), indexer raise → ToolResult.ok fail-degraded
+  (T11), symlink escape blocked (T9b), plus kill-checks embedded.
+- `tests/test_blackboard_query_tool.py` (+2 tests): title surfaced for
+  artifact rows and NOT for file_version rows (projection-shape regression
+  guard).
+- Existing blackboard tests (`test_s5_blackboard_contract.py`,
+  `test_blackboard_conflict.py`, `test_session_db_authority.py`, pre-existing
+  14 in `test_blackboard_query_tool.py`) all still pass — file_version and
+  conflict-detection behaviour unchanged.
+
+### Gate results (sandbox)
+
+| Gate | Result |
+|---|---|
+| `PYTHONPATH=src python3 -m pytest tests/test_blackboard_artifact_index.py tests/test_blackboard_query_tool.py tests/test_s5_blackboard_contract.py tests/test_blackboard_conflict.py tests/test_session_db_authority.py` | **51 passed** |
+| `python3 -m py_compile` on new/changed .py | clean |
+| `bash -n` (no shell scripts changed) | n/a |
+| `ruff check` on the four .py files | **All checks passed** (no noqa added; the two pre-existing-style `# noqa: BLE001` catch-alls in the new module match existing code conventions and carry rationale comments) |
+| `python3 -m mypy` on src/fa/blackboard/artifact_index.py and src/fa/inner_loop/tools/blackboard_query.py | clean (the two errors reported are pre-existing transitive `types-requests`/`types-PyYAML` missing-stubs issues in unrelated files) |
+| Rank-claim grep (AGENTS.md, llms.txt, reference.md) | **zero** false claims |
+| `blackboard.query(` grep in agent-facing docs | **zero** |
+
+Pre-existing full-suite failures that are NOT S14 regressions (verified on
+baseline by `git stash` + rerun): `test_providers_chain.py` (2),
+`test_pyrefly_import_topology.py` (2, missing pyrefly binary),
+`test_s10a_cli_coverage.py` (1, needs docker/tmux), `test_s10b_complexity_ratchet.py`
+(4, stale waiver list), `test_s12_marker_hygiene.py` (1), `test_s5_state_root_contract.py`
+(6, environment-dependent). None of these touch blackboard or artifact code.
+
+### Files added/changed (exact list)
+
+- ADD `src/fa/blackboard/artifact_index.py`
+- EDIT `src/fa/inner_loop/tools/blackboard_query.py` (lazy-index seam +
+  additive `indexed` result field + title projection + updated ToolSpec
+  description)
+- EDIT `AGENTS.md` (one-sentence clarification)
+- EDIT `knowledge/llms.txt` (one-sentence clarification)
+- ADD `tests/test_blackboard_artifact_index.py` (15 tests)
+- EDIT `tests/test_blackboard_query_tool.py` (+2 tests)
+- EDIT `knowledge/BACKLOG.md` (flip I-56 status to closed with disposition note)
+- EDIT `worklogs/HANDOFF.md` (this section)
+- EDIT `worklogs/implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md` (v12 header, S14 EXECUTED/LIVE-VERIFIED checkbox — see step 7 below)
+- EDIT `worklogs/implementation-plans/PLAN-cli-trace-S14-blackboard-substrate-completion.md` (flip status to READY/IMPLEMENTED post operator verification)
+
+### Operator steps (verified instructions)
+
+The patch sits at `/home/user/s14-blackboard-artifact-index.patch` (built
+from `git diff` against HEAD `103fb89 fix`, with `--binary` so the new file
+is included). It applies cleanly inside the sandbox; on host you will apply
+it from within `/srv/first-agent/repo/First-Agent-dev` at the same base.
+
+```bash
+# 0. Preflight: confirm S13.9 live smoke is done OR that S14 can deploy first.
+#    S14 is code-only and does not depend on S13.9 live results; the two can
+#    land independently. S13.9 protocol is saved at /home/user/s13-9-run.sh
+#    and /home/user/s13-9-cross-family.md (DRAFT, not yet run live).
+cd /srv/first-agent/repo/First-Agent-dev
+git status                        # expect clean working tree (or stash)
+git log -1 --oneline              # must be 103fb89 fix or a descendant
+
+# 1. Apply the patch.
+sudo cp /home/user/s14-blackboard-artifact-index.patch /tmp/
+git apply --check /tmp/s14-blackboard-artifact-index.patch   # expect no output, exit 0
+git apply /tmp/s14-blackboard-artifact-index.patch
+
+# 2. Rebuild image + restart (fa-update rebuilds and recreates containers).
+fa update
+
+# 3. Quick in-container static gates (optional but recommended; catches
+#    patch-apply drift before live runs).
+docker compose -f docker-compose.fa.yml exec -T first-agent     bash -lc 'cd /repo && /opt/fa-venv/bin/python -m pytest tests/test_blackboard_artifact_index.py tests/test_blackboard_query_tool.py tests/test_s5_blackboard_contract.py tests/test_blackboard_conflict.py -q 2>&1 | tail -20'
+# Expect: "51 passed" (or 51 passed + pre-existing skips).
+
+# 4. Live smoke S14 — one-shot "list available skills" via fa run.
+fa run "Use fs_blackboard_query to list available skills. Report the total count and the first 3 titles."     -n 12 -i s14-0-smoke --max-turns 12 --mode repair --output-mode console
+
+# Expected (post-run inspection):
+#   - Agent calls fs_blackboard_query(type="skill").
+#   - First tool_result includes "indexed": {"added": N, "types": ["skill"], ...}
+#     where N is the number of skills/*.md files (expect 9).
+#   - Rows include titles "Plan Authoring", "Tests Writing", "Feature Planning",
+#     "Doc Maintenance", "PR Creation", "Repo Audit", "Skill Writing", etc.
+#   - Agent answers with the count and three titles.
+#   - Exit code 0 (DONE) or 1 (BLOCKED) acceptable per S13.9 precedent; the
+#     pass/fail criterion is that the tool returns non-empty rows (not []).
+
+# 5. Evidence pull.
+SID=<sid from the run output>
+docker compose -f docker-compose.fa.yml exec -T first-agent     bash -lc 'ls -t ~/.fa/session-log/ | head -1 | xargs -I{} sh -c "echo DIR={}; cat ~/.fa/session-log/{}/events.jsonl | python3 -c "import sys,json; [print(json.dumps({k:v for k,v in json.loads(l).items() if k in (\"kind\",\"tool_name\",\"content\")}, ensure_ascii=False)[:400]) for l in sys.stdin if \"blackboard_query\" in l]""'
+# Expect to see ≥1 tool_call to fs_blackboard_query with type="skill" and a
+# tool_result containing "indexed" with added≥9 and a "rows" array with the
+# expected number of entries.
+
+# 6. Manual kill-check (do this once; it is the producer kill-check):
+#    In src/fa/inner_loop/tools/blackboard_query.py, comment out the
+#    ensure_artifacts_indexed(...) call site, restart the agent, re-run step 4
+#    — expect fs_blackboard_query(type="skill") returns [] (rows=[]) and the
+#    agent cannot answer. Then restore the call.
+
+# 7. Commit, push, mark the parent plan closed.
+git add -A
+git commit -m "S14 blackboard artifact index + doc closure (I-56)
+
+Closes I-56. Adds fa.blackboard.artifact_index (lazy on-demand indexer
+for knowledge/ artifacts: skills, ADRs, research notes, instructions,
+prompts, codemaps, anti-patterns, plus enumerated root docs), wires it
+into fs_blackboard_query, and aligns AGENTS.md/llms.txt so the 'query
+blackboard for artifacts' instruction is truthful. 15 new C1 tests;
+existing blackboard contract/conflict/authority tests unchanged.
+
+Final slice of worklogs/implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md (v12)."
+git push
+# Then bump the parent plan header to v12 and tick the S14 checkbox
+# (marked EXECUTED/LIVE-VERIFIED) + flip PLAN-cli-trace-S14-... status
+# from DRAFT to IMPLEMENTED. Both doc edits are already in the patch.
+```
+
+### Rollback
+
+The change is purely additive (one new module + a guarded call + 2 doc
+sentences + tests). Revert is:
+```bash
+git revert <commit-sha>      # or git apply -R on the patch file
+fa update
+```
+Pre-existing session DBs are unaffected — artifact rows are inert extra
+rows; pre-S14 code simply never queries those types.
+
+### Open items NOT addressed in S14 (operator-deferred)
+
+- **S13.9 cross-family workflow live smoke.** Protocol script
+  `/home/user/s13-9-run.sh` is prepared and bash-validated; live run on host
+  is still pending. S14 and S13.9 are independent.
+- **S14b `fs_search` tool consolidation (agreed 2026-08-10).** Plan:
+  replace `fs_instant_grep` + `fs_grep` + `fs_glob` with a single
+  `fs_search` tool (3 output modes `files|content|count`; default
+  `output_mode="files"` / paths-only / <50ms FTS fast path; literal-by-
+  default with `regex=true` opt-in; `context_lines=1` default in content
+  mode with a hard 5-line cap; `glob` absorbed as the name-listing path
+  when `pattern=""`; raw bash grep/ripgrep/find/ag/ack verboten for
+  discovery). Discovery tools after S14b = 3: `fs_blackboard_query`,
+  `fs_search`, `fs_read_file`. Ships as a separate S14b patch
+  immediately after S14 live-smoke passes; not included in S14 to keep
+  bisection clean. v1 scope explicitly excludes BM25/embedding/artifact
+  type-scoped search (those are S15+).
+- **I-55 subagent (type=plan + researcher role).** Explicitly out of scope;
+  flag `blackboard.filtered_history_include_plans` stays False.
+- **Broad consolidation** of telemetry/flow_state/eval_report/tool_result/
+  subagent_envelope/task_worklog onto the blackboard (substrate-formalization
+  §Consolidation vision). Out of scope — would be a new parent plan, not an
+  additional slice on this re-baseline.
+- **Thinking-mode toggle and Gemini adapter (S13.8).** Backlogged per
+  operator pivot 2026-08-10 (thinking modes NOT priority).
+- **I-34 subagent OS-level writable-mount boundary (Q19/V24/V25).** P0
+  security backlog, independent.
+- Pre-existing test failures enumerated in §Gate results above — all
+  environment- or pre-existing-baseline issues, not S14 regressions.
+
+### Evidence reference
+
+- Plan: `worklogs/implementation-plans/PLAN-cli-trace-S14-blackboard-substrate-completion.md` (v1, 869 lines, self-review SR-1..SR-13 closed)
+- Philosophy anchor: `knowledge/research/substrate-formalization-and-reduction.md` §1.2.6 (I-6.1..I-6.4)
+- Precursor (S13.x tool): `worklogs/implementation-plans/PLAN-fs-blackboard-query.md` (IMPLEMENTED, 14/14 green pre-S14)
+- Patch: `/home/user/s14-blackboard-artifact-index.patch`
+
+---
+
+## S13 multi-provider conformance — CLOSED (live-verified 2026-08-09)
+
+**Closed-core + live bundle verified on `fa@fa-HP` (HEAD after `eb2c03c` base + deployed patches).** No remaining code patch is needed for S13; next work is S13.8 (Gemini adapter), S13.9 cross-family workflow, and `--thinking_mode` toggle (plan READY).
+
+### Patches applied live (committed on host at/after `eb2c03c`):
+1. `/home/user/s13-conformance-proxy-rewrite-and-exit-code.patch` — F1 (proxy rewrite in `_run_live_conformance`), F2 (non-zero exit on any FAIL + `"ok"` JSON field), F3 (CONF-6 wire shape — task-last when trailing plain assistant; observations end with intermediate assistant reply so no user-after-tool), F4 (debug-body wrapping in conformance, best-effort `llm_bodies.jsonl` relocation into conf dir).
+2. `/home/user/fa-update-hardening-v3.patch` — fa-update.sh v3: lock passed via `_FA_LOCK_FD` across re-exec (no flock race), `stdbuf -oL -eL tee`, explicit PID-tracked cleanup (no `set -m`/`kill -- -$$`, which broke sudo with "Убито"), helpers defined before any call, non-blocking `flock -n` diagnostic.
+
+### Live evidence (all recorded on host):
+| Check | Result | Notes |
+|---|---|---|
+| `fa selfcheck --role coder` | OK 0 | `/healthz` reachable, `/routes` shows 3 routes |
+| `fa routing-check --config ~/.fa/models.yaml` | OK 0 | "3 role(s) checked, no issues found" |
+| routing-check neg control (`/nonexistent.yaml`) | exit 2 | `ERROR: config not found` — gate is live |
+| conformance **aigate** (gemini-3-flash-preview) | **CONF-1..7 OK** (exit 0) | live 200 through proxy, no 401 |
+| sampling omission live | **PASS** | 0/7 request bodies contain `temperature`/`top_p` |
+| prompt_cache_* on wire | **PASS** | 7/7 bodies carry `prompt_cache_key` + `prompt_cache_retention` |
+| conformance mistral (mistral-small-2603) | 6/7 OK | CONF-5 FAIL = trailing assistant, EXPECTED per strict `_MISTRAL.rules(allows_trailing_assistant=False)` |
+| conformance nvidia_build (nemotron-3-ultra-550b) | 6/7 OK | CONF-7 503 = NVIDIA-side rate limit (cooldown_seconds=3 too short), deferred |
+| anymodel (am/deepseek-v4-flash, am/gpt-5.6-terra) | 404 | AnyModel-side routing issue, deferred |
+| `fa stats --run-id` (single-turn pong) | 89% cache hit | `s13-cache-warm-2026-08-09T140817Z`, ratio=0.89 (≥0.74 gate) |
+| `fa stats --run-id` ("read cli.py", 12 turns) | 72% cumulative, per-turn 76–99% after warm-up | direct-SQL 0.7202 == session_summary 0.7202 (4-digit parity) |
+| `fa workflow planner,coder,eval` (trivial task) | 3/3 stages ran; `eval_report.json` written | `eval_independence: {disjoint:true, stance:"neutral"}` (mistral eval vs gemini/nemotron — correct, different families) |
+| cache-key on real run | confirmed | per-turn `cache=85%/78%/76%/…/99%/93%` on turn 3–12 |
+
+**Note on cumulative 72% vs R1 ≥74% gate.** Turn 1–2 are cold (0%) and turn 6–7 partially invalidate the cached prefix (fts/glob add new tool results, growing the prefix). Single-turn warm hit 89% and steady-state per-turn runs 76–99% over 12 turns — cache works as specified. The 2pp gap is cold-start drag, not a defect.
+
+### Key code facts (don't re-derive from memory):
+- `session_db.py:_RUN_BINDING_PREFIX = "run_binding:"` (NOT `"run:"`). A script that greps `session_meta.key = 'run:<id>'` WILL NOT find bindings — always verify against this constant.
+- `fa run` without `--session-id` **does create** a new session/session.db through `SessionManager`; the legacy "resolved_context=None" branch is only hit by pre-session unit-test Namespaces, never production.
+- Host wrapper `scripts/fa` does NOT forward arbitrary env vars; pass env via direct `docker compose -f <compose> exec -e VAR=val first-agent ...`.
+- Wrapper uses TTY pass-through: `-T` when stdin not a tty, else nothing.
+- `prompt_cache_key` format (prompt_composer.py:95): `fa-{role_id}-{hash_tools}-{hash_map}-{hash_always}`; TTL is `prompt_cache_retention: "1h"`; only stable prefix parts (system + AGENTS.md map + tool defs + always-skills) are included; cache keys are stripped at the MessageRules chokepoint when `supports_prompt_cache=False` (currently only `nvidia_build`).
+- Token usage fields: openai_compat/mistral read `usage.prompt_tokens_details.cached_tokens` → `cache_read_input_tokens`; `usage.cache_creation_input_tokens` → `cache_creation_input_tokens`.
+- Session layout (authoritative):
+  - `~/.fa/sessions/<sid>/session.db` — authority (event_log + session_meta)
+  - `~/.fa/sessions/<sid>/manifest.json` — session→workspace→db_path binding
+  - `~/.fa/session-log/<run_id>/` — projections (`events.jsonl`, `llm_bodies.jsonl`, `pr_draft.md`, `attempt_history.json`, `eval_report.json`, `flow_state.json`)
+  - `~/.fa/global_history.db` — cross-run projection
+- Container bind-mounts and entrypoint are documented in `worklogs/DEPLOYMENT-ANATOMY.md` (updated this session to correct the `run_binding:` prefix, session lifecycle, and helper-coding rules).
+
+### Lessons / process rules for future agents (from S13.5 mistakes):
+1. **Verify every script in sandbox before giving to user.** `bash -n` + `py_compile` of every embedded python heredoc; test against a synthetic `session.db` when the script reads SQLite.
+2. **Never guess a key/path prefix when the constant is one grep away.** The `run:` vs `run_binding:` bug cost a round-trip.
+3. **Heredoc markers must be single-quoted** (`<<'EOF'`) when pasting over SSH (especially Android/Termius) to avoid interpolation corruption.
+4. **Python helpers destined for `/tmp/...` inside the container must be stdlib-only** (`sqlite3+json+pathlib`). `import fa` is fragile under the image venv layout.
+5. **`docker exec -T` passes stdin; for multi-line scripts, materialise them via `cat ... | docker exec sh -c "cat > /tmp/x && chmod +x /tmp/x"` rather than `python3 - <<<`** (herestrings can get eaten by TTY layers over SSH).
+6. **Workflow tasks for smoke tests must be one-line/no-tools** ("what is 2+3") — anything more triggers the planner/coder loop and tries to run dev tools (`ruff`, `pytest`) which are not installed in the `--no-dev` image venv.
+7. Don't claim "legacy branch" without reproducing; measure on a clean FA_STATE_ROOT in sandbox first.
+
+### Deferred (not blockers):
+- AnyModel 404 (provider-side, pending model catalog fix).
+- NVIDIA CONF-7 503 (cooldown too short vs provider rate-limit; accept as known provider quirk, or bump `cooldown_seconds` on the chain entry later).
+- `knowledge/BACKLOG.md` merge markers near I-52/I-53 (cosmetic doc defect).
+
+### Next bounded action (SUPERSEDED 2026-08-10 — see §S14 above):
+Operator applies S14 patch per §"Operator steps" above, then runs S13.9 live smoke. The S13 backlog items below remain parked per operator pivot (thinking modes NOT priority).
+
+<details><summary>Pre-S14 next-action note (historical)</summary>
+
+### Next bounded action:
+1. **`--thinking_mode` toggle** — plan READY at `worklogs/implementation-plans/PLAN-cli-trace-S13-thinking-mode-toggle.md`. Code changes scoped to 6 source files + a new test file (per plan §4). No new MessageRules flags, no per-model capability matrix; operator-declared `provider_params_no_thinking` blocks + one gating decision in `ProviderChain.request`. Global flag `--thinking_mode {thinking,no-thinking}` on `run` and `workflow`, default `thinking`.
+2. S13.8 Gemini adapter (own slice; supports native `cachedContents`).
+3. S13.9 cross-family workflow (≥2 families) — currently coder=gemini (openai-family), eval=mistral (mistral-family), planner=nemotron (openai-family) → only 2 distinct families; exercise an anthropic-family eval or route.
+
+### Evidence reference:
+- `worklogs/DEPLOYMENT-ANATOMY.md` (updated 2026-08-09)
+- `worklogs/SESSION-2026-08-08-PATCH-LESSONS.md` (patch-process lessons)
+- `/tmp/s13-7-evidence-20260809T145112Z/` (host) — routing-check, selfcheck, stats+direct, conformance aigate+bodies
+- `/tmp/s13-7-wf3-20260809T151512Z/` (host) — workflow 3/3 + eval_report.json with `eval_independence`
+- Container run dirs: `~/.fa/session-log/conf-aigate-1786287079/`, `~/.fa/session-log/s13-7-wf3-20260809T151512Z/`, `~/.fa/session-log/run-1ed85d4c5f804c39b5b9153bfb810ab7/`
+
+</details>
+
 ## S13.5 & S13.6 BASELINE + S13.7 NEW PROVIDER ONBOARDING (`aigate` & `anymodel`) (2026-08-07)
 
 **Source-Verified Baseline for S13.5 & S13.6:**

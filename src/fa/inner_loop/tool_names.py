@@ -36,25 +36,23 @@ _WIRE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 # must be a member (test_s13_10_tool_names.py::test_map_covers_all_tool_spec_names).
 TOOL_NAMES: frozenset[str] = frozenset(
     {
+        "fs_apply_patch",
+        "fs_blackboard_query",
         "fs_checkpoint",
         "fs_chronicle_search",
         "fs_diff",
         "fs_edit_file",
-        "fs_glob",
-        "fs_grep",
-        "fs_instant_grep",
         "fs_list_tasks",
+        "fs_read",
         "fs_read_file",
         "fs_run_bash",
+        "fs_search",
         "fs_send_ctrl_c",
         "fs_spawn_subagent",
         "fs_undo",
         "fs_usage",
         "fs_write_file",
         "fs_write_file_limited",
-        "fs_apply_patch",
-        "fs_read",
-        "fs_blackboard_query",
         "pr_prepare",
     }
 )

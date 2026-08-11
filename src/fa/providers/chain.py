@@ -119,6 +119,10 @@ class ChainEntry:
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     extra_headers: Mapping[str, str] = field(default_factory=dict)
     provider_params: Mapping[str, Any] = field(default_factory=dict)
+    # S13.x --thinking_mode: operator-declared off-signal bytes merged ONLY in
+    # ``no-thinking`` mode (on top of provider_params so they override).
+    # Always-present (default empty) so callers never need ``getattr`` guards.
+    provider_params_no_thinking: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -331,6 +335,19 @@ class ProviderChain:
         effective_temperature = request.temperature if request.temperature is not None else sampling.get("temperature")
         effective_max_tokens = request.max_tokens if request.max_tokens is not None else sampling.get("max_tokens")
         effective_top_p = request.top_p if request.top_p is not None else sampling.get("top_p")
+        # S13.x --thinking_mode chokepoint. Two modes, one branch:
+        #   thinking (default)  -> drop sampling knobs entirely (thinking-first default,
+        #                          reasoning models don't reject/ignore them).
+        #   no-thinking         -> keep operator-declared sampling from `sampling:` block
+        #                          and merge the entry's `provider_params_no_thinking`
+        #                          on top of the base provider_params so the operator's
+        #                          off-signal (e.g. reasoning_effort=none, chat_template_kwargs
+        #                          with thinking=false) reaches the wire.
+        mode = getattr(request, "thinking_mode", "thinking")
+        no_thinking_warnings: list[str] = []
+        if mode == "thinking":
+            effective_temperature = None
+            effective_top_p = None
         attempts: list[ChainAttemptRecord] = []
         for attempt_index, entry in enumerate(self._config.chain):
             now = self._clock()
@@ -341,16 +358,20 @@ class ProviderChain:
             api_key = self._env.get(entry.api_key_env, "")
             provider = self._provider_factory(entry)
             start = self._clock()
-            # Per-entry request (ADR-9 §Amendment 2026-07-23): each chain
-            # entry gets ITS OWN `model_slug` (entry.model — the literal
-            # string this provider expects, which legitimately differs
-            # across platforms for "the same" logical model) and ITS OWN
-            # `provider_params` merged into `extras` — never a sibling
-            # entry's provider-specific fields. Role-level `sampling`
-            # defaults apply uniformly (every adapter already understands
-            # temperature/max_tokens/top_p).
             entry_extras: dict[str, Any] = dict(request.extras)
             entry_extras.update(entry.provider_params)
+            if mode == "no-thinking":
+                if entry.provider_params_no_thinking:
+                    entry_extras.update(entry.provider_params_no_thinking)
+                else:
+                    # Anti-surprise guard: operator asked to disable reasoning but this
+                    # entry declares no off-signal bytes. Warn; do NOT hard-fail because
+                    # some reasoning models cannot be turned off (gpt-oss, deepseek-r1,
+                    # Grok 3-mini/4.5) and the operator may be knowingly testing.
+                    no_thinking_warnings.append(
+                        f"no-thinking mode: entry {entry.provider}/{entry.model} has no "
+                        f"provider_params_no_thinking block; reasoning may stay on"
+                    )
             entry_request = replace(
                 request,
                 model_slug=entry.model,
@@ -579,6 +600,7 @@ def chain_from_mapping(role: str, raw: Mapping[str, Any]) -> ChainConfig:
             ),
             extra_headers=dict(row.get("extra_headers") or {}),
             provider_params=dict(row.get("provider_params") or {}),
+            provider_params_no_thinking=dict(row.get("provider_params_no_thinking") or {}),
         )
         for row in chain_rows
     )

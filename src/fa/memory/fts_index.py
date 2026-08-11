@@ -14,11 +14,14 @@ import logging
 import os
 import sqlite3
 import time
+import warnings
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Single source of truth for excluded dirs — used by glob, grep, instant_grep fallback, fts_index
+# Single source of truth for excluded dirs — used by glob, grep, instant_grep fallback,
+# fts_index, and search_index/_safe_walk.py. Extend via EXTRA_EXCLUDE_DIRS in _safe_walk,
+# not here (keep this set stable for backward compatibility).
 EXCLUDE_DIRS = {
     ".git",
     ".fa",
@@ -30,6 +33,11 @@ EXCLUDE_DIRS = {
     "dist",
     "build",
     ".mypy_cache",
+    ".tox",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".nox",
+    "htmlcov",
 }
 
 
@@ -41,6 +49,12 @@ class InstantGrepIndex:
     """
 
     def __init__(self, db_path: Path):
+        warnings.warn(
+            "InstantGrepIndex is deprecated; use fa.memory.search_index.SearchIndex instead. "
+            "InstantGrepIndex will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.db_path)

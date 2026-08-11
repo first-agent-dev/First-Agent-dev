@@ -2773,65 +2773,44 @@ with a comment pointing here.
 
 ---
 
-## I-56 — blackboard is a WIP/unfinished capability (same class as subagent): complete it as the next slice
+## I-56 — blackboard artifact index + doc closure (CLOSED 2026-08-10, S14)
 
-- **Status:** open (assessed 2026-08-06). P2 — the blackboard is a declared, SQLite-backed substrate
-  feature that is only partially realized; completing it (the `fs_blackboard_query` tool + an actual
-  artifact index + docs-reality fix) is the next slice after the current tool plan.
-- **Assessment source:** verified by grep/read in the repo, not assumed. The blackboard subsystem =
-  `src/fa/blackboard/blackboard.py` + `src/fa/inner_loop/session_db.py` (`blackboard` table) +
-  `src/fa/inner_loop/_sqlite_common.py` + writer `src/fa/inner_loop/tools/mutation_guard.py`.
-- **Related research artifacts created (this session, 2026-08-06):**
-  - `/home/user/research-blackboard-query-tool-gap.md` — the full gap analysis: `blackboard.query` is
-    documented-but-never-built as an agent tool; the capability exists but no ToolSpec/builder exposes it.
-  - `/home/user/wire-search-lost-capabilities.md` — repo-wide wire-search: `blackboard.query` is the ONE
-    genuine dead-instruction tool; all other referenced tools/commands are real or illustrative.
-  - `worklogs/implementation-plans/PLAN-fs-blackboard-query.md` — the DRAFT plan for building
-    `fs_blackboard_query` (the concrete next slice).
-  - `knowledge/research/blackboard-audit-as-planned-vs-as-built-2026-08-07.md` — **"NOTE — Blackboard
-    module: complete audit (as-planned vs as-built vs remaining)"** — full source-verified audit:
-    storage (complete) + conflict-detection (complete+wired) are DONE; the artifact-index role
-    (G1-G7) is unbuilt; docs still advertise it (G10). This is the authoritative gap reference for
-    this item.
-- **Why it is unfinished (verified):**
-  1. **The blackboard is only a conflict-detection log today, not an artifact index.** It holds ONLY
-     `type="file_version"` rows (writer = `mutation_guard.py:118,207`), used for write-conflict detection
-     (read_set/write_set). No code writes `type="skill"/"research"/"adr"/"role"/"tool_spec"` entries —
-     the artifact-index intent from `knowledge/research/substrate-formalization-and-reduction.md`
-     (`load_artifacts(type, query)` index over markdown files) is NOT implemented.
-  2. **No `rank` field exists anywhere** in `BlackboardEntry`/`Blackboard.query`/`session_db` (verified
-     grep = zero). AGENTS.md:265,269 + llms.txt:42,44,89 advertise `blackboard.query(...)` returning
-     "rank" — a FALSE claim; the rank feature was never built.
-  3. **`blackboard.query` is not an agent tool.** It is a Python method on `Blackboard`
-     (blackboard.py:297) and a `query_blackboard_rows` on `SessionDatabase`, but there is **no
-     ToolSpec/builder/registration** exposing it to the LLM. AGENTS.md:7,265,271 + llms.txt:42-89 +
-     reference.md:14 instruct the agent to "use `blackboard.query`" — a dead instruction (the tool that
-     would satisfy it does not exist).
-  4. **`Blackboard.query` has no `limit` and no `rank` ordering.** It returns all matching rows ordered
-     `timestamp ASC` (session_db.py:852-862). A real artifact-discovery tool must add an output cap and
-     decide ordering.
-- **Design intent (from docs):** `project-overview.md` §1.2.6 Substrate Formality + I-6.2 (blackboard
-  append-only, content-hashed, queryable, detect_conflict()), I-6.4 (content-hash/toolchain-digest/
-  schema-version stamps). The substrate-formalization research note describes the blackboard as a
-  **queryable index over markdown files** (skills/ADRs/research/roles/tool_specs), with a unified
-  `load_artifacts(type, query)` loader "sorted by rank", filesystem-canon markdown remaining the source
-  of truth. This is the *target*; only the conflict-detection slice exists today.
-- **Unblock-trigger / why now:** the dead `blackboard.query` instruction in the agent-facing docs
-  (AGENTS.md/llms.txt/reference.md) actively misleads the model (it would call a non-existent tool).
-  Building `fs_blackboard_query` (the PLAN) closes the tool gap; building the artifact index + rank is a
-  larger follow-up that makes the tool actually return useful skill/research/adr rows.
-- **First concrete step when picked up (the PLAN):**
-  1. Build `fs_blackboard_query` — a read-only tool wrapping `Blackboard.query()` that returns compact
-     metadata rows (id, type, content_hash, read/write sets, timestamp) with a `limit` output cap,
-     registered in implementer + planner profiles, added to canonical `TOOL_NAMES` (direct frozenset;
-     prune `LEGACY_TO_NEW`).
-  2. Add a blackboard artifact index/writer so `type="skill"/"research"/"adr"` rows exist to query
-     (deferred sub-slice — a real index builder, mirroring `index_repo()`/FTS).
-  3. Fix the docs-reality gap: correct the false "rank" claims; align `blackboard.query` →
-     `fs_blackboard_query` in agent-facing docs.
-- **Do NOT** treat `Blackboard.query` as "complete" just because it is tested — it is tested only for
-  the conflict-detection path, not as an artifact index or an agent tool. Do NOT propagate the docs'
-  "rank" claim until a real rank/index feature lands.
+- **Status:** **closed by PLAN-cli-trace-S14-blackboard-substrate-completion** (2026-08-10).
+- **Disposition:** all three steps in the original action list shipped:
+  1. `fs_blackboard_query` tool (PLAN-fs-blackboard-query, S13.x) — read-only agent tool wrapping
+     `Blackboard.query()` with limit clamp/key filter/compact projection; registered in implementer +
+     planner profiles; 14 tests green; verified live.
+  2. Artifact index (`src/fa/blackboard/artifact_index.py`, S14 step S1) — lazy on-demand indexer that
+     writes typed entries for knowledge/ artifacts (skills, ADRs, research notes, instructions,
+     prompts, codemaps, anti-patterns, plus 6 enumerated root-level docs) into the session
+     blackboard on first artifact query. Append-only (V6/S5): new content → new physical entry with
+     `parent_id`; deterministic logical ids; content-hash-addressed; path-contained; fail-degraded.
+     Triggered lazily from the existing `fs_blackboard_query` handler (S14 step S2); no new CLI
+     surface, no new flag, no new dependency. 15 tests green (14 new in
+     `tests/test_blackboard_artifact_index.py`, 2 additive tests in existing file).
+  3. Doc-reality closure (S14 step S3): the "rank" claim was already scrubbed by S13.10 (re-verified
+     grep); AGENTS.md and knowledge/llms.txt carry one clarifying sentence noting lazy indexing;
+     `blackboard.query(` Python-method references in agent docs stay at zero.
+- **Conflict safety:** `Blackboard.detect_conflict` filters by `new_entry.type` (blackboard.py:348),
+  so artifact rows cannot cause false-positive write conflicts against `file_version`. Pinned by
+  C1 test T5 (`test_artifact_entries_do_not_trigger_file_version_conflict`).
+- **Explicit non-goals / deferred to future slices:**
+  - Broad consolidation of telemetry/flow_state/eval/tool_result/subagent types onto the blackboard
+    (substrate-formalization §Consolidation) is **not** in scope; S14 is the last slice of the
+    parent CLI-trace re-baseline plan, not the opening slice of a new consolidation project.
+  - `type="plan"` producer for `subagent_runner.filtered_history_include_plans` (I-55): flag stays
+    off; subagent is its own slice.
+  - A separate `fa index-blackboard` CLI verb: rejected in favor of lazy indexing (no startup tax,
+    no operator action).
+  - BM25/FTS rank on blackboard rows: content search stays `fs_instant_grep`'s job (Pillar-3).
+- **Files shipped (S14):** `src/fa/blackboard/artifact_index.py` (NEW, ~250 LOC),
+  `src/fa/inner_loop/tools/blackboard_query.py` (EDIT: lazy-index seam + title projection + additive
+  `indexed` result field + ToolSpec description), `AGENTS.md`, `knowledge/llms.txt` (one-sentence
+  clarification each), `tests/test_blackboard_artifact_index.py` (NEW, 15 tests),
+  `tests/test_blackboard_query_tool.py` (+2 tests). Patch: `/home/user/s14-blackboard-artifact-index.patch`.
+- **References:** PLAN-cli-trace-S14-blackboard-substrate-completion.md, PLAN-fs-blackboard-query.md,
+  knowledge/research/blackboard-audit-as-planned-vs-as-built-2026-08-07.md,
+  knowledge/research/substrate-formalization-and-reduction.md §1.2.6.
 
 ---
 

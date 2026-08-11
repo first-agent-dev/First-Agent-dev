@@ -261,3 +261,45 @@ def test_inner_loop_smoke_path_builds(tmp_path: Path) -> None:
     result = registry.dispatch(ToolCall(name="fs_blackboard_query", params={}))
     assert result.error is not None
     assert result.error.code == "blackboard_unavailable"
+
+
+# --- S14: artifact-index integration at the tool surface ---------------------
+
+
+def test_compact_surfaces_title_for_artifact_entries(tmp_path: Path) -> None:
+    """C1 — after lazy artifact indexing, compact rows include a 'title' field
+    for artifact entries but remain payload-free."""
+    k = tmp_path / "knowledge" / "skills"
+    k.mkdir(parents=True)
+    (k / "plan-authoring").mkdir()
+    (k / "plan-authoring" / "SKILL.md").write_text("# Plan Authoring\nbody", encoding="utf-8")
+    state = SessionState(workspace_root=tmp_path, run_id="run-s14")
+
+    result = _dispatch(state, {"type": "skill"})
+    assert result.error is None
+    data = result.result
+    assert data is not None
+    assert "indexed" in data
+    assert data["indexed"]["added"] >= 1
+    rows = data["rows"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["type"] == "skill"
+    assert row.get("title") == "Plan Authoring"
+    assert "payload" not in row
+    assert row["path"].endswith("SKILL.md")
+
+
+def test_compact_file_version_has_no_title_key(tmp_path: Path) -> None:
+    """C1 — file_version rows (which carry no 'title' in payload) do NOT gain a
+    'title' key (no spurious additive field on non-artifact rows)."""
+    state = SessionState(workspace_root=tmp_path, run_id="run-s14")
+    _seed_blackboard(state)
+    result = _dispatch(state, {"type": "file_version"})
+    assert result.error is None
+    data = result.result
+    assert data is not None
+    for row in data["rows"]:
+        assert "title" not in row, "file_version rows must not expose a 'title' key"
+    # Indexer must not have run for file_version query.
+    assert "indexed" not in data

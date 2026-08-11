@@ -4,7 +4,7 @@
 
 > **Agent Pitch:** You are operating inside a strict, zero-trust TCB.
 Your code edits are checked via AST analysis, bash commands are monitored by IntentGuard.
-Use `fs_blackboard_query` and `fs_instant_grep` tools to strictly manage your context window.
+Use `fs_blackboard_query` and `fs_search` tools to strictly manage your context window.
 Highest virtues are scoped changes and deterministic precision.
 
 **First-Agent** is an implementation-first project aimed at becoming the most token- and tool-call-efficient open-source coding-agent harness.
@@ -257,21 +257,38 @@ Summaries in `knowledge/research/` are pointers, not authoritative sources.
   §Session Protocol (overwrite §Current state, rewrite §Next); load [`doc-maintenance`](./knowledge/skills/doc-maintenance/SKILL.md) skill before committing.
   Update [`knowledge/llms.txt`](./knowledge/llms.txt) rows per doc-maintenance skill §When adding a new file.
 
-## Querying Artifacts — Use Blackboard and Instant Grep First (ADR-14/15, 2026-07-11)
+## Querying Artifacts — Tool Selection by Intent (ADR-14/15, S14, 2026-08-10)
 
-- **For bootstrap:** Read AGENTS.md + llms.txt §MUST READ FIRST (5 files in order) + project-overview.md + HANDOFF.md as today. This is mandatory.
+- **Bootstrap (mandatory, unchanged):** Read AGENTS.md → llms.txt §MUST READ FIRST (5 files in order) → project-overview.md → HANDOFF.md before any tool use.
 
-- **For finding artifacts (skills, ADRs, research, files):** Use formal substrate first, not raw grep:
-  - `fs_blackboard_query(type="skill", key="api")` → list of blackboard entries with path, content_hash, read_set/write_set, timestamp
-  - `fs_instant_grep(query="auth", limit=10)` → list paths <50ms substring search via FTS5 trigram, returns paths not content, token efficient
-  - Only if blackboard and instant_grep return empty, fallback to `grep -ril` as last resort.
+### Intent → tool (exhaustive, ordered)
 
-- **Why:** Blackboard is content-hashed, versioned, with read_set/write_set, assumptions, version_dependencies, queryable (timestamp-ordered), detects conflict (write_set overlap → conflict_detected). grep -ril scans all files each time, no content hash, no transactional semantics, slow, token heavy, caused 124 steps timeout.
+| Intent | Tool | Why this one |
+|---|---|---|
+| «What artifact _types_ exist? List all skills/ADRs/research/...» | `fs_blackboard_query(type="skill")` (or adr/research/instruction/prompt/codemap/antipattern/file_version) | Returns typed, content-hashed rows with id, title, path, timestamps; triggers lazy index on first call; 50-row cap, token-cheap. **Does not search file bodies.** |
+| «Find an artifact whose *title or path* mentions X (e.g. skill name contains "api")» | `fs_blackboard_query(type=…, key="api")` | `key` matches substring against entry metadata (title/path/hash), NOT body content. Used for name-scoped lookup. |
+| «Which file versions did I (or a prior step) already touch in this session?» | `fs_blackboard_query(type="file_version")` | Returns `pre-<uuid>`/`post-<uuid>` mutation snapshots with read_set/write_set — the substrate's change log. |
+| «Find *content* somewhere in the repo — body substring, across code AND docs, don't know type yet» (DEFAULT START) | `fs_search(query="…", output_mode="files", limit=10)` | FTS5 BM25 + trigram, <50ms after first-call index, returns **paths with match_count + first-match snippet** (respects .gitignore, prunes code + docs equally). Add `glob="*.py"` for path filter; `include_tests=false` to exclude tests/. |
+| «Find files whose names/paths match a glob (e.g. all test files under X)» | `fs_search(query="", glob="tests/**/test_*.py", …)` — or `fs_search(query=" ", glob="pattern")` | Glob is a parameter on fs_search; no standalone glob tool. For pure name listing use fs_search with a broad query and the glob filter. |
+| «I have a path — read the actual bytes now» | `fs_read_file(path=…)` | Body retrieval is a separate step; discovery tools return metadata/paths, not bodies. |
+| «I need matching lines with content/numbers inline (use sparingly)» | `fs_search(query="…", output_mode="matches", context_lines=1, glob="*.py")` | Returns `{path,line,content,before,after}`. Use only after `files`-mode identified the relevant files and you need exact line numbers (e.g. to target an edit_file). |
+| «I need contiguous snippets around matches to read code without a separate read_file» | `fs_search(query="…", output_mode="regions", context_lines=2)` | Groups adjacent matches into contiguous `{path, start_line, end_line, snippet}` windows. Token-efficient alternative to fs_read_file when the answer is a short code region. |
+| «I am about to WRITE a file» | Mutation guard flow: declare read_set + write_set + assumptions (base `git rev-parse HEAD`, llms.txt hash) + version_dependencies; blackboard runs `detect_conflict()`; on conflict return structured `ToolResult.fail(code="conflict_detected")`, never silent overwrite (fixes Claude bug #55708). | Prevents cross-run/cross-agent stomps via type-scoped write_set overlap. |
 
-- **For full file list:** Do NOT read entire llms.txt BY-DEMAND INDEX full list (deprecated as of ADR-14/15). Query blackboard: `fs_blackboard_query(type="research")` or `fs_glob("knowledge/**/*.md")` but prefer blackboard query.
+### Combinators you will actually use
+1. **Type-browse:** `fs_blackboard_query(type="adr")` → skim titles → `fs_read_file(path=…)` on the relevant ones.
+2. **Body search (S14b.1):** Start with `fs_search(query="auth", output_mode="files")` → inspect returned paths (each includes a short snippet so you can usually decide without a separate read) → if you need the typed metadata/hash, `fs_blackboard_query(key=<filename>)` (key is a substring of the relpath) → use its `content_hash` in `version_dependencies`. Only escalate to `output_mode="matches"` (exact lines) or `output_mode="regions"` (contiguous snippets) when files-mode snippets are insufficient.
+3. **Before writing:** gather read_set from tools above → invoke mutation guard → blackboard serializes.
 
-- **For writing files:** Declare read_set (files read before via instant_grep), write_set (file written), assumptions (base commit `git rev-parse HEAD`, llms.txt hash), version_dependencies. Blackboard checks conflict via `detect_conflict()` before allowing write. If conflict, return structured ToolResult.fail code "conflict_detected" with details, not silent overwrite (fixes Claude bug #55708 parent HEAD switched).
+### Hard rules (S14b.1)
+- **Do NOT** slurp llms.txt/BACKLOG.md wholesale for "full list of artifacts" (deprecated by ADR-14/15); use `fs_blackboard_query(type=…)` or `fs_search(query="…", glob="knowledge/**")`.
+- **Do NOT** call `fs_blackboard_query(key="…")` expecting body-content hits — it searches metadata only. For body, `fs_search`.
+- **Do NOT** invoke `grep`/`rg`/`find`/`ag`/`ack` via `fs_run_bash` for discovery. The two approved discovery tools (`fs_blackboard_query` for typed artifact metadata; `fs_search` for file body/path/glob/line content) enforce token budgets, 30KB response caps, and .gitignore pruning; raw shell grep historically caused 124-step timeouts.
+- **Do NOT** call `fs_search` with `output_mode="matches"` or `"regions"` as your first move. DEFAULT to `output_mode="files"`; escalate only after you know which files matter. This is the primary token-budget defense.
+- **Do NOT** invent additional search flags or tools; the set above is closed. If a query truly cannot be expressed within them, surface the gap as an observation rather than reaching for bash.
+- Rows are lazily indexed on first artifact-typed query; the returned `"indexed"` field reports scanned/added/updated/skipped/errors — useful for diagnostics but do NOT surface raw stats to the user unless asked.
+- fs_search `context_lines` is clamped to 0–5 and `limit` to 1–50; requesting higher values is silently clamped with a warning, not an error.
 
-- **Single entry point for artifacts:** Blackboard is single entry point for finding artifacts, but NOT single entry point for session bootstrap. Bootstrap remains AGENTS.md + llms.txt MUST READ FIRST.
-
-- **Session data authority:** `session.db` is the SQLite authority for hot-path runtime state (3 tables: event_log, blackboard, session_meta). JSONL files are best-effort mirrors — if they disagree with session.db, session.db wins. See `knowledge/reference.md` §Session Data Layout for the full schema and authority hierarchy.
+### Single-entry point & authority
+- Blackboard is the single entry point for **typed artifacts and mutation history**; it is NOT the session bootstrap (bootstrap stays AGENTS.md + llms.txt MUST READ FIRST).
+- `session.db` is the SQLite authority for hot-path runtime state (3 tables: event_log, blackboard, session_meta). JSONL files (`.fa/blackboard/*.jsonl`) are best-effort mirrors — if they disagree with `session.db`, `session.db` wins. See `knowledge/reference.md` §Session Data Layout for the full schema and authority hierarchy.

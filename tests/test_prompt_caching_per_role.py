@@ -10,7 +10,7 @@ def test_cache_key_per_role() -> None:
 
     base = "BASE SYSTEM"
     map_md = "AGENTS.md map"
-    researcher_tools = [{"name": "fs_grep"}, {"name": "fs_read_file"}]
+    researcher_tools = [{"name": "fs_search"}, {"name": "fs_read_file"}]
     coder_tools = [
         {"name": "fs_read_file"},
         {"name": "fs_write_file"},

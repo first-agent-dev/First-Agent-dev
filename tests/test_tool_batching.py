@@ -7,14 +7,16 @@ from __future__ import annotations
 
 
 def test_batching_grouping() -> None:
-    read_only = {"fs_glob", "fs_grep", "fs_read_file", "fs_instant_grep"}
+    # S14b.1: fs_search is the single read-only discovery tool (replaces
+    # fs_glob + fs_grep + fs_instant_grep, all of which were read-only).
+    read_only = {"fs_search", "fs_read_file"}
 
     calls = [
-        {"name": "fs_glob"},
+        {"name": "fs_search"},
         {"name": "fs_read_file"},
         {"name": "fs_write_file"},
         {"name": "fs_run_bash"},
-        {"name": "fs_grep"},
+        {"name": "fs_search"},
     ]
 
     parallel = [c for c in calls if c["name"] in read_only]
@@ -23,6 +25,9 @@ def test_batching_grouping() -> None:
     assert len(parallel) == 3
     assert len(sequential) == 2
     assert all(c["name"] in read_only for c in parallel)
+    # Old tool names must never appear as parallel-safe.
+    for old in ("fs_glob", "fs_grep", "fs_instant_grep"):
+        assert old not in read_only
 
 
 def test_threadpool_parallel() -> None:
@@ -33,7 +38,7 @@ def test_threadpool_parallel() -> None:
         time.sleep(0.1)
         return f"result {name}"
 
-    calls = ["fs_glob", "fs_grep", "fs_read_file"]
+    calls = ["fs_search", "fs_read_file", "fs_chronicle_search"]
 
     start = time.time()
     with ThreadPoolExecutor(max_workers=5) as ex:

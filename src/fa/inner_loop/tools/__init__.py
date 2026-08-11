@@ -3,7 +3,7 @@
 Fixes Gap 2: bare except pass → WARNING logging (failure-observable §1.2.5)
 Phase 1: PROFILES dynamic toolset wired — researcher 600 tokens vs full 3000
 - build_registry_for_role now used for baseline/planner/eval
-- glob/grep added for researcher role
+S14b.1: fs_search replaces fs_glob + fs_grep + fs_instant_grep (unified).
 """
 
 from __future__ import annotations
@@ -21,19 +21,13 @@ from fa.inner_loop.tools.write_file import build_write_file_tool
 
 logger = logging.getLogger(__name__)
 
-build_glob_tool: Callable[[Path], ToolSpec] | None
+# fs_search (S14b.1) replaces fs_glob, fs_grep, fs_instant_grep.
+build_fs_search_tool: Callable[[Path, Path], ToolSpec] | None
 try:
-    from fa.inner_loop.tools.glob import build_glob_tool
+    from fa.inner_loop.tools.fs_search import build_fs_search_tool
 except ImportError as exc:
-    logger.warning(f"Failed to import glob tool: {exc}")
-    build_glob_tool = None
-
-build_grep_tool: Callable[[Path], ToolSpec] | None
-try:
-    from fa.inner_loop.tools.grep import build_grep_tool
-except ImportError as exc:
-    logger.warning("Failed to import grep tool: %s", exc)
-    build_grep_tool = None
+    logger.warning(f"Failed to import fs_search tool: {exc}")
+    build_fs_search_tool = None
 
 build_chronicle_search_tool: Callable[[], ToolSpec] | None
 build_usage_tool: Callable[[], ToolSpec] | None
@@ -68,13 +62,6 @@ except ImportError as exc:
     build_diff_tool = None
     build_send_ctrl_c_tool = None
 
-build_instant_grep_tool: Callable[[Path, Path], ToolSpec] | None
-try:
-    from fa.inner_loop.tools.instant_grep import build_instant_grep_tool
-except ImportError as exc:
-    logger.warning(f"Failed to import instant_grep tool: {exc}")
-    build_instant_grep_tool = None
-
 build_spawn_subagent_tool: Callable[[Path], ToolSpec] | None
 try:
     from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
@@ -83,33 +70,39 @@ except ImportError as exc:
     build_spawn_subagent_tool = None
 
 
+def _resolve_fts_path(workspace_root: Path) -> Path:
+    """Resolve the FTS DB path from feature flags, falling back to .fa/fts.db."""
+    try:
+        from fa.feature_flags import load_feature_flags_from_path
+
+        ff = load_feature_flags_from_path().flags
+        fts_path = getattr(ff, "fts_db_path", ".fa/fts.db")
+    except Exception:  # noqa: BLE001
+        fts_path = ".fa/fts.db"
+    return workspace_root / fts_path
+
+
 def _register_extra_tools(  # noqa: C901 -- complexity from fallback chain graceful degradation, documented, will split Phase 3 per Paper 2 §4.4
     registry: ToolRegistry,
     workspace_root: Path,
     *,
     include_pair: bool = True,
     include_observability: bool = True,
-    include_instant_grep: bool = False,
-    include_glob_grep: bool = False,
 ) -> None:
     """Register extra Stage 0/Phase 1 tools beyond profile base.
 
     Failure-observable: logs WARNING on failure, not silent pass.
+    fs_search is always registered here (single discovery tool for every
+    role except verifier, which uses build_registry_for_role directly and
+    gets only fs_run_bash).
     """
-    if include_glob_grep:
-        if build_glob_tool:
-            try:
-                # Avoid duplicate if already in registry
-                if "fs_glob" not in registry.names():
-                    registry.register(build_glob_tool(workspace_root))
-            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs_glob: {exc}")
-        if build_grep_tool:
-            try:
-                if "fs_grep" not in registry.names():
-                    registry.register(build_grep_tool(workspace_root))
-            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs_grep: {exc}")
+    # --- fs_search (unified search, S14b.1) ---
+    if build_fs_search_tool is not None:
+        try:
+            if "fs_search" not in registry.names():
+                registry.register(build_fs_search_tool(_resolve_fts_path(workspace_root), workspace_root))
+        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+            logger.warning(f"Failed to register fs_search: {exc}")
 
     if include_observability:
         if build_chronicle_search_tool:
@@ -159,22 +152,6 @@ def _register_extra_tools(  # noqa: C901 -- complexity from fallback chain grace
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 logger.warning(f"Failed to register fs_send_ctrl_c: {exc}")
 
-    if include_instant_grep and build_instant_grep_tool:
-        try:
-            if "fs_instant_grep" not in registry.names():
-                # Wired to feature flag fts_db_path (was dead flag, now active per FIND-018 sweep)
-                try:
-                    from fa.feature_flags import load_feature_flags_from_path
-
-                    ff = load_feature_flags_from_path().flags
-                    fts_path = getattr(ff, "fts_db_path", ".fa/fts.db")
-                except (ImportError, OSError, ValueError, AttributeError, TypeError):
-                    fts_path = ".fa/fts.db"
-                db_path = workspace_root / fts_path
-                registry.register(build_instant_grep_tool(db_path, workspace_root))
-        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            logger.warning(f"Failed to register fs_instant_grep: {exc}")
-
     if build_spawn_subagent_tool:
         try:
             if "fs_spawn_subagent" not in registry.names():
@@ -188,7 +165,7 @@ def build_baseline_registry(
     *,
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
 ) -> ToolRegistry:
-    """Baseline = implementer profile (read,write,edit,bash,glob,grep,instant_grep) + observability + pair.
+    """Baseline = implementer profile (read,write,edit,bash,fs_search,blackboard_query) + observability + pair.
 
     Phase 1 wiring: uses build_registry_for_role for token efficiency.
     """
@@ -208,8 +185,6 @@ def build_baseline_registry(
         workspace_root,
         include_pair=True,
         include_observability=True,
-        include_instant_grep=False,  # already in implementer profile
-        include_glob_grep=False,  # already in implementer profile
     )
     return registry
 
@@ -219,10 +194,7 @@ def build_planner_registry(
     *,
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
 ) -> ToolRegistry:
-    """Planner = planner profile (glob,grep,read,instant_grep) + observability.
-
-    No bash for read-only analysis per PROFILES, but we add chronicle_search/usage for observability.
-    """
+    """Planner = planner profile (fs_search,read,write for research docs,blackboard_query) + observability."""
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
@@ -238,8 +210,6 @@ def build_planner_registry(
         workspace_root,
         include_pair=False,
         include_observability=True,
-        include_instant_grep=False,
-        include_glob_grep=False,
     )
     return registry
 
@@ -249,7 +219,10 @@ def build_eval_registry(
     *,
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
 ) -> ToolRegistry:
-    """Eval = verifier profile (bash only) + usage for observability."""
+    """Eval = verifier profile (bash only) + usage for observability.
+
+    Verifier intentionally does NOT get fs_search (single-command PASS/FAIL contract).
+    """
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
@@ -265,8 +238,6 @@ def build_eval_registry(
         workspace_root,
         include_pair=False,
         include_observability=True,
-        include_instant_grep=False,
-        include_glob_grep=False,
     )
     return registry
 
@@ -274,6 +245,7 @@ def build_eval_registry(
 __all__ = [
     "build_baseline_registry",
     "build_eval_registry",
+    "build_fs_search_tool",
     "build_planner_registry",
     "build_prepare_pr_tool",
     "build_read_file_tool",

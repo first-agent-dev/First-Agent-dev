@@ -38,7 +38,7 @@ class RoleProfile:
 PROFILES_RAW: dict[str, dict[str, Any]] = {
     "researcher": {
         "description": "Read-only researcher, finds files, no writes",
-        "tools": ["fs_glob", "fs_grep", "fs_read_file", "fs_instant_grep"],
+        "tools": ["fs_search", "fs_read_file"],
         "max_context_bytes": 4096,
         "max_tokens": 600,
         "stateless": True,
@@ -57,7 +57,7 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
     },
     "code-reviewer": {
         "description": "Review diff, return issues list",
-        "tools": ["fs_read_file", "fs_grep", "fs_instant_grep"],
+        "tools": ["fs_read_file", "fs_search"],
         "max_tokens": 600,
         "stateless": True,
     },
@@ -68,9 +68,7 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
             "fs_write_file",
             "fs_edit_file",
             "fs_run_bash",
-            "fs_glob",
-            "fs_grep",
-            "fs_instant_grep",
+            "fs_search",
             "fs_blackboard_query",
         ],
         "stateless": False,
@@ -80,7 +78,7 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
         "description": (
             "Architect/Planner, read-only analysis + limited write to research docs for filesystem-canon plans"
         ),
-        "tools": ["fs_glob", "fs_grep", "fs_read_file", "fs_instant_grep", "fs_write_file", "fs_blackboard_query"],
+        "tools": ["fs_search", "fs_read_file", "fs_write_file", "fs_blackboard_query"],
         "max_tokens": 1000,
         "stateless": True,
         "write_allowlist": ["knowledge/research/", ".fa/"],
@@ -226,24 +224,12 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs_run_bash: {exc}")
 
+    # fs_search replaces fs_glob, fs_grep, fs_instant_grep (S14b.1).
+    # Resolve fts_db_path from feature flags (same wiring the old
+    # instant_grep used), falling back to .fa/fts.db if flags unavailable.
     try:
-        from fa.inner_loop.tools.glob import build_glob_tool
+        from fa.inner_loop.tools.fs_search import build_fs_search_tool
 
-        builders["fs_glob"] = lambda: build_glob_tool(root)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Failed to setup builder fs_glob: {exc}")
-
-    try:
-        from fa.inner_loop.tools.grep import build_grep_tool
-
-        builders["fs_grep"] = lambda: build_grep_tool(root)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Failed to setup builder fs_grep: {exc}")
-
-    try:
-        from fa.inner_loop.tools.instant_grep import build_instant_grep_tool
-
-        # Wired to feature flag fts_db_path (was dead flag, now active)
         try:
             from fa.feature_flags import load_feature_flags_from_path
 
@@ -252,9 +238,13 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
         except Exception as exc:  # noqa: BLE001 — missing optional FTS config uses deterministic default
             logger.warning("Feature-flag FTS path unavailable: %s; using .fa/fts.db", exc)
             fts_path = ".fa/fts.db"
-        builders["fs_instant_grep"] = lambda: build_instant_grep_tool(root / fts_path, root)
+
+        def _build_fs_search(bp: str = fts_path) -> Any:
+            return build_fs_search_tool(root / bp, root)
+
+        builders["fs_search"] = _build_fs_search
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Failed to setup builder fs_instant_grep: {exc}")
+        logger.warning(f"Failed to setup builder fs_search: {exc}")
 
     try:
         from fa.inner_loop.tools.blackboard_query import build_blackboard_query_tool

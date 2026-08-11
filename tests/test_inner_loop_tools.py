@@ -170,9 +170,10 @@ def test_build_planner_registry_has_read_and_bash(tmp_path: Path) -> None:
     names = {spec.name for spec in registry.specs()}
     # Planner should have read-only reconnaissance + limited write for plans
     assert "fs_read_file" in names
-    assert "fs_glob" in names
-    assert "fs_grep" in names
-    assert "fs_instant_grep" in names
+    assert "fs_search" in names
+    # S14b.1: old search tool names removed.
+    for old in ("fs_glob", "fs_grep", "fs_instant_grep"):
+        assert old not in names
     # Limited write_file should be present (knowledge/research/** + .fa/**)
     assert "fs_write_file" in names
     # No bash for planner in reduced surface (pair over autonomy, implementer has bash)
@@ -207,26 +208,34 @@ def test_build_eval_registry_has_read_and_bash(tmp_path: Path) -> None:
     # That's okay, but core verifier is bash
 
 
-def test_grep_tool_returns_matched_lines_with_numbers(tmp_path: Path) -> None:
-    from fa.inner_loop.tools.grep import build_grep_tool
+def test_fs_search_matches_mode_returns_lines_with_numbers(tmp_path: Path) -> None:
+    """S14b.1: fs_search in output_mode='matches' returns line numbers and content."""
+    from fa.inner_loop.tools.fs_search import build_fs_search_tool
 
     # Write a test file
     test_file = tmp_path / "test.py"
     test_file.write_text("line 1\nline 2 matching target\nline 3\n", encoding="utf-8")
 
-    tool = build_grep_tool(tmp_path)
-    # Run fallback python search on tmp_path (which is not a git repo)
-    result = tool.handler({"query": "matching target"})
+    tool = build_fs_search_tool(tmp_path / ".fa" / "fts.db", tmp_path)
+    result = tool.handler(
+        {
+            "query": "matching target",
+            "output_mode": "matches",
+            "context_lines": 0,
+            "limit": 10,
+        }
+    )
 
-    assert result.error is None
-    assert "found 1 lines" in result.summary
+    assert result.error is None, f"unexpected error: {result.error}"
     result_data = cast(dict[str, Any], result.result or {})
-    assert "matches" in result_data
-    matches = result_data["matches"]
-    assert len(matches) == 1
-    assert matches[0]["path"] == "test.py"
-    assert matches[0]["line"] == 2
-    assert matches[0]["content"] == "line 2 matching target"
+    # Must return either via FTS or python-walk fallback
+    assert result_data.get("method") in ("fts5_bm25", "fts5_trigram_fallback", "literal_fallback")
+    matches = result_data.get("matches", [])
+    assert len(matches) >= 1
+    # At least one match is on line 2 of test.py with the expected content
+    hit = next((m for m in matches if m.get("path") == "test.py" and m.get("line") == 2), None)
+    assert hit is not None, f"expected line 2 match in test.py; got {matches}"
+    assert "matching target" in hit["content"]
 
 
 def test_spawn_subagent_tool_gated_by_flag(tmp_path: Path) -> None:

@@ -1,6 +1,11 @@
 # PLAN: S13.10 — Tool-name sanitization (dot → underscore, repo-wide rename)
 
-**Status:** READY
+**Status:** COMPLETE (2026-08-05/06) — every `fs.` / `pr.` tool name migrated to `fs_` / `pr_`;
+canonical `TOOL_NAMES` frozenset in `src/fa/inner_loop/tool_names.py` with
+`is_valid_wire_name()` gate; registry, hooks, tests, AGENTS.md, and
+knowledge docs aligned; all strict-OpenAI providers (NVIDIA/Anthropic) accept
+the wire shape. S13 conformance + workflow runs (s13-7-wf3-*) verified live
+2026-08-09 without dotted-name 400s.
 **Author:** agent, 2026-08-05
 **Depth:** P2 (cross-module migration/rollout — reverses a naming decision, touches registry, wire, hooks, tests, docs)
 **Parent:** `cli-trace-substrate-rebaseline-2026-07-25.md`

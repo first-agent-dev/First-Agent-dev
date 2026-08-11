@@ -8,7 +8,7 @@ Prior art:
 - LangChain subagents pattern supervisor maintains context, subagents stateless isolated
 
 Design: Main holds PTY stateful, sub stateless subprocess.run isolated, structured JSON via fastjsonschema
-Phase 3: filtered history task + 5 relevant files via instant_grep not full parent 124 steps,
+Phase 3: filtered history task + 5 relevant files via fs_search (files-mode FTS) not full parent 124 steps,
 scrubbed env extra_allow X_FA_PROXY_TOKEN foundation per-subagent random, worklog aggregation
 """
 
@@ -41,7 +41,7 @@ class SubagentRunner:
     Stateless subagent runner with filtered history, JSON envelope, proxy_token foundation
     Phase 1: spawn limit enforced via SessionState counter (not instance counter), filtered history
     Phase 3: filtered history via build_filtered_history (transaction.read_set/write_set
-    + instant_grep fallback)
+    + fs_search FTS fallback)
     """
 
     def __init__(
@@ -202,7 +202,7 @@ class SubagentRunner:
 
             # For v0.1 minimal surface, keep file-based only unless flag True
             # build_filtered_history already handles fallback chain:
-            # transaction.read_set/write_set -> instant_grep(task) limit 5 -> glob/fallback if <3 results
+            # transaction.read_set/write_set -> fs_search(task) files-mode limit 5 -> static fallbacks if <3 results
             history = build_filtered_history(task, session, self.session_root, limit=5)
             # If include_plans flag True, append latest 3 plan entries from blackboard (600 tokens)
             if include_plans:

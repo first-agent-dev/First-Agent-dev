@@ -28,10 +28,17 @@ def _spec(name: str) -> ToolSpec:
 
 
 def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path: Path, caplog: Any) -> None:
-    """Every optional registration branch fails independently and remains retry-safe."""
+    """S14b.1: Every optional registration branch fails independently and remains retry-safe.
+
+    Mocks the module-level builder callables (build_fs_search_tool,
+    build_usage_tool, build_spawn_subagent_tool, ...) to simulate failures;
+    asserts surviving tools register, failed ones are absent, duplicates
+    are suppressed on the second call, and WARNINGs are observable.
+    """
+    import logging
+
     names = (
-        "build_glob_tool",
-        "build_grep_tool",
+        "build_fs_search_tool",
         "build_chronicle_search_tool",
         "build_usage_tool",
         "build_list_tasks_tool",
@@ -39,39 +46,37 @@ def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path
         "build_undo_tool",
         "build_diff_tool",
         "build_send_ctrl_c_tool",
-        "build_instant_grep_tool",
         "build_spawn_subagent_tool",
     )
     original = {name: getattr(tool_module, name) for name in names}
     try:
-        tool_module.build_glob_tool = lambda _: _spec("fs_glob")
-        tool_module.build_grep_tool = lambda _: (_ for _ in ()).throw(RuntimeError("grep broken"))
+        # fs_search succeeds → present
+        tool_module.build_fs_search_tool = lambda *_a, **_kw: _spec("fs_search")
         tool_module.build_chronicle_search_tool = lambda: _spec("fs_chronicle_search")
+        # usage fails → absent
         tool_module.build_usage_tool = lambda: (_ for _ in ()).throw(RuntimeError("usage broken"))
         tool_module.build_list_tasks_tool = lambda: _spec("fs_list_tasks")
         tool_module.build_checkpoint_tool = lambda _: _spec("fs_checkpoint")
         tool_module.build_undo_tool = lambda _: _spec("fs_undo")
         tool_module.build_diff_tool = lambda _: _spec("fs_diff")
         tool_module.build_send_ctrl_c_tool = lambda: _spec("fs_send_ctrl_c")
-        tool_module.build_instant_grep_tool = lambda *_: _spec("fs_instant_grep")
+        # spawn fails → absent
         tool_module.build_spawn_subagent_tool = lambda _: (_ for _ in ()).throw(RuntimeError("spawn broken"))
 
+        caplog.set_level(logging.WARNING)
         registry = ToolRegistry()
         tool_module._register_extra_tools(
             registry,
             tmp_path,
             include_pair=True,
             include_observability=True,
-            include_instant_grep=True,
-            include_glob_grep=True,
         )
+        # Second call must be idempotent (dedupe guard)
         tool_module._register_extra_tools(
             registry,
             tmp_path,
             include_pair=True,
             include_observability=True,
-            include_instant_grep=True,
-            include_glob_grep=True,
         )
     finally:
         for name, value in original.items():
@@ -79,20 +84,23 @@ def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path
 
     registered = set(registry.names())
     assert {
-        "fs_glob",
+        "fs_search",
         "fs_chronicle_search",
         "fs_list_tasks",
         "fs_checkpoint",
         "fs_undo",
         "fs_diff",
         "fs_send_ctrl_c",
-        "fs_instant_grep",
     } <= registered
-    assert "fs_grep" not in registered
+    # Failed builders must NOT register their tools.
     assert "fs_usage" not in registered
     assert "fs_spawn_subagent" not in registered
+    # Old tool names must be gone.
+    for old in ("fs_glob", "fs_grep", "fs_instant_grep"):
+        assert old not in registered
+    # No duplicates: set size equals list size.
     assert len(registry.names()) == len(registered)
-    assert any("grep" in record.message.lower() for record in caplog.records)
+    assert any("usage" in record.message.lower() for record in caplog.records)
     assert any("spawn" in record.message.lower() for record in caplog.records)
 
 

@@ -99,7 +99,7 @@ def test_usage_explicit_run_id_reads_run_authority(tmp_path: Path, monkeypatch: 
         actor="coder",
         kind="tool_call",
         content={"params": {}},
-        tool_name="fs_grep",
+        tool_name="fs_search",
         tool_call_id="tc-1",
     )
     log.append(
@@ -124,7 +124,7 @@ def test_usage_explicit_run_id_reads_run_authority(tmp_path: Path, monkeypatch: 
     assert result.result is not None
     assert result.result["run_id"] == "run-42"
     assert result.result["input_tokens"] == 500
-    assert result.result["tool_calls_breakdown"] == {"fs_grep": 1}
+    assert result.result["tool_calls_breakdown"] == {"fs_search": 1}
 
 
 def test_chronicle_search_does_not_guess_workspace_events_path(tmp_path: Path) -> None:

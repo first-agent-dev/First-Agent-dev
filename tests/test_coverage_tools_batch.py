@@ -61,7 +61,10 @@ def test_edit_file_live_handler_exact_fuzzy_and_containment(tmp_path: Path) -> N
 
 def test_profiles_build_real_role_registries_and_planner_allowlist(tmp_path: Path) -> None:
     researcher = build_registry_for_role("researcher", tmp_path)
-    assert {"fs_read_file", "fs_glob", "fs_grep"}.issubset(set(researcher.names()))
+    assert {"fs_read_file", "fs_search"}.issubset(set(researcher.names()))
+    # S14b.1: old tool names must NOT be registered.
+    old_names = {"fs_glob", "fs_grep", "fs_instant_grep"}
+    assert not (old_names & set(researcher.names()))
     assert "fs_run_bash" not in researcher.names()
 
     planner = build_registry_for_role("planner", tmp_path)

@@ -2,8 +2,7 @@
 
 Plan-ID: `PLAN-cli-trace-S11-controlled-deployment`
 
-Status: **READY TO EXECUTE** — no blocking questions. Operator scoping answers
-recorded 2026-08-01 (§0.6).
+Status: **EXECUTED 2026-08-03, re-verified 2026-08-09 after S13 closed-core** — S11.0–S11.11 complete on `fa@fa-HP`; 10/12 steps pass; S11.7 workflow was initially blocked by I-50 (→ S13), S11.4e planner 400 by I-48 (→ BACKLOG). Post-S13 re-run (s13-7-wf3-2026-08-09) verified the verdict matrix and Q35b exit-1 contract (3/3 stages, BLOCKED→exit 1, eval_independence neutral/disjoint). Evidence: `/tmp/s11-evidence-20260803T111449Z.tar.gz` (54 files) and S13.7 bundle evidence at `/tmp/s13-7-wf3-*`. See §"S11 FINAL VERDICT" and HANDOFF §S13.
 
 **Every inspection block in this sheet was rehearsed against a real local run
 before publication** (a genuine `fa run` with body capture on, then each block

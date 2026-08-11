@@ -31,22 +31,35 @@ from tests._capabilities import requires_posix_paths
 
 
 def test_profile_builder_optional_import_failure_is_observable(caplog: Any, tmp_path: Path) -> None:
-    """C2: one optional builder failure does not collapse the role registry."""
+    """C2 (S14b.1): one optional builder failure does not collapse the role registry.
+
+    fs_search replaces fs_glob/fs_grep/fs_instant_grep; simulate fs_search
+    import failure and assert the rest of the registry still builds and
+    the failure is observable via a WARNING log.
+    """
+    import logging
+
     real_import = builtins.__import__
 
-    def fail_glob(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == "fa.inner_loop.tools.glob":
-            raise ImportError("simulated glob backend unavailable")
+    def fail_fs_search(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "fa.inner_loop.tools.fs_search":
+            raise ImportError("simulated fs_search backend unavailable")
         return real_import(name, *args, **kwargs)
 
-    with patch("builtins.__import__", side_effect=fail_glob):
+    caplog.set_level(logging.WARNING)
+    with patch("builtins.__import__", side_effect=fail_fs_search):
         registry = build_registry_for_role("researcher", tmp_path)
 
     names = {spec.name for spec in registry.specs()}
+    # fs_read_file must still register despite fs_search failing
     assert "fs_read_file" in names
-    assert "fs_grep" in names
-    assert "fs_glob" not in names
-    assert any("glob" in record.message.lower() for record in caplog.records)
+    # fs_search must NOT register (its import was forced-failed)
+    assert "fs_search" not in names
+    # Old tool names must also NOT be registered (no silent fallback)
+    for old in ("fs_grep", "fs_glob", "fs_instant_grep"):
+        assert old not in names
+    # WARNING must be observable (failure-observable §1.2.5)
+    assert any("fs_search" in record.message.lower() for record in caplog.records)
 
 
 def test_subagent_runner_exception_returns_failure_and_cleans_workspace(tmp_path: Path) -> None:
@@ -184,12 +197,11 @@ def test_session_db_initialization_failure_is_explicit(tmp_path: Path) -> None:
 
 
 def test_profile_optional_builders_all_missing_are_skipped(caplog: Any, tmp_path: Path) -> None:
-    """C2: missing optional builders never make registry construction crash."""
+    """C2 (S14b.1): missing optional builders never make registry construction crash."""
     import fa.inner_loop.tools as tools
 
     names = (
-        "build_glob_tool",
-        "build_grep_tool",
+        "build_fs_search_tool",
         "build_chronicle_search_tool",
         "build_usage_tool",
         "build_list_tasks_tool",
@@ -197,7 +209,6 @@ def test_profile_optional_builders_all_missing_are_skipped(caplog: Any, tmp_path
         "build_diff_tool",
         "build_send_ctrl_c_tool",
         "build_undo_tool",
-        "build_instant_grep_tool",
         "build_spawn_subagent_tool",
     )
     original = {name: getattr(tools, name) for name in names}
@@ -210,8 +221,6 @@ def test_profile_optional_builders_all_missing_are_skipped(caplog: Any, tmp_path
             tmp_path,
             include_pair=True,
             include_observability=True,
-            include_instant_grep=True,
-            include_glob_grep=True,
         )
     finally:
         for name, value in original.items():

@@ -1,9 +1,11 @@
 # PLAN: S10b — in-module decomposition + C901 waiver retirement
 
 Plan-ID: `PLAN-cli-trace-S10b-cli-decomposition`
-Status: **BLOCKED on S10a** — not on a question. Every step here requires the
-coverage floor S10a establishes; starting earlier makes the parity proof
-unfalsifiable. No open blocking questions of its own.
+Status: **COMPLETE (2026-08-01)** — all four in-module decompositions executed
+(`_cmd_run` 39→<15, `_cmd_stats` 29→<15, `_discover_stats_sources` 19→<15,
+`_cmd_selfcheck` 19→<15); all C901 waivers in `cli.py` retired (0 remaining);
+gate green (2460 passed); see HANDOFF §S10b COMPLETE and S10b execution
+record in §11.
 Depth: **P2** — structural change to the CLI composition root, gated on a
 behaviour-invariance proof.
 Revision: **v1 (reviewed)** · Changed-since-last: split out of the former

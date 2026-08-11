@@ -39,13 +39,13 @@ Task type → primary entrypoint, then secondary:
 
 **Session data authority:** `session.db` is per-run SQLite authority (3 tables: event_log, blackboard, session_meta). JSONL files are best-effort mirrors — if they disagree with session.db, session.db wins. Full schema: knowledge/reference.md §Session Data Layout.
 
-- **For finding artifacts (skills, ADRs, research, files):** Use `fs_blackboard_query(type="skill", key="api")` or `fs_instant_grep(query="auth", limit=10)` → list entries, content-hashed, with read_set/write_set, token efficient. Do NOT use `grep -ril` scanning all files each time (slow, no content hash, token heavy, caused 124 steps timeout).
-
-- **For full file list:** Query blackboard: `fs_blackboard_query(type="research")` returns matching blackboard entries with path, content_hash. Or `fs_glob("knowledge/**/*.md")` but prefer blackboard query. Blackboard is single entry point for artifact search.
+- **For finding artifacts by TYPE / TITLE / REVISION:** `fs_blackboard_query(type="skill", key="<substring in title/path>")` → typed, content-hashed rows (id, type, title, path, timestamps) with lazy index on first call. `key` matches metadata (title/path/hash), **NOT file body**. `type="file_version"` returns `pre/post-<uuid>` mutation snapshots.
+- **For body-content substring search (code OR docs) — S14b.1 unified `fs_search`:** `fs_search(query="…", output_mode="files", limit=10)` → FTS5 BM25 + trigram, <50ms after first-call lazy index, returns paths with match_count + a short first-match snippet. Add `glob="*.py"` for path/pattern filtering, `include_tests=false` to exclude tests/, `path="src/…"` to scope to a subdir. DEFAULT to `output_mode="files"`. Escalate to `output_mode="regions"` (contiguous snippets with context) when you want inline code without a follow-up read_file, or `output_mode="matches"` for exact line numbers (rare, e.g. to target an edit_file). Use `output_mode="counts"` for a quick distribution overview. Body retrieval of a known path → `fs_read_file(path=…)`. Hard caps: `limit` clamped to 1–50, `context_lines` clamped to 0–5; responses capped at ~30KB. Do NOT invoke `grep`/`rg`/`find`/`ag`/`ack` via bash for discovery — they are not token-bounded and historically caused 124-step timeouts.
+- **For full file list:** Query blackboard: `fs_blackboard_query(type="research")` returns matching blackboard entries with path, content_hash, title. For plain path globbing use `fs_search(query=" ", glob="knowledge/**/*.md")` but prefer blackboard. Artifact rows are indexed lazily on first artifact-typed query (content-hash-addressed, append-only). Blackboard is the single entry point for typed artifacts and mutation history.
 
 - **For bootstrap, you already have MUST READ FIRST 5 files. For anything else, query.**
 
-- **For writing files:** Declare read_set (files read before via instant_grep), write_set (file written), assumptions (base commit `git rev-parse HEAD`, llms.txt hash), version_dependencies. Blackboard checks conflict via `detect_conflict()` before allowing write. If conflict (read_set overlaps write_set of concurrent entry), return structured ToolResult.fail code "conflict_detected" with details, not silent overwrite (fixes Claude bug #55708 parent HEAD switched).
+- **For writing files:** Declare read_set (files surfaced via fs_search or read via fs_read_file), write_set (file written), assumptions (base commit `git rev-parse HEAD`, llms.txt hash), version_dependencies. Blackboard checks conflict via `detect_conflict()` before allowing write. If conflict (read_set overlaps write_set of concurrent entry), return structured ToolResult.fail code "conflict_detected" with details, not silent overwrite (fixes Claude bug #55708 parent HEAD switched).
 
 - **Blackboard location:** `.fa/blackboard/blackboard.jsonl` append-only, never overwritten, Control Unit managing reads/writes, each entry stamped with toolchain digests, provider schema versions, content hashes for reproducibility (as MACOG blackboard). Queryable, detects conflict, metrics merge success/belief divergence |Bk-Sk|.
 
@@ -84,9 +84,9 @@ This section is deprecated as of ADR-14/15 (2026-07-11). Previously full per-fol
 
 - `fs_blackboard_query(type="research")` → all research-note blackboard entries
 - `fs_blackboard_query(type="adr")` → all ADR blackboard entries
-- `fs_blackboard_query(type="skill", key="api")` → skill entries matching key api
-- `fs_instant_grep(query="auth", limit=10)` → files containing auth
-- `fs_glob("knowledge/**/*.md")` → but prefer blackboard query
+- `fs_blackboard_query(type="skill", key="api")` → skill entries whose title/path contains "api" (metadata match, not body)
+- `fs_search(query="auth", output_mode="files", limit=10)` → paths of files (code or docs) whose body contains "auth" (ranked BM25, snippet included)
+- `fs_search(query=" ", glob="knowledge/**/*.md")` → glob-style path listing, but prefer blackboard query for typed artifacts
 
 **Old full list removed to reduce maintenance burden. If you need old list for backwards compatibility, run:**
 

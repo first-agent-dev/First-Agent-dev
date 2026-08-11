@@ -42,10 +42,8 @@ _NEVER_PARALLEL_TOOLS = frozenset(
 
 _PARALLEL_SAFE_TOOLS = frozenset(
     {
-        "fs_glob",
-        "fs_grep",
+        "fs_search",
         "fs_read_file",
-        "fs_instant_grep",
         "fs_chronicle_search",
         "fs_usage",
         "fs_list_tasks",

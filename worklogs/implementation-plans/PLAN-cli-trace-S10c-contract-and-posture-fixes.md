@@ -1,10 +1,11 @@
 # PLAN: S10c — deploy-gate contracts, artifact posture, and request-cost fixes
 
 Plan-ID: `PLAN-cli-trace-S10c-contract-and-posture-fixes`
-Status: **READY** — no blocking questions. Q35b and I-40 are locked in by
-operator decision (2026-08-01); I-36, I-39 and I-37(partial) accepted into
-scope in the same exchange. **Q55/Q56/Q57 answered by the operator
-2026-08-01** and folded into the steps below (§10).
+Status: **COMPLETE (2026-08-01)** — I-36, I-39, I-40 closed; routing-check exits 2 on bad config;
+`fa workflow` exits 1 on non-DONE verdict; session artifacts 0600/0700; inline
+tool block reduced 29.6% (10,619 → 7,471 bytes). Gate green: 2415 passed, mypy
+322, pyrefly 0, pylint 10.00/10, cli-coverage-floor 27/27, mutation 15/15.
+Execution record in §11.
 Depth: **P2** — two operator-visible **exit-code** contract changes plus a
 file-permission change on the artifact path. Not P1: an exit code is an API,
 and `scripts/fa-clean-rebuild.sh` and any operator `&&` chain are its

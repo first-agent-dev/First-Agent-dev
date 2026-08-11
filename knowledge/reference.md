@@ -11,7 +11,7 @@
 |-------|--------|
 | Where is session state? | `~/.fa/session-log/<run_id>/session.db` (SQLite authority). JSONL mirrors are best-effort. |
 | How to read events programmatically? | `session.session_db.read_event_rows()` — never parse JSONL directly for correctness. |
-| How to find artifacts? | `fs_blackboard_query(type="skill")` or `fs_instant_grep(query="auth", limit=10)`. See AGENTS.md §Querying Artifacts. |
+| How to find artifacts/files by content? | `fs_blackboard_query(type="skill")` for typed artifacts; `fs_search(query="auth", output_mode="files", limit=10)` for repo-wide content/path search (S14b.1 unified BM25+trigram). See AGENTS.md §Querying Artifacts. |
 | How to see cross-run stats? | `fa stats --global-history` reads `~/.fa/global_history.db`. |
 | Is JSONL authoritative? | No. If JSONL and session.db disagree, session.db wins. JSONL is human-readability surface. |
 
