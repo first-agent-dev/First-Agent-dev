@@ -37,18 +37,29 @@ doctor:
     if have just;      then ok "just ($(just --version | awk '{print $2}'))"
     else                    bad "just not found on PATH (install: uv tool install rust-just==1.57.0)"; fi
 
-    py=""
-    for cand in python3.13 python3 python; do
-        if have "$cand"; then py="$cand"; break; fi
-    done
-    if [[ -z "$py" ]]; then
-        bad "no python3 interpreter found on PATH"
-    else
-        py_ver=$("$py" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-        if [[ "$py_ver" == "3.13" || "$py_ver" == "3.14" ]]; then
-            ok "python ($py_ver, $(command -v "$py"))"
+        py=""
+    if [[ "${CI:-}" == "true" ]]; then
+        # In CI we trust setup-uv + uv sync; any python3 on PATH is fine
+        # for the doctor preflight itself (it does not import fa).
+        if have python3; then
+            py_ver=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+            ok "python ($py_ver, $(command -v python3)) [CI: version gate deferred to uv sync]"
         else
-            bad "python >=3.13 required (found $py_ver at $(command -v "$py"))"
+            bad "python3 not found on PATH"
+        fi
+    else
+        for cand in python3.13 python3 python; do
+            if have "$cand"; then py="$cand"; break; fi
+        done
+        if [[ -z "$py" ]]; then
+            bad "no python3 interpreter found on PATH"
+        else
+            py_ver=$("$py" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+            if [[ "$py_ver" == "3.13" || "$py_ver" == "3.14" ]]; then
+                ok "python ($py_ver, $(command -v "$py"))"
+            else
+                bad "python >=3.13 required (found $py_ver at $(command -v "$py"))"
+            fi
         fi
     fi
 
