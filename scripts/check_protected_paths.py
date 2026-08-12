@@ -64,8 +64,8 @@ _TCB_PATHS = frozenset(
 _TCB_PREFIXES: tuple[str, ...] = (
     "src/fa/authoring_rules/",
     "src/fa/hygiene/hooks/",  # entire hook seat directory = TCB
-    ".github/workflows/",    # all CI workflows (not just authoring-guardrails)
-    "scripts/check_",        # gate/contract scripts (check_* pattern)
+    ".github/workflows/",  # all CI workflows (not just authoring-guardrails)
+    "scripts/check_",  # gate/contract scripts (check_* pattern)
 )
 
 # Dependency manifests (supply-chain review tier). LLM authors hallucinate

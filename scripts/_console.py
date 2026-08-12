@@ -132,8 +132,8 @@ def resolve_repo_root(args: argparse.Namespace) -> Path:
 
 
 __all__ = [
-    "force_utf8_stdio",
-    "add_repo_root_arg",
     "add_output_arg",
+    "add_repo_root_arg",
+    "force_utf8_stdio",
     "resolve_repo_root",
 ]
