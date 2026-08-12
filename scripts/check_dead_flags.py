@@ -28,6 +28,17 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
+# scripts/ is not a pip-installed package; shim sys.path when invoked as a file,
+# matching the pattern used by check_workflow_hygiene.py.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts._console import (
+    add_output_arg,
+    add_repo_root_arg,
+    force_utf8_stdio,
+    resolve_repo_root,
+)
+
 # --- Configuration ---
 
 _FEATURE_FLAGS_MODULE = "src/fa/feature_flags.py"
@@ -206,24 +217,17 @@ def check_dead_flags(repo_root: Path) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="check_dead_flags",
-        description="Detect dead FeatureFlags fields and phantom getattr flags.",
-    )
-    parser.add_argument(
-        "--repo-root",
-        type=Path,
-        default=Path.cwd(),
-        help="Repository root (default: current directory).",
-    )
-    parser.add_argument(
-        "--output",
-        choices=["text", "json"],
-        default="text",
-        help="Output format (default: text).",
+    force_utf8_stdio()
+    parser = add_output_arg(
+        add_repo_root_arg(
+            argparse.ArgumentParser(
+                prog="check_dead_flags",
+                description="Detect dead FeatureFlags fields and phantom getattr flags.",
+            )
+        )
     )
     args = parser.parse_args(argv)
-    repo_root = args.repo_root.resolve()
+    repo_root = resolve_repo_root(args)
 
     result = check_dead_flags(repo_root)
 

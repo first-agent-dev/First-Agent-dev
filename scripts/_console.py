@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
-"""UTF-8 console output for gate scripts, on every platform.
+"""UTF-8 console output + shared CLI helpers for gate scripts.
 
-Why this exists
----------------
+Two concerns live here so gate scripts do not re-invent them:
+
+1. ``force_utf8_stdio()`` — make stdout/stderr UTF-8 capable everywhere
+   (see the historical note below about the Windows cp1251 failure mode).
+2. Shared argparse fragments for scripts that share the same CLI surface
+   (``--repo-root``, ``--output text|json``). Centralising these kills
+   the ``duplicate-code`` (R0801) cross-file warning between gate
+   scripts that all end up with the same 8-line argparse boilerplate.
+
+Stdlib-only by construction — this sits next to ``check_tcb_stdlib.py``
+and is imported by TCB-adjacent gates.
+
+Why force_utf8_stdio exists
+---------------------------
 ``just check`` failed on a Windows 11 host with a Russian locale::
 
     File "scripts/check_dependency_contract.py", line 105, in main
@@ -22,12 +34,12 @@ the gate on Windows.
 
 Why this shape
 --------------
-Three alternatives were considered and rejected:
+Three alternatives were considered and rejected for the UTF-8 helper:
 
 1. **Set ``PYTHONUTF8=1`` / ``PYTHONIOENCODING`` in the justfile.** Fixes the
-   ``just`` path only. The same scripts are invoked by git hooks, by CI, and by
-   hand; each would need the variable, and a missed path fails exactly the way
-   this bug already did. An environment fix cannot be enforced by a test.
+   ``just`` path only. The same scripts are invoked by git hooks, by CI, and
+   by hand; each would need the variable, and a missed path fails exactly the
+   way this bug already did. An environment fix cannot be enforced by a test.
 2. **Strip the non-ASCII characters.** Bulletproof, but it rewrites ~420
    box-drawing characters and loses the scanability the output was designed
    for. It also does not stop the next author typing ``✅``.
@@ -43,14 +55,13 @@ script cannot reintroduce the bug silently.
 If reconfiguration is somehow impossible, a gate must still be able to report
 its verdict. Losing a tick mark to ``?`` is acceptable; losing the exit code to
 a traceback is not. The whole defect was a diagnostic crashing on decoration.
-
-Stdlib-only by construction — this sits next to ``check_tcb_stdlib.py`` and is
-imported by TCB-adjacent gates.
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
+from pathlib import Path
 from typing import TextIO
 
 
@@ -83,4 +94,46 @@ def _reconfigure(stream: TextIO | None) -> None:
         return
 
 
-__all__ = ["force_utf8_stdio"]
+# ---------------------------------------------------------------------------
+# Shared argparse fragments for gate scripts
+# ---------------------------------------------------------------------------
+#
+# R0801 (duplicate-code) fires when several gate scripts each define the same
+# ``--repo-root`` and ``--output`` arguments. Centralising the add_argument
+# calls here keeps the CLI surface consistent AND eliminates the duplicate.
+# Functions return the parser back so callers can chain or add further args.
+
+
+def add_repo_root_arg(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    """Add the standard ``--repo-root`` argument (default: ``Path.cwd()``)."""
+    parser.add_argument(
+        "--repo-root",
+        type=Path,
+        default=Path.cwd(),
+        help="Repository root (default: current directory).",
+    )
+    return parser
+
+
+def add_output_arg(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    """Add the standard ``--output {text,json}`` argument (default: ``text``)."""
+    parser.add_argument(
+        "--output",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text).",
+    )
+    return parser
+
+
+def resolve_repo_root(args: argparse.Namespace) -> Path:
+    """Resolve ``args.repo_root`` to an absolute path (shorthand helper)."""
+    return args.repo_root.resolve()
+
+
+__all__ = [
+    "force_utf8_stdio",
+    "add_repo_root_arg",
+    "add_output_arg",
+    "resolve_repo_root",
+]

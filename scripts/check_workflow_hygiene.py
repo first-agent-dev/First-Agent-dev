@@ -48,7 +48,12 @@ import yaml
 # success. See scripts/_console.py for the full rationale.
 if __package__ in (None, ""):  # invoked as a file, not as scripts.<name>
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from scripts._console import force_utf8_stdio
+from scripts._console import (
+    add_output_arg,
+    add_repo_root_arg,
+    force_utf8_stdio,
+    resolve_repo_root,
+)
 
 force_utf8_stdio()
 
@@ -335,21 +340,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Workflow YAML files to check (default: .github/workflows/*.yml).",
     )
-    parser.add_argument(
-        "--repo-root",
-        type=Path,
-        default=Path.cwd(),
-        help="Repository root (default: current directory).",
-    )
-    parser.add_argument(
-        "--output",
-        choices=["text", "json"],
-        default="text",
-        help="Output format (default: text).",
-    )
+    add_repo_root_arg(parser)
+    add_output_arg(parser)
     args = parser.parse_args(argv)
 
-    repo_root = args.repo_root.resolve()
+    repo_root = resolve_repo_root(args)
 
     if args.workflows:
         workflow_paths = [p if p.is_absolute() else repo_root / p for p in args.workflows]

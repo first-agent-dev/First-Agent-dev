@@ -77,15 +77,17 @@ _TCB_PREFIXES: tuple[str, ...] = (
 _DEPENDENCY_PATHS = frozenset({"pyproject.toml", "uv.lock"})
 
 # Suppression markers (waiver-review tier). Every blocking gate in this
-# repo can be locally neutralised by a comment: "noqa: <code>" (ruff),
-# "pylint: disable=..." (incl. duplicate-code, where a disable in ONE
-# copy suppresses the cross-file pair), "pragma: no cover" (coverage),
-# "type: ignore[...]" (mypy). A waiver is a *reviewed design decision*
-# (AGENTS.md, Judgment rules), so every ADDED marker is surfaced as a PR
-# annotation for the human reviewer. Non-blocking: legitimate waivers are
-# expected; silent ones are not.
-# Concatenation keeps these literals from matching THIS file's own source
-# when the script itself is edited in a PR.
+# repo can be locally neutralised by a comment marker:
+#   - ruff        - "noqa: <code>"
+#   - pylint      - inline control comments (see pylint docs); these
+#                   can suppress cross-file duplicate findings when
+#                   placed in one of the copies.
+#   - coverage    - "pragma: no cover"
+#   - mypy        - "type: ignore[...]"
+# A waiver is a *reviewed design decision* (AGENTS.md, Judgment rules),
+# so every ADDED marker is surfaced as a PR annotation for the human
+# reviewer. Non-blocking: legitimate waivers are expected; silent ones
+# are not.
 _SUPPRESSION_MARKERS: tuple[str, ...] = (
     "# " + "noqa",
     "# " + "pylint: disable",
