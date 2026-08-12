@@ -235,6 +235,13 @@ class SearchIndex:
         except sqlite3.Error as exc:
             logger.warning("FTS schema init failed (%s); falling back to walk", exc)
             self._available = False
+            # Close the half-initialised connection so it does not leak
+            # (ResourceWarning at interpreter shutdown) when marking the
+            # index unavailable. close() is idempotent and sets _conn=None.
+            try:
+                self.close()
+            except sqlite3.Error:
+                pass
 
     def _migrate(self, from_version: int) -> None:
         if self._conn is None:

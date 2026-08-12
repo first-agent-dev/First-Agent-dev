@@ -198,6 +198,16 @@ addopts = [
   "--strict-markers",
 ]
 testpaths = ["tests"]
+# S8: narrow ResourceWarning ignores for known third-party/CPython sources
+# we don't own. Test modules that care about resource ownership (test_fs_search,
+# test_global_history_export) set ``pytestmark = pytest.mark.filterwarnings(
+# "error::ResourceWarning")`` so any unclosed fa-owned resource turns red;
+# these entries prevent CPython/pytest-cov bookkeeping warnings from being
+# classified as owned leaks. The regex matches sqlite3's repr string (which
+# contains a hex address — hence ``0x[0-9a-fA-F]+``).
+filterwarnings = [
+  "ignore:unclosed database in <sqlite3.Connection object at 0x[0-9a-fA-F]+>:ResourceWarning",
+]
 # Tests import shared fixtures and repository checker modules as namespace
 # packages (`tests.*`, `scripts.*`). Keep the repository root on pytest's
 # import path in every invocation, including CI's `uv run just check`.
@@ -439,4 +449,28 @@ DEP002 = [
     # Deferred runtime integrations are loaded dynamically and intentionally
     # absent from the default environment; the dependency contract owns them.
     "pymupdf", "pdfminer.six", "pypdf", "fastapi", "pydantic",
+]
+
+[tool.ci-pins]
+# Pinned tool versions for CI subprocess gates. This table is the single
+# source of truth: scripts read it via tomllib at runtime, GitHub Actions
+# workflow YAMLs hardcode the same value, and tests/test_semgrep_pin.py
+# enforces all three agree (drift → red).
+semgrep = "1.172.0"
+
+[tool.vulture]
+# Advisory dead-code scan configuration (just _deadcode, non-blocking).
+# - src/ only (tests/ and scripts/ are out of scope here; scripts-lint
+#   advisory covers scripts/ separately).
+# - min_confidence matches the `just _deadcode` invocation.
+# - ignore_names lists ONLY boilerplate identifiers vulture cannot see
+#   through (dunders, CLI entrypoints, argparse helpers). Protocol params
+#   and other intentionally-unused arguments use leading underscore names
+#   (e.g. ``_fmt``, ``_filters``) instead of being whitelisted here, to
+#   keep vulture sharp on the rest of src/.
+exclude = ["tests/", "scripts/"]
+min_confidence = 90
+ignore_names = [
+    "__init__", "__repr__", "__str__",
+    "main", "parse_args", "add_argument",
 ]

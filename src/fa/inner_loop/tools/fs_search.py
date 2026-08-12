@@ -15,6 +15,7 @@ back to streaming walk (INV-S14b-2).
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 from collections.abc import Mapping
@@ -641,10 +642,20 @@ def _handle(
 
 
 def build_fs_search_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
-    """Build the fs_search ToolSpec bound to a workspace and FTS DB path."""
+    """Build the fs_search ToolSpec bound to a workspace and FTS DB path.
+
+    Registers an ``atexit`` handler that closes the held
+    :class:`SearchIndex` connection deterministically at interpreter
+    shutdown. Without this, the lazy ``_IndexHolder`` singleton keeps a
+    ``sqlite3.Connection`` open until GC finalizes it, which emits a
+    ``ResourceWarning: unclosed database`` from the CPython finalizer.
+    Those warnings are treated as errors in ``tests/test_fs_search.py``
+    to prevent resource-leak regressions.
+    """
     root = Path(workspace_root).resolve()
     db = Path(db_path)
     holder = _IndexHolder(db)
+    atexit.register(holder.close)
 
     def handler(params: Mapping[str, object]) -> ToolResult:
         try:

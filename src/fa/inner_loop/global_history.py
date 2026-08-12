@@ -22,6 +22,7 @@ import sqlite3
 import threading
 from collections import Counter
 from collections.abc import Mapping
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -122,39 +123,44 @@ class GlobalHistoryStore:
     def _init_schema(self) -> None:
         try:
             with self._write_lock:
-                conn = self._connect()
-                conn.execute("PRAGMA journal_mode=WAL;")
-                conn.execute("PRAGMA synchronous=NORMAL;")
-                with conn:
-                    conn.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS runs (
-                            run_id TEXT PRIMARY KEY,
-                            created_at TEXT NOT NULL,
-                            updated_at TEXT NOT NULL,
-                            role TEXT NOT NULL,
-                            model TEXT NOT NULL DEFAULT '',
-                            family TEXT NOT NULL DEFAULT '',
-                            exit_code INTEGER NOT NULL,
-                            stop_reason TEXT NOT NULL,
-                            turns INTEGER NOT NULL,
-                            input_tokens INTEGER NOT NULL DEFAULT 0,
-                            output_tokens INTEGER NOT NULL DEFAULT 0,
-                            cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
-                            cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
-                            cache_hit_ratio REAL NOT NULL DEFAULT 0.0,
-                            tool_calls_total INTEGER NOT NULL DEFAULT 0,
-                            tool_calls_breakdown_json TEXT NOT NULL DEFAULT '{}',
-                            has_compaction_summary INTEGER NOT NULL DEFAULT 0,
-                            workspace_root TEXT NOT NULL DEFAULT '',
-                            duration_ms INTEGER NOT NULL DEFAULT 0
-                        );
-                        """
-                    )
-                    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_role ON runs(role);")
-                    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_updated_at ON runs(updated_at);")
-                    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_model ON runs(model);")
-                conn.close()
+                # ``closing()`` guarantees the connection is closed even if
+                # an exception is raised between _connect() and the explicit
+                # close() that used to live below the ``with conn:`` block.
+                # Without this, a failure between PRAGMA/table-creation and
+                # conn.close() leaked a sqlite3.Connection and produced
+                # ResourceWarning in tests.
+                with closing(self._connect()) as conn:
+                    conn.execute("PRAGMA journal_mode=WAL;")
+                    conn.execute("PRAGMA synchronous=NORMAL;")
+                    with conn:
+                        conn.execute(
+                            """
+                            CREATE TABLE IF NOT EXISTS runs (
+                                run_id TEXT PRIMARY KEY,
+                                created_at TEXT NOT NULL,
+                                updated_at TEXT NOT NULL,
+                                role TEXT NOT NULL,
+                                model TEXT NOT NULL DEFAULT '',
+                                family TEXT NOT NULL DEFAULT '',
+                                exit_code INTEGER NOT NULL,
+                                stop_reason TEXT NOT NULL,
+                                turns INTEGER NOT NULL,
+                                input_tokens INTEGER NOT NULL DEFAULT 0,
+                                output_tokens INTEGER NOT NULL DEFAULT 0,
+                                cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
+                                cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+                                cache_hit_ratio REAL NOT NULL DEFAULT 0.0,
+                                tool_calls_total INTEGER NOT NULL DEFAULT 0,
+                                tool_calls_breakdown_json TEXT NOT NULL DEFAULT '{}',
+                                has_compaction_summary INTEGER NOT NULL DEFAULT 0,
+                                workspace_root TEXT NOT NULL DEFAULT '',
+                                duration_ms INTEGER NOT NULL DEFAULT 0
+                            );
+                            """
+                        )
+                        conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_role ON runs(role);")
+                        conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_updated_at ON runs(updated_at);")
+                        conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_model ON runs(model);")
         except Exception as exc:
             logger.warning("Failed to initialize global_history DB %s: %s", self.path, exc)
             raise RuntimeError(f"global_history_init_failed: {exc}") from exc

@@ -54,6 +54,7 @@ _TCB_PATHS = frozenset(
         "scripts/check_shell_syntax.sh",
         "scripts/run_targeted_mutmut.py",
         "scripts/run_targeted_semgrep.py",
+        "scripts/_git_diff.py",  # shared helper for all targeted gates
         # --- Supply-chain / contract enforcement ---
         ".fa/dependency_contract.toml",  # S15: supply-chain TCB (ADR-11-I7)
         "scripts/check_dependency_contract.py",  # S15: contract enforcement

@@ -12,6 +12,13 @@ import pytest
 
 from tests._capabilities import requires_symlinks
 
+# Treat ResourceWarning as error in THIS module. The _IndexHolder singleton
+# (build_fs_search_tool) is atexit-closed so owned sqlite connections shut
+# down deterministically; any unclosed sqlite/file resource warning in these
+# tests is therefore a regression. Third-party/CPython false sources are
+# explicitly ignored in pyproject.toml [tool.pytest.ini_options] filterwarnings.
+pytestmark = pytest.mark.filterwarnings("error::ResourceWarning")
+
 # ---------------------------------------------------------------------------
 # Fixture helpers
 # ---------------------------------------------------------------------------

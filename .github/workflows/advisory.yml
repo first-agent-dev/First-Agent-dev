@@ -212,15 +212,23 @@ jobs:
       - name: Vulture dead-code scan (advisory)
         run: uv run vulture src/ --min-confidence 90
 
-  # Self-test: no blocking job in this workflow or the other three uses
-  # `paths:` filters (ADR-11-I6).
+  # Self-test: in this workflow and the other three, no blocking job
+  # uses `paths:` filters (ADR-11-I6) and no blocking job has a
+  # constant-false `if:` guard (trivial bypass).
+  # NOTE: first round is continue-on-error: true (advisory); promote to
+  # blocking after one week of green CI (see PLAN-postv3 Q2).
   workflow-hygiene:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: "Verify no paths: filters on blocking jobs"
-        run: python scripts/check_workflow_no_path_filter.py
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+      - name: Install Python dependencies (PyYAML used by hygiene checker)
+        run: uv sync --frozen --extra dev
+      - name: Workflow hygiene (no path filters, no if:false bypass)
+        run: uv run python scripts/check_workflow_hygiene.py
 
   # Advisory lint of scripts/ — pylint (gap profile) + mypy in non-strict mode.
   # scripts/ are dev/CI helpers, not production code; findings here are surfaced

@@ -27,5 +27,7 @@ jobs:
         with:
           enable-cache: true
       # uvx does not require uv sync; semgrep resolves via one-shot download.
-      - name: Run Semgrep (advisory SAST)
-        run: uvx semgrep scan --quiet --config=p/python --config=p/owasp-top-ten
+      # Pin version matches [tool.ci-pins].semgrep in pyproject.toml;
+      # tests/test_semgrep_pin.py enforces drift = red.
+      - name: Run Semgrep (advisory SAST, pinned 1.172.0)
+        run: uvx --from semgrep==1.172.0 semgrep scan --quiet --config=p/python --config=p/owasp-top-ten

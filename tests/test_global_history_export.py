@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
 from fa.feature_flags import FeatureFlags
 from fa.inner_loop import EventLog, SessionState
 from fa.inner_loop.coder_loop import SessionOutcome, drive_session
@@ -38,6 +40,13 @@ from tests.fixtures.session_wiring import (
     mock_response_with_tools,
     mock_success_response,
 )
+
+# Treat ResourceWarning as error in THIS module. GlobalHistoryStore uses
+# short-lived per-call connections (closed via try/finally) and _init_schema
+# is wrapped in contextlib.closing; any unclosed sqlite/file warning in
+# these tests is therefore a regression. Third-party/CPython false sources
+# are explicitly ignored in pyproject.toml [tool.pytest.ini_options].
+pytestmark = pytest.mark.filterwarnings("error::ResourceWarning")
 
 
 def _make_outcome(exit_code: int = 0, stop_reason: str = "stopped_by_llm", turns: int = 1) -> SessionOutcome:
