@@ -11,136 +11,78 @@ Proves CODEOWNERS and check_protected_paths.py list same TCB paths.
 
 from __future__ import annotations
 
-import re
+import ast
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 
-def _parse_codeowners_tcb_paths(codeowners_path: Path) -> set[str]:
-    """Extract TCB paths from .github/CODEOWNERS.
+def _parse_codeowners_patterns(codeowners_path: Path) -> set[str]:
+    """Return every normalized path pattern from CODEOWNERS."""
 
-    CODEOWNERS lines are like: /src/fa/authoring_tcb.py @MondayInRussian
-    We extract the first token that starts with /.
-    """
-    paths: set[str] = set()
-    for line in codeowners_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        # First token is path pattern
-        parts = line.split()
-        if not parts:
-            continue
-        pattern = parts[0]
-        # Only keep authoring-related TCB paths, not all CODEOWNERS
-        if any(
-            marker in pattern
-            for marker in (
-                "authoring",
-                "CODEOWNERS",
-                "check_protected_paths",
-                "authoring-guardrails",
-                "dependency_contract",
-            )
-        ):
-            # Normalize: remove leading / and keep as repo-relative
-            norm = pattern.lstrip("/")
-            paths.add(norm)
-    return paths
+    patterns: set[str] = set()
+    for raw_line in codeowners_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line and not line.startswith("#"):
+            patterns.add(line.split()[0].lstrip("/"))
+    return patterns
 
 
-def _parse_check_protected_paths_tcb() -> set[str]:
-    """Extract _TCB_PATHS from scripts/check_protected_paths.py.
+def _parse_check_protected_paths_tcb(script_path: Path) -> tuple[set[str], set[str]]:
+    """Return literal `_TCB_PATHS` and `_TCB_PREFIXES` without importing TCB code."""
 
-    The script defines _TCB_PATHS as a set/frozenset/tuple of paths.
-    We parse via regex + ast for determinism, not import (to avoid side effects).
-    """
-    import ast
-
-    script_path = Path("scripts/check_protected_paths.py")
-    if not script_path.exists():
-        return set()
-
-    source = script_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-
-    tcb_paths: set[str] = set()
-
+    tree = ast.parse(script_path.read_text(encoding="utf-8"))
+    values: dict[str, set[str]] = {"_TCB_PATHS": set(), "_TCB_PREFIXES": set()}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "_TCB_PATHS":
-                    # Value should be set/list/tuple
-                    try:
-                        # Try to get source segment for the value
-                        seg = ast.get_source_segment(source, node.value)
-                        if seg:
-                            # Extract quoted strings
-                            for m in re.finditer(r'"([^"]+)"|\'([^\']+)\'', seg):
-                                path = m.group(1) or m.group(2)
-                                if path:
-                                    # Normalize: lstrip / and keep
-                                    tcb_paths.add(path.lstrip("/"))
-                    except (TypeError, ValueError, re.error):
-                        continue
-    return tcb_paths
+            names = {target.id for target in node.targets if isinstance(target, ast.Name)}
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            names = {node.target.id}
+            value = node.value
+        else:
+            continue
+        for name in names & values.keys():
+            values[name].update(
+                child.value.lstrip("/")
+                for child in ast.walk(value)
+                if isinstance(child, ast.Constant) and isinstance(child.value, str)
+            )
+    return values["_TCB_PATHS"], values["_TCB_PREFIXES"]
+
+
+def _codeowners_covers(path: str, pattern: str) -> bool:
+    if pattern.endswith("/"):
+        return path.startswith(pattern)
+    return fnmatchcase(path, pattern)
 
 
 def test_codeowners_and_check_protected_paths_same_tcb() -> None:
-    """C2: CODEOWNERS and check_protected_paths.py must list same TCB paths.
+    """C2: current repository files have identical semantic TCB coverage in both authorities.
 
-    This is part of the governance bundle per ADR-11-I7. If they diverge,
-    protected-path edits might not be flagged for human review.
-
-    Kill-check: adding a new TCB file to one but not the other makes test fail.
+    Kill-check: remove ``scripts/run_slice_mutmut.py`` from either CODEOWNERS or
+    ``_TCB_PATHS`` and the symmetric coverage assertion fails.
     """
-    codeowners_path = Path(".github/CODEOWNERS")
-    assert codeowners_path.exists(), ".github/CODEOWNERS must exist for protected-path governance"
 
-    codeowners_tcb = _parse_codeowners_tcb_paths(codeowners_path)
-    script_tcb = _parse_check_protected_paths_tcb()
+    root = Path(__file__).resolve().parents[1]
+    patterns = _parse_codeowners_patterns(root / ".github" / "CODEOWNERS")
+    exact, prefixes = _parse_check_protected_paths_tcb(root / "scripts" / "check_protected_paths.py")
+    repository_files = {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file() and ".git" not in path.parts and ".venv" not in path.parts
+    }
+    script_covered = exact | {path for path in repository_files if any(path.startswith(prefix) for prefix in prefixes)}
+    codeowners_covered = {
+        path for path in repository_files | exact if any(_codeowners_covers(path, pattern) for pattern in patterns)
+    }
 
-    # Both should be non-empty
-    assert len(codeowners_tcb) >= 3, f"CODEOWNERS TCB set too small: {codeowners_tcb}"
-    assert len(script_tcb) >= 3, f"check_protected_paths _TCB_PATHS too small: {script_tcb}"
-
-    # CODEOWNERS may list a directory covering a file.
-    # So we check that every path in script_tcb is covered by some CODEOWNERS pattern (exact or prefix)
-    def is_covered(path: str, patterns: set[str]) -> bool:
-        # Exact match
-        if path in patterns:
-            return True
-        # Directory prefix match: pattern ends with / and path starts with pattern
-        for pat in patterns:
-            if pat.endswith("/") and path.startswith(pat):
-                return True
-        return False
-
-    missing_in_codeowners = {p for p in script_tcb if not is_covered(p, codeowners_tcb)}
-    assert not missing_in_codeowners, (
-        f"_TCB_PATHS contains paths not covered by CODEOWNERS: {missing_in_codeowners}. "
-        f"CODEOWNERS={codeowners_tcb}, script={script_tcb}. "
-        f"Keep them in sync per ADR-11-I7 and README in authoring_rules."
-    )
-
-    # For reverse, we check that every CODEOWNERS authoring path is covered by script_tcb (exact or prefix)
-    # Since CODEOWNERS may have directory pattern, and script may have file, we need reverse check too
-    # For simplicity, each file pattern must be in script_tcb or under a script directory.
-    # script_tcb contains files, so each CODEOWNERS file pattern must be present.
-    # If CODEOWNERS pattern is directory, it should have at least one file in script_tcb under it
-    missing_in_script = set()
-    for pat in codeowners_tcb:
-        if pat.endswith("/"):
-            # directory pattern: check if any script_tcb path starts with it
-            if not any(p.startswith(pat) for p in script_tcb):
-                missing_in_script.add(pat)
-        else:
-            if pat not in script_tcb:
-                # Script lists files, so this check intentionally requires an exact match.
-                missing_in_script.add(pat)
-
-    assert not missing_in_script, (
-        f"CODEOWNERS contains authoring TCB paths not covered by _TCB_PATHS: {missing_in_script}. Keep them in sync."
-    )
+    assert exact
+    assert prefixes
+    assert patterns
+    missing_in_codeowners = script_covered - codeowners_covered
+    missing_in_script = codeowners_covered - script_covered
+    assert not missing_in_codeowners, f"protected paths missing CODEOWNERS coverage: {sorted(missing_in_codeowners)}"
+    assert not missing_in_script, f"CODEOWNERS TCB paths missing script coverage: {sorted(missing_in_script)}"
 
 
 def test_authoring_guardrails_workflow_no_paths_filter() -> None:

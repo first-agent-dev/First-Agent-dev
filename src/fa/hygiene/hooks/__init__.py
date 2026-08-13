@@ -29,12 +29,17 @@ from pathlib import Path
 from fa.hygiene.hooks._util import HOOK_NAMES
 
 
-def install_hooks(repo_root: Path | None = None, *, force: bool = False) -> list[Path]:
+def install_hooks(
+    repo_root: Path | None = None,
+    *,
+    force: bool = False,
+    hook_source_dir: Path | None = None,
+) -> list[Path]:
     """Lazy wrapper to avoid RuntimeWarning on ``-m`` invocation."""
 
     from fa.hygiene.hooks.install import install_hooks as _install_hooks
 
-    return _install_hooks(repo_root=repo_root, force=force)
+    return _install_hooks(repo_root=repo_root, force=force, hook_source_dir=hook_source_dir)
 
 
 def check_hooks(repo_root: Path | None = None) -> int:

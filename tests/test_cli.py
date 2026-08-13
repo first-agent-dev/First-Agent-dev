@@ -6,15 +6,17 @@ import shutil
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 from _pytest.capture import CaptureFixture
 
-from fa.cli import _cmd_run, _cmd_stats, build_parser
+import fa.cli as cli_module
+from fa.cli import _cmd_run, _cmd_stats, _prepare_managed_workspace, _session_manager_for_args, build_parser
 from fa.inner_loop.session_db import SessionDatabase
 from fa.providers import SecretStore
 from fa.providers.base import TransportResponse
+from fa.workspace_bootstrap import ReadyState, ReadyStatus
 from tests._capabilities import requires_posix_shell, requires_pty_backend
 
 # Injected via the _cmd_run(secrets=...) seam (ADR-12): tests supply keys through
@@ -55,6 +57,59 @@ def test_cli_has_inner_loop_smoke_command() -> None:
     help_text = build_parser().format_help()
 
     assert "inner-loop-smoke" in help_text
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        (None, None),
+        ("", None),
+        ("https://github.com/fork-owner/fork-repo", "https://github.com/fork-owner/fork-repo"),
+        ("   ", "   "),
+    ],
+)
+def test_cli_passes_fa_repo_push_url_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    configured: str | None,
+    expected: str | None,
+) -> None:
+    """class=C2 claim=CT2 kill-check=remove repo_push_url factory argument."""
+
+    monkeypatch.setenv("FA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.delenv("FA_SESSION_SOURCE", raising=False)
+    if configured is None:
+        monkeypatch.delenv("FA_REPO_PUSH_URL", raising=False)
+    else:
+        monkeypatch.setenv("FA_REPO_PUSH_URL", configured)
+
+    manager = _session_manager_for_args(argparse.Namespace(workspace=None))
+
+    assert manager.repo_push_url == expected
+    assert manager.workspace_preparer is _prepare_managed_workspace
+
+
+def test_prepare_managed_workspace_warns_only_for_degraded_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    """C2/C3: CLI adapter preserves typed fail-open observability."""
+
+    degraded = ReadyState(
+        status=ReadyStatus.DEGRADED_ENVIRONMENT,
+        fingerprint=None,
+        reason_code="tool_missing",
+        log_path=tmp_path / ".fa" / "bootstrap.log",
+        repaired=False,
+        elapsed_ms=2,
+    )
+    monkeypatch.setattr(cli_module, "ensure_workspace_ready", lambda workspace: degraded)
+
+    assert _prepare_managed_workspace(tmp_path) is degraded
+    assert capsys.readouterr().err == (
+        f"[WORKSPACE_BOOTSTRAP] degraded_environment: tool_missing; log={degraded.log_path}\n"
+    )
 
 
 @requires_pty_backend
@@ -992,6 +1047,74 @@ def test_fa_run_session_manager_creates_and_attaches_with_fresh_run_ids(
     assert db.read_event_rows(run_id=first_run_id)
     assert db.read_event_rows(run_id=second_run_id)
     assert all(row["session_id"] == session_id for row in db.read_event_rows())
+
+
+def test_readiness_completes_before_provider_build_or_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C1/C2 producer proof: production factory orders ready, build, then request."""
+
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("FA_WORKSPACE_ROOT", str(tmp_path.parent))
+    monkeypatch.delenv("FA_SESSION_SOURCE", raising=False)
+    events: list[str] = []
+
+    class RecordingTransport(_ScriptedTransport):
+        @override
+        def post(
+            self,
+            url: str,
+            *,
+            headers: Mapping[str, str],
+            json_body: Mapping[str, Any],
+            timeout_seconds: float,
+            transport_retries: int,
+        ) -> TransportResponse:
+            events.append("call")
+            return super().post(
+                url,
+                headers=headers,
+                json_body=json_body,
+                timeout_seconds=timeout_seconds,
+                transport_retries=transport_retries,
+            )
+
+    transport = RecordingTransport([_stop_body("done")])
+
+    def ready(workspace: Path) -> ReadyState:
+        assert workspace == tmp_path.resolve()
+        assert events == []
+        assert transport.calls == []
+        events.append("ready")
+        return ReadyState(
+            status=ReadyStatus.READY,
+            fingerprint="sha256:test",
+            reason_code="ready_repaired",
+            log_path=workspace / ".fa" / "bootstrap.log",
+            repaired=True,
+            elapsed_ms=1,
+        )
+
+    original_build = cli_module._build_provider_chain
+
+    def recording_build(*args: Any, **kwargs: Any) -> Any:
+        events.append("build")
+        return original_build(*args, **kwargs)
+
+    monkeypatch.setattr(cli_module, "ensure_workspace_ready", ready)
+    monkeypatch.setattr(cli_module, "_build_provider_chain", recording_build)
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="readiness-order")
+    args.session_id = None
+    args.resume = False
+
+    assert _cmd_run(args, transport=transport, secrets=_TEST_SECRETS) == 0
+    assert events[:3] == ["ready", "build", "call"]
+    assert len(transport.calls) == 1
 
 
 @requires_posix_shell

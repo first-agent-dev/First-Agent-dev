@@ -53,6 +53,7 @@ _TCB_PATHS = frozenset(
         ".github/CODEOWNERS",
         "scripts/check_shell_syntax.sh",
         "scripts/run_targeted_mutmut.py",
+        "scripts/run_slice_mutmut.py",
         "scripts/run_targeted_semgrep.py",
         "scripts/_git_diff.py",  # shared helper for all targeted gates
         # --- Supply-chain / contract enforcement ---

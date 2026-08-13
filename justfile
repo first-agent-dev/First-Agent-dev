@@ -76,66 +76,41 @@ doctor:
     fi
 
     if [[ -f "uv.lock" ]]; then
-        if have uv && uv lock --locked >/dev/null 2>&1; then ok "uv.lock in sync with pyproject.toml"
+        if have uv && uv lock --check >/dev/null 2>&1; then ok "uv.lock in sync with pyproject.toml"
         else bad "uv.lock out of date — run: uv lock"; fi
     else
         bad "uv.lock missing"
     fi
 
-    # Hooks: the local commit/push hook chain is meaningless on CI runners
-    # (nobody commits or pushes from an Actions job; the CI jobs themselves
-    # are the gate). Detect CI via the de-facto `CI=true` env var that
-    # GitHub Actions / GitLab CI / CircleCI / Buildkite / Jenkins all set,
-    # and skip the hook-presence probe in that environment. On local machines
-    # we still require the hooks to be installed.
+    # Full local readiness is checked through the same read-only CT3 authority
+    # used by every bootstrap alias. CI never commits/pushes from the checkout,
+    # so its existing hooks/readiness exemption remains explicit.
     if [[ "${CI:-}" == "true" ]]; then
-        ok "git hooks: not applicable (CI environment)"
-    elif have uv && [[ -x ".venv/bin/python" || -x ".venv/Scripts/python.exe" ]]; then
-        if uv run python -m fa.hygiene.hooks.status >/dev/null 2>&1; then
-            ok "git hooks installed (verified via fa.hygiene.hooks.status)"
+        ok "workspace readiness: not applicable (CI environment)"
+    elif have uv && have python3 && [[ -x ".venv/bin/python" || -x ".venv/Scripts/python.exe" ]]; then
+        if python3 scripts/bootstrap/workspace.py check --workspace . >/dev/null 2>&1; then
+            ok "workspace readiness current (env, hooks, marker, cache sentinel)"
         else
-            bad "git hooks missing/stale — run: just install"
+            bad "workspace readiness missing/stale — run: just install"
         fi
+    elif [[ -d ".venv" ]]; then
+        bad "cannot verify workspace readiness (.venv present but not runnable)"
     else
-        # No .venv yet on a local box — that's fine for a bare `doctor`
-        # probe (doctor is read-only and cannot run `uv run` without a venv).
-        # Surface a soft note rather than a hard failure so `just doctor`
-        # stays usable from a fresh clone before `just install`.
-        if [[ -d ".venv" ]]; then
-            bad "cannot verify hooks (.venv present but not runnable)"
-        else
-            ok "git hooks: will be installed by 'just install'"
-        fi
+        ok "workspace readiness: will be prepared by 'just install'"
     fi
 
-    if [[ $fail -eq 0 ]]; then echo "doctor: OK (uv, just, python>=3.13, .venv, hooks, lock)"; fi
+    if [[ $fail -eq 0 ]]; then echo "doctor: OK (uv, just, python>=3.13, readiness, lock)"; fi
     exit $fail
 
-# One-shot host bootstrap: uv sync (frozen, dev extras) + install hooks.
-#
-# Run on a fresh clone or after `git clean -fdx`. Idempotent: re-running is
-# safe and fast with a warm uv cache. NOT a preflight — that's `just doctor`.
+# One-shot locked workspace readiness. The stdlib wrapper owns sync, hook-seat
+# install, pre-commit environment prewarm, verification, and marker publication.
 install:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    uv sync --frozen --extra dev
-    just _install-hooks
-    just _hooks-status
-    echo ""
-    echo "Bootstrap complete:"
-    echo "  - Python env synced (frozen lockfile, dev extras)"
-    echo "  - pre-commit / pre-push hooks installed"
-    echo "  - prepare-commit-msg / commit-msg hooks installed"
-    echo "  - Local commits and pushes are now guarded by the hook chain"
-    echo "  - Run 'just doctor' any time to reverify; 'just fix' auto-fixes mechanical findings."
+    python3 scripts/bootstrap/workspace.py ensure --workspace .
 
-# Harness/agent one-shot bootstrap; writes .fa/host-bootstrap.json marker.
-#
-# Thin wrapper over scripts/bootstrap/host_bootstrap.py. Kept under a
-# public name because external harnesses call `just agent-bootstrap` by
-# name; do NOT rename.
+# Harness/agent compatibility alias. Host-tool preparation remains separate;
+# workspace state delegates to the same checked-out stdlib wrapper.
 agent-bootstrap:
-    uv run python scripts/bootstrap/host_bootstrap.py
+    python3 scripts/bootstrap/host_bootstrap.py
 
 # ---------------------------------------------------------------------------
 # Public: fix / test
@@ -225,30 +200,6 @@ check-deep:
 # ---------------------------------------------------------------------------
 # Private gates (_-prefixed → hidden from `just --list`)
 # ---------------------------------------------------------------------------
-
-# Install all four git hooks (pre-commit, pre-push, prepare-commit-msg, commit-msg).
-#
-# Order matters: pre-commit's generated shim overwrites our custom seats if it
-# runs second, and our custom pre-commit/pre-push wrappers shell INTO
-# `pre-commit run` (so they need to be the outer layer). Install pre-commit's
-# hook environments first (for markdownlint/gitleaks/etc.), then force-install
-# our own bash wrappers over pre-commit/pre-push with --force.
-# NOTE: do NOT set core.hooksPath; default .git/hooks is correct.
-_install-hooks:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # Let pre-commit lay down its shim template and install hook environments
-    # (this also picks up new hooks added to .pre-commit-config.yaml).
-    uv run pre-commit install --install-hooks
-    uv run pre-commit install --install-hooks --hook-type pre-push
-    # Overwrite pre-commit/pre-push with our custom wrappers (which call
-    # `pre-commit run` internally and add the NO_PROXY / auto-restage /
-    # check-deep logic). Also installs prepare-commit-msg and commit-msg
-    # (which pre-commit does not manage).
-    uv run python -m fa.hygiene.hooks.install --force
-
-_hooks-status:
-    uv run python -m fa.hygiene.hooks.status
 
 _lock-check:
     uv lock --locked

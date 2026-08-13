@@ -123,7 +123,7 @@ services:
       - type: tmpfs
         target: /home/fa/.cache
         tmpfs:
-          size: 500M
+          size: 1536M
       # UV cache (can be rebuilt)
       - type: tmpfs
         target: /tmp/uv-cache

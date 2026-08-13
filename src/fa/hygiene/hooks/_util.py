@@ -18,6 +18,7 @@ HOOK_NAMES: tuple[str, ...] = (
     "prepare-commit-msg",
     "commit-msg",
 )
+_GIT_RESOLVE_TIMEOUT_SECONDS = 120
 
 
 def scripts_dir() -> Path:
@@ -68,36 +69,12 @@ def resolve_git_dir(repo_root: Path) -> Path:
     return dotgit
 
 
-def resolve_hooks_dir(repo_root: Path) -> Path:
-    """Return the effective hooks directory for *repo_root*.
-
-    First asks git itself via ``git rev-parse --git-path hooks`` so
-    ``core.hooksPath`` (when set) and worktree/common-dir rules are
-    honored exactly the way Git will honor them at runtime. If git is
-    unavailable or the command fails, falls back to pure-Python
-    resolution via ``resolve_git_dir()`` and an optional ``commondir``
-    file for worktree layouts.
-    """
-
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--git-path", "hooks"],  # noqa: S607
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (subprocess.CalledProcessError, OSError):
-        result = None
-    if result is not None:
-        raw = result.stdout.strip()
-        if raw:
-            hooks = Path(raw)
-            if not hooks.is_absolute():
-                hooks = (repo_root / hooks).resolve()
-            return hooks
+def resolve_default_hooks_dir(repo_root: Path) -> Path:
+    """Return Git's default hooks directory without following ``core.hooksPath``."""
 
     git_dir = resolve_git_dir(repo_root)
+    if not git_dir.is_absolute():
+        git_dir = (repo_root / git_dir).resolve()
     commondir = git_dir / "commondir"
     if commondir.is_file():
         try:
@@ -109,3 +86,35 @@ def resolve_hooks_dir(repo_root: Path) -> Path:
             common = (git_dir / common).resolve()
         return common / "hooks"
     return git_dir / "hooks"
+
+
+def resolve_hooks_dir(repo_root: Path) -> Path:
+    """Return the effective hooks directory for *repo_root*.
+
+    First asks git itself via ``git rev-parse --git-path hooks`` so
+    ``core.hooksPath`` (when set) and worktree/common-dir rules are
+    honored exactly the way Git will honor them at runtime. If git is
+    unavailable or the command fails, falls back to pure-Python default
+    resolution.
+    """
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-path", "hooks"],  # noqa: S607
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=_GIT_RESOLVE_TIMEOUT_SECONDS,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        result = None
+    if result is not None:
+        raw = result.stdout.strip()
+        if raw:
+            hooks = Path(raw)
+            if not hooks.is_absolute():
+                hooks = (repo_root / hooks).resolve()
+            return hooks
+
+    return resolve_default_hooks_dir(repo_root)

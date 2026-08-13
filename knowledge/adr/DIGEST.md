@@ -327,7 +327,7 @@ Dispatcher: ordered chain, first-deny short-circuit, one
 mutation per dispatch (inherits ADR-7 §8), family-disjoint
 rule enforced at `register()` time per
 [ADR-2 §Amendment 2026-05-20](./ADR-2-llm-tiering.md#amendment-2026-05-20--eval-role-family-disjoint--primary-source-citation)
-+ [ADR-7 §Amendment 2026-05-20](./ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule).
+and [ADR-7 §Amendment 2026-05-20](./ADR-7-inner-loop-tool-registry.md#amendment-2026-05-20--retry-budget-invariant-intra-role-t10-llm-using-hook-family-disjoint-rule).
 **Doc-only at acceptance; runtime materialised by PR #24
 ([M-1 closed 2026-05-20](../../worklogs/BACKLOG.md#m-1--inner-loop-scaffolding--hookregistry-runtime)).**
 v0.1 hooks (`SandboxHook`, `ApprovalHook`, `AuditHook`) are now
@@ -346,6 +346,7 @@ shares this exact substrate. Source:
 §R-1.
 
 **Amendments.**
+
 - *2026-05-20a (sandbox re-check carve-out):* introduces
   `Middleware.revalidates_after_modify` (default `False`). A guard
   that opts in is replayed against the mutated payload after any
@@ -362,7 +363,7 @@ shares this exact substrate. Source:
   counter blocks the very first tool call. Kept the name
   `BETWEEN_ROUNDS` (rather than renaming to `BEFORE_ROUND`) to
   preserve verbatim alignment with DPC `dpc_agent/hooks.py`
-  + Gortex `internal/hooks/dispatch.go` + borrow-roadmap §R-1
+  - Gortex `internal/hooks/dispatch.go` + borrow-roadmap §R-1
   nomenclature; the rename had no other upside.
 
 **Source:** [`ADR-8`](./ADR-8-hook-registry.md).
@@ -370,8 +371,8 @@ shares this exact substrate. Source:
 ## ADR-9 — LLM provider client (T-2 driver) (proposed 2026-05-22; revised same day)
 
 **Decision.** **Option D + α** — per-role explicit provider chain
-with cooldown. Each role in `~/.fa/models.yaml` declares `model:`
-+ `family:` + `chain: [{provider, slug, base_url, api_key_env,
+with cooldown. Each role in `~/.fa/models.yaml` declares `model:` plus
+`family:` plus `chain: [{provider, slug, base_url, api_key_env,
 cooldown_seconds?, transport_retries?, timeout_seconds?,
 extra_headers?}, ...]` ordered transport fallback. On transient
 failure (429 / 5xx / network), failed `(provider, slug)` tuple
@@ -584,8 +585,8 @@ the AGENTS.md §PR Checklist rule #10 4-question evidence cell
 inline, citing `§1.x` line ranges from the input research note
 [`fa-abc-synthesis-deep-dive-2026-05.md`](../research/fa-abc-synthesis-deep-dive-2026-05.md)
 verbatim. **Rationale.** §3 + §3a of the deep-dive authored the
-invariants as a single slate keyed on the «verifiable hook results
-+ deterministic harness to control LLM» goal lens — Option C
+invariants as a single slate keyed on the «verifiable hook results plus
+deterministic harness to control LLM» goal lens — Option C
 (single ADR-10 with named I-1..I-5) is the only shape that gives
 future PRs a single citable URL per invariant (`ADR-10#i-N`) while
 keeping DIGEST.md / HANDOFF.md / exploration_log.md cheap-read
@@ -677,6 +678,7 @@ imported into Level 0.
 **Source:** [`ADR-11`](./ADR-11-authoring-guardrails.md).
 
 **Amendments.**
+
 - **2026-07-15** — **ADR-11-I9 (Live-path Definition-of-Done):** harness product behavior is not done until a composition-root test (`drive_session` / shipped CLI session path) would fail if the production call site were removed. Unit tests alone are insufficient for session claims. Authority = pytest in `just check` / CI; steering = `knowledge/skills/tests-writing/SKILL.md`. Non-goals: wiring allowlists, STATUS enums, new fs tools, CodeGraph as gate. Complements I5 (test-decay) and ADR-10 runtime invariants.
 
 ## ADR-12 — API-key isolation from the agent (accepted 2026-06-16)
@@ -710,15 +712,22 @@ Residual (deploy-key exotic-encoding) + proxy egress allowlist → BACKLOG I-24.
 - [`../trace/exploration_log.md`](../trace/exploration_log.md) — alternatives that were rejected at decision time + lessons (per ADR).
 - [`../project-overview.md` §1.1](../project-overview.md#11-четыре-столпа-цели-project-goal--four-pillars) — four-pillar project goal that all ADR decisions advance.
 
-## ADR-13 — Workspace Isolation (accepted 2026-06-25)
+## ADR-13 — Workspace Isolation (accepted 2026-06-25; amended 2026-08-13)
 
-**Decision.** Isolate agent writes from the host worktree using a read-only bind mount (`/repo`) and per-session writable `git clone --local` directories (`/sessions/<run-id>`). The agent works in the clone (with full git capabilities), leaving the host checkout pristine for `fa update`. Container lifecycle corresponds to one session.
+**Decision.** Isolate managed agent writes from the deployment mirror with a
+read-only `/repo` source and persistent writable clones under
+`/sessions/<session-id>`. URL-form local Git transport captures one source
+commit without sharing writable administration. A missing session selector
+creates a new logical session; an explicit selector attaches the existing one.
+Fetch remains local while validated `origin.pushurl` publishes only an agent
+feature branch. Lifecycle readiness prepares the environment and hooks before
+model use; bounded caches remain ephemeral pending measured need.
 
 **Source:** [`ADR-13`](./ADR-13-workspace-isolation.md).
 
 ## ADR-14 — Stateful Bash via EventStream Runtime (proposed 2026-07-11)
 
-**Decision.** Main agent stateful PTY via EventStream Runtime FastAPI + PtyPool libtmux direct, not pexpect phased: PtyPool Map<id, Session> maxSize=2-3 LRU fail-fast PoolExhaustedError never reuse main, shared libtmux.Server injected, fallback pexpect with WARNING, sentinel |||FA_READY|||, ANSI strip, exit code parsing __FA_EXIT__:$? __FA_END__, defensive worktree checks Tier 1, tool batching parallel read-only via ThreadPool max 5 with Lock sequential log write, prompt caching split cacheable=[BASE, AGENTS.md map, tool defs per role] + non-cacheable task+memory, cache-key = role_id + hash(names+schemas) + hash(agents_map) + hash(skills) (stable, no date), to_anthropic cache_control ephemeral, to_openai prompt_cache_key retention 1h via LiteLLM, FeatureFlags in ~/.fa/config.yaml, graceful degradation WARNING not silent, thread-safety EventLog Lock, no global singleton DI via SessionState, USER fa healthcheck, concrete repro `fa run --role planner --task "Read repository..."` measuring steps. **Rationale.** Stateless subprocess.run → 124 steps timeout, no cd/venv persistence. OpenHands EventStream Runtime FastAPI + PtyPool libtmux (PR #4881 replaces pexpect for stability), OpenCode ShellPool #6488 97% reduction, Cursor 3.2 PTY requires real TTY via tmux, pi-persistent-term. Prompt caching universal: Anthropic explicit cache_control 4+1 breakpoints min 1024-4096 90% off, OpenAI automatic >1024 + prompt_cache_key. Internal contradiction flagged by external reviewer (restricted toolset per role vs global cache) solved by cache-key per role. Tool output offload 8000 chars + 500 preview per ArXiv 2603.05344 v2 staged compaction table.
+**Decision.** Main agent stateful PTY via EventStream Runtime FastAPI + PtyPool libtmux direct, not pexpect phased: PtyPool Map<id, Session> maxSize=2-3 LRU fail-fast PoolExhaustedError never reuse main, shared libtmux.Server injected, fallback pexpect with WARNING, sentinel |||FA_READY|||, ANSI strip, exit code parsing **FA_EXIT**:$? **FA_END**, defensive worktree checks Tier 1, tool batching parallel read-only via ThreadPool max 5 with Lock sequential log write, prompt caching split cacheable=[BASE, AGENTS.md map, tool defs per role] + non-cacheable task+memory, cache-key = role_id + hash(names+schemas) + hash(agents_map) + hash(skills) (stable, no date), to_anthropic cache_control ephemeral, to_openai prompt_cache_key retention 1h via LiteLLM, FeatureFlags in ~/.fa/config.yaml, graceful degradation WARNING not silent, thread-safety EventLog Lock, no global singleton DI via SessionState, USER fa healthcheck, concrete repro `fa run --role planner --task "Read repository..."` measuring steps. **Rationale.** Stateless subprocess.run → 124 steps timeout, no cd/venv persistence. OpenHands EventStream Runtime FastAPI + PtyPool libtmux (PR #4881 replaces pexpect for stability), OpenCode ShellPool #6488 97% reduction, Cursor 3.2 PTY requires real TTY via tmux, pi-persistent-term. Prompt caching universal: Anthropic explicit cache_control 4+1 breakpoints min 1024-4096 90% off, OpenAI automatic >1024 + prompt_cache_key. Internal contradiction flagged by external reviewer (restricted toolset per role vs global cache) solved by cache-key per role. Tool output offload 8000 chars + 500 preview per ArXiv 2603.05344 v2 staged compaction table.
 
 **Source:** [`ADR-14`](./ADR-14-stateful-bash-eventstream-runtime.md). [Formerly ADR-13 in draft, renumbered to avoid conflict with existing ADR-13 workspace isolation.]
 

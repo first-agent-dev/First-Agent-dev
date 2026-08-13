@@ -150,6 +150,27 @@ _on_term() {
   exit 143
 }
 
+_configure_entrypoint_workspace() {
+  local python_bin="${PYTHON:-python3}"
+  "$python_bin" -m fa.session.workspace configure-existing \
+    --source /repo \
+    --workspace "$SESSION_DIR" \
+    --session-id "$SESSION_ID" \
+    >/dev/null
+}
+
+_prepare_entrypoint_workspace() {
+  local python_bin="${PYTHON:-python3}"
+  local readiness_rc=0
+  if "$python_bin" -m fa.workspace_bootstrap ensure --workspace "$SESSION_DIR" >/dev/null; then
+    return 0
+  else
+    readiness_rc=$?
+  fi
+  log "WARN: workspace readiness degraded (rc=$readiness_rc); continuing under fail-open policy"
+  return 0
+}
+
 # Session workspace setup — runs once on container start.
 # Creates a git clone from /repo into /sessions/<id>.
 # When FA_WORKSPACE is set the caller owns the workspace — skip session clone.
@@ -162,12 +183,19 @@ if [[ -d "/repo/.git" ]] && [[ -z "${FA_WORKSPACE:-}" ]]; then
     export FA_SESSION_ID="$SESSION_ID"
     ENTRYPOINT_MANAGED_SESSION=1
     SESSION_DIR="/sessions/${SESSION_ID}"
+    SESSION_CREATED=0
+
+    if ! git check-ref-format --branch "agent/${SESSION_ID}" >/dev/null 2>&1; then
+        _fail_to_standby "FA_SESSION_ID does not form a valid Git branch: $SESSION_ID"
+    fi
 
     if [[ ! -d "$SESSION_DIR/.git" ]]; then
         # file:// protocol uses git's pack transport (not filesystem hardlinks).
         # This avoids dubious-ownership and cross-device-link failures from
         # bare-path --local clones while keeping the operation local.
-        if git clone "file:///repo" "$SESSION_DIR"             && (cd "$SESSION_DIR" && git checkout -b "agent/${SESSION_ID}"); then
+        if git clone "file:///repo" "$SESSION_DIR" \
+            && git -C "$SESSION_DIR" checkout -b "agent/${SESSION_ID}"; then
+            SESSION_CREATED=1
             cd "$SESSION_DIR"
             log "Created session workspace: $SESSION_DIR"
         else
@@ -181,7 +209,16 @@ if [[ -d "/repo/.git" ]] && [[ -z "${FA_WORKSPACE:-}" ]]; then
         log "Resumed session workspace: $SESSION_DIR"
     fi
 
-    # Publish active session path (read by host wrapper via bind mount)
+    if ! _configure_entrypoint_workspace; then
+        if [[ "$SESSION_CREATED" == "1" ]]; then
+            rm -rf "$SESSION_DIR" 2>/dev/null || true
+        fi
+        _fail_to_standby "managed Git configuration failed for $SESSION_DIR"
+    fi
+
+    _prepare_entrypoint_workspace
+
+    # Publish only after branch/remotes/identity and readiness admission are complete.
     echo "$SESSION_DIR" > "/sessions/.active.tmp.$$"
     mv "/sessions/.active.tmp.$$" "/sessions/.active"
 

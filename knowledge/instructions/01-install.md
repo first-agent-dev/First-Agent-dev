@@ -33,7 +33,7 @@
 ## Фаза 0 — что подготовить
 
 | Что | Требование |
-|-----|------------|
+| ----- | ------------ |
 | **USB-флешка** | 8 ГБ+ для установщика Ubuntu Desktop 24.04 LTS |
 | **Интернет** | Лучше проводной Ethernet (меньше возни с Wi-Fi драйверами) |
 | **Аккаунт Tailscale** | Бесплатный тариф (20 устройств), [tailscale.com](https://tailscale.com) |
@@ -49,7 +49,7 @@
 Зайдите в BIOS/UEFI. Эти настройки **критичны** для низкого потребления в 24/7.
 
 | Параметр | Значение | Зачем |
-|----------|----------|-------|
+| ---------- | ---------- | ------- |
 | **CPU C-states** | Enabled | Позволяет процессору уходить в глубокий сон |
 | **Package C-state limit** | C10 (или C8, если C10 нет) | Самое глубокое состояние простоя |
 | **PCIe ASPM** | L1 substates | Энергогейтинг линий PCIe |
@@ -95,14 +95,36 @@
 
 ## Фаза 4 — получить скрипт установки
 
-### Вариант A: на вашем ноутбуке (проверить перед развёртыванием)
+### Вариант A: операторский development clone (рекомендуется)
+
+`~/First-Agent-dev` — канонический **операторский клон для разработки**:
+именно здесь открывают VS Code/SSH, создают feature-ветки, коммиты и PR.
 
 ```bash
 git clone https://github.com/first-agent-dev/First-Agent-dev.git ~/First-Agent-dev
 cd ~/First-Agent-dev
 less scripts/setup-fa-desktop.sh
-# Скопировать на USB или передать на AIO по scp
 ```
+
+После установки `uv` одна команда подготавливает pinned `just`, locked `.venv`,
+все четыре Git-hook seat и окружения pre-commit:
+
+```bash
+cd ~/First-Agent-dev
+uvx --from rust-just==1.57.0 just agent-bootstrap
+just doctor
+```
+
+Если `uv`/`uvx` отсутствует, установите uv по
+[официальной инструкции](https://docs.astral.sh/uv/getting-started/installation/)
+и повторите ту же команду. Задача VS Code `folderOpen` может запускать её для
+удобства, но зависит от разрешения пользователя и не является гарантией.
+
+Не путайте этот клон с `/srv/first-agent/repo/First-Agent-dev`: путь `/srv/...`
+— чистое deployment mirror, которое обновляет только операторский deploy/update
+процесс. В нём не создают feature-ветки и коммиты. Гарантия автоматической
+readiness распространяется на First-Agent-managed clones; произвольный raw clone
+без установленного hook seat не может установить hook сам при первом commit.
 
 ### Вариант B: прямо на AIO (если уже вошли в систему)
 

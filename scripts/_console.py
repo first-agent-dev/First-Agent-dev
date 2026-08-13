@@ -128,7 +128,10 @@ def add_output_arg(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
 
 def resolve_repo_root(args: argparse.Namespace) -> Path:
     """Resolve ``args.repo_root`` to an absolute path (shorthand helper)."""
-    return args.repo_root.resolve()
+    repo_root = args.repo_root
+    if not isinstance(repo_root, Path):
+        raise TypeError("args.repo_root must be a pathlib.Path")
+    return repo_root.resolve()
 
 
 __all__ = [

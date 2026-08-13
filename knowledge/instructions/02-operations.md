@@ -43,7 +43,7 @@ First-Agent работает не «голым процессом» на сер�
     └── docker compose                       ← оркестратор (ДВА контейнера)
         ├── контейнер: first-agent           ← сам агент (БЕЗ LLM-ключей)
         │   ├── /repo             → код хост-репозитория (bind-mount; READ-ONLY)
-        │   ├── /sessions         → песочницы агента (bind-mount; RW; по одной на старт контейнера)
+        │   ├── /sessions         → persistent managed clones (bind-mount; RW; по session-id)
         │   ├── /home/fa/.fa      → постоянные данные/конфиг (кроме routing models.yaml)
         │   ├── /run/secrets/git_key + known_hosts → deploy-ключ (ro, ВНЕ /workspace)
         │   ├── /home/fa/.fa/models.yaml → /srv/first-agent/routing/models.yaml (ro)
@@ -68,30 +68,62 @@ First-Agent работает не «голым процессом» на сер�
 - **Данные переживают пересборку.** Память агента, история и настройки лежат на
   хосте в `/srv/first-agent/state/`. Даже если удалить контейнер, данные
   останутся.
-- **Код живёт на хосте**, в `/srv/first-agent/repo/First-Agent-dev/`, и
-  «пробрасывается» внутрь контейнера. Поэтому правка исходников не всегда требует
-  пересборки образа — а вот смена зависимостей или `Dockerfile.fa` требует.
+- **Deployment-код живёт на хосте** в
+  `/srv/first-agent/repo/First-Agent-dev/` и монтируется в контейнер как `/repo`
+  read-only. Смена deploy-коммита, зависимостей или `Dockerfile.fa` выполняется
+  только через операторский update/build процесс.
 
-Главные файлы (лежат в корне репозитория):
+### Два checkout и readiness: не смешивать роли
+
+- `~/First-Agent-dev` — **operator development clone** для VS Code/SSH,
+  feature-веток, коммитов, локальных проверок и подготовки PR.
+- `/srv/first-agent/repo/First-Agent-dev` — **clean deployment mirror** на
+  `main`. Здесь не разрабатывают и не коммитят; его изменяет только
+  оператор-контролируемый deploy/update процесс.
+- `/srv/first-agent/sessions/<session-id>` — First-Agent-managed clones, где
+  агент работает на `agent/<session-id>`. Их lifecycle готовит `.venv`, четыре
+  hook seat и pre-commit environments до первого model/provider вызова.
+
+Подготовить или восстановить операторский development clone можно одной
+командой (после `cd`):
+
+```bash
+cd ~/First-Agent-dev
+uvx --from rust-just==1.57.0 just agent-bootstrap
+just doctor
+```
+
+Если `uv`/`uvx` отсутствует, сначала установите uv по
+[официальной инструкции](https://docs.astral.sh/uv/getting-started/installation/),
+затем повторите команду. VS Code `folderOpen` — удобный best-effort запуск,
+зависящий от разрешения пользователя, а не readiness authority.
+
+Гарантия lifecycle readiness относится к managed clones и явно подготовленному
+`~/First-Agent-dev`. Произвольный raw clone без hook seat находится вне гарантии:
+отсутствующий hook не может запустить self-repair.
+
+Главные файлы (лежат в корне deployment mirror):
 
 | Файл | Назначение |
-|------|------------|
+| ------ | ------------ |
 | `Dockerfile.fa` | Рецепт сборки образа контейнера (Ubuntu + Python + агент). |
 | `docker-compose.fa.yml` | Описание запуска контейнера: лимиты, тома, сеть, healthcheck. |
 | `/srv/first-agent/secrets/fa.env` | **API-ключи LLM** (на хосте, 0600, ВНЕ репозитория). Монтируется read-only **только в контейнер `fa-egress-proxy`** (`/run/secrets/fa.env`). Контейнер агента их НЕ видит; агент ходит к провайдерам через прокси, который подставляет ключ вне досягаемости агента (ADR-12 Option C). **Не коммитится.** |
 | `/srv/first-agent/secrets/fa_proxy_token` | Токен fa→proxy (на хосте, 0600). Доказывает прокси, что вызов идёт от агента. **Не ключ** — утечка позволяет лишь платные вызовы через прокси, не раскрытие ключа. **Не коммитится.** |
 | `.env.fa` | Только **несекретные** runtime-настройки (`FA_AUTO_RUN`, `FA_TASK`, …). API-ключей здесь больше нет. |
 | `scripts/` | Скрипты установки, обновления, бэкапа и обслуживания. |
-| `~/.fa/session-log/<run_id>/session.db` | **Авторитетная SQLite-база сессии** (3 таблицы: `event_log`, `blackboard`, `session_meta`). Единственный источник истины для состояния сессии. `events.jsonl` — зеркало для чтения человеком, но НЕ авторитетен. Если JSONL и session.db расходятся — session.db прав. |
+| `~/.fa/sessions/<session-id>/session.db` | **Авторитетная SQLite-база logical session** (`event_log`, `blackboard`, `session_meta` + run bindings). Если JSONL и SQLite расходятся, SQLite прав. |
+| `~/.fa/session-log/<run-id>/` | Per-run human/debug artifacts such as `events.jsonl`; не источник session authority. |
 | `~/.fa/global_history.db` | Производная аналитическая проекция (таблица `runs`). Заполняется в конце сессии, best-effort. Потребитель: `fa stats --global-history`. |
 
 ### Артефакты сессии
 
-Каждый запуск `fa run` создаёт набор файлов в `~/.fa/session-log/<run_id>/`:
+Каждый запуск `fa run` создаёт per-run directory
+`~/.fa/session-log/<run-id>/`. Logical-session authority остаётся в
+`~/.fa/sessions/<session-id>/session.db`.
 
 | Файл | Назначение | Авторитетность |
-|------|------------|----------------|
-| `session.db` | SQLite: 3 таблицы (`event_log`, `blackboard`, `session_meta`). **Единственный источник истины.** | **Да** |
+| ------ | ------------ | ---------------- |
 | `events.jsonl` | JSONL-зеркало event_log (для `cat`/`grep`, best-effort) | Нет |
 | `pr_draft.md` | PR-драфт — нарратив сессии (человекочитаемый) | Самостоятельный |
 | `eval_report.json` | Вердикт eval + маршрут (`return_to_coder` / `return_to_planner` / `complete` / `blocked`) | Самостоятельный |
@@ -101,24 +133,55 @@ First-Agent работает не «голым процессом» на сер�
 Рабочие артефакты внутри `<workspace>/.fa/`:
 
 | Путь | Назначение |
-|------|------------|
+| ------ | ------------ |
 | `blackboard/blackboard.jsonl` | JSONL-зеркало session.db.blackboard (best-effort) |
 | `artifacts/` | Content-addressed хранилище offloaded tool results |
 | `subagents/<task_id>.json` | Результаты запуска подагентов |
 | `fts.db` | FTS5 полнотекстовый индекс (disposable cache) |
 
-
 ### 📂 Рабочие пространства (Workspace Isolation)
 
-Начиная с ADR-13, агент **не меняет** исходный код в `/srv/first-agent/repo/First-Agent-dev`. Этот каталог монтируется в контейнер как `/repo` **read-only**.
+Начиная с ADR-13, агент **не меняет** исходный код в
+`/srv/first-agent/repo/First-Agent-dev`. Этот deployment mirror монтируется в
+контейнер как `/repo` **read-only**.
 
-- **Изоляция:** При каждом перезапуске контейнера (или старте первой задачи) автоматически создаётся изолированный клон хост-репозитория (`git clone --local`) в директории `/srv/first-agent/sessions/session-<ID>`.
-- **Как это выглядит для агента:** Агент работает в этом изолированном клоне. Он может делать коммиты, создавать ветки и пушить их. Основной хост-репозиторий всегда остаётся чистым для `fa update`.
-- **Доступ оператора:** Команда `fa shell` автоматически открывает `bash` внутри *активной* сессии агента, так что вам не нужно искать пути вручную.
-- **fa stats:** Учитывайте, что `fa stats` по умолчанию показывает статистику только для *текущей* сессии. Если вам нужна статистика прошлой сессии, перейдите в её директорию (`cd /srv/first-agent/sessions/session-<ID>`) и запустите `fa stats` там. Для кросс-сессионной статистики используйте `fa stats --global-history` (читает из `~/.fa/global_history.db`).
+- **Изоляция и transport:** Managed workspace клонируется из `file:///repo`
+  через обычный Git pack transport в
+  `/srv/first-agent/sessions/<session-id>`. Клон имеет собственные Git metadata,
+  ветку `agent/<session-id>` и trusted local identity.
+- **Выбор сессии:** `fa run`/`fa workflow` без `--session-id` создаёт новую
+  persistent logical session. Явный `--session-id <id>` подключает существующую;
+  `--resume` без него запрещён. Перезапуск контейнера сам по себе не определяет
+  новую logical session.
+- **B2 remotes:** `origin` fetch читает локальный `file://` source snapshot, а
+  `origin.pushurl` указывает на validated GitHub publication URL. Опциональный
+  non-secret override — `FA_REPO_PUSH_URL`; URL с credentials не допускается.
+- **Readiness:** До первого provider/model вызова lifecycle выполняет locked
+  sync, устанавливает четыре hook seat и заранее готовит pre-commit
+  environments. Ошибка bootstrap логируется и допускает продолжение по
+  fail-open policy; реальный quality-gate failure остаётся blocking.
+- **Caches:** uv использует отдельный ephemeral tmpfs 2 GiB, а HOME/pre-commit —
+  measured ephemeral tmpfs 1536 MiB. Persistent cache отложен до появления
+  измеренной operational latency-проблемы.
+- **Публикация:** Агент может коммитить и отправлять только feature-ветку для PR.
+  Merge, обновление `main` и deployment остаются действиями оператора.
+- **Доступ оператора:** `fa shell` открывает `bash` внутри *активной* сессии;
+  `.active` — удобный текущий указатель, а не источник logical identity.
+- **fa stats:** По умолчанию команда показывает текущую сессию. Для прошлой
+  перейдите в её workspace; для кросс-сессионной статистики используйте
+  `fa stats --global-history` (`~/.fa/global_history.db`).
 
-> **Данные сессии:** Каждый запуск `fa run` создаёт авторитетную SQLite-базу (`session.db`) в `~/.fa/session-log/<run_id>/`. Все события, blackboard-записи и метаданные сессии пишутся сначала в SQLite (авторитет), затем в `events.jsonl` (зеркало для чтения человеком, best-effort). Для программного чтения всегда используйте `session.db`.
-- **Сброс сессии:** Если агент сильно "намусорил" или зашел в тупик — просто сделайте `fa restart` или `fa rebuild`. Контейнер перезапустится и создаст чистую сессию из актуального хост-репозитория.
+> **Данные сессии:** Logical session хранит авторитетную SQLite-базу
+> `~/.fa/sessions/<session-id>/session.db`; каждый запуск получает отдельный
+> `run-id` внутри этой authority. События, blackboard-записи и метаданные сначала
+> пишутся в SQLite, затем в `events.jsonl` (best-effort human-readable mirror).
+> Для программного чтения всегда используйте SQLite.
+
+- **Новая или существующая сессия после restart:** Перезапуск повторно применяет
+  session selector. Если `FA_SESSION_ID` не задан, entrypoint создаёт новую
+  logical session из текущего локального source snapshot. Если ID задан, он
+  подключает существующую managed session; restart не очищает её автоматически.
+  Для намеренно новой рабочей области запускайте без явного session ID.
 
 ### FeatureFlags (опциональный ~/.fa/config.yaml)
 
@@ -130,7 +193,7 @@ runtime-флагами. **Файл необязателен:** его отсут
 Шаблон с комментариями: [`knowledge/templates/config.yaml.example`](../templates/config.yaml.example).
 
 | Флаг | Тип | По умолч. | Назначение |
-|------|-----|-----------|------------|
+| ------ | ----- | ----------- | ------------ |
 | `blackboard.enabled` | bool | true | Включить Blackboard (конфликт-детекция, read/write sets) |
 | `blackboard.filtered_history_include_plans` | bool | false | Включить plan-записи в отфильтрованную историю |
 | `telemetry.enabled` | bool | true | Писать метрики сессии (TelemetryLogger) |
@@ -157,7 +220,7 @@ feature_flags:
 #### Переменные окружения для кастомизации
 
 | Переменная | По умолч. | Назначение | Когда менять |
-|------------|-----------|------------|--------------|
+| ------------ | ----------- | ------------ | -------------- |
 | `FA_COMPOSE_FILE` | `docker-compose.fa.yml` | Имя compose-файла, который использует wrapper `fa` | При кастомном compose-файле (например, для GPU) |
 | `FA_SECRETS_FILE` | `/run/secrets/fa.env` (AIO) или `~/.fa/.env` (WSL) | Путь к файлу API-ключей | При нестандартном расположении ключей |
 | `FA_PROXY_TOKEN_FILE` | `/run/secrets/fa_proxy_token` | Путь к файлу fa→proxy токена | Аналогично — при нестандартном layout |
@@ -248,6 +311,7 @@ systemctl --user restart fa.service          # пересоздать стек (
 >
 > **Один вопрос про каждый новый провайдер:**
 > «Принимает ли он `prompt_cache_key` / `prompt_cache_retention`?»
+>
 > - **Да / проверил** → оставляешь по умолчанию (`true`), сохраняешь выгоду кэша.
 > - **Нет / даёт 400** → ставишь `supports_prompt_cache: false` (параметры
 >   срезаются перед отправкой).
@@ -286,7 +350,7 @@ systemctl --user restart fa.service          # пересоздать стек (
 будет понятнее.
 
 | Термин | Простыми словами |
-|--------|------------------|
+| -------- | ------------------ |
 | **Образ (image)** | «Слепок» готовой среды. Из него создаются контейнеры. |
 | **Контейнер (container)** | Запущенный экземпляр образа — изолированная «коробка» с программой. |
 | **`docker compose`** | Инструмент, который запускает контейнер по описанию из `docker-compose.fa.yml`. |
@@ -380,7 +444,7 @@ docker ps    # должен быть контейнер first-agent в стат�
 Указываются перед командой. Можно комбинировать.
 
 | Команда | Когда использовать |
-|---------|--------------------|
+| --------- | -------------------- |
 | `SKIP_TESTS=1 .../fa-update.sh` | Быстро обновить без прогона pytest. |
 | `AUTO_STASH=1 .../fa-update.sh` | Автоматически отложить локальные правки перед обновлением. |
 | `NO_CACHE=1 .../fa-update.sh` | Чистая пересборка «с нуля», игнорируя кэш слоёв. |
@@ -579,7 +643,7 @@ WIPE_STATE=1 /srv/first-agent/repo/First-Agent-dev/scripts/fa-clean-rebuild.sh
 > cd /srv/first-agent/repo/First-Agent-dev && git pull --ff-only origin main
 > scripts/fa-clean-rebuild.sh
 > ```
-
+>
 > Флаги: `WIPE_STATE=1` — сбросить весь `state/` (ключи в `secrets/` не трогаются);
 > `PRUNE=1` — удалить все неиспользуемые образы и кэш сборки; `NO_BACKUP=1` —
 > пропустить бэкап (не рекомендуется); `ASSUME_YES=1` — не спрашивать
@@ -692,6 +756,7 @@ fa workflow planner,coder,eval \
 ```
 
 #### Режим repair (ограниченный цикл coder→eval)
+
 #### Режим adaptive (ограниченный planner re-entry)
 
 - `fa workflow --mode adaptive` выполняет **первый проход по списку ролей как задано**, но затем
@@ -709,7 +774,6 @@ fa workflow planner,coder,eval \
 - Двумерная модель режимов остаётся прежней:
   - ось A (реализовано сейчас): `linear` / `repair` / `adaptive`;
   - ось B (ещё не реализована): `phase-gated` / `step-gated`.
-
 
 По умолчанию `fa workflow` работает в режиме `linear` — каждая роль выполняется
 один раз. Режим `repair` добавляет ограниченный цикл починки: после первого
@@ -866,7 +930,7 @@ compactor:
       timeout_seconds: 15
 ```
 
-2. Включите компакцию в `/srv/first-agent/state/config.yaml`:
+1. Включите компакцию в `/srv/first-agent/state/config.yaml`:
 
 ```yaml
 feature_flags:
@@ -874,7 +938,7 @@ feature_flags:
   offload_threshold: 8000        # порог токенов для запуска компакции
 ```
 
-3. Пересоздайте контейнер (чтобы прокси подхватил новый route):
+1. Пересоздайте контейнер (чтобы прокси подхватил новый route):
 
 ```bash
 fa update
@@ -999,7 +1063,10 @@ Tailscale** (вашу частную сеть), а не из открытого 
 
 ### Быстрый аудит хост-раскладки (read-only)
 
-> **Авторитет сессии — SQLite, не JSONL.** Если вы читаете данные сессии вручную: `events.jsonl` удобен для `cat`/`grep`, но авторитетным источником является `session.db`. Для программного доступа используйте `sqlite3 ~/.fa/session-log/<run_id>/session.db "SELECT * FROM event_log"`.
+> **Авторитет сессии — SQLite, не JSONL.** `events.jsonl` под per-run
+> `~/.fa/session-log/<run-id>/` удобен для `cat`/`grep`, но authoritative DB
+> находится в `~/.fa/sessions/<session-id>/session.db`. Для программного доступа:
+> `sqlite3 ~/.fa/sessions/<session-id>/session.db "SELECT * FROM event_log"`.
 
 Перед тем как разбирать частную проблему, можно получить высокосигнальный
 снимок состояния хоста: где лежит canonical `routing/models.yaml`, остались ли
@@ -1271,6 +1338,7 @@ fa probe --role planner --timeout 60  # с увеличенным таймаут
 ```
 
 Probe делает минимальный API-вызов (~10 токенов) и показывает результат:
+
 - ✅ — модель доступна, ключ валиден, с таймингом и токенами
 - ❌ — с HTTP-статусом и ошибкой для каждого entry в chain
 
@@ -1342,7 +1410,7 @@ fa run --role coder --task "..." --output-mode quiet
 Все скрипты лежат в `scripts/`. Идемпотентны (безопасно перезапускать).
 
 | Скрипт | Что делает | Когда запускать |
-|--------|------------|------------------|
+| -------- | ------------ | ------------------ |
 | `setup-fa-desktop.sh` | Bootstrap хоста: система, Docker, Tailscale, репо, ключи, сервис. | Первый деплой, шаг 1. |
 | `fa-post-setup.sh` | Сборка, проверка git push, запуск сервиса, cron бэкапа. | Первый деплой, шаг 2. |
 | `fa-update.sh` | Умное обновление/пересборка с проверкой здоровья и тестами. | Каждое обновление. |

@@ -1,5 +1,12 @@
 # S13 next-session start prompt
 
+> [!CAUTION]
+> **HISTORICAL / SUPERSEDED (2026-08-13).** Do not execute the environment,
+> checkout, patch, identity, or bootstrap commands below. They describe an old
+> session handoff. Current workspace authority:
+> [ADR-13](../knowledge/adr/ADR-13-workspace-isolation.md) and
+> [AP-004](../knowledge/anti-patterns/AP-004-symptom-chasing-without-model.md).
+
 Paste everything below the line into a fresh session.
 
 ---
@@ -102,6 +109,7 @@ cli-coverage-floor).
 ## Current state (source-verified as of this handoff — re-verify, don't trust)
 
 **DONE and green:**
+
 - S13 closed core (S13.0–S13.4): I-50/I-52/I-51 fixed; `MessageRules` +
   conformance finalizer at `chain.py:368`; K1–K7 verified.
 - S13.4c/CT8: eval independence blocking → adversarial; K9/K10.
@@ -113,6 +121,7 @@ cli-coverage-floor).
 - `fa conformance` offline matrix works (CONF-6 recorded as tolerance).
 
 **OPEN / next items:**
+
 1. **Live confirmation on the deployed box** (`fa@fa-HP`) — run
    `worklogs/S13-live-sheet.md` step-by-step; share output for evaluation. The
    big unverified claims: sampling-omission on the wire, workflow past stage 2,

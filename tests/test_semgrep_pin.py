@@ -46,6 +46,7 @@ def _script_pin() -> str:
 
     for test_pin in ("1.172.0", "9.99.99"):
         argv = rs._build_semgrep_argv(pin=test_pin, pos_args=["x.py"])
+        assert argv is not None, "test requires uvx or uv on PATH"
         joined = " ".join(argv)
         m = PIN_RE.search(joined)
         assert m is not None, f"argv does not contain semgrep==<ver>: {argv}"

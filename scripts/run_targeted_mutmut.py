@@ -1,163 +1,122 @@
 #!/usr/bin/env python3
-"""Targeted mutation-testing gate (pre-push / CI).
+"""Targeted mutation selector for check-deep/pre-push.
 
-Runs ``mutmut`` against the Python files changed between the working tree
-and the merge-base with ``origin/main`` (with graceful fallbacks to
-``main``, ``HEAD~1``). Scopes mutation to those files by temporarily
-rewriting ``[tool.mutmut] source_paths`` in ``pyproject.toml`` (mutmut 3.x
-removed ``--paths-to-mutate``); the file is restored in ``finally``.
-
-Why targeted: the full sandbox+substrate scope in pyproject.toml runs for
-~20+ minutes in CI and lives in the weekly ``tests.yml`` workflow. The
-push-time gate needs to complete inside the pre-push budget.
-
-Fail-open: if mutmut is not installed, git is unavailable, the diff is
-empty/too large, or ``FA_SKIP_TARGETED_MUTATION=1`` is set, exit 0 with a
-note so unbootstrapped shells and escape-hatches work. Real survivor
-findings exit non-zero.
+Discovery is fail-open before execution for the existing emergency/tool/Git/
+oversized-diff cases. Once the isolated slice executor starts, its strict
+clean/actionable/infrastructure exit is returned unchanged.
 """
 
 from __future__ import annotations
 
 import os
-import re
-import subprocess
 import sys
-import time
+import tomllib
 from pathlib import Path
+from typing import Any, cast
 
-# Allow `python scripts/run_targeted_mutmut.py` (file-mode) as well as
-# `python -m scripts.run_targeted_mutmut` (module mode). The helper lives
-# next to this file; when invoked as a file, scripts/ is on sys.path[0]
-# automatically (script directory), but adding the repo root is safer
-# across uv run / pre-commit contexts.
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import scripts._git_diff as gd
+from scripts.run_slice_mutmut import InputError, request_from_configured_scope, run_slice
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PYPROJECT = REPO_ROOT / "pyproject.toml"
-
 MAX_FILES = 20
-MUTANT_TIMEOUT_SECONDS = 600
-_BACKUP_SUFFIX = ".pre-targeted-mutmut.bak"
+TARGETED_TIMEOUT_SECONDS = 600
 
 
-def _configured_source_roots() -> list[str]:
-    """Return currently configured [tool.mutmut] source_paths entries (trailing-/ stripped)."""
-    text = PYPROJECT.read_text(encoding="utf-8")
-    m = re.search(
-        r"source_paths\s*=\s*\[.*?\]",
-        text,
-        flags=re.DOTALL,
-    )
-    if not m:
-        return []
-    return [s.strip().strip('"').rstrip("/") for s in re.findall(r'"([^"]+)"', m.group(0))]
+def _configured_source_roots(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
+    try:
+        data = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+        raw = data["tool"]["mutmut"]["source_paths"]
+    except (OSError, KeyError, tomllib.TOMLDecodeError) as exc:
+        raise InputError(f"cannot read configured mutation source paths: {exc}") from exc
+    if not isinstance(raw, list) or not raw or not all(isinstance(item, str) for item in raw):
+        raise InputError("[tool.mutmut].source_paths must be a non-empty string array")
+    return tuple(cast(list[str], raw))
 
 
-def _scope_to_changed(changed: list[Path]) -> list[Path]:
-    """Keep only changed files that live under a configured source root or under tests/."""
-    roots = _configured_source_roots()
-    out: list[Path] = []
-    for p in changed:
-        rel = p.relative_to(REPO_ROOT).as_posix()
-        if rel.startswith("tests/") or any(rel == r or rel.startswith(r + "/") for r in roots):
-            out.append(p)
-    return out
+def _scope_to_changed(
+    changed: list[Path],
+    *,
+    repo_root: Path = REPO_ROOT,
+    source_roots: tuple[str, ...] | None = None,
+) -> list[Path]:
+    """Keep changed production files beneath configured mutmut source roots."""
+    roots = source_roots or _configured_source_roots(repo_root)
+    canonical_root = repo_root.resolve()
+    scoped: set[Path] = set()
+    for path in changed:
+        try:
+            relative = path.resolve().relative_to(canonical_root).as_posix()
+        except ValueError:
+            continue
+        if relative.startswith("tests/"):
+            continue
+        if any(relative == root.rstrip("/") or relative.startswith(root.rstrip("/") + "/") for root in roots):
+            scoped.add(path.resolve())
+    return sorted(scoped)
 
 
-def _rewrite_source_paths(scoped: list[Path]) -> None:
-    backup = PYPROJECT.with_name(PYPROJECT.name + _BACKUP_SUFFIX)
-    backup.write_text(PYPROJECT.read_text(encoding="utf-8"), encoding="utf-8")
-    text = backup.read_text(encoding="utf-8")
-    entries = "\n".join(f'  "{p.relative_to(REPO_ROOT).as_posix()}",' for p in scoped)
-    new_block = f"source_paths = [\n{entries}\n]"
-    new_text, n = re.subn(
-        r"source_paths\s*=\s*\[.*?\]",
-        new_block,
-        text,
-        count=1,
-        flags=re.DOTALL,
-    )
-    if n != 1:
-        raise RuntimeError("failed to locate source_paths block in pyproject.toml")
-    PYPROJECT.write_text(new_text, encoding="utf-8")
-
-
-def _restore_pyproject() -> None:
-    backup = PYPROJECT.with_name(PYPROJECT.name + _BACKUP_SUFFIX)
-    if backup.is_file():
-        PYPROJECT.write_text(backup.read_text(encoding="utf-8"), encoding="utf-8")
-        backup.unlink()
-
-
-def _resolve_mutmut() -> str | None:
-    return gd.resolve_tool(
-        "mutmut",
-        repo_root=REPO_ROOT,
-        venv_bin_rel=".venv/bin/mutmut",
-    )
+def _mutmut_installed() -> bool:
+    return gd.resolve_tool("mutmut", repo_root=REPO_ROOT, venv_bin_rel=".venv/bin/mutmut") is not None
 
 
 def main() -> int:
     if os.environ.get("FA_SKIP_TARGETED_MUTATION") == "1":
         gd._log("skipping (FA_SKIP_TARGETED_MUTATION=1)")
         return 0
-
-    mutmut = _resolve_mutmut()
-    if mutmut is None:
+    if not _mutmut_installed():
         gd._log("mutmut not installed; skipping (fail-open)")
         return 0
 
-    # Ask the shared helper for ALL changed .py files under src/ and tests/.
-    # Cap is generous (max_files=MAX_FILES*2) because _scope_to_changed (below)
-    # narrows further to configured [tool.mutmut] source_paths, and the FINAL
-    # cap is applied to scoped files, matching pre-refactor semantics.
     changed = gd.changed_python_files(
         REPO_ROOT,
         source_prefixes=("src/", "tests/"),
         allow_extensions=(".py",),
         max_files=MAX_FILES * 2,
+        include_worktree=True,
+        include_untracked=True,
     )
     if not changed:
-        gd._log("no changed Python files vs merge-base; nothing to mutate")
+        gd._log("no discoverable changed Python files; nothing to mutate")
         return 0
-    scoped = _scope_to_changed(changed)
+    try:
+        scoped = _scope_to_changed(changed)
+    except InputError as exc:
+        gd._log(f"invalid mutation configuration: {exc}")
+        return 2
     if not scoped:
-        gd._log("changed files are outside mutmut source_paths; nothing to do")
+        gd._log("changed files are outside configured production mutation scope; nothing to do")
         return 0
     if len(scoped) > MAX_FILES:
-        gd._log(
-            f"{len(scoped)} changed files > MAX_FILES={MAX_FILES}; skipping (weekly full-mutmut covers large diffs)"
+        gd._log(f"{len(scoped)} production files > MAX_FILES={MAX_FILES}; skipping (weekly full-mutmut covers it)")
+        return 0
+
+    gd._log(f"mutating {len(scoped)} production file(s):")
+    relative_sources = tuple(path.relative_to(REPO_ROOT).as_posix() for path in scoped)
+    for source in relative_sources:
+        gd._log(f"  - {source}")
+    try:
+        request = request_from_configured_scope(
+            REPO_ROOT,
+            source_override=relative_sources,
+            timeout_seconds=TARGETED_TIMEOUT_SECONDS,
         )
-        return 0
-
-    gd._log(f"mutating {len(scoped)} file(s):")
-    for p in scoped:
-        gd._log(f"  - {p.relative_to(REPO_ROOT).as_posix()}")
-
-    try:
-        _rewrite_source_paths(scoped)
-    except (OSError, RuntimeError, re.error) as exc:  # pragma: no cover - defensive
-        gd._log(f"failed to patch pyproject.toml: {exc}; skipping (fail-open)")
-        _restore_pyproject()
-        return 0
-
-    start = time.monotonic()
-    rc = 0
-    try:
-        env = dict(os.environ)
-        env["MUTANT_TIMEOUT_SECONDS"] = str(MUTANT_TIMEOUT_SECONDS)
-        r = subprocess.run([mutmut, "run"], cwd=REPO_ROOT, check=False, env=env)
-        rc = r.returncode
-        subprocess.run([mutmut, "results"], cwd=REPO_ROOT, check=False)
-        gd._log(f"finished in {time.monotonic() - start:.1f}s (rc={rc})")
-    finally:
-        _restore_pyproject()
-    return rc
+    except InputError as exc:
+        gd._log(f"invalid targeted mutation request: {exc}")
+        return 2
+    result = run_slice(request)
+    counts = cast(dict[str, Any] | None, result.payload.get("counts"))
+    if counts is not None:
+        gd._log(
+            f"finished: rc={result.exit_code} total={counts['total']} killed={counts['killed']} "
+            f"type_invalid={counts['type_invalid']} survived={counts['survived']}"
+        )
+    else:
+        gd._log(f"finished: rc={result.exit_code} reason={result.payload.get('reason')}")
+    return result.exit_code
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

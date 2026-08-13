@@ -1,5 +1,12 @@
 # S13 session-start prompt
 
+> [!CAUTION]
+> **HISTORICAL / SUPERSEDED (2026-08-13).** Do not execute the environment,
+> checkout, patch, identity, or bootstrap commands below. They describe an old
+> session handoff. Current workspace authority:
+> [ADR-13](../knowledge/adr/ADR-13-workspace-isolation.md) and
+> [AP-004](../knowledge/anti-patterns/AP-004-symptom-chasing-without-model.md).
+
 Paste everything below the line into a fresh session.
 
 ---
@@ -83,7 +90,7 @@ resets. Restore with `git checkout -- scripts/ src/fa/hygiene/hooks/`.
 `fa workflow planner,coder,eval` cannot complete. Stage 2 dies at turn 1 with
 `in=0` and, recovered from the deployed `events.jsonl`:
 
-```
+```text
 status=400 code=3230 type=invalid_request_message_order
 "Expected last role User or Tool (or Assistant with prefix True) for serving but got assistant"
 ```

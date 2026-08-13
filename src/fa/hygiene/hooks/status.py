@@ -1,10 +1,9 @@
 """Report the installation status of local commit hooks.
 
-Deterministic, zero-API-call verification that the three local
-hook seats are active in the current clone. Run after ``just
-install`` or at any time to confirm the local hook chain is
-active. Invoke via ``python -m fa.hygiene.hooks.status`` or
-``just hooks-status``.
+Deterministic, zero-API-call verification that all four local hook seats are
+active in the current clone. The readiness engine uses the same content and
+executability contract; operators use read-only ``just doctor`` for the complete
+environment/marker/cache/hook status.
 
 All four hooks — ``pre-commit``, ``pre-push``, ``prepare-commit-msg``,
 and ``commit-msg`` — are installed by our custom installer

@@ -284,6 +284,8 @@ source_paths = [
   # S9.6: 887 lines of pure parse/aggregate logic — the largest module in the
   # trace substrate that had never been mutation tested.
   "src/fa/stats.py",
+  # S3.5: readiness is security/lifecycle-dense and has a classified C4 baseline.
+  "src/fa/workspace_bootstrap.py",
 ]
 # Test selection is per-scope: the sandbox suites cannot exercise the substrate
 # modules, so the substrate's own suites are listed alongside them. A mutant in
@@ -300,6 +302,27 @@ pytest_add_cli_args_test_selection = [
   "tests/test_s5_state_root_contract.py",
   "tests/test_s6_subagent_fidelity.py",
   "tests/test_subagent_runner.py",
+  "tests/test_workspace_bootstrap.py",
+]
+# Complete package copy supplies sibling imports while source_paths remains the
+# only mutation authority. Alias/config tests live outside this core C4 seat.
+also_copy = ["src/fa"]
+# Mutmut 3.6 identifies the parser from the literal "pyrefly" argv element.
+# Keep the positional path segment exactly equal to source_paths; T19 pins it.
+type_check_command = [
+  "pyrefly",
+  "check",
+  "src/fa/sandbox",
+  "src/fa/session",
+  "src/fa/inner_loop/state.py",
+  "src/fa/inner_loop/subagent_envelope.py",
+  "src/fa/inner_loop/subagent_runner.py",
+  "src/fa/inner_loop/workflow_artifacts.py",
+  "src/fa/stats.py",
+  "src/fa/workspace_bootstrap.py",
+  "--output-format=json",
+  "--summary=none",
+  "--progress-bar=no",
 ]
 
 # ---------------------------------------------------------------------------
@@ -385,6 +408,8 @@ paths = [
   "src/fa/inner_loop/workflow_artifacts.py",
   # S9.6: mirrors [tool.mutmut] source_paths.
   "src/fa/stats.py",
+  # S3.5: native-Windows mirror of permanent readiness mutation scope.
+  "src/fa/workspace_bootstrap.py",
 ]
 operators = ["comparison", "arithmetic", "boolean", "boundary", "return"]
 exclude = ["**/test_*", "**/__init__.py"]
@@ -423,6 +448,9 @@ search-path = ["src", "."]
 # wholesale. Revisit when/if pyrefly becomes the primary type checker.
 [tool.pyrefly.errors]
 implicit-any-empty-container = false
+
+[tool.deptry]
+known_first_party = ["scripts"]
 
 [tool.deptry.package_module_name_map]
 # Deferred optional distributions expose import names that differ from their

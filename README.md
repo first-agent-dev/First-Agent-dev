@@ -17,7 +17,7 @@
 
 We don't trust the LLM blindly. First-Agent is locked in a deterministic sandbox:
 API keys are isolated in a separate container, and code changes happen only in
-temporary Git clones. Per-run session state is authoritative in SQLite (`session.db`);
+managed Git clones. Per-run session state is authoritative in SQLite (`session.db`);
 JSONL files are best-effort human-readable mirrors.
 
 ```mermaid
@@ -37,7 +37,7 @@ graph TD
         ProxyContainer -- HTTP + Injected Keys --> LLM[LLM Providers]
 
         Repo -.->|RO Mount| AgentContainer
-        AgentContainer -->|git clone --local| Sessions[(/sessions Isolated RW Workspaces)]
+        AgentContainer -->|file:// Git pack transport + readiness| Sessions[(/sessions Managed RW Workspaces)]
     end
 
     subgraph Session Data [Per-Run Session Authority]
@@ -111,10 +111,12 @@ deploy, multi-tenancy, billing, web UI.
 ## Quick Start
 
 **For humans:**
+
 1. Deploy & operate: [knowledge/instructions/](./knowledge/instructions/README.md)
 2. Project vision & scope: [knowledge/project-overview.md](./knowledge/project-overview.md)
 
 **For agents:**
+
 1. Read [AGENTS.md](./AGENTS.md) — repo conventions, query routing, pre-flight checklist
 2. Read [knowledge/llms.txt](./knowledge/llms.txt) §MUST READ FIRST — 5-file bootstrap
 3. Read [worklogs/HANDOFF.md](./worklogs/HANDOFF.md) — current session state
@@ -125,7 +127,7 @@ deploy, multi-tenancy, billing, web UI.
 ## Repository Map
 
 | Path | Purpose |
-|------|---------|
+| --- | --- |
 | [`AGENTS.md`](./AGENTS.md) | Agent session rules, conventions, query routing |
 | [`knowledge/project-overview.md`](./knowledge/project-overview.md) | Vision, principles, scope |
 | [`knowledge/reference.md`](./knowledge/reference.md) | Terms, features, session architecture |

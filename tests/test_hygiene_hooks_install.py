@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 import fa.hygiene.hooks as hooks_pkg
+import fa.hygiene.hooks._util as util_mod
 import fa.hygiene.hooks.install as install_mod
 import fa.hygiene.hooks.status as status_mod
 from tests._capabilities import (
@@ -53,10 +54,17 @@ check_hooks = status_mod.check_hooks
 def _make_workspace(tmp_path: Path, *, with_git: bool = True) -> Path:
     """Build a minimal First-Agent workspace fixture under tmp_path."""
 
-    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge").mkdir(parents=True)
     (tmp_path / "knowledge" / "llms.txt").write_text("marker\n", encoding="utf-8")
+    wrapper = tmp_path / "scripts" / "bootstrap" / "workspace.py"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("print('{}')\n", encoding="utf-8")
     if with_git:
-        (tmp_path / ".git" / "hooks").mkdir(parents=True)
+        subprocess.run(
+            ["git", "init", "--quiet", "--initial-branch=main"],
+            cwd=tmp_path,
+            check=True,
+        )
     return tmp_path
 
 
@@ -71,6 +79,10 @@ def _make_worktree_workspace(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _write_executable(path: Path, text: str) -> None:
+    if path.name == "git":
+        shebang, body = text.split("\n", 1)
+        root_lookup = 'if [[ "$1" == rev-parse && "$2" == --show-toplevel ]]; then\n  pwd -P\n  exit 0\nfi\n'
+        text = f"{shebang}\n{root_lookup}{body}"
     path.write_text(text, encoding="utf-8")
     path.chmod(path.stat().st_mode | 0o755)
 
@@ -269,6 +281,26 @@ def test_install_hooks_uses_worktree_gitdir(tmp_path: Path) -> None:
     assert [p.name for p in installed] == list(HOOK_NAMES)
 
 
+def test_install_hooks_uses_explicit_workspace_source(tmp_path: Path) -> None:
+    """C0: explicit workspace scripts, not imported package scripts, own the seats."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    root = _make_workspace(workspace)
+    source_dir = tmp_path / "workspace-hook-source"
+    source_dir.mkdir()
+    for name in HOOK_NAMES:
+        _write_executable(source_dir / name, f"#!/bin/sh\necho workspace-{name}\n")
+
+    installed = install_hooks(repo_root=root, force=True, hook_source_dir=source_dir)
+
+    assert [path.name for path in installed] == list(HOOK_NAMES)
+    for path in installed:
+        assert path.read_text(encoding="utf-8") == f"#!/bin/sh\necho workspace-{path.name}\n"
+        if path.is_symlink():
+            assert path.resolve() == (source_dir / path.name).resolve()
+
+
 # ---------------------------------------------------------------------------
 # Package export tests
 # ---------------------------------------------------------------------------
@@ -280,6 +312,33 @@ def test_lazy_import_hook_names() -> None:
 
 def test_lazy_import_install_hooks() -> None:
     assert callable(hooks_pkg.install_hooks)
+
+
+def test_lazy_install_hooks_forwards_hook_source_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """C0: package wrapper preserves the explicit source authority."""
+
+    workspace = tmp_path / "workspace"
+    source_dir = tmp_path / "hook-source"
+    expected = [tmp_path / "installed"]
+    captured: dict[str, object] = {}
+
+    def fake_install_hooks(
+        repo_root: Path | None = None,
+        *,
+        force: bool = False,
+        hook_source_dir: Path | None = None,
+    ) -> list[Path]:
+        captured.update(repo_root=repo_root, force=force, hook_source_dir=hook_source_dir)
+        return expected
+
+    monkeypatch.setattr(install_mod, "install_hooks", fake_install_hooks)
+
+    assert hooks_pkg.install_hooks(workspace, force=True, hook_source_dir=source_dir) == expected
+    assert captured == {
+        "repo_root": workspace,
+        "force": True,
+        "hook_source_dir": source_dir,
+    }
 
 
 def test_lazy_import_check_hooks() -> None:
@@ -545,6 +604,22 @@ exit 0
 
 
 @requires_posix_paths
+def test_resolve_hooks_dir_git_timeout_falls_back_without_hanging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C0/C3: bounded Git lookup retains deterministic pure-Python fallback."""
+
+    root = _make_workspace(tmp_path)
+
+    def timeout(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(["git", "rev-parse"], timeout=120)
+
+    monkeypatch.setattr("fa.hygiene.hooks._util.subprocess.run", timeout)
+
+    assert util_mod.resolve_hooks_dir(root) == root / ".git" / "hooks"
+
+
 def test_resolve_hooks_dir_respects_core_hookspath(tmp_path: Path) -> None:
     """Git-configured core.hooksPath wins over the default hooks directory."""
 
@@ -563,6 +638,18 @@ def test_resolve_hooks_dir_respects_core_hookspath(tmp_path: Path) -> None:
     assert [p.parent for p in installed] == [custom_hooks] * len(HOOK_NAMES)
     rc = check_hooks(repo_root=repo)
     assert rc == 0
+
+
+def test_default_hooks_dir_remains_distinct_from_custom_effective_path(tmp_path: Path) -> None:
+    """C0/C3: default-seat authority does not follow operator custom configuration."""
+
+    repo = _make_workspace(tmp_path / "repo")
+    custom_hooks = tmp_path / "operator-hooks"
+    custom_hooks.mkdir()
+    subprocess.run(["git", "config", "core.hooksPath", str(custom_hooks)], cwd=repo, check=True)
+
+    assert util_mod.resolve_hooks_dir(repo) == custom_hooks
+    assert util_mod.resolve_default_hooks_dir(repo) == repo / ".git" / "hooks"
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
@@ -681,8 +768,8 @@ exit 0
 
     assert result.returncode == 0
     log = log_path.read_text(encoding="utf-8")
-    assert "uv run pre-commit run --hook-stage pre-commit" in log
-    assert "uv run just check" in log
+    assert "uv run --no-sync pre-commit run --hook-stage pre-commit" in log
+    assert "uv run --no-sync just check" in log
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
@@ -805,6 +892,7 @@ exit 0
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 @pytest.mark.skipif(not _CAN_EXECUTE, reason="Filesystem does not support executable bits")
 def test_pre_push_runs_full_check_by_default(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path)
     hook = Path(install_mod.__file__).resolve().parent / "pre-push"
     fakebin = tmp_path / "fakebin_push"
     fakebin.mkdir()
@@ -818,14 +906,15 @@ def test_pre_push_runs_full_check_by_default(tmp_path: Path) -> None:
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
 
     assert result.returncode == 0
-    assert "uv run just check" in log_path.read_text(encoding="utf-8")
+    assert "uv run --no-sync just check" in log_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 def test_pre_push_skip_env_bypasses_full_check(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path)
     hook = Path(install_mod.__file__).resolve().parent / "pre-push"
     fakebin = tmp_path / "fakebin_push_skip"
     fakebin.mkdir()
@@ -840,8 +929,8 @@ def test_pre_push_skip_env_bypasses_full_check(tmp_path: Path) -> None:
     env = dict(os.environ)
     env["FA_HOOK_SKIP_FULL_CHECK"] = "1"
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
 
     assert result.returncode == 0
-    assert "skipping uv run just check" in result.stderr
+    assert "skipping uv run --no-sync just check" in result.stderr
     assert not log_path.exists()

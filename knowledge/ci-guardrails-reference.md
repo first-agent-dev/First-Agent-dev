@@ -17,12 +17,18 @@
 
 ## Layer 0 — deterministic local gates (`just check`)
 
-Authoritative per local-first architecture; CI re-runs the same commands.
-**Environment-readiness rule:** the agent runner MUST invoke `just agent-bootstrap`
-and require its `FA_AGENT_READY=1` marker before constructing an LLM session.
-The recipe runs `uv sync --frozen --extra dev`, installs all four hooks, and
-runs `hooks-status`; any failure prevents readiness. This is distinct from
-commit-time hygiene (which is fast and bypassable per ADR-11-I6).
+Authoritative per local-first architecture; CI re-runs the same quality commands.
+**Environment-readiness rule:** managed workspace lifecycle readiness runs before
+provider-chain construction and every model call. The checked-out stdlib wrapper
+`scripts/bootstrap/workspace.py` owns locked sync, four hook seats, pre-commit
+environment prewarm, verification, and the ignored READY marker/cache sentinel.
+Bootstrap degradation is typed, logged, and fail-open by operator policy; it is
+not allowed to rewrite a later quality-gate return code.
+
+`just agent-bootstrap` is an operator/host compatibility alias, not model task
+work. `just install` reaches the same checked-out readiness engine directly, and
+`just doctor` is the read-only recovery/status command. In CI, local hook seats
+are not required: CI executes the blocking gates directly from the PR checkout.
 
 **PR-handoff rule:** `just check` must pass before the agent opens a PR for
 human review. CI re-runs the same gate. Required branch protection blocks the
@@ -89,34 +95,33 @@ through, while any explicit metadata block (`INTENT:`, `INVARIANT:`,
 `CLASS:`, `TEST-EDITS:`, FIX-only clauses) is validated strictly.
 When strict validation applies, it checks INTENT/CLASS/INVARIANT shape,
 FIX anti-shallow-fix clauses (DOF/MECHANISM + resolving citation), and
-`validate_test_edits`. Installed by `just install`
-(→ `uv sync --extra dev` + `install-hooks` + `hooks-status`);
-all four hooks are scripts from `src/fa/hygiene/hooks/` installed via
-our tested Python installer. The `pre-commit` hook invokes
-`uv run pre-commit run --hook-stage pre-commit` so it works on
-Windows/PowerShell where the framework's own generated hook cannot find the
-executable. If hooks auto-fix already-staged files, it re-stages only that
-staged subset and retries once; if a file was partially staged before the
-hook ran, it refuses to auto-stage to avoid pulling unrelated unstaged hunks
-into the commit. `FA_HOOK_FULL_CHECK=1` runs `uv run just check` at commit
-stage for agent sessions that want local CI parity before the commit object is
-created.
+`validate_test_edits`. Managed lifecycle readiness or explicit `just install`
+prewarms pre-commit environments and installs all four scripts from
+`src/fa/hygiene/hooks/` through the tested Python installer.
 
-The `pre-push` hook runs `uv run just check` before branch publication;
-`FA_HOOK_SKIP_FULL_CHECK=1 git push` and `git --no-verify` are intentional
-operator-only escape hatches. The agent runner must not set the skip variable
-or use `--no-verify`.
-Snapshot tests pin hook constants to the skill §Output format / §Test-edit
-declaration so the two views cannot drift. **Bypassable locally**
-(`--no-verify`, by design per ADR-11-I6) — CI is the authority, this seat is
-fast feedback.
+After READY, hook bodies are network-free with respect to project resolution:
+the `pre-commit` hook invokes
+`uv run --no-sync pre-commit run --hook-stage pre-commit`. If hooks auto-fix
+already-staged files, it re-stages only that staged subset and retries once; if
+a file was partially staged before the hook ran, it refuses to auto-stage to
+avoid pulling unrelated unstaged hunks into the commit.
+`FA_HOOK_FULL_CHECK=1` runs `uv run --no-sync just check` before creating the
+commit object.
 
-Hook activation can be verified at any time with `just hooks-status`, which
-checks all four seats (pre-commit, pre-push, prepare-commit-msg, commit-msg)
-and flags missing, stale, or non-executable hooks. Without running
-`just install` in a fresh clone, local hooks are not active; CI does not
-install hooks in the contributor's local clone — it only re-runs checks on the
-PR branch.
+The `pre-push` hook runs `uv run --no-sync just check-deep` before branch
+publication. `FA_HOOK_SKIP_FULL_CHECK=1 git push` and `git --no-verify` are
+intentional operator-only escape hatches. The agent runner must not set the skip
+variable or use `--no-verify`. Snapshot tests pin hook constants to the skill
+§Output format / §Test-edit declaration so the two views cannot drift.
+**Bypassable locally** (`--no-verify`, by design per ADR-11-I6) — CI is the
+authority; this seat is fast feedback.
+
+Hook/readiness status is verified with `just doctor`, which checks the project
+environment, marker/cache sentinel, and all four seats without repairing them.
+An arbitrary raw clone with no installed seat cannot self-bootstrap from a hook;
+managed lifecycle and explicit operator recovery are the primary producers. CI
+does not install local hooks—it directly re-runs the blocking gates on the PR
+branch.
 
 ## Layer 4 — GitHub CI (PR branch; agent is NOT a codeowner)
 
@@ -171,10 +176,10 @@ The script parses YAML (ignoring comments) and only flags actual
   duplicate-code findings mean fix-the-design; `# noqa: CODE` allowed only
   for intended-design patterns, rationale comment above, surfaced by the
   suppression tier.
-- **pre-commit hooks** (ruff, gitleaks, hygiene basics, uv-lock) —
-  convenience seat, bypassable, never the authority. Installed by
-  `just install` as a script that calls `uv run pre-commit run`;
-  verify with `just hooks-status`.
+- **pre-commit hooks** (ruff, gitleaks, hygiene basics, uv-lock) — convenience
+  seats, bypassable, never the final authority. Managed lifecycle or
+  `just install` prepares them; hook bodies use `uv run --no-sync`, and
+  `just doctor` verifies readiness without mutation.
 
 ## Known residual gaps (accepted, tracked)
 

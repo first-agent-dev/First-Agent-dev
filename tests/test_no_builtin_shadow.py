@@ -1,7 +1,7 @@
-"""C0 static guarantees: no builtin-shadow parameters, no shell=True in helper.
+"""C0 static guarantees: exact stdlib overrides and no shell=True in helper.
 
 Covers:
-- CT11: server.py ``log_message`` does not shadow builtin ``format``;
+- CT11: server.py ``log_message`` matches the stdlib parameter contract;
 - T8:  scripts/_git_diff.py has no shell=True;
 - T10: targeted scripts do not invoke git merge-base/diff inline;
 - The pty_pool Protocol ``find_where`` uses ``_filters`` (no bare ``filters``).
@@ -16,29 +16,29 @@ Skill: tests-writing, C0 (AST walk).
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
 
-def _iter_funcdefs(tree: ast.AST):
+def _iter_funcdefs(tree: ast.AST) -> Iterator[ast.FunctionDef | ast.AsyncFunctionDef]:
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             yield node
 
 
-def test_server_log_message_no_format_shadow() -> None:
-    """log_message(self, _fmt, *_args) — no `format` parameter."""
+def test_server_log_message_matches_stdlib_override_signature() -> None:
+    """The override retains BaseHTTPRequestHandler's named parameters."""
     src = (REPO / "src" / "fa" / "egress_proxy" / "server.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
         for fn in _iter_funcdefs(cls):
             if fn.name == "log_message":
                 args = [a.arg for a in fn.args.args + fn.args.posonlyargs + fn.args.kwonlyargs]
-                if fn.args.vararg:
-                    args.append(fn.args.vararg.arg)
-                assert "format" not in args, f"server.Handler.log_message shadows builtin format; args={args}"
-                assert "_fmt" in args, "expected parameter `_fmt` (underscore-prefixed, no shadow)"
+                assert args == ["self", "format"]
+                assert fn.args.vararg is not None
+                assert fn.args.vararg.arg == "args"
 
 
 def test_pty_pool_find_where_underscore_filters() -> None:

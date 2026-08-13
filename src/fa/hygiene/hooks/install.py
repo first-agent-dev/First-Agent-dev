@@ -1,15 +1,14 @@
 """Install the local git hooks into ``.git/hooks/``.
 
-The repository's ``.pre-commit-config.yaml`` defines fast commit-time
-checks (ruff autofix/format, gitleaks, markdownlint, uv-lock, etc.), and
-the ``pre-commit`` framework executes them. This installer puts all four
-hook seats into ``.git/hooks/``: ``pre-commit`` (safe autofix + targeted
-restage), ``pre-push`` (``uv run just check`` local CI parity),
+The repository's ``.pre-commit-config.yaml`` defines fast commit-time checks,
+and the ``pre-commit`` framework executes them. This installer puts all four
+hook seats into the effective Git hooks directory: ``pre-commit`` (safe autofix
++ targeted restage), ``pre-push`` (``uv run --no-sync just check-deep``),
 ``prepare-commit-msg``, and ``commit-msg``.
 
-The custom shell hooks invoke tools via ``uv run`` so they work reliably
-on Windows/PowerShell where generated hook scripts often cannot find the
-project-managed executables in PATH.
+Readiness prewarms framework environments before calling this installer. The
+custom shell hooks then invoke project tools via ``uv run --no-sync`` so normal
+hook execution cannot mutate dependency state.
 
 The installer prefers symlinks (so the hook always reflects the
 current source after a ``git pull``), but falls back to copying
@@ -17,9 +16,9 @@ on platforms where symlinks require elevated privileges (Windows
 without Developer Mode).  This fallback ensures ``just install``
 works reliably across all contributor environments.
 
-Invoke via ``python -m fa.hygiene.hooks.install`` or programmatically
-via :func:`install_hooks`.  The ``just install-hooks`` recipe
-delegates here, so ``just`` and direct invocation share one code path.
+Invoke via ``python -m fa.hygiene.hooks.install`` or programmatically via
+:func:`install_hooks`. The workspace readiness engine is the primary lifecycle
+caller and passes the checked-out hook source directory explicitly.
 """
 
 from __future__ import annotations
@@ -94,13 +93,15 @@ def install_hooks(
     repo_root: Path | None = None,
     *,
     force: bool = False,
+    hook_source_dir: Path | None = None,
 ) -> list[Path]:
     """Install the local FA hooks into ``<repo_root>/.git/hooks/``.
 
-    Returns the list of installed hook paths. When ``force=True``,
-    any existing file or symlink at the target path is replaced;
-    otherwise an existing non-symlink file is preserved and the
-    function raises :class:`FileExistsError`.
+    Returns the list of installed hook paths. ``hook_source_dir`` selects an
+    explicit checked-out script directory; omitting it preserves the imported
+    package source. When ``force=True``, any existing file or symlink at the
+    target path is replaced; otherwise an existing non-symlink file is preserved
+    and the function raises :class:`FileExistsError`.
     """
 
     root = resolve_repo_root(repo_root or Path.cwd())
@@ -108,7 +109,7 @@ def install_hooks(
     if not hooks_dir.is_dir():
         raise SystemExit(f"fa.hygiene.hooks.install: {hooks_dir} does not exist; is this a git checkout?")
 
-    src_dir = scripts_dir()
+    src_dir = Path(hook_source_dir).expanduser().resolve() if hook_source_dir is not None else scripts_dir()
     installed: list[Path] = []
     for name in HOOK_NAMES:
         source = src_dir / name

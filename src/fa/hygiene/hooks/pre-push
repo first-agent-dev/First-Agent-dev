@@ -4,7 +4,7 @@
 # The pre-commit hook runs ~90% of checks (ruff, format, deptry, pylint-gap,
 # mypy strict, pyrefly, shell-syntax, gitleaks, markdownlint, doc-links,
 # whitespace, uv-lock) in under a minute. This pre-push hook is the final
-# blocking layer: it runs `uv run just check-deep`, which includes the full
+# blocking layer: it runs `uv run --no-sync just check-deep`, which includes the full
 # non-mutational `just check` chain PLUS targeted-mutmut and targeted-semgrep
 # on files changed vs merge-base. GitHub CI remains the final authority;
 # this hook is a convenience net for honest mistakes.
@@ -27,8 +27,41 @@
 
 set -euo pipefail
 
+# BEGIN FA WORKSPACE READINESS
+_fa_bootstrap_rc=0
+_fa_bootstrap_json=""
+_fa_repo_root=""
+if _fa_repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -n "$_fa_repo_root" ]]; then
+        if _fa_bootstrap_json="$(
+            python3 "$_fa_repo_root/scripts/bootstrap/workspace.py" ensure --workspace "$_fa_repo_root"
+        )"; then
+            :
+        else
+            _fa_bootstrap_rc=$?
+        fi
+    else
+        _fa_bootstrap_rc=70
+    fi
+else
+    _fa_bootstrap_rc=$?
+fi
+
+if [[ "$_fa_bootstrap_rc" -ne 0 ]]; then
+    if [[ -n "$_fa_repo_root" ]]; then
+        printf '[WORKSPACE_BOOTSTRAP] hook readiness unavailable (rc=%s); continuing without local gate; log=%s/.fa/bootstrap.log\n' \
+            "$_fa_bootstrap_rc" "$_fa_repo_root" >&2
+    else
+        printf '[WORKSPACE_BOOTSTRAP] hook readiness unavailable (rc=%s); continuing without local gate\n' \
+            "$_fa_bootstrap_rc" >&2
+    fi
+    exit 0
+fi
+unset _fa_bootstrap_json _fa_bootstrap_rc _fa_repo_root
+# END FA WORKSPACE READINESS
+
 if [[ "${FA_HOOK_SKIP_FULL_CHECK:-0}" == "1" ]]; then
-    echo "pre-push: skipping uv run just check-deep (FA_HOOK_SKIP_FULL_CHECK=1)" >&2
+    echo "pre-push: skipping uv run --no-sync just check-deep (FA_HOOK_SKIP_FULL_CHECK=1)" >&2
     exit 0
 fi
 
@@ -42,8 +75,8 @@ if ! command -v just >/dev/null 2>&1; then
     exit 127
 fi
 
-echo "pre-push: running uv run just check-deep" >&2
+echo "pre-push: running uv run --no-sync just check-deep" >&2
 # Redirect stdout to stderr (1>&2) so that Git GUI clients (like VS Code)
 # reliably display the full lint/test output in their error dialogs,
 # rather than swallowing the stdout and only showing the justfile exit code.
-uv run just check-deep 1>&2
+uv run --no-sync just check-deep 1>&2

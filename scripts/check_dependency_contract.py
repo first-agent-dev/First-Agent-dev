@@ -12,6 +12,7 @@ Exit 1 if contract violations found. Exit 0 if satisfied.
 from __future__ import annotations
 
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -31,17 +32,13 @@ PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 
 def _parse_toml_simple(path: Path) -> dict[str, Any]:
     """Parse a simple TOML file using stdlib tomllib (ADR-11-I1 compliant)."""
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib  # type: ignore[no-redef]  # Python < 3.11 fallback
     with path.open("rb") as f:
         return tomllib.load(f)
 
 
 def extract_contract_packages(contract: dict[str, Any]) -> set[str]:
     """Extract all package names from the dependency contract."""
-    packages = set()
+    packages: set[str] = set()
     for section_key in (
         "packages.core",
         "packages.security_critical",

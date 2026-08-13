@@ -1,10 +1,7 @@
 name: Mutation testing
 
-# Weekly full-scope mutation testing. Advisory (continue-on-error) until the
-# survivor workplan is cleared; on push/PR, targeted-mutmut in advisory.yml
-# covers changed files. This workflow runs mutmut against the full
-# [tool.mutmut] source_paths (sandbox + substrate).
-
+# Weekly full configured mutation scope. Advisory policy is unchanged; the
+# runner supplies complete killed/type-invalid/actionable evidence and diffs.
 on:
   workflow_dispatch:
   schedule:
@@ -30,7 +27,7 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
       - name: Install dependencies
-        run: uv sync --frozen --extra dev
+        run: uv sync --locked --extra dev
       - name: Sanity — fa resolves to the checked-out tree (editable install)
         run: |
           uv run python - <<'PYEOF'
@@ -41,29 +38,50 @@ jobs:
           assert str(p).startswith(str(root)), f"fa resolved outside workspace: {p}"
           print("fa ->", p)
           PYEOF
-      - name: Run mutation testing (scope = pyproject [tool.mutmut])
-        # NOTE: mutmut 3.x removed --paths-to-mutate; scope lives only in pyproject.
-        run: uv run mutmut run
-      - name: Export stats to job summary
+      - name: Run configured mutation testing
+        run: >-
+          uv run python scripts/run_slice_mutmut.py --configured-scope
+          --result-json mutants/mutmut-slice-result.json
+          --diff-report mutants/mutmut-slice-diffs.md
+          --timeout-seconds 18000
+      - name: Publish complete mutation summary
         if: always()
         run: |
-          uv run mutmut export-cicd-stats || true
-          {
-            echo '## Mutation testing (src/fa/sandbox + substrate)'
-            echo '```json'
-            cat mutants/mutmut-cicd-stats.json 2>/dev/null || echo '{"error": "stats file missing"}'
-            echo ''
-            echo '```'
-            echo 'Survivor-clearing tracker: knowledge/mutation-survivors-workplan.md'
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: List survivors
-        if: always()
-        run: uv run mutmut results || true
-      - name: Upload stats artifact
+          uv run python - <<'PYEOF'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("mutants/mutmut-slice-result.json")
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          if not path.is_file():
+              summary.write_text(
+                  "## Mutation testing\n\nERROR: schema-v1 result artifact is missing; no clean claim is available.\n",
+                  encoding="utf-8",
+              )
+              raise SystemExit(0)
+          data = json.loads(path.read_text(encoding="utf-8"))
+          counts = data.get("counts") or {}
+          required = {"total", "killed", "type_invalid", "survived", "not_checked"}
+          if data.get("schema_version") != 1 or not required <= counts.keys():
+              rendered = "ERROR: malformed/incomplete schema-v1 mutation result; no clean claim is available."
+          else:
+              rendered = (
+                  f"verdict={data['verdict']} total={counts['total']} killed={counts['killed']} "
+                  f"type_invalid={counts['type_invalid']} survived={counts['survived']} "
+                  f"not_checked={counts['not_checked']}"
+              )
+          with summary.open("a", encoding="utf-8") as handle:
+              handle.write(f"## Mutation testing (configured scope)\n\n`{rendered}`\n")
+              handle.write("\nSurvivor-clearing tracker: `knowledge/mutation-survivors-workplan.md`\n")
+          PYEOF
+      - name: Upload mutation result and actionable diffs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: mutation-stats
-          path: mutants/mutmut-cicd-stats.json
+          name: mutation-results
+          path: |
+            mutants/mutmut-slice-result.json
+            mutants/mutmut-slice-diffs.md
           retention-days: 90
           if-no-files-found: warn

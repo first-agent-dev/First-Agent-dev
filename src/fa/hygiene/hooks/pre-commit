@@ -33,10 +33,43 @@
 # human/agent's unrelated unstaged hunks too.  The hook then fails with an
 # explicit message so the operator can resolve the partial-staging case by hand.
 #
-# Optional local CI parity: set FA_HOOK_FULL_CHECK=1 to run `uv run just check`
+# Optional local CI parity: set FA_HOOK_FULL_CHECK=1 to run `uv run --no-sync just check`
 # after the fast autofix pass. The default full gate lives in pre-push.
 
 set -euo pipefail
+
+# BEGIN FA WORKSPACE READINESS
+_fa_bootstrap_rc=0
+_fa_bootstrap_json=""
+_fa_repo_root=""
+if _fa_repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -n "$_fa_repo_root" ]]; then
+        if _fa_bootstrap_json="$(
+            python3 "$_fa_repo_root/scripts/bootstrap/workspace.py" ensure --workspace "$_fa_repo_root"
+        )"; then
+            :
+        else
+            _fa_bootstrap_rc=$?
+        fi
+    else
+        _fa_bootstrap_rc=70
+    fi
+else
+    _fa_bootstrap_rc=$?
+fi
+
+if [[ "$_fa_bootstrap_rc" -ne 0 ]]; then
+    if [[ -n "$_fa_repo_root" ]]; then
+        printf '[WORKSPACE_BOOTSTRAP] hook readiness unavailable (rc=%s); continuing without local gate; log=%s/.fa/bootstrap.log\n' \
+            "$_fa_bootstrap_rc" "$_fa_repo_root" >&2
+    else
+        printf '[WORKSPACE_BOOTSTRAP] hook readiness unavailable (rc=%s); continuing without local gate\n' \
+            "$_fa_bootstrap_rc" >&2
+    fi
+    exit 0
+fi
+unset _fa_bootstrap_json _fa_bootstrap_rc _fa_repo_root
+# END FA WORKSPACE READINESS
 
 # Bypass system SOCKS/HTTP proxy for pip inside pre-commit envs.
 # Only affects this hook process and its children — does not
@@ -91,13 +124,13 @@ for path in "${staged_paths[@]}"; do
 done
 
 _run_fast_hooks() {
-    uv run pre-commit run --hook-stage pre-commit "$@"
+    uv run --no-sync pre-commit run --hook-stage pre-commit "$@"
 }
 
 _run_optional_full_check() {
     if [[ "${FA_HOOK_FULL_CHECK:-0}" == "1" ]]; then
-        echo "pre-commit: FA_HOOK_FULL_CHECK=1 — running uv run just check" >&2
-        uv run just check 1>&2
+        echo "pre-commit: FA_HOOK_FULL_CHECK=1 — running uv run --no-sync just check" >&2
+        uv run --no-sync just check 1>&2
     fi
 }
 

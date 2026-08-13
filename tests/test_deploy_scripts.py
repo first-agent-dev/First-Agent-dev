@@ -24,7 +24,8 @@ import pytest
 
 from tests._capabilities import requires_posix_modes, requires_posix_paths, requires_stable_tmpdir
 
-_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+_ROOT = Path(__file__).resolve().parents[1]
+_SCRIPTS = _ROOT / "scripts"
 
 # Host-side shell scripts that operators run directly or that ship in the image.
 _SHELL_SCRIPTS = [
@@ -453,11 +454,33 @@ def test_setup_downloads_host_installers_with_retry_and_without_pipe_to_root_she
 
 def test_post_setup_does_not_interpolate_remote_or_branch_inside_docker_exec_shell() -> None:
     text = (_SCRIPTS / "fa-post-setup.sh").read_text(encoding="utf-8")
-    assert "git ls-remote ${REPO_SSH_URL}" not in text
+    assert "REPO_SSH_URL" not in text
+    assert "git ls-remote ${push_url}" not in text
     assert "git push origin --delete $TEST_BRANCH" not in text
     assert "git push origin $TEST_BRANCH" not in text
-    assert "-e REPO_SSH_URL=" in text
+    assert "push_url=$(git remote get-url --push origin)" in text
+    assert 'git ls-remote "$push_url"' in text
+    assert '-e SESSION_WS="$SESSION_WS"' in text
     assert "-e TEST_BRANCH=" in text
+
+
+def test_post_setup_relies_on_lifecycle_identity_and_proves_source_unchanged() -> None:
+    """C2/C3: post-setup tests configured publication without masking lifecycle defects."""
+
+    text = (_SCRIPTS / "fa-post-setup.sh").read_text(encoding="utf-8")
+
+    identity_writes = re.findall(
+        r"(?m)^[^#\n]*\bgit\b[^\n]*\bconfig\b[^\n]*\buser\.(?:name|email)\b",
+        text,
+    )
+    assert identity_writes == []
+    assert "SOURCE_HEAD_BEFORE=" in text
+    assert "SOURCE_STATUS_BEFORE=" in text
+    assert "SOURCE_HEAD_AFTER=" in text
+    assert "SOURCE_STATUS_AFTER=" in text
+    assert '"$SOURCE_HEAD_AFTER" != "$SOURCE_HEAD_BEFORE"' in text
+    assert '"$SOURCE_STATUS_AFTER" != "$SOURCE_STATUS_BEFORE"' in text
+    assert "Git push smoke mutated /repo" in text
 
 
 def _write_env_templates(repo: Path) -> None:
@@ -667,6 +690,106 @@ def test_env_template_does_not_hardcode_fa_config_models_path() -> None:
     """D-5: drop the stale FA_CONFIG=...models.yaml hint (now a read-only mount)."""
     text = (_SCRIPTS.parent / ".env.fa.template").read_text(encoding="utf-8")
     assert "# FA_CONFIG=/home/fa/.fa/models.yaml" not in text
+
+
+def test_push_url_override_is_documented_only_in_non_secret_template() -> None:
+    """C0/C3 S8: publication routing is non-secret and never enters provider-key templates."""
+
+    runtime_template = (_ROOT / ".env.fa.template").read_text(encoding="utf-8")
+    secret_template = (_ROOT / "knowledge" / "templates" / "fa.env.template").read_text(encoding="utf-8")
+
+    assert "FA_REPO_PUSH_URL" in runtime_template
+    assert "credential-free" in runtime_template
+    assert "FA_REPO_PUSH_URL" not in secret_template
+
+
+def test_current_workspace_docs_reject_superseded_transport_and_session_claims() -> None:
+    """C0 S8/T15: current operator surfaces describe pack transport and persistent sessions."""
+
+    current_docs = (
+        _ROOT / "README.md",
+        _ROOT / "AGENTS.md",
+        _ROOT / "knowledge" / "adr" / "ADR-13-workspace-isolation.md",
+        _ROOT / "knowledge" / "adr" / "DIGEST.md",
+        _ROOT / "knowledge" / "instructions" / "01-install.md",
+        _ROOT / "knowledge" / "instructions" / "02-operations.md",
+        _ROOT / "knowledge" / "overview" / "FEATURES.md",
+        _ROOT / "knowledge" / "ci-guardrails-reference.md",
+        _ROOT / "worklogs" / "HANDOFF.md",
+    )
+    stale_phrases = (
+        "git clone --local",
+        "hardlink",
+        "container lifecycle corresponds to one session",
+        "one session per container lifecycle",
+        "по одной на старт контейнера",
+    )
+
+    violations = {
+        str(path.relative_to(_ROOT)): phrase
+        for path in current_docs
+        for phrase in stale_phrases
+        if phrase in path.read_text(encoding="utf-8").lower()
+    }
+    assert violations == {}
+    operations = (_ROOT / "knowledge" / "instructions" / "02-operations.md").read_text(encoding="utf-8")
+    normalized_operations = " ".join(operations.split())
+    assert "Перезапуск повторно применяет session selector" in normalized_operations
+    assert "Контейнер перезапустится и создаст чистую сессию" not in normalized_operations
+    assert "~/.fa/sessions/<session-id>/session.db" in operations
+    assert "~/.fa/session-log/<run_id>/session.db" not in operations
+
+
+def test_historical_workspace_docs_have_top_level_superseded_banner() -> None:
+    """C0 S8/T15: obsolete command sheets remain evidence, never current instructions."""
+
+    historical_docs = (
+        _ROOT / "knowledge" / "pr-notes" / "workspace-isolation.md",
+        _ROOT / "worklogs" / "pr-notes" / "workspace-isolation.md",
+        _ROOT / "worklogs" / "S13-NEXT-SESSION-START.md",
+        _ROOT / "worklogs" / "S13-SESSION-START-PROMPT.md",
+    )
+    for path in historical_docs:
+        banner = "\n".join(path.read_text(encoding="utf-8").splitlines()[:12])
+        assert "HISTORICAL / SUPERSEDED" in banner, path
+        assert "ADR-13-workspace-isolation.md" in banner, path
+        assert "AP-004-symptom-chasing-without-model.md" in banner, path
+
+
+def test_workspace_stale_claims_are_confined_to_historical_evidence() -> None:
+    """C0 S8/T15: any new stale-claim path is a documentation-contract failure."""
+
+    stale_phrases = (
+        "git clone --local",
+        "hardlink",
+        "container lifecycle corresponds to one session",
+        "one session per container lifecycle",
+        "по одной на старт контейнера",
+    )
+    allowed_prefixes = (
+        Path("knowledge/research"),
+        Path("knowledge/trace"),
+        Path("worklogs/archive"),
+    )
+    allowed_paths = {
+        Path("knowledge/anti-patterns/AP-004-symptom-chasing-without-model.md"),
+        Path("knowledge/pr-notes/workspace-isolation.md"),
+        Path("worklogs/pr-notes/workspace-isolation.md"),
+        Path("worklogs/S13-NEXT-SESSION-START.md"),
+        Path("worklogs/S13-SESSION-START-PROMPT.md"),
+        Path("worklogs/implementation-plans/PLAN-session-workspace-readiness-bootstrap.md"),
+    }
+    violations: dict[str, list[str]] = {}
+    for path in _ROOT.rglob("*.md"):
+        relative = path.relative_to(_ROOT)
+        if any(part in {".git", ".venv", "node_modules", "mutants"} for part in relative.parts):
+            continue
+        text = path.read_text(encoding="utf-8").lower()
+        hits = [phrase for phrase in stale_phrases if phrase in text]
+        allowed = relative in allowed_paths or any(relative.is_relative_to(prefix) for prefix in allowed_prefixes)
+        if hits and not allowed:
+            violations[relative.as_posix()] = hits
+    assert violations == {}
 
 
 def test_legacy_routing_migration_blocks_have_sunset_notes() -> None:

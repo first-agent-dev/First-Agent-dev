@@ -22,6 +22,39 @@
 
 set -euo pipefail
 
+# BEGIN FA WORKSPACE READINESS
+_fa_bootstrap_rc=0
+_fa_bootstrap_json=""
+_fa_repo_root=""
+if _fa_repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -n "$_fa_repo_root" ]]; then
+        if _fa_bootstrap_json="$(
+            python3 "$_fa_repo_root/scripts/bootstrap/workspace.py" ensure --workspace "$_fa_repo_root"
+        )"; then
+            :
+        else
+            _fa_bootstrap_rc=$?
+        fi
+    else
+        _fa_bootstrap_rc=70
+    fi
+else
+    _fa_bootstrap_rc=$?
+fi
+
+if [[ "$_fa_bootstrap_rc" -ne 0 ]]; then
+    if [[ -n "$_fa_repo_root" ]]; then
+        printf '[WORKSPACE_BOOTSTRAP] hook readiness unavailable (rc=%s); continuing without local gate; log=%s/.fa/bootstrap.log\n' \
+            "$_fa_bootstrap_rc" "$_fa_repo_root" >&2
+    else
+        printf '[WORKSPACE_BOOTSTRAP] hook readiness unavailable (rc=%s); continuing without local gate\n' \
+            "$_fa_bootstrap_rc" >&2
+    fi
+    exit 0
+fi
+unset _fa_bootstrap_json _fa_bootstrap_rc _fa_repo_root
+# END FA WORKSPACE READINESS
+
 COMMIT_MSG_FILE="${1:-}"
 if [[ -z "${COMMIT_MSG_FILE}" ]]; then
   echo "commit-msg: missing commit-msg file argument" >&2
@@ -49,4 +82,4 @@ fi
 # Delegate to the Python validator, which handles both:
 # - explicit PR-intent metadata blocks (strict validation)
 # - ordinary manual commits with no PR-intent headers (allowed)
-exec uv run python -m fa.hygiene validate "${COMMIT_MSG_FILE}"
+exec uv run --no-sync python -m fa.hygiene validate "${COMMIT_MSG_FILE}"

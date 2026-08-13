@@ -13,7 +13,6 @@ build/
 # after each run. Excluding the directory *contents* keeps the allowlist working.
 .fa/*
 !.fa/dependency_contract.toml
-!.fa/host-bootstrap.json
 
 # Environment files (may contain secrets like B2 credentials)
 .env*

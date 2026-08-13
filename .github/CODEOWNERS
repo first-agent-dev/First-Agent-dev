@@ -24,6 +24,7 @@
 /src/fa/hygiene/hooks/              @MondayInRussian
 /scripts/check_shell_syntax.sh      @MondayInRussian
 /scripts/run_targeted_mutmut.py     @MondayInRussian
+/scripts/run_slice_mutmut.py        @MondayInRussian
 /scripts/run_targeted_semgrep.py    @MondayInRussian
 /scripts/_git_diff.py               @MondayInRussian
 /scripts/check_*.py                 @MondayInRussian

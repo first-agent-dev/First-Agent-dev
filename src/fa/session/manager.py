@@ -13,6 +13,7 @@ import os
 import shutil
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,8 @@ from uuid import uuid4
 
 from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
 from fa.paths import PRIVATE_DIR_MODE
+from fa.session.workspace import WorkspaceProvisionError, provision_git_workspace
+from fa.workspace_bootstrap import ReadyState
 
 _SESSION_SCHEMA_VERSION = "v1"
 _SESSION_ID_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
@@ -75,10 +78,14 @@ class SessionManager:
         state_root: Path,
         workspace_root: Path,
         source_workspace: Path | None = None,
+        repo_push_url: str | None = None,
+        workspace_preparer: Callable[[Path], ReadyState] | None = None,
     ) -> None:
         self.state_root = Path(state_root).expanduser().resolve()
         self.workspace_root = Path(workspace_root).expanduser().resolve()
         self.source_workspace = Path(source_workspace).expanduser().resolve() if source_workspace is not None else None
+        self.repo_push_url = repo_push_url
+        self.workspace_preparer = workspace_preparer
         self.sessions_root = self.state_root / "sessions"
         self.run_root = self.state_root / "session-log"
         self.sessions_root.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIR_MODE)
@@ -200,7 +207,7 @@ class SessionManager:
                     f"workspace {workspace_path} already belongs to session {owner_id}",
                 )
 
-    def _provision_workspace(self, workspace_path: Path) -> bool:
+    def _provision_workspace(self, workspace_path: Path, *, session_id: str) -> bool:
         """Create a new workspace; return whether this method created it."""
         if workspace_path.exists():
             if not workspace_path.is_dir():
@@ -211,7 +218,21 @@ class SessionManager:
             if self.source_workspace is not None:
                 if not self.source_workspace.is_dir():
                     raise SessionManagerError("source_workspace_invalid", str(self.source_workspace))
-                shutil.copytree(self.source_workspace, workspace_path, symlinks=True)
+                if (self.source_workspace / ".git").is_dir():
+                    try:
+                        provision_git_workspace(
+                            self.source_workspace,
+                            workspace_path,
+                            session_id,
+                            self.repo_push_url,
+                        )
+                    except WorkspaceProvisionError as exc:
+                        raise SessionManagerError(
+                            "workspace_provision_failed",
+                            f"{exc.code}: {exc.detail}",
+                        ) from exc
+                else:
+                    shutil.copytree(self.source_workspace, workspace_path, symlinks=True)
             else:
                 workspace_path.mkdir(parents=False)
         except SessionManagerError:
@@ -268,8 +289,10 @@ class SessionManager:
                     status="provisioning",
                 ),
             )
-            self._provision_workspace(workspace_path)
+            self._provision_workspace(workspace_path, session_id=session_id)
             SessionDatabase(db_path, session_id=session_id)
+            if self.workspace_preparer is not None:
+                self.workspace_preparer(workspace_path)
             self._atomic_write_json(
                 session_dir / "manifest.json",
                 self._manifest_payload(
@@ -324,6 +347,8 @@ class SessionManager:
             SessionDatabase.open_existing(db_path, session_id=session_id)
         except SessionDatabaseError as exc:
             raise SessionManagerError(exc.code, str(exc)) from exc
+        if self.workspace_preparer is not None:
+            self.workspace_preparer(manifest_workspace)
         now = self._now()
         data["last_used_at"] = now
         self._atomic_write_json(manifest_path, data)

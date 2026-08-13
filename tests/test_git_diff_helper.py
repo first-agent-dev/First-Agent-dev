@@ -92,7 +92,7 @@ class TestChangedPythonFiles:
         rels = sorted(p.relative_to(repo).as_posix() for p in files_all)
         assert rels == ["scripts/z.py", "src/b.py", "tests/u.py"]
 
-    def test_cap_returns_empty_with_log(self, repo: Path, capsys: Any) -> None:  # type: ignore[no-any-unimported]
+    def test_cap_returns_empty_with_log(self, repo: Path, capsys: Any) -> None:
         for i in range(3):
             (repo / "src" / f"x{i}.py").write_text(str(i))
         _git(repo, "add", "-A")
@@ -103,12 +103,12 @@ class TestChangedPythonFiles:
         assert "fail-open" in err
         assert "max_files=2" in err
 
-    def test_missing_git_returns_empty(self, repo: Path, capsys: Any, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-any-unimported]
+    def test_missing_git_returns_empty(self, repo: Path, capsys: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(shutil, "which", lambda _name: None)
         assert gd.changed_python_files(repo, source_prefixes=("src/",)) == []
         assert "git not found" in capsys.readouterr().err
 
-    def test_no_merge_base_returns_empty(self, tmp_path: Path, capsys: Any) -> None:  # type: ignore[no-any-unimported]
+    def test_no_merge_base_returns_empty(self, tmp_path: Path, capsys: Any) -> None:
         # fresh repo with no commits / no main branch -> fail-open
         r = tmp_path / "r"
         r.mkdir()

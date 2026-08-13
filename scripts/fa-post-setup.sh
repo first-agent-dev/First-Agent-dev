@@ -168,9 +168,6 @@ if command -v tailscale &>/dev/null; then
     fi
 fi
 
-# Derive the repo SSH URL from origin remote (supports forks)
-REPO_SSH_URL=$(git remote get-url origin 2>/dev/null | sed 's|https://github.com/|git@github.com:|' || echo "git@github.com:first-agent-dev/First-Agent-dev.git")
-
 # ---------------------------------------------------------------------------
 # 1. Build + start the stack (two services: fa-egress-proxy + first-agent)
 # ---------------------------------------------------------------------------
@@ -247,32 +244,28 @@ if [[ -z "$SESSION_WS" ]]; then
 fi
 log_info "Active session workspace: $SESSION_WS"
 
+# Snapshot the local fetch authority before publication smoke. A push must never
+# mutate /repo; these values are compared after branch cleanup below.
+SOURCE_HEAD_BEFORE="$(docker exec first-agent git -C /repo rev-parse HEAD)"
+SOURCE_STATUS_BEFORE="$(docker exec first-agent git -C /repo status --porcelain=v1 --untracked-files=all)"
+
 # ---------------------------------------------------------------------------
-# 3b. Configure git inside container (in the session workspace)
+# 4. Test connectivity to the workspace's ACTUAL configured push destination.
 # ---------------------------------------------------------------------------
-log_info "Configuring git inside container..."
+log_info "Testing configured Git push destination..."
+
 # SESSION_WS originates from a container-controlled file (.active). Pass it
-# through -e (the environment) and keep the bash script body SINGLE-QUOTED
-# so there is NO host-side shell interpolation of untrusted input. Same
-# pattern applies to every docker exec block below.
-docker exec -e SESSION_WS="$SESSION_WS" first-agent \
-    bash -c 'cd "$SESSION_WS" && git config user.name "First Agent"'
-docker exec -e SESSION_WS="$SESSION_WS" first-agent \
-    bash -c 'cd "$SESSION_WS" && git config user.email "agent@first-agent.local"'
-
-# ---------------------------------------------------------------------------
-# 4. Test git SSH connectivity
-# ---------------------------------------------------------------------------
-log_info "Testing git SSH connectivity..."
-
-if docker exec -e REPO_SSH_URL="$REPO_SSH_URL" -e SESSION_WS="$SESSION_WS" first-agent \
-        bash -lc 'cd "$SESSION_WS" && git ls-remote "$REPO_SSH_URL"' >/dev/null 2>&1; then
-    log_info "Git SSH connectivity: OK"
+# through -e and keep the shell body single-quoted: no host interpolation of the
+# path or remote. The remote is read from Git config inside the container.
+if docker exec -e SESSION_WS="$SESSION_WS" first-agent \
+        bash -lc 'cd "$SESSION_WS" && push_url=$(git remote get-url --push origin) && git ls-remote "$push_url"' \
+        >/dev/null 2>&1; then
+    log_info "Configured Git push destination: reachable"
 else
-    log_error "Git SSH test FAILED. Check:"
-    log_error "  - Deploy key added to GitHub with WRITE access"
+    log_error "Configured Git push destination test FAILED. Check:"
+    log_error "  - origin.pushurl is the intended writable repository"
+    log_error "  - Deploy key has WRITE access"
     log_error "  - Container has internet access"
-    log_error "  - Tailscale is up (if DNS depends on it)"
     exit 1
 fi
 
@@ -312,6 +305,14 @@ docker exec -e TEST_BRANCH="$TEST_BRANCH" -e SESSION_WS="$SESSION_WS" first-agen
     git push origin --delete "$TEST_BRANCH" || true;
     rm -f bootstrap-test.txt
 ' || true
+
+SOURCE_HEAD_AFTER="$(docker exec first-agent git -C /repo rev-parse HEAD)"
+SOURCE_STATUS_AFTER="$(docker exec first-agent git -C /repo status --porcelain=v1 --untracked-files=all)"
+if [[ "$SOURCE_HEAD_AFTER" != "$SOURCE_HEAD_BEFORE" || "$SOURCE_STATUS_AFTER" != "$SOURCE_STATUS_BEFORE" ]]; then
+    log_error "Git push smoke mutated /repo; refusing to continue."
+    exit 1
+fi
+log_info "Source /repo remained unchanged during push smoke."
 
 # ---------------------------------------------------------------------------
 # 5b. Secret-isolation smoke check (ADR-12): the AGENT container must hold no

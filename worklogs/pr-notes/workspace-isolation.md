@@ -1,5 +1,12 @@
 # PR: Workspace Isolation (ADR-13)
 
+> [!WARNING]
+> **HISTORICAL / SUPERSEDED (2026-08-13).** This body records the original
+> workspace-isolation landing and is not current operator guidance. Do not reuse
+> its transport or lifecycle commands. Current authority:
+> [ADR-13](../../knowledge/adr/ADR-13-workspace-isolation.md) and
+> [AP-004](../../knowledge/anti-patterns/AP-004-symptom-chasing-without-model.md).
+
 **Intent:** IMPLEMENT
 **Goal Lens:** Isolate agent writes from the host worktree using a read-only bind mount and per-session writable clones.
 
@@ -24,6 +31,7 @@ Implemented Workspace Isolation via Pattern 2 (Docker AI Sandbox RO mount + per-
    - `test_entrypoint_command_override_executes_inside_session_clone` provides pure integration coverage verifying the clone latency, isolated cwd execution, and directory boundaries directly.
 
 ## Subtraction Evaluated
+
 - Removing what makes this redundant: none.
 - What capability is lost: The operator's main repo no longer becomes contaminated. While per-session clones introduce minimal latency, `git clone --local` utilizes underlying filesystem hardlinks natively providing near-zero disk-footprint/instant cloning.
 - Open-source agent-stack precedent: SWE-Next, Open SWE.

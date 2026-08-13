@@ -16,15 +16,32 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
 from fa.session.manager import SessionManager, SessionManagerError
+from fa.workspace_bootstrap import ReadyState, ReadyStatus
 
 
-def _manager(tmp_path: Path) -> SessionManager:
+def _ready_state(workspace: Path) -> ReadyState:
+    return ReadyState(
+        status=ReadyStatus.READY,
+        fingerprint="sha256:test",
+        reason_code="ready_fast_path",
+        log_path=workspace / ".fa" / "bootstrap.log",
+        repaired=False,
+        elapsed_ms=1,
+    )
+
+
+def _manager(
+    tmp_path: Path,
+    *,
+    workspace_preparer: Callable[[Path], ReadyState] | None = None,
+) -> SessionManager:
     source = tmp_path / "source"
     source.mkdir()
     (source / "README.md").write_text("source", encoding="utf-8")
@@ -32,6 +49,7 @@ def _manager(tmp_path: Path) -> SessionManager:
         state_root=tmp_path / "state",
         workspace_root=tmp_path / "workspaces",
         source_workspace=source,
+        workspace_preparer=workspace_preparer,
     )
 
 
@@ -77,6 +95,73 @@ def test_explicit_attach_reuses_session_authority_and_workspace(tmp_path: Path) 
     assert attached.workspace_path == created.workspace_path
     assert attached.session_db_path == created.session_db_path
     assert run.run_log_dir == (manager.run_root / "controlled-new-run").resolve()
+
+
+def test_new_session_prepares_after_db_before_active_manifest(tmp_path: Path) -> None:
+    """C1 A: readiness producer runs inside new-session admission ordering."""
+
+    observed: list[tuple[Path, bool, str]] = []
+
+    def prepare(workspace: Path) -> ReadyState:
+        manifests = list((tmp_path / "state" / "sessions").glob("*/manifest.json"))
+        assert len(manifests) == 1
+        manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+        db_path = Path(str(manifest["session_db_path"]))
+        observed.append((workspace, db_path.is_file(), str(manifest["status"])))
+        return _ready_state(workspace)
+
+    manager = _manager(tmp_path, workspace_preparer=prepare)
+    created = manager.create_or_attach_session(session_id=None, workspace_override=None)
+
+    assert observed == [(created.workspace_path, True, "provisioning")]
+    manifest = json.loads(created.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["status"] == "active"
+    assert "bootstrap" not in manifest
+
+
+def test_attach_prepares_after_db_validation_before_last_used_write(tmp_path: Path) -> None:
+    """C1 B: attach readiness precedes the only manifest mutation."""
+
+    creator = _manager(tmp_path)
+    created = creator.create_or_attach_session(session_id=None, workspace_override=None)
+    before = json.loads(created.manifest_path.read_text(encoding="utf-8"))
+    observed: list[tuple[Path, str]] = []
+
+    def prepare(workspace: Path) -> ReadyState:
+        current = json.loads(created.manifest_path.read_text(encoding="utf-8"))
+        observed.append((workspace, str(current["last_used_at"])))
+        return _ready_state(workspace)
+
+    manager = SessionManager(
+        state_root=tmp_path / "state",
+        workspace_root=tmp_path / "workspaces",
+        source_workspace=tmp_path / "source",
+        workspace_preparer=prepare,
+    )
+    attached = manager.create_or_attach_session(
+        session_id=created.session_id,
+        workspace_override=created.workspace_path,
+    )
+
+    assert attached.workspace_path == created.workspace_path
+    assert observed == [(created.workspace_path, str(before["last_used_at"]))]
+    after = json.loads(created.manifest_path.read_text(encoding="utf-8"))
+    assert after["status"] == "active"
+
+
+def test_unexpected_new_session_preparer_failure_rolls_back_owned_state(tmp_path: Path) -> None:
+    """C3 A: callback contract breach cannot publish an active namespace."""
+
+    def fail(_workspace: Path) -> ReadyState:
+        raise RuntimeError("preparer contract breach")
+
+    manager = _manager(tmp_path, workspace_preparer=fail)
+
+    with pytest.raises(SessionManagerError, match="session_provision_failed"):
+        manager.create_or_attach_session(session_id=None, workspace_override=None)
+
+    assert list(manager.sessions_root.iterdir()) == []
+    assert list(manager.workspace_root.iterdir()) == []
 
 
 def test_unknown_session_and_workspace_mismatch_fail_before_mutation(tmp_path: Path) -> None:

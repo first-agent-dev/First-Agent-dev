@@ -67,14 +67,13 @@ class _EgressProxyHandler(BaseHTTPRequestHandler):
     proxy_token: str
     forward: Any
 
-    # Intentionally a no-op: suppress BaseHTTPRequestHandler's default
-    # stderr access line (it would log per-request paths, which this proxy
-    # treats as sensitive). Parameters are named with leading underscores to
-    # mark them intentionally unused (avoids shadowing the builtin ``format``
-    # and keeps pylint/vulture silent on the unused variadic).
+    # Intentionally a no-op: suppress BaseHTTPRequestHandler's default stderr
+    # access line because this proxy treats per-request paths as sensitive. The
+    # parameter names match the parent API exactly; deleting them marks both as
+    # intentionally unused without weakening override checking.
     @override
-    def log_message(self, _fmt: str, *_args: Any) -> None:
-        return
+    def log_message(self, format: str, *args: Any) -> None:
+        del format, args
 
     def _send(self, status: int, body: bytes, content_type: str = "application/json") -> None:
         self.send_response(status)

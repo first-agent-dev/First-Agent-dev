@@ -133,6 +133,28 @@ def test_no_duplicate_pythonpath_on_agent() -> None:
     )
 
 
+def test_agent_cache_tmpfs_caps_keep_home_and_uv_separate() -> None:
+    """C0/C3 Q8: measured HOME headroom stays ephemeral and distinct from uv."""
+
+    volumes = _compose()["services"]["first-agent"]["volumes"]
+    tmpfs_by_target = {
+        volume["target"]: volume for volume in volumes if isinstance(volume, dict) and volume.get("type") == "tmpfs"
+    }
+
+    home_cache = tmpfs_by_target["/home/fa/.cache"]
+    uv_cache = tmpfs_by_target["/tmp/uv-cache"]
+    assert home_cache == {
+        "type": "tmpfs",
+        "target": "/home/fa/.cache",
+        "tmpfs": {"size": "1536M"},
+    }
+    assert uv_cache == {
+        "type": "tmpfs",
+        "target": "/tmp/uv-cache",
+        "tmpfs": {"size": "2G"},
+    }
+
+
 # --- setup script ---------------------------------------------------------
 
 

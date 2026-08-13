@@ -112,6 +112,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 from fa.roles import EvalFamilyConflictError
 from fa.session.manager import RunContext, SessionContext, SessionManager, SessionManagerError
 from fa.verifier import load_contracts_from_dir
+from fa.workspace_bootstrap import ReadyState, ReadyStatus, ensure_workspace_ready
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,18 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
 def _valid_run_id(value: str) -> bool:
     return bool(_RUN_ID_RE.fullmatch(value))
+
+
+def _prepare_managed_workspace(workspace: Path) -> ReadyState:
+    """Run total readiness admission and surface degradation without blocking."""
+
+    state = ensure_workspace_ready(workspace)
+    if state.status is not ReadyStatus.READY:
+        print(
+            f"[WORKSPACE_BOOTSTRAP] {state.status.value}: {state.reason_code}; log={state.log_path}",
+            file=sys.stderr,
+        )
+    return state
 
 
 def _session_manager_for_args(args: argparse.Namespace) -> SessionManager:
@@ -139,10 +152,15 @@ def _session_manager_for_args(args: argparse.Namespace) -> SessionManager:
         source_workspace: Path | None = Path(configured_source)
     else:
         source_workspace = Path("/repo") if Path("/repo").is_dir() else None
+    repo_push_url = os.environ.get("FA_REPO_PUSH_URL")
+    if repo_push_url == "":
+        repo_push_url = None
     return SessionManager(
         state_root=fa_state_root(),
         workspace_root=workspace_root,
         source_workspace=source_workspace,
+        repo_push_url=repo_push_url,
+        workspace_preparer=_prepare_managed_workspace,
     )
 
 
