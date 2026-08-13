@@ -965,27 +965,48 @@ cleanup_images() {
 # ═══════════════════════════════════════════════════════════════
 
 ensure_host_scripts() {
-  # Ensure host-side scripts are executable after checkout/update.
-  # Use ABSOLUTE paths (not relative `scripts/`) so the function is correct
-  # even if a future refactor reorders calls before the `cd "${REPO_DIR}"`
-  # in main(). A silent chmod failure here is the root cause of the
-  # "Permission denied on /usr/local/bin/fa" class.
+  # Use absolute paths so update is independent of cwd. Set deterministic 0755
+  # only on scripts that are executed directly; a broad `find ... chmod +x`
+  # dirties tracked 0644 scripts that are intentionally invoked through Bash.
   local _scripts_dir="${REPO_DIR}/scripts"
   local _hooks_dir="${REPO_DIR}/src/fa/hygiene/hooks"
-  if [[ -d "${_scripts_dir}" ]]; then
-    find "${_scripts_dir}" -maxdepth 2 -type f \( -name '*.sh' -o -name 'fa' \) -exec chmod +x {} + 2>/dev/null || true
-  fi
+  local _wrapper="${_scripts_dir}/fa"
+  local _script
+  local -a _direct_scripts=(
+    "${_wrapper}"
+    "${_scripts_dir}/fa-update.sh"
+    "${_scripts_dir}/fa-clean-rebuild.sh"
+    "${_scripts_dir}/fa-post-setup.sh"
+    "${_scripts_dir}/backup-fa.sh"
+    "${_scripts_dir}/ssh-tailscale/00-failsafe.sh"
+    "${_scripts_dir}/ssh-tailscale/10-diagnose.sh"
+    "${_scripts_dir}/ssh-tailscale/20-harden.sh"
+    "${_scripts_dir}/ssh-tailscale/30-verify.sh"
+  )
+  for _script in "${_direct_scripts[@]}"; do
+    if [[ ! -f "${_script}" ]]; then
+      echo "ERROR: required host script is missing: ${_script}" >&2
+      return 1
+    fi
+    chmod 0755 "${_script}" || return 1
+  done
+
   if [[ -d "${_hooks_dir}" ]]; then
     local _h
     for _h in commit-msg pre-commit pre-push prepare-commit-msg; do
-      [[ -f "${_hooks_dir}/${_h}" ]] && chmod +x "${_hooks_dir}/${_h}" 2>/dev/null || true
+      if [[ -f "${_hooks_dir}/${_h}" ]]; then
+        chmod 0755 "${_hooks_dir}/${_h}" || return 1
+      fi
     done
   fi
 
-  # Ensure the host-side `fa` CLI wrapper is symlinked into PATH.
-  # Idempotent: ln -sf overwrites an existing symlink silently.
-  if [[ -x "${REPO_DIR}/scripts/fa" ]]; then
-    sudo ln -sf "${REPO_DIR}/scripts/fa" /usr/local/bin/fa 2>/dev/null || true
+  sudo ln -sfn "${_wrapper}" /usr/local/bin/fa || return 1
+  if [[ "$(stat -c '%a' "${_wrapper}")" != "755" ]] \
+      || [[ ! -L /usr/local/bin/fa ]] \
+      || [[ "$(readlink -f /usr/local/bin/fa)" != "$(readlink -f "${_wrapper}")" ]] \
+      || [[ ! -x /usr/local/bin/fa ]]; then
+    echo "ERROR: host CLI wrapper mode or symlink postcondition failed." >&2
+    return 1
   fi
 }
 

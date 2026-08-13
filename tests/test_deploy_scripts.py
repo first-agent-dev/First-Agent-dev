@@ -178,7 +178,6 @@ def test_shell_script_passes_shellcheck(script: Path) -> None:
 
 
 @requires_posix_modes
-@pytest.mark.skipif(not os.access(_SCRIPTS / "fa", os.X_OK), reason="Filesystem does not support executable bits")
 def test_executable_script_modes_are_pinned() -> None:
     """Scripts invoked directly by operators/git must keep executable mode."""
     expected_exec = [
@@ -186,6 +185,7 @@ def test_executable_script_modes_are_pinned() -> None:
         _SCRIPTS / "fa-update.sh",
         _SCRIPTS / "fa-clean-rebuild.sh",
         _SCRIPTS / "fa-post-setup.sh",
+        _SCRIPTS / "backup-fa.sh",
         _SCRIPTS / "ssh-tailscale" / "00-failsafe.sh",
         _SCRIPTS / "ssh-tailscale" / "10-diagnose.sh",
         _SCRIPTS / "ssh-tailscale" / "20-harden.sh",
@@ -196,7 +196,43 @@ def test_executable_script_modes_are_pinned() -> None:
         _SCRIPTS.parent / "src" / "fa" / "hygiene" / "hooks" / "prepare-commit-msg",
     ]
     for path in expected_exec:
-        assert path.stat().st_mode & stat.S_IXUSR, f"missing executable bit: {path}"
+        mode = stat.S_IMODE(path.stat().st_mode)
+        assert mode == 0o755, f"expected mode 0755, got {mode:04o}: {path}"
+
+
+def test_clean_rebuild_repairs_and_verifies_host_wrapper() -> None:
+    """Clean rebuild must not publish a symlink to a non-executable wrapper."""
+    script = (_SCRIPTS / "fa-clean-rebuild.sh").read_text(encoding="utf-8")
+    install_block = script.split("# 9. Install host-side `fa` CLI wrapper", maxsplit=1)[1].split(
+        "# 10. Summary", maxsplit=1
+    )[0]
+
+    required_in_order = (
+        'if [[ ! -f "${FA_WRAPPER}" ]]',
+        'if ! chmod 0755 "${FA_WRAPPER}"',
+        'if ! sudo ln -sfn "${FA_WRAPPER}" /usr/local/bin/fa',
+        '''if [[ "$(stat -c '%a' "${FA_WRAPPER}")" != "755" ]]''',
+    )
+    offsets = [install_block.index(fragment) for fragment in required_in_order]
+    assert offsets == sorted(offsets)
+    assert "|| [[ ! -L /usr/local/bin/fa ]]" in install_block
+    assert '"$(readlink -f /usr/local/bin/fa)" != "$(readlink -f "${FA_WRAPPER}")"' in install_block
+    assert "|| [[ ! -x /usr/local/bin/fa ]]" in install_block
+    assert install_block.count("exit 1") == len(required_in_order)
+    assert 'if [[ -x "${FA_WRAPPER}" ]]' not in install_block
+
+
+def test_setup_and_post_setup_enforce_wrapper_mode_and_link_postconditions() -> None:
+    """Every host installer must fail rather than publish an unusable wrapper."""
+    for name in ("setup-fa-desktop.sh", "fa-post-setup.sh"):
+        script = (_SCRIPTS / name).read_text(encoding="utf-8")
+        assert 'chmod 0755 "$FA_WRAPPER"' in script
+        assert 'sudo ln -sfn "$FA_WRAPPER" /usr/local/bin/fa' in script
+        assert '''"$(stat -c '%a' "$FA_WRAPPER")" != "755"''' in script
+        assert "|| [[ ! -L /usr/local/bin/fa ]]" in script
+        assert '"$(readlink -f /usr/local/bin/fa)" != "$(readlink -f "$FA_WRAPPER")"' in script
+        assert "|| [[ ! -x /usr/local/bin/fa ]]" in script
+        assert 'chmod +x "$FA_WRAPPER"' not in script
 
 
 def _run_fa_wrapper(*args: str) -> subprocess.CompletedProcess[str]:
@@ -984,7 +1020,16 @@ def test_fa_update_ensure_host_scripts_uses_absolute_paths_and_covers_hooks() ->
     fn = fn[: fn.index("\n}\n") + 2]
     assert '"${REPO_DIR}/scripts"' in fn, "ensure_host_scripts must find scripts/ via absolute REPO_DIR path"
     assert "commit-msg" in fn and "pre-push" in fn, "ensure_host_scripts must chmod hooks/ (not just scripts/*.sh)"
-    assert "find scripts/" not in fn, "must not use relative `scripts/` path"
+    assert "_direct_scripts" in fn
+    assert "backup-fa.sh" in fn
+    assert 'find "${_scripts_dir}"' not in fn, "must not chmod every tracked shell script and dirty the mirror"
+    assert 'chmod 0755 "${_script}"' in fn
+    assert 'sudo ln -sfn "${_wrapper}" /usr/local/bin/fa' in fn
+    assert '''"$(stat -c '%a' "${_wrapper}")" != "755"''' in fn
+    assert "|| [[ ! -L /usr/local/bin/fa ]]" in fn
+    assert '"$(readlink -f /usr/local/bin/fa)" != "$(readlink -f "${_wrapper}")"' in fn
+    assert "|| [[ ! -x /usr/local/bin/fa ]]" in fn
+    assert "return 1" in fn
 
 
 # ── Batch-4 regressions: ufw delete idempotency, fa.service comment ──────

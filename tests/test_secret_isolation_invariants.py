@@ -7,6 +7,8 @@ or dropping the bash env-scrub) fails CI rather than silently regressing.
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +90,56 @@ def test_cli_supports_egress_proxy_mode() -> None:
     assert "_apply_proxy_mode" in text
     # In proxy mode the chain's key store is empty (no provider keys on fa side).
     assert "SecretStore({}) if proxy_mode" in text
+
+
+def test_deploy_secret_env_probe_checks_names_without_printing_values() -> None:
+    """Expected /run/secrets paths must not trigger a false leakage warning."""
+    probe = 'printenv | cut -d= -f1 | grep -qE "(API_KEY|_TOKEN|_SECRET)$"'
+    old_value_probe = 'printenv | grep -qiE "API_KEY|_TOKEN=|SECRET"'
+    probe_env = {
+        "PATH": os.environ["PATH"],
+        "GIT_SSH_COMMAND": "ssh -i /run/secrets/git_key",
+        "FA_PROXY_TOKEN_FILE": "/run/secrets/fa_proxy_token",
+    }
+
+    expected_paths = subprocess.run(
+        ["sh", "-c", probe],
+        env=probe_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert expected_paths.returncode == 1
+    assert expected_paths.stdout == ""
+
+    provider_key_name = subprocess.run(
+        ["sh", "-c", probe],
+        env={**probe_env, "OPENAI_API_KEY": "test-placeholder-must-not-be-printed"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert provider_key_name.returncode == 0
+    assert provider_key_name.stdout == ""
+
+    legacy_false_positive = subprocess.run(
+        ["sh", "-c", old_value_probe],
+        env=probe_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert legacy_false_positive.returncode == 0
+
+    for relative in ("scripts/fa-clean-rebuild.sh", "scripts/fa-post-setup.sh"):
+        text = (_ROOT / relative).read_text(encoding="utf-8")
+        assert probe in text
+        assert old_value_probe not in text
+        assert "investigate by name only" in text
+
+    install_doc = (_ROOT / "knowledge" / "instructions" / "01-install.md").read_text(encoding="utf-8")
+    assert 'printenv | cut -d= -f1 | grep -E \"(API_KEY|_TOKEN|_SECRET)$\"' in install_doc
+    assert "printenv | grep -iE 'API_KEY|TOKEN=|SECRET'" not in install_doc
 
 
 def test_agent_routing_models_mount_is_read_only_file_after_state_mount() -> None:

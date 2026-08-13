@@ -546,21 +546,39 @@ if docker exec first-agent sh -c 'test -e /run/secrets/fa.env' 2>/dev/null; then
 else
     log_info "  OK: no LLM key file in the agent container."
 fi
-if docker exec first-agent sh -c 'printenv | grep -qiE "API_KEY|_TOKEN=|SECRET"' 2>/dev/null; then
-    log_warn "  agent env contains a key-shaped variable — investigate."
+# Inspect variable NAMES only. Scanning complete NAME=value lines misclassifies
+# the expected /run/secrets paths in GIT_SSH_COMMAND and FA_PROXY_TOKEN_FILE as
+# leaked values, and any diagnostic output must never print an actual secret.
+if docker exec first-agent sh -c 'printenv | cut -d= -f1 | grep -qE "(API_KEY|_TOKEN|_SECRET)$"' 2>/dev/null; then
+    log_warn "  agent env contains a provider-key-shaped variable — investigate by name only."
 else
-    log_info "  OK: no key-shaped variable in the agent environment."
+    log_info "  OK: no provider-key-shaped variable in the agent environment."
 fi
 
 # ───────────────────────────────────────────────────────────────
 # 9. Install host-side `fa` CLI wrapper
 # ───────────────────────────────────────────────────────────────
 FA_WRAPPER="${REPO_DIR}/scripts/fa"
-if [[ -x "${FA_WRAPPER}" ]]; then
-    sudo ln -sf "${FA_WRAPPER}" /usr/local/bin/fa 2>/dev/null \
-        && log_info "Host CLI wrapper installed: fa → ${FA_WRAPPER}" \
-        || log_warn "Could not symlink ${FA_WRAPPER} → /usr/local/bin/fa (sudo required)."
+if [[ ! -f "${FA_WRAPPER}" ]]; then
+    log_error "Host CLI wrapper is missing: ${FA_WRAPPER}"
+    exit 1
 fi
+if ! chmod 0755 "${FA_WRAPPER}"; then
+    log_error "Could not set host CLI wrapper mode 0755: ${FA_WRAPPER}"
+    exit 1
+fi
+if ! sudo ln -sfn "${FA_WRAPPER}" /usr/local/bin/fa; then
+    log_error "Could not symlink ${FA_WRAPPER} → /usr/local/bin/fa (sudo required)."
+    exit 1
+fi
+if [[ "$(stat -c '%a' "${FA_WRAPPER}")" != "755" ]] \
+    || [[ ! -L /usr/local/bin/fa ]] \
+    || [[ "$(readlink -f /usr/local/bin/fa)" != "$(readlink -f "${FA_WRAPPER}")" ]] \
+    || [[ ! -x /usr/local/bin/fa ]]; then
+    log_error "Host CLI wrapper mode or symlink postcondition failed."
+    exit 1
+fi
+log_info "Host CLI wrapper installed: fa → ${FA_WRAPPER}"
 
 # ───────────────────────────────────────────────────────────────
 # 10. Summary

@@ -542,17 +542,26 @@ if [[ ! -f "$BACKUP_SRC" ]]; then
     log_error "Repo clone may have failed — re-run after fixing the clone."
     exit 1
 fi
-chmod +x "$BACKUP_SRC"
+chmod 0755 "$BACKUP_SRC"
 
-# Install host-side fa CLI wrapper (unified operator interface).
+# Install host-side fa CLI wrapper (unified operator interface). The exact mode
+# and resolved symlink are postconditions: setup must not report success while
+# leaving an unusable or over-permissive host command behind.
 FA_WRAPPER="$FA_DIR/repo/First-Agent-dev/scripts/fa"
-if [[ -f "$FA_WRAPPER" ]]; then
-    chmod +x "$FA_WRAPPER"
-    sudo ln -sf "$FA_WRAPPER" /usr/local/bin/fa
-    log_info "fa CLI wrapper installed: fa → $FA_WRAPPER"
-else
-    log_warn "scripts/fa not found — host shortcut not installed (will be available after fa-post-setup.sh)."
+if [[ ! -f "$FA_WRAPPER" ]]; then
+    log_error "Host CLI wrapper not found: $FA_WRAPPER"
+    exit 1
 fi
+chmod 0755 "$FA_WRAPPER"
+sudo ln -sfn "$FA_WRAPPER" /usr/local/bin/fa
+if [[ "$(stat -c '%a' "$FA_WRAPPER")" != "755" ]] \
+    || [[ ! -L /usr/local/bin/fa ]] \
+    || [[ "$(readlink -f /usr/local/bin/fa)" != "$(readlink -f "$FA_WRAPPER")" ]] \
+    || [[ ! -x /usr/local/bin/fa ]]; then
+    log_error "Host CLI wrapper mode or symlink postcondition failed."
+    exit 1
+fi
+log_info "fa CLI wrapper installed: fa → $FA_WRAPPER"
 
 BACKUP_ENV="$FA_DIR/secrets/backup.env"
 if [[ ! -f "$BACKUP_ENV" ]]; then

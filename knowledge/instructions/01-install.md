@@ -487,7 +487,7 @@ LLM-ключа.)
 # Нет файла ключей в контейнере агента (ожидаем «нет»):
 docker exec first-agent sh -c 'cat /run/secrets/fa.env 2>&1 || echo "нет ключей у агента — OK"'
 # Нет ключеподобных переменных окружения у агента (ожидаем пусто):
-docker exec first-agent printenv | grep -iE 'API_KEY|TOKEN=|SECRET' || echo "в окружении агента ключей нет — OK"
+docker exec first-agent sh -c 'printenv | cut -d= -f1 | grep -E "(API_KEY|_TOKEN|_SECRET)$"' || echo "в окружении агента ключей нет — OK"
 # LLM-ключи есть ТОЛЬКО в контейнере прокси:
 docker exec fa-egress-proxy sh -c 'test -s /run/secrets/fa.env && echo "ключи у прокси — OK"'
 ```

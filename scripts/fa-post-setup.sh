@@ -325,10 +325,13 @@ if docker exec first-agent sh -c 'test -e /run/secrets/fa.env' 2>/dev/null; then
 else
     log_info "  OK: no LLM key file in the agent container."
 fi
-if docker exec first-agent sh -c 'printenv | grep -qiE "API_KEY|_TOKEN=|SECRET"' 2>/dev/null; then
-    log_warn "  agent env contains an API_KEY/TOKEN/SECRET variable — investigate."
+# Inspect variable NAMES only. Scanning complete NAME=value lines misclassifies
+# the expected /run/secrets paths in GIT_SSH_COMMAND and FA_PROXY_TOKEN_FILE as
+# leaked values, and any diagnostic output must never print an actual secret.
+if docker exec first-agent sh -c 'printenv | cut -d= -f1 | grep -qE "(API_KEY|_TOKEN|_SECRET)$"' 2>/dev/null; then
+    log_warn "  agent env contains a provider-key-shaped variable — investigate by name only."
 else
-    log_info "  OK: no key-shaped variable in the agent environment."
+    log_info "  OK: no provider-key-shaped variable in the agent environment."
 fi
 
 # ---------------------------------------------------------------------------
@@ -414,13 +417,20 @@ fi
 # ---------------------------------------------------------------------------
 log_info "Installing host-side fa CLI wrapper..."
 FA_WRAPPER="$REPO_DIR/scripts/fa"
-if [[ -f "$FA_WRAPPER" ]]; then
-    chmod +x "$FA_WRAPPER"
-    sudo ln -sf "$FA_WRAPPER" /usr/local/bin/fa
-    log_info "fa CLI wrapper installed: fa → $FA_WRAPPER"
-else
-    log_warn "scripts/fa not found — host shortcut not installed."
+if [[ ! -f "$FA_WRAPPER" ]]; then
+    log_error "Host CLI wrapper not found: $FA_WRAPPER"
+    exit 1
 fi
+chmod 0755 "$FA_WRAPPER"
+sudo ln -sfn "$FA_WRAPPER" /usr/local/bin/fa
+if [[ "$(stat -c '%a' "$FA_WRAPPER")" != "755" ]] \
+    || [[ ! -L /usr/local/bin/fa ]] \
+    || [[ "$(readlink -f /usr/local/bin/fa)" != "$(readlink -f "$FA_WRAPPER")" ]] \
+    || [[ ! -x /usr/local/bin/fa ]]; then
+    log_error "Host CLI wrapper mode or symlink postcondition failed."
+    exit 1
+fi
+log_info "fa CLI wrapper installed: fa → $FA_WRAPPER"
 
 # ---------------------------------------------------------------------------
 # 9. Summary
