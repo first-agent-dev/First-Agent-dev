@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -90,6 +91,29 @@ def _write_executable(path: Path, text: str) -> None:
 # ---------------------------------------------------------------------------
 # install_hooks tests
 # ---------------------------------------------------------------------------
+
+
+def test_pre_commit_ruff_hooks_run_whole_tree_in_just_fix_order() -> None:
+    """Every commit fixes/checks the whole Python tree, independent of staged paths."""
+
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    config = yaml.safe_load((root / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
+    hooks = {
+        hook["id"]: hook
+        for repo in config["repos"]
+        if repo["repo"] == "local"
+        for hook in repo["hooks"]
+        if str(hook["id"]).startswith("ruff")
+    }
+    assert list(hooks)[:3] == ["ruff-fix", "ruff-format", "ruff-check"]
+    assert hooks["ruff-fix"]["entry"] == "ruff check --fix-only --force-exclude ."
+    assert hooks["ruff-format"]["entry"] == "ruff format --force-exclude ."
+    assert hooks["ruff-check"]["entry"] == "ruff check --force-exclude ."
+    for hook in hooks.values():
+        assert hook["pass_filenames"] is False
+        assert hook["always_run"] is True
 
 
 def test_install_hooks_happy_path(tmp_path: Path) -> None:
@@ -237,38 +261,44 @@ def test_install_one_symlink_fallback_to_copy(tmp_path: Path, monkeypatch: pytes
 
 
 @requires_posix_modes
-def test_install_one_copy_fallback_target_is_executable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Copy-fallback target must have the execute bit set (git requirement)."""
+def test_install_one_non_executable_source_uses_executable_copy_without_source_mutation(tmp_path: Path) -> None:
+    """A stripped checkout must yield a runnable copy without dirtying source."""
 
     root = _make_workspace(tmp_path)
     src_dir = Path(install_mod.__file__).resolve().parent
     target = root / ".git" / "hooks" / HOOK_NAMES[0]
 
-    # Operate on a tmp_path COPY, never on the shipped hook source.
-    #
-    # This test previously chmod'd ``src_dir / HOOK_NAMES[0]`` directly and
-    # restored the mode as a trailing statement with no try/finally. Two
-    # consequences, both observed:
-    #   1. any failure between chmod and restore leaked a tracked mode change
-    #      (100755 -> 100644) into the working tree;
-    #   2. ``install_mod.__file__`` resolves to the *pip-installed* package, so
-    #      the leak escaped the checkout under test and dirtied the installed
-    #      repo instead.
-    # A copy has identical semantics for _install_one (it only reads the source
-    # and writes the target) while making the mutation unreachable from git.
+    # Operate on a tmp_path copy, never on the shipped hook source. This models
+    # an archive/filesystem that stripped Git's executable bit.
     source = tmp_path / f"hook-source-{HOOK_NAMES[0]}"
     shutil.copy2(src_dir / HOOK_NAMES[0], source)
-    source.chmod(source.stat().st_mode & ~0o111)
-
-    monkeypatch.setattr(
-        install_mod.os,
-        "symlink",
-        staticmethod(lambda *_args, **_kw: (_ for _ in ()).throw(OSError("no symlink"))),
-    )
+    source.chmod(0o644)
 
     install_mod._install_one(source, target, force=True)
 
-    assert target.stat().st_mode & 0o111, "copy-fallback target must be executable"
+    assert stat.S_IMODE(source.stat().st_mode) == 0o644
+    assert not target.is_symlink()
+    assert target.read_bytes() == source.read_bytes()
+    assert os.access(target, os.X_OK), "copy target must be executable"
+
+
+@requires_posix_modes
+@requires_symlink_hook_installs
+def test_install_one_executable_source_symlink_preserves_source_mode(tmp_path: Path) -> None:
+    """Normal POSIX installs link an already-executable tracked source unchanged."""
+
+    root = _make_workspace(tmp_path)
+    source = tmp_path / "tracked-hook-source"
+    source.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    source.chmod(0o755)
+    target = root / ".git" / "hooks" / HOOK_NAMES[0]
+
+    install_mod._install_one(source, target, force=True)
+
+    assert target.is_symlink()
+    assert target.resolve() == source.resolve()
+    assert stat.S_IMODE(source.stat().st_mode) == 0o755
+    assert os.access(target, os.X_OK)
 
 
 def test_install_hooks_uses_worktree_gitdir(tmp_path: Path) -> None:
@@ -686,6 +716,128 @@ def test_pre_commit_preserves_first_failure_exit_code_when_no_files_changed(tmp_
     result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
 
     assert result.returncode == 7
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_pre_commit_autostages_initially_clean_python_fixed_by_whole_tree_hook(tmp_path: Path) -> None:
+    """Whole-tree Ruff repairs clean tracked Python and adds it to the commit."""
+
+    root = _make_workspace(tmp_path)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+    (root / "clean.py").write_text("value=  1\n", encoding="utf-8")
+    (root / "staged.txt").write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+    (root / "staged.txt").write_text("after\n", encoding="utf-8")
+    subprocess.run(["git", "add", "staged.txt"], cwd=root, check=True)
+
+    hook = Path(install_mod.__file__).resolve().parent / "pre-commit"
+    fakebin = tmp_path / "fakebin_whole_tree"
+    fakebin.mkdir()
+    count_path = tmp_path / "uv.count"
+    _write_executable(
+        fakebin / "uv",
+        f'''#!/usr/bin/env bash
+count=0
+[[ -f "{count_path}" ]] && count=$(cat "{count_path}")
+count=$((count+1))
+printf '%s' "$count" > "{count_path}"
+if [[ "$count" -eq 1 ]]; then
+  printf 'value = 1\\n' > "$PWD/clean.py"
+  exit 1
+fi
+exit 0
+''',
+    )
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"], cwd=root, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    assert staged == ["clean.py", "staged.txt"]
+    assert subprocess.run(["git", "diff", "--quiet"], cwd=root, check=False).returncode == 0
+    assert "re-staging auto-fixed files" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_pre_commit_refuses_whole_tree_fix_of_preexisting_unstaged_python(tmp_path: Path) -> None:
+    """Whole-tree automation never absorbs a pre-existing unstaged Python edit."""
+
+    root = _make_workspace(tmp_path)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+    (root / "dirty.py").write_text("value = 1\n", encoding="utf-8")
+    (root / "staged.txt").write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+    (root / "dirty.py").write_text("value=  2\n", encoding="utf-8")
+    (root / "staged.txt").write_text("after\n", encoding="utf-8")
+    subprocess.run(["git", "add", "staged.txt"], cwd=root, check=True)
+
+    hook = Path(install_mod.__file__).resolve().parent / "pre-commit"
+    fakebin = tmp_path / "fakebin_dirty_whole_tree"
+    fakebin.mkdir()
+    _write_executable(
+        fakebin / "uv",
+        '#!/usr/bin/env bash\nprintf "value = 2\\n" > "$PWD/dirty.py"\nexit 9\n',
+    )
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+
+    assert result.returncode == 9
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"], cwd=root, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    assert staged == ["staged.txt"]
+    assert "dirty.py" in result.stderr
+    assert "partial staging" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_pre_commit_reports_but_never_stages_formatter_modified_untracked_python(tmp_path: Path) -> None:
+    """Reject untracked rewrites even when the whole-tree tool reports success."""
+
+    root = _make_workspace(tmp_path)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+    (root / "staged.txt").write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+    (root / "staged.txt").write_text("after\n", encoding="utf-8")
+    subprocess.run(["git", "add", "staged.txt"], cwd=root, check=True)
+    (root / "untracked.py").write_text("value=  1\n", encoding="utf-8")
+
+    hook = Path(install_mod.__file__).resolve().parent / "pre-commit"
+    fakebin = tmp_path / "fakebin_untracked_whole_tree"
+    fakebin.mkdir()
+    _write_executable(
+        fakebin / "uv",
+        '#!/usr/bin/env bash\nprintf "value = 1\\n" > "$PWD/untracked.py"\nexit 0\n',
+    )
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+
+    assert result.returncode == 1
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"], cwd=root, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    assert staged == ["staged.txt"]
+    assert "untracked.py" in result.stderr
+    assert (
+        subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "untracked.py"], cwd=root, capture_output=True, check=False
+        ).returncode
+        != 0
+    )
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")

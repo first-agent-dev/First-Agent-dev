@@ -138,7 +138,7 @@ def test_deploy_secret_env_probe_checks_names_without_printing_values() -> None:
         assert "investigate by name only" in text
 
     install_doc = (_ROOT / "knowledge" / "instructions" / "01-install.md").read_text(encoding="utf-8")
-    assert 'printenv | cut -d= -f1 | grep -E \"(API_KEY|_TOKEN|_SECRET)$\"' in install_doc
+    assert 'printenv | cut -d= -f1 | grep -E "(API_KEY|_TOKEN|_SECRET)$"' in install_doc
     assert "printenv | grep -iE 'API_KEY|TOKEN=|SECRET'" not in install_doc
 
 

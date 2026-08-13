@@ -164,6 +164,15 @@ def test_shell_script_has_valid_syntax(script: Path) -> None:
     subprocess.run(["bash", "-n", str(script)], check=True)
 
 
+def test_shell_syntax_runner_uses_precommit_compatible_shebang() -> None:
+    """pre-commit must resolve one interpreter, not an env assignment token."""
+
+    lines = (_SCRIPTS / "check_shell_syntax.sh").read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "#!/usr/bin/env bash"
+    assert "env -S" not in lines[0]
+    assert "export LC_ALL=C" in lines
+
+
 @pytest.mark.skipif(shutil.which("shellcheck") is None, reason="shellcheck not installed")
 @pytest.mark.parametrize("script", _SHELL_SCRIPTS, ids=lambda p: p.name)
 def test_shell_script_passes_shellcheck(script: Path) -> None:
@@ -186,6 +195,7 @@ def test_executable_script_modes_are_pinned() -> None:
         _SCRIPTS / "fa-clean-rebuild.sh",
         _SCRIPTS / "fa-post-setup.sh",
         _SCRIPTS / "backup-fa.sh",
+        _SCRIPTS / "check_shell_syntax.sh",
         _SCRIPTS / "ssh-tailscale" / "00-failsafe.sh",
         _SCRIPTS / "ssh-tailscale" / "10-diagnose.sh",
         _SCRIPTS / "ssh-tailscale" / "20-harden.sh",
@@ -199,6 +209,21 @@ def test_executable_script_modes_are_pinned() -> None:
         mode = stat.S_IMODE(path.stat().st_mode)
         assert mode == 0o755, f"expected mode 0755, got {mode:04o}: {path}"
 
+    # A producer may chmod the working tree before this test runs and conceal a
+    # broken 100644 Git index entry. Pin the publication authority itself.
+    relative = [path.relative_to(_ROOT).as_posix() for path in expected_exec]
+    result = subprocess.run(
+        ["git", "-C", str(_ROOT), "ls-files", "--stage", "--", *relative],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    index_modes = {line.split(maxsplit=3)[3]: line.split(maxsplit=1)[0] for line in result.stdout.splitlines()}
+    assert set(index_modes) == set(relative)
+    for relative_path in relative:
+        assert index_modes[relative_path] == "100755", f"expected Git mode 100755: {relative_path}"
+
 
 def test_clean_rebuild_repairs_and_verifies_host_wrapper() -> None:
     """Clean rebuild must not publish a symlink to a non-executable wrapper."""
@@ -211,7 +236,7 @@ def test_clean_rebuild_repairs_and_verifies_host_wrapper() -> None:
         'if [[ ! -f "${FA_WRAPPER}" ]]',
         'if ! chmod 0755 "${FA_WRAPPER}"',
         'if ! sudo ln -sfn "${FA_WRAPPER}" /usr/local/bin/fa',
-        '''if [[ "$(stat -c '%a' "${FA_WRAPPER}")" != "755" ]]''',
+        """if [[ "$(stat -c '%a' "${FA_WRAPPER}")" != "755" ]]""",
     )
     offsets = [install_block.index(fragment) for fragment in required_in_order]
     assert offsets == sorted(offsets)
@@ -233,6 +258,21 @@ def test_setup_and_post_setup_enforce_wrapper_mode_and_link_postconditions() -> 
         assert '"$(readlink -f /usr/local/bin/fa)" != "$(readlink -f "$FA_WRAPPER")"' in script
         assert "|| [[ ! -x /usr/local/bin/fa ]]" in script
         assert 'chmod +x "$FA_WRAPPER"' not in script
+
+
+def test_deploy_producers_verify_runtime_user_tmpfs_write_and_exec() -> None:
+    """Every bring-up path must fail visibly when cache/tool tmpfs is unusable."""
+
+    for name in ("fa-update.sh", "fa-clean-rebuild.sh", "fa-post-setup.sh"):
+        text = (_SCRIPTS / name).read_text(encoding="utf-8")
+        assert "/home/fa/.cache/.fa-exec-probe-$$" in text
+        assert "/home/fa/.local/.fa-exec-probe-$$" in text
+        assert 'test -w "$dir"' in text
+        assert 'test -x "$dir"' in text
+        assert 'chmod 700 "$probe"' in text
+        assert re.search(r'(?m)^\s+"\$probe"$', text), "producer must execute the tmpfs probe"
+        assert 'rm -f "$cache_probe" "$local_probe"' in text
+        assert "workspace readiness cannot complete" in text
 
 
 def _run_fa_wrapper(*args: str) -> subprocess.CompletedProcess[str]:
@@ -1010,18 +1050,17 @@ def test_fa_clean_rebuild_backs_up_to_fa_dir_backup() -> None:
     assert "${FA_DIR}/backup" in text, "backup root must be ${FA_DIR}/backup"
 
 
-def test_fa_update_ensure_host_scripts_uses_absolute_paths_and_covers_hooks() -> None:
-    """ensure_host_scripts() must use ${REPO_DIR}/scripts (absolute path),
-    not a relative `scripts/` that depends on cwd, and must also chmod the
-    git hooks (matching setup-fa-desktop.sh and fa-post-setup.sh) so a
-    post-pull state never loses the +x bit on hooks."""
+def test_fa_update_ensure_host_scripts_uses_absolute_paths_and_preserves_hook_sources() -> None:
+    """Update repairs direct host tools but never mutates tracked hook sources."""
     text = (_SCRIPTS / "fa-update.sh").read_text(encoding="utf-8")
     fn = text[text.index("ensure_host_scripts()") :]
     fn = fn[: fn.index("\n}\n") + 2]
     assert '"${REPO_DIR}/scripts"' in fn, "ensure_host_scripts must find scripts/ via absolute REPO_DIR path"
-    assert "commit-msg" in fn and "pre-push" in fn, "ensure_host_scripts must chmod hooks/ (not just scripts/*.sh)"
+    assert "src/fa/hygiene/hooks" not in fn
+    assert "_hooks_dir" not in fn
     assert "_direct_scripts" in fn
     assert "backup-fa.sh" in fn
+    assert "check_shell_syntax.sh" in fn
     assert 'find "${_scripts_dir}"' not in fn, "must not chmod every tracked shell script and dirty the mirror"
     assert 'chmod 0755 "${_script}"' in fn
     assert 'sudo ln -sfn "${_wrapper}" /usr/local/bin/fa' in fn

@@ -11,10 +11,10 @@
 # disagreeing previously flipped BLE001 waivers back and forth between
 # `ruff check --fix` and the hook. See the comment below.
 #
-# All "_full-tree" hooks use `always_run: true` + `pass_filenames: false`
-# so they scan the relevant scope regardless of which files changed.
-# Fast per-file hooks (ruff, ruff-format, doc-links) use staged-files
-# from pre-commit for speed.
+# All full-tree hooks use `always_run: true` + `pass_filenames: false` so they
+# scan the relevant scope regardless of which files changed. Ruff is deliberately
+# whole-tree and auto-restaged by the FA wrapper; doc-links remains staged-file
+# scoped because it does not rewrite content.
 
 default_language_version:
   python: python
@@ -33,24 +33,33 @@ repos:
         args: [--fix=lf]
       - id: check-executables-have-shebangs
 
-  # Ruff (lint) + Ruff (format) from the PROJECT environment, not a
-  # pre-commit-managed mirror clone. Rationale is at the top of this file.
+  # Whole-tree Ruff automation from the PROJECT environment. Every commit runs
+  # the same fix-only → format → strict-check sequence as `just fix`, even when
+  # the staged paths are non-Python. The outer FA hook auto-stages only files
+  # that were staged already or were clean tracked Python before Ruff changed
+  # them; pre-existing unstaged/partial and untracked work is never absorbed.
   - repo: local
     hooks:
-      # Per-file autofix (fast, modifies staged files and restages via
-      # our pre-commit shell wrapper). Ruff `--fix` resolves import
-      # sorting and mechanical lint rules deterministically.
-      - id: ruff
-        name: ruff --fix (project env)
-        entry: ruff check --fix --force-exclude
+      - id: ruff-fix
+        name: ruff --fix-only (whole tree, project env)
+        entry: ruff check --fix-only --force-exclude .
         language: system
-        types_or: [python, pyi]
+        pass_filenames: false
+        always_run: true
         require_serial: true
       - id: ruff-format
-        name: ruff-format (project env)
-        entry: ruff format --force-exclude
+        name: ruff-format (whole tree, project env)
+        entry: ruff format --force-exclude .
         language: system
-        types_or: [python, pyi]
+        pass_filenames: false
+        always_run: true
+        require_serial: true
+      - id: ruff-check
+        name: ruff check (whole tree, project env)
+        entry: ruff check --force-exclude .
+        language: system
+        pass_filenames: false
+        always_run: true
         require_serial: true
 
   # Full-tree fast gates (~<1s combined). deptry is src/ only by design.

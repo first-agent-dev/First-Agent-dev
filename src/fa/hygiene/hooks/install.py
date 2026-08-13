@@ -55,36 +55,31 @@ def _install_one(
             raise FileExistsError(f"{target} exists and is not a symlink; pass force=True to overwrite.")
         target.unlink()
 
-    # On Windows, symlinks in .git/hooks/ may not be followed by
-    # Git for Windows at hook-execution time (even though they
-    # resolve correctly for reads).  Force copies on Windows to
-    # ensure the hook script content is directly in .git/hooks/.
-    if sys.platform == "win32":
+    # A symlink is executable only when its source is executable. Never repair a
+    # checked-out source in place: doing so dirties the managed workspace and
+    # changes the readiness fingerprint while admission is running. If an
+    # archive/filesystem stripped the source mode, install an executable copy
+    # instead. Windows also requires copies because Git for Windows may not
+    # follow hook symlinks at execution time.
+    copy_required = sys.platform == "win32" or not os.access(source, os.X_OK)
+    if copy_required:
         shutil.copy2(source, target)
     else:
         try:
             os.symlink(source, target)
         except OSError:
-            # Symlink failed (unlikely on non-Windows, but possible
-            # on unusual filesystems).  Fall back to a plain copy.
+            # Symlink failed (unusual filesystem or policy): preserve the
+            # tracked source and fall back to an independently executable copy.
             shutil.copy2(source, target)
 
-    # Ensure both the source script AND the installed target are
-    # executable.  Symlink permissions come from the source file,
-    # so chmod-ing the source is sufficient for symlink installs.
-    # For copy fallback, copy2 preserves the source's permission
-    # bits — so the target also needs chmod when the source was
-    # checked out without the execute bit (common on Windows where
-    # core.fileMode=false).  Without this, git silently skips the
-    # hook because it checks executability before running any hook.
-    for path in (source, target):
-        try:
-            current_mode = path.stat().st_mode
-            path.chmod(current_mode | 0o111)
-        except OSError:
-            # Best-effort only: some filesystems/platforms may reject chmod.
-            # Keep installation successful even if executability cannot be enforced here.
-            pass
+    # chmod on a symlink follows it and would mutate the tracked source. A
+    # symlink was created only for an already-executable source, so chmod only
+    # real copy targets. Fail explicitly on POSIX if Git would still skip it.
+    if not target.is_symlink():
+        current_mode = target.stat().st_mode
+        target.chmod(current_mode | 0o111)
+    if os.name != "nt" and not os.access(target, os.X_OK):
+        raise PermissionError(f"installed hook is not executable: {target}")
 
     return target
 

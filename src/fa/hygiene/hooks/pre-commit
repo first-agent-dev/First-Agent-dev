@@ -21,17 +21,14 @@
 # of what the registry says.  This only affects the git hook
 # execution path — nothing else on the system.
 #
-# Auto-retry: if a hook modifies files (trailing-whitespace,
-# end-of-file-fixer, ruff --fix / ruff-format), those changes are left in the
-# working tree but NOT re-staged, and the commit fails with exit 1.  That is
-# noisy for LLM-agent workflows that intentionally land a few larger commits.
-# Instead, we snapshot the staged path set, detect which already-staged files
-# were modified by the hook, re-stage ONLY that subset, and retry once.
+# Auto-retry: Ruff fixes/formats the whole tracked Python tree on every commit,
+# then this wrapper re-stages and retries once. It includes originally staged
+# files and initially clean tracked Python files changed by Ruff, so latent
+# full-tree drift cannot survive until pre-push.
 #
-# Safety boundary: if a staged file already had unstaged edits before hooks ran
-# (partial staging), we do NOT auto-restage it. `git add <path>` would stage the
-# human/agent's unrelated unstaged hunks too.  The hook then fails with an
-# explicit message so the operator can resolve the partial-staging case by hand.
+# Safety boundary: pre-existing unstaged/partially staged edits and untracked
+# files are never auto-staged. If whole-tree Ruff changes such a path, the hook
+# fails with an explicit path list instead of absorbing unrelated hunks.
 #
 # Optional local CI parity: set FA_HOOK_FULL_CHECK=1 to run `uv run --no-sync just check`
 # after the fast autofix pass. The default full gate lives in pre-push.
@@ -80,9 +77,21 @@ mapfile -d '' staged_paths < <(git diff --cached --name-only -z 2>/dev/null || t
 
 partial_paths=()
 partial_diff_hashes=()
+preexisting_unstaged_paths=()
+preexisting_unstaged_hashes=()
+preexisting_untracked_paths=()
+preexisting_untracked_hashes=()
 
 _partial_diff_hash() {
     git diff --binary -- "$1" 2>/dev/null | git hash-object --stdin 2>/dev/null || printf '__unknown__'
+}
+
+_file_content_hash() {
+    if [[ -f "$1" ]]; then
+        git hash-object -- "$1" 2>/dev/null || printf '__unknown__'
+    else
+        printf '__missing__'
+    fi
 }
 
 _partial_path_index() {
@@ -90,6 +99,18 @@ _partial_path_index() {
     local index
     for index in "${!partial_paths[@]}"; do
         if [[ "${partial_paths[$index]}" == "$needle" ]]; then
+            printf '%s' "$index"
+            return 0
+        fi
+    done
+    return 1
+}
+
+_preexisting_unstaged_index() {
+    local needle="$1"
+    local index
+    for index in "${!preexisting_unstaged_paths[@]}"; do
+        if [[ "${preexisting_unstaged_paths[$index]}" == "$needle" ]]; then
             printf '%s' "$index"
             return 0
         fi
@@ -123,6 +144,21 @@ for path in "${staged_paths[@]}"; do
     fi
 done
 
+# Whole-tree Ruff may repair a tracked Python file that was not part of the
+# original commit. Snapshot every pre-existing unstaged tracked path so the
+# retry can auto-stage only initially clean files and never absorb unrelated
+# human/agent edits. Untracked paths are absent from `git diff` by construction.
+mapfile -d '' preexisting_unstaged_paths < <(git diff --name-only -z 2>/dev/null || true)
+for path in "${preexisting_unstaged_paths[@]}"; do
+    [[ -n "$path" ]] || continue
+    preexisting_unstaged_hashes+=("$(_partial_diff_hash "$path")")
+done
+mapfile -d '' preexisting_untracked_paths < <(git ls-files --others --exclude-standard -z 2>/dev/null || true)
+for path in "${preexisting_untracked_paths[@]}"; do
+    [[ -n "$path" ]] || continue
+    preexisting_untracked_hashes+=("$(_file_content_hash "$path")")
+done
+
 _run_fast_hooks() {
     uv run --no-sync pre-commit run --hook-stage pre-commit "$@"
 }
@@ -135,27 +171,62 @@ _run_optional_full_check() {
 }
 
 if _run_fast_hooks "$@"; then
-    _run_optional_full_check
-    exit 0
+    first_rc=0
 else
     first_rc=$?
 fi
 
+# Do not assume a zero hook status means the working tree was untouched.
+# pre-commit detects tracked modifications, but a successful whole-tree tool can
+# rewrite an untracked path without pre-commit converting that into a failure.
+# Inspect the tree after every first pass so the wrapper can enforce its own
+# safe-restaging boundary.
 modified_paths=()
 skipped_partial_paths=()
+mapfile -d '' post_hook_modified_paths < <(git diff --name-only -z 2>/dev/null || true)
+# Keep compatibility with constrained Git adapters that support per-path diff
+# but not bulk NUL discovery; real Git normally populates the array above.
 for path in "${staged_paths[@]}"; do
     [[ -n "$path" ]] || continue
     if ! git diff --quiet -- "$path" 2>/dev/null; then
-        if partial_index="$(_partial_path_index "$path")"; then
-            # The file was already partially staged before hooks ran. Only call
-            # it hook-modified if the unstaged diff changed; otherwise preserve
-            # the original hook failure without a misleading auto-stage warning.
-            if [[ "$(_partial_diff_hash "$path")" != "${partial_diff_hashes[$partial_index]}" ]]; then
-                skipped_partial_paths+=("$path")
-            fi
-        else
-            modified_paths+=("$path")
+        found=0
+        for candidate in "${post_hook_modified_paths[@]}"; do
+            [[ "$candidate" == "$path" ]] && found=1 && break
+        done
+        [[ "$found" == "1" ]] || post_hook_modified_paths+=("$path")
+    fi
+done
+for path in "${post_hook_modified_paths[@]}"; do
+    [[ -n "$path" ]] || continue
+    if partial_index="$(_partial_path_index "$path")"; then
+        # The file was already partially staged before hooks ran. Only call it
+        # hook-modified if the unstaged diff changed; otherwise preserve the
+        # original hook failure without a misleading auto-stage warning.
+        if [[ "$(_partial_diff_hash "$path")" != "${partial_diff_hashes[$partial_index]}" ]]; then
+            skipped_partial_paths+=("$path")
         fi
+    elif dirty_index="$(_preexisting_unstaged_index "$path")"; then
+        # Never stage pre-existing unstaged work. If Ruff changed it despite
+        # pre-commit's stash boundary, fail explicitly rather than absorbing it.
+        if [[ "$(_partial_diff_hash "$path")" != "${preexisting_unstaged_hashes[$dirty_index]}" ]]; then
+            skipped_partial_paths+=("$path")
+        fi
+    elif _is_staged_path "$path"; then
+        modified_paths+=("$path")
+    else
+        case "$path" in
+          *.py|*.pyi) modified_paths+=("$path") ;;
+        esac
+    fi
+done
+
+# Ruff's whole-tree traversal can see untracked, non-ignored Python files. Never
+# stage them; if a hook changed one, surface the path explicitly instead of
+# returning an opaque formatter failure.
+for index in "${!preexisting_untracked_paths[@]}"; do
+    path="${preexisting_untracked_paths[$index]}"
+    if [[ "$(_file_content_hash "$path")" != "${preexisting_untracked_hashes[$index]}" ]]; then
+        skipped_partial_paths+=("$path")
     fi
 done
 
@@ -180,14 +251,20 @@ if [[ -f uv.lock ]] && ! _is_staged_path uv.lock && _is_staged_path pyproject.to
 fi
 
 if [ ${#skipped_partial_paths[@]} -ne 0 ]; then
-    echo "pre-commit: hooks modified files with pre-existing unstaged edits / partial staging; refusing to auto-stage:" >&2
+    echo "pre-commit: hooks modified pre-existing unstaged edits / partial staging / untracked files; refusing to auto-stage:" >&2
     printf '  %s
 ' "${skipped_partial_paths[@]}" >&2
     echo "pre-commit: stage or unstage those files explicitly, then commit again." >&2
+    # A successful tool can still rewrite an untracked path without pre-commit
+    # reporting failure. The safety refusal itself must remain commit-blocking.
+    (( first_rc != 0 )) || first_rc=1
     exit "$first_rc"
 fi
 
 if [ ${#modified_paths[@]} -eq 0 ]; then
+    if (( first_rc == 0 )); then
+        _run_optional_full_check
+    fi
     exit "$first_rc"
 fi
 

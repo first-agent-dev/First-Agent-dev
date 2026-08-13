@@ -784,6 +784,33 @@ check_proxy_path() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+#  Step 5c — Runtime storage contract
+# ═══════════════════════════════════════════════════════════════
+
+verify_runtime_storage() {
+  echo ""
+  echo "  → Verifying executable runtime-user tmpfs seats..."
+  if docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE_NAME}" sh -eu -c '
+    cache_probe=/home/fa/.cache/.fa-exec-probe-$$
+    local_probe=/home/fa/.local/.fa-exec-probe-$$
+    cleanup() { rm -f "$cache_probe" "$local_probe"; }
+    trap cleanup EXIT
+    for probe in "$cache_probe" "$local_probe"; do
+      dir=${probe%/*}
+      test -d "$dir" && test -w "$dir" && test -x "$dir"
+      printf "#!/bin/sh\nexit 0\n" >"$probe"
+      chmod 700 "$probe"
+      "$probe"
+    done
+  '; then
+    echo "  ✓ Runtime cache/tool tmpfs seats are writable and executable by uid 1000."
+  else
+    echo "  ✗ Runtime tmpfs contract failed; workspace readiness cannot complete." >&2
+    return 1
+  fi
+}
+
+# ═══════════════════════════════════════════════════════════════
 #  Step 6 — Smoke tests
 # ═══════════════════════════════════════════════════════════════
 
@@ -969,7 +996,6 @@ ensure_host_scripts() {
   # only on scripts that are executed directly; a broad `find ... chmod +x`
   # dirties tracked 0644 scripts that are intentionally invoked through Bash.
   local _scripts_dir="${REPO_DIR}/scripts"
-  local _hooks_dir="${REPO_DIR}/src/fa/hygiene/hooks"
   local _wrapper="${_scripts_dir}/fa"
   local _script
   local -a _direct_scripts=(
@@ -978,6 +1004,7 @@ ensure_host_scripts() {
     "${_scripts_dir}/fa-clean-rebuild.sh"
     "${_scripts_dir}/fa-post-setup.sh"
     "${_scripts_dir}/backup-fa.sh"
+    "${_scripts_dir}/check_shell_syntax.sh"
     "${_scripts_dir}/ssh-tailscale/00-failsafe.sh"
     "${_scripts_dir}/ssh-tailscale/10-diagnose.sh"
     "${_scripts_dir}/ssh-tailscale/20-harden.sh"
@@ -991,14 +1018,10 @@ ensure_host_scripts() {
     chmod 0755 "${_script}" || return 1
   done
 
-  if [[ -d "${_hooks_dir}" ]]; then
-    local _h
-    for _h in commit-msg pre-commit pre-push prepare-commit-msg; do
-      if [[ -f "${_hooks_dir}/${_h}" ]]; then
-        chmod 0755 "${_hooks_dir}/${_h}" || return 1
-      fi
-    done
-  fi
+  # Hook sources are tracked code, never mutable installation targets. Git owns
+  # their 100755 modes; the workspace installer uses an executable copy when a
+  # filesystem strips that mode. Mutating sources here would dirty /repo and
+  # change readiness fingerprints during deployment.
 
   sudo ln -sfn "${_wrapper}" /usr/local/bin/fa || return 1
   if [[ "$(stat -c '%a' "${_wrapper}")" != "755" ]] \
@@ -1066,6 +1089,7 @@ main() {
   ensure_sessions_dir
   build_and_deploy
   wait_for_health
+  verify_runtime_storage
   check_proxy_path
   smoke_tests
   run_tests

@@ -41,6 +41,11 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
       - UV_CACHE_DIR=/tmp/uv-cache
+      # Shared pre-commit environments are ephemeral but must be writable and
+      # executable by the fixed runtime identity (1000:1000). The tmpfs mount
+      # contract below owns those permissions; this explicit path keeps
+      # pre-commit and workspace readiness on the same cache authority.
+      - PRE_COMMIT_HOME=/home/fa/.cache/pre-commit
       # PYTHONPATH is set by fa-entrypoint.sh (it prepends <workspace>/src); do not
       # also set it here or it ends up duplicated.
       # Default is inspectable stand-by. For a deliberate one-shot
@@ -71,6 +76,15 @@ services:
     depends_on:
       fa-egress-proxy:
         condition: service_healthy
+
+    # Runtime-user-owned executable ephemeral homes. Docker otherwise mounts
+    # tmpfs as root:root mode 0755/noexec, which prevents uid 1000 from creating
+    # pre-commit/uv-tool environments and then executing them. Keep these
+    # private, nosuid, and nodev; `exec` is required because both products store
+    # managed executables below these roots.
+    tmpfs:
+      - /home/fa/.cache:rw,nosuid,nodev,exec,size=1536m,mode=0700,uid=1000,gid=1000
+      - /home/fa/.local:rw,nosuid,nodev,exec,size=500m,mode=0700,uid=1000,gid=1000
 
     # Volumes
     volumes:
@@ -120,20 +134,12 @@ services:
         target: /tmp
         tmpfs:
           size: 1G
-      - type: tmpfs
-        target: /home/fa/.cache
-        tmpfs:
-          size: 1536M
-      # UV cache (can be rebuilt)
+      # UV cache stores downloads/build inputs; executables live in the project
+      # venv or ~/.local, so this broad scratch cache stays noexec.
       - type: tmpfs
         target: /tmp/uv-cache
         tmpfs:
           size: 2G
-      # uv tool installs write to ~/.local/share/uv
-      - type: tmpfs
-        target: /home/fa/.local
-        tmpfs:
-          size: 500M
 
     # Network isolation
     networks:

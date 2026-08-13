@@ -1,15 +1,13 @@
-#!/usr/bin/env -S LC_ALL=C bash
+#!/usr/bin/env bash
 # Shell-syntax preflight: `bash -n` every .sh in the repo plus every
 # shipped git-hook shell script. Exits non-zero if any file has a syntax
 # error; prints diagnostics prefixed with the path. Used by both
 # `just _shell-syntax` and the pre-commit hook.
 #
-# LC_ALL=C is baked into the shebang so the interpreter starts in the
-# POSIX locale from the very first fork. This avoids spurious
-#   "bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8)"
-# noise on hosts (minimal containers, freshly provisioned laptops) that
-# export en_US.UTF-8 but have not generated that locale, and it keeps
-# any real bash syntax-error messages in a stable, grep-friendly form.
+# Keep the shebang to one portable interpreter token. pre-commit normalizes
+# shebangs before execution and treats `env -S LC_ALL=C bash` as an executable
+# named `LC_ALL=C`. Exporting below still gives every syntax-checking child the
+# stable POSIX locale without relying on env -S support.
 #
 # Usage:
 #   scripts/check_shell_syntax.sh            # full repo scan

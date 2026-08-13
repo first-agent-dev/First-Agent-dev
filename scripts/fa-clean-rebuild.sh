@@ -537,6 +537,25 @@ if ! wait_for_health "first-agent"; then
     exit 1
 fi
 
+log_info "Verifying executable runtime-user tmpfs seats..."
+if ! docker exec first-agent sh -eu -c '
+    cache_probe=/home/fa/.cache/.fa-exec-probe-$$
+    local_probe=/home/fa/.local/.fa-exec-probe-$$
+    cleanup() { rm -f "$cache_probe" "$local_probe"; }
+    trap cleanup EXIT
+    for probe in "$cache_probe" "$local_probe"; do
+        dir=${probe%/*}
+        test -d "$dir" && test -w "$dir" && test -x "$dir"
+        printf "#!/bin/sh\nexit 0\n" >"$probe"
+        chmod 700 "$probe"
+        "$probe"
+    done
+'; then
+    log_error "Runtime tmpfs contract failed; workspace readiness cannot complete."
+    exit 1
+fi
+log_info "  OK: runtime cache/tool tmpfs seats are writable and executable by uid 1000."
+
 # ───────────────────────────────────────────────────────────────
 # 8. Verify secret isolation (ADR-12) — warn-only
 # ───────────────────────────────────────────────────────────────

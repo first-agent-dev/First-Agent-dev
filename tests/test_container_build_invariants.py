@@ -135,21 +135,31 @@ def test_no_duplicate_pythonpath_on_agent() -> None:
 
 
 def test_agent_cache_tmpfs_caps_keep_home_and_uv_separate() -> None:
-    """C0/C3 Q8: measured HOME headroom stays ephemeral and distinct from uv."""
+    """C0/C3 Q8: HOME execution seats are private to uid 1000; uv scratch is noexec."""
 
-    volumes = _compose()["services"]["first-agent"]["volumes"]
+    agent = _compose()["services"]["first-agent"]
+    assert agent["user"] == "1000:1000"
+    assert "PRE_COMMIT_HOME=/home/fa/.cache/pre-commit" in agent["environment"]
+
+    runtime_tmpfs: dict[str, set[str]] = {}
+    for spec in agent["tmpfs"]:
+        target, raw_options = str(spec).split(":", maxsplit=1)
+        runtime_tmpfs[target] = set(raw_options.split(","))
+
+    common = {"rw", "nosuid", "nodev", "exec", "mode=0700", "uid=1000", "gid=1000"}
+    assert runtime_tmpfs == {
+        "/home/fa/.cache": common | {"size=1536m"},
+        "/home/fa/.local": common | {"size=500m"},
+    }
+    assert all("noexec" not in options for options in runtime_tmpfs.values())
+
+    volumes = agent["volumes"]
     tmpfs_by_target = {
         volume["target"]: volume for volume in volumes if isinstance(volume, dict) and volume.get("type") == "tmpfs"
     }
-
-    home_cache = tmpfs_by_target["/home/fa/.cache"]
-    uv_cache = tmpfs_by_target["/tmp/uv-cache"]
-    assert home_cache == {
-        "type": "tmpfs",
-        "target": "/home/fa/.cache",
-        "tmpfs": {"size": "1536M"},
-    }
-    assert uv_cache == {
+    assert "/home/fa/.cache" not in tmpfs_by_target
+    assert "/home/fa/.local" not in tmpfs_by_target
+    assert tmpfs_by_target["/tmp/uv-cache"] == {
         "type": "tmpfs",
         "target": "/tmp/uv-cache",
         "tmpfs": {"size": "2G"},
@@ -169,6 +179,13 @@ def test_container_session_smoke_has_publication_authority_and_wall_bounds() -> 
     assert remote in script
     assert script.index(remote) < script.index("docker run")
     assert script.count(bounded_run) == 2
+    cache_mount = "--tmpfs /home/fa/.cache:rw,nosuid,nodev,exec,size=1536m,mode=0700,uid=1000,gid=1000"
+    local_mount = "--tmpfs /home/fa/.local:rw,nosuid,nodev,exec,size=500m,mode=0700,uid=1000,gid=1000"
+    assert script.count(cache_mount) == 2
+    assert script.count(local_mount) == 2
+    assert "for dir in /home/fa/.cache /home/fa/.local" in script
+    assert '"$dir/.fa-exec-probe"' in script
+    assert '"$probe"' in script
     assert "trap 'sudo rm -rf /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state' EXIT" in script
 
 
