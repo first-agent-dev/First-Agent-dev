@@ -112,8 +112,8 @@ def main() -> int:
 
     print("❌ FOUND MagicMock(spec=<dataclass>) — use real instances instead:")
     print()
-    for filepath, lineno, cls_name in violations:
-        print(f"  {filepath}:{lineno}  MagicMock(spec={cls_name})")
+    for violation_file, lineno, cls_name in violations:
+        print(f"  {violation_file}:{lineno}  MagicMock(spec={cls_name})")
     print()
     print(f"  {len(violations)} violation(s) found.")
     print()

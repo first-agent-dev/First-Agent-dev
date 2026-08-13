@@ -161,13 +161,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state
+          trap 'sudo rm -rf /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state' EXIT
           cd /tmp/fa-ci-repo
           git init -q
           git config user.email "ci@test" && git config user.name "ci"
           git commit --allow-empty -q -m "init"
+          git remote add origin git@github.com:first-agent-dev/First-Agent-dev.git
           cd -
           sudo chown 1000:1000 /tmp/fa-ci-sessions /tmp/fa-ci-state
-          docker run --rm --user 1000:1000 --read-only \
+          timeout --foreground --kill-after=10s 300s docker run --rm --user 1000:1000 --read-only \
             --tmpfs /tmp --tmpfs /home/fa/.cache --tmpfs /home/fa/.local \
             -v /tmp/fa-ci-repo:/repo:ro \
             -v /tmp/fa-ci-sessions:/sessions \
@@ -179,7 +181,7 @@ jobs:
               test -f /sessions/.active
               test "$PWD" = "/sessions/ci-smoke"
               fa --version'
-          docker run --rm --user 1000:1000 --read-only \
+          timeout --foreground --kill-after=10s 300s docker run --rm --user 1000:1000 --read-only \
             --tmpfs /tmp --tmpfs /home/fa/.cache --tmpfs /home/fa/.local \
             -v /tmp/fa-ci-repo:/repo:ro \
             -v /tmp/fa-ci-sessions:/sessions \
@@ -191,7 +193,6 @@ jobs:
                 echo "V26 REGRESSION: FA_RUN_ID selected the session workspace" >&2
                 exit 1
               fi'
-          sudo rm -rf /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state
 
   # ---------------------------------------------------------------------------
   # Advisory jobs (continue-on-error: true)

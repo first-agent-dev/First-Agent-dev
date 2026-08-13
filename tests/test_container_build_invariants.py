@@ -17,6 +17,7 @@ import yaml
 _ROOT = Path(__file__).resolve().parents[1]
 _DOCKERFILE = _ROOT / "Dockerfile.fa"
 _COMPOSE = _ROOT / "docker-compose.fa.yml"
+_ADVISORY_WORKFLOW = _ROOT / ".github" / "workflows" / "advisory.yml"
 _SETUP = _ROOT / "scripts" / "setup-fa-desktop.sh"
 _POST_SETUP = _ROOT / "scripts" / "fa-post-setup.sh"
 _CLEAN_REBUILD = _ROOT / "scripts" / "fa-clean-rebuild.sh"
@@ -153,6 +154,22 @@ def test_agent_cache_tmpfs_caps_keep_home_and_uv_separate() -> None:
         "target": "/tmp/uv-cache",
         "tmpfs": {"size": "2G"},
     }
+
+
+def test_container_session_smoke_has_publication_authority_and_wall_bounds() -> None:
+    """C0/C3: CI smoke mirrors production source authority and cannot stand by forever."""
+
+    workflow: dict[str, Any] = yaml.safe_load(_ADVISORY_WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["container-build"]["steps"]
+    smoke = next(step for step in steps if step.get("name") == "Session workspace isolation")
+    script = str(smoke["run"])
+
+    remote = "git remote add origin git@github.com:first-agent-dev/First-Agent-dev.git"
+    bounded_run = "timeout --foreground --kill-after=10s 300s docker run"
+    assert remote in script
+    assert script.index(remote) < script.index("docker run")
+    assert script.count(bounded_run) == 2
+    assert "trap 'sudo rm -rf /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state' EXIT" in script
 
 
 # --- setup script ---------------------------------------------------------
