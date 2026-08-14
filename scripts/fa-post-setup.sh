@@ -227,6 +227,9 @@ if ! docker exec first-agent sh -eu -c '
     local_probe=/home/fa/.local/.fa-exec-probe-$$
     cleanup() { rm -f "$cache_probe" "$local_probe"; }
     trap cleanup EXIT
+    test "${NPM_CONFIG_CACHE:-}" = /home/fa/.cache/npm
+    mkdir -p "$NPM_CONFIG_CACHE"
+    test -d "$NPM_CONFIG_CACHE" && test -w "$NPM_CONFIG_CACHE" && test -x "$NPM_CONFIG_CACHE"
     for probe in "$cache_probe" "$local_probe"; do
         dir=${probe%/*}
         test -d "$dir" && test -w "$dir" && test -x "$dir"

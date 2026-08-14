@@ -29,12 +29,33 @@ def _compose() -> dict[str, Any]:
     return result
 
 
+def test_ci_workflows_do_not_use_sudo() -> None:
+    """Hosted CI fixtures must use mount-time ownership, not privileged shell repair."""
+
+    workflows = _ROOT / ".github" / "workflows"
+    offenders = [
+        path.relative_to(_ROOT).as_posix()
+        for path in sorted(workflows.glob("*.y*ml"))
+        if re.search(r"(?m)\bsudo\b", path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == []
+
+
 # --- Dockerfile -----------------------------------------------------------
 def test_home_is_pinned_for_numeric_user() -> None:
     """B1: compose runs the container as numeric 1000:1000, for which Docker may
     not derive HOME. The image must pin HOME so Path.home() resolves correctly."""
     text = _DOCKERFILE.read_text(encoding="utf-8")
     assert "ENV HOME=/home/fa" in text, "Dockerfile must pin HOME=/home/fa"
+
+
+def test_npm_cache_uses_the_writable_home_cache_tmpfs() -> None:
+    """Node-backed pre-commit hooks must not write to read-only ``$HOME/.npm``."""
+
+    text = _DOCKERFILE.read_text(encoding="utf-8")
+    cache_env = "ENV NPM_CONFIG_CACHE=/home/fa/.cache/npm"
+    assert cache_env in text
+    assert text.index(cache_env) > text.index("ENV HOME=/home/fa")
 
 
 def test_home_is_set_after_build_time_tools() -> None:
@@ -140,6 +161,7 @@ def test_agent_cache_tmpfs_caps_keep_home_and_uv_separate() -> None:
     agent = _compose()["services"]["first-agent"]
     assert agent["user"] == "1000:1000"
     assert "PRE_COMMIT_HOME=/home/fa/.cache/pre-commit" in agent["environment"]
+    assert "NPM_CONFIG_CACHE=/home/fa/.cache/npm" in agent["environment"]
 
     runtime_tmpfs: dict[str, set[str]] = {}
     for spec in agent["tmpfs"]:
@@ -174,19 +196,45 @@ def test_container_session_smoke_has_publication_authority_and_wall_bounds() -> 
     smoke = next(step for step in steps if step.get("name") == "Session workspace isolation")
     script = str(smoke["run"])
 
-    remote = "git remote add origin git@github.com:first-agent-dev/First-Agent-dev.git"
+    source_absent = "test ! -e /tmp/fa-ci-repo"
+    source_clone = 'git clone --no-hardlinks "$GITHUB_WORKSPACE" /tmp/fa-ci-repo'
+    remote = "git -C /tmp/fa-ci-repo remote set-url origin git@github.com:first-agent-dev/First-Agent-dev.git"
+    source_readable = "chmod -R a+rX /tmp/fa-ci-repo"
     bounded_run = "timeout --foreground --kill-after=10s 300s docker run"
-    assert remote in script
-    assert script.index(remote) < script.index("docker run")
+    for value in (source_absent, source_clone, remote, source_readable):
+        assert value in script
+    offsets = [script.index(value) for value in (source_absent, source_clone, remote, source_readable, "docker run")]
+    assert offsets == sorted(offsets)
+    assert "sudo" not in script
+    assert "/tmp/fa-ci-sessions" not in script
+    assert "/tmp/fa-ci-state" not in script
+    assert "mkdir -p /tmp/fa-ci-repo" not in script
+    assert "git init -q" not in script
+    assert "git commit --allow-empty" not in script
     assert script.count(bounded_run) == 2
     cache_mount = "--tmpfs /home/fa/.cache:rw,nosuid,nodev,exec,size=1536m,mode=0700,uid=1000,gid=1000"
     local_mount = "--tmpfs /home/fa/.local:rw,nosuid,nodev,exec,size=500m,mode=0700,uid=1000,gid=1000"
+    sessions_mount = "--tmpfs /sessions:rw,nosuid,nodev,exec,size=1g,mode=0700,uid=1000,gid=1000"
+    state_mount = "--tmpfs /home/fa/.fa:rw,nosuid,nodev,noexec,size=128m,mode=0700,uid=1000,gid=1000"
+    source_mount = "-v /tmp/fa-ci-repo:/repo:ro"
     assert script.count(cache_mount) == 2
     assert script.count(local_mount) == 2
+    assert script.count(sessions_mount) == 2
+    assert script.count(state_mount) == 2
+    assert script.count(source_mount) == 2
+    assert "-v /tmp/fa-ci-sessions:/sessions" not in script
+    assert "-v /tmp/fa-ci-state:/home/fa/.fa" not in script
     assert "for dir in /home/fa/.cache /home/fa/.local" in script
     assert '"$dir/.fa-exec-probe"' in script
     assert '"$probe"' in script
-    assert "trap 'sudo rm -rf /tmp/fa-ci-repo /tmp/fa-ci-sessions /tmp/fa-ci-state' EXIT" in script
+    assert 'test "${NPM_CONFIG_CACHE:-}" = /home/fa/.cache/npm' in script
+    hard_check = 'python3 -m fa.workspace_bootstrap check --workspace "$PWD"'
+    assert hard_check in script
+    assert hard_check + " >/dev/null" not in script
+    assert 'mkdir -p "$NPM_CONFIG_CACHE"' not in script
+    hard_check_block = script[script.index(hard_check) : script.index("fa --version", script.index(hard_check))]
+    assert "|| true" not in hard_check_block
+    assert re.search(r"(?m)^\s*trap\b", script) is None
 
 
 # --- setup script ---------------------------------------------------------

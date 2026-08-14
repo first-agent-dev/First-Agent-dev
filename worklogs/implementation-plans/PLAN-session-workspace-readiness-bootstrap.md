@@ -2,13 +2,39 @@
 
 Plan-ID: `PLAN-session-workspace-readiness-bootstrap`
 
-Status: **READY v23 — S1–S8 complete; S9 external proof is next**
+Status: **READY v27 — S1–S8 complete; no-sudo S9 §7 repair patch is delivery-ready, operator PR/CI pending**
 
 Depth: **P3** — changes the accepted workspace-isolation implementation,
 Git remote security boundary, container/session lifecycle wiring, local Git
 hooks, mutation-gate TCB, host developer bootstrap, and deployment verification.
 
-Revision: **v23 — S8 documentation contract complete**
+Revision: **v27 — Q4 removes sudo from CI through mount-time uid-1000 ownership**
+
+Changed-since-v26: GitHub-hosted CI now keeps only source as a runner-owned
+read-only bind and uses bounded uid/gid-1000 tmpfs for session/state roots. All
+workflow sudo/chown/privileged cleanup is removed and a repository-wide test
+pins the no-sudo policy. Production bind fidelity remains owned by live §7.
+
+Changed-since-v25: CI stale-root cleanup now uses symmetric privileged handling,
+the real-source clone mode is proven on the current promisor checkout, and tests
+pin cleanup count/order plus unique ordered deploy producers. Five targeted
+mutations are killed. External GitHub/Docker and recreated-deployment gates remain
+pending.
+
+Changed-since-v24: the 13-path external patch is based on exact `e8f7ee5`,
+deletes the provisional patch artifact, clean-applies in a second clone, and
+passes 133 targeted tests plus doc/shell/YAML/compile checks. Four producer
+mutations are killed. GitHub container C2, human merge, operator recreation, and
+PID1-bound §7 remain pending.
+
+Changed-since-v23: the post-merge §7 failure is causally bound to npm deriving
+`/home/fa/.npm` on the read-only root. Exact live B changed only
+`NPM_CONFIG_CACHE=/home/fa/.cache/npm`, returned zero, eliminated all 2,632
+tarball warnings/18 npm errors, retained every eager hook environment, and left
+source/workspace clean. The reviewed local candidate adds container policy,
+deploy storage probes, and a blocking real-source CI readiness check. §7 remains
+DEGRADED until required CI is green, a human merges, the operator recreates, and
+the PID1 startup workspace passes the live verifier.
 
 Changed-since-v22: ADR-13, digest, README, operations, FEATURES, runtime template,
 and four historical records now match the implemented transport, persistent
@@ -1289,6 +1315,45 @@ runtime override placement, historical banners, session DB authority, and
 restart/selector semantics. No historical research body was rewritten and no
 new policy choice appeared. S8 is complete; S9/T16 retains actual GitHub, CI,
 deployment, and human-boundary proof.
+
+### S9 §7 live-readiness closure record — local candidate 2026-08-14
+
+Child plan:
+[`PLAN-session-workspace-readiness-live-closure`](./PLAN-session-workspace-readiness-live-closure.md)
+
+Evidence:
+[`session-workspace-readiness-live-verification-from-6`](./session-workspace-readiness-live-verification-from-6.md)
+
+Confirmed live cause:
+
+```text
+A: npm child rc 254; mkdir /home/fa/.npm; 2632 tarball warnings
+B: only NPM_CONFIG_CACHE=/home/fa/.cache/npm changed; pre-commit rc 0
+B: zero tarball warnings; zero npm errors; all eager environments retained
+source/workspace status hashes unchanged
+CAUSE_STATUS=CACHE_PRIMARY_CONFIRMED
+```
+
+Local repair candidate:
+
+- Dockerfile and Compose pin the exact npm cache under existing writable tmpfs;
+- update, clean-rebuild, and post-setup verify the runtime npm path;
+- blocking container CI uses a real current-source clone and hard READY check;
+- structural/deploy/workflow tests pass;
+- nine current producer mutations are killed, including no-sudo/tmpfs/source-ro policy seats;
+- no persistent mount, capacity change, hook weakening, readiness-engine npm
+  branch, or runtime fail-open policy change was added.
+
+Current authority remains:
+
+```text
+SECTION_7=DEGRADED
+PATCH_STATUS=DELIVERY_READY_CLEAN_APPLY_TARGETED_GREEN
+GITHUB_CI=PENDING
+HUMAN_MERGE=PENDING
+RECREATED_DEPLOYMENT=PENDING
+FEATURE_PRODUCTION_READINESS=UNCLAIMED
+```
 
 ### Unresolved
 

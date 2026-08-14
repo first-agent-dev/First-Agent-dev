@@ -272,6 +272,13 @@ def test_deploy_producers_verify_runtime_user_tmpfs_write_and_exec() -> None:
         assert 'chmod 700 "$probe"' in text
         assert re.search(r'(?m)^\s+"\$probe"$', text), "producer must execute the tmpfs probe"
         assert 'rm -f "$cache_probe" "$local_probe"' in text
+        npm_env = 'test "${NPM_CONFIG_CACHE:-}" = /home/fa/.cache/npm'
+        npm_mkdir = 'mkdir -p "$NPM_CONFIG_CACHE"'
+        npm_access = 'test -d "$NPM_CONFIG_CACHE" && test -w "$NPM_CONFIG_CACHE" && test -x "$NPM_CONFIG_CACHE"'
+        for producer in (npm_env, npm_mkdir, npm_access):
+            assert text.count(producer) == 1, f"{name}: npm storage producer must be unique"
+        offsets = [text.index(value) for value in (npm_env, npm_mkdir, npm_access, "for probe in")]
+        assert offsets == sorted(offsets), f"{name}: npm storage checks must precede executable probes"
         assert "workspace readiness cannot complete" in text
 
 

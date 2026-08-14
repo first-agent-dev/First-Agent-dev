@@ -41,6 +41,10 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
       - UV_CACHE_DIR=/tmp/uv-cache
+      # npm defaults to $HOME/.npm, which is unavailable on the read-only root
+      # filesystem. Node-backed pre-commit environments keep their ephemeral
+      # package cache and logs in the writable HOME cache tmpfs instead.
+      - NPM_CONFIG_CACHE=/home/fa/.cache/npm
       # Shared pre-commit environments are ephemeral but must be writable and
       # executable by the fixed runtime identity (1000:1000). The tmpfs mount
       # contract below owns those permissions; this explicit path keeps

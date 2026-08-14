@@ -122,6 +122,10 @@ RUN mkdir -p /repo /sessions \
 # Docker does not reliably derive HOME from /etc/passwd (it can default to "/");
 # the agent uses Path.home() for state (~/.fa/...), so pin it to the fa home.
 ENV HOME=/home/fa
+# npm otherwise defaults to $HOME/.npm, but the runtime root filesystem —
+# including /home/fa itself — is intentionally read-only. Pre-commit's Node
+# environments need a cache/log root inside the writable HOME cache tmpfs.
+ENV NPM_CONFIG_CACHE=/home/fa/.cache/npm
 
 USER fa
 WORKDIR /workspace
