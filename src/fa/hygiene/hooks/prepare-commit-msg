@@ -56,15 +56,13 @@ COMMIT_SOURCE="${2:-}"
 # metadata headers it allows the message through without requiring the
 # rich PR-intent format.
 #
-# IMPORTANT: when COMMIT_SOURCE is empty (VS Code Git extension uses
-# ``git commit --file -`` to pass the message via stdin), the user
-# has already written their commit message and the template must NOT
-# be injected.  Earlier versions only skipped "message" (the -m flag)
-# but missed the empty-source case, causing the validator to reject
-# VS Code commits that had the INTENT template injected but INVARIANT
-# left as <fill me>.
+# IMPORTANT: an empty COMMIT_SOURCE is Git's normal editor-driven commit
+# path. It is the one path that must receive the generated PR-intent skeleton
+# before the editor opens. Git reports ``message`` for -m, -F, and -F -, so
+# those already-authored message paths remain skipped together with generated
+# template/squash/merge/amend sources.
 case "${COMMIT_SOURCE}" in
-  message|template|squash|merge|commit|"")
+  message|template|squash|merge|commit)
     exit 0
     ;;
 esac

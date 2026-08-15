@@ -28,7 +28,7 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
       - name: Install package
-        run: uv sync --frozen --extra dev
+        run: uv sync --locked --extra dev
       - name: Run Level-0 authoring kernel (always reports)
         run: uv run fa authoring-check --output json
       - name: Surface protected-path edits (flag for human review)

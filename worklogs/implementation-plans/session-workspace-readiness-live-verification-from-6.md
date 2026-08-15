@@ -1,6 +1,6 @@
 # Managed workspace readiness — post-merge live verification from §6
 
-Status: **S6 NO-SUDO DELIVERY READY — operator PR/CI and recreated §7 pending**
+Status: **S9.0 LIVE HOTFIX PENDING — mode restored; verifier umask correction next**
 
 Date: 2026-08-14
 
@@ -14,9 +14,11 @@ Current section state:
 
 ```text
 SECTION_6=PASS
-SECTION_7=DEGRADED
+SECTION_7=PASS
 CAUSE_STATUS=CACHE_PRIMARY_CONFIRMED
-PATCH_STATUS=DELIVERY_READY_CLEAN_APPLY_TARGETED_GREEN
+PATCH_STATUS=MERGED_DEPLOYED
+MERGED_SHA=33943fa3c21647057bb47b771c9a6997f8683717
+MANAGED_WORKSPACE_READINESS_GOAL=VERIFIED
 S9_STATUS=PENDING
 FEATURE_PRODUCTION_READINESS=UNCLAIMED
 ```
@@ -921,4 +923,358 @@ HUMAN_MERGE=PENDING
 RECREATED_DEPLOYMENT=PENDING
 FEATURE_PRODUCTION_READINESS=UNCLAIMED
 NEXT=S7_1_EXTERNAL_PATCH_AND_OPERATOR_PR
+```
+
+## 14. Recreated deployment §7 — PASS
+
+Merged/deployed authority:
+
+```text
+MERGED_SHA=33943fa3c21647057bb47b771c9a6997f8683717
+DEPLOYMENT_HEAD=33943fa3c21647057bb47b771c9a6997f8683717
+IMAGE_ID=sha256:50ee3a6030338af2cdcbe5bcb238d507da8b78db31141885efb20cb8571f3100
+IMAGE_REVISION=33943fa3c21647057bb47b771c9a6997f8683717
+CONTAINER_ID=402034445edc94e377b1a5e3ea5e44b5ad366b8ba3fc989f3edf4e8b29212d5a
+CONTAINER_STARTED_AT=2026-08-14T14:22:37.352436815Z
+AGENT_HEALTH=healthy
+PROXY_HEALTH=healthy
+DEPLOYMENT_STATUS_HASH=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+SOURCE_STATUS_HASH=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+Image/source byte parity:
+
+```text
+WORKSPACE_BOOTSTRAP_SHA=b8c390fc15e076a62af35851c14ca6bb0d34410a764f6d4ed89b3417fa6fe56b
+ENTRYPOINT_SHA=5f12d02f1de5e686bddc9e35dd885f396370f400d9bac71d3a648edaab61c65c
+IMAGE_SOURCE_PARITY=PASS
+```
+
+Runtime topology:
+
+```text
+RUNTIME_UID_GID=1000:1000
+HOME=/home/fa
+PRE_COMMIT_HOME=/home/fa/.cache/pre-commit
+NPM_CONFIG_CACHE=/home/fa/.cache/npm
+FA_AUTO_RUN=<unset>
+ROOT=overlay_ro
+HOME_CACHE=tmpfs_rw_exec_1536m_uid1000_gid1000
+HOME_LOCAL=tmpfs_rw_exec_500m_uid1000_gid1000
+TMP=tmpfs_rw_noexec
+UV_CACHE=tmpfs_rw_noexec
+```
+
+PID1 publication:
+
+```text
+PID1_CREATED_COUNT=1
+PID1_WORKSPACE=/sessions/session-20260814T142237-7
+ACTIVE_WORKSPACE=/sessions/session-20260814T142237-7
+CONTAINER_STARTED_EPOCH=1786717357.352436
+ACTIVE_MTIME_EPOCH=1786717420.9705675
+ACTIVE_DELAY_SECONDS=63.6181315
+PID1_ACTIVE_BINDING=PASS
+```
+
+The approximately 63.6-second delay demonstrates why health or an old `.active`
+value cannot be the verifier authority. This run bound the exact PID1 workspace;
+it does not independently identify the timestamp of the first successful Docker
+health probe.
+
+Managed Git contract:
+
+```text
+BRANCH=agent/session-20260814T142237-7
+FETCH=file:///repo
+PUSH=git@github.com:first-agent-dev/First-Agent-dev.git
+IDENTITY=First Agent <agent@first-agent.local>
+WORKSPACE_STATUS_HASH=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+Readiness contract:
+
+```text
+HOOKS_EXECUTABLE=4
+READY_RC=0
+READY_STATUS=ready
+READY_REASON=ready_fast_path
+READY_REPAIRED=false
+READY_CHECK_ELAPSED_MS=59
+FINGERPRINT=sha256:87010a40d580fbc8f21a97e2aa4578329dd4cd84a6ceddd3d6019af74469ae4c
+MARKER_MODE=0600
+MARKER_BEFORE_ACTIVE=yes
+SENTINEL_OK=yes
+```
+
+Final preservation:
+
+```text
+SOURCE_HEAD_AFTER=33943fa3c21647057bb47b771c9a6997f8683717
+SOURCE_STATUS_AFTER=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+DEPLOYMENT_HEAD_AFTER=33943fa3c21647057bb47b771c9a6997f8683717
+DEPLOYMENT_STATUS_AFTER=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+PROVIDER_MODEL_CALLS=0
+```
+
+Binary result:
+
+```text
+SECTION_7=PASS
+S9_STATUS=PENDING
+FEATURE_PRODUCTION_READINESS=UNCLAIMED
+NEXT=FRESH_LOGICAL_SESSION_PROOF
+```
+
+## 15. Fresh logical managed session — PASS
+
+The verifier first repeated recreated §7 and received the same merged/image/
+source/topology/readiness/preservation result. Warm startup-workspace check was
+`ready_fast_path` in 54 ms with the same fingerprint.
+
+The shipped CLI lifecycle factory then created a new logical session with no
+explicit selector and stopped before run/provider construction:
+
+```text
+CONTAINER_ID=402034445edc94e377b1a5e3ea5e44b5ad366b8ba3fc989f3edf4e8b29212d5a
+EXPECTED_SHA=33943fa3c21647057bb47b771c9a6997f8683717
+PID1_WORKSPACE=/sessions/session-20260814T142237-7
+SESSION_ID=session-fba3e51dcae249efbcd2d5c7dd95e7b6
+SESSION_WORKSPACE=/sessions/session-fba3e51dcae249efbcd2d5c7dd95e7b6
+CREATED_NOW=true
+RECOVERED_PENDING=false
+VERIFY_RECORD=/home/fa/.fa/live-verification/fresh-session-402034445edc.json
+CREATE_OR_ATTACH_RC=0
+```
+
+Session authority was created without beginning a run:
+
+```text
+MANIFEST_STATUS=active
+EVENT_COUNT=0
+RUN_BINDING_COUNT=0
+PROVIDER_MODEL_CALLS=0
+```
+
+The new session did not replace the PID1 startup selector:
+
+```text
+ACTIVE_BEFORE=/sessions/session-20260814T142237-7
+ACTIVE_AFTER=/sessions/session-20260814T142237-7
+ACTIVE_UNCHANGED=yes
+NEW_WORKSPACE_DIFFERS_FROM_PID1=yes
+```
+
+Managed Git/readiness contract:
+
+```text
+BRANCH=agent/session-fba3e51dcae249efbcd2d5c7dd95e7b6
+FETCH=file:///repo
+PUSH=git@github.com:first-agent-dev/First-Agent-dev.git
+IDENTITY=First Agent <agent@first-agent.local>
+READY_RC=0
+READY_STATUS=ready
+READY_REASON=ready_fast_path
+READY_CHECK_ELAPSED_MS=57
+FINGERPRINT=sha256:87010a40d580fbc8f21a97e2aa4578329dd4cd84a6ceddd3d6019af74469ae4c
+FRESH_SESSION_READINESS=PASS
+```
+
+The verifier also required executable project Python, four hook seats, no copied
+`.env.fa`, canonical manifest/DB paths and private modes, and clean workspace
+status; any mismatch would have failed before the PASS token.
+
+Final preservation:
+
+```text
+SOURCE_HEAD=33943fa3c21647057bb47b771c9a6997f8683717
+SOURCE_STATUS_HASH=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+DEPLOYMENT_HEAD=33943fa3c21647057bb47b771c9a6997f8683717
+DEPLOYMENT_STATUS_HASH=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+Binary result:
+
+```text
+FRESH_SESSION_PROOF=PASS
+MANAGED_WORKSPACE_READINESS_GOAL=VERIFIED
+S9_STATUS=PENDING
+FEATURE_PRODUCTION_READINESS=UNCLAIMED
+NEXT=DISPOSABLE_COMMIT_PROOF
+```
+
+## 16. S9.0 prepare-hook and locked-CI repair candidate — PASS LOCAL
+
+The v30 remaining-contract review invalidated the old next action before the
+retained fresh session was mutated. Real Git reports `message` for `-m`, `-F`,
+and `-F -`, and reports no source argument for a normal editor-driven commit.
+The shipped prepare hook skipped all of those paths, while its test forced the
+non-Git value `hook`.
+
+Bounded repair:
+
+- empty `COMMIT_SOURCE` now reaches the existing `fa.hygiene prepare` producer;
+- authored/generated message sources retain their compatibility skip;
+- a real-Git C2 test requires the editor to observe generated headers, then
+  requires one prepare and one commit-msg validation call, one proof file, valid
+  metadata/trailer, and a clean tree;
+- all seven workflow dependency-sync producers use `uv sync --locked --extra
+  dev`;
+- repository-wide workflow authority rejects frozen or non-locked sync lines.
+
+Focused and static evidence:
+
+```text
+HOOK_TESTS=26_passed
+AFFECTED_TESTS_INITIAL=228_passed_12_shellcheck_skipped
+AFFECTED_TESTS_FINAL=240_passed
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS
+MYPY=PASS_no_issues_2_files
+PYREFLY=PASS_0_errors
+WORKFLOW_YAML_PARSE=PASS
+SHELL_SYNTAX=PASS
+GIT_DIFF_CHECK=PASS
+```
+
+Clean candidate authority:
+
+```text
+BASE_SHA=33943fa3c21647057bb47b771c9a6997f8683717
+REMOTE_MAIN_AT_BUILD=33943fa3c21647057bb47b771c9a6997f8683717
+CANDIDATE_PATHS=10
+TRACKED_ROOT_SCRIPTS=3_mode_0755
+PATCH_DIGEST_AUTHORITY=external_sidecar
+JUST_CHECK_RC=0
+JUST_CHECK_GATES=lock,lint,mypy,pyrefly,authoring,contracts,shell,test
+FULL_PYTEST_INITIAL=2987_passed_14_skipped_1_xfailed
+FULL_PYTEST_FINAL=2999_passed_2_skipped_1_xfailed
+COVERAGE=84.68_percent
+FULL_GATE_STATUS=PASS
+```
+
+Negative proof:
+
+```text
+PREPARE_EMPTY_SOURCE_MUTATION_RC=1
+PREPARE_MUTATION_SURVIVED=no
+PREPARE_RESTORED=yes
+WORKFLOW_FROZEN_MUTATION_RC=1
+WORKFLOW_MUTATION_SURVIVED=no
+WORKFLOW_RESTORED=yes
+TARGETED_MUTATIONS=2
+SURVIVED=0
+```
+
+The apply, independent verifier, and sandbox test scripts are executable tracked
+files at repository root with byte-identical external bootstrap copies. Exact
+patch bytes are verified through an automatically discovered external
+`.sha256` sidecar, avoiding an impossible self-referential embedded patch hash.
+The root scripts were syntax-checked, ShellChecked, and exercised over real
+temporary Git repositories with shadow external tools:
+
+```text
+SCRIPT_TEST_CASES=13
+CASES=apply-success,apply-idempotent,apply-interrupted-recovery,verify-success,verify-timeout,wrong-base,dirty,deployment,patch-sha,patch-sha-file,patch-sha-symlink,patch-symlink,verify-diff
+S9_REPAIR_SCRIPT_TESTS=PASS
+SCRIPT_TEST_STDERR_BYTES=0
+TRACKED_EXTERNAL_SCRIPT_PARITY=PASS
+```
+
+The first proposed repair probe correctly failed its clean-tree oracle because
+the synthetic baseline left setup files untracked; the fixture was rebuilt and
+passed. The first script test failed on a dependent same-line Bash `local`
+assignment under `set -u`; it was split and rerun. A later patch-symlink fixture
+collision produced false setup noise, was rejected, renamed, and rerun with zero
+stderr. Once scripts became tracked, a broad `git apply --intent-to-add` trial
+rewrote the available Git index as staged deletions; the exact-diff gate blocked
+it. Delivery now uses plain `git apply` plus `git add -N --` on the exact three
+new script paths, and all 13 fixtures pass from pristine repositories. The first
+10-path candidate test also caught the prepare hook restored at mode 0644; mode
+0755 was reinstated and the executable-mode test passed. A stale external
+`rust-just` tool environment returned rc 2 before repository gates; after tool
+reinstallation the exact candidate passed `just check` with 2,999 tests. No red
+result was waived.
+
+Current boundary:
+
+```text
+S9_0_LOCAL_CANDIDATE=PASS
+REPAIR_PR=PENDING
+REQUIRED_GITHUB_CI=PENDING
+HUMAN_MERGE=PENDING
+RECREATED_DEPLOYMENT=PENDING
+REPLACEMENT_FRESH_SESSION=PENDING
+RETAINED_PRE_REPAIR_SESSION=session-fba3e51dcae249efbcd2d5c7dd95e7b6
+RETAINED_PRE_REPAIR_SESSION_MUTATED=no
+S9_STATUS=PENDING
+FEATURE_PRODUCTION_READINESS=UNCLAIMED
+NEXT=APPLY_AND_VERIFY_S9_0_REPAIR_IN_OPERATOR_CLONE
+```
+
+## 17. S9.0 live apply feedback — verifier hotfix pending
+
+The operator cleaned only the exact stale external verifier files and restored
+the tracked preflight probe, then applied A79 successfully:
+
+```text
+S9_REPAIR_APPLY=PASS
+REUSED_EXISTING=no
+APPLY_SCRIPT_RC=0
+```
+
+The first independent verification correctly blocked at the executable-mode
+oracle:
+
+```text
+READY=ready_repaired
+TARGETED_PYTEST=FAIL
+prepare-commit-msg_expected=0755
+prepare-commit-msg_actual=0700
+```
+
+Cause: apply script `umask 077` governed Git's replacement-file creation. The
+operator ran a guarded exact-path mode normalization; patch/diff identity stayed
+unchanged. The second verification then passed locked sync, readiness, 228
+focused tests, Ruff, format, Mypy, Pyrefly, shell, and workflow YAML, but full
+`just check` reported ten failures:
+
+```text
+test_posix_modes_false_when_chmod_does_not_stick
+fingerprint_changes[pyproject]
+fingerprint_changes[lock]
+fingerprint_changes[precommit_config]
+fingerprint_changes[hook_bytes]
+fingerprint_changes[hook_mode]
+fingerprint_changes[installer]
+fingerprint_changes[status]
+fingerprint_changes[python_minor]
+fingerprint_changes[uv_version]
+```
+
+All ten are one verifier-process defect. Global `umask 077` leaked into test
+subprocesses: temporary executable hooks began at 0700 rather than 0755, every
+fixed fingerprint changed, and the mocked no-op chmod probe began at its target
+0600 mode. Product behavior, lock state, and targeted gates were green.
+
+v33 correction:
+
+- Git apply runs in an umask-022 subshell;
+- exact four executable and six regular paths are normalized to 0755/0644 on
+  first and idempotent recovery paths;
+- every verifier gate runs in an umask-022 subshell, while logs/state retain
+  outer umask 077;
+- fake uv/uvx fixtures assert child `umask=0022`;
+- all 13 script cases and ShellCheck pass locally;
+- the exact ten former live failures pass under the corrected gate scope;
+- full corrected-candidate `just check` passes with 2,999 tests.
+
+```text
+HOTFIX_UMASK_REGRESSION_TESTS=10_passed
+HOTFIX_JUST_CHECK=2999_passed_2_skipped_1_xfailed
+LIVE_BRANCH_HOTFIX=PENDING
+LIVE_REPAIR_VERIFY=PENDING
+S9_STATUS=PENDING
+FEATURE_PRODUCTION_READINESS=UNCLAIMED
+NEXT=APPLY_V33_INCREMENTAL_HOTFIX
 ```
