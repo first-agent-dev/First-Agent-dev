@@ -42,7 +42,7 @@ CASES = (
     ),
     HookCase(
         "prepare-commit-msg",
-        ("COMMIT_MSG", "hook"),
+        ("COMMIT_MSG",),
         "",
         ("run", "--no-sync", "python", "-m", "fa.hygiene", "prepare", "COMMIT_MSG"),
     ),
@@ -133,6 +133,89 @@ def _rows(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def _uv_argvs(path: Path) -> list[list[str]]:
+    result: list[list[str]] = []
+    for row in _rows(path):
+        raw = row.get("argv")
+        assert isinstance(raw, list)
+        assert all(isinstance(item, str) for item in raw)
+        result.append(raw)
+    return result
+
+
+def _git_process(
+    repo: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        env=env,
+        input=input_text,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+
+def _make_real_git_hook_repo(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
+    """Create a real Git root whose hook tools delegate to checked-out FA code."""
+
+    repo = tmp_path / "real git hook repo"
+    repo.mkdir()
+    assert _git_process(repo, "init", "--quiet", "--initial-branch=main").returncode == 0
+    assert _git_process(repo, "config", "user.name", "First Agent").returncode == 0
+    assert _git_process(repo, "config", "user.email", "agent@first-agent.local").returncode == 0
+
+    (repo / "knowledge").mkdir()
+    (repo / "knowledge" / "llms.txt").write_text("marker\n", encoding="utf-8")
+    wrapper = repo / "scripts" / "bootstrap" / "workspace.py"
+    _write_executable(wrapper, f'#!{sys.executable}\nprint(\'{{"status":"ready"}}\')\n')
+    (repo / "baseline.txt").write_text("baseline\n", encoding="utf-8")
+    assert _git_process(repo, "add", "-A").returncode == 0
+    assert _git_process(repo, "commit", "--quiet", "-m", "baseline").returncode == 0
+
+    hooks_dir = repo / ".git" / "hooks"
+    for name in ("prepare-commit-msg", "commit-msg"):
+        shutil.copy2(HOOK_DIR / name, hooks_dir / name)
+        (hooks_dir / name).chmod(0o755)
+
+    uv_records = tmp_path / "real-git-uv.jsonl"
+    fakebin = tmp_path / "real-git-bin"
+    _write_executable(
+        fakebin / "uv",
+        f"#!{sys.executable}\n"
+        "from __future__ import annotations\n"
+        "import json, os, subprocess, sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "with Path(os.environ['FA_TEST_UV_RECORDS']).open('a', encoding='utf-8') as handle:\n"
+        "    handle.write(json.dumps({'argv': args}) + '\\n')\n"
+        "if args[:2] != ['run', '--no-sync']:\n"
+        "    raise SystemExit(97)\n"
+        "command = args[2:]\n"
+        "if command and command[0] == 'python':\n"
+        "    command = [sys.executable, *command[1:]]\n"
+        "raise SystemExit(subprocess.run(command, env=os.environ, check=False).returncode)\n",
+    )
+
+    env = os.environ.copy()
+    env["PATH"] = os.pathsep.join((str(fakebin), env.get("PATH", "")))
+    env["PYTHONPATH"] = os.pathsep.join((str(REPO_ROOT / "src"), env.get("PYTHONPATH", "")))
+    env["FA_TEST_UV_RECORDS"] = str(uv_records)
+    for name in (
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+    ):
+        env.pop(name, None)
+    return repo, env, uv_records
+
+
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
 def test_ready_bootstrap_precedes_normal_body_and_preserves_contract(case: HookCase, tmp_path: Path) -> None:
     repo, env = _make_repo(tmp_path)
@@ -146,6 +229,124 @@ def test_ready_bootstrap_precedes_normal_body_and_preserves_contract(case: HookC
     assert sequence[0]["argv"] == ["ensure", "--workspace", str(repo)]
     records = _rows(Path(env["FA_TEST_UV_RECORDS"]))
     assert records == [{"argv": list(case.normal_argv), "stdin": case.stdin}]
+
+
+@pytest.mark.parametrize("source", ["message", "template", "squash", "merge", "commit"])
+def test_prepare_generated_or_authored_sources_skip_template_injection(source: str, tmp_path: Path) -> None:
+    """C1: declared Git source values bootstrap, then retain compatibility skip."""
+
+    repo, env = _make_repo(tmp_path)
+    case = HookCase(
+        "prepare-commit-msg",
+        ("COMMIT_MSG", source),
+        "",
+        ("run", "--no-sync", "python", "-m", "fa.hygiene", "prepare", "COMMIT_MSG"),
+    )
+
+    result = _run(case, repo, env)
+
+    assert result.returncode == 0, result.stderr
+    assert [row["phase"] for row in _rows(Path(env["FA_TEST_SEQUENCE"]))] == ["bootstrap"]
+    assert not Path(env["FA_TEST_UV_RECORDS"]).exists()
+
+
+def test_real_git_editor_commit_reaches_prepare_and_validate(tmp_path: Path) -> None:
+    """root=git commit class=C2 claim=CT14 path=P25 matrix=M18.
+
+    producer-kill-check: restoring the empty-source skip in the installed
+    prepare-commit-msg seat leaves the editor without generated headers and
+    makes this real Git commit fail.
+    """
+
+    repo, env, uv_records = _make_real_git_hook_repo(tmp_path)
+    observed = tmp_path / "editor-observed.txt"
+    editor = tmp_path / "git-editor"
+    _write_executable(
+        editor,
+        f"#!{sys.executable}\n"
+        "from __future__ import annotations\n"
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "message = Path(sys.argv[1])\n"
+        "prepared = message.read_text(encoding='utf-8')\n"
+        "if 'INTENT: CHORE' not in prepared or 'INVARIANT: <fill me' not in prepared:\n"
+        "    print('prepared PR-intent headers missing', file=sys.stderr)\n"
+        "    raise SystemExit(91)\n"
+        "Path(os.environ['FA_TEST_EDITOR_OBSERVED']).write_text(prepared, encoding='utf-8')\n"
+        "message.write_text(\n"
+        "    'test: actual Git prepare producer\\n\\n'\n"
+        "    'INTENT: CHORE\\n'\n"
+        "    'INVARIANT: n/a\\n\\n'\n"
+        "    'AI-Session: actual-git-hook-test\\n',\n"
+        "    encoding='utf-8',\n"
+        ")\n",
+    )
+    env["GIT_EDITOR"] = str(editor)
+    env["FA_TEST_EDITOR_OBSERVED"] = str(observed)
+    proof = repo / "s9-disposable-proof.txt"
+    proof.write_text("proof\n", encoding="utf-8")
+    assert _git_process(repo, "add", proof.name, env=env).returncode == 0
+
+    result = _git_process(repo, "commit", env=env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    prepared = observed.read_text(encoding="utf-8")
+    assert "INTENT: CHORE" in prepared
+    assert "INVARIANT: <fill me" in prepared
+    calls = _uv_argvs(uv_records)
+    prepare_calls = [argv for argv in calls if "prepare" in argv]
+    validate_calls = [argv for argv in calls if "validate" in argv]
+    assert len(prepare_calls) == 1
+    assert len(validate_calls) == 1
+    assert prepare_calls[0][:5] == ["run", "--no-sync", "python", "-m", "fa.hygiene"]
+    assert validate_calls[0][:5] == ["run", "--no-sync", "python", "-m", "fa.hygiene"]
+    message = _git_process(repo, "log", "-1", "--pretty=%B", env=env).stdout
+    assert message.startswith("test: actual Git prepare producer\n\nINTENT: CHORE\nINVARIANT: n/a\n")
+    assert "AI-Session: actual-git-hook-test" in message
+    changed = _git_process(
+        repo,
+        "diff-tree",
+        "--no-commit-id",
+        "--name-only",
+        "-r",
+        "HEAD",
+        env=env,
+    ).stdout.splitlines()
+    assert changed == [proof.name]
+    assert _git_process(repo, "status", "--porcelain=v1", env=env).stdout == ""
+
+
+@pytest.mark.parametrize("message_mode", ["dash-m", "dash-F", "dash-F-stdin"])
+def test_real_git_authored_message_sources_skip_prepare_but_validate(
+    message_mode: str,
+    tmp_path: Path,
+) -> None:
+    """C2 P26: authored message paths skip injection but still run commit-msg."""
+
+    repo, env, uv_records = _make_real_git_hook_repo(tmp_path)
+    proof = repo / f"proof-{message_mode}.txt"
+    proof.write_text("proof\n", encoding="utf-8")
+    assert _git_process(repo, "add", proof.name, env=env).returncode == 0
+    expected_subject = f"test: {message_mode}"
+    input_text: str | None = None
+    if message_mode == "dash-m":
+        args = ("commit", "-m", expected_subject)
+    elif message_mode == "dash-F":
+        message_file = tmp_path / "message.txt"
+        message_file.write_text(expected_subject + "\n", encoding="utf-8")
+        args = ("commit", "-F", str(message_file))
+    else:
+        args = ("commit", "-F", "-")
+        input_text = expected_subject + "\n"
+
+    result = _git_process(repo, *args, env=env, input_text=input_text)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = _uv_argvs(uv_records)
+    assert [argv for argv in calls if "prepare" in argv] == []
+    assert len([argv for argv in calls if "validate" in argv]) == 1
+    assert _git_process(repo, "log", "-1", "--pretty=%s", env=env).stdout.strip() == expected_subject
+    assert _git_process(repo, "status", "--porcelain=v1", env=env).stdout == ""
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)

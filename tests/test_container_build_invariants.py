@@ -41,6 +41,27 @@ def test_ci_workflows_do_not_use_sudo() -> None:
     assert offenders == []
 
 
+def test_ci_workflows_use_locked_sync_never_frozen() -> None:
+    """Every workflow dependency sync must validate, never bypass, lock freshness."""
+
+    workflows = _ROOT / ".github" / "workflows"
+    frozen: list[str] = []
+    unlocked: list[str] = []
+    for path in sorted(workflows.glob("*.y*ml")):
+        relative = path.relative_to(_ROOT).as_posix()
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            command = line.strip()
+            if command.startswith("#") or "uv sync" not in command:
+                continue
+            location = f"{relative}:{line_number}"
+            if "--frozen" in command:
+                frozen.append(location)
+            if "--locked" not in command:
+                unlocked.append(location)
+    assert frozen == []
+    assert unlocked == []
+
+
 # --- Dockerfile -----------------------------------------------------------
 def test_home_is_pinned_for_numeric_user() -> None:
     """B1: compose runs the container as numeric 1000:1000, for which Docker may

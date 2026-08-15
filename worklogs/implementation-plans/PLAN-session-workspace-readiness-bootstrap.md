@@ -2,13 +2,69 @@
 
 Plan-ID: `PLAN-session-workspace-readiness-bootstrap`
 
-Status: **READY v27 — S1–S8 complete; no-sudo S9 §7 repair patch is delivery-ready, operator PR/CI pending**
+Status: **READY v33 — live mode/umask defects repaired; verifier rerun next**
 
 Depth: **P3** — changes the accepted workspace-isolation implementation,
 Git remote security boundary, container/session lifecycle wiring, local Git
 hooks, mutation-gate TCB, host developer bootstrap, and deployment verification.
 
-Revision: **v27 — Q4 removes sudo from CI through mount-time uid-1000 ownership**
+Revision: **v33 — live verifier feedback closes apply-mode and gate-umask defects**
+
+Changed-since-v32: first live apply succeeded, but the verifier caught the
+prepare hook at mode 0700; exact mode normalization restored it. The second live
+verifier passed every focused/static gate but full `just check` exposed ten
+umask-sensitive tests because verifier-level `umask 077` leaked into test
+subprocesses. Scripts now apply patches under umask 022, normalize the closed
+0755/0644 path sets on first/recovery runs, and execute every verification gate
+inside an umask-022 subshell while keeping logs/private state under 077. Fixtures
+assert both output modes and child gate umask. An incremental hotfix transports
+the corrected scripts to the already-applied operator branch; no commit, push,
+PR, deployment, or managed session mutation has occurred.
+
+Changed-since-v31: the apply, independent verifier, and sandbox test scripts are
+now executable tracked files at the First-Agent-dev root and are included in the
+repair patch. Because a patch cannot contain a script that embeds the patch's own
+final digest, exact transport authority moved to an auto-discovered external
+`<patch>.sha256` sidecar. Root-script execution covers 13 success, idempotency,
+interruption, timeout, wrong-base, dirty, deployment, patch/sidecar, symlink, and
+diff-mismatch cells with zero stderr. External copies remain only to bootstrap
+application before their tracked twins exist.
+
+Changed-since-v30: the empty-source prepare producer is repaired and covered by
+actual Git/editor/commit-msg C2; all seven workflow sync producers are locked;
+focused authority, final clean-candidate `just check` (2,999 passed), two producer
+mutations, and 11 apply/verifier script fixtures pass. Exact-current-main patch
+and standalone apply/independent-verify/test scripts are emitted externally. No
+operator clone, remote branch, PR, deployment, retained fresh session, or live
+state was mutated. The next action is operator apply/verify, repair PR required
+CI/human merge, and deployment recreation before S9.1.
+
+Changed-since-v29: source and real-Git probes found that
+`prepare-commit-msg` skips every Git-supplied source, so its template producer is
+unreachable, while its existing test forces a source value Git never emits. The
+operator selected full repair before publication proof. Blocking PR workflows
+also retain rejected `uv sync --frozen` semantics. S9 now begins with one bounded
+repair/real-Git test/locked-CI slice, human merge, deployment recreation, and a
+replacement fresh managed session. Commit, publication, PR/required-CI,
+governance, evidence, and cleanup then run as separate idempotent operator-script
+stages with independent read-only verifier scripts and exact PASS-token
+prerequisites. The already-passed `session-fba3e51d...` workspace is retained as
+historical evidence and is not mutated by the repair.
+
+Changed-since-v28: the shipped CLI lifecycle factory created a distinct managed
+session with no explicit selector, left PID1 `.active` unchanged, produced an
+active manifest/session DB with zero events/run bindings, and returned a clean
+B2/identity/hook/environment workspace whose read-only check is
+`ready_fast_path`. The managed-workspace readiness coding goal is verified. A
+real commit, pre-push, disposable PR/CI boundary, preservation recheck, and
+cleanup remain pending.
+
+Changed-since-v27: merged SHA `33943fa3` is clean and byte-identical across
+deployment/image/source; runtime npm/tmpfs policy is exact; one PID1 workspace
+published after readiness; B2/identity/.venv/four hooks/marker/sentinel/locked
+state are READY; final source/deployment hashes are unchanged. §7 is PASS. The
+next bounded task is the separate fresh logical-session proof; commit/push/PR and
+cleanup remain pending.
 
 Changed-since-v26: GitHub-hosted CI now keeps only source as a runner-owned
 read-only bind and uses bounded uid/gid-1000 tmpfs for session/state roots. All
@@ -1347,13 +1403,219 @@ Local repair candidate:
 Current authority remains:
 
 ```text
-SECTION_7=DEGRADED
-PATCH_STATUS=DELIVERY_READY_CLEAN_APPLY_TARGETED_GREEN
-GITHUB_CI=PENDING
-HUMAN_MERGE=PENDING
-RECREATED_DEPLOYMENT=PENDING
+SECTION_7=PASS
+PATCH_STATUS=MERGED_DEPLOYED
+MERGED_SHA=33943fa3c21647057bb47b771c9a6997f8683717
+GITHUB_CI=GREEN
+HUMAN_MERGE=COMPLETE
+RECREATED_DEPLOYMENT=PASS
+MANAGED_WORKSPACE_READINESS_GOAL=VERIFIED
+FRESH_LOGICAL_SESSION=PASS
+S9_STATUS=PENDING
 FEATURE_PRODUCTION_READINESS=UNCLAIMED
 ```
+
+### S9 remaining-contract adversarial review — 2026-08-14
+
+Mode: `/plan-authoring` + `/tests-writing` production audit. The old S9 prose
+was treated as a candidate to break, not as execution authority.
+
+#### Roots and dependents checked
+
+- all four hook source scripts, installer/status helpers, readiness wrapper, and
+  `pr_intent.py` prepare/validate CLI;
+- `pr_prepare`, `PrDraftStore`, `IntentGuard`, bash-intent Git classification,
+  and role prompts that define actual agent commit preparation;
+- `tests/test_hygiene_hooks_self_bootstrap.py`,
+  `tests/test_pr_intent_snapshot.py`, and
+  `tests/test_workspace_readiness_integration.py`;
+- `SessionManager` create/attach/begin-run APIs and the absence of a session
+  deletion API;
+- `just check-deep`, targeted mutation/Semgrep selectors, and pre-push stdin;
+- Dockerfile/Compose Git/secret/tool surface, host wrapper, setup/post-setup, and
+  current external §7/fresh-session verifiers;
+- every pull-request workflow, job-level advisory boundary, workflow-hygiene
+  checker, and container-build authority;
+- GitHub rules, rulesets, branch-protection, PR-check, check-run, ref, and PR
+  close/delete API surfaces needed by the live operator.
+
+#### Confirmed defects in the old S9 plan
+
+**D31 — the prepare-commit producer is unreachable from real Git.**
+
+- `src/fa/hygiene/hooks/prepare-commit-msg:66-70` skips
+  `message|template|squash|merge|commit|""`, which is the complete set of Git
+  source values plus the normal editor-driven empty source.
+- A real Git probe observed `message` for `-m`/`-F` and no second argument for a
+  plain editor commit. The shipped hook called `fa.hygiene prepare` zero times in
+  both cases.
+- `tests/test_hygiene_hooks_self_bootstrap.py:43-47` forces the fictional source
+  `hook` and invokes the shell file directly at lines 117-126. Git never emits
+  that source. `tests/test_workspace_readiness_integration.py:130-138` commits
+  with `-m`, so commit success cannot close the missing producer.
+- **Disposition:** confirmed product/test defect. Q9 is resolved by the operator:
+  repair fully before live publication proof, merge/deploy, and create a
+  replacement fresh session.
+
+**D32 — commit success alone cannot prove the normal hook bodies ran.**
+
+All four hooks intentionally fail open when readiness is unavailable
+(`pre-commit:58-66` and the identical prelude in the other seats). In addition,
+`commit-msg:12-17,85` deliberately permits a headerless manual message before its
+validator delegation and `prepare-commit-msg:66-70` skips message-source commits.
+A zero `git commit` rc and executable hook files therefore do not prove
+prepare/pre-commit/commit-msg normal bodies. S9 needs Git Trace2 evidence for
+Git's hook child, targeted Bash xtrace in the private hook log for the nested
+normal body, the prepared-buffer editor oracle, and exact commit
+graph/diff/message read-back.
+
+**D33 — the local publication integration test explicitly bypasses pre-push.**
+
+`tests/test_workspace_readiness_integration.py:143-157` sets
+`FA_HOOK_SKIP_FULL_CHECK=1`. That is valid for S6.5's local B2 smoke but cannot
+support S9's real pre-push claim. S9 must clear every hook-skip variable, capture
+the pre-push Trace2 hook child and targeted Bash-xtrace normal body, and require
+`just check-deep` completion before accepting the remote ref.
+
+**D34 — the plan conflated source-declared blocking jobs with required checks.**
+
+A PR may have green jobs while no branch rule marks any check required, or may
+have a nonempty required set while another source-declared blocking job never
+ran. `.github/workflows/advisory.yml:16-25,29-203` and
+`.github/workflows/authoring-guardrails.yml:7-39` declare pull-request jobs but
+contain no repository-settings authority. S9 must independently derive
+non-advisory jobs from pull-request workflows,
+require every one on the exact head SHA, and require a nonempty GitHub-computed
+required-check set. `gh pr checks --required` no-results/unknown rc (commonly 16)
+is collection state, never PASS.
+
+**D35 — the agent container cannot create or merge a GitHub PR.**
+
+`Dockerfile.fa:24-33` installs Git/SSH but not `gh`; Compose configures SSH at
+`docker-compose.fa.yml:65` and mounts the repository deploy key at lines 124-131,
+while a complete environment-name search finds no `GH_TOKEN` or `GITHUB_TOKEN`.
+This is sound secret-boundary behavior. The old DoD
+sentence “Agent branch can open PR” was stale. The managed workspace publishes
+the branch; the human/operator's authenticated host `gh` creates a **draft**
+disposable PR, observes CI, and closes it unmerged. No GitHub API credential is
+added to the agent container.
+
+**D36 — main-branch protection was an instruction, not a verified invariant.**
+
+`scripts/setup-fa-desktop.sh:415` only tells the operator to enable protection.
+`src/fa/sandbox/validators.py:284-294` denies force-push to main but allows an
+ordinary push; GitHub rules are the hard boundary. A destructive live push attempt is unacceptable. S9 must read
+all active rules applying to `main`, require pull-request and required-status-
+check rules, inspect contributing ruleset bypass actors, reject any DeployKey
+bypass, and verify the agent container has neither `gh` nor GitHub API-token
+variable names.
+
+**D37 — blocking PR workflows retain rejected lock semantics.**
+
+`.github/workflows/advisory.yml:67,90,124,221,239,256` and
+`.github/workflows/authoring-guardrails.yml:31` use
+`uv sync --frozen --extra dev`; the plan already rejected frozen sync because it
+skips lock freshness. The repair slice changes all workflow sync producers to
+`--locked` and adds repository-wide structural authority. Dockerfile's immutable
+runtime image install remains outside this workflow-readiness correction.
+
+**D38 — live command delivery was under-specified.**
+
+The v29 S9 block formerly at this file's lines 3562-3608 was an eight-item list
+with no script identity, idempotency/recovery state, external timeout, bounded
+output, exact PASS token, or prerequisite chain. It
+also asked for an inline Python here-document despite the operator's later
+no-heredoc requirement. Each remaining mutation now requires a standalone
+executor **and** an independent read-only verifier/test script, authored and
+sandbox-tested before presentation.
+
+**D39 — cleanup had no safe owner.**
+
+`SessionManager` exposes create/attach at
+`src/fa/session/manager.py:373-386` and begin-run at lines 408-449; a complete
+module symbol search finds no delete/remove-session API. Adding a
+product deletion API solely for one verification would be premature. A stdlib
+external cleanup helper must acquire the existing verification locks, validate
+canonical manifest/DB/workspace identity and zero event/run counts, refuse the
+current PID1 `.active` workspace, atomically rename owned roots to bounded
+tombstones, delete only after PR/ref evidence is recorded, and verify absence.
+
+**D40 — preservation was too local and cleanup ordering was unsafe.**
+
+The v29 S9 exit list formerly at this file's lines 3602-3608 compared `/repo`
+and deployment status but omitted remote `main`, container/image identity, PR
+merged state, fresh-session DB counts, verification records, and `.active`
+across commit/push/PR/cleanup. Remote branch deletion also
+had no expected-SHA precondition. CT20/T31 now close all of those cells.
+
+#### Review validation probes
+
+```text
+real Git source matrix:
+  -m=message
+  -F=message
+  -F stdin=message
+  plain editor=<absent>
+
+current shipped hook:
+  plain editor commit rc=1 when editor requires prepared headers
+  prepare normal-body calls=0
+  PREPARE_PRODUCER_KILL_CHECK=PASS
+
+proposed one-branch repair in a disposable real repository:
+  commit rc=0
+  prepare normal-body calls=1
+  validate normal-body calls=1
+  committed paths=[s9-disposable-proof.txt]
+  message has CHORE metadata=yes
+  message has AI-Session trailer=yes
+  worktree clean=yes
+  PROPOSED_REPAIR_PROBE=PASS
+
+workflow lock scan:
+  current frozen sync producers=7
+  proposed all-locked model=PASS
+  one-line frozen mutation killed=PASS
+
+hook process observability:
+  Git Trace2 child_start exposes child_class=hook + hook_name + hook argv
+  Git Trace2 does not expose uv/Python/just grandchildren launched by Bash
+  first targeted BASH_ENV pattern missed Git's relative .git/hooks path=FAIL
+  corrected BASH_ENV pattern *.git/hooks/* traces only the hook shell=PASS
+  stable PS4 exposes nested body argv without tracing child Bash scripts
+  TRACE2_TARGETED_XTRACE_SPLIT=CONFIRMED
+```
+
+The first repair probe initially left fixture setup files untracked and therefore
+failed its clean-worktree oracle. It was classified as a fixture defect, rebuilt
+with a complete baseline commit, and rerun to the PASS above; no red oracle was
+waived.
+
+#### Suspicions not promoted to defects
+
+- GitHub may currently use classic branch protection, repository rulesets, or
+  both. Source cannot decide this. The live governance verifier accepts either
+  only when the effective conjunction satisfies CT19; otherwise it stops with
+  `GITHUB_GOVERNANCE=BLOCK` and does not mutate settings.
+- Host `gh` availability/authentication is not assumed. Missing or insufficient
+  auth stops before PR creation and prints only account/scope metadata, never a
+  token.
+- A proof-only text commit should make targeted mutation/Semgrep report no
+  applicable production files. This is acceptable only after the real
+  `check-deep` path is observed with all skip variables cleared; an environment-
+  requested skip is not equivalent.
+
+#### Sound decisions retained
+
+- Commit and push remain separate stages.
+- The live proof uses a distinct no-run/no-model managed session, not PID1.
+- Runtime bootstrap remains fail-open; CI and human governance remain hard gates.
+- The deployment checkout is never a development or cleanup surface.
+- No direct push attempt to `main`, no merge API call, no `--no-verify`, and no
+  hook-skip variable are permitted in live acceptance.
+- The passed `session-fba3e51dcae249efbcd2d5c7dd95e7b6` session and its record
+  remain untouched during repair/deployment; after evidence is transcribed they
+  are cleaned together with the replacement proof session.
 
 ### Unresolved
 
@@ -1362,6 +1624,8 @@ FEATURE_PRODUCTION_READINESS=UNCLAIMED
   ephemeral tmpfs; persistence requires later measured need and a separate P2 plan.
 - `Q6` — **RESOLVED** by unchanged strict mutation policy: survivors stay exit 1;
   no baseline/pragma/allowlist is added.
+- `Q9` — **RESOLVED REPAIR-FIRST** by the operator after the real-Git prepare
+  producer defect was reproduced; S9.0 owns repair and replacement deployment.
 
 ---
 
@@ -1639,6 +1903,14 @@ Size: **L**, implemented as bounded sequential slices.
 | GAP18 | readiness subprocesses inherit pre-push stdin despite the noninteractive/preservation contract | S6.5 | T22–T23 |
 | GAP19 | focused commit tests use minimal/fake gates while current real Mypy/Pyrefly findings block the shipped commit path | S6.5 | T22–T24 |
 | GAP20 | CODEOWNERS parity test excludes real gate patterns and cannot verify S3.5 TCB governance | S6.5 | T21/T24 |
+| GAP21 | real Git cannot reach `prepare-commit-msg`'s prepare producer; the current test uses a fictional source | S9.0 | T25 |
+| GAP22 | commit/push success can be false-green through hook fail-open or explicit pre-push skip; no child-process proof exists | S9.2–S9.4 | T26–T28 |
+| GAP23 | S9 has no staged, idempotent, bounded operator executors or independent verifier/test scripts | S9.2–S9.8 | T26 |
+| GAP24 | source-declared blocking PR jobs, configured required checks, and their exact head SHA are not jointly verified | S9.5–S9.6 | T29 |
+| GAP25 | branch protection/ruleset/bypass state and agent API credential absence are not verified without risking a direct main push | S9.5–S9.6 | T30 |
+| GAP26 | no product session-delete API exists and the old cleanup prose lacks containment, lock, ownership, interruption, and residue rules | S9.7–S9.8 | T31 |
+| GAP27 | final preservation omits remote main, PR merge state, container/image, `.active`, DB counts, and verification records | S9.2–S9.8 | T27–T32 |
+| GAP28 | blocking pull-request workflows still use rejected `uv sync --frozen` semantics | S9.0 | T25 |
 
 ### 2.4 State transitions
 
@@ -1674,6 +1946,25 @@ STATE slice_mutation
     → ACTION_REQUIRED (exit 1 + exact names/diffs)
   invalid input/tool/config/process/result identity
     → INFRASTRUCTURE_FAILURE (exit 2/3; never mutation-clean)
+```
+
+```text
+STATE s9_repair
+  DEFECT_REPRODUCED
+    → REAL_GIT_TEST_GREEN → REQUIRED_CI_GREEN → HUMAN_MERGED
+    → RECREATED_DEPLOYMENT → REPLACEMENT_FRESH_SESSION_PASS
+  any mismatch
+    → PRESERVE_EVIDENCE + S9_BLOCKED
+
+STATE s9_publication
+  FRESH_READY
+    → COMMIT_PASS → PUBLICATION_PASS → PR_REQUIRED_CI_PASS
+    → HUMAN_BOUNDARY_RECORDED → EVIDENCE_RECORDED
+    → REMOTE_SESSION_CLEANUP_PASS → FINAL_PRESERVATION_PASS
+  repeated invocation
+    → VERIFY_AND_REUSE_EXACT_PRIOR_STATE
+  mismatched local/remote/record state
+    → FAIL_PRESERVE; never reset, amend, force, merge, or delete
 ```
 
 Target liveness for G1–G6, G8, and G9: **L3**. G7 reaches L3 when the
@@ -2430,6 +2721,266 @@ Kill-check: delete manager Git dispatch, lifecycle readiness admission, hook
 prelude, stdin isolation, mutation workflow producer, or an S6 authority claim;
 its named test/ledger completeness assertion fails and S7 remains blocked.
 
+### CT14 — real Git prepare/validate hook lifecycle
+
+Type: process/signal contract.
+
+Producer: Git invokes the installed checked-out
+`prepare-commit-msg` seat. Consumer: `python -m fa.hygiene prepare` writes the
+buffer consumed by the editor and later `commit-msg` validation.
+
+Closed source behavior:
+
+```text
+normal editor commit; COMMIT_SOURCE absent
+  → readiness READY
+  → run `uv run --no-sync python -m fa.hygiene prepare <buffer>` once
+  → editor must observe the generated CHORE/FIX/etc. header block
+message/template/squash/merge/amend source
+  → retain current compatibility skip; commit-msg applies its existing rules
+```
+
+The repair removes only the empty-string arm from the skip case and corrects the
+false `git commit --file -` comment: real Git reports source `message` for both
+`-F` and `-F -`. Headerless manual-message compatibility and generated-operation
+skips remain unchanged. No `pr_prepare` schema, `IntentGuard`, validator enum,
+commit-message public format, or fail-open readiness policy changes.
+
+T25 executes actual Git, installed hook seats, a deterministic editor, and the
+real `fa.hygiene` CLI. The editor fails unless it receives the prepared headers,
+then writes a valid subject/body/trailer; `commit-msg` must accept it. Separate
+real-Git cells prove `-m`, `-F`, and stdin-message paths do not inject. Re-adding
+`|""` to the skip case must kill the normal-editor test.
+
+### CT15 — operator script delivery and test contract
+
+Type: reliability/process contract.
+
+Every remaining live mutation is delivered as a standalone shell script plus an
+independent read-only verifier/test script. Thin shells share one stdlib-only
+state/Trace2 helper. A separate read-only workflow-job helper may import only the
+repository's already-locked PyYAML and must run under the replacement workspace's
+prepared project interpreter; this avoids an unsafe hand-written YAML parser
+without adding a dependency, service, or repository runtime module.
+
+Before presentation, the assistant must:
+
+1. run `bash -n` on every shell and ShellCheck when available;
+2. run `python3 -m py_compile` on every helper;
+3. execute success, expected-failure, timeout, interrupted-after-side-effect,
+   recovery, and second-run-idempotency fixtures with shadow `docker`/`gh`/Git
+   boundaries and real temporary Git repositories where Git semantics matter;
+4. prove a missing prerequisite PASS token blocks before mutation;
+5. prove malformed/symlinked/mismatched records and remote-SHA drift block;
+6. inspect script diffs and publish SHA-256 digests with the files.
+
+Live script requirements:
+
+- resolve their own directory and discover sibling prerequisite/verifier/helper
+  files; never assume `/home/fa/First-Agent-dev`, `/srv/...`, or any caller cwd;
+- discover deployment/source/container/workspace/record/repository/PR authorities
+  from prior signed-off outputs and live read-back, not a manual
+  `EXPECTED_MERGED_SHA`;
+- `set -Eeuo pipefail`, `umask 077`, explicit external timeouts, process cleanup,
+  bounded terminal tails, mode-0600 full logs, no raw secrets/proxy values;
+- no top-level interactive-shell block, no heredoc delivery, no `--no-verify`, no
+  skip variables, no force/reset/amend/rebase/merge, and no deployment checkout
+  write;
+- emit one stable `<STAGE>_PROOF=PASS|FAIL` token. A later executor must rerun
+  the preceding **read-only verifier** and require its exact PASS token before
+  any mutation.
+
+An independent verifier may reuse the shared schema/Trace2/targeted-Bash-xtrace
+parser, but it must rederive every PASS field from read-only live
+Git/GitHub/filesystem/SQLite state;
+it cannot accept the executor's stored `status="pass"` as its oracle. Fixtures
+must mutate a pass record while leaving live state wrong and require verifier
+failure.
+
+Failure preserves the managed workspace, stage record, logs, PR/ref, and session
+state. Cleanup is never an automatic `trap` after a failed proof.
+
+### CT16 — S9 verification record
+
+Type: data/atomicity contract.
+
+The existing mode-0600 fresh-session JSON remains schema 1 and keeps its current
+identity fields. The shared S9 helper adds one optional top-level `s9` object
+under the same mode-0600 file while holding the existing `.lock` with exclusive
+`flock`:
+
+```json
+{
+  "s9": {
+    "schema": 1,
+    "base_sha": "40hex",
+    "branch": "agent/session-...",
+    "proof_path": "s9-disposable-proof.txt",
+    "proof_sha256": "64hex",
+    "commit": {
+      "sha": "40hex",
+      "parent": "40hex",
+      "tree": "40hex",
+      "trace_sha256": "64hex",
+      "log_sha256": "64hex",
+      "status": "pass"
+    },
+    "publication": {
+      "remote_sha": "40hex",
+      "trace_sha256": "64hex",
+      "log_sha256": "64hex",
+      "status": "pass"
+    },
+    "pr": {
+      "number": 1,
+      "url": "https://github.com/.../pull/1",
+      "head_sha": "40hex",
+      "base_sha": "40hex",
+      "required_checks_sha256": "64hex",
+      "blocking_checks_sha256": "64hex",
+      "governance_sha256": "64hex",
+      "status": "pass"
+    }
+  }
+}
+```
+
+Writes use create-exclusive temporary files, flush/fsync, mode 0600, replace, and
+parent-directory fsync. Unknown fields are preserved. Every stage can recover
+from “side effect succeeded, record write interrupted” only by complete live
+read-back. A mismatch never auto-repairs Git/GitHub state.
+
+### CT17 — one real managed commit through all commit hooks
+
+Type: C2 live Git contract.
+
+Preconditions: replacement fresh-session verifier PASS; branch base equals the
+new merged/deployed/image/source SHA; workspace clean; event/run-binding counts
+zero; exact four current default hook seats; no hook skip variables.
+
+Mechanism:
+
+1. create exactly `s9-disposable-proof.txt` with deterministic non-secret
+   session/container/base metadata and stage only that path;
+2. clear author/committer overrides and suppress global identity as an authority;
+3. use plain `git commit` with a deterministic external `GIT_EDITOR`—not `-m` or
+   `-F`—so CT14 prepares the buffer; the editor refuses missing/wrong headers and
+   writes a valid CHORE subject/body plus `AI-Session:` trailer;
+4. create a mode-0600 command-local `BASH_ENV` file whose only enable pattern is
+   `case "$0" in *.git/hooks/*) set -x ;; *) set +x ;; esac`, set a stable
+   `PS4`, and run Git with that file plus Trace2. This traces the installed hook
+   shell but turns tracing off in descendant Bash scripts; capture mode-0600
+   Trace2 JSON and full hook/xtrace output under the verification root with an
+   external 1,800-second bound;
+5. require Trace2 `child_start` rows with `child_class="hook"` and exact
+   `hook_name` for prepare, pre-commit, and commit-msg; independently require
+   targeted Bash-xtrace commands for `fa.hygiene prepare`,
+   `pre-commit run --hook-stage pre-commit`, and `fa.hygiene validate`;
+6. require commit rc 0, one parent equal to base, exact local author identity,
+   exact one-file added diff, expected message/trailer, clean worktree, unchanged
+   session DB counts, `.active`, `/repo`, deployment, remote main, and zero model
+   calls.
+
+A second invocation verifies/reuses the same commit. Any other HEAD, staged path,
+working-tree change, message, parent, or record stops without reset/amend.
+
+### CT18 — full pre-push and feature-ref publication
+
+Type: C2/C3 live Git/network contract.
+
+The publisher reruns CT17's read-only verifier, unsets
+`FA_HOOK_SKIP_FULL_CHECK`, `FA_SKIP_TARGETED_MUTATION`, and
+`FA_SKIP_TARGETED_SEMGREP`, then reads the exact remote feature ref.
+
+```text
+remote ref absent
+  → bounded `git push --set-upstream origin <exact-session-branch>`
+remote ref == recorded commit
+  → idempotent verify/reuse; no second push
+remote ref present at any other SHA
+  → FAIL_PRESERVE; no force/delete/reset
+```
+
+A successful first push uses the same command-local targeted `BASH_ENV` shape and
+requires a Trace2 hook-child row for the installed pre-push seat plus a targeted
+Bash-xtrace `uv run --no-sync just check-deep` normal body, no environment-
+requested skip, clean gate completion, and remote SHA equality. “No applicable changed Python
+files” from targeted tools is admissible for the proof-only text commit only
+when the real selectors ran. `/repo`, deployment, remote main, `.active`, and DB
+counts remain unchanged.
+
+### CT19 — disposable draft PR, required CI, and human boundary
+
+Type: C3 GitHub governance contract.
+
+The agent container owns only SSH feature-ref publication. It must have no `gh`
+executable and no `GH_TOKEN`/`GITHUB_TOKEN`-shaped environment name. The
+operator's authenticated host `gh` derives owner/repository from the validated
+push URL and creates or reuses exactly one **draft** PR with head equal to the
+recorded session branch, base `main`, and head SHA equal to the proof commit.
+The body carries a stable “DISPOSABLE S9 PROOF — DO NOT MERGE” marker.
+
+Three independent gates are required on the exact head SHA:
+
+1. source-derived pull-request jobs: the A81 helper parses current workflow YAML
+   under locked PyYAML and emits literal display name (`job.name` or job id) for
+   every job without `continue-on-error: true`; dynamic/matrix-derived names are
+   an explicit unsupported BLOCK, never guessed. Require every emitted job to be
+   present and successful;
+2. GitHub-computed required checks: `gh pr checks --required` must return a
+   nonempty set and every row must pass; no-results/unknown/pending is not PASS;
+3. effective main governance: active rules must require a pull request and
+   required status checks. Fetch each contributing ruleset and reject any
+   `DeployKey` bypass actor; if classic protection contributes, require its
+   enforcement fields rather than inferring from a settings screenshot.
+
+Primary external contracts are GitHub's
+[Get rules for a branch](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch)
+endpoint—which returns active rules applying across repository/organization
+sources—plus [Get a repository ruleset](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset)
+for bypass actors, and the GitHub CLI
+[`gh pr checks`](https://cli.github.com/manual/gh_pr_checks) `--required`/JSON
+bucket contract. The script still captures installed `gh --version` and actual
+responses because CLI/API behavior can change after plan authoring.
+
+No live push to main and no merge API call is used as a negative test. The
+accepted human-boundary oracle is the conjunction above plus PR state
+`OPEN+DRAFT+unmerged`, unchanged remote main, and absence of agent-side GitHub
+API credentials. Missing auth/rules/checks yields a stable BLOCK token and no
+settings mutation.
+
+### CT20 — evidence-first close, cleanup, and final preservation
+
+Type: destructive cleanup/security contract.
+
+Cleanup is authored/presented only after commit, publication, PR/CI, governance,
+and human-boundary output has been transcribed into A30/A73 and the operator has
+confirmed the PR should close unmerged.
+
+Order is closed:
+
+1. verify PR head/base/SHA and checks again; close the draft PR without merge;
+2. require `state=CLOSED`, `mergedAt=null`, and remote main unchanged;
+3. read the exact feature ref and require it equals the proof commit; delete it
+   through the host GitHub API; require subsequent ref lookup 404;
+4. run §7 preservation again and require the current PID1 `.active` path;
+5. select exactly the current CT16 record plus the one prior complete
+   fresh-session record named in A73; any third/ambiguous candidate blocks. For
+   both proof-created logical sessions (the retained pre-repair session and
+   replacement target), acquire their verification locks, validate canonical
+   non-symlink manifest/DB/workspace paths, zero events/run bindings, clean Git
+   state, and proof that neither workspace is selected by `.active`; atomically
+   rename only those owned workspace and
+   session-state roots to unique contained tombstones, then remove them;
+6. unlink their verification JSON/lock/log records last and require no owned
+   path/tombstone remains;
+7. require deployment, `/repo`, remote main, container/image, PID1 `.active`, and
+   PR-unmerged state equal their baselines.
+
+Any containment, ownership, activity, count, SHA, PR, ref, or preservation
+mismatch stops before that destructive substep. There is no general retention
+sweep and no product session-deletion API in this plan.
+
 ---
 
 ## 4. Path and flag matrix
@@ -2462,8 +3013,22 @@ its named test/ledger completeness assertion fails and S7 remains blocked.
 | P22 | pre-push receives ref-update stdin while readiness launches children | inherited stdin in `_run_process` | readiness children get DEVNULL; normal gate gets original bytes exactly | S6.5 | T22–T23 |
 | P23 | current full Mypy/Pyrefly/CODEOWNERS gates | classified red baselines | minimal fixes, zero diagnostics, semantic governance parity | S6.5 | T21/T24 |
 | P24 | review discovers policy-sensitive or out-of-inventory finding | no bounded review stop gate | append blocking Q#/plan revision; no opportunistic fix | S6.5 | T21 |
+| P25 | real editor-driven Git commit has empty prepare source | prepare hook currently skips | run prepare producer once; editor observes headers | S9.0 | T25 |
+| P26 | `-m`/`-F`/stdin/generated commit source | compatibility paths | do not inject; retain commit-msg policy | S9.0 | T25 |
+| P27 | first proof commit vs interrupted/repeated invocation | fresh workspace | one exact commit or verified reuse; never amend/reset | S9.2–S9.3 | T26–T27 |
+| P28 | remote feature ref absent | B2 pushurl | real pre-push full gate then create exact ref | S9.4 | T28 |
+| P29 | remote feature ref already equals commit | retry/recovery | verify prior trace/record and reuse without pushing | S9.4 | T28 |
+| P30 | remote feature ref exists at different SHA | conflict/race | fail preserve; no force/delete | S9.4 | T28 |
+| P31 | host `gh` missing/unauthenticated/under-scoped | PR preflight | stop before PR mutation; no token output | S9.5 | T29–T30 |
+| P32 | no existing PR vs exact existing draft PR | GitHub | create once or verify/reuse exact head/base/SHA | S9.5–S9.6 | T29 |
+| P33 | required checks absent/pending/failing | GitHub | no PASS; bounded wait or stable BLOCK | S9.6 | T29 |
+| P34 | source-declared blocking job missing/failing | workflow/check runs | no PASS even if configured required subset is green | S9.6 | T29 |
+| P35 | main rules absent or deploy-key bypass present | governance | stable BLOCK; no direct main push/settings mutation | S9.6 | T30 |
+| P36 | PR close/ref delete | cleanup admission | close unmerged; expected-SHA ref check then delete | S9.7–S9.8 | T31 |
+| P37 | cleanup target is active, escaped, symlinked, nonzero DB, or mismatched | state cleanup | stop before rename/delete and preserve evidence | S9.8 | T31 |
+| P38 | interrupted cleanup leaves owned tombstone | recovery | validate contained tombstone and finish only exact owned deletion | S9.8 | T31–T32 |
 
-Coverage gate: 24/24 paths have a step and verification.
+Coverage gate: 38/38 paths have a step and verification.
 
 ### 4.2 Environment/matrix rows
 
@@ -2486,6 +3051,13 @@ Coverage gate: 24/24 paths have a step and verification.
 | M15 | clean isolated candidate, Linux/POSIX, real uv/just/pre-commit | merge/runtime readiness without dirty-worktree ambiguity | S6.5, T22/T24 |
 | M16 | pre-push stdin with a readiness child that attempts to read | child isolation + exact normal-body forwarding | S6.5, T23 |
 | M17 | effective hooks path/default seat plus custom/outside-path discovery | default path verified; policy-sensitive custom path triggers P24/Q# | S6.5, T21 |
+| M18 | Git prepare source: empty vs message/template/generated | real source routing and compatibility | S9.0/T25 |
+| M19 | operator script: first run, interrupted-after-side-effect, second run | recovery/idempotency without duplicate mutation | S9.2–S9.8/T26–T31 |
+| M20 | remote ref: absent, exact, conflicting | create/reuse/fail-preserve publication | S9.4/T28 |
+| M21 | GitHub governance: ruleset, classic protection, layered | effective rule conjunction and no DeployKey bypass | S9.5–S9.6/T30 |
+| M22 | CI authority: source blocking jobs vs configured required checks | both nonempty/exact-head/green | S9.5–S9.6/T29 |
+| M23 | cleanup: normal, active-target deny, path/symlink deny, interrupted tombstone | exact-owned deletion only | S9.7–S9.8/T31 |
+| M24 | preservation phase: commit, push, PR, close/ref-delete, session delete | remote/main/local/state identities never drift | S9.2–S9.8/T27–T32 |
 
 ---
 
@@ -3540,60 +4112,334 @@ Exit criteria:
 - [x] deploy-script static authority proves `FA_REPO_PUSH_URL` appears only in
   the non-secret runtime template/docs, not provider secret templates.
 
-### Step S9 — execute live managed-session proof
+### Step S9 — repair and execute the remaining live publication boundary
 
-Traces-to: G1–G8; GAP11; CT1–CT9.
+Traces-to: G1, G2, G5, G8; GAP11, GAP21–GAP28; CT1–CT9, CT14–CT20;
+P25–P38; M18–M24.
 
-Depends-on: S0–S8, green implementation PR CI, **human merge**, and
-operator-controlled `fa update` of the deployment mirror. Parallelizable-with:
-none. The agent may prepare the commands/report but cannot satisfy or bypass the
-merge/deploy precondition.
+Depends-on: S0–S8 and the recorded §7/fresh-session PASS. Parallelizable-with:
+none. Every stage consumes the preceding read-only verifier's exact PASS token.
 
-Target liveness: product claim L2→L3.
+Target liveness: prepare producer false-L2→L3; external publication/human
+boundary/cleanup L0–L2→L3.
+
+#### S9.0 — repair reproduced hook and CI prerequisites
+
+This is a normal source FIX in the canonical operator development clone, not a
+live-session mutation and not the later disposable proof commit.
 
 Edit exactly:
 
-- NEW `worklogs/implementation-plans/session-workspace-readiness-live-verification.md`;
-- append only a link/status summary to this plan after the report is complete;
-- no opportunistic product fix during evidence collection.
-
-Degree of freedom closed:
-
-- local/unit green could hide mount, ownership, cache, remote, or entrypoint
-  differences on the AIO host.
-
-Deterministic mechanism:
-
-- controlled live sheet with source/image identity and rollback.
+- `src/fa/hygiene/hooks/prepare-commit-msg` — remove only the empty-source skip
+  and correct the false `git commit --file -` comment;
+- `tests/test_hygiene_hooks_self_bootstrap.py` — replace the fictional `hook`
+  source fixture with the real empty-source shape and add an actual-Git C2 matrix
+  covering plain editor commit, `-m`, `-F`, and stdin message;
+- `.github/workflows/advisory.yml` and
+  `.github/workflows/authoring-guardrails.yml` — replace every workflow
+  `uv sync --frozen --extra dev` with `uv sync --locked --extra dev`;
+- `tests/test_container_build_invariants.py` — add repository-wide workflow
+  authority rejecting `uv sync --frozen` and requiring `--locked` on every
+  workflow sync;
+- root `fa-s9-apply-repair.sh`, `fa-s9-verify-repair.sh`, and
+  `fa-s9-test-scripts.sh` — tracked executable operator delivery, independent
+  verification, and sandbox fixture authority;
+- this plan/evidence summary only as required to record the repair.
 
 Do:
 
-1. Re-run tracked A1 after the operator update and record its terminal
-   `probe=complete` baseline in A30.
-2. Record the entrypoint-created startup workspace from that container recreation
-   and assert B2/identity/readiness existed before `.active` became consumable.
-3. Create a separate fresh managed logical session with a `docker compose exec`
-   Python here-document that calls `fa.cli._session_manager_for_args` using
-   `SimpleNamespace(workspace=None)`, then
-   `create_or_attach_session(session_id=None, workspace_override=None)` and emits
-   only session id/path. This exercises the shipped CLI composition root and
-   performs zero provider/model calls.
-4. For both managed producers, assert branch/fetch/push/local identity, `.venv`,
-   seats, marker, sentinel, and no copied `.env.fa`.
-5. From the logical session, commit and push a disposable branch through
-   pushurl; verify it appears on GitHub and `/repo` HEAD/status remain unchanged.
-6. Verify no direct push/merge to main is possible for agent identity.
-7. Run CI on the disposable PR; operator closes/deletes it without merge.
-8. Record cold/warm evidence and clean disposable session/branch explicitly.
+1. Make the actual-Git test install checked-out prepare/commit-msg seats, use a
+   fake readiness wrapper only at the external environment boundary, route `uv`
+   to the checked-out real `fa.hygiene` module, and use an editor that fails if
+   prepare headers are absent before writing a valid message.
+2. Prove message-source commits skip injection and retain current headerless
+   manual compatibility; do not broaden commit-msg enforcement.
+3. Run focused tests, Bash syntax, YAML parse, workflow lock scan, Ruff on changed
+   Python, `git diff --check`, and full `just check` from a clean candidate.
+4. Producer mutations:
+   - re-add `|""` to the prepare skip → actual-Git editor test must fail;
+   - change one workflow sync back to `--frozen` → repository-wide workflow test
+     must fail;
+   restore exact bytes/modes and rerun affected tests.
+5. Track executable root `fa-s9-apply-repair.sh`, independent
+   `fa-s9-verify-repair.sh`, and `fa-s9-test-scripts.sh`; retain byte-identical
+   external bootstrap copies. Generate the exact-current-main binary patch plus
+   external `<patch>.sha256` sidecar. Apply CT15: clean-clone apply/tree equality,
+   success/failure/interruption/timeout/idempotency fixtures, syntax/ShellCheck,
+   tracked/external parity, and sidecar digest before presentation. Scripts
+   auto-discover/reject the deployment checkout and never assume a host path.
+6. Load `pr-creation`; declare the existing-test edits and create a focused
+   repair PR from the canonical operator clone. A80's read-only verifier must
+   already distinguish source blocking jobs from a nonempty configured-required
+   set and inspect effective main rules. If governance is absent, stop for human
+   configuration; do not mutate GitHub settings from the script. Only after both
+   CI sets pass may a human merge and the operator run normal `fa update`.
+
+Do-not:
+
+- do not edit the deployment checkout, old fresh workspace, `pr_prepare`,
+  `IntentGuard`, commit-message schema, readiness fail-open policy, or provider
+  state;
+- do not combine the later disposable proof commit with this repair PR.
 
 Exit criteria:
 
-- [ ] live B2 push branch succeeds;
-- [ ] local fetch remains `/repo`-bound;
-- [ ] readiness predates LLM call;
-- [ ] deployment mirror remains clean;
-- [ ] GitHub CI/human merge boundary observed;
-- [ ] all L3 kill-checks recorded.
+- [x] actual Git reaches `fa.hygiene prepare` exactly once on a plain editor
+  commit and the producer-removal mutation is killed;
+- [x] `-m`, `-F`, stdin-message, generated-source compatibility cells pass;
+- [x] every workflow `uv sync` uses `--locked`; mutation is killed;
+- [x] focused/full gates pass with actual output;
+- [x] A79/A80 candidate delivery has syntax, ShellCheck, success/failure,
+  interruption-recovery, timeout, idempotency, deployment-deny, and SHA/diff
+  fixtures green; final byte identities are reported outside the patch;
+- [ ] required CI, human repair merge, operator deployment, source/image parity,
+  and recreated §7 all PASS at one new SHA.
+
+S9.0 local execution record — 2026-08-14:
+
+```text
+BASE_SHA=33943fa3c21647057bb47b771c9a6997f8683717
+REMOTE_MAIN_AT_BUILD=33943fa3c21647057bb47b771c9a6997f8683717
+HOOK_TESTS=26_passed
+AFFECTED_TESTS_INITIAL=228_passed_12_shellcheck_skipped
+AFFECTED_TESTS_FINAL=240_passed
+RUFF_CHECK_FORMAT=PASS
+MYPY=PASS
+PYREFLY=PASS
+YAML_SHELL_DIFF=PASS
+JUST_CHECK_RC=0
+FULL_PYTEST_INITIAL=2987_passed_14_skipped_1_xfailed
+FULL_PYTEST_FINAL=2999_passed_2_skipped_1_xfailed
+COVERAGE=84.68_percent
+TARGETED_MUTATIONS=2_killed_0_survived
+DELIVERY_SCRIPT_CASES=13_passed
+DELIVERY_SCRIPT_STDERR_BYTES=0
+TRACKED_ROOT_SCRIPTS=3_mode_0755
+PATCH_PATHS=10
+PATCH_DIGEST_AUTHORITY=external_sidecar
+S9_0_LOCAL_CANDIDATE=PASS
+REPAIR_PR=PENDING
+RECREATED_DEPLOYMENT=PENDING
+```
+
+The bare system-Python full test attempt first stopped during collection with 54
+`ModuleNotFoundError: bashlex` errors. It was classified as an environment
+failure, not a product result; the locked dev environment was then installed and
+the clean-candidate `just check` above passed. Probe/test authoring defects
+(untracked baseline, same-line `local` under `set -u`, and a colliding symlink
+fixture path) were fixed and rerun; none was waived. After scripts became tracked,
+a first broad `git apply --intent-to-add` trial rewrote the entire index as
+staged deletions on the available Git build. The exact-diff gate blocked it. The
+accepted mechanism is plain `git apply` followed by `git add -N --` on the closed
+three-script path set; all 13 fixtures then passed from pristine repositories.
+The first v32 candidate run also caught the modified hook restored at mode 0644;
+mode 0755 was restored and the executable-mode test reran green. A stale external
+`rust-just` tool environment returned rc 2 before repository gates; the tool was
+reinstalled and the final exact 10-path candidate passed all blocking gates with
+2,999 tests.
+
+Live operator feedback and v33 correction:
+
+```text
+LIVE_REPAIR_APPLY=PASS
+LIVE_APPLY_REUSED=no
+LIVE_VERIFY_1=FAIL_targeted_mode_0700
+LIVE_MODE_RECOVERY=PASS_0755_0644
+LIVE_VERIFY_2_FOCUSED_GATES=PASS
+LIVE_VERIFY_2_FULL_CHECK=FAIL_10_umask_sensitive_tests
+LIVE_FAILURE_PRIMARY=verifier_umask_leak
+PRODUCT_FAILURE=false
+HOTFIX_SCRIPT_CASES=13_passed
+HOTFIX_SCRIPT_STDERR_BYTES=0
+HOTFIX_SHELLCHECK=PASS
+HOTFIX_UMASK_REGRESSION_TESTS=10_passed
+HOTFIX_JUST_CHECK=2999_passed_2_skipped_1_xfailed
+HOTFIX_OPERATOR_APPLY=PENDING
+LIVE_REPAIR_VERIFY=PENDING
+```
+
+The ten failures are one mechanism class: `umask 077` made temporary executable
+fixtures start at 0700 instead of 0755, changed all fixed fingerprint baselines,
+and made the mocked-no-op chmod capability probe start at its target 0600 mode.
+No product source/test expectation was changed. The corrected verifier preserves
+private artifact creation at 077 but scopes every repo gate to umask 022.
+
+#### S9.1 — create the replacement no-run/no-model target
+
+1. Preserve the prior
+   `session-fba3e51dcae249efbcd2d5c7dd95e7b6` workspace/record unchanged as
+   historical evidence; do not attach it after deployment.
+2. Re-run the existing recreated-§7 verifier against auto-discovered remote main
+   and require `SECTION_7=PASS` on the repaired container/image/source SHA.
+3. Run the existing fresh-session verifier to create a distinct replacement
+   logical session and require `FRESH_SESSION_PROOF=PASS`, zero events,
+   zero run bindings, zero provider/model calls, clean Git state, B2, identity,
+   hooks, marker, sentinel, and readiness fast path.
+4. Record both proof-created session identities for final cleanup; PID1 startup
+   sessions are not cleanup targets.
+
+Exit criteria:
+
+- [ ] repair revision is identical across remote main, deployment, image, and
+  `/repo`;
+- [ ] replacement fresh session exists on that revision and differs from PID1
+  and the retained pre-repair session;
+- [ ] next token is exactly `NEXT=DISPOSABLE_COMMIT_PROOF`.
+
+#### S9.2 — author and sandbox-test commit-stage scripts
+
+Before giving the operator any commit command, create outside the repository:
+
+- `fa-s9-state.py` — shared stdlib record/Trace2/targeted-Bash-xtrace/parser/containment helper;
+- `fa-s9-commit.sh` — idempotent one-commit executor;
+- `fa-s9-verify-commit.sh` — independent read-only commit verifier;
+- `fa-s9-test-scripts.sh` — sandbox fixture suite for all currently delivered
+  scripts.
+
+Apply CT15 in full. Fixture tests must include real temporary Git with actual
+Git hook invocation, missing prerequisite token, malformed/symlink record,
+commit failure, interruption after commit before record write, exact recovery,
+second-run reuse, extra staged path, wrong parent, missing Trace2 hook child,
+missing targeted Bash-xtrace normal body, and a broad xtrace selector that leaks
+into a child Bash script. Present only after syntax/compile/fixture output and script SHA-256
+values are recorded.
+
+Exit criteria:
+
+- [ ] every delivered script passes CT15 static/fixture gates;
+- [ ] the independent verifier separately rejects a missing Trace2 hook child or
+  missing targeted Bash-xtrace normal body for prepare, pre-commit, or commit-msg;
+- [ ] no live mutation has run yet.
+
+#### S9.3 — execute and verify the one disposable commit
+
+The operator invokes the standalone script with `bash`; no pasted block or
+manual SHA/path input is required.
+
+1. `fa-s9-commit.sh` reruns the replacement fresh-session verifier and requires
+   its exact PASS token.
+2. Execute CT17 under its bound. On failure preserve all state/logs and emit
+   `DISPOSABLE_COMMIT_PROOF=FAIL`.
+3. Run `fa-s9-verify-commit.sh` independently; only
+   `DISPOSABLE_COMMIT_PROOF=PASS` admits publication.
+4. Re-run source/deployment/remote-main preservation.
+
+Exit criteria:
+
+- [ ] one commit, one added proof file, correct parent/author/message/trailer;
+- [ ] prepare editor oracle plus all three Trace2 hook-child rows and targeted
+  Bash-xtrace normal-body rows;
+- [ ] workspace clean; source/deployment/remote main unchanged; DB counts zero;
+- [ ] second executor/verifier run is byte/state idempotent.
+
+#### S9.4 — author, sandbox-test, execute, and verify publication
+
+After commit PASS, create/present:
+
+- `fa-s9-publish.sh` — exact feature-ref publisher;
+- `fa-s9-verify-publication.sh` — independent read-only remote/pre-push verifier;
+- extend `fa-s9-test-scripts.sh` with absent/exact/conflicting ref, pre-push
+  failure, skip-env contamination, timeout, interrupted record, and retry cells.
+
+The publisher must rerun `fa-s9-verify-commit.sh`, require exact PASS, and execute
+CT18. The verifier must require the remote feature ref equals the commit and the
+first-push Trace2 hook row plus targeted Bash-xtrace log proves the full
+pre-push path. Do not combine commit and
+push.
+
+Exit criteria:
+
+- [ ] `PUBLICATION_PROOF=PASS` from the independent verifier;
+- [ ] no hook skip variable and no `--no-verify`/force path was used;
+- [ ] real `just check-deep` completed and remote ref equals the commit;
+- [ ] source/deployment/remote main/DB/`.active` preservation remains exact;
+- [ ] repeated run verifies/reuses the ref without a second push.
+
+#### S9.5 — author and sandbox-test host PR/governance scripts
+
+After publication PASS, create/present:
+
+- `fa-s9-open-pr.sh` — host-auth preflight, governance read, and idempotent draft
+  PR creation/reuse;
+- `fa-s9-workflow-jobs.py` — read-only PyYAML helper run by the prepared project
+  interpreter to derive pull-request non-advisory job display names;
+- `fa-s9-verify-pr-ci.sh` — independent bounded required/all-blocking CI watcher
+  and human-boundary verifier;
+- extend `fa-s9-test-scripts.sh` with workflow shorthand/longhand triggers, job
+  `name` override, `continue-on-error`, missing `gh`, auth failure, no PR/exact
+  PR/mismatched PR, no required checks, pending/fail/pass checks, missing source
+  job, classic/ruleset/layered governance, and DeployKey-bypass rejection cells.
+
+The scripts auto-discover repository/head/base from the publication record. They
+print account/scope **metadata only**, never auth tokens. Governance is checked
+before PR creation. If it fails, no GitHub setting is mutated and no direct push
+to main is attempted.
+
+Exit criteria:
+
+- [ ] CT15 fixtures/static checks pass and hashes are recorded;
+- [ ] ruleset/classic parser fixtures cover M21/M22;
+- [ ] live state remains publication PASS with no PR mutation before presentation.
+
+#### S9.6 — create/reuse the draft PR and prove CI/human boundary
+
+1. `fa-s9-open-pr.sh` reruns the publication verifier and requires exact PASS.
+2. Require host `gh` auth and CT19 governance; create or exact-reuse one draft PR.
+3. `fa-s9-verify-pr-ci.sh` waits under an external bound, records source-derived
+   blocking jobs and GitHub-required checks separately, and requires both
+   nonempty applicable sets green on the exact commit.
+4. Require PR remains OPEN+DRAFT+unmerged, remote main unchanged, agent container
+   without GitHub API credentials, and no DeployKey ruleset bypass.
+5. Preserve PR URL/number and complete check/governance JSON hashes in CT16.
+
+Exit criteria:
+
+- [ ] `PR_REQUIRED_CI_PROOF=PASS`;
+- [ ] every source-declared blocking PR job and every configured required check
+  is present/successful on the exact head SHA;
+- [ ] human boundary conjunction is PASS without a merge or direct-main attempt;
+- [ ] no cleanup has begun.
+
+#### S9.7 — record evidence before destructive cleanup
+
+1. Append actual commit/push/PR/check/governance/preservation outputs to A30/A73
+   and update the parent status only through
+   `PR_REQUIRED_CI_PROOF=PASS`; keep `S9_STATUS=PENDING`.
+2. The assistant reviews the evidence, reports any mismatch, and waits for the
+   operator's explicit confirmation that the draft PR may close unmerged.
+3. Only after evidence and confirmation, author/present:
+   - `fa-s9-close-cleanup.sh` — close/ref/session/record cleanup executor;
+   - `fa-s9-verify-cleanup.sh` — independent final absence/preservation verifier;
+   - extend `fa-s9-test-scripts.sh` with PR already closed, PR merged deny,
+     remote-SHA mismatch, active-session deny, path/symlink/DB-count deny,
+     interruption/tombstone recovery, and second-run cells.
+
+Exit criteria:
+
+- [ ] live evidence is recorded before cleanup script delivery;
+- [ ] cleanup scripts pass CT15 fixtures and hashes are recorded;
+- [ ] no destructive cleanup runs without explicit human confirmation.
+
+#### S9.8 — close unmerged, clean exact proof state, and finalize
+
+1. `fa-s9-close-cleanup.sh` reruns the PR/CI verifier and requires exact PASS.
+2. Execute CT20 in its closed order. Never use `gh pr close --delete-branch`
+   because that couples PR, remote-ref, and local-branch mutations without the
+   expected-SHA gates.
+3. Run `fa-s9-verify-cleanup.sh` independently and re-run recreated §7.
+4. Append final results to A30/A73 and update this plan/HANDOFF via
+   doc-maintenance.
+
+Exit criteria:
+
+- [ ] PR CLOSED and unmerged; exact feature ref absent;
+- [ ] retained pre-repair and replacement proof sessions/records absent; PID1
+  workspace and `.active` intact;
+- [ ] deployment, `/repo`, remote main, container/image, and provider/model-call
+  boundaries unchanged;
+- [ ] independent verifier emits `S9_FINAL_PROOF=PASS`;
+- [ ] only then set `S9_STATUS=PASS` and
+  `FEATURE_PRODUCTION_READINESS=VERIFIED`.
 
 ---
 
@@ -3807,17 +4653,21 @@ Oracles:
   own evidence record, or the four correction-bannered PR-note/session-prompt
   files; the test stores that allowlist explicitly and fails on any new path.
 
-### T16 — final live path
+### T16 — final live path umbrella
 
-Class: C2/C3 live deployment.
+Class: C2/C3 live deployment/GitHub.
 
-Root: host wrapper/container/session Git/GitHub branch and CI.
+T16 is satisfied only by the conjunction T25–T32. A remote branch or green PR
+alone is insufficient. Root: repaired deployed image → replacement no-run
+managed session → real commit hooks → full pre-push → GitHub feature ref → draft
+PR → source-blocking + configured-required checks → non-destructive governance
+proof → evidence-first cleanup.
 
-Oracle: branch remote, file artifacts, source cleanliness, PR checks, denied
-merge boundary.
+Oracle: exact stage PASS tokens and CT16 record fields, remote/local/state
+read-back, PR unmerged state, and final preservation.
 
-Kill-check: temporarily omit pushurl/readiness producer in a disposable candidate
-and show the sheet fails before restoring.
+Kill-check: T25–T32 each name a producer/gate omission or branch inversion. No
+destructive live mutation of `/repo`, deployment, or `main` is used as a kill.
 
 ### T17 — isolated runner and targeted-selector contract
 
@@ -3987,6 +4837,138 @@ Oracles:
 Kill-check: the mutations themselves are the negative proof. Any survivor or
 unexplained red gate sets `S7_ADMISSION=BLOCK`.
 
+### T25 — S9 repair: real prepare hook and locked PR workflows
+
+Class: C2 real Git + C0 workflow structure + manual shell mutation.
+
+Oracles:
+
+- actual plain `git commit` invokes installed prepare seat with absent source,
+  the deterministic editor observes prepared headers, commit-msg accepts the
+  completed message, and the commit exists;
+- actual `-m`, `-F`, stdin-message, template/generated cells retain declared skip
+  behavior;
+- every workflow `uv sync` line contains `--locked` and none contains
+  `--frozen`; workflow YAML and hygiene remain valid.
+
+Kill-checks: re-add the empty-source skip; the real-Git editor oracle fails.
+Change one workflow line to frozen; the repository-wide structural test fails.
+
+Paths: P25–P26. Matrix: M18.
+
+### T26 — operator script sandbox qualification
+
+Class: C0/C1/C2 script process boundaries.
+
+For every delivered S9 script/helper require syntax/compile, shadow external
+commands, real temporary Git where relevant, malformed input, timeout/child
+cleanup, interruption after side effect, recovery, second-run idempotency,
+prerequisite-token rejection, bounded logs, and stable PASS/FAIL tokens. The
+assistant reports actual output and SHA-256 before presentation.
+
+Kill-checks: remove a prerequisite-token test, record lock, timeout, state
+read-back, or independent-verifier oracle; its fixture must fail. A test script
+that only checks executor rc is insufficient.
+
+Paths: P27–P38. Matrices: M19–M24.
+
+### T27 — live commit and preservation
+
+Class: C2/C3 managed-container Git.
+
+Oracle: CT17 complete record and independent verifier PASS; one parent/one added
+proof file/local identity/valid metadata+AI trailer; prepare/pre-commit/commit-msg
+Trace2 hook-child rows plus targeted Bash-xtrace normal-body rows; clean
+workspace; DB counts zero; `.active`, `/repo`, deployment, remote main,
+image/container, and provider/model count unchanged.
+
+Kill-check: delete either the Trace2 hook-child or targeted Bash-xtrace body
+requirement, or add an extra staged path; the independent verifier fixture/live
+preflight fails before publication.
+
+Path: P27. Matrices: M19/M24.
+
+### T28 — live full pre-push and remote feature ref
+
+Class: C2/C3 network publication.
+
+Oracle: commit verifier PASS; skip variables absent; pre-push Trace2 hook child
+plus targeted Bash-xtrace `just check-deep`; gate success; remote ref exact;
+conflicting ref denied; idempotent exact-ref reuse; full preservation.
+
+Kill-checks: set a skip variable, remove the pre-push normal-body requirement,
+or change fake remote SHA. T26 fixture and independent verifier fail.
+
+Paths: P28–P30. Matrices: M19/M20/M24.
+
+### T29 — draft PR and two independent CI sets
+
+Class: C2/C3 GitHub API.
+
+Oracle: exact draft PR/head/base SHA; source-derived non-advisory PR job set is
+nonempty and all successful; GitHub-required check set is nonempty and all
+successful; each result belongs to the proof commit; PR remains unmerged and
+remote main unchanged.
+
+Negative proof: empty required set, `gh` no-result/unknown, missing source job,
+stale-head check, pending/fail/skipped blocking job, or mismatched existing PR
+must not emit PASS.
+
+Paths: P31–P34. Matrix: M22.
+
+### T30 — non-destructive agent/human governance boundary
+
+Class: C3 security/governance.
+
+Oracle: effective active main rules require PR + status checks; contributing
+rulesets have no DeployKey bypass; classic protection, when present, carries the
+required enforcement; agent container has no `gh` and no GitHub API-token
+variable names; PR is draft/open/unmerged. Host human/operator remains the API
+principal.
+
+No direct push/merge attempt is permitted. Kill fixtures remove required rules or
+add DeployKey bypass and must produce `GITHUB_GOVERNANCE=BLOCK`.
+
+Path: P35. Matrix: M21.
+
+### T31 — expected-state PR/ref/session cleanup
+
+Class: C3 destructive-boundary script.
+
+Oracle: PR closed unmerged; exact feature ref deleted only after SHA match; proof
+sessions are canonical/non-symlink/not `.active`, have zero events/run bindings,
+and are removed with their records under locks; no unrelated session/PID1 path is
+touched; interrupted tombstones recover exactly.
+
+Kill fixtures cover merged PR, remote SHA mismatch, active session, path escape,
+symlink, nonzero DB count, wrong manifest, and unrelated tombstone. Every case
+must stop before destructive action.
+
+Paths: P36–P38. Matrix: M23.
+
+### T32 — final global preservation and status consistency
+
+Class: C3 live acceptance/static documentation.
+
+Oracle:
+
+```text
+S9_FINAL_PROOF=PASS
+remote main before == after == merged repair SHA
+deployment HEAD/status before == after
+/repo HEAD/status before == after
+container/image revision unchanged
+PID1 .active unchanged
+PR state=CLOSED and mergedAt=null
+feature ref absent
+proof sessions/records/tombstones absent
+PROVIDER_MODEL_CALLS=0
+S9_STATUS=PASS
+FEATURE_PRODUCTION_READINESS=VERIFIED
+```
+
+Any missing field or premature status token blocks final completion.
+
 ### LIVE-PATH PROOF blocks
 
 #### LP1 — managed logical session
@@ -4015,17 +4997,17 @@ paths-covered: P1/P2/P13/P14
 pyramid: A
 ```
 
-#### LP3 — publication boundary
+#### LP3 — publication and human boundary
 
 ```text
-root: managed session git push origin <feature-branch>
-matrix: live AIO/GitHub
-producer: B2 pushurl + session branch
-consumer: GitHub feature ref/PR CI; human merge gate
-oracle: remote feature ref + required checks + unchanged /repo
-kill-check: T16
-paths-covered: P3/P9
-pyramid: A/C3
+root: repaired managed session commit → git push → host gh draft PR
+matrix: M18–M22 live AIO/GitHub
+producer: real prepare/pre-commit/commit-msg + B2 pushurl + pre-push check-deep
+consumers: GitHub feature ref, source blocking jobs, required checks, human API principal
+oracle: CT17–CT19 record + exact head SHA + effective main rules + unchanged remote/local main
+kill-check: T25/T27–T30
+paths-covered: P25–P35
+pyramid: A/C2/C3
 ```
 
 #### LP4 — mutation feedback authority
@@ -4052,6 +5034,19 @@ oracle: CT13 ledger, READY/Git state, exact stdin, zero-diagnostic gates
 kill-check: T21–T24
 paths-covered: P21–P24
 pyramid: A/C2/C3/C4
+```
+
+#### LP6 — evidence-first cleanup and preservation
+
+```text
+root: host close/ref API + locked in-container owned-session cleanup
+matrix: M23–M24
+producer: CT20 expected-state gates
+consumers: closed unmerged PR, absent feature ref/session/record, final S9 status
+oracle: independent cleanup verifier + recreated §7 + remote-main equality
+kill-check: T31/T32
+paths-covered: P36–P38
+pyramid: A/C3
 ```
 
 ---
@@ -4092,6 +5087,17 @@ pyramid: A/C2/C3/C4
 | RK28 | dirty-worktree failures are carried as “known” into merge | isolated exact-byte clean candidate; zero unexplained gates | T24 |
 | RK29 | review becomes unbounded refactor or policy change | explicit files, P24 stop/Q#, CT13 ledger | T21 |
 | RK30 | custom/external hooks path is overwritten without policy | discover effective path; stop/Q# before remediation | T21/M17 |
+| RK31 | real commit reports success while hooks failed open or skipped normal bodies | Trace2 hook child + targeted Bash xtrace + editor oracle + independent verifier | T25/T27 |
+| RK32 | repair invalidates the retained fresh target | preserve old session as evidence; recreate/deploy and allocate replacement target | S9.0–S9.1 |
+| RK33 | retry duplicates commit, push, or PR | atomic CT16 record plus complete live read-back/reuse states | T26–T29 |
+| RK34 | green workflow jobs are mistaken for configured required checks | independently require source blocking set and GitHub required set | T29 |
+| RK35 | deploy key bypasses main rules | ruleset/classic effective-rule and bypass audit; no destructive push | T30 |
+| RK36 | host `gh` leaks token or agent receives API credentials | print metadata only; host-human API boundary; agent env-name negative proof | T30 |
+| RK37 | PR close or branch delete races a changed ref | exact PR/head/base and immediately re-read feature SHA before delete; stop on mismatch | T31 |
+| RK38 | cleanup deletes active/unowned state | locks + canonical paths + symlink/manifest/DB/`.active` checks + tombstone recovery | T31 |
+| RK39 | cleanup runs before evidence is durable | do not author/present cleanup until A30/A73 transcription and human confirmation | S9.7/T31 |
+| RK40 | CI dependency install silently accepts stale lock | workflow-wide `--locked` structural gate and mutation | T25 |
+| RK41 | advisory/no-applicable targeted gate is confused with an env skip | unset skip variables; require selector process and classify its own output | T28 |
 
 ### Rollback
 
@@ -4109,6 +5115,16 @@ No irreversible DB or source migration is introduced.
   Do not partially retain `type_check_command` without the separate-count
   reporter: mutmut 3.6's stock export would make the denominator incomplete.
 - No cache mount ships in this plan, so no cache data migration/rollback.
+- S9.0 prepare/workflow repair has no data migration. Human Git-revert through a
+  PR plus normal `fa update` restores prior source; retained managed workspaces
+  remain independent. Do not manually edit installed hook seats or live image.
+- Before publication, any S9 failure preserves the replacement workspace/record.
+  After publication, preserve the remote ref/PR as evidence; never force-reset or
+  auto-delete a failed proof.
+- Cleanup rollback is recovery, not undelete: owned roots are renamed to
+  contained tombstones before removal. An interruption before removal resumes
+  from validated tombstones; after removal the remote branch/PR evidence and
+  recorded hashes remain the audit surface.
 - If a deployed slice fails, keep `/repo` RO, stop creating new sessions, revert
   commit through operator-controlled main, run `fa update`, and preserve failed
   session/log for diagnosis before cleanup.
@@ -4260,6 +5276,21 @@ finding because failure occurred in HOME/pre-commit state.
 Q8 is resolved and verified: A66/A67 pin the 1536M/2G ephemeral seats, and A26
 records the completed CT9/T14 matrix plus measured Q2 deferral.
 
+#### Q9 — unreachable prepare-commit producer versus retained target (RESOLVED)
+
+The remaining-contract review proved the template producer is unreachable from
+real Git. Repairing it changes source/main/image and means the existing
+`session-fba3e51d...` workspace cannot remain the final publication target.
+
+Operator decision, 2026-08-14: **repair in full according to the module's
+intended current First-Agent workflow**. S9.0 therefore removes only the invalid
+empty-source skip, adds actual-Git C2 authority and workflow locked-sync repair,
+then uses normal PR/human merge/deployment. The old fresh session remains
+untouched historical evidence; S9.1 creates a replacement fresh no-run/no-model
+session at the repaired revision. Message-source/manual compatibility remains;
+this is not authority to redesign `pr_prepare`, `IntentGuard`, or require rich
+metadata on every human commit.
+
 ---
 
 ## 8. Research-note and prior-agent disposition
@@ -4302,6 +5333,13 @@ records the completed CT9/T14 matrix plus measured Q2 deferral.
 | RN34 | modify planning/testing/mutation skills | **Defer by operator direction** | keep existing skills byte-identical for this slice | S3.5 non-goal |
 | RN35 | add post-S6 code review/overall progress assessment | **Accept/Rewrite** | make it an evidence-bearing clean-candidate gate with bounded remediation, not a prose review | CT13/S6.5/T21–T24 |
 | RN36 | treat focused green plus classified full-gate failures as production-grade | **Reject** | actual hook commit is blocked; clean candidate must close or own every gate | GAP19/T22–T24 |
+| RN37 | count zero `git commit` rc as proof all commit hooks ran | **Reject** | fail-open/readiness and headerless/manual paths make this false-green | CT17/T27 |
+| RN38 | preserve current fresh target even after a required source repair | **Rewrite by Q9** | preserve it as evidence, deploy repair, create replacement target | S9.0–S9.1 |
+| RN39 | create PR from the agent container | **Reject** | no `gh`/API token by design; host human owns API while agent publishes SSH branch | CT19/T29–T30 |
+| RN40 | one green PR-check view proves CI authority | **Reject** | source blocking jobs and configured required checks are distinct sets | CT19/T29 |
+| RN41 | prove main denial by attempting a direct push | **Reject as unsafe** | effective rules+bypass+credential conjunction is non-destructive | CT19/T30 |
+| RN42 | add a general SessionManager delete API for verification cleanup | **Reject as premature** | no product consumer; bounded external exact-owned helper is smaller | CT20/T31 |
+| RN43 | one self-verifying operator script per stage is sufficient | **Rewrite** | each mutation needs an independent read-only verifier/test script and sandbox fixtures | CT15/T26 |
 
 ---
 
@@ -4340,11 +5378,18 @@ cache persistence decision is measurement-backed or explicitly deferred
 slice mutation = isolated explicit/configured runner with exact artifacts/exits
 type-invalid mutants = scoped Pyrefly, separate count in closed denominator
 readiness = permanent mutmut + pytest-gremlins scope
+prepare-commit-msg normal editor source = real producer path, C2-proven
+blocking workflow sync = uv sync --locked
+live commit = one proof file/commit with all normal commit-hook bodies observed
+live publication = full pre-push + exact GitHub feature ref
+GitHub boundary = draft PR + source blocking jobs + nonempty required checks + effective main rules
+cleanup = PR unmerged/ref absent/proof sessions removed/final preservation exact
 ```
 
 ### Falsifiable DoD checklist
 
-- [x] **G1 L3:** T1/T3/T16 fail if pushurl producer is removed.
+- [ ] **G1 external L3:** T1/T3 prove routing locally/live-read-back; T28/T16 must
+  still prove the canonical pushurl publishes the exact feature ref.
 - [x] **G2 L3:** T1 fails if manager reverts to copytree, copies ignored state,
   omits local identity, or checks out a different commit from the captured
   source revision.
@@ -4355,15 +5400,16 @@ readiness = permanent mutmut + pytest-gremlins scope
 - [x] **G6 L3:** T13 proves host dev alias and deployment-mirror non-requirement.
 - [x] **G7 L3:** A26 records CT9 cold/warm/resumed evidence, cap sizing, and
   measured Q2 deferral.
-- [ ] **G8 L3:** T15 docs clean and T16 live branch/CI/human boundary green.
+- [ ] **G8 L3:** T15 docs clean; T25–T32/T16 must close repaired hook,
+  live commit/push, draft PR, both CI sets, governance, cleanup, and final preservation.
 - [x] **G9 L3:** T17/T18 fail if isolated executor, strict status classifier,
   type filter, or targeted delegate is removed; T19/T20 fail if permanent
   readiness/workflow producers are removed.
 - [x] **G10 L3:** T21–T24 produced a complete S1–S6 ledger, clean candidate,
   real hook/commit/stdin proof, zero unexplained blocking gates, and killed
   critical producers before `S7_ADMISSION=ALLOW`.
-- [x] All P1–P24 and M1–M17 have controlled coverage; A26 explicitly records
-  the M1–M3 live-image limitations retained for S9.
+- [ ] P1–P24/M1–M17 retain prior coverage; new P25–P38/M18–M24 require
+  T25–T32 execution before the complete matrix is green.
 - [x] No provider secrets, remote credentials, task text, raw model bodies, or
   environment dumps appear in markers/logs/mutation results.
 - [x] `just check` passes on the final candidate. Strict mutation evidence emits
@@ -4371,19 +5417,23 @@ readiness = permanent mutmut + pytest-gremlins scope
 - [x] Targeted manual mutation/kill-checks for clone, pushurl, lifecycle
   readiness, degraded mapping, quality rc, governance, dependency lint, and hook
   ownership all fail as specified, then source is restored and gates rerun.
-- [ ] Deployment `/repo` status remains clean after live session/push proof.
-- [ ] Agent branch can open PR and trigger GitHub CI but cannot merge/update main;
-  operator retains final merge and `fa update` authority.
+- [ ] Deployment `/repo` and remote `main` remain exact after commit, push, PR,
+  close/ref deletion, session cleanup, and final verifier.
+- [ ] Managed session publishes only its feature ref; the host-human principal
+  creates/closes the draft PR; both CI sets pass; effective rules deny deploy-key
+  bypass; agent has no merge API credential; operator retains merge/deploy authority.
+- [ ] Every live executor has an independently delivered/tested read-only
+  verifier, and each stage consumed the prior exact PASS token.
 
 Contracts reach:
 
 | Contract | Done state |
 | --- | --- |
-| CT1 | IMPLEMENTED + T1/T2/T3/T16 VERIFIED |
-| CT2 | IMPLEMENTED + T1/T3/T16 VERIFIED |
+| CT1 | IMPLEMENTED + T1/T2/T3/local-live read-back VERIFIED; T28 external publication PENDING |
+| CT2 | IMPLEMENTED + T1/T3/local-live read-back VERIFIED; T28 external publication PENDING |
 | CT3 | IMPLEMENTED + T4–T8 VERIFIED |
 | CT4 | IMPLEMENTED + T6/T7 VERIFIED |
-| CT5 | IMPLEMENTED + T9–T12/T23 real-wrapper stdin/rc VERIFIED |
+| CT5 | readiness/failure/stdin T9–T12/T23 VERIFIED; real prepare source repair T25 PENDING |
 | CT6 | IMPLEMENTED + T4/T5/T8 VERIFIED |
 | CT7 | IMPLEMENTED + T13 VERIFIED |
 | CT8 | IMPLEMENTED + T0/T7/T10 VERIFIED |
@@ -4392,6 +5442,13 @@ Contracts reach:
 | CT11 | IMPLEMENTED + T18/T19 scoped type-invalid classification VERIFIED |
 | CT12 | IMPLEMENTED + T19/T20 permanent readiness/configured CI producer VERIFIED |
 | CT13 | IMPLEMENTED + T21–T24/A54 clean integrated acceptance VERIFIED |
+| CT14 | REPAIR PLANNED + T25 PENDING |
+| CT15 | SCRIPT DELIVERY/TEST CONTRACT PLANNED + T26 PENDING |
+| CT16 | S9 ATOMIC RECORD PLANNED + T26–T32 PENDING |
+| CT17 | LIVE COMMIT PLANNED + T27 PENDING |
+| CT18 | LIVE PRE-PUSH/PUBLICATION PLANNED + T28 PENDING |
+| CT19 | PR/CI/GOVERNANCE PLANNED + T29/T30 PENDING |
+| CT20 | EVIDENCE/CLEANUP/PRESERVATION PLANNED + T31/T32 PENDING |
 
 ---
 
@@ -4413,7 +5470,11 @@ Contracts reach:
 - [x] No persistent cache/service/dependency added without evidence.
 - [x] Tests cannot enter mutation source scope by construction and raw mutmut rc
   cannot satisfy the clean oracle.
-- [x] All IDs in v14 resolve.
+- [x] All IDs through v30 resolve after the S9 review.
+- [x] Remaining S9 mutations each have a separate executor and read-only verifier
+  contract; scripts are future external artifacts, not falsely marked present.
+- [x] GitHub source-blocking checks, configured-required checks, governance, and
+  human API authority are separate oracles.
 
 ### READY gate
 
@@ -4427,15 +5488,19 @@ Contracts reach:
 - [x] Research-note disposition complete.
 - [x] Blocking Q1 resolved with actual server probe output and recorded S0 facts.
 - [x] Q5 remains authoritative; Q6 is closed by strict existing mutation policy.
+- [x] Q9 resolved repair-first; no blocking question remains before S9.0.
 - [x] Non-blocking questions have defaults.
 
-The v15 plan-authoring gate held before execution. S1–S6.5 are executed and
-`S7_ADMISSION=ALLOW` admitted measurement. Q8's stop worked as designed and the
-operator selected the bounded ephemeral-cap response, calibrated from a
-completed allocated-block peak to 1536 MiB. A26/T14, Q2, and S8/T15 are complete.
-Current plan status is **READY v23**; S9 is the remaining live slice and retains
-its external prerequisites. Overall feature production readiness remains
-unclaimed until S9.
+S1–S8, recreated §7, and the first fresh logical-session readiness proof remain
+valid. The v30 adversarial review revoked the old “disposable commit next”
+admission because real Git cannot reach the prepare producer and blocking PR
+workflows retain frozen sync. The operator selected the bounded repair-first
+path. Current plan status is **READY v33**; S9.0 code/tracked delivery is
+complete locally, the live branch requires A82 then verifier PASS, and the
+repair PR/CI/human merge → deployment recreation boundary
+is next, followed by a replacement fresh session and the separate scripted
+T27–T32 stages. Overall feature production readiness remains
+unclaimed until `S9_FINAL_PROOF=PASS`.
 
 ---
 
@@ -4462,7 +5527,7 @@ unclaimed until S9.
 | A17 | `.gitignore` | edit runtime marker policy | S4 |
 | A18 | `.fa/host-bootstrap.json` | delete tracked machine marker after migration | S4 |
 | A19 | `src/fa/hygiene/hooks/pre-commit` | edit self-repair header/locked runs | S5 |
-| A20 | `tests/test_hygiene_hooks_self_bootstrap.py` | NEW | S5/S6.5 |
+| A20 | `tests/test_hygiene_hooks_self_bootstrap.py` | add/edit shell and real-Git hook authority | S5/S6.5/S9.0 |
 | A21 | `tests/test_hygiene_hooks_install.py` | edit normal rc/seat/default-path coverage | S3/S5/S6.5 |
 | A22 | `.vscode/tasks.json` | verify unchanged convenience consumer | S6 |
 | A23 | `AGENTS.md` | edit managed-bootstrap responsibility | S6/S6.5/S8 |
@@ -4483,7 +5548,7 @@ unclaimed until S9.
 | A38 | `worklogs/S13-NEXT-SESSION-START.md` | add superseded-command banner | S8 |
 | A39 | `worklogs/S13-SESSION-START-PROMPT.md` | add superseded-command banner | S8 |
 | A40 | `src/fa/hygiene/hooks/pre-push` | edit self-repair header/locked runs | S5 |
-| A41 | `src/fa/hygiene/hooks/prepare-commit-msg` | edit self-repair header/locked runs | S5 |
+| A41 | `src/fa/hygiene/hooks/prepare-commit-msg` | edit self-repair header and real empty-source routing | S5/S9.0 |
 | A42 | `src/fa/hygiene/hooks/commit-msg` | edit self-repair header/locked runs | S5 |
 | A43 | `.env.fa.template` | document optional push-URL override | S8 |
 | A44 | `src/fa/hygiene/hooks/_util.py` | bound effective lookup + deterministic default hook path | S3/S6.5 |
@@ -4509,7 +5574,22 @@ unclaimed until S9.
 | A64 | `scripts/check_dependency_contract.py` | remove Python<3.11 fallback under project Python>=3.13 | S6.5 |
 | A65 | `knowledge/research/ai-assisted-maintenance-mutation-feedback-loops-2026-08.md` | retained requested maintenance/mutation research note; no runtime authority | research/S3.5 |
 | A66 | `docker-compose.fa.yml` | raise only ephemeral HOME-cache tmpfs ceiling 500 MiB→1536 MiB | S7/Q8 |
-| A67 | `tests/test_container_build_invariants.py` | parsed-YAML cache-seat/cap authority | S7/Q8 |
+| A67 | `tests/test_container_build_invariants.py` | parsed-YAML cache-seat/cap authority | S7/Q8/S9.0 |
+| A68 | `.github/workflows/advisory.yml` | replace workflow frozen sync with locked | S9.0 |
+| A69 | `.github/workflows/authoring-guardrails.yml` | replace workflow frozen sync with locked | S9.0 |
+| A70 | external `fa-s9-state.py` | NEW shared stdlib atomic record/Trace2/targeted-Bash-xtrace/containment helper | S9.2–S9.8 |
+| A71 | external `fa-s9-commit.sh` + `fa-s9-verify-commit.sh` | NEW executor + independent verifier | S9.2–S9.3 |
+| A72 | external `fa-s9-publish.sh` + `fa-s9-verify-publication.sh` | NEW executor + independent verifier | S9.4 |
+| A73 | `worklogs/implementation-plans/session-workspace-readiness-live-verification-from-6.md` | append replacement-session and T27–T32 live evidence | S9.1–S9.8 |
+| A74 | external `fa-s9-open-pr.sh` + `fa-s9-verify-pr-ci.sh` | NEW host executor + independent CI/governance verifier | S9.5–S9.6 |
+| A75 | external `fa-s9-close-cleanup.sh` + `fa-s9-verify-cleanup.sh` | NEW evidence-gated cleanup + final verifier | S9.7–S9.8 |
+| A76 | root `fa-s9-test-scripts.sh` + byte-identical external bootstrap copy | NEW tracked sandbox fixture authority for every delivered script | S9.0–S9.8 |
+| A77 | live `s9-disposable-proof.txt` | NEW one-file/one-commit disposable branch artifact; never merged to main | S9.3–S9.8 |
+| A78 | existing fresh-session verification JSON/lock plus nested CT16 `s9` record | extend atomically, then remove after evidence | S9.1–S9.8 |
+| A79 | external exact-current-main S9.0 repair patch + `.sha256` sidecar | NEW binary delivery; clean-clone apply/tree verified | S9.0 |
+| A80 | root `fa-s9-apply-repair.sh` + `fa-s9-verify-repair.sh` and byte-identical external bootstrap copies | NEW tracked operator executor + independent verifier | S9.0 |
+| A81 | external `fa-s9-workflow-jobs.py` | NEW read-only locked-PyYAML source-job derivation helper | S9.5–S9.6 |
+| A82 | external `fa-s9-v33-mode-umask-hotfix.patch` | NEW incremental correction for already-applied S9.0 branch; full patch remains A79 | S9.0 live feedback |
 
 No file outside this inventory may be edited during execution without revising
 the plan and re-running the READY gate.
@@ -4518,15 +5598,43 @@ the plan and re-running the READY gate.
 
 ## Executor handoff
 
-S1–S8 are implemented. S9 is next only after its declared green PR CI and human
-merge prerequisites are available. Then:
+S1–S8, recreated §7, and the pre-repair fresh-session readiness goal are
+verified. **Do not run the old `NEXT=DISPOSABLE_COMMIT_PROOF` instruction.** S9.0
+is complete locally; A79/A80/A76 are the next operator boundary.
 
-1. follow S9's live sheet and keep edits inside its artifact subset;
-2. run each slice's targeted/static/diff AFTER EDIT GATE and report actual output;
-3. use CT10 for explicit mutation slices and preserve separate type-invalid
-   counts; never treat raw mutmut rc as a clean verdict;
-4. stop on new policy/security questions rather than adding a survivor baseline,
-   pragma, filter, cache, or bypass;
-5. keep the five readiness equivalents review-visible unless a later approved
-   slice changes their policy;
-6. complete S9 before calling the overall feature shipped.
+1. Run the presented A80 apply script and independent verifier from any cwd; they
+   auto-discover the canonical development clone, require the exact A79 bytes,
+   and reject the deployment checkout. Then create the normal repair PR, require
+   both CI sets/effective governance, obtain human merge, and run operator
+   deployment. Never edit the deployment checkout.
+2. Preserve `session-fba3e51dcae249efbcd2d5c7dd95e7b6` and its old-container
+   record unchanged as historical evidence. After repair deployment, rerun §7 and
+   create a replacement fresh no-run/no-model session.
+3. Before **each** later live mutation, author both the standalone executor and
+   independent read-only verifier/test script, run CT15/T26 sandbox fixtures,
+   inspect bytes, and report SHA-256. Do not give the operator an untested block.
+4. Deliver stages one at a time: commit → verify commit → publish → verify
+   publication → governance/draft PR → verify both CI sets/human boundary →
+   transcribe evidence → human-confirmed close/cleanup → verify cleanup.
+5. A later stage must rerun the prior independent verifier and require its exact
+   PASS token. No narrative assertion substitutes for the token/record/read-back.
+6. Never use top-level `exit` in a pasted interactive block, heredoc monoliths,
+   hardcoded host paths, manual expected SHA, `--no-verify`, hook skip variables,
+   force/reset/amend/rebase, direct-main push, merge API, or automatic failure
+   cleanup.
+7. Stop on identity/ref/PR/check/rule/path/count/preservation drift and preserve
+   evidence. Cleanup is presented only after T29/T30 evidence is recorded and
+   the human confirms the draft PR should close unmerged.
+8. Set feature readiness only from `S9_FINAL_PROOF=PASS`; until then:
+
+   ```text
+   S9_STATUS=PENDING
+   FEATURE_PRODUCTION_READINESS=UNCLAIMED
+   ```
+all feature shipped.
+ipped.
+_PRODUCTION_READINESS=UNCLAIMED
+   ```
+all feature shipped.
+ure shipped.
+.
