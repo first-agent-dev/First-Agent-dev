@@ -80,9 +80,6 @@ Parameters:
   path            (string, default ".") - subdirectory to search under,
                   relative to the workspace root. Must not escape root
                   (enforced server-side).
-  types           (list of strings, optional) - RESERVED for future
-                  blackboard artifact-type filter; accepted and ignored
-                  with a notice in v1.
   include_tests   (bool, default true) - include files under tests/.
   exclude_dirs    (list of strings, optional) - additional directory
                   basenames to exclude (union with the built-in set:
@@ -120,19 +117,12 @@ _INPUT_SCHEMA: dict[str, Any] = {
         },
         "regex": {"type": "boolean", "default": False},
         "case_sensitive": {"type": "boolean", "default": False},
-        "glob": {"type": ["string", "null"], "default": None},
+        "glob": {"type": "string"},
         "path": {"type": "string", "default": "."},
-        "types": {
-            "type": ["array", "null"],
-            "items": {"type": "string"},
-            "default": None,
-            "description": ("Reserved for future artifact-type filter; ignored in v1."),
-        },
         "include_tests": {"type": "boolean", "default": True},
         "exclude_dirs": {
-            "type": ["array", "null"],
+            "type": "array",
             "items": {"type": "string"},
-            "default": None,
         },
         "max_file_size": {
             "type": "integer",
@@ -577,11 +567,6 @@ def _handle(
     if err:
         return ToolResult.fail("invalid_params", err, retryable=True)
 
-    # types (R-15: reserved, accepted+ignored)
-    note: str | None = None
-    if data.get("types") is not None:
-        note = "types parameter is reserved for future artifact-type filtering; ignored in v1."
-
     # Build one immutable carrier; both search paths consume the same object.
     search_params = _build_search_params(
         query=query,
@@ -623,8 +608,6 @@ def _handle(
         "index_stats": index_stats_dict,
     }
     _output_for_mode(result, sr, output_mode)
-    if note:
-        result["note"] = note
     if warnings_list:
         result["warnings"] = warnings_list
     elif sr.warnings:

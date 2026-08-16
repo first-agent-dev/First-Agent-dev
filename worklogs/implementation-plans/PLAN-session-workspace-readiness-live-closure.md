@@ -2,13 +2,13 @@
 
 Plan-ID: `PLAN-session-workspace-readiness-live-closure`
 
-Status: **DELIVERY-READY v18 — no-sudo CI topology implemented; operator PR/CI and recreated §7 pending**
+Status: **LIVE-VERIFIED v19 — recreated PID1 workspace passes §7; later parent proof pending**
 
 Depth: **P2** — live diagnosis, cross-layer runtime configuration, blocking
 container CI, operator-controlled rollout, and rollback. No ADR or public API
 change is planned.
 
-Revision: **v18 — Q4 resolves CI writable roots to uid-1000 tmpfs and read-only runner-owned source**
+Revision: **v19 — merged SHA 33943fa3 deployed; identity, topology, readiness, and preservation all PASS**
 
 Date: 2026-08-14
 
@@ -1513,17 +1513,34 @@ Only if S7.3 passes:
 4. Run final docs/link/status-consistency checks and pause for a separate next
    task.
 
+Execution record:
+
+```text
+MERGED_SHA=33943fa3c21647057bb47b771c9a6997f8683717
+CONTAINER_ID=402034445edc94e377b1a5e3ea5e44b5ad366b8ba3fc989f3edf4e8b29212d5a
+IMAGE_ID=sha256:50ee3a6030338af2cdcbe5bcb238d507da8b78db31141885efb20cb8571f3100
+PID1_WORKSPACE=/sessions/session-20260814T142237-7
+READY_REASON=ready_fast_path
+READY_CHECK_MS=59
+MARKER_MODE=0600
+MARKER_BEFORE_ACTIVE=yes
+SENTINEL_OK=yes
+SOURCE_DEPLOYMENT_PRESERVATION=PASS
+PROVIDER_MODEL_CALLS=0
+SECTION_7=PASS
+```
+
 Exit criteria:
 
-- [ ] external e8 patch identity is exact and applied from exact base;
-- [ ] required CI and human merge identities are recorded;
-- [ ] recreated container runs merged image;
-- [ ] final `.active` equals the unique PID 1 startup workspace;
-- [ ] PID 1 workspace satisfies every CT10 cell and warm fast path;
-- [ ] deployment/source authorities remain unchanged and clean;
-- [ ] no model/provider call occurred;
-- [ ] §7 PASS is recorded without advancing later parent status;
-- [ ] handoff names the next bounded parent task.
+- [x] external e8 patch identity is exact and applied from exact base;
+- [x] required CI and human merge identities are recorded;
+- [x] recreated container runs merged image;
+- [x] final `.active` equals the unique PID 1 startup workspace;
+- [x] PID 1 workspace satisfies every CT10 cell and warm fast path;
+- [x] deployment/source authorities remain unchanged and clean;
+- [x] no model/provider call occurred;
+- [x] §7 PASS is recorded without advancing later parent status;
+- [x] next bounded task is the fresh logical-session proof.
 
 Kill-checks:
 

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSpec
+from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSchemaPortabilityError, ToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +289,8 @@ def build_registry_for_role(
         try:
             spec = builder()
             registry.register(spec)
+        except ToolSchemaPortabilityError:
+            raise
         except Exception as exc:  # noqa: BLE001 - failure-observable
             logger.warning(f"Failed to build/register tool {tool_name} for role {role}: {exc}")
 

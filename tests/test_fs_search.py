@@ -64,6 +64,51 @@ def _mk_tool(root: Path) -> Any:
     return build_fs_search_tool(root / ".fa" / "fts.db", root)
 
 
+def test_fs_search_tool_schema_uses_optional_non_nullable_provider_shapes(tmp_path: Path) -> None:
+    """S13.11 regression: optional means omitted, never ``type: [T, null]``.
+
+    Live Aigate/Gemini rejected both ``types`` and ``exclude_dirs`` after
+    translating their nullable type arrays to ``any_of`` with sibling fields.
+    ``types`` is ignored by the handler and must be deleted rather than adapted.
+    """
+
+    tool = _mk_tool(tmp_path)
+    schema = tool.input_schema
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+
+    assert "types" not in properties
+    assert "types parameter is reserved" not in tool.description
+    assert properties["glob"] == {"type": "string"}
+    assert properties["exclude_dirs"] == {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+    required = schema["required"]
+    assert isinstance(required, list)
+    assert "glob" not in required
+    assert "exclude_dirs" not in required
+
+
+def test_fs_search_registry_rejects_explicit_null_for_optional_filters(tmp_path: Path) -> None:
+    """C1: provider-portable optional fields are omitted or carry their real type."""
+
+    from fa.inner_loop.registry import ToolCall, ToolRegistry
+
+    registry = ToolRegistry()
+    registry.register(_mk_tool(tmp_path))
+
+    omitted = registry.validate(ToolCall(name="fs_search", params={"query": "auth"}))
+    null_glob = registry.validate(ToolCall(name="fs_search", params={"query": "auth", "glob": None}))
+    null_exclude = registry.validate(ToolCall(name="fs_search", params={"query": "auth", "exclude_dirs": None}))
+
+    assert omitted is None
+    assert null_glob is not None and null_glob.error is not None
+    assert null_glob.error.code == "invalid_params"
+    assert null_exclude is not None and null_exclude.error is not None
+    assert null_exclude.error.code == "invalid_params"
+
+
 # ---------------------------------------------------------------------------
 # Basic output-mode tests
 # ---------------------------------------------------------------------------

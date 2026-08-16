@@ -79,6 +79,39 @@ def _mk_case(case: int) -> ConfCase:
     return ConfCase(case=case, name=f"CONF-{case}", role="coder", task="a task")
 
 
+class _RecordingSuccessTransport:
+    """Record exact provider request bodies and return a successful completion."""
+
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+        self.bodies: list[dict[str, Any]] = []
+
+    def post(self, url: str, **kwargs: Any) -> Any:
+        from fa.providers.base import TransportResponse
+
+        self.urls.append(url)
+        self.bodies.append(dict(kwargs.get("json_body", {})))
+        return TransportResponse(
+            status=200,
+            body={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+
+def _enable_proxy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    token_file = tmp_path / "fa_proxy_token"
+    token_file.write_text("test-token-1234", encoding="utf-8")
+    monkeypatch.setenv("FA_EGRESS_PROXY_URL", "http://proxy.test:8080")
+    monkeypatch.setenv("FA_PROXY_TOKEN_FILE", str(token_file))
+
+
 def test_case_to_request_uses_composer() -> None:
     """C1 — a ConfCase becomes a RequestInfo that mirrors the real production request.
 
@@ -202,6 +235,79 @@ def test_cmd_conformance_live_provider_with_injected_secrets(
     # All 7 cases must be OK (the fake transport returns a 200 canned body).
     assert "OK" in out
     assert "FAIL" not in out
+
+
+def test_cmd_conformance_selects_requested_provider_before_proxy_rewrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2 S13.11: ``--provider`` selects actual chain entries, not a label.
+
+    Current production builds the whole coder chain, so the successful first
+    OpenRouter entry serves every row even when the command says Aigate.
+    """
+
+    from fa.cli import _cmd_conformance, build_parser
+
+    models = tmp_path / "models-two-providers.yaml"
+    models.write_text(
+        """coder:
+  name: "gemini-test"
+  family: "gemini"
+  chain:
+    - provider: openrouter
+      model: "first/gemini-3-flash-preview"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: FIRST_KEY
+    - provider: aigate
+      model: "target/gemini-3-flash-preview"
+      base_url: "https://api.aigate.shop/v1"
+      api_key_env: TARGET_KEY
+""",
+        encoding="utf-8",
+    )
+    _enable_proxy(tmp_path, monkeypatch)
+    transport = _RecordingSuccessTransport()
+    args = build_parser().parse_args(["conformance", "--provider", "aigate", "--config", str(models)])
+
+    assert _cmd_conformance(args, transport=transport, secrets={}) == 0
+    assert transport.bodies
+    assert {body["model"] for body in transport.bodies} == {"target/gemini-3-flash-preview"}
+    assert all("/route/aigate-" in url for url in transport.urls)
+
+
+def test_cmd_conformance_appends_exact_nonempty_production_tools_conf8(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2 S13.11: live matrix appends CONF-8 with `_cmd_run` coder tools."""
+
+    from fa.cli import _cmd_conformance, build_parser
+
+    models = tmp_path / "models-aigate.yaml"
+    models.write_text(
+        """coder:
+  name: "gemini-test"
+  family: "gemini"
+  chain:
+    - provider: aigate
+      model: "target/gemini-3-flash-preview"
+      base_url: "https://api.aigate.shop/v1"
+      api_key_env: TARGET_KEY
+""",
+        encoding="utf-8",
+    )
+    _enable_proxy(tmp_path, monkeypatch)
+    transport = _RecordingSuccessTransport()
+    args = build_parser().parse_args(["conformance", "--provider", "aigate", "--config", str(models)])
+
+    assert _cmd_conformance(args, transport=transport, secrets={}) == 0
+    assert len(transport.bodies) == 8
+    conf8_tools = transport.bodies[-1].get("tools")
+    assert isinstance(conf8_tools, list) and conf8_tools
+    names = [tool["function"]["name"] for tool in conf8_tools]
+    assert len(names) == len(set(names)) == 15
+    assert {"fs_search", "pr_prepare"} <= set(names)
 
 
 def test_live_executor_records_chain_exhaustion_as_case_failure() -> None:

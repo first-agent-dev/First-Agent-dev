@@ -2814,6 +2814,40 @@ with a comment pointing here.
 
 ---
 
+## I-57 — Agent tooling revamp
+
+- **Status:** open, captured 2026-08-16. Split priority: P0 Git-mutation
+  authority first; P1/P2 wiring/schema/consistency later.
+- **Context:**
+  [`worklogs/ANALYSIS-agent-tooling-revamp-2026-08-16.md`](../worklogs/ANALYSIS-agent-tooling-revamp-2026-08-16.md).
+- **Idea:** Re-baseline the 15 provider-visible tools against one safety,
+  lifecycle, schema, error, and result contract. This is not a cosmetic
+  mass-refactor: destructive Git tools and live wiring are reviewed before
+  descriptions or output-schema uniformity.
+- **Confirmed P0 drivers:**
+  - `fs_undo` can fall back to `git reset --hard HEAD~1` without an explicit
+    checkpoint and is outside IntentGuard/Sandbox/Approval mutation sets;
+  - `fs_checkpoint` runs `git add -A`, commit, branch, and stash fallbacks
+    outside those mutation authorities and may leave index drift on failure.
+- **Other confirmed drivers:** default `fs_send_ctrl_c` receives no PTY pool;
+  `fs_run_bash` advertises unavailable tools; `fs_edit_file` records a
+  transaction write before filesystem success; tool schemas/error/result
+  contracts are uneven; mutable schema can diverge from its compiled validator.
+- **Blocked-on:** current S13.11 provider-schema repair reaches merged/deployed
+  live PASS. Do not expand S13.11 with this backlog.
+- **Unblock-trigger:** S13.11 CONF-8 and natural `fs_search` smoke pass, then a
+  dedicated `/plan-authoring` session resolves ATR-Q1..ATR-Q4 from the context
+  note before any P0 implementation.
+- **First concrete step:** author Slice A for `fs_checkpoint`/`fs_undo` only.
+  Decide whether to remove both from the default registry while unsafe; require
+  temporary-Git C1/C3 proofs over HEAD/index/worktree/branch/stash and mutation
+  guard deny/allow paths.
+- **Do not:** create one “revamp all tools” PR, duplicate existing I-34/I-55
+  subagent-containment work, or mass-add `additionalProperties:false` before
+  selected-provider CONF-8 evidence.
+
+---
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](./MAINTENANCE.md) — recurring
