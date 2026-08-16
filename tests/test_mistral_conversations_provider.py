@@ -155,6 +155,9 @@ class TestBuildConversationsBody:
         func_tool = body["tools"][0]
         assert func_tool["type"] == "function"
         assert func_tool["function"]["name"] == "search"
+        expected_function = request.tools[0]["function"]
+        assert isinstance(expected_function, Mapping)
+        assert func_tool["function"]["parameters"] == expected_function["parameters"]
 
     def test_mixed_tools(self) -> None:
         """Built-in and function tools coexist."""

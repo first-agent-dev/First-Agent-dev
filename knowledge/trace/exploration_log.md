@@ -1903,3 +1903,27 @@
   - **(b) No new principles, keep minimalism-first only.** Reason: minimalism-first 4-question test insufficient for topology vs substrate tradeoff. Substrate Formality and Pair over Autonomy are distinct principles that govern harness-state formality, not just file touch count. Lesson: principles added per user approval, enforceable via invariants.
 - **Coupling:** Q-20, Q-21, Paper 2 §4.4 topology complexity inversely correlates with harness-state formality: explicit formal substrates use simple topologies (L2MAC), §5.1.1 Harness as Distillation Surface, user philosophy pair programming.
 - **Source:** [project-overview.md §1.2.6, §1.2.7](../../../project-overview.md), [Substrate Formalization](../../research/substrate-formalization-and-reduction.md), [Philosophy Subagents](../../research/philosophy-subagents-cheap-deterministic.md), MACOG blackboard with content hashes + toolchain digests, L2MAC file store D persistent, implementation-plan v3 reduced.
+
+## Q-23 — How does FA keep tool schemas portable and provider qualification truthful? (2026-08-16)
+
+- **Trigger:** The default Aigate/Gemini coder rejected the complete tool corpus
+  before inference because `fs_search` advertised nullable unions; meanwhile
+  `fa probe` and live conformance could report green without sending production
+  tools or selecting the provider named by the operator.
+- **Closed by:** [ADR-7 PTS-v1 amendment](../adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-08-16--portable-tool-schema-v1-single-authority)
+  and [ADR-9 selected qualification amendment](../adr/ADR-9-llm-provider-client.md#amendment-2026-08-16--selected-provider-exact-request-qualification).
+- **Chosen:** Keep `ToolSpec.input_schema` as one local/wire authority and reject
+  non-portable authoring shapes at atomic registry admission. Qualify a provider
+  only through selected live CONF-8, which preserves deployed sampling and adds
+  the exact shared coder tool corpus. Probe remains tool-free connectivity only;
+  unexercised providers remain UNVERIFIED.
+- **Rejected:** (a) a derived full-to-wire projector, because two schema
+  authorities drift and no evidence justified stripping valid constraints;
+  (b) provider-name schema branches, because mixed chains need one deterministic
+  contract; (c) tool-free conformance as production readiness, because it cannot
+  reproduce provider schema rejection; (d) trusting the `--provider` label
+  without filtering the chain.
+- **Coupling:** ADR-7 owns source-schema admission; ADR-9 owns chain selection and
+  provider qualification; ADR-12 keeps selected-key validation/redaction scoped
+  across direct and proxy modes.
+- **Source:** [S13.11 portable schema plan](../../worklogs/implementation-plans/PLAN-cli-trace-S13.11-portable-tool-schema-contract.md).

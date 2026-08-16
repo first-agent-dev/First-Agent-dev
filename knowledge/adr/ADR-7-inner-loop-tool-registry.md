@@ -1485,6 +1485,38 @@ under a workspace-canon root, not new event rows.
   shared `fa.observability.artifacts` module so both
   middlewares share the same artifact-parsing contract.
 
+### Amendment 2026-08-16 — Portable Tool Schema v1 single authority
+
+`ToolSpec.input_schema` is the single authoritative schema used for both local
+argument validation and provider-visible function declarations. The registry
+must not maintain a second provider projection or branch schema semantics by
+provider name.
+
+`ToolRegistry.register` applies three ordered gates before mutating registry
+state:
+
+1. compile the complete schema with `fastjsonschema`;
+2. validate the same object against Portable Tool Schema v1 (PTS-v1);
+3. store the spec and compiled validator atomically.
+
+PTS-v1 admits only object/array/string/integer/number/boolean types and the
+closed keyword set `type`, `properties`, `required`, `items`, `enum`,
+`description`, `default`, `minLength`, `maxLength`, `minimum`, `maximum`, and
+`additionalProperties`. Nullable type arrays, explicit `null`, combinators,
+references/definitions, unknown keywords, malformed nested shapes, incompatible
+defaults, and invalid bounds are source-contract defects. Optional values are
+represented by omitted object properties, not nullable unions.
+
+A violation raises `ToolSchemaPortabilityError` and propagates through profile,
+extra-tool, and fallback builders. Ordinary optional import/backend/runtime
+availability failures retain their existing warning/degraded behavior. This
+separation keeps provider-invalid source schemas fail-closed without converting
+every optional tool into a hard runtime dependency.
+
+**Qualification boundary.** Static PTS-v1 admission is necessary but not a claim
+that every vendor has accepted the corpus. Selected-provider live qualification
+is owned by [ADR-9](./ADR-9-llm-provider-client.md) and S13.11 CONF-8.
+
 ## References
 
 - [HANDOFF.md §Next steps item 1](../../worklogs/HANDOFF.md#next) — the explicit six-surface scope this ADR pins.

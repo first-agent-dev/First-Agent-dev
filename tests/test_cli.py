@@ -471,6 +471,92 @@ def test_fa_run_returns_zero_on_clean_stop(
     assert messages[0]["role"] == "system"
 
 
+def test_fa_run_sends_exact_portable_coder_tool_corpus(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2 S13.11: shipped `_cmd_run` sends all 15 portable coder tools.
+
+    This is the production-corpus oracle CONF-8 must share. It is intentionally
+    stricter than ``test_drive_session_renders_tool_specs_into_request``: a
+    locally valid nullable union must fail here before reaching a real provider.
+    """
+
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    transport = _ScriptedTransport([_stop_body("ok")])
+    args = _make_run_args(
+        workspace=tmp_path,
+        config=config,
+        run_id="portable-tool-corpus",
+    )
+
+    assert _cmd_run(args, transport=transport, secrets=_TEST_SECRETS) == 0
+    tools = transport.calls[0].get("tools")
+    assert isinstance(tools, list)
+    by_name = {tool["function"]["name"]: tool for tool in tools}
+
+    assert len(tools) == 15
+    assert len(by_name) == len(tools)
+    assert {"fs_search", "pr_prepare"} <= set(by_name)
+
+    forbidden = {"anyOf", "oneOf", "allOf", "$ref", "$defs"}
+
+    def assert_portable_schema(value: object) -> None:
+        if isinstance(value, dict):
+            assert forbidden.isdisjoint(value)
+            schema_type = value.get("type")
+            assert not isinstance(schema_type, list)
+            assert schema_type != "null"
+            for child in value.values():
+                assert_portable_schema(child)
+        elif isinstance(value, list):
+            for child in value:
+                assert_portable_schema(child)
+
+    for tool in tools:
+        assert_portable_schema(tool["function"]["parameters"])
+
+    search_properties = by_name["fs_search"]["function"]["parameters"]["properties"]
+    assert "types" not in search_properties
+    assert search_properties["glob"] == {"type": "string"}
+    assert search_properties["exclude_dirs"] == {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+
+
+@pytest.mark.parametrize("role", ["coder", "planner", "eval"])
+def test_build_run_tool_registry_appends_exactly_one_pr_prepare(
+    role: str,
+    tmp_path: Path,
+) -> None:
+    """C1 S13.11: one producer owns role tools plus the PR-draft tool."""
+
+    from fa.inner_loop.pr_draft import PrDraftStore
+
+    helper = cli_module._build_run_tool_registry
+
+    role_only = cli_module._build_role_registry(role, tmp_path, bash_timeout_seconds=30)
+    draft_store = PrDraftStore(tmp_path / ".fa" / f"{role}-pr-draft.md")
+    complete = helper(
+        role,
+        tmp_path,
+        bash_timeout_seconds=30,
+        draft_store=draft_store,
+    )
+
+    role_names = role_only.names()
+    complete_names = complete.names()
+    assert complete_names[:-1] == role_names
+    assert complete_names[-1] == "pr_prepare"
+    assert complete_names.count("pr_prepare") == 1
+    assert len(complete_names) == len(role_names) + 1
+
+
 @pytest.mark.parametrize(
     ("debug_env", "capture_expected"),
     [("1", True), ("0", False)],

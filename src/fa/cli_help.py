@@ -217,12 +217,15 @@ COMMANDS: dict[str, CommandHelp] = {
         "examples": ["fa probe", "fa probe --all-roles", "fa probe -r planner --timeout 60"],
     },
     "conformance": {
-        "summary_ru": "Матрица совместимости провайдеров (CONF-1..7); offline-прогон по умолчанию.",
-        "summary_en": "Provider conformance matrix (CONF-1..7); offline run by default.",
+        "summary_ru": "Матрица совместимости: CONF-1..7 offline, CONF-1..8 для выбранного live-провайдера.",
+        "summary_en": "Provider conformance: CONF-1..7 offline; CONF-1..8 for a selected live provider.",
         "args": {
             "--provider": {
-                "ru": "Провайдер для live-прогона (требует ключ API; иначе offline).",
-                "en": "Provider for a live run (requires an API key; default is offline).",
+                "ru": "Точно выбрать настроенного провайдера для live CONF-1..8 с production-профилем запроса.",
+                "en": (
+                    "Select the exact configured provider for live CONF-1..8; "
+                    "CONF-8 sends the exact production request profile."
+                ),
             },
             "--config/-c": {
                 "ru": "Путь к models.yaml (по умолчанию ~/.fa/models.yaml).",

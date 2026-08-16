@@ -83,6 +83,7 @@ Short definitions of terms used in First-Agent and this wiki.
 | **Pillar** | One of 4 project goal pillars. Synonym *Project axis*. |
 | **PRD** | Product Requirements Document. For First-Agent this is a short markdown file under `docs/prd/`. |
 | **Prompt** | An instruction sent to an LLM. Reusable prompts are stored in `knowledge/prompts/`. |
+| **Portable Tool Schema (PTS-v1)** | Closed provider-neutral authoring profile for `ToolSpec.input_schema`: scalar types object/array/string/integer/number/boolean and the keywords `type`, `properties`, `required`, `items`, `enum`, `description`, `default`, length/numeric bounds, and `additionalProperties`. The same schema is compiled locally and sent to providers; nullable unions, combinators, references, and unknown keywords fail registration. Source: [ADR-7 amendment 2026-08-16](./adr/ADR-7-inner-loop-tool-registry.md#amendment-2026-08-16--portable-tool-schema-v1-single-authority). |
 | **Provenance frontmatter** | Mandatory `source:` + `compiled:` (+ `chain_of_custody:` when citing facts) on every research note. Schema in [`knowledge/README.md`](../README.md). |
 | **R-N / Q-N** | Notation in research notes and the exploration log: `R-N` = numbered recommendation (TAKE / SKIP / DEFER / UNCERTAIN-ASK); `Q-N` = open question. |
 | **R-S-M** | Lifecycle: Research → Scaffolding → Module. See *Phase R / S / M*. |

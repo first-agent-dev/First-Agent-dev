@@ -81,8 +81,9 @@ def test_request_hoists_system_row_into_top_level_field() -> None:
         ),
     )
     provider = AnthropicProvider(transport=transport)
+    request = _request_with_system_and_tools()
     provider.request(
-        _request_with_system_and_tools(),
+        request,
         base_url="https://api.anthropic.com",
         api_key="sk-ant-x",
         timeout_seconds=60.0,
@@ -103,6 +104,9 @@ def test_request_hoists_system_row_into_top_level_field() -> None:
     assert tool["name"] == "search"
     assert "input_schema" in tool
     assert "function" not in tool
+    expected_function = request.tools[0]["function"]
+    assert isinstance(expected_function, Mapping)
+    assert tool["input_schema"] == expected_function["parameters"]
 
 
 def test_request_supplies_default_max_tokens_when_absent() -> None:

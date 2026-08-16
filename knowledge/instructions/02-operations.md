@@ -1323,27 +1323,45 @@ down, restart, rebuild, shell, update, clean-rebuild, sessions, commit-traces),
 автоматически передаются внутрь контейнера. Новые Python-подкоманды
 (добавленные в `src/fa/cli.py`) работают через wrapper без его изменения.
 
-### Проверка доступности провайдера (liveness probe)
+### Проверка провайдера: selfcheck → probe → conformance → run
 
-`fa selfcheck` проверяет конфигурацию и роутинг, но **не делает реальный
-API-вызов**. Если модель временно недоступна (404 от Fireworks), selfcheck
-покажет OK, а `fa run` упадёт с `chain_exhausted`.
+Четыре команды отвечают на разные вопросы; зелёный результат более дешёвой
+команды не заменяет следующую ступень:
 
-Для проверки доступности используйте `fa probe`:
+1. `fa selfcheck` проверяет конфигурацию и маршруты, но **не делает API-вызов**.
+2. `fa probe` делает минимальный реальный вызов без инструментов (`tools=()`) и
+   проверяет доступность модели/ключа. Probe не доказывает, что провайдер примет
+   production-схемы инструментов.
+3. `fa conformance` без `--provider` запускает offline CONF-1..7 через composer и
+   validator без сети. `fa conformance --provider <name>` выбирает только этого
+   настроенного провайдера и запускает live CONF-1..8. CONF-8 сохраняет deployed
+   sampling-профиль и отправляет точный coder tool corpus (`fs_search`,
+   `pr_prepare` и остальные production tools).
+4. Свежий `fa run` доказывает полный model/tool trajectory, включая парные
+   `tool_call`/`tool_result`.
 
 ```bash
-fa probe --role planner        # тест одной роли
-fa probe --all-roles           # тест всех ролей из models.yaml
-fa probe --role planner --timeout 60  # с увеличенным таймаутом
+fa selfcheck --role coder
+fa probe --role coder
+fa conformance                       # offline CONF-1..7, без API-вызова
+fa conformance --provider aigate --json  # selected live CONF-1..8
+fa run --role coder 'Use fs_search to find ToolRegistry; do not edit files.'
 ```
 
-Probe делает минимальный API-вызов (~10 токенов) и показывает результат:
+Для probe также доступны:
 
-- ✅ — модель доступна, ключ валиден, с таймингом и токенами
-- ❌ — с HTTP-статусом и ошибкой для каждого entry в chain
+```bash
+fa probe --all-roles
+fa probe --role planner --timeout 60
+```
 
-**Порядок диагностики:** `fa selfcheck` (бесплатно) → `fa probe`
-(~10 токенов) → `fa run`.
+Интерпретация результата:
+
+- probe `OK` = маршрут, ключ и модель доступны для tool-free запроса;
+- live CONF-8 `OK` = выбранный провайдер принял текущий exact production request
+  profile;
+- только свежий natural run с `fs_search` call/result доказывает рабочий путь
+  агента целиком.
 
 ### Логи и вход внутрь
 

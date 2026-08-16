@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
-from fa.inner_loop.registry import ToolRegistry, ToolSpec
+from fa.inner_loop.registry import ToolRegistry, ToolSchemaPortabilityError, ToolSpec
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
 from fa.inner_loop.tools.prepare_pr import build_prepare_pr_tool
 from fa.inner_loop.tools.read_file import build_read_file_tool
@@ -82,82 +82,56 @@ def _resolve_fts_path(workspace_root: Path) -> Path:
     return workspace_root / fts_path
 
 
-def _register_extra_tools(  # noqa: C901 -- complexity from fallback chain graceful degradation, documented, will split Phase 3 per Paper 2 §4.4
+def _register_optional_tool(
+    registry: ToolRegistry,
+    tool_name: str,
+    builder: Callable[[], ToolSpec] | None,
+) -> None:
+    """Register one optional tool; source-contract failures are never degraded."""
+
+    if builder is None or tool_name in registry.names():
+        return
+    try:
+        registry.register(builder())
+    except ToolSchemaPortabilityError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - optional builder availability remains fail-degraded
+        logger.warning("Failed to register %s: %s", tool_name, exc)
+
+
+def _register_extra_tools(
     registry: ToolRegistry,
     workspace_root: Path,
     *,
     include_pair: bool = True,
     include_observability: bool = True,
 ) -> None:
-    """Register extra Stage 0/Phase 1 tools beyond profile base.
+    """Register extra tools while preserving optional availability policy."""
 
-    Failure-observable: logs WARNING on failure, not silent pass.
-    fs_search is always registered here (single discovery tool for every
-    role except verifier, which uses build_registry_for_role directly and
-    gets only fs_run_bash).
-    """
-    # --- fs_search (unified search, S14b.1) ---
-    if build_fs_search_tool is not None:
-        try:
-            if "fs_search" not in registry.names():
-                registry.register(build_fs_search_tool(_resolve_fts_path(workspace_root), workspace_root))
-        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            logger.warning(f"Failed to register fs_search: {exc}")
+    fs_search_builder = (
+        None
+        if build_fs_search_tool is None
+        else lambda: build_fs_search_tool(_resolve_fts_path(workspace_root), workspace_root)
+    )
+    _register_optional_tool(registry, "fs_search", fs_search_builder)
 
     if include_observability:
-        if build_chronicle_search_tool:
-            try:
-                if "fs_chronicle_search" not in registry.names():
-                    registry.register(build_chronicle_search_tool())
-            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs_chronicle_search: {exc}")
-
-        if build_usage_tool:
-            try:
-                if "fs_usage" not in registry.names():
-                    registry.register(build_usage_tool())
-            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs_usage: {exc}")
-
-        if build_list_tasks_tool and include_pair:
-            try:
-                if "fs_list_tasks" not in registry.names():
-                    registry.register(build_list_tasks_tool())
-            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs_list_tasks: {exc}")
+        _register_optional_tool(registry, "fs_chronicle_search", build_chronicle_search_tool)
+        _register_optional_tool(registry, "fs_usage", build_usage_tool)
+        if include_pair:
+            _register_optional_tool(registry, "fs_list_tasks", build_list_tasks_tool)
 
     if include_pair:
-        if build_checkpoint_tool:
-            try:
-                if "fs_checkpoint" not in registry.names():
-                    registry.register(build_checkpoint_tool(workspace_root))
-            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs_checkpoint: {exc}")
-        if build_undo_tool:
-            try:
-                if "fs_undo" not in registry.names():
-                    registry.register(build_undo_tool(workspace_root))
-            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs_undo: {exc}")
-        if build_diff_tool:
-            try:
-                if "fs_diff" not in registry.names():
-                    registry.register(build_diff_tool(workspace_root))
-            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs_diff: {exc}")
-        if build_send_ctrl_c_tool:
-            try:
-                if "fs_send_ctrl_c" not in registry.names():
-                    registry.register(build_send_ctrl_c_tool())
-            except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-                logger.warning(f"Failed to register fs_send_ctrl_c: {exc}")
+        checkpoint_builder = None if build_checkpoint_tool is None else lambda: build_checkpoint_tool(workspace_root)
+        undo_builder = None if build_undo_tool is None else lambda: build_undo_tool(workspace_root)
+        diff_builder = None if build_diff_tool is None else lambda: build_diff_tool(workspace_root)
+        _register_optional_tool(registry, "fs_checkpoint", checkpoint_builder)
+        _register_optional_tool(registry, "fs_undo", undo_builder)
+        _register_optional_tool(registry, "fs_diff", diff_builder)
+        _register_optional_tool(registry, "fs_send_ctrl_c", build_send_ctrl_c_tool)
 
-    if build_spawn_subagent_tool:
-        try:
-            if "fs_spawn_subagent" not in registry.names():
-                registry.register(build_spawn_subagent_tool(workspace_root))
-        except Exception as exc:  # noqa: BLE001 # graceful degradation
-            logger.warning(f"Failed to register fs_spawn_subagent: {exc}")
+    spawn_builder = None if build_spawn_subagent_tool is None else lambda: build_spawn_subagent_tool(workspace_root)
+    _register_optional_tool(registry, "fs_spawn_subagent", spawn_builder)
 
 
 def build_baseline_registry(
@@ -173,6 +147,8 @@ def build_baseline_registry(
         from fa.inner_loop.profiles import build_registry_for_role
 
         registry = build_registry_for_role("implementer", workspace_root, bash_timeout=bash_timeout_seconds)
+    except ToolSchemaPortabilityError:
+        raise
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         logger.warning(f"Failed to build implementer registry via profiles, fallback baseline: {exc}")
         registry = ToolRegistry()
@@ -199,6 +175,8 @@ def build_planner_registry(
         from fa.inner_loop.profiles import build_registry_for_role
 
         registry = build_registry_for_role("planner", workspace_root, bash_timeout=bash_timeout_seconds)
+    except ToolSchemaPortabilityError:
+        raise
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         logger.warning(f"Failed to build planner registry via profiles, fallback: {exc}")
         registry = ToolRegistry()
@@ -227,6 +205,8 @@ def build_eval_registry(
         from fa.inner_loop.profiles import build_registry_for_role
 
         registry = build_registry_for_role("verifier", workspace_root, bash_timeout=bash_timeout_seconds)
+    except ToolSchemaPortabilityError:
+        raise
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         logger.warning(f"Failed to build verifier registry via profiles, fallback: {exc}")
         registry = ToolRegistry()

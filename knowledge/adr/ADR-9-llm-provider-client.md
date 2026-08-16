@@ -1254,6 +1254,33 @@ fields sent ONLY to this entry — e.g. Mistral's `reasoning_effort`,
 `safe_prompt`, `prompt_mode`, `parallel_tool_calls`, `prediction`;
 renamed and re-scoped from role-level `extras` — see amendment above).
 
+### Amendment 2026-08-16 — selected-provider exact-request qualification
+
+Provider qualification has three deliberately distinct evidence levels:
+
+1. `fa probe` sends `tools=()` and proves connectivity, authentication, and model
+   availability only.
+2. Offline `fa conformance` keeps deterministic CONF-1..7 composer/message-order
+   coverage and performs no provider call.
+3. `fa conformance --provider <name>` selects only matching coder-chain entries
+   before secret validation and proxy rewriting, then runs CONF-1..8. CONF-8 is
+   the exact production request profile: deployed `max_tokens`, omitted
+   `temperature`/`top_p` when production omits them, and the exact rendered coder
+   tool corpus assembled by the shared `fa run` registry helper, including
+   `fs_search` and `pr_prepare`.
+
+Direct mode validates API-key names only for selected entries. Proxy mode retains
+keyless agent semantics and rewrites only the selected chain. Redaction derives
+from a selected-only `ModelsConfig`. Unknown providers and missing selected keys
+fail before transport or conformance artifacts.
+
+A provider is `VERIFIED` for the current request profile only after its selected
+live CONF-8 succeeds. Static PTS-v1 admission or a probe-only 200 does not imply
+that status; unexercised providers remain `UNVERIFIED`. Live qualification is an
+operator/deployment check, not a network-dependent CI gate.
+
+**Source contract:** [ADR-7 PTS-v1 amendment](./ADR-7-inner-loop-tool-registry.md#amendment-2026-08-16--portable-tool-schema-v1-single-authority).
+
 ## References
 
 - **Amendment 2026-07-23 references:**

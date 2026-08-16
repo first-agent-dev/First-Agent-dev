@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -9,9 +10,10 @@ from unittest.mock import patch
 import fastjsonschema  # type: ignore[import-untyped]
 import pytest
 
+import fa.inner_loop.profiles as profile_module
 import fa.inner_loop.tools as tool_module
 from fa.blackboard.blackboard import Blackboard, BlackboardEntry
-from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSpec
+from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSchemaPortabilityError, ToolSpec
 from fa.inner_loop.state import EventLog, SessionState
 from fa.inner_loop.subagent_runner import SubagentRunner
 from fa.stats import aggregate_sessions, parse_session, render_session_json
@@ -22,6 +24,19 @@ def _spec(name: str) -> ToolSpec:
         name=name,
         description=name,
         input_schema={"type": "object"},
+        permission="read",
+        handler=lambda _: ToolResult.ok(""),
+    )
+
+
+def _nonportable_spec(name: str) -> ToolSpec:
+    return ToolSpec(
+        name=name,
+        description=name,
+        input_schema={
+            "type": "object",
+            "properties": {"value": {"type": ["string", "null"]}},
+        },
         permission="read",
         handler=lambda _: ToolResult.ok(""),
     )
@@ -51,7 +66,10 @@ def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path
     original = {name: getattr(tool_module, name) for name in names}
     try:
         # fs_search succeeds → present
-        tool_module.build_fs_search_tool = lambda *_a, **_kw: _spec("fs_search")
+        def build_fs_search(_db_path: Path, _workspace_root: Path) -> ToolSpec:
+            return _spec("fs_search")
+
+        tool_module.build_fs_search_tool = build_fs_search
         tool_module.build_chronicle_search_tool = lambda: _spec("fs_chronicle_search")
         # usage fails → absent
         tool_module.build_usage_tool = lambda: (_ for _ in ()).throw(RuntimeError("usage broken"))
@@ -113,6 +131,56 @@ def test_baseline_registry_fallback_is_live_when_profiles_fail(tmp_path: Path, c
 
     assert {"fs_read_file", "fs_write_file", "fs_run_bash"} <= set(registry.names())
     assert any("fallback baseline" in record.message for record in caplog.records)
+
+
+def test_profile_registry_propagates_schema_contract_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C1: a required profile tool cannot disappear behind a warning."""
+
+    def broken_builders(
+        _workspace_root: Path,
+        bash_timeout: int = 30,
+    ) -> dict[str, Callable[[], ToolSpec]]:
+        del bash_timeout
+        return {"fs_run_bash": lambda: _nonportable_spec("fs_run_bash")}
+
+    monkeypatch.setattr(profile_module, "_build_tool_builders", broken_builders)
+
+    with pytest.raises(ToolSchemaPortabilityError, match="tool=fs_run_bash"):
+        profile_module.build_registry_for_role("verifier", tmp_path)
+
+
+def test_baseline_registry_does_not_fallback_on_schema_contract_failure(tmp_path: Path) -> None:
+    """C1: fallback is for optional availability, not invalid source contracts."""
+
+    failure = ToolSchemaPortabilityError("fs_search", "/properties/value/type", "unsupported_type")
+    with patch("fa.inner_loop.profiles.build_registry_for_role", side_effect=failure):
+        with pytest.raises(ToolSchemaPortabilityError, match="tool=fs_search"):
+            tool_module.build_baseline_registry(tmp_path)
+
+
+def test_extra_registry_propagates_schema_contract_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C1: extra-tool source defects hard-fail while ordinary failures degrade."""
+
+    def build_bad_fs_search(_db_path: Path, _workspace_root: Path) -> ToolSpec:
+        return _nonportable_spec("fs_search")
+
+    monkeypatch.setattr(tool_module, "build_fs_search_tool", build_bad_fs_search)
+    registry = ToolRegistry()
+
+    with pytest.raises(ToolSchemaPortabilityError, match="tool=fs_search"):
+        tool_module._register_extra_tools(
+            registry,
+            tmp_path,
+            include_pair=False,
+            include_observability=False,
+        )
+    assert registry.names() == ()
 
 
 def test_subagent_filtered_history_includes_real_blackboard_plans(tmp_path: Path) -> None:

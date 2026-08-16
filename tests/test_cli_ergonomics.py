@@ -510,6 +510,28 @@ def test_help_registry_covers_real_commands() -> None:
     assert set(COMMANDS) <= real, f"help registry references unknown commands: {set(COMMANDS) - real}"
 
 
+def test_conformance_help_distinguishes_offline_and_live_cases() -> None:
+    """C2 T7: parser and bilingual registry describe the same case boundary."""
+
+    entry = COMMANDS["conformance"]
+    combined_registry_en = f"{entry['summary_en']} {entry['args']['--provider']['en']}"
+    assert "CONF-1..7" in combined_registry_en
+    assert "CONF-1..8" in combined_registry_en
+    assert entry["summary_ru"]
+    assert entry["args"]["--provider"]["ru"]
+
+    parser = build_parser()
+    subparsers = parser._subparsers
+    assert subparsers is not None
+    sub = next(action for action in subparsers._group_actions if hasattr(action, "choices"))
+    choices = getattr(sub, "choices", None)
+    assert choices is not None
+    help_text = choices["conformance"].format_help()
+    assert "CONF-1..7" in help_text
+    assert "CONF-1..8" in help_text
+    assert "exact production" in help_text
+
+
 def test_adaptive_mode_replans_until_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fa.inner_loop.workflow_artifacts import load_eval_report, load_flow_state
 

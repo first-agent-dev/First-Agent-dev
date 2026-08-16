@@ -30,16 +30,34 @@ def _stable_hash(obj: Any) -> str:
     return hashlib.sha256(stable.encode()).hexdigest()[:8]
 
 
+def _normalize_tool_cache_identity(tool_def: dict[str, Any], *, index: int) -> tuple[str, Any]:
+    """Return the stable name/schema identity for one internal tool definition."""
+
+    if "function" in tool_def:
+        function = tool_def["function"]
+        if not isinstance(function, dict):
+            raise ValueError(f"tool definition at index {index} function must be an object")
+        name = function.get("name")
+        if "parameters" not in function:
+            raise ValueError(f"tool definition at index {index} function.parameters is required")
+        input_schema = function["parameters"]
+    else:
+        name = tool_def.get("name")
+        input_schema = tool_def.get("input_schema", {})
+
+    if not isinstance(name, str) or not name:
+        raise ValueError(f"tool definition at index {index} must have a non-empty string name")
+    return name, input_schema
+
+
 def _hash_tool_defs_stable(tool_defs: list[dict[str, Any]]) -> str:
-    """Hash only name + input_schema, exclude description which may contain date."""
-    stable_parts = []
-    for td in sorted(tool_defs, key=lambda x: x.get("name", "")):
-        stable_parts.append(
-            {
-                "name": td.get("name"),
-                "input_schema": td.get("input_schema"),
-            }
-        )
+    """Hash normalized tool names and schemas while excluding descriptions."""
+
+    stable_parts: list[dict[str, Any]] = []
+    for index, tool_def in enumerate(tool_defs):
+        name, input_schema = _normalize_tool_cache_identity(tool_def, index=index)
+        stable_parts.append({"name": name, "input_schema": input_schema})
+    stable_parts.sort(key=lambda item: item["name"])
     return _stable_hash(stable_parts)
 
 

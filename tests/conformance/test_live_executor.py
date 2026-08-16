@@ -15,10 +15,12 @@ C2 (CLI wiring with injected transport/secrets).
 from __future__ import annotations
 
 import io
+import json
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, override
+from typing import Any
 
 import pytest
 
@@ -55,11 +57,13 @@ class _FakeChain:
         raise_429: bool = False,
         raise_exhausted: bool = False,
         text: str = "ok",
+        tool_calls: tuple[dict[str, Any], ...] = (),
     ) -> None:
         self.requests: list[Any] = []
         self._raise_429 = raise_429
         self._raise_exhausted = raise_exhausted
         self._text = text
+        self._tool_calls = tool_calls
         self.config = SimpleNamespace(name="test-model")
 
     def request(self, request: Any) -> tuple[Any, str, list[Any]]:
@@ -72,11 +76,71 @@ class _FakeChain:
             from fa.providers.errors import ProviderChainExhaustedError
 
             raise ProviderChainExhaustedError("all chain entries failed", attempts=[], logical_call_id="x")
-        return SimpleNamespace(text=self._text, in_tokens=10, out_tokens=5), "logical-1", []
+        return (
+            SimpleNamespace(text=self._text, tool_calls=self._tool_calls, in_tokens=10, out_tokens=5),
+            "logical-1",
+            [],
+        )
 
 
 def _mk_case(case: int) -> ConfCase:
     return ConfCase(case=case, name=f"CONF-{case}", role="coder", task="a task")
+
+
+def _function_tool(name: str, *, properties: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": f"{name} description",
+            "parameters": {
+                "type": "object",
+                "properties": properties or {},
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+class _RecordingSuccessTransport:
+    """Record exact provider request bodies and return a successful completion."""
+
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+        self.bodies: list[dict[str, Any]] = []
+
+    def post(self, url: str, **kwargs: Any) -> Any:
+        from fa.providers.base import TransportResponse
+
+        self.urls.append(url)
+        self.bodies.append(dict(kwargs.get("json_body", {})))
+        return TransportResponse(
+            status=200,
+            body={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+
+def _enable_proxy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    token_file = tmp_path / "fa_proxy_token"
+    token_file.write_text("test-token-1234", encoding="utf-8")
+    monkeypatch.setenv("FA_EGRESS_PROXY_URL", "http://proxy.test:8080")
+    monkeypatch.setenv("FA_PROXY_TOKEN_FILE", str(token_file))
+
+
+def _write_coder_models(path: Path, chain_rows: str) -> Path:
+    path.write_text(
+        f'coder:\n  name: "gemini-test"\n  family: "gemini"\n  chain:\n{chain_rows}',
+        encoding="utf-8",
+    )
+    return path
 
 
 def test_case_to_request_uses_composer() -> None:
@@ -101,12 +165,72 @@ def test_case_to_request_uses_composer() -> None:
     assert req.top_p is None
 
 
+def test_production_request_profile_case_rejects_empty_or_missing_required_tools() -> None:
+    """C0p T6: runtime positive controls reject an incomplete CONF-8 corpus."""
+
+    from fa.providers import conformance as conformance_module
+
+    invalid_corpora = (
+        (),
+        (_function_tool("fs_search"),),
+        (_function_tool("pr_prepare"),),
+    )
+    for tools in invalid_corpora:
+        with pytest.raises(ValueError, match="CONF-8"):
+            conformance_module.production_request_profile_case(tools)
+
+
+def test_case_to_request_carries_conf8_tools_into_composer_and_request() -> None:
+    """C1 T6: one canonical tuple reaches prompt composition and RequestInfo."""
+
+    from fa.providers import conformance as conformance_module
+
+    tools = (
+        _function_tool("fs_search", properties={"query": {"type": "string"}}),
+        _function_tool("pr_prepare"),
+    )
+    case = conformance_module.production_request_profile_case(tools)
+    request = _case_to_request(case, model_slug="test-model")
+
+    assert request.tools == tools
+    tool_block = next(
+        str(message["content"])
+        for message in request.messages
+        if str(message.get("content", "")).startswith("Tools for role coder:\n")
+    )
+    assert json.loads(tool_block.split("\n", 1)[1]) == list(tools)
+    assert request.max_tokens == 64000
+    assert request.temperature is None
+    assert request.top_p is None
+
+
+@pytest.mark.parametrize(
+    ("text", "tool_calls", "expected_ok"),
+    [
+        ("answer", (), True),
+        ("", ({"id": "call-1", "function": {"name": "fs_search", "arguments": "{}"}},), True),
+        ("", (), False),
+    ],
+    ids=("text", "tool-call-only", "empty"),
+)
+def test_live_executor_accepts_tool_call_only_response(
+    text: str,
+    tool_calls: tuple[dict[str, Any], ...],
+    expected_ok: bool,
+) -> None:
+    """C1 T6: canonical text or tool calls indicate provider acceptance."""
+
+    row = make_live_executor(_FakeChain(text=text, tool_calls=tool_calls))(_mk_case(1), "run-1")
+    assert row["ok"] is expected_ok
+
+
 def test_live_executor_drives_chain_and_reports_tokens() -> None:
     """C1 — the live executor calls the chain and returns a row with tokens."""
     chain = _FakeChain(text="hello")
     execute = make_live_executor(chain)
     row = execute(_mk_case(1), "run-1")
     assert row["case"] == 1
+    assert row["name"] == "CONF-1"
     assert row["ok"] is True
     assert row["model"] == "test-model"
     assert row["in_tokens"] == 10
@@ -126,23 +250,12 @@ def test_cmd_conformance_live_provider_with_injected_secrets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C2 — `fa conformance --provider X` runs the live matrix with injected secrets.
+    """C2: direct mode uses the injected selected-provider secret for all cases."""
 
-    Uses a fake transport that returns a canned 200 so no real HTTP fires, and a
-    temp models.yaml with a coder role. The CLI must run the live matrix and print
-    CONF rows. Secrets passed via the injection seam are honoured (no proxy env in
-    this test so we exercise the non-proxy secret-store path).
-    """
     from fa.cli import _cmd_conformance, build_parser
-    from fa.providers.base import TransportResponse
 
-    # Ensure proxy mode is OFF (otherwise the CLI would build a proxy-only
-    # SecretStore({}) and skip the injected mapping, and the fake transport sees
-    # no proxy rewrite).
     monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
     monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
-
-    # Minimal models.yaml with a coder role.
     models = tmp_path / "models.yaml"
     models.write_text(
         """coder:
@@ -157,51 +270,354 @@ def test_cmd_conformance_live_provider_with_injected_secrets(
         encoding="utf-8",
     )
 
-    class _FakeTransport:
-        def post(self, url: str, **kw: Any) -> TransportResponse:
-            del url, kw
+    transport = _RecordingSuccessTransport()
+    args = build_parser().parse_args(["conformance", "--provider", "openrouter", "--config", str(models)])
+    code = _cmd_conformance(args, transport=transport, secrets={"TEST_KEY": "selected-test-key"})
+
+    assert code == 0
+    assert len(transport.bodies) == 8
+    assert all(url.startswith("https://example.invalid/v1") for url in transport.urls)
+
+
+def test_cmd_conformance_selects_requested_provider_before_proxy_rewrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2 S13.11: ``--provider`` selects actual chain entries, not a label.
+
+    Current production builds the whole coder chain, so the successful first
+    OpenRouter entry serves every row even when the command says Aigate.
+    """
+
+    from fa.cli import _cmd_conformance, build_parser
+
+    models = tmp_path / "models-two-providers.yaml"
+    models.write_text(
+        """coder:
+  name: "gemini-test"
+  family: "gemini"
+  chain:
+    - provider: openrouter
+      model: "first/gemini-3-flash-preview"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: FIRST_KEY
+    - provider: aigate
+      model: "target/gemini-3-flash-preview"
+      base_url: "https://api.aigate.shop/v1"
+      api_key_env: TARGET_KEY
+""",
+        encoding="utf-8",
+    )
+    _enable_proxy(tmp_path, monkeypatch)
+    transport = _RecordingSuccessTransport()
+    args = build_parser().parse_args(["conformance", "--provider", "aigate", "--config", str(models)])
+
+    assert _cmd_conformance(args, transport=transport, secrets={}) == 0
+    assert transport.bodies
+    assert {body["model"] for body in transport.bodies} == {"target/gemini-3-flash-preview"}
+    assert all("/route/aigate-" in url for url in transport.urls)
+
+
+def test_cmd_conformance_unknown_provider_exits_before_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """C2 T8: unknown provider fails before secrets, artifacts, or transport."""
+
+    from fa.cli import _cmd_conformance, build_parser
+
+    models = _write_coder_models(
+        tmp_path / "models.yaml",
+        """    - provider: openrouter
+      model: "first/gemini"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: FIRST_KEY
+""",
+    )
+    _enable_proxy(tmp_path, monkeypatch)
+    transport = _RecordingSuccessTransport()
+    args = build_parser().parse_args(["conformance", "--provider", "missing", "--config", str(models)])
+
+    assert _cmd_conformance(args, transport=transport, secrets={}) == 2
+    err = capsys.readouterr().err
+    assert "missing" in err
+    assert "openrouter" in err
+    assert transport.urls == []
+    assert not (tmp_path / ".fa" / "session-log").exists()
+
+
+def test_cmd_conformance_direct_mode_ignores_unselected_missing_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2 T8: only selected entries participate in direct key validation."""
+
+    from fa.cli import _cmd_conformance, build_parser
+
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    models = _write_coder_models(
+        tmp_path / "models.yaml",
+        """    - provider: openrouter
+      model: "first/gemini"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: FIRST_KEY
+    - provider: aigate
+      model: "target/gemini"
+      base_url: "https://api.aigate.shop/v1"
+      api_key_env: TARGET_KEY
+""",
+    )
+    transport = _RecordingSuccessTransport()
+    args = build_parser().parse_args(["conformance", "--provider", "aigate", "--config", str(models)])
+
+    assert _cmd_conformance(args, transport=transport, secrets={"TARGET_KEY": "selected-target-key"}) == 0
+    assert len(transport.bodies) == 8
+    assert {body["model"] for body in transport.bodies} == {"target/gemini"}
+
+
+def test_cmd_conformance_direct_mode_rejects_missing_selected_key_without_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """C3 T8: missing selected key is pre-network and never leaks a value."""
+
+    from fa.cli import _cmd_conformance, build_parser
+
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    models = _write_coder_models(
+        tmp_path / "models.yaml",
+        """    - provider: openrouter
+      model: "first/gemini"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: FIRST_KEY
+    - provider: aigate
+      model: "target/gemini"
+      base_url: "https://api.aigate.shop/v1"
+      api_key_env: TARGET_KEY
+""",
+    )
+    secret_sentinel = "unselected-secret-must-not-leak"
+    transport = _RecordingSuccessTransport()
+    args = build_parser().parse_args(["conformance", "--provider", "aigate", "--config", str(models)])
+
+    assert _cmd_conformance(args, transport=transport, secrets={"FIRST_KEY": secret_sentinel}) == 2
+    err = capsys.readouterr().err
+    assert "fa conformance: configuration error:" in err
+    assert "secret redactor configuration error" not in err
+    assert "TARGET_KEY" in err
+    assert secret_sentinel not in err
+    assert transport.urls == []
+    assert not (tmp_path / ".fa" / "session-log").exists()
+
+
+def test_cmd_conformance_redactor_failure_exits_before_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """C2 T8: selected-secret redactor rejection leaves no run artifacts."""
+
+    from fa.cli import _cmd_conformance, build_parser
+
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    models = _write_coder_models(
+        tmp_path / "models.yaml",
+        """    - provider: aigate
+      model: "target/gemini"
+      base_url: "https://api.aigate.shop/v1"
+      api_key_env: TARGET_KEY
+""",
+    )
+    transport = _RecordingSuccessTransport()
+    args = build_parser().parse_args(["conformance", "--provider", "aigate", "--config", str(models)])
+
+    assert _cmd_conformance(args, transport=transport, secrets={"TARGET_KEY": "short"}) == 2
+    assert "secret redactor configuration error" in capsys.readouterr().err
+    assert transport.urls == []
+    assert not (tmp_path / ".fa" / "session-log").exists()
+
+
+def test_cmd_conformance_retains_selected_provider_fallback_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2 T8: same-provider fallbacks retain order across an intervening entry."""
+
+    from fa.cli import _cmd_conformance, build_parser
+    from fa.providers.base import TransportResponse
+
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    models = _write_coder_models(
+        tmp_path / "models.yaml",
+        """    - provider: aigate
+      model: "target-a/gemini"
+      base_url: "https://api.aigate.shop/v1"
+      api_key_env: TARGET_A_KEY
+    - provider: openrouter
+      model: "forbidden/gemini"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: MISSING_MIDDLE_KEY
+    - provider: aigate
+      model: "target-b/gemini"
+      base_url: "https://api.aigate.shop/v1"
+      api_key_env: TARGET_B_KEY
+""",
+    )
+    seen_models: list[str] = []
+
+    class _FallbackTransport:
+        def post(self, url: str, **kwargs: Any) -> TransportResponse:
+            del url
+            body = dict(kwargs.get("json_body", {}))
+            model = str(body.get("model", ""))
+            seen_models.append(model)
+            if model == "target-a/gemini":
+                return TransportResponse(status=401, body={})
             return TransportResponse(
                 status=200,
                 body={"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]},
             )
 
-    # Run through proxy mode: proxy mode builds SecretStore({}) which allows
-    # empty secrets (the proxy injects keys), and rewrites chain base_urls.
-    # This matches the deployed fa@fa-HP configuration where
-    # FA_EGRESS_PROXY_URL is set and the SecretStore is empty.
-    token_file = tmp_path / "fa_proxy_token"
-    token_file.write_text("test-token-1234", encoding="utf-8")
-    monkeypatch.setenv("FA_EGRESS_PROXY_URL", "http://proxy.test:8080")
-    monkeypatch.setenv("FA_PROXY_TOKEN_FILE", str(token_file))
+    args = build_parser().parse_args(["conformance", "--provider", "aigate", "--config", str(models)])
+    secrets = {"TARGET_A_KEY": "selected-a-key", "TARGET_B_KEY": "selected-b-key"}
 
-    class _ProxyAwareTransport(_FakeTransport):
-        def __init__(self) -> None:
-            super().__init__()
-            self.seen_urls: list[str] = []
+    assert _cmd_conformance(args, transport=_FallbackTransport(), secrets=secrets) == 0
+    assert seen_models == ["target-a/gemini", "target-b/gemini"] * 8
+    assert "forbidden/gemini" not in seen_models
 
-        @override
-        def post(self, url: str, **kw: Any) -> TransportResponse:
-            self.seen_urls.append(url)
-            return super().post(url, **kw)
 
-    buf = io.StringIO()
-    monkeypatch.setattr(sys, "stdout", buf)
-    transport = _ProxyAwareTransport()
-    args = build_parser().parse_args(["conformance", "--provider", "openrouter", "--config", str(models)])
-    code = _cmd_conformance(args, transport=transport, secrets={})
-    assert code == 0, f"all-CONF-OK matrix must exit 0; got code={code}"
-    # Proxy rewrite must have pointed the transport at the proxy route, not
-    # the vendor URL from models.yaml.
-    for u in transport.seen_urls:
-        assert u.startswith("http://proxy.test:8080/route/"), (
-            f"proxy-mode conformance must rewrite vendor URL; got {u!r}"
+def test_cmd_conformance_redactor_receives_selected_models_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2 T8: redaction derives names from the selected config projection."""
+
+    from fa.cli import _cmd_conformance, build_parser
+    from fa.observability.redaction import SecretRedactor
+    from fa.providers import ModelsConfig
+
+    models = _write_coder_models(
+        tmp_path / "models.yaml",
+        """    - provider: openrouter
+      model: "first/gemini"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: FIRST_KEY
+    - provider: aigate
+      model: "target/gemini"
+      base_url: "https://api.aigate.shop/v1"
+      api_key_env: TARGET_KEY
+""",
+    )
+    _enable_proxy(tmp_path, monkeypatch)
+    seen_configs: list[ModelsConfig] = []
+    original = SecretRedactor.from_models_config
+
+    def recording_redactor(
+        env: Mapping[str, str],
+        config: ModelsConfig,
+        *,
+        extra_values: Sequence[str] = (),
+        allow_empty: bool = False,
+    ) -> SecretRedactor:
+        seen_configs.append(config)
+        return original(env, config, extra_values=extra_values, allow_empty=allow_empty)
+
+    monkeypatch.setattr(SecretRedactor, "from_models_config", recording_redactor)
+    transport = _RecordingSuccessTransport()
+    args = build_parser().parse_args(["conformance", "--provider", "aigate", "--config", str(models)])
+
+    assert _cmd_conformance(args, transport=transport, secrets={}) == 0
+    assert len(seen_configs) == 1
+    assert set(seen_configs[0].roles) == {"coder"}
+    assert [entry.provider for entry in seen_configs[0].roles["coder"].chain] == ["aigate"]
+
+
+def test_cmd_conformance_appends_exact_nonempty_production_tools_conf8(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2 T6: live CONF-8 calls the shared producer and sends exact mappings."""
+
+    import fa.cli as cli_module
+    from fa.inner_loop.pr_draft import PrDraftStore
+    from fa.inner_loop.prompt import render_tool_specs
+    from fa.inner_loop.registry import ToolRegistry
+
+    models = tmp_path / "models-aigate.yaml"
+    models.write_text(
+        """coder:
+  name: "gemini-test"
+  family: "gemini"
+  chain:
+    - provider: aigate
+      model: "target/gemini-3-flash-preview"
+      base_url: "https://api.aigate.shop/v1"
+      api_key_env: TARGET_KEY
+""",
+        encoding="utf-8",
+    )
+    _enable_proxy(tmp_path, monkeypatch)
+    expected_tools: list[dict[str, Any]] = []
+    producer_workspaces: list[Path] = []
+    original_builder = cli_module._build_run_tool_registry
+
+    def recording_builder(
+        role: str,
+        workspace: Path,
+        *,
+        bash_timeout_seconds: int,
+        draft_store: PrDraftStore,
+    ) -> ToolRegistry:
+        registry = original_builder(
+            role,
+            workspace,
+            bash_timeout_seconds=bash_timeout_seconds,
+            draft_store=draft_store,
         )
-    out = buf.getvalue()
-    assert "live run" in out
-    assert "CONF-1" in out or "CONF-" in out
-    # All 7 cases must be OK (the fake transport returns a 200 canned body).
-    assert "OK" in out
-    assert "FAIL" not in out
+        producer_workspaces.append(workspace)
+        expected_tools[:] = [dict(tool) for tool in render_tool_specs(registry.specs())]
+        return registry
+
+    monkeypatch.setattr(cli_module, "_build_run_tool_registry", recording_builder)
+    transport = _RecordingSuccessTransport()
+    args = cli_module.build_parser().parse_args(["conformance", "--provider", "aigate", "--config", str(models)])
+
+    assert cli_module._cmd_conformance(args, transport=transport, secrets={}) == 0
+    assert len(transport.bodies) == 8
+    assert all("tools" not in body for body in transport.bodies[:7])
+    conf8_body = transport.bodies[7]
+    conf8_tools = conf8_body.get("tools")
+    assert conf8_tools == expected_tools
+    assert len(producer_workspaces) == 1
+    assert producer_workspaces[0].is_relative_to(tmp_path)
+    names = [tool["function"]["name"] for tool in expected_tools]
+    assert len(names) == len(set(names)) == 15
+    assert {"fs_search", "pr_prepare"} <= set(names)
+    assert conf8_body["max_tokens"] == 64000
+    assert "temperature" not in conf8_body
+    assert "top_p" not in conf8_body
+
+    forbidden = {"anyOf", "oneOf", "allOf", "$ref", "$defs"}
+
+    def assert_portable_schema(value: object) -> None:
+        if isinstance(value, dict):
+            assert forbidden.isdisjoint(value)
+            assert not isinstance(value.get("type"), list)
+            assert value.get("type") != "null"
+            for child in value.values():
+                assert_portable_schema(child)
+        elif isinstance(value, list):
+            for child in value:
+                assert_portable_schema(child)
+
+    for tool in expected_tools:
+        assert_portable_schema(tool["function"]["parameters"])
 
 
 def test_live_executor_records_chain_exhaustion_as_case_failure() -> None:
@@ -218,6 +634,7 @@ def test_live_executor_records_chain_exhaustion_as_case_failure() -> None:
     assert row["ok"] is False
     assert "chain_exhausted" in row["error"]
     assert row["case"] == 1
+    assert row["name"] == "CONF-1"
 
 
 def test_live_executor_re_raises_unknown_infra_error() -> None:
@@ -239,7 +656,7 @@ def test_live_executor_re_raises_unknown_infra_error() -> None:
 def test_cmd_conformance_live_renders_fail_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """C2 — a live FAIL row is rendered with its reason, so it is diagnosable.
 
-    Regression for the user's run: all 7 CONF cases FAILed against nvidia_build
+    Historical regression: all then-existing 7 CONF cases failed against nvidia_build
     but the CLI printed only "FAIL model=..." with no reason. The reason must be
     surfaced so an operator can see WHY a case failed (e.g. a provider 400).
     """
@@ -421,4 +838,4 @@ def test_conf6_case_does_not_preemptively_violate_user_after_tool(
     # The transport must have seen a user-after-tool body (a tool result
     # followed by a final user message) for CONF-6.
     assert transport.conf6_seen, "CONF-6 body must exercise the user-after-tool shape on the wire"
-    assert transport.calls == 7, f"all 7 CONF cases must drive the transport once; calls={transport.calls}"
+    assert transport.calls == 8, f"all 8 live CONF cases must drive the transport once; calls={transport.calls}"

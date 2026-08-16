@@ -58,7 +58,7 @@ from fa.inner_loop.hooks import (
     VerifierObserver,
 )
 from fa.inner_loop.pr_draft import PrDraftStore
-from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
+from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE, render_tool_specs
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
 from fa.inner_loop.registry import ToolRegistry
 from fa.inner_loop.runtime_limits import RuntimeLimits
@@ -746,12 +746,12 @@ def build_parser() -> argparse.ArgumentParser:
         "conformance",
         help=COMMANDS["conformance"]["summary_en"],
         description=(
-            "Run the provider conformance matrix (CONF-1..7) and print a "
-            "capability matrix. By default it runs OFFLINE (no API key): it drives "
-            "FA's own composer + validator and records whether FA emits "
-            "provider-valid request shapes, plus per-component composition sizes "
-            "(CONF-7). Pass `--provider <name>` for a live run against a real "
-            "provider (requires the provider's API key to be configured)."
+            "Run provider conformance and print a capability matrix. By default "
+            "CONF-1..7 run OFFLINE (no API key) through FA's composer + validator; "
+            "CONF-7 records composition sizes. Pass `--provider <name>` to select "
+            "only that configured provider for live CONF-1..8. CONF-8 sends the "
+            "exact production request profile, including coder tools and deployed "
+            "sampling defaults."
         ),
         epilog=render_command_help_ru("conformance"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -2211,6 +2211,20 @@ def _build_role_registry(role: str, workspace: Path, *, bash_timeout_seconds: in
     return build_baseline_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
 
 
+def _build_run_tool_registry(
+    role: str,
+    workspace: Path,
+    *,
+    bash_timeout_seconds: int,
+    draft_store: PrDraftStore,
+) -> ToolRegistry:
+    """Build the exact role tool corpus used by a live ``fa run``."""
+
+    registry = _build_role_registry(role, workspace, bash_timeout_seconds=bash_timeout_seconds)
+    registry.register(build_prepare_pr_tool(draft_store))
+    return registry
+
+
 def _build_run_hook_registry(
     *,
     workspace: Path,
@@ -2561,7 +2575,6 @@ def _cmd_run(
     # chain resolves those per-role defaults and the adapter omits the fields when
     # they are None. (ADR-7's T=1.0-on-retry is a retry-policy concern owned by the
     # FailureClassifierObserver, not a first-attempt default.)
-    registry = _build_role_registry(role, workspace, bash_timeout_seconds=limits.bash_timeout_seconds)
 
     # M-7 §Q-N: ``pr_prepare`` is the producer side of the
     # IntentGuard read seam. The shared ``PrDraftStore`` binds the
@@ -2569,6 +2582,12 @@ def _cmd_run(
     # externally-fabricated drafts are not trusted by the guard.
     draft_path = run_log_dir / "pr_draft.md"
     draft_store = PrDraftStore(draft_path)
+    registry = _build_run_tool_registry(
+        role,
+        workspace,
+        bash_timeout_seconds=limits.bash_timeout_seconds,
+        draft_store=draft_store,
+    )
 
     # --resume preserves the on-disk draft for the next role to read;
     # only the in-memory SHA-256 digest is reset, which forces the
@@ -2586,7 +2605,6 @@ def _cmd_run(
     if draft_error is not None:
         print(draft_error, file=sys.stderr)
         return 2
-    registry.register(build_prepare_pr_tool(draft_store))
     log_path = run_log_dir / "events.jsonl"
     # redactor was already resolved above (before the transport was wrapped
     # for Tier-3 debug-body capture); reused here unchanged.
@@ -2997,6 +3015,35 @@ def _cmd_conformance(
     return 0
 
 
+def _resolve_conformance_models(
+    *,
+    config_path: Path,
+    provider: str,
+) -> tuple[ModelsConfig, ChainConfig] | str:
+    """Load structural config and select only ``provider`` from role coder."""
+
+    try:
+        models = load_models_config_from_path(config_path, require_api_keys=False)
+    except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
+        return f"fa conformance: configuration error: {exc}"
+
+    chain_config = models.roles.get("coder")
+    if chain_config is None:
+        return f"fa conformance: role 'coder' not found in {config_path}; known: {sorted(models.roles)}"
+
+    selected_entries = tuple(entry for entry in chain_config.chain if entry.provider == provider)
+    if not selected_entries:
+        configured_providers = sorted({entry.provider for entry in chain_config.chain})
+        return (
+            f"fa conformance: provider {provider!r} is not configured for role 'coder'; "
+            f"configured providers: {configured_providers}"
+        )
+
+    selected_chain = replace(chain_config, chain=selected_entries)
+    selected_models = replace(models, roles={"coder": selected_chain})
+    return selected_models, selected_chain
+
+
 def _run_live_conformance(
     args: argparse.Namespace,
     provider: str,
@@ -3004,29 +3051,31 @@ def _run_live_conformance(
     transport: Transport | None,
     secrets: Mapping[str, str] | None,
 ) -> int:
-    """Run the live conformance matrix against ``provider`` (S13.6)."""
-    from fa.providers.conformance import default_cases, make_live_executor
+    """Run the live conformance matrix against exactly ``provider`` (S13.11)."""
+    from fa.providers.conformance import (
+        default_cases,
+        make_live_executor,
+        production_request_profile_case,
+    )
     from fa.providers.live_runner import RunnerConfig, run_matrix
 
     config_path = args.config.expanduser().resolve()
     proxy_url = _resolve_proxy_url()
     proxy_mode = bool(proxy_url)
+    resolved_models = _resolve_conformance_models(config_path=config_path, provider=provider)
+    if isinstance(resolved_models, str):
+        print(resolved_models, file=sys.stderr)
+        return 2
+    selected_models, chain_config = resolved_models
     effective_secrets: Mapping[str, str] = (
         secrets if secrets is not None else (SecretStore({}) if proxy_mode else _load_secret_store())
     )
-    try:
-        models = load_models_config_from_path(config_path, env=effective_secrets, require_api_keys=not proxy_mode)
-    except (ConfigurationError, EvalFamilyConflictError, OSError) as exc:
-        print(f"fa conformance: configuration error: {exc}", file=sys.stderr)
-        return 2
-
-    chain_config = models.roles.get("coder")
-    if chain_config is None:
-        print(
-            f"fa conformance: role 'coder' not found in {config_path}; known: {sorted(models.roles)}",
-            file=sys.stderr,
-        )
-        return 2
+    if not proxy_mode:
+        try:
+            chain_config.validate(effective_secrets, require_api_keys=True)
+        except ConfigurationError as exc:
+            print(f"fa conformance: configuration error: {exc}", file=sys.stderr)
+            return 2
 
     # S13 live-fix: proxy mode must rewrite the chain to target the egress
     # proxy (same rewrite _cmd_probe and _cmd_run apply). Without this block
@@ -3040,28 +3089,25 @@ def _run_live_conformance(
             return 2
         chain_config = rewritten
 
-    # Build a per-run log directory so DebugBodyTransport can write
-    # llm_bodies.jsonl alongside the runner's results (same shape as `fa run`:
-    # one dir per run_id, both durable files co-located). The live runner
-    # writes its manifest/results into its own `base_dir`; the debug-body
-    # transport needs a dedicated per-run directory, not a shared one.
-    run_id_stub = f"conf-{provider}-preflight"
-    run_log_dir = fa_session_log_root() / run_id_stub
-    run_log_dir.mkdir(parents=True, exist_ok=True)
-
     # Secret redactor for debug-body capture. In proxy mode the redactor is
     # built allow_empty=True (matches _cmd_run); in legacy mode use the
     # SecretStore-based redactor.
     try:
         redactor = SecretRedactor.from_models_config(
             effective_secrets,
-            models,
+            selected_models,
             extra_values=_proxy_redactor_extra() if proxy_mode else (),
             allow_empty=proxy_mode,
         )
     except SecretRedactorError as exc:
         print(f"fa conformance: secret redactor configuration error: {exc}", file=sys.stderr)
         return 2
+
+    # Create artifacts only after every selection/key/proxy/redactor preflight
+    # gate succeeds. The directory is also the checkout-isolated schema workspace.
+    run_id_stub = f"conf-{provider}-preflight"
+    run_log_dir = fa_session_log_root() / run_id_stub
+    run_log_dir.mkdir(parents=True, exist_ok=True)
 
     effective_transport: Transport = transport if transport is not None else UrllibTransport()
     # Wrap transport for debug-body capture (mirrors _cmd_run) so
@@ -3076,12 +3122,24 @@ def _run_live_conformance(
 
     base_dir = fa_session_log_root() / "conformance"
     base_dir.mkdir(parents=True, exist_ok=True)
+
+    limits = load_runtime_limits_from_path().limits
+    draft_store = PrDraftStore(run_log_dir / "pr_draft.md")
+    registry = _build_run_tool_registry(
+        "coder",
+        run_log_dir,
+        bash_timeout_seconds=limits.bash_timeout_seconds,
+        draft_store=draft_store,
+    )
+    rendered_tools = render_tool_specs(registry.specs())
+    live_cases = [*default_cases(), production_request_profile_case(rendered_tools)]
+
     # Pacing: 3.0s (20 RPM) for real network calls; 0.0s for unit tests injecting a transport.
     pace_seconds = 3.0 if transport is None else 0.0
     runner_cfg = RunnerConfig(provider=provider, rpm_limit=20, base_dir=base_dir, pace_seconds=pace_seconds)
     execute = make_live_executor(chain)
 
-    result = run_matrix(default_cases(), config=runner_cfg, execute=execute)
+    result = run_matrix(live_cases, config=runner_cfg, execute=execute)
     # Re-point llm_bodies.jsonl from the preflight dir into the actual conf
     # run dir so it lives alongside results.jsonl/manifest.json (one directory
     # per run_id). Best-effort; never crash the matrix if the move fails.

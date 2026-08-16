@@ -312,6 +312,13 @@ concrete carriers; single source of truth for every tool PR.
   Source:
   [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
   §R-8 + §R-32.
+- **2026-08-16 — Portable Tool Schema v1.** `ToolSpec.input_schema` remains the
+  one local/wire authority. Registration compiles full JSON Schema, validates
+  the same object against the closed PTS-v1 type/keyword profile, then stores
+  spec+validator atomically. `ToolSchemaPortabilityError` propagates through
+  builders; ordinary optional availability still degrades. No provider-specific
+  schema fork or derived wire projector. Live acceptance belongs to ADR-9
+  selected CONF-8.
 
 **Source:** [`ADR-7`](./ADR-7-inner-loop-tool-registry.md).
 
@@ -559,6 +566,12 @@ an ADR — neither applies here, so the «Amendment» word was a
 misnomer carried over from upstream PR #52. 5 new offline tests
 covering the WARNING surface; 1 new named-invariant test; 594 total
 pass.
+- **2026-08-16 — selected-provider exact-request qualification.** Probe remains
+  tool-free connectivity evidence. Offline conformance remains CONF-1..7. Live
+  `--provider` selects matching coder entries before keys/proxy, then appends
+  CONF-8 with deployed sampling and the exact shared production tool corpus.
+  Selected-only key/redactor scope is mandatory. Only a successful selected live
+  CONF-8 makes that provider/profile VERIFIED; others remain UNVERIFIED.
 
 **Source:** [`ADR-9`](./ADR-9-llm-provider-client.md).
 

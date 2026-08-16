@@ -189,8 +189,8 @@ CONF-5  trailing-assistant tolerance  (records the capability, does not require 
 CONF-6  user-after-tool tolerance     (Mistral 3230's other half)
 CONF-7  prompt-cache + composition   (hit rate AND per-component request
                                        sizes; recorded, never pass/fail)
-CONF-8  DEPLOYED sampling profile     (the role's real temperature/top_p/
-                                       provider_params, not defaults)  <- I-48
+CONF-8  EXACT production request      (deployed sampling values/omissions +
+                                       provider_params + exact coder tools) <- I-48/S13.11
 CONF-9  oversized / truncation        (behaviour at the context limit)
 ```
 
@@ -203,8 +203,18 @@ marked that model green on CONF-1…7 while it remains unusable in production.**
 
 A conformance suite that does not exercise the configuration the deployment
 actually runs proves nothing about the deployment — the same error as S8's
-scripted transport accepting any message order. CONF-8 therefore replays each
-role's **real `models.yaml` entry**, including `provider_params`.
+scripted transport accepting any message order. CONF-8 therefore replays the
+role's **real `models.yaml` entry**, including `provider_params`, exact
+`max_tokens`, and actual `temperature`/`top_p` values or omissions.
+
+**S13.11 correction (2026-08-16).** The first shipped live harness executed only
+CONF-1..7, so the sampling-profile definition above had no stable live case. The
+[S13.11 portable-schema repair](./PLAN-cli-trace-S13.11-portable-tool-schema-contract.md)
+implements CONF-8 as the **exact production request profile** rather than
+reassigning the ID: it preserves deployed sampling/provider parameters and adds
+the exact rendered coder tools from the shared `fa run` registry, including
+`fs_search` and `pr_prepare`. Offline conformance remains exactly CONF-1..7;
+selected-provider live conformance is CONF-1..8.
 
 Output is a **capability matrix**, not a pass/fail verdict. A provider that
 fails CONF-5 is not broken — it has a rule, and the rule goes in its

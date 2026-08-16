@@ -52,7 +52,7 @@ SRC_FA = REPO_ROOT / "src" / "fa"
 # it to make a red gate green defeats the entire purpose of the file; if a new
 # function genuinely cannot be written under 15, that is a design discussion,
 # not a number edit.
-_C901_WAIVER_BUDGET = 15
+_C901_WAIVER_BUDGET = 14
 
 # Liveness control. A census that silently matched nothing would satisfy
 # "count <= budget" vacuously — the most common way a gate in this workstream
@@ -64,7 +64,7 @@ _C901_WAIVER_BUDGET = 15
 # obvious "fix" is to edit the floor down — training exactly the reflex this
 # file exists to prevent. A floor below the budget still catches a broken
 # census (which yields 0, verified) while leaving room for the ratchet to move.
-_C901_CENSUS_FLOOR = 13
+_C901_CENSUS_FLOOR = 12
 
 _MAX_COMPLEXITY_CEILING = 15
 
@@ -115,6 +115,14 @@ def _true_complexity_findings() -> list[dict[str, object]]:
     return parsed
 
 
+def test_s13_11_c901_ratchet_tracks_retired_waiver() -> None:
+    """C0 T13: one retired waiver lowers the exact budget/floor authority."""
+
+    census = _waiver_census()
+    assert len(census) == 12
+    assert (_C901_WAIVER_BUDGET, _C901_CENSUS_FLOOR, _MAX_COMPLEXITY_CEILING) == (14, 12, 15)
+
+
 def test_s10b_c901_waiver_budget() -> None:
     """C1 (S10b.1 / CT2): the number of C901 waivers may only decrease.
 
@@ -124,18 +132,18 @@ def test_s10b_c901_waiver_budget() -> None:
     This is the gate that gives ``pyproject.toml``'s *"lower it as waivers
     retire"* an enforcement seat. Before it, adding a waiver was free.
 
-    Deliberately NOT failing on the existing 19 (plan Do-not): a gate that
-    red-lights on the day it lands gets disabled or ignored, and then it
-    protects nothing.
+    The budget deliberately retains reviewed headroom above the measured census;
+    the exact S13.11 regression above forces every real retirement to lower the
+    constants in the same workstream.
 
-    Kill-check target: add a ``# noqa: C901`` anywhere under ``src/fa`` →
-    census becomes 20 > 19 → this fails naming the new site.
+    Kill-check target: raise the measured census above the configured budget →
+    this fails while naming every waiver site.
     """
     census = _waiver_census()
 
     # Liveness: prove the census mechanism actually found the known waivers.
     # A typo'd regex or a wrong root directory yields an empty list, and
-    # "0 <= 19" would pass while measuring nothing at all.
+    # "0 <= budget" would pass while measuring nothing at all.
     assert len(census) >= _C901_CENSUS_FLOOR, (
         f"C901 census found only {len(census)} waivers under {SRC_FA}, below the "
         f"liveness floor of {_C901_CENSUS_FLOOR}. Either the census is broken "

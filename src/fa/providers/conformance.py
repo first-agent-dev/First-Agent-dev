@@ -1,4 +1,4 @@
-"""S13.5 — provider conformance matrix (offline half).
+"""S13.5/S13.11 — offline matrix plus live exact-request qualification.
 
 Plan: ``worklogs/implementation-plans/PLAN-cli-trace-S13-multi-provider-conformance.md``
 §S13.5 / D4 / D5a.
@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -45,6 +45,9 @@ class ConfCase:
     role: str
     task: str
     observations: list[dict[str, Any]] = field(default_factory=list)
+    # S13.11: canonical rendered tools for live-only CONF-8. The outer tuple
+    # matches RequestInfo; default offline CONF-1..7 remain tool-free.
+    tools: tuple[Mapping[str, Any], ...] = ()
     # CONF-7: whether to record per-component composition sizes.
     record_sizes: bool = False
     # CONF-5: allow the composed request to end on a trailing assistant (a
@@ -73,7 +76,7 @@ def _compose(case: ConfCase) -> tuple[list[dict[str, Any]], dict[str, int]]:
     parts, _key = build_prompt_parts_v2(
         base_system=f"base system for {case.role}",
         agents_md_map="agents map placeholder",
-        tool_defs=[],
+        tool_defs=[dict(tool) for tool in case.tools],
         role_id=case.role,
         task=case.task,
         observations=case.observations,
@@ -227,6 +230,33 @@ def default_cases() -> list[ConfCase]:
     ]
 
 
+def production_request_profile_case(
+    tools: tuple[Mapping[str, Any], ...],
+) -> ConfCase:
+    """Build live-only CONF-8 from the exact rendered production tool corpus."""
+
+    names: set[str] = set()
+    for tool in tools:
+        function = tool.get("function")
+        if not isinstance(function, Mapping):
+            continue
+        name = function.get("name")
+        if isinstance(name, str) and name:
+            names.add(name)
+    missing = sorted({"fs_search", "pr_prepare"} - names)
+    if not tools or missing:
+        detail = f"; missing required tools: {missing}" if missing else ""
+        raise ValueError(f"CONF-8 exact production request profile requires non-empty tools{detail}")
+
+    return ConfCase(
+        case=8,
+        name="CONF-8 exact production request profile",
+        role="coder",
+        task="Reply with exactly OK. Do not call a tool.",
+        tools=tools,
+    )
+
+
 def run_conformance_matrix() -> list[dict[str, Any]]:
     """Run all CONF-1..7 scenarios and return the capability matrix as dicts."""
     rows: list[dict[str, Any]] = []
@@ -268,7 +298,7 @@ def _case_to_request(case: ConfCase, model_slug: str) -> RequestInfo:
     parts, _key = build_prompt_parts_v2(
         base_system=f"base system for {case.role}",
         agents_md_map="agents map placeholder",
-        tool_defs=[],
+        tool_defs=[dict(tool) for tool in case.tools],
         role_id=case.role,
         task=case.task,
         observations=case.observations,
@@ -280,6 +310,7 @@ def _case_to_request(case: ConfCase, model_slug: str) -> RequestInfo:
         model_slug=model_slug,
         messages=messages,
         max_tokens=64000,
+        tools=case.tools,
         extras=extras,
     )
 
@@ -338,6 +369,7 @@ def make_live_executor(chain: Any, *, transient_sleep: float = 2.0) -> Callable[
                 if isinstance(exc, ProviderRequestShapeError):
                     return {
                         "case": case.case,
+                        "name": case.name,
                         "ok": False,
                         "model": model_slug,
                         "error": f"request_shape: {exc}",
@@ -358,6 +390,7 @@ def make_live_executor(chain: Any, *, transient_sleep: float = 2.0) -> Callable[
                 detail = "; ".join(f"{a.provider}:{a.status} {a.error or ''}".strip() for a in last_exc.attempts)
                 return {
                     "case": case.case,
+                    "name": case.name,
                     "ok": False,
                     "model": model_slug,
                     "error": f"chain_exhausted: {last_exc} [{detail}]",
@@ -369,7 +402,8 @@ def make_live_executor(chain: Any, *, transient_sleep: float = 2.0) -> Callable[
             raise last_exc
         return {
             "case": case.case,
-            "ok": bool(getattr(response, "text", None)),
+            "name": case.name,
+            "ok": bool(getattr(response, "text", None) or getattr(response, "tool_calls", ())),
             "model": model_slug,
             "in_tokens": getattr(response, "in_tokens", None),
             "out_tokens": getattr(response, "out_tokens", None),
@@ -385,5 +419,6 @@ __all__ = [
     "default_cases",
     "make_live_executor",
     "matrix_to_text",
+    "production_request_profile_case",
     "run_conformance_matrix",
 ]
