@@ -7,25 +7,18 @@ Plan-ID: `PLAN-cli-trace-S13.11-portable-tool-schema-contract`
 **Depth:** P2 — cross-module provider/tool contract repair; no service,
 dependency, state migration, or deployment-topology change.
 
-**Revision:** v4 (2026-08-16)
+**Revision:** v5 (2026-08-16)
 
-**Changed since v3:** adversarial review of every remaining slice resolved the
-parent S13 CONF-8 naming collision by preserving sampling and extending it to an
-exact production request profile; added an exact S5b ratchet regression; made
-pre-push non-vacuous; completed ADR/doc-maintenance artifacts; defined
-path/SHA-independent deployment parity; replaced console-only smoke claims with
-stats/session-DB authority; and made parent readiness closure an explicit S6c
-step rather than an unspecified follow-up.
+**Changed since v4:** live AnyModel evidence confirmed the dedicated
+`supports_prompt_cache=False` capability, exact production CONF-8 acceptance,
+and a successful paired natural `fs_search` trajectory. The final local repair
+makes CONF-5/6/7 explicitly record-only so capability observations remain
+visible without failing required provider qualification. Workplan closure remains
+pending one deployed post-fix conformance rerun.
 
-**Retained from v3:** post-S4 S5 grounding, selected-before-secrets ordering,
-selected-only redaction, exact schema-only registry bindings, tool-call response
-success, both public-help owners, separate C901 synchronization, and explicit
-deferral of the pre-existing live-conformance artifact concurrency defect.
-
-**Retained from v2:** one portable `ToolSpec.input_schema` authority; deletion of
-the ignored `fs_search.types`; optional omission instead of nullable unions; a
-closed provider-schema authoring gate; selected-provider live conformance; one
-production tool-registry assembler; and nested-tool cache identity.
+**Retained from v4:** CONF-8 exact production request semantics, non-vacuous
+publication gates, complete ADR/doc maintenance, path/SHA-independent deployment
+parity, authoritative stats/session-DB live proof, and explicit parent closure.
 
 **Parent context:**
 [`PLAN-cli-trace-S13-multi-provider-conformance.md`](./PLAN-cli-trace-S13-multi-provider-conformance.md)
@@ -76,7 +69,15 @@ S6A_COVERAGE=84.87%
 S6A_MUTATIONS=MU1-MU7_KILLED_AND_RESTORED
 S6A_DOC_MUTATION_KILLED=1/1
 S6A_Q6=RESOLVED_FORMATTER_FIX_NO_WAIVER
-NEXT=S6B_FEATURE_BRANCH_PUBLICATION
+ANYMODEL_PROMPT_CACHE_CAPABILITY=PASS_LIVE
+ANYMODEL_CONF8_EXACT_REQUEST=PASS_LIVE
+ANYMODEL_NATURAL_FS_SEARCH=PASS_LIVE
+ANYMODEL_NATURAL_RUN_ID=anymodel-live-20260816T214246
+ANYMODEL_NATURAL_INPUT_TOKENS=39365
+ANYMODEL_NATURAL_TOOL_CALLS=fs_search:1
+RECORD_ONLY_FIX=PASS_LOCAL
+RECORD_ONLY_MUTATIONS_KILLED=2/2
+NEXT=APPLY_FINAL_PATCH_AND_RERUN_ANYMODEL_CONFORMANCE
 C901_CENSUS=12
 C901_BUDGET=14
 C901_FLOOR=12
@@ -664,9 +665,13 @@ mutable scenario object:
 
 ```python
 tools: tuple[Mapping[str, Any], ...] = ()
+record_only: bool = False
 ```
 
-The tuple is the immutable outer request corpus required by `RequestInfo`; the
+CONF-5/6/7 set `record_only=True`; their own result remains visible, but only
+required rows determine top-level qualification and exit status. A successful
+HTTP response is sufficient content evidence for a record-only shape. The tools
+tuple is the immutable outer request corpus required by `RequestInfo`; the
 nested mappings remain the canonical objects returned by `render_tool_specs`.
 Do not add a second deep-freeze/projector.
 

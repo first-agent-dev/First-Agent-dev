@@ -3044,6 +3044,14 @@ def _resolve_conformance_models(
     return selected_models, selected_chain
 
 
+def _conformance_row_status(row: Mapping[str, Any]) -> str:
+    """Render required versus recorded live-conformance row status."""
+
+    if row.get("record_only"):
+        return "RECORDED-OK" if row.get("ok") else "RECORDED-FAIL"
+    return "OK" if row.get("ok") else "FAIL"
+
+
 def _run_live_conformance(
     args: argparse.Namespace,
     provider: str,
@@ -3164,7 +3172,7 @@ def _run_live_conformance(
     except Exception as exc:  # noqa: BLE001 — best-effort artefact relocation
         logger.warning("fa conformance: debug-body relocation failed: %s", exc)
 
-    any_fail = any(not row.get("ok", False) for row in result.rows)
+    any_fail = any(not row.get("ok", False) for row in result.rows if not row.get("record_only", False))
     if getattr(args, "json", False):
         import json as _json
 
@@ -3185,7 +3193,7 @@ def _run_live_conformance(
     else:
         print(f"fa conformance: live run {result.run_id} (provider={provider})")
         for row in result.rows:
-            status = "OK" if row.get("ok") else "FAIL"
+            status = _conformance_row_status(row)
             # Surface the recorded per-case reason (request_shape / chain_exhausted /
             # raw provider body) so a FAIL is diagnosable, not an opaque "FAIL".
             reason = row.get("error")
@@ -3197,10 +3205,9 @@ def _run_live_conformance(
             print(f"fa conformance: resumed prior run {result.run_id}.")
     # S13 live-fix: propagate case failure as a non-zero exit code (matches
     # `fa probe` semantics: a per-chain-entry failure returns 1 so scripts
-    # and the deploy gate can detect FAIL cells instead of seeing 0 from a
-    # red matrix). CONF-7 is never pass/fail (sizes only) so it does not
-    # force failure on its own; the live executor already records ok=True
-    # for CONF-7 unconditionally.
+    # and the deploy gate can detect required FAIL cells instead of seeing 0
+    # from a red matrix). CONF-5/6/7 are capability records, so their own result
+    # remains visible but cannot fail provider qualification.
     return 1 if any_fail else 0
 
 

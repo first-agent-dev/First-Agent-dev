@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from fa.providers.conformance import ConfCase, _case_to_request, make_live_executor
+from fa.providers.conformance import ConfCase, _case_to_request, default_cases, make_live_executor
 from fa.providers.live_runner import RateLimitError
 
 
@@ -222,6 +222,28 @@ def test_live_executor_accepts_tool_call_only_response(
 
     row = make_live_executor(_FakeChain(text=text, tool_calls=tool_calls))(_mk_case(1), "run-1")
     assert row["ok"] is expected_ok
+
+
+def test_default_cases_mark_only_capability_rows_record_only() -> None:
+    """C0: CONF-5/6/7 are recorded capabilities; required rows remain blocking."""
+
+    cases = default_cases()
+    assert [case.record_only for case in cases] == [False, False, False, False, True, True, True]
+
+
+def test_live_executor_accepts_empty_record_only_response() -> None:
+    """C1: HTTP success is sufficient for a record-only request shape."""
+
+    case = ConfCase(
+        case=5,
+        name="CONF-5 trailing-assistant tolerance (recorded)",
+        role="coder",
+        task="",
+        record_only=True,
+    )
+    row = make_live_executor(_FakeChain(text="", tool_calls=()))(case, "run-1")
+    assert row["ok"] is True
+    assert row["record_only"] is True
 
 
 def test_live_executor_drives_chain_and_reports_tokens() -> None:
@@ -618,6 +640,56 @@ def test_cmd_conformance_appends_exact_nonempty_production_tools_conf8(
 
     for tool in expected_tools:
         assert_portable_schema(tool["function"]["parameters"])
+
+
+def test_cmd_conformance_record_only_failure_does_not_fail_required_matrix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2: a recorded capability failure stays visible without failing the run."""
+
+    from fa.cli import _cmd_conformance, build_parser
+    from fa.providers.base import TransportResponse
+
+    models = _write_coder_models(
+        tmp_path / "models.yaml",
+        """    - provider: anymodel
+      model: "am/deepseek-v4-flash"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+""",
+    )
+    _enable_proxy(tmp_path, monkeypatch)
+
+    class _RecordedFailureTransport:
+        def post(self, url: str, **kwargs: Any) -> TransportResponse:
+            del url
+            body = dict(kwargs.get("json_body", {}))
+            messages = list(body.get("messages", []))
+            if messages and messages[-1].get("role") == "assistant":
+                return TransportResponse(
+                    status=400,
+                    body={"error": {"message": "recorded trailing-assistant rejection"}},
+                )
+            return TransportResponse(
+                status=200,
+                body={
+                    "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                },
+            )
+
+    buffer = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", buffer)
+    args = build_parser().parse_args(["conformance", "--provider", "anymodel", "--config", str(models), "--json"])
+
+    assert _cmd_conformance(args, transport=_RecordedFailureTransport(), secrets={}) == 0
+    payload = json.loads(buffer.getvalue())
+    assert payload["ok"] is True
+    conf5 = next(row for row in payload["rows"] if row["case"] == 5)
+    assert conf5["ok"] is False
+    assert conf5["record_only"] is True
+    assert all(row["ok"] for row in payload["rows"] if not row["record_only"])
 
 
 def test_live_executor_records_chain_exhaustion_as_case_failure() -> None:

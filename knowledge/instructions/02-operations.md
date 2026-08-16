@@ -1360,6 +1360,9 @@ fa probe --role planner --timeout 60
 - probe `OK` = маршрут, ключ и модель доступны для tool-free запроса;
 - live CONF-8 `OK` = выбранный провайдер принял текущий exact production request
   profile;
+- CONF-5/6/7 — `record_only`: их собственный `ok=false` сохраняется как
+  capability evidence, но не делает обязательные CONF-1..4/8 красными и не
+  меняет top-level `ok`;
 - только свежий natural run с `fs_search` call/result доказывает рабочий путь
   агента целиком.
 

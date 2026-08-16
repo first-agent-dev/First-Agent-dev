@@ -48,6 +48,8 @@ class ConfCase:
     # S13.11: canonical rendered tools for live-only CONF-8. The outer tuple
     # matches RequestInfo; default offline CONF-1..7 remain tool-free.
     tools: tuple[Mapping[str, Any], ...] = ()
+    # CONF-5/6/7 are capability observations, not hard qualification rows.
+    record_only: bool = False
     # CONF-7: whether to record per-component composition sizes.
     record_sizes: bool = False
     # CONF-5: allow the composed request to end on a trailing assistant (a
@@ -185,6 +187,7 @@ def default_cases() -> list[ConfCase]:
                 {"role": "assistant", "content": "final"},
             ],
             allow_trailing=True,
+            record_only=True,
         ),
         # CONF-6 user-after-tool tolerance (recorded, not required).
         #
@@ -217,6 +220,7 @@ def default_cases() -> list[ConfCase]:
                 {"role": "tool", "tool_call_id": "x", "content": "r"},
                 {"role": "assistant", "content": "intermediate reply"},
             ],
+            record_only=True,
         ),
         # CONF-7 prompt-cache + composition: record sizes, never pass/fail.
         ConfCase(
@@ -225,6 +229,7 @@ def default_cases() -> list[ConfCase]:
             role="coder",
             task="a task with a moderately long instruction",
             observations=[{"role": "assistant", "content": "# Plan"}],
+            record_only=True,
             record_sizes=True,
         ),
     ]
@@ -370,6 +375,7 @@ def make_live_executor(chain: Any, *, transient_sleep: float = 2.0) -> Callable[
                     return {
                         "case": case.case,
                         "name": case.name,
+                        "record_only": case.record_only,
                         "ok": False,
                         "model": model_slug,
                         "error": f"request_shape: {exc}",
@@ -391,6 +397,7 @@ def make_live_executor(chain: Any, *, transient_sleep: float = 2.0) -> Callable[
                 return {
                     "case": case.case,
                     "name": case.name,
+                    "record_only": case.record_only,
                     "ok": False,
                     "model": model_slug,
                     "error": f"chain_exhausted: {last_exc} [{detail}]",
@@ -400,10 +407,12 @@ def make_live_executor(chain: Any, *, transient_sleep: float = 2.0) -> Callable[
             # Anything else is a real infra error (network, auth, unexpected): let
             # it propagate so it is not silently swallowed as a case result.
             raise last_exc
+        has_content = bool(getattr(response, "text", None) or getattr(response, "tool_calls", ()))
         return {
             "case": case.case,
             "name": case.name,
-            "ok": bool(getattr(response, "text", None) or getattr(response, "tool_calls", ())),
+            "record_only": case.record_only,
+            "ok": case.record_only or has_content,
             "model": model_slug,
             "in_tokens": getattr(response, "in_tokens", None),
             "out_tokens": getattr(response, "out_tokens", None),
