@@ -56,6 +56,15 @@ _NVIDIA_BUILD = ProviderSpec(
     adapter="openai_compat",
     rules=MessageRules(allows_trailing_assistant=True, supports_prompt_cache=False),
 )
+# AnyModel independently rejects both prompt-cache extension fields with HTTP
+# 400, while the same request with max_tokens=64000 and reasoning_effort=high
+# succeeds. Keep the shared OpenAI wire adapter, but normalize this measured
+# platform capability before transport.
+_ANYMODEL = ProviderSpec(
+    factory=OpenAICompatProvider,
+    adapter="openai_compat",
+    rules=MessageRules(allows_trailing_assistant=True, supports_prompt_cache=False),
+)
 _ANTHROPIC = ProviderSpec(factory=AnthropicProvider, adapter="anthropic")
 # Mistral's serving surface requires top_p=1 when greedy (temperature==0),
 # otherwise it rejects the request (I-48: `top_p must be 1 when using greedy
@@ -85,7 +94,7 @@ PROVIDERS: Mapping[str, ProviderSpec] = {
     "apertis": _OPENAI_COMPAT,
     "llm7": _OPENAI_COMPAT,
     "aigate": _OPENAI_COMPAT,
-    "anymodel": _OPENAI_COMPAT,
+    "anymodel": _ANYMODEL,
     "openmodel": _ANTHROPIC,
     "anthropic": _ANTHROPIC,
     "mistral": _MISTRAL,

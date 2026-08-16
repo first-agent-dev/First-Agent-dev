@@ -530,6 +530,15 @@ def test_nvidia_build_does_not_support_prompt_cache() -> None:
     assert openrouter_rules.supports_prompt_cache is True
 
 
+def test_anymodel_does_not_support_prompt_cache() -> None:
+    """C0p: measured AnyModel 400s require cache extensions to be disabled."""
+
+    assert PROVIDERS["anymodel"].rules.supports_prompt_cache is False
+    assert PROVIDERS["nvidia_build"].rules.supports_prompt_cache is False
+    assert PROVIDERS["openrouter"].rules.supports_prompt_cache is True
+    assert PROVIDERS["aigate"].rules.supports_prompt_cache is True
+
+
 def test_validate_and_normalize_strips_prompt_cache_for_nvidia() -> None:
     """C0p — the conformance pass strips prompt-cache keys for a non-supporting provider.
 
@@ -620,3 +629,49 @@ def test_nvidia_wire_body_omits_prompt_cache_keys() -> None:
     assert "prompt_cache_retention" not in body, body
     assert body["reasoning_budget"] == 16384  # provider_param preserved
     assert body["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
+
+
+def test_anymodel_wire_body_omits_prompt_cache_keys() -> None:
+    """C1: AnyModel drops unsupported cache extensions, preserving other fields."""
+
+    from fa.providers.openai_compat import OpenAICompatProvider
+
+    transport = _RecordingTransport()
+    entry = ChainEntry(
+        provider="anymodel",
+        model="am/deepseek-v4-flash",
+        base_url="https://anymodel.org/v1",
+        api_key_env="K",
+        cooldown_seconds=0,
+        provider_params={"reasoning_effort": "high"},
+    )
+    config = ChainConfig(
+        role="coder",
+        name="deepseek-v4-flash",
+        family="deepseek",
+        chain=(entry,),
+    )
+    chain = ProviderChain(
+        config,
+        provider_factory=lambda _entry: OpenAICompatProvider(transport),
+        env={"K": "test-key"},
+    )
+    request = RequestInfo(
+        model_slug="deepseek-v4-flash",
+        messages=({"role": "user", "content": "Reply OK"},),
+        max_tokens=64000,
+        extras={
+            "prompt_cache_key": "fa-coder-test",
+            "prompt_cache_retention": "1h",
+        },
+    )
+
+    chain.request(request)
+
+    assert len(transport.bodies) == 1
+    body = transport.bodies[0]
+    assert "prompt_cache_key" not in body
+    assert "prompt_cache_retention" not in body
+    assert body["reasoning_effort"] == "high"
+    assert body["max_tokens"] == 64000
+    assert body["model"] == "am/deepseek-v4-flash"
