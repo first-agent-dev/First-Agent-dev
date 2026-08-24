@@ -24,7 +24,11 @@ from fa.inner_loop import (
     run_session,
 )
 from fa.inner_loop.hooks import HookRegistry, SandboxHook
-from fa.inner_loop.runtime_limits import DEFAULT_COST_BUDGET_USD
+from fa.inner_loop.runtime_limits import (
+    DEFAULT_COST_BUDGET_USD,
+    ROLE_ITERATION_DEFAULTS,
+    resolve_limits_for_role,
+)
 from fa.inner_loop.tools import build_baseline_registry
 from tests._capabilities import requires_pty_backend
 
@@ -345,3 +349,188 @@ def test_bash_timeout_is_plumbed_into_tool(tmp_path: Path) -> None:
     assert results[0].error is not None
     assert results[0].error.code == "command_timeout"
     assert "1s" in results[0].summary
+
+
+# ── S14b.2: per-role iteration keys + resolution (operator decisions 2026-08-17) ──
+
+
+def test_per_role_keys_parse_into_role_iterations() -> None:
+    result = load_runtime_limits(
+        """runtime_limits:
+  max_iterations: 6
+  max_iterations_coder: 40
+  max_iterations_planner: 12
+"""
+    )
+    assert result.warnings == (), result.warnings
+    assert result.role_iterations == {"coder": 40, "planner": 12}
+    # The global knob is untouched by per-role keys.
+    assert result.limits.max_iterations == 6
+
+
+def test_per_role_stub_keys_parse_but_never_apply() -> None:
+    result = load_runtime_limits(
+        """runtime_limits:
+  max_iterations_researcher: 7
+  max_iterations_code-reviewer: 8
+"""
+    )
+    assert result.role_iterations == {"researcher": 7, "code-reviewer": 8}
+    resolved = resolve_limits_for_role(result, "researcher")
+    assert resolved.max_iterations == DEFAULT_MAX_ITERATIONS  # stub: global value, NOT 7
+    resolved_reviewer = resolve_limits_for_role(result, "code-reviewer")
+    assert resolved_reviewer.max_iterations == DEFAULT_MAX_ITERATIONS  # stub: global value, NOT 8
+
+
+def test_per_role_key_zero_warns_and_is_absent() -> None:
+    result = load_runtime_limits("runtime_limits:\n  max_iterations_coder: 0\n")
+    assert any(w.key == "max_iterations_coder" for w in result.warnings)
+    assert "coder" not in result.role_iterations
+
+
+def test_per_role_key_non_integer_warns_and_is_absent() -> None:
+    result = load_runtime_limits("runtime_limits:\n  max_iterations_eval: many\n")
+    assert any(w.key == "max_iterations_eval" for w in result.warnings)
+    assert "eval" not in result.role_iterations
+
+
+def test_role_iterations_empty_without_keys() -> None:
+    result = load_runtime_limits("runtime_limits:\n  bash_timeout_seconds: 45\n")
+    assert result.role_iterations == {}
+
+
+def test_resolve_limits_for_role_config_override_wins() -> None:
+    loaded = load_runtime_limits("runtime_limits:\n  max_iterations_coder: 10\n")
+    resolved = resolve_limits_for_role(loaded, "coder")
+    assert resolved.max_iterations == 10
+    # Other fields preserved (replace, not rebuild).
+    assert resolved.bash_timeout_seconds == DEFAULT_BASH_TIMEOUT_SECONDS
+
+
+def test_resolve_limits_for_role_testing_stage_default_99() -> None:
+    loaded = load_runtime_limits("runtime_limits:\n  max_iterations: 6\n")
+    for role in ("planner", "coder", "eval"):
+        assert resolve_limits_for_role(loaded, role).max_iterations == ROLE_ITERATION_DEFAULTS[role] == 99
+
+
+def test_resolve_limits_for_role_unknown_and_none_keep_global() -> None:
+    loaded = load_runtime_limits("runtime_limits:\n  max_iterations: 6\n")
+    assert resolve_limits_for_role(loaded, "bogus").max_iterations == 6
+    assert resolve_limits_for_role(loaded, None).max_iterations == 6
+
+
+# ── S14b.2 mutation-triage strengthening (mutation-clearing skill) ──────────
+# These pin the full config matrix (tests-writing skill §16.3): every key
+# present with a distinctive value, and the all-absent path equal to
+# anchored defaults field-by-field. They kill the default-argument and
+# key-string mutant class that survived the first targeted sweep.
+
+
+def test_all_keys_parse_with_distinct_values() -> None:
+    """Kitchen-sink config: every knob + all five per-role keys, comments,
+    and an inline comment containing a colon (pins partition-vs-rpartition)."""
+    result = load_runtime_limits(
+        """# leading comment line (with colon: x) — must be ignored
+runtime_limits:
+  # indented comment with colon: must be ignored too
+  no_colon_line_inside_block
+  max_iterations: 7
+  bash_timeout_seconds: 45
+  loop_guard_repeat_warn: 1
+  loop_guard_circuit_breaker: 55
+  loop_guard_window: 88
+  attempt_history_max_entries: 9
+  attempt_history_max_age_seconds: 10
+  qa_max_iterations: 100
+  qa_max_consecutive_errors: 5
+  qa_recurring_issue_threshold: 4
+  rate_limit_suppression_seconds: 11
+  lockfile_suppression_seconds: 12
+  auth_expired_suppression_seconds: 13
+  cost_budget_usd: 1.25
+  max_subagent_spawns_per_session: 14
+  max_iterations_planner: 21
+  max_iterations_coder: 22  # inline comment with colon: must strip cleanly
+  max_iterations_eval: 23
+  max_iterations_researcher: 24
+  max_iterations_code-reviewer: 25
+"""
+    )
+    assert result.warnings == (), result.warnings
+    limits = result.limits
+    assert limits.max_iterations == 7
+    assert limits.bash_timeout_seconds == 45
+    assert limits.loop_guard_repeat_warn == 1
+    assert limits.loop_guard_circuit_breaker == 55
+    assert limits.loop_guard_window == 88
+    assert limits.attempt_history_max_entries == 9
+    assert limits.attempt_history_max_age_seconds == 10
+    assert limits.qa_max_iterations == 100
+    assert limits.qa_max_consecutive_errors == 5
+    assert limits.qa_recurring_issue_threshold == 4
+    assert limits.rate_limit_suppression_seconds == 11
+    assert limits.lockfile_suppression_seconds == 12
+    assert limits.auth_expired_suppression_seconds == 13
+    assert limits.cost_budget_usd == 1.25
+    assert limits.max_subagent_spawns_per_session == 14
+    assert result.role_iterations == {
+        "planner": 21,
+        "coder": 22,
+        "eval": 23,
+        "researcher": 24,
+        "code-reviewer": 25,
+    }
+
+
+def test_no_runtime_limits_block_equals_anchored_defaults_exactly() -> None:
+    """Absent block → every field equals its anchor (dataclass equality).
+
+    Kills the mutated-default-argument mutant class: any field whose
+    default arg is mutated now differs from the anchor."""
+    result = load_runtime_limits("capabilities:\n  ENABLE_DYNAMIC_TOOLS: false\n")
+    assert result.warnings == (), result.warnings
+    assert result.limits == RuntimeLimits.anchored_defaults()
+    assert result.role_iterations == {}
+
+
+def test_warning_carries_exact_line_no() -> None:
+    """line_no is 1-based file position — pins enumerate(start=…) mutants."""
+    result = load_runtime_limits("runtime_limits:\n  max_iterations: 6\n  bogus_key: 1\n  max_iterations_coder: 0\n")
+    keys = {w.key: w for w in result.warnings}
+    assert "bogus_key" in keys
+    assert keys["bogus_key"].line_no == 3
+    assert keys["max_iterations_coder"].line_no == 4
+
+
+def test_first_line_indented_is_outside_any_block() -> None:
+    """A config whose first line is indented must be ignored entirely
+    (documented: lines outside the block are ignored; there is no block
+    yet). Pins the ``in_block`` initial-value mutant."""
+    result = load_runtime_limits("  max_iterations: 99\n")
+    assert result.warnings == (), result.warnings
+    assert result.limits == RuntimeLimits.anchored_defaults()
+
+
+def test_invalid_value_branches_do_not_stop_parsing() -> None:
+    """Each warning branch must continue parsing subsequent keys, with exact
+    line_no. Kills continue→break and line_no→None mutant classes."""
+    cases = {
+        "max_iterations: bad": 2,
+        "max_iterations: -1": 2,
+        "cost_budget_usd: bad": 2,
+        "cost_budget_usd: -1.0": 2,
+        "cost_budget_usd: nan": 2,
+        "cost_budget_usd: inf": 2,
+    }
+    for bad_line, expected_line_no in cases.items():
+        result = load_runtime_limits(f"runtime_limits:\n  {bad_line}\n  bash_timeout_seconds: 45\n")
+        assert result.limits.bash_timeout_seconds == 45, bad_line  # later key still parsed
+        assert len(result.warnings) == 1, (bad_line, result.warnings)
+        assert result.warnings[0].line_no == expected_line_no, bad_line
+
+
+def test_stray_indented_line_before_block_is_ignored() -> None:
+    """An indented line before any block is ignored (not a parse stop)."""
+    result = load_runtime_limits("  stray: 1\nruntime_limits:\n  max_iterations: 7\n")
+    assert result.limits.max_iterations == 7
+    assert result.warnings == (), result.warnings

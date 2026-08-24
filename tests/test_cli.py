@@ -475,7 +475,10 @@ def test_fa_run_sends_exact_portable_coder_tool_corpus(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C2 S13.11: shipped `_cmd_run` sends all 15 portable coder tools.
+    """C2 S13.11: shipped `_cmd_run` sends all 17 portable coder tools.
+
+    (S15: fs_exploration_metrics joined the implementer profile — 15→16.
+    S16: fs_reach joined — 16→17. TEST-EDITS declared in PR.)
 
     This is the production-corpus oracle CONF-8 must share. It is intentionally
     stricter than ``test_drive_session_renders_tool_specs_into_request``: a
@@ -499,7 +502,7 @@ def test_fa_run_sends_exact_portable_coder_tool_corpus(
     assert isinstance(tools, list)
     by_name = {tool["function"]["name"]: tool for tool in tools}
 
-    assert len(tools) == 15
+    assert len(tools) == 17
     assert len(by_name) == len(tools)
     assert {"fs_search", "pr_prepare"} <= set(by_name)
 

@@ -489,6 +489,33 @@ def _build_search_params(
     )
 
 
+def _register_search_result_paths(result: dict[str, Any]) -> None:
+    """S15 (CT-3): register returned paths as PENDING search results.
+
+    They are not attributable yet — ``run_session`` promotes them to
+    ``last_search_paths`` at batch end (``commit_search_paths``), which keeps
+    ``surfaced_by`` attribution deterministic under the parallel executor.
+    Best-effort: a telemetry failure must never fail the search itself.
+    """
+    try:
+        from fa.inner_loop.context import get_current_session
+
+        session = get_current_session()
+        if session is None:
+            return
+        surfaced_paths: list[str] = []
+        for key in _OUTPUT_KEYS:
+            rows = result.get(key)
+            if isinstance(rows, list):
+                for row in rows:
+                    if isinstance(row, Mapping) and isinstance(row.get("path"), str):
+                        surfaced_paths.append(row["path"])
+        if surfaced_paths:
+            session.add_search_result_paths(surfaced_paths)
+    except Exception as exc:  # noqa: BLE001 - telemetry best-effort, failure-observable
+        logger.warning(f"fs_search telemetry failed: {exc}")
+
+
 def _handle(
     params: Mapping[str, object],
     holder: _IndexHolder,
@@ -614,6 +641,10 @@ def _handle(
         result["warnings"] = list(sr.warnings)
 
     _enforce_response_cap(result)
+
+    # S15 (CT-3): surface this search's returned paths to the attribution
+    # pipeline (pending set — run_session promotes at batch end).
+    _register_search_result_paths(result)
 
     summary = _build_summary(query, output_mode, sr.method, result)
     return ToolResult.ok(summary, result=result)

@@ -397,3 +397,47 @@ def test_parse_session_db_never_creates_missing_path(tmp_path: Path) -> None:
         raise AssertionError("missing DB was accepted")
     assert not missing.exists()
     assert not missing.parent.exists()
+
+
+# ── S14b.2: explicit stop conditions (operator principle Q-S14b2-3) ────────
+
+
+def _s14b2_session_with_stop(reason: str, *, with_summary: bool = True) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = [
+        {"kind": "run_started", "content": {"role": "coder"}},
+        {
+            "kind": "run_stopped",
+            "content": {"point": "iteration_cap", "reason": reason, "used": 3, "limit": 3},
+        },
+    ]
+    if with_summary:
+        events.append(
+            {
+                "kind": "session_summary",
+                "content": {"n_turns": 1, "input_tokens": 100, "output_tokens": 50},
+            }
+        )
+    return events
+
+
+def test_iteration_cap_stop_is_explicit_and_not_a_failure(tmp_path: Path) -> None:
+    """Cap-hit rows: ok stays True AND stop_reason is the full explicit reason."""
+    events_path = tmp_path / "test-run" / "events.jsonl"
+    reason = "iteration_cap: per-turn iteration limit (3) exceeded — used 3 of 3"
+    _write_events(events_path, _s14b2_session_with_stop(reason))
+
+    result = parse_session(events_path)
+    assert result is not None
+    assert result.ok is True
+    assert result.stop_reason == reason  # explicit — never inferred "stopped_by_llm"
+
+
+def test_guard_denial_stop_is_a_failure(tmp_path: Path) -> None:
+    """Non-cap stop rows keep ok=False (real failures stay failures)."""
+    events_path = tmp_path / "test-run" / "events.jsonl"
+    _write_events(events_path, _s14b2_session_with_stop("sandbox_deny: blocked"))
+
+    result = parse_session(events_path)
+    assert result is not None
+    assert result.ok is False
+    assert result.stop_reason == "sandbox_deny: blocked"

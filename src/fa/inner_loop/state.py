@@ -26,7 +26,7 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -370,6 +370,17 @@ class SessionState:
     output_bus: EventBus | None = None
     _pending_output_events: list[OutputEvent] = field(default_factory=list, init=False, repr=False)
     turn: int = 0
+    # S15 (CT-3): exploration telemetry state. ``batch_turn`` increments once
+    # per loop batch (NOT per tool call — the per-tool-call counter is
+    # ``turn`` above); ``last_search_paths`` is READ by tool handlers and
+    # mutated ONLY at batch boundaries via ``commit_search_paths`` (the loop
+    # calls it after dispatch — single mutation site, race-free under the
+    # parallel executor); ``_pending_search_paths`` is written by the
+    # fs_search handler during a batch; ``_gold_files`` is harness-declared.
+    batch_turn: int = 0
+    last_search_paths: set[str] = field(default_factory=set)
+    _pending_search_paths: set[str] = field(default_factory=set, init=False, repr=False)
+    _gold_files: set[str] = field(default_factory=set, init=False, repr=False)
     subagent_spawns: int = 0
     _subagent_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
@@ -542,12 +553,87 @@ class SessionState:
                 self.pty_pool = None
 
     # Transaction helpers
+    # §I-S15-1: transaction read-set tracking — add_read feeds mutation_guard conflict detection.
     def add_read(self, path: str) -> None:
         try:
             if self.transaction is not None:
                 self.transaction.add_read(path)
         except Exception as exc:  # noqa: BLE001 - best-effort
             logger.warning(f"add_read failed for {path}: {exc}")
+
+    # -- S15 (CT-3): file_read telemetry + deterministic surfaced_by attribution --
+
+    def record_file_read(
+        self,
+        path: str,
+        *,
+        start_line: int | None,
+        end_line: int | None,
+        surfaced_by: str,
+        bytes_read: int,
+    ) -> None:
+        """Append one ``file_read`` EventLog row (best-effort, failure-observable).
+
+        Called ONLY from the fs_read_file handler's success path, after the
+        line-window validation. ``add_read`` (transaction tracking) is
+        deliberately NOT extended: its other caller ``record_tool_call`` runs
+        BEFORE execution and would double-emit / emit for failed reads.
+        """
+        try:
+            if self.log is not None:
+                self.log.append(
+                    actor="coder",
+                    kind="file_read",
+                    content={
+                        "path": path,
+                        "turn": self.batch_turn,
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "surfaced_by": surfaced_by,
+                        "bytes_read": bytes_read,
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001 - best-effort telemetry
+            logger.warning(f"record_file_read failed for {path}: {exc}")
+
+    def declare_gold_files(self, paths: list[str]) -> None:
+        """S15 (CT-4): declare the session's gold files. Harness-only in v1 —
+        the eval harness calls this in-process; there is no CLI/tool producer."""
+        self._gold_files = {str(p) for p in paths}
+
+    def clear_gold_files(self) -> None:
+        """Clear declared gold files (fs_exploration_metrics reset=True)."""
+        self._gold_files.clear()
+
+    @property
+    def gold_files(self) -> frozenset[str]:
+        return frozenset(self._gold_files)
+
+    def add_search_result_paths(self, paths: Iterable[str]) -> None:
+        """S15 (CT-3): record paths surfaced by a search result in the CURRENT
+        batch (fs_search handler). They are NOT attributable yet — the loop's
+        ``commit_search_paths`` promotes them at batch end."""
+        self._pending_search_paths.update(str(p) for p in paths)
+
+    def commit_search_paths(self) -> None:
+        """S15 (CT-3): promote pending search paths to the attribution set.
+
+        Called once per batch by ``run_session`` AFTER dispatch — the single
+        mutation site for ``last_search_paths``, so handlers reading it during
+        a batch can never observe a partially-updated set (race-free by
+        construction under the parallel executor)."""
+        self.last_search_paths |= self._pending_search_paths
+        self._pending_search_paths.clear()
+
+    @property
+    def write_set(self) -> frozenset[str]:
+        """Snapshot of the transaction write-set (S15 CT-4 CtxEff input).
+
+        Read via SessionState because ``Transaction`` exposes no public
+        getter; the snapshot keeps the consumer isolated from live mutation."""
+        if self.transaction is None:
+            return frozenset()
+        return frozenset(self.transaction._write_set)
 
     def add_write(self, path: str) -> None:
         try:

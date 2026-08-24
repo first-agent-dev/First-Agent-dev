@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # Single source of truth for excluded dirs — used by glob, grep, instant_grep fallback,
 # fts_index, and search_index/_safe_walk.py. Extend via EXTRA_EXCLUDE_DIRS in _safe_walk,
 # not here (keep this set stable for backward compatibility).
+# §I-S14b-4: canonical exclude set — single source of truth for walker pruning in _safe_walk.
 EXCLUDE_DIRS = {
     ".git",
     ".fa",

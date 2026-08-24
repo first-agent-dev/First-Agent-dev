@@ -192,12 +192,15 @@ def test_unparsed_kinds_complete() -> None:
     # how six digit-bearing kinds (compaction_stage2/3_*) went unnoticed
     # during S9 planning: a regex with no digits in its character class made
     # LogKind look 6 members smaller than it is.
-    assert len(all_kinds) == 33, (
-        f"LogKind changed size: {len(all_kinds)} != 33. A kind was added or removed — "
+    # S15: file_read added to LogKind and excused in UNPARSED_KINDS (consumed
+    # by fs_exploration_metrics via direct log read, not by fa stats).
+    # (TEST-EDITS declared in PR.)
+    assert len(all_kinds) == 34, (
+        f"LogKind changed size: {len(all_kinds)} != 34. A kind was added or removed — "
         f"decide whether fa stats parses it (add an `elif` in _parse_events) or not "
         f"(add it to UNPARSED_KINDS with a reason), then update this count."
     )
-    assert len(UNPARSED_KINDS) == 10, f"UNPARSED_KINDS changed size: {len(UNPARSED_KINDS)} != 10"
+    assert len(UNPARSED_KINDS) == 11, f"UNPARSED_KINDS changed size: {len(UNPARSED_KINDS)} != 11"
     assert len(PARSED_KINDS) == 23, f"PARSED_KINDS changed size: {len(PARSED_KINDS)} != 23"
 
     # Derivation sanity: disjointness is NOT free. UNPARSED_KINDS is written by

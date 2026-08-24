@@ -343,6 +343,8 @@ class Blackboard:
                     return results
             return results
 
+    # §I-56-1: append-only write invariant — every blackboard write is content-addressed
+    # and conflict-checked against overlapping read/write sets before it lands.
     def detect_conflict(self, new_entry: BlackboardEntry) -> list[Conflict]:
         """Full conflict detection per v3 spec + Q2 linear chain policy."""
         conflicts: list[Conflict] = []

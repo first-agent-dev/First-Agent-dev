@@ -63,6 +63,7 @@ EventType = Literal[
     "subagent_end",
     "cost_alert",
     "loop_warn",
+    "iteration_cap",
 ]
 
 # ── Log kind ──────────────────────────────────────────────────────────────
@@ -86,6 +87,7 @@ LogKind = Literal[
     # Tool I/O
     "tool_call",
     "tool_result",
+    "file_read",
     # Hooks / guards
     "hook_decision",
     "loop_guard_warn",
@@ -443,6 +445,12 @@ class ConsoleRenderer:
     def _handle_loop_warn(self, e: OutputEvent) -> None:
         d = e.data
         self._write(f"  {self._c('33', '🔄')} loop detected: {d.get('detector', '?')} — {d.get('message', '')}")
+
+    def _handle_iteration_cap(self, e: OutputEvent) -> None:
+        # S14b.2 (CT-2): operator-visible cap signal. Turn-local — the session
+        # continues; this line explains why tool calls were skipped this turn.
+        d = e.data
+        self._write(f"  {self._c('33', '⏳')} iteration cap reached: {d.get('reason', '')}")
 
 
 # ── QuietRenderer ─────────────────────────────────────────────────────────

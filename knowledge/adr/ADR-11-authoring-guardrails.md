@@ -193,6 +193,16 @@ The first concrete pair is `knowledge/skills/pr-creation/SKILL.md` ↔ `src/fa/h
 constants — FA already seeds this in `tests/test_pr_intent_snapshot.py`.
 **Source.** Blueprint R-3; §9.3.
 
+**Peer mechanism (S17, 2026-08-17) — code anchors.** I-FROZEN marks *generated-parity* blocks with a
+checker that regenerates. The S17 `§<stable-id>` code anchor is the *navigation* peer, not a
+replacement: a single-line `# §<id>: <description>` comment at contract/invariant points (sparse,
+≤1 per ~200 lines; stable ids), indexed by the structural index (`doc_anchor` kind) and resolvable
+via `fs_reach(symbol="§<id>")` / `fs_search(query="§<id>")`. Anchor presence is NOT a guardrail
+severity — no HARD-BLOCK/ADVISORY promotion; the convention is doc-enforced (AGENTS.md §Working in
+This Repo, doc-maintenance skill). Seeds: `blackboard.py:§I-56-1`, `state.py:§I-S15-1`,
+`runtime_limits.py:§I-S14b-2`, `loop.py:§I-S14b-3`, `fts_index.py:§I-S14b-4`,
+`structural_index.py:§I-S16-1`.
+
 #### ADR-11-I4 — structural rules use AST, not regex
 
 **Rule.** Python structural rules (e.g. `__all__` completeness, `yaml.load` vs `safe_load`, swallowed

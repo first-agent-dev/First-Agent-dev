@@ -38,7 +38,7 @@ class RoleProfile:
 PROFILES_RAW: dict[str, dict[str, Any]] = {
     "researcher": {
         "description": "Read-only researcher, finds files, no writes",
-        "tools": ["fs_search", "fs_read_file"],
+        "tools": ["fs_search", "fs_read_file", "fs_exploration_metrics", "fs_reach"],
         "max_context_bytes": 4096,
         "max_tokens": 600,
         "stateless": True,
@@ -57,7 +57,7 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
     },
     "code-reviewer": {
         "description": "Review diff, return issues list",
-        "tools": ["fs_read_file", "fs_search"],
+        "tools": ["fs_read_file", "fs_search", "fs_exploration_metrics", "fs_reach"],
         "max_tokens": 600,
         "stateless": True,
     },
@@ -70,6 +70,8 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
             "fs_run_bash",
             "fs_search",
             "fs_blackboard_query",
+            "fs_exploration_metrics",
+            "fs_reach",
         ],
         "stateless": False,
         "bash_impl": "stateful",
@@ -78,7 +80,14 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
         "description": (
             "Architect/Planner, read-only analysis + limited write to research docs for filesystem-canon plans"
         ),
-        "tools": ["fs_search", "fs_read_file", "fs_write_file", "fs_blackboard_query"],
+        "tools": [
+            "fs_search",
+            "fs_read_file",
+            "fs_write_file",
+            "fs_blackboard_query",
+            "fs_exploration_metrics",
+            "fs_reach",
+        ],
         "max_tokens": 1000,
         "stateless": True,
         "write_allowlist": ["knowledge/research/", ".fa/"],
@@ -160,6 +169,20 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
         builders["fs_read_file"] = lambda: build_read_file_tool(root)
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs_read_file: {exc}")
+
+    try:
+        from fa.inner_loop.tools.fs_exploration_metrics import build_fs_exploration_metrics_tool
+
+        builders["fs_exploration_metrics"] = lambda: build_fs_exploration_metrics_tool()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Failed to setup builder fs_exploration_metrics: {exc}")
+
+    try:
+        from fa.inner_loop.tools.fs_reach import build_fs_reach_tool
+
+        builders["fs_reach"] = lambda: build_fs_reach_tool(root)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Failed to setup builder fs_reach: {exc}")
 
     try:
         from fa.inner_loop.tools.write_file import build_write_file_tool

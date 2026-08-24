@@ -20,7 +20,7 @@ This is the **T-4 mini** loader — it parses exactly the
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from fa._yaml_subset import strip_inline_comment
@@ -34,8 +34,39 @@ from fa.inner_loop.recovery.attempt_history import (
 # and the bash timeout that PR #24 introduced (30s). Both live here so any
 # code that needs the documented default imports from one place — no
 # magic constants in ``loop.py`` / ``run_bash.py``.
+# §I-S14b-2: iteration cap anchor — role-less ADR-7 default; per-turn semantics (one run_session
+# invocation = one LLM response batch); per-role caps resolve via ROLE_ITERATION_DEFAULTS.
 DEFAULT_MAX_ITERATIONS = 6
 DEFAULT_BASH_TIMEOUT_SECONDS = 30
+# S14b.2 (operator decision 2026-08-17, Q-S14b2-1): TESTING-STAGE anchors —
+# 99 per turn ≈ uncapped so the deep-testing stage observes the harness
+# without the old ill-fitted 6 cap; the operator re-tunes these after the
+# testing stage. Per-TURN semantics: one ``run_session`` invocation is one
+# LLM response batch (not a session budget). ``DEFAULT_MAX_ITERATIONS``
+# above is NOT changed — it stays the ADR-7 §Amendment 2026-05-20 anchor
+# for role-less callers (inner-loop-smoke, conformance, tests).
+ROLE_ITERATION_DEFAULTS: dict[str, int] = {
+    "planner": 99,
+    "coder": 99,
+    "eval": 99,
+    "researcher": 99,  # STUB (Q-S14b2-2): no runtime driver today; kept for future features
+    "code-reviewer": 99,  # STUB (Q-S14b2-2): no runtime driver today; kept for future features
+}
+# Roles that actually reach ``run_session`` through the CLI/workflow driver
+# (``cli.py:625``). Stub keys are parsed and retained in
+# ``RuntimeLimitsLoadResult.role_iterations`` but NEVER applied by
+# ``resolve_limits_for_role`` until a runtime driver exists.
+_LIVE_ROLE_NAMES: frozenset[str] = frozenset({"planner", "coder", "eval"})
+# Config key → canonical role name. Keys are the runtime role strings, NOT
+# the tool-profile names (implementer/verifier never reach ``run_session``;
+# their repo-wide rename is tracked in PLAN-role-vocabulary-unification.md).
+_ROLE_KEY_TO_NAME: dict[str, str] = {
+    "max_iterations_planner": "planner",
+    "max_iterations_coder": "coder",
+    "max_iterations_eval": "eval",
+    "max_iterations_researcher": "researcher",
+    "max_iterations_code-reviewer": "code-reviewer",
+}
 # Wave-2 R-2 LoopGuard caps (Kronos `kronos/security/loop_detector.py`
 # 3-detector shape + Aperant `recovery-manager.ts:120-145` simpleHash
 # threshold). Defaults documented in `borrow-roadmap-2026-05.md` R-2.
@@ -155,6 +186,10 @@ class RuntimeLimitsWarning:
 class RuntimeLimitsLoadResult:
     limits: RuntimeLimits
     warnings: tuple[RuntimeLimitsWarning, ...] = field(default_factory=tuple)
+    # S14b.2: role name → iteration cap, from the ``max_iterations_<role>``
+    # config keys. Includes stub roles (researcher/code-reviewer) — parsed
+    # and retained, never applied by ``resolve_limits_for_role``.
+    role_iterations: dict[str, int] = field(default_factory=dict)
 
 
 _KNOWN_KEYS: frozenset[str] = frozenset(
@@ -174,6 +209,12 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
         "auth_expired_suppression_seconds",
         "cost_budget_usd",
         "max_subagent_spawns_per_session",
+        # S14b.2 per-role iteration keys (three live + two stubs, Q-S14b2-2).
+        "max_iterations_planner",
+        "max_iterations_coder",
+        "max_iterations_eval",
+        "max_iterations_researcher",
+        "max_iterations_code-reviewer",
     }
 )
 
@@ -236,6 +277,7 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
     # pylint: disable=duplicate-code
     found: dict[str, int] = {}
     found_float: dict[str, float] = {}
+    found_role: dict[str, int] = {}
     warnings: list[RuntimeLimitsWarning] = []
     in_block = False
 
@@ -333,6 +375,10 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
             )
             continue
         found[key] = int_value
+        # S14b.2: per-role iteration keys resolve to role names after passing
+        # the same positive-int validation as every other knob.
+        if key in _ROLE_KEY_TO_NAME:
+            found_role[_ROLE_KEY_TO_NAME[key]] = int_value
 
     limits = RuntimeLimits(
         max_iterations=found.get("max_iterations", DEFAULT_MAX_ITERATIONS),
@@ -359,11 +405,11 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
             "max_subagent_spawns_per_session", DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION
         ),
     )
-    return RuntimeLimitsLoadResult(limits=limits, warnings=tuple(warnings))
+    return RuntimeLimitsLoadResult(limits=limits, warnings=tuple(warnings), role_iterations=found_role)
 
 
 def load_runtime_limits_from_path(
-    path: Path = DEFAULT_CONFIG_PATH,
+    path: Path | None = None,
 ) -> RuntimeLimitsLoadResult:
     """Read ``runtime_limits:`` from ``path``; fall back to anchored defaults.
 
@@ -371,13 +417,42 @@ def load_runtime_limits_from_path(
     entrypoint must run before the user creates ``~/.fa/config.yaml``).
     The stricter «refuse-to-start-on-missing-key» mode lands with the
     ``fa run`` driver in T-2.
-    """
 
+    ``path=None`` resolves :data:`DEFAULT_CONFIG_PATH` at CALL time, not at
+    import time: the module-level constant is frozen at first import, so a
+    deferred lookup is what keeps the CLI honouring the operator's HOME as
+    of process start and lets tests monkeypatch the module global (S14b.2
+    seam test). Callers that pass an explicit path are unaffected.
+    """
+    if path is None:
+        path = DEFAULT_CONFIG_PATH
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return RuntimeLimitsLoadResult(limits=RuntimeLimits.anchored_defaults())
     return load_runtime_limits(text)
+
+
+def resolve_limits_for_role(loaded: RuntimeLimitsLoadResult, role: str | None) -> RuntimeLimits:
+    """Resolve the per-role iteration cap on top of a loaded config result.
+
+    Cascade (S14b.2 CT-2, operator decisions Q-S14b2-1/Q-S14b2-2):
+    1. live role + config key present  → ``role_iterations[role]``;
+    2. live role, no config key        → ``ROLE_ITERATION_DEFAULTS[role]``
+       (TESTING-STAGE anchor, 99 per turn);
+    3. stub roles (researcher/code-reviewer) and any other/unknown role →
+       the loaded global value (``max_iterations``) unchanged.
+
+    Pure function — no I/O, no warnings: the loader owns parse feedback;
+    this owns the application policy. ``None`` role means «no role scope»
+    (smoke/conformance paths) and keeps the global value.
+    """
+    if role in _LIVE_ROLE_NAMES:
+        return replace(
+            loaded.limits,
+            max_iterations=loaded.role_iterations.get(role, ROLE_ITERATION_DEFAULTS[role]),
+        )
+    return loaded.limits
 
 
 __all__ = [
@@ -396,9 +471,11 @@ __all__ = [
     "DEFAULT_QA_MAX_ITERATIONS",
     "DEFAULT_QA_RECURRING_ISSUE_THRESHOLD",
     "DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS",
+    "ROLE_ITERATION_DEFAULTS",
     "RuntimeLimits",
     "RuntimeLimitsLoadResult",
     "RuntimeLimitsWarning",
     "load_runtime_limits",
     "load_runtime_limits_from_path",
+    "resolve_limits_for_role",
 ]

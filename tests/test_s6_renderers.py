@@ -70,6 +70,11 @@ _PAYLOADS: dict[str, dict[str, object]] = {
     "subagent_end": {"task_id": "t1", "role": "verifier", "exit_code": 1, "ok": False, "error": "boom"},
     "cost_alert": {"message": "80% of budget"},
     "loop_warn": {"detector": "repeat", "message": "same call 3x"},
+    "iteration_cap": {
+        "point": "iteration_cap",
+        "reason": "iteration_cap: per-turn iteration limit (2) exceeded — used 2 of 2",
+        "profile": "coder",
+    },
 }
 
 

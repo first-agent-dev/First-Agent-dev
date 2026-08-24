@@ -61,7 +61,7 @@ from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE, render_tool_specs
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
 from fa.inner_loop.registry import ToolRegistry
-from fa.inner_loop.runtime_limits import RuntimeLimits
+from fa.inner_loop.runtime_limits import RuntimeLimits, resolve_limits_for_role
 from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
 from fa.inner_loop.tools import (
     build_baseline_registry,
@@ -2565,10 +2565,16 @@ def _cmd_run(
         proxy_url=proxy_url,
     )
 
-    limits = load_runtime_limits_from_path().limits
+    # S14b.2 (S11): per-role iteration caps resolve here — the single seam
+    # every `fa run` / `fa workflow` stage flows through (workflow stage
+    # kwargs → _cmd_run, cli.py:1331). Config key wins; else the 99-per-turn
+    # TESTING-STAGE default for live roles (planner/coder/eval); stub roles
+    # and role-less callers keep the global value.
+    loaded_limits = load_runtime_limits_from_path()
     # Role-aware registry: planner/eval get read-only tools, coder gets
     # the full baseline (read + write + bash).
     role = args.role
+    limits = resolve_limits_for_role(loaded_limits, role)
     # No per-role sampling temperature is forced: modern reasoning/thinking models
     # lock temperature/top_p, so FA omits them from the wire by default. A role
     # that wants explicit sampling opts in via `sampling:` in models.yaml; the

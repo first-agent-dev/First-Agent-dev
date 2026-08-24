@@ -48,6 +48,7 @@ _PARALLEL_SAFE_TOOLS = frozenset(
         "fs_usage",
         "fs_list_tasks",
         "fs_diff",
+        "fs_reach",
     }
 )
 
@@ -551,6 +552,11 @@ def run_session(
                 if not batch:
                     break
 
+            # S15 (CT-3): batch boundary for deterministic surfaced_by
+            # attribution. batch_turn counts dispatched batches (NOT tool
+            # calls — the per-tool-call counter is state.turn).
+            state.batch_turn += 1
+
             # BETWEEN_ROUNDS once per batch (session-level gate)
             try:
                 hooks.dispatch(
@@ -594,9 +600,40 @@ def run_session(
                     stop = batch_stop
                     break
 
+            # S15 (CT-3): promote this batch's search results to the
+            # attribution set. A batch whose dispatch stopped the run skips
+            # this line (break above) — its pending paths are never consumed
+            # because no later batch executes; deterministic either way.
+            state.commit_search_paths()
+
     finally:
         hooks.set_event_sink(None)
         reset_current_session(token)
+
+    # §I-S14b-3: cap signal emit — single post-loop authority for the iteration_cap StopInfo/log row.
+    # S14b.2 (CT-2): the iteration cap is now observable. One post-loop site
+    # covers all three truncation paths (top-check break, parallel last-batch
+    # truncation, mid-batch truncation with a following batch) because the
+    # in-loop top-check is not re-entered when the final batch was truncated.
+    # The exact-fit guard (calls == results) means a run that consumed its
+    # budget without skipping work emits NO signal — the cap was not "hit".
+    if stop is None and len(results) >= effective_limits.max_iterations and len(calls_list) > len(results):
+        used, limit = len(results), effective_limits.max_iterations
+        reason = f"iteration_cap: per-turn iteration limit ({limit}) exceeded — used {used} of {limit}"
+        stop = StopInfo(point="iteration_cap", reason=reason)
+        # `reason` MUST start with `iteration_cap`: consumer contract with the
+        # coder_loop.py padding-branch scan and the stats.py failure classifier.
+        log.append(
+            actor="runtime",
+            kind="run_stopped",
+            content={
+                "point": "iteration_cap",
+                "reason": reason,
+                "used": used,
+                "limit": limit,
+                "profile": role,
+            },
+        )
 
     return SessionRun(results=tuple(results), stop=stop)
 

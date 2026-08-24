@@ -78,6 +78,8 @@ UNPARSED_KINDS: frozenset[LogKind] = frozenset(
         "telemetry",  # low-value — per-tool audit noise
         "timeout",  # infrastructure — no structured analytics
         "verification",  # captured by tool_result
+        "file_read",  # S15 (CT-3): consumed by fs_exploration_metrics via direct
+        # log read, not by fa stats aggregation; excuse until a stats consumer exists
     }
 )
 
@@ -564,8 +566,14 @@ def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> Sessi
         elif kind == "run_stopped":
             reason = str(content.get("reason", ""))
             if reason:
+                # S14b.2 (operator principle Q-S14b2-3): every stop condition
+                # is EXPLICIT in the report (stop_reason always recorded —
+                # never silently "unknown"/"clean"), while only real failures
+                # flip ok. Budget-governed iteration-cap truncation is not a
+                # failure, but it is never hidden.
                 stop_reason = reason
-                ok = False  # any run_stopped event is abnormal
+                if not reason.startswith("iteration_cap"):
+                    ok = False  # guard denial / abnormal stop
 
     # Infer clean stop: session_summary present + no run_stopped event
     # means drive_session exited via finish() with stop_reason="stopped_by_llm".

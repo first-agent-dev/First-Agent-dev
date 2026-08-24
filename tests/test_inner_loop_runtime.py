@@ -90,7 +90,11 @@ def test_run_session_executes_tool_through_hooks(tmp_path: Path) -> None:
 
     by_call: dict[str, list[tuple[str, str, str]]] = {}
     for event in events:
-        if event.kind == "telemetry":
+        # S15 (CT-3): file_read is per-read telemetry emitted by the read_file
+        # handler without a tool_call_id — same class as the "telemetry" rows
+        # this projection already skips; the per-call signature covers the
+        # tool_call/hook/tool_result chain only. (TEST-EDITS declared in PR.)
+        if event.kind in ("telemetry", "file_read"):
             continue
         by_call.setdefault(event.tool_call_id, []).append(_signature(event))
 

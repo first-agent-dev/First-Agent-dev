@@ -109,6 +109,8 @@ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
                 return ToolResult.fail("read_failed", str(exc), retryable=True)
 
         # Phase 0.5: Transaction read_set accumulation via contextvar DI
+        session = None
+        rel = str(path)
         try:
             from fa.inner_loop.context import get_current_session
 
@@ -135,6 +137,24 @@ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
             content = "\n".join(selected)
         else:
             content = text
+
+        # S15 (CT-3): file_read telemetry — success path only (after
+        # validation, before the ToolResult.ok return). surfaced_by is
+        # deterministic: a read attributes to search_result iff the path
+        # appeared in a search result from an EARLIER batch (last_search_paths
+        # is mutated only at batch boundaries — race-free by construction).
+        if session is not None:
+            try:
+                surfaced = "search_result" if rel in session.last_search_paths else "direct_reference"
+                session.record_file_read(
+                    rel,
+                    start_line=start_line,
+                    end_line=end_line,
+                    surfaced_by=surfaced,
+                    bytes_read=len(content.encode("utf-8")),
+                )
+            except Exception as exc:  # noqa: BLE001 - telemetry degradation must not fail the read
+                logger.warning(f"record_file_read failed for {rel}: {exc}")
 
         return ToolResult.ok(
             f"read {path.relative_to(root)}",

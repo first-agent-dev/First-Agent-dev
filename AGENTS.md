@@ -131,6 +131,22 @@ Four named slots. Pattern-match the template exactly; respect four-pillar goal s
 - **Workspace resolution.** Locate the repo root by checking for
   `./AGENTS.md` in the current directory. If present →
   FA root is `.` Always anchor on the current directory.
+- **Code anchors (S17).** Contract/invariant points in Python carry a single-line
+  comment `# §<stable-id>: <short description>` (`<stable-id>` matches
+  `[A-Za-z0-9_.-]+`). Rules: **sparse** (≤1 per ~200 lines; contracts/invariants
+  only, never routine functions), **stable** (never rename an id once referenced;
+  deprecate with a `[deprecated in favor of §<new-id>]` suffix for one cycle, then
+  remove). Indexed by the structural index as `doc_anchor` symbols — resolvable
+  via `fs_reach(symbol="§<id>")` and findable via `fs_search(query="§<id>")`.
+  Referenced externally as `<filepath>#§<id>`.
+- **Iteration limits (S14b.2).** Per-turn tool-call cap, configurable per
+  role in `~/.fa/config.yaml` → `runtime_limits:` via
+  `max_iterations_planner/_coder/_eval` (+ `_researcher/_code-reviewer`
+  stubs). Semantics: per TURN (one `run_session` call = one LLM response
+  batch). Testing-stage default is 99 for all roles (operator will
+  re-tune); `max_iterations: 6` stays the role-less ADR-7 anchor.
+  Cap hits emit `StopInfo(point="iteration_cap")` + `run_stopped` log row
+  + `iteration_cap` console event; stats records the reason explicitly.
 
 ## Context-budget discipline
 
@@ -333,6 +349,7 @@ Summaries in `knowledge/research/` are pointers, not authoritative sources.
 | «Find _content_ somewhere in the repo — body substring, across code AND docs, don't know type yet» (DEFAULT START) | `fs_search(query="…", output_mode="files", limit=10)` | FTS5 BM25 + trigram, <50ms after first-call index, returns **paths with match_count + first-match snippet** (respects .gitignore, prunes code + docs equally). Add `glob="*.py"` for path filter; `include_tests=false` to exclude tests/. |
 | «Find files whose names/paths match a glob (e.g. all test files under X)» | `fs_search(query="", glob="tests/**/test_*.py", …)` — or `fs_search(query=" ", glob="pattern")` | Glob is a parameter on fs_search; no standalone glob tool. For pure name listing use fs_search with a broad query and the glob filter. |
 | «I have a path — read the actual bytes now» | `fs_read_file(path=…)` | Body retrieval is a separate step; discovery tools return metadata/paths, not bodies. |
+| «Find callers or callees of a known function (multi-file navigation)» | `fs_reach(symbol=…, direction=…, depth=…)` | S16: Python-only call-graph BFS over the structural index; start with `fs_search` to find the symbol, then `fs_reach` to trace relationships; unresolved callees are reported honestly as `<unresolved:…>` (v1 resolution is in-file only). |
 | «I need matching lines with content/numbers inline (use sparingly)» | `fs_search(query="…", output_mode="matches", context_lines=1, glob="*.py")` | Returns `{path,line,content,before,after}`. Use only after `files`-mode identified the relevant files and you need exact line numbers (e.g. to target an edit_file). |
 | «I need contiguous snippets around matches to read code without a separate read_file» | `fs_search(query="…", output_mode="regions", context_lines=2)` | Groups adjacent matches into contiguous `{path, start_line, end_line, snippet}` windows. Token-efficient alternative to fs_read_file when the answer is a short code region. |
 | «I am about to WRITE a file» | Mutation guard flow: declare read_set + write_set + assumptions (base `git rev-parse HEAD`, llms.txt hash) + version_dependencies; blackboard runs `detect_conflict()`; on conflict return structured `ToolResult.fail(code="conflict_detected")`, never silent overwrite (fixes Claude bug #55708). | Prevents cross-run/cross-agent stomps via type-scoped write_set overlap. |

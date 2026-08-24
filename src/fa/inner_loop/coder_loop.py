@@ -1601,6 +1601,23 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             state.observations.append(f"run stopped at {stop_info.point}: {stop_info.reason}")
             break
 
+        # S14b.2 (CT-2): iteration-cap stops are turn-local — emit the
+        # operator-visible signal but DO NOT break the session loop (the
+        # model gets the synthetic-failure padding below and may continue
+        # next turn). Guard denials above remain session-terminal.
+        if turn_results.stop is not None and turn_results.stop.point == "iteration_cap":
+            if output is not None:
+                output.emit(
+                    OutputEvent(
+                        type="iteration_cap",
+                        data={
+                            "point": turn_results.stop.point,
+                            "reason": turn_results.stop.reason,
+                            "profile": role,
+                        },
+                    )
+                )
+
         # ``run_session`` enforces ``max_iterations`` per invocation.
         # If the LLM emitted more tool calls than the cap, the loop
         # breaks early and returns fewer results. We MUST pad the
