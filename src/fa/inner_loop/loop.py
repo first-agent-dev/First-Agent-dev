@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import contextvars
 from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
@@ -349,11 +350,20 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
     results_map: dict[str, ToolResult] = {}
     if exec_payloads:
         max_workers = min(len(exec_payloads), _MAX_TOOL_WORKERS)
+        # §I-S14b-5: propagate contextvars (e.g. fa_current_session) to worker threads.
+        # ContextVar is thread-local; without copy_context().run, get_current_session()
+        # returns None inside ThreadPool workers, causing fs_blackboard_query to fail
+        # with blackboard_unavailable on first try in parallel batches (I-63).
+        # NOTE: Context objects cannot be entered concurrently; we must create
+        # a distinct Context per task (otherwise "already entered" error).
+        ctxs = [contextvars.copy_context() for _ in exec_payloads]
         try:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(registry.dispatch, p.tool_call): p for p in exec_payloads if p.tool_call is not None
-                }
+                futures = {}
+                for p, ctx in zip(exec_payloads, ctxs, strict=False):
+                    if p.tool_call is None:
+                        continue
+                    futures[executor.submit(ctx.run, registry.dispatch, p.tool_call)] = p
                 done, _ = wait(futures.keys(), timeout=30)
                 for fut in done:
                     p = futures[fut]
