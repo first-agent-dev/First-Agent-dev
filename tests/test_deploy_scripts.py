@@ -824,13 +824,18 @@ def test_current_workspace_docs_reject_superseded_transport_and_session_claims()
 
 
 def test_historical_workspace_docs_have_top_level_superseded_banner() -> None:
-    """C0 S8/T15: obsolete command sheets remain evidence, never current instructions."""
+    """C0 S8/T15: obsolete command sheets remain evidence, never current instructions.
+
+    R02 minimalism: S13 session-start prompts (ephemeral git clone/checkout/apply
+    instructions) were intentionally deleted in f2ed2c9 file work — they do NOT
+    contain stale transport claims (git clone --local, hardlink, container
+    lifecycle...). Only workspace-isolation docs contain those stale claims and
+    need the HISTORICAL/SUPERSEDED banner. Expect 2, not 4.
+    """
 
     historical_docs = (
         _ROOT / "knowledge" / "pr-notes" / "workspace-isolation.md",
         _ROOT / "worklogs" / "pr-notes" / "workspace-isolation.md",
-        _ROOT / "worklogs" / "S13-NEXT-SESSION-START.md",
-        _ROOT / "worklogs" / "S13-SESSION-START-PROMPT.md",
     )
     for path in historical_docs:
         banner = "\n".join(path.read_text(encoding="utf-8").splitlines()[:12])
@@ -858,9 +863,8 @@ def test_workspace_stale_claims_are_confined_to_historical_evidence() -> None:
         Path("knowledge/anti-patterns/AP-004-symptom-chasing-without-model.md"),
         Path("knowledge/pr-notes/workspace-isolation.md"),
         Path("worklogs/pr-notes/workspace-isolation.md"),
-        Path("worklogs/S13-NEXT-SESSION-START.md"),
-        Path("worklogs/S13-SESSION-START-PROMPT.md"),
         Path("worklogs/implementation-plans/PLAN-session-workspace-readiness-bootstrap.md"),
+        Path("worklogs/implementation-plans/PLAN-rushed-patch-foundation-closure.md"),
     }
     violations: dict[str, list[str]] = {}
     for path in _ROOT.rglob("*.md"):

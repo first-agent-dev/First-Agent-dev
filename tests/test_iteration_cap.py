@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -207,6 +207,7 @@ def test_cap_signal_never_overwrites_guard_denial(tmp_path: Path) -> None:
     class DenyAfter(GuardMiddleware):
         attaches_to = (LifecyclePoint.AFTER_TOOL_EXEC,)
 
+        @override
         def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
             return Decision.deny("test denial")
 

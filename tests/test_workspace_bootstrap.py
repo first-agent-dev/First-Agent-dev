@@ -1814,3 +1814,513 @@ def test_check_cli_dispatches_read_only_authority(
     assert rc == 0
     assert seen == [workspace]
     assert json.loads(capsys.readouterr().out)["fingerprint"] == "sha256:check"
+
+
+# ---------------------------------------------------------------------------
+# Mutation-killing suite for 34 survivors (2026-08-25 targeted run)
+# Groups A-G per PLAN-workspace-bootstrap-mutation-34-survivors-subplan.md
+# ---------------------------------------------------------------------------
+
+
+def test_command_environment_hermetic_pop_and_pin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Group A: kills 12 pop mutants + 2 key-set mutants + 3 value mutants (17 total).
+
+    Asserts that 5 leak keys are removed even when present, that
+    UV_PROJECT_ENVIRONMENT leak is popped then re-pinned to workspace/.venv,
+    and that original os.environ is not mutated.
+    """
+
+    leak_keys = [
+        "VIRTUAL_ENV",
+        "VIRTUAL_ENV_PROMPT",
+        "CONDA_PREFIX",
+        "UV_PROJECT_ENVIRONMENT",
+        "UV_PYTHON",
+        "PYTHONHOME",
+    ]
+    pop_only_keys = [
+        "VIRTUAL_ENV",
+        "VIRTUAL_ENV_PROMPT",
+        "CONDA_PREFIX",
+        "UV_PYTHON",
+        "PYTHONHOME",
+    ]
+    for key in leak_keys:
+        monkeypatch.setenv(key, f"/leak/{key}")
+
+    # Snapshot original to ensure copy semantics
+    original_snapshot = {k: os.environ.get(k) for k in leak_keys}
+
+    env = bootstrap._command_environment(tmp_path)
+
+    # Pop must have removed 5 leak-only keys
+    for key in pop_only_keys:
+        assert key not in env, f"{key} leak not popped — kills mutmut_2..7,10..13"
+
+    # UV_PROJECT_ENVIRONMENT leak is popped then re-pinned — must be present but not leak value
+    assert "UV_PROJECT_ENVIRONMENT" in env
+    assert env["UV_PROJECT_ENVIRONMENT"] != "/leak/UV_PROJECT_ENVIRONMENT"
+
+    # Pin must be exact resolved path, not "None", not "XX.venvXX", not ".VENV"
+    expected_pin = str((tmp_path / ".venv").resolve())
+    assert env["UV_PROJECT_ENVIRONMENT"] == expected_pin
+    assert env["UV_PROJECT_ENVIRONMENT"] != "None"  # kills mutmut_28 str(None)
+    assert env["UV_PROJECT_ENVIRONMENT"].endswith(".venv")  # kills XX.venvXX and .VENV
+    assert ".venv" in env["UV_PROJECT_ENVIRONMENT"]
+    assert "XX.venvXX" not in env["UV_PROJECT_ENVIRONMENT"]
+    assert ".VENV" not in env["UV_PROJECT_ENVIRONMENT"]
+
+    # Safe vars must be present
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["UV_LINK_MODE"] == "copy"
+
+    # Original environ must still have leaks (copy, not mutate)
+    for key in leak_keys:
+        assert os.environ.get(key) == original_snapshot[key]
+
+    # None workspace must NOT set pin (kills mutmut_26,27 when they set wrong key)
+    env_none = bootstrap._command_environment(None)
+    for key in leak_keys:
+        assert key not in env_none, f"{key} not popped in None case"
+    assert "UV_PROJECT_ENVIRONMENT" not in env_none
+
+
+def test_command_environment_value_exactness(tmp_path: Path) -> None:
+    """Group A extra: exactness of .venv path."""
+
+    env = bootstrap._command_environment(tmp_path / "my-workspace")
+    pin = env["UV_PROJECT_ENVIRONMENT"]
+    # Must be absolute and resolved
+    assert Path(pin).is_absolute()
+    assert pin == str((tmp_path / "my-workspace" / ".venv").resolve())
+    # Must contain .venv exactly, case-sensitive
+    assert pin.endswith(".venv")
+    assert ".VENV" not in pin
+
+
+def test_open_private_calls_os_open_with_private_mode_and_nofollow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Group B: kills mutmut_7 (mode removed → default 0o777).
+
+    Spy records mode and flags without asserting inside wrapper (spy isolation).
+    """
+
+    seen: dict[str, Any] = {}
+    orig_open = os.open
+
+    def spy_open(path: str | os.PathLike[str], flags: int, *args: Any, **kwargs: Any) -> int:
+        # Record flags and mode
+        seen["flags"] = flags
+        if args:
+            seen["mode"] = args[0]
+        else:
+            seen["mode"] = kwargs.get("mode", 0o777)
+        return orig_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", spy_open)
+
+    target = tmp_path / "secret"
+    fd = bootstrap._open_private(target, os.O_WRONLY | os.O_CREAT)
+    try:
+        assert seen["mode"] == 0o600, f"mode {oct(seen.get('mode', 0))} != 0o600 — kills mutmut_7"
+        assert seen["flags"] & getattr(os, "O_NOFOLLOW", 0) != 0, "O_NOFOLLOW not set"
+        # Final mode must be private
+        assert stat.S_IMODE(os.stat(target).st_mode) == 0o600
+    finally:
+        os.close(fd)
+
+
+def test_process_runner_pins_workspace_venv_in_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Group C: kills mutmut_21 env=_command_environment(cwd) → None."""
+
+    captured: dict[str, Any] = {}
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured["env"] = kwargs.get("env")
+        captured["cwd"] = kwargs.get("cwd")
+        return subprocess.CompletedProcess(command, 0, "ok\n", "")
+
+    monkeypatch.setattr("fa.workspace_bootstrap.subprocess.run", fake_run)
+
+    result = bootstrap._run_process(
+        ["tool"],
+        cwd=tmp_path,
+        timeout=1,
+        failure_reason="sync_failed",
+    )
+
+    assert result.stdout == "ok\n"
+    env = captured["env"]
+    assert isinstance(env, dict)
+    # Must be pinned to cwd/.venv, not None
+    assert "UV_PROJECT_ENVIRONMENT" in env, "pin missing — kills mutmut_21"
+    assert env["UV_PROJECT_ENVIRONMENT"] == str((tmp_path / ".venv").resolve())
+    assert env["UV_PROJECT_ENVIRONMENT"] != "None"
+
+
+def test_read_python_minor_skips_executable_check_on_nt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Group D: kills mutmut_7,8 for _read_python_minor (nt → XXntXX / NT)."""
+
+    python = tmp_path / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\necho fake\n", encoding="utf-8")
+    python.chmod(0o644)  # not executable
+
+    monkeypatch.setattr(os, "name", "nt")
+
+    def fake_run_process(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, "3.13\n", "")
+
+    monkeypatch.setattr(bootstrap, "_run_process", fake_run_process)
+
+    # On nt, non-executable should still be considered valid
+    result = bootstrap._read_python_minor(tmp_path, strict=False)
+    assert result == "3.13"
+
+    result_strict = bootstrap._read_python_minor(tmp_path, strict=True)
+    assert result_strict == "3.13"
+
+
+def test_read_python_minor_requires_executable_on_posix(tmp_path: Path) -> None:
+    """Group D: posix side — non-executable must be rejected."""
+
+    python = tmp_path / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("not exec", encoding="utf-8")
+    python.chmod(0o644)
+
+    # Ensure posix
+    assert os.name != "nt"
+    assert bootstrap._read_python_minor(tmp_path, strict=False) is None
+
+
+def test_hooks_current_skips_executable_check_on_nt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Group D: kills mutmut_12,13 for _hooks_current."""
+
+    workspace = _make_workspace(tmp_path)
+    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
+    hooks_dir = workspace / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    for name in HOOK_NAMES:
+        src = hook_source / name
+        tgt = hooks_dir / name
+        tgt.write_bytes(src.read_bytes())
+        tgt.chmod(0o644)  # not executable
+
+    monkeypatch.setattr(os, "name", "nt")
+    assert bootstrap._hooks_current(workspace, hook_source) is True
+
+
+def test_hooks_current_requires_executable_on_posix(tmp_path: Path) -> None:
+    """Group D: posix requires X bit."""
+
+    workspace = _make_workspace(tmp_path)
+    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
+    hooks_dir = workspace / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    for name in HOOK_NAMES:
+        src = hook_source / name
+        tgt = hooks_dir / name
+        tgt.write_bytes(src.read_bytes())
+        tgt.chmod(0o644)
+
+    assert os.name != "nt"
+    assert bootstrap._hooks_current(workspace, hook_source) is False
+
+
+def test_hooks_current_false_on_content_mismatch(tmp_path: Path) -> None:
+    """Group E: kills mutmut_21 return False → True on content mismatch."""
+
+    workspace = _make_workspace(tmp_path)
+    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
+    hooks_dir = workspace / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    for name in HOOK_NAMES:
+        src = hook_source / name
+        tgt = hooks_dir / name
+        tgt.write_bytes(src.read_bytes())
+        tgt.chmod(0o755)
+
+    # Corrupt one
+    (hooks_dir / HOOK_NAMES[0]).write_bytes(b"different content")
+    (hooks_dir / HOOK_NAMES[0]).chmod(0o755)
+
+    assert bootstrap._hooks_current(workspace, hook_source) is False
+
+
+@requires_symlinks
+def test_hooks_current_false_on_symlink_mismatch(tmp_path: Path) -> None:
+    """Group E: kills mutmut_24 symlink resolve mismatch False → True.
+
+    Fix: external must be executable, otherwise X_OK check fails before symlink check,
+    causing both original and mutant to return False (survivor).
+    """
+
+    workspace = _make_workspace(tmp_path)
+    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
+    hooks_dir = workspace / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    for name in HOOK_NAMES:
+        src = hook_source / name
+        tgt = hooks_dir / name
+        tgt.write_bytes(src.read_bytes())
+        tgt.chmod(0o755)
+
+    external = tmp_path / "external-hook"
+    external.write_bytes((hook_source / HOOK_NAMES[0]).read_bytes())
+    external.chmod(0o755)
+    target = hooks_dir / HOOK_NAMES[0]
+    target.unlink()
+    target.symlink_to(external)
+
+    assert bootstrap._hooks_current(workspace, hook_source) is False
+
+
+@requires_symlinks
+def test_hook_seat_is_manageable_broken_symlink(tmp_path: Path) -> None:
+    """Group F: kills strict=True → False mutants (broken symlink not manageable)."""
+
+    source = tmp_path / "source"
+    source.write_text("hook content", encoding="utf-8")
+
+    broken = tmp_path / "broken"
+    broken.symlink_to(tmp_path / "nonexistent-target")
+
+    # Broken symlink should NOT be manageable
+    assert bootstrap._hook_seat_is_manageable(source, broken) is False
+
+
+def test_hook_seat_is_manageable_oserror_on_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Group F: kills except OSError False → True (mutmut_12)."""
+
+    source = tmp_path / "source"
+    source.write_text("hook content", encoding="utf-8")
+    target = tmp_path / "target"
+    target.write_text("different", encoding="utf-8")
+
+    orig_read_bytes = Path.read_bytes
+    calls: list[Path] = []
+
+    def fake_read_bytes(self: Path) -> bytes:
+        calls.append(self)
+        if self == target:
+            raise OSError("unreadable")
+        return orig_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", fake_read_bytes)
+
+    assert bootstrap._hook_seat_is_manageable(source, target) is False
+    assert target in calls
+
+
+def test_assert_managed_hook_ownership_preserves_fingerprint_on_resolve_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Group G: kills mutmut_6,8 fingerprint=None/omitted in hook_status_failed."""
+
+    workspace = _make_workspace(tmp_path)
+    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
+
+    def raise_oserror(_: Path) -> Path:
+        raise OSError("resolve failed")
+
+    monkeypatch.setattr(bootstrap, "resolve_hooks_dir", raise_oserror)
+
+    with pytest.raises(bootstrap._ReadinessError) as caught:
+        bootstrap._assert_managed_hook_ownership(workspace, hook_source, fingerprint="sha256:abc123")
+
+    assert caught.value.reason_code == "hook_status_failed"
+    assert caught.value.fingerprint == "sha256:abc123"
+
+
+def test_assert_managed_hook_ownership_preserves_fingerprint_on_default_resolve_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Group G: same for default hooks dir."""
+
+    workspace = _make_workspace(tmp_path)
+    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
+
+    def ok_hooks_dir(_: Path) -> Path:
+        return workspace / ".git" / "hooks"
+
+    def raise_oserror(_: Path) -> Path:
+        raise OSError("default resolve failed")
+
+    monkeypatch.setattr(bootstrap, "resolve_hooks_dir", ok_hooks_dir)
+    monkeypatch.setattr(bootstrap, "resolve_default_hooks_dir", raise_oserror)
+
+    with pytest.raises(bootstrap._ReadinessError) as caught:
+        bootstrap._assert_managed_hook_ownership(workspace, hook_source, fingerprint="sha256:def456")
+
+    assert caught.value.reason_code == "hook_status_failed"
+    assert caught.value.fingerprint == "sha256:def456"
+
+
+def test_install_workspace_hooks_preserves_fingerprint_on_ownership_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Group G: kills mutmut_3,6 in _install_workspace_hooks ownership check.
+
+    Real failure path: custom hooksPath set → _assert_managed_hook_ownership
+    raises with fingerprint from argument, not None. This kills mutants that
+    change fingerprint=fingerprint → None / omitted.
+    """
+
+    workspace = _make_workspace(tmp_path)
+    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
+    custom = tmp_path / "custom-hooks"
+    custom.mkdir()
+    subprocess.run(
+        ["git", "config", "core.hooksPath", str(custom)],
+        cwd=workspace,
+        check=True,
+    )
+
+    with pytest.raises(bootstrap._ReadinessError) as caught:
+        bootstrap._install_workspace_hooks(workspace, hook_source, fingerprint="sha256:install123")
+
+    assert caught.value.reason_code == "custom_hooks_unmanaged"
+    assert caught.value.fingerprint == "sha256:install123"
+
+    # Also test propagation when ownership check itself raises with its own fingerprint
+    # (ensures wrapper doesn't swallow)
+    def raise_readiness(*_args: Any, **_kwargs: Any) -> None:
+        raise bootstrap._ReadinessError("custom_hooks_unmanaged", fingerprint="sha256:owner")
+
+    monkeypatch.setattr(bootstrap, "_assert_managed_hook_ownership", raise_readiness)
+
+    with pytest.raises(bootstrap._ReadinessError) as caught2:
+        bootstrap._install_workspace_hooks(workspace, hook_source, fingerprint="sha256:install123")
+
+    assert caught2.value.fingerprint == "sha256:owner"
+
+
+def test_install_workspace_hooks_preserves_fingerprint_on_install_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Group G: kills mutmut_15,17 fingerprint=None/omitted on install failure."""
+
+    workspace = tmp_path / "workspace"
+    source = workspace / "src" / "fa" / "hygiene" / "hooks"
+
+    monkeypatch.setattr(bootstrap, "_assert_managed_hook_ownership", lambda *a, **k: None)
+
+    def raise_oserror(*_args: Any, **_kwargs: Any) -> list[Path]:
+        raise OSError("install failed")
+
+    monkeypatch.setattr(bootstrap, "install_hooks", raise_oserror)
+
+    with pytest.raises(bootstrap._ReadinessError) as caught:
+        bootstrap._install_workspace_hooks(workspace, source, fingerprint="sha256:install-fail")
+
+    assert caught.value.reason_code == "hook_status_failed"
+    assert caught.value.fingerprint == "sha256:install-fail"
+
+
+# ---------------------------------------------------------------------------
+# Hardening per tests-writing best practices (black-box, no spy)
+# ---------------------------------------------------------------------------
+
+
+@requires_posix_modes
+def test_open_private_creates_private_file_even_with_umask_zero(tmp_path: Path) -> None:
+    """Hardening: black-box proof that mode 0o600 is enforced even with umask 0.
+
+    Catches mutmut_7 without spying on os.open — if mode arg removed, file would be
+    created 0o777 with umask 0, then fchmod would fix it, but fstat on fd should still
+    be 0o600. This is the observable security property, not just spy.
+    """
+
+    old_umask = os.umask(0)
+    try:
+        target = tmp_path / "secret-umask"
+        fd = bootstrap._open_private(target, os.O_WRONLY | os.O_CREAT)
+        try:
+            # fd mode via fstat must be private immediately
+            assert stat.S_IMODE(os.fstat(fd).st_mode) == 0o600
+            # file on disk must also be private
+            assert stat.S_IMODE(os.stat(target).st_mode) == 0o600
+        finally:
+            os.close(fd)
+    finally:
+        os.umask(old_umask)
+
+
+def test_command_environment_does_not_mutate_original_environ(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Hardening: copy semantics — original os.environ unchanged."""
+
+    monkeypatch.setenv("VIRTUAL_ENV", "/original")
+    before = os.environ["VIRTUAL_ENV"]
+    env = bootstrap._command_environment(tmp_path)
+    # Returned env must not have leak, but original must still have it
+    assert "VIRTUAL_ENV" not in env or env["VIRTUAL_ENV"] != "/original"
+    assert os.environ["VIRTUAL_ENV"] == before
+
+
+def test_command_environment_pin_is_absolute_and_resolved(tmp_path: Path) -> None:
+    """Hardening: pin must be absolute resolved path, not relative or None."""
+
+    # Symlink workspace to test resolve()
+    real = tmp_path / "real-ws"
+    real.mkdir()
+    link = tmp_path / "link-ws"
+    link.symlink_to(real)
+
+    env = bootstrap._command_environment(link)
+    pin = env["UV_PROJECT_ENVIRONMENT"]
+    assert Path(pin).is_absolute()
+    # resolve() should have resolved symlink
+    assert str(real.resolve()) in pin
+    assert pin.endswith(".venv")
+
+
+def test_hooks_current_true_when_exact_copy_and_executable(tmp_path: Path) -> None:
+    """Hardening: positive case — exact copy + executable = True."""
+
+    workspace = _make_workspace(tmp_path)
+    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
+    hooks_dir = workspace / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    for name in HOOK_NAMES:
+        src = hook_source / name
+        tgt = hooks_dir / name
+        tgt.write_bytes(src.read_bytes())
+        tgt.chmod(0o755)
+
+    assert bootstrap._hooks_current(workspace, hook_source) is True
+
+
+@requires_symlinks
+def test_hook_seat_is_manageable_when_absent_or_exact_copy(tmp_path: Path) -> None:
+    """Hardening: absent seat is manageable, exact copy is manageable."""
+
+    source = tmp_path / "source"
+    source.write_text("hook", encoding="utf-8")
+
+    # Absent
+    absent = tmp_path / "absent"
+    assert bootstrap._hook_seat_is_manageable(source, absent) is True
+
+    # Exact copy
+    copy = tmp_path / "copy"
+    copy.write_text("hook", encoding="utf-8")
+    assert bootstrap._hook_seat_is_manageable(source, copy) is True
+
+    # Different content not manageable
+    diff = tmp_path / "diff"
+    diff.write_text("different", encoding="utf-8")
+    assert bootstrap._hook_seat_is_manageable(source, diff) is False
+
+
+def test_open_private_rejects_symlink(tmp_path: Path) -> None:
+    """Hardening: symlink attack rejected."""
+
+    target = tmp_path / "real"
+    target.write_text("real", encoding="utf-8")
+    link = tmp_path / "link"
+    link.symlink_to(target)
+
+    with pytest.raises(OSError):
+        bootstrap._open_private(link, os.O_WRONLY | os.O_CREAT)

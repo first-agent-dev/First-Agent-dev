@@ -306,7 +306,8 @@ pytest_add_cli_args_test_selection = [
 ]
 # Complete package copy supplies sibling imports while source_paths remains the
 # only mutation authority. Alias/config tests live outside this core C4 seat.
-also_copy = ["src/fa"]
+# added "scripts" 25.08
+also_copy = ["src/fa", "scripts"]
 # Mutmut 3.6 identifies the parser from the literal "pyrefly" argv element.
 # Keep the positional path segment exactly equal to source_paths; T19 pins it.
 type_check_command = [

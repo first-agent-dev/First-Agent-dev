@@ -647,7 +647,7 @@ def test_permanent_mutation_configuration_includes_readiness_and_type_filter() -
     source_paths = mutmut["source_paths"]
     assert source_paths[-1] == "src/fa/workspace_bootstrap.py"
     assert mutmut["pytest_add_cli_args_test_selection"][-1] == "tests/test_workspace_bootstrap.py"
-    assert mutmut["also_copy"] == ["src/fa"]
+    assert mutmut["also_copy"] == ["src/fa", "scripts"]
     command = mutmut["type_check_command"]
     assert command[:2] == ["pyrefly", "check"]
     assert command[2 : 2 + len(source_paths)] == source_paths

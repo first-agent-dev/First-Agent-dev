@@ -236,9 +236,27 @@ def _exclusive_lock(path: Path) -> Iterator[None]:
         os.close(descriptor)
 
 
-def _command_environment() -> dict[str, str]:
+def _command_environment(workspace: Path | None = None) -> dict[str, str]:
+    """Return a hermetic env for uv/pre-commit subprocesses.
+
+    Production-grade: pop VIRTUAL_ENV leaks so uv doesn't reuse a parent
+    venv, and explicitly pin UV_PROJECT_ENVIRONMENT to workspace/.venv
+    when workspace is known (operator chose pop+set explicit pinning).
+    """
+
     environment = os.environ.copy()
+    for key in (
+        "VIRTUAL_ENV",
+        "VIRTUAL_ENV_PROMPT",
+        "CONDA_PREFIX",
+        "UV_PROJECT_ENVIRONMENT",
+        "UV_PYTHON",
+        "PYTHONHOME",
+    ):
+        environment.pop(key, None)
     environment.update(GIT_TERMINAL_PROMPT="0", UV_LINK_MODE="copy")
+    if workspace is not None:
+        environment["UV_PROJECT_ENVIRONMENT"] = str((workspace / ".venv").resolve())
     return environment
 
 
@@ -261,7 +279,7 @@ def _run_process(
             stdin=subprocess.DEVNULL,
             text=True,
             timeout=timeout,
-            env=_command_environment(),
+            env=_command_environment(cwd),
         )
     except FileNotFoundError as exc:
         raise _ReadinessError(missing_reason or failure_reason, fingerprint=fingerprint) from exc
@@ -478,7 +496,11 @@ def _hook_seat_is_manageable(source: Path, target: Path) -> bool:
         if not target.exists() and not target.is_symlink():
             return True
         if target.is_symlink():
-            return target.resolve(strict=True) == source.resolve(strict=True)
+            # strict=True vs False is dead defensive guard for valid hook seats:
+            # source is guaranteed regular file (validated in _validate_workspace),
+            # target broken symlink is already not manageable via except or comparison.
+            # Mutmut changes strict=True → False survive with same boolean.
+            return target.resolve(strict=True) == source.resolve(strict=True)  # pragma: no mutate
         return target.is_file() and target.read_bytes() == source.read_bytes()
     except OSError:
         return False

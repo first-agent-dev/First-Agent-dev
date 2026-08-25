@@ -183,8 +183,13 @@ def test_entrypoint_expression_is_unchanged(tmp_path: Path) -> None:
 
     If the shell contract moves, the agreement test above must be revisited
     rather than silently comparing against something new.
+
+    Production-grade: use repo-root resolution, not cwd-relative Path, so
+    mutation staging (which copies tests + src/fa + scripts) still finds the file.
     """
-    entrypoint = Path("scripts/fa-entrypoint.sh").read_text(encoding="utf-8")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    entrypoint = (repo_root / "scripts" / "fa-entrypoint.sh").read_text(encoding="utf-8")
     assert 'local state_root="${FA_STATE_ROOT:-${HOME}/.fa}"' in entrypoint
 
 

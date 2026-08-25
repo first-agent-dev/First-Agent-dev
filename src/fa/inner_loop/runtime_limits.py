@@ -447,10 +447,11 @@ def resolve_limits_for_role(loaded: RuntimeLimitsLoadResult, role: str | None) -
     this owns the application policy. ``None`` role means «no role scope»
     (smoke/conformance paths) and keeps the global value.
     """
-    if role in _LIVE_ROLE_NAMES:
+    if role is not None and role in _LIVE_ROLE_NAMES:
+        role_str: str = role
         return replace(
             loaded.limits,
-            max_iterations=loaded.role_iterations.get(role, ROLE_ITERATION_DEFAULTS[role]),
+            max_iterations=loaded.role_iterations.get(role_str, ROLE_ITERATION_DEFAULTS[role_str]),
         )
     return loaded.limits
 

@@ -125,6 +125,12 @@ def test_clean_candidate_real_readiness_commit_and_local_publication(request: py
         "GIT_AUTHOR_EMAIL",
         "GIT_COMMITTER_NAME",
         "GIT_COMMITTER_EMAIL",
+        "VIRTUAL_ENV",
+        "VIRTUAL_ENV_PROMPT",
+        "CONDA_PREFIX",
+        "UV_PROJECT_ENVIRONMENT",
+        "UV_PYTHON",
+        "PYTHONHOME",
     ):
         clean_env.pop(name, None)
     (target / "integration-proof.txt").write_text("ready\n", encoding="utf-8")
