@@ -1,0 +1,245 @@
+diff --git a/knowledge/pr-notes/PR_NOTE_substrate_gap_closure.md b/knowledge/pr-notes/PR_NOTE_substrate_gap_closure.md
+index 136ccde..f431cfb 100644
+--- a/knowledge/pr-notes/PR_NOTE_substrate_gap_closure.md
++++ b/knowledge/pr-notes/PR_NOTE_substrate_gap_closure.md
+@@ -15,22 +15,22 @@ Instead of verbose feature list, this note points to the workplans that schedule
+
+ **Decision Freeze & Workplans (scheduling):**
+
+-- Decision freeze D8/D9/D10: [`substrate-decision-freeze-2026-07-15.md`](../research/substrate-decision-freeze-2026-07-15.md)
+-- Gap-closure workplan round2 (FIND-001..018, 11 slices): [`substrate-gap-closure-workplan-round2-2026-07-15.md`](../research/substrate-gap-closure-workplan-round2-2026-07-15.md)
++- Decision freeze D8/D9/D10: [`substrate-decision-freeze-2026-07-15.md`](../../worklogs/archive/substrate-decision-freeze-2026-07-15.md)
++- Gap-closure workplan round2 (FIND-001..018, 11 slices): [`substrate-gap-closure-workplan-round2-2026-07-15.md`](../../worklogs/archive/substrate-gap-closure-workplan-round2-2026-07-15.md)
+
+ **Slice implementation plans (execution):**
+
+-- Slice 0/1 prep: [`substrate-slice0-slice1-implementation-plan-2026-07-15.md`](../research/substrate-slice0-slice1-implementation-plan-2026-07-15.md)
+-- Slice 1 closure + Slice 2 init: [`substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md`](../research/substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md)
+-- Slice 2 patch design (observability): [`substrate-slice2-patch-design-2026-07-15.md`](../research/substrate-slice2-patch-design-2026-07-15.md)
+-- Slice 3 patch design (Stage C): [`substrate-slice3-patch-design-2026-07-15.md`](../research/substrate-slice3-patch-design-2026-07-15.md)
+-- Slice 4 patch design (governance): [`substrate-slice4-patch-design-2026-07-15.md`](../research/substrate-slice4-patch-design-2026-07-15.md)
+-- Slice 5-7 closure (safety & execution truthfulness): [`substrate-slice5-6-7-closure-2026-07-15.md`](../research/substrate-slice5-6-7-closure-2026-07-15.md) + state assessment [`substrate-state-assessment-2026-07-15-round3.md`](../research/substrate-state-assessment-2026-07-15-round3.md)
++- Slice 0/1 prep: [`substrate-slice0-slice1-implementation-plan-2026-07-15.md`](../../worklogs/archive/substrate-slice0-slice1-implementation-plan-2026-07-15.md)
++- Slice 1 closure + Slice 2 init: [`substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md`](../../worklogs/archive/substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md)
++- Slice 2 patch design (observability): [`substrate-slice2-patch-design-2026-07-15.md`](../../worklogs/archive/substrate-slice2-patch-design-2026-07-15.md)
++- Slice 3 patch design (Stage C): [`substrate-slice3-patch-design-2026-07-15.md`](../../worklogs/archive/substrate-slice3-patch-design-2026-07-15.md)
++- Slice 4 patch design (governance): [`substrate-slice4-patch-design-2026-07-15.md`](../../worklogs/archive/substrate-slice4-patch-design-2026-07-15.md)
++- Slice 5-7 closure (safety & execution truthfulness): [`substrate-slice5-6-7-closure-2026-07-15.md`](../../worklogs/archive/substrate-slice5-6-7-closure-2026-07-15.md) + state assessment [`substrate-state-assessment-2026-07-15-round3.md`](../../worklogs/archive/substrate-state-assessment-2026-07-15-round3.md)
+
+ **Slice 9 (global history):**
+
+-- Patch design: [`substrate-slice9-patch-design-2026-07-15.md`](../research/substrate-slice9-patch-design-2026-07-15.md)
+-- Closure: [`substrate-slice9-closure-2026-07-15.md`](../research/substrate-slice9-closure-2026-07-15.md)
++- Patch design: [`substrate-slice9-patch-design-2026-07-15.md`](../../worklogs/archive/substrate-slice9-patch-design-2026-07-15.md)
++- Closure: [`substrate-slice9-closure-2026-07-15.md`](../../worklogs/archive/substrate-slice9-closure-2026-07-15.md)
+
+ **Authoring hardening (ADR-11 I9):**
+
+diff --git a/pyproject.toml b/pyproject.toml
+index e8a7139..2f0d280 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -306,7 +306,10 @@ pytest_add_cli_args_test_selection = [
+ ]
+ # Complete package copy supplies sibling imports while source_paths remains the
+ # only mutation authority. Alias/config tests live outside this core C4 seat.
+-also_copy = ["src/fa"]
++# S5.4.5: test_entrypoint_expression_is_unchanged reads scripts/fa-entrypoint.sh
++# via relative Path — mutation staging must include scripts/ or it fails
++# FileNotFoundError (pre-existing gap triggered when workspace_bootstrap.py changed).
++also_copy = ["src/fa", "scripts"]
+ # Mutmut 3.6 identifies the parser from the literal "pyrefly" argv element.
+ # Keep the positional path segment exactly equal to source_paths; T19 pins it.
+ type_check_command = [
+diff --git a/src/fa/inner_loop/runtime_limits.py b/src/fa/inner_loop/runtime_limits.py
+index 3d8f387..52110a9 100644
+--- a/src/fa/inner_loop/runtime_limits.py
++++ b/src/fa/inner_loop/runtime_limits.py
+@@ -447,10 +447,11 @@ def resolve_limits_for_role(loaded: RuntimeLimitsLoadResult, role: str | None) -
+     this owns the application policy. ``None`` role means «no role scope»
+     (smoke/conformance paths) and keeps the global value.
+     """
+-    if role in _LIVE_ROLE_NAMES:
++    if role is not None and role in _LIVE_ROLE_NAMES:
++        role_str: str = role
+         return replace(
+             loaded.limits,
+-            max_iterations=loaded.role_iterations.get(role, ROLE_ITERATION_DEFAULTS[role]),
++            max_iterations=loaded.role_iterations.get(role_str, ROLE_ITERATION_DEFAULTS[role_str]),
+         )
+     return loaded.limits
+
+diff --git a/src/fa/workspace_bootstrap.py b/src/fa/workspace_bootstrap.py
+index 1bba675..07112d6 100644
+--- a/src/fa/workspace_bootstrap.py
++++ b/src/fa/workspace_bootstrap.py
+@@ -236,9 +236,27 @@ def _exclusive_lock(path: Path) -> Iterator[None]:
+         os.close(descriptor)
+
+
+-def _command_environment() -> dict[str, str]:
++def _command_environment(workspace: Path | None = None) -> dict[str, str]:
++    """Return a hermetic env for uv/pre-commit subprocesses.
++
++    Production-grade: pop VIRTUAL_ENV leaks so uv doesn't reuse a parent
++    venv, and explicitly pin UV_PROJECT_ENVIRONMENT to workspace/.venv
++    when workspace is known (operator chose pop+set explicit pinning).
++    """
++
+     environment = os.environ.copy()
++    for key in (
++        "VIRTUAL_ENV",
++        "VIRTUAL_ENV_PROMPT",
++        "CONDA_PREFIX",
++        "UV_PROJECT_ENVIRONMENT",
++        "UV_PYTHON",
++        "PYTHONHOME",
++    ):
++        environment.pop(key, None)
+     environment.update(GIT_TERMINAL_PROMPT="0", UV_LINK_MODE="copy")
++    if workspace is not None:
++        environment["UV_PROJECT_ENVIRONMENT"] = str((workspace / ".venv").resolve())
+     return environment
+
+
+@@ -261,7 +279,7 @@ def _run_process(
+             stdin=subprocess.DEVNULL,
+             text=True,
+             timeout=timeout,
+-            env=_command_environment(),
++            env=_command_environment(cwd),
+         )
+     except FileNotFoundError as exc:
+         raise _ReadinessError(missing_reason or failure_reason, fingerprint=fingerprint) from exc
+diff --git a/tests/test_deploy_scripts.py b/tests/test_deploy_scripts.py
+index 89b0e5b..bf74aef 100644
+--- a/tests/test_deploy_scripts.py
++++ b/tests/test_deploy_scripts.py
+@@ -824,13 +824,18 @@ def test_current_workspace_docs_reject_superseded_transport_and_session_claims()
+
+
+ def test_historical_workspace_docs_have_top_level_superseded_banner() -> None:
+-    """C0 S8/T15: obsolete command sheets remain evidence, never current instructions."""
++    """C0 S8/T15: obsolete command sheets remain evidence, never current instructions.
++
++    R02 minimalism: S13 session-start prompts (ephemeral git clone/checkout/apply
++    instructions) were intentionally deleted in f2ed2c9 file work — they do NOT
++    contain stale transport claims (git clone --local, hardlink, container
++    lifecycle...). Only workspace-isolation docs contain those stale claims and
++    need the HISTORICAL/SUPERSEDED banner. Expect 2, not 4.
++    """
+
+     historical_docs = (
+         _ROOT / "knowledge" / "pr-notes" / "workspace-isolation.md",
+         _ROOT / "worklogs" / "pr-notes" / "workspace-isolation.md",
+-        _ROOT / "worklogs" / "S13-NEXT-SESSION-START.md",
+-        _ROOT / "worklogs" / "S13-SESSION-START-PROMPT.md",
+     )
+     for path in historical_docs:
+         banner = "\n".join(path.read_text(encoding="utf-8").splitlines()[:12])
+@@ -858,9 +863,8 @@ def test_workspace_stale_claims_are_confined_to_historical_evidence() -> None:
+         Path("knowledge/anti-patterns/AP-004-symptom-chasing-without-model.md"),
+         Path("knowledge/pr-notes/workspace-isolation.md"),
+         Path("worklogs/pr-notes/workspace-isolation.md"),
+-        Path("worklogs/S13-NEXT-SESSION-START.md"),
+-        Path("worklogs/S13-SESSION-START-PROMPT.md"),
+         Path("worklogs/implementation-plans/PLAN-session-workspace-readiness-bootstrap.md"),
++        Path("worklogs/implementation-plans/PLAN-rushed-patch-foundation-closure.md"),
+     }
+     violations: dict[str, list[str]] = {}
+     for path in _ROOT.rglob("*.md"):
+diff --git a/tests/test_iteration_cap.py b/tests/test_iteration_cap.py
+index 4de8828..5fb1394 100644
+--- a/tests/test_iteration_cap.py
++++ b/tests/test_iteration_cap.py
+@@ -17,7 +17,7 @@ from __future__ import annotations
+
+ from collections.abc import Mapping
+ from pathlib import Path
+-from typing import Any
++from typing import Any, override
+
+ import pytest
+
+@@ -207,6 +207,7 @@ def test_cap_signal_never_overwrites_guard_denial(tmp_path: Path) -> None:
+     class DenyAfter(GuardMiddleware):
+         attaches_to = (LifecyclePoint.AFTER_TOOL_EXEC,)
+
++        @override
+         def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
+             return Decision.deny("test denial")
+
+diff --git a/tests/test_s5_state_root_contract.py b/tests/test_s5_state_root_contract.py
+index 6fce375..41048cf 100644
+--- a/tests/test_s5_state_root_contract.py
++++ b/tests/test_s5_state_root_contract.py
+@@ -183,8 +183,13 @@ def test_entrypoint_expression_is_unchanged(tmp_path: Path) -> None:
+
+     If the shell contract moves, the agreement test above must be revisited
+     rather than silently comparing against something new.
++
++    Production-grade: use repo-root resolution, not cwd-relative Path, so
++    mutation staging (which copies tests + src/fa + scripts) still finds the file.
+     """
+-    entrypoint = Path("scripts/fa-entrypoint.sh").read_text(encoding="utf-8")
++
++    repo_root = Path(__file__).resolve().parents[1]
++    entrypoint = (repo_root / "scripts" / "fa-entrypoint.sh").read_text(encoding="utf-8")
+     assert 'local state_root="${FA_STATE_ROOT:-${HOME}/.fa}"' in entrypoint
+
+
+diff --git a/tests/test_slice_mutmut.py b/tests/test_slice_mutmut.py
+index d720542..7cca0de 100644
+--- a/tests/test_slice_mutmut.py
++++ b/tests/test_slice_mutmut.py
+@@ -647,7 +647,7 @@ def test_permanent_mutation_configuration_includes_readiness_and_type_filter() -
+     source_paths = mutmut["source_paths"]
+     assert source_paths[-1] == "src/fa/workspace_bootstrap.py"
+     assert mutmut["pytest_add_cli_args_test_selection"][-1] == "tests/test_workspace_bootstrap.py"
+-    assert mutmut["also_copy"] == ["src/fa"]
++    assert mutmut["also_copy"] == ["src/fa", "scripts"]
+     command = mutmut["type_check_command"]
+     assert command[:2] == ["pyrefly", "check"]
+     assert command[2 : 2 + len(source_paths)] == source_paths
+diff --git a/tests/test_workspace_readiness_integration.py b/tests/test_workspace_readiness_integration.py
+index 39ba940..802f4b0 100644
+--- a/tests/test_workspace_readiness_integration.py
++++ b/tests/test_workspace_readiness_integration.py
+@@ -125,6 +125,12 @@ def test_clean_candidate_real_readiness_commit_and_local_publication(request: py
+         "GIT_AUTHOR_EMAIL",
+         "GIT_COMMITTER_NAME",
+         "GIT_COMMITTER_EMAIL",
++        "VIRTUAL_ENV",
++        "VIRTUAL_ENV_PROMPT",
++        "CONDA_PREFIX",
++        "UV_PROJECT_ENVIRONMENT",
++        "UV_PYTHON",
++        "PYTHONHOME",
+     ):
+         clean_env.pop(name, None)
+     (target / "integration-proof.txt").write_text("ready\n", encoding="utf-8")
+diff --git a/worklogs/pr-notes/PR_NOTE_substrate_gap_closure.md b/worklogs/pr-notes/PR_NOTE_substrate_gap_closure.md
+index 4956f33..c1bfa0d 100644
+--- a/worklogs/pr-notes/PR_NOTE_substrate_gap_closure.md
++++ b/worklogs/pr-notes/PR_NOTE_substrate_gap_closure.md
+@@ -16,15 +16,15 @@ Instead of verbose feature list, this note points to the workplans that schedule
+ **Decision Freeze & Workplans (scheduling):**
+
+ - Decision freeze D8/D9/D10: [`substrate-decision-freeze-2026-07-15.md`](../../worklogs/archive/substrate-decision-freeze-2026-07-15.md)
+-- Gap-closure workplan round2 (FIND-001..018, 11 slices): [`substrate-gap-closure-workplan-round2-2026-07-15.md`](../../worklogs/implementation-plans/substrate-gap-closure-workplan-round2-2026-07-15.md)
++- Gap-closure workplan round2 (FIND-001..018, 11 slices): [`substrate-gap-closure-workplan-round2-2026-07-15.md`](../archive/substrate-gap-closure-workplan-round2-2026-07-15.md)
+
+ **Slice implementation plans (execution):**
+
+-- Slice 0/1 prep: [`substrate-slice0-slice1-implementation-plan-2026-07-15.md`](../../worklogs/implementation-plans/substrate-slice0-slice1-implementation-plan-2026-07-15.md)
++- Slice 0/1 prep: [`substrate-slice0-slice1-implementation-plan-2026-07-15.md`](../archive/substrate-slice0-slice1-implementation-plan-2026-07-15.md)
+ - Slice 1 closure + Slice 2 init: [`substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md`](../../worklogs/archive/substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md)
+-- Slice 2 patch design (observability): [`substrate-slice2-patch-design-2026-07-15.md`](../../worklogs/implementation-plans/substrate-slice2-patch-design-2026-07-15.md)
+-- Slice 3 patch design (Stage C): [`substrate-slice3-patch-design-2026-07-15.md`](../../worklogs/implementation-plans/substrate-slice3-patch-design-2026-07-15.md)
+-- Slice 4 patch design (governance): [`substrate-slice4-patch-design-2026-07-15.md`](../../worklogs/implementation-plans/substrate-slice4-patch-design-2026-07-15.md)
++- Slice 2 patch design (observability): [`substrate-slice2-patch-design-2026-07-15.md`](../archive/substrate-slice2-patch-design-2026-07-15.md)
++- Slice 3 patch design (Stage C): [`substrate-slice3-patch-design-2026-07-15.md`](../archive/substrate-slice3-patch-design-2026-07-15.md)
++- Slice 4 patch design (governance): [`substrate-slice4-patch-design-2026-07-15.md`](../archive/substrate-slice4-patch-design-2026-07-15.md)
+ - Slice 5-7 closure (safety & execution truthfulness): [`substrate-slice5-6-7-closure-2026-07-15.md`](../../worklogs/archive/substrate-slice5-6-7-closure-2026-07-15.md) + state assessment [`substrate-state-assessment-2026-07-15-round3.md`](../../worklogs/archive/substrate-state-assessment-2026-07-15-round3.md)
+
+ **Slice 9 (global history):**

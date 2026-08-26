@@ -23,7 +23,7 @@ parity, authoritative stats/session-DB live proof, and explicit parent closure.
 **Parent context:**
 [`PLAN-cli-trace-S13-multi-provider-conformance.md`](./PLAN-cli-trace-S13-multi-provider-conformance.md)
 and
-[`PLAN-cli-trace-S13.10-tool-name-sanitization.md`](./PLAN-cli-trace-S13.10-tool-name-sanitization.md).
+[`PLAN-cli-trace-S13.10-tool-name-sanitization.md`](../archive/PLAN-cli-trace-S13.10-tool-name-sanitization.md).
 
 **Main-plan trajectory:** managed-workspace readiness is already live-verified.
 This slice repairs the first downstream provider request so a natural default

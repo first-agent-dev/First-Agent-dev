@@ -348,7 +348,7 @@ Closed by `tests/test_session_manifest_guards.py`, which drives the public
 asserts the specific error code, plus a registry guard that fails when a new
 `SessionManagerError` code has no test. Post-fix the same sweep reports
 `caught=9 survived=0`. See
-[`PLAN-cli-trace-S6.6-mutation-gap-closure.md`](./PLAN-cli-trace-S6.6-mutation-gap-closure.md).
+[`PLAN-cli-trace-S6.6-mutation-gap-closure.md`](../archive/PLAN-cli-trace-S6.6-mutation-gap-closure.md).
 
 ## 7. Deferred and follow-up work
 

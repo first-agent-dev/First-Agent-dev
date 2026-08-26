@@ -61,7 +61,7 @@ error, or timing detail.
 | `tests/test_probe_cli.py` | NEW — 5 tests (fake transport) |
 | `knowledge/instructions/02-operations.md` | probe docs, wrapper install, troubleshooting |
 | `knowledge/llms.txt` | scripts/fa + test_probe_cli.py entries |
-| `knowledge/BACKLOG.md` | I-26 (probe --all-entries), I-27 (fa help) |
+| `worklogs/BACKLOG.md` | I-26 (probe --all-entries), I-27 (fa help) |
 | `knowledge/pr-notes/PR_NOTE_FA_PROBE.md` | This file |
 
 ## Tests

@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S12 — platform capability markers (native-Windows dev parity)
 
 **Status:** COMPLETE (2026-08-02) — `tests/_capabilities.py` shipped with six cached

@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S11 — controlled deployment and closeout (operator live-verification sheet)
 
 Plan-ID: `PLAN-cli-trace-S11-controlled-deployment`

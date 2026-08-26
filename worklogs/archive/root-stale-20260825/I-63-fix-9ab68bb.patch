@@ -1,0 +1,73 @@
+From 9ab68bbd42c3cf8c11db11a42a6189619aa4cd6a Mon Sep 17 00:00:00 2001
+From: First-Agent Dev <fix@first-agent.dev>
+Date: Mon, 25 Aug 2026 12:30:00 +0000
+Subject: [PATCH] fix: propagate ContextVar to parallel tool workers (I-63)
+
+Fixes S18 C9 first-try failure: parallel batch [fs_search, fs_blackboard_query]
+failed with blackboard_unavailable because get_current_session() returned None
+inside ThreadPoolExecutor workers.
+
+Root cause:
+  src/fa/inner_loop/context.py defines ContextVar _current_session with default None.
+  src/fa/inner_loop/loop.py _execute_batch_parallel used executor.submit(dispatch, call)
+  without copying contextvars. Worker threads don't inherit ContextVar.
+
+Fix:
+  - import contextvars
+  - copy_context() per task (distinct Context per task, otherwise "already entered" error)
+  - executor.submit(ctx.run, dispatch, call)
+
+Affected tools (all use get_current_session):
+  blackboard_query, fs_search, read_file, write_file, edit_file, run_bash,
+  fs_exploration_metrics, observability, spawn_subagent
+
+Verification:
+  - tests/test_parallel_context.py new C1 test passes, fails without fix
+  - 98+ existing tests pass
+  - S18 C4/C5 and C10 wiring probes pass locally
+
+Base: 9ab68bbd42c3cf8c11db11a42a6189619aa4cd6a (remote main)
+Applies to: any recent main where loop.py has _execute_batch_parallel
+
+---
+ src/fa/inner_loop/loop.py | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/fa/inner_loop/loop.py b/src/fa/inner_loop/loop.py
+index 7e69671..8d5dcb4 100644
+--- a/src/fa/inner_loop/loop.py
++++ b/src/fa/inner_loop/loop.py
+@@ -9,6 +9,7 @@
+
+ from __future__ import annotations
+
++import contextvars
+ from collections.abc import Iterable, Iterator, Sequence
+ from concurrent.futures import ThreadPoolExecutor, wait
+ from dataclasses import dataclass
+@@ -349,11 +350,20 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
+     results_map: dict[str, ToolResult] = {}
+     if exec_payloads:
+         max_workers = min(len(exec_payloads), _MAX_TOOL_WORKERS)
++        # §I-S14b-5: propagate contextvars (e.g. fa_current_session) to worker threads.
++        # ContextVar is thread-local; without copy_context().run, get_current_session()
++        # returns None inside ThreadPool workers, causing fs_blackboard_query to fail
++        # with blackboard_unavailable on first try in parallel batches (I-63).
++        # NOTE: Context objects cannot be entered concurrently; we must create
++        # a distinct Context per task (otherwise "already entered" error).
++        ctxs = [contextvars.copy_context() for _ in exec_payloads]
+         try:
+             with ThreadPoolExecutor(max_workers=max_workers) as executor:
+-                futures = {
+-                    executor.submit(registry.dispatch, p.tool_call): p for p in exec_payloads if p.tool_call is not None
+-                }
++                futures = {}
++                for p, ctx in zip(exec_payloads, ctxs, strict=False):
++                    if p.tool_call is None:
++                        continue
++                    futures[executor.submit(ctx.run, registry.dispatch, p.tool_call)] = p
+                 done, _ = wait(futures.keys(), timeout=30)
+                 for fut in done:
+                     p = futures[fut]
+--
+2.43.0

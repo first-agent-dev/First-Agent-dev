@@ -16,7 +16,7 @@
 > section maps it onto the **shipped** code as of M-1..M-8. For the
 > authoritative per-module index see
 > [`knowledge/llms.txt`](./llms.txt) §BY-DEMAND INDEX; for milestone
-> status see [`knowledge/BACKLOG.md`](./BACKLOG.md) and
+> status see [`worklogs/BACKLOG.md`](../worklogs/BACKLOG.md) and
 > [`HANDOFF.md`](../worklogs/HANDOFF.md).
 
 - **Instruction Layer →** `AGENTS.md` + ADRs + `knowledge/` (text

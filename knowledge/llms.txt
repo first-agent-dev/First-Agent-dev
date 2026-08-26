@@ -1,10 +1,11 @@
-# First-Agent — llms.txt v2 Proposal (Rewritten to Remove Excess BY-DEMAND INDEX)
+# First-Agent — llms.txt
 
 > Locally orchestrated, mixed-tier LLM coding agent for single power-user. Filesystem-canonical knowledge (Markdown + YAML frontmatter); read-side scales lazily from grep to BM25. Written in Python; target codebases the agent reads can be anything.
 
 > This file is an index for LLM agents that want to ingest project documentation in one fetch. Paths relative to repo root.
 
-> Tiered layout. §MUST READ FIRST is smallest path that bootstraps session (5 files, in order). §TASK ROUTING points task-types at right primary entrypoint. §FORMAL SUBSTRATE (NEW) replaces §BY-DEMAND INDEX full file list — use Blackboard query + instant grep for artifact search.
+> Tiered layout. §MUST READ FIRST is smallest path that bootstraps session (5 files, in order). §TASK ROUTING points task-types at right primary entrypoint.
+§FORMAL SUBSTRATE replaces §BY-DEMAND INDEX full file list — use Blackboard query + instant grep for artifact search.
 
 ## § MUST READ FIRST
 
@@ -12,9 +13,9 @@ Five files cover ~90% of session-start context. Read in order:
 
 1. AGENTS.md — universal session loadout: repo navigation, style, §Pre-flight checklist, §Context-budget discipline, cross-project anti-patterns, §Loadable skills, query routing, §Querying Artifacts — Use Blackboard and Instant Grep First
 2. knowledge/project-overview.md — §1.1 four-pillar goal; §1.2 minimalism-first; §1.2.5 compliance-by-construction; §1.2.6 Substrate Formality; §1.2.7 Pair over Autonomy
-3. worklogs/HANDOFF.md — current state tables (Landmarks / Gotchas / Backlog), §Next priority list
+3. worklogs/HANDOFF.md — ongoing tasks, planned work - updated 2026-08-25
 4. knowledge/adr/DIGEST.md — one-paragraph cheat-sheet per ADR
-5. knowledge/reference.md — canonical definitions, features, session architecture (replaces glossary.md)
+5. knowledge/reference.md — canonical definitions, features, project architecture
 
 ## § TASK ROUTING
 
@@ -41,13 +42,13 @@ Task type → primary entrypoint, then secondary:
 
 - **For finding artifacts by TYPE / TITLE / REVISION:** `fs_blackboard_query(type="skill", key="<substring in title/path>")` → typed, content-hashed rows (id, type, title, path, timestamps) with lazy index on first call. `key` matches metadata (title/path/hash), **NOT file body**. `type="file_version"` returns `pre/post-<uuid>` mutation snapshots.
 - **For body-content substring search (code OR docs) — S14b.1 unified `fs_search`:** `fs_search(query="…", output_mode="files", limit=10)` → FTS5 BM25 + trigram, <50ms after first-call lazy index, returns paths with match_count + a short first-match snippet. Add `glob="*.py"` for path/pattern filtering, `include_tests=false` to exclude tests/, `path="src/…"` to scope to a subdir. DEFAULT to `output_mode="files"`. Escalate to `output_mode="regions"` (contiguous snippets with context) when you want inline code without a follow-up read_file, or `output_mode="matches"` for exact line numbers (rare, e.g. to target an edit_file). Use `output_mode="counts"` for a quick distribution overview. Body retrieval of a known path → `fs_read_file(path=…)`. Hard caps: `limit` clamped to 1–50, `context_lines` clamped to 0–5; responses capped at ~30KB. Do NOT invoke `grep`/`rg`/`find`/`ag`/`ack` via bash for discovery — they are not token-bounded and historically caused 124-step timeouts.
-- **For call-graph navigation (S16) — `fs_reach`:** `fs_reach(symbol="_parse_bool", direction="up", depth=2)` → resolves the symbol by exact suffix (or `§anchor-id`), BFS-walks callers (up) / callees (down) / both over the lazily-built `.fa/structural.db`. Params: `direction` (`up|down|both`, default both), `depth` (default 2, max 5), `limit` (default 20, max 50), `kind` (`function|method|doc_anchor`), `include_tests` (default false — test paths filtered at query time). Python-only in v1: non-Python workspaces return a structured `status:"unavailable"`; unresolved callees are reported honestly as `<unresolved:…>` — v1 resolution is in-file only, no cross-file edges. Example: `fs_reach(symbol="classify_batches", direction="down", depth=1)` lists the functions `classify_batches` calls.
+- **For call-graph navigation (S16) — `fs_reach`:** `fs_reach(symbol="_parse_bool", direction="up", depth=2)` → resolves the symbol by exact suffix (or `§anchor-id`), BFS-walks callers (up) / callees (down) / both over the lazily-built `.fa/structural.db`. Params: `direction` (`up|down|both`, default both), `depth` (default 2, max 5), `limit` (default 20, max 50), `kind` (`function|method|doc_anchor`), `include_tests` (default false — test paths filtered at query time). Python-only in v1: non-Python workspaces return a structured `status:"unavailable"`; unresolved callees are reported honestly as `<unresolved:…>` — v1 resolution is in-file only, no cross-file edges.
 - **Code anchors (S17):** contract/invariant points carry `# §<stable-id>: <description>` comments (sparse: ≤1 per ~200 lines; stable: never rename a referenced id). Resolve via `fs_reach(symbol="§<id>")`, find via `fs_search(query="§<id>")`. Seed anchors exist in `blackboard.py`, `state.py`, `runtime_limits.py`, `loop.py`, `fts_index.py`, `structural_index.py`.
 - **For full file list:** Query blackboard: `fs_blackboard_query(type="research")` returns matching blackboard entries with path, content_hash, title. For plain path globbing use `fs_search(query=" ", glob="knowledge/**/*.md")` but prefer blackboard. Artifact rows are indexed lazily on first artifact-typed query (content-hash-addressed, append-only). Blackboard is the single entry point for typed artifacts and mutation history.
 
 - **For bootstrap, you already have MUST READ FIRST 5 files. For anything else, query.**
 
-- **For writing files:** Declare read_set (files surfaced via fs_search or read via fs_read_file), write_set (file written), assumptions (base commit `git rev-parse HEAD`, llms.txt hash), version_dependencies. Blackboard checks conflict via `detect_conflict()` before allowing write. If conflict (read_set overlaps write_set of concurrent entry), return structured ToolResult.fail code "conflict_detected" with details, not silent overwrite (fixes Claude bug #55708 parent HEAD switched).
+- **For writing files:** Declare read_set (files surfaced via fs_search or read via fs_read_file), write_set (file written), assumptions (base commit `git rev-parse HEAD`, llms.txt hash), version_dependencies. Blackboard checks conflict via `detect_conflict()` before allowing write. If conflict (read_set overlaps write_set of concurrent entry), return structured ToolResult.fail code "conflict_detected" with details, not silent overwrite.
 
 - **Blackboard location:** `.fa/blackboard/blackboard.jsonl` append-only, never overwritten, Control Unit managing reads/writes, each entry stamped with toolchain digests, provider schema versions, content hashes for reproducibility (as MACOG blackboard). Queryable, detects conflict, metrics merge success/belief divergence |Bk-Sk|.
 
@@ -55,38 +56,51 @@ Task type → primary entrypoint, then secondary:
 
 ## § BY-DEMAND INDEX (Deprecated)
 
-This section is deprecated as of ADR-14/15 (2026-07-11). Previously full per-folder file list (200+ files). Now replaced by formal Blackboard query + instant grep. Reduces maintenance burden per doc-maintenance skill link integrity.
-
 **Deleted files (merged into knowledge/reference.md):** `knowledge/architecture.md`, `knowledge/glossary.md`, `knowledge/overview/FEATURES.md`. If you see references to these, they now live in `knowledge/reference.md`.
 
-**Why deprecated:**
+**Archived 2026-08-25 (b_full) — moved to `worklogs/archive/`:**
+- `PLAN-cli-trace-S10a-cli-coverage.md`, `S10b-cli-decomposition.md`, `S10c-contract-and-posture-fixes.md` — S10 slice COMPLETE
+- `PLAN-cli-trace-S11-controlled-deployment.md` — EXECUTED
+- `PLAN-cli-trace-S12-platform-capability-markers.md` — COMPLETE
+- `PLAN-cli-trace-S13.10-tool-name-sanitization.md` — COMPLETE
+- `PLAN-cli-trace-S5-authority-correctness.md`, `S6-observability-contracts.md`, `S6.6-mutation-gap-closure.md` — COMPLETE
+- `PLAN-cli-trace-S7-container-verification.md`, `S7-direct-run-vertical-slice.md` — EXECUTED/COMPLETE
+- `PLAN-cli-trace-S8-workflow-controller-surface.md`, `S9-stats-projections.md` — COMPLETE
+- `PLAN-fs-blackboard-query.md`, `PLAN-cli-trace-S14-blackboard-substrate-completion.md` — IMPLEMENTED
+- `PLAN-S14b.1-hardening.md` — READY but code-proven DONE (BINARY_SNIFF_BYTES, _refresh_state, _stat_canaries, _escape_like, _resolve_subdir)
+- `PLAN-rushed-patch-foundation-closure.md` — READY but superseded by 9ab68bb
+- `PLAN-cli-trace-S1-session-lifecycle.md`, `S2-session-manager-and-authority.md`, `S3-liveness-contract-audit.md`, `S4-direct-container-baseline.md` — READY but verification reports exist, >30d, archived per operator 2026-08-25
+- `PLAN-cli-trace-S14b-search-tools-memory-expansion.md` — READY but code-proven IMPLEMENTED (fs_search 631 lines, fs_reach, structural_index, cli registration), archived per operator 2026-08-25
 
+**Root stale moved to `worklogs/archive/root-stale-20260825/`:**
+- `I-63-fix-*.patch`, `rushed-patch-foundation-closure*.patch`, `S18-VALIDATOR-CHECKLIST.md`, `S18-I63-FIX-REPORT.md`, `UNDERSTANDING_REPORT.md`
+
+**BACKLOG/PR-NOTES canonical moves (b_full):**
+- `knowledge/BACKLOG.md` → `worklogs/BACKLOG.md` (56 entries, merged I-34..I-56). Old file now pointer stub.
+- `knowledge/pr-notes/` (25 files, stale `../research/` links) → `worklogs/pr-notes/` (30 files canonical). Old dir backed up to `worklogs/archive/knowledge-pr-notes-20260825/` and replaced with `README.md` pointer.
+
+**Why deprecated:**
 - Maintenance burden: When adding/removing file under docs/ or knowledge/, previously had to update llms.txt BY-DEMAND INDEX manually per doc-maintenance skill. Now BY-DEMAND INDEX auto-generated from blackboard or not needed — query blackboard instead.
 - Token waste: Previously, agent might read entire BY-DEMAND INDEX full list (hundreds of files) to find one file, token heavy. Now query returns 10 paths <50ms.
 - Formal substrate has content_hash, read_set/write_set, version_dependencies for reproducibility, llms.txt does not.
 
-**Maintained operator additions:**
+**Active implementation plans (10) — still in `worklogs/implementation-plans/` as of 2026-08-25 (after S1-S4+S14b archival):**
+- [`PLAN-ble001-waiver-reduction.md`](../worklogs/implementation-plans/PLAN-ble001-waiver-reduction.md): DRAFT waiver reduction.
+- [`PLAN-cli-trace-S10-cli-extraction-decision.md`](../worklogs/implementation-plans/PLAN-cli-trace-S10-cli-extraction-decision.md): S10 extraction decision record.
+- [`PLAN-cli-trace-S13-message-normalization.md`](../worklogs/implementation-plans/PLAN-cli-trace-S13-message-normalization.md): S13 message normalization slice.
+- [`PLAN-cli-trace-S13-multi-provider-conformance.md`](../worklogs/implementation-plans/PLAN-cli-trace-S13-multi-provider-conformance.md): CLOSED-CORE multi-provider conformance.
+- [`PLAN-cli-trace-S13-thinking-mode-toggle.md`](../worklogs/implementation-plans/PLAN-cli-trace-S13-thinking-mode-toggle.md): thinking-mode toggle.
+- [`PLAN-cli-trace-S13.11-portable-tool-schema-contract.md`](../worklogs/implementation-plans/PLAN-cli-trace-S13.11-portable-tool-schema-contract.md): READY P2 portable tool schema.
+- [`PLAN-session-workspace-readiness-bootstrap.md`](../worklogs/implementation-plans/PLAN-session-workspace-readiness-bootstrap.md): v33 READY — keep active (9ab68bb partial).
+- [`PLAN-session-workspace-readiness-live-closure.md`](../worklogs/implementation-plans/PLAN-session-workspace-readiness-live-closure.md): v18 DELIVERY-READY — keep active.
+- [`PLAN-workspace-bootstrap-mutation-34-survivors-review.md`](../worklogs/implementation-plans/PLAN-workspace-bootstrap-mutation-34-survivors-review.md): APPROVED — keep.
+- [`PLAN-workspace-bootstrap-mutation-34-survivors-subplan.md`](../worklogs/implementation-plans/PLAN-workspace-bootstrap-mutation-34-survivors-subplan.md): keep.
 
-- [`knowledge/skills/feature-planning/SKILL.md`](./skills/feature-planning/SKILL.md): Large-feature and new-project orchestration skill combining source-grounded planning, deterministic authority, live-path tests, mutation, and minimal-code gates.
-- [`knowledge/instructions/03-live-server-ci-governance-plan-ru.md`](./instructions/03-live-server-ci-governance-plan-ru.md): Russian live-server plan for CI/security simulation, shipped harness verification, GitHub governance, worktree review, and patch application.
-- [`worklogs/implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md`](../worklogs/implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md): DRAFT plan for source-verified CLI, trace authority, liveness, and direct-container hardening.
-- [`worklogs/implementation-plans/PLAN-cli-trace-S1-session-lifecycle.md`](../worklogs/implementation-plans/PLAN-cli-trace-S1-session-lifecycle.md): READY design/verification subplan for session lifecycle, session authority paths, run binding, and clean-format cutover.
-- [`worklogs/implementation-plans/cli-trace-S1-verification-report.md`](../worklogs/implementation-plans/cli-trace-S1-verification-report.md): S1 evidence report with source probes, frozen session/run decisions, and no-runtime-edit verification.
-- [`worklogs/implementation-plans/PLAN-cli-trace-S2-session-manager-and-authority.md`](../worklogs/implementation-plans/PLAN-cli-trace-S2-session-manager-and-authority.md): READY implementation subplan for SessionManager, session DB authority wiring, scoped EventLog/Blackboard, and DB-only stats.
-- [`worklogs/implementation-plans/cli-trace-S2-verification-report.md`](../worklogs/implementation-plans/cli-trace-S2-verification-report.md): S2 implementation evidence, targeted/full test results, static gates, kill-checks, and deferred production verification.
-- [`worklogs/implementation-plans/PLAN-cli-trace-S3-liveness-contract-audit.md`](../worklogs/implementation-plans/PLAN-cli-trace-S3-liveness-contract-audit.md): READY audit-only subplan for two-sided liveness, producer/consumer contracts, path matrices, failure policy, and verification hygiene.
-- [`worklogs/implementation-plans/cli-trace-S3-plan-review-report.md`](../worklogs/implementation-plans/cli-trace-S3-plan-review-report.md): S3 plan review evidence and READY verdict; runtime audit execution remains pending.
-- [`worklogs/implementation-plans/cli-trace-substrate-liveness-audit-2026-07-25.md`](../worklogs/implementation-plans/cli-trace-substrate-liveness-audit-2026-07-25.md): S3 executed liveness/contract audit — EventType and LogKind two-sided tables, branch-level dual-write, contract-checker false positives/negatives with producer kill-checks, P1–P33 matrix, V1–V26 dispositions, CT10/CT11 evidence, and the S5 next-slice selection.
-- [`worklogs/implementation-plans/PLAN-cli-trace-S4-direct-container-baseline.md`](../worklogs/implementation-plans/PLAN-cli-trace-S4-direct-container-baseline.md): READY operator-executed S4 subplan — clean-rebuild deployment identity, live session/run identity split, authority-vs-mirror counts, debug-body gate, proxy secret isolation, and post-run hygiene.
-- [`worklogs/implementation-plans/cli-trace-S4-verification-report.md`](../worklogs/implementation-plans/cli-trace-S4-verification-report.md): S4 executed deployment evidence — live session/run identity, authority-vs-mirror counts, debug-body gate, two-sided secret isolation, derived-consumer agreement, and the V1 reclassification from latent to production-reachable.
-- [`worklogs/implementation-plans/PLAN-cli-trace-S5-authority-correctness.md`](../worklogs/implementation-plans/PLAN-cli-trace-S5-authority-correctness.md): READY S5 subplan (v2, review-passed) — event-identity serialization, counter ordering, Blackboard conflict contract across commits, mutating-tool symmetry, authority-only agent reads, and the subagent isolation boundary.
-- [`worklogs/implementation-plans/PLAN-cli-trace-S13.11-portable-tool-schema-contract.md`](../worklogs/implementation-plans/PLAN-cli-trace-S13.11-portable-tool-schema-contract.md) (Large): READY P2 plan for one portable source schema, exact selected-provider CONF-8, shared production tool assembly, and correct cache identity.
-- [`worklogs/pr-notes/PR_NOTE_CLI_TRACE_S2_IMPLEMENTATION_S3_READY.md`](../pr-notes/PR_NOTE_CLI_TRACE_S2_IMPLEMENTATION_S3_READY.md): comprehensive PR note for the main plan, S1/S2 artifacts, implemented S2 changes, and reviewed S3 plan.
-- [`worklogs/implementation-plans/PLAN-session-workspace-readiness-live-closure.md`](../worklogs/implementation-plans/PLAN-session-workspace-readiness-live-closure.md) (Large): NO-SUDO DELIVERY-READY P2 closure; cache cause proven and CI uses read-only source plus uid-1000 tmpfs; PR/CI and §7 pending.
-- [`worklogs/implementation-plans/session-workspace-readiness-live-verification-from-6.md`](../worklogs/implementation-plans/session-workspace-readiness-live-verification-from-6.md): Post-merge live evidence from §6 through npm-cache causal proof and the pending repaired-deployment §7 gate.
+**Parent/meta plans still active:**
+- [`cli-trace-substrate-rebaseline-2026-07-25.md`](../worklogs/implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md): DRAFT parent workplan.
+- [`cli-trace-substrate-liveness-audit-2026-07-25.md`](../worklogs/implementation-plans/cli-trace-substrate-liveness-audit-2026-07-25.md): S3 executed audit evidence.
 
 **What to use instead:**
-
 - `fs_blackboard_query(type="research")` → all research-note blackboard entries
 - `fs_blackboard_query(type="adr")` → all ADR blackboard entries
 - `fs_blackboard_query(type="skill", key="api")` → skill entries whose title/path contains "api" (metadata match, not body)

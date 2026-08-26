@@ -6,7 +6,7 @@
 > zero** — its deletion is the trigger that flips
 > `.github/workflows/tests.yml` to blocking (`continue-on-error: false`,
 > gate `survived == 0`). Tracked in
-> [`BACKLOG.md` §I-23](./BACKLOG.md#i-23--mutation-testing-promotion-to-blocking-gate).
+> [`BACKLOG.md` §I-23](../worklogs/BACKLOG.md#i-23--mutation-testing-promotion-to-blocking-gate).
 >
 > **Baseline.** First honest run after the mutmut-3.x repair
 > (2026-06-12; the prior weekly workflow had been erroring instantly on a

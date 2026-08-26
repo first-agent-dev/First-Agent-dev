@@ -1,0 +1,753 @@
+diff --git a/knowledge/pr-notes/PR_NOTE_substrate_gap_closure.md b/knowledge/pr-notes/PR_NOTE_substrate_gap_closure.md
+index 136ccde..f431cfb 100644
+--- a/knowledge/pr-notes/PR_NOTE_substrate_gap_closure.md
++++ b/knowledge/pr-notes/PR_NOTE_substrate_gap_closure.md
+@@ -15,22 +15,22 @@ Instead of verbose feature list, this note points to the workplans that schedule
+
+ **Decision Freeze & Workplans (scheduling):**
+
+-- Decision freeze D8/D9/D10: [`substrate-decision-freeze-2026-07-15.md`](../research/substrate-decision-freeze-2026-07-15.md)
+-- Gap-closure workplan round2 (FIND-001..018, 11 slices): [`substrate-gap-closure-workplan-round2-2026-07-15.md`](../research/substrate-gap-closure-workplan-round2-2026-07-15.md)
++- Decision freeze D8/D9/D10: [`substrate-decision-freeze-2026-07-15.md`](../../worklogs/archive/substrate-decision-freeze-2026-07-15.md)
++- Gap-closure workplan round2 (FIND-001..018, 11 slices): [`substrate-gap-closure-workplan-round2-2026-07-15.md`](../../worklogs/archive/substrate-gap-closure-workplan-round2-2026-07-15.md)
+
+ **Slice implementation plans (execution):**
+
+-- Slice 0/1 prep: [`substrate-slice0-slice1-implementation-plan-2026-07-15.md`](../research/substrate-slice0-slice1-implementation-plan-2026-07-15.md)
+-- Slice 1 closure + Slice 2 init: [`substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md`](../research/substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md)
+-- Slice 2 patch design (observability): [`substrate-slice2-patch-design-2026-07-15.md`](../research/substrate-slice2-patch-design-2026-07-15.md)
+-- Slice 3 patch design (Stage C): [`substrate-slice3-patch-design-2026-07-15.md`](../research/substrate-slice3-patch-design-2026-07-15.md)
+-- Slice 4 patch design (governance): [`substrate-slice4-patch-design-2026-07-15.md`](../research/substrate-slice4-patch-design-2026-07-15.md)
+-- Slice 5-7 closure (safety & execution truthfulness): [`substrate-slice5-6-7-closure-2026-07-15.md`](../research/substrate-slice5-6-7-closure-2026-07-15.md) + state assessment [`substrate-state-assessment-2026-07-15-round3.md`](../research/substrate-state-assessment-2026-07-15-round3.md)
++- Slice 0/1 prep: [`substrate-slice0-slice1-implementation-plan-2026-07-15.md`](../../worklogs/archive/substrate-slice0-slice1-implementation-plan-2026-07-15.md)
++- Slice 1 closure + Slice 2 init: [`substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md`](../../worklogs/archive/substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md)
++- Slice 2 patch design (observability): [`substrate-slice2-patch-design-2026-07-15.md`](../../worklogs/archive/substrate-slice2-patch-design-2026-07-15.md)
++- Slice 3 patch design (Stage C): [`substrate-slice3-patch-design-2026-07-15.md`](../../worklogs/archive/substrate-slice3-patch-design-2026-07-15.md)
++- Slice 4 patch design (governance): [`substrate-slice4-patch-design-2026-07-15.md`](../../worklogs/archive/substrate-slice4-patch-design-2026-07-15.md)
++- Slice 5-7 closure (safety & execution truthfulness): [`substrate-slice5-6-7-closure-2026-07-15.md`](../../worklogs/archive/substrate-slice5-6-7-closure-2026-07-15.md) + state assessment [`substrate-state-assessment-2026-07-15-round3.md`](../../worklogs/archive/substrate-state-assessment-2026-07-15-round3.md)
+
+ **Slice 9 (global history):**
+
+-- Patch design: [`substrate-slice9-patch-design-2026-07-15.md`](../research/substrate-slice9-patch-design-2026-07-15.md)
+-- Closure: [`substrate-slice9-closure-2026-07-15.md`](../research/substrate-slice9-closure-2026-07-15.md)
++- Patch design: [`substrate-slice9-patch-design-2026-07-15.md`](../../worklogs/archive/substrate-slice9-patch-design-2026-07-15.md)
++- Closure: [`substrate-slice9-closure-2026-07-15.md`](../../worklogs/archive/substrate-slice9-closure-2026-07-15.md)
+
+ **Authoring hardening (ADR-11 I9):**
+
+diff --git a/pyproject.toml b/pyproject.toml
+index e8a7139..2f0d280 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -306,7 +306,10 @@ pytest_add_cli_args_test_selection = [
+ ]
+ # Complete package copy supplies sibling imports while source_paths remains the
+ # only mutation authority. Alias/config tests live outside this core C4 seat.
+-also_copy = ["src/fa"]
++# S5.4.5: test_entrypoint_expression_is_unchanged reads scripts/fa-entrypoint.sh
++# via relative Path — mutation staging must include scripts/ or it fails
++# FileNotFoundError (pre-existing gap triggered when workspace_bootstrap.py changed).
++also_copy = ["src/fa", "scripts"]
+ # Mutmut 3.6 identifies the parser from the literal "pyrefly" argv element.
+ # Keep the positional path segment exactly equal to source_paths; T19 pins it.
+ type_check_command = [
+diff --git a/src/fa/inner_loop/runtime_limits.py b/src/fa/inner_loop/runtime_limits.py
+index 3d8f387..52110a9 100644
+--- a/src/fa/inner_loop/runtime_limits.py
++++ b/src/fa/inner_loop/runtime_limits.py
+@@ -447,10 +447,11 @@ def resolve_limits_for_role(loaded: RuntimeLimitsLoadResult, role: str | None) -
+     this owns the application policy. ``None`` role means «no role scope»
+     (smoke/conformance paths) and keeps the global value.
+     """
+-    if role in _LIVE_ROLE_NAMES:
++    if role is not None and role in _LIVE_ROLE_NAMES:
++        role_str: str = role
+         return replace(
+             loaded.limits,
+-            max_iterations=loaded.role_iterations.get(role, ROLE_ITERATION_DEFAULTS[role]),
++            max_iterations=loaded.role_iterations.get(role_str, ROLE_ITERATION_DEFAULTS[role_str]),
+         )
+     return loaded.limits
+
+diff --git a/src/fa/workspace_bootstrap.py b/src/fa/workspace_bootstrap.py
+index 1bba675..07112d6 100644
+--- a/src/fa/workspace_bootstrap.py
++++ b/src/fa/workspace_bootstrap.py
+@@ -236,9 +236,27 @@ def _exclusive_lock(path: Path) -> Iterator[None]:
+         os.close(descriptor)
+
+
+-def _command_environment() -> dict[str, str]:
++def _command_environment(workspace: Path | None = None) -> dict[str, str]:
++    """Return a hermetic env for uv/pre-commit subprocesses.
++
++    Production-grade: pop VIRTUAL_ENV leaks so uv doesn't reuse a parent
++    venv, and explicitly pin UV_PROJECT_ENVIRONMENT to workspace/.venv
++    when workspace is known (operator chose pop+set explicit pinning).
++    """
++
+     environment = os.environ.copy()
++    for key in (
++        "VIRTUAL_ENV",
++        "VIRTUAL_ENV_PROMPT",
++        "CONDA_PREFIX",
++        "UV_PROJECT_ENVIRONMENT",
++        "UV_PYTHON",
++        "PYTHONHOME",
++    ):
++        environment.pop(key, None)
+     environment.update(GIT_TERMINAL_PROMPT="0", UV_LINK_MODE="copy")
++    if workspace is not None:
++        environment["UV_PROJECT_ENVIRONMENT"] = str((workspace / ".venv").resolve())
+     return environment
+
+
+@@ -261,7 +279,7 @@ def _run_process(
+             stdin=subprocess.DEVNULL,
+             text=True,
+             timeout=timeout,
+-            env=_command_environment(),
++            env=_command_environment(cwd),
+         )
+     except FileNotFoundError as exc:
+         raise _ReadinessError(missing_reason or failure_reason, fingerprint=fingerprint) from exc
+diff --git a/tests/test_deploy_scripts.py b/tests/test_deploy_scripts.py
+index 89b0e5b..bf74aef 100644
+--- a/tests/test_deploy_scripts.py
++++ b/tests/test_deploy_scripts.py
+@@ -824,13 +824,18 @@ def test_current_workspace_docs_reject_superseded_transport_and_session_claims()
+
+
+ def test_historical_workspace_docs_have_top_level_superseded_banner() -> None:
+-    """C0 S8/T15: obsolete command sheets remain evidence, never current instructions."""
++    """C0 S8/T15: obsolete command sheets remain evidence, never current instructions.
++
++    R02 minimalism: S13 session-start prompts (ephemeral git clone/checkout/apply
++    instructions) were intentionally deleted in f2ed2c9 file work — they do NOT
++    contain stale transport claims (git clone --local, hardlink, container
++    lifecycle...). Only workspace-isolation docs contain those stale claims and
++    need the HISTORICAL/SUPERSEDED banner. Expect 2, not 4.
++    """
+
+     historical_docs = (
+         _ROOT / "knowledge" / "pr-notes" / "workspace-isolation.md",
+         _ROOT / "worklogs" / "pr-notes" / "workspace-isolation.md",
+-        _ROOT / "worklogs" / "S13-NEXT-SESSION-START.md",
+-        _ROOT / "worklogs" / "S13-SESSION-START-PROMPT.md",
+     )
+     for path in historical_docs:
+         banner = "\n".join(path.read_text(encoding="utf-8").splitlines()[:12])
+@@ -858,9 +863,8 @@ def test_workspace_stale_claims_are_confined_to_historical_evidence() -> None:
+         Path("knowledge/anti-patterns/AP-004-symptom-chasing-without-model.md"),
+         Path("knowledge/pr-notes/workspace-isolation.md"),
+         Path("worklogs/pr-notes/workspace-isolation.md"),
+-        Path("worklogs/S13-NEXT-SESSION-START.md"),
+-        Path("worklogs/S13-SESSION-START-PROMPT.md"),
+         Path("worklogs/implementation-plans/PLAN-session-workspace-readiness-bootstrap.md"),
++        Path("worklogs/implementation-plans/PLAN-rushed-patch-foundation-closure.md"),
+     }
+     violations: dict[str, list[str]] = {}
+     for path in _ROOT.rglob("*.md"):
+diff --git a/tests/test_iteration_cap.py b/tests/test_iteration_cap.py
+index 4de8828..5fb1394 100644
+--- a/tests/test_iteration_cap.py
++++ b/tests/test_iteration_cap.py
+@@ -17,7 +17,7 @@ from __future__ import annotations
+
+ from collections.abc import Mapping
+ from pathlib import Path
+-from typing import Any
++from typing import Any, override
+
+ import pytest
+
+@@ -207,6 +207,7 @@ def test_cap_signal_never_overwrites_guard_denial(tmp_path: Path) -> None:
+     class DenyAfter(GuardMiddleware):
+         attaches_to = (LifecyclePoint.AFTER_TOOL_EXEC,)
+
++        @override
+         def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
+             return Decision.deny("test denial")
+
+diff --git a/tests/test_s5_state_root_contract.py b/tests/test_s5_state_root_contract.py
+index 6fce375..41048cf 100644
+--- a/tests/test_s5_state_root_contract.py
++++ b/tests/test_s5_state_root_contract.py
+@@ -183,8 +183,13 @@ def test_entrypoint_expression_is_unchanged(tmp_path: Path) -> None:
+
+     If the shell contract moves, the agreement test above must be revisited
+     rather than silently comparing against something new.
++
++    Production-grade: use repo-root resolution, not cwd-relative Path, so
++    mutation staging (which copies tests + src/fa + scripts) still finds the file.
+     """
+-    entrypoint = Path("scripts/fa-entrypoint.sh").read_text(encoding="utf-8")
++
++    repo_root = Path(__file__).resolve().parents[1]
++    entrypoint = (repo_root / "scripts" / "fa-entrypoint.sh").read_text(encoding="utf-8")
+     assert 'local state_root="${FA_STATE_ROOT:-${HOME}/.fa}"' in entrypoint
+
+
+diff --git a/tests/test_slice_mutmut.py b/tests/test_slice_mutmut.py
+index d720542..7cca0de 100644
+--- a/tests/test_slice_mutmut.py
++++ b/tests/test_slice_mutmut.py
+@@ -647,7 +647,7 @@ def test_permanent_mutation_configuration_includes_readiness_and_type_filter() -
+     source_paths = mutmut["source_paths"]
+     assert source_paths[-1] == "src/fa/workspace_bootstrap.py"
+     assert mutmut["pytest_add_cli_args_test_selection"][-1] == "tests/test_workspace_bootstrap.py"
+-    assert mutmut["also_copy"] == ["src/fa"]
++    assert mutmut["also_copy"] == ["src/fa", "scripts"]
+     command = mutmut["type_check_command"]
+     assert command[:2] == ["pyrefly", "check"]
+     assert command[2 : 2 + len(source_paths)] == source_paths
+diff --git a/tests/test_workspace_bootstrap.py b/tests/test_workspace_bootstrap.py
+index cf7788a..01fb7c1 100644
+--- a/tests/test_workspace_bootstrap.py
++++ b/tests/test_workspace_bootstrap.py
+@@ -1814,3 +1814,503 @@ def test_check_cli_dispatches_read_only_authority(
+     assert rc == 0
+     assert seen == [workspace]
+     assert json.loads(capsys.readouterr().out)["fingerprint"] == "sha256:check"
++
++
++# ---------------------------------------------------------------------------
++# Mutation-killing suite for 34 survivors (2026-08-25 targeted run)
++# Groups A-G per PLAN-workspace-bootstrap-mutation-34-survivors-subplan.md
++# ---------------------------------------------------------------------------
++
++
++def test_command_environment_hermetic_pop_and_pin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
++    """Group A: kills 12 pop mutants + 2 key-set mutants + 3 value mutants (17 total).
++
++    Asserts that 5 leak keys are removed even when present, that
++    UV_PROJECT_ENVIRONMENT leak is popped then re-pinned to workspace/.venv,
++    and that original os.environ is not mutated.
++    """
++
++    leak_keys = [
++        "VIRTUAL_ENV",
++        "VIRTUAL_ENV_PROMPT",
++        "CONDA_PREFIX",
++        "UV_PROJECT_ENVIRONMENT",
++        "UV_PYTHON",
++        "PYTHONHOME",
++    ]
++    pop_only_keys = [
++        "VIRTUAL_ENV",
++        "VIRTUAL_ENV_PROMPT",
++        "CONDA_PREFIX",
++        "UV_PYTHON",
++        "PYTHONHOME",
++    ]
++    for key in leak_keys:
++        monkeypatch.setenv(key, f"/leak/{key}")
++
++    # Snapshot original to ensure copy semantics
++    original_snapshot = {k: os.environ.get(k) for k in leak_keys}
++
++    env = bootstrap._command_environment(tmp_path)
++
++    # Pop must have removed 5 leak-only keys
++    for key in pop_only_keys:
++        assert key not in env, f"{key} leak not popped — kills mutmut_2..7,10..13"
++
++    # UV_PROJECT_ENVIRONMENT leak is popped then re-pinned — must be present but not leak value
++    assert "UV_PROJECT_ENVIRONMENT" in env
++    assert env["UV_PROJECT_ENVIRONMENT"] != f"/leak/UV_PROJECT_ENVIRONMENT"
++
++    # Pin must be exact resolved path, not "None", not "XX.venvXX", not ".VENV"
++    expected_pin = str((tmp_path / ".venv").resolve())
++    assert env["UV_PROJECT_ENVIRONMENT"] == expected_pin
++    assert env["UV_PROJECT_ENVIRONMENT"] != "None"  # kills mutmut_28 str(None)
++    assert env["UV_PROJECT_ENVIRONMENT"].endswith(".venv")  # kills XX.venvXX and .VENV
++    assert ".venv" in env["UV_PROJECT_ENVIRONMENT"]
++    assert "XX.venvXX" not in env["UV_PROJECT_ENVIRONMENT"]
++    assert ".VENV" not in env["UV_PROJECT_ENVIRONMENT"]
++
++    # Safe vars must be present
++    assert env["GIT_TERMINAL_PROMPT"] == "0"
++    assert env["UV_LINK_MODE"] == "copy"
++
++    # Original environ must still have leaks (copy, not mutate)
++    for key in leak_keys:
++        assert os.environ.get(key) == original_snapshot[key]
++
++    # None workspace must NOT set pin (kills mutmut_26,27 when they set wrong key)
++    env_none = bootstrap._command_environment(None)
++    for key in leak_keys:
++        assert key not in env_none, f"{key} not popped in None case"
++    assert "UV_PROJECT_ENVIRONMENT" not in env_none
++
++
++def test_command_environment_value_exactness(tmp_path: Path) -> None:
++    """Group A extra: exactness of .venv path."""
++
++    env = bootstrap._command_environment(tmp_path / "my-workspace")
++    pin = env["UV_PROJECT_ENVIRONMENT"]
++    # Must be absolute and resolved
++    assert Path(pin).is_absolute()
++    assert pin == str((tmp_path / "my-workspace" / ".venv").resolve())
++    # Must contain .venv exactly, case-sensitive
++    assert pin.endswith(".venv")
++    assert ".VENV" not in pin
++
++
++def test_open_private_calls_os_open_with_private_mode_and_nofollow(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """Group B: kills mutmut_7 (mode removed → default 0o777).
++
++    Spy records mode and flags without asserting inside wrapper (spy isolation).
++    """
++
++    seen: dict[str, Any] = {}
++    orig_open = os.open
++
++    def spy_open(path: str | os.PathLike[str], flags: int, *args: Any, **kwargs: Any) -> int:
++        # Record flags and mode
++        seen["flags"] = flags
++        if args:
++            seen["mode"] = args[0]
++        else:
++            seen["mode"] = kwargs.get("mode", 0o777)
++        return orig_open(path, flags, *args, **kwargs)
++
++    monkeypatch.setattr(os, "open", spy_open)
++
++    target = tmp_path / "secret"
++    fd = bootstrap._open_private(target, os.O_WRONLY | os.O_CREAT)
++    try:
++        assert seen["mode"] == 0o600, f"mode {oct(seen.get('mode', 0))} != 0o600 — kills mutmut_7"
++        assert seen["flags"] & getattr(os, "O_NOFOLLOW", 0) != 0, "O_NOFOLLOW not set"
++        # Final mode must be private
++        assert stat.S_IMODE(os.stat(target).st_mode) == 0o600
++    finally:
++        os.close(fd)
++
++
++def test_process_runner_pins_workspace_venv_in_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
++    """Group C: kills mutmut_21 env=_command_environment(cwd) → None."""
++
++    captured: dict[str, Any] = {}
++
++    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
++        captured["env"] = kwargs.get("env")
++        captured["cwd"] = kwargs.get("cwd")
++        return subprocess.CompletedProcess(command, 0, "ok\n", "")
++
++    monkeypatch.setattr("fa.workspace_bootstrap.subprocess.run", fake_run)
++
++    result = bootstrap._run_process(
++        ["tool"],
++        cwd=tmp_path,
++        timeout=1,
++        failure_reason="sync_failed",
++    )
++
++    assert result.stdout == "ok\n"
++    env = captured["env"]
++    assert isinstance(env, dict)
++    # Must be pinned to cwd/.venv, not None
++    assert "UV_PROJECT_ENVIRONMENT" in env, "pin missing — kills mutmut_21"
++    assert env["UV_PROJECT_ENVIRONMENT"] == str((tmp_path / ".venv").resolve())
++    assert env["UV_PROJECT_ENVIRONMENT"] != "None"
++
++
++def test_read_python_minor_skips_executable_check_on_nt(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """Group D: kills mutmut_7,8 for _read_python_minor (nt → XXntXX / NT)."""
++
++    python = tmp_path / ".venv" / "bin" / "python"
++    python.parent.mkdir(parents=True)
++    python.write_text("#!/bin/sh\necho fake\n", encoding="utf-8")
++    python.chmod(0o644)  # not executable
++
++    monkeypatch.setattr(os, "name", "nt")
++
++    def fake_run_process(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
++        return subprocess.CompletedProcess(command, 0, "3.13\n", "")
++
++    monkeypatch.setattr(bootstrap, "_run_process", fake_run_process)
++
++    # On nt, non-executable should still be considered valid
++    result = bootstrap._read_python_minor(tmp_path, strict=False)
++    assert result == "3.13"
++
++    result_strict = bootstrap._read_python_minor(tmp_path, strict=True)
++    assert result_strict == "3.13"
++
++
++def test_read_python_minor_requires_executable_on_posix(tmp_path: Path) -> None:
++    """Group D: posix side — non-executable must be rejected."""
++
++    python = tmp_path / ".venv" / "bin" / "python"
++    python.parent.mkdir(parents=True)
++    python.write_text("not exec", encoding="utf-8")
++    python.chmod(0o644)
++
++    # Ensure posix
++    assert os.name != "nt"
++    assert bootstrap._read_python_minor(tmp_path, strict=False) is None
++
++
++def test_hooks_current_skips_executable_check_on_nt(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """Group D: kills mutmut_12,13 for _hooks_current."""
++
++    workspace = _make_workspace(tmp_path)
++    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
++    hooks_dir = workspace / ".git" / "hooks"
++    hooks_dir.mkdir(parents=True, exist_ok=True)
++    for name in HOOK_NAMES:
++        src = hook_source / name
++        tgt = hooks_dir / name
++        tgt.write_bytes(src.read_bytes())
++        tgt.chmod(0o644)  # not executable
++
++    monkeypatch.setattr(os, "name", "nt")
++    assert bootstrap._hooks_current(workspace, hook_source) is True
++
++
++def test_hooks_current_requires_executable_on_posix(tmp_path: Path) -> None:
++    """Group D: posix requires X bit."""
++
++    workspace = _make_workspace(tmp_path)
++    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
++    hooks_dir = workspace / ".git" / "hooks"
++    hooks_dir.mkdir(parents=True, exist_ok=True)
++    for name in HOOK_NAMES:
++        src = hook_source / name
++        tgt = hooks_dir / name
++        tgt.write_bytes(src.read_bytes())
++        tgt.chmod(0o644)
++
++    assert os.name != "nt"
++    assert bootstrap._hooks_current(workspace, hook_source) is False
++
++
++def test_hooks_current_false_on_content_mismatch(tmp_path: Path) -> None:
++    """Group E: kills mutmut_21 return False → True on content mismatch."""
++
++    workspace = _make_workspace(tmp_path)
++    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
++    hooks_dir = workspace / ".git" / "hooks"
++    hooks_dir.mkdir(parents=True, exist_ok=True)
++    for name in HOOK_NAMES:
++        src = hook_source / name
++        tgt = hooks_dir / name
++        tgt.write_bytes(src.read_bytes())
++        tgt.chmod(0o755)
++
++    # Corrupt one
++    (hooks_dir / HOOK_NAMES[0]).write_bytes(b"different content")
++    (hooks_dir / HOOK_NAMES[0]).chmod(0o755)
++
++    assert bootstrap._hooks_current(workspace, hook_source) is False
++
++
++@requires_symlinks
++def test_hooks_current_false_on_symlink_mismatch(tmp_path: Path) -> None:
++    """Group E: kills mutmut_24 symlink resolve mismatch False → True."""
++
++    workspace = _make_workspace(tmp_path)
++    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
++    hooks_dir = workspace / ".git" / "hooks"
++    hooks_dir.mkdir(parents=True, exist_ok=True)
++    for name in HOOK_NAMES:
++        src = hook_source / name
++        tgt = hooks_dir / name
++        tgt.write_bytes(src.read_bytes())
++        tgt.chmod(0o755)
++
++    external = tmp_path / "external-hook"
++    external.write_bytes(b"same bytes as source but different file")
++    # Make external same bytes as source for first hook to isolate symlink check
++    external.write_bytes((hook_source / HOOK_NAMES[0]).read_bytes())
++    target = hooks_dir / HOOK_NAMES[0]
++    target.unlink()
++    target.symlink_to(external)
++
++    assert bootstrap._hooks_current(workspace, hook_source) is False
++
++
++@requires_symlinks
++def test_hook_seat_is_manageable_broken_symlink(tmp_path: Path) -> None:
++    """Group F: kills strict=True → False mutants (broken symlink not manageable)."""
++
++    source = tmp_path / "source"
++    source.write_text("hook content", encoding="utf-8")
++
++    broken = tmp_path / "broken"
++    broken.symlink_to(tmp_path / "nonexistent-target")
++
++    # Broken symlink should NOT be manageable
++    assert bootstrap._hook_seat_is_manageable(source, broken) is False
++
++
++def test_hook_seat_is_manageable_oserror_on_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
++    """Group F: kills except OSError False → True (mutmut_12)."""
++
++    source = tmp_path / "source"
++    source.write_text("hook content", encoding="utf-8")
++    target = tmp_path / "target"
++    target.write_text("different", encoding="utf-8")
++
++    orig_read_bytes = Path.read_bytes
++    calls: list[Path] = []
++
++    def fake_read_bytes(self: Path) -> bytes:
++        calls.append(self)
++        if self == target:
++            raise OSError("unreadable")
++        return orig_read_bytes(self)
++
++    monkeypatch.setattr(Path, "read_bytes", fake_read_bytes)
++
++    assert bootstrap._hook_seat_is_manageable(source, target) is False
++    assert target in calls
++
++
++def test_assert_managed_hook_ownership_preserves_fingerprint_on_resolve_error(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """Group G: kills mutmut_6,8 fingerprint=None/omitted in hook_status_failed."""
++
++    workspace = _make_workspace(tmp_path)
++    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
++
++    def raise_oserror(_: Path) -> Path:
++        raise OSError("resolve failed")
++
++    monkeypatch.setattr(bootstrap, "resolve_hooks_dir", raise_oserror)
++
++    with pytest.raises(bootstrap._ReadinessError) as caught:
++        bootstrap._assert_managed_hook_ownership(
++            workspace, hook_source, fingerprint="sha256:abc123"
++        )
++
++    assert caught.value.reason_code == "hook_status_failed"
++    assert caught.value.fingerprint == "sha256:abc123"
++
++
++def test_assert_managed_hook_ownership_preserves_fingerprint_on_default_resolve_error(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """Group G: same for default hooks dir."""
++
++    workspace = _make_workspace(tmp_path)
++    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
++
++    def ok_hooks_dir(_: Path) -> Path:
++        return workspace / ".git" / "hooks"
++
++    def raise_oserror(_: Path) -> Path:
++        raise OSError("default resolve failed")
++
++    monkeypatch.setattr(bootstrap, "resolve_hooks_dir", ok_hooks_dir)
++    monkeypatch.setattr(bootstrap, "resolve_default_hooks_dir", raise_oserror)
++
++    with pytest.raises(bootstrap._ReadinessError) as caught:
++        bootstrap._assert_managed_hook_ownership(
++            workspace, hook_source, fingerprint="sha256:def456"
++        )
++
++    assert caught.value.reason_code == "hook_status_failed"
++    assert caught.value.fingerprint == "sha256:def456"
++
++
++def test_install_workspace_hooks_preserves_fingerprint_on_ownership_error(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """Group G: kills mutmut_3,6 in _install_workspace_hooks ownership check."""
++
++    workspace = tmp_path / "workspace"
++    source = workspace / "src" / "fa" / "hygiene" / "hooks"
++
++    def raise_readiness(*_args: Any, **_kwargs: Any) -> None:
++        raise bootstrap._ReadinessError("custom_hooks_unmanaged", fingerprint="sha256:owner")
++
++    monkeypatch.setattr(bootstrap, "_assert_managed_hook_ownership", raise_readiness)
++
++    with pytest.raises(bootstrap._ReadinessError) as caught:
++        bootstrap._install_workspace_hooks(workspace, source, fingerprint="sha256:install123")
++
++    # The wrapper should preserve fingerprint from the raised error? Actually
++    # _install_workspace_hooks doesn't catch _ReadinessError from ownership check,
++    # it propagates. So fingerprint should be from original.
++    assert caught.value.fingerprint == "sha256:owner"
++
++
++def test_install_workspace_hooks_preserves_fingerprint_on_install_failure(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """Group G: kills mutmut_15,17 fingerprint=None/omitted on install failure."""
++
++    workspace = tmp_path / "workspace"
++    source = workspace / "src" / "fa" / "hygiene" / "hooks"
++
++    monkeypatch.setattr(bootstrap, "_assert_managed_hook_ownership", lambda *a, **k: None)
++
++    def raise_oserror(*_args: Any, **_kwargs: Any) -> list[Path]:
++        raise OSError("install failed")
++
++    monkeypatch.setattr(bootstrap, "install_hooks", raise_oserror)
++
++    with pytest.raises(bootstrap._ReadinessError) as caught:
++        bootstrap._install_workspace_hooks(workspace, source, fingerprint="sha256:install-fail")
++
++    assert caught.value.reason_code == "hook_status_failed"
++    assert caught.value.fingerprint == "sha256:install-fail"
++
++
++# ---------------------------------------------------------------------------
++# Hardening per tests-writing best practices (black-box, no spy)
++# ---------------------------------------------------------------------------
++
++
++@requires_posix_modes
++def test_open_private_creates_private_file_even_with_umask_zero(tmp_path: Path) -> None:
++    """Hardening: black-box proof that mode 0o600 is enforced even with umask 0.
++
++    Catches mutmut_7 without spying on os.open — if mode arg removed, file would be
++    created 0o777 with umask 0, then fchmod would fix it, but fstat on fd should still
++    be 0o600. This is the observable security property, not just spy.
++    """
++
++    old_umask = os.umask(0)
++    try:
++        target = tmp_path / "secret-umask"
++        fd = bootstrap._open_private(target, os.O_WRONLY | os.O_CREAT)
++        try:
++            # fd mode via fstat must be private immediately
++            assert stat.S_IMODE(os.fstat(fd).st_mode) == 0o600
++            # file on disk must also be private
++            assert stat.S_IMODE(os.stat(target).st_mode) == 0o600
++        finally:
++            os.close(fd)
++    finally:
++        os.umask(old_umask)
++
++
++def test_command_environment_does_not_mutate_original_environ(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
++) -> None:
++    """Hardening: copy semantics — original os.environ unchanged."""
++
++    monkeypatch.setenv("VIRTUAL_ENV", "/original")
++    before = os.environ["VIRTUAL_ENV"]
++    env = bootstrap._command_environment(tmp_path)
++    # Returned env must not have leak, but original must still have it
++    assert "VIRTUAL_ENV" not in env or env["VIRTUAL_ENV"] != "/original"
++    assert os.environ["VIRTUAL_ENV"] == before
++
++
++def test_command_environment_pin_is_absolute_and_resolved(tmp_path: Path) -> None:
++    """Hardening: pin must be absolute resolved path, not relative or None."""
++
++    # Symlink workspace to test resolve()
++    real = tmp_path / "real-ws"
++    real.mkdir()
++    link = tmp_path / "link-ws"
++    link.symlink_to(real)
++
++    env = bootstrap._command_environment(link)
++    pin = env["UV_PROJECT_ENVIRONMENT"]
++    assert Path(pin).is_absolute()
++    # resolve() should have resolved symlink
++    assert str(real.resolve()) in pin
++    assert pin.endswith(".venv")
++
++
++def test_hooks_current_true_when_exact_copy_and_executable(tmp_path: Path) -> None:
++    """Hardening: positive case — exact copy + executable = True."""
++
++    workspace = _make_workspace(tmp_path)
++    hook_source = workspace / "src" / "fa" / "hygiene" / "hooks"
++    hooks_dir = workspace / ".git" / "hooks"
++    hooks_dir.mkdir(parents=True, exist_ok=True)
++    for name in HOOK_NAMES:
++        src = hook_source / name
++        tgt = hooks_dir / name
++        tgt.write_bytes(src.read_bytes())
++        tgt.chmod(0o755)
++
++    assert bootstrap._hooks_current(workspace, hook_source) is True
++
++
++@requires_symlinks
++def test_hook_seat_is_manageable_when_absent_or_exact_copy(tmp_path: Path) -> None:
++    """Hardening: absent seat is manageable, exact copy is manageable."""
++
++    source = tmp_path / "source"
++    source.write_text("hook", encoding="utf-8")
++
++    # Absent
++    absent = tmp_path / "absent"
++    assert bootstrap._hook_seat_is_manageable(source, absent) is True
++
++    # Exact copy
++    copy = tmp_path / "copy"
++    copy.write_text("hook", encoding="utf-8")
++    assert bootstrap._hook_seat_is_manageable(source, copy) is True
++
++    # Different content not manageable
++    diff = tmp_path / "diff"
++    diff.write_text("different", encoding="utf-8")
++    assert bootstrap._hook_seat_is_manageable(source, diff) is False
++
++
++def test_open_private_rejects_symlink(tmp_path: Path) -> None:
++    """Hardening: symlink attack rejected."""
++
++    target = tmp_path / "real"
++    target.write_text("real", encoding="utf-8")
++    link = tmp_path / "link"
++    link.symlink_to(target)
++
++    with pytest.raises(OSError):
++        bootstrap._open_private(link, os.O_WRONLY | os.O_CREAT)
+diff --git a/tests/test_workspace_readiness_integration.py b/tests/test_workspace_readiness_integration.py
+index 39ba940..802f4b0 100644
+--- a/tests/test_workspace_readiness_integration.py
++++ b/tests/test_workspace_readiness_integration.py
+@@ -125,6 +125,12 @@ def test_clean_candidate_real_readiness_commit_and_local_publication(request: py
+         "GIT_AUTHOR_EMAIL",
+         "GIT_COMMITTER_NAME",
+         "GIT_COMMITTER_EMAIL",
++        "VIRTUAL_ENV",
++        "VIRTUAL_ENV_PROMPT",
++        "CONDA_PREFIX",
++        "UV_PROJECT_ENVIRONMENT",
++        "UV_PYTHON",
++        "PYTHONHOME",
+     ):
+         clean_env.pop(name, None)
+     (target / "integration-proof.txt").write_text("ready\n", encoding="utf-8")
+diff --git a/worklogs/pr-notes/PR_NOTE_substrate_gap_closure.md b/worklogs/pr-notes/PR_NOTE_substrate_gap_closure.md
+index 4956f33..c1bfa0d 100644
+--- a/worklogs/pr-notes/PR_NOTE_substrate_gap_closure.md
++++ b/worklogs/pr-notes/PR_NOTE_substrate_gap_closure.md
+@@ -16,15 +16,15 @@ Instead of verbose feature list, this note points to the workplans that schedule
+ **Decision Freeze & Workplans (scheduling):**
+
+ - Decision freeze D8/D9/D10: [`substrate-decision-freeze-2026-07-15.md`](../../worklogs/archive/substrate-decision-freeze-2026-07-15.md)
+-- Gap-closure workplan round2 (FIND-001..018, 11 slices): [`substrate-gap-closure-workplan-round2-2026-07-15.md`](../../worklogs/implementation-plans/substrate-gap-closure-workplan-round2-2026-07-15.md)
++- Gap-closure workplan round2 (FIND-001..018, 11 slices): [`substrate-gap-closure-workplan-round2-2026-07-15.md`](../archive/substrate-gap-closure-workplan-round2-2026-07-15.md)
+
+ **Slice implementation plans (execution):**
+
+-- Slice 0/1 prep: [`substrate-slice0-slice1-implementation-plan-2026-07-15.md`](../../worklogs/implementation-plans/substrate-slice0-slice1-implementation-plan-2026-07-15.md)
++- Slice 0/1 prep: [`substrate-slice0-slice1-implementation-plan-2026-07-15.md`](../archive/substrate-slice0-slice1-implementation-plan-2026-07-15.md)
+ - Slice 1 closure + Slice 2 init: [`substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md`](../../worklogs/archive/substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md)
+-- Slice 2 patch design (observability): [`substrate-slice2-patch-design-2026-07-15.md`](../../worklogs/implementation-plans/substrate-slice2-patch-design-2026-07-15.md)
+-- Slice 3 patch design (Stage C): [`substrate-slice3-patch-design-2026-07-15.md`](../../worklogs/implementation-plans/substrate-slice3-patch-design-2026-07-15.md)
+-- Slice 4 patch design (governance): [`substrate-slice4-patch-design-2026-07-15.md`](../../worklogs/implementation-plans/substrate-slice4-patch-design-2026-07-15.md)
++- Slice 2 patch design (observability): [`substrate-slice2-patch-design-2026-07-15.md`](../archive/substrate-slice2-patch-design-2026-07-15.md)
++- Slice 3 patch design (Stage C): [`substrate-slice3-patch-design-2026-07-15.md`](../archive/substrate-slice3-patch-design-2026-07-15.md)
++- Slice 4 patch design (governance): [`substrate-slice4-patch-design-2026-07-15.md`](../archive/substrate-slice4-patch-design-2026-07-15.md)
+ - Slice 5-7 closure (safety & execution truthfulness): [`substrate-slice5-6-7-closure-2026-07-15.md`](../../worklogs/archive/substrate-slice5-6-7-closure-2026-07-15.md) + state assessment [`substrate-state-assessment-2026-07-15-round3.md`](../../worklogs/archive/substrate-state-assessment-2026-07-15-round3.md)
+
+ **Slice 9 (global history):**

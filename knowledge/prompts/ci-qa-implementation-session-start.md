@@ -25,7 +25,7 @@ Implement the **TAKE** and **TAKE-advisory** recommendations from `knowledge/res
 6. `.github/workflows/pylint.yml` — dual-profile pylint (strict src/ + relaxed tests/)
 7. `.pre-commit-config.yaml` — current hooks
 8. `knowledge/llms.txt` — BY-DEMAND INDEX
-9. `knowledge/BACKLOG.md` — deferred ideas
+9. `../../worklogs/BACKLOG.md` — deferred ideas
 10. `HANDOFF.md` — session protocol
 11. `.pylintrc-tests` — relaxed pylint profile for tests/
 
@@ -102,7 +102,7 @@ Before any file edit, work through a `<thinking>` block with these exact subtask
   ```
 - Add `uv lock --check` to the `sanity-check` job to fail if `uv.lock` is stale.
 - Update `knowledge/llms.txt` §BY-DEMAND INDEX if any new files are added.
-- Update `knowledge/BACKLOG.md` with deferred items using verbatim unblock triggers:
+- Update `../../worklogs/BACKLOG.md` with deferred items using verbatim unblock triggers:
   - R-8: "Custom Semgrep rules blocked on ADR-8 freeze"
   - R-9: "UC5 eval-harness: evaluate DeepEval vs Promptfoo after inner-loop contract freeze"
   - R-10: "Adopt Tach when module count > 5"

@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: fs_blackboard_query tool                    Plan-ID: PLAN-fs-blackboard-query
 Status: IMPLEMENTED (S1-S5 green; full suite 2575 passed)          Depth: P1            Revision: v4
 Changed-since-last: final production-review pass (2026-08-06) — gap closure: T2 (key filter) and T6

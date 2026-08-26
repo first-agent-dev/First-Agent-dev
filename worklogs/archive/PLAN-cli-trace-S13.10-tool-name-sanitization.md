@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S13.10 — Tool-name sanitization (dot → underscore, repo-wide rename)
 
 **Status:** COMPLETE (2026-08-05/06) — every `fs.` / `pr.` tool name migrated to `fs_` / `pr_`;

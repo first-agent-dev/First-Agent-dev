@@ -1004,7 +1004,7 @@ mechanical pairing check the prompt-only approach cannot.
   block + §11 R-4 status update.
 - `knowledge/adr/DIGEST.md` — ADR-6 + ADR-7 row updates.
 - `knowledge/trace/exploration_log.md` — Q-7 amendment block.
-- `knowledge/BACKLOG.md` — I-7 + I-8 prior-art
+- `worklogs/BACKLOG.md` — I-7 + I-8 prior-art
   enforcement note (DPC ADR-015 cross-reference).
 - `HANDOFF.md` — ADR-7 amendment line update.
 
@@ -1155,7 +1155,7 @@ disjoint invariant** so the v0.2 amendment cannot regress.
   Cornell/Simula primary-source citation).
 - `knowledge/adr/DIGEST.md` — ADR-7 row amendments bullet.
 - `knowledge/trace/exploration_log.md` — Q-7 amendment block.
-- `knowledge/BACKLOG.md` — I-2 sub-agent invocation rules
+- `worklogs/BACKLOG.md` — I-2 sub-agent invocation rules
   paragraph (R-23 captured here for read-side discoverability).
 - `HANDOFF.md` — ADR-7 amendment line update.
 

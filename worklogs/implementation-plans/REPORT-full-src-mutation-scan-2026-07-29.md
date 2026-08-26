@@ -3,7 +3,7 @@
 - **Date:** 2026-07-29
 - **Status:** report only, no config changed by this document
 - **Requested:** operator, for later review
-- **Related:** [`PLAN-cli-trace-S6.6-mutation-gap-closure.md`](./PLAN-cli-trace-S6.6-mutation-gap-closure.md) §Q26, [`mutation-survivors-workplan.md`](./mutation-survivors-workplan.md)
+- **Related:** [`PLAN-cli-trace-S6.6-mutation-gap-closure.md`](../archive/PLAN-cli-trace-S6.6-mutation-gap-closure.md) §Q26, [`mutation-survivors-workplan.md`](./mutation-survivors-workplan.md)
 
 ## 0. Headline — my earlier estimate was wrong, in the operator's favour
 

@@ -32,7 +32,7 @@ This ADR therefore freezes the **HookRegistry contract** as
 documentation. No code lands in this PR. The runtime implementation
 is Phase-M scope and will land in a follow-up PR explicitly
 referenced from
-[`knowledge/BACKLOG.md`](../../worklogs/BACKLOG.md) (M-1 "inner-loop scaffolding").
+[`worklogs/BACKLOG.md`](../../worklogs/BACKLOG.md) (M-1 "inner-loop scaffolding").
 That follow-up PR will:
 
 1. Build `src/fa/inner_loop/registry.py` + `loop.py` against
@@ -442,7 +442,7 @@ can verify FA is not re-inventing.
 - [`research/borrow-roadmap-2026-05.md`](../research/borrow-roadmap-2026-05.md)
   §R-1 — HookRegistry primary source; §§R-2/R-3/R-4/R-5/R-22 —
   middlewares that consume this contract.
-- [`knowledge/BACKLOG.md`](../../worklogs/BACKLOG.md) M-1 — inner-loop
+- [`worklogs/BACKLOG.md`](../../worklogs/BACKLOG.md) M-1 — inner-loop
   scaffolding PR that builds the runtime.
 - [`knowledge/research/dpc-messenger-inspiration-2026-05.md`](../research/dpc-messenger-inspiration-2026-05.md)
   §0 R-1 — DPC `dpc_agent/hooks.py` (207 LOC) +

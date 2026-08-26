@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved per b_full, verification reports exist (S1-S4) / code-proven IMPLEMENTED (S14b)
+
 # PLAN: S14b — Search tools unification + memory system expansion (post-S14 substrate)
 
 **Plan-ID:** `PLAN-cli-trace-S14b-search-tools-memory-expansion`

@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S10b — in-module decomposition + C901 waiver retirement
 
 Plan-ID: `PLAN-cli-trace-S10b-cli-decomposition`

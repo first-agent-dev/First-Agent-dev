@@ -10,7 +10,7 @@ Plan-ID: `PLAN-ble001-waiver-reduction`
   `hooks/base.py` I claimed the `exc_info` pattern was the house norm. The
   operator asked *"repo-wide?"* — it was not. Measuring properly produced this
   plan.
-- **Related:** [`PLAN-cli-trace-S7-direct-run-vertical-slice.md`](./PLAN-cli-trace-S7-direct-run-vertical-slice.md),
+- **Related:** [`PLAN-cli-trace-S7-direct-run-vertical-slice.md`](../archive/PLAN-cli-trace-S7-direct-run-vertical-slice.md),
   `pyproject.toml` `[tool.ruff.lint] select = ["BLE", ...]`
 
 ---

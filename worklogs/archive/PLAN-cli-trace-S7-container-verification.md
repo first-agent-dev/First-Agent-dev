@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S7-container — operator live-verification sheet
 
 Plan-ID: `PLAN-cli-trace-S7-container-verification`

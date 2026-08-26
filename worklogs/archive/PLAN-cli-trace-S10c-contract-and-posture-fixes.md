@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S10c — deploy-gate contracts, artifact posture, and request-cost fixes
 
 Plan-ID: `PLAN-cli-trace-S10c-contract-and-posture-fixes`

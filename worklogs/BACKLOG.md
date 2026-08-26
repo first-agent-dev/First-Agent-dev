@@ -1199,6 +1199,14 @@
   - `src/fa/authoring_rules/tests.py:54` — `_INCLUDED_PREFIXES`.
   - ADR-11 §I-7 (protected-path bundle, lists `scripts/check_protected_paths.py`).
 
+## I-12-bis — Manifest-driven scope for Level-1 rules
+
+- **Status:** deferred from PR-11 (PR-10 follow-up). Original "PR-14" idea consolidated into the next PR-4 cycle per ADR-11 Appendix B.
+- **Idea:** Replace the hard-coded `SRC_SCOPE`/`TEST_SCOPE` tuples in `src/fa/authoring_rules/_scan.py` with a manifest-driven scope read from `.fa/session.toml [scope]` (fields `src_prefixes`, `test_prefixes`). Lets monorepo layouts (`core/src/`, `plugins/src/`) scope the rules without rule-pack edits, and makes scope auditable from one place.
+- **Blocked-on:** ADR-11 PR-4 (`.fa/session.toml` schema; `seam.py`). The manifest does not exist on `main` today (`ls .fa/` is empty); creating it ahead of PR-4 would invert the published Appendix B rollout.
+- **Unblock-trigger:** ADR-11 PR-4 lands `.fa/session.toml` schema + `seam.py`.
+- **First concrete step once unblocked:** Extend `parse_manifest` to recognise `[scope]` table; add `Manifest.scope: ScopeConfig` field; rule packs read `context.manifest.scope.<prefix>` with fall-back to `SRC_SCOPE`/`TEST_SCOPE` when no manifest is supplied.
+
 ## I-13 — V4 import-alias bypass (`from pytest import skip`)
 
 - **Status:** known limitation from ADR-11 PR-2 stress-test (2026-06-06).
@@ -1349,38 +1357,6 @@
 - **First concrete step once unblocked:** Add `pytest-recording` and record cassettes for the first HTTP-dependent test.
 - **References:** [`research/ci-qa-tooling-adversarial-2026-06.md`](../knowledge/research/ci-qa-tooling-adversarial-2026-06.md) §0 R-14.
 
-## I-20 — V2 nested tuple-unpacking definitions
-
-- **Status:** deferred from PR-11 (PR-10 follow-up).
-- **Idea:** `_public_symbols` walks the first level of `ast.Tuple` / `ast.List` assignment targets at module scope, but does NOT recurse into nested tuples (`(a, (b, c)) = ...`). The structurally-correct extension is to recurse, registering each leaf `ast.Name` against the outer `Assign` node.
-- **Blocked-on:** None technically; deferred because the live repo has zero instances of nested top-level tuple unpacking with `__all__`.
-- **Unblock-trigger:** ≥1 instance of nested top-level tuple unpacking appears under `src/` in a module with `__all__`.
-- **First concrete step once unblocked:** Extend `_register` in `_public_symbols` to recurse into nested `ast.Tuple`/`ast.List` targets; add fixture under `catch-corpus/F-2-nested/` and a regression test mirroring the existing `test_tuple_unpacking_at_top_level_is_flagged`.
-
-## I-21 — V2 phantom-name inverse check
-
-- **Status:** deferred from PR-11 (PR-10 follow-up). Originally proposed as a pass-1 HIGH item; dropped because the live repo has 16 `__init__.py` modules that re-export symbols via plain `from .x import Foo` listed in `__all__`. Naive enforcement would HARD-BLOCK every one of them.
-- **Idea:** Catch names that appear in `__all__` but have no in-module definition (the F822 ruff check, lifted into the authoring kernel for completeness with ADR-11-I2's "kernel is authoritative" stance).
-- **Blocked-on:** A definition-predicate extension that treats plain `from .x import Foo` as a "definition for the purpose of `__all__` membership only" (the rule's primary direction — defined-but-not-in-`__all__` — must continue to NOT count plain imports, or BLOCKER-1 territory re-opens).
-- **Unblock-trigger:** Any PR with a phantom name in `__all__` slips past ruff F822 on `main`, OR ruff is removed / disabled in CI.
-- **First concrete step once unblocked:** Add `_public_symbols_for_phantom_check(tree, declared_all)` that treats `ImportFrom` targets named in `declared_all` as definitions; emit `FA-AUTHORING-V2-EXPORTS-PHANTOM` for names in `__all__` absent from that extended set.
-
-## I-12-bis — Manifest-driven scope for Level-1 rules
-
-- **Status:** deferred from PR-11 (PR-10 follow-up). Original "PR-14" idea consolidated into the next PR-4 cycle per ADR-11 Appendix B.
-- **Idea:** Replace the hard-coded `SRC_SCOPE`/`TEST_SCOPE` tuples in `src/fa/authoring_rules/_scan.py` with a manifest-driven scope read from `.fa/session.toml [scope]` (fields `src_prefixes`, `test_prefixes`). Lets monorepo layouts (`core/src/`, `plugins/src/`) scope the rules without rule-pack edits, and makes scope auditable from one place.
-- **Blocked-on:** ADR-11 PR-4 (`.fa/session.toml` schema; `seam.py`). The manifest does not exist on `main` today (`ls .fa/` is empty); creating it ahead of PR-4 would invert the published Appendix B rollout.
-- **Unblock-trigger:** ADR-11 PR-4 lands `.fa/session.toml` schema + `seam.py`.
-- **First concrete step once unblocked:** Extend `parse_manifest` to recognise `[scope]` table; add `Manifest.scope: ScopeConfig` field; rule packs read `context.manifest.scope.<prefix>` with fall-back to `SRC_SCOPE`/`TEST_SCOPE` when no manifest is supplied.
-
-## I-22 — Per-file source decode caching for rule packs
-
-- **Status:** deferred from PR-12 (PR-10 follow-up).
-- **Idea:** `iter_python_files` is called once per rule; each call reads bytes and re-parses. Cache `(path → (bytes, tree))` in `RuleContext` and have rules consume the pre-parsed tree. ~50 LOC; eliminates linear-in-rule-count IO/parse cost.
-- **Blocked-on:** None technically; deferred because the rule count is small (3) and end-to-end runtime is 0.057 s on the test corpus. The improvement becomes visible only at ≥5 rules.
-- **Unblock-trigger:** `len(RULE_ALLOWLIST) >= 5` on `main` (next reached when PR-3 lands `parity.py` + `docs.py`).
-- **First concrete step once unblocked:** Extend `RuleContext` with `parsed: Mapping[str, tuple[bytes, ast.Module]]`; lazy-populate in the kernel pre-pass (PR-12's `_parse_visibility_diagnostics` already does the parse — share the result).
-
 ## I-15 — Visitor framework for shared `ast.walk`
 
 - **Status:** deferred from PR-12 (PR-10 follow-up).
@@ -1405,6 +1381,38 @@
 - **Unblock-trigger:** ≥3 acknowledged false-positive findings on `main` cannot be resolved through the `fp-corpus/` measurement loop within 1 week.
 - **First concrete step once unblocked:** One ADR-11 amendment paragraph choosing between "frozen suppression TOML" and "forbid loudly + corpus-only"; the amendment becomes the spec for the implementation PR.
 
+## I-19 — `# fa-noqa` inline-suppression policy decision
+
+- **Status:** deferred from PR-12 (PR-10 follow-up).
+- **Idea:** Same problem space as I-17 but at line granularity. The kernel currently has no `# noqa`-style mechanism (good — keeps the trust boundary clean); when an LLM agent encounters a HARD-BLOCK, the path of least resistance is to look for an inline suppression syntax.
+- **Blocked-on:** I-17 — the line-level decision should follow the file-level one, not lead it.
+- **Unblock-trigger:** I-17 merged AND ≥1 PR explicitly asks for line-level suppression after file-level mechanism exists.
+- **First concrete step once unblocked:** Decide on the suppression syntax (`# fa-noqa: V<N>` vs. `# fa-suppress(<CODE>): <justification>`); implement parser; integrate with the per-finding hash so a suppression cannot drift to a different finding silently.
+
+## I-20 — V2 nested tuple-unpacking definitions
+
+- **Status:** deferred from PR-11 (PR-10 follow-up).
+- **Idea:** `_public_symbols` walks the first level of `ast.Tuple` / `ast.List` assignment targets at module scope, but does NOT recurse into nested tuples (`(a, (b, c)) = ...`). The structurally-correct extension is to recurse, registering each leaf `ast.Name` against the outer `Assign` node.
+- **Blocked-on:** None technically; deferred because the live repo has zero instances of nested top-level tuple unpacking with `__all__`.
+- **Unblock-trigger:** ≥1 instance of nested top-level tuple unpacking appears under `src/` in a module with `__all__`.
+- **First concrete step once unblocked:** Extend `_register` in `_public_symbols` to recurse into nested `ast.Tuple`/`ast.List` targets; add fixture under `catch-corpus/F-2-nested/` and a regression test mirroring the existing `test_tuple_unpacking_at_top_level_is_flagged`.
+
+## I-21 — V2 phantom-name inverse check
+
+- **Status:** deferred from PR-11 (PR-10 follow-up). Originally proposed as a pass-1 HIGH item; dropped because the live repo has 16 `__init__.py` modules that re-export symbols via plain `from .x import Foo` listed in `__all__`. Naive enforcement would HARD-BLOCK every one of them.
+- **Idea:** Catch names that appear in `__all__` but have no in-module definition (the F822 ruff check, lifted into the authoring kernel for completeness with ADR-11-I2's "kernel is authoritative" stance).
+- **Blocked-on:** A definition-predicate extension that treats plain `from .x import Foo` as a "definition for the purpose of `__all__` membership only" (the rule's primary direction — defined-but-not-in-`__all__` — must continue to NOT count plain imports, or BLOCKER-1 territory re-opens).
+- **Unblock-trigger:** Any PR with a phantom name in `__all__` slips past ruff F822 on `main`, OR ruff is removed / disabled in CI.
+- **First concrete step once unblocked:** Add `_public_symbols_for_phantom_check(tree, declared_all)` that treats `ImportFrom` targets named in `declared_all` as definitions; emit `FA-AUTHORING-V2-EXPORTS-PHANTOM` for names in `__all__` absent from that extended set.
+
+## I-22 — Per-file source decode caching for rule packs
+
+- **Status:** deferred from PR-12 (PR-10 follow-up).
+- **Idea:** `iter_python_files` is called once per rule; each call reads bytes and re-parses. Cache `(path → (bytes, tree))` in `RuleContext` and have rules consume the pre-parsed tree. ~50 LOC; eliminates linear-in-rule-count IO/parse cost.
+- **Blocked-on:** None technically; deferred because the rule count is small (3) and end-to-end runtime is 0.057 s on the test corpus. The improvement becomes visible only at ≥5 rules.
+- **Unblock-trigger:** `len(RULE_ALLOWLIST) >= 5` on `main` (next reached when PR-3 lands `parity.py` + `docs.py`).
+- **First concrete step once unblocked:** Extend `RuleContext` with `parsed: Mapping[str, tuple[bytes, ast.Module]]`; lazy-populate in the kernel pre-pass (PR-12's `_parse_visibility_diagnostics` already does the parse — share the result).
+
 ## I-23 — Mutation testing: promotion to blocking gate
 
 - **Status:** deferred from the test-gaming-hardening PR (2026-06-12), which repaired
@@ -1425,14 +1433,6 @@
   `continue-on-error: false`; replace the `|| true` on the results step with a
   jq assert `.survived == 0` on the stats JSON; close this entry with a
   «landed in PR #N» marker.
-
-## I-19 — `# fa-noqa` inline-suppression policy decision
-
-- **Status:** deferred from PR-12 (PR-10 follow-up).
-- **Idea:** Same problem space as I-17 but at line granularity. The kernel currently has no `# noqa`-style mechanism (good — keeps the trust boundary clean); when an LLM agent encounters a HARD-BLOCK, the path of least resistance is to look for an inline suppression syntax.
-- **Blocked-on:** I-17 — the line-level decision should follow the file-level one, not lead it.
-- **Unblock-trigger:** I-17 merged AND ≥1 PR explicitly asks for line-level suppression after file-level mechanism exists.
-- **First concrete step once unblocked:** Decide on the suppression syntax (`# fa-noqa: V<N>` vs. `# fa-suppress(<CODE>): <justification>`); implement parser; integrate with the per-finding hash so a suppression cannot drift to a different finding silently.
 
 ## I-24 — Secret-isolation follow-ups (ADR-12)
 
@@ -1704,3 +1704,1131 @@ for evals" framing).
 - [`research/bootstrap-cost-baseline-2026-05.md`](../knowledge/research/bootstrap-cost-baseline-2026-05.md)
   §9 re-measurement triggers items 5 and 6 reference I-7 and
   I-8 here.
+
+## I-34 — Subagent containment: OS-level writable-mount boundary (Q19 / V24+V25)
+
+**Origin:** raised 2026-07-28 by the S5.6 preflight
+([`PLAN-cli-trace-S5-authority-correctness.md`](./archive/PLAN-cli-trace-S5-authority-correctness.md)
+§11 Q19); re-confirmed 2026-07-29 during the S5 post-merge review, which found
+it was tracked **only** in plans and PR notes — i.e. nowhere a future session
+would look. This entry exists so an open *security* boundary cannot be lost
+when its plan is archived.
+
+**The gap, measured (not inferred).** The Q11-B enforcement mechanism does not
+enforce. `SandboxHook` was pointed at the subagent artifact root and the runner
+`cwd` moved to match; both were then measured **not to contain anything**:
+
+- `workspace_root` is consulted only by the `rm` / `chmod` / `git` validators,
+  so a shell redirect (`echo x > /outside/path`) classifies as `GENERAL_WRITE`
+  and passes unchecked under *either* root;
+- `cwd` is not a boundary — the subagent runs a real shell and can use absolute
+  paths.
+
+Denying `GENERAL_WRITE` for spawns *was* implemented and measured to deny
+**8 of 10** realistic verifier commands (`pytest`, `mypy`, `make test`), so it
+was reverted: it trades a security hole for an unusable feature.
+
+**Why this is not "just" a missing test.** ADR-12's conclusion applies —
+lexical filters are best-effort, not boundaries. Real containment needs an
+OS-level writable-mount boundary (Q19 option (c)): a mount namespace or
+read-only bind with a single writable artifact dir, the same shape the ADR-12
+egress proxy uses for keys.
+
+**Executable record.** `tests/test_s5_isolation_boundary.py::test_subagent_write_outside_artifact_root_denied`
+is a **strict `xfail`** whose message carries the evidence above. It should
+start **passing** when containment lands — that is the acceptance signal;
+delete nothing.
+
+**Related:** S7 Q29 (empty `session_id` as an "unscoped" sentinel) touches the
+same subagent/session isolation surface.
+
+## I-35 — `SessionDatabase` first-create is not concurrency-safe (DEFERRED DDL)
+
+**Origin:** found 2026-07-29 by the S5 post-merge review (§13.4), following up
+S5 §12 R3-2 — which recorded that all six write paths use bare `with conn:`
+(DEFERRED) but was only acted on for one of them.
+
+**Measured.** Of the five remaining paths, four are **write-only**
+(`write_blackboard_row`, `append_event_row`, `set_meta`,
+`reserve_run_binding`) and therefore safe — 6 processes × 5 writes gave
+**30 attempted / 30 persisted / 0 lost**. Two do a read→write upgrade inside a
+DEFERRED transaction, which SQLite answers with `SQLITE_BUSY` *without*
+honouring `busy_timeout`:
+
+- `_ensure_identity` (`session_db.py:303`);
+- `_init_current_schema` (`:262`) — the actual failure site.
+
+Concurrent **first-create** of a fresh DB: **6 of 30 opens** raise
+`session_db_init_failed: database is locked`. Once the DB exists, concurrent
+opens are clean: **0 of 40**.
+
+**Severity: P3, deliberately.** Production does not reach the window.
+`SessionManager._new_session` serialises creation with
+`session_dir.mkdir(parents=True, exist_ok=False)` (`manager.py:252`), an atomic
+filesystem primitive — exactly one process can create a session namespace. The
+exposure is limited to the three sites that build a DB **without** that
+serializer: `blackboard.py:207`, `state.py:176`,
+`tools/observability.py:72`.
+
+**Do not fix by patching `_ensure_identity` alone.** That was prototyped during
+the review and reverted: it moved failures 6→3, proving `_ensure_identity` is a
+symptom and the DDL path is the source. The fix belongs with **S7 Q29**, which
+already proposes auditing those same three unserialised construction sites —
+resolve them together, with a multiprocess barrier test as the oracle
+(threads alone cannot falsify this; see S5 §12 R3-3).
+
+## I-36 — RESOLVED 2026-08-01 (S10c.3) — artifact permissions
+
+**Resolution.** Every artifact a run writes under `~/.fa` is now created
+`0600`, every directory `0700`, and an existing over-permissive tree is
+repaired.
+
+**The entry's scope was too narrow — measured.** It named bodies and events; a
+real run left **four** world-readable files. The missing one was
+`sessions/<sid>/session.db`, which stores full event `content`
+(`session_db.py:185`) — the same prose that makes `llm_bodies.jsonl` opt-in.
+Fixing the JSONL files alone would have closed the documented hole and left the
+larger one open.
+
+**The entry's prescribed fix does not compile.** It specified
+`Path.open(..., opener=...)`; `pathlib` rejects `opener` with `TypeError`
+(verified on 3.13, and mypy reports it as `call-overload`). The builtin
+`open()` accepts it. A test asserts the `TypeError` so the wrong shape cannot
+come back.
+
+Mechanisms: `private_opener` (`fa/paths.py`) for JSONL appends; an
+`os.open(..., 0o600)` pre-create inside `create_sqlite_connection` for both
+databases — one site, and the WAL `-wal`/`-shm` sidecars inherit the mode.
+Both set the mode in the syscall, so there is no chmod window.
+
+**Retroactive half (Q56, operator).** `tighten_fa_artifact_modes()` repairs an
+existing tree once per run. Three properties are load-bearing, each with a
+test: symlinks are **skipped** (`os.chmod` follows them and
+`follow_symlinks=False` raises `NotImplementedError` on Linux, so a crafted
+link inside `~/.fa` would otherwise have its *target* rewritten); directories
+get `0700`, not `0600`, or the state root becomes untraversable; and the pass
+tightens only, so a deliberate `0400` survives.
+
+Pinned by `tests/test_s10c_artifact_posture.py` (13 tests). The headline one is
+a **whole-tree sweep** rather than named files, because a fixed list is how the
+`session.db` omission happened in the first place.
+
+---
+
+**Original report — Tier-3 `llm_bodies.jsonl` is world-readable (0644) while the session manifest is 0600**
+
+**Found:** S7.C4 step 4d, on the live container, 2026-07-30.
+
+Measured in the deployment (`umask 0022`):
+
+```text
+644 fa:fa /home/fa/.fa/session-log/s7-run-b/llm_bodies.jsonl
+755 fa:fa /home/fa/.fa/session-log/s7-run-b
+600 fa:fa /home/fa/.fa/sessions/<sid>/manifest.json
+```
+
+`DebugBodyTransport._write` (`providers/debug_bodies.py:167`) opens the file
+with a plain `self._path.open("a", ...)`, so the mode is whatever `0666 & ~umask`
+yields — `0644` here. `SessionManager._atomic_write_json` deliberately does
+`os.chmod(temp_path, 0o600)` (`session/manager.py:133`) for the manifest.
+
+**Why it matters.** The module's own docstring says bodies "may carry
+UC5-sensitive context". `SecretRedactor` masks *known key values* — it does not
+and cannot mask prompt or response prose, which is exactly what these files are
+for. So the most sensitive artifact the system writes is the most permissive
+one. On the current single-user container the practical exposure is nil; it
+matters for multi-tenant hosts, for shared CI runners, and for any `docker cp`
+or volume snapshot that carries the directory somewhere with other readers.
+
+**The same applies to `events.jsonl`** — measured `0644` locally. Tier-1 content
+is redacted per ADR-7, so the severity is lower, but the two writers should not
+disagree about the policy.
+
+**Fix shape (do not paper over with `chmod` after the fact — there is a window
+between create and chmod where the file is readable):** pass an `opener` to
+`Path.open`, which is the stdlib-supported way to set creation mode:
+
+```python
+def _private_opener(path: str, flags: int) -> int:
+    return os.open(path, flags, 0o600)
+
+
+with self._path.open("a", encoding="utf-8", opener=_private_opener) as handle:
+    ...
+```
+
+Verified locally: `open(..., "a")` under `umask 0022` gives `0o644`; the
+`os.open(..., 0o600)` opener gives `0o600` with no window. Directory creation
+should likewise use `mkdir(mode=0o700)`.
+
+**Severity: P2.** Not a correctness bug and not exploitable in the current
+single-user deployment, but it is a security-posture defect in the exact
+subsystem whose reason for existing is "this data is sensitive, so it is
+opt-in". Should be fixed before any multi-tenant or shared-host deployment.
+
+**Scope when picked up:** `providers/debug_bodies.py` (bodies),
+`inner_loop/state.py` (`events.jsonl`), and the run-dir `mkdir` in
+`session/manager.py:398`. Needs a test asserting `stat.S_IMODE(...) == 0o600`
+on a real written file — a mode assertion is trivially falsifiable and belongs
+in the C2 producer class.
+
+---
+
+## I-37 — Tool schemas are sent to the provider twice in every request (~43% of request bytes)
+
+**Found:** while explaining the 58 KB body file recorded in S7.C4, 2026-07-30.
+Measured from a real captured `llm_bodies.jsonl` row for a one-word task.
+
+A single `pong` request decomposes as:
+
+```text
+total request bytes : 28,531   (58,095 on the container with its live tool set)
+  base system prompt:  5,924  (21%)
+  INLINE tool json  : 12,130  (43%)   <- system message #2
+  NATIVE tools array:  8,762  (31%)   <- OpenAI `tools` parameter
+  actual task       :     16  (0.06%)
+```
+
+The **same 16 tool schemas are transmitted twice**: once JSON-dumped with
+`indent=2` into a system message by
+`prompt_composer.build_prompt_parts_v2` (`prompt_composer.py:98`), and once as
+the provider-native `tools` array via `RequestInfo(tools=tool_payload)`
+(`coder_loop.py:1124`). Both derive from the same `render_tool_specs(...)`
+result (`coder_loop.py:409-410`) — `tool_defs_for_prompt` is literally a copy
+of `tool_payload`. Together they are **73% of the request**.
+
+The inline copy is also the *more expensive* of the two at 12,130 vs 8,762
+bytes, because `indent=2` pretty-printing inflates it ~38%.
+
+**Is the duplication deliberate?** Nothing in the source says so. The docstring
+for `build_prompt_parts_v2` describes the tool block only as a cacheable part;
+there is no comment claiming the inline listing improves tool-selection
+accuracy. Some 2023-era prompting practice did restate tools in the system
+prompt for models with weak native tool support — if that is the reason, it
+should be a documented, per-model decision, not an unconditional default.
+
+**Why it is not free even with prompt caching.** The container run showed
+`cache=100%` on the third call, so a warm cache does absorb much of the cost.
+But: (a) the first call of every session pays full price; (b) cache hits are
+still billed, typically at ~10% of input rate, so 43% waste becomes ~4.3%
+permanent waste; (c) it consumes context window — the run reported "Context: 9%
+of window" for a one-word task; (d) `_hash_tool_defs_stable` excludes
+`description` from the cache key precisely because descriptions contain dates,
+so a description change silently invalidates nothing while still shipping new
+bytes.
+
+**Do not "just delete the inline block".** That is a behavior change to prompt
+composition and must be measured, not assumed:
+
+1. Add an A/B under the existing `FeatureFlags` mechanism
+   (`prompt.inline_tool_listing`, default ON to preserve current behavior).
+2. Measure tool-selection accuracy on the eval corpus with it OFF.
+3. If accuracy holds, flip the default and delete the branch.
+4. Independently, if the block is kept, drop `indent=2` — that is a pure
+   ~38% saving on that block with zero semantic change.
+
+> **PARTIALLY RESOLVED 2026-08-01 (S10c.5) — option 4 shipped.** The
+> `indent=2` pretty-printing is gone: measured **10,619 → 7,471 bytes**, a
+> **29.6% saving on every request**, whitespace-only. (This entry estimated
+> ~38%; re-measured directly against the 15-tool baseline registry.) The
+> `AlwaysSkills` / `ConditionalSkills` blocks keep `indent=2` deliberately —
+> separate measurement, not covered by this item.
+>
+> **Options 1-3 remain OPEN**: deleting the inline listing still needs the
+> `FeatureFlags` A/B on the eval corpus. Note this entry's own container
+> measurement — the `AGENTS.md` map is **48.4%** of a live request versus this
+> block's 21% — so *"fixing 21% while ignoring 48% is backwards"* still stands.
+
+**Severity: P2**, cost/performance rather than correctness. Worth doing: it is
+one of the few changes that reduces spend on *every single call* the system
+makes.
+
+**Related:** I-33 (cost accounting stubs) — I-37 is the kind of regression that
+proper per-call cost accounting would have surfaced automatically.
+
+### Container measurement (S7.C4b, 2026-07-30) — the live picture is worse
+
+The local capture above used an empty `AGENTS.md` map. On the real deployment
+(`mistral-small-2603`, live pinned buffer) the same one-word task is **57,853
+bytes**:
+
+```text
+  [0] system  base prompt      :  5,924  10.2%
+  [1] system  AGENTS.md map    : 28,015  48.4%   <- largest single component
+  [2] system  INLINE tool json : 12,130  21.0%
+  [3] user    the actual task  :     38   0.1%
+      native tools array       :  8,762  15.1%
+      tool schemas sent TWICE  : 20,892  36%
+```
+
+Two corrections to the local estimate:
+
+1. The duplicated tool schemas are **36% of the live request**, not 43% — the
+   share fell only because a much larger `AGENTS.md` map diluted it. The
+   absolute waste (12,130 bytes/call) is **identical**; it is a fixed cost.
+> **RE-MEASURED LIVE 2026-08-04 (S11.8c), post-S10c.5, on the deployed box.**
+> A real `fa run` request, `mistral-small-2603`, 16 tools:
+>
+> | component | bytes | share |
+> |---|---:|---:|
+> | **`AGENTS.md` map** | **28,665** | **55.4%** |
+> | `Tools for role` (system text) | 8,396 | 16.2% |
+> | native `tools` array | 8,762 | 16.9% |
+> | base system prompt | 5,924 | 11.4% |
+> | **the actual task** | **38** | **0.1%** |
+> | total | 51,785 | |
+>
+> Two updates to the record. **(a)** The map has **grown**: 48.4% → **55.4%**.
+> **(b)** The tool-schema duplication is confirmed *at source*, not inferred:
+> `coder_loop.py:408` builds `tool_payload` once, `:409` renders it into system
+> text and `:1124` passes the same object as the native `tools=` array — one
+> source, two wire encodings, **33.1% combined**, every request.
+>
+> S10c.5 shipped and is vindicated (inline block 10,619 → 7,471 B); today's
+> 8,396 B reflects registry growth to 16 tools. But it optimised the 16% while
+> the 55% grew — the *"fixing 21% while ignoring 48% is backwards"* note in this
+> item, now with harder numbers. **0.1% of a 51.8 KB request is the work.**
+
+2. **The `AGENTS.md` map is now the single biggest component at 48.4%**, and it
+   is *larger than `AGENTS.md` itself* (28,015 vs 17,127 bytes on disk). The
+   pinned buffer is assembling more than one document into that slot. Nobody
+   has ever measured what goes in there. Worth a follow-up of its own before
+   anyone optimises the tool block: fixing 21% while ignoring 48% is
+   backwards.
+
+**Combined:** 84.5% of every live request is standing context. The task itself
+is 0.1%.
+
+---
+
+## I-38 — RESOLVED 2026-07-30 (S8.4) — `--output-mode quiet` stdout contract
+
+**Found:** S7.C5 on the live container, 2026-07-30.
+
+`QuietRenderer`'s docstring (`output.py:449`) states the contract as:
+
+> *nothing on **stdout** — so `fa run --task ... > result.txt` stays parseable,
+> which is the reason the mode exists*
+
+Measured on the deployment: **stdout 34 bytes, stderr 0 bytes.** Reconstructed
+exactly from source — `cli.py:2212` prints `OK: stopped_by_llm (turns=1)\n`
+(29 bytes) unconditionally, then `cli.py:2214` prints `outcome.final_text`
+(`pong\n`, 5 bytes). 29 + 5 = 34. Exact match, no ambiguity about what wrote
+those bytes.
+
+**The renderer honours its contract; the command does not.** `QuietRenderer.on_event`
+really is a `pass`, and `tests/test_s6_renderers.py:149` proves it for every
+`EventType`. But those two `print()` calls in `_cmd_run` sit *outside* the
+`EventBus` entirely, so no renderer-level test can see them — which is exactly
+why a local unit suite passed while the live behaviour contradicts the
+docstring.
+
+**Why it is not cosmetic.** The stated purpose of the mode is that
+`fa run ... > result.txt` yields a parseable artifact. It does not: the file
+gets a human status line prepended to the payload. Any caller doing
+`result = subprocess.check_output(...)` gets `"OK: stopped_by_llm (turns=1)\npong"`
+and must strip a line whose format is undocumented and unversioned. The
+docstring's own justification is falsified by the shipped behaviour.
+
+**This is a policy fork, not a bug with an obvious fix.** Promote to a Q# before
+touching it. The options:
+
+- **(a)** Quiet means *only* `final_text` on stdout; status line moves to
+  stderr. Best matches the docstring and normal Unix practice (data on stdout,
+  status on stderr). Changes observable output for anyone parsing today.
+- **(b)** Keep the behaviour, fix the docstring to say "quiet suppresses the
+  live renderer; the status line and final text still go to stdout." Zero risk,
+  but concedes that `> result.txt` is not clean.
+- **(c)** Add `--output-mode raw` for payload-only, leave `quiet` as-is.
+  Additive and safe; grows the surface.
+
+Recommend **(a)**, with a C2 test asserting stdout is byte-identical to
+`final_text` under quiet. It is the only option that makes the docstring true.
+
+**Severity: P2.** Contract/documentation mismatch on a mode whose entire reason
+for existing is machine-parseable output.
+
+### RESOLVED — S8.4, 2026-07-30
+
+Adopted **option (a), scoped to `quiet`** (operator decision, S8 plan Q32:
+*"quiet mode outputs less info per turn, all info is processed as usual"*).
+
+* Under `--output-mode quiet`, `_cmd_run`'s status line goes to **stderr** and
+  stdout is byte-exactly `outcome.final_text`.
+* Default `console` output is **unchanged** — the change is mode-scoped, not
+  unconditional, so no existing console user is affected.
+* `fa workflow` gained `--output-mode` and forwards it to every stage (this is
+  where the defect compounded: 102 bytes across three stages).
+* `QuietRenderer`'s docstring corrected in the same commit, and now states the
+  contract the CLI actually keeps.
+* Durable equivalence asserted: DB rows, workflow artifacts and the
+  `global_history` row are identical in both modes.
+
+Kill-checks bite in **both** directions (force-stdout fails the quiet tests;
+force-stderr fails the console tests), which is what pins a conditional rather
+than a constant.
+
+---
+
+## I-39 — RESOLVED 2026-08-01 (S10c.4 / Q55) — composer extras are no longer dropped *silently*
+
+**Resolution.** The drop remains; the **silence** does not — which was the
+actual complaint ("a key the composer invents and an adapter silently drops is
+invisible to every existing check").
+
+**Q55 (operator): Mistral is a temporary test provider, best-effort only.** So
+the key was neither added to the recognised set (that would claim API support
+nobody verified) nor removed from the composer (it works on
+openai-compatible routes, asserted in `test_providers_openai_compat.py:139`).
+It is recorded in a reviewed `_KNOWN_UNRECOGNISED` allow-list that a contract
+test asserts, keeping the gate binary: a *second*, unplanned silent drop still
+fails.
+
+`COMPOSER_EXTRA_BODY_KEYS` is exported from `prompt_composer` so the test
+compares constants instead of scraping source, and a companion test asserts the
+constant equals what the function actually emits — otherwise the contract would
+validate a fiction.
+
+**The gate found a third instance on its first run.** This entry documented
+`mistral`; `mistral_agents` has the identical gap (recognises
+`prompt_cache_key`, not `prompt_cache_retention`), verified against
+`MISTRAL_CONVERSATIONS_RECOGNIZED_PROVIDER_PARAMS_KEYS` rather than assumed
+from the family name. A further test asserts every allow-list row still
+describes a *real* mismatch, so a row cannot outlive its reason.
+
+Pinned by `tests/test_s10c_composer_extras_contract.py`.
+
+---
+
+**Original report — `prompt_cache_retention` is silently dropped for every Mistral route**
+
+**Found:** while reading the S7.C4b container output, 2026-07-30.
+
+`prompt_composer.to_openai_request_v2` (`prompt_composer.py:188`)
+unconditionally emits `extra_body = {"prompt_cache_key": ..., "prompt_cache_retention": "1h"}`.
+The container body shows `prompt_cache_key` **present** and
+`prompt_cache_retention` **absent**.
+
+Confirmed by direct call, not inference — `_build_request_body` with both keys
+in `extras` returns a body containing `prompt_cache_key` and not
+`prompt_cache_retention`. Cause: `MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS`
+(`mistral.py:77`) lists 7 keys and `prompt_cache_retention` is not among them,
+so the `if key not in ...: continue` filter drops it. `openai_compat` does pass
+it through (`tests/test_providers_openai_compat.py:139` asserts so).
+
+So the retention hint reaches OpenAI-compatible routes and never reaches
+Mistral routes. The system asks for 1-hour cache retention and, on the route it
+actually runs in production, gets provider-default retention instead.
+
+**The existing test documents the drop without justifying it.**
+`tests/test_mistral_provider.py:626` asserts `"prompt_cache_retention" not in body`
+with the docstring *"Unrecognized extras ... are filtered out."* That pins the
+filter's mechanics, but nowhere is it recorded whether Mistral genuinely
+rejects the field or whether it was simply never added to the set. Those need
+different fixes and the test cannot tell them apart.
+
+**Also a gap in the routing lint.** `routing_lint.py` check 3 flags unknown
+`provider_params` keys from `models.yaml` — good — but composer-injected
+`extras` never pass through that lint. A key the composer invents and an
+adapter silently drops is invisible to every existing check.
+
+**Action:** confirm against Mistral's current API docs whether
+`prompt_cache_retention` is supported. If yes, add it to the recognised set. If
+no, stop emitting it for Mistral routes rather than emitting-then-dropping, and
+say so in the composer. Either way, extend the lint (or add a startup
+assertion) so composer-emitted extras are checked against the destination
+adapter's recognised set.
+
+**Severity: P3.** Cost/performance only; no correctness impact. Cheap to fix.
+
+
+
+---
+
+## I-40 — RESOLVED 2026-08-01 (S10c.1) — the config gate fails when it cannot validate
+
+**Resolution, both halves.**
+
+*Missing config.* `_cmd_routing_check` now stats the path and exits **2**
+naming it. `scripts/fa-clean-rebuild.sh:471` therefore aborts instead of
+logging "Routing lint: OK" on a typo. The loader's missing-file policy is
+**unchanged** — it is documented and correct for other callers
+(`config.py:323-326`, "caller decides if absence is fatal"); the command is the
+caller that has decided absence is fatal. An empty-but-present config still
+exits 0, which is a legitimately clean state.
+
+*Unparseable YAML — wider than this entry recorded.* Executing each command
+showed **five** leaked a raw traceback: `routing-check`, `run`, `selfcheck`,
+`probe` and `egress-proxy` (the last loads this config at **container start**).
+Fixed once at the single `yaml.safe_load` in `load_models_config`, which
+converts `yaml.YAMLError` to `ConfigurationError` — the exception every one of
+those callers already handles, and the same one raised two lines below for a
+bad root type. All 19 `load_models_config*` call sites inherit it; adding the
+exception to five `except` tuples would have fixed the ones an author
+remembered.
+
+Two pinned tests were **inverted**, each with a docstring recording why —
+including S10b's parity cell, whose own docstring predicted it: *"this test
+INVERTS when I-40 is fixed — that is its purpose."*
+
+Pinned by `tests/test_s10c_config_error_contract.py` (all five commands get
+their own test, plus a C0p on the loader so a command regression is
+distinguishable from a loader regression).
+
+---
+
+**Original report — `fa routing-check` passes green on a config path that does not exist**
+
+**Found:** S10a.2, 2026-07-31, by a test written to assert exit 2 that failed.
+
+`fa routing-check --config /path/that/does/not/exist` returns **0** and prints
+`WARNING: no roles declared; nothing to check.`
+
+Cause: `load_models_config_from_path` returns an empty `roles` mapping for a
+missing file rather than raising, so `_cmd_routing_check` takes its
+"no roles declared" branch (`cli.py`) and reports success.
+
+**Why this is not cosmetic.** `scripts/fa-clean-rebuild.sh:471` runs this
+command as a **pre-build deploy gate**:
+
+```bash
+if uv run --project "${REPO_DIR}" fa routing-check --config "${ROUTING_MODELS_FILE}"; then
+    log_info "Routing lint: OK."
+else
+    log_error "... Aborting before build."
+```
+
+A typo in `ROUTING_MODELS_FILE` therefore logs **"Routing lint: OK"** and
+proceeds to build, having validated nothing. The command's own docstring calls
+it a gate that "fails in well under a second, before a Docker image build" —
+which is exactly what does not happen.
+
+**Second, smaller defect in the same handler.** `_cmd_routing_check` catches
+`(ConfigurationError, EvalFamilyConflictError, OSError)`. **Unparseable YAML
+raises `yaml.ParserError`**, which is none of those, so a syntactically broken
+`models.yaml` escapes as an unhandled traceback instead of the structured
+`ERROR: models config error` the command promises. Measured.
+
+**Fix shape.** Distinguish *absent* from *empty*: stat the path first and
+return **2** with a structured message when it does not exist, keeping 0 for a
+genuinely empty-but-present config. Add `yaml.YAMLError` to the caught tuple.
+Both are one-line changes, but both alter an operator-visible exit code, so
+they belong in a slice that owns the CLI contract — **not** in a coverage
+slice.
+
+**Severity: P2.** Silent failure of a deploy gate. Today's behaviour is pinned
+by `test_s10a_routing_check_missing_config_reports_no_roles` so the eventual
+fix is a visible diff rather than drift.
+
+---
+
+## I-41 — RESOLVED 2026-08-01 (S10b.3 / Q53) — `fa stats` renderers bound `sys.stderr` at import time
+
+**Resolution.** `render_session` / `render_aggregate` now take
+`stream: TextIO | None = None` and resolve `sys.stderr` **inside the body**, so
+the current stream is used on every call. Confirmed as a *live* defect while
+writing the S10b.3 parity cells, not merely a smell: it surfaced as
+`ValueError: I/O operation on closed file` (`stats.py:663`) when a renderer ran
+after another test whose captured stderr had since been closed.
+
+Fixing `.write` alone was insufficient — both functions also call
+`stream.flush()`, which the first patch turned into `None.flush()`. The stream
+is now resolved **once** into a local (`out`) so write and flush cannot
+diverge. A repo-wide grep for `= sys.stderr` / `= sys.stdout` on `def` lines
+confirms these were the only two sites in `src/fa`.
+
+Pinned by three FIX-regression tests in `tests/test_s19_stats_parsers.py`
+(`test_i41_*`), red before the fix, including a positive control asserting an
+explicit `stream=` still wins — so a "fix" that ignored the argument and always
+wrote to `sys.stderr` is also caught. Mutations verified: restoring the
+import-time default fails the call-time test; ignoring the argument fails the
+positive control.
+
+---
+
+**Original report — Found:** S10a.6, 2026-07-31, by a test that passed alone
+and failed in the suite.
+
+`fa.stats.render_session` and `render_aggregate` declare
+`*, stream: TextIO = sys.stderr`. A default argument is evaluated **once, at
+import**, so both functions write to whatever `sys.stderr` was bound to when
+`fa.stats` was first imported — not to the current one.
+
+**Symptom.** Under `pytest`, any test that runs after a test which replaced
+`sys.stderr` gets `ValueError: I/O operation on closed file` from
+`cli.py:2822`. Measured: `test_s10a_stats_console_render_and_dead_zones`
+passes in isolation and fails in the full module.
+
+**Why it is not only a test problem.** Any embedder that reassigns
+`sys.stderr` — a TUI, a log-capture harness, a subprocess wrapper, `fa` running
+inside another tool — silently loses the renderer's output or writes to a dead
+handle. The CLI's own quiet/console stream contract (S8.4) assumes writes go to
+the *current* stream.
+
+**This is the third instance of one defect class in this codebase:**
+
+| where | fixed by |
+|---|---|
+| `state.py` `DEFAULT_STATE_ROOT` | V10 — `default_state_root()` resolves at call time |
+| `global_history.py` `DEFAULT_GLOBAL_HISTORY_PATH` | S8.8 — `default_global_history_path()` |
+| **`stats.py` renderer `stream=` defaults** | **open (this item)** |
+
+**Fix shape** (mirrors the two precedents): default to `None` and resolve
+inside the body — `stream = stream if stream is not None else sys.stderr`.
+Both call sites in `cli.py` already omit the argument, so nothing else changes.
+
+**Severity: P3.** No production data is wrong; output can land on a stale
+stream in embedded use. Deliberately **not** fixed in S10a — that slice's DoD
+allows exactly one production edit (the `_cmd_probe` seam), and this is a
+different module. The S10a test works around it by passing an explicit stream,
+with a comment pointing here.
+
+---
+
+## I-42 — `test_pty_persistence.py` shares a hardcoded global `/tmp`
+
+- **Status:** open (found during S12, 2026-08-02). P3.
+- **Idea:** 11 tests construct `PtyPool(max_size=1, base_cwd=Path("/tmp"))`
+  instead of using the `tmp_path` fixture. They share one global directory, so
+  parallel or repeated runs can collide. Unrelated to platform: `pty_pool.py`
+  itself is correct (its default is `/workspace`, and the `RuntimeError` at
+  line 630 is a deliberate Gap-6 fail-fast).
+- **Repro:** `grep -c 'Path("/tmp")' tests/test_pty_persistence.py` -> 11.
+- **First concrete step:** replace with `tmp_path`; the tests do not depend on
+  the directory being `/tmp`.
+
+## I-43 — the suite writes into the developer's real `~/.fa` on Windows
+
+- **Status:** open (found during S12, 2026-08-02). P2.
+- **Idea:** several tests isolate state with
+  `monkeypatch.setenv("HOME", str(tmp_path/"home"))`. On POSIX
+  `Path.home()` reads `HOME`, so this works. On Windows `ntpath.expanduser`
+  prefers **`USERPROFILE`**, so the override is ignored and the run writes to
+  the operator's real `~/.fa`. Measured: `ntpath.expanduser('~')` returns
+  `C:\Users\Real` even with `HOME=/fake/home`.
+- **Evidence:** this produced 7 of the 85 Windows failures (they looked like a
+  missing `events.jsonl`, i.e. a product defect, until root-caused). Confirmed
+  independently by `test_s10c_no_artifact_is_group_or_world_accessible`
+  reporting the operator's real artifacts (`'session-log\\posture\\events.jsonl':
+  '0o666'`).
+- **Why not fixed in S12:** S12 is `tests/`-scoped and marker-only; the correct
+  fix is a `conftest.py` seam that also sets `USERPROFILE`, which touches the
+  deliberately narrow `_isolate_fa_session_log_root` fixture (its docstring
+  records that patching `Path.home` globally broke 25 tests). Needs its own
+  slice.
+- **First concrete step:** in `tests/conftest.py`, set `USERPROFILE` alongside
+  `HOME` in the autouse isolation fixture; re-run the Windows gate.
+
+## I-44 — `ruff format --check .` fails on 39 markdown files
+
+- **Status:** open (observed during S12, 2026-08-02; pre-existing). P3.
+- **Idea:** `just lint` runs `ruff format --check .`, which formats fenced
+  Python blocks inside `.md`. 39 documentation files under `knowledge/` and
+  `worklogs/` fail. All 353 tracked `.py` files are clean. Present at
+  `cf1a980`, before S12 began.
+- **Note:** the operator's Windows run reported `643 files already formatted`,
+  so the failure is environment-dependent (file discovery differs). Decide
+  whether docs should be format-gated at all, or excluded via
+  `extend-exclude`.
+- **Repro:** `uv run ruff format --check .` vs
+  `uv run ruff format --check $(git ls-files '*.py')`.
+
+## I-45 — `install_hooks` is not idempotent on Windows
+
+- **Status:** open (found during S12 Windows verification, 2026-08-02). P2.
+- **Idea:** `_install_one` (`src/fa/hygiene/hooks/install.py:55`) treats an
+  existing target as replaceable only when `target.is_symlink()`. But
+  `install.py:63` forces `shutil.copy2` on `win32` — deliberately, because Git
+  for Windows does not reliably execute a symlinked hook — so the installed
+  target is **always a real file** there. The second `install_hooks()` call
+  therefore raises `FileExistsError` instead of refreshing the hook.
+- **Impact:** an operator re-running `fa hooks install` after a `git pull` gets
+  a hard error on Windows, and the hook silently keeps the **old** content
+  until they pass `force=True`. On POSIX the symlink keeps it current
+  automatically, so the platforms disagree about whether hooks self-update.
+- **Evidence:** `test_install_hooks_is_idempotent_replacing_own_symlinks` failed
+  on a Windows box with Developer Mode enabled (symlink creation available, yet
+  the install still copied). Marked `requires_symlink_hook_installs` in S12 so
+  the suite is honest; the product behaviour is unchanged and still wrong.
+- **First concrete step:** in `_install_one`, treat a target whose content
+  matches the source as replaceable on `win32` (or pass `force=True` from
+  `install_hooks` when the existing file is one of ours). Then drop the marker.
+
+## I-46 — 12 remaining hardcoded `python3` invocations in tests
+
+- **Status:** open (found during the S12 proactive audit, 2026-08-02). P3.
+- **Idea:** Windows ships an App Execution Alias at `python3.exe` that prints a
+  Microsoft Store notice and exits 9009. `shutil.which("python3")` finds it, so
+  presence checks do not help. S12 added `requires_python3_executable` (which
+  runs it and requires real output) and applied it to the one test that
+  surfaced. Twelve other call sites remain, in
+  `test_bash_intent.py`, `test_pty_persistence.py`, `test_sandbox_secret_paths.py`,
+  `test_slice5_6_7_wiring.py`, `test_run_bash_tool_projection.py`,
+  `test_inner_loop_tools.py`, `test_deploy_scripts.py`.
+- **Why not urgent:** each currently sits inside a test already gated by
+  `requires_pty_backend` or `requires_stable_tmpdir`, or is pure string
+  analysis with no subprocess. They cannot bite on Windows today.
+- **Why it still matters:** the protection is *incidental*. Removing an
+  unrelated marker later re-exposes the hazard silently.
+- **First concrete step:** apply `requires_python3_executable` to every test
+  that actually spawns `python3`, or introduce a `PYTHON3` constant resolved
+  once via `sys.executable`.
+- **Repro:** `grep -rn 'python3' tests/*.py | grep -v _capabilities`
+
+## I-47 — stale session clones accumulate without bound
+
+- **Status:** open (observed during live S11.3, 2026-08-03). P3.
+- **Idea:** `/sessions/<id>/` holds a full repo clone per session. The
+  production box carried **18**, the oldest from 2026-07-01. Nothing prunes
+  them. Each is a complete checkout, so disk grows linearly with sessions run.
+- **Not a correctness issue:** they are only importable when the entrypoint puts
+  the *current* session's `src` on `PYTHONPATH`
+  (`scripts/fa-entrypoint.sh:199`); historical clones are inert.
+- **First concrete step:** decide a retention policy (keep N most recent, or age
+  out past D days) and implement it in the entrypoint or a `fa` housekeeping
+  subcommand. Confirm nothing reads a historical clone before deleting.
+- **Repro:** `docker compose exec -T first-agent sh -lc 'ls -d /sessions/*/src/fa | wc -l'`
+
+## I-48 — `mistral-medium-2604` rejects FA's request shape (greedy sampling)
+
+- **Status:** open (found S11.4e, **re-diagnosed** 2026-08-03 after an operator
+  model swap). P2 — the model is unusable in any role.
+- **Corrected diagnosis.** The first reading blamed the *planner role*. The
+  operator then swapped models between roles, which isolated the variable:
+
+  | run | `mistral-medium-2604` | `mistral-small-2603` |
+  |---|---|---|
+  | initial | planner → **400** | coder → 200, eval → 200 |
+  | after swap | coder → **400** | planner → 200, eval → 200 |
+
+  The fault follows the **model**, not the role. Any role configured with
+  `mistral-medium-2604` fails; every role on `mistral-small-2603` succeeds.
+- **Error:** HTTP 400 `{"message": "top_p must be 1 when using greedy sampling",
+  "type": "invalid_request_greedy_sampling", "code": "3054"}`.
+- **FA does not send `top_p`.** Verified by reading every emit site:
+  `RequestInfo.top_p` defaults to `None` (`base.py:52`), `chain.py:332` only
+  fills it from an explicit `sampling.top_p`, and `mistral.py:150` /
+  `openai_compat.py:61` emit it **only when not None**. The operator's
+  `models.yaml` sets no `sampling` block at all — the only active provider param
+  is `reasoning_effort: "high"`.
+- **Therefore the `top_p` is server-side.** `mistral-medium-2604` appears to
+  apply its own default `top_p` (≠ 1) and then reject the combination with the
+  `temperature=0.0` FA sends, most likely tied to `reasoning_effort: "high"`
+  putting the model in a reasoning/greedy mode.
+- **Candidate next steps (needs one experiment, not a code change yet):**
+  1. probe `mistral-medium-2604` **without** `reasoning_effort` — if it passes,
+     the interaction is confirmed and the fix is config;
+  2. probe it with an explicit `sampling: {top_p: 1}` — if it passes, FA should
+     send `top_p: 1` whenever `temperature == 0` for this family;
+  3. probe with `temperature` unset — isolates the greedy trigger.
+- **Do NOT "fix" by omitting `top_p` in `mistral.py`:** FA already omits it. A
+  change there would be a fix to code that is not at fault.
+- **Repro:** `docker compose exec -T first-agent fa probe --role <any-role-set-to-mistral-medium-2604> --timeout 30`
+- **Related but distinct:** **I-50** is a *different* `request_shape` failure —
+  same HTTP 400 family, but on `mistral-small-2603` inside a workflow stage
+  transition, with `in=0`. Do not merge them: I-48 reproduces on a bare `probe`
+  with one model; I-50 reproduces on a model that passes that same probe.
+
+## I-49 — `state/models.yaml` is a REQUIRED mountpoint stub, not dead state
+
+- **Status:** open, **re-diagnosed 2026-08-03 after the earlier advice caused a
+  live outage.** P3 (documentation/robustness, not correctness).
+- **CORRECTION.** The first write-up called
+  `/srv/first-agent/state/models.yaml` "dead state ... delete it". The operator
+  did, and the agent immediately reported
+  `role 'planner' not found in /home/fa/.fa/models.yaml; known: []`.
+  Restoring the file fixed it. **The advice was wrong.**
+- **Mechanism.** `docker-compose.fa.yml` performs two *nested* binds:
+  `/srv/first-agent/state` → `/home/fa/.fa` (rw), then
+  `/srv/first-agent/routing/models.yaml` → `/home/fa/.fa/models.yaml` (ro).
+  The second target lives **inside** the first bind, so the kernel needs a file
+  to exist at that path in the parent filesystem to attach the mount onto.
+  The state-dir file **is that mountpoint stub**. Remove it and the nested
+  mount has nothing to cover, so the agent reads an absent config.
+- **So the `644` is on a stub whose content is never read** — the ro mount
+  covers it. That is why the S10c.3 pass can never repair it, and why the
+  count will show 1 forever. Both observations from S11.6 stand; only the
+  *remedy* was wrong.
+- **Real (small) improvements, none of which is "delete it":**
+  1. rename the host file to something self-describing, e.g.
+     `state/models.yaml` → keep, but add `state/README-mountpoints.md`
+     explaining that it must exist and its content is ignored;
+  2. have `fa-clean-rebuild.sh` `touch` it if missing, so a well-meaning
+     cleanup cannot break the deployment;
+  3. add the same note as a comment in `docker-compose.fa.yml` next to the
+     nested mount (the existing comment says the mount "hides any legacy
+     state/models.yaml", which is what misled the analysis).
+- **Repro of the failure mode:** `sudo rm /srv/first-agent/state/models.yaml`,
+  recreate the container, then `fa run --role planner "hi"` → `known: []`.
+
+## I-50 — resumed workflow stage sends an assistant message last; provider 400s
+
+- **Status:** open, **ROOT-CAUSED 2026-08-03** from the live error body.
+  **P1 — the `planner→coder→eval` pipeline cannot complete against Mistral.**
+- **The provider's own words** (recovered from `events.jsonl`, not the console):
+
+  ```
+  status=400 code=3230 type=invalid_request_message_order
+  "Expected last role User or Tool (or Assistant with prefix True)
+   for serving but got assistant"
+  ```
+
+- **Mechanism, confirmed in source:**
+  1. `prompt_composer.py:123-125` appends the task as a `user` message and then
+     `non_cacheable.extend(observations)` — **observations come after the task**;
+  2. `coder_loop.py:450-490` rebuilds `observations` from the session DB,
+     appending only `model_msg` → `{"role": "assistant"}` and `tool_result` →
+     `{"role": "tool"}`. It **never replays `user_msg` rows**;
+  3. `_run_stage` (`cli.py:1248`) passes `"resume": not fresh`, so stage 2
+     inherits stage 1's transcript;
+  4. the planner ended `stopped_by_llm` on a plain text turn — a `model_msg`
+     with **no** trailing tool call.
+
+  Net message order: `[system, system, system, user "Task: …", …history…,
+  assistant]`. The final element is an assistant message, which Mistral rejects
+  for a non-prefix completion.
+
+- **Explains every observation** (why it looked model-specific and role-specific
+  and was neither):
+
+  | scenario | rebuilt history | last role | result |
+  |---|---|---|---|
+  | standalone `fa run` | empty | `user` | **200** |
+  | planner, stage 1 (`fresh`) | empty | `user` | **200** |
+  | coder, stage 2 (`resume`) | planner's turns | **`assistant`** | **400** |
+  | turn 2+ inside one session | ends in tool result | `tool` | **200** |
+
+- **Not provider-exotic.** OpenAI tolerates a trailing assistant message;
+  Mistral and Anthropic do not. FA supports all three, so the ordering must be
+  normalised by FA, not left to the provider.
+- **Why local tests missed it:** S8 drives the workflow through a scripted
+  transport that accepts any message order. `_assert_tool_pairing_invariant`
+  (`coder_loop.py:176`) checks tool-call/result **pairing** but says nothing
+  about the **final role** — the invariant that actually matters here.
+- **Candidate fixes (needs a decision → Q#):**
+  1. **append the task last** for a resumed session, i.e. put
+     `{"role": "user", "content": f"Task: {task}"}` *after* `observations`.
+     Smallest change; also more natural — the new instruction should follow the
+     inherited context rather than precede it. Risk: alters prompt-cache key
+     ordering, so measure the cache-hit impact (currently 74–99%).
+  2. **replay `user_msg` rows** in the rebuild so history is faithful. More
+     correct in principle, larger blast radius, and still ends on an assistant
+     message unless combined with (1).
+  3. **normalise in the provider adapter** — append a minimal continuation user
+     message when the last role is `assistant`. Localised, but hides the real
+     ordering bug from every other caller.
+  Recommend **(1)** plus a new ordering invariant asserting the last
+  provider-visible message is `user` or `tool`, with a kill-check.
+- **Repro:** `fa workflow planner,coder,eval "<any task>" --mode linear`
+  — fails at stage 2, turn 1, `in=0`. Three consecutive reproductions with
+  different transcripts and targets.
+
+## I-51 — `request_shape` console output discards the provider's error
+
+- **Status:** open (found while diagnosing I-50 live, 2026-08-03). P2 —
+  observability; it is what made I-50 hard to diagnose.
+- **Symptom:** a 400/422 from the provider renders as
+
+  ```
+  ⏳ retry in 0s (unknown/0)
+  FAIL: request_shape (turns=1)
+  ```
+
+  `unknown/0` is a placeholder. The operator gets **no** indication of why the
+  provider rejected the request.
+- **Mechanism.** `coder_loop.py:1367-1379` builds the `api_retry` event with
+  `provider="unknown"` and `status=0` **hardcoded**, discarding both values from
+  the exception. The real detail is placed in a `reason` key —
+  `f"request_shape_error: {exc}"` — but `ConsoleRenderer._handle_api_retry`
+  (`output.py:347-352`) renders only `retry_after_s`, `provider` and `status`.
+  **`reason` is never printed.**
+- **Contrast:** `fa probe` prints the same exception directly
+  (`cli.py:2978`) and shows the full body:
+  `status=400 body={'message': 'top_p must be 1 ...', 'code': '3054'}`.
+  Two paths, the same error class, radically different diagnosability.
+- **The data is not lost** — `coder_loop.py:1363` writes
+  `{"reason": "request_shape", "detail": str(exc)}` to `events.jsonl`, so the
+  cause is recoverable post-hoc. Only the live console is blind.
+- **Fix (small, two sites):**
+  1. carry the real provider/status on the event instead of the placeholders —
+     `ProviderRequestShapeError` already has `.status`;
+  2. render `reason` in `_handle_api_retry` when present.
+  Add a C1 test asserting the rendered line contains the provider's message,
+  and a kill-check that reverting either half loses it.
+- **Repro:** any workflow stage that 400s; compare console output against
+  `jq -r 'select(.kind=="run_stopped")|.content.detail' events.jsonl`.
+
+## I-52 — resumed history is not a faithful replay (`user_msg` rows dropped)
+
+- **Status:** open (found while root-causing I-50, 2026-08-03). P2.
+- **Idea:** `coder_loop.py:450-490` rebuilds `conversation_history` from the
+  session DB by translating **only** `model_msg` → `assistant` and
+  `tool_result` → `tool`. `user_msg` rows are written (`coder_loop.py:493`) but
+  **never replayed**.
+- **Consequence:** a resumed stage sees the previous stage's assistant turns and
+  tool output, but not the instruction those turns were responding to. The model
+  is asked to continue work whose stated goal is missing from its context.
+- **Relationship to I-50:** S13's normalization makes the request *valid*
+  (message ordering). It does not make the history *complete*. These are
+  separate defects and fixing the first does not fix the second.
+- **Why not fixed in S13:** replaying `user_msg` changes the token cost and the
+  cache key of every resumed request, and interacts with compaction
+  (`latest_comp_idx` windowing at `coder_loop.py:455-463`). It needs its own
+  measurement, not a rider on an ordering fix.
+- **First concrete step:** add a C1 test asserting a resumed transcript contains
+  the prior stage's user instruction; then decide whether to replay verbatim or
+  to summarise prior stages into the task text.
+- **Repro:** run `fa workflow planner,coder,eval`, then inspect the coder
+  stage's outgoing body — no `user` message from the planner stage appears.
+
+<<<<<<< ours
+<<<<<<< ours
+=======
+>>>>>>> theirs
+
+## I-53 — RESOLVED (2026-08-04): pre-S7.5 S4-F1 residue, not a live defect
+
+- **Status:** **RESOLVED — no code change required.** Kept as a record because
+  the diagnosis is reusable.
+- **What it was:** `/sessions/session-20260728T075426-7/.fa/session.db`,
+  **69,632 bytes**, found by S11.8a's stray-authority scan. Opened read-only:
+
+  | field | value |
+  |---|---|
+  | `run_id` | `('cli-smoke',)` — sole value |
+  | rows | 63 |
+  | `session_id` | `('',)` — **empty** |
+  | `session_meta` | `schema-version session-v1`, `2026-07-28T09:28:05.729Z` |
+
+- **Diagnosis.** `cli-smoke` is `_SMOKE_SESSION_ID` (`cli.py:893`), written by
+  `fa inner-loop-smoke`. The **empty `session_id` alongside a populated
+  `run_id` is the exact S4-F1 signature** — `cli.py:890-892` records it
+  verbatim: *"the S4-F1 defect was precisely that the run was labelled while the
+  session was left empty."*
+- **Dated conclusively.** Artifact written **2026-07-28T09:28Z**; S4-F1 fixed in
+  `16145b9` on **2026-07-29** ("S7.0-S7.6 … fix S4-F1 (Q28b)"). The file
+  pre-dates its own fix by one day.
+- **The fix is already regression-locked.**
+  `tests/test_s7_cli_run_paths.py:193
+  test_smoke_creates_no_session_less_authority_at_the_fa_root` asserts
+  `<workspace>/.fa/session.db` is never recreated, with a documented kill-check.
+  So the defect cannot return silently.
+- **Why the size was misleading.** 69 KB looked like an active misroute. It is
+  63 rows of smoke-run events from a single pre-fix invocation — large because
+  SQLite pages, not because traffic is still flowing.
+- **Disposition:** delete the file, or leave it as a dated artifact. Either is
+  safe. **Do not** treat it as evidence of a current routing bug.
+- **Method note:** the 8a scan classified it `STRAY` correctly and the
+  *classification was right while the initial interpretation was wrong*. Size
+  alone suggested severity; only `run_id` + `session_id` + the timestamp
+  identified it. Three cheap fields beat one expensive assumption.
+<<<<<<< ours
+=======
+
+## I-54 — prompt caching: replace universal `prompt_cache_key` with a capability-driven model
+
+- **Status:** open (found S13, 2026-08-05). P2 — affects cost and multi-provider
+  compatibility; a *transition*, not a one-line bugfix.
+- **Observation.** `prompt_composer.to_openai_request_v2` sends
+  `prompt_cache_key` + `prompt_cache_retention` in **every** OpenAI-compatible
+  request, unconditionally (`prompt_composer.py:241`). These are **not a
+  universal standard**: OpenAI-style proxies accept them, Mistral accepts
+  `prompt_cache_key` but drops `retention`, and **NVIDIA build rejects both with
+  400 "Unsupported parameter(s)"** (the live breakage this backlog item records).
+  The key is also **never read back** — FA only *measures* the provider-reported
+  `cache_hit_ratio` (`coder_loop.py:144-164`), so the emitted key does not itself
+  drive caching.
+- **Source-verified context (2026-08-05).** No mainstream harness sends these two
+  params universally:
+  - **Hermes (Nous)** — read `agent/prompt_caching.py`: uses Anthropic
+    `cache_control` **breakpoints** on a stable prefix (4 blocks: static system
+    prefix + end of system + last 2 messages), with a frozen-snapshot stable
+    prefix. Does **not** use `prompt_cache_key`. Handles envelope-vs-native
+    wire-format differences (and tracks bug #20957 where caching silently does
+    nothing on the OpenAI-compat wire path).
+  - **opencode (sst)** — read `packages/opencode/src/provider/transform.ts`:
+    sets `promptCacheKey` **gated** (`if providerID==="openai" ||
+    setCacheKey`), uses AI-SDK `providerOptions.anthropic.cacheControl` for
+    Anthropic breakpoints. Does not set it for all providers (issue #25984 shows
+    proxies can ignore it; `pi-opencode-go-cache` table confirms opencode CLI
+    sends neither `prompt_cache_key` nor `prompt_cache_retention` by default).
+  - **pi agent** (pi.dev / `pi-opencode-go-cache`) — explicitly gates
+    `prompt_cache_key`/`retention`/`cache_control` per model, skips providers
+    that reject them (e.g. GLM), i.e. a capability-driven approach like our S13
+    `MessageRules.supports_prompt_cache`.
+- **Consequence for aggregate providers.** The operator plans one-key-many-models
+  aggregate routing (OpenRouter-style, and NVIDIA's endpoint is an aggregator
+  too). There, caching is whatever the **upstream** supports; `prompt_cache_key`
+  may be honored, ignored, or rejected. Two wire formats matter (OpenAI-compat
+  vs Anthropic-compat `cache_control`), and Anthropic breakpoints only work on
+  the native wire.
+- **Needed transition (proposal).** Move from a single unconditional key to a
+  **per-provider capability-driven cache model**, applied at the single
+  chokepoint (`validate_and_normalize`), e.g. a richer `MessageRules` cache-style
+  (`auto` / `keyed` / `breakpoints` / `none`):
+  1. default **automatic prefix caching** (OpenAI/DeepSeek-style, no key) for
+     OpenAI-compat upstreams;
+  2. **gate `prompt_cache_key`** to providers that actually support it (OpenAI,
+     Mistral), never send it unconditionally;
+  3. **Anthropic `cache_control` breakpoints** on the already byte-stable
+     cacheable prefix (Hermes' proven approach) for the Anthropic wire path.
+- **⚠️ Re-research needed to update the baseline** (this item is a *start*, not
+  the final design): before implementing, re-verify against the **latest**
+  releases of opencode, Hermes, and the **pi** agent, and re-read the provider
+  docs (OpenAI prompt-cache options incl. newer `prompt_cache_options` for
+  GPT-5.6+; Mistral `prompt_cache_key`; NVIDIA/NIM). Confirm current wire shapes
+  and cache-hit pricing per provider — the research above is dated 2026-08-05.
+- **Do NOT** keep the assumption that "sending `prompt_cache_key` universally =
+  good caching." The S13 `supports_prompt_cache` flag is correct **containment**;
+  the capability-driven model is the follow-up transition.
+- **First concrete step:** extend `MessageRules` with a cache-style capability;
+  wire it in `validate_and_normalize`; add per-provider live measurement of
+  `cache_hit_ratio` (already computed) before/after; keep the live ≥74% cache-hit
+  gate per provider.
+- **Repro:** `fa workflow` on a provider that rejects `prompt_cache_key` (e.g.
+  NVIDIA) → 400 "Unsupported parameter(s): prompt_cache_key, prompt_cache_retention".
+
+## I-55 — subagent capability is WIP/unfinished/untested: complete it before relying on it
+
+- **Status:** open (assessed 2026-08-06). P2 — subagent is a declared feature with
+  several unfinished/contradictory seams; it must be completed or explicitly
+  scoped-down before it is treated as a production capability.
+- **Assessment source:** verified by grep/read in the repo (not assumed).
+  Subagent = `fa.inner_loop.subagent_runner` + `fa.inner_loop.tools.spawn_subagent` +
+  `fa.inner_loop.subagent_envelope` + `fa.inner_loop.subagent_prompts`, plus the
+  `researcher`/`verifier`/`code-reviewer`/`implementer`/`planner` role profiles in
+  `profiles.py::PROFILES_RAW` and the `SubagentEnvelope.type` schema enum
+  (`subagent_envelope.py:35`).
+- **Why it is unfinished (verified):**
+  1. **No per-role tool registry is ever built for a subagent.** `SubagentRunner.run_stateless`
+     (`subagent_runner.py:302-343`) runs a raw `subprocess.run(command)` with a scrubbed env and
+     **never constructs a `ToolRegistry`**. The `role` argument only sets the envelope `type`
+     (`subagent_envelope.py:100`); it does **not** select a tool surface.
+  2. **`build_registry_for_role("researcher")` is never called** anywhere in `src/`. Only
+     `"implementer"` / `"planner"` / `"verifier"` are built (`tools/__init__.py:198,229,256`), and
+     those feed the *main* loop (baseline/planner/eval registries), not subagents.
+  3. **The `researcher` role is declared-but-unwired.** `PROFILES_RAW` defines `researcher`
+     (`[glob,grep,read,instant_grep]`, 600-token profile, `profiles.py:39`), and `subagent_prompts.py:38`
+     / `subagent_envelope.py:139` describe it as a "structured websearch agent." But no code path
+     builds its registry or runs it as an LLM tool-user. Today `researcher` behaves like a bash/command
+     subagent (same as verifier).
+  4. **Docs overstate the blackboard-backed discovery.** AGENTS.md / llms.txt / reference.md instruct
+     the agent to use `blackboard.query(...)` for artifact discovery (`type="skill"/"research"/"adr"`),
+     but the blackboard only ever holds `type="file_version"` rows (writer = `mutation_guard.py:118,207`);
+     no code writes skill/research/adr entries, and there is **no `rank` field** anywhere in
+     `BlackboardEntry`/`Blackboard.query`/`session_db` (verified grep = zero). The subagent
+     "researcher"/"websearch" capability that would consume such an index is therefore also unrealized.
+- **Design intent (from docs):** `project-overview.md` §1.2.7 Pair-over-Autonomy + I-7.1..I-7.5:
+  subagents are **cheap, deterministic, isolated puzzle-piece providers** (structured websearch,
+  simple function) when main context is near limit (~180k). I-7.2: subagent task must be solvable with
+  **<600 tokens tool defs** and **<8000 chars output**, returning structured JSON. I-7.3: stateless,
+  scrubbed env, isolated via WorktreeManager. ADR-15 / I-6.3: simple chain planner→coder→eval is
+  default; parallel subagents only when substrate is formal and the task is embarrassingly parallel
+  with non-overlapping write_sets.
+- **Known partial implementations / contradictions to resolve:**
+  - `spawn_subagent` tool allows `role` ∈ `["verifier","researcher"]` (spawn_subagent.py:277) but only
+    `run_stateless` (bash) exists — the `researcher` path is not implemented.
+  - `subagent_envelope` mentions `from_researcher` (websearch) and `from_verifier` (bash); only
+    `from_verifier` is wired into `run_stateless`.
+  - The "filtered history" for a researcher subagent is logged but "would be injected as prompt" for
+    future use (`subagent_runner.py:314-315`) — i.e. not actually used yet.
+- **Unblock-trigger:** subagents become a required path — either (a) main context approaches the
+  180k limit and needs a cheap isolated puzzle-piece (websearch/verification), or (b) an eval/benchmark
+  task genuinely needs an isolated subagent and a simple chain is proven insufficient (I-7.4 / I-6.3).
+- **First concrete step when picked up:** decide the minimal honest scope first —
+  1. Either **finish the researcher path**: build a real per-role `ToolRegistry` for subagents (a
+     `build_subagent_registry(role)` that constructs `[glob,grep,read,instant_grep]` for `researcher`,
+     `[bash]` for `verifier`) and run the subagent as a real drive_session-like loop with that registry,
+     OR
+  2. **narrow the claim**: rename/deprecate the unimplemented `researcher` websearch path so docs do not
+     promise a capability that does not exist, and keep subagent = bash-only verifier for now.
+  Then close the doc-reality gap (blackboard skill/research index + `rank` either built or the docs
+  corrected to not assert them).
+- **Do NOT** treat `build_registry_for_role("researcher")` as "dead code to delete" without this
+  decision — it is the intended seam for a real researcher subagent, not garbage. But do NOT claim
+  subagent researcher works until its registry + loop + index are built and tested.
+
+---
+
+## I-56 — blackboard artifact index + doc closure (CLOSED 2026-08-10, S14)
+
+- **Status:** **closed by PLAN-cli-trace-S14-blackboard-substrate-completion** (2026-08-10).
+- **Disposition:** all three steps in the original action list shipped:
+  1. `fs_blackboard_query` tool (PLAN-fs-blackboard-query, S13.x) — read-only agent tool wrapping
+     `Blackboard.query()` with limit clamp/key filter/compact projection; registered in implementer +
+     planner profiles; 14 tests green; verified live.
+  2. Artifact index (`src/fa/blackboard/artifact_index.py`, S14 step S1) — lazy on-demand indexer that
+     writes typed entries for knowledge/ artifacts (skills, ADRs, research notes, instructions,
+     prompts, codemaps, anti-patterns, plus 6 enumerated root-level docs) into the session
+     blackboard on first artifact query. Append-only (V6/S5): new content → new physical entry with
+     `parent_id`; deterministic logical ids; content-hash-addressed; path-contained; fail-degraded.
+     Triggered lazily from the existing `fs_blackboard_query` handler (S14 step S2); no new CLI
+     surface, no new flag, no new dependency. 15 tests green (14 new in
+     `tests/test_blackboard_artifact_index.py`, 2 additive tests in existing file).
+  3. Doc-reality closure (S14 step S3): the "rank" claim was already scrubbed by S13.10 (re-verified
+     grep); AGENTS.md and knowledge/llms.txt carry one clarifying sentence noting lazy indexing;
+     `blackboard.query(` Python-method references in agent docs stay at zero.
+- **Conflict safety:** `Blackboard.detect_conflict` filters by `new_entry.type` (blackboard.py:348),
+  so artifact rows cannot cause false-positive write conflicts against `file_version`. Pinned by
+  C1 test T5 (`test_artifact_entries_do_not_trigger_file_version_conflict`).
+- **Explicit non-goals / deferred to future slices:**
+  - Broad consolidation of telemetry/flow_state/eval/tool_result/subagent types onto the blackboard
+    (substrate-formalization §Consolidation) is **not** in scope; S14 is the last slice of the
+    parent CLI-trace re-baseline plan, not the opening slice of a new consolidation project.
+  - `type="plan"` producer for `subagent_runner.filtered_history_include_plans` (I-55): flag stays
+    off; subagent is its own slice.
+  - A separate `fa index-blackboard` CLI verb: rejected in favor of lazy indexing (no startup tax,
+    no operator action).
+  - BM25/FTS rank on blackboard rows: content search stays `fs_instant_grep`'s job (Pillar-3).
+- **Files shipped (S14):** `src/fa/blackboard/artifact_index.py` (NEW, ~250 LOC),
+  `src/fa/inner_loop/tools/blackboard_query.py` (EDIT: lazy-index seam + title projection + additive
+  `indexed` result field + ToolSpec description), `AGENTS.md`, `knowledge/llms.txt` (one-sentence
+  clarification each), `tests/test_blackboard_artifact_index.py` (NEW, 15 tests),
+  `tests/test_blackboard_query_tool.py` (+2 tests). Patch: `/home/user/s14-blackboard-artifact-index.patch`.
+- **References:** PLAN-cli-trace-S14-blackboard-substrate-completion.md, PLAN-fs-blackboard-query.md,
+  knowledge/research/blackboard-audit-as-planned-vs-as-built-2026-08-07.md,
+  knowledge/research/substrate-formalization-and-reduction.md §1.2.6.
+
+---
+
+## See also
+
+- [`knowledge/MAINTENANCE.md`](../knowledge/MAINTENANCE.md) — recurring
+  sweeps + cross-reference cascade rules; companion to this file.
+- [`HANDOFF.md`](./HANDOFF.md) §Current state — for items
+  actively in flight (not deferred).
+- [`AGENTS.md` §Context-budget discipline](../AGENTS.md#context-budget-discipline)
+  — mitigations (a) and (b) reference I-2 and I-1/I-3
+  respectively; the rule's «tracked in BACKLOG.md until ADR-7/8
+  lands» wording points here. (Rule was numbered «PR Checklist
+  rule #11» pre-2026-05-26; PR A' moved the goal-oriented core
+  into AGENTS.md §Context-budget discipline and the PR-time
+  declaration into the [`pr-creation` skill](../knowledge/skills/pr-creation/SKILL.md)
+  §PR Checklist.)
+- [`research/bootstrap-cost-baseline-2026-05.md`](../knowledge/research/bootstrap-cost-baseline-2026-05.md)
+  §9 re-measurement triggers items 5 and 6 reference I-7 and
+  I-8 here.
+
+## Method note — a slice-and-splice edit silently deleted a BACKLOG item (2026-08-04)
+
+**I-51 vanished from this file for six commits and nobody noticed.**
+
+Sequence: `0d12ec3` added I-51 correctly (35 lines). `eb99724` then rewrote I-50
+using a start/end splice — `s[:s.index('## I-50')] + new + s[s.index('## I-12'):]`
+— which is correct only if nothing sits between the two anchors. I-51 did. It
+was deleted with no diff conflict, no test failure, and no gate complaint,
+because BACKLOG is prose and nothing validates its contents.
+
+It surfaced only when a claim in the S13 session-start prompt ("I-46 through
+I-53") was verified item by item against the file.
+
+**Two transferable points:**
+
+1. **Anchor-to-anchor splices are unsafe on append-ordered documents.** Replace
+   a section by locating *its own* end (the next `^## ` heading), never by
+   assuming the next known heading is adjacent.
+2. **The prompt-verification pass paid for itself immediately.** Every other
+   claim checked out — line numbers, file paths, CT/K ranges, the 553-line
+   count. The one that did not was a silent data loss in the project's own
+   findings ledger, and it was found by checking a claim rather than by reading
+   the file.

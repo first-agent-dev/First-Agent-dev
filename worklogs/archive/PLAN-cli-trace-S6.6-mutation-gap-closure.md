@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN — S6.6: mutation-gap closure for the S1–S6 substrate
 
 - **Status:** S6.6a–S6.6d COMPLETE (2026-07-29). Whole-`src` scope is a separate

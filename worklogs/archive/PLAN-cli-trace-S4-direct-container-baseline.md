@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved per b_full, verification reports exist (S1-S4) / code-proven IMPLEMENTED (S14b)
+
 # PLAN: S4 — Direct-Container Baseline
 
 Plan-ID: `PLAN-cli-trace-S4-direct-container-baseline`

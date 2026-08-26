@@ -188,7 +188,7 @@ the rules ship as part of closing S7.
 ## Deployment — operator action required
 
 The container half is
-[`PLAN-cli-trace-S7-container-verification.md`](../implementation-plans/PLAN-cli-trace-S7-container-verification.md):
+[`PLAN-cli-trace-S7-container-verification.md`](../archive/PLAN-cli-trace-S7-container-verification.md):
 eight steps (S7.C0–S7.C7) with exact `docker compose exec` commands, EXPECT
 lines, an evidence template and a rollback. It covers deployment drift, matrix
 cells A–D on the real path, DB↔mirror agreement, correlation joins on real
@@ -211,7 +211,7 @@ regression check. The others are order-independent after S7.C0.
 
 * **Q19 / V24 / V25 — subagent containment.** Open by decision; strict `xfail`
   in `tests/test_s5_isolation_boundary.py`, now tracked as
-  [`BACKLOG I-34`](../../knowledge/BACKLOG.md).
+  [`BACKLOG I-34`](../BACKLOG.md).
 * **Q29** — whether an empty `session_id` should remain a legal "unscoped"
   mode. Three production sites still construct DBs that way; changing that
   sentinel's meaning needs its own slice and sweep.

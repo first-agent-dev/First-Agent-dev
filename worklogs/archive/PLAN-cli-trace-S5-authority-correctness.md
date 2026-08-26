@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S5 — Authority Correctness and Mutation Safety
 
 Plan-ID: `PLAN-cli-trace-S5-authority-correctness`

@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S6 — EventLog/EventBus two-sided and path-complete contracts
 
 Status: **COMPLETE (2026-07-29)** — S6.1–S6.5 + post-completion audit + mutation sweep landed; gate 2197 passed / 14 skipped / 1 xfailed; all §8 DoD checkboxes ticked; parent S6 exit criteria met. Subagent stdout masking (S6-F7/Q25) shipped in commit `c2c79f2`.

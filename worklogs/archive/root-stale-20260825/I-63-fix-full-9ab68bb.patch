@@ -1,0 +1,169 @@
+From 9ab68bbd42c3cf8c11db11a42a6189619aa4cd6a Mon Sep 17 00:00:00 2001
+From: First-Agent Dev <fix@first-agent.dev>
+Date: Mon, 25 Aug 2026 12:35:00 +0000
+Subject: [PATCH] fix: propagate ContextVar to parallel tool workers + C1 test
+ (I-63)
+
+Fixes S18 C9 first-try failure: parallel batch [fs_search, fs_blackboard_query]
+failed with blackboard_unavailable because get_current_session() returned None
+inside ThreadPoolExecutor workers.
+
+Includes:
+ - src/fa/inner_loop/loop.py fix (required for deployment)
+ - tests/test_parallel_context.py C1 test (required for CI verification)
+
+See I-63-fix-9ab68bb.patch for minimal deployment-only patch.
+
+Base: 9ab68bbd42c3cf8c11db11a42a6189619aa4cd6a (remote main)
+
+---
+diff --git a/src/fa/inner_loop/loop.py b/src/fa/inner_loop/loop.py
+index 7e69671..8d5dcb4 100644
+--- a/src/fa/inner_loop/loop.py
++++ b/src/fa/inner_loop/loop.py
+@@ -9,6 +9,7 @@
+
+ from __future__ import annotations
+
++import contextvars
+ from collections.abc import Iterable, Iterator, Sequence
+ from concurrent.futures import ThreadPoolExecutor, wait
+ from dataclasses import dataclass
+@@ -349,11 +350,20 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
+     results_map: dict[str, ToolResult] = {}
+     if exec_payloads:
+         max_workers = min(len(exec_payloads), _MAX_TOOL_WORKERS)
++        # §I-S14b-5: propagate contextvars (e.g. fa_current_session) to worker threads.
++        # ContextVar is thread-local; without copy_context().run, get_current_session()
++        # returns None inside ThreadPool workers, causing fs_blackboard_query to fail
++        # with blackboard_unavailable on first try in parallel batches (I-63).
++        # NOTE: Context objects cannot be entered concurrently; we must create
++        # a distinct Context per task (otherwise "already entered" error).
++        ctxs = [contextvars.copy_context() for _ in exec_payloads]
+         try:
+             with ThreadPoolExecutor(max_workers=max_workers) as executor:
+-                futures = {
+-                    executor.submit(registry.dispatch, p.tool_call): p for p in exec_payloads if p.tool_call is not None
+-                }
++                futures = {}
++                for p, ctx in zip(exec_payloads, ctxs, strict=False):
++                    if p.tool_call is None:
++                        continue
++                    futures[executor.submit(ctx.run, registry.dispatch, p.tool_call)] = p
+                 done, _ = wait(futures.keys(), timeout=30)
+                 for fut in done:
+                     p = futures[fut]
+diff --git a/tests/test_parallel_context.py b/tests/test_parallel_context.py
+new file mode 100644
+index 0000000..7198f9f
+--- /dev/null
++++ b/tests/test_parallel_context.py
+@@ -0,0 +1,106 @@
++"""I-63: contextvar propagation to parallel tool workers.
++
++Verifies that get_current_session() returns the SessionState inside
++ThreadPoolExecutor workers used by run_session's parallel batch path.
++
++This is a C1 live-path test: real ToolRegistry, real SessionState,
++real blackboard, real EventLog, parallel batch of 2+ read tools.
++
++Kill-check: removing contextvars.copy_context().run wrapper in
++loop.py::_execute_batch_parallel makes test_parallel_blackboard_query_in_parallel_batch
++fail with blackboard_unavailable.
++"""
++
++from __future__ import annotations
++
++from pathlib import Path
++
++from fa.inner_loop import EventLog, SessionState, ToolCall, run_session
++from fa.inner_loop.hooks import HookRegistry
++from fa.inner_loop.registry import ToolRegistry
++from fa.inner_loop.runtime_limits import RuntimeLimits
++from fa.inner_loop.tools.blackboard_query import build_blackboard_query_tool
++from fa.inner_loop.tools.fs_search import build_fs_search_tool
++
++
++def test_parallel_blackboard_query_in_parallel_batch(tmp_path: Path) -> None:
++    """Parallel batch [fs_search, fs_blackboard_query] must both succeed first try."""
++    ws = tmp_path / "ws"
++    ws.mkdir()
++    (ws / ".fa").mkdir()
++    # seed repo files so search finds something and artifact index has content
++    (ws / "a.txt").write_text("iteration_cap needle\n")
++    (ws / "knowledge").mkdir()
++    (ws / "knowledge" / "test.md").write_text("# Skill\ncontent")
++
++    log = EventLog(ws / "ev.jsonl", run_id="par-bb")
++    state = SessionState(workspace_root=ws, run_id="par-bb", log=log)
++    # Blackboard must exist (source-verified: SessionState creates it when session_db present)
++    assert state.blackboard is not None
++
++    # Ensure artifact index has at least 1 row for the query to return
++    from fa.blackboard.artifact_index import ensure_artifacts_indexed
++
++    stats = ensure_artifacts_indexed(state.blackboard, ws)
++    # In this tiny fixture, scanned may be 1, but we at least have a DB
++    assert stats is not None
++
++    registry = ToolRegistry()
++    registry.register(build_fs_search_tool(ws / ".fa" / "fts.db", ws))
++    registry.register(build_blackboard_query_tool())
++
++    calls = (
++        ToolCall(name="fs_search", params={"query": "iteration_cap"}, call_id="t1"),
++        ToolCall(name="fs_blackboard_query", params={"type": "skill", "limit": 5}, call_id="t2"),
++    )
++
++    results = run_session(
++        calls,
++        registry=registry,
++        hooks=HookRegistry(),
++        state=state,
++        role="coder",
++        limits=RuntimeLimits(max_iterations=10),
++    )
++
++    assert len(results) == 2
++    # Both must succeed — the bug made second fail with blackboard_unavailable
++    assert results[0].error is None, f"fs_search failed: {results[0].error}"
++    assert results[1].error is None, f"fs_blackboard_query failed in parallel batch: {results[1].error} — I-63 regression"
++    assert results[1].result is not None
++
++
++def test_parallel_search_telemetry_propagated(tmp_path: Path) -> None:
++    """fs_search in parallel batch must record _pending_search_paths for S15 surfaced_by."""
++    ws = tmp_path / "ws"
++    ws.mkdir()
++    (ws / ".fa").mkdir()
++    (ws / "a.txt").write_text("needle content\n")
++
++    log = EventLog(ws / "ev.jsonl", run_id="par-search")
++    state = SessionState(workspace_root=ws, run_id="par-search", log=log)
++
++    registry = ToolRegistry()
++    registry.register(build_fs_search_tool(ws / ".fa" / "fts.db", ws))
++
++    # Parallel batch: two searches (both parallel-safe)
++    calls = (
++        ToolCall(name="fs_search", params={"query": "needle"}, call_id="t1"),
++        ToolCall(name="fs_search", params={"query": "needle"}, call_id="t2"),
++    )
++
++    results = run_session(
++        calls,
++        registry=registry,
++        hooks=HookRegistry(),
++        state=state,
++        role="coder",
++        limits=RuntimeLimits(max_iterations=10),
++    )
++
++    assert len(results) == 2
++    assert all(r.error is None for r in results)
++    # After batch, pending paths should have been committed (loop.py commits after each batch)
++    # So last_search_paths should contain a.txt (from search)
++    # Note: commit_search_paths is called after batch, so last_search_paths should be non-empty
++    assert "a.txt" in state.last_search_paths or len(state.last_search_paths) > 0
+--
+2.43.0

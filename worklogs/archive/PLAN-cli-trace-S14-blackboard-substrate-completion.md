@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S14 — Blackboard substrate completion (artifact index + doc closure)
 
 **Plan-ID:** `PLAN-cli-trace-S14-blackboard-substrate-completion`

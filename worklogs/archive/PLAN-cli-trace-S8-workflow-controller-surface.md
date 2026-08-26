@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S8 — workflow as a separate controller surface
 
 Plan-ID: `PLAN-cli-trace-S8-workflow-controller-surface`

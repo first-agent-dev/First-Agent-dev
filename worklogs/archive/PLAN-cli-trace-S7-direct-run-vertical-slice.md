@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN — S7: close the direct `fa run` vertical slice
 
 - **Status:** **COMPLETE** (2026-07-30). S7.0–S7.6 implemented and verified

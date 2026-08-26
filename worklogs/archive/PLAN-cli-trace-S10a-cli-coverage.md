@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S10a — CLI coverage to 80% (prerequisite for S10b decomposition)
 
 Plan-ID: `PLAN-cli-trace-S10a-cli-coverage`

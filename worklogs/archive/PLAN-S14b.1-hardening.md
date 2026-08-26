@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S14b.1 hardening — bugfix pass on unified fs_search (v3, post-review)
 
 **Plan-ID:** PLAN-S14b.1-hardening

@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved from implementation-plans per 30-day rule
+
 # PLAN: S9 — verify stats and derived projections (and harden the guards)
 
 Plan-ID: `PLAN-cli-trace-S9-stats-projections`

@@ -521,7 +521,7 @@ behaviour and one for structure.
 ### Step S10.4 — Close or own the dark-command gap (GAP4, G4)
 
 Traces-to: G4, GAP4. Depends-on: S10.0. Parallelizable-with: S10.2.
-**Files allowed to change:** `tests/test_s10_cli_parity.py`, `knowledge/BACKLOG.md`.
+**Files allowed to change:** `tests/test_s10_cli_parity.py`, `worklogs/BACKLOG.md`.
 
 **Current source-verified behaviour.** `_cmd_selfcheck` (113 lines, C=24) and
 `_cmd_probe` (100 lines, C=14) have **zero test references** and are ~95%
@@ -688,7 +688,7 @@ time discipline S10.3 is demonstrating.
 - **A3** `scripts/sweep_specs/s10_cli_extraction.json` (NEW)
 - **A4** `src/fa/cli.py` (modified — helpers extracted, one waiver deleted)
 - **A5** this plan (decision record), `worklogs/HANDOFF.md`
-- **A6** `knowledge/BACKLOG.md` (only if S10.4 defers)
+- **A6** `worklogs/BACKLOG.md` (only if S10.4 defers)
 - **No other file may change.**
 
 **CONTRACTS:** CT1–CT3 each PLANNED → IMPLEMENTED → **VERIFIED**.

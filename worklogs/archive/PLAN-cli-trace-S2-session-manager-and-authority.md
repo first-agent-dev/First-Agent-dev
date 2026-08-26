@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved per b_full, verification reports exist (S1-S4) / code-proven IMPLEMENTED (S14b)
+
 # PLAN: S2 — SessionManager and Session-Authority Wiring
 
 Plan-ID: `PLAN-cli-trace-S2-session-manager-and-authority`

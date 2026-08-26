@@ -1,3 +1,5 @@
+> **Status:** archived 2026-08-25 — moved per b_full, verification reports exist (S1-S4) / code-proven IMPLEMENTED (S14b)
+
 # PLAN: S1 — Session Lifecycle, Session Authority, and Run Binding
 
 Plan-ID: `PLAN-cli-trace-S1-session-lifecycle`

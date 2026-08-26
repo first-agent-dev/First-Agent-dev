@@ -1288,7 +1288,7 @@ operator/deployment check, not a network-dependent CI gate.
     `INTENT: FIX`, `CLASS: RELAX` (a strict invariant — "the wire-level
     model string is chosen how" — changes shape; ADR amendment landing in
     the same PR per that skill's rule).
-  - `knowledge/BACKLOG.md` / `worklogs/BACKLOG.md` I-32 — the multi-key
+  - `worklogs/BACKLOG.md` I-32 — the multi-key
     rotation gap this same investigation surfaced remains separately
     tracked; not implemented by this amendment.
   - LiteLLM config schema:
