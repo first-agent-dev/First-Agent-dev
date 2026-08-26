@@ -1,6 +1,6 @@
 # First-Agent
 
-![Tests](https://img.shields.io/badge/tests-1300%2B-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3100%2B-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-85%25%2B-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.13-blue)
 ![Docker](https://img.shields.io/badge/docker-Ready-blue)
