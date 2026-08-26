@@ -38,6 +38,7 @@ __all__ = [
     "FileAccess",
     "GuardActivity",
     "ProviderHealth",
+    "ScopeEstimateRecord",
     "SessionAnalytics",
     "StatsSourceError",
     "SubagentRecord",
@@ -248,6 +249,18 @@ class CompactionStartRecord:
     threshold: float = 0.0
 
 
+@dataclass(frozen=True)
+class ScopeEstimateRecord:
+    """S3.5: One scope estimation result from the chat role pre-dispatch estimator."""
+
+    difficulty: int
+    scope: str
+    risk: str
+    confidence: float
+    recommended_mode: str
+    task_preview: str = ""
+
+
 @dataclass
 class SessionAnalytics:
     """Complete analytics for one session. Serializable to JSON for WebUI."""
@@ -285,6 +298,9 @@ class SessionAnalytics:
     compaction_starts: list[CompactionStartRecord] = field(default_factory=list)
     model_msg_count: int = 0
     user_msg_count: int = 0
+
+    # S3.5: scope estimation records from chat role pre-dispatch estimator
+    scope_estimates: list[ScopeEstimateRecord] = field(default_factory=list)
 
 
 # ── Parsing ────────────────────────────────────────────────────────────────
@@ -382,6 +398,8 @@ def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> Sessi
     compaction_starts: list[CompactionStartRecord] = []
     model_msg_count: int = 0
     user_msg_count: int = 0
+    # S3.5: scope estimation records
+    scope_estimates: list[ScopeEstimateRecord] = []
 
     for event in events:
         kind = event.kind
@@ -563,6 +581,19 @@ def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> Sessi
             n_turns = int(content.get("n_turns", 0))
             has_session_summary = True
 
+        # ── S3.5: scope estimation events ─────────────────────────────
+        elif kind == "scope_estimate":
+            scope_estimates.append(
+                ScopeEstimateRecord(
+                    difficulty=int(content.get("difficulty", 0)),
+                    scope=str(content.get("scope", "")),
+                    risk=str(content.get("risk", "")),
+                    confidence=float(content.get("confidence", 0.0)),
+                    recommended_mode=str(content.get("recommended_mode", "")),
+                    task_preview=str(content.get("task_preview", "")),
+                )
+            )
+
         elif kind == "run_stopped":
             reason = str(content.get("reason", ""))
             if reason:
@@ -647,6 +678,7 @@ def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> Sessi
         compaction_starts=compaction_starts,
         model_msg_count=model_msg_count,
         user_msg_count=user_msg_count,
+        scope_estimates=scope_estimates,
     )
 
 
@@ -811,6 +843,16 @@ def render_session(analytics: SessionAnalytics, *, stream: TextIO | None = None)
     # Message-level accounting (S19)
     if a.model_msg_count or a.user_msg_count:
         w(f"💬 Messages: {a.model_msg_count} model, {a.user_msg_count} user\n\n")
+
+    # S3.5: scope estimates
+    if a.scope_estimates:
+        w("🎯 Scope estimates:\n")
+        for se in a.scope_estimates:
+            w(f"   d̂={se.difficulty} ({se.scope}) risk={se.risk} conf={se.confidence:.1f} → {se.recommended_mode}\n")
+            if se.task_preview:
+                preview = se.task_preview[:80] + ("..." if len(se.task_preview) > 80 else "")
+                w(f"   task: {preview}\n")
+        w("\n")
 
     # Efficiency
     warnings = efficiency_warnings(a)

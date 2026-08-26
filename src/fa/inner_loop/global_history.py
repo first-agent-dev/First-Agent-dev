@@ -100,6 +100,7 @@ class GlobalRunRow:
     has_compaction_summary: int
     workspace_root: str
     duration_ms: int
+    scope_estimate_json: str = "{}"  # S3.5: scope estimate projection
 
 
 class GlobalHistoryStore:
@@ -154,7 +155,8 @@ class GlobalHistoryStore:
                                 tool_calls_breakdown_json TEXT NOT NULL DEFAULT '{}',
                                 has_compaction_summary INTEGER NOT NULL DEFAULT 0,
                                 workspace_root TEXT NOT NULL DEFAULT '',
-                                duration_ms INTEGER NOT NULL DEFAULT 0
+                                duration_ms INTEGER NOT NULL DEFAULT 0,
+                                scope_estimate_json TEXT NOT NULL DEFAULT '{}'
                             );
                             """
                         )
@@ -180,8 +182,9 @@ class GlobalHistoryStore:
                             cache_read_input_tokens, cache_creation_input_tokens,
                             cache_hit_ratio,
                             tool_calls_total, tool_calls_breakdown_json,
-                            has_compaction_summary, workspace_root, duration_ms
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            has_compaction_summary, workspace_root, duration_ms,
+                            scope_estimate_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             str(row["run_id"]),
@@ -203,6 +206,7 @@ class GlobalHistoryStore:
                             int(row.get("has_compaction_summary", 0)),
                             str(row.get("workspace_root", "")),
                             int(row.get("duration_ms", 0)),
+                            str(row.get("scope_estimate_json", "{}")),  # S3.5
                         ),
                     )
             except Exception as exc:
@@ -257,6 +261,7 @@ def _extract_telemetry_from_log(log: Any) -> dict[str, Any]:
     has_compaction = 0
     created_at = ""
     turns = 0  # NEW-4: count usage events = LLM turns
+    scope_estimate: dict[str, object] = {}  # S3.5: scope estimation projection
 
     try:
         events = log.read_all() if log is not None else ()
@@ -278,6 +283,16 @@ def _extract_telemetry_from_log(log: Any) -> dict[str, Any]:
                     tool_counter[ev.tool_name or "unknown"] += 1
                 elif ev.kind == "compaction_stage3_done":
                     has_compaction = 1
+                # S3.5: capture scope estimate for cross-run projection
+                elif ev.kind == "scope_estimate":
+                    c = ev.content if isinstance(ev.content, Mapping) else {}
+                    scope_estimate = {
+                        "difficulty": int(c.get("difficulty", 0)),
+                        "scope": str(c.get("scope", "")),
+                        "risk": str(c.get("risk", "")),
+                        "confidence": float(c.get("confidence", 0.0)),
+                        "recommended_mode": str(c.get("recommended_mode", "")),
+                    }
     except Exception as exc:  # noqa: BLE001 — derived export must not crash the hot path
         logger.warning("Failed to extract telemetry from log for global export: %s", exc)
 
@@ -294,6 +309,7 @@ def _extract_telemetry_from_log(log: Any) -> dict[str, Any]:
         "has_compaction_summary": has_compaction,
         "created_at": created_at or _now_iso_z(),
         "turns": turns,  # NEW-4: from usage event count
+        "scope_estimate_json": json.dumps(scope_estimate, ensure_ascii=False),  # S3.5
     }
 
 
@@ -354,6 +370,7 @@ def build_export_row(
         "has_compaction_summary": telemetry.get("has_compaction_summary", 0),
         "workspace_root": str(workspace_root),
         "duration_ms": int(duration_ms),
+        "scope_estimate_json": str(telemetry.get("scope_estimate_json", "{}")),  # S3.5
     }
     return row
 

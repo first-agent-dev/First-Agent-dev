@@ -89,7 +89,7 @@ def test_neutral_eval_has_no_adversarial_preamble_in_composed_prompt() -> None:
 
 
 def test_eval_system_prompt_extra_adversarial_for_same_family_eval() -> None:
-    from fa.cli import _eval_system_prompt_extra
+    from fa.inner_loop.workflow_controller import eval_system_prompt_extra as _eval_system_prompt_extra
 
     models = ModelsConfig(
         roles={},
@@ -105,7 +105,7 @@ def test_eval_system_prompt_extra_adversarial_for_same_family_eval() -> None:
 
 
 def test_eval_system_prompt_extra_empty_for_non_eval_role() -> None:
-    from fa.cli import _eval_system_prompt_extra
+    from fa.inner_loop.workflow_controller import eval_system_prompt_extra as _eval_system_prompt_extra
 
     models = ModelsConfig(
         roles={},
@@ -121,7 +121,7 @@ def test_eval_system_prompt_extra_empty_for_non_eval_role() -> None:
 
 
 def test_eval_system_prompt_extra_empty_for_neutral_eval() -> None:
-    from fa.cli import _eval_system_prompt_extra
+    from fa.inner_loop.workflow_controller import eval_system_prompt_extra as _eval_system_prompt_extra
 
     models = ModelsConfig(
         roles={},
@@ -136,7 +136,7 @@ def test_eval_system_prompt_extra_empty_for_neutral_eval() -> None:
 
 
 def test_eval_system_prompt_extra_empty_when_no_assessment() -> None:
-    from fa.cli import _eval_system_prompt_extra
+    from fa.inner_loop.workflow_controller import eval_system_prompt_extra as _eval_system_prompt_extra
 
     models = ModelsConfig(roles={}, warnings=())  # eval_independence None
     assert _eval_system_prompt_extra("eval", models) == ""

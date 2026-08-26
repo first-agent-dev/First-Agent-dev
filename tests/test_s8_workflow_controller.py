@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from fa.cli import _cmd_workflow, _read_back_terminal_state
+from fa.cli import _cmd_workflow
 from fa.inner_loop.global_history import GlobalHistoryStore, default_global_history_path
 from fa.inner_loop.workflow_artifacts import (
     FlowState,
@@ -46,6 +46,7 @@ from fa.inner_loop.workflow_artifacts import (
     load_flow_state,
     write_flow_state,
 )
+from fa.inner_loop.workflow_controller import read_back_terminal_state as _read_back_terminal_state
 from fa.providers.base import TransportResponse
 from tests.test_cli_ergonomics import (
     _FAKE_MODELS_YAML,

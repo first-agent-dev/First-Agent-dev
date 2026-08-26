@@ -111,6 +111,7 @@ LogKind = Literal[
     "subagent_spawn_fail",
     # Observability / recovery
     "recovery_action",
+    "scope_estimate",  # S3: advisory scope estimation for chat role
     "verification",
     "cost_observation",
     "telemetry",

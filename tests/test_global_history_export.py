@@ -352,7 +352,7 @@ def test_global_history_export_failure_policy(tmp_path: Path, caplog: Any) -> No
 # ---------------------------------------------------------------------------
 
 
-_PROJECTION_IMPORT_ALLOWLIST = frozenset({"cli.py", "stats.py"})
+_PROJECTION_IMPORT_ALLOWLIST = frozenset({"cli.py", "stats.py", "workflow_controller.py"})
 """Modules permitted to import ``global_history``.
 
 An **allowlist**, deliberately. The predecessor of this test named seven

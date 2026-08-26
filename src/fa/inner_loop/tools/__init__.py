@@ -222,8 +222,44 @@ def build_eval_registry(
     return registry
 
 
+def build_chat_registry(
+    workspace_root: Path,
+    *,
+    bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
+) -> ToolRegistry:
+    """Chat = pair-programming partner (read+search+bash+blackboard+reach).
+
+    Chat role gets read-only tools for exploration. No write/edit tools.
+    The invoke_workflow tool is registered in S4 (not yet available).
+
+    Security boundary: chat cannot mutate files directly. Complex tasks
+    are escalated via invoke_workflow (S4) to the full planner→coder→eval pipeline.
+    """
+    try:
+        from fa.inner_loop.profiles import build_registry_for_role
+
+        registry = build_registry_for_role("chat", workspace_root, bash_timeout=bash_timeout_seconds)
+    except ToolSchemaPortabilityError:
+        raise
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+        logger.warning(f"Failed to build chat registry via profiles, fallback: {exc}")
+        registry = ToolRegistry()
+        registry.register(build_read_file_tool(workspace_root))
+        registry.register(build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds))
+
+    _register_extra_tools(
+        registry,
+        workspace_root,
+        include_pair=False,
+        include_observability=True,
+    )
+    # NOTE: invoke_workflow tool will be registered in S4
+    return registry
+
+
 __all__ = [
     "build_baseline_registry",
+    "build_chat_registry",
     "build_eval_registry",
     "build_fs_search_tool",
     "build_planner_registry",

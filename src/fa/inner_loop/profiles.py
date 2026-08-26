@@ -92,6 +92,20 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
         "stateless": True,
         "write_allowlist": ["knowledge/research/", ".fa/"],
     },
+    "chat": {
+        "description": "Pair-programming partner with scope-aware execution, read-only tools + workflow escalation",
+        "tools": [
+            "fs_read_file",
+            "fs_search",
+            "fs_blackboard_query",
+            "fs_run_bash",
+            "fs_exploration_metrics",
+            "fs_reach",
+        ],
+        "max_tokens": 800,
+        "stateless": True,
+        "bash_impl": "stateless",
+    },
 }
 
 PROFILES: dict[str, dict[str, Any]] = PROFILES_RAW

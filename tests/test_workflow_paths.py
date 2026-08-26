@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from fa.cli import _workflow_artifact_paths
+from fa.inner_loop.workflow_controller import workflow_artifact_paths as _workflow_artifact_paths
 
 
 def test_workflow_artifact_paths_use_session_log_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

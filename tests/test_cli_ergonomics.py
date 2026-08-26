@@ -628,3 +628,333 @@ def test_workflow_parses_mode_and_budgets() -> None:
     assert args.mode == "adaptive"
     assert args.max_repairs == 3
     assert args.max_replans == 2
+
+
+# ── S3: scope estimation for chat role ──────────────────────────────────────
+
+
+class _CapturingTransport:
+    """Captures the system prompt sent to the LLM for inspection."""
+
+    def __init__(self) -> None:
+        self.system_prompt: str = ""
+        self.system_messages: list[str] = []
+        self.calls: list[dict[str, Any]] = []
+
+    def post(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        json_body: Mapping[str, Any],
+        timeout_seconds: float,
+        transport_retries: int,
+    ) -> TransportResponse:
+        del url, headers, timeout_seconds, transport_retries
+        self.calls.append(dict(json_body))
+        messages = json_body.get("messages", [])
+        self.system_messages = [m.get("content", "") for m in messages if m.get("role") == "system"]
+        if messages:
+            self.system_prompt = messages[0].get("content", "")
+        body = {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "done", "tool_calls": []},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+        return TransportResponse(status=200, body=body)
+
+
+def test_chat_role_logs_scope_estimate_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C1: fa run -r chat logs scope_estimate event to events.jsonl."""
+    from fa.cli import _cmd_run
+
+    config = tmp_path / "models.yaml"
+    chat_models_yaml = """\
+chat:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: TEST_FA_RUN_KEY
+"""
+    config.write_text(chat_models_yaml, encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    transport = _CapturingTransport()
+    args = build_parser().parse_args(
+        ["run", "-r", "chat", "--config", str(config), "--workspace", str(tmp_path), "fix typo in README"]
+    )
+
+    code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
+    assert code == 0
+
+    # Find the session log directory
+    session_log_dir = home / ".fa" / "session-log"
+    run_dirs = list(session_log_dir.iterdir())
+    assert len(run_dirs) == 1
+    events_jsonl = run_dirs[0] / "events.jsonl"
+    assert events_jsonl.exists()
+
+    # Parse events and find scope_estimate
+    events = [json.loads(line) for line in events_jsonl.read_text(encoding="utf-8").splitlines()]
+    scope_events = [e for e in events if e.get("kind") == "scope_estimate"]
+    assert len(scope_events) == 1, f"Expected 1 scope_estimate event, got {len(scope_events)}"
+
+    scope_event = scope_events[0]
+    content = scope_event["content"]
+    assert content["difficulty"] == 1
+    assert content["scope"] == "single-file"
+    assert content["recommended_mode"] == "chat_direct"
+    assert "fix typo" in content["task_preview"]
+
+
+def test_coder_role_does_not_log_scope_estimate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C1: fa run -r coder does NOT log scope_estimate (only chat role)."""
+    from fa.cli import _cmd_run
+
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    transport = _CapturingTransport()
+    args = build_parser().parse_args(
+        ["run", "-r", "coder", "--config", str(config), "--workspace", str(tmp_path), "fix typo in README"]
+    )
+
+    code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
+    assert code == 0
+
+    session_log_dir = home / ".fa" / "session-log"
+    run_dirs = list(session_log_dir.iterdir())
+    assert len(run_dirs) == 1
+    events_jsonl = run_dirs[0] / "events.jsonl"
+
+    events = [json.loads(line) for line in events_jsonl.read_text(encoding="utf-8").splitlines()]
+    scope_events = [e for e in events if e.get("kind") == "scope_estimate"]
+    assert len(scope_events) == 0, f"Expected 0 scope_estimate events for coder, got {len(scope_events)}"
+
+
+def test_chat_role_system_prompt_contains_scope_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C1: system_prompt_extra contains scope hint (not initial_memory_summary)."""
+    from fa.cli import _cmd_run
+
+    config = tmp_path / "models.yaml"
+    chat_models_yaml = """\
+chat:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: TEST_FA_RUN_KEY
+"""
+    config.write_text(chat_models_yaml, encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    transport = _CapturingTransport()
+    args = build_parser().parse_args(
+        ["run", "-r", "chat", "--config", str(config), "--workspace", str(tmp_path), "refactor auth module"]
+    )
+
+    code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
+    assert code == 0
+
+    # The scope hint is injected via system_prompt_extra → PinnedBuffer →
+    # agents_md_map, which becomes the SECOND system message in the request.
+    # Verify it's in the agents_md_map (second system message), not in the
+    # base role prompt (first system message).
+    assert len(transport.system_messages) >= 2, f"Expected ≥2 system messages, got {len(transport.system_messages)}"
+
+    # The agents_md_map (second system message) should contain the scope hint
+    agents_md_content = transport.system_messages[1]
+    assert "## Task Scope Estimate" in agents_md_content, "Scope hint not found in agents_md_map system message"
+    assert "Difficulty:" in agents_md_content
+    assert "Recommended mode:" in agents_md_content
+
+    # Verify initial_memory_summary is NOT contaminated with scope hint
+    # (initial_memory_summary is reserved for resume drafts)
+    # The scope hint should NOT appear in the base role prompt (first system message)
+    base_prompt = transport.system_messages[0]
+    assert "Difficulty:" not in base_prompt, (
+        "Scope hint leaked into base system prompt (should only be in agents_md_map)"
+    )
+
+
+def test_chat_role_empty_task_does_not_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C1: empty task handled gracefully (ValueError caught, no crash)."""
+    from fa.cli import _cmd_run
+
+    config = tmp_path / "models.yaml"
+    chat_models_yaml = """\
+chat:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: TEST_FA_RUN_KEY
+"""
+    config.write_text(chat_models_yaml, encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    transport = _CapturingTransport()
+    # Empty task (whitespace only) should trigger ValueError in estimate_scope
+    args = build_parser().parse_args(
+        ["run", "-r", "chat", "--config", str(config), "--workspace", str(tmp_path), "   "]
+    )
+
+    # Should not crash — whitespace-only task is rejected by _validate_run_args
+    # with exit code 2 (usage error), which IS graceful handling.
+    # The ValueError handler in the scope estimation block is defense-in-depth
+    # for tasks that pass CLI validation but trigger the estimator.
+    code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
+    assert code == 2  # validation rejects empty tasks before scope estimation
+
+    # No session directory or events should be created for a rejected task.
+    session_log_dir = home / ".fa" / "session-log"
+    if session_log_dir.exists():
+        run_dirs = list(session_log_dir.iterdir())
+        for run_dir in run_dirs:
+            events_jsonl = run_dir / "events.jsonl"
+            if events_jsonl.exists():
+                events = [json.loads(line) for line in events_jsonl.read_text(encoding="utf-8").splitlines()]
+                scope_events = [e for e in events if e.get("kind") == "scope_estimate"]
+                assert len(scope_events) == 0, "Empty task should not produce scope_estimate event"
+
+
+def test_chat_role_scope_estimate_in_blackboard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C1 (S3.5): scope_estimate event written to blackboard after chat run."""
+    from fa.cli import _cmd_run
+    from fa.inner_loop.session_db import SessionDatabase
+
+    config = tmp_path / "models.yaml"
+    chat_models_yaml = """\
+chat:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: TEST_FA_RUN_KEY
+"""
+    config.write_text(chat_models_yaml, encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    transport = _CapturingTransport()
+    args = build_parser().parse_args(
+        ["run", "-r", "chat", "--config", str(config), "--workspace", str(tmp_path), "fix typo in README"]
+    )
+
+    code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
+    assert code == 0
+
+    # Find session DB and query blackboard for scope_estimate entries
+    session_dir = home / ".fa" / "sessions"
+    session_dirs = list(session_dir.iterdir()) if session_dir.exists() else []
+    assert len(session_dirs) >= 1, "Expected at least one session directory"
+
+    # Find the manifest to get session_id and db path
+    manifest_path = session_dirs[0] / "manifest.json"
+    assert manifest_path.exists(), "Session manifest not found"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    session_id = manifest["session_id"]
+    db_path = Path(manifest["session_db_path"])
+
+    db = SessionDatabase.open_existing(db_path, session_id=session_id)
+    # Find run_id from the session
+    run_ids = db.list_run_ids()
+    assert len(run_ids) >= 1
+
+    # Query blackboard for scope_estimate type
+    rows = db.query_blackboard_rows("scope_estimate", None)
+    assert len(rows) >= 1, f"Expected blackboard scope_estimate entry, found {len(rows)}"
+
+    entry = rows[0]
+    assert entry["type"] == "scope_estimate"
+    payload = entry["payload"]
+    assert payload["difficulty"] == 1
+    assert payload["scope"] == "single-file"
+    assert payload["recommended_mode"] == "chat_direct"
+
+
+def test_scope_estimate_in_global_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C1 (S3.5): global_history.db contains scope_estimate_json after chat run."""
+    from fa.cli import _cmd_run
+    from fa.inner_loop.global_history import GlobalHistoryStore
+
+    config = tmp_path / "models.yaml"
+    chat_models_yaml = """\
+chat:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: TEST_FA_RUN_KEY
+"""
+    config.write_text(chat_models_yaml, encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    transport = _CapturingTransport()
+    args = build_parser().parse_args(
+        ["run", "-r", "chat", "--config", str(config), "--workspace", str(tmp_path), "refactor auth module"]
+    )
+
+    code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
+    assert code == 0
+
+    # Read global_history.db
+    gh_path = home / ".fa" / "global_history.db"
+    assert gh_path.exists(), f"global_history.db not found at {gh_path}"
+
+    store = GlobalHistoryStore(db_path=gh_path)
+    rows = store.read_all()
+    assert len(rows) >= 1, "Expected at least one row in global_history"
+
+    row = rows[0]
+    scope_json = row.get("scope_estimate_json", "{}")
+    scope = json.loads(scope_json)
+    # "refactor" → L3 keyword → difficulty=3, mode=workflow_linear
+    # "auth" → security keyword → boost, but L3 already at max
+    assert scope.get("difficulty") == 3, f"Expected difficulty=3 for 'refactor auth module', got {scope}"
+    assert scope.get("recommended_mode") == "workflow_linear"

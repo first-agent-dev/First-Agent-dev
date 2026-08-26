@@ -195,13 +195,13 @@ def test_unparsed_kinds_complete() -> None:
     # S15: file_read added to LogKind and excused in UNPARSED_KINDS (consumed
     # by fs_exploration_metrics via direct log read, not by fa stats).
     # (TEST-EDITS declared in PR.)
-    assert len(all_kinds) == 34, (
-        f"LogKind changed size: {len(all_kinds)} != 34. A kind was added or removed — "
+    assert len(all_kinds) == 35, (
+        f"LogKind changed size: {len(all_kinds)} != 35. A kind was added or removed — "
         f"decide whether fa stats parses it (add an `elif` in _parse_events) or not "
         f"(add it to UNPARSED_KINDS with a reason), then update this count."
     )
     assert len(UNPARSED_KINDS) == 11, f"UNPARSED_KINDS changed size: {len(UNPARSED_KINDS)} != 11"
-    assert len(PARSED_KINDS) == 23, f"PARSED_KINDS changed size: {len(PARSED_KINDS)} != 23"
+    assert len(PARSED_KINDS) == 24, f"PARSED_KINDS changed size: {len(PARSED_KINDS)} != 24"
 
     # Derivation sanity: disjointness is NOT free. UNPARSED_KINDS is written by
     # hand and could name something outside LogKind (a typo, or a kind deleted
@@ -252,7 +252,7 @@ def test_s9_parsed_kinds_matches_dispatch() -> None:
 
     # Liveness control: an AST walk that silently returned nothing would make
     # the equality below vacuous against an empty PARSED_KINDS.
-    assert len(dispatched) == 23, f"AST derivation found {len(dispatched)} kinds, expected 23"
+    assert len(dispatched) == 24, f"AST derivation found {len(dispatched)} kinds, expected 24"
 
     assert dispatched == set(PARSED_KINDS), (
         f"PARSED_KINDS drifted from _parse_events. "

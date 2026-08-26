@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -58,25 +58,31 @@ from fa.inner_loop.hooks import (
     VerifierObserver,
 )
 from fa.inner_loop.pr_draft import PrDraftStore
-from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE, render_tool_specs
+from fa.inner_loop.prompt import render_tool_specs
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
 from fa.inner_loop.registry import ToolRegistry
 from fa.inner_loop.runtime_limits import RuntimeLimits, resolve_limits_for_role
 from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
 from fa.inner_loop.tools import (
     build_baseline_registry,
+    build_chat_registry,
     build_eval_registry,
     build_planner_registry,
     build_prepare_pr_tool,
 )
-from fa.inner_loop.workflow_artifacts import (
-    EvalReport,
-    FlowState,
-    FlowStatus,
-    load_flow_state,
-    parse_eval_report,
-    write_eval_report,
-    write_flow_state,
+from fa.inner_loop.workflow_controller import (
+    DEFAULT_MAX_REPAIRS,
+    DEFAULT_MAX_REPLANS,
+    run_workflow,
+)
+from fa.inner_loop.workflow_controller import (
+    WORKFLOW_MODES as _WORKFLOW_MODES,
+)
+from fa.inner_loop.workflow_controller import (
+    eval_system_prompt_extra as _eval_system_prompt_extra,
+)
+from fa.inner_loop.workflow_controller import (
+    slugify_task as _slugify_task,
 )
 from fa.observability import CostGuardian
 from fa.observability.redaction import SecretRedactor, SecretRedactorError
@@ -1093,34 +1099,6 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
     return 1 if any(result.error is not None for result in results) else 0
 
 
-def _slugify_task(task: str, *, limit: int = 24) -> str:
-    """Derive a short, run-id-safe slug from a task string."""
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", task.strip().lower()).strip("-")
-    return slug[:limit] or "task"
-
-
-@dataclass(frozen=True)
-class _WorkflowArtifactPaths:
-    base_dir: Path
-    eval_report: Path
-    flow_state: Path
-
-
-def _workflow_artifact_paths(run_id: str, *, base_dir: Path | None = None) -> _WorkflowArtifactPaths:
-    """Return canonical workflow artifact paths under ``~/.fa/session-log``.
-
-    Temporary physical model (workflow implementation plan 2026-06-29):
-    human-readable draft remains ``pr_draft.md``; controller truth lives in
-    separate JSON artifacts for eval verdicts and workflow state.
-    """
-    base_dir = base_dir or (fa_session_log_root() / run_id)
-    return _WorkflowArtifactPaths(
-        base_dir=base_dir,
-        eval_report=base_dir / "eval_report.json",
-        flow_state=base_dir / "flow_state.json",
-    )
-
-
 def _cmd_help(args: argparse.Namespace) -> int:
     """Render bilingual command help; --json emits the WebUI contract."""
     if getattr(args, "json", False):
@@ -1140,720 +1118,7 @@ def _cmd_help(args: argparse.Namespace) -> int:
     return 0
 
 
-# ── Workflow controller (linear + bounded repair) ──────────────────────────
-#
-# Map the evaluator's verdict to a terminal FlowState status. The controller
-# branches on the eval *route* (machine-readable), but records the verdict as
-# the human-facing terminal status. Repair routing (return_to_coder) is handled
-# by the repair loop; planner re-entry (return_to_planner) is NOT yet acted on
-# and remains a recorded, non-looping outcome until the adaptive controller.
-_EVAL_VERDICT_TO_TERMINAL_STATUS: dict[str, FlowStatus] = {
-    "PASS": "DONE",
-    "REPAIR_REQUIRED": "REPAIR_REQUIRED",
-    "REPLAN_REQUIRED": "REPLAN_REQUIRED",
-    "BLOCKED": "FAILED",
-}
-
-# S8.7 — the aggregate ``global_history`` row's ``stop_reason`` is a SEMANTIC
-# outcome, so it must be derived from the semantic authority (the terminal
-# ``FlowState.status``) and not from ``result_code``.
-#
-# Why this mapping exists: every mode returns 0 when the pipeline merely RAN TO
-# COMPLETION, regardless of the eval verdict (``_run_linear`` and
-# ``_run_repair``/``_run_adaptive`` all ``return 0``). The previous
-# ``"workflow_complete" if result_code == 0 else "workflow_failed"`` therefore
-# recorded a BLOCKED run as ``workflow_complete`` — measured, three artifacts
-# disagreeing about one run. Cross-run projections (``fa history``, S9) read
-# this column, so a rejected run was counted as a success.
-#
-# ``exit_code`` is deliberately NOT changed here: that is a separate
-# operator-visible contract (S8 plan Q35). Keeping them separate means this
-# mapping fixes the projection without silently altering shell semantics.
-_WORKFLOW_STATUS_TO_STOP_REASON: dict[str, str] = {
-    "DONE": "workflow_complete",
-    "FAILED": "workflow_failed",
-    "REPAIR_REQUIRED": "workflow_repair_required",
-    "REPLAN_REQUIRED": "workflow_replan_required",
-}
-
-# Repair-loop budget defaults (workflow plan §4.6: 2 rounds, hard max 3).
-DEFAULT_MAX_REPAIRS = 2
-MAX_REPAIRS_CEILING = 3
-DEFAULT_MAX_REPLANS = 1
-MAX_REPLANS_CEILING = 2
-
-_WORKFLOW_MODES = ("linear", "repair", "adaptive")
-
-
-def _emit_eval_report(
-    *,
-    report_path: Path,
-    final_text: str,
-    run_id: str,
-    plan_id: str,
-    plan_version: int,
-    eval_independence: Mapping[str, object] | None = None,
-) -> EvalReport:
-    """Parse the eval role's final message and persist ``eval_report.json``.
-
-    The narrative draft (``pr_draft.md``) stays human-readable; this JSON is
-    the controller's machine-readable source of truth for the eval verdict and
-    route decision.
-
-    ``eval_independence`` (S13.4c) records which stance produced the verdict so a
-    same-family adversarial ``DONE`` is distinguishable from a disjoint neutral
-    ``DONE`` in ``eval_report.json``.
-    """
-    report = parse_eval_report(
-        final_text,
-        run_id=run_id,
-        plan_id=plan_id,
-        evaluation_id=f"{run_id}-eval",
-        plan_version=plan_version,
-        eval_independence=eval_independence,
-    )
-    write_eval_report(report_path, report)
-    return report
-
-
-@dataclass(frozen=True)
-class _WorkflowContext:
-    """Invariant per-run configuration shared by every workflow stage."""
-
-    args: argparse.Namespace
-    run_id: str
-    base_task: str | None
-    per_role_task: Mapping[str, str | None]
-    artifact_paths: _WorkflowArtifactPaths
-    transport: Transport | None
-    secrets: Mapping[str, str] | None
-    session_context: SessionContext | None = None
-    run_context: RunContext | None = None
-    session_db: SessionDatabase | None = None
-
-    def task_for(self, role: str) -> str | None:
-        return self.per_role_task.get(role) or self.base_task
-
-
-@dataclass(frozen=True)
-class _WorkflowProgress:
-    """Mutable controller counters threaded through a workflow run."""
-
-    plan_version: int = 1
-    repair_round: int = 0
-    replan_round: int = 0
-
-
-@dataclass(frozen=True)
-class _StageResult:
-    """Outcome of dispatching one role stage."""
-
-    role: str
-    exit_code: int
-    eval_report: EvalReport | None = None
-
-
-def _status_for_role(role: str) -> FlowStatus:
-    if role == "planner":
-        return "PLANNING"
-    if role == "coder":
-        return "CODING"
-    if role == "eval":
-        return "EVALUATING"
-    return "CODING"
-
-
-def _eval_system_prompt_extra(role: str, models: ModelsConfig) -> str:
-    """Return the eval system-prompt extra for a role based on independence.
-
-    S13.4c stance threading: when the role is ``eval`` and the loaded config
-    reports a non-disjoint (same-family) eval, return the adversarial preamble
-    so ``drive_session`` composes an adversarial eval stance. Every other role
-    (and a disjoint eval) returns ``""``. The stance is derived from the config
-    object, never from a flag smuggled through the CLI.
-    """
-    if role != "eval" or models.eval_independence is None:
-        return ""
-    if models.eval_independence.stance != "adversarial":
-        return ""
-    return ADVERSARIAL_EVAL_STANCE_PREAMBLE
-
-
-def _eval_independence_mapping(models: ModelsConfig) -> Mapping[str, object] | None:
-    """Project the config's ``EvalIndependence`` to a serialisable mapping (S13.4c).
-
-    Returns ``None`` for a partial config (assessment undefined) so
-    ``eval_report.json`` simply omits the field for non-three-role configs.
-    """
-    indep = models.eval_independence
-    if indep is None:
-        return None
-    return {"disjoint": indep.disjoint, "stance": indep.stance}
-
-
-def _run_stage(
-    ctx: _WorkflowContext,
-    role: str,
-    *,
-    fresh: bool,
-    progress: _WorkflowProgress,
-    transition_reason: str,
-) -> _StageResult:
-    """Dispatch one role session and, for ``eval``, persist its report.
-
-    Writes a pre-dispatch FlowState mirror so the active role / repair round is
-    inspectable even mid-run, then runs the role through :func:`_cmd_run`. For
-    the ``eval`` role the terminal outcome is captured and translated into
-    ``eval_report.json``.
-    """
-    write_flow_state(
-        ctx.artifact_paths.flow_state,
-        FlowState(
-            run_id=ctx.run_id,
-            task=str(ctx.base_task or ""),
-            status=_status_for_role(role),
-            active_role=role,
-            active_plan_id=ctx.run_id,
-            active_plan_version=progress.plan_version,
-            repair_round=progress.repair_round,
-            replan_round=progress.replan_round,
-            last_actor="workflow",
-            last_transition_reason=transition_reason,
-        ),
-    )
-    stage_kwargs: dict[str, object] = {
-        "task_pos": None,
-        "task": ctx.task_for(role),
-        "role": role,
-        "config": ctx.args.config,
-        "workspace": ctx.args.workspace,
-        "max_turns": ctx.args.max_turns,
-        "run_id": ctx.run_id,
-        "resume": not fresh,
-        # S8.4: forward the operator's choice instead of hardcoding "console".
-        # ``getattr`` default keeps legacy direct-Namespace callers (tests that
-        # predate the flag) working unchanged.
-        "output_mode": getattr(ctx.args, "output_mode", None) or "console",
-        "detail": "standard",
-        "no_color": False,
-    }
-    if ctx.run_context is not None and ctx.session_context is not None:
-        stage_kwargs.update(
-            {
-                "session_id": ctx.session_context.session_id,
-                "_session_context": ctx.session_context,
-                "_run_context": ctx.run_context,
-                "_session_db": ctx.session_db,
-            }
-        )
-    stage_args = argparse.Namespace(**stage_kwargs)
-    sink: list[SessionOutcome] = []
-    code = _cmd_run(
-        stage_args,
-        transport=ctx.transport,
-        secrets=ctx.secrets,
-        outcome_sink=sink if role == "eval" else None,
-    )
-    report: EvalReport | None = None
-    if role == "eval" and code == 0 and sink:
-        # S13.4c: record which independence stance produced this verdict so a
-        # same-family adversarial DONE is auditable against a disjoint neutral
-        # DONE. Loaded from the same config the stage used; a partial config
-        # yields None and the field is omitted.
-        #
-        # Fail-soft: this is an ADVISORY provenance record. A malformed config
-        # (ConfigurationError) or an unreadable path must NOT crash the workflow
-        # after a successful eval verdict — degrade to None (field omitted) and
-        # let the verdict persist.
-        try:
-            _eval_models = load_models_config_from_path(ctx.args.config.expanduser().resolve(), require_api_keys=False)
-            _eval_independence = _eval_independence_mapping(_eval_models)
-        except (ConfigurationError, OSError):
-            logger.warning(
-                "workflow eval-report: could not load config for eval_independence record; omitting field (run=%s)",
-                ctx.run_id,
-            )
-            _eval_independence = None
-        report = _emit_eval_report(
-            report_path=ctx.artifact_paths.eval_report,
-            final_text=sink[-1].final_text,
-            run_id=ctx.run_id,
-            plan_id=ctx.run_id,
-            plan_version=progress.plan_version,
-            eval_independence=_eval_independence,
-        )
-        print(
-            f"fa workflow: eval verdict={report.verdict} "
-            f"route={report.route_decision} → {ctx.artifact_paths.eval_report}",
-            file=sys.stderr,
-        )
-    return _StageResult(role=role, exit_code=code, eval_report=report)
-
-
-def _write_stage_failure_state(
-    ctx: _WorkflowContext,
-    role: str,
-    code: int,
-    *,
-    progress: _WorkflowProgress,
-) -> None:
-    write_flow_state(
-        ctx.artifact_paths.flow_state,
-        FlowState(
-            run_id=ctx.run_id,
-            task=str(ctx.base_task or ""),
-            status="FAILED",
-            active_role=role,
-            active_plan_id=ctx.run_id,
-            active_plan_version=progress.plan_version,
-            repair_round=progress.repair_round,
-            replan_round=progress.replan_round,
-            last_actor=role,
-            last_transition_reason=f"stage exited {code}",
-            blocked_reason=f"stage {role!r} exited {code}",
-        ),
-    )
-    print(
-        f"fa workflow: stage {role!r} exited {code} — pipeline stopped (fail-fast).",
-        file=sys.stderr,
-    )
-
-
-def _write_terminal_state(
-    ctx: _WorkflowContext,
-    *,
-    last_role: str,
-    eval_report: EvalReport | None,
-    progress: _WorkflowProgress,
-    reason: str,
-) -> None:
-    status: FlowStatus
-    route: str
-    if eval_report is not None:
-        status = _EVAL_VERDICT_TO_TERMINAL_STATUS.get(eval_report.verdict, "FAILED")
-        route = eval_report.route_decision
-        blocked = eval_report.summary if eval_report.verdict == "BLOCKED" else ""
-    else:
-        status = "DONE"
-        route = ""
-        blocked = ""
-    write_flow_state(
-        ctx.artifact_paths.flow_state,
-        FlowState(
-            run_id=ctx.run_id,
-            task=str(ctx.base_task or ""),
-            status=status,
-            active_role=last_role,
-            active_plan_id=ctx.run_id,
-            active_plan_version=progress.plan_version,
-            repair_round=progress.repair_round,
-            replan_round=progress.replan_round,
-            last_actor=last_role,
-            last_transition_reason=reason,
-            last_route_decision=route,
-            blocked_reason=blocked,
-        ),
-    )
-
-
-def _read_back_terminal_state(flow_state_path: Path, run_id: str) -> FlowState | None:
-    """Re-read the terminal ``FlowState`` this invocation just persisted (S8.3).
-
-    This is the production consumer of ``flow_state.json``. Before S8.3 the
-    artifact was write-only: ``load_flow_state`` had zero callers outside its
-    defining module, while the ``global_history`` export synthesised a semantic
-    outcome from an exit code. Reading the artifact back makes the persisted
-    state the single source of terminal truth and lets the projection agree
-    with it (see ``_WORKFLOW_STATUS_TO_STOP_REASON``).
-
-    The ``run_id`` check is what makes this a *verification* rather than a
-    decorative read: a stale or foreign ``flow_state.json`` left in the run
-    directory is rejected instead of silently trusted, mirroring
-    ``SessionManager._read_manifest``'s ``manifest_identity_mismatch`` guard.
-
-    Fail-soft by contract. The workflow has already finished by the time this
-    runs, so a projection read must never change the exit code or raise; every
-    failure degrades to ``None`` and the caller keeps its previous behaviour.
-    """
-    try:
-        state = load_flow_state(flow_state_path)
-    except (OSError, ValueError, KeyError, TypeError):
-        logger.warning(
-            "workflow terminal-state read-back failed for %s; falling back to exit-code semantics",
-            run_id,
-            exc_info=True,
-        )
-        return None
-    if state.run_id != run_id:
-        logger.warning(
-            "workflow terminal-state identity mismatch at %s: artifact says %r, expected %r",
-            flow_state_path,
-            state.run_id,
-            run_id,
-        )
-        return None
-    return state
-
-
-def _print_terminal_summary(
-    ctx: _WorkflowContext,
-    *,
-    n_stages: int,
-    eval_report: EvalReport | None,
-    repair_rounds_used: int,
-) -> None:
-    if eval_report is not None and eval_report.verdict == "PASS":
-        suffix = f" after {repair_rounds_used} repair round(s)" if repair_rounds_used else ""
-        print(
-            f"\nfa workflow: accepted (verdict=PASS){suffix} — run_id={ctx.run_id}",
-            file=sys.stderr,
-        )
-        return
-    if eval_report is not None:
-        tail = f" (repair budget {repair_rounds_used} exhausted)" if repair_rounds_used else ""
-        print(
-            f"\nfa workflow: {n_stages} stage(s) ran (run_id={ctx.run_id}); "
-            f"eval verdict={eval_report.verdict} route={eval_report.route_decision} "
-            f"— not accepted{tail}.",
-            file=sys.stderr,
-        )
-        return
-    print(
-        f"\nfa workflow: all {n_stages} stage(s) completed OK (run_id={ctx.run_id})",
-        file=sys.stderr,
-    )
-
-
-def _resolve_max_repairs(args: argparse.Namespace) -> int:
-    raw = getattr(args, "max_repairs", None)
-    value = DEFAULT_MAX_REPAIRS if raw is None else int(raw)
-    if value < 0:
-        value = 0
-    return min(value, MAX_REPAIRS_CEILING)
-
-
-def _resolve_max_replans(args: argparse.Namespace) -> int:
-    raw = getattr(args, "max_replans", None)
-    value = DEFAULT_MAX_REPLANS if raw is None else int(raw)
-    if value < 0:
-        value = 0
-    return min(value, MAX_REPLANS_CEILING)
-
-
-def _render_mode_label(mode: str, *, max_repairs: int, max_replans: int) -> str:
-    if mode == "repair":
-        return f"repair (max repairs {max_repairs})"
-    if mode == "adaptive":
-        return f"adaptive (max repairs {max_repairs}, max replans {max_replans})"
-    return mode
-
-
-def _canonical_loop_roles(roles: list[str], *, include_planner: bool) -> tuple[str, ...]:
-    canonical = ["planner", "coder", "eval"] if include_planner else ["coder", "eval"]
-    return tuple(role for role in canonical if role in roles)
-
-
-def _run_initial_roles(ctx: _WorkflowContext, roles: list[str]) -> tuple[int, int, EvalReport | None]:
-    progress = _WorkflowProgress()
-    eval_report: EvalReport | None = None
-    n_stages = 0
-    for index, role in enumerate(roles):
-        n_stages += 1
-        print(f"\nfa workflow ─ stage {index + 1}/{len(roles)}: {role}", file=sys.stderr)
-        result = _run_stage(
-            ctx,
-            role,
-            fresh=index == 0,
-            progress=progress,
-            transition_reason=f"dispatching stage {index + 1}/{len(roles)}",
-        )
-        if result.exit_code != 0:
-            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-            return result.exit_code, n_stages, eval_report
-        if result.eval_report is not None:
-            eval_report = result.eval_report
-    return 0, n_stages, eval_report
-
-
-def _run_adaptive(
-    ctx: _WorkflowContext,
-    roles: list[str],
-    max_repairs: int,
-    max_replans: int,
-) -> int:
-    """Run the initial role list, then normalize loops to canonical routes.
-
-    After the first pass the controller no longer follows arbitrary role-list
-    ordering. Repair transitions always run canonical ``coder -> eval``; planner
-    re-entry always runs canonical ``planner -> coder -> eval``. This keeps the
-    user-facing entry flexible enough for the initial pass while making the
-    adaptive control surface deterministic and testable.
-    """
-    code, n_stages, eval_report = _run_initial_roles(ctx, roles)
-    if code != 0:
-        return code
-
-    progress = _WorkflowProgress()
-    if eval_report is None:
-        _write_terminal_state(
-            ctx,
-            last_role=roles[-1],
-            eval_report=None,
-            progress=progress,
-            reason="adaptive workflow completed without eval stage",
-        )
-        _print_terminal_summary(ctx, n_stages=n_stages, eval_report=None, repair_rounds_used=0)
-        return 0
-
-    while True:
-        if eval_report.route_decision == "return_to_coder":
-            if progress.repair_round >= max_repairs:
-                reason = f"repair budget exhausted ({progress.repair_round}/{max_repairs}); last route return_to_coder"
-                _write_terminal_state(
-                    ctx,
-                    last_role="eval",
-                    eval_report=eval_report,
-                    progress=progress,
-                    reason=reason,
-                )
-                _print_terminal_summary(
-                    ctx,
-                    n_stages=n_stages,
-                    eval_report=eval_report,
-                    repair_rounds_used=progress.repair_round,
-                )
-                return 0
-            progress = _WorkflowProgress(
-                plan_version=progress.plan_version,
-                repair_round=progress.repair_round + 1,
-                replan_round=progress.replan_round,
-            )
-            print(
-                f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} (adaptive route return_to_coder)",
-                file=sys.stderr,
-            )
-            for role in _canonical_loop_roles(roles, include_planner=False):
-                result = _run_stage(
-                    ctx,
-                    role,
-                    fresh=False,
-                    progress=progress,
-                    transition_reason=(f"repair round {progress.repair_round}: canonical {role} after return_to_coder"),
-                )
-                n_stages += 1
-                if result.exit_code != 0:
-                    _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-                    return result.exit_code
-                if result.eval_report is not None:
-                    eval_report = result.eval_report
-            continue
-
-        if eval_report.route_decision == "return_to_planner":
-            if progress.replan_round >= max_replans:
-                reason = (
-                    f"replan budget exhausted ({progress.replan_round}/{max_replans}); last route return_to_planner"
-                )
-                _write_terminal_state(
-                    ctx,
-                    last_role="eval",
-                    eval_report=eval_report,
-                    progress=progress,
-                    reason=reason,
-                )
-                _print_terminal_summary(
-                    ctx,
-                    n_stages=n_stages,
-                    eval_report=eval_report,
-                    repair_rounds_used=progress.repair_round,
-                )
-                return 0
-            progress = _WorkflowProgress(
-                plan_version=progress.plan_version + 1,
-                repair_round=progress.repair_round,
-                replan_round=progress.replan_round + 1,
-            )
-            print(
-                f"\nfa workflow ─ replan round {progress.replan_round}/{max_replans} "
-                f"(plan version {progress.plan_version})",
-                file=sys.stderr,
-            )
-            for role in _canonical_loop_roles(roles, include_planner=True):
-                result = _run_stage(
-                    ctx,
-                    role,
-                    fresh=False,
-                    progress=progress,
-                    transition_reason=(
-                        f"replan round {progress.replan_round}: canonical {role} after return_to_planner"
-                    ),
-                )
-                n_stages += 1
-                if result.exit_code != 0:
-                    _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-                    return result.exit_code
-                if result.eval_report is not None:
-                    eval_report = result.eval_report
-            continue
-
-        reason = (
-            f"eval verdict {eval_report.verdict} after {progress.repair_round} repair round(s) "
-            f"and {progress.replan_round} replan round(s)"
-        )
-        _write_terminal_state(
-            ctx,
-            last_role="eval",
-            eval_report=eval_report,
-            progress=progress,
-            reason=reason,
-        )
-        _print_terminal_summary(
-            ctx,
-            n_stages=n_stages,
-            eval_report=eval_report,
-            repair_rounds_used=progress.repair_round,
-        )
-        return 0
-
-
-def _run_linear(ctx: _WorkflowContext, roles: list[str]) -> int:
-    """Run every role once, in order. Fail-fast on any non-zero stage exit."""
-    eval_report: EvalReport | None = None
-    progress = _WorkflowProgress()
-    for index, role in enumerate(roles):
-        print(f"\nfa workflow ─ stage {index + 1}/{len(roles)}: {role}", file=sys.stderr)
-        result = _run_stage(
-            ctx,
-            role,
-            fresh=index == 0,
-            progress=progress,
-            transition_reason=f"dispatching stage {index + 1}/{len(roles)}",
-        )
-        if result.exit_code != 0:
-            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-            return result.exit_code
-        if result.eval_report is not None:
-            eval_report = result.eval_report
-    _write_terminal_state(
-        ctx,
-        last_role=roles[-1],
-        eval_report=eval_report,
-        progress=progress,
-        reason=(
-            f"eval verdict {eval_report.verdict} (linear; no repair loop)"
-            if eval_report is not None
-            else "linear workflow completed"
-        ),
-    )
-    _print_terminal_summary(ctx, n_stages=len(roles), eval_report=eval_report, repair_rounds_used=0)
-    return 0
-
-
-def _run_repair(ctx: _WorkflowContext, roles: list[str], max_repairs: int) -> int:
-    """Run the role list once, then bounded ``coder -> eval`` repair rounds.
-
-    The repair loop is driven purely by the machine-readable eval route:
-    while the latest eval returns ``return_to_coder`` and the repair budget
-    remains, re-run the coder then the eval. Any other route (``complete``,
-    ``return_to_planner``, ``blocked``) stops the loop — planner re-entry is
-    intentionally NOT performed in this slice; such verdicts are recorded, not
-    acted on.
-    """
-    code, n_stages, eval_report = _run_initial_roles(ctx, roles)
-    if code != 0:
-        return code
-
-    progress = _WorkflowProgress()
-    while (
-        eval_report is not None
-        and eval_report.route_decision == "return_to_coder"
-        and progress.repair_round < max_repairs
-    ):
-        progress = _WorkflowProgress(
-            plan_version=progress.plan_version,
-            repair_round=progress.repair_round + 1,
-            replan_round=progress.replan_round,
-        )
-        print(
-            f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} (eval routed return_to_coder)",
-            file=sys.stderr,
-        )
-        coder_result = _run_stage(
-            ctx,
-            "coder",
-            fresh=False,
-            progress=progress,
-            transition_reason=f"repair round {progress.repair_round}: return_to_coder",
-        )
-        n_stages += 1
-        if coder_result.exit_code != 0:
-            _write_stage_failure_state(ctx, "coder", coder_result.exit_code, progress=progress)
-            return coder_result.exit_code
-        eval_result = _run_stage(
-            ctx,
-            "eval",
-            fresh=False,
-            progress=progress,
-            transition_reason=f"repair round {progress.repair_round}: re-evaluating",
-        )
-        n_stages += 1
-        if eval_result.exit_code != 0:
-            _write_stage_failure_state(ctx, "eval", eval_result.exit_code, progress=progress)
-            return eval_result.exit_code
-        eval_report = eval_result.eval_report
-
-    budget_exhausted = (
-        eval_report is not None
-        and eval_report.route_decision == "return_to_coder"
-        and progress.repair_round >= max_repairs
-    )
-    if eval_report is None:
-        reason = "repair workflow completed"
-    elif budget_exhausted:
-        reason = f"repair budget exhausted ({progress.repair_round}/{max_repairs}); last route return_to_coder"
-    else:
-        reason = f"eval verdict {eval_report.verdict} after {progress.repair_round} repair round(s)"
-    _write_terminal_state(
-        ctx,
-        last_role="eval" if eval_report is not None else roles[-1],
-        eval_report=eval_report,
-        progress=progress,
-        reason=reason,
-    )
-    _print_terminal_summary(
-        ctx,
-        n_stages=n_stages,
-        eval_report=eval_report,
-        repair_rounds_used=progress.repair_round,
-    )
-    return 0
-
-
-def _workflow_exit_code(result_code: int, terminal_state: FlowState | None) -> int:
-    """Map a workflow run to its process exit code (S10c.2 / Q35b).
-
-    The exit code REPORTS THE VERDICT, not merely that the pipeline ran. Every
-    mode returns 0 once its stages complete regardless of what the evaluator
-    decided, so ``fa workflow && deploy`` used to proceed on BLOCKED code and
-    any CI gate reading ``$?`` saw success.
-
-    * ``0`` — terminal status ``DONE``: the work was accepted.
-    * ``1`` — any other terminal status: it ran, it was not accepted.
-    * ``result_code`` passthrough — a usage/configuration error (**2**) is a
-      DIFFERENT contract and must stay distinguishable. "I invoked this
-      wrongly" and "the code was rejected" have different fixes.
-
-    ``terminal_state is None`` means the artifact was missing, corrupt, or
-    belonged to another run. That keeps the pipeline's own answer rather than
-    inventing a verdict; ``_read_back_terminal_state`` has already logged why.
-
-    Pure and separately testable on purpose: the caller derives BOTH this and
-    the aggregate row's ``stop_reason`` from one artifact read, and extracting
-    the branch keeps ``_cmd_workflow`` under the C901 threshold — the ratchet
-    flagged it at 16 the moment this logic was added inline.
-    """
-    if result_code != 0 or terminal_state is None:
-        return result_code
-    return 0 if terminal_state.status == "DONE" else 1
+# ── Workflow controller (S4a: extracted to workflow_controller.py) ─────────
 
 
 def _cmd_workflow(
@@ -1864,19 +1129,9 @@ def _cmd_workflow(
 ) -> int:
     """Advance a task through the FA role protocol over one shared run-id.
 
-    Modes (``--mode``):
-
-    - ``linear`` (default): run every named role once, in order, fail-fast.
-    - ``repair``: run the role list once, then bounded ``coder -> eval`` repair
-      rounds driven by the machine-readable eval route (``return_to_coder``),
-      up to ``--max-repairs`` (hard ceiling 3). Planner re-entry is not yet
-      performed; non-repair routes are recorded, not acted on.
-    - ``adaptive``: run the initial role list once, then normalize loop
-      transitions to canonical ``coder -> eval`` / ``planner -> coder -> eval``
-      routes based on the eval report's machine-readable route decisions.
-
-    ``transport``/``secrets`` are forwarded to every stage so tests can inject
-    deterministic seams.
+    Thin CLI wrapper around :func:`run_workflow` (S4a). Handles argument
+    parsing, validation, and session lifecycle resolution; the pipeline
+    logic lives in ``workflow_controller.py``.
     """
     roles = [r.strip() for r in str(args.roles).split(",") if r.strip()]
     if not roles:
@@ -1885,8 +1140,9 @@ def _cmd_workflow(
 
     mode = getattr(args, "mode", None) or "linear"
     if mode not in _WORKFLOW_MODES:
+        _modes_str = ", ".join(_WORKFLOW_MODES)
         print(
-            f"fa workflow: --mode must be one of {', '.join(_WORKFLOW_MODES)} (got {mode!r})",
+            f"fa workflow: --mode must be one of {_modes_str} (got {mode!r})",
             file=sys.stderr,
         )
         return 2
@@ -1909,155 +1165,58 @@ def _cmd_workflow(
             )
             return 2
 
-    max_repairs = _resolve_max_repairs(args)
-    max_replans = _resolve_max_replans(args)
+    # Resolve max_repairs / max_replans inline (simple enough to keep here)
+    raw_repairs = getattr(args, "max_repairs", None)
+    max_repairs = DEFAULT_MAX_REPAIRS if raw_repairs is None else min(max(int(raw_repairs), 0), 3)
+    raw_replans = getattr(args, "max_replans", None)
+    max_replans = DEFAULT_MAX_REPLANS if raw_replans is None else min(max(int(raw_replans), 0), 2)
+
     if mode == "repair":
         missing = [r for r in ("coder", "eval") if r not in roles]
         if missing:
+            _missing_str = " and ".join(missing)
+            _roles_str = ",".join(roles)
             print(
-                f"fa workflow: --mode repair requires roles to include {' and '.join(missing)} (got {','.join(roles)})",
+                f"fa workflow: --mode repair requires roles to include {_missing_str} (got {_roles_str})",
                 file=sys.stderr,
             )
             return 2
     if mode == "adaptive":
         missing = [r for r in ("planner", "coder", "eval") if r not in roles]
         if missing:
+            _missing_str = " and ".join(missing)
+            _roles_str = ",".join(roles)
             print(
-                f"fa workflow: --mode adaptive requires roles to include "
-                f"{' and '.join(missing)} (got {','.join(roles)})",
+                f"fa workflow: --mode adaptive requires roles to include {_missing_str} (got {_roles_str})",
                 file=sys.stderr,
             )
             return 2
 
-    # S8.2 — wall time for the whole invocation. Anchored BEFORE session
-    # lifecycle resolution because session setup is part of what an operator
-    # waits for. ``monotonic`` (not ``time.time``) so a wall-clock adjustment
-    # mid-run cannot produce a negative or inflated duration; same pattern as
-    # ``_cmd_run`` (``_run_start_mono``).
-    _wf_start_mono = time.monotonic()
     try:
         run_id, session_context, run_context, session_db = _resolve_workflow_lifecycle(args, run_id)
     except SessionManagerError as exc:
         print(f"fa workflow: session error [{exc.code}]: {exc}", file=sys.stderr)
         return 2
 
-    artifact_paths = _workflow_artifact_paths(
-        run_id,
-        base_dir=run_context.run_log_dir if run_context is not None else None,
-    )
-    artifact_paths.base_dir.mkdir(parents=True, exist_ok=True)
-    write_flow_state(
-        artifact_paths.flow_state,
-        FlowState(
-            run_id=run_id,
-            task=str(base_task or ""),
-            status="PLANNING" if roles[0] == "planner" else "PLAN_READY",
-            active_role=roles[0],
-            active_plan_id=run_id,
-            active_plan_version=1,
-            last_actor="workflow",
-            last_transition_reason=f"workflow initialized (mode={mode})",
-        ),
-    )
-
-    ctx = _WorkflowContext(
-        args=args,
-        run_id=run_id,
-        base_task=base_task,
+    exit_code, _terminal_state = run_workflow(
+        roles=roles,
+        task=base_task,
         per_role_task=per_role_task,
-        artifact_paths=artifact_paths,
+        mode=mode,
+        max_repairs=max_repairs,
+        max_replans=max_replans,
+        run_id=run_id,
+        config=args.config,
+        workspace=args.workspace,
+        max_turns=args.max_turns,
+        output_mode=getattr(args, "output_mode", None) or "console",
+        run_stage_fn=_cmd_run,
         transport=transport,
         secrets=secrets,
         session_context=session_context,
         run_context=run_context,
         session_db=session_db,
     )
-    label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
-    print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)
-    if mode == "repair":
-        result_code = _run_repair(ctx, roles, max_repairs)
-    elif mode == "adaptive":
-        result_code = _run_adaptive(ctx, roles, max_repairs, max_replans)
-    else:
-        result_code = _run_linear(ctx, roles)
-
-    # S10c.2 / Q35b — read the persisted terminal state ONCE, here, and derive
-    # two things from it: the aggregate row's ``stop_reason`` (S8.7, below) and
-    # this command's exit code (at the terminal return).
-    #
-    # **Read it OUTSIDE the try block deliberately.** The export below is
-    # best-effort and swallows every exception so telemetry can never break a
-    # workflow. Binding this inside that block would make the exit code depend
-    # on the export succeeding: an early failure (EventLog construction, a bad
-    # import) is swallowed, execution reaches the return, and the name is
-    # unbound -> UnboundLocalError escaping from the one place written never to
-    # fail. One artifact read, two derived contracts, neither able to break the
-    # other.
-    terminal_state = _read_back_terminal_state(artifact_paths.flow_state, run_id)
-
-    # Computed HERE, before the export, so the aggregate row's ``exit_code``
-    # column and the process's own status are the same number by construction.
-    exit_code = _workflow_exit_code(result_code, terminal_state)
-
-    # LOGIC-11: Export single aggregate row to global_history.db after
-    # workflow completes. Per-stage exports are skipped in _cmd_run when
-    # outcome_sink is non-None, so each stage doesn't overwrite the previous
-    # one's row. This single export reads ALL events from the shared
-    # session.db and produces correct cross-stage telemetry.
-    try:
-        from fa.inner_loop.global_history import export_session_to_global_history
-        from fa.inner_loop.state import EventLog as _EventLog
-
-        session_dir = fa_session_log_root() / run_id
-        log_path = session_dir / "events.jsonl"
-        workflow_log = _EventLog(
-            log_path,
-            run_id=run_id,
-            session_db=session_db,
-            session_id=session_context.session_id if session_context is not None else "",
-        )
-        # Build a synthetic outcome for the aggregate row.
-        # Token totals and tool breakdown come from _extract_telemetry_from_log
-        # which reads the shared session.db correctly.
-        # S8.3 / S8.7 — derive the semantic outcome from the persisted terminal
-        # FlowState, not from result_code. Falls back to the historical
-        # exit-code rule when the artifact is missing, corrupt, or belongs to
-        # another run, so the export can never become less reliable than before.
-        _fallback_stop_reason = "workflow_complete" if result_code == 0 else "workflow_failed"
-        _stop_reason = (
-            _WORKFLOW_STATUS_TO_STOP_REASON.get(terminal_state.status, _fallback_stop_reason)
-            if terminal_state is not None
-            else _fallback_stop_reason
-        )
-        aggregate_outcome = SessionOutcome(
-            exit_code=exit_code,
-            stop_reason=_stop_reason,
-            turns=0,  # turns in global_history come from telemetry, not outcome
-            final_text="",
-            tool_results=(),
-        )
-        # Get model/family from the last role's chain config
-        _models = load_models_config_from_path(ctx.args.config.expanduser().resolve(), require_api_keys=False)
-        _last_role = roles[-1] if roles else "coder"
-        _last_chain = _models.roles.get(_last_role)
-        _last_model = _last_chain.name if _last_chain else ""
-        _last_family = _last_chain.family if _last_chain else ""
-
-        export_session_to_global_history(
-            run_id=run_id,
-            outcome=aggregate_outcome,
-            log=workflow_log,
-            role="→".join(roles),
-            model=_last_model,
-            family=_last_family,
-            workspace_root=ctx.args.workspace,
-            duration_ms=int((time.monotonic() - _wf_start_mono) * 1000),
-        )
-    except Exception as exc:  # noqa: BLE001 — best-effort, never crash workflow
-        import logging
-
-        logging.getLogger(__name__).warning("workflow global_history export failed for %s: %s", run_id, exc)
-
     return exit_code
 
 
@@ -2194,8 +1353,9 @@ def _build_role_registry(role: str, workspace: Path, *, bash_timeout_seconds: in
     """Select the role-appropriate tool registry.
 
     Extracted from ``_cmd_run`` (S10b.2). Role-aware capability scoping:
-    ``planner`` and ``eval`` get read-only tools; everything else gets the full
-    baseline (read + write + bash).
+    ``planner`` and ``eval`` get read-only tools; ``chat`` gets a read-only
+    subset plus invoke_workflow (no write/edit/subagent); everything else gets
+    the full baseline (read + write + bash).
 
     **This is a security boundary, not a convenience switch.** The ``else``
     branch is deliberately the permissive one, so an unrecognised role gets the
@@ -2208,6 +1368,8 @@ def _build_role_registry(role: str, workspace: Path, *, bash_timeout_seconds: in
         return build_planner_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
     if role == "eval":
         return build_eval_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
+    if role == "chat":
+        return build_chat_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
     return build_baseline_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
 
 
@@ -2464,6 +1626,77 @@ def _session_db_runtime_error_message(exc: RuntimeError, db_path: Path) -> str |
     return None
 
 
+def _estimate_scope_for_chat(
+    role: str,
+    task: str,
+    log: EventLog,
+    state: SessionState,
+    run_id: str,
+) -> str:
+    """Estimate task scope for the chat role and return a system-prompt hint.
+
+    Extracted from ``_cmd_run`` (S3 / F3) to keep its cyclomatic complexity
+    under the S10b threshold of 15.
+
+    Side effects (best-effort, never blocking):
+    - appends a ``scope_estimate`` event to *log*
+    - writes a ``scope_estimate`` entry to *state.blackboard* (if available)
+
+    Returns the scope hint string for ``system_prompt_extra``, or ``""``
+    when *role* is not ``"chat"`` or the task is empty.
+    """
+    if role != "chat":
+        return ""
+    from fa.inner_loop.scope_estimator import estimate_scope
+
+    try:
+        scope = estimate_scope(task)
+    except ValueError:
+        return ""  # empty task — let chat role handle normally
+
+    log.append(
+        actor="harness",
+        kind="scope_estimate",
+        content={
+            "difficulty": scope.difficulty,
+            "scope": scope.scope,
+            "risk": scope.risk,
+            "confidence": scope.confidence,
+            "recommended_mode": scope.recommended_mode,
+            "task_preview": task[:120],
+        },
+    )
+    hint = (
+        f"## Task Scope Estimate\n"
+        f"Difficulty: {scope.difficulty} ({scope.scope})\n"
+        f"Risk: {scope.risk} | Confidence: {scope.confidence:.1f}\n"
+        f"Recommended mode: {scope.recommended_mode}\n"
+    )
+    # S3.5: Write scope estimate to blackboard for cross-session queryability.
+    # Best-effort — the event_log write above is authoritative; blackboard
+    # is a derived query surface. Failure must not block the session.
+    if state.blackboard is not None:
+        try:
+            from fa.blackboard.blackboard import BlackboardEntry
+
+            bb_entry = BlackboardEntry.create(
+                id=f"scope-estimate-{run_id}",
+                type="scope_estimate",
+                payload={
+                    "difficulty": scope.difficulty,
+                    "scope": scope.scope,
+                    "risk": scope.risk,
+                    "confidence": scope.confidence,
+                    "recommended_mode": scope.recommended_mode,
+                    "task_preview": task[:120],
+                },
+            )
+            state.blackboard.write(bb_entry)
+        except Exception as exc:  # noqa: BLE001 — best-effort, never block session
+            logger.warning("scope_estimate blackboard write failed: %s", exc)
+    return hint
+
+
 def _cmd_run(
     args: argparse.Namespace,
     *,
@@ -2662,6 +1895,9 @@ def _cmd_run(
     # Wire output_bus to state so bootstrap warnings and runtime hooks emit console events.
     state.attach_output_bus(output_bus)
 
+    # S3: Scope-aware routing for chat role (F3: extracted to _estimate_scope_for_chat).
+    scope_hint = _estimate_scope_for_chat(role, args.task or "", log, state, run_id)
+
     _run_start_mono = time.monotonic()
     try:
         outcome = drive_session(
@@ -2675,7 +1911,7 @@ def _cmd_run(
             acting_family=chain_config.family,
             limits=limits,
             max_turns=args.max_turns,
-            system_prompt_extra=_eval_system_prompt_extra(role, models),
+            system_prompt_extra=_eval_system_prompt_extra(role, models) + scope_hint,
             initial_memory_summary=resume_draft_text,
             temperature=None,
             redactor=redactor,
