@@ -333,6 +333,12 @@ def test_workflow_emits_eval_report_and_records_route(tmp_path: Path, monkeypatc
     assert state.last_route_decision == "return_to_coder"
 
 
+# D4: ``--mode repair`` was removed; adaptive with a planner-less role list
+# ("coder,eval") is its exact replacement. These tests were migrated rather than
+# deleted precisely because they encode the repair contract — if planner-less
+# adaptive did not reproduce it, they would fail, so keeping them IS the
+# equivalence proof. Role list changed from the default planner,coder,eval to
+# coder,eval so the initial pass runs the same two stages repair used to run.
 def _repair_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
@@ -342,13 +348,13 @@ def _repair_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, 
     return config, home / ".fa" / "session-log" / "wf-test"
 
 
-def test_repair_mode_loops_until_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_adaptive_planner_less_loops_until_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fa.inner_loop.workflow_artifacts import load_eval_report, load_flow_state
 
     config, session_dir = _repair_env(tmp_path, monkeypatch)
     # First eval routes back to coder; the repair eval passes.
     transport = _RoleAwareTransport([("REPAIR_REQUIRED", "return_to_coder"), ("PASS", "complete")])
-    args = _workflow_args(tmp_path, config, mode="repair", max_repairs=2)
+    args = _workflow_args(tmp_path, config, roles="coder,eval", mode="adaptive", max_repairs=2)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
     assert code == 0
@@ -364,13 +370,13 @@ def test_repair_mode_loops_until_pass(tmp_path: Path, monkeypatch: pytest.Monkey
     assert state.last_route_decision == "complete"
 
 
-def test_repair_mode_enforces_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_adaptive_planner_less_enforces_repair_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fa.inner_loop.workflow_artifacts import load_flow_state
 
     config, session_dir = _repair_env(tmp_path, monkeypatch)
     # Eval always routes back to coder → budget must cap the loop.
     transport = _RoleAwareTransport([("REPAIR_REQUIRED", "return_to_coder")] * 10)
-    args = _workflow_args(tmp_path, config, mode="repair", max_repairs=2)
+    args = _workflow_args(tmp_path, config, roles="coder,eval", mode="adaptive", max_repairs=2)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
     # Q35b (S10c.2): terminal status is REPAIR_REQUIRED, not DONE, so the
@@ -386,12 +392,12 @@ def test_repair_mode_enforces_budget(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert state.last_route_decision == "return_to_coder"
 
 
-def test_repair_mode_zero_budget_behaves_like_one_eval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_adaptive_zero_repair_budget_behaves_like_one_eval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fa.inner_loop.workflow_artifacts import load_flow_state
 
     config, session_dir = _repair_env(tmp_path, monkeypatch)
     transport = _RoleAwareTransport([("REPAIR_REQUIRED", "return_to_coder")] * 4)
-    args = _workflow_args(tmp_path, config, mode="repair", max_repairs=0)
+    args = _workflow_args(tmp_path, config, roles="coder,eval", mode="adaptive", max_repairs=0)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
     # Q35b (S10c.2): terminal status is REPAIR_REQUIRED, not DONE, so the
@@ -404,13 +410,15 @@ def test_repair_mode_zero_budget_behaves_like_one_eval(tmp_path: Path, monkeypat
     assert state.repair_round == 0
 
 
-def test_repair_mode_does_not_loop_on_return_to_planner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_adaptive_without_planner_terminates_on_return_to_planner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from fa.inner_loop.workflow_artifacts import load_flow_state
 
     config, session_dir = _repair_env(tmp_path, monkeypatch)
     # REPLAN routes to planner — this slice records but does NOT re-enter.
     transport = _RoleAwareTransport([("REPLAN_REQUIRED", "return_to_planner")])
-    args = _workflow_args(tmp_path, config, mode="repair", max_repairs=2)
+    args = _workflow_args(tmp_path, config, roles="coder,eval", mode="adaptive", max_repairs=2)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
     # Q35b (S10c.2): terminal status is REPLAN_REQUIRED, not DONE, so the
@@ -424,13 +432,69 @@ def test_repair_mode_does_not_loop_on_return_to_planner(tmp_path: Path, monkeypa
     assert state.repair_round == 0
 
 
-def test_repair_mode_requires_coder_and_eval_roles(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
-    args = _workflow_args(tmp_path, tmp_path / "models.yaml", roles="planner", mode="repair")
+def test_adaptive_mode_requires_coder_and_eval_roles(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
+    """D4: adaptive needs coder+eval; planner is optional (it was mandatory before)."""
+    args = _workflow_args(tmp_path, tmp_path / "models.yaml", roles="planner", mode="adaptive")
     code = _cmd_workflow(args, transport=_ScriptedTransport())
     assert code == 2
     err = capsys.readouterr().err
     assert "requires roles to include" in err
     assert "coder and eval" in err
+
+
+def test_repair_mode_is_no_longer_accepted(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
+    """D4: ``--mode repair`` is gone; the error names the surviving modes.
+
+    Kill-check for the removal itself: if "repair" were still in
+    WORKFLOW_MODES this returns 0/1 rather than the 2 of a rejected flag.
+    """
+    args = _workflow_args(tmp_path, tmp_path / "models.yaml", mode="repair")
+    assert _cmd_workflow(args, transport=_ScriptedTransport()) == 2
+    err = capsys.readouterr().err
+    assert "--mode must be one of" in err
+    assert "linear, adaptive" in err
+    assert "repair" not in err.split("(got")[0]
+
+
+def test_adaptive_accepts_planner_less_roles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D4: coder,eval is a valid adaptive role list — repair's migration path.
+
+    Before D4 adaptive hard-rejected a planner-less list (exit 2, "requires
+    roles to include planner"), which would have stranded every documented
+    ``fa workflow coder,eval --mode repair`` invocation.
+    """
+    from fa.inner_loop.workflow_artifacts import load_flow_state
+
+    config, session_dir = _repair_env(tmp_path, monkeypatch)
+    transport = _RoleAwareTransport([("REPAIR_REQUIRED", "return_to_coder"), ("PASS", "complete")])
+    args = _workflow_args(tmp_path, config, roles="coder,eval", mode="adaptive", max_repairs=2)
+
+    assert _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS) == 0
+    assert load_flow_state(session_dir / "flow_state.json").status == "DONE"
+
+
+def test_adaptive_without_planner_does_not_spin_on_replan_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D4: return_to_planner with no planner terminates instead of looping.
+
+    Without the explicit guard, _canonical_loop_roles silently drops the
+    absent planner and the loop would re-run coder→eval against an unchanged
+    plan until the replan budget drained. The stage counts are the oracle:
+    one coder and one eval, not one per replan round.
+    """
+    from fa.inner_loop.workflow_artifacts import load_flow_state
+
+    config, session_dir = _repair_env(tmp_path, monkeypatch)
+    transport = _RoleAwareTransport([("REPLAN_REQUIRED", "return_to_planner")] * 10)
+    args = _workflow_args(tmp_path, config, roles="coder,eval", mode="adaptive", max_replans=2)
+
+    assert _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS) == 1
+    assert transport.coder_calls == 1, "replan loop ran despite there being no planner"
+    assert transport.eval_calls == 1
+    state = load_flow_state(session_dir / "flow_state.json")
+    assert state.status == "REPLAN_REQUIRED"
+    assert state.replan_round == 0
 
 
 def test_workflow_invalid_mode_rejected(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
@@ -441,8 +505,8 @@ def test_workflow_invalid_mode_rejected(tmp_path: Path, capsys: CaptureFixture[s
 
 
 def test_workflow_parses_mode_and_max_repairs() -> None:
-    args = build_parser().parse_args(["workflow", "coder,eval", "do X", "--mode", "repair", "--max-repairs", "3"])
-    assert args.mode == "repair"
+    args = build_parser().parse_args(["workflow", "coder,eval", "do X", "--mode", "adaptive", "--max-repairs", "3"])
+    assert args.mode == "adaptive"
     assert args.max_repairs == 3
 
 
@@ -754,7 +818,16 @@ def test_chat_role_system_prompt_contains_scope_hint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C1: system_prompt_extra contains scope hint (not initial_memory_summary)."""
+    """C1: the scope hint is delivered, in the NON-cacheable block (D7).
+
+    REVISED 2026-08-26. This test previously asserted the hint landed in the
+    AGENTS.md map (the second system message). That routing was the defect:
+    ``agents_md_map`` is hashed into ``hash_map``, a cache-key component, so
+    every distinct scope estimate produced a distinct cache key and the
+    cacheable prefix was never reused. The hint now travels via
+    ``drive_session(turn_context=...)`` into the non-cacheable block.
+    See tests/test_scope_hint_cache_key.py for the invariance proof.
+    """
     from fa.cli import _cmd_run
 
     config = tmp_path / "models.yaml"
@@ -781,24 +854,21 @@ chat:
     code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
     assert code == 0
 
-    # The scope hint is injected via system_prompt_extra → PinnedBuffer →
-    # agents_md_map, which becomes the SECOND system message in the request.
-    # Verify it's in the agents_md_map (second system message), not in the
-    # base role prompt (first system message).
     assert len(transport.system_messages) >= 2, f"Expected ≥2 system messages, got {len(transport.system_messages)}"
 
-    # The agents_md_map (second system message) should contain the scope hint
-    agents_md_content = transport.system_messages[1]
-    assert "## Task Scope Estimate" in agents_md_content, "Scope hint not found in agents_md_map system message"
-    assert "Difficulty:" in agents_md_content
-    assert "Recommended mode:" in agents_md_content
+    # The hint must be delivered somewhere the model can read it. Skip index 0:
+    # the chat base prompt itself documents the mechanism using the literal
+    # string "## Task Scope Estimate" (prompt.py:927), so matching there would
+    # pass even if the injection were removed entirely.
+    injected = [m for m in transport.system_messages[1:] if "## Task Scope Estimate" in m]
+    assert injected, "Scope hint was not injected into any system message"
+    assert "Difficulty:" in injected[0]
+    assert "Recommended mode:" in injected[0]
 
-    # Verify initial_memory_summary is NOT contaminated with scope hint
-    # (initial_memory_summary is reserved for resume drafts)
-    # The scope hint should NOT appear in the base role prompt (first system message)
-    base_prompt = transport.system_messages[0]
-    assert "Difficulty:" not in base_prompt, (
-        "Scope hint leaked into base system prompt (should only be in agents_md_map)"
+    # And it must NOT be in the AGENTS.md map, which is cache-key material.
+    agents_md_content = transport.system_messages[1]
+    assert "## Task Scope Estimate" not in agents_md_content, (
+        "Scope hint is back in agents_md_map — this re-breaks prefix caching (D7)"
     )
 
 

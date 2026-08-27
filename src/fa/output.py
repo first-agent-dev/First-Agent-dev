@@ -112,6 +112,7 @@ LogKind = Literal[
     # Observability / recovery
     "recovery_action",
     "scope_estimate",  # S3: advisory scope estimation for chat role
+    "scope_tripwire",  # S7: a run outgrew its scope estimate mid-flight
     "verification",
     "cost_observation",
     "telemetry",

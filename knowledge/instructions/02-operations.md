@@ -784,7 +784,7 @@ fa workflow planner,coder,eval \
 
 ```bash
 # До 2 раундов починки (жёсткий потолок — 3)
-fa workflow coder,eval "Доведи src/fa/y.py до зелёного" --mode repair --max-repairs 2
+fa workflow coder,eval "Доведи src/fa/y.py до зелёного" --mode adaptive --max-repairs 2
 ```
 
 Границы текущего среза (важно):

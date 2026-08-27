@@ -81,6 +81,11 @@ UNPARSED_KINDS: frozenset[LogKind] = frozenset(
         "verification",  # captured by tool_result
         "file_read",  # S15 (CT-3): consumed by fs_exploration_metrics via direct
         # log read, not by fa stats aggregation; excuse until a stats consumer exists
+        "scope_tripwire",  # S7 (CT10): the durable record that a run outgrew its
+        # scope estimate. Deliberately unparsed HERE: its consumer is the S8
+        # routing-calibration view, which reads the global_history projection
+        # rather than a single session's analytics. Move it to the parsed set
+        # when that view lands and needs a per-session rollup.
     }
 )
 

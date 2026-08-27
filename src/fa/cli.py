@@ -20,7 +20,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -61,6 +61,7 @@ from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.prompt import render_tool_specs
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
 from fa.inner_loop.registry import ToolRegistry
+from fa.inner_loop.routing import WITHHELD_WRITE_TOOLS, should_withhold_write_tools
 from fa.inner_loop.runtime_limits import RuntimeLimits, resolve_limits_for_role
 from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
 from fa.inner_loop.tools import (
@@ -70,6 +71,10 @@ from fa.inner_loop.tools import (
     build_planner_registry,
     build_prepare_pr_tool,
 )
+from fa.inner_loop.tools.workflow_tool import (
+    WorkflowInvocationContext,
+    build_invoke_workflow_tool,
+)
 from fa.inner_loop.workflow_controller import (
     DEFAULT_MAX_REPAIRS,
     DEFAULT_MAX_REPLANS,
@@ -77,6 +82,9 @@ from fa.inner_loop.workflow_controller import (
 )
 from fa.inner_loop.workflow_controller import (
     WORKFLOW_MODES as _WORKFLOW_MODES,
+)
+from fa.inner_loop.workflow_controller import (
+    WORKFLOW_STAGE_ROLES as _WORKFLOW_STAGE_ROLES,
 )
 from fa.inner_loop.workflow_controller import (
     eval_system_prompt_extra as _eval_system_prompt_extra,
@@ -112,6 +120,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     # of the CLI's import path deliberately); these names are needed for
     # annotations only, so they are declared here rather than promoted to a
     # runtime import that would change startup behaviour.
+    from fa.inner_loop.scope_estimator import OperatingPoint
     from fa.output import EventBus
     from fa.runtime import PtyPool
     from fa.stats import SessionAnalytics
@@ -552,8 +561,9 @@ def build_parser() -> argparse.ArgumentParser:
             "workspace. The first role starts fresh; every later role gets "
             "--resume automatically so it reads the previous role's PR draft. "
             "Stops on the first non-zero stage exit (fail-fast). With "
-            "--mode repair, adds bounded coder→eval repair rounds driven by the "
-            "machine-readable eval route (return_to_coder)."
+            "--mode adaptive, adds bounded coder→eval repair rounds and, when a "
+            "planner role is present, planner→coder→eval replan rounds, driven "
+            "by the machine-readable eval route."
         ),
         epilog=render_command_help_ru("workflow"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1138,6 +1148,26 @@ def _cmd_workflow(
         print("fa workflow: provide at least one role, e.g. planner,coder,eval", file=sys.stderr)
         return 2
 
+    # RK8 (S5): reject roles that are not pipeline stages. Before this check,
+    # `--roles planner,chat,eval` and even `--roles bogus_role` ran happily:
+    # the split had no membership test and status_for_role() silently maps an
+    # unknown role to 'CODING'. Validation belongs HERE, at the CLI boundary,
+    # for two reasons — it is the last point where the operator's intent still
+    # exists as text, and stages run in separate call frames, so no in-process
+    # guard can see a `chat` stage building its own invoke_workflow.
+    #
+    # Placed ahead of run_id allocation and any artifact write so a rejected
+    # invocation leaves nothing behind on disk.
+    unknown_roles = [r for r in roles if r not in _WORKFLOW_STAGE_ROLES]
+    if unknown_roles:
+        _allowed = ", ".join(sorted(_WORKFLOW_STAGE_ROLES))
+        _bad = ", ".join(repr(r) for r in unknown_roles)
+        print(
+            f"fa workflow: unsupported stage role(s): {_bad}. --roles must be drawn from: {_allowed}",
+            file=sys.stderr,
+        )
+        return 2
+
     mode = getattr(args, "mode", None) or "linear"
     if mode not in _WORKFLOW_MODES:
         _modes_str = ", ".join(_WORKFLOW_MODES)
@@ -1171,18 +1201,12 @@ def _cmd_workflow(
     raw_replans = getattr(args, "max_replans", None)
     max_replans = DEFAULT_MAX_REPLANS if raw_replans is None else min(max(int(raw_replans), 0), 2)
 
-    if mode == "repair":
-        missing = [r for r in ("coder", "eval") if r not in roles]
-        if missing:
-            _missing_str = " and ".join(missing)
-            _roles_str = ",".join(roles)
-            print(
-                f"fa workflow: --mode repair requires roles to include {_missing_str} (got {_roles_str})",
-                file=sys.stderr,
-            )
-            return 2
     if mode == "adaptive":
-        missing = [r for r in ("planner", "coder", "eval") if r not in roles]
+        # D4: only coder+eval are required. A planner is optional — without one
+        # the workflow still runs bounded coder→eval repair rounds, which is
+        # exactly what the removed ``repair`` mode provided. A return_to_planner
+        # route then terminates instead of looping (workflow_controller.py).
+        missing = [r for r in ("coder", "eval") if r not in roles]
         if missing:
             _missing_str = " and ".join(missing)
             _roles_str = ",".join(roles)
@@ -1353,8 +1377,10 @@ def _build_role_registry(role: str, workspace: Path, *, bash_timeout_seconds: in
     """Select the role-appropriate tool registry.
 
     Extracted from ``_cmd_run`` (S10b.2). Role-aware capability scoping:
-    ``planner`` and ``eval`` get read-only tools; ``chat`` gets a read-only
-    subset plus invoke_workflow (no write/edit/subagent); everything else gets
+    ``planner`` gets read tools plus writes limited to its profile allowlist;
+    ``eval`` gets read-only tools; ``chat`` gets the generalist set (read +
+    write + edit + bash + invoke_workflow), with scope discipline supplied by
+    the scope estimator rather than by withholding tools; everything else gets
     the full baseline (read + write + bash).
 
     **This is a security boundary, not a convenience switch.** The ``else``
@@ -1373,17 +1399,143 @@ def _build_role_registry(role: str, workspace: Path, *, bash_timeout_seconds: in
     return build_baseline_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
 
 
+def _make_workflow_ctx_provider(
+    *,
+    parent_run_id: str,
+    config: Path,
+    workspace: Path,
+    max_turns: int,
+    limits: RuntimeLimits,
+    session_context: SessionContext | None,
+    run_context: RunContext | None,
+    session_db: SessionDatabase | None,
+    transport: Transport | None,
+    secrets: Mapping[str, str] | None,
+) -> Callable[[], WorkflowInvocationContext]:
+    """Build the provider closure ``invoke_workflow`` reads at tool-call time.
+
+    A provider rather than a plain value: the context is consumed when the
+    model calls the tool, which is after the registry is assembled, so binding
+    it eagerly would freeze pre-session state.
+
+    ``run_stage_fn=_cmd_run`` is the recursion seam, and it is deliberate — a
+    nested pipeline dispatches its stages exactly the way ``fa workflow`` does.
+    Unbounded recursion is prevented on two independent axes: the tool's
+    thread-local re-entrancy guard, and the fact that the stage roles a
+    pipeline runs (planner/coder/eval) never carry ``invoke_workflow``.
+    """
+
+    def provider() -> WorkflowInvocationContext:
+        return WorkflowInvocationContext(
+            parent_run_id=parent_run_id,
+            config=config,
+            workspace=workspace,
+            max_turns=max_turns,
+            run_stage_fn=_cmd_run,
+            workflow_timeout_seconds=limits.workflow_timeout_seconds,
+            session_context=session_context,
+            run_context=run_context,
+            session_db=session_db,
+            transport=transport,
+            secrets=secrets,
+        )
+
+    return provider
+
+
+def _apply_escalation_gate(
+    registry: ToolRegistry,
+    *,
+    role: str,
+    scope_point: OperatingPoint | None,
+    gate_enabled: bool,
+) -> ToolRegistry:
+    """Return *registry* without write tools when the S7 gate fires (CT9).
+
+    Returns the SAME object when the gate does not fire, so the ungated path
+    is byte-for-byte the behaviour that shipped before S7.
+
+    When it does fire, a fresh :class:`ToolRegistry` is populated with the
+    surviving specs rather than mutating the original. ``ToolRegistry`` exposes
+    no ``unregister`` — and reaching into ``_tools`` would desynchronise the
+    parallel ``_validators`` map — so re-registering is both the supported API
+    and the only way the compiled schema validators stay consistent.
+
+    ``invoke_workflow`` is registered by the caller AFTER this returns, so the
+    escalation path this gate is steering toward can never be removed by it.
+
+    Emits one WARNING naming the estimate and the config key that disables it.
+    A capability that silently vanishes is indistinguishable from a bug, and
+    the operator needs to be able to tell those apart from the log alone.
+    """
+    if not should_withhold_write_tools(scope_point, role=role, gate_enabled=gate_enabled):
+        return registry
+
+    withheld = sorted(name for name in registry.names() if name in WITHHELD_WRITE_TOOLS)
+    if not withheld:
+        return registry
+
+    gated = ToolRegistry()
+    for spec in registry.specs():
+        if spec.name not in WITHHELD_WRITE_TOOLS:
+            gated.register(spec)
+    # ``scope_point`` is non-None whenever the gate fires; assert-free access
+    # would still be safe, but mypy cannot see that through the predicate.
+    confidence = scope_point.confidence if scope_point is not None else 0.0
+    logger.warning(
+        "chat escalation gate active: scope estimate is workflow_linear at confidence %.1f, "
+        "so %s are withheld for this session; use invoke_workflow to escalate, or set "
+        "runtime_limits.chat_escalation_gate: false to disable this gate",
+        confidence,
+        ", ".join(withheld),
+    )
+    return gated
+
+
 def _build_run_tool_registry(
     role: str,
     workspace: Path,
     *,
     bash_timeout_seconds: int,
     draft_store: PrDraftStore,
+    workflow_ctx: Callable[[], WorkflowInvocationContext | None] | None = None,
+    scope_point: OperatingPoint | None = None,
+    gate_enabled: bool = True,
 ) -> ToolRegistry:
-    """Build the exact role tool corpus used by a live ``fa run``."""
+    """Build the exact role tool corpus used by a live ``fa run``.
+
+    S4b: ``invoke_workflow`` is registered HERE rather than in the chat profile
+    because it needs values only a live run owns — the parent run id, the
+    session database, the transport, ``run_stage_fn``. A profile builder takes
+    only ``(root)``, so declaring it there would force a ``fa.cli`` import into
+    the tools package and invert the dependency direction. ``pr_prepare``
+    already establishes this seam.
+
+    ``workflow_ctx`` is ``None`` for callers with no live run to escalate into
+    (the conformance path builds a ``coder`` registry, which never reaches this
+    branch). A chat registry built without it is still usable; it simply cannot
+    invoke a nested pipeline, and says so in a warning rather than failing.
+
+    S7 / CT8+CT9: when *scope_point* says this chat task is confidently
+    repo-scale, the declared write affordances are withheld, so escalating via
+    ``invoke_workflow`` is the path of least resistance instead of advice the
+    model may ignore. The decision is made ONCE, here, and the corpus never
+    changes mid-session: a tool set that mutates between turns invalidates the
+    prompt cache and can orphan a tool reference the model already emitted.
+    Both parameters default to the ungated behaviour so callers that own no
+    estimate (the conformance path, test fixtures) are unaffected.
+    """
 
     registry = _build_role_registry(role, workspace, bash_timeout_seconds=bash_timeout_seconds)
+    registry = _apply_escalation_gate(registry, role=role, scope_point=scope_point, gate_enabled=gate_enabled)
     registry.register(build_prepare_pr_tool(draft_store))
+    if role == "chat":
+        if workflow_ctx is None:
+            logger.warning(
+                "chat registry built without a workflow context; invoke_workflow is unavailable for this session"
+            )
+        else:
+            registry.register(build_invoke_workflow_tool(run_workflow, workflow_ctx))
     return registry
 
 
@@ -1626,33 +1778,64 @@ def _session_db_runtime_error_message(exc: RuntimeError, db_path: Path) -> str |
     return None
 
 
-def _estimate_scope_for_chat(
-    role: str,
+def _resolve_scope_point(role: str, task: str) -> OperatingPoint | None:
+    """Compute the chat role's operating point, with no side effects (S7 / CT8b).
+
+    Split out of :func:`_estimate_scope_for_chat` because the S7 capability
+    gate needs the estimate when it builds the tool registry, and the registry
+    is built BEFORE ``SessionState`` exists. The original function takes
+    ``state``, so it cannot simply be called earlier; only its pure half can.
+
+    ``estimate_scope`` is a pure keyword classifier — no LLM call, no I/O — so
+    calling it early costs nothing and changes nothing.
+
+    Returns ``None`` (never raises) when there is no estimate to make: a
+    non-chat role, or a task ``estimate_scope`` rejects as empty. ``None`` means
+    "no opinion", and every consumer treats it as fail-open.
+    """
+    if role != "chat":
+        return None
+    from fa.inner_loop.scope_estimator import estimate_scope
+
+    try:
+        return estimate_scope(task)
+    except ValueError:
+        return None  # empty task — let chat role handle normally
+
+
+def _publish_scope_estimate(
+    scope: OperatingPoint | None,
     task: str,
     log: EventLog,
     state: SessionState,
     run_id: str,
 ) -> str:
-    """Estimate task scope for the chat role and return a system-prompt hint.
+    """Record *scope* and return the chat role's system-prompt hint (S3, S3.5).
 
-    Extracted from ``_cmd_run`` (S3 / F3) to keep its cyclomatic complexity
-    under the S10b threshold of 15.
+    The side-effecting half of the S7 / CT8b split. Takes an ALREADY-COMPUTED
+    operating point so that ``estimate_scope`` runs exactly once per session:
+    a second call would append a second ``scope_estimate`` event, and the S3.5
+    projection keeps the last one it sees, so the run would be recorded against
+    an estimate the gate never used.
 
     Side effects (best-effort, never blocking):
     - appends a ``scope_estimate`` event to *log*
     - writes a ``scope_estimate`` entry to *state.blackboard* (if available)
 
-    Returns the scope hint string for ``system_prompt_extra``, or ``""``
-    when *role* is not ``"chat"`` or the task is empty.
-    """
-    if role != "chat":
-        return ""
-    from fa.inner_loop.scope_estimator import estimate_scope
+    Returns the scope hint string for ``drive_session(turn_context=...)``, or
+    ``""`` when *scope* is ``None`` (non-chat role, or an empty task).
 
-    try:
-        scope = estimate_scope(task)
-    except ValueError:
-        return ""  # empty task — let chat role handle normally
+    D7: this value must NOT travel on ``system_prompt_extra``. That parameter
+    feeds the pinned-governance block, which lands in ``agents_md_map`` and is
+    hashed into the prompt cache key — measured as three distinct cache keys
+    for three different estimates, i.e. no prefix reuse at all. The hint is
+    per-task, so it belongs in the non-cacheable block.
+
+    The returned string is built only from typed ``OperatingPoint`` fields
+    (int, Literal, float); no operator-supplied text is interpolated into it.
+    """
+    if scope is None:
+        return ""
 
     log.append(
         actor="harness",
@@ -1821,11 +2004,33 @@ def _cmd_run(
     # externally-fabricated drafts are not trusted by the guard.
     draft_path = run_log_dir / "pr_draft.md"
     draft_store = PrDraftStore(draft_path)
+
+    # S7 / CT8b: resolve the operating point HERE, before the tool registry is
+    # built, because the CT8 capability gate decides the chat corpus from it.
+    # This is the pure half of the estimate — no logging, no blackboard; those
+    # run later via _publish_scope_estimate, once SessionState exists. The
+    # estimator must be called exactly once per run (T40).
+    scope_point = _resolve_scope_point(role, args.task or "")
+
     registry = _build_run_tool_registry(
         role,
         workspace,
         bash_timeout_seconds=limits.bash_timeout_seconds,
         draft_store=draft_store,
+        scope_point=scope_point,
+        gate_enabled=limits.chat_escalation_gate,
+        workflow_ctx=_make_workflow_ctx_provider(
+            parent_run_id=run_id,
+            config=config_path,
+            workspace=workspace,
+            max_turns=args.max_turns,
+            limits=limits,
+            session_context=session_context,
+            run_context=run_context,
+            session_db=session_db,
+            transport=effective_transport,
+            secrets=secrets,
+        ),
     )
 
     # --resume preserves the on-disk draft for the next role to read;
@@ -1895,8 +2100,11 @@ def _cmd_run(
     # Wire output_bus to state so bootstrap warnings and runtime hooks emit console events.
     state.attach_output_bus(output_bus)
 
-    # S3: Scope-aware routing for chat role (F3: extracted to _estimate_scope_for_chat).
-    scope_hint = _estimate_scope_for_chat(role, args.task or "", log, state, run_id)
+    # S3: Scope-aware routing for chat role (F3: extracted to a helper).
+    # S7 / CT8b: the point was resolved BEFORE the tool registry so the
+    # capability gate could use it; this publishes that same object. Do not
+    # re-estimate here — one estimate per run is a contract (T40).
+    scope_hint = _publish_scope_estimate(scope_point, args.task or "", log, state, run_id)
 
     _run_start_mono = time.monotonic()
     try:
@@ -1911,7 +2119,18 @@ def _cmd_run(
             acting_family=chain_config.family,
             limits=limits,
             max_turns=args.max_turns,
-            system_prompt_extra=_eval_system_prompt_extra(role, models) + scope_hint,
+            # D7: the two extras go to DIFFERENT channels on purpose.
+            # The eval adversarial preamble is static per role, so it belongs
+            # in the cacheable prefix. The scope hint varies with every task;
+            # routing it through system_prompt_extra put it into the AGENTS.md
+            # map, which is hashed into the cache key — measured as three
+            # distinct keys for three estimates, i.e. zero prefix reuse.
+            system_prompt_extra=_eval_system_prompt_extra(role, models),
+            turn_context=scope_hint,
+            # S7 / CT10: the estimator's verdict, so the loop can notice when
+            # a run outgrows it. Empty for non-chat roles, which disables the
+            # tripwire — the workflow roles are already correctly scoped.
+            scope_mode=scope_point.recommended_mode if scope_point is not None else "",
             initial_memory_summary=resume_draft_text,
             temperature=None,
             redactor=redactor,
@@ -2778,6 +2997,17 @@ def _cmd_stats_global_history(args: argparse.Namespace) -> int:
                 f"  {r.get('run_id', ''):<20s} {r.get('role', ''):<8s} {r.get('model', ''):<20s} "
                 f"{r.get('stop_reason', ''):<20s} turns={r.get('turns', 0)} "
                 f"in={r.get('input_tokens', 0)} out={r.get('output_tokens', 0)}",
+                file=sys.stderr,
+            )
+            # S5: ACRR proxy, read straight off the row. Additive second line
+            # so the existing first line stays byte-identical for anything
+            # parsing it. stderr like its neighbour — stdout belongs to
+            # --output json alone (see this function's docstring).
+            _acrr = r.get("acrr_proxy")
+            _acrr_text = "n/a (no files changed)" if _acrr is None else f"{float(_acrr):.2f}"
+            print(
+                f"  {'':<20s} ACRR proxy: {_acrr_text} "
+                f"(files_read={r.get('files_read', 0)}, files_changed={r.get('files_changed', 0)})",
                 file=sys.stderr,
             )
         if len(rows) > 20:

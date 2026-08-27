@@ -139,14 +139,15 @@ COMMANDS: dict[str, CommandHelp] = {
                 "en": "LLM-turn cap applied to each role.",
             },
             "--mode/-m": {
-                "ru": "Стратегия маршрутизации: 'linear' — один проход; 'repair' — "
-                "ограниченные coder→eval раунды; 'adaptive' — planner re-entry по eval route.",
-                "en": "Routing strategy: 'linear' single pass; 'repair' bounded coder→eval "
-                "rounds; 'adaptive' planner re-entry from the eval route.",
+                "ru": "Стратегия маршрутизации: 'linear' — один проход; 'adaptive' — "
+                "ограниченные coder→eval раунды плюс planner re-entry по eval route "
+                "(planner необязателен).",
+                "en": "Routing strategy: 'linear' single pass; 'adaptive' bounded coder→eval "
+                "rounds plus planner re-entry from the eval route (planner optional).",
             },
             "--max-repairs": {
-                "ru": "Макс. число раундов coder→eval в режимах repair/adaptive (по умолчанию 2, жёсткий потолок 3).",
-                "en": "Max coder→eval repair rounds in repair/adaptive (default 2, hard ceiling 3).",
+                "ru": "Макс. число раундов coder→eval в режиме adaptive (по умолчанию 2, жёсткий потолок 3).",
+                "en": "Max coder→eval repair rounds in adaptive (default 2, hard ceiling 3).",
             },
             "--max-replans": {
                 "ru": "Макс. число planner re-entry раундов в adaptive (по умолчанию 1, жёсткий потолок 2).",
@@ -162,7 +163,7 @@ COMMANDS: dict[str, CommandHelp] = {
         "examples": [
             'fa workflow planner,coder,eval "Реализуй фичу X"',
             'fa workflow coder,eval "Доделай и проверь src/fa/y.py"',
-            'fa workflow coder,eval "Доведи src/fa/y.py до green" --mode repair --max-repairs 2',
+            'fa workflow coder,eval "Доведи src/fa/y.py до green" --mode adaptive --max-repairs 2',
             'fa workflow planner,coder,eval "Проведи adaptive цикл" --mode adaptive --max-replans 1',
             'fa workflow planner,coder,eval --task-planner "Спланируй" --task-coder "Сделай" "Проверь результат"',
         ],

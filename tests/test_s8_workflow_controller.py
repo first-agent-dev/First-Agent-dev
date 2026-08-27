@@ -296,7 +296,11 @@ def test_s8_repair_exhausted_maps_to_its_own_stop_reason(tmp_path: Path, monkeyp
     two-valued boolean wearing a dict's clothes.
     """
     config, home = _wf_env(tmp_path, monkeypatch)
-    args = _workflow_args(tmp_path, config, run_id="wf-repair", session_id=None, mode="repair", max_repairs=1)
+    # D4: was mode="repair". These tests use repair only as a vehicle for
+    # generic behaviour (stop-reason mapping, stage-failure recording). On a
+    # return_to_coder route adaptive runs the identical stage sequence, so the
+    # assertions below are unchanged.
+    args = _workflow_args(tmp_path, config, run_id="wf-repair", session_id=None, mode="adaptive", max_repairs=1)
     transport = _RoleAwareTransport([("REPAIR_REQUIRED", "return_to_coder")] * 10)
 
     # Q35b (S10c.2): REPAIR_REQUIRED is a non-DONE terminal status, so the exit
@@ -502,7 +506,7 @@ def test_s8_repair_round_stage_failure_is_recorded(tmp_path: Path, monkeypatch: 
     witness that the failure happened *mid-loop* rather than at stage one.
     """
     config, home = _wf_env(tmp_path, monkeypatch)
-    args = _workflow_args(tmp_path, config, run_id="wf-repfail", session_id=None, mode="repair", max_repairs=2)
+    args = _workflow_args(tmp_path, config, run_id="wf-repfail", session_id=None, mode="adaptive", max_repairs=2)
     # planner, coder, eval(REPAIR_REQUIRED) succeed -> repair round starts -> 4th call dies.
     transport = _FailAfterNTransport([("REPAIR_REQUIRED", "return_to_coder")], fail_from=4)
 
@@ -556,7 +560,7 @@ def test_s8_shared_initial_roles_failure_is_recorded(tmp_path: Path, monkeypatch
     reaches a different one).
     """
     config, home = _wf_env(tmp_path, monkeypatch)
-    args = _workflow_args(tmp_path, config, run_id="wf-initfail", session_id=None, mode="repair", max_repairs=2)
+    args = _workflow_args(tmp_path, config, run_id="wf-initfail", session_id=None, mode="adaptive", max_repairs=2)
     transport = _FailingTransport()
 
     assert _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS) == 2
@@ -577,7 +581,7 @@ def test_s8_repair_round_eval_failure_is_recorded(tmp_path: Path, monkeypatch: p
     fails, which is the branch a coder-failure test steps over.
     """
     config, home = _wf_env(tmp_path, monkeypatch)
-    args = _workflow_args(tmp_path, config, run_id="wf-repeval", session_id=None, mode="repair", max_repairs=2)
+    args = _workflow_args(tmp_path, config, run_id="wf-repeval", session_id=None, mode="adaptive", max_repairs=2)
     # planner, coder, eval(REPAIR_REQUIRED), repair-coder succeed; the 5th call
     # (the re-eval) dies.
     transport = _FailAfterNTransport([("REPAIR_REQUIRED", "return_to_coder")], fail_from=5)

@@ -78,6 +78,7 @@ from fa.inner_loop.prompt import (
     render_tool_specs,
 )
 from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult, ToolSpec
+from fa.inner_loop.routing import check_scope_tripwire
 from fa.inner_loop.runtime_limits import RuntimeLimits
 from fa.inner_loop.state import SessionState, _now_iso_z
 from fa.observability.redaction import SecretRedactor
@@ -168,6 +169,27 @@ def _merge_memory_summary_context(initial_summary: str, rebuilt_summary: str) ->
     if initial and rebuilt:
         return f"Resumed session context:\n{initial}\n\nPrevious compacted summary:\n{rebuilt}"
     return initial or rebuilt
+
+
+def _scope_tripwire_text(state: SessionState, scope_mode: str) -> str | None:
+    """Return the S7 scope-tripwire observation for *state*, or ``None`` (CT10).
+
+    Reads the distinct-path counters that ``SessionState.record_tool_call``
+    already maintains on the session transaction — no second counter, so the
+    tripwire can never disagree with the telemetry the run reports.
+
+    Returns ``None`` when there is no transaction to read. Telemetry must never
+    be the reason a session fails, and a missing transaction means only that
+    this run cannot answer the question.
+    """
+    transaction = state.transaction
+    if transaction is None:
+        return None
+    return check_scope_tripwire(
+        files_read=len(transaction.read_set),
+        files_changed=len(transaction.write_set),
+        recommended_mode=scope_mode,
+    )
 
 
 def _assert_tool_pairing_invariant(messages: Sequence[Mapping[str, Any]]) -> None:
@@ -308,6 +330,8 @@ def drive_session(
     limits: RuntimeLimits | None = None,
     max_turns: int = DEFAULT_MAX_TURNS,
     system_prompt_extra: str = "",
+    turn_context: str = "",
+    scope_mode: str = "",
     initial_memory_summary: str = "",
     temperature: float | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -346,6 +370,12 @@ def drive_session(
             One ``run_session`` invocation per LLM turn means the
             tool-call cap applies per-turn, not per-session.
         max_turns: LLM-turn cap; defaults to :data:`DEFAULT_MAX_TURNS`.
+        turn_context: Optional per-request advisory text (the chat role's
+            scope estimate is the first consumer). Routed to the prompt's
+            NON-cacheable block so it never enters the cache key. Content
+            that varies per task must use this rather than
+            ``system_prompt_extra``, which is hashed into the cacheable
+            prefix via the AGENTS.md map.
         system_prompt_extra: Optional standing profile guidance added to the
             pinned governance block. Not for mutable resume/session context.
         initial_memory_summary: Optional mutable summary/history injected into
@@ -387,6 +417,8 @@ def drive_session(
             limits=limits,
             max_turns=max_turns,
             system_prompt_extra=system_prompt_extra,
+            turn_context=turn_context,
+            scope_mode=scope_mode,
             initial_memory_summary=initial_memory_summary,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -410,6 +442,8 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     limits: RuntimeLimits | None = None,
     max_turns: int = DEFAULT_MAX_TURNS,
     system_prompt_extra: str = "",
+    turn_context: str = "",
+    scope_mode: str = "",
     initial_memory_summary: str = "",
     temperature: float | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -535,6 +569,8 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
     collected_results: list[ToolResult] = []
     turn = 0
+    # S7 / CT10: latch so the scope tripwire fires at most once per run.
+    _tripwire_fired = False
     # S22: Session-level chain exhaustion counter for max_chain_retries guard.
     # Distinct from the inner per-turn retry loop (_per_turn_chain_retries):
     #   - Inner loop retries provider_chain.request() with cooldown waits
@@ -645,6 +681,31 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
     while turn < max_turns:
         turn += 1
+        # S7 / CT10: mid-run scope tripwire. A run whose estimate said
+        # "chat-sized" but which is now touching repo-sized numbers of files
+        # gets ONE observation naming ``invoke_workflow``, appended to
+        # ``turn_context`` so it lands in the next request's non-cacheable
+        # block (the composer re-reads this variable every turn).
+        #
+        # Latched deliberately: repeating the same sentence every turn is
+        # context the model learns to skip, and it would churn the prompt
+        # cache on every call. Advisory by design (Q21) — there is no rollback
+        # from a half-edited tree, so the model decides, not the harness.
+        if not _tripwire_fired and scope_mode:
+            _tripwire_text = _scope_tripwire_text(state, scope_mode)
+            if _tripwire_text is not None:
+                turn_context = f"{turn_context}\n\n{_tripwire_text}" if turn_context else _tripwire_text
+                _tripwire_fired = True
+                log.append(
+                    actor="harness",
+                    kind="scope_tripwire",
+                    content={
+                        "turn": turn,
+                        "files_read": len(state.transaction.read_set) if state.transaction else 0,
+                        "files_changed": len(state.transaction.write_set) if state.transaction else 0,
+                        "recommended_mode": scope_mode,
+                    },
+                )
         # ── Output: turn_start ─────────────────────────────────────────────
         if output is not None:
             output.emit(
@@ -728,6 +789,11 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             observations: list[dict[str, Any]],
             base_system_value: str = base_system,
             pinned_text_value: str = pinned_text_for_turn,
+            # S7 / CT10: bound as a default arg, matching the two values above.
+            # ``turn_context`` is reassigned by the scope tripwire inside the
+            # loop, so a bare closure read would be a late-binding bug (B023);
+            # binding here captures the value as of THIS turn.
+            turn_context_value: str = turn_context,
         ) -> tuple[dict[str, Any], list[dict[str, Any]], Mapping[str, Any]]:
             parts, cache_key = build_prompt_parts_v2(
                 base_system=base_system_value,
@@ -737,6 +803,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 memory_summary=active_summary,
                 task=task,
                 observations=observations,
+                turn_context=turn_context_value,
             )
             if provider_chain.config.family == "anthropic":
                 request_body = to_anthropic_request_v2(parts, cache_key)

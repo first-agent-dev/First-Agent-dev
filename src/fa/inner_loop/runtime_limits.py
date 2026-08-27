@@ -103,6 +103,23 @@ DEFAULT_QA_RECURRING_ISSUE_THRESHOLD = 3
 # - Auth-expired: 0 = observe-only (no gating). The LLM-driver T-2 will
 #   wire synthetic re-auth via ``Decision.modify``; until then, denying
 #   on auth would block the LLM from being notified of the auth state.
+# S4b/RK6: wall-clock ceiling for a NESTED workflow pipeline launched by the
+# ``invoke_workflow`` tool. Serial tool dispatch has no timeout (the only
+# timeouts in ``loop.py`` are on the parallel branch), and RuntimeLimits has no
+# session wall-clock cap, so one ``invoke_workflow`` call could otherwise run
+# planner -> coder -> eval plus repair/replan rounds with no bound on elapsed
+# time, blocking the chat turn indefinitely. Strictly positive: ``0`` is NOT
+# "disabled" (that is what omitting ``deadline_mono`` means), so this key stays
+# out of ``_ZERO_ALLOWED_KEYS``.
+DEFAULT_WORKFLOW_TIMEOUT_SECONDS = 1800
+
+# S7 / CT8: the chat escalation gate ships ON. It only ever fires on the
+# estimator's top confidence bucket, which measured 4/4 correct over the 15-task
+# sample, and it always leaves ``invoke_workflow`` registered — so the failure
+# mode of a false positive is "the model escalates a task it could have done
+# inline", not "the run is stuck". Operators who disagree set the key to false.
+DEFAULT_CHAT_ESCALATION_GATE = True
+
 DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS = 30
 DEFAULT_LOCKFILE_SUPPRESSION_SECONDS = 5
 DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS = 0
@@ -150,6 +167,9 @@ class RuntimeLimits:
     cost_budget_usd: float | None = DEFAULT_COST_BUDGET_USD
     # ADR-15: subagent spawn limit
     max_subagent_spawns_per_session: int = DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION
+    # S4b/RK6: nested-workflow wall-clock ceiling (seconds).
+    workflow_timeout_seconds: int = DEFAULT_WORKFLOW_TIMEOUT_SECONDS
+    chat_escalation_gate: bool = DEFAULT_CHAT_ESCALATION_GATE
 
     @classmethod
     def anchored_defaults(cls) -> RuntimeLimits:
@@ -170,6 +190,7 @@ class RuntimeLimits:
             auth_expired_suppression_seconds=DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS,
             cost_budget_usd=DEFAULT_COST_BUDGET_USD,
             max_subagent_spawns_per_session=DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION,
+            workflow_timeout_seconds=DEFAULT_WORKFLOW_TIMEOUT_SECONDS,
         )
 
 
@@ -209,6 +230,9 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
         "auth_expired_suppression_seconds",
         "cost_budget_usd",
         "max_subagent_spawns_per_session",
+        "workflow_timeout_seconds",
+        # S7 / CT8: the only boolean key. See _BOOL_KEYS for parsing.
+        "chat_escalation_gate",
         # S14b.2 per-role iteration keys (three live + two stubs, Q-S14b2-2).
         "max_iterations_planner",
         "max_iterations_coder",
@@ -240,6 +264,53 @@ _ZERO_ALLOWED_KEYS: frozenset[str] = frozenset(
 # like ``0.50`` without losing precision; every other knob is an
 # integer count (iterations, seconds, entries, ...).
 _FLOAT_KEYS: frozenset[str] = frozenset({"cost_budget_usd"})
+
+# S7 / CT8: ``chat_escalation_gate`` is the first and only boolean knob. It gets
+# its own set for the same reason ``_FLOAT_KEYS`` exists — so a typo in one key
+# can never silently fall through the wrong type-check.
+_BOOL_KEYS: frozenset[str] = frozenset({"chat_escalation_gate"})
+
+# Accepted spellings, lowercased. Deliberately NOT ``bool(value_str)``: that
+# maps "false" and "0" to True, which would turn an operator's attempt to
+# disable the gate into a no-op they could only discover by reading the source.
+_BOOL_TRUE: frozenset[str] = frozenset({"true", "yes", "on", "1"})
+_BOOL_FALSE: frozenset[str] = frozenset({"false", "no", "off", "0"})
+
+
+def _accept_bool_key(
+    *,
+    key: str,
+    value_str: str,
+    line_no: int,
+    found_bool: dict[str, bool],
+    warnings: list[RuntimeLimitsWarning],
+) -> None:
+    """Parse one boolean key into *found_bool*, or record a warning.
+
+    Hoisted out of :func:`load_runtime_limits` — including its warn branch —
+    to keep that function under the S10b cyclomatic-complexity ceiling of 15.
+    Inlining the parse measured 17, and leaving the warn branch behind still
+    measured 16.
+
+    Tolerates surrounding quotes because YAML writers habitually add them. An
+    unrecognised value warns and writes nothing, so the anchored default
+    stands: silently guessing is exactly the wrong move for a key whose whole
+    job is enabling or disabling a guard.
+    """
+    lowered = value_str.strip().strip('"').strip("'").lower()
+    if lowered in _BOOL_TRUE:
+        found_bool[key] = True
+        return
+    if lowered in _BOOL_FALSE:
+        found_bool[key] = False
+        return
+    warnings.append(
+        RuntimeLimitsWarning(
+            line_no=line_no,
+            key=key,
+            detail=f"non-boolean value: {value_str!r}",
+        )
+    )
 
 
 def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
@@ -277,6 +348,7 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
     # pylint: disable=duplicate-code
     found: dict[str, int] = {}
     found_float: dict[str, float] = {}
+    found_bool: dict[str, bool] = {}
     found_role: dict[str, int] = {}
     warnings: list[RuntimeLimitsWarning] = []
     in_block = False
@@ -304,6 +376,15 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
         # other key is an integer count (iterations, seconds, entries,
         # …). Keep the per-key parse type explicit so a typo in one
         # key never silently falls through the wrong type-check.
+        if key in _BOOL_KEYS:
+            _accept_bool_key(
+                key=key,
+                value_str=value_str,
+                line_no=line_no,
+                found_bool=found_bool,
+                warnings=warnings,
+            )
+            continue
         if key in _FLOAT_KEYS:
             try:
                 float_value = float(value_str)
@@ -404,6 +485,8 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
         max_subagent_spawns_per_session=found.get(
             "max_subagent_spawns_per_session", DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION
         ),
+        workflow_timeout_seconds=found.get("workflow_timeout_seconds", DEFAULT_WORKFLOW_TIMEOUT_SECONDS),
+        chat_escalation_gate=found_bool.get("chat_escalation_gate", DEFAULT_CHAT_ESCALATION_GATE),
     )
     return RuntimeLimitsLoadResult(limits=limits, warnings=tuple(warnings), role_iterations=found_role)
 
@@ -461,6 +544,7 @@ __all__ = [
     "DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES",
     "DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS",
     "DEFAULT_BASH_TIMEOUT_SECONDS",
+    "DEFAULT_CHAT_ESCALATION_GATE",
     "DEFAULT_COST_BUDGET_USD",
     "DEFAULT_LOCKFILE_SUPPRESSION_SECONDS",
     "DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER",
@@ -472,6 +556,7 @@ __all__ = [
     "DEFAULT_QA_MAX_ITERATIONS",
     "DEFAULT_QA_RECURRING_ISSUE_THRESHOLD",
     "DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS",
+    "DEFAULT_WORKFLOW_TIMEOUT_SECONDS",
     "ROLE_ITERATION_DEFAULTS",
     "RuntimeLimits",
     "RuntimeLimitsLoadResult",

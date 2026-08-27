@@ -1,7 +1,7 @@
 """Workflow controller — multi-role pipeline orchestration.
 
 Extracted from cli.py (S4a). This module owns the workflow pipeline:
-linear, repair, and adaptive modes. It is callable from both the CLI
+linear and adaptive modes. It is callable from both the CLI
 (``fa workflow``) and from tools (``invoke_workflow``).
 
 Dependency direction: this module does NOT import from cli.py.
@@ -18,7 +18,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
@@ -62,11 +62,40 @@ WORKFLOW_STATUS_TO_STOP_REASON: dict[str, str] = {
 }
 
 DEFAULT_MAX_REPAIRS = 2
+# S4b/RK6: exit code for a pipeline stopped by its wall-clock deadline. 124 is
+# the conventional timeout code (GNU ``timeout``), so operators reading an exit
+# status see "timed out" rather than a generic failure. It is deliberately a
+# value no stage can return: ``_cmd_run`` returns 0/1/2.
+WORKFLOW_DEADLINE_EXIT_CODE = 124
+
+# The exact substring written into ``FlowState.last_transition_reason`` when the
+# deadline stops a run. The ``invoke_workflow`` tool matches on it to report
+# ``timed_out=True``, so treat it as a wire contract between the controller and
+# the tool, not as prose.
+DEADLINE_REASON_MARKER = "workflow deadline exceeded"
+
 MAX_REPAIRS_CEILING = 3
 DEFAULT_MAX_REPLANS = 1
 MAX_REPLANS_CEILING = 2
 
-WORKFLOW_MODES = ("linear", "repair", "adaptive")
+WORKFLOW_MODES = ("linear", "adaptive")
+
+# RK8 (S5): the roles a workflow STAGE may run as. An ALLOWLIST, not a denial
+# of "chat", because the question worth asking at the boundary is "is this a
+# role this pipeline knows how to run", not "is this the one role we already
+# know is dangerous". A denylist accepts every typo and every future role by
+# default — which is exactly why `--roles bogus_role` used to run.
+#
+# Derived from nothing on purpose. NOT from PROFILES_RAW: this is a policy
+# statement about pipeline stages, not a restatement of which profiles exist.
+# `chat` IS a real profile and must stay absent here — a chat stage would build
+# its own invoke_workflow tool and could recurse into a fresh workflow, and the
+# S4b re-entrancy guard is thread-local so it cannot see across the separate
+# call frames that stages run in. Excluding chat at the CLI boundary is what
+# makes that guard's blind spot unreachable.
+#
+# Adding a role here is meant to be a deliberate edit with a test beside it.
+WORKFLOW_STAGE_ROLES: Final = frozenset({"planner", "coder", "eval"})
 
 
 # ── Dataclasses ────────────────────────────────────────────────────────────
@@ -96,6 +125,10 @@ class WorkflowContext:
     session_context: SessionContext | None = None
     run_context: RunContext | None = None
     session_db: SessionDatabase | None = None
+    # S4b/RK6: absolute ``time.monotonic()`` instant after which no NEW stage
+    # is dispatched. ``None`` means no deadline, which is what every existing
+    # caller (``_cmd_workflow``) passes, so their behaviour is unchanged.
+    deadline_mono: float | None = None
 
     def task_for(self, role: str) -> str | None:
         return self.per_role_task.get(role) or self.base_task
@@ -207,7 +240,20 @@ def _run_stage(
     inspectable even mid-run, then runs the role through ``run_stage_fn``. For
     the ``eval`` role the terminal outcome is captured and translated into
     ``eval_report.json``.
+
+    S4b/RK6 — the deadline is checked HERE, at the single choke point every
+    dispatch funnels through (four call sites today), rather than at each call
+    site: adding or removing a pipeline mode then cannot silently escape the
+    cap. The check is cooperative and cannot interrupt a stage already in
+    flight, so the honest worst case is ``deadline + one stage``. That is
+    acceptable because a single stage is already bounded by ``max_iterations``
+    and ``bash_timeout_seconds``; the unbounded quantity was the NUMBER of
+    stages, which is exactly what this caps.
     """
+    if _deadline_exceeded(ctx):
+        _write_deadline_state(ctx, role, progress=progress)
+        return StageResult(role=role, exit_code=WORKFLOW_DEADLINE_EXIT_CODE)
+
     write_flow_state(
         ctx.artifact_paths.flow_state,
         FlowState(
@@ -247,11 +293,25 @@ def _run_stage(
         )
     stage_args = argparse.Namespace(**stage_kwargs)
     sink: list[SessionOutcome] = []
+    # D5: the sink is passed for EVERY role, not just eval.
+    #
+    # ``outcome_sink`` does double duty in ``_cmd_run``: it captures the
+    # terminal outcome *and* suppresses that stage's own global_history
+    # export (cli.py:1945), because the controller writes one aggregate row
+    # for the whole workflow after all stages finish. Passing ``None`` for
+    # planner and coder meant each of them exported a row under the shared
+    # workflow ``run_id`` — a table keyed by ``run_id`` with INSERT OR
+    # REPLACE — so the stages overwrote each other and the aggregate was
+    # correct only by virtue of being written last. LOGIC-11 already
+    # documented the single-aggregate intent; only eval was honouring it.
+    #
+    # ``sink`` is local to this stage and is read below for eval alone, so
+    # collecting a non-eval outcome here is inert.
     code = run_stage_fn(
         stage_args,
         transport=ctx.transport,
         secrets=ctx.secrets,
-        outcome_sink=sink if role == "eval" else None,
+        outcome_sink=sink,
     )
     report: EvalReport | None = None
     if role == "eval" and code == 0 and sink:
@@ -282,6 +342,56 @@ def _run_stage(
     return StageResult(role=role, exit_code=code, eval_report=report)
 
 
+def _deadline_exceeded(ctx: WorkflowContext) -> bool:
+    """Return ``True`` when the run's wall-clock deadline has passed.
+
+    ``time.monotonic`` (never ``time.time``) so a system clock adjustment
+    mid-run cannot extend or collapse the budget.
+    """
+    return ctx.deadline_mono is not None and time.monotonic() >= ctx.deadline_mono
+
+
+def _write_deadline_state(
+    ctx: WorkflowContext,
+    role: str,
+    *,
+    progress: WorkflowProgress,
+) -> None:
+    """Persist the terminal FlowState for a deadline-stopped pipeline.
+
+    Deliberately terminal-and-observable rather than an exception: the run
+    stays auditable and the artifacts stay well-formed, matching the existing
+    budget-exhausted branches. ``DEADLINE_REASON_MARKER`` is the substring the
+    ``invoke_workflow`` tool matches to set ``timed_out=True``, so it is a
+    contract, not a log string.
+    """
+    elapsed = (
+        ""
+        if ctx.deadline_mono is None
+        else f" after {max(0.0, time.monotonic() - ctx.deadline_mono):.0f}s past deadline"
+    )
+    write_flow_state(
+        ctx.artifact_paths.flow_state,
+        FlowState(
+            run_id=ctx.run_id,
+            task=str(ctx.base_task or ""),
+            status="FAILED",
+            active_role=role,
+            active_plan_id=ctx.run_id,
+            active_plan_version=progress.plan_version,
+            repair_round=progress.repair_round,
+            replan_round=progress.replan_round,
+            last_actor="workflow",
+            last_transition_reason=f"{DEADLINE_REASON_MARKER}{elapsed}",
+            blocked_reason=f"{DEADLINE_REASON_MARKER}; stage {role!r} was not dispatched",
+        ),
+    )
+    print(
+        f"fa workflow: {DEADLINE_REASON_MARKER} — stage {role!r} not dispatched, pipeline stopped.",
+        file=sys.stderr,
+    )
+
+
 def _write_stage_failure_state(
     ctx: WorkflowContext,
     role: str,
@@ -289,6 +399,16 @@ def _write_stage_failure_state(
     *,
     progress: WorkflowProgress,
 ) -> None:
+    """Persist the fail-fast terminal state for a stage that exited non-zero.
+
+    S4b/RK6: a deadline stop is reported through the same non-zero return path,
+    but its FlowState is already written and strictly more informative. Writing
+    over it with ``stage exited 124`` would erase the deadline marker the tool
+    matches on, so that one code is passed through untouched.
+    """
+    if code == WORKFLOW_DEADLINE_EXIT_CODE:
+        return
+
     write_flow_state(
         ctx.artifact_paths.flow_state,
         FlowState(
@@ -414,8 +534,6 @@ def _resolve_max_replans(value: int | None) -> int:
 
 
 def _render_mode_label(mode: str, *, max_repairs: int, max_replans: int) -> str:
-    if mode == "repair":
-        return f"repair (max repairs {max_repairs})"
     if mode == "adaptive":
         return f"adaptive (max repairs {max_repairs}, max replans {max_replans})"
     return mode
@@ -519,6 +637,32 @@ def _run_adaptive(
             continue
 
         if eval_report.route_decision == "return_to_planner":
+            # D4: adaptive accepts a planner-less role list (e.g. coder,eval),
+            # which is what the removed ``repair`` mode used to serve. Without
+            # a planner there is nobody to replan, so a return_to_planner route
+            # is terminal rather than a loop — the alternative would be to spin
+            # the canonical loop with the planner silently filtered out by
+            # _canonical_loop_roles, re-running coder→eval on an unchanged plan
+            # until the replan budget drained.
+            if "planner" not in roles:
+                reason = (
+                    f"eval routed return_to_planner but no planner role is configured "
+                    f"(roles={','.join(roles)}); cannot replan"
+                )
+                _write_terminal_state(ctx, last_role="eval", eval_report=eval_report, progress=progress, reason=reason)
+                _print_terminal_summary(
+                    ctx,
+                    n_stages=n_stages,
+                    eval_report=eval_report,
+                    repair_rounds_used=progress.repair_round,
+                )
+                # 0 means "the controller finished normally", not "success":
+                # workflow_exit_code maps the non-DONE terminal state to 1.
+                # Returning 1 here is an equivalent mutant (verified: identical
+                # exit code, status, reason and stage counts), so no test can
+                # distinguish them. 0 is used for consistency with every other
+                # terminal branch in this function.
+                return 0
             if progress.replan_round >= max_replans:
                 reason = (
                     f"replan budget exhausted ({progress.replan_round}/{max_replans}); last route return_to_planner"
@@ -606,75 +750,6 @@ def _run_linear(ctx: WorkflowContext, roles: list[str], run_stage_fn: Callable[.
     return 0
 
 
-def _run_repair(ctx: WorkflowContext, roles: list[str], max_repairs: int, run_stage_fn: Callable[..., int]) -> int:
-    """Run the role list once, then bounded ``coder -> eval`` repair rounds."""
-    code, n_stages, eval_report = _run_initial_roles(ctx, roles, run_stage_fn)
-    if code != 0:
-        return code
-
-    progress = WorkflowProgress()
-    while (
-        eval_report is not None
-        and eval_report.route_decision == "return_to_coder"
-        and progress.repair_round < max_repairs
-    ):
-        progress = WorkflowProgress(
-            plan_version=progress.plan_version,
-            repair_round=progress.repair_round + 1,
-            replan_round=progress.replan_round,
-        )
-        print(
-            f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} (eval routed return_to_coder)",
-            file=sys.stderr,
-        )
-        coder_result = _run_stage(
-            ctx,
-            "coder",
-            fresh=False,
-            progress=progress,
-            transition_reason=f"repair round {progress.repair_round}: return_to_coder",
-            run_stage_fn=run_stage_fn,
-        )
-        n_stages += 1
-        if coder_result.exit_code != 0:
-            _write_stage_failure_state(ctx, "coder", coder_result.exit_code, progress=progress)
-            return coder_result.exit_code
-        eval_result = _run_stage(
-            ctx,
-            "eval",
-            fresh=False,
-            progress=progress,
-            transition_reason=f"repair round {progress.repair_round}: re-evaluating",
-            run_stage_fn=run_stage_fn,
-        )
-        n_stages += 1
-        if eval_result.exit_code != 0:
-            _write_stage_failure_state(ctx, "eval", eval_result.exit_code, progress=progress)
-            return eval_result.exit_code
-        eval_report = eval_result.eval_report
-
-    budget_exhausted = (
-        eval_report is not None
-        and eval_report.route_decision == "return_to_coder"
-        and progress.repair_round >= max_repairs
-    )
-    if eval_report is None:
-        reason = "repair workflow completed"
-    elif budget_exhausted:
-        reason = f"repair budget exhausted ({progress.repair_round}/{max_repairs}); last route return_to_coder"
-    else:
-        reason = f"eval verdict {eval_report.verdict} after {progress.repair_round} repair round(s)"
-    _write_terminal_state(
-        ctx,
-        last_role="eval" if eval_report is not None else roles[-1],
-        eval_report=eval_report,
-        progress=progress,
-        reason=reason,
-    )
-    _print_terminal_summary(ctx, n_stages=n_stages, eval_report=eval_report, repair_rounds_used=progress.repair_round)
-    return 0
-
-
 def workflow_exit_code(result_code: int, terminal_state: FlowState | None) -> int:
     """Map a workflow run to its process exit code."""
     if result_code != 0 or terminal_state is None:
@@ -704,11 +779,19 @@ def run_workflow(
     session_context: SessionContext | None = None,
     run_context: RunContext | None = None,
     session_db: SessionDatabase | None = None,
+    deadline_mono: float | None = None,
 ) -> tuple[int, FlowState | None]:
     """Run the workflow pipeline. Callable from CLI and from tools.
 
     Returns ``(exit_code, terminal_state)`` where ``terminal_state`` may be
     ``None`` if the artifact was missing or corrupt.
+
+    ``deadline_mono`` (S4b/RK6) is an absolute ``time.monotonic()`` instant
+    after which no NEW stage is dispatched. ``None`` — the default, and what
+    ``_cmd_workflow`` passes — means no deadline, so the CLI path is unchanged.
+    On expiry the pipeline writes a terminal ``FAILED`` FlowState carrying
+    ``DEADLINE_REASON_MARKER``, exports its aggregate row as usual, and returns
+    ``WORKFLOW_DEADLINE_EXIT_CODE``; it does not raise.
     """
     _wf_start_mono = time.monotonic()
 
@@ -745,12 +828,11 @@ def run_workflow(
         session_context=session_context,
         run_context=run_context,
         session_db=session_db,
+        deadline_mono=deadline_mono,
     )
     label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
     print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)
-    if mode == "repair":
-        result_code = _run_repair(ctx, roles, max_repairs, run_stage_fn)
-    elif mode == "adaptive":
+    if mode == "adaptive":
         result_code = _run_adaptive(ctx, roles, max_repairs, max_replans, run_stage_fn)
     else:
         result_code = _run_linear(ctx, roles, run_stage_fn)
@@ -809,12 +891,15 @@ def run_workflow(
 
 
 __all__ = [
+    "DEADLINE_REASON_MARKER",
     "DEFAULT_MAX_REPAIRS",
     "DEFAULT_MAX_REPLANS",
     "EVAL_VERDICT_TO_TERMINAL_STATUS",
     "MAX_REPAIRS_CEILING",
     "MAX_REPLANS_CEILING",
+    "WORKFLOW_DEADLINE_EXIT_CODE",
     "WORKFLOW_MODES",
+    "WORKFLOW_STAGE_ROLES",
     "WORKFLOW_STATUS_TO_STOP_REASON",
     "StageResult",
     "WorkflowArtifactPaths",

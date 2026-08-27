@@ -48,8 +48,8 @@ fa workflow planner,coder,eval "Спланируй, реализуй и пров
 | Режим | Описание | Команда |
 |-------|----------|---------|
 | `linear` (по умолчанию) | Каждая роль выполняется один раз | `fa workflow planner,coder,eval "..."` |
-| `repair` | + ограниченные раунды coder→eval по результатам eval | `fa workflow coder,eval "..." --mode repair --max-repairs 2` |
-| `adaptive` | + planner re-entry по eval route (детерминированные маршруты) | `fa workflow planner,coder,eval "..." --mode adaptive` |
+| `adaptive` | + раунды coder→eval и planner re-entry по eval route (детерминированные маршруты) | `fa workflow planner,coder,eval "..." --mode adaptive` |
+| `adaptive` без планировщика | только раунды coder→eval; замена снятому режиму `repair` | `fa workflow coder,eval "..." --mode adaptive --max-repairs 2` |
 
 Роли в цикле:
 

@@ -8,7 +8,7 @@ Path inventory:
   Path 1: CHAT_SYSTEM_PROMPT registered in _ROLE_PROMPTS["chat"]
   Path 2: "chat" profile in PROFILES_RAW with correct tool set and stateless config
   Path 3: build_chat_registry() returns correct tools
-  Path 4: Security boundary — no write/edit/subagent tools in chat registry
+  Path 4: Chat is a generalist — read + write + edit + bash reach the registry
   Path 5: _build_role_registry dispatches "chat" correctly
   Path 6: CHAT_SYSTEM_PROMPT content contains key identity phrases
 """
@@ -74,12 +74,23 @@ class TestProfileRegistration:
         assert isinstance(tools, list)
         assert len(tools) >= 3, "chat profile must have at least 3 tools"
 
-    def test_chat_profile_tools_are_read_only(self) -> None:
-        """Chat must NOT have write or edit tools."""
+    def test_chat_profile_declares_write_tools(self) -> None:
+        """Chat is a generalist: it writes notes and makes small edits directly.
+
+        Scope discipline is the scope estimator's job (it routes large work to
+        ``invoke_workflow``), not an artefact of withholding write tools.
+        """
         tools = PROFILES_RAW["chat"]["tools"]
-        assert "fs_write_file" not in tools, "chat must not have fs_write_file"
-        assert "fs_edit_file" not in tools, "chat must not have fs_edit_file"
-        assert "fs_spawn_subagent" not in tools, "chat must not have fs_spawn_subagent"
+        assert "fs_write_file" in tools, "chat needs fs_write_file for notes and scratch files"
+        assert "fs_edit_file" in tools, "chat needs fs_edit_file for small in-line edits"
+
+    def test_chat_profile_declares_spawn_subagent(self) -> None:
+        """Declared so the profile matches the registry that gets built.
+
+        The tool is feature-flagged off and fails with ``disabled`` when
+        invoked; the defect was the profile and registry disagreeing.
+        """
+        assert "fs_spawn_subagent" in PROFILES_RAW["chat"]["tools"]
 
     def test_chat_profile_has_read_file(self) -> None:
         assert "fs_read_file" in PROFILES_RAW["chat"]["tools"]
@@ -90,13 +101,26 @@ class TestProfileRegistration:
     def test_chat_profile_has_bash(self) -> None:
         assert "fs_run_bash" in PROFILES_RAW["chat"]["tools"]
 
-    def test_chat_profile_stateless(self) -> None:
-        profile = PROFILES_RAW["chat"]
-        assert profile.get("stateless") is True, "chat profile must be stateless"
+    def test_chat_profile_is_stateful(self) -> None:
+        """Chat keeps a persistent shell so cd/venv/env survive across turns."""
+        assert PROFILES_RAW["chat"].get("stateless") is False
 
     def test_chat_profile_bash_impl(self) -> None:
-        profile = PROFILES_RAW["chat"]
-        assert profile.get("bash_impl") == "stateless"
+        """Chat uses the stateful PTY backend (ADR-14).
+
+        Asserted against the *typed* profile rather than the raw dict so this
+        is not a tautology that reads the literal straight back.
+        """
+        assert TYPED_PROFILES["chat"].bash_impl == "stateful"
+
+    def test_no_profile_declares_max_tokens(self) -> None:
+        """``max_tokens`` was dead config — no reader ever consumed it.
+
+        The real cap is the provider default (64000). Keeping a per-profile
+        number that changes nothing invites reasoning from a false premise.
+        """
+        for name, data in PROFILES_RAW.items():
+            assert "max_tokens" not in data, f"{name} profile still carries dead max_tokens"
 
 
 # ── Group 3: Tool registry (kills Edit 3) ───────────────────────────────────
@@ -121,20 +145,62 @@ class TestChatRegistry:
         names = {spec.name for spec in chat_registry.specs()}
         assert "fs_run_bash" in names
 
-    def test_chat_registry_no_write_file(self, chat_registry: ToolRegistry) -> None:
-        """Security boundary: chat cannot write files."""
+    def test_chat_registry_has_write_file(self, chat_registry: ToolRegistry) -> None:
+        """Chat can write files — notes and scratch output are its own work."""
         names = {spec.name for spec in chat_registry.specs()}
-        assert "fs_write_file" not in names, "chat must not have fs_write_file"
+        assert "fs_write_file" in names
 
-    def test_chat_registry_no_edit_file(self, chat_registry: ToolRegistry) -> None:
-        """Security boundary: chat cannot edit files."""
+    def test_chat_registry_has_edit_file(self, chat_registry: ToolRegistry) -> None:
+        """Chat can edit files, so small changes need no pipeline."""
         names = {spec.name for spec in chat_registry.specs()}
-        assert "fs_edit_file" not in names, "chat must not have fs_edit_file"
+        assert "fs_edit_file" in names
 
-    def test_chat_registry_no_prepare_pr(self, chat_registry: ToolRegistry) -> None:
-        """Security boundary: chat cannot prepare PRs (that's a coder concern)."""
+    def test_profile_layer_builds_every_declared_tool(self, tmp_path: Path) -> None:
+        """``build_registry_for_role`` alone must satisfy the chat profile.
+
+        Targets the *profile layer* deliberately.
+        ``_register_extra_tools`` re-registers ``fs_spawn_subagent`` for every
+        role afterwards, so asserting on the fully-composed registry cannot
+        detect a missing builder here — it would pass vacuously.
+        """
+        from fa.inner_loop.profiles import build_registry_for_role
+
+        registry = build_registry_for_role("chat", tmp_path)
+        names = {spec.name for spec in registry.specs()}
+        declared = set(PROFILES_RAW["chat"]["tools"])
+        missing = declared - names
+        assert missing == set(), f"profile declares tools with no builder: {missing}"
+
+    def test_chat_registry_matches_profile_declaration(self, chat_registry: ToolRegistry) -> None:
+        """The built registry contains every tool the profile declares.
+
+        This is the guard against the class of defect where a profile lists a
+        tool that has no builder, and the tool silently vanishes.
+        """
         names = {spec.name for spec in chat_registry.specs()}
-        assert "fs_prepare_pr" not in names, "chat must not have fs_prepare_pr"
+        declared = set(PROFILES_RAW["chat"]["tools"])
+        assert declared - names == set(), f"profile declares tools the registry lacks: {declared - names}"
+
+    def test_live_chat_registry_includes_pr_prepare(self, tmp_path: Path) -> None:
+        """The *live* corpus is ``_build_run_tool_registry``, not this builder.
+
+        The previous test asserted ``"fs_prepare_pr" not in names`` — a name no
+        tool has ever had, so it passed vacuously while the real tool,
+        ``pr_prepare``, was appended for every role including chat. Assert the
+        real composition root and the real name.
+        """
+        from fa.cli import _build_run_tool_registry
+        from fa.inner_loop.pr_draft import PrDraftStore
+
+        registry = _build_run_tool_registry(
+            "chat",
+            tmp_path,
+            bash_timeout_seconds=30,
+            draft_store=PrDraftStore(tmp_path / "drafts.db"),
+        )
+        names = {spec.name for spec in registry.specs()}
+        assert "pr_prepare" in names, "pr_prepare is appended for every role by the composition root"
+        assert "fs_prepare_pr" not in names, "no tool has ever been named fs_prepare_pr"
 
     def test_chat_registry_has_search(self, chat_registry: ToolRegistry) -> None:
         names = {spec.name for spec in chat_registry.specs()}
@@ -152,11 +218,10 @@ class TestCliDispatch:
 
         registry = _build_role_registry("chat", tmp_path, bash_timeout_seconds=30)
         names = {spec.name for spec in registry.specs()}
-        # Must have read-only tools
         assert "fs_read_file" in names
-        # Must NOT have write tools
-        assert "fs_write_file" not in names
-        assert "fs_edit_file" not in names
+        # Chat is a generalist; the dispatch must deliver its write tools too.
+        assert "fs_write_file" in names
+        assert "fs_edit_file" in names
 
     def test_build_role_registry_planner_still_works(self, tmp_path: Path) -> None:
         """Regression: adding chat must not break planner dispatch."""
