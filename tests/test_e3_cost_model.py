@@ -527,18 +527,23 @@ def test_calibration_groups_by_recommended_mode(
     assert _cmd_stats_calibration(argparse.Namespace(output="json")) == 0
     payload = json.loads(capsys.readouterr().out)
     by_mode = {e["recommended_mode"]: e for e in payload["calibration"]}
-    assert by_mode["chat_direct"]["runs"] == 2
+    # S10 / CT8: runs_total counts ALL runs; success_rate + ACRR are separate.
+    assert by_mode["chat_direct"]["runs_total"] == 2
+    assert by_mode["chat_direct"]["runs_succeeded"] == 2
+    assert by_mode["chat_direct"]["success_rate"] == 1.0
     assert by_mode["chat_direct"]["acrr_mean"] == 4.0
     assert by_mode["workflow_linear"]["acrr_mean"] == 0.5
 
 
-def test_calibration_excludes_failed_runs(
+def test_calibration_excludes_failed_runs_from_acrr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """T34 (C1) — a cheap failure is not an efficiency.
+    """T34 (C1) — a cheap failure is not an efficiency (Q22).
 
-    Kill-check: drop the ``exit_code != 0`` filter and this fails — the failed
-    run's ACRR of 99.0 would drag the mean from 3.0 to 51.0.
+    S10 / CT8: the failed run IS counted in runs_total / success_rate (so the
+    reliability number reflects reality), but its ACRR of 99.0 stays out of the
+    ACRR aggregates. Kill-check: feed the failed run into the acrr list and the
+    mean drags from 3.0 toward 51.0.
     """
     monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path))
     from fa.cli import _cmd_stats_calibration
@@ -553,9 +558,14 @@ def test_calibration_excludes_failed_runs(
     assert _cmd_stats_calibration(argparse.Namespace(output="json")) == 0
     payload = json.loads(capsys.readouterr().out)
     entry = payload["calibration"][0]
-    assert entry["runs"] == 1
+    # reliability sees BOTH runs, with one failure
+    assert entry["runs_total"] == 2
+    assert entry["runs_succeeded"] == 1
+    assert entry["success_rate"] == 0.5
+    # ACRR sees only the successful run
     assert entry["acrr_mean"] == 3.0
-    assert payload["skipped_failed_runs"] == 1
+    # only 2 runs (below min_flag_runs=10) so never flagged
+    assert entry["below_reliability_target"] is False
 
 
 def test_calibration_json_goes_to_stdout_and_human_to_stderr(

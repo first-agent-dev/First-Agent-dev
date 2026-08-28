@@ -112,7 +112,11 @@ LogKind = Literal[
     # Observability / recovery
     "recovery_action",
     "scope_estimate",  # S3: advisory scope estimation for chat role
-    "scope_tripwire",  # S7: a run outgrew its scope estimate mid-flight
+    "scope_tripwire",  # S7 (retired S10): kept as a dormant alias; emitted by
+    # no production path — superseded by scope_expansion. Readers of the S8/S9
+    # calibration projection still key on the historical name.
+    "scope_expansion",  # S10: the expansion level changed at a turn boundary
+    "expansion_exhausted",  # S10: the workflow invocation budget was denied (SA-2)
     "verification",
     "cost_observation",
     "telemetry",

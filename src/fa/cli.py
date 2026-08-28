@@ -1417,6 +1417,7 @@ def _make_workflow_ctx_provider(
     session_db: SessionDatabase | None,
     transport: Transport | None,
     secrets: Mapping[str, str] | None,
+    state_ref: list[SessionState | None] | None = None,
 ) -> Callable[[], WorkflowInvocationContext]:
     """Build the provider closure ``invoke_workflow`` reads at tool-call time.
 
@@ -1431,6 +1432,36 @@ def _make_workflow_ctx_provider(
     pipeline runs (planner/coder/eval) never carry ``invoke_workflow``.
     """
 
+    def session_facts_provider() -> dict[str, Any]:
+        from fa.inner_loop.path_risk import default_scope_risk_config
+
+        sess = state_ref[0] if state_ref else None
+        if sess is None or sess.transaction is None:
+            return {}
+        transaction = sess.transaction
+        return {
+            "read_paths": list(transaction.read_set),
+            "write_paths": list(transaction.write_set),
+            "last_search_paths": list(sess.last_search_paths),
+            "workspace": str(sess.workspace_root),
+            "risk_config": default_scope_risk_config(),
+        }
+
+    def blackboard_writer(entry: Any) -> None:
+        sess = state_ref[0] if state_ref else None
+        if sess is None or sess.blackboard is None:
+            return
+        from fa.blackboard.blackboard import BlackboardEntry
+
+        bb = BlackboardEntry.create(
+            id=f"workflow-handoff-{entry.get('child_run_id', parent_run_id)}",
+            type="workflow_handoff",
+            payload=entry,
+            read_set=list(entry.get("read_paths") or []),
+            write_set=list(entry.get("write_paths") or []),
+        )
+        sess.blackboard.write(bb)
+
     def provider() -> WorkflowInvocationContext:
         return WorkflowInvocationContext(
             parent_run_id=parent_run_id,
@@ -1444,6 +1475,9 @@ def _make_workflow_ctx_provider(
             session_db=session_db,
             transport=transport,
             secrets=secrets,
+            max_invocations=limits.max_workflow_invocations,
+            session_facts_provider=session_facts_provider,
+            blackboard_writer=blackboard_writer,
         )
 
     return provider
@@ -2018,6 +2052,11 @@ def _cmd_run(
     # estimator must be called exactly once per run (T40).
     scope_point = _resolve_scope_point(role, args.task or "")
 
+    # Late-binding slot for SessionState: built after the registry below, but
+    # read by invoke_workflow's facts provider at tool-call time (S10 / CT6
+    # handoff). Same one-element-list seam as output_bus_ref.
+    workflow_state_ref: list[SessionState | None] = [None]
+
     registry = _build_run_tool_registry(
         role,
         workspace,
@@ -2036,6 +2075,7 @@ def _cmd_run(
             session_db=session_db,
             transport=effective_transport,
             secrets=secrets,
+            state_ref=workflow_state_ref,
         ),
     )
 
@@ -2098,6 +2138,9 @@ def _cmd_run(
         session_db=session_db,
         pty_pool=pty_pool,
     )
+    # Publish the live state into the late-binding slot the workflow tool's
+    # facts provider reads (planner handoff, S10 / CT6).
+    workflow_state_ref[0] = state
 
     output_mode = getattr(args, "output_mode", None) or "console"
     output_bus = _build_output_bus(args, output_mode)
@@ -3108,10 +3151,14 @@ def _cmd_stats_calibration(args: argparse.Namespace) -> int:
     routing too much work into the cheap path — a claim backed by measurement
     instead of by fifteen tasks someone invented.
 
-    **Successful runs only.** ACRR is stored for every run (Q22: record always,
-    filter at display) but a failed run's efficiency is meaningless — the paper
-    is explicit that a cheap failure is not an efficiency, since abandoning a
-    task early is the cheapest possible trajectory and would score best.
+    **Reliability counts every run; ACRR counts successes.** S10 / CT8 (DP-6):
+    ``runs_total`` / ``runs_succeeded`` / ``success_rate`` bucket ALL runs so a
+    failure drags reliability down — the estimator is scored against what
+    actually happened. The ACRR aggregates stay **successful-run only** (Q22):
+    a cheap failure is not an efficiency, since abandoning a task early is the
+    cheapest possible trajectory and would score best. A mode is flagged
+    ``below_reliability_target`` only at n >= ``min_flag_runs`` (default 10) and
+    ``success_rate < 1 - epsilon`` (default 0.05); both are runtime_limits knobs.
 
     **Stream split**, matching ``_cmd_stats_global_history``: ``--output json``
     to stdout so the table composes in a pipeline, human report to stderr.
@@ -3126,68 +3173,57 @@ def _cmd_stats_calibration(args: argparse.Namespace) -> int:
             print(f"fa stats: no global history found at {db_path}", file=sys.stderr)
             return 1
 
-        buckets: dict[str, list[float]] = {}
-        skipped_failed = 0
-        skipped_no_acrr = 0
-        for r in rows:
-            if int(r.get("exit_code", 0) or 0) != 0:
-                skipped_failed += 1
-                continue
-            acrr_value = r.get("acrr")
-            if acrr_value is None:
-                skipped_no_acrr += 1
-                continue
-            mode = ""
-            raw_scope = r.get("scope_estimate_json") or "{}"
-            try:
-                import json as _json
+        # S10 / CT8 (DP-6): reliability over ALL runs per mode; ACRR stats
+        # remain successful-run only (Q22). Epsilon / min-sample and the live
+        # gate default are read from runtime_limits so both are tunable.
+        from fa.calibration import build_calibration_report
 
-                parsed = _json.loads(raw_scope)
-                if isinstance(parsed, dict):
-                    mode = str(parsed.get("recommended_mode", "") or "")
-            except (TypeError, ValueError):
-                mode = ""
-            buckets.setdefault(mode or "(no estimate)", []).append(float(acrr_value))
-
-        table = [
-            {
-                "recommended_mode": mode,
-                "runs": len(values),
-                "acrr_mean": sum(values) / len(values),
-                "acrr_min": min(values),
-                "acrr_max": max(values),
-            }
-            for mode, values in sorted(buckets.items())
-        ]
+        limits = load_runtime_limits_from_path().limits
+        report = build_calibration_report(
+            rows,
+            epsilon=limits.calibration_epsilon,
+            min_flag_runs=limits.min_flag_runs,
+            gate_enabled=limits.chat_escalation_gate,
+        )
+        table = [b.to_dict() for b in report.buckets]
 
         if args.output == "json":
             import json as _json
 
-            print(
-                _json.dumps(
-                    {
-                        "calibration": table,
-                        "skipped_failed_runs": skipped_failed,
-                        "skipped_without_acrr": skipped_no_acrr,
-                    },
-                    indent=2,
-                    default=str,
-                )
-            )
+            print(_json.dumps(report.to_dict(), indent=2, default=str))
             return 0
 
-        print(f"\n{'=' * 50}\nRouting calibration: realized ACRR by mode\n{'=' * 50}\n", file=sys.stderr)
+        print(f"\n{'=' * 64}\nRouting calibration: reliability + realized ACRR by mode\n{'=' * 64}\n", file=sys.stderr)
+        print(
+            f"  chat_escalation_gate: {'on' if report.gate_enabled else 'off (default)'}   "
+            f"epsilon={report.epsilon:.2f}   min_flag_runs={report.min_flag_runs}\n",
+            file=sys.stderr,
+        )
         if not table:
-            print("  no successful runs with a computed ACRR yet", file=sys.stderr)
+            print("  no runs recorded yet", file=sys.stderr)
         for entry in table:
+            acrr_part = (
+                f"acrr_mean={entry['acrr_mean']:.2f} min={entry['acrr_min']:.2f} max={entry['acrr_max']:.2f}"
+                if entry["acrr_mean"] is not None
+                else "acrr=n/a"
+            )
+            flag = "  <-- BELOW RELIABILITY TARGET" if entry["below_reliability_target"] else ""
             print(
-                f"  {entry['recommended_mode']:<20s} runs={entry['runs']:<4d} "
-                f"mean={entry['acrr_mean']:.2f} min={entry['acrr_min']:.2f} max={entry['acrr_max']:.2f}",
+                f"  {entry['recommended_mode']:<20s} runs={entry['runs_total']:<4d} "
+                f"ok={entry['runs_succeeded']:<4d} success_rate={entry['success_rate']:.2f} "
+                f"{acrr_part}{flag}",
+                file=sys.stderr,
+            )
+        flagged = report.flagged_modes()
+        if flagged:
+            names = ", ".join(b.recommended_mode for b in flagged)
+            print(
+                f"\n  Below reliability target (n>={report.min_flag_runs}, rate < {1.0 - report.epsilon:.2f}): {names}",
                 file=sys.stderr,
             )
         print(
-            f"\n  (excluded {skipped_failed} failed run(s): a cheap failure is not an efficiency; "
-            f"{skipped_no_acrr} run(s) had no computed ACRR)",
+            f"\n  (success_rate counts ALL runs incl. failures; ACRR uses successful runs only; "
+            f"{report.skipped_without_acrr} successful run(s) had no computed ACRR)",
             file=sys.stderr,
         )
         return 0

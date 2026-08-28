@@ -68,9 +68,27 @@ def test_log_kind_member_count_matches_source() -> None:
     missing_from_logkind = found_kinds - args
     assert not missing_from_logkind, f"Kinds found in source but missing from LogKind: {missing_from_logkind}"
 
-    # Every LogKind member must have a producer in source
+    # Every LogKind member must have a producer in source — except members
+    # explicitly declared dormant in output.py (e.g. scope_tripwire, retired by
+    # S10 but kept as an alias because the S8 calibration projection keys on
+    # the historical name). A member is dormant only when its LogKind
+    # declaration line carries the word "dormant".
+    output_py = SRC_FA / "output.py"
+    dormant_kinds: set[str] = set()
+    import re as _re
+
+    for line in output_py.read_text().splitlines():
+        m = _re.search(r'^\s*"(scope_[a-z_]+|[a-z_]+)",\s*#.*dormant', line)
+        if m:
+            dormant_kinds.add(m.group(1))
+
     missing_from_source = args - found_kinds
-    assert not missing_from_source, f"LogKind members with no producer in source: {missing_from_source}"
+    assert not (missing_from_source - dormant_kinds), (
+        f"LogKind members with no producer in source: {missing_from_source - dormant_kinds}"
+    )
+    assert missing_from_source <= dormant_kinds, (
+        f"unproduced member not declared dormant: {missing_from_source - dormant_kinds}"
+    )
 
 
 # ── Kill-check 3: All members are strings ───────────────────────────

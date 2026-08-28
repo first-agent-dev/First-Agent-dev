@@ -46,6 +46,12 @@ KNOWN_DORMANT_KINDS: dict[str, str] = {
         "spelling. Candidate for removal from LogKind in a later slice."
     ),
     "timeout": ("same as service_unavailable: ProviderError.kind (providers/base.py:119), not a log.append kind."),
+    "scope_tripwire": (
+        "S7 kind retired in S10: the one-shot mid-flight tripwire in coder_loop was "
+        "replaced by the per-turn scope_expansion boundary (CT2). Kept in LogKind as a "
+        "dormant alias because the S8/S9 routing-calibration projection reads the "
+        "historical name; drop from LogKind once that projection is migrated."
+    ),
 }
 
 

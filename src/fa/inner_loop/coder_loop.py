@@ -68,17 +68,21 @@ import logging
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from fa.inner_loop.artifacts import ArtifactStore
+from fa.inner_loop.bash_intent import BashIntentEffect, analyze_bash_for_intent
+from fa.inner_loop.expansion import ExpansionState, difficulty_to_level, next_level, select_l2_skill
 from fa.inner_loop.hooks.base import HookPayload, HookRegistry, LifecyclePoint
 from fa.inner_loop.loop import SessionRun, run_session
+from fa.inner_loop.observations import build_observation_block
+from fa.inner_loop.path_risk import ScopeRiskConfig, default_scope_risk_config, observed_tiers
 from fa.inner_loop.projection import project_for_model
 from fa.inner_loop.prompt import (
     render_tool_specs,
 )
 from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult, ToolSpec
-from fa.inner_loop.routing import check_scope_tripwire
 from fa.inner_loop.runtime_limits import RuntimeLimits
 from fa.inner_loop.state import SessionState, _now_iso_z
 from fa.observability.redaction import SecretRedactor
@@ -89,6 +93,7 @@ from fa.providers.errors import (
     ProviderChainExhaustedError,
     ProviderRequestShapeError,
 )
+from fa.skills._inject import plan_artifact_present
 
 logger = logging.getLogger(__name__)
 
@@ -171,25 +176,58 @@ def _merge_memory_summary_context(initial_summary: str, rebuilt_summary: str) ->
     return initial or rebuilt
 
 
-def _scope_tripwire_text(state: SessionState, scope_mode: str) -> str | None:
-    """Return the S7 scope-tripwire observation for *state*, or ``None`` (CT10).
-
-    Reads the distinct-path counters that ``SessionState.record_tool_call``
-    already maintains on the session transaction — no second counter, so the
-    tripwire can never disagree with the telemetry the run reports.
-
-    Returns ``None`` when there is no transaction to read. Telemetry must never
-    be the reason a session fails, and a missing transaction means only that
-    this run cannot answer the question.
+def _load_scope_risk_config(workspace_root: Path | None) -> ScopeRiskConfig:
+    """Load ``scope_risk_tiers:`` from the same config file runtime_limits
+    reads, falling back to documented defaults + a single warning. Never
+    raises — a missing/unreadable config degrades to defaults.
     """
-    transaction = state.transaction
-    if transaction is None:
-        return None
-    return check_scope_tripwire(
-        files_read=len(transaction.read_set),
-        files_changed=len(transaction.write_set),
-        recommended_mode=scope_mode,
-    )
+    from fa.config import DEFAULT_CONFIG_PATH
+    from fa.inner_loop.path_risk import load_scope_risk_tiers
+
+    config_path: Path
+    if workspace_root is not None:
+        candidate = workspace_root / ".fa" / "config.yaml"
+        config_path = candidate if candidate.is_file() else DEFAULT_CONFIG_PATH
+    else:
+        config_path = DEFAULT_CONFIG_PATH
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return default_scope_risk_config()
+    result = load_scope_risk_tiers(text)
+    for warning in result.warnings:
+        logger.warning("scope_risk_tiers config (%s): %s", warning.key, warning.detail)
+    return result.config
+
+
+def _verify_failed_in_pairs(
+    *,
+    calls: Sequence[ToolCall],
+    results: Sequence[ToolResult],
+    workspace_root: Path | None,
+) -> bool:
+    """True iff a VERIFY_ONLY bash command (pytest/ruff/mypy) exited non-zero
+    among the given (call, result) pairs. Uses the bash_intent classifier —
+    never free-text parsing. A command the classifier cannot parse is not a
+    verify failure.
+    """
+    root = workspace_root or Path.cwd()
+    for call, result in zip(calls, results, strict=False):
+        if call.name != "fs_run_bash":
+            continue
+        if result.error is None:
+            continue
+        command = str(call.params.get("command", ""))
+        if not command:
+            continue
+        try:
+            analysis = analyze_bash_for_intent(command, repo_root=root)
+        except Exception as exc:  # noqa: BLE001 - classification is advisory
+            logger.debug("bash_intent analysis failed: %s", exc)
+            continue
+        if analysis.effect is BashIntentEffect.VERIFY_ONLY:
+            return True
+    return False
 
 
 def _assert_tool_pairing_invariant(messages: Sequence[Mapping[str, Any]]) -> None:
@@ -569,8 +607,30 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
     collected_results: list[ToolResult] = []
     turn = 0
-    # S7 / CT10: latch so the scope tripwire fires at most once per run.
-    _tripwire_fired = False
+    # S10 / CT2: expansion state for the chat role. Seeded from the
+    # estimator's recommended_mode (difficulty -> level); rebuilt per turn
+    # at the boundary. Path sets are the transaction read/write snapshots
+    # carried forward for the H-reuse observation. Non-chat roles (no scope
+    # mode) keep level 1 with no expansion advice — observations are only
+    # wired for the chat path (CT2 scope note).
+    _is_chat_role = role == "chat" and bool(scope_mode)
+    _scope_tiers = _load_scope_risk_config(state.workspace_root) if _is_chat_role else default_scope_risk_config()
+    try:
+        _seed_level = difficulty_to_level(scope_mode) if scope_mode else 1
+    except ValueError:
+        _seed_level = 1
+    _expansion = ExpansionState(level=_seed_level)
+    _active_skill_name: str = ""
+    _exhausted_flag = False
+    # Per-turn observation block. REBUILT (not appended) at every boundary so a
+    # stale L2 line never survives L3. It is composed ON TOP of the caller's
+    # turn_context (the S3 scope hint), which is session-constant and must be
+    # preserved (RK-H) — the two strings only meet at the composer binding.
+    observation_context = ""
+    # Pairs produced during the previous turn's tool batch, evaluated at the
+    # next boundary (F6: observations land in the NEXT request).
+    _prev_calls: tuple[ToolCall, ...] = ()
+    _prev_results: tuple[ToolResult, ...] = ()
     # S22: Session-level chain exhaustion counter for max_chain_retries guard.
     # Distinct from the inner per-turn retry loop (_per_turn_chain_retries):
     #   - Inner loop retries provider_chain.request() with cooldown waits
@@ -681,30 +741,100 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
     while turn < max_turns:
         turn += 1
-        # S7 / CT10: mid-run scope tripwire. A run whose estimate said
-        # "chat-sized" but which is now touching repo-sized numbers of files
-        # gets ONE observation naming ``invoke_workflow``, appended to
-        # ``turn_context`` so it lands in the next request's non-cacheable
-        # block (the composer re-reads this variable every turn).
-        #
-        # Latched deliberately: repeating the same sentence every turn is
-        # context the model learns to skip, and it would churn the prompt
-        # cache on every call. Advisory by design (Q21) — there is no rollback
-        # from a half-edited tree, so the model decides, not the harness.
-        if not _tripwire_fired and scope_mode:
-            _tripwire_text = _scope_tripwire_text(state, scope_mode)
-            if _tripwire_text is not None:
-                turn_context = f"{turn_context}\n\n{_tripwire_text}" if turn_context else _tripwire_text
-                _tripwire_fired = True
+        # S10 / CT2: per-turn scope expansion boundary. Runs EVERY turn for
+        # the chat role, BEFORE the compose call. Evidence is read from the
+        # transaction read/write sets (git-truth via tools) plus the previous
+        # turn's bash results; the observation is rebuilt by ASSIGNMENT (the
+        # old S7 append is gone), so a stale L2 line never survives an L3
+        # escalation. Effects land in the NEXT LLM request after this turn's
+        # tool batch (F6) — there is no mid-turn injection.
+        skill_block_for_request: list[dict[str, Any]] | None = None
+        if _is_chat_role:
+            transaction = state.transaction
+            read_paths = frozenset(transaction.read_set) if transaction is not None else frozenset()
+            write_paths = frozenset(transaction.write_set) if transaction is not None else frozenset()
+            tiers = observed_tiers(read_paths, write_paths, _scope_tiers)
+            files_read = len(read_paths)
+            files_changed = len(write_paths)
+            write_tier = tiers["write_max"]
+            read_high = tiers["read_max"] >= 5
+
+            verify_failed = _verify_failed_in_pairs(
+                calls=_prev_calls,
+                results=_prev_results,
+                workspace_root=state.workspace_root,
+            )
+            assumed_linear = scope_mode == "workflow_linear"
+
+            expansion_decision = next_level(
+                _expansion,
+                files_read=files_read,
+                files_changed=files_changed,
+                write_tier=write_tier,
+                read_tier_high=read_high,
+                verify_failed=verify_failed,
+                assumed_linear=assumed_linear,
+            )
+
+            level_from = _expansion.level
+            level_to = expansion_decision.level_to if expansion_decision is not None else level_from
+
+            # L2 skill injection: read the body ONLY on the entry turn.
+            skill_result = None
+            if expansion_decision is not None and expansion_decision.observation_key == "skill":
+                # Warm signal: a PLAN-*.md in the read set. Blackboard
+                # handoff keys arrive with CT6's blackboard entry; the read
+                # path already covers plan artifacts produced this run.
+                warm = plan_artifact_present(read_paths=read_paths)
+                skill_name = select_l2_skill(plan_artifact=warm)
+                _active_skill_name = skill_name
+                try:
+                    from fa.skills._inject import default_skills_root, read_skill_for_injection
+
+                    skill_result = read_skill_for_injection(skill_name, default_skills_root(state.workspace_root))
+                    if skill_result.warning is not None:
+                        logger.warning("L2 skill injection: %s", skill_result.warning)
+                except Exception as exc:  # noqa: BLE001 - advisory must never crash
+                    logger.warning("L2 skill injection failed: %s", exc)
+                    skill_result = None
+
+            render = build_observation_block(
+                level_from=level_from,
+                level_to=level_to,
+                decision=expansion_decision,
+                write_tier=write_tier,
+                skill_result=skill_result,
+                exhausted=_exhausted_flag,
+                skill_name=_active_skill_name,
+            )
+            observation_context = render.turn_context
+            skill_block_for_request = [render.skill_block] if render.skill_block is not None else None
+
+            if level_to != level_from:
+                _expansion = ExpansionState(
+                    level=level_to,
+                    observed_read_paths=read_paths,
+                    observed_write_paths=write_paths,
+                )
                 log.append(
                     actor="harness",
-                    kind="scope_tripwire",
+                    kind="scope_expansion",
                     content={
                         "turn": turn,
-                        "files_read": len(state.transaction.read_set) if state.transaction else 0,
-                        "files_changed": len(state.transaction.write_set) if state.transaction else 0,
-                        "recommended_mode": scope_mode,
+                        "level_from": level_from,
+                        "level_to": level_to,
+                        "evidence": expansion_decision.evidence if expansion_decision is not None else "",
+                        "files_read": files_read,
+                        "files_changed": files_changed,
+                        "write_tier": write_tier,
+                        "read_tier": tiers["read_max"],
                     },
+                )
+            else:
+                _expansion = ExpansionState(
+                    level=level_to,
+                    observed_read_paths=read_paths,
+                    observed_write_paths=write_paths,
                 )
         # ── Output: turn_start ─────────────────────────────────────────────
         if output is not None:
@@ -789,11 +919,18 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             observations: list[dict[str, Any]],
             base_system_value: str = base_system,
             pinned_text_value: str = pinned_text_for_turn,
-            # S7 / CT10: bound as a default arg, matching the two values above.
-            # ``turn_context`` is reassigned by the scope tripwire inside the
-            # loop, so a bare closure read would be a late-binding bug (B023);
-            # binding here captures the value as of THIS turn.
-            turn_context_value: str = turn_context,
+            # S7 / CT10 -> S10 / CT2: bound as default args (B023 late-binding
+            # pattern). The observation context is reassigned each turn by the
+            # scope expansion boundary above, so a bare closure read would
+            # capture the value at the LAST turn, not this one. The caller's
+            # turn_context (S3 scope hint) is session-constant and preserved.
+            turn_context_value: str = (
+                f"{turn_context}\n\n{observation_context}".strip() if observation_context else turn_context
+            ),
+            # S10 / CT5 F3: the L2 skill block from this turn's boundary;
+            # None on every non-entry turn. Bound as a default arg for the
+            # same late-binding reason as turn_context_value.
+            skills_conditional_value: list[dict[str, Any]] | None = skill_block_for_request,
         ) -> tuple[dict[str, Any], list[dict[str, Any]], Mapping[str, Any]]:
             parts, cache_key = build_prompt_parts_v2(
                 base_system=base_system_value,
@@ -804,6 +941,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 task=task,
                 observations=observations,
                 turn_context=turn_context_value,
+                skills_conditional=skills_conditional_value,
             )
             if provider_chain.config.family == "anthropic":
                 request_body = to_anthropic_request_v2(parts, cache_key)
@@ -1729,6 +1867,20 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 state.record_tool_call(call)
                 state.record_tool_result(call, result)
         collected_results.extend(turn_results)
+        # S10 / CT2: remember THIS turn's (call, result) pairs; the next
+        # turn's boundary evaluates them for the verify_failed trigger (F6 —
+        # effects are visible at the next request, not mid-turn).
+        _prev_calls = tuple(tool_calls)
+        _prev_results = tuple(turn_results)
+        # S10 / CT6 (SA-2): a workflow_budget_exhausted denial latches the
+        # terminal "exhausted" observation so the next request carries it.
+        if not _exhausted_flag:
+            for result in turn_results:
+                if result.error is not None and getattr(result.error, "code", "") == "workflow_budget_exhausted":
+                    _exhausted_flag = True
+                    if log is not None:
+                        log.append(actor="harness", kind="expansion_exhausted", content={"turn": turn})
+                    break
         for call, result in zip(tool_calls, turn_results, strict=True):
             # ── Output: tool_call ──────────────────────────────────────────
             if output is not None:

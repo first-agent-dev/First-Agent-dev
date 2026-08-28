@@ -86,6 +86,9 @@ UNPARSED_KINDS: frozenset[LogKind] = frozenset(
         # routing-calibration view, which reads the global_history projection
         # rather than a single session's analytics. Move it to the parsed set
         # when that view lands and needs a per-session rollup.
+        "scope_expansion",  # S10: replaces scope_tripwire mid-flight; consumed by
+        # the routing-calibration view like scope_tripwire, not session stats.
+        "expansion_exhausted",  # S10: terminal budget denial; analytics view reads it.
     }
 )
 

@@ -1736,6 +1736,118 @@ Kill-check: N/A (documentation)
 Test class: static (doc link check)
 ```
 
+> **S6 status (2026-08-28):** the ADR-16 draft portion is **done** — ADR-16 was
+> edited in place and grew from 276 → 581 lines with the S7–S10 shipped-architecture
+> addendum, the verbatim self-referential-floor caveat, fitted-weight derivation,
+> latency-exclusion rationale, Q22 display filtering, the evidence-driven two-layer
+> revision, and the tuned-constants table. ADR-16 stays **Status: proposed** by operator
+> decision until S11 closes with live-contour data (it must not assert constants the
+> live contour has not validated). The remaining S6 doc updates (`llms.txt` routing
+> index, `instructions/02-operations.md` chat section, `AGENTS.md` roles,
+> `models.yaml` example, CHAT_SYSTEM_PROMPT/tool-set revision) are carried into **S11**
+> and ship together with the live-validation results.
+
+---
+
+### S10: Scope control — evidence-driven runtime expansion ✅ DONE 2026-08-28
+
+**Standalone plan (SSOT for this slice):** `PLAN-scope-control-S10-final.md` (operator's
+home workspace) — slices S10.1–S10.8. This parent entry is the index; the scope-control
+plan owns the per-contract detail.
+
+**Traces-to:** G1–G11, CT1–CT11, DP-1…DP-9, Q22/Q25/Q26 · **Depends-on:** S1–S9 ·
+**Target liveness:** L0→L3 (pure cores C0/C0p; wiring C1; CLI C2; mutation sweep C4).
+
+What shipped (new pure modules, stdlib-only policy cores + thin seams):
+
+- **S10.1 `inner_loop/expansion.py`** — three-level posture state machine:
+  `next_level()` monotone/idempotent/ceiling-3; `verify_failed → L3`, high-tier write
+  → L3, high-tier read **arms** L2; bulk counters tier-gated (safe bulk silent);
+  `workflow_linear` never re-escalated.
+- **S10.2 `inner_loop/path_risk.py`** — positional risk model (Q26): safe/medium/high
+  tiers from config; unknown prefix → **medium**; `MAX` combines lexical+path;
+  `tests/knowledge/scripts` = medium (verification posture only, never auto-workflow);
+  `src/` + root manifests = high; additive config + structured warnings.
+- **S10.3 `skills/_inject.py`** — deterministic L2 planner-skill injection
+  (warm `feature-planning` / cold `plan-authoring`; frontmatter strip; full body on
+  entry turn via `skills_conditional`, anchor after; no body at L3).
+- **S10.4 `inner_loop/observations.py`** — per-turn observation block rebuilt by
+  assignment (no append); eviction order exhausted>escalation>verification>skill under
+  the 1800-char cap; tier-keyed verification posture (advisory, never changes level).
+- **S10.5 `inner_loop/tools/workflow_tool.py`** — escalation budget **K enforced in the
+  tool only** ((K+1)-th call → `workflow_budget_exhausted` → terminal observation +
+  durable event); live **handoff payload** from session facts (Goal / Start here ≤5 /
+  Observed / Modified / Candidate leads ≤10 / "Do exactly" 3 positive steps; ≤30 paths;
+  missing facts → goal-only, no crash).
+- **S10.6 `calibration.py`** — reliability view: `success_rate` over **ALL** runs,
+  ACRR successes-only (Q22); `below_reliability_target = n ≥ min_flag_runs (10) AND
+  rate < 1−ε (0.05)`; gate default **OFF** (`chat_escalation_gate=False`, Q25),
+  display-only.
+- **S10.7** — R1 held-out wording (14 pairs: 8 EN cue-free + 6 RU operator style) and
+  R2 deceptive tasks (6, incl. CLI "simplify the main function" and the pre-push
+  force) — proves the two-layer premise: the text estimator under-scopes, the evidence
+  engine catches it.
+- **S10.8** — mutation sweep: **21/21 killed, 0 survivors** (byte-identical restore,
+  hash-verified); two survivors on first run were real test gaps, closed with a C1
+  exhausted-latch test and a C2 K-from-config CLI test.
+
+Verification: S10 target suite **196 passed deterministic**; full `just check` toolchain
+green (ruff/format/deptry/pylint 10.00/mypy `--strict` 403 files 0 errors/pyrefly 0/
+all contract scripts); full suite **3614 passed at 85.8%** coverage. The only red gates
+are two **deliberate doc-integrity baits** for the live-contour trial (see S11):
+`test_doc_links` (46 broken links in the flattened `worklogs/archive`) and
+`test_historical_workspace_docs_have_top_level_superseded_banner` (moved
+`knowledge/pr-notes/workspace-isolation.md`); plus a pre-existing cli-coverage-floor
+stale entry (`_run_adaptive`, since S4a extraction) **fixed in this slice**.
+
+Log-kind: `scope_expansion` + `expansion_exhausted` added; S7 `scope_tripwire` retired
+as an emitter but retained as a **dormant alias** (S8/S9 projection keys on it).
+
+---
+
+### S11: Live verification rev2 + final ADR/doc closure + plan closure — OPEN (next)
+
+**Traces-to:** G7–G11, CT8–CT12, DP-6/DP-8 · **Depends-on:** S10 (DONE) ·
+**Target liveness:** **L3 live evidence** (the live chat contour).
+
+Work, in order:
+
+1. **S7/S10 live verification sheet — rev2**
+   (`worklogs/reviews/S10-LIVE-VERIFICATION-rev2.md`, copy/paste self-checking, same
+   discipline as S9: no expected output, each block prints its own PASS/FAIL, temp
+   `FA_STATE_ROOT`, trap-clean). **Two parts:**
+   - **Part A — deterministic CLI self-checks (self-oracled):** correct the S9 sheet's
+     stale `chat_escalation_gate defaults to TRUE` line (Q25: default **off**,
+     observe-only); verify tier classification on real paths (src→high, tests/knowledge
+     →medium, archive→safe, unknown→medium); expansion levels 1→2 (read arm)→3 (write /
+     verify_failed); K denial (`workflow_budget_exhausted` on the (K+1)-th call) and the
+     terminal `expansion_exhausted` observation; handoff payload sections + 5/10/30 caps;
+     `fa stats --calibration` JSON+human fields, ε/min-flag gate n<10 not flagged,
+     all-failed mode shows success_rate=0.00 + BELOW RELIABILITY TARGET; K/ε/knobs read
+     from `runtime_limits`.
+   - **Part B — live contour behavioural rows (observed via durable events, not
+     self-oracled):** run the chat agent on real tasks in `~/.fa` and observe the
+     routing/expansion/handoff trajectory in the event log — **including the deliberate
+     doc-link/banner bait**, which is staged exactly so the chat agent gets a full
+     cycle (triage → evidence → escalation/handoff) on a task its text estimator
+     under-scopes.
+2. **Patch + run the live contour**; collect measurements.
+3. **Final tweaks per live data (tune the ADR §K table):** ε, `min_flag_runs`, K, tier
+   prefixes, observation cap, handoff caps, cost weights; decide whether/when
+   `chat_escalation_gate` flips on (default stays off until data supports it).
+4. **ADR-16 closure:** append a dated **Live validation** note with measured numbers,
+   then flip **Status → Accepted**.
+5. **Remaining S6 doc updates:** `llms.txt` routing index,
+   `instructions/02-operations.md` chat section, `AGENTS.md` roles,
+   `models.yaml.example` chat section, CHAT_SYSTEM_PROMPT/tool-set revision per
+   integration findings.
+6. **Plan closure:** resolve the staged doc-integrity baits (or formally accept them),
+   confirm the full gate is green, close the parent plan and the scope-control plan.
+
+**DoD:** live sheet rev2 executed on the live contour with output pasted back; the ADR
+§K constant table shows measured values or an explicit "unchanged, validated"; ADR-16
+Accepted; docs updated with no new broken links; mutation sweep still 0 survivors.
+
 ---
 
 ## 6. Verification Plan

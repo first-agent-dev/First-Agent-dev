@@ -24,6 +24,7 @@ invocation. See CT4 "RUN IDENTITY".
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
@@ -32,6 +33,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from fa.inner_loop.expansion import TIER_HIGH, TIER_SAFE
+from fa.inner_loop.path_risk import (
+    ScopeRiskConfig,
+    default_scope_risk_config,
+    tier_for_path,
+)
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.workflow_controller import (
     DEADLINE_REASON_MARKER,
@@ -68,6 +75,8 @@ DEFAULT_TOOL_MAX_REPLANS = 1
 # depend on that staying true.
 _ACTIVE = threading.local()
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class WorkflowInvocationContext:
@@ -89,6 +98,19 @@ class WorkflowInvocationContext:
     session_db: Any = None
     transport: Any = None
     secrets: Mapping[str, str] | None = None
+    # S10 / CT6 (audit F2): structural escalation budget K — the maximum
+    # number of invocations allowed per chat session. The tool counts
+    # invocations itself (the -wfN closure); this is the bound it enforces.
+    max_invocations: int = 2
+    # S10 / CT6 (audit F2): called at tool-call time to snapshot LIVE session
+    # facts (read/write paths, search leads) for the planner handoff. The tool
+    # registry is built before SessionState exists, so the facts cannot be
+    # captured at construction — a provider closure reads them on demand, the
+    # same seam as run_stage_fn / pr_prepare. None -> goal-only degraded path.
+    session_facts_provider: Callable[[], dict[str, Any]] | None = None
+    # S10 / CT6: optional blackboard writer (BlackboardEntry) -> None, supplied
+    # at the CLI seam so the tool never imports the blackboard package itself.
+    blackboard_writer: Callable[[Any], None] | None = None
 
 
 def child_run_id(parent: str, n: int) -> str:
@@ -164,6 +186,166 @@ INVOKE_WORKFLOW_SCHEMA: dict[str, object] = {
 }
 
 
+def build_handoff_task(
+    *,
+    goal: str,
+    read_paths: list[str],
+    write_paths: list[str],
+    search_paths: list[str],
+    config: ScopeRiskConfig | None = None,
+) -> str:
+    """Assemble the planner handoff task text (S10 / CT6, DP-9).
+
+    Pure and deterministic. Sections (positive, imperative — no negative
+    instructions):
+
+      * ``Goal:`` the model-supplied task verbatim (trimmed);
+      * ``Start here:`` the top HIGH-tier paths, capped at 5;
+      * ``Observed (already read):`` read paths grouped by tier with counts;
+      * ``Modified:`` the write paths;
+      * ``Candidate leads:`` search-grep paths not already read, cap 10;
+      * ``Do exactly:`` the 3-step positive checklist for the planner.
+
+    Paths only (v1 — no snippets, no file:line); total paths capped at 30.
+    With no facts at all (all lists empty) the task degrades to the goal so
+    the planner still has a usable instruction.
+    """
+    cfg = config if config is not None else default_scope_risk_config()
+    goal = goal.strip()
+
+    def _posix(p: str) -> str:
+        return str(p).replace("\\", "/")
+
+    reads = sorted({_posix(p) for p in read_paths if p})
+    writes = sorted({_posix(p) for p in write_paths if p})
+    read_set = set(reads)
+    leads = sorted({_posix(p) for p in search_paths if p and _posix(p) not in read_set})
+
+    # Total path cap across the file-map sections (DP-9: <= 30).
+    start_here_cap = 5
+    leads_cap = 10
+    total_paths_cap = 30
+
+    read_high = [p for p in reads if tier_for_path(p, cfg) >= TIER_HIGH]
+    start_here = read_high[:start_here_cap]
+
+    grouped: dict[str, list[str]] = {"high": [], "medium": [], "safe": []}
+    for p in reads:
+        tier = tier_for_path(p, cfg)
+        key = "high" if tier >= TIER_HIGH else "safe" if tier <= TIER_SAFE else "medium"
+        grouped[key].append(p)
+
+    leads = leads[:leads_cap]
+
+    # Enforce the total-path budget, trimming Observed (the largest, most
+    # derivable section) first; Start here and Leads are the actionable ones.
+    budget = total_paths_cap - len(start_here) - len(writes) - len(leads)
+    if budget < 0:
+        # Overspent on fixed sections: trim leads to fit (writes are truth and
+        # must stay).
+        leads = leads[: max(0, leads_cap + budget)]
+        budget = total_paths_cap - len(start_here) - len(writes) - len(leads)
+    observed_flat: list[str] = []
+    for key in ("high", "medium", "safe"):
+        take = max(0, budget - len(observed_flat))
+        observed_flat.extend(grouped[key][:take])
+    observed_set = set(observed_flat)
+    grouped = {k: [p for p in v if p in observed_set] for k, v in grouped.items()}
+
+    lines = [f"Goal: {goal}"]
+
+    if start_here:
+        lines.append("")
+        lines.append("Start here:")
+        lines.extend(f"  - {p}" for p in start_here)
+
+    if any(grouped.values()):
+        lines.append("")
+        lines.append("Observed (already read):")
+        for key, label in (("high", "high risk"), ("medium", "medium risk"), ("safe", "safe")):
+            paths = grouped[key]
+            if paths:
+                lines.append(f"  {label} ({len(paths)}): " + ", ".join(paths))
+
+    if writes:
+        lines.append("")
+        lines.append("Modified:")
+        lines.extend(f"  - {p}" for p in writes)
+
+    if leads:
+        lines.append("")
+        lines.append("Candidate leads:")
+        lines.extend(f"  - {p}" for p in leads)
+
+    lines.append("")
+    lines.append(
+        "Do exactly:\n"
+        '  1) Start from the files under "Start here".\n'
+        "  2) Use Observed and Candidate leads as your map; do not re-search them.\n"
+        "  3) Produce the plan and execute toward the goal from these files."
+    )
+    return "\n".join(lines)
+
+
+def _check_budget(invocation_count: int, ctx: WorkflowInvocationContext) -> ToolResult | None:
+    """Return a failure ToolResult when the escalation budget K is spent, else None.
+
+    Enforced on the tool (audit F1): level 3 IS this call; the invocation-count
+    closure is the authority for the run id, so it also bounds K.
+    """
+    budget = max(1, int(getattr(ctx, "max_invocations", 2)))
+    if invocation_count >= budget:
+        return ToolResult.fail(
+            "workflow_budget_exhausted",
+            f"workflow escalation budget of {budget} invocation(s) used; "
+            "finish with an operator report instead of escalating again",
+        )
+    return None
+
+
+def _resolve_handoff_task(*, task: str, candidate: str, ctx: WorkflowInvocationContext) -> str:
+    """Build the planner handoff task from LIVE session facts (S10 / CT6).
+
+    A missing/raising provider degrades to the raw goal — the escalation must
+    still run. The blackboard mirror is best-effort.
+    """
+    facts: dict[str, Any] = {}
+    if ctx.session_facts_provider is not None:
+        try:
+            raw = ctx.session_facts_provider()
+            if isinstance(raw, dict):
+                facts = raw
+        except Exception as exc:  # noqa: BLE001 - facts are advisory
+            logger.warning("workflow handoff facts unavailable: %s", exc)
+            facts = {}
+
+    if not facts:
+        return task
+
+    handoff = build_handoff_task(
+        goal=task,
+        read_paths=list(facts.get("read_paths") or ()),
+        write_paths=list(facts.get("write_paths") or ()),
+        search_paths=list(facts.get("last_search_paths") or ()),
+        config=facts.get("risk_config"),
+    )
+    if ctx.blackboard_writer is not None:
+        try:
+            ctx.blackboard_writer(
+                {
+                    "type": "workflow_handoff",
+                    "goal": task,
+                    "child_run_id": candidate,
+                    "read_paths": list(facts.get("read_paths") or ()),
+                    "write_paths": list(facts.get("write_paths") or ()),
+                    "candidate_leads": list(facts.get("last_search_paths") or ()),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - blackboard is derived
+            logger.warning("workflow_handoff blackboard write failed: %s", exc)
+    return handoff
+
+
 def build_invoke_workflow_tool(
     run_workflow_fn: Callable[..., tuple[int, FlowState | None]],
     ctx_provider: Callable[[], WorkflowInvocationContext | None],
@@ -199,6 +381,11 @@ def build_invoke_workflow_tool(
                 "invoke_workflow needs a live run context and none is bound to this session",
             )
 
+        # (b2) Structural escalation budget K (S10 / CT6, audit F1).
+        budget_failure = _check_budget(invocation_count, ctx)
+        if budget_failure is not None:
+            return budget_failure
+
         task = _as_str(params, "task", "").strip()
         if not task:
             return ToolResult.fail("invalid_params", "`task` must be a non-empty string", retryable=True)
@@ -233,6 +420,10 @@ def build_invoke_workflow_tool(
                 f"derived child run id {candidate!r} does not match {_RUN_ID_RE.pattern}",
             )
 
+        # (f2) Planner handoff (S10 / CT6, DP-9): file-map + Do-exactly built
+        # from LIVE session facts; degrades to the raw goal when unavailable.
+        handoff_task = _resolve_handoff_task(task=task, candidate=candidate, ctx=ctx)
+
         # (f) Deadline. Computed here so the elapsed budget covers the whole
         # nested pipeline, not one stage.
         deadline = time.monotonic() + ctx.workflow_timeout_seconds
@@ -242,7 +433,7 @@ def build_invoke_workflow_tool(
         try:
             exit_code, terminal_state = run_workflow_fn(
                 roles=roles,
-                task=task,
+                task=handoff_task,
                 per_role_task={},
                 mode=mode,
                 max_repairs=max_repairs,
@@ -320,6 +511,7 @@ __all__ = [
     "DEFAULT_WORKFLOW_ROLES",
     "INVOKE_WORKFLOW_SCHEMA",
     "WorkflowInvocationContext",
+    "build_handoff_task",
     "build_invoke_workflow_tool",
     "child_run_id",
     "parse_roles",
