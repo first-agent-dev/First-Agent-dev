@@ -503,7 +503,7 @@ Oracle: exact tool-name SET (not count alone); exact substring in the composed
         request body; event row presence; parsed config value
 ```
 
-### S8 — Full E3 cost model + calibration (Layer 3)
+### S8 — Full E3 cost model + calibration (Layer 3) DONE 2026-08-27
 
 **Traces-to:** G9 · **Depends-on:** S5, S7 · **Target liveness:** L0→L3
 
@@ -585,7 +585,7 @@ Test class: C0 (cost arithmetic) + C1 (real sqlite, real export path)
 Oracle: exact floats; exact column values; exact grouping
 ```
 
-### S9 — Live verification sheet
+### S9 — Live verification sheet DELIVERED 2026-08-27 (awaiting live execution)
 
 **Traces-to:** G7-G10 · **Depends-on:** S7, S8 · **Target liveness:** L3 evidence
 

@@ -1,7 +1,7 @@
-"""S5 — ACRR proxy: pure function, distinct-path counting, migration, display.
+"""S5 — read amplification: pure function, distinct-path counting, migration, display.
 
 Test classes:
-  C0  compute_acrr_proxy in isolation (pure, exact oracles)
+  C0  compute_read_amplification in isolation (pure, exact oracles)
   C1  the real export path — real EventLog, real sqlite file, real renderer
 
 The C1 tests deliberately avoid mocking the store or the log. The defects this
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from fa.inner_loop.acrr import compute_acrr_proxy
+from fa.inner_loop.acrr import compute_read_amplification
 from fa.inner_loop.global_history import (
     GlobalHistoryStore,
     _extract_telemetry_from_log,
@@ -29,12 +29,12 @@ from fa.inner_loop.global_history import (
 
 def test_acrr_equal_counts_is_one() -> None:
     """Read exactly what you changed — the optimal case, ratio 1.0."""
-    assert compute_acrr_proxy(5, 5) == 1.0
+    assert compute_read_amplification(5, 5) == 1.0
 
 
 def test_acrr_over_reading() -> None:
     """20 files read to change 2 is a 10x over-read."""
-    assert compute_acrr_proxy(20, 2) == 10.0
+    assert compute_read_amplification(20, 2) == 10.0
 
 
 def test_acrr_zero_is_none() -> None:
@@ -45,24 +45,24 @@ def test_acrr_zero_is_none() -> None:
     file, and the metric stops being able to express the one condition it
     exists to detect.
     """
-    assert compute_acrr_proxy(10, 0) is None
+    assert compute_read_amplification(10, 0) is None
 
 
 def test_acrr_both_zero_is_none() -> None:
     """A run that touched nothing has no ratio, not a ratio of zero."""
-    assert compute_acrr_proxy(0, 0) is None
+    assert compute_read_amplification(0, 0) is None
 
 
 @pytest.mark.parametrize("read,changed", [(-1, 1), (1, -1), (-1, -1)])
 def test_acrr_negative_raises(read: int, changed: int) -> None:
     """A count of files cannot be negative; fail loudly rather than store noise."""
     with pytest.raises(ValueError, match="cannot be negative"):
-        compute_acrr_proxy(read, changed)
+        compute_read_amplification(read, changed)
 
 
 def test_acrr_returns_float_not_int() -> None:
     """Guards against integer division sneaking in: 1/2 must be 0.5, not 0."""
-    result = compute_acrr_proxy(1, 2)
+    result = compute_read_amplification(1, 2)
     assert result == 0.5
     assert isinstance(result, float)
 
@@ -181,14 +181,14 @@ def test_build_export_row_computes_acrr() -> None:
     row = build_export_row(run_id="r1", outcome=object(), log=log, role="coder")
     assert row["files_read"] == 4
     assert row["files_changed"] == 1
-    assert row["acrr_proxy"] == 4.0
+    assert row["read_amplification"] == 4.0
 
 
 def test_build_export_row_acrr_none_when_nothing_changed() -> None:
     """An exploration-only run stores NULL, not a fabricated ratio."""
     log = _Log([_tool_call("fs_read_file", "a.py")])
     row = build_export_row(run_id="r2", outcome=object(), log=log, role="chat")
-    assert row["acrr_proxy"] is None
+    assert row["read_amplification"] is None
 
 
 # ─────────────────────── C1: migration on a real sqlite ──────────────────────
@@ -239,7 +239,7 @@ def test_pre_s5_db_migrates(tmp_path: Path) -> None:
 
     with sqlite3.connect(db_path) as conn:
         cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(runs);").fetchall()}
-    assert {"files_read", "files_changed", "acrr_proxy"} <= cols
+    assert {"files_read", "files_changed", "read_amplification"} <= cols
 
     # and the insert that used to fail now succeeds
     store.export_run(
@@ -251,19 +251,22 @@ def test_pre_s5_db_migrates(tmp_path: Path) -> None:
             "turns": 1,
             "files_read": 4,
             "files_changed": 2,
-            "acrr_proxy": 2.0,
+            "read_amplification": 2.0,
         }
     )
     rows = {r["run_id"]: r for r in store.read_all()}
-    assert rows["new"]["acrr_proxy"] == 2.0
+    assert rows["new"]["read_amplification"] == 2.0
     assert rows["legacy"]["files_read"] == 0, "legacy row backfills to the default"
 
 
 def test_legacy_row_acrr_is_null_not_zero(tmp_path: Path) -> None:
     """A pre-S5 run has an UNKNOWN ratio, which is not the same as 0.0.
 
-    ``acrr_proxy`` is NULLable with no DEFAULT for exactly this reason: a
-    ``DEFAULT 0.0`` would claim every historical run had a perfect ratio.
+    ``read_amplification`` is NULLable with no DEFAULT for exactly this reason:
+    a ``DEFAULT 0.0`` would claim every historical run had a perfect ratio.
+
+    A pre-S5 schema has no ratio column at all, so S8's migration ADDs one; it
+    must arrive NULL rather than invent a value.
     """
     db_path = tmp_path / "global_history.db"
     with sqlite3.connect(db_path) as conn:
@@ -274,8 +277,8 @@ def test_legacy_row_acrr_is_null_not_zero(tmp_path: Path) -> None:
         )
     GlobalHistoryStore(db_path=db_path)
     with sqlite3.connect(db_path) as conn:
-        value = conn.execute("SELECT acrr_proxy FROM runs WHERE run_id='legacy'").fetchone()[0]
-    assert value is None
+        value = conn.execute("SELECT read_amplification FROM runs WHERE run_id='legacy'").fetchone()[0]
+    assert value is None, "migration must not fabricate a ratio for a row that never had one"
 
 
 def test_migration_is_idempotent(tmp_path: Path) -> None:
@@ -300,11 +303,11 @@ def test_none_acrr_round_trips_as_null(tmp_path: Path) -> None:
             "turns": 1,
             "files_read": 7,
             "files_changed": 0,
-            "acrr_proxy": None,
+            "read_amplification": None,
         }
     )
     row = store.read_all()[0]
-    assert row["acrr_proxy"] is None
+    assert row["read_amplification"] is None
     assert row["files_read"] == 7
 
 
@@ -330,14 +333,14 @@ def test_acrr_in_stats(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: 
             "turns": 3,
             "files_read": 20,
             "files_changed": 2,
-            "acrr_proxy": 10.0,
+            "read_amplification": 10.0,
         }
     )
     args = argparse.Namespace(output="console", run_id=None, since=None)
     assert _cmd_stats_global_history(args) == 0
 
     err = capsys.readouterr().err
-    assert "ACRR proxy: 10.00" in err
+    assert "read amplification: 10.00" in err
     assert "files_read=20" in err
     assert "files_changed=2" in err
 
@@ -360,14 +363,14 @@ def test_acrr_na_rendering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caps
             "turns": 1,
             "files_read": 5,
             "files_changed": 0,
-            "acrr_proxy": None,
+            "read_amplification": None,
         }
     )
     args = argparse.Namespace(output="console", run_id=None, since=None)
     assert _cmd_stats_global_history(args) == 0
 
     err = capsys.readouterr().err
-    assert "ACRR proxy: n/a (no files changed)" in err
+    assert "read amplification: n/a (no files changed)" in err
     assert "0.00" not in err
 
 
@@ -398,7 +401,7 @@ def test_acrr_json_goes_to_stdout_not_stderr(
             "turns": 2,
             "files_read": 6,
             "files_changed": 3,
-            "acrr_proxy": 2.0,
+            "read_amplification": 2.0,
         }
     )
     args = argparse.Namespace(output="json", run_id=None, since=None)
@@ -406,6 +409,6 @@ def test_acrr_json_goes_to_stdout_not_stderr(
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    assert payload[0]["acrr_proxy"] == 2.0
+    assert payload[0]["read_amplification"] == 2.0
     assert payload[0]["files_read"] == 6
-    assert "ACRR proxy:" not in captured.out, "the human line must stay on stderr"
+    assert "read amplification:" not in captured.out, "the human line must stay on stderr"

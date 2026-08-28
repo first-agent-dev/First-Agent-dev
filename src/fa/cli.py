@@ -842,6 +842,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Show cross-run history from global_history.db (derived projection, not per-run events)",
     )
+    stats_parser.add_argument(
+        "--calibration",
+        action="store_true",
+        default=False,
+        help="Show realized ACRR grouped by recommended_mode (successful runs only)",
+    )
     stats_parser.set_defaults(func=_cmd_stats)
 
     authoring_parser = subparsers.add_parser(
@@ -2166,6 +2172,20 @@ def _cmd_run(
                 workspace_root=workspace,
                 duration_ms=_run_duration_ms,
             )
+            # S8: mirror the routing outcome onto the blackboard, matching the
+            # S3.5 scope_estimate precedent (cli.py:1858) so the operator can
+            # see calibration in-session rather than only in the cross-run DB.
+            # Best-effort and separately guarded: the sqlite export above is the
+            # projection of record, and a blackboard failure must not be able to
+            # roll it back or fail the run.
+            _write_routing_outcome_to_blackboard(
+                state=state,
+                run_id=run_id,
+                outcome=outcome,
+                log=log,
+                workspace=workspace,
+                duration_ms=_run_duration_ms,
+            )
         except Exception as exc:  # noqa: BLE001 - best-effort export must not break run
             import logging
 
@@ -3003,10 +3023,16 @@ def _cmd_stats_global_history(args: argparse.Namespace) -> int:
             # so the existing first line stays byte-identical for anything
             # parsing it. stderr like its neighbour — stdout belongs to
             # --output json alone (see this function's docstring).
-            _acrr = r.get("acrr_proxy")
-            _acrr_text = "n/a (no files changed)" if _acrr is None else f"{float(_acrr):.2f}"
+            # S8: renamed acrr_proxy -> read_amplification. No fallback to the
+            # old name is needed: the migration RENAMEs the column in place, so
+            # a pre-S8 row arrives here already carrying its S5 value under the
+            # new key. A fallback would only ever mask a migration that failed.
+            _ra = r.get("read_amplification")
+            _ra_text = "n/a (no files changed)" if _ra is None else f"{float(_ra):.2f}"
+            _acrr_val = r.get("acrr")
+            _acrr_text = "n/a" if _acrr_val is None else f"{float(_acrr_val):.2f}"
             print(
-                f"  {'':<20s} ACRR proxy: {_acrr_text} "
+                f"  {'':<20s} read amplification: {_ra_text} | ACRR: {_acrr_text} "
                 f"(files_read={r.get('files_read', 0)}, files_changed={r.get('files_changed', 0)})",
                 file=sys.stderr,
             )
@@ -3016,6 +3042,158 @@ def _cmd_stats_global_history(args: argparse.Namespace) -> int:
     except Exception as exc:  # CLI must report stats failure, never crash with traceback
         logger.error("fa stats: failed to read global history: %s", exc, exc_info=True)
         print(f"fa stats: failed to read global history: {exc}", file=sys.stderr)
+        return 1
+
+
+def _write_routing_outcome_to_blackboard(
+    *,
+    state: Any,
+    run_id: str,
+    outcome: Any,
+    log: Any,
+    workspace: Path,
+    duration_ms: int,
+) -> None:
+    """Mirror this run's routing outcome onto the session blackboard (S8, CT12).
+
+    The operator asked for calibration to be observable in the blackboard, not
+    only in ``global_history.db``. This writes the same three S8 numbers the
+    projection stores, so an in-session query can answer "was this run lean?"
+    without opening the cross-run database.
+
+    Best-effort by construction: every failure path is swallowed with a warning.
+    The sqlite export is the record; this is a convenience surface, and a
+    blackboard that is disabled, full, or broken must not fail a session that
+    otherwise succeeded.
+    """
+    blackboard = getattr(state, "blackboard", None)
+    if blackboard is None:
+        return
+    try:
+        from fa.blackboard.blackboard import BlackboardEntry
+        from fa.inner_loop.global_history import build_export_row
+
+        row = build_export_row(
+            run_id=run_id,
+            outcome=outcome,
+            log=log,
+            workspace_root=workspace,
+            duration_ms=duration_ms,
+        )
+        blackboard.write(
+            BlackboardEntry.create(
+                id=f"routing-outcome-{run_id}",
+                type="routing_outcome",
+                payload={
+                    "read_amplification": row.get("read_amplification"),
+                    "cost_actual": row.get("cost_actual"),
+                    "cost_floor": row.get("cost_floor"),
+                    "acrr": row.get("acrr"),
+                    "files_read": row.get("files_read", 0),
+                    "files_changed": row.get("files_changed", 0),
+                },
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort, never block session
+        logger.warning("routing_outcome blackboard write failed: %s", exc)
+
+
+def _cmd_stats_calibration(args: argparse.Namespace) -> int:
+    """Render realized ACRR grouped by ``recommended_mode`` (``fa stats --calibration``).
+
+    This is the E3 §7.4b estimator-calibration table, and it is the answer to
+    Q22: rather than score the scope estimator against a hand-labelled test set,
+    score it against what actually happened. If ``chat_direct`` runs show a
+    materially worse ACRR than ``workflow_linear`` ones, the estimator is
+    routing too much work into the cheap path — a claim backed by measurement
+    instead of by fifteen tasks someone invented.
+
+    **Successful runs only.** ACRR is stored for every run (Q22: record always,
+    filter at display) but a failed run's efficiency is meaningless — the paper
+    is explicit that a cheap failure is not an efficiency, since abandoning a
+    task early is the cheapest possible trajectory and would score best.
+
+    **Stream split**, matching ``_cmd_stats_global_history``: ``--output json``
+    to stdout so the table composes in a pipeline, human report to stderr.
+    """
+    try:
+        from fa.inner_loop.global_history import GlobalHistoryStore, default_global_history_path
+
+        db_path = default_global_history_path()
+        store = GlobalHistoryStore(db_path=db_path)
+        rows = store.read_all()
+        if not rows:
+            print(f"fa stats: no global history found at {db_path}", file=sys.stderr)
+            return 1
+
+        buckets: dict[str, list[float]] = {}
+        skipped_failed = 0
+        skipped_no_acrr = 0
+        for r in rows:
+            if int(r.get("exit_code", 0) or 0) != 0:
+                skipped_failed += 1
+                continue
+            acrr_value = r.get("acrr")
+            if acrr_value is None:
+                skipped_no_acrr += 1
+                continue
+            mode = ""
+            raw_scope = r.get("scope_estimate_json") or "{}"
+            try:
+                import json as _json
+
+                parsed = _json.loads(raw_scope)
+                if isinstance(parsed, dict):
+                    mode = str(parsed.get("recommended_mode", "") or "")
+            except (TypeError, ValueError):
+                mode = ""
+            buckets.setdefault(mode or "(no estimate)", []).append(float(acrr_value))
+
+        table = [
+            {
+                "recommended_mode": mode,
+                "runs": len(values),
+                "acrr_mean": sum(values) / len(values),
+                "acrr_min": min(values),
+                "acrr_max": max(values),
+            }
+            for mode, values in sorted(buckets.items())
+        ]
+
+        if args.output == "json":
+            import json as _json
+
+            print(
+                _json.dumps(
+                    {
+                        "calibration": table,
+                        "skipped_failed_runs": skipped_failed,
+                        "skipped_without_acrr": skipped_no_acrr,
+                    },
+                    indent=2,
+                    default=str,
+                )
+            )
+            return 0
+
+        print(f"\n{'=' * 50}\nRouting calibration: realized ACRR by mode\n{'=' * 50}\n", file=sys.stderr)
+        if not table:
+            print("  no successful runs with a computed ACRR yet", file=sys.stderr)
+        for entry in table:
+            print(
+                f"  {entry['recommended_mode']:<20s} runs={entry['runs']:<4d} "
+                f"mean={entry['acrr_mean']:.2f} min={entry['acrr_min']:.2f} max={entry['acrr_max']:.2f}",
+                file=sys.stderr,
+            )
+        print(
+            f"\n  (excluded {skipped_failed} failed run(s): a cheap failure is not an efficiency; "
+            f"{skipped_no_acrr} run(s) had no computed ACRR)",
+            file=sys.stderr,
+        )
+        return 0
+    except Exception as exc:  # CLI must report stats failure, never crash with traceback
+        logger.error("fa stats: failed to read calibration: %s", exc, exc_info=True)
+        print(f"fa stats: failed to read calibration: {exc}", file=sys.stderr)
         return 1
 
 
@@ -3080,6 +3258,12 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     # --global-history: active consumer for global_history.db projection (Slice 9)
     if getattr(args, "global_history", False):
         return _cmd_stats_global_history(args)
+
+    # S8 / --calibration: realized ACRR by recommended_mode. Dispatched before
+    # the per-session renderers for the same reason as --global-history: it
+    # reads the cross-run projection and never opens a session database.
+    if getattr(args, "calibration", False):
+        return _cmd_stats_calibration(args)
 
     workspace = args.workspace.resolve()
     state_root = fa_state_root()

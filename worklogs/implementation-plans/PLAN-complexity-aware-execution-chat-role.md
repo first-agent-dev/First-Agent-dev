@@ -1688,6 +1688,32 @@ Do:
   2. Update llms.txt BY-DEMAND INDEX with ADR-16
   3. Add chat role section to operations manual
   4. Add chat role to AGENTS.md role descriptions
+  5. CARRIED FORWARD FROM S8 (operator instruction 2026-08-27). ADR-16 MUST
+     record the self-referential-floor caveat VERBATIM, in the Consequences
+     section, in these words:
+
+       "The floor is self-referential: it derives from the run's own
+       change-set, so a run that changed the WRONG files still scores well.
+       ACRR measures redundancy, never correctness."
+
+     Why this is mandatory and not editorial: cost_floor is computed from the
+     paths the run itself modified, so a confidently-wrong run defines its own
+     cheap baseline and reports a flattering ACRR. Anyone reading the
+     calibration table without this sentence will over-trust it as a quality
+     metric. It is an efficiency metric that presupposes success, which is
+     also why `fa stats --calibration` shows successful runs only.
+
+     Also record, from S8 as shipped:
+     - the fitted weights (alpha=1.0, beta=0.000415, gamma=0.1, delta=1.5) WITH
+       the derivation: median src/*.py = 7234 B ~= 1808 tokens, beta set so a
+       median file's token cost is half its file cost; paper defaults measured
+       to put the file axis at 0.43-2.17% of C and were rejected;
+     - that the floor EXCLUDES latency, per E3 LLM-Case 7.7, to stay
+       deterministic;
+     - that ACRR is recorded for every run and filtered at display (Q22),
+       quoting the reason: a cheap failure is not an efficiency;
+     - the E3 7.2 monotonicity caveat: the authors concede it is "partly
+       mechanical", so present it as a descriptive signature, not a scaling law.
 
 Do-not:
   - Change any existing ADR text
@@ -1701,6 +1727,10 @@ Exit criteria:
   - [ ] No broken doc links
   - [ ] CHAT_SYSTEM_PROMPT revised based on S3-S5 integration findings
   - [ ] Chat tool set revised based on S3-S5 integration findings
+  - [ ] ADR-16 contains the self-referential-floor caveat VERBATIM (grep for
+        "ACRR measures redundancy, never correctness")
+  - [ ] ADR-16 records the fitted weights with their derivation
+  - [ ] ADR-16 states the floor excludes latency and why
 
 Kill-check: N/A (documentation)
 Test class: static (doc link check)
