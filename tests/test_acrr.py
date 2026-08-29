@@ -281,6 +281,84 @@ def test_legacy_row_acrr_is_null_not_zero(tmp_path: Path) -> None:
     assert value is None, "migration must not fabricate a ratio for a row that never had one"
 
 
+# Pre-S3.5 schema: pre-S5 minus scope_estimate_json. This is the generation
+# the fixtures above never covered — and the one that broke a real host
+# (live trial 2026-08-29): the migration added the S5/S8 columns but not
+# scope_estimate_json, so every export against such a DB failed with
+# "table runs has no column named scope_estimate_json".
+_PRE_S3_5_SCHEMA = _PRE_S5_SCHEMA.replace(",\n    scope_estimate_json TEXT NOT NULL DEFAULT '{}'\n", "\n")
+
+
+def test_pre_s3_5_db_gains_scope_estimate_json(tmp_path: Path) -> None:
+    """Regression (live-found): pre-S3.5 DBs must gain scope_estimate_json.
+
+    Kill-check for the single-source-of-truth migration: re-forking the
+    add-missing list from _RUNS_COLUMNS and dropping this column must fail
+    here, not in production.
+    """
+    assert "scope_estimate_json" not in _PRE_S3_5_SCHEMA  # fixture sanity
+    db_path = tmp_path / "global_history.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(_PRE_S3_5_SCHEMA)
+        conn.execute(
+            "INSERT INTO runs (run_id, created_at, updated_at, role, exit_code,"
+            " stop_reason, turns) VALUES ('legacy', 'x', 'x', 'chat', 0, 'done', 1)"
+        )
+
+    store = GlobalHistoryStore(db_path=db_path)  # opening runs the migration
+
+    with sqlite3.connect(db_path) as conn:
+        cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(runs);").fetchall()}
+    assert "scope_estimate_json" in cols
+
+    store.export_run(
+        {
+            "run_id": "new",
+            "role": "chat",
+            "exit_code": 0,
+            "stop_reason": "done",
+            "turns": 1,
+            "scope_estimate_json": '{"recommended_mode": "chat_direct"}',
+        }
+    )
+    rows = {r["run_id"]: r for r in store.read_all()}
+    assert rows["new"]["scope_estimate_json"] == '{"recommended_mode": "chat_direct"}'
+    assert rows["legacy"]["scope_estimate_json"] == "{}", "legacy row backfills to default"
+
+
+def test_migration_matches_fresh_schema(tmp_path: Path) -> None:
+    """Drift guard: a v0-minimal DB must end up with EXACTLY the fresh columns.
+
+    Any future column added to the CREATE DDL but not reachable by the
+    migration trips this — the two paths are compared as sets on real files.
+    """
+    fresh = tmp_path / "fresh.db"
+    GlobalHistoryStore(db_path=fresh)
+
+    legacy = tmp_path / "legacy.db"
+    with sqlite3.connect(legacy) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE runs (
+                run_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                role TEXT NOT NULL,
+                exit_code INTEGER NOT NULL,
+                stop_reason TEXT NOT NULL,
+                turns INTEGER NOT NULL
+            );
+            """
+        )
+    GlobalHistoryStore(db_path=legacy)  # migrates on open
+
+    def cols(path: Path) -> set[str]:
+        with sqlite3.connect(path) as conn:
+            return {str(r[1]) for r in conn.execute("PRAGMA table_info(runs);").fetchall()}
+
+    assert cols(legacy) == cols(fresh)
+
+
 def test_migration_is_idempotent(tmp_path: Path) -> None:
     """Opening the store repeatedly must not fail on duplicate columns."""
     db_path = tmp_path / "global_history.db"
