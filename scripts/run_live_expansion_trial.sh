@@ -25,7 +25,8 @@
 #
 # Usage:
 #   scripts/run_live_expansion_trial.sh "the task to run" [max_turns] [workspace]
-#   scripts/run_live_expansion_trial.sh --clean "the task" 20
+#   scripts/run_live_expansion_trial.sh --clean "the task" 20   # run, then clean
+#   scripts/run_live_expansion_trial.sh --clean                 # sweep leftovers only
 #
 # Requires: `fa` on PATH (or .venv/bin/fa), git >= 2.5 for the default worktree
 # isolation, and a top-level `chat:` key in ~/.fa/models.yaml (preflighted).
@@ -38,8 +39,31 @@ TASK="${1:-simplify the main function in a small module without changing behavio
 MAX_TURNS="${2:-20}"
 WORKSPACE_ARG="${3:-}"
 
+# ── Bare --clean (no task): sweep ALL leftover trial dirs + worktrees, exit. ──
+# Cleanup must never require a provider, config, or secrets (live-fix #5).
+if [ "$CLEAN" = "1" ] && [ "$#" -eq 0 ]; then
+  REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || REPO="$(cd "$(dirname "$0")/.." && pwd)"
+  shopt -s nullglob
+  TRIAL_DIRS=(/tmp/fa-live-trial-*)
+  shopt -u nullglob
+  if [ "${#TRIAL_DIRS[@]}" -eq 0 ]; then
+    echo "no trial dirs under /tmp/fa-live-trial-* — nothing to clean"
+  fi
+  for d in "${TRIAL_DIRS[@]}"; do
+    [ -d "$d/worktree" ] && git -C "$REPO" worktree remove --force "$d/worktree" >/dev/null 2>&1
+    rm -rf "$d"
+    echo "removed $d"
+  done
+  git -C "$REPO" worktree prune
+  echo "worktree registry pruned"
+  exit 0
+fi
+
 # Locate fa + repo.
-REPO="$(git rev-parse --show-toplevel 2>/dev/null || cd "$(dirname "$0")/.." && pwd)"
+# NOTE: not `git ... || cd ... && pwd` — that parses as (A||B)&&C and appends
+# pwd's output when git succeeds (caught live 2026-08-29: two-line REPO broke
+# the -x test and fell through to the compose wrapper).
+REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || REPO="$(cd "$(dirname "$0")/.." && pwd)"
 FA="${FA:-$REPO/.venv/bin/fa}"
 [ -x "$FA" ] || FA="$(command -v fa || true)"
 if [ -z "$FA" ] || [ ! -x "$FA" ]; then
@@ -47,12 +71,45 @@ if [ -z "$FA" ] || [ ! -x "$FA" ]; then
   exit 2
 fi
 
+# Refuse the docker-compose wrapper (scripts/fa): it delegates inside the agent
+# container, which cannot see this host worktree (S10.9 live-sheet fix #2).
+case "$(readlink -f "$FA" 2>/dev/null || echo "")" in
+  */scripts/fa)
+    echo "ERROR: \$FA resolves to scripts/fa (docker-compose wrapper -> container)." >&2
+    echo "       Run 'uv sync' in the repo, or set FA=/path/to/repo/.venv/bin/fa." >&2
+    exit 2 ;;
+esac
+
 TRIAL_DIR="$(mktemp -d -t fa-live-trial-XXXXXX)"
 export FA_STATE_ROOT="$TRIAL_DIR/state"
 mkdir -p "$FA_STATE_ROOT"
 LOG="$TRIAL_DIR/live.log"
 RID="s10-live-$(date +%s)-$$"
 EVENTS="$FA_STATE_ROOT/session-log/$RID/events.jsonl"
+
+# Secrets (live-fix #4b, 2026-08-29): fa reads a FILE-ONLY secret store whose
+# default path resolves under FA_STATE_ROOT — which this script isolates, so
+# ~/.fa/.env would be invisible. Bridge the host secrets file in explicitly.
+if [ -z "${FA_SECRETS_FILE:-}" ] && [ -r "${HOME}/.fa/.env" ]; then
+  export FA_SECRETS_FILE="${HOME}/.fa/.env"
+fi
+if [ -n "${FA_SECRETS_FILE:-}" ] && [ ! -r "${FA_SECRETS_FILE}" ]; then
+  echo "ERROR: FA_SECRETS_FILE=${FA_SECRETS_FILE} exists but is not readable by $(id -un)." >&2
+  echo "       Production secret files are usually root-only — copy instead of pointing:" >&2
+  echo "         sudo cp <prod fa.env> ~/.fa/.env && sudo chown $(id -un): ~/.fa/.env && chmod 600 ~/.fa/.env" >&2
+  [ -n "${WORKTREE_DIR:-}" ] && git -C "$REPO" worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1
+  rm -rf "$TRIAL_DIR"
+  exit 2
+fi
+if [ -z "${FA_SECRETS_FILE:-}" ] && [ ! -f /run/secrets/fa.env ]; then
+  echo "ERROR: no provider secrets (checked FA_SECRETS_FILE, ${HOME}/.fa/.env, /run/secrets/fa.env)." >&2
+  echo "       Create ${HOME}/.fa/.env with KEY=value lines (chmod 600), or export" >&2
+  echo "       FA_SECRETS_FILE=/path/to/fa.env. The isolated FA_STATE_ROOT hides the" >&2
+  echo "       default location from fa." >&2
+  [ -n "${WORKTREE_DIR:-}" ] && git -C "$REPO" worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1
+  rm -rf "$TRIAL_DIR"
+  exit 2
+fi
 
 # ── Workspace isolation (S10.9 / D-H2): default to a throwaway worktree. ──
 WORKTREE_DIR=""
@@ -76,8 +133,20 @@ if [ -z "$WS" ]; then
 fi
 
 # ── Preflight: the chat role must be configured (fail fast, not mid-run). ──
-MODELS_YAML="${HOME}/.fa/models.yaml"
-if [ -f "$MODELS_YAML" ] && ! grep -qE '^chat:' "$MODELS_YAML"; then
+# FA_MODELS_CONFIG lets operators point at an existing (e.g. production)
+# models.yaml instead of copying one into ~/.fa (live-fix #4, 2026-08-29:
+# a MISSING file used to sail through this preflight and die mid-run with
+# "role 'chat' not found" after the worktree was already built).
+MODELS_YAML="${FA_MODELS_CONFIG:-${HOME}/.fa/models.yaml}"
+if [ ! -f "$MODELS_YAML" ]; then
+  echo "ERROR: no models config at $MODELS_YAML — host-side fa has no model routes." >&2
+  echo "       Create one from knowledge/templates/models.yaml.example (needs a" >&2
+  echo "       top-level 'chat:' role), or set FA_MODELS_CONFIG=/path/to/models.yaml." >&2
+  [ -n "$WORKTREE_DIR" ] && git -C "$REPO" worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1
+  rm -rf "$TRIAL_DIR"
+  exit 2
+fi
+if ! grep -qE '^chat:' "$MODELS_YAML"; then
   echo "ERROR: no top-level 'chat:' key in $MODELS_YAML — the chat role cannot run." >&2
   [ -n "$WORKTREE_DIR" ] && git -C "$REPO" worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1
   rm -rf "$TRIAL_DIR"
@@ -105,8 +174,10 @@ if ! "$FA" run --help >/dev/null 2>&1; then
 fi
 
 set +e
+CONFIG_ARG=()
+[ -n "${FA_MODELS_CONFIG:-}" ] && CONFIG_ARG=(--config "$FA_MODELS_CONFIG")
 "$FA" run --role chat --run-id "$RID" --workspace "$WS" \
-  --max-turns "$MAX_TURNS" --detail verbose --task "$TASK" >"$LOG" 2>&1
+  --max-turns "$MAX_TURNS" --detail verbose "${CONFIG_ARG[@]}" --task "$TASK" >"$LOG" 2>&1
 RC=$?
 set -e
 echo
@@ -160,6 +231,6 @@ if [ "$CLEAN" -eq 1 ]; then
   rm -rf "$TRIAL_DIR"
   echo "(--clean removed the trial dir and worktree)"
 elif [ -n "$WORKTREE_DIR" ]; then
-  echo "(worktree still registered; 'git -C $REPO worktree remove --force $WORKTREE_DIR' or re-run with --clean)"
+  echo "(worktree still registered; 'git -C $REPO worktree remove --force $WORKTREE_DIR' or run bare --clean to sweep all trials)"
 fi
 exit "$RC"

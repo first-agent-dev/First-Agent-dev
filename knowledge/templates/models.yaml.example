@@ -81,44 +81,263 @@
 # family glm / minimax / nemotron все различны → правило ADR-2 соблюдено.
 # ───────────────────────────────────────────────────────────────────────────
 
+# Prompt caching is a per-provider capability, not universal. When I add a provider,
+# I must decide whether it supports FA's cache params — from measured behavior, not assumptions."*
+# The one knob lives in** `src/fa/providers/registry.py`, per-provider `MessageRules`.
+# For new providers you ask one question:"Does it accept `prompt_cache_key` / `prompt_cache_retention`?"
+# - YES / tested → default (`True`), keep cache benefit
+# - NO / 400s → `supports_prompt_cache=False`
+# - UNSURE → run `fa conformance --provider <name>` live — it now sends the **real** request shape
+# and will surface a 400 if the provider rejects them.
+# The rule is always **capability flag, never a provider-name** `if` (D2/CT6).
+# ============================================================
+# First-Agent models.yaml — S13 multi-provider config
+#   planner: NVIDIA nemotron-3-ultra-550b (nemotron family)
+#   coder:   NVIDIA deepseek-v4-flash     (deepseek family)
+#   eval:    Mistral small-2603           (unchanged)
+# Registry name: nvidia_build (OpenAI-compatible adapter).
+# base_url https://integrate.api.nvidia.com/v1 -> /chat/completions
+# ============================================================
+
 planner:
-  name: "glm-5p2"           # display-метка; НЕ отправляется провайдеру
-  family: "glm"             # свободная текстовая метка; важна для eval-disjoint проверки
+  name: "anymodel planner"
+  family: "qwen"
+  sampling:
   chain:
-    - provider: fireworks
-      model: "accounts/fireworks/models/glm-5p2"   # реальная строка модели для Fireworks
-      base_url: "https://api.fireworks.ai/inference/v1"
-      api_key_env: FIREWORKS_API_KEY
-      timeout_seconds: 15
+    - provider: anymodel
+      model: "qwen/qwen3.8-max"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 600
       cooldown_seconds: 3
-      transport_retries: 1
+      transport_retries: 2
+      provider_params:
+        reasoning_effort: "xhigh"
+
+    - provider: anymodel
+      model: "am/kimi-k3"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 600
+      cooldown_seconds: 3
+      transport_retries: 2
+      provider_params:
+        reasoning_effort: "max"
+
+    - provider: anymodel
+      model: "ag/gemini-3.7-flash-high"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 600
+      cooldown_seconds: 3
+      transport_retries: 2
+      provider_params:
+        reasoning_effort: "high"
+
+    - provider: anymodel
+      model: "am/deepseek-v4-pro"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 600
+      cooldown_seconds: 3
+      transport_retries: 2
+      provider_params:
+        reasoning_effort: "high"
 
 coder:
-  name: "minimax-m3"
-  family: "minimax"
-  sampling:                # опционально — отправляется во ВСЕ entry этой роли
-    temperature: 0.2
-    max_tokens: 8000
+  name: "anymodel coder"
+  family: "anymodel"
   chain:
-    - provider: fireworks
-      model: "accounts/fireworks/models/minimax-m3"
-      base_url: "https://api.fireworks.ai/inference/v1"
-      api_key_env: FIREWORKS_API_KEY
-      timeout_seconds: 15
+    - provider: anymodel
+      model: "qwen/qwen3.8-max"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 300
       cooldown_seconds: 3
-      transport_retries: 1
+      transport_retries: 2
+  #    provider_params:
+  #      reasoning_effort: "high"
+
+    - provider: anymodel
+      model: "am/kimi-k3"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 300
+      cooldown_seconds: 3
+      transport_retries: 2
+      provider_params:
+        reasoning_effort: "high"
+
+    - provider: anymodel
+      model: "ag/gemini-3.7-flash-high"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 600
+      cooldown_seconds: 3
+      transport_retries: 2
+      provider_params:
+        reasoning_effort: "high"
+
+    - provider: anymodel
+      model: "am/minimax-m3"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 300
+      cooldown_seconds: 3
+      transport_retries: 2
+   #   provider_params:
+   #     reasoning_effort: "high"
+
+    - provider: anymodel
+      model: "am/deepseek-v4-pro"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 300
+      cooldown_seconds: 3
+      transport_retries: 2
+      provider_params:
+        reasoning_effort: "high"
+
+
 
 eval:
-  name: "nemotron-3-ultra"
-  family: "nemotron"       # отличается от glm + minimax → ADR-2 OK
+  name: "nemotron eval"
+  family: "nemotron"
   chain:
-    - provider: fireworks
-      model: "accounts/fireworks/models/nemotron-3-ultra-nvfp4"
-      base_url: "https://api.fireworks.ai/inference/v1"
-      api_key_env: FIREWORKS_API_KEY
-      timeout_seconds: 15
+    - provider: nvidia_build
+      model: "nvidia/nemotron-3-ultra-550b-a55b"
+      base_url: "https://integrate.api.nvidia.com/v1"
+      api_key_env: NVIDIA_API_KEY
+      timeout_seconds: 600
       cooldown_seconds: 3
-      transport_retries: 1
+      transport_retries: 2
+      provider_params:
+        # NVIDIA thinking mode (top-level body fields, same as the SDK's extra_body).
+        chat_template_kwargs:
+          enable_thinking: true
+        reasoning_budget: 32000
+
+    - provider: anymodel
+      model: "am/minimax-m3"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 300
+      cooldown_seconds: 3
+      transport_retries: 2
+      provider_params:
+        reasoning_effort: "high"
+
+chat:
+  name: "anymodel chat"
+  family: "anymodel"
+  chain:
+    - provider: anymodel
+      model: "am/kimi-k3"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 300
+      cooldown_seconds: 3
+      transport_retries: 2
+      provider_params:
+        reasoning_effort: "high"
+
+    - provider: anymodel
+      model: "qwen/qwen3.8-max"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 300
+      cooldown_seconds: 3
+      transport_retries: 2
+      provider_params:
+        reasoning_effort: "medium"
+
+    - provider: anymodel
+      model: "ag/gemini-3.7-flash-high"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 600
+      cooldown_seconds: 3
+      transport_retries: 2
+      provider_params:
+        reasoning_effort: "high"
+
+    - provider: anymodel
+      model: "am/minimax-m3"
+      base_url: "https://anymodel.org/v1"
+      api_key_env: ANYMODEL_API_KEY
+      timeout_seconds: 300
+      cooldown_seconds: 3
+      transport_retries: 2
+
+        #    - provider: mistral
+        #      model: "mistral-small-2603"
+        #      base_url: "https://api.mistral.ai/v1"
+        #      api_key_env: MISTRAL_API_KEY
+        #      timeout_seconds: 240
+        #      cooldown_seconds: 3
+        #      transport_retries: 2
+        #      provider_params:
+        #        reasoning_effort: "high"
+
+        # prediction:
+        #   type: "content"
+        #   content: "Previous expected output only"
+
+        # response_format:
+        #   type: "json_schema"
+        #   json_schema:
+        #     name: "evaluation"
+        #     schema:
+        #       type: "object"
+        #       properties:
+        #         verdict:
+        #           type: "string"
+        #       required:
+        #         - verdict
+
+        # parallel_tool_calls: true
+
+        # prompt_cache_key: "eval-prefix-v1"
+
+  # NOTE on coder's original 3-key rotation (MISTRAL_API_KEY / _1 / _2):
+  # true multi-key rotation is NOT implemented in this codebase today
+  # (tracked as BACKLOG I-32 — the egress-proxy route table and the
+  # ProviderChain cooldown ledger both key on (provider, model) only, not
+  # (provider, model, api_key_env), so 3 entries sharing the same model
+  # string collide as one route in proxy mode and share one cooldown in
+  # direct mode). Migrating the 3-entry shape as-is reproduces the exact
+  # `route_conflict` failure the original deploy hit. Per your instruction,
+  # coder is collapsed to its single confirmed-working key (MISTRAL_API_KEY)
+  # below — this deploys cleanly today. If/when I-32 lands, the _1/_2 keys
+  # can be reintroduced as genuine rotation entries.
+  # Original entries preserved here for when I-32 lands:
+  #
+  #     - provider: mistral
+  #       model: "mistral-small-2603"
+  #       base_url: "https://api.mistral.ai/v1"
+  #       api_key_env: MISTRAL_API_KEY_1
+  #       timeout_seconds: 240
+  #       cooldown_seconds: 3
+  #       transport_retries: 1
+  #       provider_params:
+  #         reasoning_effort: "high"
+  #     - provider: mistral
+  #       model: "mistral-small-2603"
+  #       base_url: "https://api.mistral.ai/v1"
+  #       api_key_env: MISTRAL_API_KEY_2
+  #       timeout_seconds: 240
+  #       cooldown_seconds: 3
+  #       transport_retries: 1
+  #       provider_params:
+  #         reasoning_effort: "high"
+
+
+# S2/S10: chat — роль входа для complexity-aware execution. Скоуп-эстиматор
+# стартует её в chat_direct; evidence-движок может эскалировать до
+# workflow_linear через invoke_workflow. Маршрут (provider, model) разрешено
+# разделять с другими ролями, если base_url и api_key_env совпадают
+# (fa routing-check дедуплицирует идентичные маршруты); различаются только
+# calibration-бакеты по recommended_mode, не модели.
 
 # ───────────────────────────────────────────────────────────────────────────
 # Примечания

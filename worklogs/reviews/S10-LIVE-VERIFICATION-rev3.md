@@ -88,7 +88,12 @@ cat > /tmp/cae_cal.sh <<'SHEOF'
 #!/usr/bin/env bash
 set -uo pipefail
 export FA_STATE_ROOT="$(mktemp -d)"; trap 'rm -rf "$FA_STATE_ROOT"' EXIT
-FA="${FA:-$(command -v fa || echo ./.venv/bin/fa)}"
+# Repo venv CLI ONLY. On operator hosts, `fa` on PATH is scripts/fa — a
+# docker-compose wrapper that executes inside the agent container and would
+# read the CONTAINER's history, not the FA_STATE_ROOT seeded below. Same
+# precedence as run_live_expansion_trial.sh; no silent fallback.
+FA="${FA:-./.venv/bin/fa}"
+[ -x "$FA" ] || { echo "ERROR: .venv/bin/fa missing — run 'uv sync' in the repo root first" >&2; exit 1; }
 uv run python - <<'PY'
 import json
 from fa.inner_loop.global_history import GlobalHistoryStore, default_global_history_path
@@ -127,6 +132,30 @@ they are row L3's exercise material and stay red until L3 runs.
 
 # PART 2 — live verification (provider-backed; bash; consumes tokens)
 
+**Binary pinning:** every command below uses `./.venv/bin/fa`. On operator hosts, `fa`
+on PATH is `scripts/fa` — the docker-compose wrapper — which would run the row *inside
+the agent container* (state under `/srv/first-agent/state/...`, blind to host paths).
+
+**Host bootstrap (once, operator hosts).** Host-side `fa` reads routes from
+`~/.fa/models.yaml` and keys from a FILE-ONLY secret store (`~/.fa/.env`; no env-var
+fallback by design). Production copies live in the compose volume — adjust paths:
+
+```bash
+sudo cp /srv/first-agent/secrets/fa.env ~/.fa/.env
+sudo chown "$(id -un):" ~/.fa/.env && chmod 600 ~/.fa/.env
+sudo cp /srv/first-agent/state/models.yaml ~/.fa/models.yaml
+sudo chown "$(id -un):" ~/.fa/models.yaml
+# no chat role in the production config? clone the coder chain (identical routes
+# are deduped by fa routing-check, so sharing provider+model is safe):
+grep -q '^chat:' ~/.fa/models.yaml || { echo "chat:"; sed -n '/^coder:/,/^[a-z_]*:$/{/^coder:/d;/^[a-z_]*:$/d;p;}' ~/.fa/models.yaml; } >> ~/.fa/models.yaml
+grep -A2 '^chat:' ~/.fa/models.yaml    # sanity: role present
+```
+
+If the production models.yaml has no `coder:` role either, add a `chat:` block by hand
+per `knowledge/templates/models.yaml.example`. The driver exports `FA_SECRETS_FILE`
+automatically once `~/.fa/.env` exists (its isolated `FA_STATE_ROOT` hides the default
+location from fa).
+
 **Capture setup (run once per session — the S11 data feed):**
 
 ```bash
@@ -135,13 +164,17 @@ mkdir -p "$LEDGER"
 [ -f "$LEDGER/ledger.csv" ] || echo "run_id,date,row,recommended_mode,level_path,expansion_n,observed_n,exhausted,exit_code,notes" > "$LEDGER/ledger.csv"
 ```
 
-After EVERY row below, capture (replace `$RID` / row label):
+After EVERY row below, capture (the ROW sets `$RID` — capture never runs first).
+Driver rows (2.1) print their own run id and an isolated state root; for those export
+`EVENTS="<driver-state-path>/session-log/$RID/events.jsonl"` before this block:
 
 ```bash
-EVENTS="$HOME/.fa/session-log/$RID/events.jsonl"
+[ -n "${RID:-}" ] || { echo "ERROR: capture runs AFTER a row — set RID from that row's output first" >&2; exit 1; }
+EVENTS="${EVENTS:-$HOME/.fa/session-log/$RID/events.jsonl}"
+[ -f "$EVENTS" ] || { echo "ERROR: no events at $EVENTS — did the row actually run?" >&2; exit 1; }
 cp "$EVENTS" "$LEDGER/$RID.events.jsonl"
 MODE=$(grep -o '"recommended_mode": "[a-z_]*"' "$EVENTS" | head -1 | cut -d'"' -f4)
-LEVELS=$(grep -o '"level_from": [0-9], "level_to": [0-9]' "$EVENTS" | tr '\n' ';')
+LEVELS=$(grep -o '"level_from": [0-9], "level_to": [0-9]' "$EVENTS" | sed 's/"level_from": //; s/, "level_to": />/' | tr '\n' ';')
 printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,\n' "$RID" "$(date +%F)" "L1" "${MODE:-?}" "${LEVELS:-none}" \
   "$(grep -c '"kind": "scope_expansion"' "$EVENTS" || true)" \
   "$(grep -c '"kind": "expansion_observed"' "$EVENTS" || true)" \
@@ -168,7 +201,7 @@ worktree.
 
 ```bash
 RID="cae-l1-$(date +%s)"
-fa run --role chat --run-id "$RID" --max-turns 8 --detail verbose \
+./.venv/bin/fa run --role chat --run-id "$RID" --max-turns 8 --detail verbose \
   --task "Create worklogs/reviews/live-check-notes.md (or append one line to it) noting the live sheet was checked today." \
   2>&1 | tee /tmp/cae_l1.log
 echo "fa EXIT=${PIPESTATUS[0]}"
@@ -189,7 +222,7 @@ The task really touches `src/`, so run it where the agent cannot hurt your check
 WT="$(mktemp -d)/wt"
 git worktree add --detach "$WT" HEAD
 RID="cae-l2-$(date +%s)"
-fa run --role chat --run-id "$RID" --workspace "$WT" --max-turns 20 --detail verbose \
+./.venv/bin/fa run --role chat --run-id "$RID" --workspace "$WT" --max-turns 20 --detail verbose \
   --task "simplify the main function in src/fa/cli.py — make _cmd_stats a bit shorter without changing behaviour" \
   2>&1 | tee /tmp/cae_l2.log
 echo "fa EXIT=${PIPESTATUS[0]}"
@@ -212,7 +245,7 @@ moved historical doc). Mandatory procedure:
 [ -z "$(git status --porcelain)" ] || { echo "ABORT: commit or stash first (L3 edits the real repo)"; }
 echo "-- staged defect (pre-run) --"; uv run python scripts/check_doc_links.py 2>&1 | tail -2
 RID="cae-l3-$(date +%s)"
-fa run --role chat --run-id "$RID" --workspace "$(pwd)" --max-turns 40 --detail verbose \
+./.venv/bin/fa run --role chat --run-id "$RID" --workspace "$(pwd)" --max-turns 40 --detail verbose \
   --task "The repo has broken internal documentation links (run scripts/check_doc_links.py). Investigate and fix what you can, verify with the checker, and report what you changed." \
   2>&1 | tee /tmp/cae_l3.log
 echo "fa EXIT=${PIPESTATUS[0]}"
@@ -235,8 +268,16 @@ on?** (F13 watch-item — note it in the ledger.)
 
 ## 2.5 Row L4 — post-run durable history
 
+Two durable stores hold trial rows — check BOTH (bare `fa` on PATH is the compose
+wrapper → would show the agent container's production history instead):
+
 ```bash
-fa stats --global-history --output json 2>/dev/null | uv run python -c '
+# (1) L1–L3 rows: default state root (~/.fa) — no FA_STATE_ROOT export here.
+# (2) driver (2.1) rows: the trial state root the driver printed ("state: <path>").
+for ROOT in "DEFAULT:$HOME/.fa" "TRIAL:<trial-state-path-from-driver-output>"; do
+  LABEL="${ROOT%%:*}"; PATHV="${ROOT#*:}"
+  echo "== $LABEL ($PATHV) =="
+  FA_STATE_ROOT="$PATHV" ./.venv/bin/fa stats --global-history --output json 2>/dev/null | uv run python -c '
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception as e: print("  [NOTE] no global-history json:", e); sys.exit(0)
@@ -245,7 +286,8 @@ print(f"  rows visible: {len(rows)}")
 for r in rows[-6:]:
     print("   ", r.get("run_id"), "| role=", r.get("role"), "| exit=", r.get("exit_code"))
 '
-fa stats --calibration 2>&1 1>/dev/null | head -14
+  FA_STATE_ROOT="$PATHV" ./.venv/bin/fa stats --calibration 2>&1 1>/dev/null | head -14
+done
 ```
 
 Note the `cae-*` / `s10-live-*` rows: they are trial data inside your real calibration

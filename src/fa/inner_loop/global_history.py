@@ -37,6 +37,43 @@ logger = logging.getLogger(__name__)
 DEFAULT_GLOBAL_HISTORY_PATH = Path.home() / ".fa" / "global_history.db"
 
 
+# Single source of truth for the ``runs`` table: BOTH the fresh-create DDL and
+# the add-missing migration below iterate this tuple, so they cannot drift.
+# Found live (2026-08-29, host trial): ``scope_estimate_json`` (S3.5) was in
+# CREATE but absent from the hand-written migration list, so every export
+# against a pre-S3.5 DB failed with "table runs has no column named
+# scope_estimate_json" — silently, per run. Tests never caught it because
+# tests always create fresh DBs.
+_RUNS_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("run_id", "TEXT PRIMARY KEY"),
+    ("created_at", "TEXT NOT NULL"),
+    ("updated_at", "TEXT NOT NULL"),
+    ("role", "TEXT NOT NULL"),
+    ("model", "TEXT NOT NULL DEFAULT ''"),
+    ("family", "TEXT NOT NULL DEFAULT ''"),
+    ("exit_code", "INTEGER NOT NULL"),
+    ("stop_reason", "TEXT NOT NULL"),
+    ("turns", "INTEGER NOT NULL"),
+    ("input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("output_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("cache_read_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("cache_creation_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("cache_hit_ratio", "REAL NOT NULL DEFAULT 0.0"),
+    ("tool_calls_total", "INTEGER NOT NULL DEFAULT 0"),
+    ("tool_calls_breakdown_json", "TEXT NOT NULL DEFAULT '{}'"),
+    ("has_compaction_summary", "INTEGER NOT NULL DEFAULT 0"),
+    ("workspace_root", "TEXT NOT NULL DEFAULT ''"),
+    ("duration_ms", "INTEGER NOT NULL DEFAULT 0"),
+    ("scope_estimate_json", "TEXT NOT NULL DEFAULT '{}'"),
+    ("files_read", "INTEGER NOT NULL DEFAULT 0"),
+    ("files_changed", "INTEGER NOT NULL DEFAULT 0"),
+    ("read_amplification", "REAL"),  # S8: renamed from acrr_proxy; NULL = no denominator
+    ("cost_actual", "REAL"),  # S8; NULL = not computed
+    ("cost_floor", "REAL"),  # S8
+    ("acrr", "REAL"),  # S8
+)
+
+
 def default_global_history_path() -> Path:
     """Resolve the projection DB path at CALL time, not import time (S8.8).
 
@@ -151,32 +188,9 @@ class GlobalHistoryStore:
                         conn.execute(
                             """
                             CREATE TABLE IF NOT EXISTS runs (
-                                run_id TEXT PRIMARY KEY,
-                                created_at TEXT NOT NULL,
-                                updated_at TEXT NOT NULL,
-                                role TEXT NOT NULL,
-                                model TEXT NOT NULL DEFAULT '',
-                                family TEXT NOT NULL DEFAULT '',
-                                exit_code INTEGER NOT NULL,
-                                stop_reason TEXT NOT NULL,
-                                turns INTEGER NOT NULL,
-                                input_tokens INTEGER NOT NULL DEFAULT 0,
-                                output_tokens INTEGER NOT NULL DEFAULT 0,
-                                cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
-                                cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
-                                cache_hit_ratio REAL NOT NULL DEFAULT 0.0,
-                                tool_calls_total INTEGER NOT NULL DEFAULT 0,
-                                tool_calls_breakdown_json TEXT NOT NULL DEFAULT '{}',
-                                has_compaction_summary INTEGER NOT NULL DEFAULT 0,
-                                workspace_root TEXT NOT NULL DEFAULT '',
-                                duration_ms INTEGER NOT NULL DEFAULT 0,
-                                scope_estimate_json TEXT NOT NULL DEFAULT '{}',
-                                files_read INTEGER NOT NULL DEFAULT 0,
-                                files_changed INTEGER NOT NULL DEFAULT 0,
-                                read_amplification REAL,
-                                cost_actual REAL,
-                                cost_floor REAL,
-                                acrr REAL
+                                """
+                            + ",\n".join(f"{name} {decl}" for name, decl in _RUNS_COLUMNS)
+                            + """
                             );
                             """
                         )
@@ -215,14 +229,13 @@ class GlobalHistoryStore:
                         # cost_floor and acrr are NULLable with no DEFAULT for
                         # the same reason: NULL means "not computed", and 0.0
                         # would assert every pre-S8 run was perfectly lean.
-                        for col_name, col_decl in (
-                            ("files_read", "INTEGER NOT NULL DEFAULT 0"),
-                            ("files_changed", "INTEGER NOT NULL DEFAULT 0"),
-                            ("read_amplification", "REAL"),  # S8: renamed from acrr_proxy
-                            ("cost_actual", "REAL"),  # S8
-                            ("cost_floor", "REAL"),  # S8
-                            ("acrr", "REAL"),  # S8
-                        ):
+                        # Add-missing iterates the SAME tuple the CREATE uses
+                        # (drift is now unrepresentable). PRIMARY KEY columns
+                        # are skipped: run_id exists in every schema since v0,
+                        # and ALTER TABLE cannot add a PRIMARY KEY anyway.
+                        for col_name, col_decl in _RUNS_COLUMNS:
+                            if "PRIMARY KEY" in col_decl:
+                                continue
                             if col_name not in existing_cols:
                                 conn.execute(f"ALTER TABLE runs ADD COLUMN {col_name} {col_decl};")
                         conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_role ON runs(role);")
