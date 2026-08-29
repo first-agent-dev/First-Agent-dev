@@ -26,9 +26,10 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from fa.inner_loop._sqlite_common import create_sqlite_connection
+from fa.inner_loop.acrr import compute_acrr, compute_cost, compute_cost_floor, compute_read_amplification
 from fa.paths import fa_state_root
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,13 @@ def _now_iso_z() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+# S5: which tool names count as reading vs changing a file, for the ACRR proxy.
+# Kept beside the row they feed. Verified against the live registry: these are
+# exactly the filesystem tools that carry a "path" param.
+_READ_TOOLS: Final = frozenset({"fs_read_file"})
+_CHANGE_TOOLS: Final = frozenset({"fs_write_file", "fs_edit_file"})
+
+
 @dataclass(frozen=True)
 class GlobalRunRow:
     """Typed view of runs table row — for tests and stats."""
@@ -101,6 +109,12 @@ class GlobalRunRow:
     workspace_root: str
     duration_ms: int
     scope_estimate_json: str = "{}"  # S3.5: scope estimate projection
+    files_read: int = 0  # S5: distinct paths read
+    files_changed: int = 0  # S5: distinct paths written/edited
+    read_amplification: float | None = None  # S8: renamed from acrr_proxy, see acrr.py
+    cost_actual: float | None = None  # S8: E3 Eq. 1 measured cost
+    cost_floor: float | None = None  # S8: E3 C_min for this run's change-set
+    acrr: float | None = None  # S8: E3 Eq. 3; None when there is no floor
 
 
 class GlobalHistoryStore:
@@ -156,10 +170,61 @@ class GlobalHistoryStore:
                                 has_compaction_summary INTEGER NOT NULL DEFAULT 0,
                                 workspace_root TEXT NOT NULL DEFAULT '',
                                 duration_ms INTEGER NOT NULL DEFAULT 0,
-                                scope_estimate_json TEXT NOT NULL DEFAULT '{}'
+                                scope_estimate_json TEXT NOT NULL DEFAULT '{}',
+                                files_read INTEGER NOT NULL DEFAULT 0,
+                                files_changed INTEGER NOT NULL DEFAULT 0,
+                                read_amplification REAL,
+                                cost_actual REAL,
+                                cost_floor REAL,
+                                acrr REAL
                             );
                             """
                         )
+                        # S5 MIGRATION. CREATE TABLE IF NOT EXISTS is a no-op
+                        # on an existing DB, so a pre-S5 file would keep the old
+                        # column set and every insert would fail with "table
+                        # runs has no column named files_read" (reproduced
+                        # before writing this). Add whatever is missing.
+                        # Additive and idempotent: safe on every open.
+                        #
+                        # read_amplification is deliberately NULLable with no
+                        # DEFAULT — NULL is the storage form of "no
+                        # denominator", the same distinction
+                        # compute_read_amplification makes by returning None. A
+                        # DEFAULT 0.0 would silently claim every legacy run had
+                        # a perfect ratio.
+                        existing_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(runs);").fetchall()}
+
+                        # S8 RENAME acrr_proxy -> read_amplification. A real
+                        # RENAME COLUMN (sqlite >= 3.25), not an additive
+                        # shadow column: it carries the S5 values across in
+                        # place, leaves exactly one name behind, and needs no
+                        # backfill that could disagree with the source.
+                        #
+                        # This MUST run before the add-missing loop below.
+                        # Reversed, that loop would create an empty
+                        # read_amplification, the `not in existing_cols` guard
+                        # here would then be false, and every S5 value would be
+                        # stranded in an orphaned acrr_proxy column.
+                        if "acrr_proxy" in existing_cols and "read_amplification" not in existing_cols:
+                            conn.execute("ALTER TABLE runs RENAME COLUMN acrr_proxy TO read_amplification;")
+                            existing_cols.discard("acrr_proxy")
+                            existing_cols.add("read_amplification")
+                        #
+                        # S8 adds three more on the same terms. cost_actual,
+                        # cost_floor and acrr are NULLable with no DEFAULT for
+                        # the same reason: NULL means "not computed", and 0.0
+                        # would assert every pre-S8 run was perfectly lean.
+                        for col_name, col_decl in (
+                            ("files_read", "INTEGER NOT NULL DEFAULT 0"),
+                            ("files_changed", "INTEGER NOT NULL DEFAULT 0"),
+                            ("read_amplification", "REAL"),  # S8: renamed from acrr_proxy
+                            ("cost_actual", "REAL"),  # S8
+                            ("cost_floor", "REAL"),  # S8
+                            ("acrr", "REAL"),  # S8
+                        ):
+                            if col_name not in existing_cols:
+                                conn.execute(f"ALTER TABLE runs ADD COLUMN {col_name} {col_decl};")
                         conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_role ON runs(role);")
                         conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_updated_at ON runs(updated_at);")
                         conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_model ON runs(model);")
@@ -183,8 +248,10 @@ class GlobalHistoryStore:
                             cache_hit_ratio,
                             tool_calls_total, tool_calls_breakdown_json,
                             has_compaction_summary, workspace_root, duration_ms,
-                            scope_estimate_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            scope_estimate_json,
+                            files_read, files_changed,
+                            read_amplification, cost_actual, cost_floor, acrr
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             str(row["run_id"]),
@@ -207,6 +274,18 @@ class GlobalHistoryStore:
                             str(row.get("workspace_root", "")),
                             int(row.get("duration_ms", 0)),
                             str(row.get("scope_estimate_json", "{}")),  # S3.5
+                            int(row.get("files_read", 0)),  # S5
+                            int(row.get("files_changed", 0)),  # S5
+                            # S5/S8: preserve None as SQL NULL. float(None) raises,
+                            # and float(0) would fabricate a ratio.
+                            # NULL is a load-bearing value here — it is how the
+                            # calibration view tells "no change-set" apart from
+                            # "perfectly lean", which are the same number if you
+                            # coerce to 0.0.
+                            (None if row.get("read_amplification") is None else float(row["read_amplification"])),
+                            (None if row.get("cost_actual") is None else float(row["cost_actual"])),
+                            (None if row.get("cost_floor") is None else float(row["cost_floor"])),
+                            (None if row.get("acrr") is None else float(row["acrr"])),
                         ),
                     )
             except Exception as exc:
@@ -262,6 +341,11 @@ def _extract_telemetry_from_log(log: Any) -> dict[str, Any]:
     created_at = ""
     turns = 0  # NEW-4: count usage events = LLM turns
     scope_estimate: dict[str, object] = {}  # S3.5: scope estimation projection
+    # S5: DISTINCT paths, not call counts. Reading one file five times is one
+    # file's worth of context, and counting it five times would inflate ACRR
+    # into reporting over-reading that never happened.
+    read_paths: set[str] = set()
+    changed_paths: set[str] = set()
 
     try:
         events = log.read_all() if log is not None else ()
@@ -280,7 +364,21 @@ def _extract_telemetry_from_log(log: Any) -> dict[str, Any]:
                     total_cache_creation += int(c.get("cache_creation_input_tokens", 0))
                     turns += 1  # NEW-4: each usage event = 1 LLM turn
                 elif ev.kind == "tool_call":
-                    tool_counter[ev.tool_name or "unknown"] += 1
+                    tool_name = ev.tool_name or "unknown"
+                    tool_counter[tool_name] += 1
+                    # S5: project distinct file paths for the ACRR proxy. The
+                    # path lives in the recorded params (state.py:record_tool_call
+                    # stores content={"params": {...}}). A tool call with no
+                    # usable path contributes nothing rather than a bogus key.
+                    if tool_name in _READ_TOOLS or tool_name in _CHANGE_TOOLS:
+                        c = ev.content if isinstance(ev.content, Mapping) else {}
+                        params = c.get("params") if isinstance(c.get("params"), Mapping) else {}
+                        raw_path = params.get("path") if isinstance(params, Mapping) else None
+                        if isinstance(raw_path, str) and raw_path:
+                            if tool_name in _READ_TOOLS:
+                                read_paths.add(raw_path)
+                            else:
+                                changed_paths.add(raw_path)
                 elif ev.kind == "compaction_stage3_done":
                     has_compaction = 1
                 # S3.5: capture scope estimate for cross-run projection
@@ -310,6 +408,16 @@ def _extract_telemetry_from_log(log: Any) -> dict[str, Any]:
         "created_at": created_at or _now_iso_z(),
         "turns": turns,  # NEW-4: from usage event count
         "scope_estimate_json": json.dumps(scope_estimate, ensure_ascii=False),  # S3.5
+        "files_read": len(read_paths),  # S5: distinct paths
+        "files_changed": len(changed_paths),  # S5: distinct paths
+        # S8: the PATHS themselves, not just how many. compute_cost_floor has to
+        # stat each changed file to price its token axis, and until now this
+        # function threw the strings away and returned only the two lengths
+        # above — the floor was uncomputable from the projection. Sorted so the
+        # exported row is byte-identical across runs with the same change-set
+        # (set iteration order is not stable, and an unstable row would make
+        # every diff of the projection noise).
+        "changed_paths": sorted(changed_paths),
     }
 
 
@@ -372,6 +480,36 @@ def build_export_row(
         "duration_ms": int(duration_ms),
         "scope_estimate_json": str(telemetry.get("scope_estimate_json", "{}")),  # S3.5
     }
+
+    # S5: ACRR proxy. Computed once here, at export time, and stored — the
+    # stats renderer reads only this projection and never reopens an event log,
+    # so the ratio has to exist as a column by the time it gets there.
+    files_read = int(telemetry.get("files_read", 0))
+    files_changed = int(telemetry.get("files_changed", 0))
+    row["files_read"] = files_read
+    row["files_changed"] = files_changed
+    read_amplification = compute_read_amplification(files_read, files_changed)
+    row["read_amplification"] = read_amplification
+
+    # S8 / CT11: full E3 cost model.
+    #
+    # ACRR is recorded for EVERY run, successful or not (operator decision
+    # Q22). Filtering belongs at DISPLAY time, where the reason can be stated;
+    # filtering at write time would destroy the data needed to ask "are failed
+    # runs less efficient?" and could never be undone retroactively.
+    changed_paths = telemetry.get("changed_paths", [])
+    changed_list: list[str] = [str(p) for p in changed_paths] if isinstance(changed_paths, list) else []
+    output_tokens = int(telemetry.get("output_tokens", 0))
+    cost_floor = compute_cost_floor(changed_list, workspace_root or ".", output_tokens)
+    cost_actual = compute_cost(
+        latency_s=float(duration_ms) / 1000.0,
+        tokens=int(telemetry.get("input_tokens", 0)) + output_tokens,
+        tool_calls=int(telemetry.get("tool_calls_total", 0)),
+        files=files_read + files_changed,
+    )
+    row["cost_actual"] = cost_actual
+    row["cost_floor"] = cost_floor
+    row["acrr"] = compute_acrr(cost_actual, cost_floor)
     return row
 
 

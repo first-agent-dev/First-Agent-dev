@@ -58,7 +58,10 @@ current liveness:
   chat tool registry:          L0 (absent)
   scope estimator function:    L0 (absent)
   invoke_workflow tool:        L0 (absent)
-  _run_workflow_internal():    L0 (absent; _cmd_workflow is CLI-only)
+  run_workflow():              L3 (SHIPPED S4a in workflow_controller.py;
+                               the plan originally called this
+                               _run_workflow_internal in cli.py — that symbol
+                               was never created)
   ACRR metric in fa stats:     L0 (absent)
   ADR-16:                      L0 (absent)
   models.yaml chat entry:      L0 (absent)
@@ -102,11 +105,11 @@ Track efficiency with an ACRR proxy metric.
 **MECHANISM SKETCH:**
 `fa run -r chat "task"` → deterministic `estimate_scope(task)` → if L1/L2:
 chat role handles directly with restricted tools; if L3: chat role calls
-`invoke_workflow` tool → `_run_workflow_internal()` → workflow pipeline
+`invoke_workflow` tool → `run_workflow()` (workflow_controller.py) → workflow pipeline
 runs in shared session.
 
 **PROOF SKETCH:** C1 test on `estimate_scope()` with fixture tasks; C1 test
-on `invoke_workflow` tool calling `_run_workflow_internal()`; C2 test on
+on `invoke_workflow` tool calling `run_workflow()`; C2 test on
 `fa run -r chat` routing; C1 test on ACRR computation in `fa stats`.
 
 **SIZE:** L (3 slices, new role, new ADR, CLI changes, tool registration)
@@ -133,7 +136,7 @@ on `invoke_workflow` tool calling `_run_workflow_internal()`; C2 test on
 - **GAP1:** No chat role exists → add system prompt, tool registry, models.yaml entry
 - **GAP2:** No scope estimator exists → add `estimate_scope()` function
 - **GAP3:** No workflow escalation tool exists → add `invoke_workflow` tool
-- **GAP4:** `_cmd_workflow` is not internally callable → refactor to `_run_workflow_internal()`
+- **GAP4:** `_cmd_workflow` is not internally callable → refactor to `run_workflow()` ✅ CLOSED in S4a (extracted to workflow_controller.py, not cli.py)
 - **GAP5:** No efficiency metric exists → add ACRR proxy to `fa stats` and `global_history.db`
 - **GAP6:** No ADR captures the architecture → write ADR-16
 
@@ -177,10 +180,18 @@ CT2: CHAT_SYSTEM_PROMPT TYPE:signal
 PRODUCER: src/fa/inner_loop/prompt.py:CHAT_SYSTEM_PROMPT constant
 CONSUMER: build_system_message(role="chat") → injected into LLM system message
 TRIGGER: fa run -r chat
-PAYLOAD: Minimal system prompt — pair programming partner, scope-aware,
-         knows about invoke_workflow tool, uses fs_search and fs_read_file
-         for codebase exploration, does NOT have write/edit tools directly
-         for L3 tasks
+PAYLOAD: System prompt — pair programming partner, scope-aware, knows about
+         the invoke_workflow tool, uses fs_search and fs_read_file for
+         codebase exploration, and writes/edits files directly for work it
+         sizes as small.
+REVISED 2026-08-26 (operator decision Q1): the earlier payload said chat
+         "does NOT have write/edit tools directly". That is no longer true and
+         was never a security boundary — see CT3. Chat holds fs_write_file and
+         fs_edit_file with no path allowlist. The split the prompt teaches is
+         a JUDGEMENT (small change -> do it here; large change -> escalate),
+         not a capability the registry enforces.
+CONTENT SOURCE: the prompt body is the researched variant, not the S2
+         scaffold. Ships in S6.
 DUAL-WRITE: N/A (prompt is single-source)
 KILL-CHECK: removing "chat" from _ROLE_PROMPTS → T5 fails (chat role test)
 ```
@@ -193,18 +204,33 @@ PRODUCER: NEW src/fa/inner_loop/tools/__init__.py:build_chat_registry
           + src/fa/inner_loop/profiles.py:PROFILES_RAW["chat"]
 ROOTS/CALLERS: src/fa/cli.py:_build_role_registry when role=="chat"
 INPUTS: workspace_root: Path, bash_timeout_seconds: int
-OUTPUTS: ToolRegistry with: fs_read_file, fs_search, fs_blackboard_query,
-         fs_run_bash (stateless, read-only exploration), fs_reach,
-         invoke_workflow (added in S4)
+OUTPUTS: ToolRegistry with: fs_read_file, fs_write_file, fs_edit_file,
+         fs_search, fs_blackboard_query, fs_run_bash (stateful PTY),
+         fs_exploration_metrics, fs_reach, fs_spawn_subagent,
+         + invoke_workflow (added in S4b)
+         + pr_prepare (appended for every role by _build_run_tool_registry)
 SIDE EFFECTS: none
 INVARIANTS:
   - Chat profile defined in PROFILES_RAW with tools list
   - build_chat_registry delegates to build_registry_for_role("chat", ...)
-  - Does NOT include fs_write_file, fs_edit_file (chat cannot mutate directly for L3)
-  - DOES include fs_run_bash (stateless bash for exploration only)
-  - DOES include invoke_workflow (added in S4, not in profile yet)
+  - INCLUDES fs_write_file and fs_edit_file, with NO path allowlist
+  - bash_impl == "stateful" (cd/env/venv persist across turns, ADR-14)
+  - Every tool the profile declares has a builder: the set difference
+    {declared} - {built} MUST be empty at the profile layer
+  - DOES include invoke_workflow (added in S4b, registered post-profile)
   - Pattern mirrors build_planner_registry (tools/__init__.py:168)
+REVISED 2026-08-26 (operator decision Q1/Q2/Q4b, shipped in a638253):
+  Chat previously declared 6 read-only tools. Withholding write tools was
+  described as a security boundary; it was not one. Chat's bash was never
+  restricted (see RK5), so a read-only registry only forced file mutation to
+  happen through a less observable channel. Scope discipline is the scope
+  estimator's job. Note also that fs_spawn_subagent was ALREADY registered for
+  every role unconditionally by _register_extra_tools (tools/__init__.py) —
+  declaring it in the chat profile documents reality rather than granting new
+  capability.
 KILL-CHECK: removing invoke_workflow from chat registry → T7 fails
+KILL-CHECK: removing fs_write_file from the chat profile → the profile/registry
+  parity test fails (tests/test_chat_role.py)
 ```
 
 ### CT4: invoke_workflow Tool
@@ -212,35 +238,109 @@ KILL-CHECK: removing invoke_workflow from chat registry → T7 fails
 ```
 CT4: invoke_workflow TYPE:function (tool)
 PRODUCER: NEW src/fa/inner_loop/tools/workflow_tool.py:build_invoke_workflow_tool
-CONSUMER: chat role LLM calls it when scope=3
-INPUTS: {task: str, mode: str="linear", roles: str="planner,coder,eval",
+CONSUMER: chat role LLM calls it when the scope estimate says the work is large
+INPUTS: {task: str (required), mode: str="linear",
+         roles: str="planner,coder,eval",
          max_repairs: int=2, max_replans: int=1}
-OUTPUTS: ToolResult with workflow terminal summary (verdict, route, stages ran)
-SIDE EFFECTS: calls _run_workflow_internal() which runs the workflow pipeline
-              in the shared session context
-INVARIANTS:
-  - Shares session context (same session_id, run_context, session_db)
-  - Does NOT create a new session
+OUTPUTS: ToolResult.ok(summary, result={
+           "run_id": str,        # the CHILD run_id, not the parent's
+           "exit_code": int,
+           "status": str,        # terminal FlowState.status; "" if unavailable
+           "route": str,         # FlowState.last_route_decision; "" if unavailable
+           "timed_out": bool,    # True when the deadline stopped the pipeline
+         })
+         NO "verdict" FIELD. run_workflow returns tuple[int, FlowState | None]
+         and FlowState has no verdict attribute (fields: run_id, task, status,
+         active_role, active_plan_id, active_plan_version, repair_round,
+         replan_round, last_actor, last_transition_reason, last_route_decision,
+         blocked_reason, completed_steps, invalidated_steps). The verdict lives
+         on EvalReport, which is NOT returned. The status mapping is also lossy
+         — EVAL_VERDICT_TO_TERMINAL_STATUS sends BLOCKED -> "FAILED"
+         (workflow_controller.py:50-55) — so a verdict cannot be reconstructed
+         from status either. Consumers that need the verdict read
+         eval_report.json under the child run_id's directory.
+SIDE EFFECTS: runs the full workflow pipeline; writes flow_state.json and
+              eval_report.json under the CHILD run_id's own directory
+permission: "workspace"
+
+INVARIANTS (REVISED 2026-08-26 — see "run identity" below):
+  - Shares session_context / session_db (same session_id: one conversation)
+  - Allocates a NEW child run_id: f"{parent_run_id}-wf{n}", n starting at 1
+    and incrementing per invocation within the session
+  - Does NOT create a new SESSION (session_id is inherited)
   - Returns structured result, not raw exit code
   - mode ∈ {"linear", "adaptive"}
+  - Re-entrancy: the tool is registered ONLY in the chat registry. If it is
+    ever dispatched while a workflow is already running in this process, the
+    handler MUST fail with code "workflow_reentrant" rather than recurse.
+
+RUN IDENTITY — why the child gets its own run_id:
+  The earlier invariant "shares session context, creates no new session" was
+  implemented as "reuse the parent run_id". That is unsafe, and it was
+  confirmed by execution rather than argued:
+    1. workflow_artifact_paths(run_id) (workflow_controller.py:133) and
+       _cmd_run's run_log_dir (cli.py:1766) resolve to the SAME directory, so
+       parent and child share one events.jsonl. The parent's read_all() then
+       returns the child's events, and _extract_telemetry_from_log
+       (global_history.py:248) counts the child's usage/tool_call events as
+       the parent's turns and tool totals.
+    2. global_history.runs has run_id as PRIMARY KEY with INSERT OR REPLACE
+       (global_history.py:140, :178). The child exports its aggregate during
+       the tool call; the parent exports after drive_session returns
+       (cli.py:1938). The parent's write lands second and ERASES the child's
+       row, including its scope_estimate_json.
+    3. A second invocation in the same session overwrites the first's
+       flow_state.json and eval_report.json.
+  A distinct child run_id fixes all three and makes the parent/child relation
+  queryable (child run_ids are prefixed with the parent's).
+  NOTE: control flow is NOT affected by (3) — _run_adaptive threads
+  eval_report in memory (workflow_controller.py:467). The damage from (3) is
+  to audit and external readers only.
+
 KILL-CHECK: removing invoke_workflow from chat registry → T7 fails
+KILL-CHECK: making the child reuse the parent run_id → T13 fails (two distinct
+  global_history rows expected)
 ```
 
-### CT5: _run_workflow_internal() Refactor
+### CT5: run_workflow() — the shared controller entry point
+
+> **CORRECTED 2026-08-26.** This contract named `_run_workflow_internal` in
+> `src/fa/cli.py`. That symbol does not exist and never shipped:
+> `grep -rn "_run_workflow_internal" src/` returns no matches. S4a extracted
+> the controller to its own module instead. The contract below describes what
+> is actually on main.
 
 ```
-CT5: _run_workflow_internal() TYPE:function
-PRODUCER: src/fa/cli.py:_run_workflow_internal (refactored from _cmd_workflow)
-ROOTS/CALLERS: _cmd_workflow (CLI wrapper), invoke_workflow tool
-INPUTS: roles, task, mode, max_repairs, max_replans, run_id, workspace,
-        config, session_context, run_context, session_db
+CT5: run_workflow() TYPE:function
+PRODUCER: src/fa/inner_loop/workflow_controller.py:run_workflow  (SHIPPED S4a)
+ROOTS/CALLERS: src/fa/cli.py:_cmd_workflow (cli.py:1201),
+               invoke_workflow tool (S4b)
+INPUTS (all keyword-only):
+        roles: list[str], task: str | None,
+        per_role_task: Mapping[str, str | None], mode: str,
+        max_repairs: int, max_replans: int, run_id: str,
+        config: Path, workspace: Path, max_turns: int,
+        output_mode: str = "console",
+        run_stage_fn: Callable[..., int],          # REQUIRED, no default
+        transport: Transport | None = None,
+        secrets: Mapping[str, str] | None = None,
+        session_context: SessionContext | None = None,
+        run_context: RunContext | None = None,
+        session_db: SessionDatabase | None = None
 OUTPUTS: tuple[int, FlowState | None] (exit_code, terminal_state)
-SIDE EFFECTS: writes flow_state.json, eval_report.json, events.jsonl
+SIDE EFFECTS: writes flow_state.json, eval_report.json, events.jsonl;
+              exports one aggregate row to global_history
 INVARIANTS:
-  - No argparse dependency (pure structured params)
-  - _cmd_workflow becomes thin wrapper: parse args → call _run_workflow_internal
-  - Existing behavior byte-identical (no test changes for existing workflow tests)
-KILL-CHECK: if _run_workflow_internal is bypassed by _cmd_workflow → T8 fails
+  - No argparse dependency at the signature (pure structured params).
+    NOTE: _run_stage internally BUILDS an argparse.Namespace to call
+    run_stage_fn (workflow_controller.py:254). That is the injection
+    contract, not a leak — run_stage_fn is _cmd_run, which reads args.
+  - run_stage_fn is REQUIRED. The only production implementation is
+    _cmd_run (cli.py:1213). Any caller must supply it; there is no default.
+  - workflow_controller does NOT import fa.cli (verified). The dependency
+    points one way: cli -> controller.
+  - Existing behavior byte-identical (no test changes for existing tests)
+KILL-CHECK: if _cmd_workflow bypasses run_workflow → existing workflow tests fail
 ```
 
 ### CT6: ACRR Proxy Metric
@@ -250,21 +350,38 @@ CT6: compute_acrr_proxy() TYPE:function/module
 PRODUCER: NEW src/fa/inner_loop/acrr.py:compute_acrr_proxy
 CONSUMER: fa stats (per-run), global_history.db (cross-run projection)
 INPUTS: files_read: int, files_changed: int
-OUTPUTS: float (ACRR proxy = files_read / max(files_changed, 1))
+OUTPUTS: float | None  — files_read / files_changed, or None when
+         files_changed == 0
 SIDE EFFECTS: none (pure function)
 INVARIANTS:
-  - ACRR = 1.0 when files_read == files_changed (optimal)
+  - ACRR == 1.0 when files_read == files_changed (optimal)
   - ACRR > 1.0 when files_read > files_changed (over-reading)
   - ACRR is never negative
-  - Division by zero protected (max(files_changed, 1))
+  - files_changed == 0 returns None ("no denominator"), NOT a number
+  - files_read == 0 and files_changed == 0 returns None
+  - ValueError on negative inputs (a count cannot be negative)
+
+REVISED 2026-08-26 — why None and not max(files_changed, 1):
+  The original spec required compute_acrr_proxy(10, 0) == 10.0 via
+  max(files_changed, 1). That makes the metric's most pathological input —
+  read 10 files, changed nothing, i.e. pure unproductive exploration —
+  numerically IDENTICAL to compute_acrr_proxy(10, 1), a perfectly healthy
+  run. The sentinel is unfalsifiable: the one case RN9 says ACRR exists to
+  detect is the one case it cannot express. Returning None keeps
+  "undefined ratio" distinguishable from "ratio of 10", and forces the
+  display layer to say so.
+  Consumers render None as "n/a (no files changed)".
+
 KILL-CHECK: removing ACRR from stats output → T10 fails
+KILL-CHECK: changing the zero case back to max(files_changed, 1) → the
+  C0 test asserting None for (10, 0) fails
 ```
 
 ### CT7: ADR-16
 
 ```
 CT7: ADR-16 TYPE:document
-PRODUCER: NEW knowledge/adr/ADR-16-complexity-aware-execution.md
+PRODUCER: EDIT (file already exists, see S6 note) knowledge/adr/ADR-16-complexity-aware-execution.md
 CONSUMER: future sessions, llms.txt routing, AGENTS.md reference
 TRIGGER: architectural reference for chat role + escalation + efficiency
 PAYLOAD: Decision record covering: chat role design, E3 estimator pattern,
@@ -308,11 +425,12 @@ KILL-CHECK: N/A (document, not code)
 | A2 | `src/fa/inner_loop/prompt.py` — CHAT_SYSTEM_PROMPT, _ROLE_PROMPTS | EDIT | S2 |
 | A3 | `src/fa/inner_loop/tools/__init__.py` — build_chat_registry | EDIT | S3 |
 | A4 | `src/fa/inner_loop/tools/workflow_tool.py` | ADD | S4 |
-| A5 | `src/fa/cli.py` — _run_workflow_internal, _build_role_registry, _cmd_run | EDIT | S4 |
+| A5 | `src/fa/cli.py` — _build_role_registry, _build_run_tool_registry, _cmd_run, _cmd_stats | EDIT | S4b, S5 |
+| A5b | `src/fa/inner_loop/workflow_controller.py` — run_workflow | SHIPPED S4a | S4a |
 | A6 | `src/fa/inner_loop/acrr.py` | ADD | S5 |
 | A7 | `src/fa/cli.py` — _cmd_stats | EDIT | S5 |
 | A8 | `src/fa/inner_loop/global_history.py` — schema extension | EDIT | S5 |
-| A9 | `knowledge/adr/ADR-16-complexity-aware-execution.md` | ADD | S6 |
+| A9 | `knowledge/adr/ADR-16-complexity-aware-execution.md` | EDIT | S6 |
 | A10 | `knowledge/templates/models.yaml.example` — chat section | EDIT | S2 |
 | A11 | `tests/test_scope_estimator.py` | ADD | S1 |
 | A12 | `tests/test_chat_role.py` | ADD | S2,S3 |
@@ -518,8 +636,8 @@ Do:
   8. Write C1 test: build_chat_registry returns expected tool names
 
 Do-not:
-  - Give chat role fs_write_file or fs_edit_file
-  - Give chat role fs_spawn_subagent
+  - Give chat role fs_write_file or fs_edit_file   [REVERSED by Q1, 2026-08-26]
+  - Give chat role fs_spawn_subagent               [REVERSED by Q2, 2026-08-26]
   - Make chat role mandatory in models.yaml (optional, falls back to coder)
   - Build registry manually in tools/__init__.py (use profiles.py pattern)
 
@@ -527,7 +645,10 @@ Exit criteria:
   - [ ] "chat" in _ROLE_PROMPTS → True
   - [ ] "chat" in PROFILES_RAW → True
   - [ ] build_chat_registry returns registry with fs_search, fs_read_file, fs_run_bash
-  - [ ] build_chat_registry does NOT include fs_write_file, fs_edit_file
+  - [x] ~~build_chat_registry does NOT include fs_write_file, fs_edit_file~~
+        SUPERSEDED 2026-08-26 by operator decision Q1 (commit a638253): chat
+        now HAS fs_write_file + fs_edit_file with no allowlist. Left visible
+        rather than deleted so the S2 record stays honest about what changed.
   - [ ] fa selfcheck --role chat works when chat declared in models.yaml
   - [ ] fa selfcheck --role chat falls back gracefully when not declared
   - [ ] C1 tests pass: pytest tests/test_chat_role.py -v
@@ -995,7 +1116,40 @@ Test class: C1 (regression)
 Oracle: existing workflow test suite passes unchanged
 ```
 
-### S4b: invoke_workflow Tool
+### S4b: invoke_workflow Tool ✅ DONE 2026-08-27
+
+> **Shipped.** `workflow_tool.py` (NEW), registered at the CLI seam for `chat`
+> only; RK6 deadline in `workflow_controller` + `runtime_limits`;
+> `tests/test_invoke_workflow_tool.py` (76) and `tests/test_workflow_deadline.py`
+> (11). Suite 3371p/7f (7 = known env baseline). Mutation **18/18 killed**.
+> Gates: ruff, mypy (6-error baseline), pylint 10.00/10, 7/7 contract scripts.
+>
+> **Q15 resolved = A (standardise).** `invoke_workflow` registers at the CLI
+> seam, so `build_chat_registry` does not contain it and the Q12 self-retiring
+> exemption would NOT have fired. The coherence oracle in
+> `tests/test_prompt_registry_coherence.py` now reads the LIVE corpus
+> (`cli._build_run_tool_registry`, 13 tools) instead of the profile layer, and
+> `_PENDING_REGISTRATION` is **empty**: the chat prompt has zero
+> advertised-but-unregistered tools.
+>
+> **Deviations from the packet, all verified:**
+> - Non-chat caller is at `cli.py:2391` (packet said 2378) and is hardcoded
+>   `"coder"`, so it can never reach the chat branch; it passes no context.
+> - The context provider was extracted to a module-level
+>   `_make_workflow_ctx_provider` because the inline closure pushed `_cmd_run`
+>   past the C901 complexity ceiling (16 > 15).
+> - `_write_stage_failure_state` gained a pass-through for
+>   `WORKFLOW_DEADLINE_EXIT_CODE`; without it fail-fast overwrote the deadline's
+>   terminal state with `stage exited 124` and `timed_out` reported False.
+>   (Mutation M9 confirms.)
+> - Five new public symbols had to be added to `__all__`
+>   (`FA-AUTHORING-V2-EXPORTS-COMPLETENESS`).
+> - `tests/_chat_registry_fixture.py` extracted at the third duplicate copy.
+>
+> **RK8 remains open** and is unchanged by this slice: `fa workflow --roles`
+> accepts `chat` as a stage role, which the thread-local guard cannot see
+> because that stage runs in a separate process.
+
 
 **Traces-to:** G1, GAP3, CT4
 **Depends-on:** S4a (run_workflow exists in workflow_controller.py)
@@ -1003,112 +1157,495 @@ Oracle: existing workflow test suite passes unchanged
 
 ```
 EDIT PACKET E4b / S4b
-What: Add invoke_workflow tool that chat role uses to escalate L3 tasks.
-AS-IS: chat role has no way to escalate to workflow pipeline
-TO-BE: chat role calls invoke_workflow tool → run_workflow() in shared session
+What: Add invoke_workflow tool so the chat role can escalate large tasks.
+AS-IS: chat role has no way to reach the workflow pipeline; the scope
+       estimator's output has no consumer (S1/S3 sit at L2).
+TO-BE: chat calls invoke_workflow -> run_workflow() under a CHILD run_id,
+       sharing the session but not the run identity.
+
+PREREQUISITE FACTS (verified on main, do not re-derive):
+  - run_workflow lives in workflow_controller.py, NOT cli.py. See CT5.
+  - run_workflow REQUIRES run_stage_fn; the only implementation is
+    _cmd_run (cli.py:1213). Omitting it is a TypeError.
+  - build_chat_registry delegates to build_registry_for_role("chat", ...),
+    which builds from PROFILES_RAW. A profile-declared tool needs a builder
+    in profiles.py taking only (root). invoke_workflow needs CLI-owned
+    values, so it CANNOT be profile-declared. Register it post-profile.
+  - _build_run_tool_registry (cli.py:1376) already appends pr_prepare after
+    the role registry is built. That is the precedent and the seam to use.
+  - permission MUST be "workspace" (the schema and wire-name were
+    pre-validated: validate_tool_schema_portability passes,
+    is_valid_wire_name("invoke_workflow") is True).
+  - invoke_workflow does NOT need adding to _NEVER_PARALLEL_TOOLS to be
+    safe: _should_parallelize_tool_batch falls through to "unknown tool ->
+    serial" for any spec whose permission != "read" (loop.py:149-158,
+    verified by execution). Add it anyway for intent, but do NOT claim it
+    closes a hole.
 
 Exact code mechanism:
   1. NEW src/fa/inner_loop/tools/workflow_tool.py:
-     - build_invoke_workflow_tool(run_workflow_fn, session_ctx_factory) → ToolSpec
-     - Handler: parse params → call run_workflow() → return ToolResult
-  2. src/fa/inner_loop/tools/__init__.py:
-     - Register invoke_workflow in build_chat_registry
-  3. src/fa/cli.py:
-     - Wire run_workflow from workflow_controller into chat registry build
+
+     @dataclass(frozen=True)
+     class WorkflowInvocationContext:
+         """Everything run_workflow needs that the tool cannot invent."""
+         parent_run_id: str
+         config: Path
+         workspace: Path
+         max_turns: int
+         session_context: SessionContext | None
+         run_context: RunContext | None
+         session_db: SessionDatabase | None
+         transport: Transport | None
+         secrets: Mapping[str, str] | None
+         run_stage_fn: Callable[..., int]
+
+     def build_invoke_workflow_tool(
+         run_workflow_fn: Callable[..., tuple[int, FlowState | None]],
+         ctx_provider: Callable[[], WorkflowInvocationContext],
+     ) -> ToolSpec
+
+     REPLACES the earlier "session_ctx_factory" parameter, which had no
+     type, no return shape and no named caller.
+
+  2. Child run_id allocation, inside the handler:
+       counter starts at 0 in the closure; each successful admission does
+       n += 1 and child_run_id = _child_run_id(ctx.parent_run_id, n).
+       Rationale in CT4 "RUN IDENTITY".
+
+     _child_run_id MUST respect the run_id grammar, which is validated in
+     two places with the SAME effective limit:
+       cli.py:125          ^[A-Za-z0-9_.-]{1,128}$
+       session/manager.py  [A-Za-z0-9][A-Za-z0-9_.-]{0,127}   (128 total)
+     Naive concatenation overflows: a 125-char parent yields a 129-char
+     child that fails validation (verified by execution). Truncate the
+     PARENT, never the suffix, so the discriminator always survives:
+
+       def _child_run_id(parent: str, n: int) -> str:
+           suffix = f"-wf{n}"
+           head = parent[: 128 - len(suffix)]
+           return f"{head}{suffix}"
+
+     Import the pattern rather than re-typing it; assert the result matches
+     before use and fail with code "invalid_child_run_id" if it does not.
+
+  3. Re-entrancy guard: a module-level threading.local flag, set in a
+     try/finally for the duration of the handler. If already set ->
+     ToolResult.fail("workflow_reentrant", ...).
+
+     threading.local is the correct primitive here, not a plain bool:
+     read-only tool batches are dispatched on a ThreadPoolExecutor
+     (loop.py:361-366), so a process-global flag could be observed across
+     unrelated worker threads. invoke_workflow itself always runs serially
+     (its permission is "workspace", so _should_parallelize_tool_batch
+     refuses to batch it — loop.py:149-158), but the guard must not depend
+     on that remaining true.
+
+     What this guard does and does not cover, stated honestly:
+       COVERS: the same thread re-entering invoke_workflow while a pipeline
+         is already running on it — the recursion case.
+       DOES NOT COVER: `fa workflow --roles planner,chat,eval`. Workflow
+         roles are split from a raw string with no allowlist
+         (cli.py:1136), so "chat" is accepted as a stage role today. That
+         stage runs in a SEPARATE process (run_stage_fn -> _cmd_run), so
+         thread-local state cannot see it.
+       Mitigation for the uncovered case is a role allowlist in
+       _cmd_workflow, which is OUT OF SCOPE for S4b and recorded as RK8.
+       Do not silently widen this slice to fix it.
+
+  4. src/fa/cli.py:_build_run_tool_registry — after the pr_prepare append,
+     add: if role == "chat": registry.register(build_invoke_workflow_tool(...)).
+     The ctx_provider closes over the local run_id/config/workspace/etc.
+     already in scope at the _cmd_run call site.
+     NOTE: _build_run_tool_registry's current signature does not carry these
+     values. Extend it with one keyword-only parameter
+     `workflow_ctx: Callable[[], WorkflowInvocationContext] | None = None`
+     and pass None from the non-run caller (cli.py:2378). When None and
+     role == "chat", skip registration and log a warning — a chat registry
+     built outside a live run legitimately has no workflow to invoke.
+
+RK6 DESIGN — nested-pipeline deadline (operator decision 2026-08-26: MUST
+be handled in S4b, not deferred):
+
+  THE PROBLEM, restated from evidence. Serial tool dispatch has no timeout:
+  the only timeouts in loop.py are on the parallel branch (wait(...,
+  timeout=30) at :367, fut.result(timeout=5) at :371). RuntimeLimits has no
+  wall-clock session cap. So one invoke_workflow call can run planner ->
+  coder -> eval plus up to MAX_REPAIRS_CEILING repair rounds and
+  MAX_REPLANS_CEILING replan rounds with no upper bound on elapsed time,
+  blocking the chat turn indefinitely.
+
+  MECHANISM — cooperative deadline checked between stages.
+
+  Chosen over the two alternatives on purpose:
+    - signal.alarm / SIGALRM: main-thread only, does not compose with the
+      ThreadPoolExecutor path, and interrupts at an arbitrary instruction
+      leaving flow_state.json half-written. Rejected.
+    - killing a subprocess: run_stage_fn is an in-process call
+      (_cmd_run), not a subprocess. Nothing to kill. Rejected.
+  A cooperative check cannot interrupt a stage already in flight, and that
+  limit is stated rather than hidden: the effective worst case is
+  deadline + one stage. That is acceptable because a single stage is
+  already bounded by max_iterations and bash_timeout_seconds; the unbounded
+  quantity is the NUMBER of stages, which is exactly what this caps.
+
+  IMPLEMENTATION:
+    1. runtime_limits.py: add "workflow_timeout_seconds" to _KNOWN_KEYS and
+       to the RuntimeLimits dataclass, default
+       DEFAULT_WORKFLOW_TIMEOUT_SECONDS = 1800 (30 min). Strictly positive,
+       so it is NOT added to _ZERO_ALLOWED_KEYS and NOT added to the float
+       keys — it parses as int like every other cap.
+    2. workflow_controller.py: run_workflow gains
+       `deadline_mono: float | None = None` (keyword-only, defaults None =
+       no deadline, so every existing caller including _cmd_workflow is
+       byte-identical).
+    3. A single guard helper checked at the TOP of _run_stage — the one
+       choke point every dispatch funnels through. Six call sites today
+       (:443 _run_initial_roles, :505 and :545 _run_adaptive, :581
+       _run_linear, :630 and :642 _run_repair); the last two disappear when
+       _run_repair is removed per Q3, leaving four. Guarding inside
+       _run_stage rather than at the call sites is what makes that churn
+       irrelevant:
+
+         def _deadline_exceeded(ctx) -> bool:
+             return (ctx.deadline_mono is not None
+                     and time.monotonic() >= ctx.deadline_mono)
+
+       Put deadline_mono on WorkflowContext so it threads with the rest of
+       the run state rather than through seven signatures.
+    4. On expiry: do NOT raise. Write a terminal FlowState with
+       status="FAILED" and last_transition_reason=
+       f"workflow deadline exceeded after {elapsed}s", emit the aggregate
+       global_history row as usual, and return a non-zero result code.
+       The run stays observable and the artifacts stay well-formed — the
+       same discipline as the existing budget-exhausted paths
+       (_run_adaptive's "repair budget exhausted" branch).
+    5. The tool sets timed_out=True in its result when the terminal
+       reason carries the deadline marker, so the chat model can tell
+       "the pipeline failed" from "the pipeline ran out of time" and
+       respond differently.
+
+  WHY NOT cap it in the tool alone: a deadline enforced only in the tool
+  would have to abandon a still-running pipeline, orphaning its artifacts
+  and its global_history row. Enforcing inside the controller means the
+  pipeline stops itself cleanly and stays auditable.
 
 Allowed files:
   src/fa/inner_loop/tools/workflow_tool.py (NEW)
-  src/fa/inner_loop/tools/__init__.py (EDIT)
-  src/fa/cli.py (EDIT — wire tool into chat registry)
+  src/fa/cli.py (EDIT — _build_run_tool_registry signature + registration)
+  src/fa/inner_loop/loop.py (EDIT — one line, _NEVER_PARALLEL_TOOLS)
+  src/fa/inner_loop/workflow_controller.py (EDIT — deadline_mono param,
+    WorkflowContext field, _run_stage guard; RK6)
+  src/fa/inner_loop/runtime_limits.py (EDIT — workflow_timeout_seconds; RK6)
   tests/test_invoke_workflow_tool.py (NEW)
+  tests/test_workflow_deadline.py (NEW — RK6)
+  NOT tools/__init__.py: registration happens at the CLI seam, because the
+  tool needs CLI-owned context. Editing build_chat_registry would force a
+  cli import into the tools package.
 
 Do:
-  1. Implement build_invoke_workflow_tool with input_schema:
-     {task: str(required), mode: str(default="linear"),
-      roles: str(default="planner,coder,eval"),
-      max_repairs: int(default=2), max_replans: int(default=1)}
-  2. Tool handler: validate params, call run_workflow(), format result
-  3. Register in build_chat_registry
-  4. Write C1 test: invoke_workflow tool with mock transport → returns summary
-  5. Write C1 test: tool registered in chat registry
+  1. Implement the ToolSpec with input_schema:
+     {"type": "object",
+      "properties": {
+        "task":        {"type": "string", "minLength": 1},
+        "mode":        {"type": "string", "enum": ["linear", "adaptive"]},
+        "roles":       {"type": "string"},
+        "max_repairs": {"type": "integer", "minimum": 0,
+                        "maximum": MAX_REPAIRS_CEILING},   # == 3
+        "max_replans": {"type": "integer", "minimum": 0,
+                        "maximum": MAX_REPLANS_CEILING}},  # == 2
+      "required": ["task"],
+      "additionalProperties": false}
+     Defaults applied in the handler, not the schema: mode="linear",
+     roles="planner,coder,eval", max_repairs=2, max_replans=1.
+  2. Handler contract, in order:
+     a. reentrancy guard -> fail "workflow_reentrant"
+     b. ctx_provider() is None -> fail "workflow_unavailable"
+     c. parse roles on "," , strip, drop empties; empty result ->
+        fail "invalid_roles"
+     d. mode not in {"linear","adaptive"} -> fail "invalid_mode"
+        (schema also enforces this; the handler check is the fail-closed
+        half for any caller that bypasses validation)
+     e. allocate child run_id via _child_run_id; validate against the
+        run_id pattern -> fail "invalid_child_run_id" on mismatch
+     f. compute the deadline: monotonic() + ctx.workflow_timeout_seconds
+        (see RK6 DESIGN below)
+     g. call run_workflow_fn(..., run_id=child_run_id, per_role_task={},
+        output_mode="quiet", run_stage_fn=ctx.run_stage_fn,
+        deadline_mono=deadline)
+     h. any exception from run_workflow -> fail "workflow_error" with
+        str(exc); never propagate (a tool must not kill the chat session)
+     i. success -> ToolResult.ok(summary, result={...}) per CT4 OUTPUTS,
+        with timed_out reflecting whether the deadline fired
+  3. Register at the CLI seam per mechanism step 4.
+  4. Add "invoke_workflow" to _NEVER_PARALLEL_TOOLS (intent, not fix).
 
 Do-not:
   - Change workflow controller logic
   - Add new workflow modes
   - Give invoke_workflow to non-chat roles
+  - Reuse the parent run_id for the child workflow
+  - Return "stages ran": run_workflow returns (exit_code, FlowState) and the
+    stage count is local to _run_adaptive/_run_linear. It is NOT reachable
+    from the return value. Dropped from CT4 rather than plumbed.
 
-Exit criteria:
-  - [ ] invoke_workflow tool schema is valid (ToolSpec.input_schema)
-  - [ ] invoke_workflow registered in chat registry
-  - [ ] invoke_workflow NOT in coder/planner/eval registries
-  - [ ] Tool callable from ToolRegistry with mock run_workflow
-  - [ ] C1 tests pass: pytest tests/test_invoke_workflow_tool.py -v
+Exit criteria (all binary):
+  - [ ] ToolSpec registers without raising (schema compiles via
+        fastjsonschema + passes validate_tool_schema_portability)
+  - [ ] "invoke_workflow" in {s.name for s in registry.specs()} for a chat
+        registry built with a non-None workflow_ctx
+  - [ ] "invoke_workflow" NOT in the coder/planner/eval registries
+  - [ ] handler with {"task": "x"} calls run_workflow_fn exactly once with
+        run_id != parent_run_id and run_id.startswith(parent_run_id)
+  - [ ] two successive calls produce run ids ending "-wf1" and "-wf2"
+  - [ ] handler with {"task": "x", "mode": "repair"} -> error code
+        "invalid_mode"
+  - [ ] handler with {"task": "x", "roles": " , "} -> error code
+        "invalid_roles"
+  - [ ] run_workflow_fn raising RuntimeError -> ToolResult.error.code ==
+        "workflow_error" and no exception escapes the handler
+  - [ ] re-entrant dispatch -> error code "workflow_reentrant"
+  - [ ] a 125-char parent run_id yields a child that still matches
+        [A-Za-z0-9][A-Za-z0-9_.-]{0,127} (length <= 128)
+  - [ ] RK6: run_workflow with deadline_mono already in the past runs ZERO
+        stages and returns non-zero
+  - [ ] RK6: a deadline that expires after stage 1 stops the pipeline before
+        stage 2; the recorded stage count is 1, not the full role list
+  - [ ] RK6: on expiry, flow_state.json exists, status == "FAILED", and
+        last_transition_reason contains "deadline exceeded"
+  - [ ] RK6: deadline_mono=None (every existing caller) runs the full
+        pipeline unchanged — existing workflow tests pass untouched
+  - [ ] RK6: the tool's result carries timed_out=True on expiry and
+        timed_out=False on a normal finish
+  - [ ] pytest tests/test_invoke_workflow_tool.py tests/test_workflow_deadline.py passes
 
-Kill-check:
-  - removing invoke_workflow from chat registry → test_invoke_workflow_registered fails
+Kill-checks (each must be demonstrated to FAIL the named test):
+  - remove invoke_workflow registration -> test_invoke_workflow_registered
+  - reuse parent run_id for the child -> test_child_run_id_is_distinct
+  - drop the reentrancy guard -> test_reentrant_call_is_refused
+  - let run_workflow exceptions propagate -> test_workflow_error_is_contained
+  - remove the _run_stage deadline guard -> test_deadline_stops_between_stages
+  - make the deadline raise instead of writing terminal state ->
+    test_deadline_writes_terminal_flow_state
+  - concatenate the child run_id without truncating ->
+    test_long_parent_run_id_stays_valid
 
-Test class: C1
-Oracle: tool execution result + registry membership
+Test class: C1 (composition root: _build_run_tool_registry), with C0p on
+the roles/mode parsing.
+Oracle: ranked — (1) structured ToolResult fields, (2) the run_id actually
+passed to the injected run_workflow_fn, (3) registry membership.
+Fixture honesty: run_workflow_fn is a REAL callable with run_workflow's
+true keyword-only signature that records its kwargs — not a MagicMock.
 ```
 
-### S5: ACRR Proxy in fa stats
+### S5: ACRR Proxy in fa stats  ✅ DONE 2026-08-27 (incl. RK8 allowlist + T14)
 
 **Traces-to:** G3, GAP5, CT6
-**Depends-on:** none (independent of S1-S4)
+**Depends-on:** S4b (child run_id must be distinct before per-run ratios mean
+anything — see the packet body; the earlier "none" was wrong)
 **Target liveness:** L0→L3
 
 ```
 EDIT PACKET E5 / S5
-What: Add ACRR proxy metric to fa stats and global_history.db.
-AS-IS: fa stats shows tool usage, tokens, timing — no efficiency metric
-TO-BE: fa stats shows files_read, files_changed, ACRR proxy per run
+What: Add an ACRR efficiency proxy to global_history and fa stats.
+AS-IS: fa stats shows tool usage, tokens, timing — no efficiency metric.
+TO-BE: each run records files_read / files_changed; fa stats renders ACRR.
+
+DEPENDS-ON: S4b's child-run_id fix. NOT independent, despite the earlier
+  "Depends-on: none". ACRR is computed per global_history row, and until
+  invoke_workflow stops reusing the parent run_id, a chat row and its
+  nested workflow row overwrite each other (CT4 RUN IDENTITY). Computing an
+  efficiency ratio over a row that may describe a different execution is
+  worse than not computing one.
+
+CORRECTED ASSUMPTION — read this before touching _cmd_stats:
+  The original packet said "Compute files_read from event_log ... in
+  _cmd_stats". That renderer CANNOT do this, and its NAME HAS CHANGED.
+  CORRECTED 2026-08-27 (S5 preflight): S10b.3 split _cmd_stats into three
+  independent renderers. The global-history one is _cmd_stats_global_history
+  (cli.py:2805) and its per-run print loop is at cli.py:2871. Its only data
+  source is GlobalHistoryStore.read_all() (verified by execution: zero
+  EventLog references in that function), and per-path detail is not
+  projected into that table.
+  The counting therefore happens at EXPORT time, where the events are
+  already in hand:
+    _extract_telemetry_from_log (global_history.py:248-313) already
+    iterates every event and already branches on ev.kind == "tool_call".
+    tool_call content carries {"params": {...}} including "path"
+    (state.py:751-757). Add distinct-path counting to that existing loop.
 
 Exact code mechanism:
   1. NEW src/fa/inner_loop/acrr.py:
-     - compute_acrr_proxy(files_read: int, files_changed: int) → float
-  2. src/fa/cli.py:_cmd_stats:
-     - Compute files_read from event_log (count distinct paths in fs_read_file events)
-     - Compute files_changed from event_log (count distinct paths in fs_write_file/fs_edit_file events)
-     - Compute ACRR proxy and display in stats output
-  3. src/fa/inner_loop/global_history.py:
-     - Add acrr_proxy column to global_history schema (additive, non-breaking)
-     - Export acrr_proxy in export_session_to_global_history
+     def compute_acrr_proxy(files_read: int, files_changed: int) -> float | None
+     Per CT6: returns None when files_changed == 0; ValueError on negatives.
+  2. src/fa/inner_loop/global_history.py:
+     a. _extract_telemetry_from_log: inside the existing tool_call branch,
+        collect distinct paths into two sets —
+          read set:    tool_name == "fs_read_file"
+          changed set: tool_name in {"fs_write_file", "fs_edit_file"}
+        reading content["params"]["path"] when it is a str. Return
+        "files_read": len(read_set), "files_changed": len(changed_set).
+        (These names mirror SessionState.add_read/add_write, state.py:557/638,
+        which track the same two tool groups for the transaction read-set.)
+     b. GlobalRunRow: add files_read: int = 0, files_changed: int = 0,
+        acrr_proxy: float | None = None. Defaults keep the dataclass
+        backward-compatible with existing constructors.
+     c. build_export_row: populate all three.
+     d. _init_schema MIGRATION — REQUIRED, see below.
+  3. src/fa/cli.py:_cmd_stats_global_history: render one additional line per
+     run from the row's own columns, in the per-run loop at cli.py:2871. No
+     event log access. NOTE the stream contract that function documents: the
+     human report goes to STDERR and only --output json goes to stdout, so the
+     new line must print to stderr like its neighbours.
+
+MIGRATION (the original "ALTER TABLE or new column" was a guess-point):
+  _init_schema uses CREATE TABLE IF NOT EXISTS (global_history.py:139), so an
+  already-deployed DB will NOT gain the columns and every insert will fail
+  with "table runs has no column named files_read". Implement explicitly:
+    after the CREATE TABLE, read PRAGMA table_info(runs); for each of the
+    three new columns not present, execute
+      ALTER TABLE runs ADD COLUMN <name> <type> DEFAULT <default>
+    Idempotent, additive, safe to run on every open.
+  ROLLBACK: reverting the code leaves the three columns in place. Older
+  readers select by name and ignore them, so rollback is safe and needs no
+  down-migration. State this in Risks rather than implying "no migration".
 
 Allowed files:
   src/fa/inner_loop/acrr.py (NEW)
-  src/fa/cli.py (EDIT _cmd_stats)
-  src/fa/inner_loop/global_history.py (EDIT schema + export)
+  src/fa/inner_loop/global_history.py (EDIT — telemetry, row, schema)
+  src/fa/cli.py (EDIT — _cmd_stats_global_history rendering + RK8 role
+    validation in _cmd_workflow; no other behaviour)
   tests/test_acrr.py (NEW)
+  tests/test_workflow_role_allowlist.py (NEW — RK8)
 
 Do:
-  1. Implement compute_acrr_proxy (pure function, 5 lines)
-  2. Add files_read/files_changed extraction to _cmd_stats
-  3. Add ACRR proxy line to stats console output
-  4. Add acrr_proxy to global_history schema (ALTER TABLE or new column)
-  5. Export acrr_proxy in global_history export function
-  6. Write C0 test: compute_acrr_proxy(5, 5) == 1.0
-  7. Write C0 test: compute_acrr_proxy(20, 2) == 10.0
-  8. Write C0 test: compute_acrr_proxy(10, 0) == 10.0 (protected div-by-zero)
-  9. Write C1 test: fa stats shows ACRR for a run with known file reads/changes
+  1. compute_acrr_proxy per CT6.
+  2. Distinct-path counting in _extract_telemetry_from_log.
+  3. Three columns + the PRAGMA-guarded migration.
+  4. Stats line.
+  5. C0 tests: (5,5)->1.0 ; (20,2)->10.0 ; (10,0)->None ; (0,0)->None ;
+     (-1,1) raises ValueError.
+  6. C1 test: an EventLog containing two fs_read_file calls on the SAME path
+     plus one on another, and one fs_write_file, exports files_read == 2
+     (distinct, not 3) and files_changed == 1.
+  7. C1 migration test: create a DB with the pre-S5 schema, open it with the
+     new code, assert the three columns exist and an insert succeeds.
+  8. RK8 — role allowlist (see the dedicated section below).
+  9. T14 (moved here from S4b): a chat run whose nested workflow actually
+     executes produces TWO global_history rows with different roles. S4b
+     injected a fake run_workflow and so never wrote a real row; ACRR is a
+     per-row quantity, so the two-row shape must be proven where it matters.
 
 Do-not:
-  - Implement full E3 cost model C(π) (defer to v2)
-  - Add ACRR to workflow aggregate row (separate concern)
-  - Change existing stats output format (additive only)
+  - Implement the full E3 cost model C(pi) (defer to v2)
+  - Read event logs from _cmd_stats
+  - Change existing stats output format (additive lines only)
+  - Count non-distinct paths
+  - Widen the RK8 allowlist to silence a failing test — a role that legitimately
+    belongs in a pipeline is added by editing the named constant on purpose
+  - Validate roles anywhere except the CLI boundary (stages run in separate
+    call frames with their own registries; a thread-local guard cannot see them)
 
-Exit criteria:
+Exit criteria (all binary):
   - [ ] compute_acrr_proxy(5, 5) == 1.0
   - [ ] compute_acrr_proxy(20, 2) == 10.0
-  - [ ] compute_acrr_proxy(10, 0) == 10.0
-  - [ ] fa stats shows "ACRR proxy: X.XX (files_read=N, files_changed=M)"
-  - [ ] global_history.db has acrr_proxy column after migration
+  - [ ] compute_acrr_proxy(10, 0) is None
+  - [ ] compute_acrr_proxy(0, 0) is None
+  - [ ] compute_acrr_proxy(-1, 1) raises ValueError
+  - [ ] distinct-path test: 3 read calls / 2 unique paths -> files_read == 2
+  - [ ] a pre-S5 DB gains all three columns on open, and insert succeeds
+  - [ ] fa stats prints "ACRR proxy: X.XX (files_read=N, files_changed=M)"
+        and "ACRR proxy: n/a (no files changed)" when files_changed == 0
+  - [ ] fa workflow --roles planner,chat,eval exits 2 with an "invalid role"
+        message naming chat and listing the permitted roles
+  - [ ] fa workflow --roles bogus_role exits 2 the same way
+  - [ ] fa workflow --roles planner,coder,eval is UNCHANGED (exit 0 path)
+  - [ ] a chat run + nested workflow yields 2 global_history rows (T14)
   - [ ] C0 + C1 tests pass
 
-Kill-check: removing compute_acrr_proxy call from _cmd_stats → test_acrr_in_stats fails
+Kill-checks:
+  - remove the compute_acrr_proxy call from the stats renderer ->
+    test_acrr_in_stats fails
+  - revert the zero case to max(files_changed, 1) -> test_acrr_zero_is_none
+    fails
+  - delete the allowlist membership check -> test_rk8_chat_rejected_as_stage_role
+    fails
+  - add "chat" to the allowlist constant -> the same test fails (proves the
+    test binds to the ROLE, not merely to the presence of a check)
+  - drop the PRAGMA migration -> test_pre_s5_db_migrates fails
+  - count non-distinct paths -> test_files_read_is_distinct fails
 
-Test class: C0 + C1
-Oracle: exact float value for C0; stats output contains ACRR line for C1
+Test class: C0 (pure) + C1 (export path, real EventLog, real sqlite file)
+Oracle: exact float / None for C0; exact column values for C1
 ```
+
+#### RK8 — role allowlist (folded into S5, operator-approved 2026-08-27)
+
+VERIFIED LIVE 2026-08-27 by executing build_parser():
+  `fa workflow --roles planner,chat,eval`, `--roles chat`, `--roles bogus_role`
+  and `--roles researcher,coder` ALL parse and run today. cli.py:1141 splits
+  --roles on commas with no membership check of any kind, and
+  status_for_role() silently returns 'CODING' for chat, researcher and
+  bogus_role alike. Nothing downstream ever rejects them.
+
+WHY THIS IS THE RIGHT SHAPE. Two candidate fixes were considered and one
+rejected. A thread-local re-entrancy guard CANNOT work: workflow stages run
+in separate call frames, each building its own registry, so the guard set by
+an outer chat run is not visible at the point a `chat` STAGE would construct
+its own invoke_workflow tool. The defect is therefore an INPUT-VALIDATION
+defect and belongs at the input boundary — the CLI — which is also the only
+place where the operator's intent is still expressed as text.
+
+An allowlist rather than a `chat`-specific denial. A denylist answers "is this
+the one role we already know is dangerous", which is false confidence: it
+accepts every typo and every future role by default, exactly as bogus_role is
+accepted today. The allowlist answers "is this one of the roles this pipeline
+knows how to run". New roles WILL emerge; each then arrives as a deliberate
+one-line edit to a named constant with a test, which is the behaviour we want.
+
+MECHANISM:
+  WORKFLOW_STAGE_ROLES: Final = frozenset({"planner", "coder", "eval"})
+    Module-level in cli.py beside WORKFLOW_MODES, exported via __all__
+    (FA-AUTHORING-V2-EXPORTS-COMPLETENESS applies to new public symbols).
+    Derive nothing from PROFILES_RAW: the allowlist is a POLICY statement
+    about pipeline stages, not a restatement of which profiles exist. chat is
+    a real profile and must still be absent here.
+  Validation goes in _cmd_workflow immediately after the --roles split at
+  cli.py:1141, mirroring the existing --mode block at cli.py:1146-1153 in
+  both style and exit code:
+    unknown = [r for r in roles if r not in WORKFLOW_STAGE_ROLES]
+    if unknown: print an error naming the offending role(s) AND the permitted
+    set, then return 2.
+  Order matters: validate BEFORE any run_id allocation or artifact write, so a
+  rejected invocation leaves no state behind.
+
+WHY chat is excluded even though it is a valid profile: a chat stage would
+construct its own invoke_workflow tool and could recurse into a fresh
+workflow, and the S4b re-entrancy guard cannot observe it across call frames.
+Excluding chat at the boundary is what makes that guard's blind spot
+unreachable.
+
+SCOPE FENCE: this is CLI input validation only. Do not touch status_for_role
+(its 'CODING' default is reached by other callers and is out of scope), the
+controller, or the stage loop.
+
+### S7-S9: Deterministic routing + full E3 cost model — SEE ADDENDUM
+
+**Added 2026-08-27 (operator-directed).** Three new slices are specified in a
+companion plan: `PLAN-ADDENDUM-deterministic-routing-S7-S9.md`.
+
+- **S7** — deterministic escalation: a pre-run capability gate (chat loses write
+  tools when the estimator confidently says `workflow_linear`) plus a mid-run
+  scope tripwire. Driven by a measurement taken this session: the estimator is
+  60% accurate overall, ALL errors are under-scopes, and accuracy by confidence
+  is 0.8 -> 100%, 0.6 -> 60%, 0.3 -> 33%. The gate therefore binds only the 0.8
+  bucket.
+- **S8** — the full E3 cost model (Eq. 1) and real ACRR (Eq. 3) against a
+  self-referential floor, replacing the S5 file-ratio proxy, which is renamed
+  `read_amplification` because it was never the paper's ACRR.
+- **S9** — live verification sheet with pasted real output.
+
+**S6 is re-sequenced to run LAST** (S7 -> S8 -> S9 -> S6) so ADR-16 records
+settled decisions once rather than being amended twice.
 
 ### S6: ADR-16 + Documentation
 
@@ -1123,13 +1660,20 @@ EDIT PACKET E6 / S6
 What: Write ADR-16 and update documentation.
 
 Exact code mechanism:
-  1. NEW knowledge/adr/ADR-16-complexity-aware-execution.md
+  0. CORRECTED 2026-08-27 (preflight): ADR-16 is NOT new. It already exists
+     on disk at 276 lines with status "proposed", committed in the base
+     revision 00c1c4a. S6 therefore EDITS it: flip Status proposed ->
+     accepted, and reconcile its recorded decisions with what S1-S5 actually
+     shipped (the operator confirmed ADR-16 is not immutable and its records
+     may be changed to match the agreed design). Read the file before
+     writing; do not recreate it from the plan's summary.
+  1. EDIT knowledge/adr/ADR-16-complexity-aware-execution.md
   2. EDIT knowledge/llms.txt — add ADR-16 routing
   3. EDIT knowledge/instructions/02-operations.md — chat role section
   4. EDIT AGENTS.md — add chat role to role descriptions
 
 Allowed files:
-  knowledge/adr/ADR-16-complexity-aware-execution.md (NEW)
+  knowledge/adr/ADR-16-complexity-aware-execution.md (EDIT — ALREADY EXISTS, 276 lines, status: proposed)
   knowledge/llms.txt (EDIT)
   knowledge/instructions/02-operations.md (EDIT)
   AGENTS.md (EDIT)
@@ -1144,6 +1688,32 @@ Do:
   2. Update llms.txt BY-DEMAND INDEX with ADR-16
   3. Add chat role section to operations manual
   4. Add chat role to AGENTS.md role descriptions
+  5. CARRIED FORWARD FROM S8 (operator instruction 2026-08-27). ADR-16 MUST
+     record the self-referential-floor caveat VERBATIM, in the Consequences
+     section, in these words:
+
+       "The floor is self-referential: it derives from the run's own
+       change-set, so a run that changed the WRONG files still scores well.
+       ACRR measures redundancy, never correctness."
+
+     Why this is mandatory and not editorial: cost_floor is computed from the
+     paths the run itself modified, so a confidently-wrong run defines its own
+     cheap baseline and reports a flattering ACRR. Anyone reading the
+     calibration table without this sentence will over-trust it as a quality
+     metric. It is an efficiency metric that presupposes success, which is
+     also why `fa stats --calibration` shows successful runs only.
+
+     Also record, from S8 as shipped:
+     - the fitted weights (alpha=1.0, beta=0.000415, gamma=0.1, delta=1.5) WITH
+       the derivation: median src/*.py = 7234 B ~= 1808 tokens, beta set so a
+       median file's token cost is half its file cost; paper defaults measured
+       to put the file axis at 0.43-2.17% of C and were rejected;
+     - that the floor EXCLUDES latency, per E3 LLM-Case 7.7, to stay
+       deterministic;
+     - that ACRR is recorded for every run and filtered at display (Q22),
+       quoting the reason: a cheap failure is not an efficiency;
+     - the E3 7.2 monotonicity caveat: the authors concede it is "partly
+       mechanical", so present it as a descriptive signature, not a scaling law.
 
 Do-not:
   - Change any existing ADR text
@@ -1157,10 +1727,126 @@ Exit criteria:
   - [ ] No broken doc links
   - [ ] CHAT_SYSTEM_PROMPT revised based on S3-S5 integration findings
   - [ ] Chat tool set revised based on S3-S5 integration findings
+  - [ ] ADR-16 contains the self-referential-floor caveat VERBATIM (grep for
+        "ACRR measures redundancy, never correctness")
+  - [ ] ADR-16 records the fitted weights with their derivation
+  - [ ] ADR-16 states the floor excludes latency and why
 
 Kill-check: N/A (documentation)
 Test class: static (doc link check)
 ```
+
+> **S6 status (2026-08-28):** the ADR-16 draft portion is **done** — ADR-16 was
+> edited in place and grew from 276 → 581 lines with the S7–S10 shipped-architecture
+> addendum, the verbatim self-referential-floor caveat, fitted-weight derivation,
+> latency-exclusion rationale, Q22 display filtering, the evidence-driven two-layer
+> revision, and the tuned-constants table. ADR-16 stays **Status: proposed** by operator
+> decision until S11 closes with live-contour data (it must not assert constants the
+> live contour has not validated). The remaining S6 doc updates (`llms.txt` routing
+> index, `instructions/02-operations.md` chat section, `AGENTS.md` roles,
+> `models.yaml` example, CHAT_SYSTEM_PROMPT/tool-set revision) are carried into **S11**
+> and ship together with the live-validation results.
+
+---
+
+### S10: Scope control — evidence-driven runtime expansion ✅ DONE 2026-08-28
+
+**Standalone plan (SSOT for this slice):** `PLAN-scope-control-S10-final.md` (operator's
+home workspace) — slices S10.1–S10.8. This parent entry is the index; the scope-control
+plan owns the per-contract detail.
+
+**Traces-to:** G1–G11, CT1–CT11, DP-1…DP-9, Q22/Q25/Q26 · **Depends-on:** S1–S9 ·
+**Target liveness:** L0→L3 (pure cores C0/C0p; wiring C1; CLI C2; mutation sweep C4).
+
+What shipped (new pure modules, stdlib-only policy cores + thin seams):
+
+- **S10.1 `inner_loop/expansion.py`** — three-level posture state machine:
+  `next_level()` monotone/idempotent/ceiling-3; `verify_failed → L3`, high-tier write
+  → L3, high-tier read **arms** L2; bulk counters tier-gated (safe bulk silent);
+  `workflow_linear` never re-escalated.
+- **S10.2 `inner_loop/path_risk.py`** — positional risk model (Q26): safe/medium/high
+  tiers from config; unknown prefix → **medium**; `MAX` combines lexical+path;
+  `tests/knowledge/scripts` = medium (verification posture only, never auto-workflow);
+  `src/` + root manifests = high; additive config + structured warnings.
+- **S10.3 `skills/_inject.py`** — deterministic L2 planner-skill injection
+  (warm `feature-planning` / cold `plan-authoring`; frontmatter strip; full body on
+  entry turn via `skills_conditional`, anchor after; no body at L3).
+- **S10.4 `inner_loop/observations.py`** — per-turn observation block rebuilt by
+  assignment (no append); eviction order exhausted>escalation>verification>skill under
+  the 1800-char cap; tier-keyed verification posture (advisory, never changes level).
+- **S10.5 `inner_loop/tools/workflow_tool.py`** — escalation budget **K enforced in the
+  tool only** ((K+1)-th call → `workflow_budget_exhausted` → terminal observation +
+  durable event); live **handoff payload** from session facts (Goal / Start here ≤5 /
+  Observed / Modified / Candidate leads ≤10 / "Do exactly" 3 positive steps; ≤30 paths;
+  missing facts → goal-only, no crash).
+- **S10.6 `calibration.py`** — reliability view: `success_rate` over **ALL** runs,
+  ACRR successes-only (Q22); `below_reliability_target = n ≥ min_flag_runs (10) AND
+  rate < 1−ε (0.05)`; gate default **OFF** (`chat_escalation_gate=False`, Q25),
+  display-only.
+- **S10.7** — R1 held-out wording (14 pairs: 8 EN cue-free + 6 RU operator style) and
+  R2 deceptive tasks (6, incl. CLI "simplify the main function" and the pre-push
+  force) — proves the two-layer premise: the text estimator under-scopes, the evidence
+  engine catches it.
+- **S10.8** — mutation sweep: **21/21 killed, 0 survivors** (byte-identical restore,
+  hash-verified); two survivors on first run were real test gaps, closed with a C1
+  exhausted-latch test and a C2 K-from-config CLI test.
+
+Verification: S10 target suite **196 passed deterministic**; full `just check` toolchain
+green (ruff/format/deptry/pylint 10.00/mypy `--strict` 403 files 0 errors/pyrefly 0/
+all contract scripts); full suite **3614 passed at 85.8%** coverage. The only red gates
+are two **deliberate doc-integrity baits** for the live-contour trial (see S11):
+`test_doc_links` (46 broken links in the flattened `worklogs/archive`) and
+`test_historical_workspace_docs_have_top_level_superseded_banner` (moved
+`knowledge/pr-notes/workspace-isolation.md`); plus a pre-existing cli-coverage-floor
+stale entry (`_run_adaptive`, since S4a extraction) **fixed in this slice**.
+
+Log-kind: `scope_expansion` + `expansion_exhausted` added; S7 `scope_tripwire` retired
+as an emitter but retained as a **dormant alias** (S8/S9 projection keys on it).
+
+---
+
+### S11: Live verification rev2 + final ADR/doc closure + plan closure — OPEN (next)
+
+**Traces-to:** G7–G11, CT8–CT12, DP-6/DP-8 · **Depends-on:** S10 (DONE) ·
+**Target liveness:** **L3 live evidence** (the live chat contour).
+
+Work, in order:
+
+1. **S7/S10 live verification sheet — rev2**
+   (`worklogs/reviews/S10-LIVE-VERIFICATION-rev2.md`, copy/paste self-checking, same
+   discipline as S9: no expected output, each block prints its own PASS/FAIL, temp
+   `FA_STATE_ROOT`, trap-clean). **Two parts:**
+   - **Part A — deterministic CLI self-checks (self-oracled):** correct the S9 sheet's
+     stale `chat_escalation_gate defaults to TRUE` line (Q25: default **off**,
+     observe-only); verify tier classification on real paths (src→high, tests/knowledge
+     →medium, archive→safe, unknown→medium); expansion levels 1→2 (read arm)→3 (write /
+     verify_failed); K denial (`workflow_budget_exhausted` on the (K+1)-th call) and the
+     terminal `expansion_exhausted` observation; handoff payload sections + 5/10/30 caps;
+     `fa stats --calibration` JSON+human fields, ε/min-flag gate n<10 not flagged,
+     all-failed mode shows success_rate=0.00 + BELOW RELIABILITY TARGET; K/ε/knobs read
+     from `runtime_limits`.
+   - **Part B — live contour behavioural rows (observed via durable events, not
+     self-oracled):** run the chat agent on real tasks in `~/.fa` and observe the
+     routing/expansion/handoff trajectory in the event log — **including the deliberate
+     doc-link/banner bait**, which is staged exactly so the chat agent gets a full
+     cycle (triage → evidence → escalation/handoff) on a task its text estimator
+     under-scopes.
+2. **Patch + run the live contour**; collect measurements.
+3. **Final tweaks per live data (tune the ADR §K table):** ε, `min_flag_runs`, K, tier
+   prefixes, observation cap, handoff caps, cost weights; decide whether/when
+   `chat_escalation_gate` flips on (default stays off until data supports it).
+4. **ADR-16 closure:** append a dated **Live validation** note with measured numbers,
+   then flip **Status → Accepted**.
+5. **Remaining S6 doc updates:** `llms.txt` routing index,
+   `instructions/02-operations.md` chat section, `AGENTS.md` roles,
+   `models.yaml.example` chat section, CHAT_SYSTEM_PROMPT/tool-set revision per
+   integration findings.
+6. **Plan closure:** resolve the staged doc-integrity baits (or formally accept them),
+   confirm the full gate is green, close the parent plan and the scope-control plan.
+
+**DoD:** live sheet rev2 executed on the live contour with output pasted back; the ADR
+§K constant table shows measured values or an explicit "unchanged, validated"; ADR-16
+Accepted; docs updated with no new broken links; mutation sweep still 0 survivors.
 
 ---
 
@@ -1174,8 +1860,16 @@ Test class: static (doc link check)
 | T4 | C1 | Chat role run with L2 task → d̂=2 in scope_estimate | event_log fields | remove estimate_scope call | S3 |
 | T5 | C1 | Chat role dispatches with CHAT_SYSTEM_PROMPT | System message content | remove "chat" from _ROLE_PROMPTS | S2 |
 | T6 | C1 | Ambiguous task → ĉ<0.5 in scope_estimate | confidence field | N/A (data-driven) | S3 |
-| T7 | C1 | invoke_workflow tool registered in chat registry | Tool name in registry | remove from registry | S4 |
-| T8 | C1 | invoke_workflow tool calls _run_workflow_internal | Mock verification | remove delegation | S4 |
+| T7 | C1 | invoke_workflow tool registered in chat registry | Tool name in registry | remove from registry | S4b |
+| T8 | C1 | invoke_workflow calls run_workflow (workflow_controller) with an injected run_stage_fn | recorded kwargs on a real-signature fake | remove delegation | S4b |
+| T13 | C1 | invoke_workflow allocates a CHILD run_id distinct from the parent | recorded run_id kwarg; startswith(parent) and != parent | reuse parent run_id | S4b |
+| T14 | C1 | a chat run and its nested workflow produce TWO global_history rows | row count == 2, roles differ | reuse parent run_id | **S5** (moved 2026-08-27: S4b injected a fake run_workflow, so no real rows were ever written; this is an S5 concern because ACRR is per-row) |
+| T15 | C0p | roles/mode parsing rejects empty roles and non-enum modes | error codes invalid_roles / invalid_mode | accept any string | S4b |
+| T16 | C1 | pre-S5 global_history DB gains files_read/files_changed/acrr_proxy on open | PRAGMA table_info + successful insert | drop the migration | S5 |
+| T17 | C1 | RK6: a deadline expiring after stage 1 stops the pipeline before stage 2 | recorded stage count == 1 | remove the _run_stage guard | S4b |
+| T18 | C1 | RK6: on expiry flow_state.json is well-formed, status FAILED, reason contains "deadline exceeded" | parsed FlowState fields | make the deadline raise | S4b |
+| T19 | C1 | RK6: deadline_mono=None leaves every existing caller byte-identical | existing workflow suite green | default to a finite deadline | S4b |
+| T20 | C0p | a 125-char parent run_id yields a child <= 128 chars matching the run_id grammar | re.fullmatch against the real pattern | concatenate without truncating | S4b |
 | T9 | C1 | models.yaml without chat → coder fallback | Role resolution | N/A (existing) | S2 |
 | T10 | C1 | fa stats shows ACRR proxy | Output contains "ACRR" | remove ACRR computation | S5 |
 | T11 | C0 | compute_acrr_proxy division-by-zero protected | Exact float | N/A (pure) | S5 |
@@ -1188,7 +1882,7 @@ root: drive_session (real composition root)
 matrix: M1 (chat declared), M2 (chat not declared)
 paths-covered: P1-P8 (8/8)
 producer targets: estimate_scope, CHAT_SYSTEM_PROMPT, build_chat_registry,
-                  invoke_workflow, _run_workflow_internal, compute_acrr_proxy
+                  invoke_workflow, run_workflow, compute_acrr_proxy
 pyramid: A (all deterministic)
 ```
 
@@ -1202,14 +1896,17 @@ pyramid: A (all deterministic)
 |---|---|---|---|
 | RK1 | Estimator keywords too narrow — misses real L3 tasks | Start optimistic (E3 principle); expand captures misses | Track escalation rate in ACRR |
 | RK2 | invoke_workflow breaks session context sharing | Share session_context/run_context/session_db explicitly | C1 test with real session |
-| RK3 | _run_workflow_internal refactor breaks existing tests | Regression gate: all existing workflow tests must pass | pytest test_cli_ergonomics |
+| RK3 | ~~_run_workflow_internal refactor breaks existing tests~~ **CLOSED in S4a** — the extraction shipped as `run_workflow` in workflow_controller.py with the full suite green | Regression gate: all existing workflow tests must pass | pytest test_cli_ergonomics |
 | RK4 | ACRR proxy too coarse (file ratio misses token waste) | v1 is acknowledged proxy; full cost model in v2 | Research note: document limitation |
-| RK5 | Chat role weakens security (bash access) | IntentGuard restricts to READ_ONLY; no write tools | C3 test: chat cannot write files |
+| RK5 | ~~Chat role weakens security (bash access)~~ **RETIRED 2026-08-26** | The stated mitigation was never implemented and the premise is now reversed. `_build_run_hook_registry` takes no `role` (cli.py:1389), `IntentGuard(repo_root, draft_store)` is role-blind (cli.py:1471), and `intent_guard.py` contains zero `role` references — chat's bash was never restricted to READ_ONLY. Since chat also now holds write tools by decision Q1, "chat cannot write files" is not a property to defend. | n/a — see RK6 |
+| RK6 | A nested workflow runs unbounded inside one chat tool call | **RESOLVED 2026-08-26 — option (a), in scope for S4b.** Cooperative wall-clock deadline: `workflow_timeout_seconds` (default 1800) → `run_workflow(deadline_mono=...)` → checked at the top of `_run_stage`, the single choke point for all seven dispatch sites. On expiry the controller writes a terminal `FAILED` FlowState with reason "deadline exceeded", exports its global_history row, and returns non-zero — it does not raise. Full mechanism and rejected alternatives (SIGALRM, subprocess kill) in the S4b packet under "RK6 DESIGN". Known limit, stated not hidden: a stage already in flight is not interrupted, so the worst case is deadline + one stage. | `timed_out=True` in the tool result; `last_transition_reason` contains "deadline exceeded" |
+| RK7 | Cost budgets do not compose across the escalation boundary | **ACCEPTED AS-IS 2026-08-26 (operator decision).** `CostGuardian(budget_usd=limits.cost_budget_usd)` is constructed per run (cli.py:1029, cli.py:1476), so a chat session with budget B that escalates can spend B (chat) + B × stages. Deliberately not fixed in S4b: the budget is a per-run guardrail, not a global ledger, and RK6's deadline now bounds the number of stages that can run. Revisit if observed spend justifies threading a remaining-budget value into the child. **This is a known, accepted multiplier — not an oversight.** | `fa stats` cost totals exceed the configured per-run budget |
+| RK8 | `chat` is accepted as a workflow STAGE role, bypassing the re-entrancy guard | **FOLDED INTO S5 (operator decision 2026-08-27): role allowlist.** An allowlist is the fitting design precisely because new roles may emerge later — a closed, named set makes each addition a deliberate edit rather than an accident. Mechanism in the S5 packet under "RK8 — role allowlist". Original analysis: `_cmd_workflow` splits `--roles` from a raw string with no allowlist (cli.py:1136), so `fa workflow --roles planner,chat,eval` runs a chat stage that could itself call `invoke_workflow`. The thread-local guard cannot see it because each stage runs via `run_stage_fn` → `_cmd_run` in a separate call frame with its own registry. Mitigation: validate `--roles` against the known pipeline roles in `_cmd_workflow`. Small and self-contained, but it is a CLI-validation change, not part of the tool slice. | a chat stage appears in a workflow run's stage list |
 
 ### Rollback
 
 - Each slice is independently revertable (separate commits)
-- No data migration (ACRR column is additive)
+- S5 DOES require a migration: `_init_schema` uses CREATE TABLE IF NOT EXISTS (global_history.py:139), so existing DBs need PRAGMA-guarded ALTER TABLE for the three new columns. Rollback is safe without a down-migration (name-based reads ignore extra columns).
 - Chat role is optional in models.yaml — removing it reverts to pre-existing behavior
 - invoke_workflow tool only appears in chat registry — removing it has no effect on other roles
 
@@ -1246,8 +1943,8 @@ pyramid: A (all deterministic)
 - 4 roles in _ROLE_PROMPTS (planner, coder, eval, chat) — L3
 - estimate_scope() callable, tested, integrated — L3
 - invoke_workflow tool registered in chat registry — L3
-- _run_workflow_internal callable from both CLI and tool — L3
-- ACRR proxy in fa stats output and global_history.db — L3
+- run_workflow (workflow_controller.py) callable from both CLI and tool — L3
+- ACRR proxy in fa stats output and global_history.db (files_read, files_changed, acrr_proxy columns) — L3
 - ADR-16 accepted and referenced — L3
 
 **ARTIFACTS:**
@@ -1258,10 +1955,10 @@ pyramid: A (all deterministic)
 
 **Plan is DONE when:**
 - All S1-S6 slices complete with after-edit gates green
-- All T1-T12 tests pass
+- All T1-T20 tests pass
 - `just check` passes (lint + mypy + tests)
 - `fa run -r chat "fix typo in README"` works end-to-end
-- `fa run -r chat "refactor workflow controller"` escalates to workflow
+- `fa run -r chat "refactor workflow controller"` escalates to workflow, and the escalation produces a SECOND global_history row under a child run_id
 - `fa stats` shows ACRR proxy for completed runs
 - ADR-16 is committed and referenced in llms.txt
 - No blocking Q# remains
@@ -1278,10 +1975,24 @@ pyramid: A (all deterministic)
 - [ ] Matrix has ≥1 covering step per row ✓
 - [ ] Fixtures/types are honest (real types, not loosened mocks) ✓
 - [ ] No vague verbs without mechanism ✓
-- [ ] Security: chat role does NOT get write tools (C3) ✓
-- [ ] All ID references resolve ✓
+- [x] Security: chat role's boundary is the scope estimator, not tool withholding. Chat HAS write/edit tools (Q1, shipped a638253). The old gate line asserted the opposite and is retired; RK5 explains why it was never enforced anyway.
+- [x] All ID references resolve — CT5 corrected 2026-08-26: it named `_run_workflow_internal`, which has no matches in src/. The real symbol is `run_workflow` in workflow_controller.py.
 - [ ] Blocking Q# set is EMPTY ✓
 - [ ] Minimal-mechanism check: no new dependencies, no LLM calls for classification ✓
 - [ ] Research notes fully dispositioned ✓
 
-**Status: DRAFT → promote to READY after operator review of this plan**
+**Status: S1–S4a SHIPPED. S4b/S5/S6 revised 2026-08-26 after an adversarial
+review (`/home/user/plan-review-S4b-S6-2026-08-26.md`), then re-audited
+against the code a second time (`/home/user/plan-edit-audit-2026-08-26.md`),
+which found four defects in the first revision and corrected them.
+
+Three original blocking assumptions were false and are fixed in-place: the
+shared-run_id design (CT4), the `_run_workflow_internal` symbol (CT5), and
+S5's event-log-in-`_cmd_stats` data source.
+
+Operator decisions 2026-08-26: **RK6 (nested-pipeline timeout) is RESOLVED
+and in scope for S4b** — cooperative deadline checked in `_run_stage`.
+**RK7 (cost-budget composition) is ACCEPTED AS-IS.** RK8 (chat as a workflow
+stage role) is newly recorded and OUT OF SCOPE.
+
+S4b is READY to implement. No blocking Q# remains.**

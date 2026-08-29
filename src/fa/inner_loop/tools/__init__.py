@@ -12,8 +12,9 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
-from fa.inner_loop.registry import ToolRegistry, ToolSchemaPortabilityError, ToolSpec
+from fa.inner_loop.registry import ToolRegistry, ToolSchemaPortabilityError, ToolSpec, ToolWireNameError
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
+from fa.inner_loop.tool_names import is_valid_wire_name
 from fa.inner_loop.tools.prepare_pr import build_prepare_pr_tool
 from fa.inner_loop.tools.read_file import build_read_file_tool
 from fa.inner_loop.tools.run_bash import build_run_bash_tool
@@ -92,8 +93,24 @@ def _register_optional_tool(
     if builder is None or tool_name in registry.names():
         return
     try:
-        registry.register(builder())
-    except ToolSchemaPortabilityError:
+        spec = builder()
+        # D13: the SECOND composition layer. ``build_registry_for_role`` only
+        # sees profile tools; everything added here (fs_search, fs_usage,
+        # fs_chronicle_search, fs_spawn_subagent, pr_prepare, ...) bypassed the
+        # wire-name guard entirely, so a malformed name in an optional builder
+        # still reached the provider. Same policy, same enforcement point type:
+        # a composition root, not ToolRegistry.register (which 16 test sites
+        # use with deliberately dotted names).
+        if not is_valid_wire_name(spec.name):
+            raise ToolWireNameError(spec.name)
+        registry.register(spec)
+    except (ToolSchemaPortabilityError, ToolWireNameError):
+        # D12: both are correctness failures, not availability failures.
+        # The generic fallback below exists for a missing/broken optional
+        # builder; degrading to a reduced registry on a malformed tool
+        # NAME would ship a provider-rejectable tool set while silently
+        # dropping tools the role's prompt promises (measured: chat falls
+        # from 9 tools to 6, losing fs_write_file and fs_edit_file).
         raise
     except Exception as exc:  # noqa: BLE001 - optional builder availability remains fail-degraded
         logger.warning("Failed to register %s: %s", tool_name, exc)
@@ -147,7 +164,13 @@ def build_baseline_registry(
         from fa.inner_loop.profiles import build_registry_for_role
 
         registry = build_registry_for_role("implementer", workspace_root, bash_timeout=bash_timeout_seconds)
-    except ToolSchemaPortabilityError:
+    except (ToolSchemaPortabilityError, ToolWireNameError):
+        # D12: both are correctness failures, not availability failures.
+        # The generic fallback below exists for a missing/broken optional
+        # builder; degrading to a reduced registry on a malformed tool
+        # NAME would ship a provider-rejectable tool set while silently
+        # dropping tools the role's prompt promises (measured: chat falls
+        # from 9 tools to 6, losing fs_write_file and fs_edit_file).
         raise
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         logger.warning(f"Failed to build implementer registry via profiles, fallback baseline: {exc}")
@@ -175,7 +198,13 @@ def build_planner_registry(
         from fa.inner_loop.profiles import build_registry_for_role
 
         registry = build_registry_for_role("planner", workspace_root, bash_timeout=bash_timeout_seconds)
-    except ToolSchemaPortabilityError:
+    except (ToolSchemaPortabilityError, ToolWireNameError):
+        # D12: both are correctness failures, not availability failures.
+        # The generic fallback below exists for a missing/broken optional
+        # builder; degrading to a reduced registry on a malformed tool
+        # NAME would ship a provider-rejectable tool set while silently
+        # dropping tools the role's prompt promises (measured: chat falls
+        # from 9 tools to 6, losing fs_write_file and fs_edit_file).
         raise
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         logger.warning(f"Failed to build planner registry via profiles, fallback: {exc}")
@@ -205,7 +234,13 @@ def build_eval_registry(
         from fa.inner_loop.profiles import build_registry_for_role
 
         registry = build_registry_for_role("verifier", workspace_root, bash_timeout=bash_timeout_seconds)
-    except ToolSchemaPortabilityError:
+    except (ToolSchemaPortabilityError, ToolWireNameError):
+        # D12: both are correctness failures, not availability failures.
+        # The generic fallback below exists for a missing/broken optional
+        # builder; degrading to a reduced registry on a malformed tool
+        # NAME would ship a provider-rejectable tool set while silently
+        # dropping tools the role's prompt promises (measured: chat falls
+        # from 9 tools to 6, losing fs_write_file and fs_edit_file).
         raise
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         logger.warning(f"Failed to build verifier registry via profiles, fallback: {exc}")
@@ -227,19 +262,33 @@ def build_chat_registry(
     *,
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
 ) -> ToolRegistry:
-    """Chat = pair-programming partner (read+search+bash+blackboard+reach).
+    """Chat = generalist pair-programming partner.
 
-    Chat role gets read-only tools for exploration. No write/edit tools.
-    The invoke_workflow tool is registered in S4 (not yet available).
+    Chat is a full participant, not a read-only viewer: it reads, searches,
+    runs bash, and **writes and edits files anywhere in the workspace**. That
+    is deliberate. Notes, research and scratch files are chat's own output, and
+    small code edits are exactly the work it should handle in-line rather than
+    paying for a full pipeline.
 
-    Security boundary: chat cannot mutate files directly. Complex tasks
-    are escalated via invoke_workflow (S4) to the full planner→coder→eval pipeline.
+    Scope discipline comes from the deterministic scope estimator, which sizes
+    the request and routes large work to ``invoke_workflow``
+    (planner→coder→eval). Withholding write tools would not add safety here —
+    it would only block the small edits chat exists to make.
+
+    The tool list is owned by ``PROFILES_RAW["chat"]``; this function
+    delegates there so the declaration and the built registry cannot drift.
     """
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
         registry = build_registry_for_role("chat", workspace_root, bash_timeout=bash_timeout_seconds)
-    except ToolSchemaPortabilityError:
+    except (ToolSchemaPortabilityError, ToolWireNameError):
+        # D12: both are correctness failures, not availability failures.
+        # The generic fallback below exists for a missing/broken optional
+        # builder; degrading to a reduced registry on a malformed tool
+        # NAME would ship a provider-rejectable tool set while silently
+        # dropping tools the role's prompt promises (measured: chat falls
+        # from 9 tools to 6, losing fs_write_file and fs_edit_file).
         raise
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         logger.warning(f"Failed to build chat registry via profiles, fallback: {exc}")

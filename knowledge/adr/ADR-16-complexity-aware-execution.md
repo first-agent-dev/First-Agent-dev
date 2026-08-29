@@ -1,6 +1,16 @@
 # ADR-16 — Complexity-Aware Execution (Chat Role, Scope Estimation, Workflow Escalation)
 
 - **Status:** proposed
+  - *2026-08-26:* Option B (below) proposed and accepted as the architecture direction.
+  - *2026-08-28 (S10 addendum):* the full Estimate→Execute→Expand loop has now been
+    **implemented and mutation-tested** (slices S7–S10). The addendum at
+    [§ Addendum 2026-08-28](#addendum-2026-08-28--shipped-architecture-s7s10) below records
+    what shipped, the places where the shipped mechanism differs from the original proposal
+    (the routing decision is evidence-driven, not keyword-driven), and the set of tuned
+    constants that await live-contour validation in slice S11. This ADR is **deliberately
+    not flipped to Accepted until S11 closes**: per "never assert beyond verified", the
+    numeric constants (ε, K, tier prefixes, caps, fitted cost weights) are code variables
+    seeded to documented values, not yet calibrated against the live chat contour.
 - **Date:** 2026-08-26
 - **Deciders:** Project Owner + Agent-Assisted Architecture Session
 
@@ -259,6 +269,315 @@ file charges on three axes at once). Full cost model is deferred to v2.
 - **ADR-13 (Workspace Isolation):** Chat operates in managed workspace clone.
 - **ADR-17 (Context Management):** Chat role benefits from compaction for
   longer conversations. No new compaction logic needed.
+
+---
+
+## Addendum 2026-08-28 — Shipped architecture (S7–S10)
+
+> This addendum records the system **as built and tested**, not as first proposed.
+> The Option B architecture above was the direction; the slices that landed
+> (S1 estimator, S2 chat role, S3 CLI integration, S3.5 observability, S4 workflow
+> controller + `invoke_workflow` tool, S5 ACRR proxy, S7 deterministic routing, S8 full
+> cost model, S9 live-verification sheet, **S10 scope control / evidence-driven
+> expansion**) sharpened one load-bearing fact that changes how the whole thing must be
+> read.
+
+### A. The load-bearing revision: routing is evidence-driven, not keyword-driven
+
+The original proposal (Option B) framed the estimator as "optimistic, with the workflow
+as a safety net for under-estimates." Implementation and measurement proved the framing
+needed to be stronger: the lexical estimator is **expected to be wrong on the hardest
+tasks**, and correctness therefore cannot depend on the words in the task. We call this
+the **two-layer design**:
+
+1. **Layer 1 — the lexical estimator** (`estimate_scope`, pure Python, <1 ms, no LLM
+   call) reads the task *text* and maps a handful of cue words to a seed posture
+   (`chat_direct` → level 1, `chat_planned` → level 2, `workflow_linear` → level 3). It
+   is the cheap, fast path for the common case. It is deliberately weak.
+2. **Layer 2 — the evidence engine** (S10) runs at every turn boundary on the *actual*
+   observed read/write behaviour and escalates regardless of what the words said.
+
+Why two layers: held-out tests showed simple, genuinely-cross-file tasks phrased with
+**none** of the estimator's cue words — and in the operator's real **terse Russian style**
+— score `chat_direct` at confidence 0.3. Example task wording that scores *direct* but
+must still escalate: *"simplify the main function"*, *"clean up a small thing in the
+cli"*, *"убери лишнее из главной функции"*, *"поправь проверку перед пушем"*. If routing
+relied on the text these would silently run as single-pass chat tasks; they do not,
+because the escalation reads evidence, not wording.
+
+**Consequence for readers of this ADR:** the estimator decides *initial* posture and
+cost; the evidence engine decides *whether the run outgrew its posture*. The mid-run
+evidence path is **observe-only** — it never removes a tool or kills a turn (Q25); it
+attaches advisory text to the next request and (for L3) recommends `invoke_workflow`.
+No tool is ever taken away mid-run.
+
+### B. Expansion as a three-level posture state machine (S10.1, `expansion.py`)
+
+Postures are **levels**, not tool sets:
+
+| Level | Posture | Meaning |
+|---|---|---|
+| 1 | `chat_direct` | work the task directly in chat |
+| 2 | `chat_planned` | **arm** the planner-skill injection (L2) |
+| 3 | `workflow` | recommend `invoke_workflow` (the escalation) |
+
+The pure decision function `next_level(state, *, files_read, files_changed, write_tier,
+read_tier_high, verify_failed, assumed_linear)` returns an `ExpansionDecision(level_to,
+evidence, observation_key)` or `None`. Properties (all mutation-tested):
+
+- **Monotone & idempotent** — decisions only move strictly up; re-evaluating the same
+  state+evidence returns the same answer.
+- **Ceiling 3** — `next_level` at level 3 returns `None`; nothing is ever advised above
+  the ceiling (`LEVEL_CEILING = 3`).
+- **No K argument here.** The escalation budget K is enforced structurally in the tool
+  (§E), because level 3 *is* the `invoke_workflow` call.
+
+Trigger policy (strongest evidence first, so the emitted trigger name is unambiguous):
+
+| Evidence (trigger name) | Required condition | Effect |
+|---|---|---|
+| `verify_failed` | a `VERIFY_ONLY` bash command (pytest/ruff/mypy), classified by `bash_intent`, exited non-zero on the previous turn | → level 3 |
+| `high_tier_write` | `write_tier == TIER_HIGH (5)` for a modified path | → level 3 |
+| `read_high_arm` | a high-tier path was **read** (`read_tier_high`) and level < 2 | → arm level 2 |
+| (silence) | bulk counters alone | no escalation |
+
+Critical gating (R1/DP-1): **bulk counters never escalate without a high tier present.**
+A large but *safe* change — e.g. fixing doc links across 15 archived files, or editing
+only `tests/`/`knowledge/` — stays silent. The inherited S7 thresholds
+(`READ_LIMIT = 10`, `CHANGE_LIMIT = 3`) play **no policy role** (S10.9 / GAP-H4: they
+were validated-but-unread inputs to `next_level` and have been removed from it). They
+remain load-bearing for *telemetry*: `near_miss_evidence` uses them to decide when a
+policy-relevant-but-silent boundary earns a durable `expansion_observed` event. A run seeded `workflow_linear` is
+never re-escalated (RK-I — the advice would duplicate the seed).
+
+L2 skill selection is deterministic (`select_l2_skill`): a plan/research artifact
+already in context (**warm**) → the lighter, context-rich `feature-planning` skill;
+otherwise (**cold**) → the full `plan-authoring` skill.
+
+### C. The positional risk model: where, not what (S10.2, `path_risk.py`)
+
+Escalation evidence comes from **path tiers**, because *which files* the run touches is
+a stronger signal than the words in the task (Q26). Paths are classed into three tiers
+from a configurable `scope_risk_tiers:` config block:
+
+- **safe (1)** — `worklogs/archive`, `worklogs/research`, `worklogs/reviews`,
+  `worklogs/pr-notes`, `worklogs/implementation-plans`: never escalate.
+- **medium (3)** — `knowledge/`, `tests/`, `scripts/`: a write here is a
+  *verification-posture* change only (it nudges targeted tests), **never a scope
+  escalation**; a read is silent. Editing `tests/**` is a medium/high *posture* matter
+  for the agent's own discipline, not an auto-workflow trigger.
+- **high (5)** — `src/` plus repo-root manifests (`pyproject.toml`, `justfile`,
+  `Dockerfile`, `.github/`, lockfiles, …): a read **arms** level 2, a write
+  **escalates** to level 3.
+
+Rules, each pinned by tests:
+
+- **Unknown prefix → medium, not high** (RK-J). Failing safe means "ask for more process"
+  rather than "stay casual inside production code" — but a novel *docs* tree must not
+  force workflow. Medium is the deliberate midpoint.
+- **`MAX` combines signals** (`combine_tiers = max(lexical, path_based)`): a
+  lexically-easy task (1) touching `src/` (5) ends high, never averaged down. MAX is
+  associative/commutative/idempotent and keeps the strongest signal.
+- **Config lists are additive to defaults** and a bad/missing config degrades to defaults
+  **plus a structured warning** — never a crash, never silence (`ScopeRiskWarning`;
+  failure-observable). The high default (`src`) cannot be silently dropped. Resolution is
+  canonical (S10.9 / D-H8): `path_risk.load_scope_risk_config()` reads `~/.fa/config.yaml`
+  (`DEFAULT_CONFIG_PATH`) and is the **single** source for both the escalation evidence and
+  the planner-handoff facts (CT-H7) — the short-lived `<workspace>/.fa/config.yaml`
+  candidate was removed as a single-site convention no other knob honours.
+- `observed_tiers(reads, writes, cfg)` returns per-set maxima; an empty set is
+  `TIER_NO_EVIDENCE (0)`, distinct from a *safe* observation, so "no writes this turn"
+  never reads as "wrote safely."
+
+### D. Mid-run observations: rebuilt, capped, tier-keyed (S10.4, `observations.py`)
+
+Each turn boundary the loop renders a fresh advisory block. Rendering rules (DP-8), all
+kill-checked:
+
+- **Rebuilt per turn by assignment — never appended.** A stale L2 ("planner skill
+  active") line cannot survive an L3 escalation: the block is a keyed dict
+  `{skill, escalation, verification, exhausted}` reassigned each turn.
+- **Eviction order under a fixed token budget** (`OBSERVATION_CAP_CHARS = 1800`,
+  ≈ a conservative 500-token ceiling): `exhausted` (4) > `escalation` (3) >
+  `verification` (2) > `skill` (1). Lowest-priority entries are dropped first; the
+  terminal line always wins space.
+- **The full skill body never enters this string.** On the L2 entry turn the body travels
+  via the separate `skills_conditional` channel; the observation carries only a short
+  anchor.
+- **Verification posture is tier-keyed and advisory** (never changes level): no writes →
+  nothing; medium-tier writes → "consider targeted tests for what you edited"; high-tier
+  writes → "Risk tier high … run <command> and confirm green before reporting done."
+- A positive-imperative checklist (**"Do exactly:"**), never negative instructions —
+  see §F.
+
+### E. The workflow escalation: K budget + live handoff (S10.5, `workflow_tool.py`)
+
+The chat role escalates by calling a registered `invoke_workflow` tool that invokes the
+shared workflow pipeline (`planner → coder → eval`) with a **child** run id derived from
+the parent (distinct, ≤128 chars). Two structures keep escalation bounded and useful:
+
+**Escalation budget K (audit F1).** K is enforced **only in the tool**, not in the pure
+expansion core. The tool holds an `invocation_count` closure; `_check_budget` denies the
+(K+1)-th call with a structured error:
+
+```
+code:   workflow_budget_exhausted
+message: workflow escalation budget of K invocation(s) used;
+         finish with an operator report instead of escalating again
+```
+
+K defaults to `max_workflow_invocations = 2` and is read from `RuntimeLimits`
+(`limits.max_workflow_invocations`), so it is a config knob, not a hardcoded constant.
+A budget denial latches in the loop and renders the terminal `expansion_exhausted`
+observation (the `exhausted` key above) — the agent finishes the task with its current
+tools and reports state. The loop also emits a durable `expansion_exhausted` log event.
+
+**The planner handoff (handoff payload).** Because the chat role assembles prompts
+mechanically at runtime (the agent never self-selects a skill unless explicitly told),
+the handoff task is built from **live session facts** via a provider closure
+(`session_facts_provider`, wired in the CLI from the live `SessionState`). Sections:
+
+1. **`Goal:`** — the model-supplied task, verbatim (trimmed).
+2. **`Start here:`** — the top HIGH-tier read paths, **cap 5** (the actionable entry
+   points).
+3. **`Observed (already read):`** — read paths grouped by tier with counts (the map;
+   tells the planner what *not* to re-search).
+4. **`Modified:`** — the write paths.
+5. **`Candidate leads:`** — search/grep paths not already read, **cap 10**.
+6. **`Do exactly:`** — a 3-step positive checklist for the planner.
+
+Caps (S10.9 / CT-H5): Start-here ≤ 5, leads ≤ 10, **Modified ≤ 15 with an explicit
+`(+N more — run git status for the full set)` overflow marker**, total path entries ≤ 30
+(marker line excluded), paths only (no snippets, no file:line in v1). When paths exceed
+the total budget, the *Observed* section (the most derivable) is trimmed first;
+Start-here and Leads are the actionable ones. Writes beyond the Modified cap are
+summarized, never silently dropped. A missing or
+raising facts provider **degrades to the bare goal** — escalation still runs, never
+crashes; the blackboard mirror (`type: workflow_handoff`) is best-effort.
+
+### F. Positive-imperative harness instructions (prompt-assembly lesson)
+
+A recurring failure: an agent told what *not* to do ("don't list files", "don't
+re-search") does not reliably comply, and the harness must not depend on the model
+remembering a prohibition. Both escalation seams therefore use numbered, positive
+**"Do exactly:"** checklists — for the chat side ("1) Call invoke_workflow with the
+current goal. 2) The harness attaches a file map and handoff; start from its 'Start
+here' list. 3) Continue the chat task only if you finish without it.") and for the
+planner handoff ("Start from 'Start here'; use Observed/Candidate leads as your map; do
+not re-search them"). The composition is mechanical (code assembles tool call → goal →
+harness-attached file map); the agent is given positive steps, not constraints.
+
+### G. Reliability calibration (S10.6, `calibration.py`)
+
+The efficiency view is extended with a **reliability** view so that a mode cannot look
+good while failing. `fa stats --calibration` builds `build_calibration_report(rows, *,
+epsilon, min_flag_runs, gate_enabled)` from `global_history.db`:
+
+- **Reliability counts every run.** `runs_total` = all runs in a mode bucket;
+  `runs_succeeded` = `exit_code == 0`; `success_rate = succeeded / total`
+  (0.0 for an all-failed mode). **Failed runs drag the rate down.**
+- **ACRR aggregates successes only** (Q22): a cheap failure is not an efficiency.
+  Failed runs contribute no ACRR (see the self-referential-floor caveat below).
+- **`below_reliability_target`** fires only when `runs_total ≥ min_flag_runs` **and**
+  `success_rate < 1 − epsilon`. Defaults: `calibration_epsilon = 0.05`,
+  `min_flag_runs = 10`. A rate *exactly* at `1 − ε` is not flagged; a sample below the
+  minimum is never flagged (no wolf-crying on n=2).
+- Both ε and `min_flag_runs` are code variables on `RuntimeLimits`, toggleable; the gate
+  can be silenced by setting `min_flag_runs` above the available sample.
+
+**The escalation gate defaults OFF (`chat_escalation_gate = False`, Q25).** The
+*mechanism* (levels, observation blocks, K enforcement) is fully shipped and measured;
+the *policy* of auto-blocking/auto-routing on a low reliability flag is display-only for
+now — it surfaces `BELOW RELIABILITY TARGET` and the gate state in both JSON and human
+output, and can be enabled later by config. No mid-run tool removal ever happens.
+
+### H. Log-kind evolution (S10, F4)
+
+Two new durable event kinds join `LogKind`: **`scope_expansion`** (the per-turn boundary
+event — evidence, level change) and **`expansion_exhausted`** (terminal K denial). The
+S10.9 adds **`expansion_observed`** (CT-H3): delta-gated durable telemetry for
+policy-relevant boundaries that (correctly) did not escalate — the S11 tuning feed. It is
+JSONL-only by design (not console-mirrored: noise), while `scope_expansion` and
+`expansion_exhausted` **are** console-mirrored (CT-H4) so operators see posture changes
+live. The
+S7 one-shot mid-flight **`scope_tripwire`** kind is **retired as an emitted event**
+(replaced by the per-turn `scope_expansion` boundary) but **kept in the `LogKind` enum as
+a dormant alias**, because the S8/S9 routing-calibration projection still keys on the
+historical name. It is registered in the contract checker's `KNOWN_DORMANT_KINDS` with
+the reason, and is to be dropped from the enum once that projection migrates.
+
+### I. The cost model as shipped (S8) — supersedes the §Architecture ACRR sketch
+
+The original `ACRR_proxy = files_read / files_changed` sketch was the v1 proxy. S8
+shipped the fuller E3 cost model `C(π) = α·T + β·tokens + γ·tools + δ·files` with fitted
+weights and a cost floor. The mandatory caveat — reproduced **verbatim** below because it
+is easy to over-trust the calibration table — is:
+
+> "The floor is self-referential: it derives from the run's own change-set, so a run that
+> changed the WRONG files still scores well. ACRR measures redundancy, never correctness."
+
+Additional S8 facts this ADR must record:
+
+- **Fitted weights:** α = 1.0, β = 0.000415, γ = 0.1, δ = 1.5. Derivation: the median
+  `src/*.py` file is ~7234 B ≈ 1808 tokens; β is set so a median file's token cost is
+  half its file cost. The paper's default weights were measured and put the file axis at
+  0.43–2.17% of C; they were rejected as too weak for FA's file-dominated workload.
+- **The floor EXCLUDES latency**, per E3 LLM-Case 7.7, to stay deterministic (wall-clock
+  is not reproducible across machines).
+- **ACRR is recorded for every run and filtered at display** (Q22), because a cheap
+  failure is not an efficiency: an unsuccessful run reports no flattering ACRR, which is
+  also why `fa stats --calibration` draws ACRR from successful runs only.
+- **E3 §7.2 monotonicity caveat:** the paper's authors concede the cost/success
+  monotonicity is "partly mechanical"; present it as a descriptive signature, **not a
+  scaling law**.
+
+### J. Validation evidence (S10.6 / S10.7)
+
+- **C0/C1/C2 tests** across pure cores (`expansion`, `path_risk`, `observations`,
+  `calibration`) and wired seams (CLI provider, coder loop, workflow tool), plus C2
+  real-CLI tests driving `fa stats --calibration` against a temp `FA_STATE_ROOT`.
+- **R1 — held-out wording (14 pairs):** 8 English tasks with cue-free vocabulary + 6
+  Russian operator-style phrasings; asserts the evidence engine escalates on identical
+  high-tier evidence *regardless of wording* (high-tier write → L3; high-tier read → L2),
+  and records (not gates) the estimator's under-scope rate — a high rate is the premise
+  of the two-layer design, not a failure.
+- **R2 — deceptive tasks (6):** e.g. the CLI's own *"simplify the main function"* and a
+  force-push via `src/fa/hygiene/hooks/pre-push` (EN + RU). Verifies stable **one-level**
+  arming/escalation (read-high arms exactly L2, then write-high escalates exactly L3),
+  `verify_failed → L3` even mid-level, and that high-tier paths (`src/fa/cli.py`,
+  `pre-push`, `workflow_tool.py`, `prompt_composer.py`) all classify tier 5 against the
+  *real* baseline registry and trajectory.
+- **Mutation sweep (S10.8):** 20–21 hand-applied mutants (ceiling removal, bulk-fires
+  without tier, MAX→min, unknown→high, `tests/**`→high, read/write swap, stale L2
+  accumulation, cap/eviction removal, K-check removal, goal-only handoff, blackboard
+  removal, hardcoded K, calibration failed-run pre-filter, ε/min-sample removal,
+  rate-denominator errors) — **all killed, zero survivors**, with byte-identical
+  restore after each mutant.
+- **Full gate:** `just check` toolchain green on ruff, ruff-format, deptry, pylint
+  (10.00/10), mypy `--strict` (src + tests, 0 errors), pyrefly (0 errors), authoring,
+  all contract scripts (dependency, producer-consumer, log-kind, no-mocked-dataclasses,
+  dead-flags), shell-syntax; full suite 3614 passed at **85.85%** coverage (floor 80%).
+
+### K. Tuned constants awaiting live validation (S11 input)
+
+These are code variables seeded to documented values and **not yet calibrated** against
+the live chat contour; S11 revisits them with real data and records the outcome here:
+
+| Constant | Default | Location | Open question for live runs |
+|---|---|---|---|
+| Calibration tolerance ε | 0.05 | `runtime_limits.calibration_epsilon` | Does 5% below-perfect flag too eagerly / too late on real mode volumes? |
+| Minimum flag sample | 10 | `runtime_limits.min_flag_runs` | Is n=10 enough to separate noise from a real regression? |
+| Escalation budget K | 2 | `runtime_limits.max_workflow_invocations` | Do legitimately hard tasks need a 3rd escalation? Does K=2 ever trap a task? |
+| Tier prefixes | safe/medium/high defaults | `scope_risk_tiers:` config | Do real repos need extra medium/high prefixes? Is unknown→medium right? |
+| Observation cap | 1800 chars | `observations.OBSERVATION_CAP_CHARS` | Does the advisory ever crowd real context, or get evicted too aggressively? |
+| Handoff caps | 5 / 10 / 30 paths | `workflow_tool` caps | Are Start-here=5 / Leads=10 / total=30 the right map size for the planner? |
+| Cost weights | α1.0 β0.000415 γ0.1 δ1.5 | S8 cost model | Confirmed on synthetic data; validate ordering on live runs. |
+| `chat_escalation_gate` | **off** | `runtime_limits` | Flip to on only after live reliability data supports an auto-policy. |
+
+S11 also performs the remaining documentation updates (`llms.txt` routing index,
+`instructions/02-operations.md` chat section, `AGENTS.md` roles, models.yaml example),
+flips this ADR to **Accepted** with a dated Live-validation note, and closes the parent
+plan.
 
 ---
 

@@ -88,13 +88,21 @@ def build_prompt_parts_v2(
     memory_summary: str = "",
     task: str = "",
     observations: list[dict[str, Any]] | None = None,
+    turn_context: str = "",
 ) -> tuple[PromptParts, str]:
     """Build prompt parts with two-level caching.
 
     - cacheable: BASE system + AGENTS.md map + tool defs + alwaysApply skills (stable)
-    - non-cacheable: conditional skills + memory_summary + task + observations (varies)
+    - non-cacheable: conditional skills + turn_context + memory_summary + task
+      + observations (varies)
 
     Cache-key stable: role + hash_tools + hash_map + hash_always_skills (not conditional).
+
+    ``turn_context`` carries per-request advisory text that must NOT enter the
+    cache key — the chat role's scope estimate is the first consumer. Anything
+    routed through ``agents_md_map`` is hashed into ``hash_map``, so a value
+    that varies per task silently destroys prefix reuse on every request; this
+    parameter is the supported channel for such content.
     """
     observations = observations or []
     skills_all = skills_all or []
@@ -138,6 +146,10 @@ def build_prompt_parts_v2(
                 "content": f"ConditionalSkills:\n{json.dumps(skills_conditional, indent=2)}",
             }
         )
+    # Placed before the memory summary so per-turn advisory context reads as
+    # framing for the turn rather than as part of the accumulated history.
+    if turn_context:
+        non_cacheable.append({"role": "system", "content": turn_context})
     if memory_summary:
         non_cacheable.append({"role": "system", "content": f"Memory summary:\n{memory_summary}"})
 

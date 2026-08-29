@@ -15,7 +15,7 @@ used by any production code. The canonical set is now a direct frozenset; a tool
 name must be added here (and to the ``ToolSpec.name`` in ``tools/*.py``) or the
 S13.10 composition test fails.
 
-**Names covered (20):**
+**Names covered (21):**
 - 17 canonical ``ToolSpec.name`` wire names (``fs_read_file`` … ``pr_prepare``,
   incl. ``fs_blackboard_query``).
 - ``fs_write_file_limited`` — a builder key in ``profiles.py`` (not a standalone
@@ -23,6 +23,19 @@ S13.10 composition test fails.
 - ``fs_apply_patch`` — referenced in ``intent_guard`` logic/docs (prose), not a
   registered tool.
 - ``fs_read`` — a fixture tool name in ``conformance.py`` test scenario.
+- ``invoke_workflow`` — **declared ahead of registration (D10).** The chat role's
+  system prompt already instructs the model to call it for ``workflow_linear``
+  scope estimates, and the escalation design depends on that instruction, but the
+  tool itself lands in S4b (``tools/__init__.py``: "invoke_workflow tool will be
+  registered in S4"). It is listed here so the canonical ledger matches the
+  advertised contract; ``test_prompt_registry_coherence.py`` records it as a
+  known-pending exemption that must be deleted once S4b registers the builder,
+  at which point the coherence test converts into live enforcement.
+
+**Note on the namespace.** ``invoke_workflow`` deliberately carries neither the
+``fs_`` nor the ``pr_`` prefix: it is not a filesystem or PR operation but a
+control-flow escalation. The D10 enforcement layers are prefix-agnostic precisely
+so that this is expressible — see ``tests/test_s13_10_tool_names.py``.
 """
 
 from __future__ import annotations
@@ -55,6 +68,7 @@ TOOL_NAMES: frozenset[str] = frozenset(
         "fs_usage",
         "fs_write_file",
         "fs_write_file_limited",
+        "invoke_workflow",
         "pr_prepare",
     }
 )

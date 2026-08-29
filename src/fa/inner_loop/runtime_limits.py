@@ -103,6 +103,40 @@ DEFAULT_QA_RECURRING_ISSUE_THRESHOLD = 3
 # - Auth-expired: 0 = observe-only (no gating). The LLM-driver T-2 will
 #   wire synthetic re-auth via ``Decision.modify``; until then, denying
 #   on auth would block the LLM from being notified of the auth state.
+# S4b/RK6: wall-clock ceiling for a NESTED workflow pipeline launched by the
+# ``invoke_workflow`` tool. Serial tool dispatch has no timeout (the only
+# timeouts in ``loop.py`` are on the parallel branch), and RuntimeLimits has no
+# session wall-clock cap, so one ``invoke_workflow`` call could otherwise run
+# planner -> coder -> eval plus repair/replan rounds with no bound on elapsed
+# time, blocking the chat turn indefinitely. Strictly positive: ``0`` is NOT
+# "disabled" (that is what omitting ``deadline_mono`` means), so this key stays
+# out of ``_ZERO_ALLOWED_KEYS``.
+DEFAULT_WORKFLOW_TIMEOUT_SECONDS = 1800
+
+# S7 / CT8 -> S10/CT9 (Q25): the chat escalation gate ships OFF. The
+# mechanism stays in place and the key remains honoured — an operator who
+# wants the estimator's top-confidence bucket to auto-suggest workflow sets
+# ``chat_escalation_gate: true``. Observe-only expansion advice (levels,
+# observations, handoff) is unaffected; no tool is ever removed mid-run.
+DEFAULT_CHAT_ESCALATION_GATE = False
+
+# S10 / CT6: structural escalation budget K — the maximum number of
+# ``invoke_workflow`` calls per chat session. Enforced in the tool via the
+# invocation-count closure (the (K+1)-th call returns
+# ``workflow_budget_exhausted``). The pure expansion module deliberately
+# does not know K (audit F1): level 3 *is* that tool call.
+DEFAULT_MAX_WORKFLOW_INVOCATIONS = 2
+
+# S10 / CT8 (DP-6): calibration showcase knobs. ``epsilon`` is the tolerance
+# for the below-reliability flag (flag when success_rate < 1 - epsilon);
+# ``min_flag_runs`` is the minimum sample size below which the flag never
+# fires (avoid crying wolf on 1-2 runs). Both are display-only — no runtime
+# consumer, both are code variables so they can be retuned per install. The
+# flag toggles OFF by setting ``min_flag_runs`` above the available sample
+# (epsilon itself stays in the valid (0.0, 1.0] tolerance range).
+DEFAULT_CALIBRATION_EPSILON = 0.05
+DEFAULT_MIN_FLAG_RUNS = 10
+
 DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS = 30
 DEFAULT_LOCKFILE_SUPPRESSION_SECONDS = 5
 DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS = 0
@@ -150,6 +184,14 @@ class RuntimeLimits:
     cost_budget_usd: float | None = DEFAULT_COST_BUDGET_USD
     # ADR-15: subagent spawn limit
     max_subagent_spawns_per_session: int = DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION
+    # S4b/RK6: nested-workflow wall-clock ceiling (seconds).
+    workflow_timeout_seconds: int = DEFAULT_WORKFLOW_TIMEOUT_SECONDS
+    chat_escalation_gate: bool = DEFAULT_CHAT_ESCALATION_GATE
+    # S10 / CT6: structural escalation budget K (see DEFAULT_MAX_WORKFLOW_INVOCATIONS).
+    max_workflow_invocations: int = DEFAULT_MAX_WORKFLOW_INVOCATIONS
+    # S10 / CT8: calibration showcase knobs (display-only; see anchors).
+    calibration_epsilon: float = DEFAULT_CALIBRATION_EPSILON
+    min_flag_runs: int = DEFAULT_MIN_FLAG_RUNS
 
     @classmethod
     def anchored_defaults(cls) -> RuntimeLimits:
@@ -170,6 +212,11 @@ class RuntimeLimits:
             auth_expired_suppression_seconds=DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS,
             cost_budget_usd=DEFAULT_COST_BUDGET_USD,
             max_subagent_spawns_per_session=DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION,
+            workflow_timeout_seconds=DEFAULT_WORKFLOW_TIMEOUT_SECONDS,
+            chat_escalation_gate=DEFAULT_CHAT_ESCALATION_GATE,
+            max_workflow_invocations=DEFAULT_MAX_WORKFLOW_INVOCATIONS,
+            calibration_epsilon=DEFAULT_CALIBRATION_EPSILON,
+            min_flag_runs=DEFAULT_MIN_FLAG_RUNS,
         )
 
 
@@ -209,6 +256,13 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
         "auth_expired_suppression_seconds",
         "cost_budget_usd",
         "max_subagent_spawns_per_session",
+        "workflow_timeout_seconds",
+        # S7 / CT8: the only boolean key. See _BOOL_KEYS for parsing.
+        "chat_escalation_gate",
+        # S10: escalation budget K + calibration showcase knobs (CT6/CT8).
+        "max_workflow_invocations",
+        "calibration_epsilon",
+        "min_flag_runs",
         # S14b.2 per-role iteration keys (three live + two stubs, Q-S14b2-2).
         "max_iterations_planner",
         "max_iterations_coder",
@@ -239,7 +293,124 @@ _ZERO_ALLOWED_KEYS: frozenset[str] = frozenset(
 # a USD value (R-45) so the YAML config can carry sub-dollar budgets
 # like ``0.50`` without losing precision; every other knob is an
 # integer count (iterations, seconds, entries, ...).
-_FLOAT_KEYS: frozenset[str] = frozenset({"cost_budget_usd"})
+_FLOAT_KEYS: frozenset[str] = frozenset({"cost_budget_usd", "calibration_epsilon"})
+
+# Float keys bounded to (0.0, 1.0] (probability/tolerance values). Zero is
+# NOT allowed for these (``epsilon: 0`` would flag every imperfect mode with
+# no tolerance); operators who want the flag off set ``min_flag_runs`` above
+# their sample size. NaN/Inf are rejected by the shared float path.
+_UNIT_INTERVAL_KEYS: frozenset[str] = frozenset({"calibration_epsilon"})
+
+# ``chat_escalation_gate`` is still the only boolean knob. It gets its own
+# set for the same reason ``_FLOAT_KEYS`` exists — so a typo in one key
+# can never silently fall through the wrong type-check.
+_BOOL_KEYS: frozenset[str] = frozenset({"chat_escalation_gate"})
+
+# Accepted spellings, lowercased. Deliberately NOT ``bool(value_str)``: that
+# maps "false" and "0" to True, which would turn an operator's attempt to
+# disable the gate into a no-op they could only discover by reading the source.
+_BOOL_TRUE: frozenset[str] = frozenset({"true", "yes", "on", "1"})
+_BOOL_FALSE: frozenset[str] = frozenset({"false", "no", "off", "0"})
+
+
+def _accept_bool_key(
+    *,
+    key: str,
+    value_str: str,
+    line_no: int,
+    found_bool: dict[str, bool],
+    warnings: list[RuntimeLimitsWarning],
+) -> None:
+    """Parse one boolean key into *found_bool*, or record a warning.
+
+    Hoisted out of :func:`load_runtime_limits` — including its warn branch —
+    to keep that function under the S10b cyclomatic-complexity ceiling of 15.
+    Inlining the parse measured 17, and leaving the warn branch behind still
+    measured 16.
+
+    Tolerates surrounding quotes because YAML writers habitually add them. An
+    unrecognised value warns and writes nothing, so the anchored default
+    stands: silently guessing is exactly the wrong move for a key whose whole
+    job is enabling or disabling a guard.
+    """
+    lowered = value_str.strip().strip('"').strip("'").lower()
+    if lowered in _BOOL_TRUE:
+        found_bool[key] = True
+        return
+    if lowered in _BOOL_FALSE:
+        found_bool[key] = False
+        return
+    warnings.append(
+        RuntimeLimitsWarning(
+            line_no=line_no,
+            key=key,
+            detail=f"non-boolean value: {value_str!r}",
+        )
+    )
+
+
+def _accept_float_key(
+    *,
+    key: str,
+    value_str: str,
+    line_no: int,
+    found_float: dict[str, float],
+    warnings: list[RuntimeLimitsWarning],
+) -> None:
+    """Parse one float key into *found_float*, or record a warning.
+
+    Mirrors :func:`_accept_bool_key` and is hoisted for the same reason:
+    keeping :func:`load_runtime_limits` under the S10b cyclomatic-complexity
+    ceiling of 15. NaN/Inf are rejected (they silently disable the cost
+    guardian); keys in :data:`_UNIT_INTERVAL_KEYS` are bounded to
+    ``(0.0, 1.0]``; every other float key follows the non-negative /
+    positive rule shared with the int path. On any failure the anchored
+    default stands — a typo never silently disables a guard.
+    """
+    try:
+        float_value = float(value_str)
+    except ValueError:
+        warnings.append(
+            RuntimeLimitsWarning(
+                line_no=line_no,
+                key=key,
+                detail=f"non-numeric value: {value_str!r}",
+            )
+        )
+        return
+    # ``float("nan")`` / ``float("inf")`` parse without raising, but NaN
+    # poisons the rollup and +/-Inf flips the gate the opposite way.
+    if math.isnan(float_value) or math.isinf(float_value):
+        warnings.append(
+            RuntimeLimitsWarning(
+                line_no=line_no,
+                key=key,
+                detail=f"value must be a finite number: {value_str!r}",
+            )
+        )
+        return
+    if key in _UNIT_INTERVAL_KEYS:
+        if not 0.0 < float_value <= 1.0:
+            warnings.append(
+                RuntimeLimitsWarning(
+                    line_no=line_no,
+                    key=key,
+                    detail=f"value must be in (0.0, 1.0]: {float_value}",
+                )
+            )
+            return
+        found_float[key] = float_value
+        return
+    min_allowed_float = 0.0 if key in _ZERO_ALLOWED_KEYS else 1.0
+    if float_value < min_allowed_float:
+        detail = (
+            f"value must be non-negative: {float_value}"
+            if key in _ZERO_ALLOWED_KEYS
+            else f"value must be positive: {float_value}"
+        )
+        warnings.append(RuntimeLimitsWarning(line_no=line_no, key=key, detail=detail))
+        return
+    found_float[key] = float_value
 
 
 def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
@@ -277,6 +448,7 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
     # pylint: disable=duplicate-code
     found: dict[str, int] = {}
     found_float: dict[str, float] = {}
+    found_bool: dict[str, bool] = {}
     found_role: dict[str, int] = {}
     warnings: list[RuntimeLimitsWarning] = []
     in_block = False
@@ -304,49 +476,23 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
         # other key is an integer count (iterations, seconds, entries,
         # …). Keep the per-key parse type explicit so a typo in one
         # key never silently falls through the wrong type-check.
+        if key in _BOOL_KEYS:
+            _accept_bool_key(
+                key=key,
+                value_str=value_str,
+                line_no=line_no,
+                found_bool=found_bool,
+                warnings=warnings,
+            )
+            continue
         if key in _FLOAT_KEYS:
-            try:
-                float_value = float(value_str)
-            except ValueError:
-                warnings.append(
-                    RuntimeLimitsWarning(
-                        line_no=line_no,
-                        key=key,
-                        detail=f"non-numeric value: {value_str!r}",
-                    )
-                )
-                continue
-            # ``float("nan")`` and ``float("inf")`` parse without
-            # raising, but NaN poisons the rollup (``x + NaN == NaN``
-            # permanently; ``NaN > budget`` is always ``False`` so
-            # the gate stops denying) and ±Inf flips the gate the
-            # opposite way. Reject early with a warning rather than
-            # silently disabling the guardian.
-            if math.isnan(float_value) or math.isinf(float_value):
-                warnings.append(
-                    RuntimeLimitsWarning(
-                        line_no=line_no,
-                        key=key,
-                        detail=f"value must be a finite number: {value_str!r}",
-                    )
-                )
-                continue
-            min_allowed_float = 0.0 if key in _ZERO_ALLOWED_KEYS else 1.0
-            if float_value < min_allowed_float:
-                detail = (
-                    f"value must be non-negative: {float_value}"
-                    if key in _ZERO_ALLOWED_KEYS
-                    else f"value must be positive: {float_value}"
-                )
-                warnings.append(
-                    RuntimeLimitsWarning(
-                        line_no=line_no,
-                        key=key,
-                        detail=detail,
-                    )
-                )
-                continue
-            found_float[key] = float_value
+            _accept_float_key(
+                key=key,
+                value_str=value_str,
+                line_no=line_no,
+                found_float=found_float,
+                warnings=warnings,
+            )
             continue
         try:
             int_value = int(value_str)
@@ -404,6 +550,11 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
         max_subagent_spawns_per_session=found.get(
             "max_subagent_spawns_per_session", DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION
         ),
+        workflow_timeout_seconds=found.get("workflow_timeout_seconds", DEFAULT_WORKFLOW_TIMEOUT_SECONDS),
+        chat_escalation_gate=found_bool.get("chat_escalation_gate", DEFAULT_CHAT_ESCALATION_GATE),
+        max_workflow_invocations=found.get("max_workflow_invocations", DEFAULT_MAX_WORKFLOW_INVOCATIONS),
+        calibration_epsilon=found_float.get("calibration_epsilon", DEFAULT_CALIBRATION_EPSILON),
+        min_flag_runs=found.get("min_flag_runs", DEFAULT_MIN_FLAG_RUNS),
     )
     return RuntimeLimitsLoadResult(limits=limits, warnings=tuple(warnings), role_iterations=found_role)
 
@@ -461,6 +612,8 @@ __all__ = [
     "DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES",
     "DEFAULT_AUTH_EXPIRED_SUPPRESSION_SECONDS",
     "DEFAULT_BASH_TIMEOUT_SECONDS",
+    "DEFAULT_CALIBRATION_EPSILON",
+    "DEFAULT_CHAT_ESCALATION_GATE",
     "DEFAULT_COST_BUDGET_USD",
     "DEFAULT_LOCKFILE_SUPPRESSION_SECONDS",
     "DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER",
@@ -468,10 +621,13 @@ __all__ = [
     "DEFAULT_LOOP_GUARD_WINDOW",
     "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION",
+    "DEFAULT_MAX_WORKFLOW_INVOCATIONS",
+    "DEFAULT_MIN_FLAG_RUNS",
     "DEFAULT_QA_MAX_CONSECUTIVE_ERRORS",
     "DEFAULT_QA_MAX_ITERATIONS",
     "DEFAULT_QA_RECURRING_ISSUE_THRESHOLD",
     "DEFAULT_RATE_LIMIT_SUPPRESSION_SECONDS",
+    "DEFAULT_WORKFLOW_TIMEOUT_SECONDS",
     "ROLE_ITERATION_DEFAULTS",
     "RuntimeLimits",
     "RuntimeLimitsLoadResult",

@@ -195,12 +195,22 @@ def test_unparsed_kinds_complete() -> None:
     # S15: file_read added to LogKind and excused in UNPARSED_KINDS (consumed
     # by fs_exploration_metrics via direct log read, not by fa stats).
     # (TEST-EDITS declared in PR.)
-    assert len(all_kinds) == 35, (
-        f"LogKind changed size: {len(all_kinds)} != 35. A kind was added or removed — "
+    # S10: scope_expansion + expansion_exhausted added to LogKind and excused
+    # in UNPARSED_KINDS (both consumed by the routing/calibration projection
+    # via direct log read, like scope_tripwire — not by per-session stats).
+    # 36 -> 38 total; UNPARSED 12 -> 14; PARSED unchanged at 24.
+    # (TEST-EDITS declared in PR.)
+    # S10.9: expansion_observed added to LogKind and excused in UNPARSED_KINDS
+    # (near-miss telemetry consumed by the S11 calibration/tuning view via
+    # direct log read — not by per-session stats; CT-H3).
+    # 38 -> 39 total; UNPARSED 14 -> 15; PARSED unchanged at 24.
+    # (TEST-EDITS declared in PR.)
+    assert len(all_kinds) == 39, (
+        f"LogKind changed size: {len(all_kinds)} != 39. A kind was added or removed — "
         f"decide whether fa stats parses it (add an `elif` in _parse_events) or not "
         f"(add it to UNPARSED_KINDS with a reason), then update this count."
     )
-    assert len(UNPARSED_KINDS) == 11, f"UNPARSED_KINDS changed size: {len(UNPARSED_KINDS)} != 11"
+    assert len(UNPARSED_KINDS) == 15, f"UNPARSED_KINDS changed size: {len(UNPARSED_KINDS)} != 15"
     assert len(PARSED_KINDS) == 24, f"PARSED_KINDS changed size: {len(PARSED_KINDS)} != 24"
 
     # Derivation sanity: disjointness is NOT free. UNPARSED_KINDS is written by

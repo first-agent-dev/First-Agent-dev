@@ -46,6 +46,12 @@ KNOWN_DORMANT_KINDS: dict[str, str] = {
         "spelling. Candidate for removal from LogKind in a later slice."
     ),
     "timeout": ("same as service_unavailable: ProviderError.kind (providers/base.py:119), not a log.append kind."),
+    "scope_tripwire": (
+        "S7 kind retired in S10: the one-shot mid-flight tripwire in coder_loop was "
+        "replaced by the per-turn scope_expansion boundary (CT2). Kept in LogKind as a "
+        "dormant alias because the S8/S9 routing-calibration projection reads the "
+        "historical name; drop from LogKind once that projection is migrated."
+    ),
 }
 
 
@@ -225,6 +231,10 @@ def check_console_mirror_dual_write(console_mirror_kinds: set[str]) -> list[str]
         "subagent_spawn_done": "subagent_end",
         "subagent_spawn_fail": "subagent_end",
         "run_stopped": "session_end",
+        # S10.9 / CT-H4: expansion mirrors use identity mapping (the EventType
+        # member name equals the LogKind name).
+        "scope_expansion": "scope_expansion",
+        "expansion_exhausted": "expansion_exhausted",
     }
 
     # Files that contain output.emit calls

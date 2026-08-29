@@ -38,6 +38,13 @@ _NEVER_PARALLEL_TOOLS = frozenset(
         "fs_write_file",
         "fs_edit_file",
         "fs_run_bash",
+        # S4b: invoke_workflow runs a whole nested pipeline. It is ALREADY
+        # serial without this entry — _should_parallelize_tool_batch falls
+        # through to "unknown tool -> serial" for any spec whose permission is
+        # not "read", and invoke_workflow's is "workspace" (verified by
+        # execution). Listed here to state the intent explicitly, NOT because
+        # it closes a hole.
+        "invoke_workflow",
     }
 )
 

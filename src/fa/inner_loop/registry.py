@@ -55,6 +55,32 @@ class ToolSchemaPortabilityError(ValueError):
         super().__init__(f"non-portable tool schema: tool={tool_name} path={self.path} reason={reason}")
 
 
+class ToolWireNameError(ValueError):
+    """A tool name would be rejected by a strict provider (D10).
+
+    The name half of the same contract ``ToolSchemaPortabilityError`` covers
+    for schemas.
+
+    Raised by ``build_registry_for_role`` — the production composition root —
+    rather than by this module's ``register``, by ``ToolSpec.__post_init__``,
+    or by ``render_tool_specs``. All three of those are shared with test
+    fixtures that deliberately use dotted names (``test.echo``, ``t.ok``,
+    ``demo.crash``) to exercise dispatch, validation and stop-paths
+    independently of naming policy: measured at 47 ToolSpec constructions (21
+    dotted), 16 dotted ``register`` sites, and 11 tests reaching the renderer
+    through ``drive_session``. The composition root is the tightest boundary
+    that real provider traffic crosses and those fixtures do not.
+    """
+
+    def __init__(self, tool_name: str) -> None:
+        self.tool_name = tool_name
+        super().__init__(
+            f"tool name is not provider-portable: {tool_name!r} "
+            f"violates ^[a-zA-Z0-9_-]{{1,64}}$ (dots and spaces are rejected by "
+            f"OpenAI, Anthropic, NVIDIA and Gemini)"
+        )
+
+
 def _pointer(path: str, token: object) -> str:
     escaped = str(token).replace("~", "~0").replace("/", "~1")
     return f"{path}/{escaped}" if path else f"/{escaped}"
@@ -466,5 +492,6 @@ __all__ = [
     "ToolResult",
     "ToolSchemaPortabilityError",
     "ToolSpec",
+    "ToolWireNameError",
     "validate_tool_schema_portability",
 ]

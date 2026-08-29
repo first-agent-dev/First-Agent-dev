@@ -75,6 +75,10 @@ _PAYLOADS: dict[str, dict[str, object]] = {
         "reason": "iteration_cap: per-turn iteration limit (2) exceeded — used 2 of 2",
         "profile": "coder",
     },
+    # S10.9 / CT-H4: console mirrors of the durable expansion events. Payload
+    # keys match the emitted data dicts in coder_loop exactly.
+    "scope_expansion": {"level_from": 1, "level_to": 3, "evidence": "high_tier_write"},
+    "expansion_exhausted": {"turn": 5},
 }
 
 

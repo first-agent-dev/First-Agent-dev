@@ -85,7 +85,13 @@ _FLOORS: dict[str, float] = {
     "_cmd_chunk": 80.0,
     "_cmd_authoring_check": 80.0,
     "_cmd_egress_proxy": 80.0,
-    "_run_adaptive": 80.0,
+    # NOTE: `_run_adaptive` was floored here during S10b CLI decomposition but
+    # does not live in cli.py: the S4a workflow-controller extraction moved it
+    # to src/fa/inner_loop/workflow_controller.py, where its coverage is
+    # exercised by tests/test_s8_workflow_controller.py and counted in the
+    # global >=80% floor. Removed from this cli.py-only table (2026-08-28) — a
+    # cli.py floor entry for a function the file no longer contains made the
+    # gate fail vacuously.
     "_discover_stats_sources": 80.0,
     # S10b.4 helpers — the manifest validation matrix, now directly unit-tested
     # by error CODE (the operator contract) rather than only through the
