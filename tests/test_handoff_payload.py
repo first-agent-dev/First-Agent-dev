@@ -295,3 +295,71 @@ def test_hardcoded_k_constant_breaks_config_override(tmp_path: Path) -> None:
     assert denied is not None
     assert denied.error is not None
     assert denied.error.code == "workflow_budget_exhausted"
+
+
+# ── S10.9 additions: CT-H5 caps, CT-H6 K honesty, F11 guard ────────────────
+
+
+def test_modified_section_capped_at_15_with_overflow_marker() -> None:
+    """S10.9 / CT-H5 (F7): 40 writes render 15 Modified entries + a marker;
+    the total path budget stays a real bound; nothing is silently dropped."""
+    writes = [f"src/fa/mod_{i:02d}.py" for i in range(40)]
+    out = build_handoff_task(
+        goal="big refactor",
+        read_paths=["src/fa/cli.py"],
+        write_paths=writes,
+        search_paths=[],
+    )
+    modified = out.split("Modified:")[1].split("Do exactly:")[0]
+    entry_lines = [ln for ln in modified.splitlines() if ln.strip().startswith("- ")]
+    assert len(entry_lines) == 15, "Modified must cap at 15 entries"
+    assert "(+25 more" in modified, "overflow must be explicit, never silent"
+    # total path entries across all sections ≤ 30 (marker line excluded)
+    all_entries = [ln for ln in out.splitlines() if ln.strip().startswith("- ")]
+    assert len(all_entries) <= 30 + 1  # + the Observed inline row is not a "- " line
+    assert sum(1 for ln in out.splitlines() if ln.strip().startswith("- ")) <= 31
+
+
+def test_modified_under_cap_renders_fully_without_marker() -> None:
+    writes = [f"src/fa/mod_{i}.py" for i in range(5)]
+    out = build_handoff_task(goal="small", read_paths=[], write_paths=writes, search_paths=[])
+    assert "(+" not in out.split("Modified:")[1].split("Do exactly:")[0]
+    assert len([ln for ln in out.split("Modified:")[1].splitlines() if ln.strip().startswith("- ")]) == 5
+
+
+def test_k_zero_denies_first_call_as_disabled_by_config() -> None:
+    """S10.9 / CT-H6 (F8): K=0 means never escalate — honored, not clamped."""
+    runner_calls: list[dict[str, Any]] = []
+
+    def runner(kw: dict[str, Any]) -> tuple[int, None]:
+        runner_calls.append(kw)
+        return 0, None
+
+    ctx = _ctx(facts={}, max_invocations=0)
+    results = _run_tool(ctx, [{"task": "do the thing"}], runner)
+    assert results[0].error is not None
+    assert results[0].error.code == "workflow_budget_exhausted"
+    assert "disabled by config" in results[0].error.message
+    assert runner_calls == [], "K=0 must never reach run_workflow"
+
+
+def test_k_negative_clamps_to_zero_not_one() -> None:
+    ctx = _ctx(facts={}, max_invocations=-3)
+    results = _run_tool(ctx, [{"task": "x"}], lambda kw: (0, None))
+    assert results[0].error is not None
+    assert results[0].error.code == "workflow_budget_exhausted"
+
+
+def test_malformed_risk_config_degrades_to_goal_only() -> None:
+    """S10.9 / F11: a raising handoff BUILD (not just a raising provider)
+    degrades to the bare goal — the escalation still runs."""
+    runner_calls: list[dict[str, Any]] = []
+
+    def runner(kw: dict[str, Any]) -> tuple[int, None]:
+        runner_calls.append(kw)
+        return 0, None
+
+    ctx = _ctx(facts={"read_paths": ["src/a.py"], "risk_config": "not-a-config"}, max_invocations=2)
+    results = _run_tool(ctx, [{"task": "keep going"}], runner)
+    assert results[0].error is None, f"build failure must not surface as tool error: {results[0].error}"
+    assert runner_calls and runner_calls[0]["task"] == "keep going"

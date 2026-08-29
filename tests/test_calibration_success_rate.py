@@ -109,6 +109,22 @@ def test_epsilon_boundary_just_below_target_flagged() -> None:
     assert b.below_reliability_target is True
 
 
+def test_epsilon_boundary_exactly_at_target_not_flagged() -> None:
+    """S10.9 / CT-H1 (F1): rate EXACTLY 1 - epsilon is NOT flagged.
+
+    The ADR documents "a rate exactly at 1 - epsilon is not flagged" and the
+    operator harness pinned it, but pytest covered only 0.94/0.96 — the
+    ``<`` → ``<=`` mutant survived the whole suite. This is the CI
+    kill-check for that documented boundary (flag iff rate < 1 - epsilon).
+    """
+    rows = [_row("chat_direct", 0, acrr=1.0)] * 95 + [_row("chat_direct", 1)] * 5
+    report = _report(rows, epsilon=0.05, min_flag_runs=10)
+    b = _bucket(report, "chat_direct")
+    assert abs(b.success_rate - 0.95) < 1e-9
+    assert b.runs_total == 100 and b.runs_total >= 10  # sample gate satisfied
+    assert b.below_reliability_target is False
+
+
 def test_epsilon_toggle_changes_flag() -> None:
     # 0.90 rate: flagged at epsilon=0.05 (target .95), not at epsilon=0.20 (target .80)
     rows = [_row("chat_direct", 0, acrr=1.0)] * 9 + [_row("chat_direct", 1)]

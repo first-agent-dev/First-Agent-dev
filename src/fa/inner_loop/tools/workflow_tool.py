@@ -237,14 +237,21 @@ def build_handoff_task(
 
     leads = leads[:leads_cap]
 
+    # Modified is truth but not unbounded (S10.9 / CT-H5): cap the section and
+    # keep an explicit overflow marker — writes beyond the cap are summarized,
+    # never silently dropped, and the planner can recover them via git status.
+    modified_cap = 15
+    shown_writes = writes[:modified_cap]
+    writes_overflow = len(writes) - len(shown_writes)
+
     # Enforce the total-path budget, trimming Observed (the largest, most
     # derivable section) first; Start here and Leads are the actionable ones.
-    budget = total_paths_cap - len(start_here) - len(writes) - len(leads)
+    budget = total_paths_cap - len(start_here) - len(shown_writes) - len(leads)
     if budget < 0:
         # Overspent on fixed sections: trim leads to fit (writes are truth and
-        # must stay).
+        # must stay, capped + marked above).
         leads = leads[: max(0, leads_cap + budget)]
-        budget = total_paths_cap - len(start_here) - len(writes) - len(leads)
+        budget = total_paths_cap - len(start_here) - len(shown_writes) - len(leads)
     observed_flat: list[str] = []
     for key in ("high", "medium", "safe"):
         take = max(0, budget - len(observed_flat))
@@ -270,7 +277,9 @@ def build_handoff_task(
     if writes:
         lines.append("")
         lines.append("Modified:")
-        lines.extend(f"  - {p}" for p in writes)
+        lines.extend(f"  - {p}" for p in shown_writes)
+        if writes_overflow > 0:
+            lines.append(f"  (+{writes_overflow} more — run git status for the full set)")
 
     if leads:
         lines.append("")
@@ -293,8 +302,14 @@ def _check_budget(invocation_count: int, ctx: WorkflowInvocationContext) -> Tool
     Enforced on the tool (audit F1): level 3 IS this call; the invocation-count
     closure is the authority for the run id, so it also bounds K.
     """
-    budget = max(1, int(getattr(ctx, "max_invocations", 2)))
+    budget = max(0, int(getattr(ctx, "max_invocations", 2)))
     if invocation_count >= budget:
+        if budget == 0:
+            return ToolResult.fail(
+                "workflow_budget_exhausted",
+                "workflow escalation is disabled by config (max_workflow_invocations=0); "
+                "finish with an operator report",
+            )
         return ToolResult.fail(
             "workflow_budget_exhausted",
             f"workflow escalation budget of {budget} invocation(s) used; "
@@ -322,13 +337,17 @@ def _resolve_handoff_task(*, task: str, candidate: str, ctx: WorkflowInvocationC
     if not facts:
         return task
 
-    handoff = build_handoff_task(
-        goal=task,
-        read_paths=list(facts.get("read_paths") or ()),
-        write_paths=list(facts.get("write_paths") or ()),
-        search_paths=list(facts.get("last_search_paths") or ()),
-        config=facts.get("risk_config"),
-    )
+    try:
+        handoff = build_handoff_task(
+            goal=task,
+            read_paths=list(facts.get("read_paths") or ()),
+            write_paths=list(facts.get("write_paths") or ()),
+            search_paths=list(facts.get("last_search_paths") or ()),
+            config=facts.get("risk_config"),
+        )
+    except Exception as exc:  # noqa: BLE001 - handoff is advisory; degrade to goal
+        logger.warning("workflow handoff build failed: %s", exc)
+        return task
     if ctx.blackboard_writer is not None:
         try:
             ctx.blackboard_writer(

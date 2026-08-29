@@ -78,7 +78,11 @@ it said.
 - Full `just check` toolchain green: ruff + ruff-format, deptry, pylint (10.00/10),
   mypy `--strict` (403 files, 0 errors), pyrefly (0 errors), authoring, all contract
   scripts (dependency / producer-consumer / log-kind / no-mocked-dataclasses / dead-flags),
-  shell syntax. Full pytest **3614 passed at ~85.8% coverage** (floor 80%).
+  shell syntax. Full pytest at the pre-S10.9 tip measured 3611 passed / 6 failed
+  (3 semgrep environmental, 2 staged doc-gate reds, 1 encoding regression) — the
+  encoding regression plus a dead-branch pylint E1101 were found in review and
+  fixed in S10.9; see PLAN-scope-control-S10.9-hardening.md. Post-S10.9 the suite
+  is green except the 2 staged doc-gate reds at ~86% coverage (floor 80%).
 - Stale-floor fix included: `check_cli_coverage_floor.py` no longer references
   `_run_adaptive`, which the S4a controller extraction moved out of `cli.py`.
 
@@ -111,5 +115,20 @@ it said.
 ```sh
 git checkout New-main-role-chat-and-complexity-aware-workflow-execution
 git apply --whitespace=nowarn S10-complexity-aware-execution-2026-08-29.patch
-python scripts/verify_complexity_aware_execution.py   # expect 133/133 ALL GREEN
+python scripts/verify_complexity_aware_execution.py   # expect 151/151 ALL GREEN (133 S1–S10 + 18 S10.9)
 ```
+
+## S10.9 — hardening pass (pre-merge, 2026-08-29)
+
+Adversarial review (`REVIEW-PR63-findings.md`, second-agent confirmed) surfaced one
+self-inflicted red gate and edge gaps; `PLAN-scope-control-S10.9-hardening.md` closed
+them: encoding fix + dead-branch removal in the verify harness; pytest kill-check for
+the ε boundary; `next_level` dead counter params removed and repurposed into
+`near_miss_evidence` telemetry (`expansion_observed`, delta-gated, JSONL-only);
+`scope_expansion`/`expansion_exhausted` console-mirrored; handoff Modified capped at 15
+with an explicit overflow marker (≤30 total holds); K=0 honored as "escalation disabled";
+handoff build failures degrade to goal-only; scope-risk config unified on
+`DEFAULT_CONFIG_PATH` (workspace fork removed) and shared by escalation + handoff;
+`_prefix_matches` dot-strip and segment-anchored globs; E3 spec §3.4 marked SUPERSEDED;
+live sheet rev3 (JSONL oracles, worktree isolation, S11 capture ledger). Harness now
+151/151. The 2 doc-gate reds remain staged for live row L3.

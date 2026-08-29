@@ -73,11 +73,21 @@ from typing import Any
 
 from fa.inner_loop.artifacts import ArtifactStore
 from fa.inner_loop.bash_intent import BashIntentEffect, analyze_bash_for_intent
-from fa.inner_loop.expansion import ExpansionState, difficulty_to_level, next_level, select_l2_skill
+from fa.inner_loop.expansion import (
+    ExpansionState,
+    difficulty_to_level,
+    near_miss_evidence,
+    next_level,
+    select_l2_skill,
+)
 from fa.inner_loop.hooks.base import HookPayload, HookRegistry, LifecyclePoint
 from fa.inner_loop.loop import SessionRun, run_session
 from fa.inner_loop.observations import build_observation_block
-from fa.inner_loop.path_risk import ScopeRiskConfig, default_scope_risk_config, observed_tiers
+from fa.inner_loop.path_risk import (
+    default_scope_risk_config,
+    load_scope_risk_config,
+    observed_tiers,
+)
 from fa.inner_loop.projection import project_for_model
 from fa.inner_loop.prompt import (
     render_tool_specs,
@@ -174,30 +184,6 @@ def _merge_memory_summary_context(initial_summary: str, rebuilt_summary: str) ->
     if initial and rebuilt:
         return f"Resumed session context:\n{initial}\n\nPrevious compacted summary:\n{rebuilt}"
     return initial or rebuilt
-
-
-def _load_scope_risk_config(workspace_root: Path | None) -> ScopeRiskConfig:
-    """Load ``scope_risk_tiers:`` from the same config file runtime_limits
-    reads, falling back to documented defaults + a single warning. Never
-    raises — a missing/unreadable config degrades to defaults.
-    """
-    from fa.config import DEFAULT_CONFIG_PATH
-    from fa.inner_loop.path_risk import load_scope_risk_tiers
-
-    config_path: Path
-    if workspace_root is not None:
-        candidate = workspace_root / ".fa" / "config.yaml"
-        config_path = candidate if candidate.is_file() else DEFAULT_CONFIG_PATH
-    else:
-        config_path = DEFAULT_CONFIG_PATH
-    try:
-        text = config_path.read_text(encoding="utf-8")
-    except OSError:
-        return default_scope_risk_config()
-    result = load_scope_risk_tiers(text)
-    for warning in result.warnings:
-        logger.warning("scope_risk_tiers config (%s): %s", warning.key, warning.detail)
-    return result.config
 
 
 def _verify_failed_in_pairs(
@@ -614,7 +600,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     # mode) keep level 1 with no expansion advice — observations are only
     # wired for the chat path (CT2 scope note).
     _is_chat_role = role == "chat" and bool(scope_mode)
-    _scope_tiers = _load_scope_risk_config(state.workspace_root) if _is_chat_role else default_scope_risk_config()
+    _scope_tiers = load_scope_risk_config() if _is_chat_role else default_scope_risk_config()
     try:
         _seed_level = difficulty_to_level(scope_mode) if scope_mode else 1
     except ValueError:
@@ -631,6 +617,10 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     # next boundary (F6: observations land in the NEXT request).
     _prev_calls: tuple[ToolCall, ...] = ()
     _prev_results: tuple[ToolResult, ...] = ()
+    # S10.9 / CT-H3: delta gate for the durable near-miss telemetry
+    # (expansion_observed) — one event per distinct policy-relevant evidence
+    # tuple per run, never on a transition turn.
+    _last_observed_evidence: tuple[tuple[str, object], ...] | None = None
     # S22: Session-level chain exhaustion counter for max_chain_retries guard.
     # Distinct from the inner per-turn retry loop (_per_turn_chain_retries):
     #   - Inner loop retries provider_chain.request() with cooldown waits
@@ -768,8 +758,6 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
             expansion_decision = next_level(
                 _expansion,
-                files_read=files_read,
-                files_changed=files_changed,
                 write_tier=write_tier,
                 read_tier_high=read_high,
                 verify_failed=verify_failed,
@@ -830,12 +818,49 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         "read_tier": tiers["read_max"],
                     },
                 )
+                # S10.9 / CT-H4: console mirror (dual-write contract).
+                if output is not None:
+                    output.emit(
+                        OutputEvent(
+                            type="scope_expansion",
+                            turn=turn,
+                            max_turns=max_turns,
+                            data={
+                                "level_from": level_from,
+                                "level_to": level_to,
+                                "evidence": expansion_decision.evidence if expansion_decision is not None else "",
+                            },
+                        )
+                    )
             else:
                 _expansion = ExpansionState(
                     level=level_to,
                     observed_read_paths=read_paths,
                     observed_write_paths=write_paths,
                 )
+                # S10.9 / CT-H3: durable near-miss telemetry. Recorded when a
+                # policy-relevant signal was present but (correctly) did not
+                # escalate; delta-gated so an unchanged evidence tuple logs
+                # once per run. Never fires on a transition turn (this else
+                # branch). Includes workflow_linear-seeded runs — telemetry
+                # records the seed-was-right case too.
+                near_miss = near_miss_evidence(
+                    _expansion,
+                    files_read=files_read,
+                    files_changed=files_changed,
+                    write_tier=write_tier,
+                    read_tier_high=read_high,
+                    verify_failed=verify_failed,
+                )
+                if near_miss is not None:
+                    evidence_key = tuple(sorted(near_miss.items()))
+                    if evidence_key != _last_observed_evidence:
+                        _last_observed_evidence = evidence_key
+                        log.append(
+                            actor="harness",
+                            kind="expansion_observed",
+                            content={"turn": turn, **near_miss},
+                        )
         # ── Output: turn_start ─────────────────────────────────────────────
         if output is not None:
             output.emit(
@@ -1880,6 +1905,16 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                     _exhausted_flag = True
                     if log is not None:
                         log.append(actor="harness", kind="expansion_exhausted", content={"turn": turn})
+                    # S10.9 / CT-H4: console mirror (dual-write contract).
+                    if output is not None:
+                        output.emit(
+                            OutputEvent(
+                                type="expansion_exhausted",
+                                turn=turn,
+                                max_turns=max_turns,
+                                data={"turn": turn},
+                            )
+                        )
                     break
         for call, result in zip(tool_calls, turn_results, strict=True):
             # ── Output: tool_call ──────────────────────────────────────────

@@ -31,8 +31,6 @@ from fa.inner_loop.scope_estimator import estimate_scope
 class LevelEvidence(TypedDict):
     """The keyword evidence `next_level` consumes for one turn."""
 
-    files_read: int
-    files_changed: int
     write_tier: int
     read_tier_high: bool
     verify_failed: bool
@@ -42,16 +40,12 @@ class LevelEvidence(TypedDict):
 # (task wording, evidence the run actually produced)
 # evidence: high-tier write -> escalation to level 3; high-tier read -> arm 2.
 HIGH_WRITE_EVIDENCE: LevelEvidence = {
-    "files_read": 2,
-    "files_changed": 2,
     "write_tier": 5,
     "read_tier_high": False,
     "verify_failed": False,
     "assumed_linear": False,
 }
 HIGH_READ_EVIDENCE: LevelEvidence = {
-    "files_read": 1,
-    "files_changed": 0,
     "write_tier": 0,
     "read_tier_high": True,
     "verify_failed": False,

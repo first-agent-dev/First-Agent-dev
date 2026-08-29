@@ -64,6 +64,8 @@ EventType = Literal[
     "cost_alert",
     "loop_warn",
     "iteration_cap",
+    "scope_expansion",  # S10.9 / CT-H4: console mirror of the posture change
+    "expansion_exhausted",  # S10.9 / CT-H4: console mirror of the K denial
 ]
 
 # ── Log kind ──────────────────────────────────────────────────────────────
@@ -117,6 +119,9 @@ LogKind = Literal[
     # calibration projection still key on the historical name.
     "scope_expansion",  # S10: the expansion level changed at a turn boundary
     "expansion_exhausted",  # S10: the workflow invocation budget was denied (SA-2)
+    "expansion_observed",  # S10.9: policy-relevant evidence that (correctly) did
+    # not escalate — durable near-miss telemetry for S11 constant tuning (CT-H3).
+    # Delta-gated; never emitted on a transition turn. JSONL-only by design.
     "verification",
     "cost_observation",
     "telemetry",
@@ -173,6 +178,11 @@ CONSOLE_MIRROR_KINDS: frozenset[LogKind] = frozenset(
         "subagent_spawn_done",
         "subagent_spawn_fail",
         "run_stopped",
+        # S10.9 / CT-H4: the evidence engine's posture changes are operator-
+        # critical. ``expansion_observed`` is deliberately NOT mirrored (noise);
+        # it stays JSONL-only telemetry.
+        "scope_expansion",
+        "expansion_exhausted",
     }
 )
 
@@ -457,6 +467,25 @@ class ConsoleRenderer:
         # continues; this line explains why tool calls were skipped this turn.
         d = e.data
         self._write(f"  {self._c('33', '⏳')} iteration cap reached: {d.get('reason', '')}")
+
+    def _handle_scope_expansion(self, e: OutputEvent) -> None:
+        # S10.9 / CT-H4: console mirror of the durable scope_expansion event.
+        # The evidence engine changed posture — the operator should see the
+        # level move and why, live, without reading events.jsonl.
+        if self.detail == "minimal":
+            return
+        d = e.data
+        self._write(
+            f"  {self._c('33', '⤴')} scope L{d.get('level_from', '?')}→L{d.get('level_to', '?')} "
+            f"({d.get('evidence', '')})"
+        )
+
+    def _handle_expansion_exhausted(self, e: OutputEvent) -> None:
+        # S10.9 / CT-H4: terminal K-budget denial — the run finishes with its
+        # current tools and reports to the operator.
+        if self.detail == "minimal":
+            return
+        self._write(f"  {self._c('31', '⛔')} escalation budget exhausted — finishing with current tools")
 
 
 # ── QuietRenderer ─────────────────────────────────────────────────────────

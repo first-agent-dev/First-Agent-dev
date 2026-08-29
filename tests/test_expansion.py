@@ -16,6 +16,7 @@ from fa.inner_loop.expansion import (
     ExpansionDecision,
     ExpansionState,
     difficulty_to_level,
+    near_miss_evidence,
     next_level,
     select_l2_skill,
 )
@@ -54,8 +55,6 @@ def test_select_l2_skill_warm_and_cold() -> None:
 def test_high_tier_write_escalates_to_three() -> None:
     d = next_level(
         state(1),
-        files_read=1,
-        files_changed=1,
         write_tier=5,
         read_tier_high=False,
         verify_failed=False,
@@ -67,8 +66,6 @@ def test_high_tier_write_escalates_to_three() -> None:
 def test_high_tier_read_without_write_arms_level_two() -> None:
     d = next_level(
         state(1),
-        files_read=1,
-        files_changed=0,
         write_tier=0,
         read_tier_high=True,
         verify_failed=False,
@@ -80,8 +77,6 @@ def test_high_tier_read_without_write_arms_level_two() -> None:
 def test_verify_failed_escalates() -> None:
     d = next_level(
         state(2),
-        files_read=2,
-        files_changed=1,
         write_tier=3,
         read_tier_high=False,
         verify_failed=True,
@@ -94,8 +89,6 @@ def test_archive_bulk_safe_tier_stays_silent() -> None:
     # 15 files read, many changed — but safe tier and no high read: no signal.
     d = next_level(
         state(1),
-        files_read=15,
-        files_changed=15,
         write_tier=1,
         read_tier_high=False,
         verify_failed=False,
@@ -108,8 +101,6 @@ def test_medium_tier_writes_do_not_change_level() -> None:
     # tests/** edit = medium: verification posture only, never a level change.
     d = next_level(
         state(1),
-        files_read=4,
-        files_changed=2,
         write_tier=3,
         read_tier_high=False,
         verify_failed=False,
@@ -121,8 +112,6 @@ def test_medium_tier_writes_do_not_change_level() -> None:
 def test_assumed_linear_is_always_silent() -> None:
     d = next_level(
         state(1),
-        files_read=50,
-        files_changed=50,
         write_tier=5,
         read_tier_high=True,
         verify_failed=True,
@@ -134,8 +123,6 @@ def test_assumed_linear_is_always_silent() -> None:
 def test_clean_run_no_evidence_returns_none() -> None:
     d = next_level(
         state(1),
-        files_read=2,
-        files_changed=1,
         write_tier=1,
         read_tier_high=False,
         verify_failed=False,
@@ -150,16 +137,12 @@ def test_clean_run_no_evidence_returns_none() -> None:
 def test_never_escalates_above_ceiling() -> None:
     kwargs_cases: tuple[LevelEvidence, ...] = (
         {
-            "files_read": 99,
-            "files_changed": 99,
             "write_tier": 5,
             "read_tier_high": True,
             "verify_failed": True,
             "assumed_linear": False,
         },
         {
-            "files_read": 0,
-            "files_changed": 0,
             "write_tier": 0,
             "read_tier_high": True,
             "verify_failed": False,
@@ -175,22 +158,16 @@ def test_monotone_across_sequence() -> None:
     evaluation with the same evidence is idempotent (I3)."""
     s = state(1)
     # arm to 2 on high read
-    d1 = next_level(
-        s, files_read=1, files_changed=0, write_tier=0, read_tier_high=True, verify_failed=False, assumed_linear=False
-    )
+    d1 = next_level(s, write_tier=0, read_tier_high=True, verify_failed=False, assumed_linear=False)
     assert d1 is not None and d1.level_to == 2
     # idempotent: same state+evidence again -> same answer
-    d1b = next_level(
-        s, files_read=1, files_changed=0, write_tier=0, read_tier_high=True, verify_failed=False, assumed_linear=False
-    )
+    d1b = next_level(s, write_tier=0, read_tier_high=True, verify_failed=False, assumed_linear=False)
     assert d1b == d1
     s2 = ExpansionState(level=2)
     # read-high at level 2 does NOT re-arm and does not escalate
     assert (
         next_level(
             s2,
-            files_read=1,
-            files_changed=0,
             write_tier=0,
             read_tier_high=True,
             verify_failed=False,
@@ -199,9 +176,7 @@ def test_monotone_across_sequence() -> None:
         is None
     )
     # escalate to 3 on high write
-    d3 = next_level(
-        s2, files_read=3, files_changed=1, write_tier=5, read_tier_high=True, verify_failed=False, assumed_linear=False
-    )
+    d3 = next_level(s2, write_tier=5, read_tier_high=True, verify_failed=False, assumed_linear=False)
     assert d3 is not None and d3.level_to == 3
     assert d3.level_to > s2.level > s.level
 
@@ -217,24 +192,140 @@ def test_state_rejects_bad_level() -> None:
 
 
 def test_negative_counters_rejected() -> None:
+    # S10.9 / CT-H2: counter validation moved with the counters — they are
+    # telemetry inputs now (near_miss_evidence), not policy inputs.
     with pytest.raises(ValueError):
-        next_level(
+        near_miss_evidence(
             state(1),
             files_read=-1,
             files_changed=0,
             write_tier=0,
             read_tier_high=False,
             verify_failed=False,
+        )
+    with pytest.raises(ValueError):
+        near_miss_evidence(
+            state(1),
+            files_read=0,
+            files_changed=-2,
+            write_tier=0,
+            read_tier_high=False,
+            verify_failed=False,
+        )
+    with pytest.raises(ValueError):
+        near_miss_evidence(
+            state(1),
+            files_read=0,
+            files_changed=0,
+            write_tier=2,
+            read_tier_high=False,
+            verify_failed=False,
+        )
+
+
+# ── S10.9 / CT-H2: near-miss telemetry truth table ─────────────────────────
+
+
+def test_near_miss_clean_turn_emits_nothing() -> None:
+    # Two safe reads, no writes, nothing armed: a clean turn is silent.
+    assert (
+        near_miss_evidence(
+            state(1),
+            files_read=2,
+            files_changed=0,
+            write_tier=0,
+            read_tier_high=False,
+            verify_failed=False,
+        )
+        is None
+    )
+
+
+def test_near_miss_bulk_reads_over_threshold_reported() -> None:
+    # 15 distinct reads with no high tier: escalation stays silent, telemetry
+    # records the near miss (this is the S11 tuning signal).
+    ev = near_miss_evidence(
+        state(1),
+        files_read=15,
+        files_changed=0,
+        write_tier=0,
+        read_tier_high=False,
+        verify_failed=False,
+    )
+    assert ev is not None
+    assert ev["files_read"] == 15
+    assert ev["level"] == 1
+
+
+def test_near_miss_safe_bulk_writes_reported_but_never_escalate() -> None:
+    # The archive link-fix shape: 15 SAFE-tier writes. next_level stays None
+    # (tier-gated policy); the observation carries the counters.
+    assert (
+        next_level(
+            state(1),
+            write_tier=1,
+            read_tier_high=False,
+            verify_failed=False,
             assumed_linear=False,
         )
+        is None
+    )
+    ev = near_miss_evidence(
+        state(1),
+        files_read=3,
+        files_changed=15,
+        write_tier=1,
+        read_tier_high=False,
+        verify_failed=False,
+    )
+    assert ev is not None
+    assert ev["files_changed"] == 15
+    assert ev["write_tier"] == 1
+
+
+def test_near_miss_medium_write_reported() -> None:
+    # A single tests/ write (below CHANGE_LIMIT) is verification-posture
+    # territory: reported even though no counter tripped.
+    ev = near_miss_evidence(
+        state(1),
+        files_read=1,
+        files_changed=1,
+        write_tier=3,
+        read_tier_high=False,
+        verify_failed=False,
+    )
+    assert ev is not None
+    assert ev["write_tier"] == 3
+
+
+def test_near_miss_high_read_already_armed_reported() -> None:
+    # High-tier read while already at L2: no re-arm by design, but the
+    # continued high-tier exposure is telemetry-worthy.
+    ev = near_miss_evidence(
+        state(2),
+        files_read=1,
+        files_changed=0,
+        write_tier=0,
+        read_tier_high=True,
+        verify_failed=False,
+    )
+    assert ev is not None
+    assert ev["read_tier_high"] is True
+    # ...while at L1 the same read ARMS (a transition, never a near miss).
+    d = next_level(
+        state(1),
+        write_tier=0,
+        read_tier_high=True,
+        verify_failed=False,
+        assumed_linear=False,
+    )
+    assert d is not None and d.level_to == 2
 
 
 def test_bad_write_tier_rejected() -> None:
     with pytest.raises(ValueError):
         next_level(
             state(1),
-            files_read=0,
-            files_changed=0,
             write_tier=2,
             read_tier_high=False,
             verify_failed=False,

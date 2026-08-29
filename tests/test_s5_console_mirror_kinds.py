@@ -1,7 +1,7 @@
 """Kill-check tests for S5: Add CONSOLE_MIRROR_KINDS to output.py.
 
 Verifies:
-1. CONSOLE_MIRROR_KINDS has exactly 13 members
+1. CONSOLE_MIRROR_KINDS has exactly 17 members (15 at S5, +2 in S10.9)
 2. Every CONSOLE_MIRROR_KINDS member is also in LogKind
 3. CONSOLE_MIRROR_KINDS is exported in __all__
 4. Key safety-critical kinds are present
@@ -13,12 +13,17 @@ import typing
 
 from fa.output import CONSOLE_MIRROR_KINDS, LogKind
 
-# ── Kill-check 1: CONSOLE_MIRROR_KINDS has exactly 13 members ──────
+# ── Kill-check 1: CONSOLE_MIRROR_KINDS has exactly 17 members ──────
 
 
 def test_console_mirror_kinds_count() -> None:
-    """CONSOLE_MIRROR_KINDS must have exactly 15 members."""
-    assert len(CONSOLE_MIRROR_KINDS) == 15, (
+    """CONSOLE_MIRROR_KINDS must have exactly 17 members.
+
+    S10.9 / CT-H4 added ``scope_expansion`` and ``expansion_exhausted``
+    (operator-critical posture changes); ``expansion_observed`` is
+    deliberately NOT mirrored (JSONL-only telemetry, noise policy).
+    """
+    assert len(CONSOLE_MIRROR_KINDS) == 17, (
         f"Expected 15 members, got {len(CONSOLE_MIRROR_KINDS)}: {sorted(CONSOLE_MIRROR_KINDS)}"
     )
 

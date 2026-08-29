@@ -231,6 +231,10 @@ def check_console_mirror_dual_write(console_mirror_kinds: set[str]) -> list[str]
         "subagent_spawn_done": "subagent_end",
         "subagent_spawn_fail": "subagent_end",
         "run_stopped": "session_end",
+        # S10.9 / CT-H4: expansion mirrors use identity mapping (the EventType
+        # member name equals the LogKind name).
+        "scope_expansion": "scope_expansion",
+        "expansion_exhausted": "expansion_exhausted",
     }
 
     # Files that contain output.emit calls

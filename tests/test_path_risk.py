@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from fa.inner_loop.expansion import TIER_HIGH, TIER_MEDIUM, TIER_SAFE
 from fa.inner_loop.path_risk import (
+    DEFAULT_MEDIUM_PREFIXES,
+    DEFAULT_SAFE_PREFIXES,
     TIER_NO_EVIDENCE,
+    ScopeRiskConfig,
     combine_tiers,
     default_scope_risk_config,
     load_scope_risk_tiers,
@@ -282,3 +285,47 @@ def test_calibration_epsilon_non_numeric_warns() -> None:
 #   * tests write scored high  => test_tests_write_is_medium_not_high_q26 fails
 #   * gate default flips true  => test_gate_default_is_off_q25 fails
 #   * epsilon range check gone => test_calibration_epsilon_range_enforced fails
+
+
+# ── S10.9 / CT-H8: path-match correctness (F10) ────────────────────────────
+
+
+def test_glob_prefix_is_segment_anchored() -> None:
+    """`src/*` matches one segment only; `*` must not span `/` (bare fnmatch
+    lets it, which the old code relied on by accident)."""
+    cfg = ScopeRiskConfig(
+        safe_prefixes=DEFAULT_SAFE_PREFIXES,
+        medium_prefixes=DEFAULT_MEDIUM_PREFIXES,
+        high_prefixes=frozenset({"src/*"}),
+    )
+    assert tier_for_path("src/a.py", cfg) == TIER_HIGH
+    assert tier_for_path("src/a/b.py", cfg) == TIER_MEDIUM  # unknown fallback, NOT high
+    # the /** form remains the whole-subtree glob
+    cfg2 = ScopeRiskConfig(
+        safe_prefixes=DEFAULT_SAFE_PREFIXES,
+        medium_prefixes=DEFAULT_MEDIUM_PREFIXES,
+        high_prefixes=frozenset({"gen/**"}),
+    )
+    assert tier_for_path("gen/a/b/c.py", cfg2) == TIER_HIGH
+    assert tier_for_path("gen", cfg2) == TIER_HIGH
+
+
+def test_dot_directories_survive_prefix_matching() -> None:
+    """`lstrip("./")` was a char-set strip: it ate the dot off `.ci/x`, making
+    a configured `ci` prefix match a DIFFERENT directory. The prefix-loop
+    strip keeps dot-dirs intact — both directions pinned."""
+    cfg = ScopeRiskConfig(
+        safe_prefixes=DEFAULT_SAFE_PREFIXES,
+        medium_prefixes=DEFAULT_MEDIUM_PREFIXES,
+        high_prefixes=frozenset({"ci"}),
+    )
+    # `.ci/x` is NOT `ci/x`: it must not inherit the `ci` tier (was HIGH pre-fix)
+    assert tier_for_path(".ci/x.yml", cfg) == TIER_MEDIUM
+    assert tier_for_path("ci/x.yml", cfg) == TIER_HIGH
+    # and a configured dot-prefix matches its own dot-directory
+    cfg2 = ScopeRiskConfig(
+        safe_prefixes=DEFAULT_SAFE_PREFIXES,
+        medium_prefixes=DEFAULT_MEDIUM_PREFIXES,
+        high_prefixes=frozenset({".deploy"}),
+    )
+    assert tier_for_path(".deploy/prod.yaml", cfg2) == TIER_HIGH

@@ -15,13 +15,16 @@ FA adaptation (SSOT decisions, 2026-08-28):
     (max workflow invocations per chat session) is enforced structurally in
     the ``invoke_workflow`` tool (CT6), because level 3 *is* that tool call.
     This module only knows the level ceiling.
-  * Trigger policy (positional risk model, Q26 / DP-1):
+  * Trigger policy (positional risk model, Q26 / DP-1) — tier/verify evidence
+    only; the S7 bulk counters play NO policy role (S10.9 / GAP-H4):
       - a failed verification command        -> level 3
       - a write into a high-tier path        -> level 3
       - read of a high-tier path (no write)  -> arms level 2
-      - bulk counters fire ONLY when a high tier is present (safe bulk,
-        e.g. an archive link-fix over 15 files, stays silent)
-      - a run seeded as ``workflow_linear`` is never re-escalated (RK-I).
+      - a run seeded as ``workflow_linear`` is never re-escalated (RK-I)
+    The counters still matter for *telemetry*: :func:`near_miss_evidence`
+    uses them to decide when a policy-relevant-but-silent boundary is worth
+    a durable ``expansion_observed`` event (S10.9 / CT-H2, feeding S11
+    constant tuning). Escalation itself never reads them.
 
 The module never mutates state and never directs re-reading observed paths;
 the caller threads ``ExpansionState`` (carrying the observed path sets)
@@ -43,6 +46,7 @@ __all__ = [
     "ExpansionDecision",
     "ExpansionState",
     "difficulty_to_level",
+    "near_miss_evidence",
     "next_level",
     "select_l2_skill",
 ]
@@ -135,8 +139,6 @@ def select_l2_skill(*, plan_artifact: bool) -> str:
 def next_level(
     state: ExpansionState,
     *,
-    files_read: int,
-    files_changed: int,
     write_tier: int,
     read_tier_high: bool,
     verify_failed: bool,
@@ -144,10 +146,12 @@ def next_level(
 ) -> ExpansionDecision | None:
     """Evaluate one turn's evidence; return the next posture or ``None``.
 
+    Policy is tier/verify-gated only (S10.9 / GAP-H4): the S7 bulk counters
+    were validated-but-unread inputs and are no longer accepted here. They
+    live in caller telemetry and :func:`near_miss_evidence`.
+
     Args:
         state: current posture.
-        files_read / files_changed: distinct-path counters from the
-            transaction read/write sets.
         write_tier: max tier of paths written this run (0 = no writes;
             otherwise 1/3/5).
         read_tier_high: True when a high-tier path has been read.
@@ -160,10 +164,8 @@ def next_level(
         when no trigger fires / the ceiling is reached.
 
     Raises:
-        ValueError: on negative counters — programmer error only.
+        ValueError: on an out-of-range write tier — programmer error only.
     """
-    if files_read < 0 or files_changed < 0:
-        raise ValueError("file counters must be non-negative")
     if write_tier not in (0, TIER_SAFE, TIER_MEDIUM, TIER_HIGH):
         raise ValueError(f"write_tier must be one of 0/1/3/5, got {write_tier!r}")
 
@@ -183,14 +185,62 @@ def next_level(
     if write_tier == TIER_HIGH:
         return ExpansionDecision(level_to=3, evidence="high_tier_write", observation_key="escalation")
 
-    # Bulk counters (files_read > READ_LIMIT / files_changed > CHANGE_LIMIT)
-    # are tier-gated: with no high-tier WRITE they never escalate. A large
-    # but safe change — e.g. the archive link-fix across 15 files — stays
-    # silent; that is the whole point of gating the inherited S7 thresholds
-    # (Q26 / DP-1, P5). The values remain accepted and validated as inputs.
     if read_tier_high and state.level < 2:
         return ExpansionDecision(level_to=2, evidence="read_high_arm", observation_key="skill")
 
-    # Counters without a high tier stay silent (tier-gated): a large but safe
-    # change (archive docs, tests-only) is not evidence for workflow.
+    # No high-tier evidence: nothing to advise. A large but safe change
+    # (archive docs, tests-only) is not evidence for workflow — the counters
+    # that once described this case are telemetry inputs now (see
+    # near_miss_evidence).
     return None
+
+
+def near_miss_evidence(
+    state: ExpansionState,
+    *,
+    files_read: int,
+    files_changed: int,
+    write_tier: int,
+    read_tier_high: bool,
+    verify_failed: bool,
+) -> dict[str, int | bool] | None:
+    """Telemetry predicate for a policy-relevant boundary that did NOT escalate.
+
+    Called by the loop only when :func:`next_level` returned ``None`` (CT-H3:
+    never on a transition turn). Returns the evidence payload when the turn
+    carried a signal the S11 tuning cares about:
+
+      * bulk counters over the inherited S7 thresholds (tier-gated silent), or
+      * a medium-or-higher write (verification-posture territory), or
+      * a high-tier read while already armed (no re-arm by design).
+
+    Otherwise ``None`` — clean turns emit nothing. The caller delta-gates on
+    the payload so an unchanged evidence tuple is logged once per run.
+    Works for ``workflow_linear``-seeded runs too: telemetry records the
+    seed-was-right case as well (the caller decides; this predicate has no
+    ``assumed_linear`` opinion).
+
+    Raises:
+        ValueError: on negative counters or an out-of-range write tier.
+    """
+    if files_read < 0 or files_changed < 0:
+        raise ValueError("file counters must be non-negative")
+    if write_tier not in (0, TIER_SAFE, TIER_MEDIUM, TIER_HIGH):
+        raise ValueError(f"write_tier must be one of 0/1/3/5, got {write_tier!r}")
+
+    worthy = (
+        files_read > READ_LIMIT
+        or files_changed > CHANGE_LIMIT
+        or write_tier >= TIER_MEDIUM
+        or (read_tier_high and state.level >= 2)
+    )
+    if not worthy:
+        return None
+    return {
+        "files_read": files_read,
+        "files_changed": files_changed,
+        "write_tier": write_tier,
+        "read_tier_high": read_tier_high,
+        "verify_failed": verify_failed,
+        "level": state.level,
+    }

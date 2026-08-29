@@ -109,8 +109,6 @@ def test_r2_wording_under_scopes_but_reveal_escalates() -> None:
         read_tiers = observed_tiers(frozenset(task.reveal_reads), frozenset(), cfg)
         arm = next_level(
             ExpansionState(level=1),
-            files_read=len(task.reveal_reads),
-            files_changed=0,
             write_tier=read_tiers["write_max"],
             read_tier_high=read_tiers["read_max"] >= 5,
             verify_failed=False,
@@ -123,8 +121,6 @@ def test_r2_wording_under_scopes_but_reveal_escalates() -> None:
         write_tiers = observed_tiers(frozenset(task.reveal_reads), frozenset(task.reveal_writes), cfg)
         esc = next_level(
             ExpansionState(level=2),
-            files_read=len(task.reveal_reads),
-            files_changed=len(task.reveal_writes),
             write_tier=write_tiers["write_max"],
             read_tier_high=write_tiers["read_max"] >= 5,
             verify_failed=False,
@@ -151,8 +147,6 @@ def test_r2_failed_verification_escalates_even_without_high_write() -> None:
     """A red pytest on coupled work is itself an escalation signal (verify_failed)."""
     decision = next_level(
         ExpansionState(level=2),
-        files_read=4,
-        files_changed=1,
         write_tier=3,  # medium (e.g. a tests/ edit)
         read_tier_high=True,
         verify_failed=True,

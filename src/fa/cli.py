@@ -1433,7 +1433,9 @@ def _make_workflow_ctx_provider(
     """
 
     def session_facts_provider() -> dict[str, Any]:
-        from fa.inner_loop.path_risk import default_scope_risk_config
+        # S10.9 / CT-H7: the SAME resolved config the escalation evidence
+        # uses — handoff tiers can never diverge from expansion tiers (F4).
+        from fa.inner_loop.path_risk import load_scope_risk_config
 
         sess = state_ref[0] if state_ref else None
         if sess is None or sess.transaction is None:
@@ -1444,7 +1446,7 @@ def _make_workflow_ctx_provider(
             "write_paths": list(transaction.write_set),
             "last_search_paths": list(sess.last_search_paths),
             "workspace": str(sess.workspace_root),
-            "risk_config": default_scope_risk_config(),
+            "risk_config": load_scope_risk_config(),
         }
 
     def blackboard_writer(entry: Any) -> None:

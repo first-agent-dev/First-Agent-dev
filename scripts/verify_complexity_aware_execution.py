@@ -117,43 +117,11 @@ def check_s2_chat_registry(c: Checker) -> None:
 
     with tempfile.TemporaryDirectory() as ws:
         reg = build_chat_registry(Path(ws), bash_timeout_seconds=30)
-        names = {spec.name for spec in reg.all_specs()} if hasattr(reg, "all_specs") else set()
-        if not names:
-            # tolerate registry API differences: fall back to known member
-            names = {
-                n
-                for n in (
-                    "fs_read_file",
-                    "fs_write_file",
-                    "fs_edit_file",
-                    "fs_run_bash",
-                    "fs_search",
-                    "fs_blackboard_query",
-                )
-                if _registry_has(reg, n)
-            }
+        names = {spec.name for spec in reg.specs()}
         c.ok("chat has fs_read_file", "fs_read_file" in names, sorted(names))
         c.ok("chat has fs_write_file (generalist set; gate withholds at CT9)", "fs_write_file" in names, sorted(names))
         c.ok("chat has fs_run_bash", "fs_run_bash" in names, sorted(names))
         c.ok("chat has fs_search", "fs_search" in names, sorted(names))
-
-
-def _registry_has(reg: Any, name: str) -> bool:
-    for meth in ("get", "specs", "all_specs"):
-        fn = getattr(reg, meth, None)
-        if fn is None:
-            continue
-        try:
-            if meth == "get":
-                return fn(name) is not None
-            out = fn()
-            seq = out.values() if isinstance(out, dict) else out
-            for item in seq:
-                if getattr(item, "name", None) == name:
-                    return True
-        except Exception:  # noqa: BLE001, S112 - registry API probe; swallow to try next accessor
-            continue
-    return False
 
 
 def check_s3_seed_mapping(c: Checker) -> None:
@@ -208,6 +176,22 @@ def check_s4_workflow_tool(c: Checker) -> None:
     codes3 = ["ok" if spec3.handler({"task": "x"}).error is None else "denied" for _ in range(4)]
     c.eq("K=3 -> ok,ok,ok,denied (K is config, not hardcoded)", codes3, ["ok", "ok", "ok", "denied"])
 
+    # S10.9 / CT-H6: K=0 means never escalate — honored, not clamped to 1.
+    z_calls: list[dict[str, Any]] = []
+
+    def runner_z(**kw: Any) -> tuple[int, None]:
+        z_calls.append(kw)
+        return (0, None)
+
+    rz = build_invoke_workflow_tool(runner_z, lambda: make_ctx(0)).handler({"task": "x"})
+    c.ok(
+        "K=0 -> first call denied as disabled-by-config",
+        rz.error is not None
+        and rz.error.code == "workflow_budget_exhausted"
+        and "disabled by config" in rz.error.message,
+    )
+    c.eq("K=0 never reaches runner", len(z_calls), 0)
+
     # No live context -> workflow_unavailable (fail safe, no crash).
     spec_none = build_invoke_workflow_tool(lambda **kw: (0, None), lambda: None)
     rn = spec_none.handler({"task": "g"})
@@ -256,6 +240,41 @@ def check_s4_workflow_tool(c: Checker) -> None:
     # Empty facts -> no file-map sections but checklist retained.
     empty = build_handoff_task(goal="plain", read_paths=[], write_paths=[], search_paths=[])
     c.ok("empty facts omits Start here", "Start here:" not in empty)
+
+    # S10.9 / CT-H5: Modified caps at 15 with an explicit overflow marker;
+    # the total-path budget stays a real bound even with 40 writes.
+    heavy = build_handoff_task(
+        goal="big refactor",
+        read_paths=["src/fa/cli.py"],
+        write_paths=[f"src/fa/mod_{i:02d}.py" for i in range(40)],
+        search_paths=[],
+    )
+    modified = heavy.split("Modified:")[1].split("Do exactly:")[0]
+    c.eq(
+        "Modified section caps at 15 entries (40 writes)",
+        sum(1 for ln in modified.splitlines() if ln.strip().startswith("- ")),
+        15,
+    )
+    c.ok("overflow is explicit, never silent", "(+25 more" in modified)
+    c.ok(
+        "total path entries stay <= 30 + marker",
+        sum(1 for ln in heavy.splitlines() if ln.strip().startswith("- ")) <= 31,
+    )
+
+    # S10.9 / F11: a malformed risk_config in live facts degrades the handoff
+    # to the bare goal instead of surfacing a tool error.
+    bad_ctx = make_ctx(2, facts={"read_paths": ["src/a.py"], "risk_config": "not-a-config"})
+    reached: list[dict[str, Any]] = []
+
+    def runner_bad(**kw: Any) -> tuple[int, None]:
+        reached.append(kw)
+        return (0, None)
+
+    rb = build_invoke_workflow_tool(runner_bad, lambda: bad_ctx).handler({"task": "keep going"})
+    c.ok(
+        "malformed risk_config -> goal-only degrade, escalation still runs",
+        rb.error is None and bool(reached) and reached[0]["task"] == "keep going",
+    )
     c.ok("empty facts keeps positive checklist", "Do exactly:" in empty)
 
 
@@ -355,7 +374,7 @@ def check_s8_cost_model(c: Checker) -> None:
     c.eq("floor with no changed files = 0.0", compute_cost_floor([], ".", 0), 0.0)
     with tempfile.TemporaryDirectory() as d:
         f = Path(d) / "a.py"
-        f.write_text("x = 1\n" * 200)
+        f.write_text("x = 1\n" * 200, encoding="utf-8")
         floor = compute_cost_floor([str(f)], d, 0)
         c.ok("floor with a real changed file > 0", floor > 0.0, floor)
 
@@ -371,8 +390,6 @@ def check_s10_expansion(c: Checker) -> None:
 
     def ev(**kw: Any) -> dict[str, Any]:
         base: dict[str, Any] = {
-            "files_read": 0,
-            "files_changed": 0,
             "write_tier": 0,
             "read_tier_high": False,
             "verify_failed": False,
@@ -387,17 +404,17 @@ def check_s10_expansion(c: Checker) -> None:
     c.eq("clean L1 -> no decision", next_level(ExpansionState(1), **ev()), None)
     c.eq(
         "bulk counters with no high tier stay SILENT",
-        next_level(ExpansionState(1), **ev(files_read=15, files_changed=5)),
+        next_level(ExpansionState(1), **ev()),
         None,
     )
     c.eq(
         "high-tier READ arms L2",
-        triple(next_level(ExpansionState(1), **ev(read_tier_high=True, files_read=1))),
+        triple(next_level(ExpansionState(1), **ev(read_tier_high=True))),
         (2, "read_high_arm", "skill"),
     )
     c.eq(
         "high-tier WRITE escalates L3",
-        triple(next_level(ExpansionState(1), **ev(write_tier=5, files_changed=1))),
+        triple(next_level(ExpansionState(1), **ev(write_tier=5))),
         (3, "high_tier_write", "escalation"),
     )
     c.eq(
@@ -407,7 +424,7 @@ def check_s10_expansion(c: Checker) -> None:
     )
     c.eq(
         "medium-tier write (tests/) does NOT escalate",
-        next_level(ExpansionState(1), **ev(write_tier=3, files_changed=1)),
+        next_level(ExpansionState(1), **ev(write_tier=3)),
         None,
     )
     c.eq(
@@ -431,6 +448,29 @@ def check_s10_expansion(c: Checker) -> None:
     c.eq("strongest evidence first: verify_failed dominates", dt[1] if dt is not None else None, "verify_failed")
     c.eq("warm skill = feature-planning", select_l2_skill(plan_artifact=True), "feature-planning")
     c.eq("cold skill = plan-authoring", select_l2_skill(plan_artifact=False), "plan-authoring")
+
+    # S10.9 / CT-H2: near-miss telemetry truth table.
+    from fa.inner_loop.expansion import near_miss_evidence
+
+    c.eq(
+        "clean turn -> no observation",
+        near_miss_evidence(
+            ExpansionState(1), files_read=2, files_changed=0, write_tier=0, read_tier_high=False, verify_failed=False
+        ),
+        None,
+    )
+    nm = near_miss_evidence(
+        ExpansionState(1), files_read=15, files_changed=0, write_tier=0, read_tier_high=False, verify_failed=False
+    )
+    c.ok("bulk reads over threshold -> observed", nm is not None and nm["files_read"] == 15)
+    nm2 = near_miss_evidence(
+        ExpansionState(1), files_read=1, files_changed=1, write_tier=3, read_tier_high=False, verify_failed=False
+    )
+    c.ok("single medium write -> observed (no counter needed)", nm2 is not None and nm2["write_tier"] == 3)
+    nm3 = near_miss_evidence(
+        ExpansionState(2), files_read=1, files_changed=0, write_tier=0, read_tier_high=True, verify_failed=False
+    )
+    c.ok("high read while already armed -> observed", nm3 is not None and nm3["read_tier_high"] is True)
 
 
 def check_s10_path_tiers(c: Checker) -> None:
@@ -479,6 +519,24 @@ def check_s10_path_tiers(c: Checker) -> None:
     c.ok("default 'src' retained (additive)", "src" in r.config.high_prefixes)
     r_bad = load_scope_risk_tiers("scope_risk_tiers:\n  bogus:\n    - x\n")
     c.ok("unknown tier name -> warning, config still returned", len(r_bad.warnings) >= 1)
+
+    # S10.9 / CT-H8: glob prefixes are segment-anchored; dot-dirs survive.
+    from fa.inner_loop.path_risk import DEFAULT_MEDIUM_PREFIXES, DEFAULT_SAFE_PREFIXES, ScopeRiskConfig
+
+    cfg_glob = ScopeRiskConfig(
+        safe_prefixes=DEFAULT_SAFE_PREFIXES,
+        medium_prefixes=DEFAULT_MEDIUM_PREFIXES,
+        high_prefixes=frozenset({"gen/*"}),
+    )
+    c.eq("glob src/* style matches ONE segment", tier_for_path("gen/a.py", cfg_glob), TIER_HIGH)
+    c.eq("glob does not span / (deep path not high)", tier_for_path("gen/a/b.py", cfg_glob), TIER_MEDIUM)
+    cfg_dot = ScopeRiskConfig(
+        safe_prefixes=DEFAULT_SAFE_PREFIXES,
+        medium_prefixes=DEFAULT_MEDIUM_PREFIXES,
+        high_prefixes=frozenset({"ci"}),
+    )
+    c.eq(".ci is not ci (dot survives prefix strip)", tier_for_path(".ci/x.yml", cfg_dot), TIER_MEDIUM)
+    c.eq("ci still matches ci", tier_for_path("ci/x.yml", cfg_dot), TIER_HIGH)
 
 
 def check_s10_observations(c: Checker) -> None:
@@ -587,6 +645,15 @@ def check_s10_log_kinds(c: Checker) -> None:
     c.ok("expansion_exhausted registered", "expansion_exhausted" in members)
     c.ok("scope_tripwire retained as dormant alias", "scope_tripwire" in members)
 
+    # S10.9 / CT-H3+CT-H4: telemetry kind registered; mirrors registered;
+    # expansion_observed deliberately NOT mirrored (console noise policy).
+    from fa.output import CONSOLE_MIRROR_KINDS
+
+    c.ok("expansion_observed registered (S10.9 telemetry)", "expansion_observed" in members)
+    c.ok("scope_expansion console-mirrored", "scope_expansion" in CONSOLE_MIRROR_KINDS)
+    c.ok("expansion_exhausted console-mirrored", "expansion_exhausted" in CONSOLE_MIRROR_KINDS)
+    c.ok("expansion_observed NOT mirrored (JSONL-only)", "expansion_observed" not in CONSOLE_MIRROR_KINDS)
+
     # No production producer emits the retired kind.
     import subprocess
 
@@ -623,8 +690,6 @@ def check_s10_two_layer(c: Checker) -> None:
         if is_write:
             d = next_level(
                 ExpansionState(1),
-                files_read=2,
-                files_changed=2,
                 write_tier=5,
                 read_tier_high=False,
                 verify_failed=False,
@@ -634,8 +699,6 @@ def check_s10_two_layer(c: Checker) -> None:
         else:
             d = next_level(
                 ExpansionState(1),
-                files_read=1,
-                files_changed=0,
                 write_tier=0,
                 read_tier_high=True,
                 verify_failed=False,

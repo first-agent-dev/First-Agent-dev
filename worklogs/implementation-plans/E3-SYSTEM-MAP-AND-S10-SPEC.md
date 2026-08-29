@@ -731,6 +731,20 @@ Same spirit — hand the case to Expand — different wire. The ADR must record
 this as an adaptation; S10a's trigger table (row 2) is where the "armed"
 state becomes observable at runtime.
 
+> **SUPERSEDED 2026-08-29 (S10.9 / GAP-H9).** The ĉ×0.6 conflict penalty
+> above was **never implemented and will not be**. S10 shipped the two-layer
+> design instead (ADR-16 addendum §A): the lexical estimator is deliberately
+> weak, and wording-vs-structure disagreement is resolved by the *runtime
+> evidence engine* (`inner_loop/expansion.py` + `path_risk.py`), which arms
+> and escalates on observed reads/writes regardless of the estimate. The
+> completion criterion "disagreement pulls ĉ below the gate threshold (exact
+> float)" (§Completion, row 4.2) is void; its intent — disagreement hands the
+> case to Expand — is carried by the `read_high_arm` / `high_tier_write`
+> triggers, pinned by the R1/R2 suites. Rationale for the pivot: adjusting a
+> lexical confidence number cannot express *positional* evidence, and the
+> gate (auto-tool-withholding) ships OFF (Q25), leaving the estimate-time
+> penalty with no consumer.
+
 ### 3.5 S10d — Eq. 2's reliability constraint, measured
 
 `fa stats --calibration` already groups realized ACRR by `recommended_mode` and
@@ -842,7 +856,7 @@ must score tier 1, not 3.
 | 3.4 Eq. 4 | `r̂` populated and consumed | S10b |
 | 3.4 Eq. 4 | `M` (prior experience) socket | Principle 5 signature note; future `M` = calibration history |
 | 4.2 | one cheap probe | S10b |
-| 4.2 | conflict lowers ĉ | S10c (adaptation note) |
+| 4.2 | conflict lowers ĉ | ~~S10c~~ **SUPERSEDED** (S10.9): evidence engine, §3.4 disposition |
 | 4.2 | quoted-literal fast path | R1 fast-path removal |
 | 4.3 | verification scales with risk | S10b |
 | 4.4 | progressive expansion, `K`, monotone | S10a |

@@ -344,8 +344,10 @@ Trigger policy (strongest evidence first, so the emitted trigger name is unambig
 Critical gating (R1/DP-1): **bulk counters never escalate without a high tier present.**
 A large but *safe* change — e.g. fixing doc links across 15 archived files, or editing
 only `tests/`/`knowledge/` — stays silent. The inherited S7 thresholds
-(`READ_LIMIT = 10`, `CHANGE_LIMIT = 3`) are still accepted and validated as inputs, but
-they are tier-gated so safe bulk work does not nag. A run seeded `workflow_linear` is
+(`READ_LIMIT = 10`, `CHANGE_LIMIT = 3`) play **no policy role** (S10.9 / GAP-H4: they
+were validated-but-unread inputs to `next_level` and have been removed from it). They
+remain load-bearing for *telemetry*: `near_miss_evidence` uses them to decide when a
+policy-relevant-but-silent boundary earns a durable `expansion_observed` event. A run seeded `workflow_linear` is
 never re-escalated (RK-I — the advice would duplicate the seed).
 
 L2 skill selection is deterministic (`select_l2_skill`): a plan/research artifact
@@ -378,7 +380,11 @@ Rules, each pinned by tests:
   associative/commutative/idempotent and keeps the strongest signal.
 - **Config lists are additive to defaults** and a bad/missing config degrades to defaults
   **plus a structured warning** — never a crash, never silence (`ScopeRiskWarning`;
-  failure-observable). The high default (`src`) cannot be silently dropped.
+  failure-observable). The high default (`src`) cannot be silently dropped. Resolution is
+  canonical (S10.9 / D-H8): `path_risk.load_scope_risk_config()` reads `~/.fa/config.yaml`
+  (`DEFAULT_CONFIG_PATH`) and is the **single** source for both the escalation evidence and
+  the planner-handoff facts (CT-H7) — the short-lived `<workspace>/.fa/config.yaml`
+  candidate was removed as a single-site convention no other knob honours.
 - `observed_tiers(reads, writes, cfg)` returns per-set maxima; an empty set is
   `TIER_NO_EVIDENCE (0)`, distinct from a *safe* observation, so "no writes this turn"
   never reads as "wrote safely."
@@ -440,9 +446,12 @@ the handoff task is built from **live session facts** via a provider closure
 5. **`Candidate leads:`** — search/grep paths not already read, **cap 10**.
 6. **`Do exactly:`** — a 3-step positive checklist for the planner.
 
-Caps: Start-here ≤ 5, leads ≤ 10, **total paths ≤ 30**, paths only (no snippets, no
-file:line in v1). When paths exceed the total budget, the *Observed* section (the most
-derivable) is trimmed first; Start-here and Leads are the actionable ones. A missing or
+Caps (S10.9 / CT-H5): Start-here ≤ 5, leads ≤ 10, **Modified ≤ 15 with an explicit
+`(+N more — run git status for the full set)` overflow marker**, total path entries ≤ 30
+(marker line excluded), paths only (no snippets, no file:line in v1). When paths exceed
+the total budget, the *Observed* section (the most derivable) is trimmed first;
+Start-here and Leads are the actionable ones. Writes beyond the Modified cap are
+summarized, never silently dropped. A missing or
 raising facts provider **degrades to the bare goal** — escalation still runs, never
 crashes; the blackboard mirror (`type: workflow_handoff`) is best-effort.
 
@@ -486,6 +495,11 @@ output, and can be enabled later by config. No mid-run tool removal ever happens
 
 Two new durable event kinds join `LogKind`: **`scope_expansion`** (the per-turn boundary
 event — evidence, level change) and **`expansion_exhausted`** (terminal K denial). The
+S10.9 adds **`expansion_observed`** (CT-H3): delta-gated durable telemetry for
+policy-relevant boundaries that (correctly) did not escalate — the S11 tuning feed. It is
+JSONL-only by design (not console-mirrored: noise), while `scope_expansion` and
+`expansion_exhausted` **are** console-mirrored (CT-H4) so operators see posture changes
+live. The
 S7 one-shot mid-flight **`scope_tripwire`** kind is **retired as an emitted event**
 (replaced by the per-turn `scope_expansion` boundary) but **kept in the `LogKind` enum as
 a dormant alias**, because the S8/S9 routing-calibration projection still keys on the

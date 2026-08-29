@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from fa.inner_loop.expansion import TIER_HIGH, TIER_MEDIUM, TIER_SAFE
 
@@ -40,6 +40,7 @@ __all__ = [
     "ScopeRiskWarning",
     "combine_tiers",
     "default_scope_risk_config",
+    "load_scope_risk_config",
     "load_scope_risk_tiers",
     "observed_tiers",
     "tier_for_path",
@@ -132,21 +133,31 @@ def _normalise_prefix(raw: str) -> str:
 
 
 def _prefix_matches(path: str, prefix: str) -> bool:
-    """Glob-aware, path-boundary-aware prefix match.
+    """Glob-aware, path-boundary-aware prefix match (S10.9 / CT-H8).
 
-    ``*`` is a glob (``fnmatch``); a literal prefix matches only at a path
-    boundary, so ``src`` matches ``src/a.py`` and ``src`` but never
-    ``src-legacy/x.py``.
+    * ``./`` is stripped by an explicit prefix loop — NOT ``lstrip("./")``,
+      which is a character-set strip and would eat a leading dot off
+      dot-directories (``.github/x`` → ``github/x``).
+    * A literal prefix matches only at a path boundary, so ``src`` matches
+      ``src/a.py`` and ``src`` but never ``src-legacy/x.py``.
+    * A glob prefix matches **segment-anchored**: each ``/``-separated
+      segment is fnmatched against the corresponding path segment and the
+      segment counts must be equal, so ``src/*`` matches ``src/a.py`` but
+      NOT ``src/a/b.py`` (bare ``fnmatch`` lets ``*`` span ``/``). The
+      ``/**`` suffix remains the whole-subtree form.
     """
-    path = path.strip().replace("\\", "/").lstrip("./")
+    path = path.strip().replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
     if any(ch in prefix for ch in "*?["):
-        # fnmatch is path-blind; anchor ``*`` to within one segment by
-        # translating ``/**`` (whole subtree) and leaving single-segment
-        # globs to fnmatch against the top segment(s).
         if prefix.endswith("/**"):
             base = prefix[:-3]
             return path == base or path.startswith(base + "/")
-        return fnmatch(path, prefix)
+        prefix_segments = prefix.split("/")
+        path_segments = path.split("/")
+        if len(prefix_segments) != len(path_segments):
+            return False
+        return all(fnmatch(ps, xs) for ps, xs in zip(path_segments, prefix_segments, strict=True))
     return path == prefix or path.startswith(prefix + "/")
 
 
@@ -324,3 +335,31 @@ def _add_prefix(
         return
     target = {TIER_SAFE: safe, TIER_MEDIUM: medium, TIER_HIGH: high}[tier]
     target.add(prefix)
+
+
+def load_scope_risk_config(config_path: Path | None = None) -> ScopeRiskConfig:
+    """Resolve the operative ``scope_risk_tiers:`` config (S10.9 / CT-H7).
+
+    Single source for BOTH consumers — the coder loop's escalation evidence
+    and the CLI's planner-handoff facts provider — so the two can never
+    classify a path differently (F4). Reads the canonical
+    ``~/.fa/config.yaml`` only (F5 / D-H8: the short-lived workspace-level
+    candidate was a single-site convention no other knob honours); a custom
+    path can be injected for tests. Never raises: a missing/unreadable file
+    degrades to documented defaults, and parse warnings are logged.
+    """
+    import logging
+
+    from fa.config import DEFAULT_CONFIG_PATH
+
+    path = Path(config_path) if config_path is not None else DEFAULT_CONFIG_PATH
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return default_scope_risk_config()
+    result = load_scope_risk_tiers(text)
+    if result.warnings:
+        logger = logging.getLogger(__name__)
+        for warning in result.warnings:
+            logger.warning("scope_risk_tiers config (%s): %s", warning.key, warning.detail)
+    return result.config
