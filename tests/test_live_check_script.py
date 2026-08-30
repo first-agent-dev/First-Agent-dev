@@ -74,10 +74,37 @@ def test_r1_state_and_routing_paths() -> None:
     """R1: oracle reads the documented deployment paths; overrides are test-only."""
     text = _text()
     assert "/srv/first-agent/state" in text, "state-bind host path missing"
+    assert "/srv/first-agent/sessions" in text, "sessions-bind host path missing"
     assert "/srv/first-agent/routing/models.yaml" in text, "routing source path missing"
-    assert "FA_STATE_HOST" in text and "FA_ROUTING" in text, (
-        "test-only path overrides missing (the battery depends on them)"
+    for var in ("FA_STATE_HOST", "FA_SESSIONS_HOST", "FA_ROUTING"):
+        assert var in text, f"test-only path override {var} missing (battery depends on it)"
+
+
+def test_session_audit_mirrors_manager_blocking_classes() -> None:
+    """The audit flags only what manager._read_manifest actually raises on.
+
+    A merely-pruned workspace must NOT block (resolve() tolerates missing
+    paths); corrupt/incomplete/v!=v1/inactive manifests and /sessions escapes
+    (the rev3 DoS class) must abort setup.
+    """
+    text = _text()
+    body = text.split("audit_sessions()", 1)[1].split("\n}\n", 1)[0]
+    for marker in ("schema_version", '"v1"', '"active"', "path_escape class", "pruned"):
+        assert marker in body, f"audit lost the {marker} check"
+    assert "sys.exit(1 if blocking else 0)" in body, "audit no longer distinguishes blocking"
+    setup_body = text.split("cmd_setup()", 1)[1].split("\n}", 1)[0]
+    assert "audit_sessions" in setup_body, "setup lost the session audit"
+    assert "warn_stale_sessions" not in text, "old always-warn scan reintroduced"
+
+
+def test_schema_check_warms_up_the_fix6_migration() -> None:
+    """fix6 migrates on open — the check must warm it via the wrapper, not die."""
+    text = _text()
+    body = text.split("check_history_schema()", 1)[1].split("\n}\n", 1)[0]
+    assert '"$FA" stats --global-history' in body, (
+        "schema check must trigger the additive/idempotent migration through the production wrapper and re-verify"
     )
+    assert "mode=ro" in text, "schema probe must open the production db read-only"
 
 
 def test_r2_missing_events_is_fail_never_pass() -> None:

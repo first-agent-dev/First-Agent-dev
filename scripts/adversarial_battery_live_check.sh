@@ -15,7 +15,7 @@ set -u
 SRC_SCRIPT="${1:-$(cd "$(dirname "$0")" && pwd)/run_live_check.sh}"
 ROOT="$(mktemp -d /tmp/adv-XXXXXX)"
 export HOME="$ROOT/home"
-mkdir -p "$HOME/.fa" "$ROOT/repo/scripts" "$ROOT/state/session-log" "$ROOT/routing" "$ROOT/bin"
+mkdir -p "$HOME/.fa" "$ROOT/repo/scripts" "$ROOT/state/session-log" "$ROOT/routing" "$ROOT/bin" "$ROOT/sessions"
 
 # ── testbed repo (host-checkout stand-in) ──
 cp "$SRC_SCRIPT" "$ROOT/repo/scripts/run_live_check.sh"
@@ -73,6 +73,7 @@ chmod +x "$ROOT/repo/scripts/fa"
 # ── deployment-path fixtures (tests-only overrides of two documented paths) ──
 printf 'chat:\n  name: stub\n  chain:\n    - provider: p\n      model: m\n' > "$ROOT/routing/models.yaml"
 export FA_STATE_HOST="$ROOT/state"
+export FA_SESSIONS_HOST="$ROOT/sessions"
 export FA_ROUTING="$ROOT/routing/models.yaml"
 
 cd "$ROOT/repo"
@@ -165,6 +166,27 @@ echo "== S9: l4 reads durable history through the wrapper"
 OUT="$(bash scripts/run_live_check.sh l4 2>&1)"; RC=$?
 if [ $RC -eq 0 ] && printf '%s' "$OUT" | grep -qF 'rows visible: 1'; then ok "S9 l4 history parse"
 else miss "S9 l4 history parse" "rc=$RC out=$OUT"; fi
+
+echo "== S10 (SESSION AUDIT): pruned workspace is informational — setup must still pass"
+mkdir -p "$ROOT/state/sessions/session-pruned"
+printf '{"schema_version":"v1","session_id":"session-pruned","workspace_path":"/sessions/session-pruned","session_db_path":"/home/fa/.fa/sessions/session-pruned/session.db","status":"active"}\n' > "$ROOT/state/sessions/session-pruned/manifest.json"
+OUT="$(bash scripts/run_live_check.sh setup 2>&1)"; RC=$?
+if [ $RC -eq 0 ] && printf '%s' "$OUT" | grep -qF '1 pruned-workspace'; then
+  closed "S10: pruned workspace does not block setup"
+else
+  defect "S10: pruned workspace treated as blocking"
+fi
+
+echo "== S11 (SESSION AUDIT): workspace escaping /sessions must abort setup (rev3 DoS class)"
+mkdir -p "$ROOT/state/sessions/session-escape"
+printf '{"schema_version":"v1","session_id":"session-escape","workspace_path":"/tmp/worktrees/gone","session_db_path":"/home/fa/.fa/sessions/session-escape/session.db","status":"active"}\n' > "$ROOT/state/sessions/session-escape/manifest.json"
+OUT="$(bash scripts/run_live_check.sh setup 2>&1)"; RC=$?
+if [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -qF '[BLOCK] session-escape'; then
+  closed "S11: escaping-workspace manifest aborts setup"
+else
+  defect "S11: escaping-workspace manifest accepted"
+fi
+rm -rf "$ROOT/state/sessions/session-escape" "$ROOT/state/sessions/session-pruned"
 
 echo
 echo "battery: $PASS checks OK, $FAIL missed; defect probes still open:${DEFECTS:- none}"

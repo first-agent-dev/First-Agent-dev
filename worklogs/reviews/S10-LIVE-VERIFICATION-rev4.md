@@ -43,8 +43,12 @@ scripts/run_live_check.sh setup
 
 Checks: wrapper + docker present, `chat:` role in the routing file, stack status,
 **`fa probe` (proxy + providers — fails fast before tokens are spent)**,
-routing-check (container view), history schema (fix6), stale-session scan
-(report-only; production state is never swept), ledger initialized.
+routing-check (container view), history schema (a pre-S3.5 db is warmed up
+through the wrapper — fix6 migrates on every open, additive + idempotent),
+session-manifest audit (aborts only on the classes `manager._read_manifest`
+actually raises on: corrupt, non-`v1`, non-`active`, or workspace escaping
+`/sessions` — the rev3 DoS class; merely-pruned workspaces are informational
+and never block), ledger initialized. Production state is never swept.
 
 ## §2 — rows (one command each; no git steps between rows)
 

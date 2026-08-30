@@ -44,6 +44,7 @@ REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || REPO="$(cd "$(dirname "$0
 cd "$REPO"
 FA="./scripts/fa"                                        # host wrapper -> container
 STATE_HOST="${FA_STATE_HOST:-/srv/first-agent/state}"    # host side of container ~/.fa
+SESSIONS_HOST="${FA_SESSIONS_HOST:-/srv/first-agent/sessions}" # host side of container /sessions
 ROUTING="${FA_ROUTING:-/srv/first-agent/routing/models.yaml}"
 PY="python3"                                             # host stdlib python (parsing only)
 LEDGER_DIR="worklogs/reviews/live-trial-data"
@@ -57,44 +58,93 @@ need_fa() {
   command -v docker >/dev/null 2>&1 || die "docker not on PATH — the wrapper cannot reach the stack"
 }
 
-check_history_schema() {
-  # fix6 (migration single-source-of-truth) must be in this checkout, else
-  # per-run exports against a pre-S3.5 global_history.db fail.
-  local db="$STATE_HOST/global_history.db"
-  [ -f "$db" ] || return 0
-  "$PY" - "$db" <<'PYEOF' || echo "  [WARN] history schema check failed — skipping"
+schema_has_col() { # schema_has_col <db> — exit 0 iff runs.scope_estimate_json exists
+  "$PY" - "$1" <<'PYEOF'
 import sqlite3, sys
-cols = {r[1] for r in sqlite3.connect(sys.argv[1]).execute("PRAGMA table_info(runs);")}
-if "scope_estimate_json" not in cols:
-    print("  [WARN] global_history.db predates S3.5 and this checkout lacks the")
-    print("         fix6 migration — exports will fail. Run 'fa update'.")
+try:
+    cols = {r[1] for r in sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True).execute("PRAGMA table_info(runs);")}
+except Exception:
     sys.exit(1)
-print("  history schema OK (scope_estimate_json present)")
+sys.exit(0 if "scope_estimate_json" in cols else 1)
 PYEOF
 }
 
-warn_stale_sessions() {
-  # A session manifest whose workspace_path no longer exists makes
-  # SessionManager refuse runs (path_escape). Production state is NOT ours to
-  # delete — report and let the operator decide.
-  [ -d "$STATE_HOST/sessions" ] || return 0
-  "$PY" - "$STATE_HOST" <<'PYEOF' || echo "  [WARN] stale-session scan failed — skipping"
+check_history_schema() {
+  # fix6 migrates global_history.db ON EVERY OPEN (additive + idempotent —
+  # see _init_db in src/fa/inner_loop/global_history.py). A pre-S3.5 db is
+  # therefore not broken, just not yet opened by updated code: warm the
+  # migration up through the wrapper and re-verify.
+  local db="$STATE_HOST/global_history.db"
+  [ -f "$db" ] || { echo "  no global_history.db yet (first run creates it)"; return 0; }
+  if schema_has_col "$db"; then
+    echo "  history schema OK (scope_estimate_json present)"
+  else
+    echo "  history schema pre-S3.5 — warming up (fix6 migration runs on open)..."
+    "$FA" stats --global-history --output json >/dev/null 2>&1 || true
+    if schema_has_col "$db"; then
+      echo "  history schema migrated OK (scope_estimate_json present)"
+    else
+      echo "  [WARN] warm-up did not add scope_estimate_json — exports may fail; investigate before l4"
+    fi
+  fi
+}
+
+audit_sessions() {
+  # Mirrors what actually blocks a NEW session (manager._read_manifest via
+  # _check_reverse_workspace_ownership, which reads EVERY manifest with no
+  # try/except): corrupt/unreadable, missing required fields, schema_version
+  # != v1, status != active, or workspace_path escaping the /sessions root
+  # (the rev3 DoS class). A workspace dir that was merely PRUNED does NOT
+  # block — resolve() tolerates missing paths — so it is informational.
+  # Paths: manifests live under the state bind; workspace_path is a CONTAINER
+  # path (/sessions/...) mapped here to its host side for the dir check.
+  if [ ! -d "$STATE_HOST/sessions" ]; then
+    echo "  no sessions dir yet"
+    return 0
+  fi
+  local rc=0
+  set +e
+  "$PY" - "$STATE_HOST" "$SESSIONS_HOST" <<'PYEOF'
 import glob, json, os, sys
-stale = []
-for m in glob.glob(os.path.join(sys.argv[1], "sessions", "*", "manifest.json")):
+state_host, sessions_host = sys.argv[1], sys.argv[2]
+REQUIRED = {"schema_version", "session_id", "workspace_path", "session_db_path", "status"}
+blocking, pruned = [], []
+for m in sorted(glob.glob(os.path.join(state_host, "sessions", "*", "manifest.json"))):
+    name = os.path.basename(os.path.dirname(m))
     try:
         with open(m, encoding="utf-8") as fh:
             data = json.load(fh)
-    except Exception:
+    except Exception as exc:
+        blocking.append((name, f"unreadable/corrupt ({type(exc).__name__})"))
         continue
-    wp = data.get("workspace_path") or ""
-    if wp and not os.path.isdir(wp):
-        stale.append((os.path.basename(os.path.dirname(m)), wp))
-for name, wp in stale:
-    print(f"  [WARN] stale session {name}: workspace missing: {wp}")
-if not stale:
-    print("  no stale session manifests")
+    if not isinstance(data, dict) or not REQUIRED.issubset(data):
+        blocking.append((name, "missing required manifest fields"))
+        continue
+    if data.get("schema_version") != "v1":
+        blocking.append((name, f"schema_version {data.get('schema_version')!r} != 'v1'"))
+        continue
+    if data.get("status") != "active":
+        blocking.append((name, f"status {data.get('status')!r} != 'active'"))
+        continue
+    wp = os.path.normpath(str(data.get("workspace_path") or ""))
+    if not (wp == "/sessions" or wp.startswith("/sessions/")):
+        blocking.append((name, f"workspace escapes /sessions root: {wp} (path_escape class)"))
+        continue
+    rel = wp[len("/sessions/"):] if wp.startswith("/sessions/") else ""
+    if not os.path.isdir(os.path.join(sessions_host, rel)):
+        pruned.append(name)
+for name, why in blocking[:5]:
+    print(f"  [BLOCK] {name}: {why}")
+if len(blocking) > 5:
+    print(f"  [BLOCK] ...and {len(blocking) - 5} more")
+print(f"  sessions: {len(blocking)} blocking, {len(pruned)} pruned-workspace (informational)")
+sys.exit(1 if blocking else 0)
 PYEOF
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    die "blocking manifest(s) above make SessionManager refuse EVERY new session; quarantine the listed session dirs under $STATE_HOST/sessions/ (operator decision), then re-run setup"
+  fi
 }
 
 append_ledger() { # rid row exit mode levels exp obs exh notes
@@ -188,8 +238,8 @@ cmd_setup() {
   "$FA" routing-check
   echo "== history schema:"
   check_history_schema
-  echo "== stale-session scan (report only — production state is not swept):"
-  warn_stale_sessions
+  echo "== session-manifest audit (blocking classes only; production state never swept):"
+  audit_sessions
   mkdir -p "$LEDGER_DIR"
   [ -f "$LEDGER" ] || echo "$HDR" > "$LEDGER"
   echo "== ledger: $LEDGER"
