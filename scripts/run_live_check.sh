@@ -154,12 +154,54 @@ append_ledger() { # rid row exit mode levels exp obs exh notes
     "$1" "$(date +%F)" "$2" "${4:-?}" "${5:-none}" "${6:-0}" "${7:-0}" "${8:-0}" "$3" "$9" >> "$LEDGER"
 }
 
+print_timeline() { # print_timeline <events.jsonl> — per-turn tool activity at a glance
+  "$PY" - "$1" <<'PYEOF' || echo "  [WARN] timeline parse failed"
+import json, sys
+from collections import OrderedDict
+turns = OrderedDict()
+def slot(t):
+    return turns.setdefault(t, {"tools": [], "marks": []})
+for line in open(sys.argv[1], encoding="utf-8"):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        e = json.loads(line)
+    except Exception:
+        continue
+    kind, c = e.get("kind", ""), (e.get("content") or {})
+    t = c.get("turn", 0)
+    if kind == "tool_result":
+        ok = c.get("ok", True)
+        err = (c.get("error") or {})
+        why = str(err.get("summary") or err.get("message") or "")
+        name = e.get("tool_name") or "?"
+        guard = next((g for g in ("IntentGuard", "LoopGuard", "PauseGuard") if g in why), "")
+        slot(t)["tools"].append(f"{name}{'' if ok else ' ✗' + (':' + guard if guard else '')}")
+    elif kind == "scope_expansion":
+        slot(t)["marks"].append(f"⤴L{c.get('level_from')}>{c.get('level_to')}({c.get('evidence')})")
+    elif kind == "expansion_observed":
+        slot(t)["marks"].append("near-miss")
+    elif kind == "loop_guard_warn":
+        slot(t)["marks"].append(f"loop:{c.get('detector','?')}")
+print("  ── turn timeline (tools per turn; ✗:Guard = guard denial) ──")
+for t, s in turns.items():
+    if not s["tools"] and not s["marks"]:
+        continue
+    n = len(s["tools"])
+    par = " [parallel x%d]" % n if n > 1 else ""
+    print(f"  t{t:>2}{par}: {' '.join(s['tools']) if s['tools'] else '-'}"
+          + (f"  {' '.join(s['marks'])}" if s["marks"] else ""))
+PYEOF
+}
+
 row_run() { # row_run <label> <max_turns> <task>
   local label="$1" turns="$2" task="$3"
   need_fa
   mkdir -p "$LEDGER_DIR" # R4: dir exists before ANY capture copy
   local rid="cae-${label}-$(date +%s)-$$"
   local log="/tmp/cae_${label}.log"
+  local detail="${CAE_DETAIL:-verbose}"   # CAE_DETAIL=debug adds per-event ms timing
   local events="$STATE_HOST/session-log/$rid/events.jsonl"
   rm -f "$events" 2>/dev/null || true
   echo "RID=$rid  (log: $log)"
@@ -169,7 +211,7 @@ row_run() { # row_run <label> <max_turns> <task>
 
   local rc=0
   set +e
-  "$FA" run --role chat --run-id "$rid" --max-turns "$turns" --detail verbose \
+  "$FA" run --role chat --run-id "$rid" --max-turns "$turns" --detail "$detail" \
     --task "$task" 2>&1 | tee "$log"
   rc=${PIPESTATUS[0]}
   set -e
@@ -208,12 +250,27 @@ row_run() { # row_run <label> <max_turns> <task>
       else
         echo "  [NOTE] no escalation within the turn cap (src/ not touched?)"
       fi
-      grep -qE 'read_high_arm|high_tier_write|verify_failed' "$events" \
-        && echo "  [PASS] expansion evidence names present" \
-        || echo "  [NOTE] no evidence names in events"
-      grep -q "Start here" "$log" \
-        && echo "  [PASS] planner handoff map reached the workflow" \
-        || echo "  [NOTE] model finished in chat (advice not taken — legitimate, note it)"
+      # The evidence-name grep MUST run against the escalation events only.
+      # Unanchored, it also matches the refusal text of a guard denial stored
+      # in a tool_result payload — which is how a run with expansion_n=0
+      # printed "[PASS] expansion evidence names present" on 2026-08-30.
+      if [ "${exp:-0}" -gt 0 ]; then
+        grep '"kind": "scope_expansion"' "$events" \
+          | grep -qE 'read_high_arm|high_tier_write|verify_failed' \
+          && echo "  [PASS] expansion evidence names present" \
+          || echo "  [NOTE] escalation fired but no evidence name in it"
+      fi
+      if grep -q "Start here" "$log"; then
+        echo "  [PASS] planner handoff map reached the workflow"
+      else
+        echo "  [NOTE] no handoff map in output."
+        if [ "${obs:-0}" -gt 0 ]; then
+          echo "        near-miss telemetry present (observed_n=$obs): the policy"
+          echo "        deliberately declined to escalate. Not 'advice not taken'."
+        else
+          echo "        no escalation evidence at all (model finished in chat)."
+        fi
+      fi
       ;;
   esac
   [ "${exh:-0}" -gt 0 ] && echo "  [OBS] K budget exhausted -> operator-report path"
@@ -222,6 +279,7 @@ row_run() { # row_run <label> <max_turns> <task>
   append_ledger "$rid" "$label" "$rc" "$mode" "$levels" "$exp" "$obs" "$exh" \
     "auto-captured via=container"
   trap - INT TERM
+  print_timeline "$events"
   echo "  ledger + events captured (host checkout untouched by design)"
 }
 

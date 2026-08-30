@@ -1,89 +1,125 @@
-# Complexity-Aware Execution — live verification rev4 (slices S1–S10.9)
+# S10 Live Verification — operator runbook
 
-*Supersedes `S10-LIVE-VERIFICATION-rev3.md` (kept as evidence). Rev4 measures the
-PRODUCTION mechanism exactly as documented in `worklogs/DEPLOYMENT-ANATOMY.md`:
-host wrapper `fa` → `docker compose exec first-agent fa` → keys injected by
-`fa-egress-proxy`. Rev3's eight live-only defects all came from machinery sitting
-between the operator and the engine — rev4 removes every layer, including the
-host-venv shortcut an earlier rev4 draft used.*
+**Authoritative doc for live-verifying complexity-aware execution (slices S1–S10.9)
+on the production deployment.** Self-contained: follow it top to bottom; no
+knowledge of earlier revisions is needed (history: §7).
 
-**Principles (each earned):**
-
-1. **Production path only** — `./scripts/fa` (same file as `/usr/local/bin/fa`);
-   config is the read-only bind of `/srv/first-agent/routing/models.yaml`; LLM keys
-   exist **only inside the proxy** (ADR-12 Option C) and are never copied anywhere.
-2. **Logic lives in committed scripts** — `scripts/run_live_check.sh`, pinned by
-   `tests/test_live_check_script.py` and exercised end-to-end by
-   `scripts/adversarial_battery_live_check.sh` (stub deployment: 16 checks + 6
-   regression probes, no provider needed). One short command per row.
-3. **Guarded oracles** — a missing `events.jsonl` is a FAIL, never a PASS; a nonzero
-   `fa` exit is announced before any verdict; run ids are PID-unique and the events
-   path is cleared pre-run, so no row can be scored against another row's events.
-4. **Auto-ledger** — every row appends its CSV line + `events.jsonl` copy under
-   `worklogs/reviews/live-trial-data/` (host side; rows themselves never touch the
-   host checkout — they run in the container's session clone `/sessions/<id>`).
+Everything runs through ONE committed script — `scripts/run_live_check.sh` —
+pinned by `tests/test_live_check_script.py` and exercised end-to-end by
+`scripts/adversarial_battery_live_check.sh`. You paste one short command per
+step; the script prints the verdicts and captures the evidence.
 
 ---
 
-## §0 — prerequisites (nothing to copy)
+## 1. What the script does (deployment anatomy in one paragraph)
 
-- Stack healthy: `fa status` shows `first-agent` and `fa-egress-proxy` up.
-- Run from the deployment checkout: `/srv/first-agent/repo/First-Agent-dev`
-  (apply the rev4 patch there; base commit `8799d4e`. Host-side scripts only —
-  no `fa update` / rebuild needed).
-- **Security cleanup:** if an earlier rev4 draft left `~/.fa/.env` (real API keys)
-  or a copied `~/.fa/models.yaml` in the host home, delete both — the deployment
-  never reads them, and keys must not live outside the proxy.
+`fa` on this host is the wrapper `./scripts/fa` → `docker compose exec
+first-agent fa …` (see `worklogs/DEPLOYMENT-ANATOMY.md`). The agent container
+holds **no LLM keys** — `fa-egress-proxy` injects them; config inside the
+container is the read-only bind of `/srv/first-agent/routing/models.yaml`.
+Rows execute inside the container's per-session workspace clone
+(`/sessions/<id>` from `/repo`), so **the host checkout is never modified**.
+The script reads run events from the host side of the state bind
+(`/srv/first-agent/state/session-log/<run_id>/events.jsonl`) and appends every
+row to the ledger under `worklogs/reviews/live-trial-data/`.
 
-## §1 — preflight
+There is nothing to copy, configure, or clean up beforehand. Never copy
+`fa.env` or `models.yaml` anywhere; keys live only in the proxy.
+
+## 2. Prerequisites
+
+- Stack up: `fa status` shows `first-agent` and `fa-egress-proxy` healthy.
+- Run from any checkout that contains these scripts — the ledger is written
+  there; commit the evidence there. Your checkout location does not change
+  what is measured: rows always execute the container engine, which is built
+  from and clones `/srv/first-agent/repo/First-Agent-dev` (absolute binds).
+  To measure updated engine code: update that checkout, `fa update`.
+
+## 3. Preflight
 
 ```bash
 scripts/run_live_check.sh setup
 ```
 
-Checks: wrapper + docker present, `chat:` role in the routing file, stack status,
-**`fa probe` (proxy + providers — fails fast before tokens are spent)**,
-routing-check (container view), history schema (a pre-S3.5 db is warmed up
-through the wrapper — fix6 migrates on every open, additive + idempotent),
-session-manifest audit (aborts only on the classes `manager._read_manifest`
-actually raises on: corrupt, non-`v1`, non-`active`, or workspace escaping
-`/sessions` — the rev3 DoS class; merely-pruned workspaces are informational
-and never block), ledger initialized. Production state is never swept.
+Healthy output ends with `READY.` and shows:
 
-## §2 — rows (one command each; no git steps between rows)
+| Line | Meaning |
+|---|---|
+| stack status: both services `Up (healthy)` | containers running |
+| `fa probe: OK` | proxy + at least one provider per chain reachable (a `⚠️ 429` on `chain[0]` with a green `chain[1]` is failover working — fine) |
+| `fa routing-check: OK` | mounted routing config parses; `chat` role required |
+| `history schema OK` / `migrated OK` | `global_history.db` usable (pre-S3.5 dbs are migrated automatically on open — additive, idempotent) |
+| `sessions: 0 blocking, N pruned-workspace` | session-manifest audit; **pruned is informational**. `[BLOCK]` lines abort setup — see §6 |
+
+Setup aborts (exit 2, `ERROR:` line) if anything above is unhealthy. Fix that
+first; rows cost tokens and must not run against a broken stack.
+
+## 4. Rows — one command each, in order
 
 ```bash
-scripts/run_live_check.sh l1        # docs-only negative control: expect 0 escalations
-scripts/run_live_check.sh l2        # src/ task (session clone): expect scope_expansion
-scripts/run_live_check.sh l3        # doc-defect full cycle, 40 turns (session clone)
-scripts/run_live_check.sh l4        # durable history + calibration (container state)
-scripts/run_live_check.sh ledger    # the S11 data feed, formatted
+scripts/run_live_check.sh l1
+scripts/run_live_check.sh l2
+scripts/run_live_check.sh l3
+scripts/run_live_check.sh l4
+scripts/run_live_check.sh ledger
 ```
 
-Each row prints its RID, the oracles, and captures automatically. l2/l3 edits
-happen inside the per-session clone — the host checkout stays clean; there is
-nothing to review-discard on the host. IntentGuard making the model draft a PR
-intent before mutating is the guardrail working, not a trial defect.
+| Row | Task | Expected verdicts |
+|---|---|---|
+| `l1` | docs-only note (8-turn cap) — negative control | `fa EXIT=0` + `[PASS] no escalation on a safe docs task`. Any `scope_expansion` here is a finding (`[NOTE] UNEXPECTED…`) |
+| `l2` | shorten `_cmd_stats` in `src/fa/cli.py` (20 turns) | `[PASS] scope_expansion fired (N): 1>2;` + `[PASS] expansion evidence names present`. `[NOTE] model finished in chat` = advice not taken — legitimate, record it |
+| `l3` | fix broken doc links, full cycle (40 turns) | same escalation signals as l2; IntentGuard making the model draft a PR intent first is the guardrail working, not a defect |
+| `l4` | durable history + calibration | `rows visible: N` incl. this trial's `cae-*` rows; calibration buckets printed |
+| `ledger` | — | the capture table, formatted |
 
-## §3 — reading the results
+Run ONE command at a time and review before the next. Each row prints
+`RID=cae-<row>-<ts>-<pid>`, then after the run a **turn timeline**: tools per
+turn (`[parallel xN]` when the model batched calls in one turn), `✗:IntentGuard`
+/ `✗:LoopGuard` denials, `⤴` escalations, `near-miss`, and `loop:` warnings —
+the tool-behaviour picture without reading the transcript. For per-event ms
+timing, prefix with `CAE_DETAIL=debug`. The ledger line and a copy of
+`events.jsonl` are captured automatically under
+`worklogs/reviews/live-trial-data/`; full stdout stays at `/tmp/cae_<row>.log`.
 
-| Signal | Meaning |
+## 5. Sign-off
+
+1. `scripts/run_live_check.sh ledger` shows all rows with `exit_code=0` (or a
+   recorded, explained failure).
+2. Commit the evidence:
+
+```bash
+git add worklogs/reviews/live-trial-data && git commit -m "live: S10 verification ledger + events"
+```
+
+That commit = Part 2 complete. The ledger (`ledger.csv`: `run_id,date,row,
+recommended_mode,level_path,expansion_n,observed_n,exhausted,exit_code,notes`
+plus the captured `*.events.jsonl`) is the data feed for S11 constant closure
+(ε, K, tier prefixes, caps).
+
+## 6. Failure triage
+
+| Signal | Meaning → action |
 |---|---|
-| l1 `[PASS] no escalation` | negative control holds: safe docs task stays chat_direct |
-| l2/l3 `[PASS] scope_expansion fired` | evidence engine escalates on high-tier paths |
-| `[NOTE] model finished in chat` | advice not taken — legitimate; record in ledger notes |
-| `[OBS] K budget exhausted` | escalation budget spent → operator-report path |
-| `[FAIL] fa exited N` | the run itself failed — verdicts below are diagnostics only |
-| `expansion_observed` counts | near-miss telemetry feeding S11 constant tuning |
-| l4 rows `cae-*` | trial rows inside durable history; calibration buckets updated |
+| `[FAIL] fa exited N` | the run itself failed; printed verdicts are diagnostics only. Read `/tmp/cae_<row>.log` and `fa logs`. Re-run the row after fixing |
+| `[FAIL] no events file` | session never started (stack/proxy/session problem). Run `setup` again; check `fa logs` |
+| `[FAIL] interrupted` + ledger row `INTERRUPTED` | Ctrl-C mid-row; evidence was still captured. Re-run the row |
+| `[NOTE] near-miss telemetry present (observed_n=N)` | escalation evidence existed but policy declined to escalate — this is S11 tuning data, not a failure |
+| timeline shows `✗:LoopGuard` on repeated reads of one file | read truncation + path-thrash interplay (known finding D10) — note it, re-run with the file pre-read in one pass |
+| `[BLOCK] <session>: …` at setup | a manifest that makes SessionManager refuse **every** new session (corrupt, non-`v1`, non-`active`, or workspace escaping `/sessions`). Quarantine the listed dir under `/srv/first-agent/state/sessions/`, re-run setup |
+| `setup` dies on `fa probe failed` | stack/proxy/provider down — `fa status`, `fa logs`, fix before spending tokens |
 
-**Sign-off:** commit `worklogs/reviews/live-trial-data/` (ledger + captured
-events) = Part 2 complete; feeds S11 constant closure (ε, K, tier prefixes, caps).
+Run ids are PID-unique and events are cleared pre-run, so a row can never be
+scored against another row's events; a missing events file is always a FAIL,
+never a silent PASS.
 
-## Deprecated by rev4 (do not use)
+## 7. History (do not follow these)
 
-- `scripts/run_live_expansion_trial.sh` driver (worktree + temp state isolation).
-- Rev3's manual capture blocks, dual-root L4, inline multiline row commands.
-- The earlier rev4 draft's host-venv path (`./.venv/bin/fa`) and its §0
-  `sudo cp` of `models.yaml`/`fa.env` into the host home — wrong anatomy: the
-  container never reads host `~/.fa`, and keys belong only in the proxy.
+- `S10-LIVE-VERIFICATION-rev3.md`: superseded; kept only as the evidence
+  trail for the eight live-only defects that shaped this script. (An earlier
+  rev2 sheet was removed from the tree at `48ef288`.)
+- `scripts/run_live_expansion_trial.sh`: deprecated driver (git-worktree +
+  temp state-root isolation) — kept in-tree for git history only.
+- An early rev4 draft ran a host-local venv (`./.venv/bin/fa`) and copied
+  `models.yaml`/`fa.env` into `~/.fa`: wrong anatomy — the container never
+  reads host `~/.fa`, and keys belong only in the proxy. If such copies exist
+  in the host home, delete them.

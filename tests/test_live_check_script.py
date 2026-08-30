@@ -153,6 +153,38 @@ def test_r4_ledger_dir_before_capture_and_header_shape() -> None:
     ], f"ledger header drifted: {cols}"
 
 
+def test_evidence_grep_is_anchored_to_escalation_events() -> None:
+    """The evidence-name check must run over scope_expansion events ONLY.
+
+    Unanchored, it matches guard-refusal text stored in tool_result payloads:
+    the 2026-08-30 l3 run printed "[PASS] expansion evidence names present"
+    with expansion_n=0 because a LoopGuard refusal string contained
+    "high_tier_write".
+    """
+    text = _text()
+    assert """grep '"kind": "scope_expansion"' "$events" """ in text, (
+        "evidence check no longer anchored to escalation events"
+    )
+    assert '"${exp:-0}" -gt 0 ]; then' in text.split("l2|l3)", 1)[1], "evidence check must be gated on exp > 0"
+
+
+def test_near_miss_note_distinguishes_declined_from_ignored() -> None:
+    """observed_n>0 without escalation = policy declined; not 'advice not taken'."""
+    text = _text()
+    assert "near-miss telemetry present" in text, "the no-handoff NOTE must explain the near-miss case separately"
+
+
+def test_row_diagnostics_detail_and_timeline() -> None:
+    """Operator feedback 2026-08-30: rows must show the broader picture."""
+    text = _text()
+    assert "CAE_DETAIL:-verbose" in text, "detail level must be overridable (debug adds ms timing)"
+    body = text.split("row_run()", 1)[1].split("\n}\n", 1)[0]
+    assert "print_timeline" in body, "row_run lost its per-turn timeline printout"
+    assert 'kind == "tool_result"' in text and "loop_guard_warn" in text, (
+        "timeline must surface guard denials and loop warnings from events"
+    )
+
+
 def test_rows_never_gate_or_touch_the_host_checkout() -> None:
     """Rows run in the container's session clone — no host-tree gates remain."""
     text = _text()

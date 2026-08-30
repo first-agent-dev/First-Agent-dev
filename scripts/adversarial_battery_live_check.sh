@@ -53,6 +53,12 @@ case "$cmd" in
       fail-with-events)
         printf '{"kind": "tool_call"}\n' > "$d/events.jsonl"
         exit "${STUB_EXIT:-1}" ;;
+      refusal-noise)
+        {
+          echo '{"kind": "tool_call", "content": {"turn": 7}, "tool_name": "fs_edit_file"}'
+          echo '{"kind": "tool_result", "content": {"turn": 7, "ok": false, "error": {"summary": "tool call skipped: session stopped — LoopGuard: path src/fa/cli.py thrashed across 5 distinct attempts (high_tier_write mention inside refusal text)"}}, "tool_name": "fs_edit_file"}'
+        } > "$d/events.jsonl"
+        exit 0 ;;
       ok-l2)
         {
           echo '{"kind": "tool_call", "scope_estimate": {"recommended_mode": "chat_direct"}}'
@@ -98,6 +104,7 @@ printf '%s' "$OUT" | grep -qF '[PASS] no escalation' && ok "S1 PASS verdict" || 
 grep -qF 'cae-l1-' worklogs/reviews/live-trial-data/ledger.csv 2>/dev/null \
   && ok "S1 ledger row" || miss "S1 ledger row"
 printf '%s' "$OUT" | grep -qF 'captured' && ok "S1 events captured" || miss "S1 events captured"
+printf '%s' "$OUT" | grep -qF 'turn timeline' && ok "S1 timeline printed" || miss "S1 timeline printed"
 
 echo "== S2: session never starts (no events file) — must FAIL, never PASS"
 OUT="$(STUB_MODE=no-events bash scripts/run_live_check.sh l1 2>&1)"; RC=$?
@@ -187,6 +194,16 @@ else
   defect "S11: escaping-workspace manifest accepted"
 fi
 rm -rf "$ROOT/state/sessions/session-escape" "$ROOT/state/sessions/session-pruned"
+
+echo "== S12 (DEFECT PROBE): guard-refusal text containing evidence names must not fake [PASS]"
+O="$(STUB_MODE=refusal-noise bash scripts/run_live_check.sh l2 2>&1)" || true
+if printf '%s' "$O" | grep -qF '[PASS] expansion evidence names present'; then
+  defect "S12: refusal payload faked the evidence PASS (l3 2026-08-30 defect)"
+elif printf '%s' "$O" | grep -qF 'no escalation within the turn cap'; then
+  closed "S12: refusal text cannot fake the evidence PASS"
+else
+  miss "S12 probe: unexpected verdicts" "$O"
+fi
 
 echo
 echo "battery: $PASS checks OK, $FAIL missed; defect probes still open:${DEFECTS:- none}"
