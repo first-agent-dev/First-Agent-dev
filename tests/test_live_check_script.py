@@ -1,0 +1,177 @@
+"""Contract pins for scripts/run_live_check.sh (sheet rev4, deployment-native).
+
+The rev3 live trial produced eight live-only defects from isolation layers;
+the adversarial review of rev4 added six more (D1..D6). Rev4-final follows
+worklogs/DEPLOYMENT-ANATOMY.md: the production mechanism is the host wrapper
+./scripts/fa -> docker compose exec first-agent fa, keys injected by the
+egress proxy, state read from the host side of the state bind. These pins
+keep that contract from rotting:
+
+R1  production mechanism only — wrapper fa, no host venv, no config/key
+    copies, no env overrides reaching fa;
+R2  guarded oracles — missing events is FAIL, rc is announced, run ids are
+    PID-unique and events are cleared pre-run;
+R3  the dispatch surface stays {setup,l1,l2,l3,l4,ledger};
+R4  the ledger header stays the S11-agreed CSV shape and its dir is created
+    before any capture copy.
+
+Syntax is additionally gated by scripts/check_shell_syntax.sh; these tests
+pin the SEMANTICS that bash -n cannot see, and run the stub-deployment
+battery end to end.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "run_live_check.sh"
+BATTERY = Path(__file__).resolve().parent.parent / "scripts" / "adversarial_battery_live_check.sh"
+
+
+def _text() -> str:
+    return SCRIPT.read_text(encoding="utf-8")
+
+
+def _code() -> str:
+    """Script text with comment lines stripped — for negative substring pins,
+    so a header comment documenting a ban ('Never ./.venv/bin/fa') cannot
+    trip the ban's own pin."""
+    return "\n".join(line for line in _text().splitlines() if not line.lstrip().startswith("#"))
+
+
+def test_script_exists_and_is_syntax_clean() -> None:
+    assert SCRIPT.is_file(), "run_live_check.sh missing"
+    proc = subprocess.run(["bash", "-n", str(SCRIPT)], capture_output=True, text=True)
+    assert proc.returncode == 0, f"bash -n failed:\n{proc.stderr}"
+
+
+def test_r1_deployment_mechanism_only() -> None:
+    """R1: the runner uses the host wrapper and never a host venv or key copies."""
+    text = _text()
+    assert 'FA="./scripts/fa"' in text, "runner must invoke the deployment wrapper"
+    code = _code()
+    assert ".venv/bin/fa" not in code, (
+        "host venv is not the deployment mechanism: production fa runs inside "
+        "the container via docker compose exec (DEPLOYMENT-ANATOMY.md)"
+    )
+    assert "export FA_STATE_ROOT" not in code, "rev4 runner must not isolate FA_STATE_ROOT"
+    assert "worktree add" not in code, "rev4 runner must not create git worktrees"
+    assert "sudo cp" not in code, "no config copying — container models.yaml is a read-only bind"
+    assert "~/.fa/.env" not in code and "fa.env" not in code, (
+        "LLM keys live ONLY in the egress proxy (ADR-12 Option C); the runner must never reference a host-side key file"
+    )
+
+
+def test_r1_scrubs_override_env() -> None:
+    """R1/D3: override env vars are scrubbed before fa is ever invoked."""
+    text = _text()
+    assert "unset FA_STATE_ROOT" in text, "env scrub removed"
+    assert text.index("unset FA_STATE_ROOT") < text.index('"$FA" run'), "scrub must precede every fa invocation"
+
+
+def test_r1_state_and_routing_paths() -> None:
+    """R1: oracle reads the documented deployment paths; overrides are test-only."""
+    text = _text()
+    assert "/srv/first-agent/state" in text, "state-bind host path missing"
+    assert "/srv/first-agent/routing/models.yaml" in text, "routing source path missing"
+    assert "FA_STATE_HOST" in text and "FA_ROUTING" in text, (
+        "test-only path overrides missing (the battery depends on them)"
+    )
+
+
+def test_r2_missing_events_is_fail_never_pass() -> None:
+    """R2: the events-file guard exists and no false-pass pattern remains."""
+    text = _text()
+    assert '[ ! -f "$events" ]' in text, "missing-events guard removed"
+    assert "[FAIL] no events file" in text, "missing-events FAIL branch removed"
+    assert '|| echo "  [PASS]' not in text, "unguarded PASS fallback reintroduced"
+
+
+def test_r2_failed_run_is_flagged() -> None:
+    """R2/D2: a nonzero fa exit must be announced before any verdict."""
+    text = _text()
+    assert "[FAIL] fa exited" in text, "rc-aware oracle removed"
+    l1_body = text.split("    l1)\n", 1)[1].split(";;", 1)[0]
+    assert '"$rc" -eq 0' in l1_body, "l1 PASS no longer requires fa exit 0"
+
+
+def test_r2_no_stale_event_reads() -> None:
+    """R2/D6: RID is PID-unique and the events path is cleared pre-run."""
+    text = _text()
+    assert '-$$"' in text, "run_id lost its PID suffix (same-second collisions)"
+    assert 'rm -f "$events"' in text, "pre-run events delete removed"
+    assert text.index('rm -f "$events"') < text.index('"$FA" run'), "events must be cleared before the run, not after"
+
+
+def test_r4_ledger_dir_before_capture_and_header_shape() -> None:
+    """R4/D1: ledger dir before any capture copy; header stays the agreed shape."""
+    text = _text()
+    assert text.index('mkdir -p "$LEDGER_DIR"') < text.index('cp "$events"'), (
+        "capture copy runs before the ledger dir exists (defect D1)"
+    )
+    header_line = next(line for line in text.splitlines() if line.startswith("HDR="))
+    cols = header_line.split('"', 2)[1].split(",")
+    assert cols == [
+        "run_id",
+        "date",
+        "row",
+        "recommended_mode",
+        "level_path",
+        "expansion_n",
+        "observed_n",
+        "exhausted",
+        "exit_code",
+        "notes",
+    ], f"ledger header drifted: {cols}"
+
+
+def test_rows_never_gate_or_touch_the_host_checkout() -> None:
+    """Rows run in the container's session clone — no host-tree gates remain."""
+    text = _text()
+    assert "require_clean_tree" not in text, (
+        "clean-tree gate reintroduced: rows never modify the host checkout "
+        "(/repo bind is read-only; work happens in /sessions/<id>)"
+    )
+    assert "session-*/" not in text, "host bootstrap-dir sweeping is a dead host-venv artifact"
+
+
+def test_r3_dispatch_surface() -> None:
+    """R3: one command per row; dispatch surface is pinned."""
+    text = _text()
+    for sub in ("setup", "l1", "l2", "l3", "l4", "ledger"):
+        assert f"\n  {sub})" in text or f" {sub}) " in text or f"{sub})\n" in text, (
+            f"subcommand {sub} missing from dispatch"
+        )
+
+
+def test_setup_fails_fast_on_unhealthy_stack() -> None:
+    """setup must probe before any row spends tokens (deployment guard S5)."""
+    text = _text()
+    setup_body = text.split("cmd_setup()", 1)[1].split("\n}", 1)[0]
+    assert '"$FA" probe' in setup_body, "setup lost its probe"
+    assert "die" in setup_body.split('"$FA" probe', 1)[1][:120], "probe failure must abort setup"
+    assert '"$FA" status' in setup_body, "setup lost its stack status check"
+
+
+def test_interrupt_captures_ledger_row() -> None:
+    """A Ctrl-C mid-row must land an INTERRUPTED ledger row, not silence."""
+    text = _text()
+    assert "trap '" in text and "INTERRUPTED" in text, "interrupt trap removed"
+    assert "trap - INT TERM" in text, "trap never reset after the row completes"
+
+
+def test_adversarial_battery_is_green() -> None:
+    """The committed stub-deployment battery (S0..S9) must pass with 0 defects."""
+    assert BATTERY.is_file(), "adversarial_battery_live_check.sh missing"
+    proc = subprocess.run(["bash", str(BATTERY)], capture_output=True, text=True, timeout=180)
+    assert proc.returncode == 0, f"battery failed:\n{proc.stdout}\n{proc.stderr}"
+    assert "0 missed" in proc.stdout
+    assert "DEFECT-CONFIRMED" not in proc.stdout
+
+
+def test_usage_exit_code() -> None:
+    """No/unknown subcommand exits 2 with usage (never runs anything)."""
+    proc = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, cwd=SCRIPT.parent.parent)
+    assert proc.returncode == 2
+    assert "usage:" in proc.stderr

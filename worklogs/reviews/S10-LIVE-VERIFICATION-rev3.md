@@ -1,4 +1,14 @@
+> **Superseded by `S10-LIVE-VERIFICATION-rev4.md`.** Rev3's isolation layers (temp
+> FA_STATE_ROOT, worktrees, driver script, inline multiline blocks) produced eight
+> live-only defects; rev4 measures the production mechanism via
+> `scripts/run_live_check.sh`. Kept as evidence — do not execute.
+
 # Complexity-Aware Execution — live verification rev3 (slices S1–S10.9)
+
+*Supersedes `S10-LIVE-VERIFICATION-rev2.md` (kept as evidence). Rev3 fixes the
+rev2 oracle defect (engine signals live in `events.jsonl`, not console output),
+enforces real workspace isolation for live write-rows, and adds the S11 data
+capture step.*
 
 **Feature:** chat role + deterministic scope estimation + evidence-driven workflow
 escalation + E3 cost/calibration + S10.9 hardening.
