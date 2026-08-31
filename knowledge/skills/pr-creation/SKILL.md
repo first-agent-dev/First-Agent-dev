@@ -98,11 +98,11 @@ cleanup».
 
 | Intent       | Required INVARIANT content                                                                                                                |
 |--------------|--------------------------------------------------------------------------------------------------------------------------------------------|
-| `RESEARCH`   | `n/a` — research artefacts do not bind project behaviour by themselves.                                                                  |
+| `RESEARCH`   | Free-form one-sentence note. |
 | `ADR-RULE`   | `Contract: <one sentence stating the introduced or modified clause>`                                                                     |
 | `IMPLEMENT`  | `Implements: <ADR or rule reference, e.g. ADR-10 §2 or knowledge/skills/pr-creation/SKILL.md>`                                            |
 | `FIX`        | `Affects: <pre-existing ADR or rule invariant being restored / changed / bypassed, e.g. ADR-7 §5 Input validation>`                       |
-| `CHORE`      | `n/a` — non-semantic updates do not change any invariant.                                                                                |
+| `CHORE`      | Free-form one-sentence note. |
 
 ## Decision points
 

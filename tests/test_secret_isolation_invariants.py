@@ -69,7 +69,14 @@ def test_run_bash_passes_scrubbed_env() -> None:
     text = _RUN_BASH.read_text(encoding="utf-8")
     # subprocess must receive an explicit scrubbed env, never inherit implicitly.
     assert "build_scrubbed_env(os.environ" in text
-    assert "env=build_scrubbed_env" in text
+    # S12.1 (CT1): the scrubbed env is extended (readiness-venv PATH prepend)
+    # before being passed, so the pin follows the variable flow instead of the
+    # old inline call — and additionally pins the ORDER: the prepend must
+    # operate on the already-scrubbed dict, never on raw os.environ.
+    scrub_at = text.index("env = build_scrubbed_env(os.environ")
+    prepend_at = text.index('env["PATH"]')
+    assert scrub_at < prepend_at, "venv PATH prepend must operate on the SCRUBBED env"
+    assert "env=env" in text, "subprocess call no longer receives the explicit env"
 
 
 def test_cli_reads_keys_from_store_not_environ() -> None:

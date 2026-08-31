@@ -75,6 +75,9 @@ def test_fail_closed_flags_default_restrictive() -> None:
     # context_budget_enabled: default=True → budget check active
     # (When flags missing, budget should still be enforced)
     assert "context_budget_enabled" in FAIL_CLOSED_FLAGS
+    # S12.4: intent_guard_mode: default="enforce" → guard active when
+    # flags missing (a config outage must never disable the draft gate).
+    assert "intent_guard_mode" in FAIL_CLOSED_FLAGS
 
 
 # ── Kill-check 5: FAIL-OPEN flags default to permissive/deny value ──

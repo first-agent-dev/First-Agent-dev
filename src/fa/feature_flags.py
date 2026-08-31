@@ -42,6 +42,9 @@ class FeatureFlags:
     max_subagent_spawns_per_session: int = 3
     blackboard_filtered_history_include_plans: bool = False
     max_chain_retries: int = 0  # S22: session-level chain retry limit (default=0 → fail-fast, user opts in)
+    # S12.4 (CT4): IntentGuard enforcement mode. Closed enum; unknown values
+    # degrade to "enforce" at the guard (fail-closed) with a warning.
+    intent_guard_mode: str = "enforce"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -58,6 +61,7 @@ class FeatureFlags:
             "max_subagent_spawns_per_session": self.max_subagent_spawns_per_session,
             "blackboard.filtered_history_include_plans": self.blackboard_filtered_history_include_plans,
             "max_chain_retries": self.max_chain_retries,
+            "intent_guard.mode": self.intent_guard_mode,
         }
 
 
@@ -71,6 +75,7 @@ class FeatureFlags:
 FAIL_CLOSED_FLAGS: frozenset[str] = frozenset(
     {
         "context_budget_enabled",  # default=True when flags missing → budget check active
+        "intent_guard_mode",  # S12.4: default="enforce" when flags missing → guard active
     }
 )
 
@@ -124,6 +129,8 @@ _KNOWN_FLAGS: dict[str, str] = {
     "max_subagent_spawns_per_session": "int",
     "blackboard.filtered_history_include_plans": "bool",
     "max_chain_retries": "int",
+    "intent_guard.mode": "str",
+    "intent_guard_mode": "str",
 }
 
 
@@ -284,6 +291,7 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
             found, "blackboard.filtered_history_include_plans", [], False
         ),
         max_chain_retries=_get_int(found, "max_chain_retries", [], 0),
+        intent_guard_mode=_get_str(found, "intent_guard.mode", ["intent_guard_mode"], "enforce"),
     )
 
     return FeatureFlagsLoadResult(flags=flags, warnings=tuple(warnings))

@@ -61,6 +61,7 @@ References:
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -86,6 +87,8 @@ from fa.inner_loop.hooks.base import (
 )
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.registry import ToolCall
+
+logger = logging.getLogger(__name__)
 
 # Public surface — also serves as the explicit re-export for the
 # shared classifier / validator so mypy ``--strict`` treats them as
@@ -122,6 +125,14 @@ _DRAFT_REQUIRED_BASH_EFFECTS: frozenset[BashIntentEffect] = frozenset(
     }
 )
 
+
+# S12.4 (CT4): closed enum for the operator-facing mode toggle.
+#   enforce — deny (default; the M-7 behaviour, unchanged)
+#   observe — evaluate and log, but allow: live trials keep the denial
+#             telemetry without the draft ceremony blocking the run
+#   off     — the guard is not registered at all (cli._build_run_hook_registry)
+INTENT_GUARD_MODES: frozenset[str] = frozenset({"enforce", "observe", "off"})
+_FALLBACK_MODE = "enforce"  # fail-closed on an unparseable config value
 
 _MISSING_DRAFT_REASON = (
     "IntentGuard: missing or untrusted current-session PR draft; call "
@@ -245,10 +256,17 @@ class IntentGuard(GuardMiddleware):
         repo_root: Path,
         draft_store: PrDraftStore,
         git_runner: GitRunner | None = None,
+        mode: str = "enforce",
     ) -> None:
         self._repo_root = repo_root
         self._draft_store = draft_store
         self._git_runner: GitRunner = git_runner or self._default_git_runner
+        # S12.4 (CT4): fail-closed on an unknown mode — a typo in config.yaml
+        # must never silently downgrade enforcement.
+        if mode not in INTENT_GUARD_MODES:
+            logger.warning("IntentGuard: unknown mode %r, falling back to %r", mode, _FALLBACK_MODE)
+            mode = _FALLBACK_MODE
+        self._mode = mode
 
     def _default_git_runner(self) -> str:
         result = subprocess.run(
@@ -260,6 +278,20 @@ class IntentGuard(GuardMiddleware):
             check=True,
         )
         return result.stdout
+
+    def _decide(self, reason: str) -> Decision:
+        """S12.4 (CT4): single deny exit so observe mode cannot be bypassed.
+
+        Both denial sites (missing draft, shape/test-edit violations) route
+        through here. In observe mode the denial is converted to an allow
+        that CARRIES the reason: HookRegistry.dispatch records
+        ``decision.reason`` into the DispatchRecord for allow decisions too
+        (hooks/base.py:163), so the existing hook_decision sink persists the
+        would-be denial and the trial loses no telemetry.
+        """
+        if self._mode == "observe":
+            return Decision(action="allow", reason=f"would-deny(observe): {reason}")
+        return Decision.deny(reason)
 
     @override
     def handle(self, point: LifecyclePoint, payload: HookPayload) -> Decision:
@@ -274,7 +306,7 @@ class IntentGuard(GuardMiddleware):
 
         draft_text = self._draft_store.read_current_text()
         if draft_text is None:
-            return Decision.deny(_MISSING_DRAFT_REASON)
+            return self._decide(_MISSING_DRAFT_REASON)
         try:
             stdout = self._git_runner()
         except (subprocess.CalledProcessError, OSError):
@@ -311,4 +343,4 @@ class IntentGuard(GuardMiddleware):
         # Echo the git hook's wording so agent error-recovery sees the
         # same shape whether the rule fires at hook time or harness time.
         reason = "IntentGuard: " + "; ".join(v.message for v in violations)
-        return Decision.deny(reason)
+        return self._decide(reason)

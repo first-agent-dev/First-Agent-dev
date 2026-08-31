@@ -369,12 +369,19 @@ _CITATION_RE: re.Pattern[str] = re.compile(r"`?(?P<path>\S+\.\S+):(?P<line>\d+)`
 _NA_RE: re.Pattern[str] = re.compile(r"^n/a\s*\(.+\)\s*$", re.IGNORECASE)
 
 # Per-intent required INVARIANT prefix (skill §Reference INVARIANT-content table).
+# S12.5 (CT5): RESEARCH and CHORE carry NO required prefix — the
+# INVARIANT header must still be present and non-empty (Check 3's
+# invariant_missing branch is unchanged), but its content is free-form.
+# Rationale (live-trial D11): agents burned turns rediscovering the
+# literal `n/a` token; the shape check bought no signal for intents that
+# bind no invariant by definition. An empty tuple means "no shape check"
+# at every consumer — see Check 3 and prepare_pr._validate_invariant_prefix.
 _INVARIANT_REQUIRED_PREFIXES: dict[Intent, tuple[str, ...]] = {
-    Intent.RESEARCH: ("n/a",),
+    Intent.RESEARCH: (),
     Intent.ADR_RULE: ("Contract:",),
     Intent.IMPLEMENT: ("Implements:",),
     Intent.FIX: ("Affects:",),
-    Intent.CHORE: ("n/a",),
+    Intent.CHORE: (),
 }
 # Public read-only view so M-7 §Q-N consumers (e.g., the ``pr_prepare``
 # tool) can validate against the same table without duplicating it.
@@ -621,7 +628,11 @@ def validate_commit_msg(
         )
     else:
         required = _INVARIANT_REQUIRED_PREFIXES[intent]
-        if not any(invariant_value.lower().startswith(p.lower()) for p in required):
+        # S12.5 (CT5): empty tuple = no shape check for this intent.
+        # Without the `required and` guard, `any(())` is False and every
+        # RESEARCH/CHORE draft would be rejected — the empty-tuple trap
+        # called out in the S12 plan (RN7).
+        if required and not any(invariant_value.lower().startswith(p.lower()) for p in required):
             violations.append(
                 Violation(
                     "invariant_shape_mismatch",

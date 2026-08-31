@@ -150,6 +150,56 @@ def _prepare_managed_workspace(workspace: Path) -> ReadyState:
     return state
 
 
+# S12.2 (CT2): readiness announcement. Bootstrap success is silent by design
+# (only degradation prints, see _prepare_managed_workspace), which left the
+# model to rediscover the environment every session — the 2026-08-31 l2 row
+# burned 12 of 20 turns on `find / -name pytest` while a working
+# .venv/bin/pytest sat in the workspace. Static per run, so it belongs in the
+# cacheable prefix (D7), not turn_context.
+_READINESS_PROMPT_EXTRA = (
+    "Workspace ready: the project venv is at ./.venv — run tests with "
+    "`uv run pytest ...` (or `.venv/bin/pytest`); never reinstall or rebuild "
+    "the environment. Before the first workspace mutation, call `pr_prepare` "
+    "(use CHORE for chores)."
+)
+
+
+def _readiness_prompt_extra(workspace: Path) -> str:
+    """Return the readiness block iff the workspace actually has a venv.
+
+    Predicate is ``.venv/bin`` existence rather than a bootstrap status
+    object: this is called on the drive path, which has no access to the
+    ReadyState produced during session creation, and the claim being made is
+    exactly "the venv is there" — so the check and the claim are the same
+    fact. Absent venv (raw clone, degraded bootstrap) returns "" and the
+    model is told nothing.
+    """
+    if (workspace / ".venv" / "bin").is_dir():
+        return _READINESS_PROMPT_EXTRA
+    return ""
+
+
+def _resolve_intent_guard_mode(override: str | None) -> str:
+    """Resolve the S12.4 IntentGuard enforcement mode.
+
+    An explicit *override* wins (tests, callers that already parsed config);
+    otherwise the value is read lazily from ``~/.fa/config.yaml`` following
+    the precedent in ``profiles.py``. Every degradation path lands on
+    ``"enforce"`` so a missing, unreadable, or malformed config can never
+    turn the guard off (FAIL_CLOSED, feature_flags.py).
+    """
+
+    if override is not None:
+        return override
+    try:
+        from fa.feature_flags import load_feature_flags_from_path
+
+        return load_feature_flags_from_path().flags.intent_guard_mode
+    except Exception as exc:  # noqa: BLE001 — fail closed to "enforce"
+        logger.warning("IntentGuard mode unavailable (%s); enforcing", exc)
+        return "enforce"
+
+
 def _session_manager_for_args(args: argparse.Namespace) -> SessionManager:
     """Build the lifecycle manager from deployment/test roots, never host topology."""
     workspace_override = getattr(args, "workspace", None)
@@ -1590,6 +1640,7 @@ def _build_run_hook_registry(
     draft_store: PrDraftStore,
     run_log_dir: Path,
     output_bus_ref: list[EventBus],
+    intent_guard_mode: str | None = None,
 ) -> HookRegistry:
     """Assemble the guard/observer stack for a ``fa run`` session.
 
@@ -1662,7 +1713,24 @@ def _build_run_hook_registry(
     # ~/.fa/session-log/<run_id>/pr_draft.md (populated by the M-7 §Q-N
     # ``pr_prepare`` tool). Registered after SandboxHook so only
     # workspace-contained paths reach the intent classifier.
-    hooks.register(IntentGuard(repo_root=workspace, draft_store=draft_store))
+    # S12.4 (CT4): ``intent_guard_mode`` is a 3-state operator toggle
+    # (enforce|observe|off, default enforce). ``off`` skips registration so
+    # the guard costs nothing; ``observe`` keeps every denial in the
+    # DispatchRecord (hooks/base.py:163 records reason for allows too) but
+    # converts it to an allow, so live trials keep the telemetry without the
+    # draft ceremony blocking the run. Resolution is lazy so callers that
+    # already parsed config (or tests) can pin it.
+    resolved_intent_guard_mode = _resolve_intent_guard_mode(intent_guard_mode)
+    if resolved_intent_guard_mode == "off":
+        logger.warning("IntentGuard disabled (intent_guard.mode=off)")
+    else:
+        hooks.register(
+            IntentGuard(
+                repo_root=workspace,
+                draft_store=draft_store,
+                mode=resolved_intent_guard_mode,
+            )
+        )
     hooks.register(AuditHook(event_log=log))
     hooks.register(SecretGuard(secrets=redactor.secrets if redactor is not None else frozenset()))
     hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
@@ -2176,7 +2244,7 @@ def _cmd_run(
             # routing it through system_prompt_extra put it into the AGENTS.md
             # map, which is hashed into the cache key — measured as three
             # distinct keys for three estimates, i.e. zero prefix reuse.
-            system_prompt_extra=_eval_system_prompt_extra(role, models),
+            system_prompt_extra=_eval_system_prompt_extra(role, models) + _readiness_prompt_extra(workspace),
             turn_context=scope_hint,
             # S7 / CT10: the estimator's verdict, so the loop can notice when
             # a run outgrows it. Empty for non-chat roles, which disables the

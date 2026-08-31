@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import os
 import re
 import shutil
 import signal
@@ -128,10 +129,20 @@ class PtySession:
 
                 # PS1 includes sentinel with control chars \x01 \x02 to avoid visible in output
                 ps1 = f"\x01{self._sentinel_token}\x02"
+                # S12.1 (CT1): the readiness-provisioned workspace venv wins over
+                # the system/runtime python. `--norc --noprofile` means this env
+                # dict is the child's WHOLE environment, so PATH must be built
+                # here, not assumed. Same predicate as the tmux setup_cmd below
+                # and _run_subprocess_fallback (tools/run_bash.py) — three
+                # backends, one contract: prepend iff <cwd>/.venv/bin exists.
+                venv_bin = self.cwd / ".venv" / "bin"
+                venv_env = (
+                    {"PATH": f"{venv_bin}{os.pathsep}{os.environ.get('PATH', os.defpath)}"} if venv_bin.is_dir() else {}
+                )
                 self._fallback = pexpect.spawn(
                     "/bin/bash",
                     ["--norc", "--noprofile"],
-                    env={"PS1": ps1, "PAGER": "cat", **self.env},
+                    env={"PS1": ps1, "PAGER": "cat", **venv_env, **self.env},
                     encoding="utf-8",
                     echo=False,
                     cwd=str(self.cwd),
@@ -188,6 +199,14 @@ class PtySession:
                     f"&& export PROMPT_COMMAND='' && export PAGER=cat "
                     f"&& export TERM=xterm-256color"
                 )
+                # S12.1 (CT1): venv PATH prepend — absolute path (the pane's
+                # start_directory is self.cwd and cannot change before this
+                # first command). Appended to the && chain: it runs after shell
+                # init, so no profile can clobber it; a missing venv leaves
+                # the chain untouched (raw clones behave exactly as before).
+                venv_bin = self.cwd / ".venv" / "bin"
+                if venv_bin.is_dir():
+                    setup_cmd += f' && export PATH="{venv_bin}:$PATH"'
                 pane.send_keys(
                     setup_cmd,
                     suppress_history=True,
@@ -292,6 +311,13 @@ class PtySession:
                 is_timeout = isinstance(exc, pexpect.TIMEOUT)
                 label = f"Timeout {timeout}s partial" if is_timeout else f"Command failed: {exc}"
                 self._cleanup_script(script_path)
+                if is_timeout:
+                    # S12.3 (CT3) parity with _run_tmux: reclaim the persistent
+                    # shell so the orphaned command cannot tax later calls.
+                    try:
+                        self._fallback.sendcontrol("c")
+                    except Exception:  # noqa: BLE001, S110 — best-effort reclaim
+                        pass
                 return PtyResult(
                     stdout=f"{label}:\n{ANSI_RE.sub('', raw)[:8000]}",
                     exit_code=-1,
@@ -402,6 +428,11 @@ class PtySession:
                 newline_idx = text.find("\n", start_idx)
                 start_of_output = newline_idx + 1 if newline_idx != -1 else start_idx + len(start_token)
                 remainder = text[start_of_output:]
+                # S12.3 (CT3): accumulate the best snapshot EVERY poll. Before
+                # this, `output` was only assigned on success, which made the
+                # "Timeout Ns partial:" branch below dead code and threw away
+                # everything a long command had already printed.
+                output = resolve_cr(ANSI_RE.sub("", remainder))
                 if end_token in remainder:
                     clean = ANSI_RE.sub("", remainder)
                     clean = resolve_cr(clean)
@@ -417,6 +448,24 @@ class PtySession:
                 pass
             time.sleep(0.2)
         self._cleanup_script(script_path)
+        if timed_out:
+            # S12.3 (CT3): reclaim the persistent shell. Without this the
+            # orphaned command keeps the pane busy and EVERY later command in
+            # the session dies with "no output captured" (live defect
+            # 2026-08-31: 7 consecutive 30s taxes after one `unittest
+            # discover` overran). C-c first, then wait for the prompt sentinel
+            # so the next run() starts clean. A SIGINT-resistant command
+            # simply expires the wait (P5) — the caller still gets a clean
+            # timed_out result, never an exception.
+            try:
+                self.pane.send_keys("C-c")
+            except Exception:  # noqa: BLE001, S110 — best-effort reclaim
+                pass
+            try:
+                self._wait_for_sentinel(timeout=5)
+            except TimeoutError:
+                pass
+            output = output.replace(self._sentinel_token, "")
         truncated = len(output) > 8000
         if truncated:
             output = output[:8000] + "\n...[truncated 8000]"

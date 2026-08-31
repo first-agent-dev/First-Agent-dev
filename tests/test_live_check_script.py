@@ -204,7 +204,7 @@ def test_rows_never_gate_or_touch_the_host_checkout() -> None:
 def test_r3_dispatch_surface() -> None:
     """R3: one command per row; dispatch surface is pinned."""
     text = _text()
-    for sub in ("setup", "smoke", "l1", "l2", "l3", "l4", "ledger"):
+    for sub in ("setup", "smoke", "env", "pty", "l1", "l2", "l3", "l4", "ledger"):
         assert f"\n  {sub})" in text or f" {sub}) " in text or f"{sub})\n" in text, (
             f"subcommand {sub} missing from dispatch"
         )
@@ -260,6 +260,65 @@ def test_timeline_surfaces_provider_rollup_and_stop_reason() -> None:
     assert "stop=${stop_reason:-stopped_by_llm}" in text, (
         "ledger notes lost the stop reason (stopped_by_llm is the default)"
     )
+
+
+def test_s12_env_row_objective_is_binary() -> None:
+    """S12.6 (CT6): the env row's oracle is the version grep plus the two
+    exact failure strings from the 2026-08-31 l2 run; rc=0 with a failed
+    oracle must exit 3 with ENV_PROBE_FAILED (objective-miss contract)."""
+    text = _text()
+    assert "ENV_PROBE_FAILED" in text, "env objective-miss flag removed"
+    env_body = text.split("    env)", 1)[1].split("      ;;", 1)[0]
+    assert "pytest [0-9]+" in env_body, "version oracle removed"
+    assert "command not found" in env_body, "failure-string absence check removed"
+    assert "No module named pytest" in env_body, "failure-string absence check removed"
+    assert "vrc=3" in env_body, "env objective miss no longer exits 3"
+
+
+def test_s12_pty_row_counts_preambles() -> None:
+    """S12.6 (CT6): one executor-timeout preamble is the EXPECTED fallback
+    for the sleep itself; >1 means the dirty-pane tax (D16) is back."""
+    text = _text()
+    assert "PTY_RECOVERY_FAILED" in text, "pty objective-miss flag removed"
+    pty_body = text.split("    pty)", 1)[1].split("      ;;", 1)[0]
+    assert "PtyPool executor timeout" in pty_body, "preamble count oracle removed"
+    assert '"RECOVERED"' in pty_body, "recovery oracle removed"
+    assert "-le 1" in pty_body, "preamble cap removed"
+    assert "vrc=3" in pty_body, "pty objective miss no longer exits 3"
+
+
+def test_s12_env_pty_rows_reuse_row_run() -> None:
+    """Both new rows must go through row_run (same ledger, same capture)."""
+    text = _text()
+    env_fn = text.split("cmd_env()", 1)[1].split("\n}", 1)[0]
+    pty_fn = text.split("cmd_pty()", 1)[1].split("\n}", 1)[0]
+    assert "row_run env 6" in env_fn, "env row not on row_run with the 6-turn cap"
+    assert "row_run pty 6" in pty_fn, "pty row not on row_run with the 6-turn cap"
+
+
+def test_s12_setup_prints_effective_flag_modes() -> None:
+    """S12.6: setup surfaces the operator flag state before tokens are spent;
+    a missing config must print the shipped default, never silence."""
+    text = _text()
+    setup_body = text.split("cmd_setup()", 1)[1].split("\n}", 1)[0]
+    assert "intent_guard.mode: enforce (default)" in setup_body, "default printout removed"
+    assert "tool_batching.enabled: true (default)" in setup_body, "batching default printout removed"
+    assert "$STATE_HOST/config.yaml" in setup_body, "config source is not the container-side config"
+
+
+def test_s12_l1_ceremony_note_is_never_a_fail() -> None:
+    """S12.6: IntentGuard denial counts on l1 are informational ([NOTE]/[OBS])
+    — model variance must not fail the negative-control row."""
+    text = _text()
+    l1_body = text.split("    l1)", 1)[1].split("      ;;", 1)[0]
+    assert "IntentGuard denials" in l1_body, "ceremony note removed"
+    assert "[NOTE]" in l1_body, "ceremony note lost its NOTE class"
+    # The ceremony block itself (ig_denials .. its closing fi) must never
+    # touch the verdict code; the l1 case's own vrc=3 belongs to the
+    # negative-control branch, which is a different failure class.
+    ceremony = l1_body.split("ig_denials=", 1)[1].split("\n        fi", 1)[0]
+    assert "vrc=" not in ceremony, "ceremony friction must never set the objective-miss code"
+    assert "flag=" not in ceremony, "ceremony friction must never flag the ledger row"
 
 
 def test_adversarial_battery_is_green() -> None:

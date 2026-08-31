@@ -571,6 +571,9 @@ Key commands:
 2. **Declare intent.** Before your first mutation, call `pr_prepare`
    with the correct `intent` and `invariant`. This establishes the
    human-readable work log and satisfies the IntentGuard.
+   INVARIANT prefixes: `ADR-RULE` → `Contract: …`, `IMPLEMENT` →
+   `Implements: …`, `FIX` → `Affects: …`; `RESEARCH` and `CHORE` take
+   free-form text (one short line, e.g. `n/a (chore: dependency bump)`).
 
 3. **For each plan step, in order:**
    a. Read the target file(s) with `fs_read_file`.

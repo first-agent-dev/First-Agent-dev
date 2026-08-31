@@ -232,6 +232,14 @@ def _run_subprocess_fallback(
 ) -> ToolResult:
     """Run the stateless fallback and project its result into ToolResult."""
     # Fallback: subprocess.run (stateless) with binary mode to preserve \r
+    # S12.1 (CT1): prepend the readiness venv AFTER scrubbing — the secret
+    # filter is never bypassed, PATH is already allowlisted by bash_env.
+    # Covers the main-agent fallback AND subagents (executor=None reaches
+    # this same function). Same predicate as PtySession (runtime/pty_pool.py).
+    env = build_scrubbed_env(os.environ, extra_allow=extra_allow)
+    venv_bin = root / ".venv" / "bin"
+    if venv_bin.is_dir():
+        env["PATH"] = f"{venv_bin}{os.pathsep}{env.get('PATH', os.defpath)}"
     try:
         completed_bytes = subprocess.run(  # noqa: S602 — shell is the product contract after sandbox admission
             command,
@@ -243,7 +251,7 @@ def _run_subprocess_fallback(
             capture_output=True,
             text=False,
             timeout=timeout_seconds,
-            env=build_scrubbed_env(os.environ, extra_allow=extra_allow),
+            env=env,
         )
         try:
             stdout_raw = completed_bytes.stdout.decode("utf-8", errors="ignore")

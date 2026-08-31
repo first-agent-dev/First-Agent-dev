@@ -72,7 +72,19 @@ _INPUT_SCHEMA: dict[str, object] = {
             "type": "string",
             "enum": sorted(INTENT_VALUES),
         },
-        "invariant": {"type": "string", "minLength": 1},
+        "invariant": {
+            "type": "string",
+            "minLength": 1,
+            # S12.5 (CT5): document the remaining shape rules inline — the
+            # model reads this schema, not the skill doc (live-trial D11:
+            # agents burned turns rediscovering the old `n/a` literal).
+            "description": (
+                "One-line invariant statement. Required prefixes: ADR-RULE -> "
+                "'Contract: ...', IMPLEMENT -> 'Implements: ...', FIX -> "
+                "'Affects: ...'. RESEARCH and CHORE take free-form text "
+                "(e.g. 'n/a (dependency bump)')."
+            ),
+        },
         "fix_class": {
             "type": "string",
             "enum": sorted(CLASS_VALUES),
@@ -157,6 +169,11 @@ def _validate_fix_fields(
 
 def _validate_invariant_prefix(intent: Intent, invariant: str) -> str | None:
     required = INVARIANT_REQUIRED_PREFIXES[intent]
+    # S12.5 (CT5): empty tuple = no shape check (RESEARCH/CHORE). The
+    # early return must precede the any() below — any(()) is False and
+    # would reject every draft for those intents (RN7 empty-tuple trap).
+    if not required:
+        return None
     if any(invariant.lower().startswith(p.lower()) for p in required):
         return None
     return (

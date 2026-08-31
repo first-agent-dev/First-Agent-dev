@@ -2791,6 +2791,99 @@ with a comment pointing here.
 
 ---
 
+## I-57 — LoopGuard counts truncated continuation reads as path thrash (D10)
+
+- **Status:** open (live trial 2026-08-30, kimi l3 FAIL: 40 turns / iteration_cap). P2.
+- **Idea:** `LoopGuard`'s repeat detector treats successive `fs_read_file` calls
+  on the SAME path as thrashing even when each call advances an offset (the
+  pagination continuation pattern for large files). The l3 row died to 5x
+  denied continuation reads of one file. S12 deliberately deferred this: it is
+  a guard-semantics change with no live reproduction on the current model, and
+  S12 already touched three guard subsystems.
+- **First concrete step:** teach the repeat detector to ignore same-path reads
+  whose params differ in offset/limit (or key on (path, offset) instead of
+  path). Needs its own mutation-tested plan — the detector is shared by the
+  warn sink and the circuit breaker.
+- **Repro:** l3 row (`scripts/run_live_check.sh l3`) on a model that paginates
+  large file reads; watch for `✗:LoopGuard` on repeated `fs_read_file`.
+
+## I-58 — IntentGuard denies read-only bash before a draft exists (D17)
+
+- **Status:** open (live trial 2026-08-31, gemini l2 t9). P3.
+- **Idea:** `IntentGuard` treats OPAQUE_EXEC bash as draft-requiring, so even
+  `ls`/`cat` reconnaissance is denied until `pr_prepare` has run — a 3-turn
+  ceremony before the model can look around. S12.4 shipped the operator-level
+  lever (`intent_guard.mode: observe`); a semantic fix would exempt
+  high-confidence read-only commands (the `bash_intent` analyzer already
+  classifies effects — `READ` could bypass the draft requirement).
+- **First concrete step:** decide the risk boundary (allow-list of read-only
+  verbs vs. classifier confidence) and pin it with mutation tests; the
+  classifier is shared with the git hook seat (ADR-10 I-1).
+
+## I-59 — IntentGuard needs a structural refactor
+
+- **Status:** open (operator decision 2026-08-31: low priority). P4.
+- **Idea:** operator assessment: the current IntentGuard implementation needs
+  a refactor. S12.4 added the 3-state mode flag as the tactical lever; the
+  refactor (rule composition, per-intent policy objects, clearer deny-reason
+  taxonomy) is deliberately unscheduled until the live series closes.
+- **First concrete step:** none until S11 sign-off; then scope against the
+  would-deny telemetry that observe mode accumulates.
+
+## I-60 — root-level `.md` files classify as TIER_MEDIUM writes (D12)
+
+- **Status:** open (live trial 2026-08-31, gemini l1 near-miss). P3 — feeds S11.
+- **Idea:** `path_risk.py:183` gives root-level `*.md` TIER_MEDIUM, so writing
+  `live-check-notes.md` at repo root produced an expansion near-miss on the
+  docs-only negative control. S11 (constant closure) owns the tier-prefix
+  table including this cell; do not hotfix ahead of the constant pass.
+
+## I-61 — `verify_failed` expansion evidence lacks the failing command/output
+
+- **Status:** open (live trial 2026-08-31, gemini l2 t4). P3.
+- **Idea:** the `verify_failed` evidence name reaches the `scope_expansion`
+  event, but the event does not carry WHICH command failed or its last output
+  lines, so triage needs the full transcript. Add a bounded (e.g. 500-char)
+  tail of the failing verify output to the evidence payload.
+
+## I-62 — `/tmp` friction inside the container (D13)
+
+- **Status:** open (live trial 2026-08-31). P4.
+- **Idea:** models habitually write scratch files to `/tmp`; the sandbox hook
+  denies writes outside the session workspace, costing turns. Options: prompt
+  guidance toward a workspace `scratch/` dir, or a sandbox-exempt scratch
+  mount. Decide with the S11 prompt pass.
+
+## I-63 — qwen provider 429s under live load (D14)
+
+- **Status:** open (live trial 2026-08-30/31). P4 — chain failover masks it.
+- **Idea:** the qwen link 429s intermittently; failover to the next chain link
+  works (visible as `failover x1` in the timeline), but each 429 costs a retry
+  window. Track whether it is quota or burst shape before changing routing.
+
+## I-64 — ACRR backfill for rows run before the calibration schema settled
+
+- **Status:** open. P4.
+- **Idea:** early ledger rows predate the current calibration buckets; their
+  acrr values are absent or incomparable. Backfill from the captured
+  `events.jsonl` copies under `worklogs/reviews/live-trial-data/` when S11
+  computes the constants, or mark those rows `acrr=n/a` explicitly.
+
+## I-65 — timeout -> subprocess fallback RE-RUNS the command (RK7)
+
+- **Status:** open (pre-existing; out of S12 scope by operator decision). P2 — correctness under mutation.
+- **Idea:** `tools/run_bash.py:208-210 -> :339`: when the pty executor times
+  out, the tool falls back to a subprocess execution of the SAME command. For
+  non-idempotent commands (writes, sends, deletes) this double-executes: the
+  pty attempt may have partially run before the timeout. S12.3 made the pty
+  timeout path clean (C-c + partial output) but did not change the fallback
+  contract.
+- **First concrete step:** choose between (a) no re-run — surface the pty
+  timeout + partial output as the result, or (b) an idempotency token the
+  command template can carry. Both are behavioural; needs a plan + mutation
+  tests. Live signal: the pty row (`scripts/run_live_check.sh pty`) exercises
+  this path once per run.
+
 ## See also
 
 - [`knowledge/MAINTENANCE.md`](../knowledge/MAINTENANCE.md) — recurring

@@ -72,6 +72,50 @@ case "$cmd" in
           echo '{"kind": "session_summary", "content": {"n_turns": 2, "input_tokens": 4100, "output_tokens": 60}}'
         } > "$d/events.jsonl"
         exit 0 ;;
+      env-ok)
+        {
+          echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 800, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 800, "error": null}]}}'
+          echo '{"kind": "model_msg", "content": {"finish_reason": "stop"}}'
+          echo '{"kind": "session_summary", "content": {"n_turns": 2, "input_tokens": 2100, "output_tokens": 20}}'
+        } > "$d/events.jsonl"
+        echo "pytest 8.4.2"
+        exit 0 ;;
+      env-broken)
+        {
+          echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 800, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 800, "error": null}]}}'
+          echo '{"kind": "model_msg", "content": {"finish_reason": "stop"}}'
+        } > "$d/events.jsonl"
+        echo "bash: line 1: pytest: command not found"
+        exit 0 ;;
+      env-archaeology)
+        # The 2026-08-31 l2 shape: bare `pytest` failed, the agent dug, then
+        # `.venv/bin/pytest` worked. Transcript carries BOTH the version line
+        # AND "command not found" — only the absence-grep can fail this.
+        {
+          echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 800, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 800, "error": null}]}}'
+          echo '{"kind": "model_msg", "content": {"finish_reason": "stop"}}'
+        } > "$d/events.jsonl"
+        echo "bash: line 1: pytest: command not found"
+        echo "pytest 8.4.2"
+        exit 0 ;;
+      pty-ok)
+        {
+          echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 31000, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 31000, "error": null}]}}'
+          echo '{"kind": "model_msg", "content": {"finish_reason": "stop"}}'
+        } > "$d/events.jsonl"
+        echo "WARNING PtyPool executor timeout, fallback to subprocess for command sleep 35"
+        echo "RECOVERED"
+        exit 0 ;;
+      pty-dirty)
+        {
+          echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 93000, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 93000, "error": null}]}}'
+          echo '{"kind": "model_msg", "content": {"finish_reason": "stop"}}'
+        } > "$d/events.jsonl"
+        echo "WARNING PtyPool executor timeout, fallback to subprocess for command sleep 35"
+        echo "WARNING PtyPool executor timeout, fallback to subprocess for command echo RECOVERED"
+        echo "WARNING PtyPool executor timeout, fallback to subprocess for command echo RECOVERED"
+        echo "RECOVERED"
+        exit 0 ;;
       ok-l2)
         {
           echo '{"kind": "tool_call", "scope_estimate": {"recommended_mode": "chat_direct"}}'
@@ -260,6 +304,55 @@ if [ $RC -eq 3 ] && printf '%s' "$OUT" | grep -qF '[FAIL] expected escalation ne
 else
   defect "S15: no-escalation l2 passed silently (rc=$RC)"
 fi
+
+echo "== S17 (S12.6 CT6): env row — healthy venv probe must PASS"
+OUT="$(STUB_MODE=env-ok bash scripts/run_live_check.sh env 2>&1)"; RC=$?
+if [ $RC -eq 0 ] && printf '%s' "$OUT" | grep -qF '[PASS] venv pytest reachable'; then ok "S17 env PASS"
+else miss "S17 env PASS" "rc=$RC out=$OUT"; fi
+grep -qF 'cae-env-' worklogs/reviews/live-trial-data/ledger.csv 2>/dev/null \
+  && ok "S17 env ledger row" || miss "S17 env ledger row"
+
+echo "== S17b (OBJECTIVE CONTRACT): rc=0 but 'command not found' in transcript -> exit 3 + flag"
+OUT="$(STUB_MODE=env-broken bash scripts/run_live_check.sh env 2>&1)"; RC=$?
+if [ $RC -eq 3 ] && printf '%s' "$OUT" | grep -qF '[FAIL] env probe' \
+   && grep -qF 'ENV_PROBE_FAILED' worklogs/reviews/live-trial-data/ledger.csv; then
+  closed "S17b: broken readiness exits 3 and is flagged (never a silent pass)"
+else
+  defect "S17b: broken readiness passed silently (rc=$RC)"
+fi
+
+echo "== S17c (DEFECT PROBE): archaeology transcript (version line + 'command not found') must FAIL"
+OUT="$(STUB_MODE=env-archaeology bash scripts/run_live_check.sh env 2>&1)"; RC=$?
+if [ $RC -eq 3 ] && printf '%s' "$OUT" | grep -qF '[FAIL] env probe' \
+   && grep -qF 'ENV_PROBE_FAILED' worklogs/reviews/live-trial-data/ledger.csv; then
+  closed "S17c: archaeology transcript cannot ride the version line to a PASS"
+else
+  defect "S17c: archaeology transcript passed (rc=$RC)"
+fi
+
+echo "== S18 (S12.6 CT6): pty row — one expected timeout preamble, pane recovered"
+OUT="$(STUB_MODE=pty-ok bash scripts/run_live_check.sh pty 2>&1)"; RC=$?
+if [ $RC -eq 0 ] && printf '%s' "$OUT" | grep -qF '[PASS] pane reclaimed after timeout'; then ok "S18 pty PASS"
+else miss "S18 pty PASS" "rc=$RC out=$OUT"; fi
+
+echo "== S18b (OBJECTIVE CONTRACT): 3 preamble occurrences (D16 class) -> exit 3 + flag"
+OUT="$(STUB_MODE=pty-dirty bash scripts/run_live_check.sh pty 2>&1)"; RC=$?
+if [ $RC -eq 3 ] && printf '%s' "$OUT" | grep -qF '[FAIL] pty probe' \
+   && grep -qF 'PTY_RECOVERY_FAILED' worklogs/reviews/live-trial-data/ledger.csv; then
+  closed "S18b: dirty pane exits 3 and is flagged"
+else
+  defect "S18b: dirty pane passed silently (rc=$RC)"
+fi
+
+echo "== S19 (S12.6 CT6): setup prints effective flag modes (default when no config)"
+OUT="$(bash scripts/run_live_check.sh setup 2>&1)"; RC=$?
+if printf '%s' "$OUT" | grep -qF 'intent_guard.mode: enforce (default)'; then ok "S19 default-mode printout"
+else miss "S19 default-mode printout" "$OUT"; fi
+printf 'feature_flags:\n  intent_guard.mode: observe\n' > "$FA_STATE_HOST/config.yaml"
+OUT="$(bash scripts/run_live_check.sh setup 2>&1)"; RC=$?
+if printf '%s' "$OUT" | grep -qF 'intent_guard.mode: observe'; then ok "S19 config-mode printout"
+else miss "S19 config-mode printout" "$OUT"; fi
+rm -f "$FA_STATE_HOST/config.yaml"
 
 echo "== S16 (STOP REASON): abnormal stop is surfaced in verdict + ledger notes"
 OUT="$(STUB_MODE=stop-reason bash scripts/run_live_check.sh l3 2>&1)"; RC=$?

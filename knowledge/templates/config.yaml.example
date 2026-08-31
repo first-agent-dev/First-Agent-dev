@@ -34,6 +34,17 @@ feature_flags:
   # (if the model supports it). Disabling forces one tool call per turn.
   tool_batching.enabled: true        # default: true
 
+  # ── IntentGuard (M-7 commit-intent draft gate) ────────────────────────
+  # S12.4: 3-state operator toggle for the pre-commit draft ceremony.
+  #   enforce — deny mutating tools until the PR draft passes shape checks
+  #             (default; unchanged M-7 behaviour)
+  #   observe — evaluate every rule but allow: denials are still recorded in
+  #             the hook_decision event log with a "would-deny(observe):"
+  #             reason prefix, so trials keep the telemetry without blocking
+  #   off     — guard is not registered at all
+  # Unknown values fall back to enforce (fail-closed) with a warning.
+  intent_guard.mode: enforce         # default: enforce (enforce|observe|off)
+
   # ── Subagent spawning ─────────────────────────────────────────────────
   # Allow the agent to spawn subagent tasks. OFF by default — enable only
   # when you have a use-case that needs it (e.g. parallel research).
