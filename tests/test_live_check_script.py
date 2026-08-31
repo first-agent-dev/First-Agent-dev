@@ -11,7 +11,7 @@ R1  production mechanism only — wrapper fa, no host venv, no config/key
     copies, no env overrides reaching fa;
 R2  guarded oracles — missing events is FAIL, rc is announced, run ids are
     PID-unique and events are cleared pre-run;
-R3  the dispatch surface stays {setup,l1,l2,l3,l4,ledger};
+R3  the dispatch surface stays {setup,smoke,l1,l2,l3,l4,ledger};
 R4  the ledger header stays the S11-agreed CSV shape and its dir is created
     before any capture copy.
 
@@ -183,6 +183,12 @@ def test_row_diagnostics_detail_and_timeline() -> None:
     assert 'kind == "tool_result"' in text and "loop_guard_warn" in text, (
         "timeline must surface guard denials and loop warnings from events"
     )
+    assert 'kind == "model_msg"' in text, (
+        "turn bucketing must be order-based on model_msg boundaries: "
+        "tool_call/tool_result events carry no turn field (state.py), so a "
+        "content.turn lookup piles everything into turn 0 — the bug the "
+        "2026-08-31 gemini l1 run exposed (t0 [parallel x7])"
+    )
 
 
 def test_rows_never_gate_or_touch_the_host_checkout() -> None:
@@ -198,10 +204,14 @@ def test_rows_never_gate_or_touch_the_host_checkout() -> None:
 def test_r3_dispatch_surface() -> None:
     """R3: one command per row; dispatch surface is pinned."""
     text = _text()
-    for sub in ("setup", "l1", "l2", "l3", "l4", "ledger"):
+    for sub in ("setup", "smoke", "l1", "l2", "l3", "l4", "ledger"):
         assert f"\n  {sub})" in text or f" {sub}) " in text or f"{sub})\n" in text, (
             f"subcommand {sub} missing from dispatch"
         )
+    smoke_body = text.split("cmd_smoke()", 1)[1].split("\n}", 1)[0]
+    assert '"$FA"' not in smoke_body and "row_run smoke" in smoke_body, (
+        "smoke must reuse the row_run mechanism (same oracle, same ledger), not grow its own fa invocation path"
+    )
 
 
 def test_setup_fails_fast_on_unhealthy_stack() -> None:
@@ -220,8 +230,40 @@ def test_interrupt_captures_ledger_row() -> None:
     assert "trap - INT TERM" in text, "trap never reset after the row completes"
 
 
+def test_objective_misses_exit_three_and_flag_the_ledger() -> None:
+    """A completed run that misses the row objective is a finding, not a note.
+
+    An escalating negative control (l1) and a non-escalating l2 both exit 3
+    with an explicit ledger flag — the 2026-08-31 review found both verdict
+    classes exiting 0 behind a [NOTE].
+    """
+    text = _text()
+    assert "NEGATIVE_CONTROL_FAILED" in text, "escalating-negative-control flag removed"
+    assert "NO_ESCALATION_WHERE_EXPECTED" in text, "missed-l2-objective flag removed"
+    assert "vrc=3" in text, "objective-miss exit code removed"
+    assert 'return "$vrc"' in text, "row_run no longer propagates the verdict code"
+    assert "3 = run completed but the row OBJECTIVE was missed" in text, (
+        "exit-code contract no longer documented in the header"
+    )
+
+
+def test_timeline_surfaces_provider_rollup_and_stop_reason() -> None:
+    """Observability contract: which model answered, how slow, did it fail
+    over, why did the run stop — all readable from the events file alone."""
+    text = _text()
+    assert 'kind == "llm_call"' in text, "per-turn model/latency/failover meta removed"
+    assert "failover x" in text, "failover counter removed from timeline meta"
+    assert "summary:" in text, "run rollup summary line removed"
+    assert '"kind": "run_stopped"' in text and "[STOP] abnormal stop" in text, (
+        "abnormal stop reason is no longer extracted to the verdict"
+    )
+    assert "stop=${stop_reason:-stopped_by_llm}" in text, (
+        "ledger notes lost the stop reason (stopped_by_llm is the default)"
+    )
+
+
 def test_adversarial_battery_is_green() -> None:
-    """The committed stub-deployment battery (S0..S9) must pass with 0 defects."""
+    """The committed stub-deployment battery (S0..S16) must pass with 0 defects."""
     assert BATTERY.is_file(), "adversarial_battery_live_check.sh missing"
     proc = subprocess.run(["bash", str(BATTERY)], capture_output=True, text=True, timeout=180)
     assert proc.returncode == 0, f"battery failed:\n{proc.stdout}\n{proc.stderr}"

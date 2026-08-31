@@ -28,8 +28,14 @@
 # from /repo). The host checkout is never modified by a row — no clean-tree
 # gates, no commit/restore choreography between rows.
 #
+# Exit codes: 0 = row objective met; 1 = run failure (fa rc!=0 or no events);
+# 2 = preflight/usage error; 3 = run completed but the row OBJECTIVE was missed
+# (negative control escalated, or expected escalation never fired) — a finding,
+# ledgered with an explicit flag in notes.
+#
 # Usage:
 #   scripts/run_live_check.sh setup    # preflight: stack, probe, routing, schema, ledger
+#   scripts/run_live_check.sh smoke    # 2-turn chat-role end-to-end (probe tests coder!)
 #   scripts/run_live_check.sh l1       # docs-only negative control (expect 0 escalations)
 #   scripts/run_live_check.sh l2       # src/ task (expect escalation; session clone only)
 #   scripts/run_live_check.sh l3       # doc-defect full cycle (40 turns, session clone)
@@ -98,6 +104,10 @@ audit_sessions() {
   # block — resolve() tolerates missing paths — so it is informational.
   # Paths: manifests live under the state bind; workspace_path is a CONTAINER
   # path (/sessions/...) mapped here to its host side for the dir check.
+  if [ -e "$STATE_HOST/sessions" ] && [ ! -r "$STATE_HOST/sessions" ]; then
+    echo "  [WARN] $STATE_HOST/sessions exists but is unreadable for $(id -un) — audit skipped"
+    return 0
+  fi
   if [ ! -d "$STATE_HOST/sessions" ]; then
     echo "  no sessions dir yet"
     return 0
@@ -154,13 +164,20 @@ append_ledger() { # rid row exit mode levels exp obs exh notes
     "$1" "$(date +%F)" "$2" "${4:-?}" "${5:-none}" "${6:-0}" "${7:-0}" "${8:-0}" "$3" "$9" >> "$LEDGER"
 }
 
-print_timeline() { # print_timeline <events.jsonl> — per-turn tool activity at a glance
+print_timeline() { # print_timeline <events.jsonl> — per-turn activity + run summary
   "$PY" - "$1" <<'PYEOF' || echo "  [WARN] timeline parse failed"
 import json, sys
 from collections import OrderedDict
 turns = OrderedDict()
+turn = 0
+pending = ""          # llm_call meta: logged BEFORE its turn's model_msg
+totals = {}
+stop = None
+t_first = t_last = None
+denials = {}
+n_tools = n_esc = n_near = 0
 def slot(t):
-    return turns.setdefault(t, {"tools": [], "marks": []})
+    return turns.setdefault(t, {"tools": [], "marks": [], "meta": ""})
 for line in open(sys.argv[1], encoding="utf-8"):
     line = line.strip()
     if not line:
@@ -170,28 +187,86 @@ for line in open(sys.argv[1], encoding="utf-8"):
     except Exception:
         continue
     kind, c = e.get("kind", ""), (e.get("content") or {})
-    t = c.get("turn", 0)
+    ts = e.get("ts") or ""
+    if ts:
+        t_first = t_first or ts
+        t_last = ts
+    # Turn attribution is ORDER-BASED: tool_call/tool_result events carry no
+    # turn field (state.py), but exactly one model_msg is logged per LLM
+    # response. Within a turn the durable order is: provider_attempt*,
+    # llm_call, usage, model_msg, tools — so llm_call meta is stashed and
+    # consumed by the next model_msg. Events that carry content.turn
+    # (scope_expansion, expansion_observed) trust their own.
+    if kind == "llm_call":
+        bad = 0
+        for a in (c.get("chain") or []):
+            st = str(a.get("status", ""))
+            if a.get("error") or st.startswith(("4", "5")):
+                bad += 1
+        secs = (c.get("wallclock_ms") or 0) / 1000.0
+        pending = "[%s %.1fs%s]" % (c.get("model", "?"), secs, f" failover x{bad}" if bad else "")
+        continue
+    if kind == "model_msg":
+        turn += 1
+        s = slot(turn)
+        s["meta"] = pending
+        pending = ""
+        continue
+    if kind == "session_summary":
+        totals = c
+        continue
+    if kind == "run_stopped":
+        stop = str(c.get("reason") or "?")
+        continue
+    ct = c.get("turn")
+    t = ct if isinstance(ct, int) and ct > 0 else turn
     if kind == "tool_result":
         ok = c.get("ok", True)
         err = (c.get("error") or {})
         why = str(err.get("summary") or err.get("message") or "")
         name = e.get("tool_name") or "?"
-        guard = next((g for g in ("IntentGuard", "LoopGuard", "PauseGuard") if g in why), "")
+        guard = ""
+        for label, needles in (("IntentGuard", ("IntentGuard", "required shape for `INTENT")),
+                               ("LoopGuard", ("LoopGuard",)), ("PauseGuard", ("PauseGuard",))):
+            if any(n in why for n in needles):
+                guard = label
+                break
+        n_tools += 1
+        if not ok:
+            key = guard or "other"
+            denials[key] = denials.get(key, 0) + 1
         slot(t)["tools"].append(f"{name}{'' if ok else ' ✗' + (':' + guard if guard else '')}")
     elif kind == "scope_expansion":
+        n_esc += 1
         slot(t)["marks"].append(f"⤴L{c.get('level_from')}>{c.get('level_to')}({c.get('evidence')})")
     elif kind == "expansion_observed":
+        n_near += 1
         slot(t)["marks"].append("near-miss")
     elif kind == "loop_guard_warn":
         slot(t)["marks"].append(f"loop:{c.get('detector','?')}")
-print("  ── turn timeline (tools per turn; ✗:Guard = guard denial) ──")
+print("  ── turn timeline ([model latency] per turn; ✗:Guard = guard denial) ──")
 for t, s in turns.items():
     if not s["tools"] and not s["marks"]:
         continue
     n = len(s["tools"])
     par = " [parallel x%d]" % n if n > 1 else ""
-    print(f"  t{t:>2}{par}: {' '.join(s['tools']) if s['tools'] else '-'}"
+    print(f"  t{t:>2} {s['meta']}{par}: {' '.join(s['tools']) if s['tools'] else '-'}"
           + (f"  {' '.join(s['marks'])}" if s["marks"] else ""))
+wall = "?"
+if t_first and t_last:
+    try:
+        from datetime import datetime
+        f = datetime.fromisoformat(t_first.replace("Z", "+00:00"))
+        l = datetime.fromisoformat(t_last.replace("Z", "+00:00"))
+        wall = f"{(l - f).total_seconds():.0f}s"
+    except Exception:
+        pass
+den = ", ".join(f"{v}x{k}" for k, v in sorted(denials.items())) or "0"
+tok = ""
+if totals:
+    tok = f", {totals.get('input_tokens', 0)} in/{totals.get('output_tokens', 0)} out tok"
+print(f"  summary: {turn} turns, {wall} wall, {n_tools} tools, denials[{den}], "
+      f"{n_esc} escalations, {n_near} near-miss, stop={stop or 'stopped_by_llm'}{tok}")
 PYEOF
 }
 
@@ -200,7 +275,7 @@ row_run() { # row_run <label> <max_turns> <task>
   need_fa
   mkdir -p "$LEDGER_DIR" # R4: dir exists before ANY capture copy
   local rid="cae-${label}-$(date +%s)-$$"
-  local log="/tmp/cae_${label}.log"
+  local log="/tmp/cae_${rid}.log"   # unique per run: re-runs never clobber prior transcripts
   local detail="${CAE_DETAIL:-verbose}"   # CAE_DETAIL=debug adds per-event ms timing
   local events="$STATE_HOST/session-log/$rid/events.jsonl"
   rm -f "$events" 2>/dev/null || true
@@ -228,7 +303,11 @@ row_run() { # row_run <label> <max_turns> <task>
     return 1
   fi
 
-  local mode levels exp obs exh
+  local mode levels exp obs exh stop_reason=""
+  if grep -q '"kind": "run_stopped"' "$events"; then
+    stop_reason="$(grep '"kind": "run_stopped"' "$events" | tail -1 \
+      | grep -o '"reason": "[^"]*"' | head -1 | cut -d'"' -f4 || true)"
+  fi
   mode="$(grep -o '"recommended_mode": "[a-z_]*"' "$events" | head -1 | cut -d'"' -f4 || true)"
   levels="$(grep -o '"level_from": [0-9], "level_to": [0-9]' "$events" \
     | sed 's/"level_from": //; s/, "level_to": />/' | tr '\n' ';' || true)"
@@ -236,19 +315,41 @@ row_run() { # row_run <label> <max_turns> <task>
   obs="$(grep -c '"kind": "expansion_observed"' "$events" || true)"
   exh="$(grep -c '"kind": "expansion_exhausted"' "$events" || true)"
 
+  if [ -n "$stop_reason" ]; then
+    echo "  [STOP] abnormal stop: $stop_reason (see events)"
+  fi
+  local vrc=0 flag=""
+  if [ "$rc" -ne 0 ]; then
+    vrc="$rc"
+  fi
   case "$label" in
+    smoke)
+      if [ "$rc" -eq 0 ]; then
+        echo "  [PASS] chat chain end-to-end (proxy -> chat provider -> session mechanics)"
+      fi
+      ;;
     l1)
       if [ "$rc" -eq 0 ] && [ "${exp:-0}" -eq 0 ]; then
         echo "  [PASS] no escalation on a safe docs task"
       elif [ "${exp:-0}" -ne 0 ]; then
-        echo "  [NOTE] UNEXPECTED scope_expansion ($exp) — inspect $events"
+        # A negative control that escalates is a FINDING, not a note: the
+        # row's whole purpose is "safe work must not escalate". Exit 3.
+        echo "  [FAIL] UNEXPECTED scope_expansion ($exp) on the negative control — inspect $events"
+        [ "$rc" -eq 0 ] && vrc=3
+        flag="NEGATIVE_CONTROL_FAILED"
       fi
       ;;
     l2|l3)
       if [ "${exp:-0}" -gt 0 ]; then
         echo "  [PASS] scope_expansion fired ($exp): ${levels:-?}"
+      elif [ "$label" = "l2" ] && [ "$rc" -eq 0 ]; then
+        # l2's objective IS the escalation; a clean run without one is a
+        # missed objective (model finished in chat), distinct from a crash.
+        echo "  [FAIL] expected escalation never fired within the turn cap (src/ not touched?)"
+        vrc=3
+        flag="NO_ESCALATION_WHERE_EXPECTED"
       else
-        echo "  [NOTE] no escalation within the turn cap (src/ not touched?)"
+        echo "  [NOTE] no escalation within the turn cap"
       fi
       # The evidence-name grep MUST run against the escalation events only.
       # Unanchored, it also matches the refusal text of a guard denial stored
@@ -275,12 +376,14 @@ row_run() { # row_run <label> <max_turns> <task>
   esac
   [ "${exh:-0}" -gt 0 ] && echo "  [OBS] K budget exhausted -> operator-report path"
 
+  local notes="auto-captured via=container stop=${stop_reason:-stopped_by_llm}"
+  [ -n "$flag" ] && notes="$notes $flag"
   cp "$events" "$LEDGER_DIR/$rid.events.jsonl"
-  append_ledger "$rid" "$label" "$rc" "$mode" "$levels" "$exp" "$obs" "$exh" \
-    "auto-captured via=container"
+  append_ledger "$rid" "$label" "$rc" "$mode" "$levels" "$exp" "$obs" "$exh" "$notes"
   trap - INT TERM
   print_timeline "$events"
   echo "  ledger + events captured (host checkout untouched by design)"
+  return "$vrc"
 }
 
 # ── subcommands ──────────────────────────────────────────────────────────────
@@ -301,7 +404,11 @@ cmd_setup() {
   mkdir -p "$LEDGER_DIR"
   [ -f "$LEDGER" ] || echo "$HDR" > "$LEDGER"
   echo "== ledger: $LEDGER"
-  echo "READY. Rows: l1 -> l2 -> l3 -> l4 (no git steps between rows; commit the ledger at the end)"
+  echo "READY. Rows: smoke -> l1 -> l2 -> l3 -> l4 (no git steps between rows; commit the ledger at the end)"
+}
+
+cmd_smoke() {
+  row_run smoke 2 "Reply with the single word OK and nothing else. Do not use any tools."
 }
 
 cmd_l1() {
@@ -330,11 +437,14 @@ print(f"  rows visible: {len(rows)}")
 if not rows:
     shape = list(d)[:8] if isinstance(d, dict) else type(d).__name__
     print("  [NOTE] zero rows; top-level shape:", shape)
-for r in rows[-6:]:
-    print("   ", r.get("run_id"), "| role=", r.get("role"), "| exit=", r.get("exit_code"))
+trial = [r for r in rows if str(r.get("run_id", "")).startswith("cae-")]
+print(f"  this trial (cae-*): {len(trial)} row(s)")
+for r in trial[-8:]:
+    print("   ", r.get("run_id"), "| role=", r.get("role"), "| exit=", r.get("exit_code"),
+          "| stop=", r.get("stop_reason", "?"))
 '
   echo "== calibration:"
-  "$FA" stats --calibration 2>&1 1>/dev/null | head -14
+  "$FA" stats --calibration 2>&1 1>/dev/null | head -40
 }
 
 cmd_ledger() {
@@ -345,13 +455,14 @@ cmd_ledger() {
 
 case "${1:-}" in
   setup)  cmd_setup ;;
+  smoke)  cmd_smoke ;;
   l1)     cmd_l1 ;;
   l2)     cmd_l2 ;;
   l3)     cmd_l3 ;;
   l4)     cmd_l4 ;;
   ledger) cmd_ledger ;;
   *)
-    echo "usage: scripts/run_live_check.sh {setup|l1|l2|l3|l4|ledger}" >&2
+    echo "usage: scripts/run_live_check.sh {setup|smoke|l1|l2|l3|l4|ledger}" >&2
     exit 2
     ;;
 esac

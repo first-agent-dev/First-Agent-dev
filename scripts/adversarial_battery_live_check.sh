@@ -53,22 +53,43 @@ case "$cmd" in
       fail-with-events)
         printf '{"kind": "tool_call"}\n' > "$d/events.jsonl"
         exit "${STUB_EXIT:-1}" ;;
+      stop-reason)
+        {
+          echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 700, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 700, "error": null}]}}'
+          echo '{"kind": "model_msg", "content": {"finish_reason": "tool_calls"}}'
+          echo '{"kind": "run_stopped", "content": {"reason": "iteration_cap", "turns": 40}}'
+        } > "$d/events.jsonl"
+        exit 1 ;;
       refusal-noise)
         {
-          echo '{"kind": "tool_call", "content": {"turn": 7}, "tool_name": "fs_edit_file"}'
-          echo '{"kind": "tool_result", "content": {"turn": 7, "ok": false, "error": {"summary": "tool call skipped: session stopped — LoopGuard: path src/fa/cli.py thrashed across 5 distinct attempts (high_tier_write mention inside refusal text)"}}, "tool_name": "fs_edit_file"}'
+          echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 1400, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 1400, "error": null}]}}'
+          echo '{"kind": "model_msg", "content": {"finish_reason": "tool_calls"}}'
+          echo '{"kind": "tool_call", "content": {"params": {"path": "src/fa/cli.py"}}, "tool_name": "fs_edit_file"}'
+          echo '{"kind": "tool_result", "content": {"ok": false, "error": {"summary": "tool call skipped: session stopped — LoopGuard: path src/fa/cli.py thrashed across 5 distinct attempts (high_tier_write mention inside refusal text)"}}, "tool_name": "fs_edit_file"}'
+          echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 2600, "chain": [{"provider": "p", "slug": "m", "status": 429, "ms": 900, "error": "rate limited"}, {"provider": "p2", "slug": "m2", "status": 200, "ms": 1700, "error": null}]}}'
+          echo '{"kind": "model_msg", "content": {"finish_reason": "stop"}}'
+          echo '{"kind": "tool_result", "content": {"ok": true, "summary": "read src/fa/cli.py"}, "tool_name": "Read"}'
+          echo '{"kind": "session_summary", "content": {"n_turns": 2, "input_tokens": 4100, "output_tokens": 60}}'
         } > "$d/events.jsonl"
         exit 0 ;;
       ok-l2)
         {
           echo '{"kind": "tool_call", "scope_estimate": {"recommended_mode": "chat_direct"}}'
-          echo '{"kind": "scope_expansion", "data": {"level_from": 1, "level_to": 2, "evidence": "read_high_arm"}}'
-          echo '{"kind": "expansion_observed", "data": {"turn": 2}}'
+          echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 1100, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 1100, "error": null}]}}'
+          echo '{"kind": "model_msg", "content": {"finish_reason": "tool_calls"}}'
+          echo '{"kind": "scope_expansion", "content": {"turn": 2, "level_from": 1, "level_to": 2, "evidence": "read_high_arm"}}'
+          echo '{"kind": "expansion_observed", "content": {"turn": 2}}'
         } > "$d/events.jsonl"
         echo "planner sees: Start here: src/fa/cli.py"
         exit 0 ;;
       *)
-        printf '{"kind": "tool_call", "scope_estimate": {"recommended_mode": "chat_direct"}}\n' > "$d/events.jsonl"
+        {
+          echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 900, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 900, "error": null}]}}'
+          echo '{"kind": "model_msg", "content": {"finish_reason": "tool_calls"}}'
+          echo '{"kind": "tool_result", "content": {"ok": true, "summary": "bash exited 0"}, "tool_name": "Bash"}'
+          echo '{"kind": "model_msg", "content": {"finish_reason": "stop"}}'
+          echo '{"kind": "session_summary", "content": {"n_turns": 2, "input_tokens": 3200, "output_tokens": 42}}'
+        } > "$d/events.jsonl"
         exit 0 ;;
     esac ;;
   *) exit 0 ;;
@@ -105,6 +126,10 @@ grep -qF 'cae-l1-' worklogs/reviews/live-trial-data/ledger.csv 2>/dev/null \
   && ok "S1 ledger row" || miss "S1 ledger row"
 printf '%s' "$OUT" | grep -qF 'captured' && ok "S1 events captured" || miss "S1 events captured"
 printf '%s' "$OUT" | grep -qF 'turn timeline' && ok "S1 timeline printed" || miss "S1 timeline printed"
+if printf '%s' "$OUT" | grep -qF 't 1 [stub-model 0.9s]: Bash'; then ok "S1 timeline buckets by model_msg turns (with model/latency meta)"
+else miss "S1 timeline buckets by model_msg turns (with model/latency meta)" "$(printf '%s' "$OUT" | grep -A4 'turn timeline')"; fi
+if printf '%s' "$OUT" | grep -qE 'summary: 2 turns, .* 1 tools, denials\[0\], 0 escalations, 0 near-miss, stop=stopped_by_llm, 3200 in/42 out tok'; then ok "S1 run summary line"
+else miss "S1 run summary line" "$(printf '%s' "$OUT" | grep -F 'summary:')"; fi
 
 echo "== S2: session never starts (no events file) — must FAIL, never PASS"
 OUT="$(STUB_MODE=no-events bash scripts/run_live_check.sh l1 2>&1)"; RC=$?
@@ -199,10 +224,50 @@ echo "== S12 (DEFECT PROBE): guard-refusal text containing evidence names must n
 O="$(STUB_MODE=refusal-noise bash scripts/run_live_check.sh l2 2>&1)" || true
 if printf '%s' "$O" | grep -qF '[PASS] expansion evidence names present'; then
   defect "S12: refusal payload faked the evidence PASS (l3 2026-08-30 defect)"
-elif printf '%s' "$O" | grep -qF 'no escalation within the turn cap'; then
-  closed "S12: refusal text cannot fake the evidence PASS"
+elif printf '%s' "$O" | grep -qF '[FAIL] expected escalation never fired'; then
+  if printf '%s' "$O" | grep -qF 't 1 [stub-model 1.4s]: fs_edit_file ✗:LoopGuard' \
+     && printf '%s' "$O" | grep -qF 't 2 [stub-model 2.6s failover x1]: Read' \
+     && ! printf '%s' "$O" | grep -qF 't 0'; then
+    closed "S12: refusal text cannot fake the evidence PASS (per-turn buckets + failover meta)"
+  else
+    defect "S12b: timeline mis-bucketed (t0 pile-up, missing guard marker, or no failover meta)"
+  fi
 else
   miss "S12 probe: unexpected verdicts" "$O"
+fi
+
+echo "== S13: smoke row (chat chain end-to-end through the production mechanism)"
+OUT="$(STUB_MODE=ok-l1 bash scripts/run_live_check.sh smoke 2>&1)"; RC=$?
+if [ $RC -eq 0 ] && printf '%s' "$OUT" | grep -qF '[PASS] chat chain end-to-end'; then ok "S13 smoke PASS"
+else miss "S13 smoke PASS" "rc=$RC out=$OUT"; fi
+grep -qF 'cae-smoke-' worklogs/reviews/live-trial-data/ledger.csv 2>/dev/null \
+  && ok "S13 smoke ledger row" || miss "S13 smoke ledger row"
+
+echo "== S14 (OBJECTIVE CONTRACT): negative control that escalates must exit 3 + flag the ledger"
+OUT="$(STUB_MODE=ok-l2 bash scripts/run_live_check.sh l1 2>&1)"; RC=$?
+if [ $RC -eq 3 ] && printf '%s' "$OUT" | grep -qF '[FAIL] UNEXPECTED scope_expansion' \
+   && grep -qF 'NEGATIVE_CONTROL_FAILED' worklogs/reviews/live-trial-data/ledger.csv; then
+  closed "S14: escalating negative control exits 3 and is flagged"
+else
+  defect "S14: escalating negative control passed silently (rc=$RC)"
+fi
+
+echo "== S15 (OBJECTIVE CONTRACT): l2 that never escalates must exit 3 + flag the ledger"
+OUT="$(STUB_MODE=ok-l1 bash scripts/run_live_check.sh l2 2>&1)"; RC=$?
+if [ $RC -eq 3 ] && printf '%s' "$OUT" | grep -qF '[FAIL] expected escalation never fired' \
+   && grep -qF 'NO_ESCALATION_WHERE_EXPECTED' worklogs/reviews/live-trial-data/ledger.csv; then
+  closed "S15: objective-miss l2 exits 3 and is flagged"
+else
+  defect "S15: no-escalation l2 passed silently (rc=$RC)"
+fi
+
+echo "== S16 (STOP REASON): abnormal stop is surfaced in verdict + ledger notes"
+OUT="$(STUB_MODE=stop-reason bash scripts/run_live_check.sh l3 2>&1)"; RC=$?
+if printf '%s' "$OUT" | grep -qF '[STOP] abnormal stop: iteration_cap' \
+   && grep -qF 'stop=iteration_cap' worklogs/reviews/live-trial-data/ledger.csv; then
+  closed "S16: stop reason reaches verdict and ledger"
+else
+  defect "S16: stop reason not surfaced"
 fi
 
 echo
