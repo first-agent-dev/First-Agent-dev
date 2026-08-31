@@ -72,31 +72,43 @@ case "$cmd" in
           echo '{"kind": "session_summary", "content": {"n_turns": 2, "input_tokens": 4100, "output_tokens": 60}}'
         } > "$d/events.jsonl"
         exit 0 ;;
+      ok-long-text)
+        # S12.6c cap probe: a 2500-char single-line model message.
+        LONG="$(printf 'L%.0s' $(seq 1 2500))"
+        {
+          echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 900, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 900, "error": null}]}}'
+          printf '{"kind": "model_msg", "content": {"finish_reason": "stop", "text": "%s"}}\n' "$LONG"
+        } > "$d/events.jsonl"
+        exit 0 ;;
       env-ok)
+        # S12.6b: faithful surface — the console mirror prints only the tool
+        # SUMMARY; the command stdout (version line) lives in the tool_result
+        # event. The oracle must read events, exactly like the live runner.
         {
           echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 800, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 800, "error": null}]}}'
+          echo '{"kind": "tool_result", "tool_name": "fs_run_bash", "content": {"ok": true, "summary": "bash exited 0", "result": {"returncode": 0, "stdout": "pytest 9.0.3\n"}}}'
           echo '{"kind": "model_msg", "content": {"finish_reason": "stop"}}'
           echo '{"kind": "session_summary", "content": {"n_turns": 2, "input_tokens": 2100, "output_tokens": 20}}'
         } > "$d/events.jsonl"
-        echo "pytest 8.4.2"
+        echo "9.0.3"
         exit 0 ;;
       env-broken)
         {
           echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 800, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 800, "error": null}]}}'
+          echo '{"kind": "tool_result", "tool_name": "fs_run_bash", "content": {"ok": false, "error": {"summary": "bash exited 127"}, "result": {"returncode": 127, "stdout": "bash: line 1: pytest: command not found\n"}}}'
           echo '{"kind": "model_msg", "content": {"finish_reason": "stop"}}'
         } > "$d/events.jsonl"
-        echo "bash: line 1: pytest: command not found"
         exit 0 ;;
       env-archaeology)
         # The 2026-08-31 l2 shape: bare `pytest` failed, the agent dug, then
-        # `.venv/bin/pytest` worked. Transcript carries BOTH the version line
-        # AND "command not found" — only the absence-grep can fail this.
+        # `.venv/bin/pytest` worked. Events carry BOTH the version line AND
+        # "command not found" — only the absence-grep can fail this.
         {
           echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 800, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 800, "error": null}]}}'
+          echo '{"kind": "tool_result", "tool_name": "fs_run_bash", "content": {"ok": false, "error": {"summary": "bash exited 127"}, "result": {"returncode": 127, "stdout": "bash: line 1: pytest: command not found\n"}}}'
+          echo '{"kind": "tool_result", "tool_name": "fs_run_bash", "content": {"ok": true, "summary": "bash exited 0", "result": {"returncode": 0, "stdout": "pytest 9.0.3\n"}}}'
           echo '{"kind": "model_msg", "content": {"finish_reason": "stop"}}'
         } > "$d/events.jsonl"
-        echo "bash: line 1: pytest: command not found"
-        echo "pytest 8.4.2"
         exit 0 ;;
       pty-ok)
         {
@@ -131,7 +143,7 @@ case "$cmd" in
           echo '{"kind": "llm_call", "content": {"model": "stub-model", "wallclock_ms": 900, "chain": [{"provider": "p", "slug": "m", "status": 200, "ms": 900, "error": null}]}}'
           echo '{"kind": "model_msg", "content": {"finish_reason": "tool_calls"}}'
           echo '{"kind": "tool_result", "content": {"ok": true, "summary": "bash exited 0"}, "tool_name": "Bash"}'
-          echo '{"kind": "model_msg", "content": {"finish_reason": "stop"}}'
+          echo '{"kind": "model_msg", "content": {"finish_reason": "stop", "text": "Verified: all checks passed."}}'
           echo '{"kind": "session_summary", "content": {"n_turns": 2, "input_tokens": 3200, "output_tokens": 42}}'
         } > "$d/events.jsonl"
         exit 0 ;;
@@ -174,6 +186,19 @@ if printf '%s' "$OUT" | grep -qF 't 1 [stub-model 0.9s]: Bash'; then ok "S1 time
 else miss "S1 timeline buckets by model_msg turns (with model/latency meta)" "$(printf '%s' "$OUT" | grep -A4 'turn timeline')"; fi
 if printf '%s' "$OUT" | grep -qE 'summary: 2 turns, .* 1 tools, denials\[0\], 0 escalations, 0 near-miss, stop=stopped_by_llm, 3200 in/42 out tok'; then ok "S1 run summary line"
 else miss "S1 run summary line" "$(printf '%s' "$OUT" | grep -F 'summary:')"; fi
+if printf '%s' "$OUT" | grep -qF '💬 Verified: all checks passed.'; then ok "S1 timeline prints model text (S12.6c)"
+else miss "S1 timeline prints model text (S12.6c)" "$(printf '%s' "$OUT" | grep -A6 'turn timeline')"; fi
+
+echo "== S1b (S12.6c): overlong model text is capped; CAE_LLM_FULL=1 uncaps"
+PAT="$(printf 'L%.0s' $(seq 1 2500))"
+OUT="$(STUB_MODE=ok-long-text bash scripts/run_live_check.sh l1 2>&1)"; RC=$?
+if printf '%s' "$OUT" | grep -qF '…[+500 chars'; then ok "S1b cap marker present"
+else miss "S1b cap marker present" "$(printf '%s' "$OUT" | grep -F '💬' | head -2)"; fi
+if printf '%s' "$OUT" | grep -qF "$PAT"; then miss "S1b capped run leaked the full 2500-char text"
+else ok "S1b capped run truncated"; fi
+OUT="$(STUB_MODE=ok-long-text CAE_LLM_FULL=1 bash scripts/run_live_check.sh l1 2>&1)"; RC=$?
+if printf '%s' "$OUT" | grep -qF "$PAT"; then ok "S1b CAE_LLM_FULL=1 uncaps"
+else miss "S1b CAE_LLM_FULL=1 uncaps"; fi
 
 echo "== S2: session never starts (no events file) — must FAIL, never PASS"
 OUT="$(STUB_MODE=no-events bash scripts/run_live_check.sh l1 2>&1)"; RC=$?

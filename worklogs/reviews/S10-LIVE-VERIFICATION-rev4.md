@@ -72,7 +72,7 @@ scripts/run_live_check.sh ledger
 | Row | Task | Expected verdicts |
 |---|---|---|
 | `smoke` | 2-turn "reply OK, no tools" (cheap) | `[PASS] chat chain end-to-end`. **`setup`'s probe tests the `coder` chain — smoke is what proves the `chat` chain + session mechanics before expensive rows** |
-| `env` | S12: readiness handoff (6 turns) — run `pytest --version` in the session workspace | `[PASS] venv pytest reachable without archaeology`. The v4.4 l2 failure (D15: 12/20 turns burned hunting for pytest) must not recur: a transcript containing `command not found` or `No module named pytest` is a finding — `[FAIL] env probe`, **exit 3**, flag `ENV_PROBE_FAILED` |
+| `env` | S12: readiness handoff (6 turns) — run `pytest --version` in the session workspace | `[PASS] venv pytest reachable without archaeology`. The version oracle reads the captured **events** (the console shows only the tool summary, never command stdout — S12.6b). The v4.4 l2 failure (D15: 12/20 turns burned hunting for pytest) must not recur: `command not found` or `No module named pytest` anywhere in events/transcript is a finding — `[FAIL] env probe`, **exit 3**, flag `ENV_PROBE_FAILED` |
 | `pty` | S12: pty timeout recovery (6 turns) — `sleep 35` (times out by design), then `echo RECOVERED` | `[PASS] pane reclaimed after timeout; next command clean (pty preamble x0 or x1)`. The timed-out sleep may log ONE `PtyPool executor timeout` fallback; more than one (or a missing `RECOVERED`) means the dirty-pane tax is back (D16) — `[FAIL] pty probe`, **exit 3**, flag `PTY_RECOVERY_FAILED` |
 | `l1` | docs-only note (8-turn cap) — negative control | `fa EXIT=0` + `[PASS] no escalation on a safe docs task`. Any `scope_expansion` here is a finding: `[FAIL] UNEXPECTED…`, **exit 3**, ledger flag `NEGATIVE_CONTROL_FAILED`. `[OBS] IntentGuard denials: N` is the ceremony cost (S12.6); `N>1` prints `[NOTE]` — friction to record, never a row failure |
 | `l2` | shorten `_cmd_stats` in `src/fa/cli.py` (20 turns) | `[PASS] scope_expansion fired (N): 1>2;` + `[PASS] expansion evidence names present`. No escalation on a clean run = missed objective: `[FAIL] expected escalation never fired`, **exit 3**, flag `NO_ESCALATION_WHERE_EXPECTED` (near-miss telemetry present means the policy deliberately declined — S11 data, still exit 3) |
@@ -92,6 +92,10 @@ failed before success. Then tools per turn (turns delimited by model
 responses — `[parallel xN]` when the model batched N tool calls in one turn),
 `✗:IntentGuard` / `✗:LoopGuard` denials, `⤴` escalations, `near-miss`, and
 `loop:` warnings — the tool-behaviour picture without reading the transcript.
+Each turn's **full model text** is restored under the turn as an indented `💬`
+block (S12.6c — the live console truncates model output to 200 chars; the
+timeline does not): capped at 2000 chars per turn, `CAE_LLM_FULL=1` prints
+the complete text.
 A closing `summary:` line rolls up turns, wall time, tools, denials by guard,
 escalations, near-misses, stop reason and tokens. An abnormal stop also
 prints `[STOP] abnormal stop: <reason>` before the verdicts. For per-event ms

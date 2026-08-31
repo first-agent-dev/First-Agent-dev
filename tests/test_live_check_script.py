@@ -270,6 +270,11 @@ def test_s12_env_row_objective_is_binary() -> None:
     assert "ENV_PROBE_FAILED" in text, "env objective-miss flag removed"
     env_body = text.split("    env)", 1)[1].split("      ;;", 1)[0]
     assert "pytest [0-9]+" in env_body, "version oracle removed"
+    # S12.6b: the console mirror shows only the tool summary — the version
+    # line lives in the tool_result event, so the oracle MUST read events
+    # (live false negative cae-env-1788177076: log-only grep missed a
+    # behaviourally perfect 2-turn probe).
+    assert '"$events"' in env_body, "env oracle no longer reads the events file"
     assert "command not found" in env_body, "failure-string absence check removed"
     assert "No module named pytest" in env_body, "failure-string absence check removed"
     assert "vrc=3" in env_body, "env objective miss no longer exits 3"
@@ -319,6 +324,20 @@ def test_s12_l1_ceremony_note_is_never_a_fail() -> None:
     ceremony = l1_body.split("ig_denials=", 1)[1].split("\n        fi", 1)[0]
     assert "vrc=" not in ceremony, "ceremony friction must never set the objective-miss code"
     assert "flag=" not in ceremony, "ceremony friction must never flag the ledger row"
+
+
+def test_timeline_prints_llm_text() -> None:
+    """S12.6c: the timeline restores the FULL model text per turn from the
+    events — the live console mirror truncates to 200 chars (output.py), so
+    the post-row timeline is the operator's only complete LLM-output surface.
+    Capped at 2000 chars by default; CAE_LLM_FULL=1 uncaps."""
+    text = _text()
+    assert "💬" in text, "timeline lost the model-text block"
+    assert 'c.get("text")' in text, "timeline no longer captures model_msg text"
+    assert "CAE_LLM_FULL" in text, "uncapped override removed"
+    assert '"llm"' in text, "per-turn llm slot removed"
+    # A text-only turn (final answer, no tools) must still be printed.
+    assert 'not s["tools"] and not s["marks"] and not s["llm"]' in text, "text-only turns are skipped again"
 
 
 def test_adversarial_battery_is_green() -> None:

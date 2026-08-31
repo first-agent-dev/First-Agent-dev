@@ -179,7 +179,7 @@ t_first = t_last = None
 denials = {}
 n_tools = n_esc = n_near = 0
 def slot(t):
-    return turns.setdefault(t, {"tools": [], "marks": [], "meta": ""})
+    return turns.setdefault(t, {"tools": [], "marks": [], "meta": "", "llm": ""})
 for line in open(sys.argv[1], encoding="utf-8"):
     line = line.strip()
     if not line:
@@ -212,6 +212,9 @@ for line in open(sys.argv[1], encoding="utf-8"):
         turn += 1
         s = slot(turn)
         s["meta"] = pending
+        # S12.6c: full model text — the live console mirror truncates to 200
+        # chars (output.py), the events carry everything.
+        s["llm"] = str(c.get("text") or "")
         pending = ""
         continue
     if kind == "session_summary":
@@ -246,14 +249,24 @@ for line in open(sys.argv[1], encoding="utf-8"):
         slot(t)["marks"].append("near-miss")
     elif kind == "loop_guard_warn":
         slot(t)["marks"].append(f"loop:{c.get('detector','?')}")
-print("  ── turn timeline ([model latency] per turn; ✗:Guard = guard denial) ──")
+print("  ── turn timeline ([model latency] per turn; ✗:Guard = guard denial; 💬 = model text) ──")
+import os
+_llm_cap = 0 if os.environ.get("CAE_LLM_FULL") else 2000
 for t, s in turns.items():
-    if not s["tools"] and not s["marks"]:
+    if not s["tools"] and not s["marks"] and not s["llm"]:
         continue
     n = len(s["tools"])
     par = " [parallel x%d]" % n if n > 1 else ""
     print(f"  t{t:>2} {s['meta']}{par}: {' '.join(s['tools']) if s['tools'] else '-'}"
           + (f"  {' '.join(s['marks'])}" if s["marks"] else ""))
+    if s["llm"]:
+        txt = s["llm"].rstrip()
+        if _llm_cap and len(txt) > _llm_cap:
+            txt = txt[:_llm_cap] + " …[+%d chars — CAE_LLM_FULL=1 for the full text]" % (len(s["llm"].rstrip()) - _llm_cap)
+        lines = txt.splitlines() or [""]
+        print("      💬 " + lines[0])
+        for ln in lines[1:]:
+            print("        " + ln)
 wall = "?"
 if t_first and t_last:
     try:
@@ -352,18 +365,25 @@ row_run() { # row_run <label> <max_turns> <task>
       fi
       ;;
     env)
-      # S12.6 (CT6): readiness-handoff probe. The session clone has a .venv;
-      # the agent must find its pytest without archaeology (D15: 12/20 turns
-      # burned on 2026-08-31). The two absence-greps are exactly the failure
-      # strings that run produced. rc=0 with a failed oracle is an objective
-      # miss -> exit 3 (v4.4 contract).
+      # S12.6 (CT6) + S12.6b: readiness-handoff probe. The session clone has a
+      # .venv; the agent must find its pytest without archaeology (D15: 12/20
+      # turns burned on 2026-08-31). S12.6b FIX (live false negative,
+      # 2026-08-31 cae-env-1788177076): the console mirror shows only the tool
+      # SUMMARY ("bash exited 0") — the command stdout (the pytest version
+      # line) lives in the tool_result EVENT, so the version oracle greps the
+      # events file (the log stays an OR-branch for a model that echoes the
+      # full line). The two absence-greps are exactly the failure strings the
+      # 2026-08-31 run produced; they are checked on BOTH surfaces. rc=0 with
+      # a failed oracle is an objective miss -> exit 3 (v4.4 contract).
       if [ "$rc" -eq 0 ] \
-         && grep -qE 'pytest [0-9]+\.[0-9]+' "$log" \
+         && { grep -qE 'pytest [0-9]+\.[0-9]+' "$events" || grep -qE 'pytest [0-9]+\.[0-9]+' "$log"; } \
+         && ! grep -q "command not found" "$events" \
          && ! grep -q "command not found" "$log" \
+         && ! grep -q "No module named pytest" "$events" \
          && ! grep -q "No module named pytest" "$log"; then
         echo "  [PASS] venv pytest reachable without archaeology (D15 fix verified)"
       else
-        echo "  [FAIL] env probe: pytest not cleanly reachable — inspect $log"
+        echo "  [FAIL] env probe: pytest not cleanly reachable — inspect $log and the captured events"
         [ "$rc" -eq 0 ] && vrc=3
         flag="ENV_PROBE_FAILED"
       fi
