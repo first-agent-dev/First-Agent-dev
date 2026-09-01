@@ -2807,6 +2807,71 @@ with a comment pointing here.
 - **Repro:** l3 row (`scripts/run_live_check.sh l3`) on a model that paginates
   large file reads; watch for `✗:LoopGuard` on repeated `fs_read_file`.
 
+### MECHANISM — established 2026-08-31 by direct execution, not inference
+
+Superseded two earlier notes here (one blamed `offload_threshold`, one claimed
+some live reads "arrived inline"). Both were wrong; the second was refuted by
+running the real code path. Verified by rebuilding the venv and calling the
+production functions (`build_read_file_tool`, `project_for_model`) against this
+repo's own `src/fa/cli.py`:
+
+1. **Every read the model made on the gemini l2 row was elided.** Measured
+   raw payload sizes for its exact ranges: 1-150 = 5207 B, 3331-3664 = 13158 B,
+   3330-3664 = 13160 B, 3330-3460 = 5553 B, 3330-3440 = 4604 B. All exceed the
+   4096-byte budget, so all five were projected to exactly 4158 bytes.
+   (Caveat: measured against the local checkout at `afaac84`; the live session
+   ran at `ece9bcc`. Lines 1-3 match the live event content verbatim and the
+   margin is ~20%, so the conclusion is robust, but it is not byte-identical
+   proof.)
+2. **The events file cannot show this.** `artifact_id` + `preview` in a
+   `tool_result` row means only that state.py's audit offload fired
+   (>8000 chars, state.py:772-783). Projection elision is a separate mechanism
+   at 4096 bytes (projection.py:66, `ToolSpec.max_context_bytes` default
+   registry.py:350; `fs_read_file` sets no override — confirmed on the built
+   spec). Reads between 4096 and 8000 bytes look "clean" in the log and are
+   still elided to the model.
+3. **The boundary is bytes, not lines.** Exact cutoff for the 3330+ region is
+   97 lines inline / 98 elided, but lines 1-150 (5207 B) elide while 3330-3400
+   (71 lines, 3196 B) does not. Any advice phrased in lines is wrong; only a
+   byte figure is safe.
+4. **Elision shape** (`default_head_tail`, projection.py:31-47): ~2 KB head +
+   ~2 KB tail of the *rendered JSON*, marker `\n... [elided] ...\n`. Because
+   `render_tool_payload` sorts keys, the tail always ends with
+   `"line_count": <TOTAL FILE LINES>, "path": ...` — so the model DOES learn
+   the file is 3664 lines, but never which lines it is missing, and there is no
+   resume hint and no mention of the requested range in the output.
+5. **Narrowing was the right instinct and it nearly worked.** The escape is a
+   range whose payload fits 4096 B (<= ~70 lines in this region); the model got
+   to 111 lines (3330-3440) and stopped two steps short. Nothing in the tool
+   description tells it the budget exists: `start_line` / `end_line` appear only
+   in `input_schema`, and the built spec's description mentions neither.
+6. **Session kill** (loop_guard.py:155-176; thresholds from RuntimeLimits
+   165-167 = warn 3 / breaker 5 / window 8): Detector 2 counts DISTINCT
+   `params_hash` per `path_hint`, so advancing ranges increment the breaker.
+   A BETWEEN_ROUNDS denial deliberately does not break the loop
+   (coder_loop.py:1816-1875); the padding branch writes `run_stopped` and every
+   later turn re-scans it and fails all calls with "tool call skipped: session
+   stopped". Verified in both l2 event files (3 `run_stopped` rows on the
+   gemini row, 2 on the kimi row). On the gemini row the collateral was a
+   `pytest` verify and an `invoke_workflow` escalation; the session then ended
+   because the MODEL stopped emitting tool calls, not because of a turn cap.
+7. **NOT established:** whether the kimi row's `fs_edit_file` (t6) actually
+   applied. The pulls so far filtered out `tool_call` / `tool_result` rows, so
+   this is unverified in both directions. Note the kimi model claimed "I have
+   the full function now" after reads whose largest window was 65 lines of a
+   ~130-line function — so a guard denial there may have blocked an
+   under-informed edit. Do not cite the kimi edit as proof the guard vetoes
+   correct work until the tool_result is read.
+
+**Fix shape (corrected):** the fix belongs in the `read_file` handler, NOT in a
+custom `ToolSpec.elide`. `ToolElider` is `Callable[[Any, int], str]`
+(registry.py:22) — it receives the payload and the budget only, never the
+requested range or the file length, so it cannot produce a resume hint. The
+handler already has `start`, `end` and `len(lines)` (read_file.py:130-166) and
+can return a contiguous slice that fits plus a footer naming the omitted span.
+Cheapest interim mitigation is the description line alone, since narrowing to
+<= ~70 lines already works today.
+
 ## I-58 — IntentGuard denies read-only bash before a draft exists (D17)
 
 - **Status:** open (live trial 2026-08-31, gemini l2 t9). P3.
@@ -2845,6 +2910,11 @@ with a comment pointing here.
   event, but the event does not carry WHICH command failed or its last output
   lines, so triage needs the full transcript. Add a bounded (e.g. 500-char)
   tail of the failing verify output to the evidence payload.
+- **2026-08-31 addendum (cae-l2-1788181737 t7):** a `pytest` call DENIED by
+  the LoopGuard circuit breaker produced `verify_failed` evidence and an
+  L2->L3 escalation. A guard denial is not a verification failure — the
+  evidence classifier should distinguish `denied` from `failed` (same
+  payload fix can carry the distinction).
 
 ## I-62 — `/tmp` friction inside the container (D13)
 
@@ -2883,6 +2953,75 @@ with a comment pointing here.
   command template can carry. Both are behavioural; needs a plan + mutation
   tests. Live signal: the pty row (`scripts/run_live_check.sh pty`) exercises
   this path once per run.
+
+## I-66 — near-miss telemetry omits the write paths; pty wrapper scripts may pollute write accounting
+
+- **Status:** open (live trial 2026-08-31, cae-pty-1788177112 t4 near-miss). P4 — benign, S11 tuning data.
+- **Idea:** the t4 `expansion_observed` fired with `files_changed: 1, write_tier: 3`
+  on a session whose only tools were `sleep 35` / `echo RECOVERED` — no model
+  write ever happened. The trigger condition is confirmed
+  (`write_tier >= TIER_MEDIUM`, expansion.py `near_miss_evidence`), and the
+  write set is the CUMULATIVE transaction set snapshotted via
+  `git status --porcelain` after every bash run (tools/run_bash.py:182).
+  Prime suspect: the pty materializes its wrapper script INSIDE the workspace
+  (`pty_pool.py:272` `.fa-bash-<call_id>.sh`), which git-status can observe;
+  the event payload carries only counters, so the path cannot be identified
+  after the fact.
+- **First concrete step:** (a) include the triggering write paths in the
+  `expansion_observed` payload (bounded list), (b) exclude `.fa-bash-*.sh`
+  wrapper scripts from write-set accounting or move them out of the
+  workspace. Policy behaviour on 2026-08-31 was CORRECT (declined to
+  escalate) — this is telemetry hygiene, not a guard defect.
+
+
+## I-67 — `in_tokens` is provider-relative, but token telemetry mixes providers on failover
+
+- **Status:** open (live trial 2026-08-31, cae-l2-1788181737 llm_call #3). P3.
+- **Idea:** `llm_call.in_tokens` is `response.in_tokens` from whichever chain
+  entry finally answered (coder_loop.py:1548). On the l2 row, turn 4's gemini
+  attempt returned 503 and the SAME request succeeded on the kimi fallback —
+  and that attempt reported `in_tokens=21121` where the gemini turns either
+  side reported 4604 and 6369 for a strictly larger history. The 21.1k -> 6.4k
+  "drop" that looked like lost context was a TOKENIZER CHANGE, not compaction:
+  the gemini-only series is perfectly monotonic
+  (3272, 4604, 6369, 7625, 8927, 9024, 9160, 9171) and zero
+  `compaction_*` / `context_budget_warn` events were emitted. Two consumers are
+  affected: `record_usage` sums per-response tokens across providers into one
+  `usage_totals` dict (coder_loop.py:632-640), which feeds
+  `session_summary.total_in` and the `session_end` OutputEvent, so any
+  failover session reports a mixed-unit total; and the ledger's per-row token
+  columns inherit the same ambiguity. Separately, the failed-over turn's
+  BEHAVIOUR came from a different model than the row's declared model, and
+  nothing in the row records it.
+- **First concrete step:** (a) stamp the answering `slug`/`family` onto the
+  `usage` event and skip or separately bucket cross-provider totals, (b)
+  surface `failover: true` + answering slug in `session_summary` and in the
+  live-sheet row notes so a row's model attribution is honest. The
+  ContextBudget estimator is unaffected — it is local `chars//4`
+  (context_budget.py:18-30), never provider-reported.
+- **Addendum (same day, second pull — both l2 event files):** attribution
+  PROVEN by `provider_attempt` rows: logical call `55d28154` =
+  `ag/gemini-3.7-flash-medium` 503 (26169 ms) then `am/kimi-k3` 200
+  (9559 ms), and the `model_msg` for that call carries `in_tokens: 21121`.
+  `context_limit` / `compaction_threshold` are ABSENT from the operator's
+  `/srv/first-agent/routing/models.yaml`, so the loader defaults apply
+  (chain.py:637-638): `context_limit=150000`, `compaction_threshold=None`.
+  Consequences: `compaction_enabled` is False (coder_loop.py:1128),
+  Stage-2 masking can never run, Stage-3 is a hard stop at
+  `min(max(120001, 135000), 150000)` = 135000 tokens, and the local
+  `chars//4` estimate never approaches it. Masking/compaction are therefore
+  EXCLUDED as a cause of any observed token drop. What remains unexplained
+  is provider-side: kimi's series on the 2026-08-30 l2 row is NOT monotonic
+  (19284, 20202, 39397, 22109, 23890, 24105, 24681 — a +19k spike then a
+  -17k drop with zero compaction events), and kimi's FIRST call reported
+  19284 in_tokens where gemini's first call on the same task reported 3272
+  (~5.9x) for an identical prompt. So `in_tokens` is not comparable across
+  providers even in trend, and any harness-side inference from it is unsafe.
+  Discriminating measurement: send one fixed prompt to two slugs and compare
+  reported `in_tokens`; if they differ materially for identical input the
+  number is a provider artefact. Note `cache_read_input_tokens` is also
+  provider-shaped (kimi: 12288/7680/7680, always multiples of 256; gemini: 0
+  on every turn of the 2026-08-31 row).
 
 ## See also
 

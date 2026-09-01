@@ -1,4 +1,7 @@
 run_id,date,row,recommended_mode,level_path,expansion_n,observed_n,exhausted,exit_code,notes
-cae-l1-1788087922-673573,2026-08-30,l1,chat_direct,none,0,1,0,0,"auto-captured via=container"
-cae-l2-1788088035-674208,2026-08-30,l2,chat_direct,1>2;2>3;,2,1,0,0,"auto-captured via=container"
-cae-l3-1788088444-675235,2026-08-30,l3,chat_direct,none,0,6,0,1,"auto-captured via=container"
+cae-smoke-1788176541-826835,2026-08-31,smoke,chat_direct,none,0,0,0,0,"auto-captured via=container stop=stopped_by_llm"
+cae-env-1788177076-831672,2026-08-31,env,chat_direct,none,0,0,0,0,"auto-captured via=container stop=stopped_by_llm ENV_PROBE_FAILED"
+cae-pty-1788177112-832051,2026-08-31,pty,chat_direct,none,0,1,0,0,"auto-captured via=container stop=stopped_by_llm"
+cae-env-1788181465-848969,2026-08-31,env,chat_direct,none,0,0,0,0,"auto-captured via=container stop=stopped_by_llm"
+cae-l1-1788181547-849412,2026-08-31,l1,chat_direct,none,0,2,0,0,"auto-captured via=container stop=stopped_by_llm"
+cae-l2-1788181737-850175,2026-08-31,l2,chat_direct,1>2;2>3;,2,2,0,0,"auto-captured via=container stop=LoopGuard: path 'src/fa/cli.py' thrashed across 5 distinct attempts (threshold 5)"
