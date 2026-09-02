@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from fa.inner_loop.registry import ToolResult, ToolSpec
+from fa.inner_loop.registry import DEFAULT_TOOL_CONTEXT_BYTES, ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,9 @@ _DESCRIPTION = (
     "Trace call relationships of a Python symbol: find its callers (direction=up) "
     "or callees (direction=down) up to a BFS depth. Python-only in v1; unresolved "
     "callees are reported honestly as <unresolved:...>. Use fs_search first to "
-    "find a symbol by name, then fs_reach to trace relationships."
+    "find a symbol by name, then fs_reach to trace relationships; for a file's "
+    "structural outline (symbols/sections with exact line ranges) use fs_search "
+    "output_mode='outline' instead."
 )
 
 
@@ -120,7 +122,10 @@ def build_fs_reach_tool(workspace_root: Path) -> ToolSpec:
         permission="read",
         handler=handler,
         tags=("fs", "navigation", "discovery"),
-        max_context_bytes=_MAX_RESPONSE_BYTES,
+        # S12.7 (CT2/GAP4): projection ceiling (was 30_000 — an inventory
+        # miss in PLAN-s12.7 preflight, unified with the ceiling tier).
+        # _MAX_RESPONSE_BYTES remains the INTERNAL cap.
+        max_context_bytes=DEFAULT_TOOL_CONTEXT_BYTES,
     )
 
 

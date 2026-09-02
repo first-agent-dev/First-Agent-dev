@@ -525,11 +525,10 @@ def test_fa_run_sends_exact_portable_coder_tool_corpus(
 
     search_properties = by_name["fs_search"]["function"]["parameters"]["properties"]
     assert "types" not in search_properties
-    assert search_properties["glob"] == {"type": "string"}
-    assert search_properties["exclude_dirs"] == {
-        "type": "array",
-        "items": {"type": "string"},
-    }
+    assert search_properties["glob"]["type"] == "string"
+    assert "Removed (S12.7)" in search_properties["glob"]["description"]
+    assert search_properties["exclude_dirs"]["type"] == "array"
+    assert search_properties["exclude_dirs"]["items"] == {"type": "string"}
 
 
 @pytest.mark.parametrize("role", ["coder", "planner", "eval"])

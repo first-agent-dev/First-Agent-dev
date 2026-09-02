@@ -394,7 +394,11 @@ def test_gated_registry_keeps_working_validators(tmp_path: Path) -> None:
         scope_point=point,
         gate_enabled=True,
     )
-    bad_call = ToolCall(name="fs_read_file", params={}, call_id="")
+    # S12.7 (CT7) probe update: fs_read_file no longer schema-REQUIRES "path"
+    # (path XOR artifact_id is enforced at handler level), so {} is now
+    # schema-valid. The validator-presence probe uses a type-invalid payload
+    # instead — same oracle (schema rejection), independent of the XOR move.
+    bad_call = ToolCall(name="fs_read_file", params={"path": 123}, call_id="")
     rejected = registry.validate(bad_call)
     assert rejected is not None, "a surviving tool lost its schema validator"
     assert rejected.error is not None

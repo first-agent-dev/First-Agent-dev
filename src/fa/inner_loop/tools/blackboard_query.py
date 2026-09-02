@@ -12,7 +12,8 @@ antipattern + enumerated root docs) via ``fa.blackboard.artifact_index``
 (S14 / I-56). Returns compact metadata rows (id, type, content_hash, read/write
 sets, timestamp, path, title-inferred-path) rather than full payload blobs for
 token efficiency (Pillar-3). Content search is ``fs_search``'s job (use
-output_mode="files" for path discovery; "matches"/"regions" for line content).
+output_mode="files" for path discovery, "outline" for a file's structure,
+"matches" for line content).
 
 **Access seam.** Tool handlers get the session-bound blackboard via the
 thread-local ``get_current_session()`` → ``session.blackboard`` (same seam as

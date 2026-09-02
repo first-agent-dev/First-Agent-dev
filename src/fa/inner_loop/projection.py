@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from fa.inner_loop.artifacts import ArtifactStore
 from fa.inner_loop.registry import ToolResult, ToolSpec
 
 _ERROR_MESSAGE_CHARS = 500
+
+logger = logging.getLogger(__name__)
 _ELISION_MARKER = "\n... [elided] ...\n"
 
 
@@ -71,7 +74,21 @@ def project_for_model(spec: ToolSpec, result: ToolResult, artifact_store: Artifa
         return f"{result.summary}\n\n[artifact: {artifact_id}]"
 
     elider = spec.elide or default_head_tail
-    elided = _clip_utf8(elider(result.result, spec.max_context_bytes), spec.max_context_bytes)
+    elided = elider(result.result, spec.max_context_bytes)
+    clipped = _clip_utf8(elided, spec.max_context_bytes)
+    if clipped != elided and spec.elide is not None:
+        # S12.7 (CT5): a custom elider overshooting max_context_bytes is a
+        # contract violation — clip (runtime belt-and-suspenders) but make it
+        # OBSERVABLE. Correct adapters never trigger this: their footer
+        # reserve keeps the clip a no-op (see _read_head_frame /
+        # _bash_tail_frame). default_head_tail keeps its silent clip.
+        logger.warning(
+            "custom elider %s overshot max_context_bytes (%d > %d); output clipped",
+            getattr(spec.elide, "__name__", repr(spec.elide)),
+            len(elided.encode("utf-8")),
+            spec.max_context_bytes,
+        )
+    elided = clipped
     return f"{result.summary}\n\n{elided}\n\n[artifact: {artifact_id}]"
 
 

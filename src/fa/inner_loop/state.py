@@ -769,20 +769,14 @@ class SessionState:
         if result.error is not None:
             content["error"] = asdict(result.error)
 
-        # Offload full output to ArtifactStore if large, keep artifact_id in telemetry
-        artifact_id: str | None = None
-        try:
-            if self.artifact_store is not None:
-                # S13: FAIL-OPEN — offload_threshold defaults to 8000
-                threshold = self.feature_flags.offload_threshold if self.feature_flags is not None else 8000
-                full_output = json.dumps(content, ensure_ascii=False, default=str)
-                if len(full_output) > threshold:
-                    artifact_id = self.artifact_store.put(content)
-                    # Also ensure artifact listed in content for projection
-                    content["artifact_id"] = artifact_id
-                    content["preview"] = full_output[:500] + "...[offloaded]"
-        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            logger.warning(f"Artifact offload failed: {exc}")
+        # S12.7 (CT6/GAP7): the threshold-8000 offload block (duplicate
+        # artifact + injected artifact_id + 500-char preview) is DELETED.
+        # Projection (project_for_model) is the ONLY in-loop offload path;
+        # events carry the FULL raw result always (RD-1 audit superset:
+        # logged ⊇ model-visible at every size). Compaction masking reads
+        # content.get("artifact_id") — absent now — and falls back to its
+        # own self-store (compactor.py fallback; pinned by
+        # test_compaction_sota.py::test_project_messages_after_mask_...).
 
         # Structured telemetry logging
         try:
@@ -818,7 +812,7 @@ class SessionState:
                     branch_decision="",
                     rejected_alternatives=[],
                     human_approval=None,
-                    artifact_id=artifact_id,
+                    artifact_id=None,  # S12.7 (CT6): state offload deleted; projection owns artifacts
                 )
                 self.telemetry.log(event)
 
@@ -829,7 +823,7 @@ class SessionState:
                     content={
                         "tool_name": call.name,
                         "ok": result.error is None,
-                        "artifact_id": artifact_id or "",
+                        "artifact_id": "",  # S12.7 (CT6): state offload deleted
                         "turn": self.turn,
                     },
                     tool_name=call.name,

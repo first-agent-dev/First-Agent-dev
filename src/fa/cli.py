@@ -1068,6 +1068,8 @@ def _cmd_inner_loop_smoke(args: argparse.Namespace) -> int:
             repeat_warn=limits.loop_guard_repeat_warn,
             circuit_breaker=limits.loop_guard_circuit_breaker,
             window=limits.loop_guard_window,
+            pingpong_warn_cycles=limits.loop_guard_pingpong_warn_cycles,
+            pingpong_break_cycles=limits.loop_guard_pingpong_break_cycles,
             warn_sink=_smoke_loop_guard_warn_sink,
         )
     )
@@ -1703,6 +1705,8 @@ def _build_run_hook_registry(
             repeat_warn=limits.loop_guard_repeat_warn,
             circuit_breaker=limits.loop_guard_circuit_breaker,
             window=limits.loop_guard_window,
+            pingpong_warn_cycles=limits.loop_guard_pingpong_warn_cycles,
+            pingpong_break_cycles=limits.loop_guard_pingpong_break_cycles,
             warn_sink=_loop_guard_warn_sink,
         )
     )

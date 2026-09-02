@@ -81,6 +81,7 @@ from fa.inner_loop.expansion import (
     select_l2_skill,
 )
 from fa.inner_loop.hooks.base import HookPayload, HookRegistry, LifecyclePoint
+from fa.inner_loop.hooks.loop_guard import LOOP_GUARD_REASON_PREFIX
 from fa.inner_loop.loop import SessionRun, run_session
 from fa.inner_loop.observations import build_observation_block
 from fa.inner_loop.path_risk import (
@@ -1820,6 +1821,35 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         # point silently changed that behaviour and was caught by
         # test_loop_guard_circuit_breaker_works_without_sink.
         if turn_results.stop is not None and turn_results.stop.point == LifecyclePoint.AFTER_TOOL_EXEC.value:
+            stop_info = turn_results.stop
+            if output is not None:
+                output.emit(
+                    OutputEvent(
+                        type="hook_deny",
+                        data={"point": stop_info.point, "reason": stop_info.reason},
+                    )
+                )
+            state.observations.append(f"run stopped at {stop_info.point}: {stop_info.reason}")
+            break
+
+        # S12.7 (CT1/GAP2): a LoopGuard circuit-breaker TRIP at
+        # BETWEEN_ROUNDS terminates the session in-band. The trip is
+        # identified by the single-sourced ``LOOP_GUARD_REASON_PREFIX``
+        # on the stop reason (Decision.reason → PermissionError →
+        # StopInfo.reason; hooks/loop_guard.py owns the constant).
+        # Any OTHER BETWEEN_ROUNDS stop (PauseGuard "pause sentinel
+        # active: …", etc.) keeps the continue-by-design semantics
+        # below — the scope note above still holds for them, and
+        # LoopGuard warn rounds never produce a stop at all.
+        # No `missing > 0` padding runs after a trip: there is no next
+        # model call, so no synthetic run_stopped results are produced
+        # (the former zombie: every later tool call failing with
+        # "session stopped" while the runner kept going).
+        if (
+            turn_results.stop is not None
+            and turn_results.stop.point == LifecyclePoint.BETWEEN_ROUNDS.value
+            and turn_results.stop.reason.startswith(LOOP_GUARD_REASON_PREFIX)
+        ):
             stop_info = turn_results.stop
             if output is not None:
                 output.emit(

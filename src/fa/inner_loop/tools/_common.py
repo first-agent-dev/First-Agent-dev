@@ -11,6 +11,7 @@ import logging
 import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import Any
 
 from fa.inner_loop.registry import ToolResult
 from fa.inner_loop.tools.base import optional_int, require_string
@@ -192,3 +193,59 @@ __all__ = [
     "validate_bash_command",
     "validate_search_params",
 ]
+
+# ── S12.7 (CT4/GAP6): bash tail-frame machinery ────────────────────────────
+# Retention arithmetic (R16 lesson — never promise raw-byte whole windows):
+# ceiling 32_768 - ~350B envelope scaffolding (keys/ids/flags) - escape
+# headroom on shell text (~1.2x) ~= a 30_000B retained stdout tail. The
+# envelope then renders under the ceiling and stays INLINE; the FULL stdout
+# always goes to the artifact when trimmed. Anything that still overflows
+# (huge stderr, escaping inflation) is framed by ``_bash_tail_frame`` at the
+# projection chokepoint.
+_RETAINED_TAIL_BYTES = 30_000
+_BASH_FRAME_RESERVE = 128  # projection appends "\n\n[artifact: …]" after the frame
+
+
+def _utf8_tail(text: str, max_bytes: int) -> str:
+    """Last ``max_bytes`` of ``text``, utf-8-safe (never splits a codepoint)."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[-max_bytes:].decode("utf-8", errors="ignore")
+
+
+def _retained_stdout(stdout: str) -> tuple[str, bool]:
+    """Tail-biased retention within the ceiling. Returns (retained, truncated)."""
+    if len(stdout.encode("utf-8")) <= _RETAINED_TAIL_BYTES:
+        return stdout, False
+    return _utf8_tail(stdout, _RETAINED_TAIL_BYTES), True
+
+
+def _bash_tail_frame(value: Any, max_bytes: int) -> str:
+    """Tail-biased bash frame for over-ceiling envelopes (S12.7 CT4).
+
+    ``ToolElider`` protocol: called positionally as
+    ``elider(result.result, spec.max_context_bytes)`` by the projection
+    layer. Shape: header, then the stdout tail, then — LAST — the stderr
+    block, so the error is always in the frame's final bytes when present
+    (stderr-preserving invariant). stderr is capped at a quarter of the
+    usable budget so a giant stderr cannot evict stdout entirely. Projection
+    appends the ``[artifact: …]`` footer (the single id source).
+    """
+    if not isinstance(value, Mapping):
+        return str(value)
+    stdout = str(value.get("stdout", ""))
+    stderr = str(value.get("stderr", ""))
+    usable = max(0, max_bytes - _BASH_FRAME_RESERVE)
+    header = f"[cmd out — TRUNCATED: showing last ~{usable}B of stdout — stderr at end]"
+
+    stderr_block = ""
+    if stderr:
+        stderr_bytes = len(stderr.encode("utf-8"))
+        stderr_budget = min(stderr_bytes, max(0, usable // 4))
+        stderr_shown = _utf8_tail(stderr, stderr_budget) if stderr_budget < stderr_bytes else stderr
+        stderr_block = f"\n[stderr — last {stderr_budget}B]\n{stderr_shown}"
+
+    body_budget = usable - len(header.encode("utf-8")) - 1 - len(stderr_block.encode("utf-8"))
+    stdout_tail = _utf8_tail(stdout, max(0, body_budget))
+    return header + "\n" + stdout_tail + stderr_block

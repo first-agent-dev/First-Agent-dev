@@ -30,6 +30,20 @@ logger = logging.getLogger(__name__)
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07")
 
+# S12.7 (CT4): executor-level output retention — TAIL-biased (the error is
+# usually at the end) and sized to match the tools layer's retention target
+# (``_RETAINED_TAIL_BYTES`` in fa.inner_loop.tools._common; tests pin the two
+# equal). Replaces the former head-biased ``[:8000]`` slices at all three
+# read-out sites.
+_EXEC_RETAINED_BYTES = 30_000
+
+
+def _tail_keep(text: str, max_chars: int = _EXEC_RETAINED_BYTES) -> str:
+    """Tail-biased retention for executor output; marker at the head."""
+    if len(text) <= max_chars:
+        return text
+    return f"[...truncated — showing last {max_chars} chars]\n" + text[-max_chars:]
+
 
 def resolve_cr(text: str) -> str:
     """Normalize CR artifacts — FIND-016 fix.
@@ -319,7 +333,7 @@ class PtySession:
                     except Exception:  # noqa: BLE001, S110 — best-effort reclaim
                         pass
                 return PtyResult(
-                    stdout=f"{label}:\n{ANSI_RE.sub('', raw)[:8000]}",
+                    stdout=f"{label}:\n{_tail_keep(ANSI_RE.sub('', raw))}",
                     exit_code=-1,
                     truncated=True,
                     session_id=self.session_id,
@@ -334,9 +348,9 @@ class PtySession:
             exit_code = int(m.group(1)) if m else -1
             if f"{self._exit_token}:" in clean:
                 clean = clean.split(f"{self._exit_token}:")[0]
-            truncated = len(clean) > 8000
+            truncated = len(clean) > _EXEC_RETAINED_BYTES
             if truncated:
-                clean = clean[:8000] + "\n...[truncated]"
+                clean = _tail_keep(clean)
             return PtyResult(stdout=clean.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id)
         return PtyResult(stdout="No fallback available", exit_code=-1, truncated=False, session_id=self.session_id)
 
@@ -466,9 +480,9 @@ class PtySession:
             except TimeoutError:
                 pass
             output = output.replace(self._sentinel_token, "")
-        truncated = len(output) > 8000
+        truncated = len(output) > _EXEC_RETAINED_BYTES
         if truncated:
-            output = output[:8000] + "\n...[truncated 8000]"
+            output = _tail_keep(output)
         if timed_out:
             output = f"Timeout {timeout}s partial:\n{output}" if output else f"Timeout {timeout}s: no output captured"
         return PtyResult(

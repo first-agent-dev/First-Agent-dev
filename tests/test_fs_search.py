@@ -79,11 +79,12 @@ def test_fs_search_tool_schema_uses_optional_non_nullable_provider_shapes(tmp_pa
 
     assert "types" not in properties
     assert "types parameter is reserved" not in tool.description
-    assert properties["glob"] == {"type": "string"}
-    assert properties["exclude_dirs"] == {
-        "type": "array",
-        "items": {"type": "string"},
-    }
+    assert properties["glob"]["type"] == "string"
+    assert "Removed (S12.7)" in properties["glob"]["description"], (
+        "removed params must be schema-visible as removed (portable profile has no 'deprecated')"
+    )
+    assert properties["exclude_dirs"]["type"] == "array"
+    assert properties["exclude_dirs"]["items"] == {"type": "string"}
     required = schema["required"]
     assert isinstance(required, list)
     assert "glob" not in required
@@ -114,7 +115,9 @@ def test_fs_search_registry_rejects_explicit_null_for_optional_filters(tmp_path:
 # ---------------------------------------------------------------------------
 
 
-def test_fs_search_files_mode_returns_paths_with_snippet(tmp_path: Path) -> None:
+def test_fs_search_files_mode_returns_stat_rows(tmp_path: Path) -> None:
+    """S12.7 §A6 v7: files rows are {path, lines, bytes}, path-ordered —
+    match_count/first_match_* are deliberately gone (discovery only)."""
     _populate_sample_repo(tmp_path)
     tool = _mk_tool(tmp_path)
 
@@ -124,67 +127,47 @@ def test_fs_search_files_mode_returns_paths_with_snippet(tmp_path: Path) -> None
     files = r.result["files"]
     paths = [f["path"] for f in files]
     assert "src/auth.py" in paths
-    # Each files entry carries match_count and first_match_{line,snippet} per R-10
+    assert paths == sorted(paths), "files rows must be path-ordered (§A6)"
     hit = next(f for f in files if f["path"] == "src/auth.py")
-    assert hit["match_count"] >= 1
-    assert hit["first_match_line"] is not None
-    assert hit["first_match_snippet"] is not None
-    assert "authenticate" in hit["first_match_snippet"].lower()
+    assert set(hit.keys()) == {"path", "lines", "bytes"}
+    assert isinstance(hit["lines"], int) and hit["lines"] >= 1
+    assert hit["bytes"] == (tmp_path / "src" / "auth.py").stat().st_size
+    assert "skipped_large_files" in r.result, "skip report must be surfaced in files mode"
 
 
-def test_fs_search_matches_mode_returns_line_content(tmp_path: Path) -> None:
+def test_fs_search_matches_mode_returns_merged_regions(tmp_path: Path) -> None:
+    """S12.7 §A6 v7: matches = merged regions, grep-marked (N: hit, N- ctx)."""
     _populate_sample_repo(tmp_path)
     tool = _mk_tool(tmp_path)
 
-    r = tool.handler(
-        {
-            "query": "authenticate",
-            "output_mode": "matches",
-            "context_lines": 0,
-            "limit": 10,
-        }
-    )
+    r = tool.handler({"query": "authenticate", "output_mode": "matches", "limit": 10})
     assert r.error is None
     matches = r.result["matches"]
     assert len(matches) >= 1
-    # Every match carries path/line/content/before/after
     for m in matches:
-        assert set(m.keys()) >= {"path", "line", "content", "before", "after"}
-        assert isinstance(m["line"], int)
+        assert set(m.keys()) == {"path", "start_line", "end_line", "match_lines", "match_count", "snippet"}
+        assert m["start_line"] <= m["end_line"]
+        assert m["match_count"] == len(m["match_lines"]) >= 1
+        import re as _re
+
+        hit_lines = set(m["match_lines"])
+        marked: list[tuple[int, str]] = []
+        for s in m["snippet"]:
+            mo = _re.match(r"^(\d+)([:\-])", s)
+            if s.startswith("["):
+                continue  # trailer
+            assert mo is not None, f"snippet line not N:/N- marked: {s!r}"
+            marked.append((int(mo.group(1)), mo.group(2)))
+        assert marked, "region must render at least one line"
+        for ln, marker in marked:
+            expected = ":" if ln in hit_lines else "-"
+            assert marker == expected, f"line {ln} marked {marker!r}, expected {expected!r}"
+        assert any(ln in hit_lines for ln, _ in marked), "at least one hit line must render"
 
 
-def test_fs_search_regions_mode_groups_adjacent_matches(tmp_path: Path) -> None:
-    _populate_sample_repo(tmp_path)
-    tool = _mk_tool(tmp_path)
-
-    r = tool.handler(
-        {
-            "query": "auth",
-            "output_mode": "regions",
-            "context_lines": 1,
-            "limit": 10,
-        }
-    )
-    assert r.error is None
-    regions = r.result["regions"]
-    assert len(regions) >= 1
-    for region in regions:
-        assert set(region.keys()) >= {"path", "start_line", "end_line", "match_count", "snippet"}
-        assert region["start_line"] <= region["end_line"]
-        assert region["match_count"] >= 1
-
-
-def test_fs_search_counts_mode_returns_per_file_counts(tmp_path: Path) -> None:
-    _populate_sample_repo(tmp_path)
-    tool = _mk_tool(tmp_path)
-
-    r = tool.handler({"query": "auth", "output_mode": "counts", "limit": 10})
-    assert r.error is None
-    counts = r.result["counts"]
-    assert len(counts) >= 1
-    hit = next(c for c in counts if c["path"] == "src/auth.py")
-    # auth/auth/authenticate/Auth/Authentication all contain 'auth' (case-insensitive)
-    assert hit["count"] >= 2
+# regions/counts pins removed in S12.7 S7b (§A6 v7): regions folded into
+# matches (merged-region rows pinned above); counts mode removed — replaced
+# by removed-mode steering pins in tests/test_s127_fs_surface.py (P19).
 
 
 # ---------------------------------------------------------------------------
@@ -193,11 +176,17 @@ def test_fs_search_counts_mode_returns_per_file_counts(tmp_path: Path) -> None:
 
 
 def test_fs_search_empty_query_is_invalid_params(tmp_path: Path) -> None:
+    """S12.7 §A6 v7/CT11: blank query == absent query. files -> listing;
+    matches -> invalid_params (a grep needs a pattern)."""
     _populate_sample_repo(tmp_path)
     tool = _mk_tool(tmp_path)
-    r = tool.handler({"query": "   "})
-    assert r.error is not None
-    assert r.error.code == "invalid_params"
+    listing = tool.handler({"query": "   "})
+    assert listing.error is None, "blank query + files mode = pure listing"
+    assert listing.result["method"] == "walk_listing" and listing.result["files"]
+    grep = tool.handler({"query": "   ", "output_mode": "matches"})
+    assert grep.error is not None
+    assert grep.error.code == "invalid_params"
+    assert "matches" in grep.error.message
 
 
 def test_fs_search_invalid_output_mode_is_invalid_params(tmp_path: Path) -> None:
@@ -208,22 +197,23 @@ def test_fs_search_invalid_output_mode_is_invalid_params(tmp_path: Path) -> None
     assert r.error.code == "invalid_params"
 
 
-def test_fs_search_context_lines_clamped_to_hard_cap(tmp_path: Path) -> None:
+def test_fs_search_context_lines_removed_ignored_with_warning(tmp_path: Path) -> None:
+    """S12.7 §A6 v7 (R22): context_lines is a fixed internal 1-line constant —
+    the knob warns and is ignored instead of clamping."""
     _populate_sample_repo(tmp_path)
     tool = _mk_tool(tmp_path)
     r = tool.handler(
         {
             "query": "auth",
             "output_mode": "matches",
-            "context_lines": 100,  # well above HARD_MAX_CONTEXT_LINES=5
+            "context_lines": 100,
             "limit": 10,
         }
     )
     assert r.error is None
-    # Tool must have clamped and warned rather than erroring
     warnings = r.result.get("warnings") or []
-    assert any("context_lines" in w.lower() or "clamp" in w.lower() for w in warnings), (
-        f"expected a clamp warning; got {warnings!r}"
+    assert any("context_lines" in w and "ignored" in w for w in warnings), (
+        f"expected a leniency warning; got {warnings!r}"
     )
 
 
@@ -254,7 +244,6 @@ def test_fs_search_negative_values_normalized_to_defaults(tmp_path: Path) -> Non
         {
             "query": "auth",
             "output_mode": "files",
-            "context_lines": -1,
             "limit": -5,
         }
     )
@@ -346,7 +335,9 @@ def test_fs_search_trigram_finds_partial_identifier(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_fs_search_include_tests_false_excludes_tests_dir(tmp_path: Path) -> None:
+def test_fs_search_include_tests_removed_exclude_dirs_excludes_tests_dir(tmp_path: Path) -> None:
+    """S12.7 §A6 v7 (R22): include_tests is gone — exclude_dirs is THE tests-off
+    switch; a passed include_tests is ignored with an observable warning."""
     _populate_sample_repo(tmp_path)
     tool = _mk_tool(tmp_path)
     r = tool.handler(
@@ -354,16 +345,28 @@ def test_fs_search_include_tests_false_excludes_tests_dir(tmp_path: Path) -> Non
             "query": "auth",
             "output_mode": "files",
             "limit": 20,
-            "include_tests": False,
+            "exclude_dirs": ["tests"],
         }
     )
     assert r.error is None
     paths = [f["path"] for f in r.result["files"]]
-    assert not any(p.startswith("tests/") for p in paths), (
-        f"tests/ should be excluded when include_tests=False; got {paths}"
-    )
-    # But src/auth.py and README.md (both contain 'auth') must remain
+    assert not any(p.startswith("tests/") for p in paths), f"tests/ should be excluded via exclude_dirs; got {paths}"
     assert "src/auth.py" in paths
+
+    legacy = tool.handler(
+        {
+            "query": "auth",
+            "output_mode": "files",
+            "limit": 20,
+            "include_tests": False,
+        }
+    )
+    assert legacy.error is None
+    legacy_paths = [f["path"] for f in legacy.result["files"]]
+    assert any(p.startswith("tests/") for p in legacy_paths), (
+        "include_tests=False must be IGNORED (R22): tests content stays searchable"
+    )
+    assert any("include_tests" in w and "ignored" in w for w in legacy.result["warnings"])
 
 
 # ---------------------------------------------------------------------------
@@ -454,18 +457,14 @@ def test_fs_search_regex_mode_returns_matches(tmp_path: Path) -> None:
     assert "src/auth.py" in paths
 
 
-def test_fs_search_case_sensitive_respects_case(tmp_path: Path) -> None:
-    """'AUTH' (all caps) should not match lowercase 'auth' content when case_sensitive=True.
-    Since our sample files contain 'auth' lowercase and class names, searching for
-    a string that only exists in lowercase — e.g. 'authenticate' — with case_sensitive=True
-    and a capitalized query should return empty.
-    """
+def test_fs_search_case_insensitive_always(tmp_path: Path) -> None:
+    """S12.7 (R21/Q4): case_sensitive removed — literal search matches across
+    case ALWAYS; the legacy param warns and is ignored."""
     _populate_sample_repo(tmp_path)
     tool = _mk_tool(tmp_path)
-    # 'AUTHENTICATE' (all caps) doesn't appear in the fixture; case-sensitive must return 0
     r = tool.handler(
         {
-            "query": "AUTHENTICATE",
+            "query": "AUTHENTICATE",  # fixture only contains lowercase/mixed
             "output_mode": "files",
             "case_sensitive": True,
             "limit": 10,
@@ -473,7 +472,8 @@ def test_fs_search_case_sensitive_respects_case(tmp_path: Path) -> None:
     )
     assert r.error is None
     paths = [f["path"] for f in r.result["files"]]
-    assert len(paths) == 0, f"case-sensitive search for AUTHENTICATE should return 0; got {paths}"
+    assert "src/auth.py" in paths, f"case-insensitive always: expected hit; got {paths}"
+    assert any("case_sensitive" in w and "ignored" in w for w in r.result["warnings"])
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +488,7 @@ def test_fs_search_glob_filters_by_path_pattern(tmp_path: Path) -> None:
         {
             "query": "auth",
             "output_mode": "files",
-            "glob": "*.py",
+            "path": "*.py",
             "limit": 20,
         }
     )
@@ -544,7 +544,6 @@ def test_fs_search_response_size_cap_respected(tmp_path: Path) -> None:
         {
             "query": "auth_",
             "output_mode": "matches",
-            "context_lines": 0,
             "limit": 50,
         }
     )
@@ -744,7 +743,7 @@ def test_glob_doublestar_crosses_dirs(tmp_path: Path) -> None:
     r = tool.handler(
         {
             "query": "auth",
-            "glob": "src/**/*.py",
+            "path": "src/**/*.py",
             "output_mode": "files",
             "limit": 50,
         }
@@ -756,7 +755,7 @@ def test_glob_doublestar_crosses_dirs(tmp_path: Path) -> None:
     r2 = tool.handler(
         {
             "query": "DEEP_TOKEN",
-            "glob": "src/**/*.py",
+            "path": "src/**/*.py",
             "output_mode": "files",
             "limit": 50,
         }
@@ -776,7 +775,7 @@ def test_glob_singlestar_does_not_cross_dirs(tmp_path: Path) -> None:
     r = tool.handler(
         {
             "query": "SUBDIR_TOKEN",
-            "glob": "src/*.py",
+            "path": "src/*.py",
             "output_mode": "files",
             "limit": 50,
         }
@@ -793,7 +792,7 @@ def test_glob_basename_pattern_matches_any_depth(tmp_path: Path) -> None:
     r = tool.handler(
         {
             "query": "test_auth",  # only exists under tests/
-            "glob": "*.py",
+            "path": "*.py",
             "output_mode": "files",
             "limit": 50,
         }
@@ -954,10 +953,9 @@ def test_latin1_file_indexed_without_error(tmp_path: Path) -> None:
 # ---- F3: max_file_size used for match display ----
 
 
-def test_large_file_match_visible_with_larger_max_file_size(tmp_path: Path) -> None:
-    """A match within the first 100KB of a 200KB file must be visible
-    when max_file_size=1MB (snippet display uses max_file_size, not the
-    100KB index cap)."""
+def test_large_file_match_visible_under_fixed_cap(tmp_path: Path) -> None:
+    """S12.7 §A6 v7: the size cap is a fixed 200_000-byte constant — a ~170KB
+    file (over the 100KB index-content cap) must still match and render."""
     from fa.memory.search_index import MAX_CONTENT_BYTES_INDEXED
 
     _populate_sample_repo(tmp_path)
@@ -973,17 +971,14 @@ def test_large_file_match_visible_with_larger_max_file_size(tmp_path: Path) -> N
         {
             "query": "UNIQUE_LARGE_FILE_TOKEN",
             "output_mode": "matches",
-            "context_lines": 1,
-            "max_file_size": 1_000_000,
             "limit": 10,
         }
     )
     assert r.error is None
-    # We must get at least one match with content visible
+    # We must get at least one region with the token visible in the snippet
     assert r.result["matches"], f"expected match in large file, got {r.result}"
-    m = r.result["matches"][0]
-    assert m["content"], "match content must be visible (not truncated away)"
-    assert "UNIQUE_LARGE_FILE_TOKEN" in m["content"]
+    joined = "\n".join(r.result["matches"][0]["snippet"])
+    assert "UNIQUE_LARGE_FILE_TOKEN" in joined, "match content must be visible (not truncated away)"
 
 
 # ---- Canary fast-path ----

@@ -82,7 +82,8 @@ def test_run_bash_large_output_offloads_artifact_without_internal_error(tmp_path
     token = set_current_session(state)
     try:
         tool = build_run_bash_tool(tmp_path)
-        result = tool.handler({"command": "python3 - <<'PY'\nprint('A' * 9001)\nPY"})
+        # S12.7 (CT4): offload threshold is the 30k retention target (was 8k)
+        result = tool.handler({"command": "python3 - <<'PY'\nprint('A' * 30001)\nPY"})
     finally:
         reset_current_session(token)
 
@@ -232,10 +233,10 @@ def test_fs_search_matches_mode_returns_lines_with_numbers(tmp_path: Path) -> No
     assert result_data.get("method") in ("fts5_bm25", "fts5_trigram_fallback", "literal_fallback")
     matches = result_data.get("matches", [])
     assert len(matches) >= 1
-    # At least one match is on line 2 of test.py with the expected content
-    hit = next((m for m in matches if m.get("path") == "test.py" and m.get("line") == 2), None)
-    assert hit is not None, f"expected line 2 match in test.py; got {matches}"
-    assert "matching target" in hit["content"]
+    # S12.7 §A6: matches are merged regions — line 2 must be a reported hit
+    hit = next((m for m in matches if m.get("path") == "test.py" and 2 in m.get("match_lines", [])), None)
+    assert hit is not None, f"expected line-2 hit region in test.py; got {matches}"
+    assert any("2:" in s and "matching target" in s for s in hit["snippet"])
 
 
 def test_spawn_subagent_tool_gated_by_flag(tmp_path: Path) -> None:
