@@ -210,7 +210,8 @@ def test_loop_guard_circuit_breaker_works_without_sink(tmp_path: Path) -> None:
     )
     # (3) no zombie: zero synthetic session-stopped tool results.
     zombie = [r for r in outcome.tool_results if r.error is not None and "session stopped" in r.error.message]
-    assert not zombie, f"synthetic run_stopped results after a trip: {[r.error.message for r in zombie]}"
+    msgs = [r.error.message if r.error is not None else "?" for r in zombie]
+    assert not zombie, f"synthetic run_stopped results after a trip: {msgs}"
     # (4) the structured reason is durable: run_stopped row carries the prefix.
     events = log.read_all()
     stopped = [e for e in events if e.kind == "run_stopped" and "LoopGuard" in str(e.content.get("reason", ""))]

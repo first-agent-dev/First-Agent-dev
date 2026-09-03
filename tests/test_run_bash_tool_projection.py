@@ -48,6 +48,7 @@ def test_run_bash_over_budget_output_keeps_tail_shape(tmp_path: Path) -> None:
     result = tool.handler({"command": _large_output_command(40_000)})
     assert result.error is None, f"command failed: {result.error}"
     env = result.result
+    assert env is not None
     assert env["truncated"] is True
     assert str(env["stdout"]).endswith(_TAIL_MARKER)
     assert _HEAD_MARKER not in str(env["stdout"])
@@ -69,9 +70,10 @@ def test_run_bash_elide_leaves_small_output_untouched(tmp_path: Path) -> None:
     tool = build_run_bash_tool(workspace)
 
     result = tool.handler({"command": "echo short-output"})
+    assert result.result is not None
     assert result.error is None, f"command failed: {result.error}"
 
     rendered = project_for_model(tool, result, artifact_store)
     assert "short-output" in rendered
-    assert result.result["truncated"] is False
+    assert result.result is not None and result.result["truncated"] is False
     assert "[artifact: tool-result-" not in rendered

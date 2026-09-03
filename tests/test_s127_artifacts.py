@@ -124,6 +124,7 @@ def test_s127_read_file_resolves_artifact_from_session_store(tmp_path: Path) -> 
     finally:
         reset_current_session(token)
 
+    assert result.result is not None
     assert result.error is None, result.error
     assert result.result["content"] == "alpha\nbeta\ngamma\n"
     assert result.result["line_count"] == 3
@@ -146,13 +147,16 @@ def test_s127_read_file_resolves_artifact_from_projection_store(tmp_path: Path) 
         reset_current_session(token)
 
     assert full.error is None, full.error
+    full_payload = full.result
+    first_payload = first_line.result
+    assert full_payload is not None and first_payload is not None
     # dict payload renders via render_tool_payload (pretty JSON, sort_keys).
-    assert "projection-elided output" in full.result["content"]
-    assert "second line" in full.result["content"]
-    assert full.result["line_count"] == 3  # { / \stdout\: … / } — embedded \n stays escaped
+    assert "projection-elided output" in full_payload["content"]
+    assert "second line" in full_payload["content"]
+    assert full_payload["line_count"] == 3  # { / \stdout\: … / } — embedded \n stays escaped
     # windowing applies over the RENDERED lines: line 1 of the JSON is '{'.
-    assert first_line.result["content"] == "{"
-    assert first_line.result["line_count"] == full.result["line_count"]
+    assert first_payload["content"] == "{"
+    assert first_payload["line_count"] == full_payload["line_count"]
 
 
 def test_s127_read_file_windowed_artifact_semantics(tmp_path: Path) -> None:
@@ -164,9 +168,13 @@ def test_s127_read_file_windowed_artifact_semantics(tmp_path: Path) -> None:
     token = set_current_session(state)
     try:
         windowed = tool.handler({"artifact_id": artifact_id, "start_line": 10, "end_line": 19})
+        assert windowed.result is not None
         end_only = tool.handler({"artifact_id": artifact_id, "end_line": 3})
+        assert end_only.result is not None
         invalid = tool.handler({"artifact_id": artifact_id, "start_line": 0, "end_line": 5})
+        assert invalid.error is not None
         inverted = tool.handler({"artifact_id": artifact_id, "start_line": 9, "end_line": 4})
+        assert inverted.error is not None
     finally:
         reset_current_session(token)
 
@@ -212,8 +220,11 @@ def test_s127_read_file_path_and_artifact_id_are_mutually_exclusive(tmp_path: Pa
     tool = build_read_file_tool(tmp_path)
 
     both = tool.handler({"path": "some.txt", "artifact_id": "tool-result-" + "c" * 16})
+    assert both.error is not None
     neither = tool.handler({})
+    assert neither.error is not None
     bad_type = tool.handler({"artifact_id": 42})
+    assert bad_type.error is not None
 
     assert both.error.code == "invalid_params" and "mutually exclusive" in both.error.message
     assert neither.error.code == "invalid_params" and ("path" in neither.error.message)
@@ -241,7 +252,9 @@ def test_s127_oversize_artifact_read_elides_via_projection(tmp_path: Path) -> No
         reset_current_session(token)
 
     assert result.error is None
-    assert len(result.result["content"]) == 40_000  # full payload from the store
+    content = result.result
+    assert content is not None
+    assert len(content["content"]) == 40_000  # full payload from the store
 
     projected = project_for_model(tool, result, ArtifactStore(tmp_path / "projection-artifacts"))
     assert "[artifact: tool-result-" in projected, "oversize read must elide with a chained ref"

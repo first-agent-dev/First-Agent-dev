@@ -14,6 +14,7 @@ Invariants under test:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 from fa.inner_loop.artifacts import ArtifactStore
 from fa.inner_loop.projection import project_for_model
@@ -22,7 +23,7 @@ from fa.inner_loop.state import EventLog, SessionState
 from fa.inner_loop.tools.read_file import build_read_file_tool
 
 
-def _record(tmp_path: Path, payload_size: int) -> tuple[SessionState, dict]:
+def _record(tmp_path: Path, payload_size: int) -> tuple[SessionState, dict[str, Any]]:
     log = EventLog(tmp_path / "events.jsonl", run_id="audit")
     state = SessionState(workspace_root=tmp_path, run_id="audit", log=log)
     state.record_tool_result(
@@ -31,7 +32,7 @@ def _record(tmp_path: Path, payload_size: int) -> tuple[SessionState, dict]:
     )
     rows = log.read_all()
     event = [e for e in rows if e.kind == "tool_result"][-1]
-    return state, event.content
+    return state, cast("dict[str, Any]", dict(event.content))
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +180,7 @@ def test_s127_compaction_mask_uses_self_store_without_event_artifact_id(tmp_path
 
     masked_row = next(e for e in masked if e.kind == "tool_result")
     referenced = masked_row.content.get("artifact_id")
-    assert referenced and referenced.startswith("tool-result-"), (
+    assert isinstance(referenced, str) and referenced.startswith("tool-result-"), (
         f"masked pointer must reference a self-stored artifact; got {referenced!r}"
     )
     stored = store.get(referenced)

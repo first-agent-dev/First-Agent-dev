@@ -81,7 +81,9 @@ from fa.inner_loop.expansion import (
     select_l2_skill,
 )
 from fa.inner_loop.hooks.base import HookPayload, HookRegistry, LifecyclePoint
-from fa.inner_loop.hooks.loop_guard import LOOP_GUARD_REASON_PREFIX
+from fa.inner_loop.hooks.loop_guard import (
+    LOOP_GUARD_REASON_PREFIX as LOOP_GUARD_REASON_PREFIX,
+)
 from fa.inner_loop.loop import SessionRun, run_session
 from fa.inner_loop.observations import build_observation_block
 from fa.inner_loop.path_risk import (
@@ -2039,6 +2041,7 @@ def _build_tool_calls(raw_calls: Sequence[Mapping[str, Any]]) -> tuple[ToolCall,
 __all__ = [
     "DEFAULT_MAX_TOKENS",
     "DEFAULT_MAX_TURNS",
+    "LOOP_GUARD_REASON_PREFIX",
     "SessionOutcome",
     "drive_session",
 ]

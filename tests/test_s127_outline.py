@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -179,7 +180,7 @@ def test_s127_outline_constants() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_tool(tmp_path: Path):
+def _make_tool(tmp_path: Path) -> Any:
     from fa.inner_loop.tools.fs_search import build_fs_search_tool
 
     (tmp_path / "mod.py").write_text(
@@ -195,7 +196,7 @@ def _make_tool(tmp_path: Path):
 def test_s127_outline_branch_py_md_and_defaults(tmp_path: Path) -> None:
     tool = _make_tool(tmp_path)
     r = tool.handler({"path": "mod.py", "output_mode": "outline"})
-    assert r.ok and r.result["mode"] == "outline" and r.result["truncated"] is False
+    assert r.error is None and r.result["mode"] == "outline" and r.result["truncated"] is False
     assert [(x["name"], x["start_line"], x["end_line"], x["depth"]) for x in r.result["rows"]] == [
         ("alpha", 1, 2, 0),
         ("Beta", 5, 7, 0),
@@ -226,7 +227,7 @@ def test_s127_outline_steering_errors(tmp_path: Path) -> None:
     assert syn.error.code == "invalid_params" and "syntax error" in syn.error.message
     assert "output_mode='matches'" in syn.error.message, "every failure names the better tool"
     big = tool.handler({"path": "mod.py", "output_mode": "outline"})
-    assert big.ok  # size path covered below via monkeypatched constant
+    assert big.error is None  # size path covered below via monkeypatched constant
 
 
 def test_s127_outline_size_cap_steers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -257,7 +258,7 @@ def test_s127_outline_byte_cap_governs(tmp_path: Path, monkeypatch: pytest.Monke
     tool = _make_tool(tmp_path)
     monkeypatch.setattr(fss, "MAX_RESPONSE_BYTES", 120)
     r = tool.handler({"path": "mod.py", "output_mode": "outline"})
-    assert r.ok and r.result["returned"] < 3 and r.result["truncated"] is True
+    assert r.error is None and r.result["returned"] < 3 and r.result["truncated"] is True
     assert any("byte cap" in w for w in r.result["warnings"])
 
 
@@ -268,9 +269,9 @@ def test_s127_schema_query_optionality_final(tmp_path: Path) -> None:
     no_q = tool.handler({"path": "doc.md", "output_mode": "matches"})
     assert no_q.error.code == "invalid_params" and "matches" in no_q.error.message
     listing = tool.handler({"path": ".", "output_mode": "files"})
-    assert listing.ok and listing.result["method"] == "walk_listing" and listing.result["files"]
+    assert listing.error is None and listing.result["method"] == "walk_listing" and listing.result["files"]
     both = tool.handler({"path": "doc.md", "output_mode": "outline", "query": ""})
-    assert both.ok and len(both.result["rows"]) == 2, "empty string query == absent (full outline)"
+    assert both.error is None and len(both.result["rows"]) == 2, "empty string query == absent (full outline)"
 
 
 def test_s127_fold_py_bare_divider_is_not_a_section() -> None:

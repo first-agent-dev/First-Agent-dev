@@ -53,6 +53,7 @@ def test_s127_t1_full_read_frame(tmp_path: Path) -> None:
     tool = build_read_file_tool(tmp_path)
     (tmp_path / "s.txt").write_text("alpha\nbeta\n", encoding="utf-8")
     result = tool.handler({"path": "s.txt"})
+    assert result.result is not None
     assert result.error is None
     assert result.result["content"] == "alpha\nbeta\n"  # content stays PURE
     assert result.result["line_count"] == 2
@@ -69,11 +70,13 @@ def test_s127_t2_window_frame_and_resume(tmp_path: Path) -> None:
     _big_file(tmp_path, 100, "def f{i}(x): return {i}")
     result = tool.handler({"path": "big_mod.py", "start_line": 10, "end_line": 19})
     assert result.error is None
+    assert result.result is not None
     frame = result.result["frame"]
     assert "showing 10-19" in frame
     assert "9 above, 81 below" in frame
     assert "continue with start_line=20" in frame
     assert "<=~750 lines" in frame
+    assert result.result is not None
     assert result.result["start_line"] == 10 and result.result["end_line"] == 19
     assert result.result["content"].splitlines()[0] == "def f10(x): return 10"
 
@@ -96,8 +99,10 @@ def test_s127_t2_oversize_hands_off_to_window_anchored_t3(tmp_path: Path) -> Non
     _big_file(tmp_path, 3_000, "def f{i}(x): return x + {i}  # padding padding padding")
     result = tool.handler({"path": "big_mod.py", "start_line": 2000, "end_line": 2800})
     assert result.error is None
-    assert "frame" not in result.result, "handoff payload must be UNFRAMED (no double frame)"
-    assert result.result["start_line"] == 2000, "window fields kept for T3 anchoring"
+    payload = result.result
+    assert payload is not None
+    assert "frame" not in payload, "handoff payload must be UNFRAMED (no double frame)"
+    assert payload["start_line"] == 2000, "window fields kept for T3 anchoring"
 
     projected = project_for_model(tool, result, ArtifactStore(tmp_path / "a"))
     assert "[artifact: tool-result-" in projected
@@ -127,6 +132,7 @@ def test_s127_t3_full_oversize_anchors_at_one_with_steer(tmp_path: Path) -> None
     tool = build_read_file_tool(tmp_path)
     _big_file(tmp_path, 3_000, "def f{i}(x): return x + {i}  # padding padding padding")
     result = tool.handler({"path": "big_mod.py"})
+    assert result.result is not None
     assert "frame" not in result.result
     projected = project_for_model(tool, result, ArtifactStore(tmp_path / "a"))
     body = _projected_body(projected)
@@ -150,10 +156,12 @@ def test_s127_t3_artifact_variant_no_outline_steer(tmp_path: Path) -> None:
     token = set_current_session(state)
     try:
         result = tool.handler({"artifact_id": artifact_id, "start_line": 5, "end_line": 1_900})
+        assert result.error is None
     finally:
         reset_current_session(token)
-    assert result.error is None
-    assert "frame" not in result.result
+    payload = result.result
+    assert payload is not None
+    assert "frame" not in payload
 
     projected = project_for_model(tool, result, ArtifactStore(tmp_path / "proj"))
     assert "[artifact: tool-result-" in projected
@@ -174,6 +182,7 @@ def test_s127_t1_artifact_read_gets_frame(tmp_path: Path) -> None:
     token = set_current_session(state)
     try:
         result = tool.handler({"artifact_id": artifact_id})
+        assert result.result is not None
     finally:
         reset_current_session(token)
     assert result.error is None
@@ -207,20 +216,28 @@ def test_s127_rendered_measure_property_across_densities(tmp_path: Path) -> None
         # (a) framed windows near the promised size stay inline and <= ceiling
         result = tool.handler({"path": "mod.py", "start_line": 1, "end_line": 700})
         assert result.error is None
-        if "frame" in result.result:  # inline tier
-            rendered = len(render_tool_payload(result.result).encode())
+        payload = result.result
+        assert payload is not None
+        if "frame" in payload:  # inline tier
+            rendered = len(render_tool_payload(payload).encode())
             assert rendered <= _CEILING, f"{label}: framed result {rendered}B > ceiling"
 
         # (b) the whole file (clearly over) hands off
         result = tool.handler({"path": "mod.py"})
-        assert "frame" not in result.result, f"{label}: oversize read must hand off, not frame"
+        assert result.error is None
+        payload = result.result
+        assert payload is not None
+        assert "frame" not in payload, f"{label}: oversize read must hand off, not frame"
 
         # (c) a window near the raw 32k boundary: whatever the handler decides,
         # projection's own measure agrees — inline implies <= ceiling
         win_start = max(1, total_lines // 2)
         result = tool.handler({"path": "mod.py", "start_line": win_start, "end_line": win_start + 750})
-        if "frame" in result.result:
-            assert len(render_tool_payload(result.result).encode()) <= _CEILING
+        assert result.error is None
+        payload = result.result
+        assert payload is not None
+        if "frame" in payload:
+            assert len(render_tool_payload(payload).encode()) <= _CEILING
 
 
 def test_s127_r16_boundary_window_does_not_frame_inline(tmp_path: Path) -> None:
@@ -241,6 +258,7 @@ def test_s127_r16_boundary_window_does_not_frame_inline(tmp_path: Path) -> None:
     (tmp_path / "dense.py").write_text(content, encoding="utf-8")
 
     result = tool.handler({"path": "dense.py", "start_line": 1, "end_line": len(block)})
+    assert result.result is not None
     assert result.error is None
     framed_rendered = len(render_tool_payload({**result.result, "frame": "x" * 140}).encode())
     if framed_rendered <= _CEILING:

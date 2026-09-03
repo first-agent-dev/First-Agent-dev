@@ -21,6 +21,7 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass
+from typing import override
 
 # Read cap enforced by the CALLER (fs_search) before reading a file for
 # outlining — 2MB keeps the fold bounded on pathological inputs.
@@ -105,12 +106,15 @@ class _FoldVisitor(ast.NodeVisitor):
         self.generic_visit(node)
         self._depth -= 1
 
+    @override
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._visit_def(node, "function")
 
+    @override
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self._visit_def(node, "async_function")
 
+    @override
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self.rows.append(
             OutlineRow(
@@ -195,6 +199,7 @@ def fold_markdown(source: str) -> list[OutlineRow]:
 __all__ = [
     "OUTLINE_DEFAULT_LIMIT",
     "OUTLINE_MAX_READ_BYTES",
+    "SYMBOL_KINDS",
     "OutlineRow",
     "fold_markdown",
     "fold_python_source",

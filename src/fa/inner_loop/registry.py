@@ -497,6 +497,7 @@ class ToolRegistry:
 
 
 __all__ = [
+    "DEFAULT_TOOL_CONTEXT_BYTES",
     "ToolCall",
     "ToolElider",
     "ToolError",

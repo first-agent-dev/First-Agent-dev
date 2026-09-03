@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from fa.inner_loop.registry import ToolSpec
 from fa.inner_loop.tools.fs_search import MAX_RESPONSE_BYTES, build_fs_search_tool
 
 
-def _mk(tmp_path: Path) -> object:
+def _mk(tmp_path: Path) -> ToolSpec:
     return build_fs_search_tool(tmp_path / ".fa" / "fts.db", tmp_path)
 
 
@@ -36,6 +37,7 @@ def test_s127_merge_gap_threshold(tmp_path: Path) -> None:
     )
     tool = _mk(tmp_path)
     r = tool.handler({"query": "needle", "output_mode": "matches", "limit": 10})
+    assert r.result is not None
     assert r.error is None
     regions = [m for m in r.result["matches"] if m["path"] == "g.py"]
     assert len(regions) == 2, f"expected 2 regions (gap<=2 merges, gap 3 splits); got {regions}"
@@ -52,6 +54,7 @@ def test_s127_merge_marking_hits_and_context(tmp_path: Path) -> None:
     src.write_text("a\nNEEDLE\nb\n", encoding="utf-8")
     tool = _mk(tmp_path)
     r = tool.handler({"query": "needle", "output_mode": "matches"})  # ci always
+    assert r.result is not None
     assert r.error is None and len(r.result["matches"]) == 1
     assert r.result["matches"][0]["snippet"] == ["1-a", "2:NEEDLE", "3-b"], (
         "grep marking: N: hits, N- context (1 fixed context line per side)"
@@ -71,8 +74,10 @@ def test_s127_dense_cluster_trailer_and_byte_bound(tmp_path: Path) -> None:
     tool = _mk(tmp_path)
     r = tool.handler({"query": "needle_", "output_mode": "matches", "limit": 10})
     assert r.error is None
-    assert len(r.result["matches"]) == 1, "adjacent hits (gap 1) merge into ONE region"
-    region = r.result["matches"][0]
+    matches = r.result
+    assert matches is not None
+    assert len(matches["matches"]) == 1, "adjacent hits (gap 1) merge into ONE region"
+    region = matches["matches"][0]
     assert region["match_count"] == 200
     rendered = [s for s in region["snippet"] if not s.startswith("[")]
     trailer = [s for s in region["snippet"] if s.startswith("[")]
@@ -91,6 +96,7 @@ def test_s127_limit_caps_regions_not_hits(tmp_path: Path) -> None:
     (tmp_path / "three.py").write_text("needle\n", encoding="utf-8")  # 1 region
     tool = _mk(tmp_path)
     r = tool.handler({"query": "needle", "output_mode": "matches", "limit": 2})
+    assert r.result is not None
     assert r.error is None
     assert r.result["returned"] == 2 and r.result["truncated"] is True, "limit caps REGIONS; more regions existed"
 
@@ -107,6 +113,7 @@ def test_s127_files_rows_lines_bytes_and_skip_report(tmp_path: Path) -> None:
     assert big.stat().st_size > 200_000
     tool = _mk(tmp_path)
     r = tool.handler({"query": "needle", "output_mode": "files"})
+    assert r.result is not None
     assert r.error is None
     rows = r.result["files"]
     assert [f["path"] for f in rows] == ["small.py"], "big.py is over the cap: no row"
@@ -115,10 +122,12 @@ def test_s127_files_rows_lines_bytes_and_skip_report(tmp_path: Path) -> None:
     assert r.result["skipped_large_files"] == 1, "skip must be SURFACED, not silent"
     # listing (no query) surfaces the same skip report
     lst = tool.handler({"output_mode": "files"})
+    assert lst.result is not None
     assert lst.result["skipped_large_files"] == 1
     assert [f["path"] for f in lst.result["files"]] == ["small.py"]
     (tmp_path / "empty.py").write_text("", encoding="utf-8")
     empty = tool.handler({"output_mode": "files", "path": "empty.py"})
+    assert empty.result is not None
     assert empty.result["files"] == [{"path": "empty.py", "lines": 0, "bytes": 0}], (
         "empty file: lines=0 (None is reserved for unreadable)"
     )
@@ -145,6 +154,7 @@ def test_s127_removed_modes_steer(tmp_path: Path) -> None:
 def test_s127_unknown_mode_lists_valid(tmp_path: Path) -> None:
     tool = _mk(tmp_path)
     r = tool.handler({"query": "x", "output_mode": "bogus"})
+    assert r.error is not None
     assert r.error.code == "invalid_params"
     assert "files" in r.error.message and "matches" in r.error.message and "outline" in r.error.message
 
@@ -158,19 +168,23 @@ def test_s127_lenient_absent_query_per_mode(tmp_path: Path) -> None:
     (tmp_path / "a.py").write_text("needle\n", encoding="utf-8")
     tool = _mk(tmp_path)
     files_r = tool.handler({"output_mode": "files"})
-    assert files_r.ok and files_r.result["method"] == "walk_listing"
+    assert files_r.result is not None
+    assert files_r.error is None and files_r.result["method"] == "walk_listing"
     assert files_r.result["total"] == 1 and files_r.result["files"][0]["path"] == "a.py"
     matches_r = tool.handler({"output_mode": "matches"})
+    assert matches_r.error is not None
     assert matches_r.error.code == "invalid_params" and "matches" in matches_r.error.message
     outline_r = tool.handler({"output_mode": "outline", "path": "a.py"})
-    assert outline_r.ok and outline_r.result["mode"] == "outline"
+    assert outline_r.result is not None
+    assert outline_r.error is None and outline_r.result["mode"] == "outline"
 
 
 def test_s127_lenient_zero_hit_steers(tmp_path: Path) -> None:
     (tmp_path / "a.py").write_text("needle\n", encoding="utf-8")
     tool = _mk(tmp_path)
     zero = tool.handler({"query": "definitely_not_present_token", "output_mode": "files"})
-    assert zero.ok and zero.result["files"] == [], "zero hits: empty rows, never an error"
+    assert zero.result is not None
+    assert zero.error is None and zero.result["files"] == [], "zero hits: empty rows, never an error"
     assert zero.result.get("warnings", []) == [], "zero-hit adds no noise (honest empty)"
 
 
@@ -189,7 +203,8 @@ def test_s127_lenient_all_six_removed_params_warn(tmp_path: Path) -> None:
             "context_lines": 9,
         }
     )
-    assert r.ok, "legacy knobs must never fail the call (CT11 leniency)"
+    assert r.result is not None
+    assert r.error is None, "legacy knobs must never fail the call (CT11 leniency)"
     warned = {w.split("'")[1] for w in r.result["warnings"] if "accepted but ignored" in w}
     assert warned == {"order", "include_tests", "glob", "case_sensitive", "max_file_size", "context_lines"}
 
@@ -200,9 +215,11 @@ def test_s127_path_absorbs_glob(tmp_path: Path) -> None:
     (tmp_path / "src" / "y.md").write_text("needle\n", encoding="utf-8")
     tool = _mk(tmp_path)
     r = tool.handler({"query": "needle", "output_mode": "files", "path": "src/*.py"})
-    assert r.ok and [f["path"] for f in r.result["files"]] == ["src/x.py"]
+    assert r.result is not None
+    assert r.error is None and [f["path"] for f in r.result["files"]] == ["src/x.py"]
     lst = tool.handler({"output_mode": "files", "path": "*.md"})
-    assert lst.ok and [f["path"] for f in lst.result["files"]] == ["src/y.md"]
+    assert lst.result is not None
+    assert lst.error is None and [f["path"] for f in lst.result["files"]] == ["src/y.md"]
 
 
 def test_s127_regex_casing_comes_from_pattern(tmp_path: Path) -> None:
@@ -211,9 +228,11 @@ def test_s127_regex_casing_comes_from_pattern(tmp_path: Path) -> None:
     (tmp_path / "r.py").write_text("needle_lower()\n", encoding="utf-8")
     tool = _mk(tmp_path)
     strict = tool.handler({"query": "NE[ED]+DLE", "output_mode": "matches", "regex": True})
-    assert strict.ok and strict.result["matches"] == [], "no forced IGNORECASE on regex"
+    assert strict.result is not None
+    assert strict.error is None and strict.result["matches"] == [], "no forced IGNORECASE on regex"
     ci = tool.handler({"query": "(?i)NE[ED]+DLE", "output_mode": "matches", "regex": True})
-    assert ci.ok and len(ci.result["matches"]) == 1, "pattern-level (?i) opts in"
+    assert ci.result is not None
+    assert ci.error is None and len(ci.result["matches"]) == 1, "pattern-level (?i) opts in"
 
 
 def test_s127_response_cap_is_32768() -> None:
@@ -254,7 +273,8 @@ def test_s127_regex_flag_warns_in_outline_mode(tmp_path: Path) -> None:
     (tmp_path / "o.py").write_text("def alpha():\n    pass\n", encoding="utf-8")
     tool = _mk(tmp_path)
     r = tool.handler({"path": "o.py", "output_mode": "outline", "query": "alp", "regex": True})
-    assert r.ok and [x["name"] for x in r.result["rows"]] == ["alpha"], "filter stays literal"
+    assert r.result is not None
+    assert r.error is None and [x["name"] for x in r.result["rows"]] == ["alpha"], "filter stays literal"
     assert any("'regex' is accepted but ignored in outline" in w for w in r.result["warnings"])
 
 
@@ -264,5 +284,6 @@ def test_s127_outline_ignores_scope_filters_with_warning(tmp_path: Path) -> None
     (tmp_path / "o.py").write_text("def alpha():\n    pass\n", encoding="utf-8")
     tool = _mk(tmp_path)
     r = tool.handler({"path": "o.py", "output_mode": "outline", "exclude_dirs": ["src"]})
-    assert r.ok and [x["name"] for x in r.result["rows"]] == ["alpha"]
+    assert r.result is not None
+    assert r.error is None and [x["name"] for x in r.result["rows"]] == ["alpha"]
     assert any("'exclude_dirs' is accepted but ignored in outline" in w for w in r.result["warnings"])

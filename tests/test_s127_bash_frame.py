@@ -26,6 +26,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import pytest
+
 from fa.inner_loop.artifacts import ArtifactStore
 from fa.inner_loop.context import reset_current_session, set_current_session
 from fa.inner_loop.projection import project_for_model
@@ -141,10 +143,13 @@ def test_s127_projection_frames_over_ceiling_envelope(tmp_path: Path) -> None:
     import re
 
     artifact_id = re.findall(r"tool-result-[0-9a-f]{16}", projected)[-1]
-    assert store.get(artifact_id) is not None and store.get(artifact_id)["stderr"] == "E" * 13_500
+    stored_env = store.get(artifact_id)
+    assert stored_env is not None and stored_env["stderr"] == "E" * 13_500
 
 
-def test_s127_ct5_overshooting_elider_is_observable_not_silent(tmp_path: Path, caplog) -> None:
+def test_s127_ct5_overshooting_elider_is_observable_not_silent(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """CT5 guard: a custom elider that overshoots gets clipped (runtime
     safety) AND the violation is WARNING-observable; a correct elider never
     triggers the warning."""
@@ -212,6 +217,7 @@ def test_run_bash_tail_retention_and_inline_envelope(tmp_path: Path) -> None:
         reset_current_session(token)
     assert result.error is None, f"command failed: {result.error}"
     env = result.result
+    assert env is not None
 
     assert env["truncated"] is True
     stdout = str(env["stdout"])
@@ -240,6 +246,7 @@ def test_run_bash_small_output_untouched(tmp_path: Path) -> None:
     workspace.mkdir()
     tool = build_run_bash_tool(workspace)
     result = tool.handler({"command": "echo short-output"})
+    assert result.result is not None
     assert result.error is None, f"command failed: {result.error}"
     assert result.result["truncated"] is False
     assert result.result["artifact_id"] is None
