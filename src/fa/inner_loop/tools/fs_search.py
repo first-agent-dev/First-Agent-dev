@@ -681,7 +681,6 @@ def _do_outline(
         truncated = True
     if truncated and len(row_dicts) < len(shown):
         warnings_list.append(f"byte cap {MAX_RESPONSE_BYTES} reached — {total} rows total, narrow with query")
-    shown = shown[: len(row_dicts)]
 
     result: dict[str, Any] = {
         "query": query or "",

@@ -39,8 +39,6 @@ _MD_SECTION = re.compile(r"^\s*§\s*(.+?)\s*$")
 _PY_BANNER = re.compile(r"^#\s*[=\-─]{2,}\s*([^\s=\-─].*?[^\s=\-─])\s*[=\-─]{2,}\s*$")
 _PY_SECTION = re.compile(r"^#\s*§\s*(.+?)\s*$")
 
-SYMBOL_KINDS = frozenset({"function", "class", "async_function"})
-
 
 @dataclass(frozen=True)
 class OutlineRow:
@@ -199,7 +197,6 @@ def fold_markdown(source: str) -> list[OutlineRow]:
 __all__ = [
     "OUTLINE_DEFAULT_LIMIT",
     "OUTLINE_MAX_READ_BYTES",
-    "SYMBOL_KINDS",
     "OutlineRow",
     "fold_markdown",
     "fold_python_source",
