@@ -5,3 +5,8 @@ cae-pty-1788177112-832051,2026-08-31,pty,chat_direct,none,0,1,0,0,"auto-captured
 cae-env-1788181465-848969,2026-08-31,env,chat_direct,none,0,0,0,0,"auto-captured via=container stop=stopped_by_llm"
 cae-l1-1788181547-849412,2026-08-31,l1,chat_direct,none,0,2,0,0,"auto-captured via=container stop=stopped_by_llm"
 cae-l2-1788181737-850175,2026-08-31,l2,chat_direct,1>2;2>3;,2,2,0,0,"auto-captured via=container stop=LoopGuard: path 'src/fa/cli.py' thrashed across 5 distinct attempts (threshold 5)"
+cae-s127-advancing-1788510163-1223192,2026-09-04,s127-advancing,chat_direct,1>2;,1,1,0,0,"auto-captured via=container stop=stopped_by_llm"
+cae-s127-repeat-1788512988-1226653,2026-09-04,s127-repeat,chat_direct,1>2;,1,1,0,1,"auto-captured via=container stop=iteration_cap"
+cae-s127-repeat-1788516927-1231558,2026-09-04,s127-repeat,chat_direct,1>2;,1,1,0,1,"auto-captured via=container stop=LoopGuard: identical call fs_read_file (ecdf2cbea4a6) repeated 5 times (threshold 5)"
+cae-s127-repeat-1788517880-1233304,2026-09-04,s127-repeat,chat_direct,1>2;,1,0,0,0,"auto-captured via=container stop=stopped_by_llm S127_REPEAT_FAILED"
+cae-s127-pingpong-1788518709-1234608,2026-09-04,s127-pingpong,chat_direct,1>2;,1,1,0,0,"auto-captured via=container stop=stopped_by_llm"

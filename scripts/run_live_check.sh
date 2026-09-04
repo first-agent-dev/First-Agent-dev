@@ -221,7 +221,12 @@ for line in open(sys.argv[1], encoding="utf-8"):
         totals = c
         continue
     if kind == "run_stopped":
-        stop = str(c.get("reason") or "?")
+        r = str(c.get("reason") or "?")
+        # Mirror the bash stop_reason logic: a meaningful in-band LoopGuard stop
+        # wins over a trailing generic stop (iteration_cap) the engine may add
+        # after the guard trips, so the summary reports WHY the session ended.
+        if r.startswith("LoopGuard:") or not (stop or "").startswith("LoopGuard:"):
+            stop = r
         continue
     ct = c.get("turn")
     t = ct if isinstance(ct, int) and ct > 0 else turn
@@ -285,12 +290,15 @@ print(f"  summary: {turn} turns, {wall} wall, {n_tools} tools, denials[{den}], "
 PYEOF
 }
 
-row_run() { # row_run <label> <max_turns> <task> [assert_hook]
+row_run() { # row_run <label> <max_turns> <task> [assert_hook] [nonzero_ok]
   # assert_hook (S12.7): optional function called as `hook <events> <log> <rc>`
   # AFTER the run and BEFORE the ledger append. It prints [PASS]/[FAIL] lines and
   # may set the caller-scoped `vrc` / `flag` (bash dynamic scoping) to record an
   # objective miss. Existing rows pass no hook and keep their `case` verdicts.
-  local label="$1" turns="$2" task="$3" hook="${4:-}"
+  # nonzero_ok=1 (S12.7 guard rows): a non-zero `fa` exit is the EXPECTED in-band
+  # termination when the guard trips (run_stopped carries the LoopGuard reason),
+  # so it is reported as a STOP, not a run failure, and the hook owns the verdict.
+  local label="$1" turns="$2" task="$3" hook="${4:-}" nonzero_ok="${5:-}"
   need_fa
   mkdir -p "$LEDGER_DIR" # R4: dir exists before ANY capture copy
   local rid="cae-${label}-$(date +%s)-$$"
@@ -319,7 +327,11 @@ row_run() { # row_run <label> <max_turns> <task> [assert_hook]
   echo "fa EXIT=$rc"
 
   if [ "$rc" -ne 0 ]; then
-    echo "  [FAIL] fa exited $rc — the run FAILED; verdicts below are diagnostics only, do NOT ledger this row as a pass"
+    if [ "$nonzero_ok" = "1" ]; then
+      echo "  [STOP] fa exited $rc — session terminated in-band (expected for a guard-trip row); the hook judges the objective"
+    else
+      echo "  [FAIL] fa exited $rc — the run FAILED; verdicts below are diagnostics only, do NOT ledger this row as a pass"
+    fi
   fi
 
   if [ ! -f "$events" ]; then
@@ -331,8 +343,15 @@ row_run() { # row_run <label> <max_turns> <task> [assert_hook]
 
   local mode levels exp obs exh stop_reason=""
   if grep -q '"kind": "run_stopped"' "$events"; then
-    stop_reason="$(grep '"kind": "run_stopped"' "$events" | tail -1 \
-      | grep -o '"reason": "[^"]*"' | head -1 | cut -d'"' -f4 || true)"
+    # The engine can emit a meaningful in-band stop (LoopGuard: …) followed by a
+    # generic trailing stop (iteration_cap). Prefer the guard reason so the
+    # timeline/ledger report WHY the session ended, not the trailing label.
+    stop_reason="$(grep '"kind": "run_stopped"' "$events" \
+      | grep -o '"reason": "LoopGuard:[^"]*"' | head -1 | cut -d'"' -f4 || true)"
+    if [ -z "$stop_reason" ]; then
+      stop_reason="$(grep '"kind": "run_stopped"' "$events" | tail -1 \
+        | grep -o '"reason": "[^"]*"' | head -1 | cut -d'"' -f4 || true)"
+    fi
   fi
   mode="$(grep -o '"recommended_mode": "[a-z_]*"' "$events" | head -1 | cut -d'"' -f4 || true)"
   levels="$(grep -o '"level_from": [0-9], "level_to": [0-9]' "$events" \
@@ -345,7 +364,10 @@ row_run() { # row_run <label> <max_turns> <task> [assert_hook]
     echo "  [STOP] abnormal stop: $stop_reason (see events)"
   fi
   local vrc=0 flag=""
-  if [ "$rc" -ne 0 ]; then
+  # A guard-trip row (nonzero_ok=1) terminates in-band by design, so its non-zero
+  # exit is NOT a verdict — the hook decides from the events. Every other row
+  # keeps the rc-as-failure contract.
+  if [ "$rc" -ne 0 ] && [ "$nonzero_ok" != "1" ]; then
     vrc="$rc"
   fi
   case "$label" in
@@ -494,6 +516,7 @@ print_self_report() { # print_self_report <events.jsonl> — surface the model's
   "$PY" - "$1" <<'PYEOF' || echo "  [WARN] self-report parse failed"
 import json, sys
 last = None
+guard_stop = False
 for line in open(sys.argv[1], encoding="utf-8"):
     line = line.strip()
     if not line:
@@ -506,9 +529,15 @@ for line in open(sys.argv[1], encoding="utf-8"):
         txt = str((e.get("content") or {}).get("text") or "")
         if "TOOL_FEEDBACK:" in txt:
             last = txt
+    elif e.get("kind") == "run_stopped":
+        if str((e.get("content") or {}).get("reason") or "").startswith("LoopGuard:"):
+            guard_stop = True
 print("  ── model tool-UX self-report (residual-gap radar) ──")
 if last is None:
-    print("  [NOTE] no TOOL_FEEDBACK block found — the model did not comply; record it")
+    if guard_stop:
+        print("  [NOTE] no TOOL_FEEDBACK — expected: the guard ended the session in-band before the model could self-report")
+    else:
+        print("  [NOTE] no TOOL_FEEDBACK block found — the model did not comply; record it")
 else:
     for ln in last[last.index("TOOL_FEEDBACK:"):].rstrip().splitlines():
         print("  📝 " + ln)
@@ -546,13 +575,13 @@ s127_finish() { # s127_finish <FLAG> — set vrc/flag if any expectation failed
   if [ "${S127_ROW_FAILED:-0}" = "1" ]; then vrc=3; flag="$1"; fi
 }
 
-s127_row() { # s127_row <name> <turns> <task> <hook>
+s127_row() { # s127_row <name> <turns> <task> <hook> [nonzero_ok]
   # S12.7: print the FULL model text every turn for the gate rows (the operator
   # reads the model's own words to find residual gaps). Scoped to this row's
   # invocation only — legacy rows keep the S12.6c 2000-char default cap that
   # tests/test_live_check_script.py's battery pins. CAE_LLM_FULL=0 overrides.
   export CAE_LLM_FULL="${CAE_LLM_FULL:-1}"
-  row_run "s127-$1" "$2" "$3" "$4"
+  row_run "s127-$1" "$2" "$3" "$4" "${5:-}"
 }
 
 # ── GUARD (S1) — the gap-closure headline ─────────────────────────────────────
@@ -571,20 +600,31 @@ s127_assert_advancing() {
 }
 
 cmd_s127_repeat() { # Detector 1: identical repeat still warns then denies, in-band, with the prefix
+  # nonzero_ok=1: the deny@5 terminates the session in-band (fa exits non-zero) —
+  # that IS the objective, so the exit is a STOP, not a failure. The hook verifies
+  # the warn@3 + deny@5 actually fired; if they did not, the hook fails the row.
   s127_row repeat 12 \
     "Read lines 1-40 of src/fa/cli.py. Then read the EXACT same lines 1-40 again. Repeat this identical read five times total. After the fifth, stop and report what the tool told you." \
-    s127_assert_repeat
+    s127_assert_repeat 1
 }
 s127_assert_repeat() {
   S127_ROW_FAILED=0
-  s127_expect "$1" "$2" "identical-repeat produced a guard signal (warn or deny)" present '"kind": "loop_guard_warn"|"reason": "LoopGuard'
+  # The objective is the full Detector-1 progression: warn at the 3rd identical
+  # read, then the circuit-breaker deny at the 5th carrying the LoopGuard: prefix
+  # (which terminates in-band). Assert BOTH — a warn alone means the agent never
+  # reached 5 repeats, so the deny contract was not exercised.
+  s127_expect "$1" "$2" "warn fired at the 3rd identical read" present '"kind": "loop_guard_warn"'
+  s127_expect "$1" "$2" "circuit-breaker deny fired with the LoopGuard: reason" present '"reason": "LoopGuard'
   s127_finish "S127_REPEAT_FAILED"
 }
 
 cmd_s127_pingpong() { # Detector 3 (preventive): exact A-B alternation warns at 3 cycles, denies at 4
+  # nonzero_ok=1: if the preventive detector trips, it terminates in-band (fa
+  # exits non-zero) — expected, not a failure. The hook reports PASS (signal) or
+  # NOTE (no signal); it never hard-fails (RN11: preventive, field-driven).
   s127_row pingpong 14 \
     "Alternate two reads exactly eight times: read lines 1-30 of src/fa/cli.py, then lines 1-30 of src/fa/__init__.py, then lines 1-30 of src/fa/cli.py again, and so on, strictly alternating. After eight reads, stop." \
-    s127_assert_pingpong
+    s127_assert_pingpong 1
 }
 s127_assert_pingpong() {
   S127_ROW_FAILED=0
