@@ -62,10 +62,19 @@ _REMOVED_PARAMS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _ignored_params(data: Mapping[str, object]) -> list[dict[str, str]]:
+    return [{"param": name, "replacement": steer} for name, steer in _REMOVED_PARAMS if data.get(name) is not None]
+
+
 def _warn_removed_params(data: Mapping[str, object], warnings_list: list[str]) -> None:
-    for name, steer in _REMOVED_PARAMS:
-        if data.get(name) is not None:
-            warnings_list.append(f"param '{name}' is accepted but ignored (S12.7): {steer}")
+    for item in _ignored_params(data):
+        warnings_list.append(f"param '{item['param']}' is accepted but ignored (S12.7): {item['replacement']}")
+
+
+def _attach_ignored_params(result: dict[str, Any], data: Mapping[str, object]) -> None:
+    ignored = _ignored_params(data)
+    if ignored:
+        result["ignored_params"] = ignored
 
 
 _TOOL_DESCRIPTION = """\
@@ -478,6 +487,9 @@ def _estimate_size(obj: Any) -> int:
 
 def _enforce_response_cap(result: dict[str, Any]) -> None:
     """Mutate result in-place to stay under MAX_RESPONSE_BYTES."""
+    pre_returned = int(result.get("returned", 0) or 0)
+    total = int(result.get("total", pre_returned) or pre_returned)
+    popped_any = False
     while _estimate_size(result) > MAX_RESPONSE_BYTES and result.get("returned", 0) > 1:
         popped = False
         for key in _OUTPUT_KEYS:
@@ -486,11 +498,19 @@ def _enforce_response_cap(result: dict[str, Any]) -> None:
                 lst.pop()
                 result["returned"] = sum(len(result.get(k, []) or []) for k in _OUTPUT_KEYS)
                 result["truncated"] = True
-                result.setdefault("warnings", []).append(f"response truncated to {MAX_RESPONSE_BYTES}-byte cap")
+                popped_any = True
                 popped = True
                 break
         if not popped:
             break
+    if popped_any:
+        msg = (
+            f"response truncated to {MAX_RESPONSE_BYTES}-byte cap — "
+            f"{total} matched, narrow with query/path"
+        )
+        warnings = result.setdefault("warnings", [])
+        if msg not in warnings:
+            warnings.append(msg)
 
 
 def _build_summary(query: str, mode: str, method: str, result: dict[str, Any]) -> str:
@@ -693,6 +713,7 @@ def _do_outline(
     }
     if warnings_list:
         result["warnings"] = warnings_list
+    _attach_ignored_params(result, data)
 
     _register_outline_path(str(rel))
     summary = f"fs_search[outline] {len(row_dicts)}/{total} rows for {str(rel)!r}"
@@ -720,6 +741,7 @@ def _do_files_listing(
     exclude_set: frozenset[str],
     limit: int,
     warnings_list: list[str],
+    data: Mapping[str, object] | None = None,
 ) -> ToolResult:
     """S12.7 (§A6 v7 / CT11): absent query + files mode = pure listing.
 
@@ -763,6 +785,8 @@ def _do_files_listing(
     }
     if warnings_list:
         result["warnings"] = warnings_list
+    if data is not None:
+        _attach_ignored_params(result, data)
 
     _enforce_response_cap(result)
 
@@ -872,7 +896,7 @@ def _handle(
 
     # S12.7 (§A6 v7 / CT11): absent query + files = pure scope listing.
     if query is None and output_mode == "files":
-        return _do_files_listing(root, subdir, glob_pat, exclude_set, limit, warnings_list)
+        return _do_files_listing(root, subdir, glob_pat, exclude_set, limit, warnings_list, data)
 
     if query is None:  # unreachable: files+None listed and matches+None failed above
         return ToolResult.fail("invalid_params", "query must be a non-empty string", retryable=True)
@@ -911,6 +935,7 @@ def _handle(
         "method": sr.method,
         "returned": sr.returned,
         "truncated": bool(sr.truncated),
+        "total": int(sr.total if getattr(sr, "total", 0) else sr.returned),
         "total_bytes": int(sr.total_bytes),
         "index_stats": index_stats_dict,
     }
@@ -919,6 +944,7 @@ def _handle(
         result["warnings"] = warnings_list
     elif sr.warnings:
         result["warnings"] = list(sr.warnings)
+    _attach_ignored_params(result, data)
 
     _enforce_response_cap(result)
 

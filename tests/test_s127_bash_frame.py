@@ -57,6 +57,19 @@ def _large_output_command(filler_len: int) -> str:
 # ---------------------------------------------------------------------------
 
 
+def test_s127_f7_description_documents_pipeline_returncode() -> None:
+    """F7: keep the key ``returncode``; document last-stage exit next to | tail.
+
+    Kill-check: drop the pipeline sentence from the tool description → fail.
+    """
+    tool = build_run_bash_tool(Path("/tmp"))
+    desc = tool.description
+    assert "returncode is the shell/pipeline exit" in desc
+    assert "set -o pipefail" in desc
+    assert "Prefer grep / | tail" in desc
+    assert "pipeline_exit" not in desc
+
+
 def test_s127_retention_boundary() -> None:
     """Exactly 30,000B stays whole; 30,001 retains the tail."""
     exact = "x" * _RETAINED_TAIL_BYTES

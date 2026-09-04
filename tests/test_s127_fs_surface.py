@@ -99,6 +99,7 @@ def test_s127_limit_caps_regions_not_hits(tmp_path: Path) -> None:
     assert r.result is not None
     assert r.error is None
     assert r.result["returned"] == 2 and r.result["truncated"] is True, "limit caps REGIONS; more regions existed"
+    assert r.result["total"] == 3, "F9: matches must surface pre-limit region count"
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +238,26 @@ def test_s127_regex_casing_comes_from_pattern(tmp_path: Path) -> None:
 
 def test_s127_response_cap_is_32768() -> None:
     assert MAX_RESPONSE_BYTES == 32_768, "CT2 alignment: the read budget ceiling (S2/S4)"
+
+
+def test_s127_f9_byte_cap_warning_names_total() -> None:
+    """F9: byte-cap truncation must name the pre-cap match total once."""
+    from fa.inner_loop.tools.fs_search import _enforce_response_cap
+
+    rows = [{"path": f"f{i}.py", "lines": 1, "bytes": 1, "pad": "x" * 4000} for i in range(20)]
+    result = {
+        "returned": 20,
+        "total": 62,
+        "truncated": False,
+        "files": rows,
+        "warnings": [],
+    }
+    _enforce_response_cap(result)
+    assert result["truncated"] is True
+    assert result["returned"] < 20
+    cap_warns = [w for w in result["warnings"] if "byte cap" in w]
+    assert len(cap_warns) == 1
+    assert "62 matched" in cap_warns[0]
 
 
 def test_s127_files_stat_rows_is_the_sorting_authority(tmp_path: Path) -> None:
