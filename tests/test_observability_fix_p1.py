@@ -125,12 +125,20 @@ def test_loop_guard_warn_event_emitted_via_drive_session(tmp_path: Path) -> None
 
 
 def test_loop_guard_circuit_breaker_works_without_sink(tmp_path: Path) -> None:
-    """root=drive_session matrix=A claim=circuit breaker denies tool; kill-check=LoopGuard logic.
+    """root=drive_session matrix=A claim=LoopGuard trip terminates the session
+    in-band; kill-check=the BETWEEN_ROUNDS+prefix terminal branch in coder_loop
+    (S12.7 CT1/GAP2 — deliberately re-pinned from the old padding contract).
 
-    The circuit breaker must deny tool execution when repeat count hits
-    circuit_breaker threshold, even without a warn_sink. The session may
-    still complete normally if the LLM stops afterwards — the key is that
-    the denied tool result appears in the outcome.
+    S12.7 semantics encoded here (was: a LoopGuard-denied synthetic tool result
+    appears and the session continues):
+    1. warn rounds CONTINUE (turns below the breaker execute normally);
+    2. the circuit-breaker TRIP terminates the session in-band — the model is
+       not called again (efficiency oracle: request.call_count), even with no
+       warn_sink;
+    3. NO synthetic `run_stopped` tool results are produced after the trip
+       (the former zombie: every later call failing with "session stopped");
+    4. the structured reason is durable in the event log (run_stopped row,
+       LoopGuard prefix) — the operator-facing postmortem contract.
     """
     log = EventLog(tmp_path / "events.jsonl", run_id="test-cb-no-sink")
     state = SessionState(
@@ -140,8 +148,16 @@ def test_loop_guard_circuit_breaker_works_without_sink(tmp_path: Path) -> None:
         feature_flags=FeatureFlags(context_budget_enabled=False),
     )
     hooks = HookRegistry()
-    # NO warn_sink — circuit breaker should still work
-    hooks.register(LoopGuard(repeat_warn=2, circuit_breaker=3, window=10))
+    # NO warn_sink — the trip must still terminate the run.
+    hooks.register(
+        LoopGuard(
+            repeat_warn=2,
+            circuit_breaker=3,
+            window=10,
+            pingpong_warn_cycles=2,
+            pingpong_break_cycles=3,
+        )
+    )
 
     # Register a simple test tool
     registry = ToolRegistry()
@@ -161,7 +177,9 @@ def test_loop_guard_circuit_breaker_works_without_sink(tmp_path: Path) -> None:
         "type": "function",
         "function": {"name": "test.echo", "arguments": json.dumps({"text": "hello"})},
     }
-    # Provide enough turns for circuit breaker to fire
+    # Six responses available. The trip must consume only FOUR: turns 1-3
+    # execute (counts 1,2,3 — warn at 2, breaker at 3 fires at turn 4's
+    # BETWEEN_ROUNDS gate), so response #5 ("done") is never requested.
     mock_chain.request.side_effect = [
         _mock_response_with_tools([same_call]),
         _mock_response_with_tools([same_call]),
@@ -179,13 +197,25 @@ def test_loop_guard_circuit_breaker_works_without_sink(tmp_path: Path) -> None:
         state=state,
         max_turns=6,
     )
-    # Circuit breaker should have produced a denied tool result
-    # The session may still end normally (stopped_by_llm) but at least
-    # one tool result should contain the LoopGuard deny message.
-    denied = [r for r in outcome.tool_results if "LoopGuard" in r.summary]
-    assert len(denied) >= 1, (
-        f"Expected at least 1 LoopGuard-denied tool result. Got: {[r.summary for r in outcome.tool_results]}"
+    # (1) warn rounds continued: turns 1-3 produced ok results.
+    ok_results = [r for r in outcome.tool_results if r.error is None]
+    assert len(ok_results) == 3, (
+        f"turns below the breaker must execute; got {[r.summary for r in outcome.tool_results]}"
     )
+    # (2) the trip terminated the session: exactly 4 model calls — the 5th
+    # response was never requested (the old zombie path kept calling).
+    assert mock_chain.request.call_count == 4, (
+        f"model was called {mock_chain.request.call_count}x after/beside the trip; "
+        "the LoopGuard trip must terminate the session in-band"
+    )
+    # (3) no zombie: zero synthetic session-stopped tool results.
+    zombie = [r for r in outcome.tool_results if r.error is not None and "session stopped" in r.error.message]
+    msgs = [r.error.message if r.error is not None else "?" for r in zombie]
+    assert not zombie, f"synthetic run_stopped results after a trip: {msgs}"
+    # (4) the structured reason is durable: run_stopped row carries the prefix.
+    events = log.read_all()
+    stopped = [e for e in events if e.kind == "run_stopped" and "LoopGuard" in str(e.content.get("reason", ""))]
+    assert len(stopped) >= 1, f"expected a run_stopped row with the LoopGuard reason; kinds: {[e.kind for e in events]}"
 
 
 # ── LOGIC-15: FailureClassifierObserver + AttemptHistoryObserver wiring ────

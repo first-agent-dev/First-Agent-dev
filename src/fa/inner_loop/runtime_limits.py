@@ -15,6 +15,37 @@ the smoke entrypoint runs cleanly out-of-the-box; the future ``fa run``
 LLM driver (T-2) tightens this to «refuse to start on missing key».
 This is the **T-4 mini** loader — it parses exactly the
 ``runtime_limits:`` block; the full YAML loader lands with T-4 proper.
+
+Tool context budgets (S12.7 CT2/GAP4) — one ceiling + tabled outliers.
+``DEFAULT_TOOL_CONTEXT_BYTES`` (defined beside ``ToolSpec`` in
+``registry.py``) is the documented ceiling AND the
+``ToolSpec.max_context_bytes`` default. It is NOT imported from here: a
+module-scope ``registry → runtime_limits`` import closes the cycle
+``registry → runtime_limits → recovery → registry`` (verified S12.7
+R14) — import it from ``fa.inner_loop.registry``, never re-type the
+literal. Source of truth for every per-tool value:
+
+- Ceiling tier (spec budget = 32_768):
+    ``fs_read_file``, ``fs_write_file``, ``fs_spawn_subagent``,
+    ``fs_exploration_metrics`` and any tool without an explicit budget
+    (``fs_prepare_pr``, workflow tool) — ride the default;
+    ``fs_search`` (was 30_000), ``fs_reach`` (was 30_000, an S12.7
+    inventory miss confirmed live and unified here), ``fs_run_bash``
+    (was 8_000; both builder sites).
+  NOTE: fs_search / fs_reach / fs_run_bash still pre-truncate INTERNALLY
+  below the ceiling (30_000 / 30_000 / 8_000) until S5/S7 restructure
+  their frames; the spec budget is the projection-chokepoint ceiling,
+  not the internal cap.
+- Deliberate small outliers (kept, with reason):
+    4_000  fs_edit_file, fs_chronicle_search, fs_diff — ack-shaped
+           envelopes; full payload recoverable via ``[artifact:]``;
+    2_048  fs_blackboard_query — compact answer envelope (S8 mention
+           purge pending);
+    2_000  fs_usage, fs_list_tasks — compact status envelopes;
+    1_000  fs_checkpoint, fs_undo, fs_send_ctrl_c — ack-only.
+- ``profiles.py`` ``PROFILES_RAW`` ``max_context_bytes`` keys (4096 /
+  2048) are unconsumed metadata (verified S12.7 R14: no reader outside
+  the dict itself) — noted here so the scatter hunt need not repeat.
 """
 
 from __future__ import annotations
@@ -73,6 +104,13 @@ _ROLE_KEY_TO_NAME: dict[str, str] = {
 DEFAULT_LOOP_GUARD_REPEAT_WARN = 3
 DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER = 5
 DEFAULT_LOOP_GUARD_WINDOW = 8
+# S12.7 (CT1): period-2 ping-pong oscillation detector (Detector 3). Warn at
+# 3 full A-B cycles (6 calls), deny at 4 cycles (8 calls = the default
+# window). Field precedent: OpenHands "Alternating Patterns" (6+ cycles),
+# OpenClaw pingPong detector. Preventive — no FA transcript shows A-B-A-B
+# yet (PLAN-s12.7 RN11).
+DEFAULT_LOOP_GUARD_PINGPONG_WARN_CYCLES = 3
+DEFAULT_LOOP_GUARD_PINGPONG_BREAK_CYCLES = 4
 # Wave-2 R-34 QA-loop circuit-breaker constants (Aperant `qa-loop.ts`
 # magic-validated anchors per `borrow-roadmap-2026-05.md` R-34). The
 # constants land here as documented defaults so the future QA
@@ -165,6 +203,9 @@ class RuntimeLimits:
     loop_guard_repeat_warn: int = DEFAULT_LOOP_GUARD_REPEAT_WARN
     loop_guard_circuit_breaker: int = DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER
     loop_guard_window: int = DEFAULT_LOOP_GUARD_WINDOW
+    # S12.7 (CT1): ping-pong oscillation knobs (Detector 3).
+    loop_guard_pingpong_warn_cycles: int = DEFAULT_LOOP_GUARD_PINGPONG_WARN_CYCLES
+    loop_guard_pingpong_break_cycles: int = DEFAULT_LOOP_GUARD_PINGPONG_BREAK_CYCLES
     # Wave-2 R-6 attempt-history knobs (Aperant anchors).
     attempt_history_max_entries: int = DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES
     attempt_history_max_age_seconds: int = DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS
@@ -202,6 +243,8 @@ class RuntimeLimits:
             loop_guard_repeat_warn=DEFAULT_LOOP_GUARD_REPEAT_WARN,
             loop_guard_circuit_breaker=DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER,
             loop_guard_window=DEFAULT_LOOP_GUARD_WINDOW,
+            loop_guard_pingpong_warn_cycles=DEFAULT_LOOP_GUARD_PINGPONG_WARN_CYCLES,
+            loop_guard_pingpong_break_cycles=DEFAULT_LOOP_GUARD_PINGPONG_BREAK_CYCLES,
             attempt_history_max_entries=DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES,
             attempt_history_max_age_seconds=DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS,
             qa_max_iterations=DEFAULT_QA_MAX_ITERATIONS,
@@ -246,6 +289,8 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
         "loop_guard_repeat_warn",
         "loop_guard_circuit_breaker",
         "loop_guard_window",
+        "loop_guard_pingpong_warn_cycles",
+        "loop_guard_pingpong_break_cycles",
         "attempt_history_max_entries",
         "attempt_history_max_age_seconds",
         "qa_max_iterations",
@@ -532,6 +577,12 @@ def load_runtime_limits(text: str) -> RuntimeLimitsLoadResult:
         loop_guard_repeat_warn=found.get("loop_guard_repeat_warn", DEFAULT_LOOP_GUARD_REPEAT_WARN),
         loop_guard_circuit_breaker=found.get("loop_guard_circuit_breaker", DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER),
         loop_guard_window=found.get("loop_guard_window", DEFAULT_LOOP_GUARD_WINDOW),
+        loop_guard_pingpong_warn_cycles=found.get(
+            "loop_guard_pingpong_warn_cycles", DEFAULT_LOOP_GUARD_PINGPONG_WARN_CYCLES
+        ),
+        loop_guard_pingpong_break_cycles=found.get(
+            "loop_guard_pingpong_break_cycles", DEFAULT_LOOP_GUARD_PINGPONG_BREAK_CYCLES
+        ),
         attempt_history_max_entries=found.get("attempt_history_max_entries", DEFAULT_ATTEMPT_HISTORY_MAX_ENTRIES),
         attempt_history_max_age_seconds=found.get(
             "attempt_history_max_age_seconds", DEFAULT_ATTEMPT_HISTORY_MAX_AGE_SECONDS
@@ -617,6 +668,8 @@ __all__ = [
     "DEFAULT_COST_BUDGET_USD",
     "DEFAULT_LOCKFILE_SUPPRESSION_SECONDS",
     "DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER",
+    "DEFAULT_LOOP_GUARD_PINGPONG_BREAK_CYCLES",
+    "DEFAULT_LOOP_GUARD_PINGPONG_WARN_CYCLES",
     "DEFAULT_LOOP_GUARD_REPEAT_WARN",
     "DEFAULT_LOOP_GUARD_WINDOW",
     "DEFAULT_MAX_ITERATIONS",

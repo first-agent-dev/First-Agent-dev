@@ -7,19 +7,32 @@ threshold is crossed. The thresholds come from
 per ADR-7 §Amendment 2026-05-20 rule 1) — never magic constants in
 the guard code.
 
-Detectors (subset of the Kronos ``kronos/security/loop_detector.py``
-3-detector shape; see ``borrow-roadmap-2026-05.md`` §R-2). The third
-Kronos detector (no-op observation thrash) is intentionally deferred
-to a later Wave-2/Wave-3 R-N because it needs observation-content
-fingerprinting, which the inner loop does not yet record:
+Detectors (Kronos ``kronos/security/loop_detector.py`` shape; see
+``borrow-roadmap-2026-05.md`` §R-2). The Kronos no-op-observation
+detector remains deferred (it needs observation-content
+fingerprinting, which the inner loop does not yet record):
 
 1. **Identical-call repeat.** Same ``(tool_name, params_hash)`` shows
    up ``>= loop_guard_repeat_warn`` times in the trailing window
    → emit a ``kind="loop_guard_warn"`` event (allow). If the same
    sig hits ``loop_guard_circuit_breaker`` → deny.
-2. **Same-path thrash.** Same workspace-relative ``path`` parameter
-   appears across multiple call sigs in the window
-   → same warn/deny progression as (1).
+2. **Ping-pong oscillation** (S12.7 CT1). The trailing window ends
+   with ``2k`` calls alternating between exactly TWO distinct
+   ``(tool_name, params_hash)`` sigs (A,B,A,B,…) → warn at
+   ``loop_guard_pingpong_warn_cycles`` full cycles (default 3),
+   deny at ``loop_guard_pingpong_break_cycles`` (default 4 = the
+   default window). A one-sig "alternation" (pure repeat) never
+   matches — that is Detector 1's domain — and advancing reads
+   (all-distinct windows) are aperiodic and never match.
+
+REMOVED in S12.7 (CT1): the former same-path thrash detector counted
+distinct params-hashes per path and therefore denied *advancing* work
+— five distinct-window reads of one file counted as thrash. Committed
+live evidence (kimi l2 row 1788088035) shows it vetoing a correct
+edit. Distinct params are progress, not thrash.
+
+Every deny reason starts with ``LOOP_GUARD_REASON_PREFIX``; the loop
+driver scopes session-terminal handling on that prefix (CT1).
 
 Deny at the ``BETWEEN_ROUNDS`` lifecycle point so the runtime catches
 the ``PermissionError`` in the same code path that already handles
@@ -52,6 +65,8 @@ from fa.inner_loop.hooks.base import (
 from fa.inner_loop.recovery.attempt_history import canonical_params_hash
 from fa.inner_loop.runtime_limits import (
     DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER,
+    DEFAULT_LOOP_GUARD_PINGPONG_BREAK_CYCLES,
+    DEFAULT_LOOP_GUARD_PINGPONG_WARN_CYCLES,
     DEFAULT_LOOP_GUARD_REPEAT_WARN,
     DEFAULT_LOOP_GUARD_WINDOW,
 )
@@ -62,6 +77,14 @@ from fa.inner_loop.runtime_limits import (
 # so unit tests can pass a list-appender.
 WarnSink = Callable[[str, str], None]
 
+# S12.7 (CT1): single source of the guard-identity contract. Every
+# LoopGuard deny reason starts with this prefix; ``coder_loop`` scopes
+# session-terminal stop handling on it (point == BETWEEN_ROUNDS AND
+# reason.startswith(this)). Consumer must IMPORT the constant — never
+# re-type the literal. The prefix is already operator-load-bearing:
+# the live-trial postmortem recipe greps it in events.jsonl.
+LOOP_GUARD_REASON_PREFIX = "LoopGuard: "
+
 
 @dataclass(frozen=True)
 class _Observation:
@@ -69,11 +92,10 @@ class _Observation:
 
     tool_name: str
     params_hash: str
-    path_hint: str
 
 
 class LoopGuard(GuardMiddleware):
-    """Non-progress detector — denies on repeated identical / thrash patterns."""
+    """Non-progress detector — denies on identical repeats / ping-pong oscillation."""
 
     name = "LoopGuard"
     attaches_to = (LifecyclePoint.BEFORE_TOOL_EXEC, LifecyclePoint.BETWEEN_ROUNDS)
@@ -84,6 +106,8 @@ class LoopGuard(GuardMiddleware):
         repeat_warn: int = DEFAULT_LOOP_GUARD_REPEAT_WARN,
         circuit_breaker: int = DEFAULT_LOOP_GUARD_CIRCUIT_BREAKER,
         window: int = DEFAULT_LOOP_GUARD_WINDOW,
+        pingpong_warn_cycles: int = DEFAULT_LOOP_GUARD_PINGPONG_WARN_CYCLES,
+        pingpong_break_cycles: int = DEFAULT_LOOP_GUARD_PINGPONG_BREAK_CYCLES,
         warn_sink: WarnSink | None = None,
     ) -> None:
         if repeat_warn < 1:
@@ -92,9 +116,17 @@ class LoopGuard(GuardMiddleware):
             raise ValueError("circuit_breaker must be >= repeat_warn")
         if window < circuit_breaker:
             raise ValueError("window must be >= circuit_breaker")
+        if pingpong_warn_cycles < 1:
+            raise ValueError("pingpong_warn_cycles must be >= 1")
+        if pingpong_break_cycles < pingpong_warn_cycles:
+            raise ValueError("pingpong_break_cycles must be >= pingpong_warn_cycles")
+        if 2 * pingpong_break_cycles > window:
+            raise ValueError("window must be >= 2 * pingpong_break_cycles (a full alternation must fit)")
         self.repeat_warn = repeat_warn
         self.circuit_breaker = circuit_breaker
         self.window = window
+        self.pingpong_warn_cycles = pingpong_warn_cycles
+        self.pingpong_break_cycles = pingpong_break_cycles
         self._warn_sink = warn_sink
         self._observations: deque[_Observation] = deque(maxlen=window)
         # Tracks which detector/threshold combos already produced a
@@ -108,22 +140,17 @@ class LoopGuard(GuardMiddleware):
         if payload.tool_call is None:
             return
         # ADR-7 §1 typing: ``ToolCall.params`` is ``Mapping[str, object]``,
-        # not specifically ``dict``. Use ``.get`` directly — every other
-        # caller in the package (builtin.py, tools/base.py) does the same.
-        # An earlier ``isinstance(params, dict)`` guard here silently
-        # disabled Detector 2 for non-dict ``Mapping`` payloads
-        # (Agent-Review BUG-0005).
+        # not specifically ``dict``. ``canonical_params_hash`` consumes any
+        # Mapping (MappingProxyType included) — no dict isinstance guard.
         params = payload.tool_call.params
-        path_hint = str(params.get("path", ""))
         observation = _Observation(
             tool_name=payload.tool_call.name,
             params_hash=canonical_params_hash(payload.tool_call.name, params),
-            path_hint=path_hint,
         )
         self._observations.append(observation)
 
     def _scan(self) -> Decision:
-        """Run the two detectors over the trailing window."""
+        """Run the detectors over the trailing window."""
 
         if not self._observations:
             return Decision.allow()
@@ -137,7 +164,7 @@ class LoopGuard(GuardMiddleware):
             warn_key = ("identical", f"{tool_name}|{params_hash}")
             if count >= self.circuit_breaker:
                 reason = (
-                    f"LoopGuard: identical call {tool_name} "
+                    f"{LOOP_GUARD_REASON_PREFIX}identical call {tool_name} "
                     f"({params_hash}) repeated {count} times "
                     f"(threshold {self.circuit_breaker})"
                 )
@@ -149,30 +176,37 @@ class LoopGuard(GuardMiddleware):
                     f"{tool_name} repeated {count} times (warn threshold {self.repeat_warn})",
                 )
 
-        # Detector 2: same-path thrash. Count rows by ``path_hint``
-        # across DIFFERENT params_hashes — same file, different
-        # attempts (typical fix-edit-fix-edit churn). Pure-repeat
-        # (same params_hash) is already captured by Detector 1.
-        path_sigs: dict[str, set[str]] = {}
-        for obs in self._observations:
-            if not obs.path_hint:
-                continue
-            path_sigs.setdefault(obs.path_hint, set()).add(obs.params_hash)
-        for path, distinct_sigs in path_sigs.items():
-            distinct = len(distinct_sigs)
-            warn_key = ("thrash", path)
-            if distinct >= self.circuit_breaker:
-                reason = (
-                    f"LoopGuard: path {path!r} thrashed across "
-                    f"{distinct} distinct attempts "
-                    f"(threshold {self.circuit_breaker})"
-                )
-                return Decision.deny(reason)
-            if distinct >= self.repeat_warn and warn_key not in self._warned:
+        # Detector 3 (S12.7 CT1): period-2 ping-pong oscillation. The
+        # predicate — the last 2k sigs satisfy sig[j] == sig[j-2] for all
+        # j AND span exactly two distinct sigs — is monotone from the
+        # back (if the last 2k alternate, so do the last 2(k-1)), so the
+        # scan stops at the first k that fails. Pure repeats (one sig)
+        # never match; advancing reads (all-distinct windows) never match.
+        sigs = [(obs.tool_name, obs.params_hash) for obs in self._observations]
+        cycles = 0
+        for k in range(1, len(sigs) // 2 + 1):
+            tail = sigs[-2 * k :]
+            if len(set(tail)) != 2:
+                break
+            if any(tail[j] != tail[j - 2] for j in range(2, 2 * k)):
+                break
+            cycles = k
+        if cycles >= self.pingpong_break_cycles:
+            pair = sorted(set(sigs[-2 * self.pingpong_break_cycles :]))
+            return Decision.deny(
+                f"{LOOP_GUARD_REASON_PREFIX}ping-pong oscillation between "
+                f"{pair[0][0]} and {pair[1][0]} "
+                f"({cycles} cycles, threshold {self.pingpong_break_cycles})"
+            )
+        if cycles >= self.pingpong_warn_cycles:
+            pair = sorted(set(sigs[-2 * cycles :]))
+            warn_key = ("pingpong", f"{pair[0]}|{pair[1]}")
+            if warn_key not in self._warned:
                 self._warned.add(warn_key)
                 self._emit_warn(
-                    "same_path_thrash",
-                    f"path {path!r} hit by {distinct} distinct attempts (warn threshold {self.repeat_warn})",
+                    "pingpong_oscillation",
+                    f"alternation between {pair[0][0]} and {pair[1][0]} reached {cycles} cycles "
+                    f"(warn threshold {self.pingpong_warn_cycles})",
                 )
 
         return Decision.allow()

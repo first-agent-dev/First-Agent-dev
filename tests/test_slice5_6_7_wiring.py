@@ -50,7 +50,8 @@ def test_pr6_wiring_bash_large_output_offloads_artifact_via_live_path(tmp_path: 
     - oracle: event tool_result with artifact_id + truncated
     - kill-check: removing put() in run_bash.py makes artifact_id None and fails
 
-    Product claim: fs_run_bash large output >8000 offloads to ArtifactStore and returns truncated preview.
+    Product claim: fs_run_bash output over the 30k retention target (S12.7 CT4; was >8000)
+    offloads to ArtifactStore and returns the retained tail + truncated flag.
     """
     log = EventLog(tmp_path / "events.jsonl", run_id="pr6-artifact")
     state = SessionState(
@@ -65,8 +66,8 @@ def test_pr6_wiring_bash_large_output_offloads_artifact_via_live_path(tmp_path: 
     mock_chain = MagicMock(spec=ProviderChain)
     mock_chain.config = make_test_chain_config()
 
-    # Turn 1: LLM asks to run bash printing 9001 A's
-    large_cmd = "python3 - <<'PY'\nprint('A' * 9001)\nPY"
+    # Turn 1: LLM asks to run bash printing 30001 A's (over the 30k target)
+    large_cmd = "python3 - <<'PY'\nprint('A' * 30001)\nPY"
     tc1 = make_tool_call("fs_run_bash", {"command": large_cmd}, "tc-1")
     # Turn 2: stop
     mock_chain.request.side_effect = [

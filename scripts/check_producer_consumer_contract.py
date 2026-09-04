@@ -79,7 +79,9 @@ PRODUCER_SITE_FLOOR: dict[str, int] = {
     "context_warn": 5,
     # S6.2 raised this from 2 -> 3: drive_session now emits hook_deny when an
     # AFTER_TOOL_EXEC denial stops the outer loop (S6-F4).
-    "hook_deny": 3,
+    # S12.7 (CT1/GAP2) raised this from 3 -> 4: the scoped BETWEEN_ROUNDS
+    # LoopGuard-trip branch emits hook_deny at its own terminal site.
+    "hook_deny": 4,
     "llm_response": 1,
     "loop_warn": 3,
     "session_end": 1,

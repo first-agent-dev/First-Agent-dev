@@ -113,35 +113,35 @@ def test_loop_guard_denies_at_circuit_breaker_for_identical_call() -> None:
     assert "LoopGuard" in decision.reason
 
 
-def test_loop_guard_detects_same_path_thrash_across_distinct_attempts() -> None:
-    """Detector 2: same path, different params each time → thrash deny."""
+def test_loop_guard_allows_advancing_reads_on_one_path() -> None:
+    """S12.7 (CT1/GAP1): distinct params on one path are PROGRESS, not thrash.
+
+    The former Detector 2 denied exactly this shape — five distinct-window
+    reads of one file counted as "thrash" and (committed kimi l2 evidence,
+    row 1788088035) vetoed a correct edit. Distinct params_hash each time →
+    Detector 1 never fires, Detector 3 (two-sig alternation) never fires,
+    and the guard must allow at every BETWEEN_ROUNDS tick.
+    """
 
     guard = LoopGuard(repeat_warn=3, circuit_breaker=5, window=8)
-    # Five DIFFERENT contents on the same path. params_hash differs each
-    # time → Detector 1 (identical sigs) never fires. Detector 2
-    # counts distinct params_hashes per path and trips at 5.
+    # Five DIFFERENT windows on the same path (the l2 shape).
     for i in range(5):
         guard.handle(
             LifecyclePoint.BEFORE_TOOL_EXEC,
             HookPayload(tool_call=_make_call("hot.txt", content=f"v{i}\n", call_id=f"tc-{i}")),
         )
     decision = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())
-    assert decision.action == "deny"
-    assert "thrashed" in decision.reason
-    assert "hot.txt" in decision.reason
+    assert decision.action == "allow", (
+        f"advancing distinct-window reads must never be denied; got {decision.action}: {decision.reason}"
+    )
 
 
-def test_loop_guard_path_thrash_fires_for_non_dict_mapping_params() -> None:
-    """Agent-Review BUG-0005 regression: ``ToolCall.params`` is typed
-    ``Mapping[str, object]``, not ``dict``. An earlier
-    ``isinstance(params, dict)`` guard in ``LoopGuard._record`` silently
-    set ``path_hint=""`` for any non-dict ``Mapping`` (e.g.
-    ``MappingProxyType``), making Detector 2 entirely ineffective for
-    those payloads. This test fixes that case by submitting five
-    distinct-content writes against the same path via
-    ``MappingProxyType``; before the fix the assertion below failed
-    because the guard saw five empty path-hints and Detector 2 never
-    matched the same path twice."""
+def test_loop_guard_hashes_non_dict_mapping_params_and_allows_advancing() -> None:
+    """``ToolCall.params`` is ``Mapping[str, object]``, not ``dict``
+    (Agent-Review BUG-0005 lineage). ``canonical_params_hash`` must accept
+    any Mapping (MappingProxyType included) so the sigs differ per call —
+    and five distinct-content writes on one path must stay ALLOWED
+    (S12.7 CT1: distinct params are progress)."""
 
     from types import MappingProxyType
 
@@ -155,15 +155,17 @@ def test_loop_guard_path_thrash_fires_for_non_dict_mapping_params() -> None:
             ),
         )
     decision = guard.handle(LifecyclePoint.BETWEEN_ROUNDS, HookPayload())
-    assert decision.action == "deny"
-    assert "thrashed" in decision.reason
-    assert "hot.txt" in decision.reason
+    assert decision.action == "allow", (
+        f"distinct MappingProxyType writes must hash distinctly and stay allowed; "
+        f"got {decision.action}: {decision.reason}"
+    )
 
 
 def test_loop_guard_window_drops_old_observations() -> None:
     """Sliding window: older calls fall off and stop counting."""
 
-    guard = LoopGuard(repeat_warn=3, circuit_breaker=4, window=4)
+    # S12.7: pp knobs fitted to the small window (ctor validates 2*break <= window).
+    guard = LoopGuard(repeat_warn=3, circuit_breaker=4, window=4, pingpong_warn_cycles=1, pingpong_break_cycles=2)
     # 4 distinct calls fill the window with no repeats.
     for i in range(4):
         guard.handle(
@@ -226,7 +228,8 @@ def test_loop_guard_in_run_session_stops_run_with_event(tmp_path: Path) -> None:
 def test_loop_guard_does_not_observe_calls_outside_attaches_to() -> None:
     """A misregistered LifecyclePoint must not alter LoopGuard state."""
 
-    guard = LoopGuard(repeat_warn=2, circuit_breaker=3, window=4)
+    # S12.7: pp knobs fitted to the small window (ctor validates 2*break <= window).
+    guard = LoopGuard(repeat_warn=2, circuit_breaker=3, window=4, pingpong_warn_cycles=1, pingpong_break_cycles=2)
     call = _make_call("a.txt")
     decision = guard.handle(LifecyclePoint.AFTER_TOOL_EXEC, HookPayload(tool_call=call))
     # AFTER_TOOL_EXEC is not in attaches_to; handle() falls through to

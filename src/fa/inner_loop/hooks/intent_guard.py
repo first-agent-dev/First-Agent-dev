@@ -96,6 +96,7 @@ logger = logging.getLogger(__name__)
 # the same callables power both the M-6 git hook and this middleware
 # (ADR-10 I-1 single-source-of-truth).
 __all__ = [
+    "INTENT_GUARD_MODES",
     "GitRunner",
     "Intent",
     "IntentGuard",

@@ -38,7 +38,6 @@ class FeatureFlags:
     worktree_mode: str = "shared"
     fts_db_path: str = ".fa/fts.db"
     prompt_caching: bool = True
-    offload_threshold: int = 8000
     max_subagent_spawns_per_session: int = 3
     blackboard_filtered_history_include_plans: bool = False
     max_chain_retries: int = 0  # S22: session-level chain retry limit (default=0 → fail-fast, user opts in)
@@ -57,7 +56,6 @@ class FeatureFlags:
             "worktree.mode": self.worktree_mode,
             "memory.fts_db_path": self.fts_db_path,
             "prompt.caching": self.prompt_caching,
-            "offload_threshold": self.offload_threshold,
             "max_subagent_spawns_per_session": self.max_subagent_spawns_per_session,
             "blackboard.filtered_history_include_plans": self.blackboard_filtered_history_include_plans,
             "max_chain_retries": self.max_chain_retries,
@@ -91,7 +89,6 @@ FAIL_OPEN_FLAGS: frozenset[str] = frozenset(
         "worktree_mode",
         "fts_db_path",
         "prompt_caching",
-        "offload_threshold",
         "max_subagent_spawns_per_session",
         "blackboard_filtered_history_include_plans",
         "max_chain_retries",  # default=0 → fail-fast when unconfigured
@@ -125,7 +122,6 @@ _KNOWN_FLAGS: dict[str, str] = {
     "memory.fts_db_path": "str",
     "fts_db_path": "str",
     "prompt.caching": "bool",
-    "offload_threshold": "int",
     "max_subagent_spawns_per_session": "int",
     "blackboard.filtered_history_include_plans": "bool",
     "max_chain_retries": "int",
@@ -285,7 +281,6 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
         worktree_mode=_get_str(found, "worktree.mode", ["worktree_mode"], "shared"),
         fts_db_path=_get_str(found, "memory.fts_db_path", ["fts_db_path"], ".fa/fts.db"),
         prompt_caching=_get_bool(found, "prompt.caching", [], True),
-        offload_threshold=_get_int(found, "offload_threshold", [], 8000),
         max_subagent_spawns_per_session=_get_int(found, "max_subagent_spawns_per_session", [], 3),
         blackboard_filtered_history_include_plans=_get_bool(
             found, "blackboard.filtered_history_include_plans", [], False

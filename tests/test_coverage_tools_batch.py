@@ -18,10 +18,21 @@ def test_read_file_live_handler_windows_and_failures(tmp_path: Path) -> None:
 
     result = tool.handler({"path": "notes.txt", "start_line": 2, "end_line": 3})
     assert result.error is None
+    # S12.7 (CT3): read results carry the frame contract additively —
+    # rel_path always; start_line/end_line + frame for windowed reads
+    # (T2). Windowing/failure semantics unchanged (this test's subject).
     assert result.result == {
         "path": str(path),
+        "rel_path": "notes.txt",
         "content": "two\nthree",
         "line_count": 3,
+        "start_line": 2,
+        "end_line": 3,
+        "frame": (
+            "[File: notes.txt — 3 lines total — showing 2-3 — 1 above, 0 below — "
+            "continue with start_line=4 — windows of <=~750 lines (~30,000B) are "
+            "typically returned whole]"
+        ),
     }
 
     invalid = tool.handler({"path": "notes.txt", "start_line": 3, "end_line": 2})

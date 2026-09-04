@@ -1,6 +1,7 @@
 """fa.inner_loop.compaction — foundation for ADR-17 progressive compaction
 
-Current: Stage 1 only warning + artifact offload 8000 chars → scratch file + 500-char preview
+Current: Stage 1 only warning + masker self-store offload of masked blocks (S12.7 CT6: state threshold offload deleted;
+projection owns elision artifacts)
 Full progressive: warning 70%, observation masking 80%, full LLM compaction 90%
 """
 

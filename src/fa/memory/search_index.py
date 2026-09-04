@@ -47,6 +47,12 @@ SCHEMA_VERSION = 1
 # ---------------------------------------------------------------------------
 MAX_CONTENT_BYTES_INDEXED = 100_000
 SNIPPET_MAX_BYTES = 400
+# S12.7 (§A6 v7, R22): fixed internal constants — no longer model knobs.
+# Skip/cut behavior is still SURFACED (skipped_large_files, region trailer).
+MERGE_GAP_LINES = 2  # hits merge into one region when the hit gap is <= this
+MATCH_CONTEXT_LINES = 1  # context lines rendered each side of a region
+REGION_SNIPPET_MAX_BYTES = 4_000  # per-region rendered byte bound (trailer beyond)
+MAX_SEARCH_FILE_BYTES = 200_000  # files above this are skipped and reported
 
 # ---------------------------------------------------------------------------
 # Production refresh/robustness tuning (S14b.1-hardening).
@@ -156,18 +162,17 @@ class SearchParams:
     ``fs_search`` tool, plus derived ``subdir_rel``.
     """
 
+    # S12.7 (§A6 v7, R22): include_tests / max_file_size / context_lines /
+    # case_sensitive / order are GONE as knobs — fixed module constants and
+    # always-case-insensitive literals replace them (regex casing is
+    # controlled by the pattern itself).
     query: str
     output_mode: str = "files"
     glob_pat: str | None = None
     subdir_rel: str = ""
-    include_tests: bool = True
     exclude_set: frozenset[str] = field(default_factory=frozenset)
-    max_file_size: int = 200_000
-    context_lines: int = 1
     limit: int = 20
     regex: bool = False
-    case_sensitive: bool = False
-    order: str = "bm25"
 
 
 @dataclass
@@ -178,8 +183,7 @@ class SearchResult:
     method: str
     files: list[dict[str, Any]] = field(default_factory=list)
     matches: list[dict[str, Any]] = field(default_factory=list)
-    regions: list[dict[str, Any]] = field(default_factory=list)
-    counts: list[dict[str, Any]] = field(default_factory=list)
+    skipped_large_files: int = 0
     returned: int = 0
     truncated: bool = False
     total_bytes: int = 0
@@ -191,6 +195,76 @@ class SearchResult:
 # ---------------------------------------------------------------------------
 # SearchIndex
 # ---------------------------------------------------------------------------
+
+
+def files_stat_rows(root: Path, rels: list[str], limit: int) -> list[dict[str, Any]]:
+    """§A6 v7 files rows: ``{path, lines, bytes}`` ordered by path.
+
+    ``lines`` counts lines of the first MAX_SEARCH_FILE_BYTES bytes (None
+    when unreadable); ``bytes`` is the stat size. Match counts / snippets
+    are deliberately gone — files mode is discovery; escalate to
+    matches/outline for content.
+    """
+    files_out: list[dict[str, Any]] = []
+    for rel in sorted(rels)[:limit]:
+        fp: Path = root / rel
+        stat_ok = True
+        try:
+            size = fp.stat().st_size
+        except OSError:
+            size = 0
+            stat_ok = False
+        lines: int | None = None  # None = unreadable; 0 = genuinely empty
+        text = SearchIndex._read_text_for_match(fp, MAX_SEARCH_FILE_BYTES)
+        if text:
+            lines = len(text.splitlines())
+        elif stat_ok and size == 0:
+            lines = 0
+        files_out.append({"path": rel, "lines": lines, "bytes": size})
+    return files_out
+
+
+def walk_scope_listing(
+    root: Path,
+    *,
+    subdir_rel: str,
+    glob_pat: str | None,
+    exclude_set: frozenset[str],
+) -> tuple[list[str], int]:
+    """§A6 v7: enumerate the search scope fresh from disk.
+
+    Returns (rels of files <= MAX_SEARCH_FILE_BYTES, count of larger files
+    skipped) — UNORDERED; row ordering is imposed solely by
+    ``files_stat_rows`` (single sorting authority). Uses the real walk
+    so untracked files are listed too — a listing that hides new files
+    would mislead discovery. Fail-open: a walk error yields ([], 0) plus
+    a warning, never a crash.
+    """
+    rels: list[str] = []
+    skipped = 0
+    try:
+        for _fp, rel, _mt, sz in iter_searchable_files(
+            root,
+            DEFAULT_PATTERNS,
+            extra_exclude_dirs=exclude_set,
+            max_file_size=0,
+            use_git_ls_files=False,
+        ):
+            if not SearchIndex._passes_filters(
+                rel,
+                subdir_rel=subdir_rel,
+                glob_pat=glob_pat,
+                exclude_set=exclude_set,
+            ):
+                continue
+            if sz > MAX_SEARCH_FILE_BYTES:
+                skipped += 1
+                continue
+            rels.append(rel)
+    except Exception as exc:  # noqa: BLE001 - fail-open, failure-observable
+        logger.warning("scope listing walk failed: %s", exc)
+        return [], 0
+    return rels, skipped
 
 
 class SearchIndex:
@@ -683,7 +757,6 @@ class SearchIndex:
         *,
         subdir_rel: str,
         glob_pat: str | None,
-        include_tests: bool,
         exclude_set: frozenset[str],
     ) -> bool:
         """Single authority for query-time path filters.
@@ -692,10 +765,9 @@ class SearchIndex:
         1. ``subdir_rel`` is empty OR ``rel`` lives under ``subdir_rel``
            (either as a direct child or deeper; also accepts an exact
            match against ``subdir_rel.rstrip("/")``).
-        2. ``include_tests`` is True OR no path component equals
-           ``"tests"``.
-        3. No path component is in ``exclude_set``.
-        4. ``glob_pat`` is None OR ``_path_matches(rel, glob_pat)`` holds.
+        2. No path component is in ``exclude_set`` (S12.7 §A6: exclude_dirs
+           is the only dir-exclusion knob — include_tests is gone).
+        3. ``glob_pat`` is None OR ``_path_matches(rel, glob_pat)`` holds.
 
         This is called from every search path (BM25 post-fetch, trigram
         post-fetch, python-walk pre-yield, and _collect_matches as
@@ -706,8 +778,6 @@ class SearchIndex:
             if not (rel + "/").startswith(subdir_rel) and rel != subdir_rel.rstrip("/"):
                 return False
         parts: list[str] = rel.replace("\\", "/").split("/")
-        if not include_tests and "tests" in parts:
-            return False
         if not exclude_set.isdisjoint(parts):
             return False
         if glob_pat is not None and not SearchIndex._path_matches(rel, glob_pat):
@@ -781,27 +851,6 @@ class SearchIndex:
                 stack.append((pi + 1, gi + 1))
         return False
 
-    @staticmethod
-    def _first_match(text: str, needle: str, case_sensitive: bool) -> tuple[int, str] | None:
-        hay = text if case_sensitive else text.lower()
-        n = needle if case_sensitive else needle.lower()
-        idx = hay.find(n)
-        if idx < 0:
-            return None
-        line_no = text.count("\n", 0, idx) + 1
-        line_start = text.rfind("\n", 0, idx) + 1
-        line_end = text.find("\n", idx)
-        if line_end < 0:
-            line_end = len(text)
-        snippet = text[line_start:line_end].rstrip()
-        if len(snippet) > SNIPPET_MAX_BYTES:
-            snippet = snippet[:SNIPPET_MAX_BYTES] + "..."
-        return (line_no, snippet)
-
-    # ------------------------------------------------------------------
-    # Search: BM25 → trigram → literal walk
-    # ------------------------------------------------------------------
-
     def search(
         self,
         params: SearchParams,
@@ -816,10 +865,6 @@ class SearchIndex:
         arguments because they describe *where* to search in the filesystem,
         not *how* to search.
         """
-        # params.order is reserved for future use; only "bm25" is honored in v1.
-        # The parameter is accepted on SearchParams for forward-compat but is not
-        # consulted in this implementation.
-        _ = params.order
         root = root.resolve()
         subdir = (root / subpath).resolve() if subpath else root
         try:
@@ -851,7 +896,7 @@ class SearchIndex:
         # Regex and case-sensitive searches force the python-walk path:
         # FTS5 MATCH/LIKE cannot honor Python regex or case-sensitive
         # semantics against a case-folded tokenizer.
-        if effective.regex or effective.case_sensitive:
+        if effective.regex:
             return self._search_python_walk(
                 params=effective,
                 root=root,
@@ -890,7 +935,6 @@ class SearchIndex:
                     rel,
                     subdir_rel=effective.subdir_rel,
                     glob_pat=effective.glob_pat,
-                    include_tests=effective.include_tests,
                     exclude_set=effective.exclude_set,
                 ):
                     continue
@@ -903,7 +947,6 @@ class SearchIndex:
                     rel,
                     subdir_rel=effective.subdir_rel,
                     glob_pat=effective.glob_pat,
-                    include_tests=effective.include_tests,
                     exclude_set=effective.exclude_set,
                 ):
                     continue
@@ -1008,24 +1051,19 @@ class SearchIndex:
         subdir_rel: str = params.subdir_rel
         output_mode: str = params.output_mode
         glob_pat: str | None = params.glob_pat
-        include_tests: bool = params.include_tests
         exclude_set: frozenset[str] = params.exclude_set
-        max_file_size: int = params.max_file_size
         limit: int = params.limit
-        case_sensitive: bool = params.case_sensitive
 
-        # For literal substring search we lowercase both sides when case-insensitive.
-        # For regex search, compile with re.IGNORECASE so that uppercase atoms in
-        # the pattern (e.g. ``\w+Middleware``) still match against original-cased
-        # text — do NOT lowercase the haystack or character-class semantics shift
-        # (R-fix from S14b.1 pre-deploy smoke test).
+        # S12.7 (R21/Q4): literal search is case-insensitive ALWAYS (both
+        # sides lowered). Regex compiles with NO forced flags — the pattern
+        # controls casing via e.g. ``(?i)``; the haystack is never lowered
+        # for regex (character-class semantics must not shift).
         pat: re.Pattern[str] | None
         if as_regex:
-            flags = 0 if case_sensitive else re.IGNORECASE
-            pat = re.compile(query, flags)
+            pat = re.compile(query)
             needle = ""  # unused
         else:
-            needle = query if case_sensitive else query.lower()
+            needle = query.lower()
             pat = None
 
         hits: list[tuple[str, float]] = []
@@ -1037,14 +1075,13 @@ class SearchIndex:
         # substring matching and cannot honour regex semantics.
         per_file_matches: dict[str, list[tuple[int, str]]] = {}
 
-        read_cap: int = max(max_file_size, MAX_CONTENT_BYTES_INDEXED)
+        read_cap: int = max(MAX_SEARCH_FILE_BYTES, MAX_CONTENT_BYTES_INDEXED)
         try:
             for fp, rel, _mt, _sz in iter_searchable_files(
                 root,
                 DEFAULT_PATTERNS,
                 extra_exclude_dirs=exclude_set,
-                include_tests=include_tests,
-                max_file_size=max_file_size,
+                max_file_size=MAX_SEARCH_FILE_BYTES,
                 use_git_ls_files=self._available,
             ):
                 # Defense-in-depth: resolve the path we are about to read and
@@ -1064,7 +1101,6 @@ class SearchIndex:
                     rel,
                     subdir_rel=subdir_rel,
                     glob_pat=glob_pat,
-                    include_tests=include_tests,
                     exclude_set=exclude_set,
                 ):
                     continue
@@ -1081,7 +1117,7 @@ class SearchIndex:
                     if found:
                         per_file_matches[rel] = file_matches
                 else:
-                    hay = text if case_sensitive else text.lower()
+                    hay = text.lower()
                     found = needle in hay
                     cnt = hay.count(needle)
                 if not found:
@@ -1092,7 +1128,7 @@ class SearchIndex:
                     hits.append((rel, 0.0))
                 else:
                     match_counts[rel] = cnt
-                if output_mode in ("files", "counts") and len(matched_paths) >= limit:
+                if output_mode == "files" and len(matched_paths) >= limit:
                     result.truncated = True
                     break
         except Exception as exc:  # noqa: BLE001
@@ -1121,57 +1157,19 @@ class SearchIndex:
         text: str,
         needle: str,
         *,
-        case_sensitive: bool,
         output_mode: str,
     ) -> tuple[list[tuple[int, str]], int]:
         """Scan ``text`` for ``needle``; return (line_matches, total_count).
 
-        * For ``files`` mode returns only the first match (for snippet).
-        * For ``matches``/``regions`` returns every line with a hit.
-        * For ``counts`` returns (empty_list, occurrence_count).
+        S12.7 §A6 v7: literals are case-insensitive always; returns every
+        hit line for both surviving modes (files matches, matches renders).
         """
-        if output_mode == "counts":
-            hay = text if case_sensitive else text.lower()
-            return [], hay.count(needle)
-
         matches: list[tuple[int, str]] = []
         lines = text.splitlines()
         for i, line in enumerate(lines, start=1):
-            hay = line if case_sensitive else line.lower()
-            if needle in hay:
+            if needle in line.lower():
                 matches.append((i, line.rstrip()))
-                if output_mode == "files":
-                    # files mode: only first hit needed for snippet (R-10)
-                    return matches, text.count(needle) if case_sensitive else text.lower().count(needle)
-        count = len(matches)
-        return matches, count
-
-    @staticmethod
-    def _build_files_output(
-        matched_files: list[str],
-        per_file_matches: dict[str, list[tuple[int, str]]],
-        match_counts: dict[str, int],
-        limit: int,
-    ) -> list[dict[str, Any]]:
-        files_out: list[dict[str, Any]] = []
-        for rel in matched_files[:limit]:
-            first_line: int | None = None
-            first_snippet: str | None = None
-            fms = per_file_matches.get(rel)
-            if fms:
-                first_line, raw_snip = fms[0]
-                first_snippet = raw_snip[:SNIPPET_MAX_BYTES]
-                if len(raw_snip) > SNIPPET_MAX_BYTES:
-                    first_snippet += "..."
-            files_out.append(
-                {
-                    "path": rel,
-                    "match_count": match_counts.get(rel, 0),
-                    "first_match_line": first_line,
-                    "first_match_snippet": first_snippet,
-                }
-            )
-        return files_out
+        return matches, len(matches)
 
     def _build_matches_output(
         self,
@@ -1179,31 +1177,53 @@ class SearchIndex:
         matched_files: list[str],
         per_file_matches: dict[str, list[tuple[int, str]]],
         *,
-        context_lines: int,
         limit: int,
-        max_file_size: int,
     ) -> tuple[list[dict[str, Any]], bool]:
+        """§A6 v7 matches: grep-like MERGED regions.
+
+        Hits merge into one region when the gap between consecutive hit
+        lines is <= MERGE_GAP_LINES (fixed, 2). Each region renders
+        MATCH_CONTEXT_LINES context lines per side, marked grep-style:
+        ``N:`` prefixes hit lines, ``N-`` prefixes context lines. A
+        region's rendered snippet is bounded by REGION_SNIPPET_MAX_BYTES;
+        elided hits are reported with a ``[...N more hits in lines A-B]``
+        trailer (never silently cut). ``limit`` caps REGIONS, not hits.
+        """
         matches_out: list[dict[str, Any]] = []
         truncated = False
         for rel in matched_files:
+            fms = per_file_matches.get(rel, [])
+            if not fms:
+                continue
             fp: Path = root / rel
-            # De-duplicate: the same rel can be repeated from multiple
-            # hits; re-read only once per rel (matches/regions are read
-            # in the same order, and we already have per_file_matches).
-            full_text: str = self._read_text_for_match(fp, max_file_size)
-            full_lines: list[str] = full_text.splitlines()
-            for ln, content in per_file_matches.get(rel, []):
-                start_ctx = max(0, ln - 1 - context_lines)
-                end_ctx = min(len(full_lines), ln + context_lines)
-                before = [line.rstrip() for line in full_lines[start_ctx : ln - 1]]
-                after = [line.rstrip() for line in full_lines[ln:end_ctx]]
+            full_lines: list[str] = self._read_text_for_match(fp, MAX_SEARCH_FILE_BYTES).splitlines()
+            for grp in self._group_adjacent(fms):
+                hit_lines = {ln for ln, _ in grp}
+                start = max(1, grp[0][0] - MATCH_CONTEXT_LINES)
+                end = min(len(full_lines), grp[-1][0] + MATCH_CONTEXT_LINES)
+                snippet: list[str] = []
+                used_bytes = 0
+                last_rendered = start - 1
+                for i in range(start, end + 1):
+                    line = full_lines[i - 1].rstrip() if 0 < i <= len(full_lines) else ""
+                    marked = f"{i}:" if i in hit_lines else f"{i}-"
+                    marked += line[:SNIPPET_MAX_BYTES]
+                    if used_bytes + len(marked) + 1 > REGION_SNIPPET_MAX_BYTES:
+                        break
+                    snippet.append(marked)
+                    used_bytes += len(marked) + 1
+                    last_rendered = i
+                remaining = [ln for ln, _ in grp if ln > last_rendered]
+                if remaining:
+                    snippet.append(f"[...{len(remaining)} more hits in lines {remaining[0]}-{remaining[-1]}]")
                 matches_out.append(
                     {
                         "path": rel,
-                        "line": ln,
-                        "content": content[:SNIPPET_MAX_BYTES],
-                        "before": before,
-                        "after": after,
+                        "start_line": start,
+                        "end_line": end,
+                        "match_lines": [ln for ln, _ in grp],
+                        "match_count": len(grp),
+                        "snippet": snippet,
                     }
                 )
                 if len(matches_out) >= limit:
@@ -1214,62 +1234,18 @@ class SearchIndex:
         return matches_out, truncated
 
     @staticmethod
-    def _group_adjacent(fms: list[tuple[int, str]], context_lines: int) -> list[list[tuple[int, str]]]:
+    def _group_adjacent(fms: list[tuple[int, str]]) -> list[list[tuple[int, str]]]:
+        """Group hit lines into regions: merge when gap <= MERGE_GAP_LINES."""
         if not fms:
             return []
         grouped: list[list[tuple[int, str]]] = [[fms[0]]]
         for ln, content in fms[1:]:
             prev_ln = grouped[-1][-1][0]
-            if ln - prev_ln <= context_lines * 2 + 1:
+            if ln - prev_ln <= MERGE_GAP_LINES:
                 grouped[-1].append((ln, content))
             else:
                 grouped.append([(ln, content)])
         return grouped
-
-    def _build_regions_output(
-        self,
-        root: Path,
-        matched_files: list[str],
-        per_file_matches: dict[str, list[tuple[int, str]]],
-        *,
-        context_lines: int,
-        limit: int,
-        max_file_size: int,
-    ) -> tuple[list[dict[str, Any]], bool]:
-        regions_out: list[dict[str, Any]] = []
-        truncated = False
-        for rel in matched_files:
-            fms = per_file_matches.get(rel, [])
-            if not fms:
-                continue
-            fp: Path = root / rel
-            full_text: str = self._read_text_for_match(fp, max_file_size)
-            full_lines: list[str] = full_text.splitlines()
-            for grp in SearchIndex._group_adjacent(fms, context_lines):
-                start = max(1, grp[0][0] - context_lines)
-                end = min(len(full_lines), grp[-1][0] + context_lines)
-                snippet = [full_lines[i - 1].rstrip() for i in range(start, end + 1) if 0 <= i - 1 < len(full_lines)]
-                regions_out.append(
-                    {
-                        "path": rel,
-                        "start_line": start,
-                        "end_line": end,
-                        "match_count": len(grp),
-                        "snippet": snippet,
-                    }
-                )
-                if len(regions_out) >= limit:
-                    truncated = True
-                    break
-            if len(regions_out) >= limit:
-                break
-        return regions_out, truncated
-
-    @staticmethod
-    def _build_counts_output(
-        matched_files: list[str], match_counts: dict[str, int], limit: int
-    ) -> list[dict[str, Any]]:
-        return [{"path": rel, "count": match_counts.get(rel, 0)} for rel in matched_files[:limit]]
 
     def _collect_matches(
         self,
@@ -1290,10 +1266,10 @@ class SearchIndex:
         matched_files: list[str] = []
         match_counts: dict[str, int] = {}
         per_file_matches: dict[str, list[tuple[int, str]]] = {}
-        need_content = params.output_mode in ("matches", "regions", "files", "counts")
-        read_cap: int = max(params.max_file_size, MAX_CONTENT_BYTES_INDEXED)
+        need_content = params.output_mode in ("matches", "files")
+        read_cap: int = max(MAX_SEARCH_FILE_BYTES, MAX_CONTENT_BYTES_INDEXED)
         for rel, _score in hits:
-            if len(matched_files) >= params.limit and params.output_mode in ("files", "counts"):
+            if len(matched_files) >= params.limit and params.output_mode == "files":
                 truncated = True
                 break
             # D-in-D: re-run filter on rel from the index (catches stale
@@ -1302,7 +1278,6 @@ class SearchIndex:
                 rel,
                 subdir_rel=params.subdir_rel,
                 glob_pat=params.glob_pat,
-                include_tests=params.include_tests,
                 exclude_set=params.exclude_set,
             ):
                 continue
@@ -1332,14 +1307,13 @@ class SearchIndex:
                 fms, cnt = self._scan_file_matches(
                     text,
                     needle,
-                    case_sensitive=params.case_sensitive,
                     output_mode=params.output_mode,
                 )
                 if fms:
                     per_file_matches[rel] = fms
                 if cnt:
                     match_counts[rel] = cnt
-            if len(matched_files) >= params.limit and params.output_mode in ("files", "counts"):
+            if len(matched_files) >= params.limit and params.output_mode == "files":
                 truncated = True
                 break
         return matched_files, match_counts, per_file_matches, truncated
@@ -1356,7 +1330,7 @@ class SearchIndex:
         per_file_matches_override: dict[str, list[tuple[int, str]]] | None = None,
     ) -> SearchResult:
         result.method = method
-        needle = params.query if params.case_sensitive else params.query.lower()
+        needle = params.query.lower()  # R21: case-insensitive always
         precomputed = per_file_matches_override or {}
 
         matched_files, match_counts, per_file_matches, truncated = self._collect_matches(
@@ -1377,33 +1351,24 @@ class SearchIndex:
         result.total_bytes = self._compute_total_bytes(root, matched_files)
 
         if params.output_mode == "files":
-            result.files = self._build_files_output(matched_files, per_file_matches, match_counts, params.limit)
+            _rels, skipped_large = walk_scope_listing(
+                root,
+                subdir_rel=params.subdir_rel,
+                glob_pat=params.glob_pat,
+                exclude_set=params.exclude_set,
+            )
+            result.skipped_large_files = skipped_large
+            result.files = files_stat_rows(root, matched_files, params.limit)
             result.returned = len(result.files)
         elif params.output_mode == "matches":
             result.matches, extra_trunc = self._build_matches_output(
                 root,
                 matched_files,
                 per_file_matches,
-                context_lines=params.context_lines,
                 limit=params.limit,
-                max_file_size=params.max_file_size,
             )
             result.returned = len(result.matches)
             truncated = truncated or extra_trunc
-        elif params.output_mode == "regions":
-            result.regions, extra_trunc = self._build_regions_output(
-                root,
-                matched_files,
-                per_file_matches,
-                context_lines=params.context_lines,
-                limit=params.limit,
-                max_file_size=params.max_file_size,
-            )
-            result.returned = len(result.regions)
-            truncated = truncated or extra_trunc
-        elif params.output_mode == "counts":
-            result.counts = self._build_counts_output(matched_files, match_counts, params.limit)
-            result.returned = len(result.counts)
         else:
             raise ValueError(f"unknown output_mode: {params.output_mode}")
 
@@ -1413,8 +1378,12 @@ class SearchIndex:
 
 __all__ = [
     "BINARY_SNIFF_BYTES",
+    "MATCH_CONTEXT_LINES",
     "MAX_CONTENT_BYTES_INDEXED",
+    "MAX_SEARCH_FILE_BYTES",
+    "MERGE_GAP_LINES",
     "REFRESH_THROTTLE_SECONDS",
+    "REGION_SNIPPET_MAX_BYTES",
     "SCHEMA_VERSION",
     "SNIPPET_MAX_BYTES",
     "SearchIndex",
@@ -1422,4 +1391,6 @@ __all__ = [
     "SearchResult",
     "SearchStats",
     "_bm25_tokenize",
+    "files_stat_rows",
+    "walk_scope_listing",
 ]

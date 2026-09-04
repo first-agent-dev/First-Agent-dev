@@ -8,9 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fa.inner_loop.registry import ToolResult, ToolSpec
+from fa.inner_loop.registry import DEFAULT_TOOL_CONTEXT_BYTES, ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
-from fa.inner_loop.tools._common import prepare_workspace_context, truncate_for_preview, validate_bash_command
+from fa.inner_loop.tools._common import (
+    _bash_tail_frame,
+    _retained_stdout,
+    prepare_workspace_context,
+    validate_bash_command,
+)
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
 
 logger = logging.getLogger(__name__)
@@ -46,27 +51,6 @@ def _normalize_carriage_return(text: str) -> str:
         if result.endswith("\n") and text.endswith("\n"):
             result = result[:-1]
         return result
-
-
-def _bash_run_elide(value: Any, _max_bytes: int) -> str:
-    """Adapt ``truncate_for_preview`` to the ``ToolElider`` protocol.
-
-    ``ToolElider`` is ``Callable[[value, max_context_bytes], str]`` and
-    ``ToolRegistry``'s projection layer calls it POSITIONALLY as
-    ``elider(result, spec.max_context_bytes)``. ``truncate_for_preview``'s
-    own second positional parameter is ``preview_len`` — passing it
-    directly as ``elide=truncate_for_preview`` would silently bind the
-    tool's context budget (thousands of bytes) into ``preview_len``,
-    producing a preview an order of magnitude larger than the intended
-    fixed 500-char head + 200-char tail shape and losing the truncation
-    notice (this exact regression shipped once; see
-    tests/test_run_bash_tool_projection.py for the kill-check).
-
-    ``_max_bytes`` (the tool's ``max_context_bytes``) is intentionally
-    unused here: fs_run_bash's preview length is a fixed token-budget
-    constant (500+200), not proportional to the tool's overall budget.
-    """
-    return truncate_for_preview(value, preview_len=500)
 
 
 def _get_write_set_from_git_status(root: Path) -> list[str]:
@@ -187,7 +171,11 @@ def _run_pty_executor(
 
             artifact_id = None
             stdout = _normalize_carriage_return(pty_result.stdout)
-            if artifact_store is not None and len(stdout) > 8000:
+            # S12.7 (CT4): tail-biased retention replaces the 8,000B/500-char
+            # head preview — the model sees the END of long output (where the
+            # answer/error usually is); FULL stdout goes to the artifact.
+            retained, trimmed = _retained_stdout(stdout)
+            if trimmed and artifact_store is not None:
                 try:
                     put_method = getattr(artifact_store, "put", None) or getattr(artifact_store, "write", None)
                     if put_method is not None:
@@ -195,13 +183,12 @@ def _run_pty_executor(
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("artifact store write failed: %s", exc)
 
-            preview = truncate_for_preview(stdout, preview_len=500)
             summary = f"bash exited {pty_result.exit_code}"
             result = {
                 "returncode": pty_result.exit_code,
-                "stdout": stdout if len(stdout) <= 8000 else preview,
+                "stdout": retained,
                 "stderr": "",
-                "truncated": pty_result.truncated,
+                "truncated": bool(pty_result.truncated) or trimmed,
                 "artifact_id": artifact_id,
                 "session_id": pty_result.session_id,
             }
@@ -285,23 +272,27 @@ def _run_subprocess_fallback(
     stdout_clean = _normalize_carriage_return(completed.stdout)
     stderr_clean = _normalize_carriage_return(completed.stderr)
     artifact_id = None
-    if artifact_store is not None and len(stdout_clean) > 8000:
+    # S12.7 (CT4): tail-biased retention replaces the 8,000B/500-char head
+    # preview; FULL stdout goes to the artifact iff trimmed. stderr stays
+    # whole here — if the envelope still overflows the ceiling (huge stderr,
+    # escaping inflation), projection's _bash_tail_frame frames it with the
+    # stderr block LAST.
+    retained, trimmed = _retained_stdout(stdout_clean)
+    if trimmed and artifact_store is not None:
         try:
             put_method = getattr(artifact_store, "put", None) or getattr(artifact_store, "write", None)
             if put_method is not None:
                 artifact_id = put_method(stdout_clean)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to offload large fallback stdout to ArtifactStore: %s", exc)
+            logger.warning("Failed to offload trimmed stdout to ArtifactStore: %s", exc)
 
-    truncated = len(stdout_clean) > 8000
-    preview_stdout = stdout_clean if len(stdout_clean) <= 8000 else truncate_for_preview(stdout_clean, preview_len=500)
     summary = f"bash exited {completed.returncode}"
     result = {
         "returncode": completed.returncode,
-        "stdout": preview_stdout,
+        "stdout": retained,
         "stderr": stderr_clean,
         "artifact_id": artifact_id,
-        "truncated": truncated,
+        "truncated": trimmed,
     }
 
     if completed.returncode != 0:
@@ -357,8 +348,9 @@ across calls (cd, export, source .venv/bin/activate survive). Stateless for chea
 Background processes: use fs_run_bash_background for long-running commands (dev servers),
 then fs_read_terminal, fs_list_tasks, fs_kill_task, fs_send_ctrl_c.
 
-Output capped 8000 chars with artifact_id + 500-char preview (ADR-13/14). For large outputs,
-chain with | head -n 100 or | tail -n 100 or grep.
+Output over ~30,000 chars is retained TAIL-biased (the end, where errors/answers usually
+are) with the full output stored under artifact_id — follow it with fs_read_file
+{"artifact_id": ...} (S12.7). Prefer grep / | tail -n N for huge outputs.
 
 Chain commands with && for atomicity: cd src && ls -la
 
@@ -377,8 +369,10 @@ per-session isolation (Gap 13).
         permission="workspace",
         handler=handler,
         tags=("fs", "bash"),
-        max_context_bytes=8000,
-        elide=_bash_run_elide,
+        # S12.7 (CT2/GAP4): projection ceiling (was 8_000). The tool's
+        # INTERNAL >8000 pre-truncation stays until the S5 tail frame.
+        max_context_bytes=DEFAULT_TOOL_CONTEXT_BYTES,
+        elide=_bash_tail_frame,
     )
 
 

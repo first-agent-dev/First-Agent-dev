@@ -26,10 +26,33 @@ class TestDeadFlagsUnit:
         )
 
     def test_all_current_fields_present(self) -> None:
-        """FeatureFlags should expose the current 13-field schema."""
+        """FeatureFlags exposes exactly the current field set (S12.7 CT6:
+        offload_threshold REMOVED — state's threshold offload was deleted;
+        configs still carrying it get the loader's unknown-flag warning).
+
+        Upgraded from the stale count-only pin (13 vs actual 14 had been red
+        on a clean tree) to an exact-name set: a count can be satisfied by
+        coincidence, a set cannot."""
         result = check_dead_flags(Path.cwd())
-        declared_names = [f["name"] for f in result["declared_fields"]]
-        assert len(declared_names) == 13, f"Expected 13 fields, got {len(declared_names)}: {declared_names}"
+        declared_names = {f["name"] for f in result["declared_fields"]}
+        expected = {
+            "blackboard_enabled",
+            "telemetry_enabled",
+            "tool_batching_enabled",
+            "subagent_spawning_enabled",
+            "context_budget_enabled",
+            "pty_pool_max_size",
+            "worktree_mode",
+            "fts_db_path",
+            "prompt_caching",
+            "max_subagent_spawns_per_session",
+            "blackboard_filtered_history_include_plans",
+            "max_chain_retries",
+            "intent_guard_mode",
+        }
+        assert declared_names == expected, (
+            f"FeatureFlags drifted: missing={expected - declared_names} extra={declared_names - expected}"
+        )
         deprecated = [f["name"] for f in result["declared_fields"] if f["is_deprecated"]]
         assert deprecated == []
 

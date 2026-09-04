@@ -337,6 +337,20 @@ class ToolResult:
         )
 
 
+# S12.7 (CT2/GAP4): single documented ceiling for tool context budgets —
+# the default for ``ToolSpec.max_context_bytes`` and the budget of the
+# ceiling-tier tools. Defined HERE (beside its only consumer) because a
+# module-scope import from ``runtime_limits`` would close the cycle
+# registry → runtime_limits → recovery → registry (verified S12.7 R14).
+# House rationale: src/ .py fit@32KB = 149/160 files (93.1%) at
+# @612400c — in-ceiling results stay inline (RD-1: full raw inline
+# always); oversize payloads elide at the projection chokepoint with an
+# artifact reference. The per-tool scatter table (ceiling tier +
+# deliberate small outliers, with reasons) lives in
+# ``runtime_limits.py``'s docstring — one table, this one constant.
+DEFAULT_TOOL_CONTEXT_BYTES = 32_768
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
@@ -347,7 +361,7 @@ class ToolSpec:
     tags: tuple[str, ...] = ()
     output_schema: dict[str, object] | None = None
     defer_loading: bool = False
-    max_context_bytes: int = 4096
+    max_context_bytes: int = DEFAULT_TOOL_CONTEXT_BYTES
     elide: ToolElider | None = None
 
     def __post_init__(self) -> None:
@@ -483,6 +497,7 @@ class ToolRegistry:
 
 
 __all__ = [
+    "DEFAULT_TOOL_CONTEXT_BYTES",
     "ToolCall",
     "ToolElider",
     "ToolError",

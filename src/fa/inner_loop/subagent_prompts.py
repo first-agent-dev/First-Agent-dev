@@ -63,7 +63,7 @@ def _get_fts_files(workspace_root: Path, task: str, limit: int) -> list[str]:
 
     S14b.1: replaced InstantGrepIndex (trigram-only, path-only) with SearchIndex
     (BM25 + trigram + streaming fallback). We invoke .search with output_mode=
-    "files" which returns ranked paths with optional first-match snippets.
+    "files" which returns {path, lines, bytes} rows (S12.7 §A6).
     Best-effort: any failure returns [] so caller falls through to transaction
     files and static fallbacks.
     """
@@ -79,11 +79,9 @@ def _get_fts_files(workspace_root: Path, task: str, limit: int) -> list[str]:
 
         index = SearchIndex(db_path)
         try:
-            # Ensure the full index is built (always include_tests=True at
-            # index time so the per-process sentinel isn't poisoned; query-
-            # time include_tests=False below filters test paths out of
-            # results). The mtime/size-incremental check makes this a no-op
-            # on subsequent calls.
+            # Ensure the full index is built (superset at index time; the
+            # query below scopes via exclude_set). The mtime/size-incremental
+            # check makes this a no-op on subsequent calls.
             try:
                 index.ensure_indexed(
                     workspace_root,
@@ -93,10 +91,14 @@ def _get_fts_files(workspace_root: Path, task: str, limit: int) -> list[str]:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("SearchIndex.ensure_indexed failed: %s", exc)
                 return []
+            # S12.7 (§A6 v7): include_tests is gone from SearchParams —
+            # exclude_set is the tests-off switch. Passing the removed kwarg
+            # raised TypeError, silently swallowed to [] by the best-effort
+            # blanket below (found in R25 review; pinned by test).
             params = SearchParams(
                 query=task,
                 output_mode="files",
-                include_tests=False,
+                exclude_set=frozenset({"tests"}),
                 limit=limit,
             )
             sr = index.search(params, root=workspace_root)
