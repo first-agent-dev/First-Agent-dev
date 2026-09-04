@@ -254,9 +254,8 @@ for line in open(sys.argv[1], encoding="utf-8"):
         slot(t)["marks"].append("near-miss")
     elif kind == "loop_guard_warn":
         slot(t)["marks"].append(f"loop:{c.get('detector','?')}")
-print("  ── turn timeline ([model latency] per turn; ✗:Guard = guard denial; 💬 = model text) ──")
+print("  ── turn timeline ([model latency] per turn; ✗:Guard = guard denial) ──")
 import os
-_llm_cap = 0 if os.environ.get("CAE_LLM_FULL") else 2000
 for t, s in turns.items():
     if not s["tools"] and not s["marks"] and not s["llm"]:
         continue
@@ -264,14 +263,6 @@ for t, s in turns.items():
     par = " [parallel x%d]" % n if n > 1 else ""
     print(f"  t{t:>2} {s['meta']}{par}: {' '.join(s['tools']) if s['tools'] else '-'}"
           + (f"  {' '.join(s['marks'])}" if s["marks"] else ""))
-    if s["llm"]:
-        txt = s["llm"].rstrip()
-        if _llm_cap and len(txt) > _llm_cap:
-            txt = txt[:_llm_cap] + " …[+%d chars — CAE_LLM_FULL=1 for the full text]" % (len(s["llm"].rstrip()) - _llm_cap)
-        lines = txt.splitlines() or [""]
-        print("      💬 " + lines[0])
-        for ln in lines[1:]:
-            print("        " + ln)
 wall = "?"
 if t_first and t_last:
     try:
@@ -303,7 +294,7 @@ row_run() { # row_run <label> <max_turns> <task> [assert_hook] [nonzero_ok]
   mkdir -p "$LEDGER_DIR" # R4: dir exists before ANY capture copy
   local rid="cae-${label}-$(date +%s)-$$"
   local log="/tmp/cae_${rid}.log"   # unique per run: re-runs never clobber prior transcripts
-  local detail="${CAE_DETAIL:-verbose}"   # CAE_DETAIL=debug adds per-event ms timing
+  local detail="${CAE_DETAIL:-debug}"   # debug = full model text PER TURN live (output.py:254) + per-event ms timing
   local events="$STATE_HOST/session-log/$rid/events.jsonl"
   rm -f "$events" 2>/dev/null || true
   # S12.7 residual-gap radar: every live task also asks the model to grade the
@@ -497,7 +488,7 @@ row_run() { # row_run <label> <max_turns> <task> [assert_hook] [nonzero_ok]
 #   3. self-report — the model's own TOOL_FEEDBACK block (the only direct window
 #                    into the model-visible framed string, which events do NOT log)
 # Run after PR merge + `fa update`, pinned single model. Full model text prints
-# every turn (CAE_LLM_FULL defaults to 1 below); CAE_LLM_FULL=0 restores the cap.
+# live every turn via `fa --detail debug` (row_run's default detail level).
 
 # Appended to EVERY live task (s127 + legacy s10 rows). The exact marker line
 # TOOL_FEEDBACK: is what print_self_report greps for.
@@ -576,11 +567,8 @@ s127_finish() { # s127_finish <FLAG> — set vrc/flag if any expectation failed
 }
 
 s127_row() { # s127_row <name> <turns> <task> <hook> [nonzero_ok]
-  # S12.7: print the FULL model text every turn for the gate rows (the operator
-  # reads the model's own words to find residual gaps). Scoped to this row's
-  # invocation only — legacy rows keep the S12.6c 2000-char default cap that
-  # tests/test_live_check_script.py's battery pins. CAE_LLM_FULL=0 overrides.
-  export CAE_LLM_FULL="${CAE_LLM_FULL:-1}"
+  # Per-turn FULL model text comes from `fa --detail debug` (row_run's default
+  # detail level) — printed live by fa's console mirror, not re-dumped post-run.
   row_run "s127-$1" "$2" "$3" "$4" "${5:-}"
 }
 

@@ -177,7 +177,9 @@ def test_near_miss_note_distinguishes_declined_from_ignored() -> None:
 def test_row_diagnostics_detail_and_timeline() -> None:
     """Operator feedback 2026-08-30: rows must show the broader picture."""
     text = _text()
-    assert "CAE_DETAIL:-verbose" in text, "detail level must be overridable (debug adds ms timing)"
+    assert "CAE_DETAIL:-debug" in text, (
+        "detail level must be overridable; default debug = full model text per turn live (output.py:254)"
+    )
     body = text.split("row_run()", 1)[1].split("\n}\n", 1)[0]
     assert "print_timeline" in body, "row_run lost its per-turn timeline printout"
     assert 'kind == "tool_result"' in text and "loop_guard_warn" in text, (
@@ -326,18 +328,22 @@ def test_s12_l1_ceremony_note_is_never_a_fail() -> None:
     assert "flag=" not in ceremony, "ceremony friction must never flag the ledger row"
 
 
-def test_timeline_prints_llm_text() -> None:
-    """S12.6c: the timeline restores the FULL model text per turn from the
-    events — the live console mirror truncates to 200 chars (output.py), so
-    the post-row timeline is the operator's only complete LLM-output surface.
-    Capped at 2000 chars by default; CAE_LLM_FULL=1 uncaps."""
+def test_per_turn_model_text_via_detail_debug_not_timeline_redump() -> None:
+    """Operator feedback 2026-09-04: per-turn agent messages must come from fa's
+    native ``--detail debug`` (output.py:254 'debug: + model text per turn'),
+    printed LIVE per turn by the console mirror — NOT re-dumped post-run by the
+    timeline. The old S12.6c timeline model-text block existed only because the
+    live mirror truncated to 200 chars at verbose; it duplicated the last agent
+    message three times (fa final-result dump + timeline 💬 + self-report) and
+    never showed the intermediate turns' full text live. Under --detail debug
+    the timeline is a terse structural summary and CAE_LLM_FULL is obsolete."""
     text = _text()
-    assert "💬" in text, "timeline lost the model-text block"
-    assert 'c.get("text")' in text, "timeline no longer captures model_msg text"
-    assert "CAE_LLM_FULL" in text, "uncapped override removed"
-    assert '"llm"' in text, "per-turn llm slot removed"
-    # A text-only turn (final answer, no tools) must still be printed.
-    assert 'not s["tools"] and not s["marks"] and not s["llm"]' in text, "text-only turns are skipped again"
+    assert "CAE_DETAIL:-debug" in text, "rows must default to --detail debug for live per-turn model text"
+    assert "💬" not in text, (
+        "timeline must not re-dump model text — fa --detail debug prints it live per turn; "
+        "re-printing it post-run is the 3x-last-message duplication the operator flagged"
+    )
+    assert "CAE_LLM_FULL" not in text, "CAE_LLM_FULL timeline-cap machinery is obsolete under --detail debug"
 
 
 def test_adversarial_battery_is_green() -> None:

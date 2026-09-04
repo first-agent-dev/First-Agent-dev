@@ -91,6 +91,34 @@ def test_console_llm_response() -> None:
     assert "cache=" in out
 
 
+def test_console_llm_response_detail_levels_model_text() -> None:
+    """Operator feedback 2026-09-04: ``--detail debug`` is the live per-turn
+    agent-message surface. verbose shows a 200-char preview (💭); debug emits the
+    FULL multi-line text (💬). Before the fix both truncated to 200, so the
+    documented "debug: + model text per turn" contract was unimplemented and the
+    only complete LLM text was the end-of-run dump (the 3x-last-message problem).
+    """
+    text = "HEAD " + "x" * 250 + "\nSECOND line of the agent message\nTHIRD line"
+
+    def _render(detail: str) -> str:
+        buf = StringIO()
+        r = ConsoleRenderer(detail=detail, no_color=True)
+        with patch.object(r, "_write", side_effect=lambda t: buf.write(t + "\n")):
+            r.on_event(_event("llm_response", text=text, in_tokens=10, out_tokens=5))
+        return buf.getvalue()
+
+    verbose = _render("verbose")
+    assert "💭" in verbose, "verbose shows the preview marker"
+    assert "SECOND line" not in verbose, "verbose must truncate at 200 chars (no 2nd line)"
+    assert "THIRD line" not in verbose, "verbose must truncate at 200 chars (no 3rd line)"
+
+    debug = _render("debug")
+    assert "💬" in debug, "debug shows the full-text marker"
+    assert "x" * 250 in debug, "debug must not truncate the long first line"
+    assert "SECOND line of the agent message" in debug, "debug must emit the full 2nd line"
+    assert "THIRD line" in debug, "debug must emit the full 3rd line"
+
+
 def test_console_tool_call_success() -> None:
     buf = StringIO()
     r = ConsoleRenderer(detail="standard")

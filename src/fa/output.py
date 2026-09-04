@@ -250,8 +250,8 @@ class ConsoleRenderer:
     Detail levels:
     - minimal:  turn headers + final summary
     - standard: + tool action lines
-    - verbose:  + LLM timing/tokens + tool params
-    - debug:    + model text per turn
+    - verbose:  + LLM timing/tokens + tool params + 200-char model-text preview
+    - debug:    + FULL model text per turn (💬) + per-event ms timing
     """
 
     def __init__(
@@ -319,8 +319,14 @@ class ConsoleRenderer:
         if self.detail in ("verbose", "debug") and d.get("text"):
             raw_text = d["text"]
             text_str = raw_text if isinstance(raw_text, str) else str(raw_text)
-            preview = text_str[:200].replace("\n", " ")
-            self._write(f"  {self._c('2', f'💭 {preview}')}")
+            if self.detail == "debug":
+                # emit the FULL text (multi-line, indented) - live per-turn agent-message.
+                for i, ln in enumerate(text_str.rstrip().splitlines() or [""]):
+                    lead = "💬 " if i == 0 else ""
+                    self._write(self._c("2", f"  {lead}{ln}" if i == 0 else f"     {ln}"))
+            else:
+                preview = text_str[:200].replace("\n", " ")
+                self._write(f"  {self._c('2', f'💭 {preview}')}")
 
     def _handle_tool_call(self, e: OutputEvent) -> None:
         d = e.data

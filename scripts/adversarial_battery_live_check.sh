@@ -186,19 +186,14 @@ if printf '%s' "$OUT" | grep -qF 't 1 [stub-model 0.9s]: Bash'; then ok "S1 time
 else miss "S1 timeline buckets by model_msg turns (with model/latency meta)" "$(printf '%s' "$OUT" | grep -A4 'turn timeline')"; fi
 if printf '%s' "$OUT" | grep -qE 'summary: 2 turns, .* 1 tools, denials\[0\], 0 escalations, 0 near-miss, stop=stopped_by_llm, 3200 in/42 out tok'; then ok "S1 run summary line"
 else miss "S1 run summary line" "$(printf '%s' "$OUT" | grep -F 'summary:')"; fi
-if printf '%s' "$OUT" | grep -qF '💬 Verified: all checks passed.'; then ok "S1 timeline prints model text (S12.6c)"
-else miss "S1 timeline prints model text (S12.6c)" "$(printf '%s' "$OUT" | grep -A6 'turn timeline')"; fi
+if printf '%s' "$OUT" | grep -qF '💬'; then miss "S1 timeline must NOT re-dump model text" "$(printf '%s' "$OUT" | grep -F '💬' | head -2)"
+else ok "S1 timeline is terse — no model-text re-dump (per-turn text comes from fa --detail debug, live)"; fi
 
-echo "== S1b (S12.6c): overlong model text is capped; CAE_LLM_FULL=1 uncaps"
-PAT="$(printf 'L%.0s' $(seq 1 2500))"
-OUT="$(STUB_MODE=ok-long-text bash scripts/run_live_check.sh l1 2>&1)"; RC=$?
-if printf '%s' "$OUT" | grep -qF '…[+500 chars'; then ok "S1b cap marker present"
-else miss "S1b cap marker present" "$(printf '%s' "$OUT" | grep -F '💬' | head -2)"; fi
-if printf '%s' "$OUT" | grep -qF "$PAT"; then miss "S1b capped run leaked the full 2500-char text"
-else ok "S1b capped run truncated"; fi
-OUT="$(STUB_MODE=ok-long-text CAE_LLM_FULL=1 bash scripts/run_live_check.sh l1 2>&1)"; RC=$?
-if printf '%s' "$OUT" | grep -qF "$PAT"; then ok "S1b CAE_LLM_FULL=1 uncaps"
-else miss "S1b CAE_LLM_FULL=1 uncaps"; fi
+echo "== S1b: per-turn model text comes from fa --detail debug (the script's default detail level), not a post-run timeline re-dump"
+if grep -qF 'CAE_DETAIL:-debug' scripts/run_live_check.sh; then ok "S1b rows default to --detail debug (full model text per turn live; output.py:254)"
+else miss "S1b rows default to --detail debug" "detail default is not debug"; fi
+if grep -qF 'CAE_LLM_FULL' scripts/run_live_check.sh; then miss "S1b obsolete CAE_LLM_FULL timeline-cap machinery still present"
+else ok "S1b CAE_LLM_FULL machinery removed (obsolete under --detail debug)"; fi
 
 echo "== S2: session never starts (no events file) — must FAIL, never PASS"
 OUT="$(STUB_MODE=no-events bash scripts/run_live_check.sh l1 2>&1)"; RC=$?
