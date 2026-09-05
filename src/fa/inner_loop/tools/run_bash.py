@@ -183,6 +183,13 @@ def _run_pty_executor(
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("artifact store write failed: %s", exc)
 
+            # F7: ``returncode`` is the shell/pipeline last-stage exit
+            # (here PtyPool ``exit_code``). FA does not wrap ``set -o pipefail``
+            # (``| head`` / ``| grep`` would then SIGPIPE and burn turns) and
+            # does not inject ``PIPESTATUS``: the subprocess fallback is
+            # ``shell=True`` → ``/bin/sh -c`` (dash on Ubuntu: no PIPESTATUS),
+            # so a pipestatus field would be PTY-vs-fallback inconsistent.
+            # Out-of-band capture only if that is ever pursued.
             summary = f"bash exited {pty_result.exit_code}"
             result = {
                 "returncode": pty_result.exit_code,
@@ -286,6 +293,8 @@ def _run_subprocess_fallback(
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to offload trimmed stdout to ArtifactStore: %s", exc)
 
+    # F7: last-stage pipeline exit (see PTY path). ``shell=True`` here is
+    # ``/bin/sh -c`` — not bash — so ``PIPESTATUS`` is unavailable.
     summary = f"bash exited {completed.returncode}"
     result = {
         "returncode": completed.returncode,
@@ -351,6 +360,11 @@ then fs_read_terminal, fs_list_tasks, fs_kill_task, fs_send_ctrl_c.
 Output over ~30,000 chars is retained TAIL-biased (the end, where errors/answers usually
 are) with the full output stored under artifact_id — follow it with fs_read_file
 {"artifact_id": ...} (S12.7). Prefer grep / | tail -n N for huge outputs.
+
+returncode is the shell/pipeline exit (last stage), not each command in a pipe.
+Piping a failing producer into tail/grep reports tail's 0. FA does not enable
+pipefail for you. If you need the producer's status, put set -o pipefail in THAT
+command or do not pipe.
 
 Chain commands with && for atomicity: cd src && ls -la
 

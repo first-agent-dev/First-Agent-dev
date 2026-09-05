@@ -91,14 +91,17 @@ def test_s127_dense_cluster_trailer_and_byte_bound(tmp_path: Path) -> None:
 
 
 def test_s127_limit_caps_regions_not_hits(tmp_path: Path) -> None:
-    (tmp_path / "one.py").write_text("needle\nx\n\nneedle\n", encoding="utf-8")  # 1 region
-    (tmp_path / "two.py").write_text("needle\n", encoding="utf-8")  # 1 region
-    (tmp_path / "three.py").write_text("needle\n", encoding="utf-8")  # 1 region
+    # two adjacent hits (gap 1 <= MERGE_GAP_LINES) = ONE region, two hits —
+    # proves limit counts regions, not hit lines.
+    (tmp_path / "one.py").write_text("needle\nneedle\n", encoding="utf-8")
+    (tmp_path / "two.py").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "three.py").write_text("needle\n", encoding="utf-8")
     tool = _mk(tmp_path)
     r = tool.handler({"query": "needle", "output_mode": "matches", "limit": 2})
     assert r.result is not None
     assert r.error is None
     assert r.result["returned"] == 2 and r.result["truncated"] is True, "limit caps REGIONS; more regions existed"
+    assert r.result["total"] == 3, "F9: matches must surface pre-limit region count"
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +210,12 @@ def test_s127_lenient_all_six_removed_params_warn(tmp_path: Path) -> None:
     assert r.error is None, "legacy knobs must never fail the call (CT11 leniency)"
     warned = {w.split("'")[1] for w in r.result["warnings"] if "accepted but ignored" in w}
     assert warned == {"order", "include_tests", "glob", "case_sensitive", "max_file_size", "context_lines"}
+    # F8: loud top-level field (not only buried warnings[]). Kill-check:
+    # drop _attach_ignored_params → this fails while warnings[] still pass.
+    ignored = r.result.get("ignored_params")
+    assert isinstance(ignored, list) and {i["param"] for i in ignored} == warned
+    glob_row = next(i for i in ignored if i["param"] == "glob")
+    assert "path" in glob_row["replacement"]
 
 
 def test_s127_path_absorbs_glob(tmp_path: Path) -> None:
@@ -237,6 +246,26 @@ def test_s127_regex_casing_comes_from_pattern(tmp_path: Path) -> None:
 
 def test_s127_response_cap_is_32768() -> None:
     assert MAX_RESPONSE_BYTES == 32_768, "CT2 alignment: the read budget ceiling (S2/S4)"
+
+
+def test_s127_f9_byte_cap_warning_names_total() -> None:
+    """F9: byte-cap truncation must name the pre-cap match total once."""
+    from fa.inner_loop.tools.fs_search import _enforce_response_cap
+
+    rows = [{"path": f"f{i}.py", "lines": 1, "bytes": 1, "pad": "x" * 4000} for i in range(20)]
+    result = {
+        "returned": 20,
+        "total": 62,
+        "truncated": False,
+        "files": rows,
+        "warnings": [],
+    }
+    _enforce_response_cap(result)
+    assert result["truncated"] is True
+    assert result["returned"] < 20
+    cap_warns = [w for w in result["warnings"] if "byte cap" in w]
+    assert len(cap_warns) == 1
+    assert "62 matched" in cap_warns[0]
 
 
 def test_s127_files_stat_rows_is_the_sorting_authority(tmp_path: Path) -> None:

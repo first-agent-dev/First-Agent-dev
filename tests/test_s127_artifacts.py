@@ -185,6 +185,40 @@ def test_s127_read_file_windowed_artifact_semantics(tmp_path: Path) -> None:
     assert inverted.error.code == "invalid_params"
 
 
+def test_s127_f4_sandbox_allows_artifact_id_only_read(tmp_path: Path) -> None:
+    """F4: artifact_id-only must reach the tool; path-only stays contained.
+
+    The model will omit path, send path=\"\", or send both. Hook must not
+    waste a turn with 'path must be a non-empty string' when artifact_id
+    is present. Path-only workspace reads MUST still be allowed.
+    """
+    from fa.inner_loop.hooks.base import HookPayload, LifecyclePoint
+    from fa.inner_loop.hooks.builtin import SandboxHook
+    from fa.inner_loop.registry import ToolCall
+
+    (tmp_path / "x.py").write_text("ok\n", encoding="utf-8")
+    hook = SandboxHook(tmp_path)
+    aid = "tool-result-" + "0" * 16
+
+    def _dec(params: dict[str, object], call_id: str):
+        return hook.handle(
+            LifecyclePoint.BEFORE_TOOL_EXEC,
+            HookPayload(tool_call=ToolCall(name="fs_read_file", params=params, call_id=call_id)),
+        )
+
+    assert _dec({"artifact_id": aid}, "c1").action == "allow"
+    assert _dec({"artifact_id": aid, "path": ""}, "c1b").action == "allow"
+    path_only = _dec({"path": "x.py"}, "c-path")
+    assert path_only.action == "allow", path_only.reason
+    deny_empty = _dec({}, "c2")
+    assert deny_empty.action == "deny"
+    assert "path must be a non-empty string" in deny_empty.reason
+    both = _dec({"path": "x.py", "artifact_id": aid}, "c3")
+    assert both.action == "allow", both.reason
+    escape = _dec({"path": "../etc/passwd"}, "c4")
+    assert escape.action == "deny"
+
+
 def test_s127_read_file_unknown_foreign_and_traversal_artifacts(tmp_path: Path) -> None:
     """P8 unknown/foreign/traversal: one structured artifact_not_found with
     steering; no existence oracle distinctions."""
