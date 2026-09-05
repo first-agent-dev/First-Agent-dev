@@ -91,9 +91,11 @@ def test_s127_dense_cluster_trailer_and_byte_bound(tmp_path: Path) -> None:
 
 
 def test_s127_limit_caps_regions_not_hits(tmp_path: Path) -> None:
-    (tmp_path / "one.py").write_text("needle\nx\n\nneedle\n", encoding="utf-8")  # 1 region
-    (tmp_path / "two.py").write_text("needle\n", encoding="utf-8")  # 1 region
-    (tmp_path / "three.py").write_text("needle\n", encoding="utf-8")  # 1 region
+    # two adjacent hits (gap 1 <= MERGE_GAP_LINES) = ONE region, two hits —
+    # proves limit counts regions, not hit lines.
+    (tmp_path / "one.py").write_text("needle\nneedle\n", encoding="utf-8")
+    (tmp_path / "two.py").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "three.py").write_text("needle\n", encoding="utf-8")
     tool = _mk(tmp_path)
     r = tool.handler({"query": "needle", "output_mode": "matches", "limit": 2})
     assert r.result is not None
@@ -208,6 +210,12 @@ def test_s127_lenient_all_six_removed_params_warn(tmp_path: Path) -> None:
     assert r.error is None, "legacy knobs must never fail the call (CT11 leniency)"
     warned = {w.split("'")[1] for w in r.result["warnings"] if "accepted but ignored" in w}
     assert warned == {"order", "include_tests", "glob", "case_sensitive", "max_file_size", "context_lines"}
+    # F8: loud top-level field (not only buried warnings[]). Kill-check:
+    # drop _attach_ignored_params → this fails while warnings[] still pass.
+    ignored = r.result.get("ignored_params")
+    assert isinstance(ignored, list) and {i["param"] for i in ignored} == warned
+    glob_row = next(i for i in ignored if i["param"] == "glob")
+    assert "path" in glob_row["replacement"]
 
 
 def test_s127_path_absorbs_glob(tmp_path: Path) -> None:
