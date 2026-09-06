@@ -5,11 +5,11 @@
 **Tip verified against:** `fc1f2e68144f2a9f4fd279c21fb619842d69cc70`
 **Status:** research + verification. No code changed. Deliverable is this doc; the plan it feeds is `/plan-authoring` work, gated on §9 decisions.
 
-**Revision 2** — reframed after operator context: the module's founding sources (Q-15, AP-001, AP-003, `pr-creation/SKILL.md`, ADR-10 I-1, ADR-8, ADR-11) and the stated design intent ("inherited context", "garbage in → slop out", "push models to the limits").
+**Revision 3** — rev 1 verified the defect; rev 2 reframed it against the founding sources (Q-15, AP-001, AP-003, ADR-10 I-1, ADR-8, ADR-11); **rev 3 re-baselines the goal and folds in the redesign** per operator direction. §§1–4 are rev 2's verified findings, unchanged. §§5–8 are new.
 
 ---
 
-## 0. What changed in rev 2, and why it matters
+## 0. What rev 2 established (carried forward)
 
 Rev 1 treated F6 as two independent bugs: an over-broad bash classifier and an under-documented tool schema. Both findings stand and are re-verified below.
 
@@ -223,228 +223,276 @@ There is a deeper point here worth stating plainly. A validator can only ever ch
 
 ---
 
-## 5. Option space
+## 5. Re-baseline — what the seat is actually for (operator, rev 3)
 
-Five options. Weighed against §1.2 minimalism-first, §1.2.5 compliance-by-construction, AP-001 action-count, Pillar 3 KPI #2.
+Rev 2 diagnosed the inversion. Rev 3 re-baselines the **goal**, because the operator's workflow moved since the module was built and the module never followed.
 
-### Option A — Patch the symptoms (rev 1's plan)
+### 5.1 The operator's stated pipeline
 
-Widen the bash whitelist; add schema descriptions; make surplus fields lenient; enrich the deny message.
+> "agent always works in git style repos. All changes are commits, final step is pr creation with a note attached. Idea was that pr_prepare note would serve as: **inherited context**, model starts all changes with locking in invariants and continues while following that trajectory; **some function deterministically verifies compliance**; after work is done pr_prepare note text goes in as **part of frontmatter in actual PR's description** + mentioning link to plans, docs, etc."
 
-- ✅ Small, low-risk, each piece independently revertable.
-- ❌ Leaves the inversion. The model still composes from nothing; still no pre-filled draft; still deny-only. Cuts ~6 turns to ~2, not to ~0.
-- ❌ **AP-004 risk:** four call-site guards, no named root cause. The anti-shallow-fix gate would rightly ask what producer freedom was closed — "the model can send wrong fields" is a symptom, not a freedom.
-- **Verdict:** necessary but insufficient. Its good parts survive inside C/D.
+So the note has a **three-phase lifecycle**, and only phase 2 was ever built:
 
-### Option B — Delete the harness seat, keep the git hook
+| phase | purpose | consumer | built? |
+|---|---|---|---|
+| **1. Anchor** | model locks intent before work; the note enters its own context and biases the trajectory | the model itself | ❌ the note is write-only; nothing re-surfaces it in-session |
+| **2. Compliance** | a deterministic function verifies work matches declared intent | `IntentGuard` | ⚠️ built, but checks *header shape*, not *compliance with the declared trajectory* |
+| **3. Publication** | note becomes PR-description frontmatter + links to plans/docs | `gh pr create` | ❌ **nothing in `src/fa/` creates a PR.** Verified: no `gh pr create`, no PR-body composer |
 
-- ✅ Maximum subtraction; §1.2 would ask this question.
-- ❌ Destroys the operator's actual goal. The git hook fires at *commit* time — after the code is written. "Inherited context" requires the anchor to exist *before* the trajectory. This is Q-15's rejected (c) with extra steps.
-- **Verdict:** rejected on goal grounds, not cost grounds.
+**This is the finding that reframes the whole module.** F6's turn-tax is phase 2 misfiring. But phases 1 and 3 — the two the operator actually described as the point — **do not exist**. The module is one-third built, and the built third is the enforcement third.
 
-### Option C — Restore the scaffold (wire `render_prepare_buffer` into the harness seat)
+That explains why it feels wrong. A checkpoint that only ever *blocks*, never *pays back*, is experienced as a toll. Phases 1 and 3 are where the payback lives.
 
-Do at the harness seat what the git seat already does.
+### 5.2 Verified: the anchor is write-only within a session
 
-1. **Pre-compute + pre-fill.** At session bootstrap, run `classify_intent` over the current staged/dirty state, render the per-intent template via `render_prepare_buffer` (`pr_intent.py:307`), and surface it as turn context — exactly the `_publish_scope_estimate` shape (`cli.py:1920`, injected at `cli.py:2252` via `turn_context`, deliberately *not* on the cacheable prefix per the D7 note at `cli.py:1942-1947`). The model sees a filled draft with `<fill me — …>` placeholders before it acts.
-2. **Accept the filled template.** `pr_prepare` gains a single-field path: send the edited text, harness parses it with the same `parse_field` / `validate_commit_msg`. Structured fields stay supported.
-3. **Repair instead of deny.** On a near-miss, return `Decision.modify` (`hooks/base.py:76`) with the corrected payload, plus a loud `repaired[]` notice. The replay machinery at `hooks/base.py:180-200` already handles re-validation. **Currently zero middlewares use this seat** — building the affordance and never wiring it is the ADR-11 §I9 shape.
-4. **Keep rejecting what must be rejected.** Missing FIX clauses stay hard denials — those are AP-003's load-bearing fields. Never auto-fill `DETERMINISTIC MECHANISM`; auto-filling the anti-shallow-fix gate would *be* the shallow fix.
+`pr_prepare` writes the draft (`prepare_pr.py:255`). `IntentGuard` reads it (`intent_guard.py:308`). **Nothing puts it back in front of the model during the session.**
 
-- ✅ Restores Q-15's chosen design; cites its own founding document.
-- ✅ Action count 6 → 1, matching AP-001:130 "one action".
-- ✅ Adds **no new component** — wires an existing function, an existing hook affordance, an existing precedent. §1.2 question 3 answers itself: nothing to replace, only to connect.
-- ✅ Improves anchor quality: a pre-filled template with intent-specific placeholders steers content, where a bare schema steers only syntax.
-- ⚠️ Touches the composition root (`cli.py`) and the hook decision path.
-- ⚠️ `Decision.modify` is unexercised in production — first user pays the integration cost. Mitigated: the replay path is already tested at the registry level.
+The one place the draft *is* re-surfaced is `--resume`, across sessions:
 
-### Option D — C, plus make the anchor earn its place
-
-C, plus: the classifier's intent is **injected as the default**, so the model's job shrinks to confirm-or-override with a one-line reason (the skill's D-5 override, `SKILL.md:186-190`, already permits typed override — it just has no cheap surface). And a *warning-only* signal when the invariant is content-free (`n/a` under an intent whose diff shape is non-trivial) — observable, never blocking, per §1.2.5 "WARNING surface, never a silent pass".
-
-- ✅ Directly targets the `invariant: "n/a"` failure §4 identifies.
-- ✅ Warning-only respects forgiving-tools and keeps judgement out of the deny path.
-- ⚠️ "Content-free" needs a deterministic definition or it becomes the LLM-judgement §1.2 q4 forbids. Proposal: purely structural — `n/a`-only invariant **and** classifier intent ∉ {RESEARCH, CHORE} **and** ≥1 projected path under `src/`. No semantics.
-- **Verdict:** the goal-aligned target. Ships after C proves out.
-
-### Option E — Full redesign (I-59)
-
-Rule composition, per-intent policy objects, deny-reason taxonomy.
-
-- ❌ Operator set I-59 to P4, "deliberately unscheduled until the live series closes" (`BACKLOG.md:2889-2896`). C+D delivers the KPI win without pre-empting it.
-- **Verdict:** stays deferred. C is deliberately shaped to not foreclose it.
-
-### Recommendation
-
-**C now, D next, with A's cheap parts folded into C.** Specifically:
-
-- A's bash-whitelist widening is **kept** — it is an independent defect (I-58) with its own root cause, and it shrinks how often the seat fires at all.
-- A's schema descriptions are **kept** — cheap, and they make the fallback path (structured fields) coherent.
-- A's surplus-field leniency is **kept**, now justified by `_render_draft` already discarding them (§2.6) rather than by "be nice".
-- A's deny-message enrichment is **subsumed** by C3: repair beats a better rejection.
-
----
-
-## 6. Proposed changes
-
-Ordered by dependency. Each independently landable and kill-checkable.
-
-### C1 — Widen the deterministic safe set (closes I-58)
-
-**Degree of freedom closed:** `analyze_bash_for_intent` labels a command `OPAQUE_EXEC` — and therefore draft-requiring — whenever its head verb is absent from a 33-entry table, even when the verb provably cannot write. The draft requirement is decided by an omission in a data table, not by the command's effect.
-
-**Deterministic mechanism:** extend `_READ_ONLY_COMMANDS` (`bash_intent.py:62`) with the pure-filter / pure-inspect POSIX set; add a `uv run` / `uvx` unwrap mirroring `_unwrap_env` (`bash_intent.py:227`); basename the head in `_is_verify_only` to match its sibling `_is_read_only` (`bash_intent.py:287`).
-
-Safety argument: every added verb is a pure filter or inspector, and **write redirects are detected upstream of the verb lookup** (`_analyze_redirects`), escalating to `REPO_WRITE` regardless. Widening the verb table cannot widen write authority.
-
-- Add: `seq sort uniq cut tr nl rev fold column paste join comm expand unexpand basename dirname realpath readlink md5sum sha1sum sha256sum cksum jq yq xxd od strings ps printenv command type sleep yes tac`
-- `sed`: `READ_ONLY` only when no `-i` / `--in-place`; `_sed_target_files` (`bash_intent.py:307`) already owns the in-place path. Same for `perl -i`.
-- `awk`: **excluded by default** — it can write via `print > "file"` inside its program text, invisible to bashlex. See §9 Q1.
-- `uv run <verifier>` → unwrap → `VERIFY_ONLY`; `uv run <anything else>` stays `OPAQUE_EXEC`. The unwrap widens nothing on its own.
-- **Deliberately unchanged:** `_reduce_analyses` max-severity (`:192`) and compound-node opacity (`:174`). Both are genuine safety properties; recursing into them is I-59. Pinned by tests so the non-change is intentional.
-
-### C2 — Pre-compute the intent and pre-fill the draft (the core fix)
-
-**Degree of freedom closed:** the harness never computes the session's likely intent before the model's first tool call and never renders the per-intent template, although `classify_intent` (`pr_intent.py:164`) and `render_prepare_buffer` (`pr_intent.py:307`) both exist and the git seat consumes both (`pr_intent.py:928`). The model must therefore infer the entire header shape from a schema, which is the composition burden Q-15 rejected as option (c).
-
-**Deterministic mechanism:** at session bootstrap, classify the current staged/dirty snapshot and inject the rendered template as turn context, following `_publish_scope_estimate` (`cli.py:1920`) — same pure-function-then-inject shape, same non-cacheable placement per the D7 note (`cli.py:1942-1947`).
-
-- New `_publish_intent_scaffold(...)`, sibling to `_publish_scope_estimate`, emitting an `intent_scaffold` event and returning a `## Draft Intent (pre-filled)` block appended to the existing `turn_context` (`cli.py:2252`).
-- **D7 compliance is mandatory:** the block is per-session, so it must ride `turn_context`, never `system_prompt_extra`. Putting it on the cacheable prefix would fork the prompt cache per session — the exact measured failure the D7 note records.
-- Empty/clean workspace → classifier yields `CHORE` → template is two lines. Cheap floor, no special-casing.
-- Token cost: ~40–90 tokens. Against 6 turns, this is not close.
-
-### C3 — Accept the filled template; repair near-misses instead of denying
-
-**Degree of freedom closed:** `pr_prepare` accepts exactly one input shape (structured JSON fields, `prepare_pr.py:67-97`) and `_validate_fix_fields` (`:136-168`) surfaces one violation per call, so a caller who edited the pre-filled template, or who sent surplus fields the renderer would have discarded anyway (`:121`), pays one turn per deviation instead of being repaired or corrected in one pass.
-
-**Deterministic mechanism:** add a `draft_text` input parsed by the same `parse_field` / `validate_commit_msg`; collect **all** violations in one pass; accept-and-report surplus FIX-only fields under a non-FIX intent via top-level `ignored_params`, mirroring `fs_search.py:74-77`; and return `Decision.modify` (`hooks/base.py:76`) for repairable near-misses at the guard seat.
-
-**The asymmetry is load-bearing and must survive:**
-
-| direction | behaviour | why |
-|---|---|---|
-| surplus FIX-only fields under non-FIX intent | **accept, drop, report** | `_render_draft:121` already drops them — the artifact is identical either way (§2.6) |
-| missing FIX clauses under `INTENT: FIX` | **reject, all violations at once** | AP-003's load-bearing fields; relaxing this *is* the shallow fix |
-| invariant prefix mismatch | **reject, constructive message** | shape-bearing; message already names expected prefixes |
-| `DETERMINISTIC MECHANISM` auto-fill | **never** | auto-filling the anti-shallow-fix gate defeats its purpose |
-
-Plus C2's companion: schema descriptions on the four undescribed properties, derived from `INVARIANT_REQUIRED_PREFIXES` (`pr_intent.py:391`) and the enums rather than hand-typed, per ADR-10 I-1.
-
-**Constraints verified:**
-- **PTS-v1** (`registry.py:289`, enforced `:425`): `if`/`then`/`dependentRequired` are **not** permitted. Conditionality must be prose in `description`, which `invariant` already proves passes (`prepare_pr.py:78`).
-- **Prompt cache:** `prompt_composer.py:43-59` hashes name + `input_schema`, excluding `description`. Adding a `draft_text` property changes the cache key **once at deploy**, not per session. Note in the PR.
-- **Token budget:** `estimate_tokens` (`profiles.py:433-445`). Target ≤ ~120 added tokens.
-
-### C4 — Warning-only anchor-quality signal (Option D; ships after C)
-
-**Degree of freedom closed:** nothing observes whether the draft states a real intent, so a `invariant: "n/a"` draft under a source-touching diff satisfies the gate identically to a substantive one — the seat's stated purpose (trajectory anchor) has no failure surface at all.
-
-**Deterministic mechanism:** a purely structural predicate — `invariant` is `n/a`-only **and** classifier intent ∉ {RESEARCH, CHORE} **and** ≥1 projected path under `src/` — emitting a WARNING event, never a deny, per §1.2.5 "WARNING surface, never a silent pass".
-
-No semantics, no LLM judgement, no blocking. It makes the empty case *observable*, which is the §1.2.5 half currently missing.
-
-### Explicitly out of scope
-
-- `_reduce_analyses` / compound-node opacity — considered, deliberately unchanged (§C1).
-- I-59 structural refactor — stays P4. C is shaped not to foreclose it.
-- `intent_guard.mode: observe` (`intent_guard.py:130-136`) — the tactical lever is not a substitute for the semantic fix; untouched.
-- Making the git-hook seat as strict as the harness seat — ADR-11:650 names seat asymmetry as an explicit non-goal.
-
----
-
-## 7. Anti-shallow-fix gate — draft PR clauses
-
-```text
-INTENT: FIX
-CLASS: REPAIR
-INVARIANT: Affects: harness-side intent-declaration seat (Q-15 pre-population
-contract, S12.7 F6, backlog I-58)
-
-DEGREE-OF-FREEDOM CLOSED: the harness seat asks the LLM to COMPOSE the
-PR-intent header from a bare schema, while the git seat hands it a
-mechanically pre-filled template to EDIT — so the seat Q-15 chose for its
-LOWER action count (exploration_log.md:1352-1367, rejecting post-hoc
-declaration on AP-001 action-count grounds) carries the higher one, and the
-model's first-instinct phrasing is met with denial instead of a scaffold.
-Compounding it, the draft requirement is triggered by a verb-table omission
-rather than by a command's actual write capability.
-
-DETERMINISTIC MECHANISM: the session bootstrap classifies the staged
-snapshot and injects the rendered per-intent template as turn context,
-reusing the same render_prepare_buffer the git hook consumes and the same
-pure-function-then-inject shape as the scope estimator, so the agent edits a
-filled buffer instead of composing one — src/fa/hygiene/pr_intent.py:307;
-near-miss payloads are repaired via the existing Decision.modify seat rather
-than denied — src/fa/inner_loop/hooks/base.py:76; and the read-only safe set
-is widened so the effect label follows write capability, with redirect
-detection unchanged upstream of the verb lookup —
-src/fa/inner_loop/bash_intent.py:62.
-
-TEST-EDITS:
-tests/test_bash_intent.py — new safe-set verbs and uv-run unwrap must be pinned
-tests/test_prepare_pr.py — draft_text path and surplus-field leniency replace first-violation rejection
-tests/test_intent_guard.py — repair-instead-of-deny path is new behaviour at the guard seat
-tests/test_pr_intent_snapshot.py — render_prepare_buffer gains a second production consumer
+```
+# cli.py:2163-2168
+# When resuming, inject the previous session's draft content as
+# mutable memory-summary context so the LLM sees the existing
+# plan/work-log from turn 1 …
 ```
 
----
+**The operator's "inherited context" mechanism already exists and is wired — but only across a `--resume` boundary, never within the session where the trajectory is actually being followed.** Same class as `render_prepare_buffer` (§1.2), `Decision.modify` (§0), `should_load_skill` (§5.6): built, correct, wired to the wrong seat or no seat.
 
-## 8. Test plan
+### 5.3 Verified: phase 3 has no implementation at all
 
-### 8.1 Offline (pytest)
+Exhaustive grep across `src/fa/`: no `gh pr create`, no PR-body builder, no frontmatter composer for PR descriptions. `pr_intent.py` validates *commit messages* at the git-hook seat; `_cli_validate` (`pr_intent.py:944`) is a commit-msg gate. The draft never becomes a PR description.
 
-| file | pins |
+So "the note goes into the PR frontmatter" is, in the operator's own words, "mostly in my head and partly written code". Correct — the head part is phase 3.
+
+### 5.4 The two objects, and why the resemblance misleads
+
+`pr_prepare` is **commit-shaped**; the operator's copy-paste protocol is **slice-shaped**. Field-level overlap is one row:
+
+| operator's protocol field | `pr_prepare` equivalent |
 |---|---|
-| `tests/test_bash_intent.py` | each new verb → `READ_ONLY`; **kill-check:** each still → `REPO_WRITE` with `> out.txt`; `sed -n` read-only / `sed -i` mutating; `uv run pytest` → `VERIFY_ONLY` but `uv run rm -rf /` → `OPAQUE_EXEC`; `.venv/bin/pytest` → `VERIFY_ONLY`; brace/compound/`$(…)` **still** opaque (guards the deliberate non-change) |
-| `tests/test_cli.py` | `_publish_intent_scaffold` emits `intent_scaffold` once per session; block reaches `turn_context` and **never** `system_prompt_extra` (D7 kill-check); clean workspace → CHORE two-line template |
-| `tests/test_prepare_pr.py` | `draft_text` round-trips to a byte-identical draft vs structured fields; `{intent: CHORE, +3 FIX fields}` → **ok** + all three in `ignored_params` + rendered draft identical to the two-field call; `INTENT: FIX` missing all three → **one** rejection listing **all three**; invariant-prefix mismatch still rejects; `DETERMINISTIC MECHANISM` never auto-filled |
-| `tests/test_intent_guard.py` | repairable near-miss → `Decision.modify` with `repaired[]`, not `deny`; missing FIX clauses → still `deny`; read-only bash never reaches the draft branch; **kill-check:** revert the modify path → row denies |
-| `tests/test_pr_intent_snapshot.py` | `render_prepare_buffer` has ≥2 production consumers (guards the ADR-11 §I9 unwiring class that caused this) |
-| `tests/test_s127_doc_gates.py` | one required-field line per `INTENT_VALUES` member, derived from the enum, so adding an intent fails the test |
-| `tests/test_prompt_registry_coherence.py` | PTS-v1 still passes; `estimate_tokens` delta within budget |
+| concrete intent | `intent` ✅ |
+| which plan contract + gap IDs | — |
+| exact files allowed to change | — |
+| current behavior → target behavior | — |
+| exact code mechanism | `deterministic_mechanism` (FIX-only) ⚠️ |
+| production best practice | — |
+| failure behavior | — |
+| DoD + negative proof | — |
+| tests-writing class C0/C1/C2/C3 | — |
+| producer kill-check target | — |
+| stop rule → promote to Q# | — |
 
-After every edit, per standing rule: `tests/test_live_check_script.py` + `scripts/adversarial_battery_live_check.sh`.
+One clean match. Two partial. Eight missing. **These are not the same artifact and should not be forced into one schema** — that is how you get a 6-property object serving two masters, which is the shape that produced F6.
 
-### 8.2 Live rows (`scripts/run_live_check.sh`, `s127_row` conventions at `:568-572`)
+But they are also not unrelated: the slice contract is *upstream* of the commit note. Which gives the answer.
 
-**`s127-intent-scaffold`** (C2) — task: make one small edit to a source file and report it.
-- `[PASS]` `"kind": "intent_scaffold"` present
-- `[PASS]` **at most one** `pr_prepare` call (assert on count, not presence)
-- `[PASS]` absent `is only valid when .intent. is .FIX.`
-- kill-check: pre-fix shows 4 `pr_prepare` calls
+### 5.5 Recommendation on the object question — derive, don't merge
 
-**`s127-bash-recon-nodraft`** (C1) — three read-only recon commands (`wc -l`, `sort`, `uv run pytest --version`), nothing written.
-- `[PASS]` `fs_run_bash` ran
-- `[PASS]` **absent** `missing or untrusted current-session PR draft`
-- `[PASS]` **absent** `"tool_name": "pr_prepare"` — the point is that no ceremony was needed
-- kill-check: pre-fix denies on turn 1
+**Three artifacts, one model-facing ceremony, two of them derived.**
 
-**`s127-intent-repair`** (C3) — instruct a deliberately slightly-wrong `pr_prepare` (FIX fields under CHORE), then proceed.
-- `[PASS]` the call **succeeded**
-- `[PASS]` `ignored_params` present
-- `[PASS]` **absent** a second corrective `pr_prepare`
+```
+   ┌─ SLICE CONTRACT ──────────────────────────────┐   ← the ONE thing the model writes
+   │  plan_id · slice_id · contract_ids · gap_ids  │     (per implementation slice)
+   │  files_allowed[] · current → target           │
+   │  mechanism · failure_behavior                 │
+   │  dod · negative_proof · test_class            │
+   │  kill_check_target · open_questions[]         │
+   └───────────────┬───────────────────────────────┘
+                   │ mechanically derived, no LLM call
+        ┌──────────┴──────────┐
+        ▼                     ▼
+  COMMIT NOTE           PR FRONTMATTER
+  INTENT/CLASS/         slice contracts (all)
+  INVARIANT/DOF/        + plan links + doc links
+  MECHANISM             + per-slice verification evidence
+  (per commit)          (per PR, phase 3)
+```
 
-**`s127-intent-anchor-quality`** (C4, after C ships) — non-trivial `src/` edit with a deliberately empty intent.
-- `[PASS]` WARNING event present
-- `[PASS]` run **not** blocked (forgiving-tools kill-check)
+Why derivation rather than merge or extension:
 
-**Re-runs:** `s127-bash-tail`, `s127-bash-stderr`, and `s127-bash-small` (still pending in the SSOT progress table) on the fixed build.
+- **The mapping is total and deterministic.** `intent` ← already declared. `INVARIANT: Affects: …` ← `contract_ids` + `current→target`. `DEGREE-OF-FREEDOM CLOSED` ← `current_behavior` (the freedom that exists today). `DETERMINISTIC MECHANISM` ← `mechanism` + `kill_check_target` (which *is* a `path:line`, satisfying the citation rule by construction). **The anti-shallow-fix gate's hardest field becomes a by-product of a field the operator already writes for engineering reasons.** That is the strongest argument in the whole design: AP-003 compliance stops being ceremony and becomes exhaust.
+- **§1.2 q4 answers itself.** Derivation is parsing + formatting + lookup — the exact case where the principle says "function, not LLM call". Asking the model to write the commit note *and* the slice contract is asking it to say the same thing twice, which is precisely the action-count drift AP-001 names.
+- **One ceremony, richer payload.** Action count stays at 1 (AP-001:130), but the single action now carries the fields the operator actually cares about instead of five commit-message headers.
+- **Phase 3 becomes trivial.** If slice contracts accumulate as typed artifacts, the PR frontmatter is a fold over them. No new authoring burden.
+- **`pr_prepare` survives as an internal writer.** The model stops calling it; the harness does, from the derivation. Its validator stays authoritative (ADR-10 I-1 intact — one validator, now two *derived* consumers). No deletion, no migration of the git-hook seat, ADR-11:650 seat asymmetry preserved.
+
+**Cost, stated honestly:** this is strictly more machinery than rev 2's C1–C4. It is a redesign, which the operator has folded into this PR. The mitigation is that every piece is a *wiring* of something that already exists — `FlowState` for state, `Decision.modify` for repair, `render_prepare_buffer` for scaffolding, `_publish_scope_estimate` for injection, `skills/_inject.py` for skill delivery, `--resume` draft injection for anchoring. **The redesign adds one new artifact type and one new tool; everything else is connection.**
+
+### 5.6 Operator decisions, recorded
+
+| # | decision | consequence |
+|---|---|---|
+| Q1 | **Derive, don't merge** (recommended above; operator asked for reasoning first) | slice contract is the model-facing object; commit note + PR frontmatter derived |
+| Q2 | **Workflow pipeline only** (`planner → coder → eval`) | chat stays lightweight; the protocol formalises in the coder stage. **Major simplification** — `FlowState` already exists there, and `workflow_controller.py` already owns stage sequencing |
+| Q3 | **Harness runs verification and injects real output** | the strongest option. Model cannot claim a green run that did not happen |
+| Q4 | **Warn on out-of-scope writes, never block** | forgiving-tools consistent; `files_allowed` is advisory + observable |
+| Q5 | **Plan-ID derivation is advisory** — operator is sceptical, citing the `pr_prepare` failure pattern | **correctly sceptical; see §5.7** |
+| Q6 | **Stop-rule: first-class tool + halt**, shaped now for a future `ask_user`; backlog for this round | design the seam, don't build the tool yet |
+
+### 5.7 On Q5 scepticism — the operator is right, and the reason matters
+
+> "Not sure we can reliably achieve this — prior pr_prepare situation with consecutive fails is what I expect. I like the idea, but very sceptical."
+
+**This scepticism is correct and generalises into the design's central rule.** The `pr_prepare` failure was not "the model couldn't produce a value". It was: *the harness demanded a value the model had to guess, and rejected wrong guesses one at a time*. Any field where the harness knows the answer better than the model is a field the harness must **supply**, not demand.
+
+Applied to plan IDs: the harness can read the plan file and extract `### S11:` / `**Traces-to:** G7–G11, CT8–CT12` — both are stable conventions in the operator's actual plans (verified in `PLAN-complexity-aware-execution-chat-role.md:1752`, `:1808`). So:
+
+- Parse the plan, offer the **detected** slice ID and contract IDs **pre-filled** in the scaffold.
+- Model confirms or overrides.
+- Harness verifies the final strings **exist in the plan file** — a substring check, not a schema guess.
+- Unparseable plan → field is blank and **optional**, run proceeds. Never a rejection.
+
+**Rule (binding for this redesign): no field may be rejected for absence unless the harness cannot possibly supply or derive it.** The only fields meeting that bar are genuine judgement — `mechanism`, `current→target`, `dod`. Everything else is scaffolded, pre-filled, or optional. This rule is what prevents the redesign from recreating F6 at ten times the surface area.
 
 ---
 
-## 9. Decisions needed before planning
+## 6. Design — the slice contract, in the pipeline
 
-1. **Scope — C2 in or out of this PR?** C1+C3 alone cuts ~6 turns to ~2 and is low-risk. C2 is the actual root-cause fix, cuts to ~1, and touches the composition root. One PR (coherent story, one anti-shallow-fix argument) or two (smaller review surface, C1+C3 lands immediately)? **My recommendation: one PR, C1+C2+C3.** Splitting means the first PR's mechanism clause has to describe a symptom fix, which is the AP-003 shape.
-2. **`Decision.modify` first production use.** C3 wires an affordance that exists, is tested at registry level, and has zero production consumers. Accept that risk, or land C3 as better-rejection-only and defer repair to a follow-up?
-3. **`awk`** — excluded by default (can write via `print > "file"`, invisible to bashlex). Include and accept the blind spot, or keep opaque?
-4. **C4 now or later?** It targets the `invariant: "n/a"` failure most directly — the thing closest to your actual goal — but it is the only piece touching *content* rather than *shape*. Fold into this round, or ship after C proves out?
-5. **I-58 / I-59 disposition.** This closes I-58 outright. Mark I-59 partially addressed (deny-reason taxonomy improved by C3) but open for the structural refactor?
-6. **`s127-bash-tail`'s brace group stays opaque** by design here — ceremony drops from six turns to one, not zero. Accept, or also reword the row?
+Scoped to Q2 (workflow pipeline). Chat role untouched this round.
+
+### 6.1 Where it sits
+
+`run_workflow` already sequences stages and writes `FlowState` before each (`workflow_controller.py:257-271`). The slice contract slots into the **coder** stage:
+
+```
+PLANNING ──► PLAN_READY ──► [SLICE_SCAFFOLD] ──► CODING ──► [VERIFYING] ──► EVALUATING ──► DONE
+                                  │                              │
+                          harness pre-fills            harness RUNS the
+                          from plan + classifier       verify commands
+```
+
+Two new `FlowStatus` members. `FlowStatus` is already a closed literal with a frozenset guard (`workflow_artifacts.py:50-62`, `:71-84`) — additive, and the existing validator catches typos.
+
+### 6.2 The artifact
+
+`slice_contract.json`, sibling to `eval_report.json` / `flow_state.json`, reusing their atomic-write + typed-parse pattern (`workflow_artifacts.py:510-549`):
+
+```python
+@dataclass(frozen=True)
+class SliceContract:
+    # ── harness-supplied (model confirms or overrides; never rejected) ──
+    plan_path: str = ""          # detected from read set / blackboard
+    slice_id: str = ""           # parsed "### S11:"
+    contract_ids: tuple[str, ...] = ()   # parsed "**Traces-to:** G7–G11, CT8–CT12"
+    files_allowed: tuple[str, ...] = ()  # seeded from plan; advisory (Q4)
+    verify_commands: tuple[str, ...] = ()  # parsed from plan's verify lines
+
+    # ── model-authored judgement (the only rejectable fields) ──
+    intent: str = ""             # reuses the Intent enum — SSOT, ADR-10 I-1
+    current_behavior: str = ""   # source-verified, per the operator's protocol
+    target_behavior: str = ""
+    mechanism: str = ""
+    failure_behavior: str = ""
+    dod: str = ""
+    negative_proof: str = ""
+
+    # ── harness-derived, model may override ──
+    test_class: str = ""         # C0/C0p/C1/C2/C3 — derivable from files_allowed
+    kill_check_target: str = ""  # path:line — feeds DETERMINISTIC MECHANISM
+
+    # ── phase 1 / stop-rule ──
+    open_questions: tuple[str, ...] = ()
+```
+
+`test_class` derivation is real, not aspirational: the `tests-writing` skill states the rule as a decision procedure — *"Session / product / loop claim? → C1 (or C2 if CLI-only). Pure helper → C0/C0p"* (`SKILL.md:65`), *"Security? ≥1 adversarial case (C3)"* (`:75`). `path_risk.py` already tiers paths. Files under `src/fa/inner_loop/` touching the loop → C1; pure helper → C0; `_cmd_*` → C2; a hook/sandbox path → C3. Harness proposes, model overrides with a reason.
+
+### 6.3 Phase 1 — the anchor actually anchors
+
+The gap that makes the note feel pointless. Three wirings, all of existing parts:
+
+1. **Pre-fill** the contract from plan + `classify_intent` + `render_prepare_buffer`, inject as turn context via the `_publish_scope_estimate` shape (`cli.py:1920`), respecting the D7 non-cacheable rule (`cli.py:1942-1947`).
+2. **Re-surface** the confirmed contract each coder turn as a compact anchor — reusing the `build_skill_anchor` pattern (`skills/_inject.py`) and the observation-block budget (`observations.py`, 1800-char cap with eviction). Full body on entry turn, ~2-line anchor after. **This is the "inherited context" mechanism, applied within the session instead of only across `--resume`.**
+3. **Inject `tests-writing`** at the coder stage. Its frontmatter triggers already name this exact case — *"IMPLEMENT or FIX touching src/fa/ that claims product behavior"*, *"writing or changing tests under tests/"* (`SKILL.md:11-13`) — and `should_load_skill` (`skills/loader.py:119`) exists with **zero production callers**. Fourth built-unwired affordance; wire it here.
+
+### 6.4 Phase 2 — compliance that means something
+
+Today: header-shape validation. Target: compliance with the *declared trajectory*, all deterministic, all observable:
+
+| check | mechanism | on violation |
+|---|---|---|
+| writes stay in `files_allowed` | path compare at `BEFORE_TOOL_EXEC` | **WARNING** (Q4), never deny |
+| verify commands actually ran | scan event log for `fs_run_bash` with real exit code | block the `slice complete` transition |
+| tests exist for the declared class | `test_class` C1 → ≥1 new/changed test under `tests/` | WARNING |
+| kill-check target is real | `resolve_citation` (`pr_intent.py`) — **already built** | WARNING at contract time, hard at commit |
+| DoD is not empty under a `src/` diff | structural predicate (§C4, rev 2) | WARNING |
+
+Every one is a pure function over artifacts the harness already holds. No LLM judgement anywhere.
+
+### 6.5 Phase 3 — the note becomes the PR
+
+New, and the operator's stated end-goal. After the pipeline reaches `DONE`, fold accumulated slice contracts into a PR body:
+
+```markdown
+---
+plan: worklogs/implementation-plans/PLAN-….md
+slices: [S11.1, S11.2]
+contracts: [G7, G8, CT8]
+---
+INTENT: FIX
+CLASS: REPAIR
+INVARIANT: Affects: …
+DEGREE-OF-FREEDOM CLOSED: …     ← derived from current_behavior
+DETERMINISTIC MECHANISM: …      ← derived from mechanism + kill_check_target
+
+## S11.1 - <target_behavior>
+Verification: <actual command output captured by the harness>
+```
+
+Deterministic fold, no LLM call. Whether it writes the body to a file for `gh pr create -F` or shells out is a §8 decision.
+
+### 6.6 Q3 — the harness runs verification
+
+The strongest lever the operator chose, and the reason it works: `verify_commands` come from the **plan**, not the model, so the harness executes a command the operator authored.
+
+- Runs after the coder stage signals slice-done, before `EVALUATING`.
+- Reuses the existing bash gate (`SandboxHook`, `builtin.py:87`) — same sandbox, same containment, no second exec path.
+- Real stdout/stderr/exit code injected as turn context and recorded in the contract.
+- Non-zero → `REPAIR_REQUIRED` via existing routing (`workflow_controller.py:49-53`); the model sees actual output, not its own summary.
+- **Kills "no exception ⇒ done"** structurally: the model never reports the result, the harness does.
+
+Bounded by the existing wall-clock deadline (`_deadline_exceeded`, `workflow_controller.py:345`) and `bash_timeout_seconds`.
+
+### 6.7 Q6 — the stop-rule seam, built for a later `ask_user`
+
+Backlog the tool; build the seam now. `open_questions` on the contract + a `BLOCKED_ON_QUESTION` route that maps onto the existing `blocked` decision and `CODER_BLOCKED` status — **both already in the enums** (`workflow_artifacts.py:48`, `:55`). When `ask_user` lands it becomes the producer for a consumer that already exists. Zero throwaway work.
+
+### 6.8 What this subsumes from rev 2
+
+| rev 2 | rev 3 status |
+|---|---|
+| C1 bash safe-set widening | **keep as-is** — independent defect (I-58) |
+| C2 pre-fill the draft | **absorbed** — §6.3, richer scaffold |
+| C3 leniency + `Decision.modify` | **absorbed** — §5.7's "never reject what the harness can supply" |
+| C4 anchor-quality warning | **absorbed** — §6.4 |
 
 ---
 
-## 10. Citation index (re-resolved at `fc1f2e6`)
+## 7. Docs to update
+
+Per the operator's "update design docs if needed" — the redesign changes recorded decisions, so these are part of the work, not follow-up:
+
+| doc | change |
+|---|---|
+| `knowledge/trace/exploration_log.md` | new Q# recording the three-phase lifecycle + derive-don't-merge; Q-15 amendment noting the harness seat now honours pre-population |
+| `worklogs/BACKLOG.md` | I-58 closed by C1; I-59 partially addressed; new row for `ask_user` |
+| `knowledge/adr/` | slice contract + harness-run verification is an architectural decision — likely an ADR-16 amendment or new ADR |
+| `knowledge/skills/pr-creation/SKILL.md` | commit note is now *derived*; document the mapping |
+| `knowledge/skills/plan-authoring/SKILL.md` | note which markers the harness parses (advisory, §5.7) |
+| `knowledge/project-overview.md` | §1.2.5 gains the slice-contract seat as an instantiation |
+
+---
+
+## 8. Open decisions before the plan
+
+1. **Slice granularity** — one contract per plan slice (S11.1), or per coder stage entry? Repairs re-enter the coder stage; does a repair amend the contract or open a new one? *(Leaning: amend, with `repair_round` from `FlowState`.)*
+2. **Phase 3 boundary** — does FA shell out to `gh pr create`, or write the body to a file the operator uses? *(Leaning: file. Shelling out makes FA a publisher, which is a bigger threat-model change than it looks.)*
+3. **Contract on repair rounds** — re-verify the whole contract each round, or only invalidated steps? `FlowState.invalidated_steps` already exists (`workflow_artifacts.py:264`).
+4. **`tests-writing` injection cost** — the skill is large. Full body on coder entry then anchor (the `skills/_inject.py` pattern), or a distilled subset? Needs a token measurement against `estimate_tokens`.
+5. **Does the chat role get any of this?** Q2 says pipeline-only. Confirming: chat keeps today's `pr_prepare` (plus C1 relief), and the protocol is pipeline-only until proven.
+6. **C1 scope** — `awk` in the safe set? (carried from rev 2 §9 Q3; still open).
+
+---
+## 9. Citation index (re-resolved at `fc1f2e6`)
 
 ### Founding sources
 | citation | what |
@@ -518,3 +566,27 @@ After every edit, per standing rule: `tests/test_live_check_script.py` + `script
 |---|---|
 | `worklogs/reviews/live-trial-data/cae-s127-bash-tail-1788526685-1245712.events.jsonl` | 6-turn ceremony; turn-3 identical repeat |
 | `worklogs/reviews/live-trial-data/cae-s127-bash-stderr-1788527120-1246970.events.jsonl` | 6-turn ceremony; final draft `invariant: "n/a"` |
+
+### Rev 3 additions — the three-phase lifecycle
+| citation | what |
+|---|---|
+| `src/fa/cli.py:2163-2168` | **`--resume` injects the prior draft as context** — the "inherited context" mechanism, wired only across sessions |
+| `src/fa/cli.py:1836-1840` | clearing the draft is fatal-on-failure (trust model) |
+| `src/fa/cli.py:1858` | `draft_store.clear(remove_file=not resume)` |
+| *(absence)* `src/fa/**` | **no `gh pr create`, no PR-body composer** — phase 3 does not exist |
+| `src/fa/inner_loop/workflow_artifacts.py:50-84` | `FlowStatus` closed literal + frozenset guard — additive-safe |
+| `src/fa/inner_loop/workflow_artifacts.py:128-145` | `StepResult` — precedent for the slice contract's shape |
+| `src/fa/inner_loop/workflow_artifacts.py:250-301` | `FlowState` — where the slice contract attaches |
+| `src/fa/inner_loop/workflow_artifacts.py:264` | `invalidated_steps` — repair-round granularity (§8 Q3) |
+| `src/fa/inner_loop/workflow_artifacts.py:510-549` | atomic write + typed load — reuse for `slice_contract.json` |
+| `src/fa/inner_loop/workflow_controller.py:49-53` | verdict → status routing (`REPAIR_REQUIRED`) |
+| `src/fa/inner_loop/workflow_controller.py:257-271` | `FlowState` written before each stage — the scaffold seat |
+| `src/fa/inner_loop/workflow_controller.py:345` | wall-clock deadline — bounds harness-run verification |
+| `src/fa/skills/loader.py:119` | **`should_load_skill` — zero production callers** (4th unwired affordance) |
+| `src/fa/skills/_inject.py:1-20` | deterministic skill injection; planner skills only |
+| `src/fa/inner_loop/expansion.py:128-136` | `select_l2_skill` — only two skills reachable |
+| `src/fa/inner_loop/coder_loop.py:773-790` | L2 injection call site |
+| `src/fa/inner_loop/hooks/builtin.py:87-104` | `SandboxHook` — reuse for harness-run verification |
+| `knowledge/skills/tests-writing/SKILL.md:11-13` | triggers already name the coder-stage case |
+| `knowledge/skills/tests-writing/SKILL.md:65`, `:75` | C0/C1/C2/C3 as a decision procedure → derivable |
+| `worklogs/implementation-plans/PLAN-…-chat-role.md:1752`, `:1808` | `### S10:` / `**Traces-to:**` — the parseable markers (§5.7) |
