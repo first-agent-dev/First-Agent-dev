@@ -225,7 +225,7 @@ There is a deeper point here worth stating plainly. A validator can only ever ch
 
 ---
 
-## 5. Re-baseline (rev 4) — the finding that dissolves most of the problem
+## 5. Re-baseline — the finding that dissolves most of the problem
 
 Rev 3 proposed a new `SliceContract` schema. **Rev 4 retracts that proposal.** Operator feedback ("overall i am lost", "simple system per my desired behaviour") forced a re-read of the planning skills, and the re-read produced the finding below.
 
@@ -329,6 +329,29 @@ PR  (fa publishes branch→main; operator verifies and merges)  [phase 3]
 
 Nothing here is a new schema. One new small artifact (run constraints), one skill injection, two gates.
 
+### 5.6 Operator decisions, recorded
+
+| # | decision | status |
+|---|---|---|
+| Q1 | object model | **superseded by §5.5** — no `SliceContract`; skill injection + run constraints |
+| Q2 | **workflow pipeline only** | confirmed; chat strips `pr_prepare` entirely (§8 Q5) |
+| Q3 | **harness runs verification, injects real output** | confirmed — mechanizes the `AFTER EDIT GATE` (`:388-415`) |
+| Q4 | **warn on out-of-scope writes, never block** | confirmed; note `feature-planning:337` says "Allowed files are binding" — the *skill* says stop, the *harness* only warns. Deliberate: forgiving-tools |
+| Q5 | plan-ID extraction | **script-only, no LLM**; build it, measure it, invest further only if warranted. Legacy plans failing is expected, not a kill signal (§5.7) |
+| Q6 | stop-rule tool | backlogged; seam only |
+
+### 5.7 Q5 — script-only extraction, and how far to invest
+
+Operator: *"no llm call, only script extraction. If script will fail — not worth to invest further."*
+
+Accepted as a **hard gate on the feature, decided before any code**:
+
+- Extractor is a pure function: plan text → `{S#, GAP#, CT#, T#}`. Regex over the common ID grammar (§5.3). No LLM, no fallback prompt.
+- **Operator decision (rev 5):** older plans do not conform and the extractor *will* fail on them — that is expected and is **not** a kill signal. Build the function, measure it, and invest further only if the measurement shows it is worth it.
+- **Corrected criterion: conformance is scoped to plans authored under the current skills, not the whole back-catalogue.** Step 1 of the plan measures extraction across `worklogs/implementation-plans/` and reports a per-plan pass/fail table, splitting *conforming* (post-skill) from *legacy*. Legacy misses are recorded, not counted against the gate.
+- Failure stays **soft in every case**: unparseable plan → fields blank and optional, run proceeds, WARNING emitted. Never a rejection (this is the §5.7 rule that keeps F6 from recurring).
+- The ceremony injection (§5.1, §5.8) does not depend on the extractor and ships regardless.
+
 ### 5.8 Injection payload — condensates, not skill bodies (operator, rev 5)
 
 Operator: *"i would prefer a separate shorter version for this task. My prompt is ~30 loc, parts from skill are ~150 loc. We can add a new .md file right besides SKILL.md and inject it instead."* Same for `tests-writing`: *"we dont [inject the whole skill]. Same treatment, shorter version for injection."*
@@ -354,32 +377,9 @@ Authoring rule: **the condensate is derived from the skill, never divergent from
 
 **`knowledge/skills/README.md:101-110` index** gains no rows — `INJECT.md` is not a skill, it is a payload of one. Worth one line in the README preamble so the layout is discoverable.
 
-### 5.6 Operator decisions, recorded
-
-| # | decision | status |
-|---|---|---|
-| Q1 | object model | **superseded by §5.5** — no `SliceContract`; skill injection + run constraints |
-| Q2 | **workflow pipeline only** | confirmed; chat strips `pr_prepare` entirely (§8 Q5) |
-| Q3 | **harness runs verification, injects real output** | confirmed — mechanizes the `AFTER EDIT GATE` (`:388-415`) |
-| Q4 | **warn on out-of-scope writes, never block** | confirmed; note `feature-planning:337` says "Allowed files are binding" — the *skill* says stop, the *harness* only warns. Deliberate: forgiving-tools |
-| Q5 | plan-ID extraction | **script-only, no LLM**; build it, measure it, invest further only if warranted. Legacy plans failing is expected, not a kill signal (§5.7) |
-| Q6 | stop-rule tool | backlogged; seam only |
-
-### 5.7 Q5 — script-only extraction, and the kill criterion
-
-Operator: *"no llm call, only script extraction. If script will fail — not worth to invest further."*
-
-Accepted as a **hard gate on the feature, decided before any code**:
-
-- Extractor is a pure function: plan text → `{S#, GAP#, CT#, T#}`. Regex over the common ID grammar (§5.3). No LLM, no fallback prompt.
-- **Operator decision (rev 5):** older plans do not conform and the extractor *will* fail on them — that is expected and is **not** a kill signal. Build the function, measure it, and invest further only if the measurement shows it is worth it.
-- **Corrected criterion: conformance is scoped to plans authored under the current skills, not the whole back-catalogue.** Step 1 of the plan measures extraction across `worklogs/implementation-plans/` and reports a per-plan pass/fail table, splitting *conforming* (post-skill) from *legacy*. Legacy misses are recorded, not counted against the gate.
-- Failure stays **soft in every case**: unparseable plan → fields blank and optional, run proceeds, WARNING emitted. Never a rejection (this is the §5.7 rule that keeps F6 from recurring).
-- The ceremony injection (§5.1, §5.8) does not depend on the extractor and ships regardless.
-
 ---
 
-## 6. Design (rev 4) — three mechanisms
+## 6. Design — three mechanisms
 
 ### 6.1 M1 — inject the ceremony at the coder stage
 
