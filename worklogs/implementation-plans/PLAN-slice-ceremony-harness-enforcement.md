@@ -1,6 +1,6 @@
 # PLAN: Harness-enforced per-slice implementation ceremony    Plan-ID: PLAN-slice-ceremony-harness-enforcement
 Status: READY                                   Depth: P2
-Revision: v1   Changed-since-last: initial
+Revision: v2   Changed-since-last: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
 Upstream context: `worklogs/reviews/F6-RESEARCH-intentguard-pr-prepare-friction.md` (rev 5, `7e50943`);
 PR [#68](https://github.com/first-agent-dev/First-Agent-dev/pull/68); operator decisions rev 3–rev 5.
 
@@ -38,6 +38,13 @@ PR [#68](https://github.com/first-agent-dev/First-Agent-dev/pull/68); operator d
 | `Each skill is single file` | `skill-writing/SKILL.md:63`. **Invariant that `INJECT.md` violates.** |
 | `estimate_tokens` | two: `profiles.py:430` (registry), `memory/context_budget.py:18` (messages, `chars//4`). |
 | `_DRAFT_REQUIRED_BASH_EFFECTS` | `intent_guard.py:121-127` — `INDEX_WRITE`, `REPO_WRITE`, `OPAQUE_EXEC`. |
+| `_is_chat_role` | `coder_loop.py:605` = `role == "chat" and bool(scope_mode)`. **Gates the entire boundary block at `:745`.** |
+| `stage_kwargs` | `workflow_controller.py:272-284` — **no `scope_mode` key**, so a workflow stage always has `scope_mode=""`. |
+| `skill_block` routing | `observations.py:168` → `ObservationRender.skill_block`; `coder_loop.py:802` → `skill_block_for_request` → `:961` `skills_conditional`. **Body never enters `turn_context`.** |
+| `skills_conditional` placement | `prompt_composer.py:141-148` — appended to **`non_cacheable`**. Injection is therefore cache-safe (D7 satisfied). |
+| `build_skill_block` | `_inject.py:163-190` — header/description come from **frontmatter**; `_ARGUMENT_HINT:62` keys on skill name. |
+| controller imports | `workflow_controller.py:12-43` — no `subprocess`, no tool imports. **Cannot execute a command.** |
+| edit-packet persistence | grep `packet` in `src/fa/` → **zero hits.** Model prose is not stored anywhere. |
 | `_MISSING_DRAFT_REASON` | `intent_guard.py:138-141` — literally instructs "call `pr_prepare`". |
 
 **Gold patterns mirrored**
@@ -47,6 +54,10 @@ PR [#68](https://github.com/first-agent-dev/First-Agent-dev/pull/68); operator d
   rows mirror `cmd_s127_advancing` / `s127_assert_advancing`.
 
 **Conflicts / invariants found**
+0. **(D1, plan-breaking)** The L2 injection site is inside `if _is_chat_role:` (`coder_loop.py:745`), and
+   `_is_chat_role` requires `role == "chat"` **and** a non-empty `scope_mode` (`:605`). The controller
+   never passes `scope_mode` (`workflow_controller.py:272-284`). **v1's S5 targeted code the coder role
+   never executes.** → S5 rewritten, S5a added.
 1. **`skill-writing/SKILL.md:63`** forbids sibling files in a skill dir → must be amended (S1).
 2. **Deadlock risk:** unregistering `pr_prepare` for chat while `IntentGuard` runs in `enforce`
    leaves `_MISSING_DRAFT_REASON` (`intent_guard.py:138`) instructing the model to call a tool that
@@ -144,7 +155,7 @@ stage sequencer.
 |---|---|
 | Entry points | `coder_loop.py:773` (L2 entry only), `workflow_controller.py:257` (stage runner) |
 | Existing types | `SkillInjectionResult` (`_inject.py`), `FlowState`/`EvalReport` (`workflow_artifacts.py`) |
-| Producers/consumers | producer `read_skill_for_injection:216`; consumer `build_observation_block:105`. **Fires once per run, at L2 entry, planner skills only** |
+| Producers/consumers | producer `read_skill_for_injection:216`; consumer `build_observation_block:105` → `skills_conditional` (`prompt_composer.py:141`). **Fires once per run, at L2 entry, planner skills only, and only when `_is_chat_role` (`coder_loop.py:605,745`)** |
 | State stores | JSONL event log; `~/.fa/session-log/<run_id>/pr_draft.md`; workflow artifacts dir |
 | Flags/defaults | `intent_guard_mode` = `enforce`; no flag for ceremony injection yet |
 | Tests today | `tests/test_skill_injection.py` (C0 on the read path). No coder-stage injection test. No harness-verification test |
@@ -167,7 +178,8 @@ stage sequencer.
 |---|---|---|
 | GAP1 | loader cannot read any file but `SKILL.md` (`_inject.py:47,224`) | S2 / T1 |
 | GAP2 | no condensed injectable ceremony exists | S1 / T2 |
-| GAP3 | coder stage never injects a ceremony (`coder_loop.py:773` = L2-entry planner only) | S5 / T4 |
+| GAP3 | coder stage never injects a ceremony — the site is **chat-gated dead code** for `coder` (`coder_loop.py:605,745`) | S5a, S5 / T4 |
+| GAP3b | `stage_kwargs` (`workflow_controller.py:272-284`) carries no signal a stage could use to enable ceremony injection | S5a / T4c |
 | GAP4 | `tests-writing` never injected; `should_load_skill:119` has zero callers | S5 / T5 |
 | GAP5 | verification is model-narrated; no harness execution | S6 / T6 |
 | GAP6 | no files-allowed scope signal | S7 / T7 |
@@ -176,6 +188,8 @@ stage sequencer.
 | GAP9 | no plan-ID extraction | S3 / T3 |
 | GAP10 | no PR publication path; `gh` not whitelisted (`bash_intent.py:62-99`) | S10 / T10 |
 | GAP11 | `skill-writing:63` forbids the sibling file this plan adds | S1 / T2b |
+| GAP12 | edit packets are never persisted (grep `packet` → 0 hits), so CT8's PR body has **no source data** | S6a / T14 |
+| GAP13 | `workflow_controller.py:12-43` imports no executor; it cannot run a verification command | S6 / T6 |
 
 ---
 
@@ -190,23 +204,45 @@ stage sequencer.
 **CT2 — `INJECT.md` condensate** *(data/authority, §6.3)*
 - AUTHORITY: `SKILL.md` is SSOT for the protocol; `INJECT.md` is a **derived executable subset**.
   On disagreement, `SKILL.md` wins and `INJECT.md` is corrected.
+- **SHAPE (D3, corrected):** `INJECT.md` **MUST carry minimal frontmatter** (`name:` + one-line
+  `description:`). `build_skill_block` (`_inject.py:163-190`) derives the injected `# <name> — <desc>`
+  header from frontmatter; `split_frontmatter` (`_inject.py:84-105`) returns `("", text)` for a file
+  without it, so `description` would be empty and the header degenerate. v1's "no frontmatter" rule
+  was wrong.
+- **NAME COLLISION (D3b):** `name:` must be unique per condensate (`feature-planning-inject`,
+  `tests-writing-inject`) — `build_skill_block` uses it for the header and `_ARGUMENT_HINT`
+  (`_inject.py:62`) keys on it. Both new names need `_ARGUMENT_HINT` entries or they silently fall
+  back to the generic hint.
 - DETERMINISTIC MECHANISM: parity test T2 — every field label in `INJECT.md` appears in `SKILL.md`.
 - FAILURE SURFACE: missing/empty `INJECT.md` ⇒ `SkillInjectionResult.warning`, run proceeds (CT1).
 
 **CT3 — ceremony injection** *(signal, §6.2, TWO-SIDED)*
-- PRODUCER: `coder_loop.py` slice-entry branch (**TO ADD**, S5), when role=`coder` ∧
-  `slice_ceremony.mode != off`. Payload `{skill: str, body: str, turn: int}`. Paths P1, P2, P3.
-- CONSUMER: `build_observation_block` (`observations.py:105`) → `turn_context` → model. Plus event
-  `ceremony_injected` consumed by the live-check assertion.
-- DUAL-WRITE: turn_context (live) **and** event log (durable) must both be written in the same
-  branch — mirrors the existing `skill_result` handling.
+- PRODUCER: new `_ceremony_block_for_turn` branch in `coder_loop.py`, **outside** the `_is_chat_role`
+  gate (D1), when `role == "coder"` ∧ `slice_ceremony.mode != off`. Paths P1, P2, P3.
+- CONSUMER (D2, corrected): the **body** travels `ObservationRender.skill_block` (`observations.py:168`)
+  → `skill_block_for_request` (`coder_loop.py:802`) → `skills_conditional` (`:961`) →
+  `prompt_composer.py:141-148`, which appends it to **`non_cacheable`**. Only the short *anchor* is
+  `turn_context`. **v1 asserted the body lands in `turn_context`; it does not.**
+- CACHE SAFETY: because `skills_conditional` is non-cacheable (`prompt_composer.py:139-148`), D7 is
+  satisfied structurally — no separate mitigation needed.
+- MULTI-SKILL: `skills_conditional` is a **list** (`coder_loop.py:961`); v1's `[render.skill_block]`
+  single-element construction (`:802`) must become a list of two condensates.
+- DUAL-WRITE: `skills_conditional` (live) **and** event log (durable) written in the same branch.
 - KILL-CHECK: remove the producer call at the S5 site ⇒ **T4** fails.
 - SHIP RULE: producer proof before shipped.
 
 **CT4 — harness-run verification** *(signal, §6.2, TWO-SIDED)*
-- PRODUCER: post-coder verification step in `workflow_controller.py` (**TO ADD**, S6). Runs plan
-  `T#` commands through the existing `SandboxHook` bash path. Payload
-  `{command, exit_code, stdout_tail, stderr_tail, duration_ms}`.
+- PRODUCER (D4, corrected): `run_verification(commands, workspace) -> tuple[VerificationResult, ...]`
+  in **new** `src/fa/inner_loop/verification.py`, calling `_run_subprocess_fallback`
+  (`tools/run_bash.py:219`). Invoked from `_run_stage` (`workflow_controller.py:310`) **after** the
+  coder stage returns. Payload `{command, exit_code, stdout_tail, stderr_tail, duration_ms}`.
+- **Why not "through SandboxHook" (v1's claim):** `SandboxHook` is a `BEFORE_TOOL_EXEC` middleware
+  that gates *model-issued tool calls*; it is not an executor. The controller imports no subprocess
+  facility at all (`workflow_controller.py:12-43`). v1's mechanism did not exist.
+- **Why this is still safe:** the commands come from the operator's plan, not the model, so no
+  model-controlled string reaches the shell. Exploration-log Q19 concerned *denying* model commands
+  and does not apply — but the plan-sourced command list MUST be treated as trusted-input-only and
+  never merged with model output (asserted by T6c).
 - CONSUMER: (a) next coder turn's `turn_context` (real output); (b) verdict routing —
   non-zero ⇒ `REPAIR_REQUIRED` via `EVAL_VERDICT_TO_TERMINAL_STATUS` (`workflow_controller.py:50-55`, applied at `:445`).
 - KILL-CHECK: remove the producer ⇒ **T6** fails (no `verification_ran` event, exit code absent).
@@ -233,6 +269,9 @@ stage sequencer.
 **CT8 — PR publication** *(signal, §6.2)*
 - PRODUCER: publisher in `src/fa/hygiene/pr_publish.py` (**TO ADD**, S10), invoked only when the
   pipeline reaches `DONE`. Pushes the session branch and opens a PR to `main`.
+- **INPUT (D5, corrected):** the body is folded from the `slice_packets.jsonl` artifact written by
+  S6a. v1 said "fold accumulated edit packets" while nothing in the repo persists them
+  (grep `packet` → 0 hits) — CT8 had no source data and was unbuildable as written.
 - CONSUMER: GitHub; locally the emitted `pr_published` event + the written body file.
 - KILL-CHECK: remove the producer call ⇒ T10 fails.
 
@@ -322,16 +361,22 @@ Do:
    "not complete from no exception") → stop rule (new policy choice ⇒ promote to Q#, STOP).
 2. Write `tests-writing/INJECT.md`: C0/C0p/C1/C2/C3/C4 ladder, producer/consumer two-sided law,
    kill-check requirement, anti-theater minimum.
-3. **No YAML frontmatter** in either file — only `SKILL.md` carries frontmatter/triggers.
+3. **Add minimal frontmatter to each** (D3): `name:` + one-line `description:`. Names must be
+   `feature-planning-inject` and `tests-writing-inject`. Without frontmatter `split_frontmatter`
+   (`_inject.py:84-105`) yields an empty description and `build_skill_block` (`:181-183`) renders a
+   degenerate `# <name> — <name>` header. **No `triggers:`/`globs:`** — those stay `SKILL.md`-only.
+3b. Add `_ARGUMENT_HINT` entries (`_inject.py:62`) for both new names, else they fall back to the
+   generic "Apply this skill to the current task now." hint.
 4. Amend `skill-writing/SKILL.md:63` to: one `SKILL.md` **plus an optional derived `INJECT.md`**.
 
-Do-not: do not paraphrase field names — parity is checked mechanically. Do not add frontmatter.
-Do not exceed 40 lines in either file.
+Do-not: do not paraphrase field names — parity is checked mechanically. Do not add `triggers:` or
+`globs:`. Do not exceed 40 lines of **body** (frontmatter excluded).
 
 Exit criteria:
 - [ ] `test -f knowledge/skills/feature-planning/INJECT.md && test -f knowledge/skills/tests-writing/INJECT.md`
 - [ ] `wc -l` ≤ 40 each
-- [ ] neither file starts with `---`
+- [ ] each file starts with `---` and declares `name:` + `description:` (D3)
+- [ ] `grep -n 'feature-planning-inject\|tests-writing-inject' src/fa/skills/_inject.py` shows both `_ARGUMENT_HINT` keys
 - [ ] T2 parity passes; `grep -n "optional derived" knowledge/skills/skill-writing/SKILL.md` hits
 
 ---
@@ -344,6 +389,7 @@ Target liveness: L1→L2
 
 Edit:
 - path: `src/fa/skills/_inject.py` symbol: `read_skill_for_injection:216` change: add `*, file_name: str = SKILL_FILE_NAME`; use it at `:224`
+- path: `src/fa/skills/_inject.py` symbol: `_ARGUMENT_HINT:62` change: add hints for the two condensate names (S1 dependency)
 
 Degree of freedom closed: the injected payload's filename was a hardcoded constant
 (`_inject.py:47`), so no call site could choose a lighter payload; it is now a typed parameter with
@@ -441,82 +487,178 @@ Exit criteria:
 
 ---
 
+### Step S5a: Carry a ceremony signal into the workflow stage (unblocks S5)
+
+Traces-to: G1 · GAP3, GAP3b · CT3 · P1
+Depends-on: S4    Parallelizable-with: S6a
+Target liveness: L0→L2
+
+**Why this step exists.** The L2 injection site sits inside `if _is_chat_role:`
+(`coder_loop.py:745`), and `_is_chat_role` is `role == "chat" and bool(scope_mode)` (`:605`). The
+controller's `stage_kwargs` (`workflow_controller.py:272-284`) has no `scope_mode`, so for a
+workflow `coder` stage the flag is always False. **Without this step S5 edits code that never runs.**
+
+Edit:
+- path: `src/fa/inner_loop/workflow_controller.py` symbol: `_run_stage:272-284` change: add `"slice_ceremony": <mode>` to `stage_kwargs`
+- path: `src/fa/cli.py` symbol: `_cmd_run` signature change: accept `slice_ceremony` and forward it to the coder loop
+- path: `src/fa/inner_loop/coder_loop.py` symbol: `run_coder_loop` signature change: accept `slice_ceremony: str = "off"`
+
+Degree of freedom closed: whether a stage receives ceremony context was implicitly tied to
+`_is_chat_role`, a predicate about a *different* feature; it becomes an explicit stage argument.
+
+Deterministic mechanism: `src/fa/inner_loop/workflow_controller.py:272-284` — an explicit
+`stage_kwargs` key, defaulted `"off"`, so a caller that omits it gets today's behaviour exactly.
+
+Do:
+1. Thread the value controller → `_cmd_run` → `run_coder_loop`, mirroring how `scope_mode` is
+   already threaded (`coder_loop.py:361,448,473`).
+2. Default `"off"` at every hop; `argparse.Namespace` consumers use `getattr(args, "slice_ceremony", "off")`,
+   mirroring the `resume` precedent (`cli.py:2161`).
+3. Do **not** reuse or set `scope_mode` — that would switch on chat-only scope machinery
+   (`observed_tiers`, `next_level`, escalation events) as a side effect.
+
+Do-not: do not widen `_is_chat_role`. Do not make the coder stage look like a chat session.
+
+Exit criteria:
+- [ ] `grep -n "slice_ceremony" src/fa/inner_loop/workflow_controller.py src/fa/cli.py src/fa/inner_loop/coder_loop.py` hits all three
+- [ ] T4c: a workflow coder stage receives `slice_ceremony="enforce"`; a chat run still receives `"off"`
+- [ ] `scope_mode` is unchanged for every existing caller (T4d regression)
+
+Kill-check: removing the `stage_kwargs` key makes **T4c** fail.
+
+---
+
 ### Step S5: Inject the ceremony at coder-stage slice entry
 
 Traces-to: G1, G2 · GAP3, GAP4 · CT3 · P1, P2, P3
-Depends-on: S1, S2, S4    Parallelizable-with: none
+Depends-on: S1, S2, S4, **S5a**    Parallelizable-with: none
 Target liveness: L2→L3
 
 Edit:
-- path: `src/fa/inner_loop/coder_loop.py` symbol: slice-entry branch near `:773-800` change: when role=`coder` ∧ mode≠`off`, read both `INJECT.md` condensates and pass into `build_observation_block`
+- path: `src/fa/inner_loop/coder_loop.py` symbol: new `_ceremony_block_for_turn` helper + call site **outside** the `if _is_chat_role:` block at `:745` change: when `role == "coder"` ∧ `slice_ceremony != "off"`, read both condensates and extend `skill_block_for_request`
+- path: `src/fa/inner_loop/coder_loop.py` symbol: `:802` change: `skill_block_for_request` becomes a **list of N blocks**, not `[render.skill_block]`
 - path: `src/fa/skills/loader.py` symbol: `should_load_skill:119` change: **wire it** — first production caller
 
-Degree of freedom closed: which protocol text reaches the model at implementation time was entirely
-the operator's manual choice (paste or forget); it is now a deterministic function of role, stage,
-and turn index.
+Degree of freedom closed: which protocol text reaches the model at implementation time was the
+operator's manual choice (paste or forget); it becomes a deterministic function of role, stage, and
+turn index.
 
-Deterministic mechanism: `src/fa/inner_loop/coder_loop.py` slice-entry branch — condensates read via
-`read_skill_for_injection(..., file_name="INJECT.md")` (CT1) and emitted as `ceremony_injected`.
+Deterministic mechanism: `src/fa/inner_loop/coder_loop.py` `_ceremony_block_for_turn` — condensates
+read via `read_skill_for_injection(..., file_name="INJECT.md")` (CT1), appended to
+`skill_block_for_request`, which `:961` passes as `skills_conditional`.
 
 Do:
-1. Full condensate body on **slice-entry** turn (P1/P2); short anchor via `build_skill_anchor` on
-   later turns (P3) — mirrors the existing L2 entry/anchor split.
-2. Route through `should_load_skill` (`loader.py:119`) so injection is trigger-based, giving that
-   function its first production caller (GAP4).
-3. Emit `ceremony_injected` **in the same branch** that writes `turn_context` — CT3 dual-write.
-4. Wrap in `try/except` + `logger.warning`, mirroring `coder_loop.py:786-789`: an advisory must
-   never crash a run.
-5. Plan absent (P2) ⇒ inject the ceremony anyway with ID fields blank. **Never block** (G8).
+1. Declare `skill_block_for_request` (`:744`) as a list and **append** rather than replace, so the
+   existing chat L2 block and the new ceremony blocks can coexist without either clobbering the other.
+2. Full condensate bodies on the **slice-entry** turn (P1/P2); on later turns (P3) inject nothing
+   into `skills_conditional` and emit only the short anchor via `turn_context`, mirroring
+   `observations.py:152-158`.
+3. Route the decision through `should_load_skill` (`loader.py:119`), giving it its first production
+   caller (GAP4).
+4. Emit `ceremony_injected` in the **same branch** that appends the blocks — CT3 dual-write.
+5. Wrap in `try/except` + `logger.warning`, mirroring `coder_loop.py:786-789`.
+6. Plan absent (P2) ⇒ inject anyway with ID fields blank. **Never block** (G8).
 
-Do-not: do not put any of this in `system_prompt_extra` — **D7** (`cli.py:1942-1947`), it would
-break the prompt cache. Do not inject on every turn. Do not inject for chat/planner/eval.
+Do-not: do not place the call inside `if _is_chat_role:` (D1 — it would never run for `coder`). Do
+not add the body to `turn_context` (D2 — the body's channel is `skills_conditional`; `turn_context`
+is capped at `OBSERVATION_CAP_CHARS` with eviction, `observations.py:171-184`, so a ~40-line body
+would evict the verification and escalation lines). Do not inject on every turn.
 
 Exit criteria:
 - [ ] `grep -n 'file_name="INJECT.md"' src/fa/inner_loop/coder_loop.py`
+- [ ] the injection call is **not** inside the `_is_chat_role` block: `awk 'NR>745 && /_ceremony_block_for_turn/' ` resolves outside that branch
 - [ ] `grep -n "should_load_skill" src/fa/inner_loop/` returns a **production** hit
-- [ ] T4 asserts ceremony text in `turn_context` on entry turn, anchor-only on turn 2
-- [ ] T5 asserts the `tests-writing` condensate is present
+- [ ] T4 asserts **two** entries in `skills_conditional` on the entry turn, anchor-only on turn 2
+- [ ] T5 asserts the `tests-writing-inject` body is one of them
+- [ ] T4b: a chat L2 run still receives its planner skill block (no regression from the list change)
 
-Kill-check: removing the `read_skill_for_injection` call at this site makes **T4** fail.
+Kill-check: removing the `_ceremony_block_for_turn` call makes **T4** fail.
+
+---
+
+### Step S6a: Persist edit packets (unblocks CT8)
+
+Traces-to: G7 · GAP12 · CT8
+Depends-on: S4    Parallelizable-with: S5a, S6
+Target liveness: L0→L2
+
+**Why this step exists.** CT8 folds "accumulated edit packets" into a PR body, but nothing in the
+repo persists them — grep `packet` across `src/fa/` returns **zero hits**, and `StepResult`
+(`workflow_artifacts.py:128-133`) has no field for model prose. v1's S10 had no input.
+
+Edit:
+- path: `src/fa/inner_loop/workflow_artifacts.py` symbol: new `SlicePacket` + `append_slice_packet` change: **NEW** append-only JSONL writer beside the existing artifacts
+
+Degree of freedom closed: the record of what the model claimed to implement lived only in transient
+chat history; it becomes a durable, append-only artifact keyed by run and slice.
+
+Deterministic mechanism: `src/fa/inner_loop/workflow_artifacts.py` — `slice_packets.jsonl` written
+through the existing atomic-write helper (`:510-549`), one JSON object per line.
+
+Do:
+1. `SlicePacket` frozen dataclass: `run_id`, `slice_id`, `turn`, `raw_text`, `verification`
+   (the CT4 results for that slice).
+2. Capture the model's packet **verbatim as text**. Do **not** parse it into fields — the packet is
+   prose by design (rev 4), and a parser would recreate the F6 rejection surface (G8).
+3. Append-only; a malformed or absent packet writes nothing and emits a WARNING. Never blocks.
+
+Do-not: do not validate the packet's internal structure. Do not fail the slice when it is missing.
+
+Exit criteria:
+- [ ] `slice_packets.jsonl` exists after a coder slice, one line per packet
+- [ ] T14: malformed packet ⇒ WARNING, run continues, no exception
+- [ ] the file is readable by `build_pr_body` (S10) without further parsing
+
+Kill-check: removing the append call makes **T14** fail and leaves S10's body empty.
 
 ---
 
 ### Step S6: Harness runs the verification commands
 
-Traces-to: G3 · GAP5 · CT4 · P4, P5
-Depends-on: S3, S4    Parallelizable-with: S7
+Traces-to: G3 · GAP5, GAP13 · CT4 · P4, P5
+Depends-on: S3, S4    Parallelizable-with: S7, S6a
 Target liveness: L0→L3
 
+**Correction from v1 (D4).** v1 said "execute through the existing `SandboxHook` bash path". That
+mechanism does not exist: `SandboxHook` (`builtin.py:87`) is a `BEFORE_TOOL_EXEC` middleware that
+gates *model-issued tool calls*, not an executor, and `workflow_controller.py:12-43` imports no
+subprocess facility.
+
 Edit:
-- path: `src/fa/inner_loop/workflow_controller.py` symbol: stage runner near `:257-271` change: after the coder stage, execute plan `T#` commands and inject real output
+- path: `src/fa/inner_loop/verification.py` symbol: `VerificationResult`, `run_verification` change: **NEW** thin wrapper over `_run_subprocess_fallback` (`tools/run_bash.py:219`)
+- path: `src/fa/inner_loop/workflow_controller.py` symbol: `_run_stage:310` change: after a `coder` stage returns, run the plan's commands and record results
 
 Degree of freedom closed: whether a verification actually ran was the model's word — it could
-narrate a green run it never executed; execution now happens in harness code the model cannot reach,
-and the exit code enters context verbatim.
+narrate a green run it never executed; execution now happens in harness code the model cannot
+reach, and the exit code is recorded verbatim.
 
-Deterministic mechanism: `src/fa/inner_loop/workflow_controller.py` post-coder verification step —
-real `exit_code` recorded in the `verification_ran` event and routed via
-`EVAL_VERDICT_TO_TERMINAL_STATUS` (`:49-53`).
+Deterministic mechanism: `src/fa/inner_loop/verification.py:run_verification` — returns a typed
+`VerificationResult` carrying the real integer `exit_code`; the controller records it and routes on
+it, so no model-authored string can stand in for a result.
 
 Do:
-1. Take commands from the **plan** (extracted, S3) — never from model output. This is what makes
-   the gate trustworthy: the operator authored them.
-2. Execute through the existing `SandboxHook` bash path (`builtin.py:87-104`). **No second exec path**
-   — exploration-log Q19 (`builtin.py:112-127`) showed a stricter gate denies 8/10 real verifier commands.
-3. Inject `{command, exit_code, stdout_tail, stderr_tail}` as `turn_context`.
-4. Non-zero ⇒ `REPAIR_REQUIRED`. P5 (no commands) ⇒ emit `verification_ran` with
-   `skipped: true`, do **not** block (G8).
-5. Bound by the existing wall-clock deadline (`workflow_controller.py:345`) and `bash_timeout_seconds`.
+1. Commands come from the **plan** (extracted, S3) — never from model output. This is what makes the
+   gate trustworthy: the operator authored them.
+2. Reuse `_run_subprocess_fallback` (`tools/run_bash.py:219`) rather than a fresh `subprocess.run`,
+   so timeout/decoding/CR-normalisation behaviour stays identical to the model-facing bash tool.
+3. Enforce a per-command timeout (`bash_timeout_seconds`) **and** check the run deadline
+   (`workflow_controller.py:345`) between commands; a hung verification must not consume the budget.
+4. Inject `{command, exit_code, stdout_tail, stderr_tail}` into the next stage's context.
+5. Non-zero ⇒ `REPAIR_REQUIRED` (`:50-55`). P5 (no commands) ⇒ record `skipped: true`, do **not**
+   block (G8).
 
-Do-not: do not let the model supply or edit the command list. Do not add a new sandbox gate. Do not
-block when the plan names no commands.
+Do-not: do not let the model supply, extend, or edit the command list (T6c asserts this). Do not add
+a new sandbox gate — exploration-log Q19 (`builtin.py:112-127`) showed a stricter gate denies 8/10
+real verifier commands. Do not run commands for non-`coder` stages.
 
 Exit criteria:
 - [ ] `verification_ran` event carries a real integer `exit_code`
-- [ ] T6: seeded failing command ⇒ `REPAIR_REQUIRED` and the model's next turn sees the real stderr
+- [ ] T6: seeded failing command ⇒ `REPAIR_REQUIRED`, and the next turn's context contains the real stderr text
 - [ ] T6b: P5 ⇒ `skipped: true`, run continues
+- [ ] T6c: a command string present in model output but absent from the plan is **never** executed
+- [ ] T6d: a command exceeding the timeout is killed and recorded as failed, not hung
 
-Kill-check: removing the execution call makes **T6** fail (no event, no exit code).
+Kill-check: removing the `run_verification` call makes **T6** fail (no event, no exit code).
 
 ---
 
@@ -617,7 +759,7 @@ Exit criteria:
 ### Step S10: PR publication
 
 Traces-to: G7 · GAP10 · CT8 · P10, P11
-Depends-on: S1–S8    Parallelizable-with: S9
+Depends-on: S1–S8, **S6a** (packet source)    Parallelizable-with: S9
 Target liveness: L0→L3
 
 Edit:
@@ -633,7 +775,8 @@ Deterministic mechanism: `src/fa/hygiene/pr_publish.py` — `publish_pr` is call
 force-push to `main`.
 
 Do:
-1. `build_pr_body(packets, plan_links) -> str` — **pure**, deterministic fold. Frontmatter
+1. `build_pr_body(packets, plan_links) -> str` — **pure**, deterministic fold over the
+   `slice_packets.jsonl` rows written by S6a (D5). Frontmatter
    (plan/slices/contracts) + commit-note headers + per-slice sections carrying the **real** captured
    verification output (S6).
 2. `publish_pr` — push the session branch, open a PR to `main`. Harness-side, never agent bash.
@@ -660,10 +803,15 @@ Kill-check: removing the `publish_pr` call from the `DONE` branch makes **T10** 
 | T2 | CT2 | C0p | parity: labels ⊆ `SKILL.md` | the `INJECT.md` files | — |
 | T2b | CT2 | C0p | `skill-writing:63` amended text present | — | — |
 | T3 | CT6 | C0 | returned `PlanIds` tuples | `### S<n>:` pattern | — |
-| T4 | CT3 | **C1** | event `ceremony_injected` + `turn_context` content | injection call in `coder_loop.py` | P1,P2,P3 |
+| T4 | CT3 | **C1** | event `ceremony_injected` + **2 entries in `skills_conditional`** (D2) | `_ceremony_block_for_turn` call | P1,P2,P3 |
+| T4b | CT3 | C1 | chat L2 run still receives its planner block (list-change regression) | `:802` list build | — |
+| T4c | CT3 | C1 | workflow coder stage receives `slice_ceremony="enforce"` | `stage_kwargs` key | P1 |
+| T4d | CT3 | C1 | `scope_mode` unchanged for all existing callers | — | — |
 | T5 | CT3 | C1 | `tests-writing` body in context | second condensate read | P1 |
 | T6 | CT4 | **C1** | event kind + real `exit_code` | verification exec call | P4 |
 | T6b | CT4 | C1 | `skipped: true`, run continues | — | P5 |
+| T6c | CT4 | **C3** | model-authored command never executed | plan-only command source | P4 |
+| T6d | CT4 | C1 | timeout ⇒ recorded failure, not hang | timeout arg | P4 |
 | T7 | CT5 | C1 | `scope_warning` event **+ write succeeded** | the emit | P6,P7 |
 | T7b | CT5 | C0 | static: zero `Decision.deny` in the module | — | P7 |
 | T8 | CT7 | C2 | registry `names()` per role | conditional registration | P9 |
@@ -671,25 +819,26 @@ Kill-check: removing the `publish_pr` call from the `DONE` branch makes **T10** 
 | T10 | CT8 | C1 | `pr_published` event + body file | `publish_pr` call | P10,P11 |
 | T10a | CT8 | C0 | pure fold output | — | — |
 | T11 | CT10 | C1 | existing `pr_intent` suite green | — | — |
+| T14 | CT8 | C1 | `slice_packets.jsonl` written; malformed ⇒ WARNING only | append call | P10 |
 | T12 | CT3 | C1 | `observe`: events yes, context unchanged | — | P12/C |
 | T13 | CT3 | C1 | `off`: zero events, byte-identical | — | P12/D |
 
-**C4 / mutation handoff.** After C1/C2 green: (a) remove the ceremony injection call → T4 must fail;
+**C4 / mutation handoff.** After C1/C2 green: (a) remove the `_ceremony_block_for_turn` call → T4 must fail; (a2) remove the `stage_kwargs` key → T4c must fail;
 (b) invert the `slice_ceremony.mode != "off"` branch → T13 must fail; (c) remove the verification
 exec → T6 must fail; (d) remove `draft_tool_available` → T9 must fail. A survivor blocks shipped.
 
 **LIVE-PATH PROOF — G1 (ceremony injection)**
 - root: `fa workflow --roles planner,coder,eval` · matrix: A
-- test: `scripts/run_live_check.sh s127-ceremony-inject` · oracle: event kind + fields
+- test: `scripts/run_live_check.sh s127-ceremony-inject` · oracle: event kind + fields (**not** `turn_context` text — D2)
 - kill-check: removing the `coder_loop.py` injection call fails the row
-- producer: `coder_loop.py` slice branch · consumer: `observations.py:105` → `turn_context`
+- producer: `coder_loop.py:_ceremony_block_for_turn` · consumer: `skills_conditional` (`prompt_composer.py:141-148`, non-cacheable)
 - paths-covered: 3/3 (P1,P2,P3) · contract-check: PASS required · pyramid: A
 
 **LIVE-PATH PROOF — G3 (harness verification)**
 - root: same · matrix: A
 - test: `scripts/run_live_check.sh s127-harness-verify` · oracle: real `exit_code` in `verification_ran`
 - kill-check: removing the exec call fails the row
-- producer: `workflow_controller.py` post-coder step · consumer: verdict routing `:50-55` + next turn context
+- producer: `verification.py:run_verification` called from `workflow_controller.py:310` · consumer: verdict routing `:50-55` + next turn context
 - paths-covered: 2/2 (P4,P5) · efficiency: bounded by `:345` deadline · pyramid: A
 
 **LIVE-PATH PROOF — G6/CT9 (no chat deadlock)**
@@ -719,6 +868,9 @@ tests/test_plan_ids.py tests/test_scope_warn.py tests/test_live_check_script.py`
 | RK6 | Publication pushes to `main` or leaks the token | `DONE`-gated, session branch only, harness-side | T10 |
 | RK7 | New injection breaks the prompt cache | `turn_context` only, never `system_prompt_extra` (D7) | T12 |
 | RK8 | The plan recreates F6 (new rejection surface) | G8: no field rejected for absence; S5/S6/S7 all degrade to warnings | T6b, T7, T13 |
+| RK9 | **S5a threads a new arg through 3 layers**; a missed hop silently disables the feature | default `"off"` at every hop + T4c asserts arrival at the coder loop, not just departure | T4c |
+| RK10 | Harness-executed commands are a **new code-execution surface** not gated by SandboxHook | plan-sourced only, never model-sourced (T6c); per-command timeout (T6d); coder stage only | T6c, T6d |
+| RK11 | `skill_block_for_request` list change clobbers the existing chat L2 block | append, never replace; T4b is the regression guard | T4b |
 
 **ROLLBACK (P2+ required).** Flag `slice_ceremony.mode` — default `observe`, set `off` for a
 byte-identical revert (T13 proves it). S8 is the only non-flagged change: revert = restore the
@@ -778,8 +930,8 @@ non-goals respected; RN1–RN13 dispositioned; mutation handoff (a)–(d) shows 
 
 **Anti-theater checklist**
 - [x] Every referenced symbol verified via preflight or marked **NEW**
-- [x] Every G# maps to ≥1 CT#, ≥1 S#, ≥1 T# (G1→CT3/S5/T4 · G2→CT3/S5/T5 · G3→CT4/S6/T6 ·
-      G4→CT5/S7/T7 · G5→CT6/S3/T3 · G6→CT7,CT9/S8/T8,T9 · G7→CT8/S10/T10 · G8→S5,S6,S7/T6b,T7,T13)
+- [x] Every G# maps to ≥1 CT#, ≥1 S#, ≥1 T# (G1→CT3/S5a,S5/T4,T4c · G2→CT3/S5/T5 · G3→CT4/S6/T6,T6c ·
+      G4→CT5/S7/T7 · G5→CT6/S3/T3 · G6→CT7,CT9/S8/T8,T9 · G7→CT8/S6a,S10/T10,T14 · G8→S5,S6,S7/T6b,T7,T13)
 - [x] Every signal CT# (CT3,CT4,CT5,CT8) has BOTH producer and consumer named
 - [x] Every kill-check targets the **PRODUCER**
 - [x] Path inventory P1–P12: all covered (§4.1)
@@ -788,8 +940,8 @@ non-goals respected; RN1–RN13 dispositioned; mutation handoff (a)–(d) shows 
 - [x] Real types at wiring boundaries (`SkillInjectionResult`, `FlowState`, `Decision`)
 - [x] No vague verbs without a mechanism
 - [x] Assumptions labeled (Q1, Q2 are measurements, not assertions)
-- [x] Security contract CT9 has an adversarial case (T9, C3)
-- [x] All IDs resolve — G1–G8, GAP1–GAP11, CT1–CT10, S1–S10, T1–T13 (17 incl. a/b), P1–P12, Q1–Q4, RK1–RK8, RN1–RN13. Machine-linted; the only non-plan IDs are explicitly labelled external (`S12.4 (external)` flag precedent, `exploration-log Q19`, `operator decision Q-op1..6`)
+- [x] Security contracts have adversarial cases: CT9→T9 (C3), CT4→T6c (C3, command-injection boundary)
+- [x] All IDs resolve — G1–G8, GAP1–GAP13, CT1–CT10, S1–S10 + S5a/S6a (12 steps), T1–T14 (23 incl. a–d), P1–P12, Q1–Q4, RK1–RK11, RN1–RN13. Machine-linted; the only non-plan IDs are explicitly labelled external (`S12.4 (external)` flag precedent, `exploration-log Q19`, `operator decision Q-op1..6`)
 
 **READY gate**
 - [x] Preflight log present and non-trivial
@@ -804,6 +956,12 @@ non-goals respected; RN1–RN13 dispositioned; mutation handoff (a)–(d) shows 
 - [x] Research notes dispositioned (RN1–RN13)
 - [x] BLOCKING open questions: **EMPTY** (Q1–Q4 non-blocking, all carry defaults)
 - [x] All IDs resolve
+
+**Post-review note.** v1 passed this same gate while containing 5 defects, three of which
+(D1, D4, D5) would have made steps unimplementable as written. The gate is necessary, not
+sufficient: it checks *internal* consistency, and every one of these defects was an *external*
+mismatch with real code that only reading the callers exposed. The v2 additions (S5a, S6a) both
+exist because a "wire it up" step assumed a seam that was not there.
 
 **STATUS: READY**
 
@@ -822,11 +980,13 @@ non-goals respected; RN1–RN13 dispositioned; mutation handoff (a)–(d) shows 
 | plan ID extractor | `src/fa/inner_loop/plan_ids.py` | add | S3 |
 | measurement script | `scripts/measure_plan_id_extraction.py` | add | S3 |
 | feature flags | `src/fa/feature_flags.py:46,62,76,129,289` | edit | S4 |
-| coder loop | `src/fa/inner_loop/coder_loop.py:773-800` | edit | S5 |
-| workflow controller | `src/fa/inner_loop/workflow_controller.py:257-271` | edit | S6,S10 |
+| coder loop | `src/fa/inner_loop/coder_loop.py:744,802,961` + new helper | edit | S5, S5a |
+| verification runner | `src/fa/inner_loop/verification.py` | add | S6 |
+| slice packet artifact | `src/fa/inner_loop/workflow_artifacts.py` | edit | S6a |
+| workflow controller | `src/fa/inner_loop/workflow_controller.py:272-284,310` | edit | S5a,S6,S10 |
 | scope hook | `src/fa/inner_loop/hooks/scope_warn.py` | add | S7 |
 | intent guard | `src/fa/inner_loop/hooks/intent_guard.py:226` | edit | S8 |
-| CLI wiring | `src/fa/cli.py:162,1625,1716` | edit | S7,S8 |
+| CLI wiring | `src/fa/cli.py:162,1625,1716` + `_cmd_run` signature | edit | S5a,S7,S8 |
 | chat prompts | `src/fa/inner_loop/prompt.py:525,571,645` | edit | S8 |
 | PR publisher | `src/fa/hygiene/pr_publish.py` | add | S10 |
 | operator instructions | `knowledge/instructions/02-operations.md` | edit | S9 |
