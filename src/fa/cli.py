@@ -2254,6 +2254,13 @@ def _cmd_run(
             # a run outgrows it. Empty for non-chat roles, which disables the
             # tripwire — the workflow roles are already correctly scoped.
             scope_mode=scope_point.recommended_mode if scope_point is not None else "",
+            # PLAN S5a (CT3): per-slice ceremony mode, threaded from the
+            # workflow controller's stage_kwargs. ``getattr`` with an "off"
+            # default mirrors the ``resume``/``session_id`` precedent above:
+            # _cmd_run is invoked both by argparse (which will not define this
+            # attribute) and by the controller (which does), so a missing
+            # attribute must degrade to today's behaviour rather than raise.
+            slice_ceremony=str(getattr(args, "slice_ceremony", "off") or "off"),
             initial_memory_summary=resume_draft_text,
             temperature=None,
             redactor=redactor,

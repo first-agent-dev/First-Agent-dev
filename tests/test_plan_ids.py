@@ -201,8 +201,10 @@ class TestAgainstRealPlan:
 
     def test_extraction_is_total_over_repo_plans(self) -> None:
         plans = sorted((REPO_ROOT / "worklogs" / "implementation-plans").glob("*.md"))
-        if not plans:
-            pytest.skip("no plan artifacts in this checkout")
+        # Asserted, not skipped: these artifacts are committed, so an empty
+        # glob means the corpus moved and this measurement silently stopped
+        # measuring anything. A skip here would be test theater.
+        assert plans, "no plan artifacts found — the corpus path moved"
         for path in plans:
             result = extract_plan_ids(path.read_text(encoding="utf-8"))
             assert isinstance(result, PlanIds), path.name
@@ -210,8 +212,7 @@ class TestAgainstRealPlan:
     def test_this_plan_is_conforming(self) -> None:
         """The slice-ceremony plan must be parseable by its own extractor."""
         path = REPO_ROOT / "worklogs" / "implementation-plans" / "PLAN-slice-ceremony-harness-enforcement.md"
-        if not path.exists():
-            pytest.skip("plan artifact not present")
+        assert path.is_file(), f"plan artifact missing: {path}"
         ids = extract_plan_ids(path.read_text(encoding="utf-8"))
         assert "S1" in ids.slices
         assert "CT1" in ids.contracts

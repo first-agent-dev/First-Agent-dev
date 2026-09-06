@@ -10,13 +10,14 @@ hardcoded SKILL_FILE_NAME makes test_reads_named_sibling_file fail.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
 from fa.skills._inject import (
+    _ARGUMENT_HINT,
     SKILL_FILE_NAME,
     SKILLS_RELATIVE_DIR,
-    _ARGUMENT_HINT,
     default_skills_root,
     read_skill_for_injection,
     split_frontmatter,
@@ -41,9 +42,7 @@ class TestFileNameParameter:
         """Back-compat: omitting file_name must still read SKILL.md."""
         skill_dir = tmp_path / Path(*SKILLS_RELATIVE_DIR) / "demo"
         skill_dir.mkdir(parents=True)
-        (skill_dir / SKILL_FILE_NAME).write_text(
-            "---\nname: demo\ndescription: d\n---\n\nBody.\n", encoding="utf-8"
-        )
+        (skill_dir / SKILL_FILE_NAME).write_text("---\nname: demo\ndescription: d\n---\n\nBody.\n", encoding="utf-8")
         result = read_skill_for_injection("demo", default_skills_root(tmp_path))
         assert result.warning is None
         assert result.block is not None
@@ -63,9 +62,7 @@ class TestFileNameParameter:
         (skill_dir / INJECT_FILE_NAME).write_text(
             "---\nname: demo-inject\ndescription: short\n---\n\nSHORT BODY\n", encoding="utf-8"
         )
-        result = read_skill_for_injection(
-            "demo", default_skills_root(tmp_path), file_name=INJECT_FILE_NAME
-        )
+        result = read_skill_for_injection("demo", default_skills_root(tmp_path), file_name=INJECT_FILE_NAME)
         assert result.warning is None
         assert result.block is not None
         assert "SHORT BODY" in result.block["body"]
@@ -77,9 +74,7 @@ class TestFileNameParameter:
         skill_dir = tmp_path / Path(*SKILLS_RELATIVE_DIR) / "demo"
         skill_dir.mkdir(parents=True)
         (skill_dir / SKILL_FILE_NAME).write_text("---\nname: demo\n---\n\nBody\n", encoding="utf-8")
-        result = read_skill_for_injection(
-            "demo", default_skills_root(tmp_path), file_name="TYPO.md"
-        )
+        result = read_skill_for_injection("demo", default_skills_root(tmp_path), file_name="TYPO.md")
         assert result.block is None
         assert result.warning is not None
         assert "TYPO.md" in result.warning
@@ -103,9 +98,7 @@ class TestCondensatesExist:
         assert result.block["name"] == expected_name
 
     @pytest.mark.parametrize(("skill", "expected_name"), CONDENSATES)
-    def test_frontmatter_present_and_header_not_degenerate(
-        self, skill: str, expected_name: str
-    ) -> None:
+    def test_frontmatter_present_and_header_not_degenerate(self, skill: str, expected_name: str) -> None:
         """D3: without frontmatter the header renders '# name — name'.
 
         The description must be a real sentence, not an echo of the name.
@@ -132,18 +125,14 @@ class TestCondensatesExist:
     @pytest.mark.parametrize(("skill", "_name"), CONDENSATES)
     def test_no_triggers_or_globs(self, skill: str, _name: str) -> None:
         """A condensate is a payload, not a separately selectable skill."""
-        frontmatter, _ = split_frontmatter(
-            (SKILLS_ROOT / skill / INJECT_FILE_NAME).read_text(encoding="utf-8")
-        )
+        frontmatter, _ = split_frontmatter((SKILLS_ROOT / skill / INJECT_FILE_NAME).read_text(encoding="utf-8"))
         assert "triggers:" not in frontmatter
         assert "globs:" not in frontmatter
 
     @pytest.mark.parametrize(("skill", "_name"), CONDENSATES)
     def test_body_stays_small(self, skill: str, _name: str) -> None:
         """The whole point is cost: a condensate that grows is the wrong subset."""
-        _, body = split_frontmatter(
-            (SKILLS_ROOT / skill / INJECT_FILE_NAME).read_text(encoding="utf-8")
-        )
+        _, body = split_frontmatter((SKILLS_ROOT / skill / INJECT_FILE_NAME).read_text(encoding="utf-8"))
         assert len(body.splitlines()) <= 60
 
     @pytest.mark.parametrize(("skill", "_name"), CONDENSATES)
@@ -157,7 +146,7 @@ class TestParityWithParentSkill:
     """CT2: the condensate must never state a rule its SKILL.md does not."""
 
     #: Field labels the ceremony depends on. Each must appear in the parent.
-    FEATURE_PLANNING_LABELS = [
+    FEATURE_PLANNING_LABELS: ClassVar[list[str]] = [
         "Degree of freedom closed",
         "Deterministic mechanism",
         "Production best practice",
@@ -166,14 +155,12 @@ class TestParityWithParentSkill:
         "Producer kill-check target",
         "Concrete intent",
     ]
-    TESTS_WRITING_LABELS = ["C0", "C0p", "C1", "C2", "C3", "C4"]
+    TESTS_WRITING_LABELS: ClassVar[list[str]] = ["C0", "C0p", "C1", "C2", "C3", "C4"]
 
     @pytest.mark.parametrize("label", FEATURE_PLANNING_LABELS)
     def test_feature_planning_labels_exist_in_parent(self, label: str) -> None:
         parent = (SKILLS_ROOT / "feature-planning" / SKILL_FILE_NAME).read_text(encoding="utf-8")
-        condensate = (SKILLS_ROOT / "feature-planning" / INJECT_FILE_NAME).read_text(
-            encoding="utf-8"
-        )
+        condensate = (SKILLS_ROOT / "feature-planning" / INJECT_FILE_NAME).read_text(encoding="utf-8")
         assert label in condensate, "condensate dropped a required field"
         assert label.lower() in parent.lower(), f"condensate invented {label!r}"
 

@@ -359,6 +359,12 @@ def drive_session(
     system_prompt_extra: str = "",
     turn_context: str = "",
     scope_mode: str = "",
+    # PLAN S5a (CT3): per-slice ceremony mode for THIS stage. Deliberately a
+    # separate argument from ``scope_mode``: reusing scope_mode would switch on
+    # the chat-only scope machinery (observed_tiers, next_level, escalation
+    # events) as a side effect. Default "off" so every existing caller keeps
+    # today's behaviour byte-for-byte.
+    slice_ceremony: str = "off",
     initial_memory_summary: str = "",
     temperature: float | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -446,6 +452,7 @@ def drive_session(
             system_prompt_extra=system_prompt_extra,
             turn_context=turn_context,
             scope_mode=scope_mode,
+            slice_ceremony=slice_ceremony,
             initial_memory_summary=initial_memory_summary,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -471,6 +478,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     system_prompt_extra: str = "",
     turn_context: str = "",
     scope_mode: str = "",
+    slice_ceremony: str = "off",
     initial_memory_summary: str = "",
     temperature: float | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
