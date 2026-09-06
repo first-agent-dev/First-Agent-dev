@@ -5,6 +5,8 @@
 **Tip verified against:** `fc1f2e68144f2a9f4fd279c21fb619842d69cc70`
 **Status:** research + verification. No code changed. Deliverable is this doc; the plan it feeds is `/plan-authoring` work, gated on §9 decisions.
 
+**Revision 5** — operator decisions on injection payload, extractor investment, and PR publishing folded in (§5.8, §5.7, §8). Rev 4's finding stands: the hand-pasted ceremony *is* `feature-planning/SKILL.md` §9–§12, so nothing new is invented — but the **injected** form is a purpose-built condensate, not the skill body (§5.8).
+
 **Revision 4** — rev 3 proposed a new `SliceContract` schema; **rev 4 retracts it.** Operator feedback forced a re-read of the planning skills, which showed the hand-pasted ceremony *is* `feature-planning/SKILL.md` §9–§12 verbatim (§5.1). The design collapses to skill injection + two gates. §§1–4 are rev 2's verified findings, unchanged.
 
 ---
@@ -327,6 +329,31 @@ PR  (fa publishes branch→main; operator verifies and merges)  [phase 3]
 
 Nothing here is a new schema. One new small artifact (run constraints), one skill injection, two gates.
 
+### 5.8 Injection payload — condensates, not skill bodies (operator, rev 5)
+
+Operator: *"i would prefer a separate shorter version for this task. My prompt is ~30 loc, parts from skill are ~150 loc. We can add a new .md file right besides SKILL.md and inject it instead."* Same for `tests-writing`: *"we dont [inject the whole skill]. Same treatment, shorter version for injection."*
+
+Accepted. This is the right call, and the size argument understates it: injecting `feature-planning` §9–§12 (~135 lines) plus `tests-writing` (828 lines) **every coder turn** is a per-turn tax that the operator's own 30-line prompt proves is unnecessary. The hand-pasted prompt is the **empirical proof of sufficiency** — it has been driving real slices successfully at ~30 lines.
+
+**Two new files:**
+
+| file | content | budget |
+|---|---|---|
+| `knowledge/skills/feature-planning/INJECT.md` | before-gate → edit packet → after-gate → stop rule, condensed from `SKILL.md:306-441` | ~30–40 lines |
+| `knowledge/skills/tests-writing/INJECT.md` | C0–C4 ladder + producer kill-check + anti-theater minimum, condensed from `SKILL.md:123-128,156` | ~20–30 lines |
+
+Authoring rule: **the condensate is derived from the skill, never divergent from it.** The skill stays SSOT for the full protocol; `INJECT.md` is the executable subset. Drift between them is a real risk (`parity.py` precedent, `authoring-hardening-workplan-2026-07-16.md:273`), so the plan carries a **parity test**: every field name in `INJECT.md` must appear in its `SKILL.md`. Cheap, and it stops the two from silently forking.
+
+#### Three verified obstacles, none fatal
+
+1. **The loader hardcodes the filename.** `SKILL_FILE_NAME = "SKILL.md"` (`_inject.py:47`) and `read_skill_for_injection` builds `skills_root / skill_name / SKILL_FILE_NAME` (`:216-224`) — it **cannot** read a sibling file today. Fix: add an optional filename parameter defaulting to `SKILL.md`. Small, backward-compatible, and `test_read_skill_from_temp_fixture` (`tests/test_skill_injection.py:184`) already exercises the read path against a tmp fixture, so the new arg is testable without touching the real tree.
+
+2. **`skill-writing/SKILL.md:63` states an invariant: "Each skill is single file `SKILL.md` under `knowledge/skills/<name>/`".** Adding `INJECT.md` **violates a written rule**. This must be amended deliberately, not silently — the amendment goes in the plan's doc step (§7), stating that a skill is one `SKILL.md` **plus an optional derived `INJECT.md`**, and that only `SKILL.md` carries frontmatter/triggers. Unamended, this is exactly the "doc says X, code does Y" drift the repo has anti-patterns against.
+
+3. **Naming.** `INJECT.md` over the operator's `<SkillName>-inject.md`: the directory already names the skill, so the prefix is redundant, and a fixed filename means the loader takes a constant, not a computed string. Trivially reversible if the operator prefers the explicit form.
+
+**`knowledge/skills/README.md:101-110` index** gains no rows — `INJECT.md` is not a skill, it is a payload of one. Worth one line in the README preamble so the layout is discoverable.
+
 ### 5.6 Operator decisions, recorded
 
 | # | decision | status |
@@ -335,7 +362,7 @@ Nothing here is a new schema. One new small artifact (run constraints), one skil
 | Q2 | **workflow pipeline only** | confirmed; chat strips `pr_prepare` entirely (§8 Q5) |
 | Q3 | **harness runs verification, injects real output** | confirmed — mechanizes the `AFTER EDIT GATE` (`:388-415`) |
 | Q4 | **warn on out-of-scope writes, never block** | confirmed; note `feature-planning:337` says "Allowed files are binding" — the *skill* says stop, the *harness* only warns. Deliberate: forgiving-tools |
-| Q5 | plan-ID extraction | **script-only, no LLM; if the script fails, abandon the feature** (§5.7) |
+| Q5 | plan-ID extraction | **script-only, no LLM**; build it, measure it, invest further only if warranted. Legacy plans failing is expected, not a kill signal (§5.7) |
 | Q6 | stop-rule tool | backlogged; seam only |
 
 ### 5.7 Q5 — script-only extraction, and the kill criterion
@@ -345,8 +372,10 @@ Operator: *"no llm call, only script extraction. If script will fail — not wor
 Accepted as a **hard gate on the feature, decided before any code**:
 
 - Extractor is a pure function: plan text → `{S#, GAP#, CT#, T#}`. Regex over the common ID grammar (§5.3). No LLM, no fallback prompt.
-- **Kill criterion, measured up front:** run it over every plan in `worklogs/implementation-plans/`. If it does not extract clean slice + contract IDs from **all** of them, the auto-derivation feature is dropped and `files_allowed` / ID pre-fill is cut from scope. The ceremony injection (§5.1) does not depend on it and ships regardless.
-- This measurement is **step 1 of the plan**, before any behavioural code, so the scope decision is made on data.
+- **Operator decision (rev 5):** older plans do not conform and the extractor *will* fail on them — that is expected and is **not** a kill signal. Build the function, measure it, and invest further only if the measurement shows it is worth it.
+- **Corrected criterion: conformance is scoped to plans authored under the current skills, not the whole back-catalogue.** Step 1 of the plan measures extraction across `worklogs/implementation-plans/` and reports a per-plan pass/fail table, splitting *conforming* (post-skill) from *legacy*. Legacy misses are recorded, not counted against the gate.
+- Failure stays **soft in every case**: unparseable plan → fields blank and optional, run proceeds, WARNING emitted. Never a rejection (this is the §5.7 rule that keeps F6 from recurring).
+- The ceremony injection (§5.1, §5.8) does not depend on the extractor and ships regardless.
 
 ---
 
@@ -356,9 +385,11 @@ Accepted as a **hard gate on the feature, decided before any code**:
 
 The core change, and mostly wiring.
 
-- On entering the coder stage for a slice, inject `feature-planning` §9–§12 (the gates + edit packet + kill-check) into turn context — full body (§8 Q4), via the existing observation-block path (`coder_loop.py:773-790`).
-- Inject `tests-writing` alongside it, since the packet demands a C0–C4 class. Use `should_load_skill` (`loader.py:119`) — currently zero callers.
+- On entering the coder stage for a slice, inject **`feature-planning/INJECT.md`** (~30–40 ln, §5.8) into turn context via the existing observation-block path (`coder_loop.py:773-790`) — not the 135-line skill excerpt, not the 643-line skill.
+- Inject **`tests-writing/INJECT.md`** (~20–30 ln) alongside it, since the packet demands a C0–C4 class. Use `should_load_skill` (`loader.py:119`) — currently zero callers.
+- Requires the loader filename parameter (§5.8 obstacle 1): `read_skill_for_injection(..., file_name="INJECT.md")`.
 - Re-surface `RUN CONSTRAINTS` compactly each turn (phase 1), reusing the `--resume` injection shape (`cli.py:2163`) but within-session.
+- Anchor pattern still applies: full condensate on slice entry, short anchor on later turns (`build_skill_anchor`) — with a ~30-line payload the entry cost is now negligible.
 
 No new schema. The model emits the packet as prose, as it does today when the operator pastes it.
 
@@ -390,6 +421,9 @@ The `AFTER EDIT GATE` currently asks the *model* to run commands and report outp
 
 | doc | change |
 |---|---|
+| `knowledge/skills/feature-planning/INJECT.md` | **new** — ~30–40 ln condensate, the injected ceremony (§5.8) |
+| `knowledge/skills/tests-writing/INJECT.md` | **new** — ~20–30 ln condensate: C0–C4 + kill-check |
+| `knowledge/skills/skill-writing/SKILL.md:63` | **amend the single-file invariant** to allow a derived `INJECT.md` (§5.8 obstacle 2) |
 | `knowledge/skills/plan-authoring/SKILL.md` | **port §9–§12 from `feature-planning`** — the conforming fix for the real schema gap (§5.3) |
 | `knowledge/instructions/02-operations.md` | **operator instructions** (per feedback) — the ceremony is now automatic; stop pasting it |
 | `knowledge/skills/pr-creation/SKILL.md` | `pr_prepare` tool is retired from the agent seat; commit gate unchanged |
@@ -407,13 +441,13 @@ The `AFTER EDIT GATE` currently asks the *model* to run commands and report outp
 - **(b) one packet per edit** — S11 might yield E1 (add the warning), E2 (wire it), E3 (test). Three packets, one commit. Matches the skill exactly (`EDIT PACKET E# / S#` — note it is keyed by **both**). Risk: more ceremony per slice.
 - **(c) hybrid** — packet per edit, gate per slice: before-gate once at slice entry, packet per edit, after-gate once before commit.
 
-**Recommendation: (c).** It is what the skill's own numbering (`E# / S#`) implies, and it puts the expensive parts (gates, verification) at slice boundaries while keeping packets bounded per edit. Deferred to operator.
+**Resolved (rev 5): (c) hybrid**, per recommendation. Before-gate once at slice entry; one edit packet per edit (`E# / S#`, bounded, no bundling per `feature-planning:386`); after-gate + harness-run verification once before the commit. One slice = one commit.
 
-**Q2 — phase 3. Resolved:** operator confirms fa publishes branch→main, he verifies and merges. Note: **no PR-creation code exists anywhere in the repo** (verified: `gh pr create` appears only in two research docs), and `gh` is **not** in the bash read-only whitelist (`bash_intent.py:62-99`). So publishing today is either manual or outside `src/fa/`. **New question:** should fa publish, or emit a PR-body file? Recommendation: emit the file first (smaller threat-model change), add publishing later.
+**Q2 — phase 3. Resolved (rev 5):** fa **should publish** — push commits to a branch and open a PR to `main` via standard git + its GitHub token; the operator verifies and merges manually. Two verified facts shape the implementation: no PR-creation code exists anywhere in the repo (`gh pr create` appears only in two research docs), and **`gh` is not in the bash read-only whitelist** (`bash_intent.py:62-99`), so an agent-issued `gh` call classifies as `OPAQUE_EXEC`. Therefore publishing is a **harness action, not an agent bash call** — deterministic, at the end of the pipeline, with the PR body composed from the run's edit packets. This also keeps the token out of model-reachable surface. Threat-model note for the plan: publishing is the first outbound-write capability in the pipeline; it must be gated on the pipeline reaching `DONE` and must target the session branch only, never `main` directly (`validators.py:251` already guards force-push to `main`).
 
 **Q3 — re-verify all each round?** Operator asks what a senior production team would do. **Answer: neither extreme — this is the standard CI/local split.** Locally, re-run only the affected subset each iteration (fast feedback); before the merge boundary, run the full suite once. Selective re-runs risk missing a regression that a fixed test would have caught; full re-runs each round waste wall-clock and hit the deadline (`workflow_controller.py:345`). **Recommendation:** targeted `T#` per repair round, full plan verification once before the slice is marked done. `FlowState.invalidated_steps` (`workflow_artifacts.py:264`) already models exactly this.
 
-**Q4 — full skill injection. Resolved:** full body. Note the cost: `feature-planning` is 643 lines and `tests-writing` 828. Injecting both fully is large; §9–§12 alone is ~135 lines. **Recommendation:** full §9–§12 (not the whole skill) + full `tests-writing`, measured against `estimate_tokens` in step 1.
+**Q4 — injection payload. Resolved (rev 5):** neither full skill nor a raw §9–§12 slice — a purpose-built `INJECT.md` condensate per skill (§5.8). Supersedes rev 4's "full body" reading. Token measurement stays in step 1, but the budget question largely dissolves: ~60 lines total instead of ~970.
 
 **Q5 — strip from chat. Resolved:** remove the `pr_prepare` tool and its description from the chat role. Confirms §5.4. Saves tokens in the common path and removes the F6 tax where it was measured.
 
@@ -535,3 +569,15 @@ The `AFTER EDIT GATE` currently asks the *model* to run commands and report outp
 | `knowledge/skills/pr-creation/SKILL.md:142-150` | same definition; `n/a (reason)` allowed |
 | `src/fa/inner_loop/bash_intent.py:62-99` | `gh` **not** in the read-only whitelist — bears on Q2 |
 | *(absence)* repo-wide | `gh pr create` appears only in two research docs; **no PR-creation code** |
+
+### Rev 5 additions — injection payload, extractor, publishing
+| citation | what |
+|---|---|
+| `src/fa/skills/_inject.py:47` | `SKILL_FILE_NAME = "SKILL.md"` — hardcoded; blocks sibling-file injection |
+| `src/fa/skills/_inject.py:216-224` | `read_skill_for_injection` builds `skills_root/<name>/SKILL.md`; needs a filename param |
+| `tests/test_skill_injection.py:184` | `test_read_skill_from_temp_fixture` — existing tmp-fixture read test to extend |
+| `knowledge/skills/skill-writing/SKILL.md:63` | **"Each skill is single file `SKILL.md`"** — invariant that `INJECT.md` violates; must be amended |
+| `knowledge/skills/README.md:101-110` | skill index; `INJECT.md` adds no row (payload, not skill) |
+| `knowledge/research/authoring-hardening-workplan-2026-07-16.md:273` | parity-check precedent for doc↔code mirrors → parity test for `SKILL.md` ↔ `INJECT.md` |
+| `src/fa/sandbox/validators.py:251` | force-push guard on `main` — bears on harness-side publishing |
+| `src/fa/inner_loop/bash_intent.py:62-99` | `gh` absent from whitelist → publishing must be a harness action, not agent bash |
