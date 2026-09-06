@@ -44,6 +44,15 @@ class FeatureFlags:
     # S12.4 (CT4): IntentGuard enforcement mode. Closed enum; unknown values
     # degrade to "enforce" at the guard (fail-closed) with a warning.
     intent_guard_mode: str = "enforce"
+    # PLAN S4 (CT3): per-slice implementation-ceremony injection mode.
+    # Closed enum {off, observe, enforce}, mirroring intent_guard_mode's
+    # 3-state shape. Default "observe" — telemetry before behaviour change,
+    # per the S12.4 rollout precedent: the events prove the trigger fires on
+    # real runs before the model's context is altered by it.
+    #   off      — no injection, no events; byte-identical to pre-feature
+    #   observe  — emit events, leave the request payload untouched
+    #   enforce  — inject the condensates into skills_conditional
+    slice_ceremony_mode: str = "observe"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -60,7 +69,21 @@ class FeatureFlags:
             "blackboard.filtered_history_include_plans": self.blackboard_filtered_history_include_plans,
             "max_chain_retries": self.max_chain_retries,
             "intent_guard.mode": self.intent_guard_mode,
+            "slice_ceremony.mode": self.slice_ceremony_mode,
         }
+
+
+#: PLAN S4 (CT3): closed enum for ``slice_ceremony_mode``. Mirrors
+#: ``INTENT_GUARD_MODES``. A value outside this set degrades to
+#: ``SLICE_CEREMONY_FALLBACK_MODE`` at the consumer, never at load time:
+#: the loaded config stays a faithful record of what the operator wrote,
+#: and the correction is applied (and logged) where the value is used.
+SLICE_CEREMONY_MODES: frozenset[str] = frozenset({"off", "observe", "enforce"})
+
+#: Unknown/unparseable values land here. ``observe`` and not ``off`` because a
+#: typo should still yield telemetry the operator can see; and not ``enforce``
+#: because a typo must never silently start rewriting prompts.
+SLICE_CEREMONY_FALLBACK_MODE = "observe"
 
 
 # ── Fail-closed / fail-open flag categorization (S13) ────────────────
@@ -92,6 +115,12 @@ FAIL_OPEN_FLAGS: frozenset[str] = frozenset(
         "max_subagent_spawns_per_session",
         "blackboard_filtered_history_include_plans",
         "max_chain_retries",  # default=0 → fail-fast when unconfigured
+        # PLAN S4: default="observe" when flags missing. "observe" emits
+        # telemetry but does not alter the request, so an unreadable config
+        # cannot silently switch a live run's prompt composition on. The
+        # restrictive value here is the *quiet* one, not a stricter gate:
+        # this flag guards an advisory injection, not a safety boundary.
+        "slice_ceremony_mode",
     }
 )
 
@@ -127,6 +156,8 @@ _KNOWN_FLAGS: dict[str, str] = {
     "max_chain_retries": "int",
     "intent_guard.mode": "str",
     "intent_guard_mode": "str",
+    "slice_ceremony.mode": "str",
+    "slice_ceremony_mode": "str",
 }
 
 
@@ -287,6 +318,7 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
         ),
         max_chain_retries=_get_int(found, "max_chain_retries", [], 0),
         intent_guard_mode=_get_str(found, "intent_guard.mode", ["intent_guard_mode"], "enforce"),
+        slice_ceremony_mode=_get_str(found, "slice_ceremony.mode", ["slice_ceremony_mode"], "observe"),
     )
 
     return FeatureFlagsLoadResult(flags=flags, warnings=tuple(warnings))
@@ -305,6 +337,8 @@ def load_feature_flags_from_path(
 __all__ = [
     "FAIL_CLOSED_FLAGS",
     "FAIL_OPEN_FLAGS",
+    "SLICE_CEREMONY_FALLBACK_MODE",
+    "SLICE_CEREMONY_MODES",
     "FeatureFlagWarning",
     "FeatureFlags",
     "FeatureFlagsLoadResult",
