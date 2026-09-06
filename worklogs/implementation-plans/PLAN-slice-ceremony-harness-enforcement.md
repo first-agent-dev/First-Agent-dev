@@ -1,6 +1,6 @@
 # PLAN: Harness-enforced per-slice implementation ceremony    Plan-ID: PLAN-slice-ceremony-harness-enforcement
 Status: READY                                   Depth: P2
-Revision: v2   Changed-since-last: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
+Revision: v3 (review pass 2 in progress)   Changed-since-last-v1: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
 Upstream context: `worklogs/reviews/F6-RESEARCH-intentguard-pr-prepare-friction.md` (rev 5, `7e50943`);
 PR [#68](https://github.com/first-agent-dev/First-Agent-dev/pull/68); operator decisions rev 3–rev 5.
 
@@ -966,6 +966,61 @@ exist because a "wire it up" step assumed a seam that was not there.
 **STATUS: READY**
 
 ---
+
+---
+
+## 12. Review pass 2 — findings (v3, awaiting operator decision on D8/D10/D11)
+
+**Confirmed defects, fixed in place**
+
+**D6 — `should_load_skill` is the wrong tool for S5, and wiring it is theater.**
+`should_load_skill(skill_path, current_files, task_text)` (`loader.py:119-175`) decides *whether* a
+skill matches, by glob/trigger/`alwaysApply`. But S5 already knows the answer deterministically:
+role is `coder`, mode is on, so the ceremony applies. Routing a known decision through a
+fuzzy matcher adds a failure mode (a trigger-phrase miss silently disables the ceremony) and buys
+nothing. Worse, `INJECT.md` deliberately carries no `triggers:`/`globs:` (S1/D3), so
+`should_load_skill` would return **False** for both condensates and the feature would never fire.
+→ **S5 no longer calls `should_load_skill`.** GAP4 is closed by *injecting `tests-writing-inject`
+directly*, not by wiring the matcher. Wiring it stays a separate backlog item, honestly labelled.
+
+**D7 — `_READINESS_PROMPT_EXTRA` is not chat-only; S8 as written breaks every role.**
+`cli.py:2251` appends `_readiness_prompt_extra(workspace)` to `system_prompt_extra` for **all**
+roles — it is not role-conditional. v1/v2's S8 said "drop the `pr_prepare` sentence"; doing that
+removes the instruction from `coder` too, which still has the tool and still needs it. → S8 now
+makes the readiness text **role-parameterised**, keeping the `pr_prepare` clause for non-chat roles.
+
+**Open questions for the operator (blocking S8 only)**
+
+**D8 — S8 contradicts a deliberate, tested design decision.**
+`tests/test_chat_role.py:184-203` is not incidental coverage; it is a regression test written
+*against* the exact behaviour S8 restores. Its docstring records that a previous test asserted the
+wrong name and "passed vacuously while the real tool, `pr_prepare`, was appended for every role
+including chat". Someone already fixed this in the direction opposite to S8. Removing it is
+defensible (that test asserts *what is*, not *what should be*), but it must be a recorded reversal,
+not a silent test deletion. → **Q5, below.**
+
+**D9 — S8's blast radius is 10 test files, not the "one assertion" v2 implied.**
+`pr_prepare` appears in `tests/{test_chat_role,test_cli,test_intent_guard,test_prepare_pr,
+test_prompt_registry_coherence,test_readiness_announcement,test_s12_invariant_relaxation,
+test_bash_intent}.py`, `tests/conformance/test_live_executor.py`, and a pinned baseline
+`tests/data/windows-baseline-2026-08-02.txt`. Several (`test_cli.py:794-978`) assert the full
+deny-then-allow ceremony. Most are role-agnostic and stay valid; the chat-specific ones must be
+**re-pointed at `coder`**, not deleted. S8's exit criteria now require an explicit per-file
+disposition.
+
+**D10 — the conformance path builds a `coder` registry and is in scope.**
+`cli.py:2734` builds `_build_run_tool_registry("coder", ...)` for the live-executor conformance
+suite, and `tests/data/windows-baseline-2026-08-02.txt` pins a rendered corpus. S8 keeps
+`pr_prepare` for `coder`, so this should be unaffected — but the baseline must be re-verified, not
+assumed. → **Q6.**
+
+**D11 — the ceremony and `pr_prepare` now overlap for the `coder` role.**
+After S5, a coder slice receives the ceremony (which asks for intent, DoF-closed, mechanism, DoD).
+Under `IntentGuard` in `enforce`, the same slice must *also* call `pr_prepare` before its first
+mutation (`intent_guard.py:226-232`, role-agnostic). That is the F6 turn-tax reappearing inside the
+very pipeline this plan is meant to streamline — the model states its intent twice, in two formats,
+to two consumers. Not a code defect; a **design collision the plan did not name.** → **Q7.**
+
 
 ## 11. Artifacts inventory
 
