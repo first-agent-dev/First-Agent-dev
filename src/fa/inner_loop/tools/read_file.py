@@ -142,6 +142,7 @@ def _rendered_bytes(result_dict: Mapping[str, object]) -> int:
 
 
 def _file_frame_header(rel: str, total_lines: int, start: int, end: int, text_bytes: int) -> str:
+    end = min(end, total_lines)  # a window never extends past EOF
     if start == 1 and end == total_lines:
         return f"[File: {rel} — {total_lines} lines, {text_bytes} bytes — showing ALL]"
     above, below = start - 1, total_lines - end
@@ -153,6 +154,7 @@ def _file_frame_header(rel: str, total_lines: int, start: int, end: int, text_by
 
 
 def _artifact_frame_header(artifact_id: str, total_lines: int, start: int, end: int) -> str:
+    end = min(end, total_lines)  # a window never extends past EOF
     if start == 1 and end == total_lines:
         return f"[Artifact: {artifact_id} — {total_lines} lines — showing ALL]"
     above, below = start - 1, total_lines - end

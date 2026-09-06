@@ -130,6 +130,18 @@ class SandboxHook(GuardMiddleware):
             # tracked as Q19 option (c). V24/V25 remain OPEN.
             return self._handle_bash(call.params.get("command"))
         if call.name in _FS_PATH_TOOLS:
+            # Path-only reads stay on the containment path (the common case).
+            # artifact_id-only fs_read_file targets the session store, not the
+            # workspace tree — skip path containment so the tool can retrieve
+            # or return artifact_not_found. Blank path is treated as absent
+            # (LLM often sends path="" with artifact_id).
+            if call.name == "fs_read_file":
+                raw_path = call.params.get("path")
+                raw_aid = call.params.get("artifact_id")
+                path_absent = not isinstance(raw_path, str) or not raw_path.strip()
+                aid_present = isinstance(raw_aid, str) and bool(raw_aid.strip())
+                if aid_present and path_absent:
+                    return Decision.allow()
             return self._handle_path(call.params.get("path"))
         return Decision.allow()
 

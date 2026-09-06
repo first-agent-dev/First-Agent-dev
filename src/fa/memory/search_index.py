@@ -185,6 +185,7 @@ class SearchResult:
     matches: list[dict[str, Any]] = field(default_factory=list)
     skipped_large_files: int = 0
     returned: int = 0
+    total: int = 0
     truncated: bool = False
     total_bytes: int = 0
     index_stats: SearchStats | None = None
@@ -1178,7 +1179,7 @@ class SearchIndex:
         per_file_matches: dict[str, list[tuple[int, str]]],
         *,
         limit: int,
-    ) -> tuple[list[dict[str, Any]], bool]:
+    ) -> tuple[list[dict[str, Any]], bool, int]:
         """§A6 v7 matches: grep-like MERGED regions.
 
         Hits merge into one region when the gap between consecutive hit
@@ -1191,13 +1192,22 @@ class SearchIndex:
         """
         matches_out: list[dict[str, Any]] = []
         truncated = False
+        total_regions = 0
         for rel in matched_files:
             fms = per_file_matches.get(rel, [])
             if not fms:
                 continue
+            groups = self._group_adjacent(fms)
+            total_regions += len(groups)
+            if len(matches_out) >= limit:
+                truncated = True
+                continue  # count remaining regions from in-memory hits; no extra read
             fp: Path = root / rel
             full_lines: list[str] = self._read_text_for_match(fp, MAX_SEARCH_FILE_BYTES).splitlines()
-            for grp in self._group_adjacent(fms):
+            for grp in groups:
+                if len(matches_out) >= limit:
+                    truncated = True
+                    break
                 hit_lines = {ln for ln, _ in grp}
                 start = max(1, grp[0][0] - MATCH_CONTEXT_LINES)
                 end = min(len(full_lines), grp[-1][0] + MATCH_CONTEXT_LINES)
@@ -1226,12 +1236,7 @@ class SearchIndex:
                         "snippet": snippet,
                     }
                 )
-                if len(matches_out) >= limit:
-                    truncated = True
-                    break
-            if len(matches_out) >= limit:
-                break
-        return matches_out, truncated
+        return matches_out, truncated, total_regions
 
     @staticmethod
     def _group_adjacent(fms: list[tuple[int, str]]) -> list[list[tuple[int, str]]]:
@@ -1360,14 +1365,16 @@ class SearchIndex:
             result.skipped_large_files = skipped_large
             result.files = files_stat_rows(root, matched_files, params.limit)
             result.returned = len(result.files)
+            result.total = len(matched_files)
         elif params.output_mode == "matches":
-            result.matches, extra_trunc = self._build_matches_output(
+            result.matches, extra_trunc, total_regions = self._build_matches_output(
                 root,
                 matched_files,
                 per_file_matches,
                 limit=params.limit,
             )
             result.returned = len(result.matches)
+            result.total = total_regions
             truncated = truncated or extra_trunc
         else:
             raise ValueError(f"unknown output_mode: {params.output_mode}")

@@ -702,19 +702,19 @@ s127_assert_bash_tail() {
   s127_finish "S127_BASH_TAIL_FAILED"
 }
 
-cmd_s127_bash_stderr() { # CT4: stderr is preserved in the last bytes of the visible result
+cmd_s127_bash_stderr() { # CT4 + F7: stderr last-bytes; non-zero LAST-STAGE exit (no masking pipe)
   s127_row bash-stderr 10 \
-    "Run a bash command that fails with a long stderr traceback (for example: python3 -c 'import sys; print(\"x\"*4000, file=sys.stderr); raise SystemExit(2)'). Report the actual error text you saw at the end." \
+    "Run a SINGLE unpiped bash command that fails with a long stderr traceback and a non-zero exit. Do NOT pipe it (no | tail, no | grep, no 2>&1 | …): fs_run_bash returncode is the last pipeline stage, so a pipe would mask the failure. Example: python3 -c 'import sys; print(\"x\"*4000, file=sys.stderr); raise RuntimeError(\"S127_STDERR_MARKER\")'. Report the error text you saw and whether the tool treated the command as failed." \
     s127_assert_bash_stderr
 }
 s127_assert_bash_stderr() {
   S127_ROW_FAILED=0
   s127_expect "$1" "$2" "failing bash ran" present '"tool_name": "fs_run_bash"'
-  # A non-zero exit is surfaced in the result SUMMARY ("bash exited N",
-  # run_bash.py:186/289) — never in the task text, so this cannot false-pass on
-  # the prompt. The stderr-TEXT preservation itself is the model's self-report
-  # (the visible result's last bytes), read from the timeline/📝 block.
-  s127_expect "$1" "$2" "the non-zero exit was surfaced (bash exited N)" present 'bash exited [1-9]|"ok": false'
+  # F7: require the handler summary for a non-zero LAST-STAGE exit
+  # ("bash exited N"). Do NOT OR with ok:false (IntentGuard/pr_prepare denials)
+  # or stderr-presence (a 2>&1 | tail pipeline can print the traceback then
+  # exit 0). Task text must not contain "bash exited N" (false-pass).
+  s127_expect "$1" "$2" "non-zero last-stage exit surfaced (bash exited N)" present 'bash exited [1-9]'
   s127_finish "S127_BASH_STDERR_FAILED"
 }
 

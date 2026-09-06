@@ -355,6 +355,21 @@ def test_adversarial_battery_is_green() -> None:
     assert "DEFECT-CONFIRMED" not in proc.stdout
 
 
+def test_s127_bash_stderr_row_requires_nonzero_last_stage_exit() -> None:
+    """F7: bash-stderr must not OR-pass on ok:false (IntentGuard) or stderr
+    while a | tail pipeline exits 0. Task must forbid a masking pipe and
+    must not contain the oracle string ``bash exited N``.
+    """
+    text = _text()
+    body = text.split("cmd_s127_bash_stderr()", 1)[1].split("cmd_s127_bash_small()", 1)[0]
+    assert "Do NOT pipe" in body
+    assert "bash exited [1-9]" in body
+    assert '"ok": false' not in body
+    assert "raise RuntimeError" in body
+    assert "bash exited 2" not in body
+    assert "SystemExit(2)" not in body
+
+
 def test_usage_exit_code() -> None:
     """No/unknown subcommand exits 2 with usage (never runs anything)."""
     proc = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, cwd=SCRIPT.parent.parent)

@@ -64,6 +64,25 @@ def test_s127_t1_full_read_frame(tmp_path: Path) -> None:
     assert "[artifact:" not in projected
 
 
+def test_s127_f1_window_past_eof_clamps_to_showing_all(tmp_path: Path) -> None:
+    """F1: end_line past EOF must not print negative below / phantom range.
+
+    degree-of-freedom-closed: requested end vs file length
+    deterministic-mechanism: read_file._file_frame_header end=min(end,total)
+    kill-check: drop the clamp -> frame contains '-25 below' / showing 1-30
+    """
+    tool = build_read_file_tool(tmp_path)
+    (tmp_path / "short.py").write_text("a\nb\nc\nd\ne\n", encoding="utf-8")
+    result = tool.handler({"path": "short.py", "start_line": 1, "end_line": 30})
+    assert result.error is None and result.result is not None
+    frame = result.result["frame"]
+    assert "showing ALL" in frame
+    assert "below" not in frame
+    assert "continue with start_line=" not in frame
+    assert "-25" not in frame
+    assert result.result["content"].splitlines() == ["a", "b", "c", "d", "e"]
+
+
 def test_s127_t2_window_frame_and_resume(tmp_path: Path) -> None:
     """T2: window -> a-b, above/below counts, exact resume call, promise."""
     tool = build_read_file_tool(tmp_path)
@@ -170,6 +189,25 @@ def test_s127_t3_artifact_variant_no_outline_steer(tmp_path: Path) -> None:
     assert "continue with start_line=" in body and f"(artifact_id={artifact_id})]" in body
     assert "fs_search" not in body, "artifact T3 must not steer to fs_search outline"
     assert body.split("\n", 1)[1].startswith("row 5")
+
+
+def test_s127_f1_artifact_window_past_eof_clamps_to_showing_all(tmp_path: Path) -> None:
+    """F1 sibling: _artifact_frame_header clamps the same way."""
+    tool = build_read_file_tool(tmp_path)
+    log = EventLog(tmp_path / "r0" / "events.jsonl", run_id="r0")
+    state = SessionState(workspace_root=tmp_path, run_id="r0", log=log)
+    state.artifact_store = ArtifactStore(tmp_path / "r0" / "fa-artifacts")
+    artifact_id = state.artifact_store.put("a\nb\nc\nd\ne\n")
+    token = set_current_session(state)
+    try:
+        result = tool.handler({"artifact_id": artifact_id, "start_line": 1, "end_line": 30})
+    finally:
+        reset_current_session(token)
+    assert result.error is None and result.result is not None
+    frame = result.result["frame"]
+    assert "showing ALL" in frame
+    assert "below" not in frame
+    assert "-25" not in frame
 
 
 def test_s127_t1_artifact_read_gets_frame(tmp_path: Path) -> None:
