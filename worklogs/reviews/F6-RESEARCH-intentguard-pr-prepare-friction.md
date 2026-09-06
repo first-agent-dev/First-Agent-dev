@@ -5,7 +5,7 @@
 **Tip verified against:** `fc1f2e68144f2a9f4fd279c21fb619842d69cc70`
 **Status:** research + verification. No code changed. Deliverable is this doc; the plan it feeds is `/plan-authoring` work, gated on §9 decisions.
 
-**Revision 3** — rev 1 verified the defect; rev 2 reframed it against the founding sources (Q-15, AP-001, AP-003, ADR-10 I-1, ADR-8, ADR-11); **rev 3 re-baselines the goal and folds in the redesign** per operator direction. §§1–4 are rev 2's verified findings, unchanged. §§5–8 are new.
+**Revision 4** — rev 3 proposed a new `SliceContract` schema; **rev 4 retracts it.** Operator feedback forced a re-read of the planning skills, which showed the hand-pasted ceremony *is* `feature-planning/SKILL.md` §9–§12 verbatim (§5.1). The design collapses to skill injection + two gates. §§1–4 are rev 2's verified findings, unchanged.
 
 ---
 
@@ -223,273 +223,201 @@ There is a deeper point here worth stating plainly. A validator can only ever ch
 
 ---
 
-## 5. Re-baseline — what the seat is actually for (operator, rev 3)
+## 5. Re-baseline (rev 4) — the finding that dissolves most of the problem
 
-Rev 2 diagnosed the inversion. Rev 3 re-baselines the **goal**, because the operator's workflow moved since the module was built and the module never followed.
+Rev 3 proposed a new `SliceContract` schema. **Rev 4 retracts that proposal.** Operator feedback ("overall i am lost", "simple system per my desired behaviour") forced a re-read of the planning skills, and the re-read produced the finding below.
 
-### 5.1 The operator's stated pipeline
+### 5.1 The operator's ceremony already exists, in the repo, as a skill
 
-> "agent always works in git style repos. All changes are commits, final step is pr creation with a note attached. Idea was that pr_prepare note would serve as: **inherited context**, model starts all changes with locking in invariants and continues while following that trajectory; **some function deterministically verifies compliance**; after work is done pr_prepare note text goes in as **part of frontmatter in actual PR's description** + mentioning link to plans, docs, etc."
+The prompt the operator hand-pastes for every slice **is `knowledge/skills/feature-planning/SKILL.md` §9–§12, near-verbatim.**
 
-So the note has a **three-phase lifecycle**, and only phase 2 was ever built:
-
-| phase | purpose | consumer | built? |
-|---|---|---|---|
-| **1. Anchor** | model locks intent before work; the note enters its own context and biases the trajectory | the model itself | ❌ the note is write-only; nothing re-surfaces it in-session |
-| **2. Compliance** | a deterministic function verifies work matches declared intent | `IntentGuard` | ⚠️ built, but checks *header shape*, not *compliance with the declared trajectory* |
-| **3. Publication** | note becomes PR-description frontmatter + links to plans/docs | `gh pr create` | ❌ **nothing in `src/fa/` creates a PR.** Verified: no `gh pr create`, no PR-body composer |
-
-**This is the finding that reframes the whole module.** F6's turn-tax is phase 2 misfiring. But phases 1 and 3 — the two the operator actually described as the point — **do not exist**. The module is one-third built, and the built third is the enforcement third.
-
-That explains why it feels wrong. A checkpoint that only ever *blocks*, never *pays back*, is experienced as a toll. Phases 1 and 3 are where the payback lives.
-
-### 5.2 Verified: the anchor is write-only within a session
-
-`pr_prepare` writes the draft (`prepare_pr.py:255`). `IntentGuard` reads it (`intent_guard.py:308`). **Nothing puts it back in front of the model during the session.**
-
-The one place the draft *is* re-surfaced is `--resume`, across sessions:
-
-```
-# cli.py:2163-2168
-# When resuming, inject the previous session's draft content as
-# mutable memory-summary context so the LLM sees the existing
-# plan/work-log from turn 1 …
-```
-
-**The operator's "inherited context" mechanism already exists and is wired — but only across a `--resume` boundary, never within the session where the trajectory is actually being followed.** Same class as `render_prepare_buffer` (§1.2), `Decision.modify` (§0), `should_load_skill` (§5.6): built, correct, wired to the wrong seat or no seat.
-
-### 5.3 Verified: phase 3 has no implementation at all
-
-Exhaustive grep across `src/fa/`: no `gh pr create`, no PR-body builder, no frontmatter composer for PR descriptions. `pr_intent.py` validates *commit messages* at the git-hook seat; `_cli_validate` (`pr_intent.py:944`) is a commit-msg gate. The draft never becomes a PR description.
-
-So "the note goes into the PR frontmatter" is, in the operator's own words, "mostly in my head and partly written code". Correct — the head part is phase 3.
-
-### 5.4 The two objects, and why the resemblance misleads
-
-`pr_prepare` is **commit-shaped**; the operator's copy-paste protocol is **slice-shaped**. Field-level overlap is one row:
-
-| operator's protocol field | `pr_prepare` equivalent |
+| operator's pasted prompt | source in repo |
 |---|---|
-| concrete intent | `intent` ✅ |
-| which plan contract + gap IDs | — |
-| exact files allowed to change | — |
-| current behavior → target behavior | — |
-| exact code mechanism | `deterministic_mechanism` (FIX-only) ⚠️ |
-| production best practice | — |
-| failure behavior | — |
-| DoD + negative proof | — |
-| tests-writing class C0/C1/C2/C3 | — |
-| producer kill-check target | — |
-| stop rule → promote to Q# | — |
+| "state current source-verified behavior" + "stop if blocking question, append it" | `feature-planning/SKILL.md:306-336` — `BEFORE EDITING GATE` |
+| "what idea is implemented now?" | `:344` |
+| plan contract + gap IDs / files allowed | `:314-325` |
+| concrete intent · current→target · code mechanism · **degree of freedom closed** · **deterministic mechanism** · production best practice · failure behavior · DoD + negative proof · C0–C4 class · producer kill-check target | `:342-386` — `EDIT PACKET E# / S#` |
+| "run targeted tests, static checks, inspect diff, report actual output, not complete from 'no exception'" | `:388-415` — `AFTER EDIT GATE` |
+| "after a big chunk, run mutation testing" | `:423-441` — kill-check protocol |
+| "if implementation reveals a new policy choice, stop and promote to Q#" | `:326-334` |
 
-One clean match. Two partial. Eight missing. **These are not the same artifact and should not be forced into one schema** — that is how you get a 6-property object serving two masters, which is the shape that produced F6.
+**Every element. No exceptions.** The operator is not asking for a new artifact — he is hand-delivering a skill the harness already contains and never injects.
 
-But they are also not unrelated: the slice contract is *upstream* of the commit note. Which gives the answer.
+**This inverts the entire problem.** Rev 3 asked "what new schema should the model fill in?" The right question is: **"why is the harness making the operator paste a skill it already ships?"**
 
-### 5.5 Recommendation on the object question — derive, don't merge
+Answer, verified: `select_l2_skill` (`expansion.py:128-136`) injects a planning skill **once, at L2 entry**, and only `plan-authoring` or `feature-planning`. There is **no per-slice injection during the coder stage**, and `should_load_skill` (`skills/loader.py:119`) — the function that would do trigger-based injection — has **zero production callers**. The skill is injected as *planning* input and never re-applied as *execution* protocol, which is what §9–§12 actually are.
 
-**Three artifacts, one model-facing ceremony, two of them derived.**
+**Consequence: no new schema. The design becomes "inject §9–§12 at the coder stage, per slice, and enforce the two gates the harness can check deterministically."** That is dramatically smaller than rev 3, and it is why rev 4 retracts the `SliceContract` dataclass.
+
+### 5.2 Operator correction accepted — I was wrong about DEGREE-OF-FREEDOM CLOSED
+
+Operator: *"Degree of freedom closed is more like 'what agent should do exactly?' — scope, best practices to use maybe."*
+
+I claimed it derives from `current_behavior`. **That is wrong**, and the repo settles it — against both of us, in a way that matters:
+
+> `DEGREE-OF-FREEDOM CLOSED:` names the **producer-site** decision (schema typing) the LLM previously had freedom on. The previous wrong-shape fix had freedom on «which truth-strings to accept»; this fix removes the freedom entirely.
+> — `AP-003:152-156`
+
+> One sentence naming the spec-bearing decision **the LLM previously had a degree of freedom on, that this fix removes.** … A genuine answer names a **producer-site** decision (a schema field shape, a function return contract, a config validation rule).
+> — `pr-creation/SKILL.md:142-150`
+
+So it is neither "the freedom that exists today" (my rev-3 error) nor "what the agent should do / scope / best practices" (the operator's reading). It is: **the producer-site decision that this change removes freedom on.** It is about *the code's* freedom, not the agent's, and it is inherently **per-change** — which is exactly why it cannot be a PR-level generalized rule list.
+
+Two things follow, and they are load-bearing:
+
+1. **My "mapping is total and deterministic" claim is retracted.** DoF-closed is genuine per-slice judgement. It cannot be derived from `current_behavior` or anything else. Rev 3's strongest argument was wrong.
+2. **`feature-planning:361` already asks for exactly this field, per edit packet, in the operator's own ceremony.** The field the commit gate needs is already produced by the protocol the operator already runs by hand. It does not need deriving — it needs **carrying**.
+
+The operator's instinct that these are "2 different artifacts" is therefore correct, but the relationship is simpler than rev 3's derivation machinery: the edit packet **contains** the commit note's hardest fields as ordinary content.
+
+### 5.3 The schema conflict is smaller than it looks
+
+Operator: *"skills produce different shapes of plans… there is a schema conflict."*
+
+Real, but narrow. The ID vocabularies are **identical**:
+
+| ID | `feature-planning:120-132` | `plan-authoring:161-181` |
+|---|---|---|
+| `G#` `GAP#` `CT#` `P#` `M#` `A#` `S#` `T#` `Q#` `RK#` `RN#` | all present | all present, same meanings |
+
+Both use `S#` for the implementation slice. Both use `GAP#`/`CT#` for contracts. **Liveness `L0`–`L3` is in both.** The plan *skeletons* differ (feature-planning has 10 sections, plan-authoring ~12 with a heavier preflight/READY gate), but **the machine-relevant surface — the ID grammar — is common.**
+
+So the extractor parses `S#`, `GAP#`, `CT#`, `T#` and works against both skills. The operator's proposed mitigation ("force workflow to use only plan-authoring") is **not necessary**, and I'd advise against it: `feature-planning` is the skill that carries §9–§12, which is the part being mechanized.
+
+**The actual conflict is the opposite of the stated one:** `plan-authoring` has **no** before-edit gate, no edit packet, and no after-edit gate. Verified — `grep` for `BEFORE EDITING`/`EDIT PACKET`/`AFTER EDIT`/`Producer kill-check`/`Tests-writing class` in `plan-authoring/SKILL.md` returns a **single** hit (`:442`, "Degree of freedom closed", inside a step template). Operator: *"plan-authoring does not conform currently to pr_prepare and my prompt."* Correct — and the fix is to port §9–§12 into `plan-authoring` (a doc change, §7), not to restrict which skill the workflow may use.
+
+### 5.4 Should `pr_prepare` exist at all?
+
+Operator: *"while writing this i become more sceptical on whole pr_prepare feature, should it exist?"* … *"Pr_prepare should be a generalized intent / guideline and degree-of-freedom-closed list of rules that all slices should follow, like 'implement features strictly following design decisions locked in ADR-20'."*
+
+**Split it into the three things it currently conflates**, and the answer differs for each:
+
+| role | keep? | why |
+|---|---|---|
+| **The commit-message gate** (`pr_intent.py`, git hook) | **keep, untouched** | Runs at the git seat, costs the model nothing, catches AP-003 shallow fixes at the boundary. Not implicated in F6. `ADR-10 I-1` keeps it as the single validator. |
+| **The agent-facing `pr_prepare` tool** (`prepare_pr.py`) | **delete from chat; replace in workflow** | This is the F6 turn-tax. Operator's Q5 already says strip it from chat. In the workflow, the edit packet supersedes it. |
+| **"Generalized rules all slices follow"** (operator's new idea) | **new, and it is not `pr_prepare`** | This is a *session-scoped constraint set* ("follow ADR-20"), not a per-commit note. Different lifetime, different shape. |
+
+That third row is the operator's real want, and it is **the phase-1 "inherited context" mechanism** — the thing rev 3 found already exists but only across `--resume` (`cli.py:2163-2168`). It is one field, set once per run, re-surfaced every coder turn. It is not `pr_prepare`; it is *smaller* than `pr_prepare`.
+
+**So: `pr_prepare` as an agent tool should not exist.** The commit gate stays; the constraint set is new and tiny; the per-slice ceremony is a skill injection. Three simple things replacing one confused one — which is the "simple system per my desired behaviour" the operator asked for.
+
+### 5.5 The corrected object model
 
 ```
-   ┌─ SLICE CONTRACT ──────────────────────────────┐   ← the ONE thing the model writes
-   │  plan_id · slice_id · contract_ids · gap_ids  │     (per implementation slice)
-   │  files_allowed[] · current → target           │
-   │  mechanism · failure_behavior                 │
-   │  dod · negative_proof · test_class            │
-   │  kill_check_target · open_questions[]         │
-   └───────────────┬───────────────────────────────┘
-                   │ mechanically derived, no LLM call
-        ┌──────────┴──────────┐
-        ▼                     ▼
-  COMMIT NOTE           PR FRONTMATTER
-  INTENT/CLASS/         slice contracts (all)
-  INVARIANT/DOF/        + plan links + doc links
-  MECHANISM             + per-slice verification evidence
-  (per commit)          (per PR, phase 3)
+RUN CONSTRAINTS  (new, tiny, set once per run — the operator's "generalized rules")
+  "follow ADR-20"  ·  "no new deps"  ·  links to plan/docs
+  └─ re-surfaced every coder turn as inherited context   [phase 1]
+              │
+              ▼
+PLAN ARTIFACT  (already exists, authored by plan-authoring / feature-planning)
+  S# · GAP# · CT# · T#  ← common ID grammar, both skills
+              │  script extraction only, no LLM  [§5.7]
+              ▼
+EDIT PACKET  (already specified — feature-planning §9-§12; injected, not invented)
+  before-gate → packet → after-gate → kill-check
+              │  the model writes this as PROSE, per slice
+              ▼
+COMMIT  (one slice = one commit, per operator)
+  DoF-closed + mechanism carried from the packet, checked by the existing hook
+              │
+              ▼
+PR  (fa publishes branch→main; operator verifies and merges)  [phase 3]
 ```
 
-Why derivation rather than merge or extension:
-
-- **The mapping is total and deterministic.** `intent` ← already declared. `INVARIANT: Affects: …` ← `contract_ids` + `current→target`. `DEGREE-OF-FREEDOM CLOSED` ← `current_behavior` (the freedom that exists today). `DETERMINISTIC MECHANISM` ← `mechanism` + `kill_check_target` (which *is* a `path:line`, satisfying the citation rule by construction). **The anti-shallow-fix gate's hardest field becomes a by-product of a field the operator already writes for engineering reasons.** That is the strongest argument in the whole design: AP-003 compliance stops being ceremony and becomes exhaust.
-- **§1.2 q4 answers itself.** Derivation is parsing + formatting + lookup — the exact case where the principle says "function, not LLM call". Asking the model to write the commit note *and* the slice contract is asking it to say the same thing twice, which is precisely the action-count drift AP-001 names.
-- **One ceremony, richer payload.** Action count stays at 1 (AP-001:130), but the single action now carries the fields the operator actually cares about instead of five commit-message headers.
-- **Phase 3 becomes trivial.** If slice contracts accumulate as typed artifacts, the PR frontmatter is a fold over them. No new authoring burden.
-- **`pr_prepare` survives as an internal writer.** The model stops calling it; the harness does, from the derivation. Its validator stays authoritative (ADR-10 I-1 intact — one validator, now two *derived* consumers). No deletion, no migration of the git-hook seat, ADR-11:650 seat asymmetry preserved.
-
-**Cost, stated honestly:** this is strictly more machinery than rev 2's C1–C4. It is a redesign, which the operator has folded into this PR. The mitigation is that every piece is a *wiring* of something that already exists — `FlowState` for state, `Decision.modify` for repair, `render_prepare_buffer` for scaffolding, `_publish_scope_estimate` for injection, `skills/_inject.py` for skill delivery, `--resume` draft injection for anchoring. **The redesign adds one new artifact type and one new tool; everything else is connection.**
+Nothing here is a new schema. One new small artifact (run constraints), one skill injection, two gates.
 
 ### 5.6 Operator decisions, recorded
 
-| # | decision | consequence |
+| # | decision | status |
 |---|---|---|
-| Q1 | **Derive, don't merge** (recommended above; operator asked for reasoning first) | slice contract is the model-facing object; commit note + PR frontmatter derived |
-| Q2 | **Workflow pipeline only** (`planner → coder → eval`) | chat stays lightweight; the protocol formalises in the coder stage. **Major simplification** — `FlowState` already exists there, and `workflow_controller.py` already owns stage sequencing |
-| Q3 | **Harness runs verification and injects real output** | the strongest option. Model cannot claim a green run that did not happen |
-| Q4 | **Warn on out-of-scope writes, never block** | forgiving-tools consistent; `files_allowed` is advisory + observable |
-| Q5 | **Plan-ID derivation is advisory** — operator is sceptical, citing the `pr_prepare` failure pattern | **correctly sceptical; see §5.7** |
-| Q6 | **Stop-rule: first-class tool + halt**, shaped now for a future `ask_user`; backlog for this round | design the seam, don't build the tool yet |
+| Q1 | object model | **superseded by §5.5** — no `SliceContract`; skill injection + run constraints |
+| Q2 | **workflow pipeline only** | confirmed; chat strips `pr_prepare` entirely (§8 Q5) |
+| Q3 | **harness runs verification, injects real output** | confirmed — mechanizes the `AFTER EDIT GATE` (`:388-415`) |
+| Q4 | **warn on out-of-scope writes, never block** | confirmed; note `feature-planning:337` says "Allowed files are binding" — the *skill* says stop, the *harness* only warns. Deliberate: forgiving-tools |
+| Q5 | plan-ID extraction | **script-only, no LLM; if the script fails, abandon the feature** (§5.7) |
+| Q6 | stop-rule tool | backlogged; seam only |
 
-### 5.7 On Q5 scepticism — the operator is right, and the reason matters
+### 5.7 Q5 — script-only extraction, and the kill criterion
 
-> "Not sure we can reliably achieve this — prior pr_prepare situation with consecutive fails is what I expect. I like the idea, but very sceptical."
+Operator: *"no llm call, only script extraction. If script will fail — not worth to invest further."*
 
-**This scepticism is correct and generalises into the design's central rule.** The `pr_prepare` failure was not "the model couldn't produce a value". It was: *the harness demanded a value the model had to guess, and rejected wrong guesses one at a time*. Any field where the harness knows the answer better than the model is a field the harness must **supply**, not demand.
+Accepted as a **hard gate on the feature, decided before any code**:
 
-Applied to plan IDs: the harness can read the plan file and extract `### S11:` / `**Traces-to:** G7–G11, CT8–CT12` — both are stable conventions in the operator's actual plans (verified in `PLAN-complexity-aware-execution-chat-role.md:1752`, `:1808`). So:
-
-- Parse the plan, offer the **detected** slice ID and contract IDs **pre-filled** in the scaffold.
-- Model confirms or overrides.
-- Harness verifies the final strings **exist in the plan file** — a substring check, not a schema guess.
-- Unparseable plan → field is blank and **optional**, run proceeds. Never a rejection.
-
-**Rule (binding for this redesign): no field may be rejected for absence unless the harness cannot possibly supply or derive it.** The only fields meeting that bar are genuine judgement — `mechanism`, `current→target`, `dod`. Everything else is scaffolded, pre-filled, or optional. This rule is what prevents the redesign from recreating F6 at ten times the surface area.
+- Extractor is a pure function: plan text → `{S#, GAP#, CT#, T#}`. Regex over the common ID grammar (§5.3). No LLM, no fallback prompt.
+- **Kill criterion, measured up front:** run it over every plan in `worklogs/implementation-plans/`. If it does not extract clean slice + contract IDs from **all** of them, the auto-derivation feature is dropped and `files_allowed` / ID pre-fill is cut from scope. The ceremony injection (§5.1) does not depend on it and ships regardless.
+- This measurement is **step 1 of the plan**, before any behavioural code, so the scope decision is made on data.
 
 ---
 
-## 6. Design — the slice contract, in the pipeline
+## 6. Design (rev 4) — three mechanisms
 
-Scoped to Q2 (workflow pipeline). Chat role untouched this round.
+### 6.1 M1 — inject the ceremony at the coder stage
 
-### 6.1 Where it sits
+The core change, and mostly wiring.
 
-`run_workflow` already sequences stages and writes `FlowState` before each (`workflow_controller.py:257-271`). The slice contract slots into the **coder** stage:
+- On entering the coder stage for a slice, inject `feature-planning` §9–§12 (the gates + edit packet + kill-check) into turn context — full body (§8 Q4), via the existing observation-block path (`coder_loop.py:773-790`).
+- Inject `tests-writing` alongside it, since the packet demands a C0–C4 class. Use `should_load_skill` (`loader.py:119`) — currently zero callers.
+- Re-surface `RUN CONSTRAINTS` compactly each turn (phase 1), reusing the `--resume` injection shape (`cli.py:2163`) but within-session.
 
-```
-PLANNING ──► PLAN_READY ──► [SLICE_SCAFFOLD] ──► CODING ──► [VERIFYING] ──► EVALUATING ──► DONE
-                                  │                              │
-                          harness pre-fills            harness RUNS the
-                          from plan + classifier       verify commands
-```
+No new schema. The model emits the packet as prose, as it does today when the operator pastes it.
 
-Two new `FlowStatus` members. `FlowStatus` is already a closed literal with a frozenset guard (`workflow_artifacts.py:50-62`, `:71-84`) — additive, and the existing validator catches typos.
+### 6.2 M2 — harness runs the after-edit gate (Q3)
 
-### 6.2 The artifact
+The `AFTER EDIT GATE` currently asks the *model* to run commands and report output — precisely the self-report the operator distrusts.
 
-`slice_contract.json`, sibling to `eval_report.json` / `flow_state.json`, reusing their atomic-write + typed-parse pattern (`workflow_artifacts.py:510-549`):
+- Harness executes the plan's `T#` commands itself after the coder signals slice-done, through the existing `SandboxHook` bash path (`builtin.py:87-104`) — no second exec path.
+- Real stdout/exit code injected as turn context and recorded.
+- Non-zero → `REPAIR_REQUIRED` via existing routing (`workflow_controller.py:49-53`).
+- Structurally kills "complete from no exception" (`feature-planning:410`): the model never reports the result.
 
-```python
-@dataclass(frozen=True)
-class SliceContract:
-    # ── harness-supplied (model confirms or overrides; never rejected) ──
-    plan_path: str = ""          # detected from read set / blackboard
-    slice_id: str = ""           # parsed "### S11:"
-    contract_ids: tuple[str, ...] = ()   # parsed "**Traces-to:** G7–G11, CT8–CT12"
-    files_allowed: tuple[str, ...] = ()  # seeded from plan; advisory (Q4)
-    verify_commands: tuple[str, ...] = ()  # parsed from plan's verify lines
+### 6.3 M3 — two deterministic gates, both cheap
 
-    # ── model-authored judgement (the only rejectable fields) ──
-    intent: str = ""             # reuses the Intent enum — SSOT, ADR-10 I-1
-    current_behavior: str = ""   # source-verified, per the operator's protocol
-    target_behavior: str = ""
-    mechanism: str = ""
-    failure_behavior: str = ""
-    dod: str = ""
-    negative_proof: str = ""
-
-    # ── harness-derived, model may override ──
-    test_class: str = ""         # C0/C0p/C1/C2/C3 — derivable from files_allowed
-    kill_check_target: str = ""  # path:line — feeds DETERMINISTIC MECHANISM
-
-    # ── phase 1 / stop-rule ──
-    open_questions: tuple[str, ...] = ()
-```
-
-`test_class` derivation is real, not aspirational: the `tests-writing` skill states the rule as a decision procedure — *"Session / product / loop claim? → C1 (or C2 if CLI-only). Pure helper → C0/C0p"* (`SKILL.md:65`), *"Security? ≥1 adversarial case (C3)"* (`:75`). `path_risk.py` already tiers paths. Files under `src/fa/inner_loop/` touching the loop → C1; pure helper → C0; `_cmd_*` → C2; a hook/sandbox path → C3. Harness proposes, model overrides with a reason.
-
-### 6.3 Phase 1 — the anchor actually anchors
-
-The gap that makes the note feel pointless. Three wirings, all of existing parts:
-
-1. **Pre-fill** the contract from plan + `classify_intent` + `render_prepare_buffer`, inject as turn context via the `_publish_scope_estimate` shape (`cli.py:1920`), respecting the D7 non-cacheable rule (`cli.py:1942-1947`).
-2. **Re-surface** the confirmed contract each coder turn as a compact anchor — reusing the `build_skill_anchor` pattern (`skills/_inject.py`) and the observation-block budget (`observations.py`, 1800-char cap with eviction). Full body on entry turn, ~2-line anchor after. **This is the "inherited context" mechanism, applied within the session instead of only across `--resume`.**
-3. **Inject `tests-writing`** at the coder stage. Its frontmatter triggers already name this exact case — *"IMPLEMENT or FIX touching src/fa/ that claims product behavior"*, *"writing or changing tests under tests/"* (`SKILL.md:11-13`) — and `should_load_skill` (`skills/loader.py:119`) exists with **zero production callers**. Fourth built-unwired affordance; wire it here.
-
-### 6.4 Phase 2 — compliance that means something
-
-Today: header-shape validation. Target: compliance with the *declared trajectory*, all deterministic, all observable:
-
-| check | mechanism | on violation |
+| gate | check | on violation |
 |---|---|---|
-| writes stay in `files_allowed` | path compare at `BEFORE_TOOL_EXEC` | **WARNING** (Q4), never deny |
-| verify commands actually ran | scan event log for `fs_run_bash` with real exit code | block the `slice complete` transition |
-| tests exist for the declared class | `test_class` C1 → ≥1 new/changed test under `tests/` | WARNING |
-| kill-check target is real | `resolve_citation` (`pr_intent.py`) — **already built** | WARNING at contract time, hard at commit |
-| DoD is not empty under a `src/` diff | structural predicate (§C4, rev 2) | WARNING |
+| files-allowed | writes ⊆ declared set | **WARNING** (Q4) |
+| commit fields | DoF-closed + mechanism present with resolvable `path:line` | existing hook, unchanged |
 
-Every one is a pure function over artifacts the harness already holds. No LLM judgement anywhere.
+`resolve_citation` already exists in `pr_intent.py`. Nothing new.
 
-### 6.5 Phase 3 — the note becomes the PR
+### 6.4 Retracted from rev 3
 
-New, and the operator's stated end-goal. After the pipeline reaches `DONE`, fold accumulated slice contracts into a PR body:
-
-```markdown
----
-plan: worklogs/implementation-plans/PLAN-….md
-slices: [S11.1, S11.2]
-contracts: [G7, G8, CT8]
----
-INTENT: FIX
-CLASS: REPAIR
-INVARIANT: Affects: …
-DEGREE-OF-FREEDOM CLOSED: …     ← derived from current_behavior
-DETERMINISTIC MECHANISM: …      ← derived from mechanism + kill_check_target
-
-## S11.1 - <target_behavior>
-Verification: <actual command output captured by the harness>
-```
-
-Deterministic fold, no LLM call. Whether it writes the body to a file for `gh pr create -F` or shells out is a §8 decision.
-
-### 6.6 Q3 — the harness runs verification
-
-The strongest lever the operator chose, and the reason it works: `verify_commands` come from the **plan**, not the model, so the harness executes a command the operator authored.
-
-- Runs after the coder stage signals slice-done, before `EVALUATING`.
-- Reuses the existing bash gate (`SandboxHook`, `builtin.py:87`) — same sandbox, same containment, no second exec path.
-- Real stdout/stderr/exit code injected as turn context and recorded in the contract.
-- Non-zero → `REPAIR_REQUIRED` via existing routing (`workflow_controller.py:49-53`); the model sees actual output, not its own summary.
-- **Kills "no exception ⇒ done"** structurally: the model never reports the result, the harness does.
-
-Bounded by the existing wall-clock deadline (`_deadline_exceeded`, `workflow_controller.py:345`) and `bash_timeout_seconds`.
-
-### 6.7 Q6 — the stop-rule seam, built for a later `ask_user`
-
-Backlog the tool; build the seam now. `open_questions` on the contract + a `BLOCKED_ON_QUESTION` route that maps onto the existing `blocked` decision and `CODER_BLOCKED` status — **both already in the enums** (`workflow_artifacts.py:48`, `:55`). When `ask_user` lands it becomes the producer for a consumer that already exists. Zero throwaway work.
-
-### 6.8 What this subsumes from rev 2
-
-| rev 2 | rev 3 status |
-|---|---|
-| C1 bash safe-set widening | **keep as-is** — independent defect (I-58) |
-| C2 pre-fill the draft | **absorbed** — §6.3, richer scaffold |
-| C3 leniency + `Decision.modify` | **absorbed** — §5.7's "never reject what the harness can supply" |
-| C4 anchor-quality warning | **absorbed** — §6.4 |
+`SliceContract` dataclass · new `FlowStatus` members · derivation of commit fields from contract fields · `test_class` auto-derivation (it is a judgement call the packet already asks for). Rev 2's **C1** (bash safe-set widening) stays — independent defect.
 
 ---
 
 ## 7. Docs to update
 
-Per the operator's "update design docs if needed" — the redesign changes recorded decisions, so these are part of the work, not follow-up:
-
 | doc | change |
 |---|---|
-| `knowledge/trace/exploration_log.md` | new Q# recording the three-phase lifecycle + derive-don't-merge; Q-15 amendment noting the harness seat now honours pre-population |
-| `worklogs/BACKLOG.md` | I-58 closed by C1; I-59 partially addressed; new row for `ask_user` |
-| `knowledge/adr/` | slice contract + harness-run verification is an architectural decision — likely an ADR-16 amendment or new ADR |
-| `knowledge/skills/pr-creation/SKILL.md` | commit note is now *derived*; document the mapping |
-| `knowledge/skills/plan-authoring/SKILL.md` | note which markers the harness parses (advisory, §5.7) |
-| `knowledge/project-overview.md` | §1.2.5 gains the slice-contract seat as an instantiation |
+| `knowledge/skills/plan-authoring/SKILL.md` | **port §9–§12 from `feature-planning`** — the conforming fix for the real schema gap (§5.3) |
+| `knowledge/instructions/02-operations.md` | **operator instructions** (per feedback) — the ceremony is now automatic; stop pasting it |
+| `knowledge/skills/pr-creation/SKILL.md` | `pr_prepare` tool is retired from the agent seat; commit gate unchanged |
+| `knowledge/trace/exploration_log.md` | new Q# — ceremony-as-skill finding; Q-15 amendment |
+| `knowledge/adr/` | ADR for harness-run verification + agent-tool retirement |
+| `worklogs/BACKLOG.md` | I-58 (C1); `ask_user` row; `should_load_skill` wired |
 
 ---
 
-## 8. Open decisions before the plan
+## 8. Open decisions
 
-1. **Slice granularity** — one contract per plan slice (S11.1), or per coder stage entry? Repairs re-enter the coder stage; does a repair amend the contract or open a new one? *(Leaning: amend, with `repair_round` from `FlowState`.)*
-2. **Phase 3 boundary** — does FA shell out to `gh pr create`, or write the body to a file the operator uses? *(Leaning: file. Shelling out makes FA a publisher, which is a bigger threat-model change than it looks.)*
-3. **Contract on repair rounds** — re-verify the whole contract each round, or only invalidated steps? `FlowState.invalidated_steps` already exists (`workflow_artifacts.py:264`).
-4. **`tests-writing` injection cost** — the skill is large. Full body on coder entry then anchor (the `skills/_inject.py` pattern), or a distilled subset? Needs a token measurement against `estimate_tokens`.
-5. **Does the chat role get any of this?** Q2 says pipeline-only. Confirming: chat keeps today's `pr_prepare` (plus C1 relief), and the protocol is pipeline-only until proven.
-6. **C1 scope** — `awk` in the safe set? (carried from rev 2 §9 Q3; still open).
+**Q1 — slice granularity.** Operator asked for examples. Concretely, for a plan with `S11: add files_allowed warning`:
+
+- **(a) one contract per plan slice** — S11 = one commit, one edit packet. Repair rounds amend the same packet. Matches "one slice = one commit". Risk: a slice touching 4 files across 2 subsystems yields a bundled packet, which `feature-planning:386` forbids ("do not combine unrelated contracts").
+- **(b) one packet per edit** — S11 might yield E1 (add the warning), E2 (wire it), E3 (test). Three packets, one commit. Matches the skill exactly (`EDIT PACKET E# / S#` — note it is keyed by **both**). Risk: more ceremony per slice.
+- **(c) hybrid** — packet per edit, gate per slice: before-gate once at slice entry, packet per edit, after-gate once before commit.
+
+**Recommendation: (c).** It is what the skill's own numbering (`E# / S#`) implies, and it puts the expensive parts (gates, verification) at slice boundaries while keeping packets bounded per edit. Deferred to operator.
+
+**Q2 — phase 3. Resolved:** operator confirms fa publishes branch→main, he verifies and merges. Note: **no PR-creation code exists anywhere in the repo** (verified: `gh pr create` appears only in two research docs), and `gh` is **not** in the bash read-only whitelist (`bash_intent.py:62-99`). So publishing today is either manual or outside `src/fa/`. **New question:** should fa publish, or emit a PR-body file? Recommendation: emit the file first (smaller threat-model change), add publishing later.
+
+**Q3 — re-verify all each round?** Operator asks what a senior production team would do. **Answer: neither extreme — this is the standard CI/local split.** Locally, re-run only the affected subset each iteration (fast feedback); before the merge boundary, run the full suite once. Selective re-runs risk missing a regression that a fixed test would have caught; full re-runs each round waste wall-clock and hit the deadline (`workflow_controller.py:345`). **Recommendation:** targeted `T#` per repair round, full plan verification once before the slice is marked done. `FlowState.invalidated_steps` (`workflow_artifacts.py:264`) already models exactly this.
+
+**Q4 — full skill injection. Resolved:** full body. Note the cost: `feature-planning` is 643 lines and `tests-writing` 828. Injecting both fully is large; §9–§12 alone is ~135 lines. **Recommendation:** full §9–§12 (not the whole skill) + full `tests-writing`, measured against `estimate_tokens` in step 1.
+
+**Q5 — strip from chat. Resolved:** remove the `pr_prepare` tool and its description from the chat role. Confirms §5.4. Saves tokens in the common path and removes the F6 tax where it was measured.
+
+**Q6 — stop-rule best practice.** Operator asks. **Recommendation: fail-closed halt, no auto-continue.** When a blocking `Q#` appears the run stops and surfaces the question; it does not guess a default. Rationale: the skill already mandates it (`feature-planning:326-334`, "STOP immediately"), a guessed policy choice is the most expensive error class (it silently propagates through every later slice), and halting is the only behaviour that stays correct when `ask_user` later lands — the seam becomes a producer for a consumer that already exists (`CODER_BLOCKED`, `workflow_artifacts.py:55`). Non-blocking questions with explicit defaults continue, per the skill.
 
 ---
 ## 9. Citation index (re-resolved at `fc1f2e6`)
@@ -590,3 +518,20 @@ Per the operator's "update design docs if needed" — the redesign changes recor
 | `knowledge/skills/tests-writing/SKILL.md:11-13` | triggers already name the coder-stage case |
 | `knowledge/skills/tests-writing/SKILL.md:65`, `:75` | C0/C1/C2/C3 as a decision procedure → derivable |
 | `worklogs/implementation-plans/PLAN-…-chat-role.md:1752`, `:1808` | `### S10:` / `**Traces-to:**` — the parseable markers (§5.7) |
+
+### Rev 4 additions — the ceremony-as-skill finding
+| citation | what |
+|---|---|
+| `knowledge/skills/feature-planning/SKILL.md:306-336` | `BEFORE EDITING GATE` — operator's "state current behavior / stop on blocking Q#" |
+| `…/feature-planning/SKILL.md:342-386` | `EDIT PACKET E# / S#` — **all ten** of the operator's per-edit fields |
+| `…/feature-planning/SKILL.md:361` | `Degree of freedom closed` already in the packet, per edit |
+| `…/feature-planning/SKILL.md:388-415` | `AFTER EDIT GATE` — targeted tests, static checks, diff, "not complete from no exception" |
+| `…/feature-planning/SKILL.md:423-441` | mutation / kill-check protocol |
+| `…/feature-planning/SKILL.md:337` | "Allowed files are binding" — skill says stop, harness only warns (Q4, deliberate) |
+| `…/feature-planning/SKILL.md:120-132` | ID grammar `G#/GAP#/CT#/P#/M#/A#/S#/T#/Q#/RK#/RN#` |
+| `knowledge/skills/plan-authoring/SKILL.md:161-181` | **identical** ID grammar — extractor works against both (§5.3) |
+| *(absence)* `plan-authoring/SKILL.md` | **no** before-edit gate / edit packet / after-edit gate — the real schema gap |
+| `knowledge/anti-patterns/AP-003:152-156` | DoF-closed = **producer-site** decision the change removes freedom on |
+| `knowledge/skills/pr-creation/SKILL.md:142-150` | same definition; `n/a (reason)` allowed |
+| `src/fa/inner_loop/bash_intent.py:62-99` | `gh` **not** in the read-only whitelist — bears on Q2 |
+| *(absence)* repo-wide | `gh pr create` appears only in two research docs; **no PR-creation code** |
