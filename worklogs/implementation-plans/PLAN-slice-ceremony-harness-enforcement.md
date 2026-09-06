@@ -1,12 +1,13 @@
 # PLAN: Harness-enforced per-slice implementation ceremony    Plan-ID: PLAN-slice-ceremony-harness-enforcement
 Status: READY                                   Depth: P2
-Revision: v3   Changed-since-v2: review pass 2 — D6 (`should_load_skill` would silently disable the ceremony), D7 (readiness text is role-agnostic), D8/D9/D10 resolved, D11 closed by new S6b (harness-derived draft). 12→13 steps. Delivery split into three PRs.   Changed-since-v1: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
+Revision: v4   Changed-since-v3: external adversarial review — F-1 (verification commands had no producer; added ```verify grammar), F-2 (pinned the draft-extraction contract; INTENT never guessed), F-3 (late-binding placement), F-4 (honest L3 scoping), F-5a (no private-function reuse), F-5b (refuted — `fa run` defaults to coder). **S10 removed from scope (D-1).** 13 steps → 12 in scope.   Changed-since-v2: review pass 2 — D6 (`should_load_skill` would silently disable the ceremony), D7 (readiness text is role-agnostic), D8/D9/D10 resolved, D11 closed by new S6b (harness-derived draft). 12→13 steps. Delivery split into three PRs.   Changed-since-v1: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
 **Delivery (operator decision, review pass 2): three sequenced PRs, not one.**
 PR #68 keeps the S12.7 F1/F4/F7/F8/F9 fixes and merges on its own. Then:
 **PR-A = S1–S4** (two docs, one defaulted kwarg, one pure module, one flag — no behaviour change,
 independently verifiable); **PR-B = S5a, S5, S6a, S6, S6b, S7** (the wiring and the enforcement);
-**PR-C = S8, S9, S10** (chat removal, docs, publication). This supersedes the earlier
-"fold everything into #68" instruction, which predated the plan reaching 13 steps.
+**PR-C = S8 + S9** (chat removal + docs). **S10 (PR publication) is REMOVED from this plan** —
+see §13 D-1. This supersedes the earlier "fold everything into #68" instruction, which predated the
+plan reaching 13 steps.
 
 Upstream context: `worklogs/reviews/F6-RESEARCH-intentguard-pr-prepare-friction.md` (rev 5, `7e50943`);
 PR [#68](https://github.com/first-agent-dev/First-Agent-dev/pull/68); operator decisions rev 3–rev 5.
@@ -115,7 +116,7 @@ implementation slices execute (operator decision Q-op2), and because `FlowState`
 - **G8** No new rejection surface: no field may be denied for absence. (Anti-F6 clause.)
 
 **NON-GOALS:** a `SliceContract` typed artifact (rev 3, retracted); the `ask_user` stop-rule tool
-(backlogged); replacing the git-hook commit validator; changing `pr_intent.py` validation logic;
+(backlogged); **PR publication (G7/CT8/S10 — moved to its own plan, D-1);** replacing the git-hook commit validator; changing `pr_intent.py` validation logic;
 touching the eval or planner role's own prompts.
 
 **INTENT:** Code should ensure that *whenever a coder stage begins an implementation slice*, the
@@ -240,6 +241,21 @@ stage sequencer.
 - SHIP RULE: producer proof before shipped.
 
 **CT4 — harness-run verification** *(signal, §6.2, TWO-SIDED)*
+- **COMMAND SOURCE (F-1, option (a)):** `PlanIds` carries a new field
+  `commands: tuple[str, ...]`, extracted by CT6 from a **fenced `verify` block** in the plan's §6
+  (verification) section. Grammar, pinned here and mirrored into both planning skills (S9):
+
+  ````text
+  ```verify
+  uv run pytest tests/test_plan_ids.py -q
+  uv run mypy src/fa/inner_loop/plan_ids.py
+  ```
+  ````
+
+  Rationale: `T#` is a **taxonomy label** (`feature-planning:267-278` — C0/C0p/C1/C2/C3/C4), not a
+  runnable string, and no existing plan carries a command column (verified: zero `uv run` hits in
+  `PLAN-complexity-aware-execution-chat-role.md`). Extracting `T#` IDs and hoping they are commands
+  was a producer-less consumer — the same defect class as D5.
 - PRODUCER (D4, corrected): `run_verification(commands, workspace) -> tuple[VerificationResult, ...]`
   in **new** `src/fa/inner_loop/verification.py`, calling `_run_subprocess_fallback`
   (`tools/run_bash.py:219`). Invoked from `_run_stage` (`workflow_controller.py:310`) **after** the
@@ -254,7 +270,10 @@ stage sequencer.
 - CONSUMER: (a) next coder turn's `turn_context` (real output); (b) verdict routing —
   non-zero ⇒ `REPAIR_REQUIRED` via `EVAL_VERDICT_TO_TERMINAL_STATUS` (`workflow_controller.py:50-55`, applied at `:445`).
 - KILL-CHECK: remove the producer ⇒ **T6** fails (no `verification_ran` event, exit code absent).
-- SHIP RULE: **must be L3.** This is G3, the operator's strongest requirement.
+- SHIP RULE: **L3 for plans carrying a ```verify block.** (F-4, honest scoping.) A plan without one
+  yields `commands=()` → `skipped: true`, so end-to-end plan→verify is **not** proven for
+  non-conforming plans. T6e proves the real path (plan text → extract → execute); T6's seeded list
+  proves only the executor. Stated here rather than claiming an unqualified L3.
 
 **CT5 — files-allowed scope warning** *(signal, §6.2)*
 - PRODUCER: new `ScopeWarnHook` at `BEFORE_TOOL_EXEC` (**TO ADD**, S7). Emits `scope_warning`
@@ -265,7 +284,9 @@ stage sequencer.
 
 **CT6 — plan ID extraction** *(function, §6.1)*
 - `extract_plan_ids(text: str) -> PlanIds` where `PlanIds` is a frozen dataclass of
-  `slices/gaps/contracts/tests: tuple[str, ...]`.
+  `slices/gaps/contracts/tests: tuple[str, ...]` **plus `commands: tuple[str, ...]`** (F-1).
+- `commands` come from fenced ```verify blocks only. **No command is ever inferred from prose** —
+  an un-fenced plan yields `commands=()` and S6 records `skipped: true` (P5), never a guess.
 - PURE: **y** — no FS, no LLM, no network. POST: unparseable input ⇒ **empty tuples, never raises**.
 - DETERMINISTIC MECHANISM: compiled regexes over the ID grammar common to both planning skills
   (`feature-planning:120-132` ≡ `plan-authoring:161-181`).
@@ -292,6 +313,13 @@ stage sequencer.
 - ADVERSARIAL CASE (C3, T9): chat session, `intent_guard_mode=enforce`, model attempts
   `fs_write_file`. Assert **not denied** with `_MISSING_DRAFT_REASON`. Without the fix this
   deadlocks the session permanently — the highest-severity risk in this plan.
+
+**CT7b — `pr_prepare` retained for `coder` is load-bearing, not dead weight** *(invariant, F-5)*
+- The reviewer suspected it survives only for a path that may not exist. **Verified: it does exist.**
+  `fa run --role` **defaults to `coder`** (`cli.py:542-546`), so `fa run` with no `--role` is a
+  standalone coder session with no workflow controller and therefore no S6b deriver. Removing the
+  tool there would reintroduce the CT9 deadlock on the default invocation.
+- Confirmed by T8 (present for `coder`) and T8b (readiness clause retained for non-chat roles).
 
 **CT10 — `pr_intent.py` untouched** *(invariant)*
 - The commit-message validator and its git-hook seat are unchanged. Verified by T11 (existing suite green).
@@ -449,7 +477,8 @@ grammar shared by `feature-planning:120-132` and `plan-authoring:161-181`.
 
 Do:
 1. `PlanIds` frozen dataclass: `slices`, `gaps`, `contracts`, `tests` — all `tuple[str, ...]`.
-2. `extract_plan_ids(text)` — patterns for `### S<n>:`, `GAP<n>`, `CT<n>`, `T<n>`. No FS, no LLM.
+2. `extract_plan_ids(text)` — patterns for `### S<n>:`, `GAP<n>`, `CT<n>`, `T<n>`, **and fenced
+   ```verify blocks → `commands`** (F-1). No FS, no LLM.
 3. Unparseable/empty input ⇒ all-empty `PlanIds`. **Never raise.**
 4. Measurement script: run over every file in `worklogs/implementation-plans/`, print a per-plan
    pass/fail table **split conforming (post-skill) vs legacy**, and a summary rate.
@@ -461,6 +490,7 @@ Exit criteria:
 - [ ] `python3 scripts/measure_plan_id_extraction.py` prints the split table
 - [ ] measured rate on **conforming** plans recorded in this plan's §7 Q1 row
 - [ ] T3 green including the empty-input and garbage-input cases
+- [ ] T3b green: a plan with no ```verify block yields `commands=()` (and S6 then skips, never guesses)
 
 Kill-check: deleting the `### S<n>:` pattern makes **T3** fail.
 
@@ -554,9 +584,19 @@ Deterministic mechanism: `src/fa/inner_loop/coder_loop.py` `_ceremony_block_for_
 read via `read_skill_for_injection(..., file_name="INJECT.md")` (CT1), appended to
 `skill_block_for_request`, which `:961` passes as `skills_conditional`.
 
+**Placement (F-3 — pinned, not left to the implementer).** `_compose_request_payload` is
+re-defined **every turn** inside the turn loop, and `skills_conditional_value` is bound as a
+**default arg** at definition time (`coder_loop.py:958-961`, the documented B023 late-binding
+pattern). So the assignment must happen **inside the per-turn loop, before
+`_compose_request_payload` is re-defined** — "outside the `_is_chat_role` block" is necessary but
+not sufficient. It must also **reset to `None` on non-entry turns**, mirroring the chat block's
+"None on every non-entry turn" comment (`:959-960`); otherwise the full body is re-sent every turn.
+
 Do:
 1. Declare `skill_block_for_request` (`:744`) as a list and **append** rather than replace, so the
    existing chat L2 block and the new ceremony blocks can coexist without either clobbering the other.
+1b. Assign inside the turn loop before the `_compose_request_payload` re-definition; reset to `None`
+   on non-entry turns (F-3).
 2. Full condensate bodies on the **slice-entry** turn (P1/P2); on later turns (P3) inject nothing
    into `skills_conditional` and emit only the short anchor via `turn_context`, mirroring
    `observations.py:152-158`.
@@ -576,7 +616,9 @@ would evict the verification and escalation lines). Do not inject on every turn.
 
 Exit criteria:
 - [ ] `grep -n 'file_name="INJECT.md"' src/fa/inner_loop/coder_loop.py`
-- [ ] the injection call is **not** inside the `_is_chat_role` block: `awk 'NR>745 && /_ceremony_block_for_turn/' ` resolves outside that branch
+- [ ] the injection call is **not** inside the `_is_chat_role` block, **and** sits inside the turn
+      loop above the `_compose_request_payload` definition (`:955`) — F-3
+- [ ] T4e: on a non-entry turn `skills_conditional` is `None`/absent (no per-turn body resend)
 - [ ] T4 asserts **two** entries in `skills_conditional` on the entry turn, anchor-only on turn 2
 - [ ] T5 asserts the `tests-writing-inject` body is one of them
 - [ ] T4b: a chat L2 run still receives its planner skill block (no regression from the list change)
@@ -634,7 +676,7 @@ gates *model-issued tool calls*, not an executor, and `workflow_controller.py:12
 subprocess facility.
 
 Edit:
-- path: `src/fa/inner_loop/verification.py` symbol: `VerificationResult`, `run_verification` change: **NEW** thin wrapper over `_run_subprocess_fallback` (`tools/run_bash.py:219`)
+- path: `src/fa/inner_loop/verification.py` symbol: `VerificationResult`, `run_verification` change: **NEW** dedicated runner reusing `build_scrubbed_env` + timeout/decode policy (F-5); **not** `_run_subprocess_fallback`
 - path: `src/fa/inner_loop/workflow_controller.py` symbol: `_run_stage:310` change: after a `coder` stage returns, run the plan's commands and record results
 
 Degree of freedom closed: whether a verification actually ran was the model's word — it could
@@ -648,8 +690,12 @@ it, so no model-authored string can stand in for a result.
 Do:
 1. Commands come from the **plan** (extracted, S3) — never from model output. This is what makes the
    gate trustworthy: the operator authored them.
-2. Reuse `_run_subprocess_fallback` (`tools/run_bash.py:219`) rather than a fresh `subprocess.run`,
-   so timeout/decoding/CR-normalisation behaviour stays identical to the model-facing bash tool.
+2. **Do not call `_run_subprocess_fallback`** (F-5). It is module-private, tool-shaped, and carries
+   side effects the verifier must not have — `transaction.add_write` from git-status
+   (`run_bash.py:168`) and artifact offload (`:178-180`). Passing `None, None` would skip them but
+   still couples a new module to a private function. Instead reuse the **policy pieces only**:
+   `build_scrubbed_env` + the venv-PATH prepend + the same timeout/binary-decode handling
+   (`run_bash.py:233-250`). ~15 lines, no private coupling, no unwanted side effects.
 3. Enforce a per-command timeout (`bash_timeout_seconds`) **and** check the run deadline
    (`workflow_controller.py:345`) between commands; a hung verification must not consume the budget.
 4. Inject `{command, exit_code, stdout_tail, stderr_tail}` into the next stage's context.
@@ -666,6 +712,7 @@ Exit criteria:
 - [ ] T6b: P5 ⇒ `skipped: true`, run continues
 - [ ] T6c: a command string present in model output but absent from the plan is **never** executed
 - [ ] T6d: a command exceeding the timeout is killed and recorded as failed, not hung
+- [ ] `grep -c "_run_subprocess_fallback\|transaction\|artifact_store" src/fa/inner_loop/verification.py` == 0 (F-5)
 
 Kill-check: removing the `run_verification` call makes **T6** fail (no event, no exit code).
 
@@ -768,7 +815,12 @@ Exit criteria:
 
 ---
 
-### Step S10: PR publication
+### Step S10: PR publication — ⚠️ REMOVED FROM THIS PLAN (D-1)
+
+> Moved to `PLAN-harness-pr-publication`. Retained below for transfer only; **not in scope for
+> PR-A/B/C and not counted in the DoD.** The harness's first outbound-write capability needs its own
+> threat review, not one step in an F6 plan.
+
 
 Traces-to: G7 · GAP10 · CT8 · P10, P11
 Depends-on: S1–S8, **S6a** (packet source)    Parallelizable-with: S9
@@ -815,15 +867,18 @@ Kill-check: removing the `publish_pr` call from the `DONE` branch makes **T10** 
 | T2 | CT2 | C0p | parity: labels ⊆ `SKILL.md` | the `INJECT.md` files | — |
 | T2b | CT2 | C0p | `skill-writing:63` amended text present | — | — |
 | T3 | CT6 | C0 | returned `PlanIds` tuples | `### S<n>:` pattern | — |
+| T3b | CT6 | C0 | fenced ```verify block → `commands`; absent ⇒ `()`; prose never yields a command | verify-block pattern | — |
 | T4 | CT3 | **C1** | event `ceremony_injected` + **2 entries in `skills_conditional`** (D2) | `_ceremony_block_for_turn` call | P1,P2,P3 |
 | T4b | CT3 | C1 | chat L2 run still receives its planner block (list-change regression) | `:802` list build | — |
 | T4c | CT3 | C1 | workflow coder stage receives `slice_ceremony="enforce"` | `stage_kwargs` key | P1 |
 | T4d | CT3 | C1 | `scope_mode` unchanged for all existing callers | — | — |
+| T4e | CT3 | C1 | non-entry turn ⇒ no body in `skills_conditional` (F-3 late-binding) | reset-to-None branch | P3 |
 | T5 | CT3 | C1 | `tests-writing` body in context | second condensate read | P1 |
 | T6 | CT4 | **C1** | event kind + real `exit_code` | verification exec call | P4 |
 | T6b | CT4 | C1 | `skipped: true`, run continues | — | P5 |
 | T6c | CT4 | **C3** | model-authored command never executed | plan-only command source | P4 |
 | T6d | CT4 | C1 | timeout ⇒ recorded failure, not hang | timeout arg | P4 |
+| T6e | CT4 | **C1** | **real path**: plan text with a ```verify block → extracted → executed → exit code recorded | extract→run seam | P4 |
 | T7 | CT5 | C1 | `scope_warning` event **+ write succeeded** | the emit | P6,P7 |
 | T7b | CT5 | C0 | static: zero `Decision.deny` in the module | — | P7 |
 | T8 | CT7 | C2 | registry `names()` per role | conditional registration | P9 |
@@ -834,6 +889,8 @@ Kill-check: removing the `publish_pr` call from the `DONE` branch makes **T10** 
 | T11 | CT10 | C1 | existing `pr_intent` suite green | — | — |
 | T15 | CT11 | **C3** | packet says IMPLEMENT + diff deletes a test ⇒ **blocked** | classifier-intent call site | P4 |
 | T16 | CT11 | C1 | absent packet ⇒ guard denies as today (fail-closed) | `write_text` call | P4 |
+| T17 | CT11 | **C3** | **malformed-but-present packet** ⇒ partial draft, no typed INTENT, not blocked by the deriver | label-omission branch | P4 |
+| T18 | CT11 | C0 | derived draft never contains `<fill me>` or a fabricated citation | renderer | — |
 | T14 | CT8 | C1 | `slice_packets.jsonl` written; malformed ⇒ WARNING only | append call | P10 |
 | T12 | CT3 | C1 | `observe`: events yes, context unchanged | — | P12/C |
 | T13 | CT3 | C1 | `off`: zero events, byte-identical | — | P12/D |
@@ -886,6 +943,7 @@ tests/test_plan_ids.py tests/test_scope_warn.py tests/test_live_check_script.py`
 | RK9 | **S5a threads a new arg through 3 layers**; a missed hop silently disables the feature | default `"off"` at every hop + T4c asserts arrival at the coder loop, not just departure | T4c |
 | RK10 | Harness-executed commands are a **new code-execution surface** not gated by SandboxHook | plan-sourced only, never model-sourced (T6c); per-command timeout (T6d); coder stage only | T6c, T6d |
 | RK12 | Harness-derived draft is read as forging agent provenance | it asserts the *harness's* own provenance (`pr_draft.py:46-51`); test-protection stays keyed on the staged diff (`pr_intent.py:519-526`) | T15 |
+| RK14 | Ceremony injected but models still emit unparseable packets ⇒ F6 persists behind a new mechanism | **no unit test can prove this**; only the live re-run settles it (D-2). DoD says so plainly | live re-run |
 | RK13 | Deleting chat tests erases a documented decision | reversal recorded in exploration_log + replacement docstring cites this plan (D8) | S8 exit criteria |
 | RK11 | `skill_block_for_request` list change clobbers the existing chat L2 block | append, never replace; T4b is the regression guard | T4b |
 
@@ -937,7 +995,7 @@ PR. Observe via the three live-check rows and the event log.
 
 **CONTRACTS.** CT1–CT10 all `VERIFIED` (each has a T# and a kill-check).
 
-**DONE when:** G1–G4, G6, G7 at **L3**; G5 at its contract L3 (advisory end-to-end); G8 holds
+**DONE when:** G1, G2, G4, G6 at **L3** (G7 deferred, D-1); **G3 at L3 for plans carrying a ```verify block, and explicitly not proven end-to-end for plans without one** (F-4); G5 at its contract L3 (advisory end-to-end); G8 holds
 (T6b, T7, T13 prove degradation, not denial); all LIVE-PATH PROOF blocks green; matrix A–D covered;
 non-goals respected; RN1–RN13 dispositioned; mutation handoff (a)–(d) shows no survivor.
 
@@ -1064,9 +1122,41 @@ Deterministic mechanism: `src/fa/inner_loop/verification.py:derive_draft_from_pa
 function; the guard's own validators (`validate_commit_msg`, `validate_test_edits`) remain the
 authority and are unchanged (CT10).
 
+**Extraction contract (F-2 — pinned, because this step decides whether a mutation is blocked).**
+S6a stores the packet verbatim; S6b reads **labelled lines** out of it. The two are consistent: the
+*artifact* is prose, the *deriver* reads a small fixed label set. The labels are exactly the ones
+`INJECT.md` already asks for (S1), so a compliant packet is parseable by construction:
+
+| draft field | packet label (case-insensitive, line-anchored) | if missing |
+|---|---|---|
+| `INTENT:` | `Concrete intent:` → mapped via `classify_intent` if unlabelled | **omit the line** |
+| `CLASS:` | `Tests-writing class:` | omit |
+| `INVARIANT:` | `Definition of Done` / `DoD:` | omit |
+| `DEGREE-OF-FREEDOM CLOSED:` | `Degree of freedom closed:` | omit |
+| `DETERMINISTIC MECHANISM:` | `Producer kill-check target:` (a `path:line`) | omit |
+
+**Incomplete-extraction behaviour — the F6 trap, closed explicitly.** A partially-parseable packet
+must NOT produce a new denial path. Therefore:
+1. The deriver emits **only the fields it could extract**, never `<fill me>` placeholders.
+2. **`INTENT:` is never guessed from prose.** If no intent label is found, the deriver omits the
+   typed line entirely, and `IntentGuard` falls back to `classify_intent(projected)` — the
+   staged-diff classifier (`intent_guard.py:328-331`), which is the *safer* authority anyway. This
+   closes F-2's point 3: a mis-read regex can no longer forge a typed D-5 override, because the
+   deriver never writes one it is not certain of.
+3. If the derived draft would be **empty of all fields**, write nothing → the guard behaves exactly
+   as today. This is denial-as-today, not a new denial (see G8 note below).
+
+**G8 reconciliation (F-2 point 2, and the reviewer is right to press on it).** G8 says "no field may
+be rejected for absence". S6b honours it *within the ceremony*: no ceremony field is ever rejected,
+and a sloppily-formatted packet still yields a usable partial draft. What remains is the
+**pre-existing** `IntentGuard` gate, unchanged by this plan. The honest statement is in §9 DoD:
+the F6 fix is not *proven* until the live re-run shows models producing parseable packets without a
+retry loop.
+
 Do:
-1. Render the commit-note fields from the packet. `DETERMINISTIC MECHANISM` maps from the packet's
-   kill-check target (a `path:line`), satisfying the citation rule by construction.
+1. Render the commit-note fields from the packet per the label table above. `DETERMINISTIC MECHANISM`
+   maps from the packet's kill-check target (a `path:line`), satisfying the citation rule by
+   construction.
 2. Write via `PrDraftStore.write_text` (`pr_draft.py:68`) — never touch `_current_digest` directly.
 3. **No packet ⇒ write nothing.** The guard then denies exactly as today (fail-closed).
 4. Pipeline coder stages only. Chat is untouched (it has no tool after S8 and no ceremony).
@@ -1078,6 +1168,10 @@ Exit criteria:
 - [ ] a pipeline coder slice mutates the workspace with **zero** `pr_prepare` tool calls
 - [ ] T15: a packet declaring `IMPLEMENT` while the diff deletes a test is **still blocked**
 - [ ] T16: absent packet ⇒ guard denies as today (fail-closed, no bypass)
+- [ ] **T17 (F-2, the realistic failure): packet present but labels absent/reworded** ⇒ partial draft
+      emitted, **no typed `INTENT:` line**, classifier intent governs, and the slice is **not**
+      blocked by the deriver
+- [ ] T18: no derived draft ever contains `<fill me>` or an invented `path:line`
 - [ ] `grep -c "pr_intent" src/fa/inner_loop/verification.py` == 0 (validators untouched)
 
 Kill-check: removing the `write_text` call makes **T16**'s counterpart (the zero-`pr_prepare` slice) fail.
@@ -1090,7 +1184,42 @@ Kill-check: removing the `write_text` call makes **T16**'s counterpart (the zero
   `validate_test_edits`, which stays keyed on classifier intent from the staged diff.
 - ADVERSARIAL CASE (C3, **T15**): packet claims `IMPLEMENT`; diff deletes `tests/test_x.py`.
   Must be **blocked** (`pr_intent.py:508-512`).
+- ADVERSARIAL CASE (C3, **T17**): packet present but labels reworded. Must degrade to a partial
+  draft with **no typed `INTENT:`**, so the staged-diff classifier governs. A mis-derived
+  `INTENT: IMPLEMENT` would be a bypass; omission cannot be.
 
+
+---
+
+## 13. Review pass 3 — external adversarial review (findings F-1…F-5, D-1, D-2)
+
+A second reviewer audited v3. **Six findings accepted, one partially refuted.** All fixes are in the
+sections above; this section records the reasoning.
+
+| # | verdict | resolution |
+|---|---|---|
+| **F-1** | **Accepted — blocking, and the best catch in the review.** `T#` is a *taxonomy label* (`feature-planning:267-278`), not a runnable string; zero existing plans carry commands (verified against `PLAN-complexity-aware-execution-chat-role.md`). `run_verification(commands, …)` had **no producer** — the same defect class as D5. | Option **(a)**: `PlanIds.commands` extracted from a fenced ```verify block; grammar pinned in CT4 and mirrored into both planning skills (S9). Chose (a) over (b) because a fixed command set cannot express per-slice verification and would quietly weaken G3. New tests T3b, T6e. |
+| **F-2** | **Accepted — blocking.** S6a said "do not parse"; S6b had to parse. The unspecified half was the *security-critical* half. | Extraction contract pinned as a label table in S6b. **Key decision: `INTENT:` is never guessed.** If unlabelled, the deriver omits the typed line and the staged-diff classifier governs (`intent_guard.py:328-331`) — a mis-read regex can no longer forge a D-5 override, which was F-2's sharpest point. New tests T17 (C3, malformed-but-present) and T18. |
+| **F-3** | **Accepted.** Verified at `coder_loop.py:958-961`: `skills_conditional_value` is a **default arg** bound at each turn's re-definition of `_compose_request_payload`. "Outside `_is_chat_role`" was necessary but insufficient. | Placement pinned in S5: inside the turn loop, above the re-definition, reset to `None` on non-entry turns. New test T4e (no per-turn body resend). |
+| **F-4** | **Accepted.** G3's unqualified L3 rested on a seeded command list. | DoD now scopes it honestly: **L3 for plans carrying a ```verify block; explicitly not proven end-to-end for plans without one.** T6e proves the real path. |
+| **F-5a** | **Accepted.** `_run_subprocess_fallback` is private and side-effectful (`run_bash.py:168` `transaction.add_write`, `:178-180` artifact offload). | S6 now reuses **policy only** (`build_scrubbed_env` + timeout/decode), ~15 lines, no private coupling. Exit criterion greps to enforce it. |
+| **F-5b** | **Partially refuted.** The suspicion that `pr_prepare`-for-`coder` is dead weight is **wrong**: `fa run --role` **defaults to `coder`** (`cli.py:542-546`), so bare `fa run` is a standalone coder session with no controller and no S6b deriver. Removing it there reintroduces the CT9 deadlock on the *default* invocation. | Recorded as **CT7b** with the evidence, so the question is not re-litigated. |
+
+**D-1 — Scope pushback: accepted, and it is the right call.**
+S10 (`fa` publishes a PR) is the harness's **first outbound-write capability**. Bundling it into a
+ceremony-friction fix is scope creep, and it deserves its own threat review rather than one step and
+one risk row. **S10 is removed from this plan** and becomes `PLAN-harness-pr-publication` (to author
+separately). Consequences applied: G7 and CT8 are **deferred non-goals**; S6a survives because the
+packet artifact is independently useful (it is S6b's input); T10/T10a move with S10.
+This also shrinks the F6 fix to what it actually is: **PR-A + PR-B**, with PR-C (chat removal + docs)
+as cleanup.
+
+**D-2 — G8-vs-fail-closed tension: accepted as stated, not resolved by argument.**
+The reviewer is right that "no packet ⇒ deny as today" is still a denial-for-absence, and that the
+fix's success depends on a *behavioural* property no unit test can prove: that the injected ceremony
+actually causes models to emit parseable packets without a retry loop. Recorded plainly in §9 DoD
+rather than argued away. The live re-run is the only oracle, and until it is green **this plan
+claims a mechanism, not a cure.**
 
 ## 11. Artifacts inventory
 
