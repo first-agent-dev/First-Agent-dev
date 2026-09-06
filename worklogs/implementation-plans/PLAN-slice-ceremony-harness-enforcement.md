@@ -1,6 +1,13 @@
 # PLAN: Harness-enforced per-slice implementation ceremony    Plan-ID: PLAN-slice-ceremony-harness-enforcement
 Status: READY                                   Depth: P2
-Revision: v3 (review pass 2 in progress)   Changed-since-last-v1: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
+Revision: v3   Changed-since-v2: review pass 2 — D6 (`should_load_skill` would silently disable the ceremony), D7 (readiness text is role-agnostic), D8/D9/D10 resolved, D11 closed by new S6b (harness-derived draft). 12→13 steps. Delivery split into three PRs.   Changed-since-v1: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
+**Delivery (operator decision, review pass 2): three sequenced PRs, not one.**
+PR #68 keeps the S12.7 F1/F4/F7/F8/F9 fixes and merges on its own. Then:
+**PR-A = S1–S4** (two docs, one defaulted kwarg, one pure module, one flag — no behaviour change,
+independently verifiable); **PR-B = S5a, S5, S6a, S6, S6b, S7** (the wiring and the enforcement);
+**PR-C = S8, S9, S10** (chat removal, docs, publication). This supersedes the earlier
+"fold everything into #68" instruction, which predated the plan reaching 13 steps.
+
 Upstream context: `worklogs/reviews/F6-RESEARCH-intentguard-pr-prepare-friction.md` (rev 5, `7e50943`);
 PR [#68](https://github.com/first-agent-dev/First-Agent-dev/pull/68); operator decisions rev 3–rev 5.
 
@@ -180,7 +187,8 @@ stage sequencer.
 | GAP2 | no condensed injectable ceremony exists | S1 / T2 |
 | GAP3 | coder stage never injects a ceremony — the site is **chat-gated dead code** for `coder` (`coder_loop.py:605,745`) | S5a, S5 / T4 |
 | GAP3b | `stage_kwargs` (`workflow_controller.py:272-284`) carries no signal a stage could use to enable ceremony injection | S5a / T4c |
-| GAP4 | `tests-writing` never injected; `should_load_skill:119` has zero callers | S5 / T5 |
+| GAP4 | `tests-writing` never injected by any path | S5 / T5 |
+| GAP4b | `should_load_skill:119` still has zero production callers — **explicitly NOT closed here** (D6); backlogged | S9 (backlog row) |
 | GAP5 | verification is model-narrated; no harness execution | S6 / T6 |
 | GAP6 | no files-allowed scope signal | S7 / T7 |
 | GAP7 | `pr_prepare` registered for all roles (`cli.py:1625`) incl. chat | S8 / T8 |
@@ -537,7 +545,6 @@ Target liveness: L2→L3
 Edit:
 - path: `src/fa/inner_loop/coder_loop.py` symbol: new `_ceremony_block_for_turn` helper + call site **outside** the `if _is_chat_role:` block at `:745` change: when `role == "coder"` ∧ `slice_ceremony != "off"`, read both condensates and extend `skill_block_for_request`
 - path: `src/fa/inner_loop/coder_loop.py` symbol: `:802` change: `skill_block_for_request` becomes a **list of N blocks**, not `[render.skill_block]`
-- path: `src/fa/skills/loader.py` symbol: `should_load_skill:119` change: **wire it** — first production caller
 
 Degree of freedom closed: which protocol text reaches the model at implementation time was the
 operator's manual choice (paste or forget); it becomes a deterministic function of role, stage, and
@@ -553,8 +560,11 @@ Do:
 2. Full condensate bodies on the **slice-entry** turn (P1/P2); on later turns (P3) inject nothing
    into `skills_conditional` and emit only the short anchor via `turn_context`, mirroring
    `observations.py:152-158`.
-3. Route the decision through `should_load_skill` (`loader.py:119`), giving it its first production
-   caller (GAP4).
+3. Decide injection **directly** from `(role == "coder", slice_ceremony != "off", is_slice_entry)`.
+   Do **not** route through `should_load_skill` (D6): it matches on `globs`/`triggers`
+   (`loader.py:119-175`), and the condensates deliberately carry neither, so it would return
+   **False** and the ceremony would never fire. GAP4 is closed by injecting `tests-writing-inject`
+   directly, which is the outcome that was actually wanted.
 4. Emit `ceremony_injected` in the **same branch** that appends the blocks — CT3 dual-write.
 5. Wrap in `try/except` + `logger.warning`, mirroring `coder_loop.py:786-789`.
 6. Plan absent (P2) ⇒ inject anyway with ID fields blank. **Never block** (G8).
@@ -567,7 +577,6 @@ would evict the verification and escalation lines). Do not inject on every turn.
 Exit criteria:
 - [ ] `grep -n 'file_name="INJECT.md"' src/fa/inner_loop/coder_loop.py`
 - [ ] the injection call is **not** inside the `_is_chat_role` block: `awk 'NR>745 && /_ceremony_block_for_turn/' ` resolves outside that branch
-- [ ] `grep -n "should_load_skill" src/fa/inner_loop/` returns a **production** hit
 - [ ] T4 asserts **two** entries in `skills_conditional` on the entry turn, anchor-only on turn 2
 - [ ] T5 asserts the `tests-writing-inject` body is one of them
 - [ ] T4b: a chat L2 run still receives its planner skill block (no regression from the list change)
@@ -703,7 +712,7 @@ Target liveness: L3→L3 (chat), CT9 L0→L3
 
 Edit:
 - path: `src/fa/cli.py` symbol: `_build_run_tool_registry:1625` change: register `build_prepare_pr_tool` **only when `role != "chat"`**
-- path: `src/fa/cli.py` symbol: `_READINESS_PROMPT_EXTRA:162` change: drop the `pr_prepare` sentence for chat
+- path: `src/fa/cli.py` symbol: `_READINESS_PROMPT_EXTRA:159-164`, `_readiness_prompt_extra:167` change: **role-parameterise** (D7) — keep the `pr_prepare` clause for non-chat roles, omit it for chat. `cli.py:2251` appends this for **every** role, so an unconditional edit would strip the instruction from `coder`, which still has the tool
 - path: `src/fa/inner_loop/prompt.py` symbol: `:525,571,645` change: remove `pr_prepare` instructions from the chat prompt only
 - path: `src/fa/inner_loop/hooks/intent_guard.py` symbol: `IntentGuard.__init__`, `_requires_draft:226` change: add `draft_tool_available: bool`; skip the draft requirement when False
 
@@ -718,7 +727,7 @@ without the tool.
 Do:
 1. Make registration role-conditional at `cli.py:1625`.
 2. Pass `draft_tool_available=(role != "chat")` into `IntentGuard` at `cli.py:1731-1736`.
-3. Strip the 4 chat-facing prompt/description sites. **Leave coder/planner/eval prompts alone.**
+3. Strip the chat-facing prompt sites only. **Leave coder/planner/eval prompts alone** — verified: `_readiness_prompt_extra` is role-agnostic today (`cli.py:2251`).
 4. Re-check `prompt.py:20,22,24,822,854` — remove only chat-role text.
 
 Do-not: do not delete `prepare_pr.py`. Do not touch `pr_intent.py` (CT10). Do not change the
@@ -727,7 +736,10 @@ Do-not: do not delete `prepare_pr.py`. Do not touch `pr_intent.py` (CT10). Do no
 Exit criteria:
 - [ ] `pr_prepare ∉ chat registry names`; `∈ coder registry names` (T8)
 - [ ] **T9 (C3 adversarial):** chat + `enforce` + `fs_write_file` ⇒ **not** denied with `_MISSING_DRAFT_REASON`
-- [ ] `grep -c pr_prepare` on the chat prompt path == 0
+- [ ] `grep -c pr_prepare` on the chat prompt path == 0; **non-chat roles still receive it** (T8b)
+- [ ] **Per-file test disposition (D9)** recorded for all ten files referencing `pr_prepare`: chat-specific assertions deleted, role-agnostic ones untouched, `coder`-side replacements added
+- [ ] **D10 check:** conformance suite re-run and `tests/data/windows-baseline-2026-08-02.txt` confirmed unchanged (S8 keeps `pr_prepare` for `coder`)
+- [ ] reversal recorded in `knowledge/trace/exploration_log.md` (S9), and the replacement test's docstring cites this plan
 - [ ] chat registry `estimate_tokens` strictly lower than before
 
 Kill-check: reverting `_requires_draft` makes **T9** fail (session deadlocks).
@@ -818,7 +830,10 @@ Kill-check: removing the `publish_pr` call from the `DONE` branch makes **T10** 
 | T9 | CT9 | **C3** | absence of `_MISSING_DRAFT_REASON` deny | `draft_tool_available` branch | P8 |
 | T10 | CT8 | C1 | `pr_published` event + body file | `publish_pr` call | P10,P11 |
 | T10a | CT8 | C0 | pure fold output | — | — |
+| T8b | CT7 | C1 | non-chat roles still receive the `pr_prepare` readiness clause (D7) | role-parameterised extra | P9 |
 | T11 | CT10 | C1 | existing `pr_intent` suite green | — | — |
+| T15 | CT11 | **C3** | packet says IMPLEMENT + diff deletes a test ⇒ **blocked** | classifier-intent call site | P4 |
+| T16 | CT11 | C1 | absent packet ⇒ guard denies as today (fail-closed) | `write_text` call | P4 |
 | T14 | CT8 | C1 | `slice_packets.jsonl` written; malformed ⇒ WARNING only | append call | P10 |
 | T12 | CT3 | C1 | `observe`: events yes, context unchanged | — | P12/C |
 | T13 | CT3 | C1 | `off`: zero events, byte-identical | — | P12/D |
@@ -870,6 +885,8 @@ tests/test_plan_ids.py tests/test_scope_warn.py tests/test_live_check_script.py`
 | RK8 | The plan recreates F6 (new rejection surface) | G8: no field rejected for absence; S5/S6/S7 all degrade to warnings | T6b, T7, T13 |
 | RK9 | **S5a threads a new arg through 3 layers**; a missed hop silently disables the feature | default `"off"` at every hop + T4c asserts arrival at the coder loop, not just departure | T4c |
 | RK10 | Harness-executed commands are a **new code-execution surface** not gated by SandboxHook | plan-sourced only, never model-sourced (T6c); per-command timeout (T6d); coder stage only | T6c, T6d |
+| RK12 | Harness-derived draft is read as forging agent provenance | it asserts the *harness's* own provenance (`pr_draft.py:46-51`); test-protection stays keyed on the staged diff (`pr_intent.py:519-526`) | T15 |
+| RK13 | Deleting chat tests erases a documented decision | reversal recorded in exploration_log + replacement docstring cites this plan (D8) | S8 exit criteria |
 | RK11 | `skill_block_for_request` list change clobbers the existing chat L2 block | append, never replace; T4b is the regression guard | T4b |
 
 **ROLLBACK (P2+ required).** Flag `slice_ceremony.mode` — default `observe`, set `off` for a
@@ -989,37 +1006,90 @@ roles — it is not role-conditional. v1/v2's S8 said "drop the `pr_prepare` sen
 removes the instruction from `coder` too, which still has the tool and still needs it. → S8 now
 makes the readiness text **role-parameterised**, keeping the `pr_prepare` clause for non-chat roles.
 
-**Open questions for the operator (blocking S8 only)**
+**Operator decisions (review pass 2)**
 
-**D8 — S8 contradicts a deliberate, tested design decision.**
-`tests/test_chat_role.py:184-203` is not incidental coverage; it is a regression test written
-*against* the exact behaviour S8 restores. Its docstring records that a previous test asserted the
-wrong name and "passed vacuously while the real tool, `pr_prepare`, was appended for every role
-including chat". Someone already fixed this in the direction opposite to S8. Removing it is
-defensible (that test asserts *what is*, not *what should be*), but it must be a recorded reversal,
-not a silent test deletion. → **Q5, below.**
+**D8/D9 — resolved: delete the chat-specific assertions.** `tests/test_chat_role.py:184-203` and the
+chat-side assertions in `test_cli.py` assert *what is*, not *what should be*; the plan supersedes
+them. **Mitigation for the one real cost** (a reviewer later cannot tell the reversal was
+deliberate): the deletion is not silent — S8 records the reversal in
+`knowledge/trace/exploration_log.md` (S9) and the replacement `coder`-side test carries a docstring
+naming this plan. Per-file disposition is now an S8 exit criterion; ten files reference the tool and
+most are role-agnostic and stay untouched.
 
-**D9 — S8's blast radius is 10 test files, not the "one assertion" v2 implied.**
-`pr_prepare` appears in `tests/{test_chat_role,test_cli,test_intent_guard,test_prepare_pr,
-test_prompt_registry_coherence,test_readiness_announcement,test_s12_invariant_relaxation,
-test_bash_intent}.py`, `tests/conformance/test_live_executor.py`, and a pinned baseline
-`tests/data/windows-baseline-2026-08-02.txt`. Several (`test_cli.py:794-978`) assert the full
-deny-then-allow ceremony. Most are role-agnostic and stay valid; the chat-specific ones must be
-**re-pointed at `coder`**, not deleted. S8's exit criteria now require an explicit per-file
-disposition.
+**D10 — resolved as a check, not a change.** `cli.py:2734` builds a **`coder`** registry for the
+conformance suite and S8 keeps `pr_prepare` for `coder`, so the pinned corpus
+(`tests/data/windows-baseline-2026-08-02.txt`) should be unaffected. S8 must *re-run and confirm*
+rather than assume — added as an exit criterion, not a code change.
 
-**D10 — the conformance path builds a `coder` registry and is in scope.**
-`cli.py:2734` builds `_build_run_tool_registry("coder", ...)` for the live-executor conformance
-suite, and `tests/data/windows-baseline-2026-08-02.txt` pins a rendered corpus. S8 keeps
-`pr_prepare` for `coder`, so this should be unaffected — but the baseline must be re-verified, not
-assumed. → **Q6.**
+**D11 — resolved: the harness derives the draft; the model never calls `pr_prepare` in the pipeline.**
+This is the "derive, don't merge" principle (F6 rev 4 §5.5) finally applied to the enforcement seat.
+After S6a captures the packet, the harness writes the draft itself via `PrDraftStore.write_text`
+(`pr_draft.py:68`), which sets `_current_digest` and therefore satisfies
+`read_current_text()` (`:75-91`) — `IntentGuard` is satisfied with **zero model turns**. → new **S6b**.
 
-**D11 — the ceremony and `pr_prepare` now overlap for the `coder` role.**
-After S5, a coder slice receives the ceremony (which asks for intent, DoF-closed, mechanism, DoD).
-Under `IntentGuard` in `enforce`, the same slice must *also* call `pr_prepare` before its first
-mutation (`intent_guard.py:226-232`, role-agnostic). That is the F6 turn-tax reappearing inside the
-very pipeline this plan is meant to streamline — the model states its intent twice, in two formats,
-to two consumers. Not a code defect; a **design collision the plan did not name.** → **Q7.**
+*Security review of this choice (it is the risky one, so it is argued explicitly):*
+- The trust model is **not** weakened. `_current_digest` proves "this process wrote it and the file
+  is unmodified" (`pr_draft.py:46-51`). A harness-written draft satisfies that honestly — the
+  harness *is* the current process. This is not forging agent provenance; it is the harness
+  asserting its own.
+- **The test-protection rule stays armed.** `validate_test_edits` is called with
+  `classify_intent(projected)` — the intent derived from the **staged diff**, never the draft's typed
+  value (`intent_guard.py:341`, security invariant at `pr_intent.py:519-526`). A model that writes a
+  misleading packet still cannot delete a test: deletion violates "under EVERY intent shape"
+  (`pr_intent.py:508-512`), and the diff, not the packet, decides.
+- **Residual risk (named, not hidden):** the packet's `INTENT:` becomes the typed D-5 override, which
+  governs *shape* checks. A model could soften shape validation by mis-declaring intent — but that
+  is exactly today's exposure with a model-authored `pr_prepare` call, so the change is
+  risk-neutral, not risk-increasing. **T15** pins it.
+- **Failure mode:** if the packet is missing/unparseable, the harness writes **no** draft and the
+  guard behaves exactly as today (deny + `_MISSING_DRAFT_REASON`). Fail-closed, no new bypass.
+
+---
+
+### Step S6b: Harness-derived PR draft (closes the double-ceremony, D11)
+
+Traces-to: G3, G8 · CT4, CT11 · P4
+Depends-on: S6a    Parallelizable-with: S7
+Target liveness: L0→L3
+
+Edit:
+- path: `src/fa/inner_loop/verification.py` symbol: `derive_draft_from_packet` change: **NEW** pure `SlicePacket -> str` renderer producing `INTENT:`/`CLASS:`/`INVARIANT:` (+ FIX clauses)
+- path: `src/fa/inner_loop/workflow_controller.py` symbol: post-coder step change: call `PrDraftStore.write_text` with the derived text before the coder stage's first mutation
+
+Degree of freedom closed: the model could previously satisfy the mutation gate with a draft
+unrelated to the work it was about to do (`invariant: "n/a"` passed — F6 evidence); the draft is now
+**derived from the packet the ceremony already required**, so the two cannot disagree.
+
+Deterministic mechanism: `src/fa/inner_loop/verification.py:derive_draft_from_packet` — a pure
+function; the guard's own validators (`validate_commit_msg`, `validate_test_edits`) remain the
+authority and are unchanged (CT10).
+
+Do:
+1. Render the commit-note fields from the packet. `DETERMINISTIC MECHANISM` maps from the packet's
+   kill-check target (a `path:line`), satisfying the citation rule by construction.
+2. Write via `PrDraftStore.write_text` (`pr_draft.py:68`) — never touch `_current_digest` directly.
+3. **No packet ⇒ write nothing.** The guard then denies exactly as today (fail-closed).
+4. Pipeline coder stages only. Chat is untouched (it has no tool after S8 and no ceremony).
+
+Do-not: do not pass the packet's typed intent to `validate_test_edits` (`pr_intent.py:519-526`). Do
+not synthesise a draft when the packet is absent. Do not modify `pr_intent.py` (CT10).
+
+Exit criteria:
+- [ ] a pipeline coder slice mutates the workspace with **zero** `pr_prepare` tool calls
+- [ ] T15: a packet declaring `IMPLEMENT` while the diff deletes a test is **still blocked**
+- [ ] T16: absent packet ⇒ guard denies as today (fail-closed, no bypass)
+- [ ] `grep -c "pr_intent" src/fa/inner_loop/verification.py` == 0 (validators untouched)
+
+Kill-check: removing the `write_text` call makes **T16**'s counterpart (the zero-`pr_prepare` slice) fail.
+
+---
+
+**CT11 — harness-derived draft** *(security, §6.5 — adversarial case required)*
+- BOUNDARY: draft provenance and the test-protection rule.
+- INVARIANT: a harness-written draft satisfies `IntentGuard` **without** weakening
+  `validate_test_edits`, which stays keyed on classifier intent from the staged diff.
+- ADVERSARIAL CASE (C3, **T15**): packet claims `IMPLEMENT`; diff deletes `tests/test_x.py`.
+  Must be **blocked** (`pr_intent.py:508-512`).
 
 
 ## 11. Artifacts inventory
@@ -1031,7 +1101,6 @@ to two consumers. Not a code defect; a **design collision the plan did not name.
 | single-file invariant | `knowledge/skills/skill-writing/SKILL.md:63` | edit | S1 |
 | skills README | `knowledge/skills/README.md` | edit | S1 |
 | skill loader | `src/fa/skills/_inject.py:216,224` | edit | S2 |
-| skill trigger loader | `src/fa/skills/loader.py:119` | edit (wire) | S5 |
 | plan ID extractor | `src/fa/inner_loop/plan_ids.py` | add | S3 |
 | measurement script | `scripts/measure_plan_id_extraction.py` | add | S3 |
 | feature flags | `src/fa/feature_flags.py:46,62,76,129,289` | edit | S4 |
