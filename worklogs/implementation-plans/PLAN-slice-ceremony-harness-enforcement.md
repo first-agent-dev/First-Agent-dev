@@ -1790,3 +1790,344 @@ than claimed as a verified fix. **M28 kills only at the unit level.**
 
 **S6 and S7 are blocked pending Q10; S6a is unblocked and is now the critical
 path (S6b and S7 both depend on it).**
+
+---
+
+## §19 Completion-gate hardening — new steps S11–S14 (operator-approved 2026-09-07)
+
+Source: `worklogs/reviews/AUDIT-completion-measurement.md`. These close the gap
+between *"the model asserted done"* and *"the harness observed done"*. Without
+them, S6 lands as instrumentation whose result nothing acts on.
+
+**Operator decisions folded in:** Q10 refinement accepted (harness synthesises
+`return_to_coder` only); Q11 = yes (require harness evidence); Q12 = yes,
+validate in harness code, missing slice ⇒ WARN; Q13 = not now (eval keeps no
+ceremony injection until Q11 is measured).
+
+### F1 answered precisely — the eight `step_results` occurrences
+
+The audit's "zero consumers" claim, enumerated. Every occurrence in `src/`:
+
+| # | Site | Kind |
+|---|---|---|
+| 1 | `prompt.py:829` | prose in the eval prompt: "structure them so they map to `step_results[]`" |
+| 2 | `workflow_artifacts.py:196` | `EvalReport` field declaration |
+| 3 | `:218` | `to_json_dict` — **serialise** |
+| 4 | `:240` | `from_json_dict` — **deserialise** |
+| 5 | `:409` | `_scan_step_results` — **produce** (regex over eval prose) |
+| 6 | `:456` | assigned inside `parse_eval_report` |
+| 7 | `:467` | passed to the fail-closed `BLOCKED` report |
+| 8 | `:488` | passed to the normal report |
+
+All eight are **produce / store / reload**. Not one is a **read that changes a
+decision**: no branch, comparison, aggregation, or routing input anywhere reads
+`step_results`. `tests/test_workflow_artifacts.py` asserts round-trip fidelity
+only — it proves the field survives JSON, not that it means anything.
+
+That is the exact sense of "zero consumers": **the data is complete, correct,
+and inert.** S11/S12 give it a consumer.
+
+---
+
+### Step S11: Reconcile the verdict against harness observation (Q11)
+
+Traces-to: G3 · CT4 · new CT19
+Depends-on: **S6** (produces the observations)    Blocks: nothing
+Target liveness: L0→L3
+
+**Why.** Today `EVAL_VERDICT_TO_TERMINAL_STATUS["PASS"] = "DONE"`
+(`workflow_controller.py:52`) makes a model-typed token the sole cause of
+success. Probed at the tip: the single word `PASS` yields
+`verdict=PASS route=complete steps=[]` and exits 0.
+
+Edit:
+- path: `src/fa/inner_loop/workflow_artifacts.py` symbol: new `reconcile_verdict` change: **NEW** pure function `(claimed: EvalReport, observed: VerificationOutcome|None) -> EvalReport`
+- path: `src/fa/inner_loop/workflow_controller.py` symbol: after the eval stage in `_run_stage` change: route on the **effective** report
+
+Degree of freedom closed: a PASS could previously coexist with a red
+verification in the same run and nothing compared them; the two facts are now
+reconciled at one point, with the observation dominant.
+
+Deterministic mechanism: a pure function with a four-row truth table; the
+controller routes on its output, so there is no path from a claimed PASS to
+`DONE` while an observed command is non-zero.
+
+| observed | claimed | effective | why |
+|---|---|---|---|
+| all exit 0 | PASS | `DONE` | agreement |
+| any non-zero | PASS | **`REPAIR_REQUIRED`** | **the only new authority** |
+| all exit 0 | REPAIR_REQUIRED | `REPAIR_REQUIRED` | eval may see what commands cannot |
+| no commands ran | any | claimed, tagged `evidence: none` | honest degradation (G8) |
+
+Do:
+1. Keep BOTH facts in `eval_report.json` — add `harness_verification`
+   `{ran, commands, failures, exit_codes}` beside `verdict`. An override must be
+   **auditable**, never silent.
+2. When overriding, rewrite `summary` to name the failing command.
+3. Q10 refinement: the harness synthesises **`return_to_coder` only**. A failing
+   command is by definition an implementation defect; `REPLAN_REQUIRED` requires
+   judging plan *shape* (`prompt.py:804-812`) — reading comprehension the
+   harness does not have. Escalation to planner stays eval's privilege.
+
+Do-not: do not let a green verification **upgrade** a claimed
+REPAIR_REQUIRED/BLOCKED to PASS (row 3). Observation may only ever be *more*
+conservative — otherwise the harness starts overruling a judge that read the
+diff.
+
+Exit criteria:
+- [ ] T15: observed failure + claimed PASS ⇒ terminal `REPAIR_REQUIRED`, exit 1
+- [ ] T15b: observed green + claimed PASS ⇒ `DONE` (no false positive)
+- [ ] T15c: no commands ⇒ claimed verdict honoured, `evidence: none` recorded
+- [ ] T15d: green observation never upgrades a non-PASS claim
+- [ ] `eval_report.json` records both the claim and the observation
+
+Kill-check: delete the override branch ⇒ **T15** fails (run goes `DONE` green).
+
+---
+
+### Step S12: Validate slice IDs against the plan (Q12)
+
+Traces-to: G5 · CT6 · new CT20
+Depends-on: **S3** (`extract_plan_ids`, shipped but imported by nothing)
+Target liveness: L0→L2
+
+**Why.** `_STEP_LINE_RE` (`workflow_artifacts.py:342`) accepts any
+`S\d+[A-Za-z0-9_.-]*`. Probed: `- S99: PASS` and `- S404: PASS` are accepted as
+real slices with `acceptance_matched=True`. Meanwhile
+`grep -rn "plan_ids" src/fa/` outside the module returns **nothing** — S3
+shipped dead.
+
+Edit:
+- path: `src/fa/inner_loop/workflow_controller.py` symbol: post-eval change: call `extract_plan_ids(plan_text).slices`, cross-check claimed IDs
+
+Do:
+1. Claimed ID ∉ plan ⇒ **WARNING**, and drop it from `step_results` — it is
+   noise, not evidence.
+2. Plan slice with **no verdict** ⇒ **WARNING** (operator: warn, not block).
+   Record as `unreported_slices` in the report.
+3. No plan resolvable ⇒ skip silently. Legacy plans failing extraction is
+   expected and is NOT a kill signal (standing operator rule).
+
+Do-not: do not block on either condition yet. Revisit only after real-run
+coverage data exists.
+
+**Note the asymmetry, deliberately:** invention (`S404`) is cosmetic; the real
+risk is **omission** — dropping `S7` from the list yields a clean PASS. Rule 2
+is the one that matters.
+
+Exit criteria:
+- [ ] T16: `S404: PASS` ⇒ warning, dropped from `step_results`
+- [ ] T16b: plan slice absent from eval output ⇒ warning + `unreported_slices`
+- [ ] T16c: unresolvable plan ⇒ no warnings, no exception
+- [ ] `grep -c "plan_ids" src/fa/inner_loop/workflow_controller.py` > 0 (S3 alive)
+
+Kill-check: remove the cross-check ⇒ **T16** fails.
+
+---
+
+### Step S13: Give eval the plan, the diff, and the related docs
+
+Traces-to: G3 · new CT21
+Depends-on: none (independent; do FIRST — cheapest, likely largest quality win)
+Target liveness: L0→L3
+
+**Why — the strongest finding in the audit.** The eval prompt is good: it is
+told to judge "whether the coder satisfied the planner's execution contract"
+using "repo-native verification commands." But:
+
+- `grep -rn "plan_path|plan_file|diff" src/fa/inner_loop/workflow_controller.py`
+  ⇒ **zero hits**. The harness passes eval no plan and no diff.
+- Eval receives only `ctx.task_for(role)` (`:283`) — a task string.
+- `fresh=index == 0` (`:583`, `:747`): only stage 0 is fresh, so **eval resumes
+  the coder's session** and reads the coder's own success narration as context.
+
+So the judge is asked to check code against a contract it was never handed,
+while sitting inside the defendant's transcript.
+
+Edit:
+- path: `src/fa/inner_loop/workflow_controller.py` symbol: eval `stage_kwargs` change: append a harness-built evidence preamble to the eval task
+- path: `src/fa/inner_loop/workflow_controller.py` symbol: new `_eval_evidence_block` change: **NEW**
+
+Do:
+1. Supply, as text the harness controls: the **plan path**, the **slice IDs**
+   (S12), a **`git diff --stat` + full diff** of the run's changes, and links to
+   related docs (ADR index, the plan's own `## Artifacts` table).
+2. Truncate the diff at a bounded size with an explicit
+   `[diff truncated — N files, use fs_read_file]` marker. Never silently drop.
+3. Paths, not pasted file bodies, for docs — eval has `fs_read_file`.
+
+Do-not: do not paste the whole plan inline (it is 1600+ lines and would evict
+the diff). Do not remove the coder transcript in this step.
+
+**Deferred, deliberately — `fresh=True` for eval.** Resuming the coder's session
+is the structural independence break, but a fresh eval loses real evidence and
+costs tokens. Recommendation: add `--eval-fresh` defaulting to today's
+behaviour, and **measure** before flipping. Recorded as **Q15**, not decided
+here.
+
+Exit criteria:
+- [ ] T17: the eval request contains the plan path and a non-empty diff
+- [ ] T17b: an oversized diff is truncated with the marker, never dropped
+- [ ] T17c: with no changes, the block says so explicitly (not an empty string)
+
+Kill-check: remove the preamble ⇒ **T17** fails.
+
+---
+
+### Step S14: `acceptance_matched` → `claimed_pass` (truth in naming)
+
+Traces-to: G8 · CT4
+Depends-on: none    Parallelizable-with: all
+Target liveness: L0→L1
+
+**Why.** `workflow_artifacts.py:426` computes
+`acceptance_matched = verdict == "pass"` — literally `x = (x == "pass")`. The
+name asserts an acceptance predicate was matched; the value restates the
+model's claim. A reader of `eval_report.json` is actively misled. This is the
+in-repo proof of the ceremony's own risk: a senior-sounding label with no
+falsifiable content behind it.
+
+Edit:
+- path: `src/fa/inner_loop/workflow_artifacts.py` symbol: `StepResult.acceptance_matched` change: rename to `claimed_pass` (field, `to_json_dict`, `from_json_dict`, `:426`)
+- path: `tests/test_workflow_artifacts.py` change: 4 assertion sites
+
+Blast radius verified at tip: **3 src sites, 4 test sites, 0 other callers**;
+no `eval_report.json` exists on disk and the artifact carries no
+`schema_version`, so no migration is required.
+
+Do:
+1. Rename. Do **not** try to make it "real" here — that is S11's job, and a
+   real acceptance check needs per-slice command attribution the plan does not
+   yet define.
+2. Once S11 lands, `claimed_pass` sits beside the observation and the pair is
+   self-documenting.
+
+Exit criteria:
+- [ ] `grep -rc "acceptance_matched" src/ tests/` == 0
+- [ ] T18: round-trip still passes with the new key
+
+Kill-check: n/a (pure rename; the round-trip test is the guard).
+
+---
+
+### §19.1 Sequencing
+
+**S14 → S13 → S12 → S11.** Rationale: S14 is a free rename; S13 is independent
+and probably the biggest quality win per line; S12 revives S3 and produces the
+slice list S11 reports against; S11 needs S6's observations and is the actual
+gate. S6 remains blocked on Q10 — now answered (harness synthesises
+`return_to_coder` only), so **S6 is unblocked**.
+
+### §19.2 New open question
+
+> **Q15 — should the eval stage run fresh?** Today `fresh=index == 0` seats eval
+> in the coder's transcript. Fresh eval = real independence, but loses evidence
+> and costs tokens. Proposal: `--eval-fresh` flag, default unchanged, decide on
+> measurement. **Not decided.**
+
+---
+
+## §20 Flow chart re-verified against §19 — and one new gap it exposed
+
+Re-walked `workflow_controller.py` at the tip after writing S11–S14. The §6
+chart in the audit was **correct but incomplete**: it drew the eval path and
+omitted the no-eval path. Verifying it found F6.
+
+### F6 (NEW) — a workflow with no eval stage reports `DONE` unconditionally
+
+`_write_terminal_state:467-470`:
+
+```python
+if eval_report is not None:
+    status = EVAL_VERDICT_TO_TERMINAL_STATUS.get(eval_report.verdict, "FAILED")
+else:
+    status = "DONE"          # <-- no judge ran, yet the run is a success
+```
+
+`--roles` is free-form over `WORKFLOW_STAGE_ROLES`, so `fa workflow --roles
+coder` is legal and terminates `DONE`, exit 0, with **nothing having judged
+anything**. `_run_adaptive:610-617` has the same shape ("adaptive workflow
+completed without eval stage" → `return 0`).
+
+Two further conditions narrow when a report exists at all — `_run_stage:336`
+requires `role == "eval" AND code == 0 AND sink`. So an eval stage that exits
+non-zero also yields `eval_report=None`; that case is caught earlier by the
+stage-failure branch (`_run_initial_roles:588`), but the **empty-sink** case
+(eval produced no final message) falls through to `DONE`.
+
+**This is the same class of defect as F2/F3 and arguably the worst: absence of
+evidence is read as evidence of success.** It is invisible in the default
+planner→coder→eval pipeline, which is why it survived.
+
+**Fix (folded into S11, no new step):** `reconcile_verdict` must treat "no eval
+report" as its own row, and the terminal writer must distinguish *judged* from
+*unjudged*:
+
+| eval report | observations | terminal |
+|---|---|---|
+| present | per §19 S11 table | as tabled |
+| **absent, eval was in `--roles`** | any | **`FAILED`** (the judge was asked for and did not answer) |
+| **absent, eval not in `--roles`** | all exit 0 | `DONE` + `judged: false` recorded |
+| **absent, eval not in `--roles`** | any non-zero | **`REPAIR_REQUIRED`** |
+
+Rationale for row 3: the operator may legitimately run `--roles coder` as a
+scratch pipeline; forcing `FAILED` would break a valid use. But the artifact
+must say `judged: false` so no reader mistakes it for a verified run. Row 4 is
+S11's whole point — an observed failure outranks the absence of a judge.
+
+- [ ] T19: `--roles coder` with a failing verify command ⇒ `REPAIR_REQUIRED`
+- [ ] T19b: `--roles coder` all green ⇒ `DONE` **and** `judged: false`
+- [ ] T19c: eval in roles but empty sink ⇒ `FAILED`, not `DONE`
+
+### §20.1 Corrected chart (verified line-by-line at the tip)
+
+```
+fa workflow --roles A,B,C --mode {linear|adaptive}
+   │
+   ├─ _run_stage:263  deadline check (single choke point, 4 call sites)
+   │
+   ├─ per stage: fresh = (index == 0)        :583 / :747
+   │     └─ ONLY stage 0 is fresh; eval RESUMES the coder session   (F4 -> Q15)
+   │
+   ├─ coder stage ends
+   │     ├─ S6a  capture packet        sink[-1].final_text
+   │     └─ S6   run plan verify cmds  -> observations            [NEW]
+   │
+   ├─ eval stage ends
+   │     ├─ :336  guard: role==eval AND code==0 AND sink
+   │     │         -> else eval_report stays None  ................ F6
+   │     ├─ parse_eval_report:433   claimed verdict + step_results
+   │     ├─ S13  eval was given plan path + diff + doc links      [NEW]
+   │     ├─ S12  validate slice IDs vs extract_plan_ids  -> WARN  [NEW]
+   │     └─ S11  reconcile(observed, claimed) -> EFFECTIVE verdict[NEW]
+   │
+   ├─ route on the EFFECTIVE verdict
+   │     linear   (:738): run to end; first non-zero exit stops
+   │     adaptive (:596): return_to_coder  -> repair_round+1  (cap :621)
+   │                      return_to_planner-> replan_round+1  (:707)
+   │                      complete/blocked -> terminal
+   │
+   └─ _write_terminal_state:464
+         eval_report present -> EVAL_VERDICT_TO_TERMINAL_STATUS
+         absent              -> F6 table above (was: unconditional DONE)
+```
+
+**Invariant the chart now enforces:** every path to `DONE` passes through
+either a judged verdict reconciled with observation (S11), or an explicit
+`judged: false` record. There is no longer a silent path from "nothing ran" to
+"success".
+
+### §20.2 Where the operator's own rule now binds the harness
+
+> *"never mark a slice complete from 'no exception'"*
+
+| Actor | Bound by | Mechanism |
+|---|---|---|
+| coder | INJECT.md AFTER EDIT GATE | prompt nudge (non-falsifiable) |
+| eval | eval system prompt | prompt nudge (non-falsifiable) |
+| **harness** | **S11 + F6 fix** | **code: absence of evidence never yields DONE** |
+
+Before §19 the rule bound only the two model roles — by prompt, i.e.
+unfalsifiably. S11 and the F6 fix are the first places the *harness* is held to
+it, in code, with kill-checks. That is the difference between a ceremony and a
+contract.

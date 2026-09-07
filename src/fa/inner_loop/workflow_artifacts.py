@@ -126,9 +126,22 @@ def _as_dict_list(value: object) -> list[dict[str, object]]:
 
 @dataclass(frozen=True)
 class StepResult:
+    """One per-slice verdict as CLAIMED by the eval model.
+
+    ``claimed_pass`` was named ``acceptance_matched`` until S14. That name
+    asserted an acceptance predicate had been matched; the value is computed as
+    ``verdict == "pass"`` -- it restates the model's own claim and no predicate
+    is evaluated anywhere. The rename removes a misleading guarantee from the
+    artifact rather than inventing one.
+
+    Harness-OBSERVED evidence is a separate field (``EvalReport``'s
+    ``harness_verification``, S11); the pair is deliberately kept side by side
+    so a claim can be audited against an observation.
+    """
+
     step_id: str
     verdict: StepVerdict
-    acceptance_matched: bool
+    claimed_pass: bool
     evidence: str
     notes: str = ""
 
@@ -137,7 +150,7 @@ class StepResult:
         return cls(
             step_id=_as_str(data["step_id"]),
             verdict=_as_literal(data["verdict"], _STEP_VERDICTS, "verdict"),  # type: ignore[arg-type]
-            acceptance_matched=bool(data["acceptance_matched"]),
+            claimed_pass=bool(data["claimed_pass"]),
             evidence=_as_str(data["evidence"]),
             notes=_as_str(data.get("notes", "")),
         )
@@ -423,7 +436,7 @@ def _scan_step_results(text: str) -> tuple[StepResult, ...]:
             StepResult(
                 step_id=step_id,
                 verdict=verdict,
-                acceptance_matched=verdict == "pass",
+                claimed_pass=verdict == "pass",
                 evidence=evidence,
             )
         )
