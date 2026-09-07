@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 
 __all__ = [
     "PlanIds",
+    "extract_plan_id",
     "extract_plan_ids",
 ]
 
@@ -59,6 +60,24 @@ _SLICE_RE = re.compile(r"^#{2,4}\s+(?:Step\s+)?(S\d+[a-z]?)\s*:", re.MULTILINE)
 _GAP_RE = re.compile(r"\bGAP(\d+[a-z]?)\b")
 _CONTRACT_RE = re.compile(r"\bCT(\d+[a-z]?)\b")
 _TEST_RE = re.compile(r"\bT(\d+[a-z]?)\b")
+
+#: The plan's own declared identity, e.g. ``Plan-ID: PLAN-foo``. Real plans in
+#: this repo use three shapes, all of which must parse:
+#:
+#:   ``Plan-ID: `PLAN-foo```   (backticked -- the most common)
+#:   ``Plan-ID:** PLAN-foo``   (the label was bolded, so ``**`` trails the colon)
+#:   ``Plan-ID: PLAN-foo``     (bare)
+#:
+#: Anchored to a line start so a mention in prose ("see Plan-ID: X above")
+#: further down the document cannot masquerade as the declaration; callers
+#: take the FIRST match, which is the header.
+#: ``.*?`` before the label because this repo's own plan puts the declaration
+#: at the END of the H1 title line ("# PLAN: ...    Plan-ID: PLAN-foo"), not on
+#: a line of its own. Still line-anchored, so the first match is the header.
+_PLAN_ID_RE = re.compile(
+    r"^.*?Plan-ID:\s*\**\s*`?([A-Za-z0-9][A-Za-z0-9._-]*)`?",
+    re.MULTILINE,
+)
 
 #: Fenced ``verify`` block. ``[ \t]*`` tolerates indentation inside list
 #: items; the closing fence is any ``` at line start (after optional
@@ -146,3 +165,22 @@ def extract_plan_ids(text: str) -> PlanIds:
         tests=_ordered_unique([f"T{n}" for n in _TEST_RE.findall(text)]),
         commands=_extract_commands(text),
     )
+
+
+def extract_plan_id(text: str) -> str | None:
+    """Return the plan's declared ``Plan-ID``, or ``None`` if it has none.
+
+    S12a. Separate from :func:`extract_plan_ids` because the two answer
+    different questions and have different failure modes: the plural function
+    recovers *contents* (slices, gaps, commands) and an empty result is normal,
+    while this one recovers the plan's *identity* and its absence means the
+    caller must fall back to another identifier rather than invent one.
+
+    Never raises. An absent, malformed, or non-textual declaration yields
+    ``None``, because a run must not fail merely because its plan omitted a
+    header field.
+    """
+    match = _PLAN_ID_RE.search(text or "")
+    if match is None:
+        return None
+    return match.group(1).strip() or None

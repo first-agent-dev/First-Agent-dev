@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Final
 
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import resolve_injection_modes
+from fa.inner_loop.plan_ids import extract_plan_id
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.workflow_artifacts import (
     EvalReport,
@@ -139,6 +140,40 @@ class WorkflowContext:
     # per stage dispatch (flag > config > off) rather than per turn -- modes
     # change between invocations, not mid-loop (plan v5 RK15).
     inject_overrides: Mapping[str, str] = field(default_factory=dict)
+    # S12a: the plan artifact this run executes against. ``None`` -- the
+    # default and what every pre-S12a caller passes -- means the harness has no
+    # contract to check against, so S12 (slice-ID validation) and S13 (the eval
+    # evidence block) degrade silently rather than warning about a plan the
+    # operator never supplied.
+    plan_path: Path | None = None
+
+    def plan_text(self) -> str | None:
+        """Read the plan once, or ``None`` if absent/unreadable.
+
+        Never raises: a plan that vanished mid-run must not take the pipeline
+        down with it, because the plan is advisory input, not a dependency.
+        """
+        if self.plan_path is None:
+            return None
+        try:
+            return self.plan_path.read_text(encoding="utf-8")
+        except OSError:
+            logger.warning("workflow: plan not readable at %s; continuing without it", self.plan_path)
+            return None
+
+    def plan_identity(self) -> str:
+        """The plan's declared ``Plan-ID``, falling back to ``run_id``.
+
+        Historically ``plan_id`` was passed ``run_id`` at every call site -- a
+        field whose name promised a plan reference while holding a run
+        identifier. When a plan IS supplied and declares an ID, records now
+        carry the real thing; otherwise the old value is kept so existing
+        artifacts stay shaped as before.
+        """
+        text = self.plan_text()
+        if text is None:
+            return self.run_id
+        return extract_plan_id(text) or self.run_id
 
     def task_for(self, role: str) -> str | None:
         return self.per_role_task.get(role) or self.base_task
@@ -349,7 +384,8 @@ def _run_stage(
             report_path=ctx.artifact_paths.eval_report,
             final_text=sink[-1].final_text,
             run_id=ctx.run_id,
-            plan_id=ctx.run_id,
+            # S12a: the plan's declared ID when one was supplied, else run_id.
+            plan_id=ctx.plan_identity(),
             plan_version=progress.plan_version,
             eval_independence=_eval_independence,
         )
@@ -507,6 +543,7 @@ def _write_terminal_state(
             last_route_decision=route,
             blocked_reason=blocked,
             judged=eval_report is not None,
+            plan_path=str(ctx.plan_path) if ctx.plan_path else "",
         ),
     )
 
@@ -832,6 +869,7 @@ def run_workflow(
     session_db: SessionDatabase | None = None,
     deadline_mono: float | None = None,
     inject_overrides: Mapping[str, str] | None = None,
+    plan_path: Path | None = None,
 ) -> tuple[int, FlowState | None]:
     """Run the workflow pipeline. Callable from CLI and from tools.
 
@@ -882,6 +920,7 @@ def run_workflow(
         session_db=session_db,
         deadline_mono=deadline_mono,
         inject_overrides=dict(inject_overrides or {}),
+        plan_path=plan_path,
     )
     label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
     print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)

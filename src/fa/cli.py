@@ -755,6 +755,18 @@ def build_parser() -> argparse.ArgumentParser:
             help=f"Override the task text for the {_role} stage.",
         )
     workflow_parser.add_argument(
+        "--plan",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Plan artifact this run executes against. Optional; when given, the "
+            "harness records it and can check the run against the plan's own "
+            "contracts. Never inferred -- guessing the contract is worse than "
+            "having none."
+        ),
+    )
+    workflow_parser.add_argument(
         "--inject",
         action="append",
         default=None,
@@ -1350,6 +1362,15 @@ def _cmd_workflow(
     #
     # Placed ahead of run_id allocation and any artifact write so a rejected
     # invocation leaves nothing behind on disk.
+    # S12a: fail fast on a plan that is not there. Placed with the role check
+    # -- ahead of run_id allocation and any artifact write -- so a mistyped
+    # path leaves nothing behind and the operator learns immediately, rather
+    # than after a full pipeline silently ran with no contract.
+    plan_path: Path | None = getattr(args, "plan", None)
+    if plan_path is not None and not plan_path.is_file():
+        print(f"fa workflow: --plan not found: {plan_path}", file=sys.stderr)
+        return 2
+
     unknown_roles = [r for r in roles if r not in _WORKFLOW_STAGE_ROLES]
     if unknown_roles:
         _allowed = ", ".join(sorted(_WORKFLOW_STAGE_ROLES))
@@ -1443,6 +1464,7 @@ def _cmd_workflow(
         run_context=run_context,
         session_db=session_db,
         inject_overrides=inject_overrides,
+        plan_path=plan_path,
     )
     return exit_code
 

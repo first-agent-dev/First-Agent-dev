@@ -281,6 +281,10 @@ class FlowState:
     # Defaults True so pre-S11a artifacts (no key) read as judged rather than
     # silently downgrading historical runs.
     judged: bool = True
+    # S12a: the plan artifact this run executed against, as a string path.
+    # Empty means none was supplied -- the run has no declared contract, which
+    # is a fact worth recording rather than an error.
+    plan_path: str = ""
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -297,6 +301,7 @@ class FlowState:
             "last_route_decision": self.last_route_decision,
             "blocked_reason": self.blocked_reason,
             "judged": self.judged,
+            "plan_path": self.plan_path,
             "completed_steps": list(self.completed_steps),
             "invalidated_steps": list(self.invalidated_steps),
         }
@@ -321,6 +326,7 @@ class FlowState:
             # Absent key => True: a pre-S11a artifact predates the concept and
             # must not be reinterpreted as unjudged.
             judged=bool(data.get("judged", True)),
+            plan_path=_as_str(data.get("plan_path", "")),
         )
 
 

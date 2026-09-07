@@ -2383,3 +2383,86 @@ the caller already owns; `judged` defaults True purely for artifact
 back-compatibility.
 
 **Next per §21.1: S12a** (`--plan` / `plan_path`), which unblocks S12 and S13.
+
+---
+
+## §23 S12a implementation record — SHIPPED
+
+**Status: COMPLETE.** The workflow now has a plan reference. S12 and S13 are unblocked.
+
+### What shipped
+
+| Edit | File |
+|---|---|
+| `_PLAN_ID_RE` + `extract_plan_id(text) -> str \| None`, exported | `plan_ids.py` |
+| `WorkflowContext.plan_path: Path \| None = None`; `plan_text()`; `plan_identity()` | `workflow_controller.py` |
+| `emit_eval_report(plan_id=ctx.plan_identity())` — was `ctx.run_id` | same |
+| `run_workflow(..., plan_path=None)` threading | same |
+| terminal `FlowState(plan_path=...)` | same |
+| `FlowState.plan_path: str = ""` + serialise + parse | `workflow_artifacts.py` |
+| `--plan PATH` + up-front existence check | `cli.py` |
+| 11 tests (4×C0 extractor, 3×C0 identity, 2×C1 root, 2×C2 CLI) | `tests/test_plan_reference.py` (NEW) |
+
+Diff: **+106/−1** across four `src/` files. Purely additive; every field
+defaults to the pre-S12a value.
+
+### Plan correction — Do-2 had no producer
+
+S12a Do-2 said "populate `plan_id` from the plan's own ID", but `PlanIds`
+exposes **no plan-ID field** — the instruction had no source. Not promoted to a
+`Q#`: it is a missing producer for a decision already made, not a new policy
+choice. Resolved by parsing the `Plan-ID:` convention that plans already use.
+
+**Three real shapes exist in this repo** and all must parse:
+
+```
+Plan-ID: `PLAN-foo`      backticked (most common)
+**Plan-ID:** PLAN-foo    bolded label
+# PLAN: Title    Plan-ID: PLAN-foo    inline at end of H1 (this plan's own form)
+```
+
+Run against all 32 files in `worklogs/implementation-plans/`: **12 resolve**,
+the rest return `None`. That is the expected outcome — legacy plans failing
+extraction is not a kill signal.
+
+### Verification (actual output)
+
+- `tests/test_plan_reference.py` — **11 passed**
+- `plan_ids` + `no_eval_terminal` + authoring gate — **42 passed**
+- full suite — **9 failed, 3933 passed**; `comm -23` vs baseline **empty**
+- `ruff check src/fa tests` — All checks passed; `format --check` clean
+- `test_live_check_script.py` **28 passed**; battery **28 OK, 0 missed**
+
+### Mutation battery (C4) — 5 run, 5 killed
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | terminal `FlowState` never records `plan_path` (the kill-check) | 1 failed ✅ |
+| M2 | `plan_identity()` always returns `run_id` | 1 failed ✅ |
+| M3 | `extract_plan_id` always `None` | 4 failed ✅ |
+| M4 | CLI drops the missing-file guard | 1 failed ✅ |
+| M5 | regex handles only the tidy bare-line shape | 4 failed ✅ |
+
+M5 is the one worth keeping: it is the mutant a naive test suite misses. Pinning
+all three declaration shapes against real repo samples — rather than one
+invented canonical form — is what kills it.
+
+### Design notes
+
+- **`--plan` is optional and never inferred.** No globbing of
+  `worklogs/implementation-plans/`: guessing the contract is worse than having
+  none, and a wrong plan would make S12's validation actively misleading.
+- **Fail fast, leave nothing behind.** The existence check sits with the
+  role-allowlist check, ahead of `run_id` allocation and any artifact write, so
+  a mistyped path cannot produce a half-written session (T20c asserts the
+  absence of `flow_state.json`).
+- **The plan is advisory input, not a dependency.** `plan_text()` swallows
+  `OSError` and warns; a plan deleted mid-run degrades to the `run_id` fallback
+  rather than failing an otherwise healthy pipeline.
+
+### No new Q#
+
+No new policy choice surfaced.
+
+**Next per §21.1: S12** (validate slice IDs against the plan) — its two inputs,
+`extract_plan_ids` (S3) and `plan_path` (S12a), now both exist.
