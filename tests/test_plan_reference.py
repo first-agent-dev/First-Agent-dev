@@ -28,13 +28,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from fa.cli import build_parser
 from fa.inner_loop.plan_ids import extract_plan_id
 from fa.inner_loop.workflow_controller import (
     WorkflowContext,
+    build_eval_report,
     run_workflow,
     workflow_artifact_paths,
 )
@@ -236,3 +239,65 @@ def test_missing_plan_file_is_rejected_before_anything_runs(tmp_path: Path, caps
     assert _cmd_workflow(args) == 2
     assert "not found" in capsys.readouterr().err
     assert not workflow_artifact_paths(run_id).flow_state.exists(), "a rejected invocation must leave nothing on disk"
+
+
+# ── §24 D-1: the build/write seam S12, S13 and S11b all depend on ──────────
+
+
+def test_build_eval_report_does_not_write_anything(tmp_path: Path) -> None:
+    """C0 — parsing must be separable from persisting.
+
+    ``emit_eval_report`` fused parse-and-write, so S12 (drop invented slice
+    IDs), S13 (record the ID list) and S11b (override the verdict against
+    harness observation) would each have had to rewrite ``eval_report.json``
+    after the fact: three writes of one file, a window in which the artifact
+    on disk contradicts the routing decision, and a last-writer-wins ordering
+    dependency between otherwise independent steps.
+
+    This pins the seam. If ``build_eval_report`` ever starts writing, the
+    ``build -> adjust -> write`` pipeline those steps rely on is gone.
+    """
+    # Watch the WHOLE filesystem surface this call could plausibly touch, not
+    # just tmp_path: a regression that writes to the process CWD (the most
+    # likely accidental target) would be invisible to a tmp_path-only oracle.
+    # Verified by mutation -- the first version of this test missed exactly
+    # that mutant.
+    monkeyed: list[str] = []
+    real_open = open
+
+    def _tracking_open(file, mode="r", *args, **kwargs):  # type: ignore[no-untyped-def]
+        if any(flag in str(mode) for flag in ("w", "a", "x", "+")):
+            monkeyed.append(str(file))
+        return real_open(file, mode, *args, **kwargs)
+
+    cwd_before = set(os.listdir("."))
+    with patch("builtins.open", _tracking_open):
+        report = build_eval_report(
+            "### Verdict\nPASS\n",
+            run_id="seam-1",
+            plan_id="PLAN-x",
+            plan_version=1,
+        )
+
+    assert report.verdict == "PASS"
+    assert report.plan_id == "PLAN-x"
+    assert monkeyed == [], f"build_eval_report must not open anything for writing; got {monkeyed}"
+    assert set(os.listdir(".")) == cwd_before, "build_eval_report must not create files"
+
+
+def test_emit_still_writes_for_callers_that_need_no_adjustment(tmp_path: Path) -> None:
+    """C0 — the split must not break the one-call convenience path."""
+    from fa.inner_loop.workflow_controller import emit_eval_report
+
+    path = tmp_path / "eval_report.json"
+    report = emit_eval_report(
+        report_path=path,
+        final_text="### Verdict\nREPAIR_REQUIRED\n",
+        run_id="seam-2",
+        plan_id="PLAN-y",
+        plan_version=1,
+    )
+
+    assert path.is_file(), "emit_eval_report must still persist the artifact"
+    assert json.loads(path.read_text(encoding="utf-8"))["verdict"] == "REPAIR_REQUIRED"
+    assert report.route_decision == "return_to_coder"

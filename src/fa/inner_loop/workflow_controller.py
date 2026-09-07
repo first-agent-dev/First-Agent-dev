@@ -227,8 +227,47 @@ def emit_eval_report(
     plan_version: int,
     eval_independence: Mapping[str, object] | None = None,
 ) -> EvalReport:
-    """Parse the eval role's final message and persist ``eval_report.json``."""
-    report = parse_eval_report(
+    """Parse the eval role's final message and persist ``eval_report.json``.
+
+    Kept as the one-call convenience wrapper for callers that need no
+    post-processing. Anything that must ADJUST the report before it lands on
+    disk -- S12 (drop invented slice IDs), S11b (reconcile the verdict against
+    harness observation) -- must call :func:`build_eval_report` and
+    :func:`write_eval_report` around its own step, NOT call this and rewrite
+    the artifact afterwards.
+    """
+    report = build_eval_report(
+        final_text,
+        run_id=run_id,
+        plan_id=plan_id,
+        plan_version=plan_version,
+        eval_independence=eval_independence,
+    )
+    write_eval_report(report_path, report)
+    return report
+
+
+def build_eval_report(
+    final_text: str,
+    *,
+    run_id: str,
+    plan_id: str,
+    plan_version: int,
+    eval_independence: Mapping[str, object] | None = None,
+) -> EvalReport:
+    """Parse the eval role's final message WITHOUT writing anything.
+
+    Split out of :func:`emit_eval_report` because three planned steps (S12,
+    S13, S11b) each need to adjust the report between parsing and persisting
+    it. With parse-and-write fused, each would have had to re-open and rewrite
+    ``eval_report.json`` after the fact: three writes of one file, a window in
+    which the artifact on disk contradicts the routing decision, and a
+    last-writer-wins ordering dependency between otherwise independent steps.
+
+    Separating the two makes the pipeline explicit and single-write:
+    ``build -> adjust -> write``.
+    """
+    return parse_eval_report(
         final_text,
         run_id=run_id,
         plan_id=plan_id,
@@ -236,8 +275,6 @@ def emit_eval_report(
         plan_version=plan_version,
         eval_independence=eval_independence,
     )
-    write_eval_report(report_path, report)
-    return report
 
 
 def status_for_role(role: str) -> FlowStatus:
@@ -997,6 +1034,7 @@ __all__ = [
     "WorkflowArtifactPaths",
     "WorkflowContext",
     "WorkflowProgress",
+    "build_eval_report",
     "emit_eval_report",
     "eval_system_prompt_extra",
     "read_back_terminal_state",

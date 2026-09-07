@@ -661,8 +661,23 @@ Consequences:
 Degree of freedom closed: the record of what the model claimed to implement lived only in transient
 chat history; it becomes a durable, append-only artifact keyed by run and slice.
 
-Deterministic mechanism: `src/fa/inner_loop/workflow_artifacts.py` — `slice_packets.jsonl` written
-through the existing atomic-write helper (`:510-549`), one JSON object per line.
+Deterministic mechanism: `src/fa/inner_loop/workflow_artifacts.py` —
+`slice_packets.jsonl`, one JSON object per line.
+
+**⚠ CONFIRMED DEFECT (§24 D-2): the stated mechanism is impossible.** v7 said
+"append-only JSONL written through the existing atomic-write helper
+(`:510-549`)". The helper is `_write_json_atomic` at **`:539`** (not
+`:510-549`) and it ends in `os.replace(temp_path, path)` — a whole-file
+**overwrite**. Routing an append through it would truncate the file to the
+newest packet on every call, silently destroying every earlier one, while
+looking correct in any test that writes a single packet.
+
+**Corrected mechanism.** Append with `open(path, "a", encoding="utf-8")` and
+one `json.dumps(...) + "\n"` per record. On POSIX a single `write()` under
+`O_APPEND` below `PIPE_BUF` is atomic, which is the right guarantee for an
+append-only log; whole-file atomic replace is the wrong tool. Create the
+parent directory first (`_write_json_atomic` does this and an appender must
+too). Do **not** add a second atomic-write helper.
 
 Do:
 1. `SlicePacket` frozen dataclass: `run_id`, `slice_id`, `turn`, `raw_text`, `verification`
@@ -800,7 +815,7 @@ Target liveness: L0→L3
 
 Edit:
 - path: `src/fa/inner_loop/hooks/scope_warn.py` symbol: `ScopeWarnHook` change: **NEW** `BEFORE_TOOL_EXEC` observer
-- path: `src/fa/cli.py` symbol: `_build_run_hook_registry:1716` change: register it
+- path: `src/fa/cli.py` symbol: `_build_run_hook_registry` (**`:1807`** — v7's `:1716` is stale, §24) change: register it
 
 Degree of freedom closed: writes outside the declared slice scope were invisible; they now emit a
 typed event while remaining permitted, so scope drift is observable without becoming a new denial
@@ -853,10 +868,18 @@ Depends-on: none    Parallelizable-with: S5–S7
 Target liveness: L3→L3 (chat), CT9 L0→L3
 
 Edit:
-- path: `src/fa/cli.py` symbol: `_build_run_tool_registry:1625` change: register `build_prepare_pr_tool` **only when `role != "chat"`**
-- path: `src/fa/cli.py` symbol: `_READINESS_PROMPT_EXTRA:159-164`, `_readiness_prompt_extra:167` change: **role-parameterise** (D7) — keep the `pr_prepare` clause for non-chat roles, omit it for chat. `cli.py:2251` appends this for **every** role, so an unconditional edit would strip the instruction from `coder`, which still has the tool
+- path: `src/fa/cli.py` symbol: `_build_run_tool_registry` (**`:1760`** — v7's `:1625` is stale, §24) change: register `build_prepare_pr_tool` **only when `role != "chat"`**. The function already takes `role` as its first positional argument, so no signature change is needed; both call sites (`:2305` run, `:2915` conformance-with-`"coder"`) are unaffected
+- path: `src/fa/cli.py` symbol: `_READINESS_PROMPT_EXTRA` (**`:165`**), `_readiness_prompt_extra` (**`:173`**) — v7's `:159-164`/`:167` are stale (§24) change: **role-parameterise** (D7) — keep the `pr_prepare` clause for non-chat roles, omit it for chat. `cli.py:2251` appends this for **every** role, so an unconditional edit would strip the instruction from `coder`, which still has the tool
 - path: `src/fa/inner_loop/prompt.py` symbol: `:525,571,645` change: remove `pr_prepare` instructions from the chat prompt only
-- path: `src/fa/inner_loop/hooks/intent_guard.py` symbol: `IntentGuard.__init__`, `_requires_draft:226` change: add `draft_tool_available: bool`; skip the draft requirement when False
+- path: `src/fa/inner_loop/hooks/intent_guard.py` symbol: `IntentGuard.__init__` + the `_requires_draft` **call site** (`:304`) change: add `draft_tool_available: bool`; skip the draft requirement when False
+
+  **§24 correction:** `_requires_draft` (`:226`) is a **module-level function**
+  taking `(call, repo_root)`, not an `IntentGuard` method. It has no access to
+  instance state, so the availability flag CANNOT be threaded "into
+  `_requires_draft`" as v7 implies. Gate at the call site inside the hook
+  (`:304`, guarding the `_MISSING_DRAFT_REASON` return at `:310`), or pass the
+  flag as a third parameter. Do not make the module function read instance
+  attributes.
 
 Degree of freedom closed: the guard assumed the draft tool was universally registered, so removing
 it from one role would have produced a permanent deadlock; availability is now an explicit
@@ -1901,22 +1924,49 @@ Traces-to: G5 · CT6 · new CT20
 Depends-on: **S3** (`extract_plan_ids`, shipped but imported by nothing) + **S12a** (§21 C-3: the harness has no plan path today)
 Target liveness: L0→L2
 
-**Why.** `_STEP_LINE_RE` (`workflow_artifacts.py:342`) accepts any
+**Why.** `_STEP_LINE_RE` (`workflow_artifacts.py:371`) accepts any
 `S\d+[A-Za-z0-9_.-]*`. Probed: `- S99: PASS` and `- S404: PASS` are accepted as
-real slices with `acceptance_matched=True`. Meanwhile
-`grep -rn "plan_ids" src/fa/` outside the module returns **nothing** — S3
-shipped dead.
+real slices with `claimed_pass=True` (field renamed from `acceptance_matched`
+by S14; `_scan_step_results` at `:438`, assignment at `:455`).
+
+**Anchors re-verified 2026-09-07 (§24).** Three claims in v7 were stale:
+`_STEP_LINE_RE` is at `:371` not `:342`; the field is `claimed_pass` not
+`acceptance_matched`; and `plan_ids` is **no longer** unimported — S12a wired
+`extract_plan_id` at `workflow_controller.py:25`. S3's *plural*
+`extract_plan_ids` is still unused, which is what this step fixes.
 
 Edit:
-- path: `src/fa/inner_loop/workflow_controller.py` symbol: post-eval change: call `extract_plan_ids(plan_text).slices`, cross-check claimed IDs
+- path: `src/fa/inner_loop/workflow_controller.py` symbol: new `_validate_slice_ids(report, plan_text) -> tuple[EvalReport, list[str]]` change: **NEW** pure adjuster
+- path: same file symbol: `_run_stage` eval branch change: `build_eval_report -> _validate_slice_ids -> write_eval_report`
+
+**Seam (§24 D-1 — do not deviate).** `emit_eval_report` used to parse AND write
+in one call, so any post-processing meant rewriting `eval_report.json` after
+the fact. §24 split out **`build_eval_report`** (parse only). S12 MUST use
+`build -> adjust -> write`, never `emit -> rewrite`: three planned steps (S12,
+S13, S11b) adjust the same report, and re-writing would give three writes of
+one file plus a last-writer-wins ordering dependency between them.
 
 Do:
 1. Claimed ID ∉ plan ⇒ **WARNING**, and drop it from `step_results` — it is
    noise, not evidence.
 2. Plan slice with **no verdict** ⇒ **WARNING** (operator: warn, not block).
-   Record as `unreported_slices` in the report.
-3. No plan resolvable ⇒ skip silently. Legacy plans failing extraction is
-   expected and is NOT a kill signal (standing operator rule).
+   Record as `unreported_slices` on `EvalReport`.
+3. No plan resolvable (`ctx.plan_text() is None`, or `extract_plan_ids`
+   returns `slices == ()`) ⇒ return the report **unchanged**, emit nothing.
+   Legacy plans failing extraction is expected and is NOT a kill signal.
+
+**Data shape (was unspecified — an executing agent would have had to guess).**
+`EvalReport` is `@dataclass(frozen=True)` (`workflow_artifacts.py:200`), so
+"drop it from `step_results`" means `dataclasses.replace(report, ...)`, not
+mutation. `unreported_slices` is a **new field**:
+`unreported_slices: tuple[str, ...] = ()`, added to `to_json_dict` and
+`from_json_dict` (absent key ⇒ `()`), matching how S11a added `judged` and
+S12a added `plan_path`.
+
+**Comparison is exact-match, case-sensitive.** `extract_plan_ids` yields
+`("S1","S5a","S11b",...)` and `_STEP_LINE_RE` captures the same token shape.
+Do **not** normalise case or strip suffixes: `S5` and `S5a` are different
+slices, and folding them would silently mark a real omission as reported.
 
 Do-not: do not block on either condition yet. Revisit only after real-run
 coverage data exists.
@@ -1928,8 +1978,10 @@ is the one that matters.
 Exit criteria:
 - [ ] T16: `S404: PASS` ⇒ warning, dropped from `step_results`
 - [ ] T16b: plan slice absent from eval output ⇒ warning + `unreported_slices`
-- [ ] T16c: unresolvable plan ⇒ no warnings, no exception
-- [ ] `grep -c "plan_ids" src/fa/inner_loop/workflow_controller.py` > 0 (S3 alive)
+- [ ] T16c: unresolvable plan ⇒ report returned unchanged, no warnings, no exception
+- [ ] T16d: `S5` and `S5a` are never conflated (exact match, both directions)
+- [ ] T16e: `eval_report.json` is written **once** per eval stage (S12 adjusts before the write, never after)
+- [ ] `grep -c "extract_plan_ids" src/fa/inner_loop/workflow_controller.py` > 0 (S3's plural extractor alive)
 
 Kill-check: remove the cross-check ⇒ **T16** fails.
 
@@ -1945,9 +1997,12 @@ Target liveness: L0→L3
 told to judge "whether the coder satisfied the planner's execution contract"
 using "repo-native verification commands." But:
 
-- `grep -rn "plan_path|plan_file|diff" src/fa/inner_loop/workflow_controller.py`
-  ⇒ **zero hits**. The harness passes eval no plan and no diff.
-- Eval receives only `ctx.task_for(role)` (`:283`) — a task string.
+- **PARTLY FIXED BY S12a.** `plan_path` now exists on `WorkflowContext`
+  (`workflow_controller.py:148`) with `plan_text()` (`:154`) and
+  `plan_identity()` (`:164`). What is still missing is the **delivery**: eval
+  receives only `ctx.task_for(role)` (`:319`) — a task string. The plan is
+  reachable by the harness and still never reaches the judge.
+- No diff is produced anywhere in the controller.
 - `fresh=index == 0` (`:583`, `:747`): only stage 0 is fresh, so **eval resumes
   the coder's session** and reads the coder's own success narration as context.
 
@@ -1960,11 +2015,29 @@ Edit:
 
 Do:
 1. Supply, as text the harness controls: the **plan path**, the **slice IDs**
-   (S12), a **`git diff --stat` + full diff** of the run's changes, and links to
-   related docs (ADR index, the plan's own `## Artifacts` table).
+   (from `extract_plan_ids`, shared with S12), a **`git diff --stat` + full
+   diff** of the run's changes, and links to related docs (ADR index, the
+   plan's own `## Artifacts` table).
 2. Truncate the diff at a bounded size with an explicit
    `[diff truncated — N files, use fs_read_file]` marker. Never silently drop.
 3. Paths, not pasted file bodies, for docs — eval has `fs_read_file`.
+
+**Git invocation contract (was unspecified — three real hazards).**
+- **Do NOT reuse `pr_intent._run_git`** (`pr_intent.py:817`): it passes
+  `check=True` and raises on non-zero. The plan is advisory input, so a repo
+  in any unexpected state (not a git repo, detached, git absent) must degrade
+  to "no diff available", never fail the run. Use `subprocess.run(...,
+  check=False)` and treat a non-zero return as an empty diff.
+- **Diff WHAT, exactly?** `git diff` (unstaged) misses staged work and
+  `--cached` misses unstaged. Use `git diff HEAD` so both are captured; a
+  coder that staged nothing and a coder that staged everything then produce
+  the same evidence.
+- **Untracked files are invisible to `git diff HEAD`.** A slice whose entire
+  contribution is a new file would show an EMPTY diff — the judge would see
+  nothing and could still pass it. Append `git status --porcelain` so new
+  files are at least named. State this limitation in the block itself.
+- Bound the subprocess with a timeout; a hung `git` must not consume the run
+  deadline.
 
 Do-not: do not paste the whole plan inline (it is 1600+ lines and would evict
 the diff). Do not remove the coder transcript in this step.
@@ -1979,6 +2052,9 @@ Exit criteria:
 - [ ] T17: the eval request contains the plan path and a non-empty diff
 - [ ] T17b: an oversized diff is truncated with the marker, never dropped
 - [ ] T17c: with no changes, the block says so explicitly (not an empty string)
+- [ ] T17d: a workspace that is **not a git repo** yields the block minus the diff, run continues, no exception
+- [ ] T17e: a run whose only change is an **untracked new file** still names that file in the block
+- [ ] T17f: no `--plan` ⇒ the block omits plan lines rather than emitting empty headings
 
 Kill-check: remove the preamble ⇒ **T17** fails.
 
@@ -2466,3 +2542,80 @@ No new policy choice surfaced.
 
 **Next per §21.1: S12** (validate slice IDs against the plan) — its two inputs,
 `extract_plan_ids` (S3) and `plan_path` (S12a), now both exist.
+
+---
+
+## §24 Adversarial review of ALL remaining slices — 2026-09-07 (tip `ce921f1`)
+
+Remaining: **S12, S13, S6a, S6, S6b, S7, S11b, S8, S9**. Every finding below was
+checked against code; nothing is inferred from the plan alone.
+
+### 24.0 Trajectory — does the next slice advance what matters?
+
+**Yes, and the ordering holds.** S12 → S13 both feed the completion gate, which
+§18–§20 established as the weakest link (a model-typed `PASS` was the sole cause
+of `DONE`). S12a shipped the prerequisite. No drift, no premature abstraction.
+
+**One deferral the main plan requires and the remaining slices silently drop:**
+§19 F1 established that `step_results` has **zero consumers** — parsed, stored,
+never read by a decision. S12 adds *validation* of those results and S11b
+overrides the *top-level* verdict, but **nothing makes a per-slice `FAIL` route
+anything.** A run can end `DONE` with `S7: FAIL` in `step_results`. Recorded as
+**Q16** below rather than silently carried.
+
+### 24.1 CONFIRMED DEFECTS
+
+| # | Defect | Evidence | Status |
+|---|---|---|---|
+| **D-1** | **`emit_eval_report` fuses parse + write**, but S12, S13 and S11b all must adjust the report before it persists. Each would have to rewrite `eval_report.json` after the fact: 3 writes of one file, a window where the artifact contradicts the routing decision, and a last-writer-wins ordering dependency between nominally independent steps. | `workflow_controller.py` `parse_eval_report(...)` then `write_eval_report(...)` in one body; single production caller at `:383` | **FIXED** — split out `build_eval_report` (parse only), exported. `build → adjust → write` is now the mandated pipeline. |
+| **D-2** | **S6a's mechanism is impossible.** "Append-only JSONL through the existing atomic-write helper (`:510-549`)" — the helper is at `:539` and ends in `os.replace()`, a whole-file overwrite. It would truncate the log to the newest packet every call, destroying all prior packets, while passing any single-packet test. | `_write_json_atomic:539`, `os.replace(temp_path, path)` | **FIXED in plan** — corrected to `open(..., "a")` + one `json.dumps` per line. |
+| **D-3** | **S8's IntentGuard edit targets the wrong symbol.** v7 says add `draft_tool_available` to "`_requires_draft:226`". That is a **module-level function** `(call, repo_root)` with no instance access — it cannot read a constructor flag. | `intent_guard.py:226` is `def _requires_draft(call, repo_root)`; hook call site `:304`, deny at `:310` | **FIXED in plan** — gate at the call site. |
+| **D-4** | **Stale anchors across four steps.** S12: `_STEP_LINE_RE` `:342`→**`:371`**; field `acceptance_matched`→**`claimed_pass`** (renamed by S14); "`plan_ids` imported by nothing" is now **false** (S12a wired `extract_plan_id` at `:25`). S7: `_build_run_hook_registry` `:1716`→**`:1807`**. S8: `_build_run_tool_registry` `:1625`→**`:1760`**; `_READINESS_PROMPT_EXTRA` `:159`→**`:165`**; `_readiness_prompt_extra` `:167`→**`:173`**. S13: eval task arg `:283`→**`:319`**. | direct grep at tip | **FIXED in plan.** |
+| **D-5** | **S12's data shape was unguessable.** "Drop it from `step_results`" / "record as `unreported_slices`" — but `EvalReport` is `@dataclass(frozen=True)` (`:200`) and has no such field. An agent would have had to invent mutation semantics and a schema. | `workflow_artifacts.py:200` | **FIXED in plan** — `dataclasses.replace`, new field with serialise/parse and absent-key default, matching the `judged`/`plan_path` precedent. |
+| **D-6** | **S13's git contract was unspecified, with three real failure modes.** (a) The obvious helper `pr_intent._run_git:817` uses `check=True` and **raises** — fatal for advisory input. (b) `git diff` vs `--cached` each miss half the work. (c) **`git diff HEAD` cannot see untracked files**, so a slice that only ADDS files shows an empty diff and the judge sees nothing. | `pr_intent.py:817-829` | **FIXED in plan** — `check=False`, `git diff HEAD`, plus `git status --porcelain` for new files, with the limitation stated in the block. |
+
+### 24.2 Suspicions (not confirmed — flagged, not acted on)
+
+- **S6's `bash_timeout_seconds` reuse.** S6 says enforce "a per-command timeout
+  (`bash_timeout_seconds`)". That budget was sized for *model-issued* commands;
+  a plan's full test suite can legitimately exceed it. Not verified against the
+  configured value, so not a defect — but S6 should state whether the
+  verification budget is the same knob or its own.
+- **S6b's label parsing vs G8.** S6b reads labelled lines out of prose packets.
+  The label set matches `INJECT.md`, so a compliant packet parses — but a model
+  that reformats slightly yields a silently emptier draft. The plan's
+  "omit the field" rule handles it; the risk is that omission is invisible.
+
+### 24.3 Verified sound — no action
+
+- **S7's mechanism.** `BEFORE_TOOL_EXEC` exists (`hooks/base.py:28`), the hooks
+  package is the right home, and "never returns deny" is checkable by grep.
+  Only the registration anchor was stale.
+- **S8's registry seam.** `_build_run_tool_registry` already takes `role` as its
+  first positional arg, so role-conditional registration needs no signature
+  change, and the conformance caller passes `"coder"` (`:2915`) so it keeps the
+  tool. S8's D10 concern is correctly scoped.
+- **S12a's output is genuinely reusable.** `ctx.plan_text()` / `plan_identity()`
+  give S12 and S13 exactly what they need with no further plumbing.
+
+### 24.4 New open question
+
+> **Q16 — should a per-slice `FAIL` block completion?** Today `step_results` is
+> inert (§19 F1): a run can end `DONE` while carrying `S7: FAIL`. S12 validates
+> those IDs and S11b overrides the top-level verdict, but neither makes a
+> per-slice failure route anything.
+> (a) Any `FAIL` in `step_results` forces `REPAIR_REQUIRED` — strongest, and
+> makes slice granularity real.
+> (b) Warn only, like S12's `unreported_slices` — consistent with the current
+> "warn, don't block" posture.
+> (c) Leave inert; rely on the top-level verdict.
+> Recommendation **(a)**, deferred to its own step after S11b lands, since it
+> changes routing authority. **Not decided — do not implement inside S12.**
+
+### 24.5 DoD tightening applied
+
+S12 gained **T16d** (`S5` vs `S5a` never conflated — exact-match, both
+directions) and **T16e** (`eval_report.json` written exactly once per eval
+stage, i.e. the D-1 seam is respected). S13 gained **T17d** (non-git workspace
+degrades), **T17e** (untracked-only change still named), **T17f** (no `--plan`
+omits headings rather than emitting empty ones). All are binary and observable.
