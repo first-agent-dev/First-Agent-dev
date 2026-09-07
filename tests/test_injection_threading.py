@@ -12,10 +12,10 @@ drive_session). A C0 on each hop in isolation would pass even if the hops were
 not connected, which is precisely the defect this slice exists to prevent
 (the L2 site at coder_loop.py:745 is unreachable for a workflow coder stage).
 
-Q7 RESOLVED: the workflow owns the switch (WorkflowContext.injections_enabled,
-default False). The per-injection MODE still comes from config, so a stage that
-is allowed to inject still reads "off" unless the operator opted in. These tests
-pin the transport and the default; fa.inner_loop.injections owns mode semantics.
+Q7: the workflow owns the switch (WorkflowContext.inject_overrides, empty by
+default). Q8: modes are resolved ONCE per stage dispatch (--inject > config >
+off), not per turn. These tests pin the transport and the default;
+fa.inner_loop.injections owns mode semantics.
 """
 
 from __future__ import annotations
@@ -53,41 +53,47 @@ class _MinimalState:
 
 
 class TestControllerCarriesTheSignal:
-    def test_context_defaults_to_disabled(self) -> None:
+    def test_context_defaults_to_no_overrides(self) -> None:
         """Every existing construction site omits this field."""
-        assert WorkflowContext.__dataclass_fields__["injections_enabled"].default is False
+        ctx = _make_context(Path("/tmp"))
+        assert ctx.inject_overrides == {}
 
-    def test_disabled_context_sends_no_modes(self, tmp_path: Path) -> None:
+    def test_default_context_resolves_everything_off(self, tmp_path: Path) -> None:
         """Default path: byte-identical to the pre-feature harness."""
         seen = _capture_stage_args(tmp_path)
-        assert seen.injection_modes is None
+        assert mode_for(seen.injection_modes, CODER_SLICE_CEREMONY.name) == MODE_OFF
 
     def test_stage_kwargs_carries_the_modes(self, tmp_path: Path) -> None:
         """PRODUCER KILL-CHECK for the stage_kwargs key."""
-        seen = _capture_stage_args(tmp_path, injections_enabled=True)
+        seen = _capture_stage_args(tmp_path, inject_overrides={CODER_SLICE_CEREMONY.name: MODE_ENFORCE})
         assert seen.injection_modes is not None
         assert CODER_SLICE_CEREMONY.name in seen.injection_modes
 
+    def test_override_reaches_the_stage(self, tmp_path: Path) -> None:
+        """The whole point: --inject on the CLI changes what a stage sees."""
+        seen = _capture_stage_args(tmp_path, inject_overrides={CODER_SLICE_CEREMONY.name: MODE_ENFORCE})
+        assert mode_for(seen.injection_modes, CODER_SLICE_CEREMONY.name) == MODE_ENFORCE
+
     def test_stage_args_is_a_namespace_with_the_attribute(self, tmp_path: Path) -> None:
         """_cmd_run reads via getattr, so the attribute must actually exist."""
-        seen = _capture_stage_args(tmp_path, injections_enabled=True)
+        seen = _capture_stage_args(tmp_path)
         assert isinstance(seen, argparse.Namespace)
         assert hasattr(seen, "injection_modes")
 
-    def test_modes_are_resolvers_not_precomputed_strings(self, tmp_path: Path) -> None:
-        """The hot-reload property, asserted at the transport boundary.
-
-        If the controller ever resolves modes to strings before dispatch, a
-        config change mid-run stops taking effect and a WebUI toggle silently
-        needs a restart.
-        """
-        seen = _capture_stage_args(tmp_path, injections_enabled=True)
-        resolver = seen.injection_modes[CODER_SLICE_CEREMONY.name]
-        assert callable(resolver)
+    def test_modes_are_resolved_strings(self, tmp_path: Path) -> None:
+        """Q8: resolution is once-per-dispatch, so no callables cross the hop."""
+        seen = _capture_stage_args(tmp_path, inject_overrides={CODER_SLICE_CEREMONY.name: MODE_ENFORCE})
+        for value in seen.injection_modes.values():
+            assert isinstance(value, str)
 
     def test_role_gating_survives_the_hop(self, tmp_path: Path) -> None:
-        """A coder-only injection stays off for a planner stage."""
-        seen = _capture_stage_args(tmp_path, injections_enabled=True, role="planner")
+        """PRODUCER KILL-CHECK: a coder-only injection stays off for planner,
+        even when the operator passed --inject explicitly."""
+        seen = _capture_stage_args(
+            tmp_path,
+            inject_overrides={CODER_SLICE_CEREMONY.name: MODE_ENFORCE},
+            role="planner",
+        )
         assert mode_for(seen.injection_modes, CODER_SLICE_CEREMONY.name) == MODE_OFF
 
 
@@ -126,7 +132,7 @@ class TestCmdRunForwards:
         would still DECLARE the parameter while the value silently reverted
         to the default in between.
         """
-        sentinel = {CODER_SLICE_CEREMONY.name: lambda: MODE_ENFORCE}
+        sentinel = {CODER_SLICE_CEREMONY.name: MODE_ENFORCE}
         seen = _spy_on_inner(injection_modes=sentinel)
         assert seen.get("injection_modes") is sentinel
 
@@ -165,7 +171,7 @@ class TestScopeModeUnchanged:
 
     def test_stage_kwargs_has_no_scope_mode(self, tmp_path: Path) -> None:
         """Regression: the controller must not start setting scope_mode."""
-        seen = _capture_stage_args(tmp_path, injections_enabled=True)
+        seen = _capture_stage_args(tmp_path)
         assert not hasattr(seen, "scope_mode") or getattr(seen, "scope_mode", "") == ""
 
 
@@ -173,20 +179,9 @@ class TestScopeModeUnchanged:
 
 
 def test_default_run_is_byte_identical_to_pre_feature(tmp_path: Path) -> None:
-    """Absent explicit opt-in, no injections reach the stage at all."""
+    """Absent an explicit --inject, every injection resolves off."""
     seen = _capture_stage_args(tmp_path)
-    assert seen.injection_modes is None
-
-
-def test_enabled_but_unconfigured_still_resolves_off(tmp_path: Path) -> None:
-    """Two independent switches.
-
-    ``injections_enabled`` only grants the stage permission to CONSULT config.
-    With no operator opt-in in config, the effective mode is still off -- so
-    enabling the pipeline flag alone cannot change a single prompt.
-    """
-    seen = _capture_stage_args(tmp_path, injections_enabled=True)
-    assert mode_for(seen.injection_modes, CODER_SLICE_CEREMONY.name) == MODE_OFF
+    assert all(v == MODE_OFF for v in seen.injection_modes.values())
 
 
 # ── helpers ────────────────────────────────────────────────────────────────

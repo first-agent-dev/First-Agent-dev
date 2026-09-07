@@ -57,6 +57,11 @@ from fa.inner_loop.hooks import (
     SecretGuard,
     VerifierObserver,
 )
+from fa.inner_loop.injections import (
+    InjectionFlagError,
+    parse_inject_overrides,
+    resolve_injection_modes,
+)
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.prompt import render_tool_specs
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
@@ -177,6 +182,31 @@ def _readiness_prompt_extra(workspace: Path) -> str:
     if (workspace / ".venv" / "bin").is_dir():
         return _READINESS_PROMPT_EXTRA
     return ""
+
+
+def _resolved_injection_modes(args: argparse.Namespace, role: str) -> Mapping[str, str]:
+    """Resolve injection modes for one stage, honouring the controller.
+
+    Two callers with different knowledge:
+
+    * the workflow controller has already resolved modes for this role and put
+      them in ``stage_kwargs``; that value wins untouched;
+    * a standalone ``fa run`` has only ``--inject`` and the config file.
+
+    A malformed ``--inject`` degrades to "no injections" with a warning rather
+    than aborting, because by this point the session is already being built --
+    ``_cmd_workflow`` rejects bad input up front, where a non-zero exit is
+    still clean. See plan v5 Q8.
+    """
+    precomputed = getattr(args, "injection_modes", None)
+    if precomputed is not None:
+        return precomputed
+    try:
+        overrides = parse_inject_overrides(getattr(args, "inject", None))
+    except InjectionFlagError as exc:
+        logger.warning("ignoring --inject (%s)", exc)
+        return {}
+    return resolve_injection_modes(role, overrides=overrides)
 
 
 def _resolve_intent_guard_mode(override: str | None) -> str:
@@ -554,6 +584,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=COMMANDS["run"]["args"]["--role/-r"]["en"],
     )
     run_parser.add_argument(
+        "--inject",
+        action="append",
+        default=None,
+        metavar="NAME=MODE",
+        help=(
+            "Enable a prompt injection for this run, e.g. "
+            "--inject coder_slice_ceremony=enforce. Repeatable. "
+            "Modes: off | observe | enforce. Overrides ~/.fa/config.yaml."
+        ),
+    )
+    run_parser.add_argument(
         "--config",
         "-c",
         type=Path,
@@ -702,6 +743,17 @@ def build_parser() -> argparse.ArgumentParser:
             default=None,
             help=f"Override the task text for the {_role} stage.",
         )
+    workflow_parser.add_argument(
+        "--inject",
+        action="append",
+        default=None,
+        metavar="NAME=MODE",
+        help=(
+            "Enable a prompt injection for this run, e.g. "
+            "--inject coder_slice_ceremony=enforce. Repeatable. "
+            "Modes: off | observe | enforce. Overrides ~/.fa/config.yaml."
+        ),
+    )
     workflow_parser.set_defaults(func=_cmd_workflow)
 
     help_parser = subparsers.add_parser(
@@ -1288,6 +1340,16 @@ def _cmd_workflow(
         print(f"fa workflow: session error [{exc.code}]: {exc}", file=sys.stderr)
         return 2
 
+    # PLAN S5a / Q8: parse --inject before any stage runs. A malformed value is
+    # fatal here rather than ignored: the operator asked for a specific
+    # injection, so a typo must not produce a run that looks configured and is
+    # not (plan Q6 -- fail closed, never guess).
+    try:
+        inject_overrides = parse_inject_overrides(getattr(args, "inject", None))
+    except InjectionFlagError as exc:
+        print(f"fa workflow: {exc}", file=sys.stderr)
+        return 2
+
     exit_code, _terminal_state = run_workflow(
         roles=roles,
         task=base_task,
@@ -1306,6 +1368,7 @@ def _cmd_workflow(
         session_context=session_context,
         run_context=run_context,
         session_db=session_db,
+        inject_overrides=inject_overrides,
     )
     return exit_code
 
@@ -2262,13 +2325,13 @@ def _cmd_run(
             # a run outgrows it. Empty for non-chat roles, which disables the
             # tripwire — the workflow roles are already correctly scoped.
             scope_mode=scope_point.recommended_mode if scope_point is not None else "",
-            # PLAN S5a: per-injection mode resolvers, supplied by the workflow
-            # controller's stage_kwargs. ``getattr`` with a None default mirrors
-            # the ``resume``/``session_id`` precedent above: _cmd_run is invoked
-            # both by argparse (which never defines this attribute) and by the
-            # controller (which does), so a missing attribute must degrade to
-            # "no injections" rather than raise.
-            injection_modes=getattr(args, "injection_modes", None),
+            # PLAN S5a: resolved injection modes. _cmd_run is invoked both by
+            # the workflow controller (which precomputes this in stage_kwargs)
+            # and by argparse for a standalone `fa run` (which does not), so
+            # the controller's value wins when present and a direct run falls
+            # back to resolving its own --inject/config. Resolved once here,
+            # not per turn (plan v5 Q8/RK15).
+            injection_modes=_resolved_injection_modes(args, role),
             initial_memory_summary=resume_draft_text,
             temperature=None,
             redactor=redactor,

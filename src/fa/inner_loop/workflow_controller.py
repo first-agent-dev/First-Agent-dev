@@ -16,12 +16,12 @@ import logging
 import sys
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from fa.inner_loop.coder_loop import SessionOutcome
-from fa.inner_loop.injections import build_injection_modes
+from fa.inner_loop.injections import resolve_injection_modes
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.workflow_artifacts import (
     EvalReport,
@@ -130,16 +130,15 @@ class WorkflowContext:
     # is dispatched. ``None`` means no deadline, which is what every existing
     # caller (``_cmd_workflow``) passes, so their behaviour is unchanged.
     deadline_mono: float | None = None
-    # PLAN S5a: opt-in switch for prompt injections (fa.inner_loop.injections)
-    # on this run's stages. False for every existing construction site --
-    # including _cmd_workflow -- so their behaviour is unchanged.
+    # PLAN S5a / Q8: operator-supplied ``--inject NAME=MODE`` overrides for
+    # this run, already parsed and validated. Empty for every existing
+    # construction site, so their behaviour is unchanged.
     #
-    # Q7 resolved: the WORKFLOW owns this. Injections are about executing a
-    # planned slice, which is the pipeline's job; a standalone `fa run` is
-    # often a one-off where a protocol payload is noise. The per-injection
-    # MODE still comes from config, so this flag only decides whether the
-    # stage is allowed to consult it at all.
-    injections_enabled: bool = False
+    # Q7: the WORKFLOW owns the switch. Injections are about executing a
+    # planned slice, which is the pipeline's job. Q8: resolution happens once
+    # per stage dispatch (flag > config > off) rather than per turn -- modes
+    # change between invocations, not mid-loop (plan v5 RK15).
+    inject_overrides: Mapping[str, str] = field(default_factory=dict)
 
     def task_for(self, role: str) -> str | None:
         return self.per_role_task.get(role) or self.base_task
@@ -292,13 +291,13 @@ def _run_stage(
         "output_mode": ctx.output_mode,
         "detail": "standard",
         "no_color": False,
-        # PLAN S5a: per-injection mode resolvers for THIS role. A separate
+        # PLAN S5a: resolved injection modes for THIS role. A separate
         # stage_kwargs key because the L2 injection site is gated on
         # ``_is_chat_role`` (coder_loop.py:613) -- a predicate about a
         # DIFFERENT feature -- so a workflow coder stage could never reach it.
-        # Resolvers, not strings: the mode is read per turn, so a config edit
-        # lands without restarting a running pipeline.
-        "injection_modes": (build_injection_modes(role) if ctx.injections_enabled else None),
+        # Role gating lives in resolve_injection_modes, so a coder-only
+        # injection stays off here for a planner or eval stage.
+        "injection_modes": resolve_injection_modes(role, overrides=ctx.inject_overrides),
     }
     if ctx.run_context is not None and ctx.session_context is not None:
         stage_kwargs.update(
@@ -798,6 +797,7 @@ def run_workflow(
     run_context: RunContext | None = None,
     session_db: SessionDatabase | None = None,
     deadline_mono: float | None = None,
+    inject_overrides: Mapping[str, str] | None = None,
 ) -> tuple[int, FlowState | None]:
     """Run the workflow pipeline. Callable from CLI and from tools.
 
@@ -847,6 +847,7 @@ def run_workflow(
         run_context=run_context,
         session_db=session_db,
         deadline_mono=deadline_mono,
+        inject_overrides=dict(inject_overrides or {}),
     )
     label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
     print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)

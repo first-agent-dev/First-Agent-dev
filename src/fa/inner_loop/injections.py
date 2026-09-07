@@ -13,13 +13,18 @@ Three design constraints drove the shape:
     and one ``FeatureFlags`` field; every hop below already carries it because
     the transport is a mapping, not a parameter per injection.
 
-2.  **Hot-reloadable.** The mode is resolved by CALLING a resolver at the moment
-    it is needed, not by reading a string once at process start. A running
-    session therefore observes a ``~/.fa/config.yaml`` edit on its next turn --
-    which is what a future WebUI toggle needs, since it will write config and
-    expect a live agent to follow without a restart. The read is cached for
-    :data:`_CACHE_TTL_SECONDS` so a per-turn resolve does not mean a per-turn
-    stat+parse of the config file.
+2.  **Configured per invocation.** The effective mode is resolved ONCE, at
+    startup, from ``--inject <name>=<mode>`` if given, else ``~/.fa/config.yaml``,
+    else ``off`` (:func:`resolve_injection_modes`). This mirrors
+    ``_resolve_intent_guard_mode`` (cli.py) so the codebase has one
+    override-then-config idiom rather than two.
+
+    A deliberate NON-goal (plan v5 RK15): re-reading config mid-run. One
+    ``fa workflow`` invocation is a single process spanning many stages, so a
+    live re-read would only enable toggling while the agent is mid-loop --
+    which is not how the toggles are used. Modes change between invocations.
+    If that ever changes, the indirection at :func:`mode_for` is where a lazy
+    resolver would slot back in.
 
 3.  **Inert by default.** Every unknown, malformed, or unreadable input resolves
     to :data:`MODE_OFF`. An injection rewrites the model's context; a config
@@ -43,9 +48,7 @@ The mode vocabulary is deliberately the same three states for every injection
 from __future__ import annotations
 
 import logging
-import threading
-import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -64,12 +67,6 @@ INJECTION_MODES: frozenset[str] = frozenset({MODE_OFF, MODE_OBSERVE, MODE_ENFORC
 #: who typo'd the mode has not consented to telemetry either, and ``off`` is the
 #: only value that is provably identical to not having the feature.
 FALLBACK_MODE = MODE_OFF
-
-#: How long a resolved config read is reused before re-reading from disk. Short
-#: enough that a WebUI toggle feels immediate (a turn is seconds to minutes),
-#: long enough that a multi-call turn does not re-parse the file each time.
-_CACHE_TTL_SECONDS = 2.0
-
 
 # ── Injection registry ─────────────────────────────────────────────────────
 
@@ -116,13 +113,9 @@ INJECTION_SPECS: Mapping[str, InjectionSpec] = {
 
 # ── Mode resolution ────────────────────────────────────────────────────────
 
-#: A zero-arg callable returning the mode for one injection, evaluated at the
-#: moment the mode is needed. Threading a resolver rather than a string is what
-#: makes hot reload possible: the value is not captured at dispatch time.
-ModeResolver = Callable[[], str]
-
-#: Mapping of injection name -> resolver, as carried through the stage boundary.
-InjectionModes = Mapping[str, ModeResolver]
+#: Mapping of injection name -> already-resolved mode, as carried through the
+#: stage boundary. Plain strings: resolution happens once at startup.
+InjectionModes = Mapping[str, str]
 
 
 def normalize_mode(value: object) -> str:
@@ -140,56 +133,21 @@ def normalize_mode(value: object) -> str:
     return candidate
 
 
-class _FlagCache:
-    """TTL cache over the on-disk feature flags.
+def _load_flags(config_path: Path | None) -> object | None:
+    """Read feature flags from disk, or ``None`` when unreadable.
 
-    Exists so that resolving N injection modes on every turn does not mean N
-    config parses per turn, while still observing an external edit within
-    :data:`_CACHE_TTL_SECONDS`. Guarded by a lock because a session may resolve
-    from more than one thread.
+    Never raises: an advisory feature must not be able to abort a run because
+    the operator's config has a syntax error.
     """
+    try:
+        from fa.feature_flags import load_feature_flags_from_path
 
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._value: object | None = None
-        self._expires_at = 0.0
-
-    def get(self, path: Path | None) -> object | None:
-        now = time.monotonic()
-        with self._lock:
-            if self._value is not None and now < self._expires_at:
-                return self._value
-        loaded = self._load(path)
-        with self._lock:
-            self._value = loaded
-            self._expires_at = now + _CACHE_TTL_SECONDS
-        return loaded
-
-    def invalidate(self) -> None:
-        """Drop the cached read. Used by tests and by an explicit reload."""
-        with self._lock:
-            self._value = None
-            self._expires_at = 0.0
-
-    @staticmethod
-    def _load(path: Path | None) -> object | None:
-        try:
-            from fa.feature_flags import load_feature_flags_from_path
-
-            if path is None:
-                return load_feature_flags_from_path().flags
-            return load_feature_flags_from_path(path).flags
-        except Exception as exc:  # noqa: BLE001 - advisory; must never crash a run
-            logger.warning("injection modes: config unreadable (%s); using %r", exc, FALLBACK_MODE)
-            return None
-
-
-_FLAG_CACHE = _FlagCache()
-
-
-def reset_flag_cache() -> None:
-    """Force the next resolve to re-read config. Test seam and reload hook."""
-    _FLAG_CACHE.invalidate()
+        if config_path is None:
+            return load_feature_flags_from_path().flags
+        return load_feature_flags_from_path(config_path).flags
+    except Exception as exc:  # noqa: BLE001 - advisory; must never crash a run
+        logger.warning("injection modes: config unreadable (%s); using %r", exc, FALLBACK_MODE)
+        return None
 
 
 def resolve_mode(spec: InjectionSpec, role: str, *, config_path: Path | None = None) -> str:
@@ -202,7 +160,7 @@ def resolve_mode(spec: InjectionSpec, role: str, *, config_path: Path | None = N
     """
     if role not in spec.roles:
         return MODE_OFF
-    flags = _FLAG_CACHE.get(config_path)
+    flags = _load_flags(config_path)
     if flags is None:
         return FALLBACK_MODE
     try:
@@ -213,18 +171,81 @@ def resolve_mode(spec: InjectionSpec, role: str, *, config_path: Path | None = N
     return normalize_mode(raw)
 
 
-def build_injection_modes(role: str, *, config_path: Path | None = None) -> dict[str, ModeResolver]:
-    """Build the resolver mapping handed to a session for *role*.
+class InjectionFlagError(ValueError):
+    """A ``--inject`` argument the operator wrote cannot be honoured.
 
-    Every known injection gets an entry, including ones that are ``off`` for
-    this role, so a consumer can always ask about any injection by name without
-    a membership check. The resolvers are lazy: constructing this mapping reads
-    no config, and a session that never asks never pays.
+    Raised rather than ignored: the operator asked for something specific, so
+    silently dropping a typo would produce a run that looks configured and is
+    not. Config-file problems degrade quietly to ``off``; explicit CLI input
+    does not (plan Q6 -- fail closed, never guess).
     """
-    return {
-        name: (lambda s=spec: resolve_mode(s, role, config_path=config_path))  # type: ignore[misc]
-        for name, spec in INJECTION_SPECS.items()
-    }
+
+
+def parse_inject_overrides(values: Sequence[str] | None) -> dict[str, str]:
+    """Parse repeatable ``--inject <name>=<mode>`` arguments.
+
+    Every failure mode is an error, never a shrug: unknown injection name,
+    unknown mode, missing ``=``, blank name, and duplicate names for the same
+    injection all raise :class:`InjectionFlagError` with the valid choices in
+    the message.
+
+    Duplicates are rejected rather than last-wins because ``--inject x=off
+    --inject x=enforce`` has no obvious reading, and guessing one would be
+    exactly the silent misconfiguration this function exists to prevent.
+    """
+    overrides: dict[str, str] = {}
+    for raw in values or ():
+        text = str(raw).strip()
+        if "=" not in text:
+            raise InjectionFlagError(
+                f"--inject expects <name>=<mode>, got {raw!r}. Known injections: {sorted(INJECTION_SPECS)}."
+            )
+        name, _, mode_text = text.partition("=")
+        name = name.strip()
+        mode = mode_text.strip().lower()
+        if name not in INJECTION_SPECS:
+            raise InjectionFlagError(f"--inject: unknown injection {name!r}. Known: {sorted(INJECTION_SPECS)}.")
+        if mode not in INJECTION_MODES:
+            raise InjectionFlagError(
+                f"--inject {name}: unknown mode {mode_text.strip()!r}. Valid modes: {sorted(INJECTION_MODES)}."
+            )
+        if name in overrides:
+            raise InjectionFlagError(f"--inject: {name!r} given more than once.")
+        overrides[name] = mode
+    return overrides
+
+
+def resolve_injection_modes(
+    role: str,
+    *,
+    overrides: Mapping[str, str] | None = None,
+    config_path: Path | None = None,
+) -> dict[str, str]:
+    """Resolve every injection's effective mode for *role*, once.
+
+    Precedence is ``--inject`` flag > config file > ``off``, matching
+    ``_resolve_intent_guard_mode``'s override-then-config shape.
+
+    Role gating is applied to overrides too: ``--inject coder_slice_ceremony=
+    enforce`` on a planner stage still yields ``off``. The flag says what the
+    operator wants enabled, not which roles it applies to -- that is the spec's
+    business, so one flag cannot smuggle a payload into the wrong role.
+
+    Every known injection gets an entry, including ones that are ``off`` here,
+    so a consumer can ask about any injection by name without a membership
+    check.
+    """
+    supplied = overrides or {}
+    resolved: dict[str, str] = {}
+    for name, spec in INJECTION_SPECS.items():
+        if role not in spec.roles:
+            resolved[name] = MODE_OFF
+            continue
+        override = supplied.get(name)
+        resolved[name] = (
+            normalize_mode(override) if override is not None else resolve_mode(spec, role, config_path=config_path)
+        )
+    return resolved
 
 
 def mode_for(modes: InjectionModes | None, name: str) -> str:
@@ -237,14 +258,7 @@ def mode_for(modes: InjectionModes | None, name: str) -> str:
     """
     if not modes:
         return MODE_OFF
-    resolver = modes.get(name)
-    if resolver is None:
-        return MODE_OFF
-    try:
-        return normalize_mode(resolver())
-    except Exception as exc:  # noqa: BLE001 - advisory; must never crash a run
-        logger.warning("injection %r: resolver failed (%s); using %r", name, exc, MODE_OFF)
-        return MODE_OFF
+    return normalize_mode(modes.get(name))
 
 
 def is_active(modes: InjectionModes | None, name: str) -> bool:
@@ -265,14 +279,14 @@ __all__ = [
     "MODE_ENFORCE",
     "MODE_OBSERVE",
     "MODE_OFF",
+    "InjectionFlagError",
     "InjectionModes",
     "InjectionSpec",
-    "ModeResolver",
-    "build_injection_modes",
     "is_active",
     "is_observed",
     "mode_for",
     "normalize_mode",
-    "reset_flag_cache",
+    "parse_inject_overrides",
+    "resolve_injection_modes",
     "resolve_mode",
 ]

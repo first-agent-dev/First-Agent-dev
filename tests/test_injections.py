@@ -1,15 +1,14 @@
 """PLAN S5a — the injection registry, mode resolution, and hot reload.
 
 root=injections class=C0/C1 claim=G1 path=T4a,T4b,T4f
-oracle=exact resolved mode strings for a given (spec, role, config) triple.
-producer-kill-check=deleting the role gate in resolve_mode makes
-test_role_outside_spec_is_always_off fail; replacing the resolver mapping with
-eagerly-resolved strings makes test_config_edit_is_observed_without_restart fail.
+oracle=exact resolved mode strings for a given (flag, config, role) triple.
+producer-kill-check=deleting the role gate in resolve_mode or in
+resolve_injection_modes makes the role tests fail; making parse_inject_overrides
+lenient makes the rejection tests fail.
 
-The hot-reload tests are the load-bearing ones: a future WebUI toggle writes
-config and expects a RUNNING agent to follow. That property is invisible to a
-signature test and is exactly what a "resolve once at startup" refactor would
-silently destroy, so it is pinned against a real file on disk.
+Precedence (plan v5 Q8) is the load-bearing property: --inject > config > off,
+resolved ONCE per invocation. The rejection tests matter just as much -- a
+mistyped --inject must abort, not silently produce an unconfigured run.
 """
 
 from __future__ import annotations
@@ -27,21 +26,16 @@ from fa.inner_loop.injections import (
     MODE_ENFORCE,
     MODE_OBSERVE,
     MODE_OFF,
+    InjectionFlagError,
     InjectionSpec,
-    build_injection_modes,
     is_active,
     is_observed,
     mode_for,
     normalize_mode,
-    reset_flag_cache,
+    parse_inject_overrides,
+    resolve_injection_modes,
     resolve_mode,
 )
-
-
-@pytest.fixture(autouse=True)
-def _clear_cache() -> None:
-    """The module caches config reads; tests must not inherit each other's."""
-    reset_flag_cache()
 
 
 def _write_config(path: Path, mode: str) -> None:
@@ -167,43 +161,119 @@ class TestResolveMode:
         assert resolve_mode(phantom, "coder", config_path=cfg) == FALLBACK_MODE
 
 
-# ── hot reload (the WebUI-toggle requirement) ──────────────────────────────
+# ── --inject parsing: explicit input fails loudly ──────────────────────────
 
 
-class TestHotReload:
-    def test_config_edit_is_observed_without_restart(self, tmp_path: Path) -> None:
-        """PRODUCER KILL-CHECK for laziness.
+class TestParseInjectOverrides:
+    def test_none_and_empty_are_empty(self) -> None:
+        assert parse_inject_overrides(None) == {}
+        assert parse_inject_overrides([]) == {}
 
-        The whole point of threading resolvers instead of strings. If a
-        refactor resolves modes once at session start, this fails: the second
-        read would still report the first value.
+    @pytest.mark.parametrize("mode", sorted(INJECTION_MODES))
+    def test_valid_pair_parses(self, mode: str) -> None:
+        got = parse_inject_overrides([f"{CODER_SLICE_CEREMONY.name}={mode}"])
+        assert got == {CODER_SLICE_CEREMONY.name: mode}
+
+    def test_surrounding_whitespace_tolerated(self) -> None:
+        got = parse_inject_overrides([f"  {CODER_SLICE_CEREMONY.name} = ENFORCE  "])
+        assert got == {CODER_SLICE_CEREMONY.name: MODE_ENFORCE}
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "no_equals_sign",
+            "=enforce",
+            "unknown_injection=enforce",
+            f"{CODER_SLICE_CEREMONY.name}=loud",
+            f"{CODER_SLICE_CEREMONY.name}=",
+        ],
+        ids=["no-eq", "blank-name", "unknown-name", "bad-mode", "blank-mode"],
+    )
+    def test_malformed_input_raises(self, raw: str) -> None:
+        """PRODUCER KILL-CHECK: silently ignoring a typo would produce a run
+        that LOOKS configured and is not -- the exact failure this prevents."""
+        with pytest.raises(InjectionFlagError):
+            parse_inject_overrides([raw])
+
+    def test_shape_error_names_the_expected_shape(self) -> None:
+        """PRODUCER KILL-CHECK for the '=' check specifically.
+
+        Without it, "noequals" still raises -- but via the unknown-name branch,
+        telling the operator their injection name is wrong when the real defect
+        is a missing '='. A raise alone is not the property; the right
+        diagnosis is.
         """
+        with pytest.raises(InjectionFlagError) as excinfo:
+            parse_inject_overrides(["noequals"])
+        assert "<name>=<mode>" in str(excinfo.value)
+
+    def test_error_message_lists_valid_choices(self) -> None:
+        """An operator must be able to fix the typo from the message alone."""
+        with pytest.raises(InjectionFlagError) as excinfo:
+            parse_inject_overrides(["unknown_injection=enforce"])
+        assert CODER_SLICE_CEREMONY.name in str(excinfo.value)
+
+    def test_duplicate_name_raises(self) -> None:
+        """`--inject x=off --inject x=enforce` has no obvious reading."""
+        with pytest.raises(InjectionFlagError):
+            parse_inject_overrides([f"{CODER_SLICE_CEREMONY.name}=off", f"{CODER_SLICE_CEREMONY.name}=enforce"])
+
+    def test_distinct_names_coexist(self) -> None:
+        """Shape check for the multi-injection future."""
+        got = parse_inject_overrides([f"{CODER_SLICE_CEREMONY.name}=observe"])
+        assert len(got) == 1
+
+
+# ── precedence: flag > config > off (plan v5 Q8) ───────────────────────────
+
+
+class TestPrecedence:
+    def test_flag_beats_config(self, tmp_path: Path) -> None:
         cfg = tmp_path / "config.yaml"
         _write_config(cfg, "off")
-        modes = build_injection_modes("coder", config_path=cfg)
-        assert mode_for(modes, CODER_SLICE_CEREMONY.name) == MODE_OFF
+        modes = resolve_injection_modes("coder", overrides={CODER_SLICE_CEREMONY.name: MODE_ENFORCE}, config_path=cfg)
+        assert modes[CODER_SLICE_CEREMONY.name] == MODE_ENFORCE
 
-        _write_config(cfg, "enforce")
-        reset_flag_cache()  # stands in for the TTL expiring
-        assert mode_for(modes, CODER_SLICE_CEREMONY.name) == MODE_ENFORCE
-
-    def test_toggle_back_off_also_takes_effect(self, tmp_path: Path) -> None:
-        """A toggle that only turns on would be a trap."""
+    def test_flag_can_also_disable(self, tmp_path: Path) -> None:
+        """Precedence must work in both directions, not just to turn on."""
         cfg = tmp_path / "config.yaml"
         _write_config(cfg, "enforce")
-        modes = build_injection_modes("coder", config_path=cfg)
-        assert is_active(modes, CODER_SLICE_CEREMONY.name)
+        modes = resolve_injection_modes("coder", overrides={CODER_SLICE_CEREMONY.name: MODE_OFF}, config_path=cfg)
+        assert modes[CODER_SLICE_CEREMONY.name] == MODE_OFF
 
-        _write_config(cfg, "off")
-        reset_flag_cache()
-        assert not is_active(modes, CODER_SLICE_CEREMONY.name)
+    def test_config_used_when_no_flag(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "config.yaml"
+        _write_config(cfg, "observe")
+        modes = resolve_injection_modes("coder", config_path=cfg)
+        assert modes[CODER_SLICE_CEREMONY.name] == MODE_OBSERVE
 
-    def test_building_the_mapping_reads_no_config(self, tmp_path: Path) -> None:
-        """Resolvers are lazy: a session that never asks never pays."""
-        missing = tmp_path / "never-created.yaml"
-        modes = build_injection_modes("coder", config_path=missing)
+    def test_off_when_neither(self, tmp_path: Path) -> None:
+        modes = resolve_injection_modes("coder", config_path=tmp_path / "absent.yaml")
+        assert modes[CODER_SLICE_CEREMONY.name] == MODE_OFF
+
+    def test_role_gate_beats_the_flag(self, tmp_path: Path) -> None:
+        """PRODUCER KILL-CHECK for role gating on the override path.
+
+        A flag says WHAT to enable, not which roles it applies to. Without
+        this, one --inject could smuggle a coder payload into a planner stage.
+        """
+        modes = resolve_injection_modes(
+            "planner",
+            overrides={CODER_SLICE_CEREMONY.name: MODE_ENFORCE},
+            config_path=tmp_path / "absent.yaml",
+        )
+        assert modes[CODER_SLICE_CEREMONY.name] == MODE_OFF
+
+    def test_every_injection_gets_an_entry(self, tmp_path: Path) -> None:
+        """Consumers must be able to ask by name without a membership check."""
+        modes = resolve_injection_modes("coder", config_path=tmp_path / "absent.yaml")
         assert set(modes) == set(INJECTION_SPECS)
-        assert not missing.exists()
+
+    def test_result_is_plain_strings(self, tmp_path: Path) -> None:
+        """Q8: resolution happens once; the transport carries no callables."""
+        modes = resolve_injection_modes("coder", config_path=tmp_path / "absent.yaml")
+        for value in modes.values():
+            assert isinstance(value, str)
 
 
 # ── mode_for / is_active / is_observed: the safe read path ─────────────────
@@ -219,19 +289,12 @@ class TestSafeReads:
         assert mode_for({}, CODER_SLICE_CEREMONY.name) == MODE_OFF
 
     def test_unknown_injection_name_is_off(self) -> None:
-        modes = build_injection_modes("coder")
+        modes = resolve_injection_modes("coder")
         assert mode_for(modes, "no_such_injection") == MODE_OFF
 
-    def test_raising_resolver_degrades_to_off(self) -> None:
-        """An advisory feature must never crash a run."""
-
-        def _boom() -> str:
-            raise RuntimeError("config exploded")
-
-        assert mode_for({"x": _boom}, "x") == MODE_OFF
-
-    def test_resolver_returning_garbage_is_normalized(self) -> None:
-        assert mode_for({"x": lambda: "nonsense"}, "x") == MODE_OFF
+    def test_garbage_value_is_normalized(self) -> None:
+        """Defence in depth: a hand-built mapping cannot smuggle a bad mode."""
+        assert mode_for({"x": "nonsense"}, "x") == MODE_OFF
 
     @pytest.mark.parametrize(
         ("mode", "active", "observed"),
@@ -239,6 +302,6 @@ class TestSafeReads:
     )
     def test_active_and_observed_semantics(self, mode: str, active: bool, observed: bool) -> None:
         """observe emits telemetry but must NOT alter the payload."""
-        modes = {"x": lambda m=mode: m}
+        modes = {"x": mode}
         assert is_active(modes, "x") is active
         assert is_observed(modes, "x") is observed
