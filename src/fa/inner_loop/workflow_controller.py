@@ -292,9 +292,11 @@ def _run_stage(
         "detail": "standard",
         "no_color": False,
         # PLAN S5a: resolved injection modes for THIS role. A separate
-        # stage_kwargs key because the L2 injection site is gated on
-        # ``_is_chat_role`` (coder_loop.py:613) -- a predicate about a
-        # DIFFERENT feature -- so a workflow coder stage could never reach it.
+        # stage_kwargs key because the pre-existing L2 skill-injection site is
+        # gated on ``_is_chat_role`` (coder_loop.py, ``_is_chat_role = role ==
+        # "chat" and bool(scope_mode)``) -- a predicate about a DIFFERENT
+        # feature -- so a workflow coder stage could never reach it. The
+        # ceremony site added in S5b therefore sits OUTSIDE that gate.
         # Role gating lives in resolve_injection_modes, so a coder-only
         # injection stays off here for a planner or eval stage.
         "injection_modes": resolve_injection_modes(role, overrides=ctx.inject_overrides),

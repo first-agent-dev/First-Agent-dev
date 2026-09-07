@@ -217,3 +217,63 @@ class TestAgainstRealPlan:
         assert "S1" in ids.slices
         assert "CT1" in ids.contracts
         assert "GAP1" in ids.gaps
+
+
+# ── T3c: the grammar-collision hazard (plan review, 2026-09-07) ────────────
+
+
+def test_grammar_example_is_indistinguishable_from_a_real_fence() -> None:
+    """C0 — pins a REAL defect found in plan review, not a hypothetical.
+
+    ``_extract_commands`` cannot tell a command list from a fenced example
+    that documents the grammar. The slice-ceremony plan documented the
+    ```verify grammar inside a ````text wrapper; the extractor returned that
+    example's two commands and nothing else, because §6 had no fence of its
+    own. S6 ("the harness runs the plan's commands") would therefore have run
+    S3's self-test, passed, and verified nothing about the slice under test.
+
+    This is not fixed in code: nesting depth is a markdown-authoring
+    convention, and teaching the extractor to skip examples would need it to
+    parse nested fences -- more machinery than the risk warrants. It is fixed
+    by CONVENTION plus this test, which documents the trap for the next author.
+    """
+    doc = "\n".join(
+        [
+            "Grammar, documented for plan authors:",
+            "",
+            "````text",
+            "```verify",
+            "uv run pytest tests/test_example.py -q",
+            "```",
+            "````",
+        ]
+    )
+    ids = extract_plan_ids(doc)
+    assert ids.commands == ("uv run pytest tests/test_example.py -q",), (
+        "documented behaviour: a fenced EXAMPLE is still extracted as a real "
+        "command. If this ever changes, the plan convention can be relaxed."
+    )
+
+
+def test_real_plan_yields_its_own_verification_commands() -> None:
+    """C1 — the live plan must expose runnable commands, not just an example.
+
+    Kill-check: delete the ```verify block from the plan's §6 and this fails,
+    which is exactly the state the review found.
+    """
+    plan = (
+        Path(__file__).resolve().parents[1]
+        / "worklogs"
+        / "implementation-plans"
+        / "PLAN-slice-ceremony-harness-enforcement.md"
+    )
+    if not plan.is_file():
+        # The plan is an artifact of one feature branch. Absence is not an
+        # extractor failure, so there is nothing to assert -- returning early
+        # keeps this from becoming a tautological assertion
+        # (FA-AUTHORING-V11-PLACEHOLDER-ASSERT).
+        return
+    ids = extract_plan_ids(plan.read_text(encoding="utf-8"))
+    real = [c for c in ids.commands if "test_plan_ids" not in c and "plan_ids.py" not in c]
+    assert real, "plan §6 must carry a verify fence with the slice's own commands"
+    assert any("ruff" in c for c in real), "static checks belong in the plan's command list"
