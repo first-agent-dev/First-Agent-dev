@@ -1,6 +1,6 @@
 # PLAN: Harness-enforced per-slice implementation ceremony    Plan-ID: PLAN-slice-ceremony-harness-enforcement
 Status: READY                                   Depth: P2
-Revision: v4   Changed-since-v3: external adversarial review — F-1 (verification commands had no producer; added ```verify grammar), F-2 (pinned the draft-extraction contract; INTENT never guessed), F-3 (late-binding placement), F-4 (honest L3 scoping), F-5a (no private-function reuse), F-5b (refuted — `fa run` defaults to coder). **S10 removed from scope (D-1).** 13 steps → 12 in scope.   Changed-since-v2: review pass 2 — D6 (`should_load_skill` would silently disable the ceremony), D7 (readiness text is role-agnostic), D8/D9/D10 resolved, D11 closed by new S6b (harness-derived draft). 12→13 steps. Delivery split into three PRs.   Changed-since-v1: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
+Revision: v5   Changed-since-v3: external adversarial review — F-1 (verification commands had no producer; added ```verify grammar), F-2 (pinned the draft-extraction contract; INTENT never guessed), F-3 (late-binding placement), F-4 (honest L3 scoping), F-5a (no private-function reuse), F-5b (refuted — `fa run` defaults to coder). **S10 removed from scope (D-1).** 13 steps → 12 in scope.   Changed-since-v2: review pass 2 — D6 (`should_load_skill` would silently disable the ceremony), D7 (readiness text is role-agnostic), D8/D9/D10 resolved, D11 closed by new S6b (harness-derived draft). 12→13 steps. Delivery split into three PRs.   Changed-since-v1: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
 **Delivery (operator decision, review pass 2): three sequenced PRs, not one.**
 PR #68 keeps the S12.7 F1/F4/F7/F8/F9 fixes and merges on its own. Then:
 **PR-A = S1–S4** (two docs, one defaulted kwarg, one pure module, one flag — no behaviour change,
@@ -1220,6 +1220,84 @@ fix's success depends on a *behavioural* property no unit test can prove: that t
 actually causes models to emit parseable packets without a retry loop. Recorded plainly in §9 DoD
 rather than argued away. The live re-run is the only oracle, and until it is green **this plan
 claims a mechanism, not a cure.**
+
+## 14. Review pass 4 — injection control surface (Q7, Q8; operator, 2026-09)
+
+Status: **DECIDED — no code written against this section yet.** Recorded before
+implementation per the operator's "lock in decisions first" instruction.
+
+### 14.1 Q7 — who owns the injection switch → **(A) the workflow**
+
+`WorkflowContext.injections_enabled` (default `False`) grants a stage permission
+to consult config; the per-injection mode decides what actually happens. Two
+independent switches, so enabling the pipeline flag alone changes zero prompts.
+Rationale: injections are about *executing a planned slice*, which is the
+pipeline's job; a standalone `fa run` is often a one-off where a protocol
+payload is noise. (A) is strictly narrower than (B) — easy to widen later, hard
+to walk back. **Already implemented** (`d0781dc`).
+
+### 14.2 Q8 — control surface: CLI flag vs config file vs live re-read
+
+**Operator's correction (accepted).** The `d0781dc` design assumed toggles might
+change *while an agent is mid-loop*, and paid for that with per-turn resolution
+plus a 2s TTL cache. The operator's actual model is: **toggles are tweaked
+between `fa run` invocations, not during one.** Under a future WebUI, the UI
+knobs become CLI arguments and config edits at launch time; the chat window is
+a front-end over invocations, not a live control plane into a running loop.
+
+**Fact-check performed before deciding** (line-exact, current tip):
+
+| Claim | Verified |
+|---|---|
+| A workflow run is ONE process spanning many stages/turns | ✅ `cli.py:1303,1533` — `run_stage_fn=_cmd_run` is called in-process per stage |
+| IntentGuard already models "explicit override wins, else config" | ✅ `cli.py:182-197` `_resolve_intent_guard_mode(override)` |
+| IntentGuard exposes **no** CLI flag; it is config-only + programmatic override | ✅ only caller is `cli.py:1735`, param `intent_guard_mode: str \| None = None` at `:1653` |
+
+**Consequence — the hot-reload machinery is over-engineering.** Because one
+`fa workflow` invocation is a single long process, "per-turn re-read" only buys
+mid-run toggling, which is explicitly NOT wanted. What the operator wants is
+*per-invocation* configuration, which a plain value resolved once at startup
+already delivers.
+
+**DECISION Q8 — hybrid, mirroring the IntentGuard precedent:**
+
+1. **CLI flag is the primary surface.** `--inject <name>=<mode>` (repeatable) on
+   `run` and `workflow`. Explicit, greppable in shell history, and exactly what a
+   WebUI knob maps onto — the UI sets an argument, it does not mutate a running
+   process.
+2. **Config file is the persistent default** for operators who always want it on,
+   read when no CLI override is supplied.
+3. **Precedence: CLI flag > config > `off`.** Identical in shape to
+   `_resolve_intent_guard_mode`, so there is one resolution idiom in the codebase
+   rather than two competing ones.
+4. **Resolve ONCE per invocation, at startup.** The mode becomes a plain `str`
+   again in the transport.
+
+**What this retracts from `d0781dc`:** the `ModeResolver` callable transport, the
+`_FlagCache` TTL cache, `reset_flag_cache()`, and the hot-reload tests. The
+registry, role gating, the closed enum, `normalize_mode`, fail-to-`off`
+polarity, and the two-switch split all **survive unchanged** — those were about
+extensibility, which is still wanted.
+
+**Cost of the retraction:** small and bounded. `injections.py` loses ~60 lines
+(cache + laziness); `InjectionSpec`, `INJECTION_SPECS`, and `resolve_mode`'s
+signature are untouched. The transport type narrows from
+`Mapping[str, Callable[[], str]]` to `Mapping[str, str]`, which simplifies every
+consumer. RK15 below records the one thing genuinely lost.
+
+**RK15 (accepted).** Dropping live re-read means an operator who wants to change
+an injection mode must start a new invocation. Accepted because that is the
+stated workflow; if a future WebUI ever needs mid-run toggling, the resolver
+transport is re-introducible behind the same `mode_for()` call site, which is
+why that indirection is being kept.
+
+### 14.3 Deferred, explicitly not now
+
+- **G9 — `fa inject list/status`** surfacing effective modes and their source
+  (flag vs config vs default). Wanted for WebUI introspection; backlog, not this plan.
+- Chat-role and planner-role injections: registry rows only, no specs authored yet.
+
+---
 
 ## 11. Artifacts inventory
 
