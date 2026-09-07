@@ -1537,6 +1537,41 @@ Planned rows, each asserting on `events.jsonl` like the existing hooks:
 The last two need no model call, so they are cheap and should run on every
 battery pass; the first four are token-costing rows.
 
+### 17.2b Correction — S5 step 1 (append) was initially missed
+
+The first S5b revision used `skill_block_for_request = [render.skill_block]`
+on the chat path (the pre-existing line) while the ceremony branch above
+ASSIGNED the same variable. The plan's step 1 required append precisely so the
+two producers coexist. The clobber was unreachable today -- the ceremony branch
+needs `role=="coder"`, the chat branch needs `role=="chat"` -- but correct only
+by accident, and the accident ends the moment a chat-role injection is
+registered. Now `[*(skill_block_for_request or []), render.skill_block]`, pinned
+by a test that also asserts the old form is gone.
+
+Found by re-reading the loop under operator challenge, not by the test suite:
+every test passed both before and after, because no test exercised a role that
+reaches both branches. Recorded as a coverage gap, not just a fixed typo.
+
+### 17.2c Verification strength — corrected
+
+The original S5b claim ("337 -> 6182 bytes") came from calling
+`build_prompt_parts_v2` DIRECTLY from the test, not from running the loop. That
+proves the composer serializes blocks it is handed; it does NOT prove the loop
+hands them over, which is the actual claim. `tests/test_slice_ceremony_injection.py`
+now boots `drive_session` against the `FakeProvider` harness from
+`tests/test_coder_loop.py` and asserts on the `RequestInfo` a provider receives:
+
+- `enforce` -> the request carries `BEFORE EDITING GATE` and both block names;
+- `observe` -> the request is **byte-identical** to `off` (the inertness claim,
+  stated as full-request equality rather than "no gate text", so `observe`
+  cannot be altering context by another route);
+- unconfigured (`injection_modes=None`) -> identical to `off`;
+- a guard test asserting `enforce != off`, so the equality tests cannot pass
+  vacuously.
+
+Mutation re-run against these: M24 (blocks read but never attached) and M22
+(`observe` injects) now die at the live path, not only at the mirror.
+
 ### 17.3 Follow-up (not blocking S5b)
 
 - **S5e:** teach `run_live_check.sh` a role/flag-parameterised row helper, then

@@ -19,6 +19,7 @@ to the composition root).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -204,10 +205,18 @@ class TestSiteIsNotChatGated:
         chat_gate = source.index("if _is_chat_role:", site - 4000)
         assert site < chat_gate, "ceremony must be injected BEFORE the chat-only branch"
 
-    def test_chat_block_variable_is_not_clobbered(self) -> None:
-        """T4b: the chat L2 path still assigns its own block afterwards."""
+    def test_chat_path_appends_rather_than_replaces(self) -> None:
+        """T4b + PLAN S5 step 1: the two producers must COEXIST.
+
+        They are mutually exclusive today (ceremony needs role=="coder", the
+        chat block needs role=="chat"), so a bare assignment loses nothing --
+        but it would be correct only by accident, and the accident ends the
+        moment a chat-role injection is registered. The plan therefore
+        required append; this pins it.
+        """
         source = (REPO_ROOT / "src" / "fa" / "inner_loop" / "coder_loop.py").read_text(encoding="utf-8")
-        assert "skill_block_for_request = [render.skill_block]" in source
+        assert "skill_block_for_request = [*(skill_block_for_request or []), render.skill_block]" in source
+        assert "skill_block_for_request = [render.skill_block]" not in source
 
 
 # ── C1: the call site attaches what the gate authorised ────────────────────
@@ -245,3 +254,96 @@ class TestCallSiteAttachesTheBlocks:
         assert should_inject_ceremony("coder", 1, modes) is False
         blocks = _ceremony_blocks(REPO_ROOT) if should_inject_ceremony("coder", 1, modes) else None
         assert "BEFORE EDITING GATE" not in _compose(blocks)
+
+
+# ── L3: the REAL loop, the REAL request a provider receives ────────────────
+#
+# Everything above stops at the composer. These tests boot `drive_session`
+# against a fake provider and assert on `RequestInfo` -- the object a real
+# provider would serialize and send. This is the ADR-11-I9 live-path claim:
+# remove the production call site and these fail, because nothing else puts
+# the ceremony into a request.
+
+
+def _run_coder_turn(tmp_path: Path, workspace: Path, mode: str | None) -> list[Any]:
+    """Drive one real coder session; return the provider's observed requests."""
+    from fa.inner_loop.coder_loop import drive_session
+    from fa.inner_loop.hooks import HookRegistry, SandboxHook
+    from fa.inner_loop.state import EventLog, SessionState
+    from fa.providers.chain import ChainConfig, ChainEntry, ProviderChain
+    from tests.test_coder_loop import FakeProvider, _make_response, _registry_with_dummy_tool
+
+    provider = FakeProvider([_make_response(text="done", finish_reason="stop")])
+    entry = ChainEntry(
+        provider="openrouter",
+        model="test/model",
+        base_url="https://example.invalid/v1",
+        api_key_env="TEST_KEY",
+        cooldown_seconds=300,
+    )
+    chain = ProviderChain(
+        ChainConfig(role="coder", name="test-model", family="", chain=(entry,)),
+        provider_factory=lambda _e: provider,
+        env={"TEST_KEY": "k"},
+    )
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    log = EventLog(tmp_path / "events.jsonl", run_id="t")
+    state = SessionState(workspace_root=workspace, run_id="t", log=log)
+
+    modes = None if mode is None else {CODER_SLICE_CEREMONY.name: mode}
+    drive_session(
+        "implement the slice",
+        provider_chain=chain,
+        registry=_registry_with_dummy_tool(),
+        hooks=hooks,
+        state=state,
+        role="coder",
+        injection_modes=modes,
+    )
+    return provider.calls
+
+
+def _request_text(request: Any) -> str:
+    return json.dumps(request.messages, ensure_ascii=False)
+
+
+class TestLivePathRequest:
+    def test_enforce_puts_the_ceremony_in_the_real_request(self, tmp_path: Path) -> None:
+        """PRODUCER KILL-CHECK, live path: delete the call site and this fails.
+
+        `state.workspace_root` is the repo so the real condensates resolve;
+        the event log goes to tmp_path so nothing is written into the tree.
+        """
+        calls = _run_coder_turn(tmp_path, REPO_ROOT, MODE_ENFORCE)
+        assert calls, "the loop never reached the provider"
+        body = _request_text(calls[0])
+        assert "BEFORE EDITING GATE" in body
+        assert "feature-planning-inject" in body
+        assert "tests-writing-inject" in body
+
+    def test_observe_sends_a_byte_identical_request_to_off(self, tmp_path: Path) -> None:
+        """The claim that makes `observe` a safe DEFAULT, on the live path.
+
+        Not merely "no gate text": the ENTIRE request must match the `off`
+        request, or `observe` would be altering model context by some other
+        route while claiming to be inert.
+        """
+        observe = _request_text(_run_coder_turn(tmp_path / "a", REPO_ROOT, MODE_OBSERVE)[0])
+        off = _request_text(_run_coder_turn(tmp_path / "b", REPO_ROOT, MODE_OFF)[0])
+        assert observe == off
+
+    def test_unconfigured_matches_off_too(self, tmp_path: Path) -> None:
+        """A loop called with no modes at all must not inject."""
+        none_modes = _request_text(_run_coder_turn(tmp_path / "c", REPO_ROOT, None)[0])
+        off = _request_text(_run_coder_turn(tmp_path / "d", REPO_ROOT, MODE_OFF)[0])
+        assert none_modes == off
+        assert "BEFORE EDITING GATE" not in none_modes
+
+    def test_enforce_actually_differs_from_off(self, tmp_path: Path) -> None:
+        """Guards the two tests above: if every request were identical they
+        would pass vacuously."""
+        enforce = _request_text(_run_coder_turn(tmp_path / "e", REPO_ROOT, MODE_ENFORCE)[0])
+        off = _request_text(_run_coder_turn(tmp_path / "f", REPO_ROOT, MODE_OFF)[0])
+        assert enforce != off
+        assert len(enforce) > len(off)

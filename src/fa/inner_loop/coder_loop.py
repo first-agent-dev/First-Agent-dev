@@ -909,7 +909,14 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 skill_name=_active_skill_name,
             )
             observation_context = render.turn_context
-            skill_block_for_request = [render.skill_block] if render.skill_block is not None else None
+            # PLAN S5 step 1: APPEND, never replace. The ceremony branch above
+            # may already have populated this. The two are mutually exclusive
+            # today (that branch needs role=="coder", this one needs
+            # role=="chat"), so a bare assignment would not lose anything --
+            # but it would be correct only by accident, and the accident
+            # evaporates the moment a chat-role injection is registered.
+            if render.skill_block is not None:
+                skill_block_for_request = [*(skill_block_for_request or []), render.skill_block]
 
             if level_to != level_from:
                 _expansion = ExpansionState(
