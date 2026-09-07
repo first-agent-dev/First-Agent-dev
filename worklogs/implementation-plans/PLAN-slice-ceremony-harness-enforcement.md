@@ -2690,3 +2690,74 @@ had aborted. Flagged for S9/e2e: on the live host (python ≥3.13) this should b
 re-checked rather than assumed.
 
 **Remaining:** S13, S6, S6a, S6b, S7, S11b, S8, S9.
+
+---
+
+## §26 — S13 implementation record (shipped `f1043b9`)
+
+**Contracts:** G3 · CT21 (consumes S12a `plan_path`, S12 `extract_plan_ids`).
+**Files touched:** `workflow_controller.py`, new `tests/test_eval_evidence_block.py`.
+Classes C0 + C1. **Kill-check:** the append at the eval `stage_kwargs` site.
+
+### What shipped
+
+`_eval_evidence_block(ctx, *, runner=None)` + `_git_output(...)`, appended to the
+eval stage task **only**. Constants `EVAL_DIFF_MAX_CHARS` (60k),
+`EVAL_GIT_TIMEOUT_SECONDS` (15), `EVAL_DOC_PATHS`, all exported.
+
+The judge now receives, as harness-controlled text: plan path, declared slice IDs,
+`git diff HEAD --stat`, a bounded diff, **named untracked files**, and doc paths.
+
+### Plan corrections found during source verification
+
+| Plan said | Truth at tip |
+|---|---|
+| link "the plan's own `## Artifacts` table" | **UNFOUNDED** — `grep -rln "^## Artifacts" worklogs/ knowledge/` returns nothing. No plan in this repo has one. Dropped; links the ADR index instead. |
+| `_run_git` at `inner_loop/pr_intent.py:817` | It is at **`hygiene/pr_intent.py:817`** |
+| — | `inner_loop/tools/pair_tools.py:28` already has a correct-shaped helper, but `workflow_controller` imports nothing from `tools/`; kept a local helper rather than add a layering edge. |
+
+### D-6 verified empirically, not assumed
+
+In a scratch repo: `git diff HEAD` on an untracked new file prints **nothing**,
+while `git status --porcelain` shows `?? newfile.py`. An add-only slice would have
+shown the judge an empty diff. The test asserts this precondition against real git
+*before* asserting the block compensates.
+
+### Degradation contract
+
+Advisory input. `check=False` + timeout; non-git workspace, absent binary,
+timeout, or non-zero exit each collapse to `None` and drop only their own section.
+"No changes" is stated explicitly — an omitted section reads as "diff unavailable"
+when the truth is "the coder changed nothing", itself a finding worth a FAIL.
+
+### Negative proof
+
+**11/11 mutants killed**: kill-check (append removed), `diff HEAD`→`diff`,
+`diff HEAD`→`--cached`, untracked handling dropped, `check=True`, timeout removed,
+silent truncation, no-changes message removed, role gate widened to coder, task
+substituted instead of appended, slice IDs dropped, docs-existence filter removed.
+
+**Two of my own tests were broken, and mutants found them, not review:**
+1. `"STAGED_CONTENT"` is a **substring** of `"UNSTAGED_CONTENT"`, so the staged
+   assertion passed on unstaged text and the `git diff` mutant survived.
+2. The same fixture committed the file it meant to leave staged, so nothing was
+   actually staged.
+Both now use non-overlapping markers and assert preconditions against git first.
+This is the fourth instance this session of *the check* being the broken thing.
+
+### Verification actually run
+
+Baseline **re-measured by stashing** rather than from notes (the session's recorded
+baseline list turned out to be unreliable after a sandbox reset): `9 failed / 3947
+passed` before, `9 failed / 3962 passed` after — identical failure sets, +15.
+`ruff check src/fa tests` clean; `test_live_check_script.py` 28 passed; adversarial
+battery `28 OK, 0 missed`; LogKind contract PASS.
+
+### Deferred (not silently skipped)
+
+`fresh=True` for eval is **Q15, already answered in §21.2**: an `--eval-fresh`
+toggle defaulting to inherit. Not implemented here — S13's scope is delivery of
+the evidence, and the block is required in both modes. The judge still resumes
+the coder's session by default; that remains open.
+
+**Remaining:** S6, S6a, S6b, S7, S11b, S8, S9.
