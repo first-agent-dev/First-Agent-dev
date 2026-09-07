@@ -1,6 +1,6 @@
 # PLAN: Harness-enforced per-slice implementation ceremony    Plan-ID: PLAN-slice-ceremony-harness-enforcement
 Status: READY                                   Depth: P2
-Revision: v6   Changed-since-v5: review pass 5 — Q9 resolved (b): chat-nested pipelines inherit `--inject` through `WorkflowInvocationContext`; G9 promoted from deferred into scope as `fa inject list/status` with source attribution. New steps S5c, S5d; new contracts CT16, CT17, CT18.   Changed-since-v3: external adversarial review — F-1 (verification commands had no producer; added ```verify grammar), F-2 (pinned the draft-extraction contract; INTENT never guessed), F-3 (late-binding placement), F-4 (honest L3 scoping), F-5a (no private-function reuse), F-5b (refuted — `fa run` defaults to coder). **S10 removed from scope (D-1).** 13 steps → 12 in scope.   Changed-since-v2: review pass 2 — D6 (`should_load_skill` would silently disable the ceremony), D7 (readiness text is role-agnostic), D8/D9/D10 resolved, D11 closed by new S6b (harness-derived draft). 12→13 steps. Delivery split into three PRs.   Changed-since-v1: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
+Revision: v7   Changed-since-v6: review pass 6 — default mode for ALL injections is `observe` (restores §2 l.179, which S5a had drifted from); source attribution switched from value-inference to declaration; ADR-10 Amendment 2026-09-07 (I-6) seats injected prompt payloads normatively.   Changed-since-v5: review pass 5 — Q9 resolved (b): chat-nested pipelines inherit `--inject` through `WorkflowInvocationContext`; G9 promoted from deferred into scope as `fa inject list/status` with source attribution. New steps S5c, S5d; new contracts CT16, CT17, CT18.   Changed-since-v3: external adversarial review — F-1 (verification commands had no producer; added ```verify grammar), F-2 (pinned the draft-extraction contract; INTENT never guessed), F-3 (late-binding placement), F-4 (honest L3 scoping), F-5a (no private-function reuse), F-5b (refuted — `fa run` defaults to coder). **S10 removed from scope (D-1).** 13 steps → 12 in scope.   Changed-since-v2: review pass 2 — D6 (`should_load_skill` would silently disable the ceremony), D7 (readiness text is role-agnostic), D8/D9/D10 resolved, D11 closed by new S6b (harness-derived draft). 12→13 steps. Delivery split into three PRs.   Changed-since-v1: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
 **Delivery (operator decision, review pass 2): three sequenced PRs, not one.**
 PR #68 keeps the S12.7 F1/F4/F7/F8/F9 fixes and merges on its own. Then:
 **PR-A = S1–S4** (two docs, one defaulted kwarg, one pure module, one flag — no behaviour change,
@@ -1422,6 +1422,69 @@ attribution tests fail; break the projection equivalence → CT18 test fails.
 **Docs (folds into S9).** `knowledge/instructions/02-operations.md` gains the
 `--inject` flag and the `fa inject` command with the worked example above;
 `cli_help.py` carries EN+RU entries for both.
+
+---
+
+## 16. Review pass 6 — default mode + ADR seat (operator, 2026-09-07)
+
+### 16.1 Default mode for ALL injections is `observe`
+
+**Operator decision.** The default tier of the Q8 precedence chain
+(`--inject` > config > default) is **`observe`**, not `off`, and this is a
+property of the injection framework, not of one injection.
+
+Note this RESTORES the plan's own §2 line 179 ("default `observe`") and
+§7 RK9 rollback line 950, which the S5a implementation had silently drifted
+away from by defaulting every tier to `off`. Recorded here so the drift is
+not re-introduced by someone reading §5 in isolation.
+
+**Why it is safe.** Only `enforce` alters the request payload. `observe`
+records that a trigger fired and leaves the prompt byte-identical, so an
+unconfigured or misconfigured harness still cannot have its context
+rewritten — it just reports what it *would* have injected. Defaulting to
+`off` instead makes the feature invisible until someone edits config, which
+is how a control surface rots unnoticed.
+
+**Three places carry the default**, all now `observe`:
+`FeatureFlags.coder_slice_ceremony_mode`, the loader default in
+`load_feature_flags`, and `injections.FALLBACK_MODE`.
+
+**Two boundaries deliberately stay `off`:**
+
+| Case | Mode | Why |
+|---|---|---|
+| Role outside the spec's `roles` | `off` | A planner stage must not emit coder telemetry. Role gating outranks every tier. |
+| `mode_for` on an absent mapping / unknown name | `off` | Means "this call site was never wired" or "no such injection" — neither has anything to observe. Distinct from a KNOWN injection left unconfigured, which is `observe`. |
+
+**Consequence — source attribution had to change.** `explain_injection_modes`
+previously inferred "came from config" as *mode ≠ fallback*. With the default
+at `observe`, an explicit `config: off` — the setting a cautious operator is
+most likely to write — would have been mislabelled `default`. Attribution now
+tests DECLARATION (`_config_declares`: parsed flags vs dataclass defaults).
+Documented limitation: a config that writes exactly the default value reports
+as `default`; the effective mode is identical, so nobody is misled.
+
+**Honest test-strength note.** With one three-valued injection,
+`_config_declares` is currently behaviourally EQUIVALENT to the old
+heuristic, so the mutant swapping them survives. Kept anyway because the
+equivalence is an accident of today's registry: add an injection whose flag
+default differs from `FALLBACK_MODE` and value-inference starts lying.
+Recorded rather than papered over.
+
+### 16.2 ADR seat — ADR-10 Amendment 2026-09-07 (I-6)
+
+Injected prompt payloads now have a normative home:
+`knowledge/adr/ADR-10-deterministic-harness-invariants.md`, **Amendment
+2026-09-07 — ADR-10-I6**. ADR-10 is the correct seat because it governs
+runtime determinism around the LLM call (I-1 single-source classifier, I-4
+loop-owned state), whereas ADR-11 governs authoring-time admission.
+
+I-6 makes five clauses normative, each already implemented: (1) registered,
+never ad hoc; (2) resolved once per invocation, mid-run re-read forbidden;
+(3) role-gated first and unconditionally; (4) defaults to `observe`, never
+`enforce`, with the fail-loud/fail-quiet asymmetry between CLI input and
+config; (5) introspectable without running the model (`fa inject`).
+
 
 ---
 

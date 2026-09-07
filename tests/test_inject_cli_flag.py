@@ -74,9 +74,9 @@ class TestResolvedInjectionModes:
         modes = _resolved_injection_modes(args, "coder")
         assert modes[NAME] == MODE_ENFORCE
 
-    def test_no_flag_resolves_off(self) -> None:
+    def test_no_flag_resolves_to_the_default(self) -> None:
         args = build_parser().parse_args(["run", "task"])
-        assert _resolved_injection_modes(args, "coder")[NAME] == MODE_OFF
+        assert _resolved_injection_modes(args, "coder")[NAME] == MODE_OBSERVE
 
     def test_role_gate_applies_at_the_cli_seam(self) -> None:
         args = build_parser().parse_args(["run", "--inject", f"{NAME}=enforce", "task"])
@@ -97,7 +97,7 @@ class TestResolvedInjectionModes:
         args.injection_modes = {NAME: MODE_OFF}
         assert _resolved_injection_modes(args, "coder")[NAME] == MODE_OFF
 
-    def test_malformed_flag_degrades_to_all_off(self) -> None:
+    def test_malformed_flag_degrades_to_the_default(self) -> None:
         """By this point the session is being built, so aborting would be a
         crash mid-construction; _cmd_workflow rejects bad input up front where
         a clean non-zero exit is still possible.
@@ -109,11 +109,11 @@ class TestResolvedInjectionModes:
         """
         args = build_parser().parse_args(["run", "--inject", "bogus=enforce", "task"])
         modes = _resolved_injection_modes(args, "coder")
-        assert modes == {NAME: MODE_OFF}
+        assert modes == {NAME: MODE_OBSERVE}
 
     def test_namespace_without_the_attribute_is_safe(self) -> None:
         """A hand-built Namespace (tests, conformance harness) must not crash."""
-        assert _resolved_injection_modes(argparse.Namespace(), "coder")[NAME] == MODE_OFF
+        assert _resolved_injection_modes(argparse.Namespace(), "coder")[NAME] == MODE_OBSERVE
 
 
 # ── _cmd_workflow rejects bad input up front ───────────────────────────────
@@ -150,7 +150,47 @@ class TestExplainInjectionModes:
 
     def test_default_source(self, tmp_path: Path) -> None:
         st = explain_injection_modes("coder", config_path=tmp_path / "absent.yaml")[NAME]
-        assert (st.mode, st.source) == (MODE_OFF, SOURCE_DEFAULT)
+        assert (st.mode, st.source) == (MODE_OBSERVE, SOURCE_DEFAULT)
+
+    def test_config_off_is_attributed_to_config_not_default(self, tmp_path: Path) -> None:
+        """Attribution must test DECLARATION, not value.
+
+        Once the default became `observe`, inferring the source from "the mode
+        differs from the fallback" would report an explicit `off` -- the one
+        setting a cautious operator is most likely to write -- as `default`.
+        """
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("feature_flags:\n  coder_slice_ceremony_mode: off\n", encoding="utf-8")
+        st = explain_injection_modes("coder", config_path=cfg)[NAME]
+        assert st.mode == MODE_OFF
+        assert str(cfg) in st.source
+
+    def test_absent_config_is_default_even_though_mode_is_the_fallback(self, tmp_path: Path) -> None:
+        """PRODUCER KILL-CHECK for _config_declares.
+
+        Pairs with the test above. `config: off` is attributed correctly by
+        BOTH the declaration check and the old value-inference heuristic, so
+        that case alone cannot detect a regression. This case separates them:
+        with no config file the mode IS the fallback, and only a declaration
+        check can still say `default`. Together the two pin the real rule.
+        """
+        st = explain_injection_modes("coder", config_path=tmp_path / "absent.yaml")[NAME]
+        assert st.mode == MODE_OBSERVE
+        assert st.source == SOURCE_DEFAULT
+
+    def test_config_matching_the_default_value_is_not_claimed_as_config(self, tmp_path: Path) -> None:
+        """Documented limitation, pinned so it stays deliberate.
+
+        A config that writes exactly the default value is reported as
+        `default`. The effective mode is identical either way, so no operator
+        is misled about behaviour -- but if this ever needs to change, this
+        test is the record that the current answer was chosen, not missed.
+        """
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("feature_flags:\n  coder_slice_ceremony_mode: observe\n", encoding="utf-8")
+        st = explain_injection_modes("coder", config_path=cfg)[NAME]
+        assert st.mode == MODE_OBSERVE
+        assert st.source == SOURCE_DEFAULT
 
     def test_role_gated_is_distinct_from_default(self, tmp_path: Path) -> None:
         """CT17: 'you disabled it' and 'it does not apply here' must not look

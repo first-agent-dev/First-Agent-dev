@@ -50,7 +50,11 @@ class FeatureFlags:
     # model's context, so it must be opted into explicitly. This is the
     # OPPOSITE polarity from intent_guard_mode above, which fails closed to
     # "enforce" because it is a safety gate rather than an advisory payload.
-    coder_slice_ceremony_mode: str = "off"
+    # PLAN S5a (operator, 2026-09-07): defaults to "observe", not "off".
+    # `observe` emits telemetry that the trigger fired but leaves the request
+    # payload untouched, so an unconfigured run still cannot have its prompt
+    # rewritten -- while the harness reports what it WOULD have injected.
+    coder_slice_ceremony_mode: str = "observe"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -100,9 +104,10 @@ FAIL_OPEN_FLAGS: frozenset[str] = frozenset(
         "max_subagent_spawns_per_session",
         "blackboard_filtered_history_include_plans",
         "max_chain_retries",  # default=0 → fail-fast when unconfigured
-        # PLAN S5a: default="off" when flags are missing. An unreadable config
-        # cannot switch a live run's prompt composition on; "off" is provably
-        # identical to not having the feature.
+        # PLAN S5a: default="observe" when flags are missing. An unreadable
+        # config still cannot switch a live run's PROMPT composition on --
+        # only "enforce" alters the payload -- so the permissive direction
+        # here costs telemetry, never a rewritten context.
         "coder_slice_ceremony_mode",
     }
 )
@@ -305,7 +310,7 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
             found,
             "injections.coder_slice_ceremony.mode",
             ["coder_slice_ceremony_mode"],
-            "off",
+            "observe",
         ),
     )
 

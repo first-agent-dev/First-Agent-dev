@@ -26,11 +26,13 @@ Three design constraints drove the shape:
     If that ever changes, the indirection at :func:`mode_for` is where a lazy
     resolver would slot back in.
 
-3.  **Inert by default.** Every unknown, malformed, or unreadable input resolves
-    to :data:`MODE_OFF`. An injection rewrites the model's context; a config
-    typo must never silently turn that on. Note this is the opposite polarity
-    from IntentGuard, which fails CLOSED to "enforce" because it is a safety
-    gate. This is an advisory payload, so quiet is the safe direction.
+3.  **Never rewrites a prompt by accident.** Every unknown, malformed, or
+    unreadable input resolves to :data:`FALLBACK_MODE`, which is ``observe``:
+    telemetry only, payload untouched. A config typo therefore cannot turn a
+    context rewrite ON -- that needs an explicit ``enforce``. Note the
+    polarity is still the opposite of IntentGuard, which fails CLOSED to
+    "enforce" because it is a safety gate; this is an advisory payload, so the
+    unconfigured state is "tell me, don't act".
 
 The mode vocabulary is deliberately the same three states for every injection
 (:data:`INJECTION_MODES`), so an operator learns it once:
@@ -66,7 +68,19 @@ INJECTION_MODES: frozenset[str] = frozenset({MODE_OFF, MODE_OBSERVE, MODE_ENFORC
 #: Where anything unrecognised lands. ``off`` and not ``observe``: an operator
 #: who typo'd the mode has not consented to telemetry either, and ``off`` is the
 #: only value that is provably identical to not having the feature.
-FALLBACK_MODE = MODE_OFF
+#: The mode used whenever nothing else says otherwise: no ``--inject``, no
+#: config entry, an unreadable config, or a value outside the enum.
+#:
+#: ``observe`` rather than ``off`` (operator, 2026-09-07). This is safe in the
+#: sense that matters: only :data:`MODE_ENFORCE` alters the request payload, so
+#: an unconfigured or misconfigured run still cannot have its prompt rewritten
+#: -- it just reports which injections WOULD have fired. Defaulting to silence
+#: instead would make the feature invisible until someone edits config, which
+#: is how a control surface rots unnoticed.
+#:
+#: Role gating is NOT affected: an injection outside its spec's roles resolves
+#: to :data:`MODE_OFF`, so a planner stage never emits coder telemetry.
+FALLBACK_MODE = MODE_OBSERVE
 
 # ── Injection registry ─────────────────────────────────────────────────────
 
@@ -219,7 +233,7 @@ def parse_inject_overrides(values: Sequence[str] | None) -> dict[str, str]:
 #: tell an operator whether they disabled an injection or it simply does not
 #: apply to this role -- the distinction that made Q9 invisible.
 SOURCE_FLAG = "--inject flag"
-SOURCE_DEFAULT = "default (off)"
+SOURCE_DEFAULT = f"default ({FALLBACK_MODE})"
 SOURCE_ROLE_GATED = "role-gated (off)"
 
 
@@ -229,6 +243,38 @@ def _source_config(config_path: Path | None) -> str:
 
 #: Shown when no explicit config path was given, i.e. the usual `~/.fa/config.yaml`.
 _DEFAULT_CONFIG_LABEL = "~/.fa/config.yaml"
+
+
+def _config_declares(spec: InjectionSpec, config_path: Path | None) -> bool:
+    """True when the config file actually sets this injection's flag.
+
+    Attribution must not be inferred from the VALUE. Once the default became
+    ``observe``, "the mode is not the fallback" stopped meaning "config said
+    so" -- a config that explicitly writes ``observe`` would have been
+    mislabelled ``default``.
+
+    So compare the flags parsed from the file against the dataclass defaults:
+    a difference proves the file declared it. The one case this cannot
+    distinguish is a config that sets exactly the default value, which is
+    reported as ``default``; the effective mode is identical either way, so
+    the operator is never misled about what will happen.
+
+    Honest note on test strength: with a single three-valued injection this is
+    currently EQUIVALENT to the older "mode differs from the fallback"
+    heuristic, because a declared value that is neither the default nor a
+    distinguishable mode does not exist yet. It is written this way because
+    the equivalence is an accident of today's registry -- add one injection
+    whose flag default differs from FALLBACK_MODE, or one non-mode-valued
+    flag, and value-inference starts lying while this stays correct.
+    """
+    if (flags := _load_flags(config_path)) is None:
+        return False
+    try:
+        from fa.feature_flags import FeatureFlags
+
+        return spec.read_flag(flags) != spec.read_flag(FeatureFlags())
+    except Exception:  # noqa: BLE001 - attribution is advisory, never fatal
+        return False
 
 
 @dataclass(frozen=True)
@@ -265,7 +311,7 @@ def explain_injection_modes(
             mode, source = normalize_mode(override), SOURCE_FLAG
         else:
             mode = resolve_mode(spec, role, config_path=config_path)
-            source = _source_config(config_path) if mode != FALLBACK_MODE else SOURCE_DEFAULT
+            source = _source_config(config_path) if _config_declares(spec, config_path) else SOURCE_DEFAULT
         explained[name] = InjectionStatus(name=name, role=role, mode=mode, source=source, summary=spec.summary)
     return explained
 
@@ -299,14 +345,22 @@ def resolve_injection_modes(
 def mode_for(modes: InjectionModes | None, name: str) -> str:
     """Read one injection's mode from a resolver mapping, safely.
 
-    Returns :data:`MODE_OFF` when the mapping is absent, the injection is not
-    present, or the resolver raises. This is the function call sites should use
-    -- it is the single place the "absence means off" rule is enforced, so no
-    consumer has to remember it.
+    Returns :data:`MODE_OFF` for an absent mapping or an unknown injection
+    name. Note this is deliberately NOT :data:`FALLBACK_MODE`: those two cases
+    mean "this call site was never wired" and "no such injection exists", and
+    neither has anything to observe. The ``observe`` default belongs to
+    resolution -- a KNOWN injection that the operator has not configured.
+
+    A key that is present but holds a garbage value does go through
+    :func:`normalize_mode`, so it lands on :data:`FALLBACK_MODE`: that
+    injection does exist and was resolved, the value is just unusable.
+
+    This is the single place those rules live, so no consumer has to remember
+    them.
     """
-    if not modes:
+    if not modes or name not in modes:
         return MODE_OFF
-    return normalize_mode(modes.get(name))
+    return normalize_mode(modes[name])
 
 
 def is_active(modes: InjectionModes | None, name: str) -> bool:

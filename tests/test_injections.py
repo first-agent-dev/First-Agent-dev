@@ -65,9 +65,9 @@ class TestNormalizeMode:
     def test_anything_else_is_the_fallback(self, raw: object) -> None:
         assert normalize_mode(raw) == FALLBACK_MODE
 
-    def test_fallback_is_off_not_enforce(self) -> None:
+    def test_fallback_is_observe_not_enforce(self) -> None:
         """A config typo must never silently start rewriting prompts."""
-        assert FALLBACK_MODE == MODE_OFF
+        assert FALLBACK_MODE == MODE_OBSERVE
 
 
 # ── registry shape ─────────────────────────────────────────────────────────
@@ -134,20 +134,20 @@ class TestResolveMode:
         _write_config(cfg, "enforce")
         assert resolve_mode(CODER_SLICE_CEREMONY, role, config_path=cfg) == MODE_OFF
 
-    def test_missing_config_file_is_off(self, tmp_path: Path) -> None:
-        assert resolve_mode(CODER_SLICE_CEREMONY, "coder", config_path=tmp_path / "absent.yaml") == MODE_OFF
+    def test_missing_config_file_is_observe(self, tmp_path: Path) -> None:
+        assert resolve_mode(CODER_SLICE_CEREMONY, "coder", config_path=tmp_path / "absent.yaml") == MODE_OBSERVE
 
-    def test_malformed_config_is_off(self, tmp_path: Path) -> None:
+    def test_malformed_config_is_observe(self, tmp_path: Path) -> None:
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             "feature_flags:\n  injections:\n    coder_slice_ceremony:\n      mode: bogus\n", encoding="utf-8"
         )
-        assert resolve_mode(CODER_SLICE_CEREMONY, "coder", config_path=cfg) == MODE_OFF
+        assert resolve_mode(CODER_SLICE_CEREMONY, "coder", config_path=cfg) == MODE_OBSERVE
 
-    def test_unrelated_config_is_off(self, tmp_path: Path) -> None:
+    def test_unrelated_config_is_observe(self, tmp_path: Path) -> None:
         cfg = tmp_path / "config.yaml"
         cfg.write_text("feature_flags:\n  telemetry_enabled: true\n", encoding="utf-8")
-        assert resolve_mode(CODER_SLICE_CEREMONY, "coder", config_path=cfg) == MODE_OFF
+        assert resolve_mode(CODER_SLICE_CEREMONY, "coder", config_path=cfg) == MODE_OBSERVE
 
     def test_spec_reading_a_missing_flag_degrades(self, tmp_path: Path) -> None:
         """A spec left pointing at a deleted field must not crash a run."""
@@ -247,9 +247,9 @@ class TestPrecedence:
         modes = resolve_injection_modes("coder", config_path=cfg)
         assert modes[CODER_SLICE_CEREMONY.name] == MODE_OBSERVE
 
-    def test_off_when_neither(self, tmp_path: Path) -> None:
+    def test_observe_when_neither(self, tmp_path: Path) -> None:
         modes = resolve_injection_modes("coder", config_path=tmp_path / "absent.yaml")
-        assert modes[CODER_SLICE_CEREMONY.name] == MODE_OFF
+        assert modes[CODER_SLICE_CEREMONY.name] == MODE_OBSERVE
 
     def test_role_gate_beats_the_flag(self, tmp_path: Path) -> None:
         """PRODUCER KILL-CHECK for role gating on the override path.
@@ -288,13 +288,32 @@ class TestSafeReads:
     def test_empty_mapping_is_off(self) -> None:
         assert mode_for({}, CODER_SLICE_CEREMONY.name) == MODE_OFF
 
+    def test_default_observe_still_cannot_rewrite_a_prompt(self, tmp_path: Path) -> None:
+        """NEGATIVE PROOF for the observe-by-default decision.
+
+        Making the default louder is only safe because `observe` is inert on
+        the payload. If someone ever makes is_active() true for observe, an
+        unconfigured run would start silently rewriting model context -- so
+        the safety of the default is pinned here, not just its value.
+        """
+        modes = resolve_injection_modes("coder", config_path=tmp_path / "absent.yaml")
+        assert modes[CODER_SLICE_CEREMONY.name] == MODE_OBSERVE
+        assert is_active(modes, CODER_SLICE_CEREMONY.name) is False
+        assert is_observed(modes, CODER_SLICE_CEREMONY.name) is True
+
+    def test_unwired_call_site_is_off_not_observe(self) -> None:
+        """An absent mapping means "nobody wired this", which has nothing to
+        observe -- distinct from a known injection left unconfigured."""
+        assert mode_for(None, CODER_SLICE_CEREMONY.name) == MODE_OFF
+        assert mode_for({}, CODER_SLICE_CEREMONY.name) == MODE_OFF
+
     def test_unknown_injection_name_is_off(self) -> None:
         modes = resolve_injection_modes("coder")
         assert mode_for(modes, "no_such_injection") == MODE_OFF
 
     def test_garbage_value_is_normalized(self) -> None:
         """Defence in depth: a hand-built mapping cannot smuggle a bad mode."""
-        assert mode_for({"x": "nonsense"}, "x") == MODE_OFF
+        assert mode_for({"x": "nonsense"}, "x") == MODE_OBSERVE
 
     @pytest.mark.parametrize(
         ("mode", "active", "observed"),

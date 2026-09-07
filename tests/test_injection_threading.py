@@ -28,7 +28,14 @@ from typing import Any
 import pytest
 
 from fa.inner_loop import coder_loop
-from fa.inner_loop.injections import CODER_SLICE_CEREMONY, MODE_ENFORCE, MODE_OFF, mode_for
+from fa.inner_loop.injections import (
+    CODER_SLICE_CEREMONY,
+    MODE_ENFORCE,
+    MODE_OBSERVE,
+    MODE_OFF,
+    is_active,
+    mode_for,
+)
 from fa.inner_loop.workflow_controller import WorkflowContext
 
 
@@ -58,10 +65,10 @@ class TestControllerCarriesTheSignal:
         ctx = _make_context(Path("/tmp"))
         assert ctx.inject_overrides == {}
 
-    def test_default_context_resolves_everything_off(self, tmp_path: Path) -> None:
-        """Default path: byte-identical to the pre-feature harness."""
+    def test_default_context_resolves_to_observe(self, tmp_path: Path) -> None:
+        """Default path: telemetry only, payload untouched."""
         seen = _capture_stage_args(tmp_path)
-        assert mode_for(seen.injection_modes, CODER_SLICE_CEREMONY.name) == MODE_OFF
+        assert mode_for(seen.injection_modes, CODER_SLICE_CEREMONY.name) == MODE_OBSERVE
 
     def test_stage_kwargs_carries_the_modes(self, tmp_path: Path) -> None:
         """PRODUCER KILL-CHECK for the stage_kwargs key."""
@@ -178,10 +185,14 @@ class TestScopeModeUnchanged:
 # ── Inertness (Q7) ─────────────────────────────────────────────────────────
 
 
-def test_default_run_is_byte_identical_to_pre_feature(tmp_path: Path) -> None:
-    """Absent an explicit --inject, every injection resolves off."""
+def test_default_run_leaves_the_payload_untouched(tmp_path: Path) -> None:
+    """Absent an explicit --inject, no injection may ALTER the request.
+
+    The default is `observe`, so this is no longer "every mode is off" -- the
+    invariant that actually matters is that nothing reaches `enforce`.
+    """
     seen = _capture_stage_args(tmp_path)
-    assert all(v == MODE_OFF for v in seen.injection_modes.values())
+    assert not any(is_active(seen.injection_modes, n) for n in seen.injection_modes)
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
