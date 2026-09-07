@@ -3245,6 +3245,60 @@ the judge contradicts is itself a signal. Not in S15.
 | Slice IDs validated against plan | LIVE (S12) |
 | Judge shown plan + diff | LIVE (S13), `enforce` per Q18 |
 
+## 27.8d SIMPLIFICATION REVIEW — S15's tail may be largely unnecessary
+
+Raised by the operator: "this is getting too complicated and complex. does a
+better, wise and elegant solution exist?" Answer: **yes**, and the mechanism is
+already in the codebase.
+
+**Finding (verified).** `PlanIds.commands` — runnable acceptance commands
+extracted from fenced ```verify blocks (`plan_ids.py:_VERIFY_BLOCK_RE@85`,
+`_extract_commands@123`) — has **ZERO consumers repo-wide**. `.slices` is read
+at `workflow_controller.py:332,:461`; `.commands` is read nowhere. The harness
+extracts each plan's executable acceptance criteria into a frozen dataclass and
+discards them, while S15 builds an elaborate apparatus to recover weaker
+information from judge *prose*.
+
+`feature-planning/SKILL.md:630` already mandates per-slice tests with
+kill-checks, and `workflow_controller.py:413` already has a fail-safe
+subprocess runner. The pieces exist; nothing joins them.
+
+**Consequence for the open questions.** Under a design where the harness runs
+the plan's own acceptance commands and a slice is complete iff its commands
+exit 0:
+
+| Item | Fate |
+|---|---|
+| Q17 (unjudged slice, full gate, re-ask, halt) | **dissolves** — coverage stops being self-declared |
+| Q20 normalisation matrix (T51) | **deleted** — nothing depends on parsing `**S1**` |
+| Q20 `tool_choice` adapter work | **deferred indefinitely** |
+| Q21 coder self-report | **dissolves** |
+| Q16 per-slice FAIL | unchanged, still live |
+| Q18 evidence block | unchanged, MORE valuable (now carries command output) |
+
+**Known limits (not oversold).** Plans with no verify blocks degrade to today's
+advisory path; a command can be vacuous (`pytest -q` on an empty file exits 0);
+a coder can weaken a test — mitigated because the diff already reaches the
+judge; doc/ADR slices are not command-testable and stay judge-assessed. The
+judge is therefore NOT removed: factual questions move to facts, judgement
+questions stay with the judge.
+
+**Proposed S16 — harness runs the plan's acceptance commands.** Read
+`PlanIds.commands` per slice, run with timeout, capture exit + output, slice
+complete iff exit 0, results into the evidence block, absent blocks ⇒ advisory.
+One function, one call site, plus tests — against the 29 GAPs / 46 T-rows
+currently queued to make prose trustworthy.
+
+**Sequencing decision.** S15c (unmasked secret in diffs) ships first regardless
+— live security defect, independent of this. Then **stop and re-derive** what
+remains of S15 rather than building S15d/S15e as written; a large part is
+expected to evaporate. Full reasoning:
+`worklogs/reviews/SIMPLIFICATION-the-elegant-path.md`.
+
+**Process note.** This was findable two audits ago. `.commands` populated with
+no readers is the exact "grep for readers, not writers" pattern already logged
+as a lesson in this plan, unapplied to the one field that mattered.
+
 ## 27.9 Definition of Done
 
 - [ ] Every GAP20–GAP34 row has a passing `T#` **and** a killed mutant.
