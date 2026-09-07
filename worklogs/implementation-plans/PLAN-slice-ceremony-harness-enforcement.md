@@ -2889,9 +2889,13 @@ CONSUMER KILL-CHECK: n/a (payload is terminal)
 CT25: slice_coverage_rule  TYPE:function
 PRODUCER: validate_slice_ids (extend)
 INPUTS: EvalReport, RunEvidence
-OUTPUTS: (EvalReport, warnings) — verdict downgraded per Q17
+OUTPUTS: (EvalReport, warnings, coverage_gap: tuple[str, ...])
 INVARIANTS: (1) never UPGRADES a verdict; (2) inert when no plan resolved;
-            (3) inert when plan declared zero slices (B-3 warns separately)
+            (3) inert when plan declared zero slices (B-3 warns separately);
+            (4) FULL GATE per Q17 — one unreported slice weighs the same as
+                all of them, no threshold;
+            (5) the halt reason must be textually distinct from an
+                evaluator-declared BLOCKED (prompt.py:814 = external obstacle)
 KILL-CHECK: delete the coverage branch ⇒ T38 fails
 ```
 
@@ -2909,7 +2913,9 @@ KILL-CHECK: delete the coverage branch ⇒ T38 fails
 | P37 | secret in tracked diff | masked in task and log | S15c | T30 |
 | P38 | 5000 untracked files | block within budget | S15a | T35 |
 | P39 | one 9000-line file + one critical file | both represented | S15a | T37 |
-| P40 | eval judges 1 of 20 slices | not DONE (Q17) | S15d | T38 |
+| P40 | eval judges 1 of 20 slices | re-ask eval once; still short ⇒ halt for operator | S15d | T38 |
+| P44 | eval retry then reports all 20 | run continues normally, no halt | S15d | T52 |
+| P45 | judge writes `**S1**: PASS` for every slice | normalised, coverage satisfied, NO false halt | S15d | T51 |
 | P41 | repair round 2 | task carries round-1 findings | S15e | T39 |
 | P42 | two runs, same task, same second | distinct artifact dirs | S15f | T48 |
 | P43 | 3 repair rounds | 3 recoverable eval records | S15f | T49 |
@@ -2965,11 +2971,24 @@ Traces-to: G10 · CT22 · GAP22/23. L0→L3.
 - `--plan` supplied + zero slices ⇒ structured warning naming the path (B-3).
 - Exit: T33, T34. Kill-check: re-read at eval ⇒ T33 fails.
 
-### S15d — enforce coverage  ⚠️ BLOCKED ON Q17
-Traces-to: CT25 · GAP26/29/30. Do not start until Q17 is answered.
-- Coverage rule per Q17; case-fold comparison preserving `S5`≠`S5a` (GAP29);
-  retain the failing record when Q16 fires on an invented ID (GAP30).
-- Exit: T38, T41, T42, T43.
+### S15d — enforce coverage  ✅ UNBLOCKED (Q17 = (d) re-ask once, then halt for operator)
+Traces-to: CT25 · GAP26/29/30 · Q20. L1→L3.
+- **Retry step.** On a non-empty coverage gap, re-run the *eval* stage exactly
+  once, appending the missing IDs to the eval task ("you did not report on
+  S2, S3 — report on those"). Budget `max_eval_retries = 1`, a module constant,
+  NOT an operator flag (a new knob is a new policy choice ⇒ new Q#).
+- **Halt step.** If the retry still leaves a gap: terminate for operator
+  attention. Do NOT re-run the coder, do NOT escalate to the planner.
+  Reason string must name the slices and the attempt count.
+- **Full gate** (operator-confirmed): any single unreported slice trips it.
+- Case-fold comparison preserving `S5`≠`S5a` (GAP29); retain the failing record
+  when Q16 fires on an invented ID (GAP30).
+- **Parser-drift mitigation (Q20, mandatory in this slice).** Before the gap is
+  computed, normalise judge lines: strip `**`/`*`/`_`/backticks around the ID,
+  accept table-cell (`| S1 | PASS |`) and numbered-list (`1. S1:`) leaders,
+  accept `PASSED`/`FAILED`, accept an optional `Step ` prefix. Without this the
+  full gate turns formatting drift into a false halt — measured, see §27.8b.
+- Exit: T38, T41, T42, T43, **T51 (normalisation matrix, red-first)**.
 
 ### S15e — close the repair feedback loop
 Traces-to: G9 · GAP27. L0→L3.
@@ -2985,8 +3004,15 @@ Traces-to: GAP33/34. L1→L3.
   whichever S6a settles; S15f only requires the history exist).
 - Exit: T47, T48, T49, T50 (**T16e, finally written**).
 
-### S15g — governance and framing
+### S15g — governance and framing  ✅ UNBLOCKED (Q18 = (i) enforce + amend ADR-10)
 Traces-to: G12 · CT24 · GAP28/31/32. L0→L3.
+- **Default `enforce`** for `eval_evidence_block` (operator-confirmed).
+- **ADR-10 I-6 clause 4 amendment is part of this slice, not a follow-up.**
+  Record the carve-out in the ADR text: payloads supplying the *artifact under
+  review* default to `enforce`; payloads supplying *instructions to the model*
+  keep the `observe` default. Name `coder_slice_ceremony` (instruction-class,
+  unchanged) and `eval_evidence_block` (evidence-class, `enforce`) as the two
+  worked examples. Clauses 1/2/3/5 apply unchanged to both.
 - Register `eval_evidence_block` as an `InjectionSpec` + `FeatureFlags` field,
   mirroring `coder_slice_ceremony`'s **5 coupled sites** (dataclass, `as_dict`,
   fail-open set, type map, loader) — verified count, not guessed.
@@ -3035,31 +3061,158 @@ default mode; unregister the spec.
 | RK21 | Base commit wrong under `--resume` | Q19 |
 | RK22 | Redacting the task masks a legitimately-similar string | Mask is exact-substring on known secrets only; same tradeoff already accepted for tool output |
 | RK23 | Coverage rule turns partial judging into repair storms | Q17 must state the budget interaction |
-| RK24 | S15g default-mode choice silently disables shipped behaviour | Q18, blocking on operator |
+| RK24 | S15g default-mode choice silently disables shipped behaviour | CLOSED: Q18=(i) `enforce`; ADR-10 amended in-slice |
+| RK25 | Full gate + brittle regex ⇒ false halts on formatting drift | S15d normalisation matrix (T51); measured in §27.8b |
+| RK26 | Q19 answer assumes a workflow resume path that does not exist | §27.8a; S15a persists the base, resume logic deferred to Q20 |
 
-## 27.8 Open questions
+## 27.8 Open questions — ANSWERED by the operator
 
-- **Q17 (BLOCKING, gates S15d).** An unjudged plan slice: (a) forces
-  `REPAIR_REQUIRED`; (b) forces `BLOCKED` (judge failed its job — arguably the
-  honest reading, since the fault is the evaluator's, not the coder's);
-  (c) warn only. Note (a) re-runs the *coder* for an *evaluator* failure.
-  My recommendation: **(b)**, because it routes the fault to the party that
-  caused it. Not chosen unilaterally.
-- **Q18 (BLOCKING, gates S15g).** ADR-10 I-6 mandates `observe` as the default
-  for a registered injection, but S13 shipped always-on. Defaulting to
-  `observe` silently regresses landed behaviour; defaulting to `enforce`
-  deviates from I-6. Options: (i) `enforce` + ADR-10 amendment recording the
-  carve-out; (ii) `observe` + accept the regression; (iii) treat harness
-  *evidence* as a distinct category from prompt *injection* and amend I-6's
-  scope. Leaning (i).
-- **Q19 (non-blocking).** Under `--resume`, is the base commit the original
-  run's base or the resumed session's HEAD? Default if unanswered: session
-  HEAD, recorded in the artifact.
+All three are closed. Recorded verbatim in intent; implementation notes follow
+each.
+
+- **Q17 — ANSWERED: option (d), re-ask the judge, then STOP FOR THE OPERATOR.**
+  On detecting unreported slices, re-run the *eval* stage once with the missing
+  IDs named in the task. If the second review still leaves slices unreported,
+  **halt and surface to the operator** — do NOT escalate to the planner and do
+  NOT re-run the coder. Operator's rationale, verbatim in intent: a further
+  automated escalation "sounds loopy"; the pair-programmer model is that the
+  human interferes at the point of confusion. Deeper automation is explicitly
+  deferred to a later iteration.
+  - **Sub-question — ANSWERED: full gate.** One unreported slice out of twenty
+    is treated exactly like nineteen. No threshold, no proportional rule.
+  - Budget: exactly one eval retry (`max_eval_retries = 1`, not operator-tunable
+    in this slice — a new knob would be a new policy choice and thus a new Q#).
+  - Terminal status on the second failure must be **distinguishable** from an
+    evaluator-declared `BLOCKED` (which per `prompt.py:814` means an *external*
+    obstacle). Use a distinct reason string, e.g.
+    `evaluator did not report on slices S2, S3 after 2 attempts`.
+- **Q18 — ANSWERED: option (i), `enforce` + amend ADR-10.** The evidence block
+  defaults to `enforce`. Operator's rationale: evidence is important enough to
+  be on by default. S15g therefore does BOTH: registers the block as a proper
+  `InjectionSpec` with a flag (satisfying I-6 clauses 1, 2, 3, 5) and amends
+  ADR-10 I-6 clause 4 to record the carve-out for evidence-class payloads.
+  The amendment must state the distinction explicitly: payloads that supply the
+  *artifact under review* default to `enforce`; payloads that supply
+  *instructions to the model* keep the `observe` default. The existing
+  `coder_slice_ceremony` injection is instruction-class and its default is
+  unchanged.
+- **Q19 — ANSWERED: the original run's starting point.** When a run resumes, the
+  diff is measured from the base commit of the *original* run, not the resumed
+  session's HEAD. Operator's rationale: both real resume scenarios ("it broke,
+  continue" and "here is a correction, continue") are the *same run and the same
+  chain of changes*, so the judge's frame of reference must not shift mid-chain.
+  - **Implementation consequence:** the base commit must be **persisted** in the
+    run artifact at t0 and **re-read** on resume, not recomputed. This upgrades
+    Q19 from a defaulting decision to a storage requirement on CT22
+    (`run_evidence_snapshot` gains a persist/reload path).
+  - **See §27.8a — the premise needs correcting before this can be built.**
+
+## 27.8a Q19 premise correction — `fa workflow` has no `--resume`
+
+Discovered while implementing the operator's answers; verified at `87ea5e2`.
+
+The Q19 question as I originally posed it presupposed that a workflow run can be
+resumed. **It cannot.** Evidence, mechanically checked:
+
+- `build_parser()` subcommand inspection: `run` has `--resume`; **`workflow`
+  does not**.
+- `run_workflow()` has **no `resume` parameter** in its signature
+  (`workflow_controller.py`, `def run_workflow`).
+- `_cmd_workflow` never reads `args.resume` in its call to `run_workflow`.
+- The one `"resume"` key inside the controller (`workflow_controller.py:574`) is
+  `"resume": not fresh` — a *per-stage* flag meaning "this is not stage 0, so
+  keep the on-disk PR draft so the next role can read the previous role's work
+  log". It is intra-run plumbing between stages, not run-level resume.
+- `--resume` on `fa run` means, per `cli_help`: "Resume an existing session:
+  preserve the on-disk PR draft so the previous role's work log can be read."
+  That is *draft preservation*, not restoration of history or of a base commit.
+
+So the operator's stated scenarios — "it broke, continue where we left off" and
+"stop, here is a correction, continue" — **are not implemented for workflow runs
+today**. The operator flagged exactly this uncertainty ("to be fair I never even
+tried resume... no idea, actually") and was correct to.
+
+**Disposition.** The answer to Q19 is recorded and correct *as a requirement for
+whenever workflow resume exists*. S15a implements the half that is real now:
+pin the base commit at t0 and **persist it in the run artifact** so it is
+already durable when resume arrives. No resume-specific branch is written in
+S15, because there is no resume path to branch on; writing one would be
+unreachable code and untestable at the live path.
+
+**New backlog item (not in S15):** design workflow-level resume, including
+whether it restores the pinned base, the plan digest, and the repair/replan
+counters. Promoted as **Q20** rather than assumed.
+
+## 27.8b Q20 (NEW, non-blocking) — the eval output contract is regex-scraped
+
+Raised by the operator's design challenge: "there is a notion that then a
+developer needs to use regular expressions, something is wrong in design."
+
+The concern is legitimate and is now measured. `_STEP_LINE_RE`
+(`workflow_artifacts.py:378`) parses the judge's per-slice verdict lines. Tested
+against realistic model formatting:
+
+| Judge output | Parsed? |
+|---|---|
+| `- S1: PASS - ok` | yes |
+| `- S1: PASS — em-dash` | yes |
+| `* S2: FAIL: broken` | yes |
+| `  - s3: pass - lowercase` | yes |
+| `- S5a: PARTIAL - suffix` | yes |
+| `- **S1**: PASS - bolded` | **NO** |
+| `\| S1 \| PASS \| ok \|` (table) | **NO** |
+| `- S1: PASSED - past tense` | **NO** |
+| `1. S1: PASS - numbered` | **NO** |
+| `- Step S1: PASS` | **NO** |
+
+**This interacts directly with the Q17 full-gate answer.** Demonstrated:
+
+```
+plain markdown  parsed=['S1','S2']  unreported=[]
+bolded IDs      parsed=[]           unreported=['S1','S2']
+markdown table  parsed=[]           unreported=['S1','S2']
+```
+
+A judge that reviewed **every slice correctly** but wrote `**S1**` instead of
+`S1` is indistinguishable, to the harness, from a judge that reviewed nothing.
+Under the full gate that now halts the run for the operator, **formatting drift
+becomes a false stop**. This is a real cost of the (d)+full-gate combination and
+must be mitigated, not just noted.
+
+**Mitigation shipped inside S15d (cheap, no architecture change):** normalise
+the line before matching — strip markdown emphasis (`**`, `*`, `_`, backticks),
+accept table-cell and numbered-list leaders, accept `PASSED`/`FAILED`, accept an
+optional `Step ` prefix. Each becomes a T-row with a red-first test. This does
+not make parsing sound; it removes the failure modes a competent model actually
+produces.
+
+**The architectural fix is deliberately NOT in S15.** Options, for a later
+slice:
+
+1. **Tool-call contract** — give the eval role a `submit_verdict` tool whose
+   JSON schema the provider validates. All three provider adapters already send
+   `tools` (`anthropic.py`, `openai_compat.py`, `mistral.py`), so this is
+   portable. The judge "answers" by calling the tool; there is no prose to
+   parse. This is the standard production answer and is the recommended target.
+2. **Provider structured output** (`response_format: json_schema`) — the repo's
+   own Mistral adapter documents **100% vs 64% schema conformance** for
+   `json_schema` over `json_object` (`providers/mistral.py:22-26`). But
+   `response_format` is implemented for **Mistral only** (16 refs) and for no
+   other adapter, so choosing this would make the verdict contract
+   provider-dependent. Rejected for that reason.
+3. Keep regex as a **fallback** behind either of the above, since a model can
+   still end its turn with prose instead of a tool call.
+
+Recommendation: **(1) with (3) as fallback**, as its own slice after S15.
+Not started; no code in S15 depends on it.
 
 ## 27.9 Definition of Done
 
 - [ ] Every GAP20–GAP34 row has a passing `T#` **and** a killed mutant.
-- [ ] Q17/Q18 answered by the operator and recorded here before S15d/S15g.
+- [x] Q17/Q18/Q19 answered by the operator and recorded in §27.8.
+- [ ] S15d ships the Q20 normalisation matrix; a bolded/tabled judge report does
+      NOT produce a false halt (T51 watched red first).
+- [ ] S15g amends ADR-10 I-6 clause 4 in the same commit as the `enforce` default.
 - [ ] `fa inject` lists `eval_evidence_block`; `off` yields a byte-identical task.
 - [ ] Secret probe: no known secret reaches `args.task` or `events.jsonl`.
 - [ ] Commit-then-judge live row passes on the host.
