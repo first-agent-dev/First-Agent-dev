@@ -44,6 +44,13 @@ class FeatureFlags:
     # S12.4 (CT4): IntentGuard enforcement mode. Closed enum; unknown values
     # degrade to "enforce" at the guard (fail-closed) with a warning.
     intent_guard_mode: str = "enforce"
+    # PLAN S5a: mode for the coder role's per-slice implementation ceremony
+    # injection. Closed enum {off, observe, enforce}; see
+    # fa.inner_loop.injections. Default "off" -- an injection rewrites the
+    # model's context, so it must be opted into explicitly. This is the
+    # OPPOSITE polarity from intent_guard_mode above, which fails closed to
+    # "enforce" because it is a safety gate rather than an advisory payload.
+    coder_slice_ceremony_mode: str = "off"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -60,6 +67,7 @@ class FeatureFlags:
             "blackboard.filtered_history_include_plans": self.blackboard_filtered_history_include_plans,
             "max_chain_retries": self.max_chain_retries,
             "intent_guard.mode": self.intent_guard_mode,
+            "injections.coder_slice_ceremony.mode": self.coder_slice_ceremony_mode,
         }
 
 
@@ -92,6 +100,10 @@ FAIL_OPEN_FLAGS: frozenset[str] = frozenset(
         "max_subagent_spawns_per_session",
         "blackboard_filtered_history_include_plans",
         "max_chain_retries",  # default=0 → fail-fast when unconfigured
+        # PLAN S5a: default="off" when flags are missing. An unreadable config
+        # cannot switch a live run's prompt composition on; "off" is provably
+        # identical to not having the feature.
+        "coder_slice_ceremony_mode",
     }
 )
 
@@ -127,6 +139,8 @@ _KNOWN_FLAGS: dict[str, str] = {
     "max_chain_retries": "int",
     "intent_guard.mode": "str",
     "intent_guard_mode": "str",
+    "injections.coder_slice_ceremony.mode": "str",
+    "coder_slice_ceremony_mode": "str",
 }
 
 
@@ -287,6 +301,12 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
         ),
         max_chain_retries=_get_int(found, "max_chain_retries", [], 0),
         intent_guard_mode=_get_str(found, "intent_guard.mode", ["intent_guard_mode"], "enforce"),
+        coder_slice_ceremony_mode=_get_str(
+            found,
+            "injections.coder_slice_ceremony.mode",
+            ["coder_slice_ceremony_mode"],
+            "off",
+        ),
     )
 
     return FeatureFlagsLoadResult(flags=flags, warnings=tuple(warnings))

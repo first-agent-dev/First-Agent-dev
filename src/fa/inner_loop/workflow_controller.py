@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from fa.inner_loop.coder_loop import SessionOutcome
+from fa.inner_loop.injections import build_injection_modes
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.workflow_artifacts import (
     EvalReport,
@@ -129,11 +130,16 @@ class WorkflowContext:
     # is dispatched. ``None`` means no deadline, which is what every existing
     # caller (``_cmd_workflow``) passes, so their behaviour is unchanged.
     deadline_mono: float | None = None
-    # PLAN S5a (CT3): per-run ceremony mode, forwarded to every stage via
-    # stage_kwargs. Defaults to "off" so every existing construction site --
-    # including _cmd_workflow, which does not set it -- keeps today's
-    # behaviour exactly. Q7 decides who supplies a non-"off" value.
-    slice_ceremony: str = "off"
+    # PLAN S5a: opt-in switch for prompt injections (fa.inner_loop.injections)
+    # on this run's stages. False for every existing construction site --
+    # including _cmd_workflow -- so their behaviour is unchanged.
+    #
+    # Q7 resolved: the WORKFLOW owns this. Injections are about executing a
+    # planned slice, which is the pipeline's job; a standalone `fa run` is
+    # often a one-off where a protocol payload is noise. The per-injection
+    # MODE still comes from config, so this flag only decides whether the
+    # stage is allowed to consult it at all.
+    injections_enabled: bool = False
 
     def task_for(self, role: str) -> str | None:
         return self.per_role_task.get(role) or self.base_task
@@ -286,16 +292,13 @@ def _run_stage(
         "output_mode": ctx.output_mode,
         "detail": "standard",
         "no_color": False,
-        # PLAN S5a (CT3): explicit per-stage ceremony signal. It exists as its
-        # own stage_kwargs key because the L2 injection site is gated on
-        # ``_is_chat_role`` (coder_loop.py:605) -- a predicate about a
+        # PLAN S5a: per-injection mode resolvers for THIS role. A separate
+        # stage_kwargs key because the L2 injection site is gated on
+        # ``_is_chat_role`` (coder_loop.py:613) -- a predicate about a
         # DIFFERENT feature -- so a workflow coder stage could never reach it.
-        # Making this an argument decouples the two.
-        #
-        # Pinned to "off" pending Q7 (which layer owns the value). "off" is
-        # byte-identical to pre-feature behaviour, so this key is inert
-        # plumbing until that question is answered.
-        "slice_ceremony": ctx.slice_ceremony,
+        # Resolvers, not strings: the mode is read per turn, so a config edit
+        # lands without restarting a running pipeline.
+        "injection_modes": (build_injection_modes(role) if ctx.injections_enabled else None),
     }
     if ctx.run_context is not None and ctx.session_context is not None:
         stage_kwargs.update(

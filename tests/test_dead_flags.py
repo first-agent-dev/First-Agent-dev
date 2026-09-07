@@ -49,6 +49,9 @@ class TestDeadFlagsUnit:
             "blackboard_filtered_history_include_plans",
             "max_chain_retries",
             "intent_guard_mode",
+            # PLAN S5a: mode for the coder-role per-slice ceremony injection
+            # (fa.inner_loop.injections). Default "off".
+            "coder_slice_ceremony_mode",
         }
         assert declared_names == expected, (
             f"FeatureFlags drifted: missing={expected - declared_names} extra={declared_names - expected}"

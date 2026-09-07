@@ -84,6 +84,7 @@ from fa.inner_loop.hooks.base import HookPayload, HookRegistry, LifecyclePoint
 from fa.inner_loop.hooks.loop_guard import (
     LOOP_GUARD_REASON_PREFIX as LOOP_GUARD_REASON_PREFIX,
 )
+from fa.inner_loop.injections import InjectionModes
 from fa.inner_loop.loop import SessionRun, run_session
 from fa.inner_loop.observations import build_observation_block
 from fa.inner_loop.path_risk import (
@@ -359,12 +360,15 @@ def drive_session(
     system_prompt_extra: str = "",
     turn_context: str = "",
     scope_mode: str = "",
-    # PLAN S5a (CT3): per-slice ceremony mode for THIS stage. Deliberately a
-    # separate argument from ``scope_mode``: reusing scope_mode would switch on
-    # the chat-only scope machinery (observed_tiers, next_level, escalation
-    # events) as a side effect. Default "off" so every existing caller keeps
-    # today's behaviour byte-for-byte.
-    slice_ceremony: str = "off",
+    # PLAN S5a: per-injection mode RESOLVERS for this stage, keyed by
+    # injection name (fa.inner_loop.injections). Resolvers rather than strings
+    # so the mode is read when it is needed, letting a config edit -- e.g. a
+    # WebUI toggle -- take effect on the next turn without restarting the
+    # agent. Deliberately separate from ``scope_mode``: reusing that would
+    # switch on chat-only scope machinery (observed_tiers, next_level,
+    # escalation events) as a side effect. ``None`` means "no injections",
+    # which is what every existing caller gets.
+    injection_modes: InjectionModes | None = None,
     initial_memory_summary: str = "",
     temperature: float | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -452,7 +456,7 @@ def drive_session(
             system_prompt_extra=system_prompt_extra,
             turn_context=turn_context,
             scope_mode=scope_mode,
-            slice_ceremony=slice_ceremony,
+            injection_modes=injection_modes,
             initial_memory_summary=initial_memory_summary,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -478,7 +482,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     system_prompt_extra: str = "",
     turn_context: str = "",
     scope_mode: str = "",
-    slice_ceremony: str = "off",
+    injection_modes: InjectionModes | None = None,
     initial_memory_summary: str = "",
     temperature: float | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
