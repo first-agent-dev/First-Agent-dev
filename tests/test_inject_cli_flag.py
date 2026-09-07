@@ -19,12 +19,18 @@ from pathlib import Path
 
 import pytest
 
-from fa.cli import _resolved_injection_modes, build_parser
+from fa.cli import _cmd_inject, _resolved_injection_modes, build_parser
 from fa.inner_loop.injections import (
     CODER_SLICE_CEREMONY,
+    INJECTION_SPECS,
     MODE_ENFORCE,
     MODE_OBSERVE,
     MODE_OFF,
+    SOURCE_DEFAULT,
+    SOURCE_FLAG,
+    SOURCE_ROLE_GATED,
+    explain_injection_modes,
+    resolve_injection_modes,
 )
 
 NAME = CODER_SLICE_CEREMONY.name
@@ -91,12 +97,19 @@ class TestResolvedInjectionModes:
         args.injection_modes = {NAME: MODE_OFF}
         assert _resolved_injection_modes(args, "coder")[NAME] == MODE_OFF
 
-    def test_malformed_flag_degrades_rather_than_raising(self) -> None:
+    def test_malformed_flag_degrades_to_all_off(self) -> None:
         """By this point the session is being built, so aborting would be a
         crash mid-construction; _cmd_workflow rejects bad input up front where
-        a clean non-zero exit is still possible."""
+        a clean non-zero exit is still possible.
+
+        The degraded result is a full all-off mapping rather than an empty one:
+        the shape a caller gets must not depend on whether the operator made a
+        typo, or a consumer's `modes[name]` starts raising KeyError only on the
+        error path.
+        """
         args = build_parser().parse_args(["run", "--inject", "bogus=enforce", "task"])
-        assert _resolved_injection_modes(args, "coder") == {}
+        modes = _resolved_injection_modes(args, "coder")
+        assert modes == {NAME: MODE_OFF}
 
     def test_namespace_without_the_attribute_is_safe(self) -> None:
         """A hand-built Namespace (tests, conformance harness) must not crash."""
@@ -118,3 +131,85 @@ class TestWorkflowRejectsBadInject:
         )
         assert _cmd_workflow(args) == 2
         assert "inject" in capsys.readouterr().err.lower()
+
+
+# ── S5d / G9: `fa inject` introspection ─────────────────────────────────────
+
+
+class TestExplainInjectionModes:
+    """root=injections class=C0 claim=CT17/CT18 path=S5d
+
+    oracle=the winning input for each (role, overrides, config) triple.
+    producer-kill-check=hardcoding source to any single value fails the
+    attribution tests; breaking the projection fails test_projection_matches.
+    """
+
+    def test_flag_source(self) -> None:
+        st = explain_injection_modes("coder", overrides={NAME: MODE_ENFORCE})[NAME]
+        assert (st.mode, st.source) == (MODE_ENFORCE, SOURCE_FLAG)
+
+    def test_default_source(self, tmp_path: Path) -> None:
+        st = explain_injection_modes("coder", config_path=tmp_path / "absent.yaml")[NAME]
+        assert (st.mode, st.source) == (MODE_OFF, SOURCE_DEFAULT)
+
+    def test_role_gated_is_distinct_from_default(self, tmp_path: Path) -> None:
+        """CT17: 'you disabled it' and 'it does not apply here' must not look
+        identical -- that ambiguity is what made the Q9 bug invisible."""
+        st = explain_injection_modes("planner", overrides={NAME: MODE_ENFORCE}, config_path=tmp_path / "absent.yaml")[
+            NAME
+        ]
+        assert (st.mode, st.source) == (MODE_OFF, SOURCE_ROLE_GATED)
+        assert st.source != SOURCE_DEFAULT
+
+    def test_config_source_names_the_file(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("feature_flags:\n  coder_slice_ceremony_mode: enforce\n", encoding="utf-8")
+        st = explain_injection_modes("coder", config_path=cfg)[NAME]
+        assert st.mode == MODE_ENFORCE
+        assert str(cfg) in st.source
+
+    def test_every_injection_is_explained(self) -> None:
+        assert set(explain_injection_modes("coder")) == set(INJECTION_SPECS)
+
+    @pytest.mark.parametrize("role", ["coder", "planner", "eval", "chat"])
+    @pytest.mark.parametrize("override", [None, MODE_OFF, MODE_OBSERVE, MODE_ENFORCE])
+    def test_projection_matches_resolution(self, role: str, override: str | None) -> None:
+        """CT18: the table can never disagree with what a real run does."""
+        overrides = {} if override is None else {NAME: override}
+        explained = explain_injection_modes(role, overrides=overrides)
+        assert {k: v.mode for k, v in explained.items()} == resolve_injection_modes(role, overrides=overrides)
+
+
+class TestInjectCommand:
+    def test_prints_a_row_per_injection(self, capsys: pytest.CaptureFixture[str]) -> None:
+        args = build_parser().parse_args(["inject", "status", "--role", "coder"])
+        assert _cmd_inject(args) == 0
+        out = capsys.readouterr().out
+        assert "INJECTION" in out and "SOURCE" in out
+        for name in INJECTION_SPECS:
+            assert name in out
+
+    def test_subcommand_defaults_to_status(self) -> None:
+        assert build_parser().parse_args(["inject"]).subcommand == "status"
+
+    def test_list_and_status_are_both_accepted(self) -> None:
+        for sub in ("list", "status"):
+            assert build_parser().parse_args(["inject", sub]).subcommand == sub
+
+    def test_flag_is_reflected_in_the_table(self, capsys: pytest.CaptureFixture[str]) -> None:
+        args = build_parser().parse_args(["inject", "--role", "coder", "--inject", f"{NAME}=enforce"])
+        assert _cmd_inject(args) == 0
+        out = capsys.readouterr().out
+        assert MODE_ENFORCE in out and SOURCE_FLAG in out
+
+    def test_bad_inject_exits_2(self, capsys: pytest.CaptureFixture[str]) -> None:
+        args = build_parser().parse_args(["inject", "--inject", "bogus=enforce"])
+        assert _cmd_inject(args) == 2
+        assert "inject" in capsys.readouterr().err.lower()
+
+    def test_unreadable_config_does_not_raise(self, tmp_path: Path) -> None:
+        """An introspection command must never traceback on bad config."""
+        bad = tmp_path / "broken.yaml"
+        bad.write_text("feature_flags: [unclosed\n", encoding="utf-8")
+        args = build_parser().parse_args(["inject", "--config", str(bad)])
+        assert _cmd_inject(args) == 0

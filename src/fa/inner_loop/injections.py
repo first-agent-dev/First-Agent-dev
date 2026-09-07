@@ -215,6 +215,61 @@ def parse_inject_overrides(values: Sequence[str] | None) -> dict[str, str]:
     return overrides
 
 
+#: Where an effective mode came from. Four values, because "off" alone cannot
+#: tell an operator whether they disabled an injection or it simply does not
+#: apply to this role -- the distinction that made Q9 invisible.
+SOURCE_FLAG = "--inject flag"
+SOURCE_DEFAULT = "default (off)"
+SOURCE_ROLE_GATED = "role-gated (off)"
+
+
+def _source_config(config_path: Path | None) -> str:
+    return f"config ({config_path if config_path is not None else _DEFAULT_CONFIG_LABEL})"
+
+
+#: Shown when no explicit config path was given, i.e. the usual `~/.fa/config.yaml`.
+_DEFAULT_CONFIG_LABEL = "~/.fa/config.yaml"
+
+
+@dataclass(frozen=True)
+class InjectionStatus:
+    """One injection's effective mode plus WHY it has that mode."""
+
+    name: str
+    role: str
+    mode: str
+    source: str
+    summary: str
+
+
+def explain_injection_modes(
+    role: str,
+    *,
+    overrides: Mapping[str, str] | None = None,
+    config_path: Path | None = None,
+) -> dict[str, InjectionStatus]:
+    """Resolve every injection for *role*, recording which input won.
+
+    This is the single implementation of the precedence rule
+    (``--inject`` > config > ``off``); :func:`resolve_injection_modes` is a
+    projection over it. Keeping one implementation is deliberate: an
+    introspection command that computed modes separately could disagree with
+    what a real run does, which is worse than having no command at all.
+    """
+    supplied = overrides or {}
+    explained: dict[str, InjectionStatus] = {}
+    for name, spec in INJECTION_SPECS.items():
+        if role not in spec.roles:
+            mode, source = MODE_OFF, SOURCE_ROLE_GATED
+        elif (override := supplied.get(name)) is not None:
+            mode, source = normalize_mode(override), SOURCE_FLAG
+        else:
+            mode = resolve_mode(spec, role, config_path=config_path)
+            source = _source_config(config_path) if mode != FALLBACK_MODE else SOURCE_DEFAULT
+        explained[name] = InjectionStatus(name=name, role=role, mode=mode, source=source, summary=spec.summary)
+    return explained
+
+
 def resolve_injection_modes(
     role: str,
     *,
@@ -235,17 +290,10 @@ def resolve_injection_modes(
     so a consumer can ask about any injection by name without a membership
     check.
     """
-    supplied = overrides or {}
-    resolved: dict[str, str] = {}
-    for name, spec in INJECTION_SPECS.items():
-        if role not in spec.roles:
-            resolved[name] = MODE_OFF
-            continue
-        override = supplied.get(name)
-        resolved[name] = (
-            normalize_mode(override) if override is not None else resolve_mode(spec, role, config_path=config_path)
-        )
-    return resolved
+    return {
+        name: status.mode
+        for name, status in explain_injection_modes(role, overrides=overrides, config_path=config_path).items()
+    }
 
 
 def mode_for(modes: InjectionModes | None, name: str) -> str:
@@ -279,9 +327,14 @@ __all__ = [
     "MODE_ENFORCE",
     "MODE_OBSERVE",
     "MODE_OFF",
+    "SOURCE_DEFAULT",
+    "SOURCE_FLAG",
+    "SOURCE_ROLE_GATED",
     "InjectionFlagError",
     "InjectionModes",
     "InjectionSpec",
+    "InjectionStatus",
+    "explain_injection_modes",
     "is_active",
     "is_observed",
     "mode_for",
