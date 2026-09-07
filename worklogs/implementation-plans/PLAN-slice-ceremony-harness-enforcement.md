@@ -2619,3 +2619,74 @@ directions) and **T16e** (`eval_report.json` written exactly once per eval
 stage, i.e. the D-1 seam is respected). S13 gained **T17d** (non-git workspace
 degrades), **T17e** (untracked-only change still named), **T17f** (no `--plan`
 omits headings rather than emitting empty ones). All are binary and observable.
+
+---
+
+## §25 — S12 implementation record (shipped `4c5731a`)
+
+**Contracts:** G5 · CT6 · CT20 · Q16. **Files touched:** `workflow_artifacts.py`,
+`workflow_controller.py`, new `tests/test_slice_id_validation.py`. Classes C0 + C1.
+
+### What shipped
+
+`validate_slice_ids(report, plan_text) -> tuple[EvalReport, tuple[str, ...]]` and
+`EvalReport.unreported_slices: tuple[str, ...] = ()`.
+
+Order of operations (deliberate): Q16 fail-override **first** (plan-independent),
+then `plan_text is None` ⇒ no-op, then `extract_plan_ids(...).slices` empty ⇒ no-op,
+then drop invented IDs, then compute unreported.
+
+| Defect closed | Before | After |
+|---|---|---|
+| Invented IDs | `- S404: PASS` parsed as a real slice, inflating coverage | dropped + warned |
+| **Omission** | dropping `S7` yielded a clean `PASS` over unexamined work | recorded in `unreported_slices` + warned |
+| Inert `step_results` (§19 F1) | run ends `DONE` carrying `S7: FAIL` | **Q16** ⇒ `REPAIR_REQUIRED` |
+
+### Scope decisions (stated, not silent)
+
+- Only the literal `fail` verdict blocks. `partial`/`not_evaluated` do not — neither
+  asserts the slice is broken, and widening would turn "the evaluator was unsure"
+  into a hard repair loop.
+- The override is **one-directional**: it never upgrades a non-`PASS` verdict, so
+  `BLOCKED`/`REPLAN_REQUIRED` survive intact.
+- Q16 holds with no plan: a reported failure is a fact about the work, independent
+  of whether the harness can see the contract.
+- Matching is exact and case-sensitive. `S5a` must not satisfy `S5`.
+- Legacy/unparseable plans ⇒ silent no-op (operator ruling: not a kill signal).
+
+### D-1 compliance
+
+The function is pure — no logging, no writes. The eval branch is now
+`build_eval_report → validate_slice_ids → write_eval_report`: exactly one write,
+already adjusted. Warnings surface via `logger.warning` + stderr at the call site.
+
+### Negative proof (the part that counts)
+
+Mutation battery **9/9 killed**, including the L3 kill-check (deleting the
+`validate_slice_ids` call at the producer site in `_run_stage`). Also killed:
+case-folded matching, prefix matching (`S5a` satisfying `S5`), Q16 widened to
+`partial`, Q16 with the `PASS` guard dropped, Q16 skipped when no plan, dropped
+serialisation, and **each of the two independent defaults** (dataclass and
+`from_json_dict`) removed separately.
+
+12 tests: 11 C0 on the pure adjuster, 1 C1 booting the real `run_workflow` and
+asserting on the persisted `eval_report.json` — the file the repair loop actually
+reads, not the in-memory return value.
+
+### Verification actually run
+
+`3947 passed`, same 9 pre-existing baseline failures, `comm -23` empty (no
+regressions); `ruff check src/fa tests` clean; `test_live_check_script.py` 28
+passed; adversarial battery `28 OK, 0 missed`; authoring gates 152 passed.
+
+### Host finding (not a regression)
+
+`tests/test_workspace_bootstrap.py` aborts this host's pytest run with
+`INTERNALERROR: cannot instantiate 'WindowsPath'` at ~97%. **Reproduced at `HEAD`
+with the S12 changes stashed**, so it is a python-3.11-host artifact, not a
+regression. Excluded from the comparison run. The first full-suite result this
+session was therefore *invalid* — the `comm` output was empty only because the run
+had aborted. Flagged for S9/e2e: on the live host (python ≥3.13) this should be
+re-checked rather than assumed.
+
+**Remaining:** S13, S6, S6a, S6b, S7, S11b, S8, S9.
