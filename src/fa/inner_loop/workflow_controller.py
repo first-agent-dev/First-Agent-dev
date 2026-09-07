@@ -374,6 +374,137 @@ def _eval_independence_mapping(models: ModelsConfig) -> Mapping[str, object] | N
     return {"disjoint": indep.disjoint, "stance": indep.stance}
 
 
+EVAL_DIFF_MAX_CHARS: Final = 60_000
+"""Cap on the diff embedded in the eval evidence block.
+
+Large enough that a normal slice arrives whole, small enough that a runaway
+diff cannot evict the rest of the block -- and the task itself -- from the
+judge's context. Truncation is always announced, never silent.
+"""
+
+EVAL_GIT_TIMEOUT_SECONDS: Final = 15
+"""Per-invocation cap on the advisory git calls.
+
+A hung ``git`` must not silently consume the workflow deadline; on timeout the
+section is omitted and the run continues.
+"""
+
+EVAL_DOC_PATHS: Final = ("knowledge/adr/DIGEST.md", "knowledge/adr/README.md")
+"""Repo docs offered to the judge as PATHS, not pasted bodies.
+
+Eval has ``fs_read_file``; pasting bodies would burn context on documents it
+may not need. Only paths that exist are listed, so a moved doc drops out
+rather than sending the judge to a dead reference.
+"""
+
+
+def _git_output(args: list[str], cwd: Path, runner: Callable[..., object] | None = None) -> str | None:
+    """Run one advisory git command; ``None`` when it could not be answered.
+
+    Deliberately NOT ``fa.hygiene.pr_intent._run_git``: that helper passes
+    ``check=True`` and raises on a non-zero exit. This input is advisory, so a
+    workspace that is not a git repo, a detached HEAD, or a missing git binary
+    must degrade to "no diff available" rather than take the run down. Every
+    failure mode collapses to ``None``.
+    """
+    # Local import: keeps subprocess off this module's import surface.
+    import subprocess
+
+    run = runner if runner is not None else subprocess.run
+    try:
+        # Fixed "git" argv, list form, no shell.
+        result = run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=EVAL_GIT_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # FileNotFoundError (git absent), TimeoutExpired, bad cwd -- all advisory.
+        logger.warning("workflow: advisory `git %s` unavailable; continuing", " ".join(args))
+        return None
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    return str(getattr(result, "stdout", "") or "")
+
+
+def _eval_evidence_block(ctx: WorkflowContext, *, runner: Callable[..., object] | None = None) -> str:
+    """Build the evidence preamble handed to the eval stage. (S13)
+
+    **Why this exists.** The eval prompt asks the judge whether the coder
+    satisfied "the planner's execution contract", but eval received only
+    ``ctx.task_for(role)`` -- a task string. The contract it is asked to check
+    against was never handed to it, while under the default
+    ``fresh=index == 0`` it sits inside the coder's own transcript, reading the
+    defendant's success narration as context. This block supplies, as text the
+    HARNESS controls rather than text the coder wrote: the plan path, the
+    declared slice IDs, what actually changed on disk, and where the reference
+    docs live.
+
+    Every section degrades independently. A missing plan, a workspace that is
+    not a git repo, or an absent git binary each drop their own section and
+    leave the rest intact; none raises. Sections that would be empty are
+    OMITTED rather than emitted as a bare heading, because an empty heading
+    reads as "checked, found nothing" when the truth is "never looked".
+
+    Returns ``""`` when nothing could be gathered, so the caller appends
+    nothing rather than a hollow frame.
+    """
+    lines: list[str] = []
+
+    plan_text = ctx.plan_text()
+    if ctx.plan_path is not None:
+        lines.append(f"Plan: {ctx.plan_path}")
+        if plan_text is not None:
+            slices = extract_plan_ids(plan_text).slices
+            if slices:
+                # IDs only. The plan can run to thousands of lines and pasting
+                # it would evict the diff -- the judge has fs_read_file.
+                lines.append(f"Plan slices to judge ({len(slices)}): {', '.join(slices)}")
+        lines.append("Read the plan for the execution contract; do not infer it from the transcript.")
+
+    stat = _git_output(["diff", "HEAD", "--stat"], ctx.workspace, runner)
+    diff = _git_output(["diff", "HEAD"], ctx.workspace, runner)
+    status = _git_output(["status", "--porcelain"], ctx.workspace, runner)
+
+    if stat is None and diff is None and status is None:
+        lines.append("Changed files: unavailable (not a git repository, or git could not be run).")
+    else:
+        # `git diff HEAD` covers staged AND unstaged work, so a coder that
+        # staged everything and one that staged nothing yield the same
+        # evidence. It CANNOT see untracked files, which is why porcelain
+        # status is included: a slice whose entire contribution is a new file
+        # would otherwise show an empty diff and could be passed on nothing.
+        untracked = tuple(line[3:] for line in (status or "").splitlines() if line.startswith("??"))
+        if untracked:
+            lines.append(f"New untracked files ({len(untracked)}): {', '.join(untracked)}")
+            lines.append("These are NOT in the diff below; read them with fs_read_file before judging.")
+        if stat:
+            lines.append(f"Diff stat (git diff HEAD):\n{stat.rstrip()}")
+        if diff:
+            body = diff
+            if len(body) > EVAL_DIFF_MAX_CHARS:
+                body = (
+                    body[:EVAL_DIFF_MAX_CHARS] + f"\n[diff truncated at {EVAL_DIFF_MAX_CHARS} chars of {len(diff)}"
+                    " -- read the remaining files with fs_read_file]"
+                )
+            lines.append(f"Diff (git diff HEAD):\n{body}")
+        elif not untracked:
+            # Explicit, not silence: "nothing changed" is itself a finding
+            # worth a FAIL, and an absent section reads as "diff unavailable".
+            lines.append("Changed files: NONE. `git diff HEAD` is empty and there are no untracked files.")
+
+    existing_docs = [name for name in EVAL_DOC_PATHS if (ctx.workspace / name).is_file()]
+    if existing_docs:
+        lines.append(f"Reference docs (read as needed): {', '.join(existing_docs)}")
+
+    if not lines:
+        return ""
+    return "## Evidence supplied by the harness\n\n" + "\n".join(lines)
+
+
 # ── Stage dispatch ─────────────────────────────────────────────────────────
 
 
@@ -421,9 +552,20 @@ def _run_stage(
             last_transition_reason=transition_reason,
         ),
     )
+    # S13: the judge is handed the contract and the evidence. Eval only --
+    # the coder and planner already have the plan by other means, and a diff
+    # of the coder's own work is not input to writing it.
+    stage_task = ctx.task_for(role)
+    if role == "eval":
+        evidence = _eval_evidence_block(ctx)
+        if evidence:
+            # Appended, never substituted: the task states what to judge and
+            # the block states what to judge it against.
+            stage_task = f"{stage_task}\n\n{evidence}" if stage_task else evidence
+
     stage_kwargs: dict[str, object] = {
         "task_pos": None,
-        "task": ctx.task_for(role),
+        "task": stage_task,
         "role": role,
         "config": ctx.config,
         "workspace": ctx.workspace,
@@ -1100,6 +1242,9 @@ __all__ = [
     "DEADLINE_REASON_MARKER",
     "DEFAULT_MAX_REPAIRS",
     "DEFAULT_MAX_REPLANS",
+    "EVAL_DIFF_MAX_CHARS",
+    "EVAL_DOC_PATHS",
+    "EVAL_GIT_TIMEOUT_SECONDS",
     "EVAL_VERDICT_TO_TERMINAL_STATUS",
     "MAX_REPAIRS_CEILING",
     "MAX_REPLANS_CEILING",
