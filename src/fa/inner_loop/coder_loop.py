@@ -69,7 +69,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from fa.inner_loop.artifacts import ArtifactStore
 from fa.inner_loop.bash_intent import BashIntentEffect, analyze_bash_for_intent
@@ -84,7 +84,13 @@ from fa.inner_loop.hooks.base import HookPayload, HookRegistry, LifecyclePoint
 from fa.inner_loop.hooks.loop_guard import (
     LOOP_GUARD_REASON_PREFIX as LOOP_GUARD_REASON_PREFIX,
 )
-from fa.inner_loop.injections import InjectionModes
+from fa.inner_loop.injections import (
+    CODER_SLICE_CEREMONY,
+    InjectionModes,
+    is_active,
+    is_observed,
+    mode_for,
+)
 from fa.inner_loop.loop import SessionRun, run_session
 from fa.inner_loop.observations import build_observation_block
 from fa.inner_loop.path_risk import (
@@ -188,6 +194,64 @@ def _merge_memory_summary_context(initial_summary: str, rebuilt_summary: str) ->
     if initial and rebuilt:
         return f"Resumed session context:\n{initial}\n\nPrevious compacted summary:\n{rebuilt}"
     return initial or rebuilt
+
+
+#: Condensates injected by the coder-stage slice ceremony, in prompt order.
+#: Purpose-built ``INJECT.md`` files (~50-60 lines each) rather than the full
+#: ``SKILL.md`` bodies (643 + 828 lines), which would dominate the context
+#: window. PLAN S5 / CT1.
+CEREMONY_SKILLS: Final[tuple[str, ...]] = ("feature-planning", "tests-writing")
+
+
+def should_inject_ceremony(role: str, turn: int, injection_modes: InjectionModes | None) -> bool:
+    """True when THIS turn must carry the slice-ceremony payload.
+
+    Extracted from the call site so the decision is testable directly. A test
+    that re-implements the condition instead would keep passing while the
+    production guard rotted -- the mutation run that motivated this extraction
+    showed exactly that (mutants flipping `is_active` to `is_observed` and
+    detaching the blocks both survived against a mirrored predicate).
+
+    Three conditions, each load-bearing:
+
+    * ``role == "coder"`` -- the ceremony is the coder's implementation
+      protocol; injections.py role-gating already forces `off` elsewhere, but
+      the site states it too so the payload branch is self-contained.
+    * ``turn == 1`` -- the workflow dispatches one coder stage per slice, so
+      the stage's first turn IS slice entry. Later turns must not resend a
+      ~5 KB body every request.
+    * mode is ``enforce`` -- ``observe`` deliberately does NOT inject; it only
+      records that the trigger fired (ADR-10-I6 clause 4).
+    """
+    return role == "coder" and turn == 1 and is_active(injection_modes, CODER_SLICE_CEREMONY.name)
+
+
+def _ceremony_blocks(workspace_root: Path) -> list[dict[str, Any]]:
+    """Read the slice-ceremony condensates as composer-ready skill blocks.
+
+    Advisory by contract: a missing or unreadable condensate is logged and
+    skipped, never raised. The ceremony tells the model how to work; failing
+    a real implementation run because a markdown file moved would be a far
+    worse outcome than running without the reminder (plan G8: no new
+    rejection surface).
+
+    Returns the blocks that could be read, in :data:`CEREMONY_SKILLS` order,
+    which may be empty.
+    """
+    blocks: list[dict[str, Any]] = []
+    try:
+        from fa.skills._inject import default_skills_root, read_skill_for_injection
+
+        skills_root = default_skills_root(workspace_root)
+        for skill_name in CEREMONY_SKILLS:
+            result = read_skill_for_injection(skill_name, skills_root, file_name="INJECT.md")
+            if result.warning is not None:
+                logger.warning("slice ceremony: %s", result.warning)
+            if result.block is not None:
+                blocks.append(dict(result.block))
+    except Exception as exc:  # noqa: BLE001 - advisory must never crash a run
+        logger.warning("slice ceremony injection failed: %s", exc)
+    return blocks
 
 
 def _verify_failed_in_pairs(
@@ -754,6 +818,40 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         # escalation. Effects land in the NEXT LLM request after this turn's
         # tool batch (F6) — there is no mid-turn injection.
         skill_block_for_request: list[dict[str, Any]] | None = None
+
+        # PLAN S5 (G1/G2, CT3, P1-P3): coder-stage slice ceremony.
+        #
+        # Deliberately OUTSIDE the `_is_chat_role` branch below: that
+        # predicate is about a different feature (chat scope expansion) and is
+        # false for a workflow coder stage, so anything placed inside it is
+        # dead code for this role (plan D1).
+        #
+        # Entry turn only. The workflow dispatches one coder stage per slice,
+        # so turn 1 of the stage IS slice entry; later turns must not resend
+        # the bodies, which is why this assigns rather than accumulates and
+        # sits inside the turn loop, above the `_compose_request_payload`
+        # re-definition that binds it as a default arg (plan F-3).
+        if role == "coder" and turn == 1 and is_observed(injection_modes, CODER_SLICE_CEREMONY.name):
+            enforcing = should_inject_ceremony(role, turn, injection_modes)
+            ceremony_blocks = _ceremony_blocks(state.workspace_root) if enforcing else []
+            if ceremony_blocks:
+                skill_block_for_request = list(ceremony_blocks)
+            # CT3 dual-write: telemetry in the SAME branch that injects, so
+            # "the harness said it injected" and "the payload changed" cannot
+            # drift apart. `observe` records the counterfactual and alters
+            # nothing, which is what makes it a safe default (ADR-10-I6).
+            log.append(
+                actor="harness",
+                kind="ceremony_injected",
+                content={
+                    "turn": turn,
+                    "role": role,
+                    "mode": mode_for(injection_modes, CODER_SLICE_CEREMONY.name),
+                    "skills": list(CEREMONY_SKILLS) if enforcing else [],
+                    "blocks": len(ceremony_blocks),
+                },
+            )
+
         if _is_chat_role:
             transaction = state.transaction
             read_paths = frozenset(transaction.read_set) if transaction is not None else frozenset()
@@ -2051,9 +2149,11 @@ def _build_tool_calls(raw_calls: Sequence[Mapping[str, Any]]) -> tuple[ToolCall,
 
 
 __all__ = [
+    "CEREMONY_SKILLS",
     "DEFAULT_MAX_TOKENS",
     "DEFAULT_MAX_TURNS",
     "LOOP_GUARD_REASON_PREFIX",
     "SessionOutcome",
     "drive_session",
+    "should_inject_ceremony",
 ]

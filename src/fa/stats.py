@@ -91,6 +91,12 @@ UNPARSED_KINDS: frozenset[LogKind] = frozenset(
         "expansion_exhausted",  # S10: terminal budget denial; analytics view reads it.
         "expansion_observed",  # S10.9: near-miss telemetry; consumed by the S11
         # calibration/tuning view, not session stats.
+        "ceremony_injected",  # PLAN S5: records that the coder-stage slice
+        # ceremony fired (and under `observe`, that it would have). There is no
+        # per-session rollup to compute -- it is at most one event per coder
+        # stage -- so it stays out of the analytics dispatch; the audit question
+        # it answers ("was the protocol actually injected?") is answered by
+        # reading the JSONL directly.
     }
 )
 

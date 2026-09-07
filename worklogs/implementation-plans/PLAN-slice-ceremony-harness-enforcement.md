@@ -1488,6 +1488,67 @@ config; (5) introspectable without running the model (`fa inject`).
 
 ---
 
+## 17. S5b implementation record + e2e plan (2026-09-07)
+
+### 17.1 What shipped
+
+`coder_loop.py` gained `should_inject_ceremony(role, turn, injection_modes)`
+and `_ceremony_blocks(workspace_root)`, plus a call site placed inside the turn
+loop, **above** the `_compose_request_payload` re-definition and **outside**
+`if _is_chat_role:` (plan D1 / F-3, both verified by test).
+
+Verified end-to-end in-process: with `enforce`, the composed **provider request
+body** grows 337 → 6182 bytes (anthropic) / 311 → 6156 (openai) and contains
+`BEFORE EDITING GATE`. That is the L3 claim — bytes to the provider, not merely
+a populated dataclass.
+
+New `LogKind` member `ceremony_injected`, emitted in the same branch that builds
+the payload (CT3 dual-write) and under `observe` too, where `blocks: 0` records
+the counterfactual. Declared in `UNPARSED_KINDS` with a reason.
+
+**Test-theater defect found and fixed by mutation testing.** The first revision
+of `tests/test_slice_ceremony_injection.py` re-implemented the gate condition
+locally. Mutants M22 (`is_active` → `is_observed`, i.e. `observe` starts
+rewriting prompts) and M24 (blocks read but never attached) both **survived** —
+the tests were grading their own mirror. Fixed by extracting the real predicate
+into production and asserting against it. All 7 mutants now die.
+
+### 17.2 e2e rows for the live host (NOT yet added to the script)
+
+**Blocking constraint, source-verified:** `row_run` (`scripts/run_live_check.sh`
+:284-315) hardcodes `--role chat`. Every existing `s127-*` row is therefore a
+chat row. The ceremony is a **coder-role** feature gated on `--inject`, so these
+rows cannot reuse `row_run` as written. Adding them requires either a
+`row_run_role` variant taking role + extra flags, or a dedicated
+`ceremony_row` helper. That is a script change with its own blast radius, so it
+is scoped as its own step rather than smuggled into S5b.
+
+Planned rows, each asserting on `events.jsonl` like the existing hooks:
+
+| Row | Invocation | Assertions |
+|---|---|---|
+| `s127-ceremony-enforce` | `fa run --role coder --inject coder_slice_ceremony=enforce` | `"kind": "ceremony_injected"` present with `"mode": "enforce"`; `"blocks": 2`; the model's turn-1 request carries `BEFORE EDITING GATE` |
+| `s127-ceremony-observe` | same, `=observe` | `ceremony_injected` present with `"mode": "observe"` and `"blocks": 0`; ceremony text **absent** from the request — the inertness claim, on the live host |
+| `s127-ceremony-off` | same, `=off` | no `ceremony_injected` event at all |
+| `s127-ceremony-role-gate` | `--role planner --inject coder_slice_ceremony=enforce` | no `ceremony_injected`; proves one flag cannot smuggle a payload into the wrong role |
+| `s127-inject-status` | `fa inject status --role coder --inject ...=enforce` | exit 0; stdout has the row and `--inject flag` in SOURCE; no session directory created (read-only claim) |
+| `s127-inject-bad-flag` | `fa inject --inject bogus=enforce` | exit 2; stderr names the valid choices |
+
+The last two need no model call, so they are cheap and should run on every
+battery pass; the first four are token-costing rows.
+
+### 17.3 Follow-up (not blocking S5b)
+
+- **S5e:** teach `run_live_check.sh` a role/flag-parameterised row helper, then
+  land the six rows above.
+- Turn-2 anchor text (plan S5 step 2, "anchor only on later turns") is **not**
+  implemented: today later turns inject nothing at all. That is the safe half of
+  the requirement. The short `turn_context` anchor is deferred and should be its
+  own slice, since it touches `observations.py` capping behaviour.
+
+
+---
+
 ## 11. Artifacts inventory
 
 | artifact | path | action | owner |
