@@ -3203,8 +3203,47 @@ slice:
 3. Keep regex as a **fallback** behind either of the above, since a model can
    still end its turn with prose instead of a tool call.
 
-Recommendation: **(1) with (3) as fallback**, as its own slice after S15.
-Not started; no code in S15 depends on it.
+**CORRECTION (verified after the operator's follow-up).** Recommendation (1) was
+made without checking whether a tool call can be *forced*. It cannot:
+`tool_choice` has **zero references repo-wide** (all three adapters), and it is
+absent from `MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS`. An unforced tool is one
+the model may decline to call, so it does not remove the prose fallback.
+
+Vendor evals also rank the mechanisms differently than I implied: OpenAI reports
+~100% for schema-constrained output, **~86% for function/tool calling**, lower
+for plain JSON mode. Tool calling is the middle option, not the best.
+
+Revised target, as its own slice after S15, eval-role only (operator-approved
+scope):
+  1. **`tool_choice` passthrough in all three adapters** — the prerequisite that
+     converts an advisory tool into an enforced contract.
+  2. `submit_verdict` tool with a **flat** schema (the 64% figure comes from
+     4-level-deep nesting; our verdict shape is shallow, so the collapse case
+     does not apply).
+  3. Regex retained as fallback.
+`response_format` remains rejected: Mistral-only (16 refs vs 0 elsewhere) would
+make the verdict contract provider-dependent.
+
+Full reasoning, sourced: `worklogs/reviews/Q20-OUTPUT-CONTRACT-BRIEF.md`.
+
+### 27.8c Q21 (NEW, non-blocking) — coder self-report as evidence, never as gate
+
+Operator asked whether the coder could report slice completion as a last step.
+Recorded conclusion: **not as a completion gate** — that would restore the
+self-grading the eval role exists to prevent, in JSON, which merely *looks*
+more trustworthy than prose. Viable variant: a `slice_status` tool whose claims
+are recorded, never acted on, and handed to eval as evidence to verify. A claim
+the judge contradicts is itself a signal. Not in S15.
+
+**Slice-measurement status (asked directly; nothing was abandoned):**
+
+| Question | Status |
+|---|---|
+| Chunking/commit granularity | settled Q-op1 hybrid (plan:368) |
+| Per-slice `FAIL` blocks the run | **LIVE** (Q16 = (a)); verified: `PASS` + `S2: FAIL` ⇒ `REPAIR_REQUIRED` |
+| Unjudged slice blocks the run | Q17 = (d), S15d |
+| Slice IDs validated against plan | LIVE (S12) |
+| Judge shown plan + diff | LIVE (S13), `enforce` per Q18 |
 
 ## 27.9 Definition of Done
 
