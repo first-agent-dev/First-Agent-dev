@@ -216,3 +216,14 @@ ADR-level invariants the plan silently assumed, and both are now violated.
 
 **Fix order:** B-1 (security) → A-1/B-6 (base-commit snapshot, fixes B-7 too) →
 B-2/B-3 (freeze + warn) → A-2 (Q17) → B-9 (register the injection) → A-3.
+
+---
+
+## Disposition
+
+All findings in this note are consolidated into **PLAN §27 — SLICE S15
+(BLOCKING)**, with a `GAP#` row, a contract card, a falsifiable `T#`, and a
+named kill-check for each. S6/S6a/S6b/S7/S11b/S8/S9 are on hold until S15 lands.
+
+Blocking operator decisions: **Q17** (unjudged slice ⇒ REPAIR / BLOCKED / warn)
+gates S15d; **Q18** (I-6 default-mode vs shipped always-on) gates S15g.

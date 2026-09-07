@@ -2761,3 +2761,308 @@ the evidence, and the block is required in both modes. The judge still resumes
 the coder's session by default; that remains open.
 
 **Remaining:** S6, S6a, S6b, S7, S11b, S8, S9.
+
+---
+
+# §27 — SLICE S15: close the two-pass audit findings (BLOCKING)
+
+**Status: BLOCKING.** S6, S6a, S6b, S7, S11b, S8, S9 are **on hold** until S15
+lands. Rationale: S12/S13 shipped the *evidence pipe* and one enforcement rule,
+but two audit passes proved the pipe can be empty, mutable, and leaky. Building
+S6+ on top would stack features on an unsound base — every later slice consumes
+`eval_report.json` or the eval prompt, and both are currently untrustworthy.
+
+Depth: **P2** (cross-module: controller + CLI + prompt + flags + ADR).
+Mode: `plan`. MAX effort. Sources: `AUDIT-S12-S13-adversarial.md` (round 1),
+`AUDIT-S12-S13-round2.md` (round 2).
+
+## 27.0 Preflight log
+
+```text
+roots checked:  cli.py:_cmd_workflow(:1369 --plan, :1448 run_workflow)
+                workflow_controller.py:_run_stage(:558 stage_task)
+                coder_loop.py:drive_session(:651 user_msg log)
+greps/reads -> findings:
+  _redact              -> coder_loop.py:150 def, :2090 ONLY call (tool results)
+  user_msg             -> coder_loop.py:651 task logged verbatim, unredacted
+  plan_text()          -> workflow_controller.py:174,457,639,643 (4 reads/stage)
+  _SLICE_RE            -> plan_ids.py:55 heading+colon only
+  untracked line       -> workflow_controller.py:482 (uncapped)
+  EVAL_DIFF_MAX_CHARS  -> :377 def, :488 use
+  active_plan_id       -> :547,:691,:730,:793 all = ctx.run_id
+  write_eval_report    -> :647 (1/stage, but N/loop, same path)
+  INJECTION_SPECS      -> injections.py:123 (only coder_slice_ceremony)
+  SecretRedactor       -> observability/redaction.py:21, .redact() pure, stdlib
+  sha256 convention    -> authoring_tcb.py:264 "sha256:"+hexdigest
+gold patterns mirrored: CODER_SLICE_CEREMONY spec (injections.py:114) +
+                        its 5 coupled sites (flags dataclass, as_dict,
+                        fail-open set, type map, loader)
+conflicts/invariants:   ADR-12 (one redaction chokepoint), ADR-10 I-6
+                        (registered/once/role-gated/observe-default/
+                        introspectable), ADR-11 I5 (no placeholder asserts)
+current liveness:       S12/S13 = L2 (call-reachable, behaviour WRONG on the
+                        paths below), not L3
+unresolved -> Q#:       Q17 (blocking), Q18, Q19
+```
+
+## 27.1 Executive intent
+
+**G9** — the judge cannot be shown an empty, stale, or attacker-shaped picture
+of the work.
+**G10** — the contract being validated is immutable for the run's duration.
+**G11** — no harness-composed prompt text can carry a secret to a provider.
+**G12** — every injected payload is registered, gated, and introspectable.
+
+Non-goals (explicit): `--eval-fresh` (Q15, separate slice); S6a's append-only
+packet log (own slice, referenced by B-12); rewriting `_STEP_LINE_RE`'s grammar
+(B-3 warns, does not re-parse); multi-repo/monorepo diff strategies.
+
+Minimal mechanism: **one snapshot object** (`RunEvidence`) computed once per
+run and carried as frozen data, plus **one redaction chokepoint** on the task,
+plus **one registry entry**. No new subsystem.
+
+## 27.2 GAP ledger — current → target
+
+| GAP | Finding | Current (verified) | Target | Falsifiable proof |
+|---|---|---|---|---|
+| GAP20 | B-1 | `_redact` applied only at `coder_loop.py:2090` (tool results); task reaches provider + `events.jsonl` raw | every task redacted before dispatch | T30: secret in diff ⇒ absent from `args.task` at `drive_session` boundary AND from `events.jsonl` |
+| GAP21 | A-1/B-6/B-7 | `git diff HEAD` at eval time; committed work invisible, worktree drift, monotonic growth | diff vs **run base commit**, captured at run start | T31: coder commits ⇒ work still visible; T32: base pinned at t0 |
+| GAP22 | B-2 | `plan_text()` re-reads per call; plan writable in-workspace | read once at entry, hashed, frozen | T33: mutate plan mid-run ⇒ validation uses t0 text + warns |
+| GAP23 | B-3 | `--plan` given but unparseable ⇒ zero warnings | structured warning naming the file | T34: em-dash plan ⇒ warning emitted, run continues |
+| GAP24 | B-4/B-5 | untracked list uncapped (170k observed); `.fa/` reported as deliverable | capped + `.fa` excluded | T35: 5000 files ⇒ block ≤ budget; T36: `.fa/` absent |
+| GAP25 | B-8 | truncation by git file order; filler evicts security hunk | per-file budget, no file evicts another | T37: 9000-line filler ⇒ `z_crit.py` hunk still present |
+| GAP26 | A-2 | `unreported_slices` written, never read | coverage rule (Q17) | T38: 1-of-20 judged ⇒ not DONE |
+| GAP27 | A-3 | repair coder re-run with identical task, no findings | findings appended to repair task | T39: round 2 task contains round 1 failure text |
+| GAP28 | A-4 | block cites `fs_read_file`; eval registry lacks it | cite eval's real tools | T40: block tool names ⊆ eval registry |
+| GAP29 | A-5 | `s1` parsed then dropped as invented | case-fold compare, `S5`≠`S5a` | T41: `s1` matches `S1`; T42: `S5a` ≠ `S5` |
+| GAP30 | A-6 | Q16 can fire on an ID then delete its evidence | keep the fail record | T43: invented FAIL ⇒ cause visible in artifact |
+| GAP31 | B-9 | S13 block unregistered, always-on, invisible | `InjectionSpec` + flag + `fa inject` row | T44: `fa inject` lists it; T45: `off` ⇒ byte-identical task |
+| GAP32 | A-7/B-10 | coder text pasted unfenced; judge not told what is authoritative | fenced + prompt clause | T46: fence survives payload containing a fence |
+| GAP33 | B-11 | `flow_state.active_plan_id` = run_id ≠ `eval_report.plan_id`; run_id collides at 1s | one identity; collision-resistant id | T47: both artifacts agree; T48: two same-second runs differ |
+| GAP34 | B-12/A-10 | repair rounds overwrite one file; T16e never written | per-round retention + the missing test | T49: 3 rounds ⇒ 3 recoverable records; T50: exactly 1 write/stage |
+
+## 27.3 Contract cards
+
+```text
+CT22: run_evidence_snapshot  TYPE:data
+PRODUCER: workflow_controller.RunEvidence (NEW), built in run_workflow before stage 0
+CONSUMER: _eval_evidence_block, validate_slice_ids, _write_terminal_state
+SCHEMA: frozen dataclass {base_commit: str|None, plan_text: str|None,
+        plan_sha256: str|None, plan_path: Path|None, plan_id: str|None}
+AUTHORITY: source of truth for BOTH artifacts; nothing re-reads the plan or
+        re-resolves HEAD after t0
+SIDE EFFECTS: two subprocess reads + one file read, all at t0, all check=False
+INVARIANTS: (1) computed exactly once per run_workflow call;
+            (2) plan_sha256 == sha256(plan_text) when plan_text is not None;
+            (3) base_commit is None only when HEAD does not resolve
+KILL-CHECK: recompute mid-run instead of reusing ⇒ T33 fails
+```
+
+```text
+CT23: task_redaction  TYPE:security
+BOUNDARY: harness-composed prompt text → provider
+ALLOW: text with no known secret substring (raw/b64/hex/url/reversed)
+DENY:  n/a — this masks, it does not block (an advisory block must not fail a run)
+FAIL POLARITY: fail-SAFE (mask). A redactor that errors must not emit raw text.
+PRODUCER: cli.py `_cmd_run`, after redactor construction (:2244) and before
+        drive_session (:2408) — the ONE point where both exist
+OBSERVABLE: masked token in args.task and in events.jsonl user_msg
+C3 REQUIRED: yes
+KILL-CHECK: remove the redact call ⇒ T30 fails
+```
+
+```text
+CT24: eval_evidence_injection  TYPE:signal
+PRODUCER: InjectionSpec("eval_evidence_block", roles={"eval"},
+          read_flag=lambda f: f.eval_evidence_block_mode, default "enforce"*)
+CONSUMER: _run_stage eval branch
+TRIGGER: role == "eval" AND mode == enforce
+MODES: off (byte-identical task) | observe (telemetry, no payload change) | enforce
+*DEVIATION FROM I-6 DEFAULT: see Q18 — I-6 mandates `observe` default; shipping
+ S13 already enforces. Defaulting to observe is a silent behaviour REGRESSION of
+ a landed slice. Operator decision required; do not choose unilaterally.
+PRODUCER KILL-CHECK: remove append ⇒ T44/T45 fail
+CONSUMER KILL-CHECK: n/a (payload is terminal)
+```
+
+```text
+CT25: slice_coverage_rule  TYPE:function
+PRODUCER: validate_slice_ids (extend)
+INPUTS: EvalReport, RunEvidence
+OUTPUTS: (EvalReport, warnings) — verdict downgraded per Q17
+INVARIANTS: (1) never UPGRADES a verdict; (2) inert when no plan resolved;
+            (3) inert when plan declared zero slices (B-3 warns separately)
+KILL-CHECK: delete the coverage branch ⇒ T38 fails
+```
+
+## 27.4 Path / matrix inventory
+
+| P# | Trigger | Target behaviour | S# | T# |
+|---|---|---|---|---|
+| P30 | coder commits its work | diff vs base still shows it | S15a | T31 |
+| P31 | coder leaves work uncommitted | unchanged from today | S15a | T31b |
+| P32 | untracked-only change | named AND in diff body | S15a | T35b |
+| P33 | not a git repo / git absent | block minus diff, run continues | S15a | T17d (exists) |
+| P34 | HEAD unresolvable (empty repo) | `base_commit=None`, degrade to `HEAD` semantics + warn | S15a | T31c |
+| P35 | plan mutated mid-run | t0 text used; warning emitted | S15b | T33 |
+| P36 | plan supplied, 0 slices extracted | warning, run continues | S15b | T34 |
+| P37 | secret in tracked diff | masked in task and log | S15c | T30 |
+| P38 | 5000 untracked files | block within budget | S15a | T35 |
+| P39 | one 9000-line file + one critical file | both represented | S15a | T37 |
+| P40 | eval judges 1 of 20 slices | not DONE (Q17) | S15d | T38 |
+| P41 | repair round 2 | task carries round-1 findings | S15e | T39 |
+| P42 | two runs, same task, same second | distinct artifact dirs | S15f | T48 |
+| P43 | 3 repair rounds | 3 recoverable eval records | S15f | T49 |
+
+| M# | Matrix row | Coverage |
+|---|---|---|
+| M20 | `eval_evidence_block=off` | T45 (byte-identical) |
+| M21 | `=observe` | T45b (telemetry only) |
+| M22 | `=enforce` | T44 |
+| M23 | mode linear | T38 |
+| M24 | mode adaptive + repairs | T39, T49 |
+| M25 | `--plan` absent | T17f (exists) |
+| M26 | redactor absent (`None`) | T30b — must not crash |
+
+## 27.5 Implementation slices
+
+Ordered by **blast radius descending**, so each later slice builds on a
+verified base. Each is independently shippable and independently revertible.
+
+### S15c — redact the task (SECURITY FIRST)
+Traces-to: G11 · CT23 · GAP20. Liveness L0→L3. **Ship first.**
+- `cli.py` `_cmd_run`: after the redactor exists (:2244) and before
+  `drive_session` (:2408), `args.task = _redact(redactor, args.task)`.
+- Placed in `_cmd_run`, **not** the controller: the controller has
+  `secrets` (a mapping) but not a constructed `SecretRedactor`, and this seam
+  covers operator-typed tasks and future composers too — one chokepoint, not
+  one per producer (ADR-12's own argument).
+- Failure: `redactor is None` ⇒ identity (M26). Never raises.
+- Exit: T30 (masked in task), T30b (None-safe), T30c (masked in events.jsonl).
+- Kill-check: remove the call ⇒ T30 fails.
+
+### S15a — evidence from a pinned base, budgeted per file
+Traces-to: G9 · CT22 · GAP21/24/25. L2→L3.
+- `RunEvidence.base_commit` = `git rev-parse HEAD` at t0 (`check=False`).
+- Diff via **temporary index** (verified read-only):
+  `GIT_INDEX_FILE=<tmp> git read-tree <base>` → `git add -A -- . ':(exclude).fa'`
+  → `git diff --cached <base>`. This captures committed + staged + unstaged +
+  untracked in ONE diff, respects `.gitignore`, excludes the harness's own
+  run dir, and **mutates nothing** (`git add -N` was rejected: it rewrites the
+  coder's real index — proven).
+- Per-file budget from `--numstat`: cap each file, then the whole block, so no
+  single noisy file can evict another (B-8). Announce every truncation.
+- Cap the untracked list (B-4) with `... and N more`.
+- Exit: T31, T31b, T31c, T35, T35b, T36, T37. Kill-check: pin to `HEAD` ⇒ T31 fails.
+
+### S15b — freeze the contract
+Traces-to: G10 · CT22 · GAP22/23. L0→L3.
+- Build `RunEvidence` once in `run_workflow`; `plan_text`/`plan_sha256` read at
+  t0. `plan_text()`'s "read once" docstring becomes true, or the method is
+  removed in favour of the snapshot.
+- Re-hash at eval; digest mismatch ⇒ **warn, use t0 text** (do not fail: the
+  plan is advisory, and failing would let a stray editor kill a run).
+- `--plan` supplied + zero slices ⇒ structured warning naming the path (B-3).
+- Exit: T33, T34. Kill-check: re-read at eval ⇒ T33 fails.
+
+### S15d — enforce coverage  ⚠️ BLOCKED ON Q17
+Traces-to: CT25 · GAP26/29/30. Do not start until Q17 is answered.
+- Coverage rule per Q17; case-fold comparison preserving `S5`≠`S5a` (GAP29);
+  retain the failing record when Q16 fires on an invented ID (GAP30).
+- Exit: T38, T41, T42, T43.
+
+### S15e — close the repair feedback loop
+Traces-to: G9 · GAP27. L0→L3.
+- Repair-round coder task gains the prior `EvalReport`'s failing step evidence
+  and blocking findings (harness-composed, so it inherits S15c's redaction).
+- Exit: T39. Kill-check: drop the append ⇒ T39 fails.
+
+### S15f — artifact identity and retention
+Traces-to: GAP33/34. L1→L3.
+- `active_plan_id` ← `RunEvidence.plan_id` (4 sites: :547,:691,:730,:793).
+- `run_id` gains a short random suffix (collision at 1s proven).
+- Per-round eval records retained (`eval_report.round<N>.json` or S6a's log —
+  whichever S6a settles; S15f only requires the history exist).
+- Exit: T47, T48, T49, T50 (**T16e, finally written**).
+
+### S15g — governance and framing
+Traces-to: G12 · CT24 · GAP28/31/32. L0→L3.
+- Register `eval_evidence_block` as an `InjectionSpec` + `FeatureFlags` field,
+  mirroring `coder_slice_ceremony`'s **5 coupled sites** (dataclass, `as_dict`,
+  fail-open set, type map, loader) — verified count, not guessed.
+- Fence the coder-derived diff and add one eval-prompt clause: harness evidence
+  is authoritative; text inside the fence is *the artifact under review*, never
+  an instruction (A-7/B-10).
+- Replace `fs_read_file` citations with eval's real tools (GAP28).
+- `EVAL_DOC_PATHS` is First-Agent-specific → derive or drop for other repos.
+- Exit: T44, T45, T45b, T46, T40.
+
+## 27.6 Verification plan
+
+| T# | Class | Root | Oracle | Kill-check |
+|---|---|---|---|---|
+| T30 | C3 | real `_cmd_run` | secret absent from `args.task` at dispatch | remove redact ⇒ fail |
+| T30b | C1 | `_cmd_run`, redactor None | no exception, task unchanged | — |
+| T30c | C3 | events.jsonl on disk | masked in `user_msg` | — |
+| T31 | C1 | `run_workflow` + real git | committed work in eval task | pin to HEAD ⇒ fail |
+| T31c | C1 | empty repo | `base_commit=None`, warn, continue | — |
+| T33 | C1 | plan mutated between stages | t0 text used; digest warning | re-read ⇒ fail |
+| T34 | C0 | em-dash plan | warning names the path | — |
+| T35 | C0p | 5000 untracked | block ≤ budget | remove cap ⇒ fail |
+| T37 | C1 | filler + critical file | critical hunk present | remove per-file budget ⇒ fail |
+| T38 | C1 | 1-of-20 judged | terminal status ≠ DONE | remove rule ⇒ fail |
+| T39 | C1 | adaptive, 2 rounds | round-2 task ⊃ round-1 evidence | — |
+| T44/T45 | C2 | `fa inject`, `--inject=off` | row listed; task byte-identical | — |
+| T46 | C3 | payload containing ``` fence | fence not breakable | — |
+| T48 | C1 | two same-second runs | distinct artifact dirs | — |
+| T50 | C4 | write spy | exactly 1 write/stage | — |
+
+**Live-path proof:** new `s127-*` rows in `scripts/run_live_check.sh` for
+(a) commit-then-judge, (b) secret-in-diff masked, (c) `--inject
+eval_evidence_block=off`. After ANY edit: `tests/test_live_check_script.py` +
+`scripts/adversarial_battery_live_check.sh`.
+
+**Mutation battery** (each must die): pin base→`HEAD`; drop `:(exclude).fa`;
+`add -A`→`add -N`; remove per-file budget; remove untracked cap; skip re-hash;
+drop the coverage rule; case-fold `S5a`→`S5`; remove the redact call; flip
+default mode; unregister the spec.
+
+## 27.7 Risks
+
+| RK | Risk | Mitigation |
+|---|---|---|
+| RK20 | Temp-index diff is slower on large repos | `--numstat` first; budget before materialising bodies; timeout already enforced |
+| RK21 | Base commit wrong under `--resume` | Q19 |
+| RK22 | Redacting the task masks a legitimately-similar string | Mask is exact-substring on known secrets only; same tradeoff already accepted for tool output |
+| RK23 | Coverage rule turns partial judging into repair storms | Q17 must state the budget interaction |
+| RK24 | S15g default-mode choice silently disables shipped behaviour | Q18, blocking on operator |
+
+## 27.8 Open questions
+
+- **Q17 (BLOCKING, gates S15d).** An unjudged plan slice: (a) forces
+  `REPAIR_REQUIRED`; (b) forces `BLOCKED` (judge failed its job — arguably the
+  honest reading, since the fault is the evaluator's, not the coder's);
+  (c) warn only. Note (a) re-runs the *coder* for an *evaluator* failure.
+  My recommendation: **(b)**, because it routes the fault to the party that
+  caused it. Not chosen unilaterally.
+- **Q18 (BLOCKING, gates S15g).** ADR-10 I-6 mandates `observe` as the default
+  for a registered injection, but S13 shipped always-on. Defaulting to
+  `observe` silently regresses landed behaviour; defaulting to `enforce`
+  deviates from I-6. Options: (i) `enforce` + ADR-10 amendment recording the
+  carve-out; (ii) `observe` + accept the regression; (iii) treat harness
+  *evidence* as a distinct category from prompt *injection* and amend I-6's
+  scope. Leaning (i).
+- **Q19 (non-blocking).** Under `--resume`, is the base commit the original
+  run's base or the resumed session's HEAD? Default if unanswered: session
+  HEAD, recorded in the artifact.
+
+## 27.9 Definition of Done
+
+- [ ] Every GAP20–GAP34 row has a passing `T#` **and** a killed mutant.
+- [ ] Q17/Q18 answered by the operator and recorded here before S15d/S15g.
+- [ ] `fa inject` lists `eval_evidence_block`; `off` yields a byte-identical task.
+- [ ] Secret probe: no known secret reaches `args.task` or `events.jsonl`.
+- [ ] Commit-then-judge live row passes on the host.
+- [ ] Full suite: no regression against a **stash-measured** baseline (not notes).
+- [ ] ADR-10 I-6 amended or complied with — no third state.
+- [ ] `AUDIT-S12-S13-*.md` findings each marked closed with the `T#` that proves it.

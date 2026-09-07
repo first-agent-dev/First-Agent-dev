@@ -158,3 +158,14 @@ guarantee is not yet enforced.
 
 Order to fix: **A-1 → A-2 → A-3** (evidence, then enforcement, then convergence).
 A-4/A-5 are cheap. A-2 needs an operator decision (**Q17**).
+
+---
+
+## Disposition
+
+All findings in this note are consolidated into **PLAN §27 — SLICE S15
+(BLOCKING)**, with a `GAP#` row, a contract card, a falsifiable `T#`, and a
+named kill-check for each. S6/S6a/S6b/S7/S11b/S8/S9 are on hold until S15 lands.
+
+Blocking operator decisions: **Q17** (unjudged slice ⇒ REPAIR / BLOCKED / warn)
+gates S15d; **Q18** (I-6 default-mode vs shipped always-on) gates S15g.
