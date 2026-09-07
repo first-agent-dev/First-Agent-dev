@@ -1,6 +1,6 @@
 # PLAN: Harness-enforced per-slice implementation ceremony    Plan-ID: PLAN-slice-ceremony-harness-enforcement
 Status: READY                                   Depth: P2
-Revision: v5   Changed-since-v3: external adversarial review — F-1 (verification commands had no producer; added ```verify grammar), F-2 (pinned the draft-extraction contract; INTENT never guessed), F-3 (late-binding placement), F-4 (honest L3 scoping), F-5a (no private-function reuse), F-5b (refuted — `fa run` defaults to coder). **S10 removed from scope (D-1).** 13 steps → 12 in scope.   Changed-since-v2: review pass 2 — D6 (`should_load_skill` would silently disable the ceremony), D7 (readiness text is role-agnostic), D8/D9/D10 resolved, D11 closed by new S6b (harness-derived draft). 12→13 steps. Delivery split into three PRs.   Changed-since-v1: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
+Revision: v6   Changed-since-v5: review pass 5 — Q9 resolved (b): chat-nested pipelines inherit `--inject` through `WorkflowInvocationContext`; G9 promoted from deferred into scope as `fa inject list/status` with source attribution. New steps S5c, S5d; new contracts CT16, CT17, CT18.   Changed-since-v3: external adversarial review — F-1 (verification commands had no producer; added ```verify grammar), F-2 (pinned the draft-extraction contract; INTENT never guessed), F-3 (late-binding placement), F-4 (honest L3 scoping), F-5a (no private-function reuse), F-5b (refuted — `fa run` defaults to coder). **S10 removed from scope (D-1).** 13 steps → 12 in scope.   Changed-since-v2: review pass 2 — D6 (`should_load_skill` would silently disable the ceremony), D7 (readiness text is role-agnostic), D8/D9/D10 resolved, D11 closed by new S6b (harness-derived draft). 12→13 steps. Delivery split into three PRs.   Changed-since-v1: adversarial self-review. **5 confirmed defects fixed** — D1 the injection site is chat-gated dead code for `coder` (S5 rewritten, S5a added); D2 the skill body rides `skills_conditional`, not `turn_context` (CT3/T4 oracle corrected); D3 `INJECT.md` without frontmatter loses its header/description (S1 corrected); D4 the controller cannot execute bash (S6 re-seated); D5 edit packets were never persisted, so the PR body had no source (S6a added). Step count 10→12.
 **Delivery (operator decision, review pass 2): three sequenced PRs, not one.**
 PR #68 keeps the S12.7 F1/F4/F7/F8/F9 fixes and merges on its own. Then:
 **PR-A = S1–S4** (two docs, one defaulted kwarg, one pure module, one flag — no behaviour change,
@@ -1293,9 +1293,135 @@ why that indirection is being kept.
 
 ### 14.3 Deferred, explicitly not now
 
-- **G9 — `fa inject list/status`** surfacing effective modes and their source
-  (flag vs config vs default). Wanted for WebUI introspection; backlog, not this plan.
+- ~~**G9 — `fa inject list/status`**~~ — **PROMOTED INTO SCOPE**, see §15.2.
 - Chat-role and planner-role injections: registry rows only, no specs authored yet.
+
+---
+
+## 15. Review pass 5 — inheritance + introspection (Q9, G9; operator, 2026-09-07)
+
+Both items below were raised by the stop rule during S5a implementation and
+decided by the operator. §14 is unchanged by them; this section is additive.
+
+### 15.1 Q9 — do chat-nested pipelines inherit `--inject`? → **(b) yes, inherit**
+
+**Source-verified defect.** `invoke_workflow`
+(`src/fa/inner_loop/tools/workflow_tool.py:453-472`) calls `run_workflow_fn(...)`
+with fourteen keyword arguments and `inject_overrides` is not among them. The
+parameter defaults to `None` → `dict(None or {})` → `{}`
+(`workflow_controller.py:797,850`). So a pipeline the model launches from a chat
+session resolves EVERY injection to `off`, even when the operator started that
+chat with `--inject coder_slice_ceremony=enforce`.
+
+Concretely: `fa run --role chat --inject coder_slice_ceremony=enforce`, then ask
+the chat agent to run planner→coder. The coder stage of that nested pipeline
+gets no ceremony payload and says nothing about it. The flag appears to do
+nothing — the worst failure class for a control surface, because it is silent.
+
+| Option | Verdict |
+|---|---|
+| (a) leave as-is; flag only affects `fa workflow` | **Rejected.** Two invocation paths with different injection semantics and no signal telling them apart. |
+| **(b) inherit through `WorkflowInvocationContext`** | **CHOSEN.** Matches "the operator configured THIS invocation": everything downstream of that process inherits it, nested or not. |
+| (c) tool schema parameter, model decides | **Rejected.** Hands the model control over enforcement of its own protocol. A model that finds the ceremony inconvenient can decline it. |
+
+**Mechanism.** `WorkflowInvocationContext` gains
+`inject_overrides: Mapping[str, str] = field(default_factory=dict)` — a frozen
+dataclass, so the default must be a factory, and every existing construction
+site (`cli.py:1591`, `tests/test_handoff_payload.py:27,189`,
+`tests/test_invoke_workflow_tool.py:156`) keeps working untouched. The provider
+factory `_make_workflow_ctx_provider` (`cli.py:1531`) takes the already-parsed
+overrides as a keyword argument and the tool forwards `ctx.inject_overrides` in
+its `run_workflow_fn(...)` call.
+
+**Parsed once, at the CLI seam.** The chat session's `--inject` is parsed by
+`_cmd_run` and handed to the provider as a mapping. The tool never sees raw
+`NAME=MODE` strings, so it cannot re-derive or re-interpret them, and a
+malformed value has already been rejected before any session exists.
+
+**Role gating is unaffected and still authoritative.** Inheritance passes
+OVERRIDES, not modes. The nested pipeline's coder stage re-resolves through
+`resolve_injection_modes(role, overrides=...)`, so a chat session carrying
+`coder_slice_ceremony=enforce` still yields `off` for its planner stage. One
+inherited flag cannot smuggle a payload into the wrong role — the property §14
+established, preserved across the new hop.
+
+**CT16 (contract).** Given a `WorkflowInvocationContext` with
+`inject_overrides={coder_slice_ceremony: enforce}`, the `run_workflow_fn` call
+made by `invoke_workflow` receives `inject_overrides` equal to that mapping;
+given the default context, it receives `{}`.
+
+### 15.2 G9 — `fa inject` introspection → **IN SCOPE (folded in)**
+
+Rationale for promoting it: Q9 was a silent-misconfiguration bug that existed
+because there is no way to ask the harness what it will actually do. Shipping a
+control surface with three inputs (flag, config, default) and no way to read
+back the effective state reproduces that blind spot by construction. G9 is the
+observability half of §14's control half.
+
+**Surface.** `fa inject list` and `fa inject status` — `status` is the default
+when the subcommand is omitted, and both accept `--inject NAME=MODE` and
+`--role` so an operator can preview a specific invocation.
+
+```
+$ fa inject status --role coder --inject coder_slice_ceremony=enforce
+INJECTION              ROLE    MODE      SOURCE
+coder_slice_ceremony   coder   enforce   --inject flag
+```
+
+**The SOURCE column is the whole point** — "enforce" alone does not tell an
+operator whether their flag took effect or the config did. Sources are exactly
+four: `--inject flag`, `config (<path>)`, `default (off)`, and
+`role-gated (off)` — the last distinguishing "you disabled it" from "this
+injection does not apply to this role", which is precisely the Q9 confusion.
+
+**Mechanism — one new function, no duplicated precedence logic.**
+`explain_injection_modes(role, *, overrides, config_path) -> dict[str, InjectionStatus]`
+in `injections.py`, where `InjectionStatus` is a frozen dataclass
+`(name, role, mode, source, summary)`. `resolve_injection_modes` is then
+re-expressed as a thin projection over it (`{k: v.mode for ...}`) so the
+precedence rule has exactly one implementation and the table can never disagree
+with what a run actually does. That equivalence is itself asserted (CT18).
+
+**Read-only and side-effect free.** `fa inject` starts no session, writes no
+artifact, and touches no run directory; it reads config and prints. Unreadable
+config degrades to `default (off)` rows plus the existing warning, never a
+traceback. A malformed `--inject` exits 2 with the same message as
+`fa workflow`, since both are up-front operator input.
+
+**CT17 (contract).** Every row's `source` correctly identifies the winning
+input; a role-gated injection reports `role-gated (off)` and never
+`default (off)`.
+**CT18 (contract).** For all `(role, overrides, config)`,
+`{name: st.mode for name, st in explain_injection_modes(...).items()}` equals
+`resolve_injection_modes(...)`.
+
+### 15.3 Steps (appended to §5)
+
+**S5c — inherit overrides into nested pipelines (Q9).**
+Files: `src/fa/inner_loop/tools/workflow_tool.py`, `src/fa/cli.py`,
+`tests/test_invoke_workflow_tool.py`.
+DoD: CT16 holds; the default context still sends `{}`; existing construction
+sites unmodified. Negative proof: deleting the forwarding line fails a test that
+asserts the mapping arrives, not merely that the key exists.
+Tests: C1 (tool→controller boundary with a spy `run_workflow_fn`).
+Kill-check: drop `inject_overrides=ctx.inject_overrides` from the tool call →
+inheritance test fails.
+
+**S5d — `fa inject list/status` (G9).**
+Files: `src/fa/inner_loop/injections.py`, `src/fa/cli.py`,
+`src/fa/cli_help.py`, `tests/test_inject_cli_flag.py` (or a new
+`tests/test_inject_introspection.py`).
+DoD: CT17 + CT18 hold; `fa inject` exits 0 and prints one row per known
+injection; bad `--inject` exits 2. Negative proof: a source-attribution test
+that fails if every row is hardcoded to one source.
+Tests: C0 (`explain_injection_modes` source attribution across the four cases),
+C1 (CLI invocation, exit codes, row count).
+Kill-check: make `explain_injection_modes` always report `default (off)` →
+attribution tests fail; break the projection equivalence → CT18 test fails.
+
+**Docs (folds into S9).** `knowledge/instructions/02-operations.md` gains the
+`--inject` flag and the `fa inject` command with the worked example above;
+`cli_help.py` carries EN+RU entries for both.
 
 ---
 
