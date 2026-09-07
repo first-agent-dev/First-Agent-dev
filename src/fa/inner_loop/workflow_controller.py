@@ -16,18 +16,19 @@ import logging
 import sys
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import resolve_injection_modes
-from fa.inner_loop.plan_ids import extract_plan_id
+from fa.inner_loop.plan_ids import extract_plan_id, extract_plan_ids
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.workflow_artifacts import (
     EvalReport,
     FlowState,
     FlowStatus,
+    default_route_for_verdict,
     load_flow_state,
     parse_eval_report,
     write_eval_report,
@@ -277,6 +278,75 @@ def build_eval_report(
     )
 
 
+def validate_slice_ids(report: EvalReport, plan_text: str | None) -> tuple[EvalReport, tuple[str, ...]]:
+    """Cross-check the evaluator's claimed slice IDs against the plan. (S12/Q16)
+
+    Returns the adjusted report and the human-readable warnings to emit. Pure:
+    it neither logs nor writes, so the decision is testable without booting a
+    workflow, and the caller keeps a single write of ``eval_report.json``
+    (§24 D-1 -- ``build -> adjust -> write``, never ``emit -> rewrite``).
+
+    Three adjustments, in order:
+
+    1. **Invented IDs are dropped.** ``_STEP_LINE_RE`` accepts any ``S<digits>``
+       token, so ``- S404: PASS`` parses as a real slice. An ID absent from the
+       plan is noise, not evidence, and carrying it would inflate apparent
+       coverage.
+    2. **Omitted slices are recorded** in ``unreported_slices``. This is the
+       one that matters: invention is cosmetic, but silently DROPPING ``S7``
+       from the list yields a clean ``PASS`` over unexamined work.
+    3. **Q16 -- a per-slice ``fail`` forces ``REPAIR_REQUIRED``.** Before this,
+       ``step_results`` was inert: a run could end ``DONE`` while carrying
+       ``S7: FAIL``. Only the literal ``fail`` verdict blocks; ``partial`` and
+       ``not_evaluated`` do not, because neither asserts the slice is broken
+       and widening the rule would turn "the evaluator was unsure" into a hard
+       route.
+
+    Degrades to a no-op when no plan is resolvable (``plan_text is None``, or
+    the plan declares no slices). Legacy plans failing extraction is expected
+    and is not a kill signal, so an unparseable plan must not manufacture
+    warnings about slices nobody declared.
+
+    Comparison is exact and case-sensitive: ``S5`` and ``S5a`` are different
+    slices, and folding them would report a real omission as covered.
+    """
+    warnings: list[str] = []
+
+    # Q16 applies even with no plan: a reported failure is a fact about the
+    # work, independent of whether the harness can see the contract.
+    failed = tuple(step.step_id for step in report.step_results if step.verdict == "fail")
+    if failed and report.verdict == "PASS":
+        warnings.append(
+            f"eval returned PASS while reporting per-slice failure(s): {', '.join(failed)}; "
+            "routing to REPAIR_REQUIRED (Q16)"
+        )
+        report = replace(
+            report,
+            verdict="REPAIR_REQUIRED",
+            route_decision=default_route_for_verdict("REPAIR_REQUIRED"),
+            summary=f"per-slice failure reported for {', '.join(failed)}: {report.summary}",
+        )
+
+    if plan_text is None:
+        return report, tuple(warnings)
+    declared = extract_plan_ids(plan_text).slices
+    if not declared:
+        return report, tuple(warnings)
+
+    known = set(declared)
+    kept = tuple(step for step in report.step_results if step.step_id in known)
+    invented = tuple(step.step_id for step in report.step_results if step.step_id not in known)
+    if invented:
+        warnings.append(f"eval reported slice id(s) absent from the plan, dropped: {', '.join(invented)}")
+
+    reported = {step.step_id for step in kept}
+    unreported = tuple(slice_id for slice_id in declared if slice_id not in reported)
+    if unreported:
+        warnings.append(f"plan slice(s) with no eval verdict: {', '.join(unreported)}")
+
+    return replace(report, step_results=kept, unreported_slices=unreported), tuple(warnings)
+
+
 def status_for_role(role: str) -> FlowStatus:
     if role == "planner":
         return "PLANNING"
@@ -417,15 +487,22 @@ def _run_stage(
                 ctx.run_id,
             )
             _eval_independence = None
-        report = emit_eval_report(
-            report_path=ctx.artifact_paths.eval_report,
-            final_text=sink[-1].final_text,
+        # S12/§24 D-1: build -> adjust -> write, exactly one write. Calling
+        # emit_eval_report here and rewriting afterwards would persist a report
+        # that contradicts the routing decision for the window in between.
+        report = build_eval_report(
+            sink[-1].final_text,
             run_id=ctx.run_id,
             # S12a: the plan's declared ID when one was supplied, else run_id.
             plan_id=ctx.plan_identity(),
             plan_version=progress.plan_version,
             eval_independence=_eval_independence,
         )
+        report, _slice_warnings = validate_slice_ids(report, ctx.plan_text())
+        for _warning in _slice_warnings:
+            logger.warning("workflow eval-report: %s (run=%s)", _warning, ctx.run_id)
+            print(f"fa workflow: {_warning}", file=sys.stderr)
+        write_eval_report(ctx.artifact_paths.eval_report, report)
         print(
             f"fa workflow: eval verdict={report.verdict} "
             f"route={report.route_decision} → {ctx.artifact_paths.eval_report}",
@@ -1042,6 +1119,7 @@ __all__ = [
     "slugify_task",
     "status_for_role",
     "terminal_status_without_eval",
+    "validate_slice_ids",
     "workflow_artifact_paths",
     "workflow_exit_code",
 ]

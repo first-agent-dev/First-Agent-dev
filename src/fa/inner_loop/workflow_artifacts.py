@@ -218,6 +218,11 @@ class EvalReport:
     # and neutral. Serialised as a plain mapping (not the roles.EvalIndependence
     # dataclass) to keep this module free of a roles dependency.
     eval_independence: Mapping[str, object] | None = None
+    # S12: plan slices the evaluator never reported a verdict for. Empty both
+    # when a supplied plan was fully covered and when no plan was supplied at
+    # all; the two are distinguished by FlowState.plan_path, not by overloading
+    # this field with a sentinel.
+    unreported_slices: tuple[str, ...] = ()
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -229,6 +234,7 @@ class EvalReport:
             "route_decision": self.route_decision,
             "summary": self.summary,
             "step_results": [asdict(step) for step in self.step_results],
+            "unreported_slices": list(self.unreported_slices),
             "findings": [item.to_json_dict() for item in self.findings],
             "integration_checks": list(self.integration_checks),
             "regression_checks": list(self.regression_checks),
@@ -251,6 +257,7 @@ class EvalReport:
             ),
             summary=_as_str(data["summary"]),
             step_results=tuple(StepResult.from_json_dict(item) for item in _as_dict_list(data.get("step_results", []))),
+            unreported_slices=_as_str_tuple(data.get("unreported_slices", [])),
             findings=tuple(EvalFinding.from_json_dict(item) for item in _as_dict_list(data.get("findings", []))),
             integration_checks=_as_str_tuple(data.get("integration_checks", [])),
             regression_checks=_as_str_tuple(data.get("regression_checks", [])),
