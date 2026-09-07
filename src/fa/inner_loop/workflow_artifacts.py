@@ -275,6 +275,12 @@ class FlowState:
     blocked_reason: str = ""
     completed_steps: tuple[str, ...] = field(default_factory=tuple)
     invalidated_steps: tuple[str, ...] = field(default_factory=tuple)
+    # S11a/F6: did a judge actually rule on this run? ``DONE`` with
+    # ``judged=False`` means "the stages ran and nothing evaluated them" -- a
+    # legitimate scratch pipeline (``--roles coder``), never a verified result.
+    # Defaults True so pre-S11a artifacts (no key) read as judged rather than
+    # silently downgrading historical runs.
+    judged: bool = True
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -290,6 +296,7 @@ class FlowState:
             "last_transition_reason": self.last_transition_reason,
             "last_route_decision": self.last_route_decision,
             "blocked_reason": self.blocked_reason,
+            "judged": self.judged,
             "completed_steps": list(self.completed_steps),
             "invalidated_steps": list(self.invalidated_steps),
         }
@@ -311,6 +318,9 @@ class FlowState:
             blocked_reason=_as_str(data.get("blocked_reason", "")),
             completed_steps=_as_str_tuple(data.get("completed_steps", [])),
             invalidated_steps=_as_str_tuple(data.get("invalidated_steps", [])),
+            # Absent key => True: a pre-S11a artifact predates the concept and
+            # must not be reinterpreted as unjudged.
+            judged=bool(data.get("judged", True)),
         )
 
 

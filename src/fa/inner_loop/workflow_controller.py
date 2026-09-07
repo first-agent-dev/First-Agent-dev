@@ -450,6 +450,29 @@ def _write_stage_failure_state(
     )
 
 
+def terminal_status_without_eval(*, eval_requested: bool) -> tuple[FlowStatus, str]:
+    """Map a run that produced no eval report to a terminal status. (S11a/F6)
+
+    Extracted as a pure function so the decision is testable directly and so a
+    mutation that flips it dies at a named oracle rather than only inside a
+    full workflow boot.
+
+    Two genuinely different situations were previously collapsed into
+    ``DONE``:
+
+    * ``eval_requested`` -- the operator asked for a judge and none ruled
+      (the stage produced no final message, so ``_run_stage``'s
+      ``role == "eval" and code == 0 and sink`` guard left the report unset).
+      Absence of evidence is not evidence of success: fail closed.
+    * not requested -- e.g. ``fa workflow --roles coder``, a legitimate
+      scratch pipeline. It still succeeded; it simply was never judged, which
+      the caller records via ``FlowState.judged``.
+    """
+    if eval_requested:
+        return "FAILED", "eval stage produced no verdict"
+    return "DONE", ""
+
+
 def _write_terminal_state(
     ctx: WorkflowContext,
     *,
@@ -457,6 +480,7 @@ def _write_terminal_state(
     eval_report: EvalReport | None,
     progress: WorkflowProgress,
     reason: str,
+    eval_requested: bool = False,
 ) -> None:
     status: FlowStatus
     route: str
@@ -465,9 +489,8 @@ def _write_terminal_state(
         route = eval_report.route_decision
         blocked = eval_report.summary if eval_report.verdict == "BLOCKED" else ""
     else:
-        status = "DONE"
+        status, blocked = terminal_status_without_eval(eval_requested=eval_requested)
         route = ""
-        blocked = ""
     write_flow_state(
         ctx.artifact_paths.flow_state,
         FlowState(
@@ -483,6 +506,7 @@ def _write_terminal_state(
             last_transition_reason=reason,
             last_route_decision=route,
             blocked_reason=blocked,
+            judged=eval_report is not None,
         ),
     )
 
@@ -612,7 +636,13 @@ def _run_adaptive(
             last_role=roles[-1],
             eval_report=None,
             progress=progress,
-            reason="adaptive workflow completed without eval stage",
+            reason=(
+                "eval stage ran but produced no verdict"
+                if "eval" in roles
+                else "adaptive workflow completed without eval stage"
+            ),
+            # S11a/F6: "eval" present in roles means a judge WAS asked for.
+            eval_requested="eval" in roles,
         )
         _print_terminal_summary(ctx, n_stages=n_stages, eval_report=None, repair_rounds_used=0)
         return 0
@@ -762,8 +792,10 @@ def _run_linear(ctx: WorkflowContext, roles: list[str], run_stage_fn: Callable[.
         reason=(
             f"eval verdict {eval_report.verdict} (linear; no repair loop)"
             if eval_report is not None
-            else "linear workflow completed"
+            else ("eval stage ran but produced no verdict" if "eval" in roles else "linear workflow completed")
         ),
+        # S11a/F6: see terminal_status_without_eval.
+        eval_requested="eval" in roles,
     )
     _print_terminal_summary(ctx, n_stages=len(roles), eval_report=eval_report, repair_rounds_used=0)
     return 0
@@ -932,6 +964,7 @@ __all__ = [
     "run_workflow",
     "slugify_task",
     "status_for_role",
+    "terminal_status_without_eval",
     "workflow_artifact_paths",
     "workflow_exit_code",
 ]

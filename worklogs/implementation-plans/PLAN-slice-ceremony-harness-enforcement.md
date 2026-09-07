@@ -2309,3 +2309,77 @@ shape as `--inject`, no mid-loop reconfiguration.
 
 - [ ] T21: `--eval-fresh` ⇒ eval stage starts a fresh session
 - [ ] T21b: default (absent) ⇒ eval resumes, byte-identical to today
+
+---
+
+## §22 S11a implementation record — SHIPPED
+
+**Status: COMPLETE.** F6 closed. `judged` is now a first-class artifact field.
+
+### What shipped
+
+| Edit | File |
+|---|---|
+| `terminal_status_without_eval(*, eval_requested)` — pure, exported | `workflow_controller.py` |
+| `_write_terminal_state(..., eval_requested=False)`; `else` branch delegates | same |
+| `judged=eval_report is not None` on the `FlowState` write | same |
+| `eval_requested="eval" in roles` at the two None-capable call sites (`_run_adaptive`, `_run_linear`) | same |
+| `FlowState.judged: bool = True` + serialise + `from_json_dict` (absent ⇒ True) | `workflow_artifacts.py` |
+| 8 tests (2×C0 decision, 1×C0 compat, 5×C1 composition-root) | `tests/test_workflow_no_eval_terminal.py` (NEW) |
+
+Only **2 of 7** `_write_terminal_state` call sites can pass `eval_report=None`;
+the other five always hold a report. Threading a default-`False` keyword rather
+than changing all seven kept the diff to +47/−4 in `src/`.
+
+### Verification (actual output, not "no exception")
+
+- `tests/test_workflow_no_eval_terminal.py` — **8 passed**
+- controller/artifact suites — **57 passed** after re-scoping two deadline tests
+- full suite — **9 failed, 3922 passed**; `comm -23` vs baseline **empty** (zero new)
+- `ruff check src/fa tests` — All checks passed; `ruff format --check` clean
+- `test_live_check_script.py` **28 passed**; battery **28 OK, 0 missed**
+- authoring gate on a real workspace — **1 passed**
+
+### Mutation battery (C4) — 4 run, 4 killed
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | restore `return "DONE", ""` unconditionally (the original F6 bug) | **5 failed** ✅ |
+| M2 | `judged=True` hard-coded | **3 failed** ✅ |
+| M3 | `eval_requested=False` at both call sites | **3 failed** ✅ |
+| M4 | `FlowState.judged` default `True`→`False` | **survived first**, then killed |
+
+**M4 is the finding worth keeping.** The first compat test asserted only
+`from_json_dict({...no judged...}).judged is True` — which passes under the
+mutant because the deserialiser carries its *own* `data.get("judged", True)`.
+Two independent defaults guard the same concept, and the test pinned the wrong
+one. Fixed by additionally constructing a `FlowState` without the field. General
+lesson: **when a default exists in two places, an oracle that exercises only one
+of them is not a test of "the default".**
+
+### Collateral: two deadline tests re-scoped, not weakened
+
+`test_no_deadline_runs_the_full_pipeline` and
+`test_generous_deadline_runs_the_full_pipeline` used `_RecordingStage`, which
+returns 0 **without appending a `SessionOutcome`** — in production a successful
+eval stage always appends one, so the fixture was unfaithful. Post-S11a their
+`--roles planner,coder,eval` correctly yields `FAILED`.
+
+Their real oracle is "every stage was dispatched", not "the work was accepted",
+so both were re-scoped to `["planner","coder"]` and **strengthened** with
+`assert state.judged is False`. The behaviour change is intended, and the
+alternative (relaxing S11a so a silent judge passes) would have deleted the
+feature to save a fixture.
+
+### Not done here (correctly deferred)
+
+Row 4 of §19's table — unjudged **and** an observed command failure ⇒
+`REPAIR_REQUIRED` — needs S6's observations and belongs to **S11b**.
+
+### No new Q#
+
+No new policy choice surfaced. `eval_requested` is derived from `roles`, which
+the caller already owns; `judged` defaults True purely for artifact
+back-compatibility.
+
+**Next per §21.1: S12a** (`--plan` / `plan_path`), which unblocks S12 and S13.
