@@ -542,7 +542,15 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--role",
         "-r",
-        default="coder",
+        # Operator decision (2026-09): bare `fa run` is a CHAT session. The
+        # long-standing "coder" default was legacy -- it predates the chat
+        # role and was never revisited, so the default invocation dropped an
+        # operator straight into a write+bash agent with no scope estimate.
+        # "chat" is the correct front door: read-oriented registry plus
+        # invoke_workflow (cli.py:1626), and it is the role the live check
+        # already drives (run_live_check.sh:314). Explicit `-r coder` is
+        # unchanged for anyone who wants the old behaviour.
+        default="chat",
         help=COMMANDS["run"]["args"]["--role/-r"]["en"],
     )
     run_parser.add_argument(

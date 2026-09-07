@@ -55,9 +55,10 @@ COMMANDS: dict[str, CommandHelp] = {
                 "en": "Task text in quotes (positional). '-' reads the task from stdin. Also accepted via --task.",
             },
             "--role/-r": {
-                "ru": "Роль: planner | coder | eval (по умолчанию coder). Должна совпадать "
+                "ru": "Роль: planner | coder | eval | chat (по умолчанию chat). Должна совпадать "
                 "с ключом верхнего уровня в ~/.fa/models.yaml.",
-                "en": "Role: planner | coder | eval (default coder). Must match a top-level key in ~/.fa/models.yaml.",
+                "en": "Role: planner | coder | eval | chat (default chat). Must match a "
+                "top-level key in ~/.fa/models.yaml.",
             },
             "--max-turns/-n": {
                 "ru": "Лимит ходов LLM (по умолчанию 16).",
