@@ -756,10 +756,15 @@ Consequences that must be honoured:
 - The synthetic report must be marked as harness-origin so it is never confused
   with a model-authored eval.
 
-**This seam is a new policy choice, so per the operator's stop rule it is
-promoted to `Q10` and S6 does not start until it is answered.**
+**This seam was a new policy choice, so per the operator's stop rule it was
+promoted to `Q10`. ✅ ANSWERED 2026-09-07: option (a), with the refinement that
+the harness synthesises `return_to_coder` ONLY — escalation to the planner
+stays eval's privilege, because `REPLAN_REQUIRED` requires judging plan *shape*
+(`prompt.py:804-812`). The `repair_round` cap covers verification-driven
+repairs. **S6 IS UNBLOCKED.** Implementation detail lives in §19 S11b.**
 
-> **Q10 — how should a harness verification failure re-enter the loop?**
+> **Q10 (answered — retained for the reasoning) — how should a harness
+> verification failure re-enter the loop?**
 > (a) **R-1 above** — synthesise an eval report with `route_decision =
 > "return_to_coder"` (reuses the tested path; the eval stage is no longer the
 > sole author of routing).
@@ -1831,8 +1836,13 @@ and inert.** S11/S12 give it a consumer.
 
 ### Step S11: Reconcile the verdict against harness observation (Q11)
 
+> **SPLIT in §21 (C-1) — do not execute as one step.** **S11a** (F6: unjudged
+> never means DONE) has **no dependencies** and runs before S6. **S11b** (the
+> reconciliation rows below) needs S6's observations. T19* belong to S11a;
+> T15* to S11b.
+
 Traces-to: G3 · CT4 · new CT19
-Depends-on: **S6** (produces the observations)    Blocks: nothing
+Depends-on: **S6** for S11b only; **S11a has none**    Blocks: nothing
 Target liveness: L0→L3
 
 **Why.** Today `EVAL_VERDICT_TO_TERMINAL_STATUS["PASS"] = "DONE"`
@@ -1888,7 +1898,7 @@ Kill-check: delete the override branch ⇒ **T15** fails (run goes `DONE` green)
 ### Step S12: Validate slice IDs against the plan (Q12)
 
 Traces-to: G5 · CT6 · new CT20
-Depends-on: **S3** (`extract_plan_ids`, shipped but imported by nothing)
+Depends-on: **S3** (`extract_plan_ids`, shipped but imported by nothing) + **S12a** (§21 C-3: the harness has no plan path today)
 Target liveness: L0→L2
 
 **Why.** `_STEP_LINE_RE` (`workflow_artifacts.py:342`) accepts any
@@ -1928,7 +1938,7 @@ Kill-check: remove the cross-check ⇒ **T16** fails.
 ### Step S13: Give eval the plan, the diff, and the related docs
 
 Traces-to: G3 · new CT21
-Depends-on: none (independent; do FIRST — cheapest, likely largest quality win)
+Depends-on: **S12a** (plan path) + **S12** (slice IDs) — see §21 C-2/C-3; NOT dependency-free as first written
 Target liveness: L0→L3
 
 **Why — the strongest finding in the audit.** The eval prompt is good: it is
@@ -1959,11 +1969,11 @@ Do:
 Do-not: do not paste the whole plan inline (it is 1600+ lines and would evict
 the diff). Do not remove the coder transcript in this step.
 
-**Deferred, deliberately — `fresh=True` for eval.** Resuming the coder's session
-is the structural independence break, but a fresh eval loses real evidence and
-costs tokens. Recommendation: add `--eval-fresh` defaulting to today's
-behaviour, and **measure** before flipping. Recorded as **Q15**, not decided
-here.
+**`fresh=True` for eval — Q15 ANSWERED (§21.2).** Operator decision:
+`--eval-fresh` toggle, **default = inherit the coder context** (today's
+`fresh=index == 0`). The evidence block is required in BOTH modes: under the
+default the judge still never receives the contract, and under `--eval-fresh`
+this block is its only context.
 
 Exit criteria:
 - [ ] T17: the eval request contains the plan path and a non-empty diff
@@ -2010,20 +2020,26 @@ Kill-check: n/a (pure rename; the round-trip test is the guard).
 
 ---
 
-### §19.1 Sequencing
+### §19.1 Sequencing — ⚠️ SUPERSEDED by §21.1
 
-**S14 → S13 → S12 → S11.** Rationale: S14 is a free rename; S13 is independent
+> Verified against the tip in §21: S11 depends on S6, S13 depends on S12, and
+> both S12/S13 need a plan path that does not exist. **Use §21.1's order:**
+> S14 → S11a → S12a → S12 → S13 → S6 → S11b.
+
+Original (kept for transfer): **S14 → S13 → S12 → S11.** Rationale: S14 is a free rename; S13 is independent
 and probably the biggest quality win per line; S12 revives S3 and produces the
 slice list S11 reports against; S11 needs S6's observations and is the actual
 gate. S6 remains blocked on Q10 — now answered (harness synthesises
 `return_to_coder` only), so **S6 is unblocked**.
 
-### §19.2 New open question
+### §19.2 Q15 — CLOSED (operator, 2026-09-07)
 
 > **Q15 — should the eval stage run fresh?** Today `fresh=index == 0` seats eval
-> in the coder's transcript. Fresh eval = real independence, but loses evidence
-> and costs tokens. Proposal: `--eval-fresh` flag, default unchanged, decide on
-> measurement. **Not decided.**
+> in the coder's transcript. **ANSWERED: toggleable, inheriting the coder
+> context by default.** `--eval-fresh` opts into a fresh session; absent, the
+> behaviour is byte-identical to today. Rationale: independence is measurable
+> only against a stable baseline, and the default must not silently change the
+> cost/quality profile of existing runs. Detail + tests in §21.2.
 
 ---
 
@@ -2131,3 +2147,165 @@ Before §19 the rule bound only the two model roles — by prompt, i.e.
 unfalsifiably. S11 and the F6 fix are the first places the *harness* is held to
 it, in code, with kill-checks. That is the difference between a ceremony and a
 contract.
+
+---
+
+## §21 Sequencing check for S14→S13→S12→S11 — plan does NOT yet support it
+
+Operator proposal: close S14, S13, S12, S11 first, then return to S6. Verified
+the dependency graph against the tip. **Two conflicts and one prerequisite gap.
+The order is right in spirit; the plan as written cannot execute it.**
+
+### C-1 — S11 declares `Depends-on: S6`, which the proposal inverts
+
+S11's four-row table needs `observed` — produced by S6. As written, S11 cannot
+precede S6.
+
+**Resolution: split S11.** The F6 fix needs no observations at all; only the
+reconciliation rows do.
+
+Both halves are given real `### Step` headers below so a step scan cannot miss
+them (the §19 S11 block stays as the shared rationale).
+
+T19/T19b/T19c belong to **S11a**; T15* to **S11b**.
+
+### Step S11a: Unjudged never means DONE (F6)
+
+Traces-to: G3 · CT19    Depends-on: **none**    Blocks: nothing
+Target liveness: L0→L3
+
+**Highest-ROI item in §19–§21, and dependency-free.** Today
+`_write_terminal_state:467` sets `status = "DONE"` whenever `eval_report is
+None`, and `_run_adaptive:610-617` returns 0 with reason "adaptive workflow
+completed without eval stage". `fa workflow --roles coder` therefore reports
+success with nothing having judged anything.
+
+Edit:
+- path: `src/fa/inner_loop/workflow_controller.py` symbol: `_write_terminal_state` change: replace the unconditional `else: status = "DONE"`
+- path: same symbol: `_run_adaptive` no-eval branch change: same rule
+- path: `src/fa/inner_loop/workflow_artifacts.py` symbol: `FlowState`/report change: record `judged: bool`
+
+Do:
+1. eval WAS in `--roles` but no report (incl. empty sink, `_run_stage:336`
+   guard) ⇒ **`FAILED`**. The judge was asked for and did not answer.
+2. eval NOT in `--roles` ⇒ `DONE` **and** `judged: false` in the artifact. A
+   scratch `--roles coder` run stays valid but is never mistakable for verified.
+3. Once S6 lands, row 4 of §19's table (unjudged + observed failure ⇒
+   `REPAIR_REQUIRED`) is added by **S11b**, not here.
+
+Do-not: do not make eval mandatory in `--roles` — that breaks a legitimate
+scratch pipeline. The fix is honest labelling, not forced ceremony.
+
+Exit criteria:
+- [ ] T19: eval in roles but report absent ⇒ `FAILED`, not `DONE`
+- [ ] T19b: `--roles coder` all green ⇒ `DONE` **and** `judged: false`
+- [ ] T19c: eval ran but empty sink ⇒ `FAILED`
+
+Kill-check: restore `else: status = "DONE"` ⇒ **T19** fails.
+
+### Step S11b: Reconcile claimed verdict vs harness observation
+
+Traces-to: G3 · CT4 · CT19    Depends-on: **S6** (observations)
+Target liveness: L0→L3
+
+The remaining three rows of §19's table, `harness_verification` in
+`eval_report.json`, and T15/T15b/T15c/T15d. Rationale, truth table, and the
+"observation may only ever be more conservative" invariant are in §19 S11 and
+are not restated here.
+
+### C-2 — S13 consumes S12's output
+
+S13 Do-1 says "the **slice IDs** (S12)". So S13 depends on S12, and the
+proposed S13→S12 order is backwards. Two options:
+
+- (a) reorder to **S12 → S13** (dependency-honest), or
+- (b) drop slice IDs from S13's first cut — plan path + diff + doc links carry
+  most of the value and need nothing from S12.
+
+**Recommend (a).** S12 is small, and S13 is materially better with the slice
+list in it.
+
+### C-3 (prerequisite gap) — the harness has no plan path to give
+
+Both S12 and S13 assume the harness can locate the plan. It cannot:
+
+- `WorkflowArtifactPaths` (`workflow_controller.py:106-109`) has exactly three
+  fields: `base_dir`, `eval_report`, `flow_state`. **No plan.**
+- `emit_eval_report` is called with `plan_id=ctx.run_id` (`:352`), and
+  `active_plan_id=ctx.run_id` at `:274,399,438,478`. **`plan_id` is the run ID
+  wearing a plan's name** — the same class of defect as `acceptance_matched`
+  (S14): a field whose name promises a plan reference and whose value is
+  something else.
+- `grep` for `plan` + `path|file|.md` in the controller ⇒ **zero hits**.
+
+So S12 ("validate IDs against the plan") and S13 ("give eval the plan path")
+both have an unstated prerequisite that does not exist.
+
+**Resolution — new S12a, blocking both.**
+
+### Step S12a: Give the workflow a plan reference
+
+Traces-to: G5 · CT6 · CT21    Depends-on: none    Blocks: S12, S13
+Target liveness: L0→L2
+
+Edit:
+- path: `src/fa/cli.py` symbol: `workflow` parser change: add `--plan PATH`
+- path: `src/fa/inner_loop/workflow_controller.py` symbol: `WorkflowContext` change: add `plan_path: Path | None = None`
+- path: same symbol: `emit_eval_report` call change: pass a real plan identity, not `ctx.run_id`
+
+Do:
+1. `--plan` is **optional**. Absent ⇒ `plan_path=None`; S12 and S13 degrade to
+   today's behaviour with no warnings. Legacy/planner-authored runs must not
+   break (standing operator rule: legacy plans failing extraction is expected
+   and is NOT a kill signal).
+2. Keep `plan_id` as-is for artifact compatibility, but populate it from the
+   plan's own ID when a plan is supplied. Do not silently redefine the field.
+3. Record `plan_path` in `flow_state` so a run is traceable to its contract.
+
+Do-not: do not make `--plan` mandatory. Do not infer the plan by globbing
+`worklogs/implementation-plans/` — guessing the contract is worse than not
+having one.
+
+Exit criteria:
+- [ ] T20: `--plan P` ⇒ `ctx.plan_path == P`, recorded in `flow_state`
+- [ ] T20b: no `--plan` ⇒ `None`, no warning, behaviour unchanged
+- [ ] T20c: `--plan` pointing at a missing file ⇒ clear error before any stage runs
+
+Kill-check: drop the wiring ⇒ **T20** fails and S12/S13 have no input.
+
+### §21.1 Corrected order
+
+```
+S14  DONE (shipped 54bf663)
+ │
+ ├─ S11a  F6: unjudged never means DONE      no deps   <- do next, highest ROI
+ ├─ S12a  --plan / plan_path                 no deps
+ │    └─ S12   validate slice IDs            needs S12a + S3
+ │         └─ S13   eval gets plan+diff+IDs  needs S12a, S12
+ │
+ └─ S6    harness runs verify commands       unblocked (Q10 answered)
+      └─ S11b  reconcile claimed vs observed needs S6
+```
+
+**Answer to the operator's question: yes, close the new slices first — but as
+S14 → S11a → S12a → S12 → S13 → S6 → S11b.** S11 splits around S6 rather than
+sitting entirely before or after it. Everything up to S13 is dependency-free of
+S6, so the intent of the proposal holds.
+
+### §21.2 Q15 answered — eval freshness is toggleable, inherits by default
+
+**Operator decision: `--eval-fresh` toggle, default = inherit the coder
+context (today's `fresh=index == 0`).** Q15 is CLOSED.
+
+Consequences for S13: the evidence block (plan path, diff, doc links) must be
+supplied **regardless** of the toggle, because under the default the judge
+still never receives the contract. Under `--eval-fresh` it becomes the eval
+stage's *only* context, so it is load-bearing in both modes — S13 is not
+obsoleted by the flag.
+
+Placement note: per the standing operator rule, toggles are set **between**
+`fa run` invocations, so this is a launch-time CLI flag resolved once — same
+shape as `--inject`, no mid-loop reconfiguration.
+
+- [ ] T21: `--eval-fresh` ⇒ eval stage starts a fresh session
+- [ ] T21b: default (absent) ⇒ eval resumes, byte-identical to today
