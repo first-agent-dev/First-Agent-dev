@@ -176,22 +176,35 @@ def test_no_deadline_runs_the_full_pipeline(tmp_path: Path) -> None:
 
     ``_cmd_workflow`` passes no deadline. This is the regression guard for the
     "byte-identical for existing callers" claim.
-    """
-    stage = _RecordingStage()
-    exit_code, state = _run(tmp_path, stage, run_id="dl-none", deadline_mono=None)
 
-    assert stage.roles == _ROLES, "the whole pipeline must still run without a deadline"
+    Roles here deliberately EXCLUDE ``eval``. This test is about the deadline
+    not firing, not about acceptance. ``_RecordingStage`` returns 0 without
+    appending a ``SessionOutcome``, which in production never happens for a
+    successful eval stage; after S11a a requested-but-silent judge is a
+    ``FAILED`` run (F6). Asking for an eval here would assert the wrong thing.
+    """
+    roles = ["planner", "coder"]
+    stage = _RecordingStage()
+    exit_code, state = _run(tmp_path, stage, run_id="dl-none", deadline_mono=None, roles=roles)
+
+    assert stage.roles == roles, "the whole pipeline must still run without a deadline"
     assert exit_code == 0
     assert state is not None
     assert state.status == "DONE"
+    assert state.judged is False, "no eval stage ran, so the run is unjudged (S11a)"
 
 
 def test_generous_deadline_runs_the_full_pipeline(tmp_path: Path) -> None:
-    """C1 (matrix A — feature on, not firing) — the guard is not a blanket stop."""
-    stage = _RecordingStage()
-    exit_code, _state = _run(tmp_path, stage, run_id="dl-generous", deadline_mono=time.monotonic() + 3600)
+    """C1 (matrix A — feature on, not firing) — the guard is not a blanket stop.
 
-    assert stage.roles == _ROLES
+    ``eval`` is excluded for the same reason as the test above: the oracle is
+    "every stage was dispatched", not "the work was accepted".
+    """
+    roles = ["planner", "coder"]
+    stage = _RecordingStage()
+    exit_code, _state = _run(tmp_path, stage, run_id="dl-generous", deadline_mono=time.monotonic() + 3600, roles=roles)
+
+    assert stage.roles == roles
     assert exit_code == 0
 
 

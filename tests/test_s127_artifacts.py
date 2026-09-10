@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from fa.inner_loop.artifacts import ArtifactStore
 from fa.inner_loop.context import reset_current_session, set_current_session
@@ -200,7 +201,7 @@ def test_s127_f4_sandbox_allows_artifact_id_only_read(tmp_path: Path) -> None:
     hook = SandboxHook(tmp_path)
     aid = "tool-result-" + "0" * 16
 
-    def _dec(params: dict[str, object], call_id: str):
+    def _dec(params: dict[str, object], call_id: str) -> Any:
         return hook.handle(
             LifecyclePoint.BEFORE_TOOL_EXEC,
             HookPayload(tool_call=ToolCall(name="fs_read_file", params=params, call_id=call_id)),

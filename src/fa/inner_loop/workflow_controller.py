@@ -16,16 +16,19 @@ import logging
 import sys
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from fa.inner_loop.coder_loop import SessionOutcome
+from fa.inner_loop.injections import resolve_injection_modes
+from fa.inner_loop.plan_ids import canonical_slice_id, extract_plan_id, extract_plan_ids
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.workflow_artifacts import (
     EvalReport,
     FlowState,
     FlowStatus,
+    default_route_for_verdict,
     load_flow_state,
     parse_eval_report,
     write_eval_report,
@@ -129,6 +132,49 @@ class WorkflowContext:
     # is dispatched. ``None`` means no deadline, which is what every existing
     # caller (``_cmd_workflow``) passes, so their behaviour is unchanged.
     deadline_mono: float | None = None
+    # PLAN S5a / Q8: operator-supplied ``--inject NAME=MODE`` overrides for
+    # this run, already parsed and validated. Empty for every existing
+    # construction site, so their behaviour is unchanged.
+    #
+    # Q7: the WORKFLOW owns the switch. Injections are about executing a
+    # planned slice, which is the pipeline's job. Q8: resolution happens once
+    # per stage dispatch (flag > config > off) rather than per turn -- modes
+    # change between invocations, not mid-loop (plan v5 RK15).
+    inject_overrides: Mapping[str, str] = field(default_factory=dict)
+    # S12a: the plan artifact this run executes against. ``None`` -- the
+    # default and what every pre-S12a caller passes -- means the harness has no
+    # contract to check against, so S12 (slice-ID validation) and S13 (the eval
+    # evidence block) degrade silently rather than warning about a plan the
+    # operator never supplied.
+    plan_path: Path | None = None
+
+    def plan_text(self) -> str | None:
+        """Read the plan once, or ``None`` if absent/unreadable.
+
+        Never raises: a plan that vanished mid-run must not take the pipeline
+        down with it, because the plan is advisory input, not a dependency.
+        """
+        if self.plan_path is None:
+            return None
+        try:
+            return self.plan_path.read_text(encoding="utf-8")
+        except OSError:
+            logger.warning("workflow: plan not readable at %s; continuing without it", self.plan_path)
+            return None
+
+    def plan_identity(self) -> str:
+        """The plan's declared ``Plan-ID``, falling back to ``run_id``.
+
+        Historically ``plan_id`` was passed ``run_id`` at every call site -- a
+        field whose name promised a plan reference while holding a run
+        identifier. When a plan IS supplied and declares an ID, records now
+        carry the real thing; otherwise the old value is kept so existing
+        artifacts stay shaped as before.
+        """
+        text = self.plan_text()
+        if text is None:
+            return self.run_id
+        return extract_plan_id(text) or self.run_id
 
     def task_for(self, role: str) -> str | None:
         return self.per_role_task.get(role) or self.base_task
@@ -182,8 +228,47 @@ def emit_eval_report(
     plan_version: int,
     eval_independence: Mapping[str, object] | None = None,
 ) -> EvalReport:
-    """Parse the eval role's final message and persist ``eval_report.json``."""
-    report = parse_eval_report(
+    """Parse the eval role's final message and persist ``eval_report.json``.
+
+    Kept as the one-call convenience wrapper for callers that need no
+    post-processing. Anything that must ADJUST the report before it lands on
+    disk -- S12 (drop invented slice IDs), S11b (reconcile the verdict against
+    harness observation) -- must call :func:`build_eval_report` and
+    :func:`write_eval_report` around its own step, NOT call this and rewrite
+    the artifact afterwards.
+    """
+    report = build_eval_report(
+        final_text,
+        run_id=run_id,
+        plan_id=plan_id,
+        plan_version=plan_version,
+        eval_independence=eval_independence,
+    )
+    write_eval_report(report_path, report)
+    return report
+
+
+def build_eval_report(
+    final_text: str,
+    *,
+    run_id: str,
+    plan_id: str,
+    plan_version: int,
+    eval_independence: Mapping[str, object] | None = None,
+) -> EvalReport:
+    """Parse the eval role's final message WITHOUT writing anything.
+
+    Split out of :func:`emit_eval_report` because three planned steps (S12,
+    S13, S11b) each need to adjust the report between parsing and persisting
+    it. With parse-and-write fused, each would have had to re-open and rewrite
+    ``eval_report.json`` after the fact: three writes of one file, a window in
+    which the artifact on disk contradicts the routing decision, and a
+    last-writer-wins ordering dependency between otherwise independent steps.
+
+    Separating the two makes the pipeline explicit and single-write:
+    ``build -> adjust -> write``.
+    """
+    return parse_eval_report(
         final_text,
         run_id=run_id,
         plan_id=plan_id,
@@ -191,8 +276,75 @@ def emit_eval_report(
         plan_version=plan_version,
         eval_independence=eval_independence,
     )
-    write_eval_report(report_path, report)
-    return report
+
+
+def validate_slice_ids(report: EvalReport, plan_text: str | None) -> tuple[EvalReport, tuple[str, ...]]:
+    """Cross-check the evaluator's claimed slice IDs against the plan. (S12/Q16)
+
+    Returns the adjusted report and the human-readable warnings to emit. Pure:
+    it neither logs nor writes, so the decision is testable without booting a
+    workflow, and the caller keeps a single write of ``eval_report.json``
+    (§24 D-1 -- ``build -> adjust -> write``, never ``emit -> rewrite``).
+
+    Three adjustments, in order:
+
+    1. **Invented IDs are dropped.** ``_STEP_LINE_RE`` accepts any ``S<digits>``
+       token, so ``- S404: PASS`` parses as a real slice. An ID absent from the
+       plan is noise, not evidence, and carrying it would inflate apparent
+       coverage.
+    2. **Omitted slices are recorded** in ``unreported_slices``. This is the
+       one that matters: invention is cosmetic, but silently DROPPING ``S7``
+       from the list yields a clean ``PASS`` over unexamined work.
+    3. **Q16 -- a per-slice ``fail`` forces ``REPAIR_REQUIRED``.** Before this,
+       ``step_results`` was inert: a run could end ``DONE`` while carrying
+       ``S7: FAIL``. Only the literal ``fail`` verdict blocks; ``partial`` and
+       ``not_evaluated`` do not, because neither asserts the slice is broken
+       and widening the rule would turn "the evaluator was unsure" into a hard
+       route.
+
+    Degrades to a no-op when no plan is resolvable (``plan_text is None``, or
+    the plan declares no slices). Legacy plans failing extraction is expected
+    and is not a kill signal, so an unparseable plan must not manufacture
+    warnings about slices nobody declared.
+
+    Comparison is exact and case-sensitive: ``S5`` and ``S5a`` are different
+    slices, and folding them would report a real omission as covered.
+    """
+    warnings: list[str] = []
+
+    # Q16 applies even with no plan: a reported failure is a fact about the
+    # work, independent of whether the harness can see the contract.
+    failed = tuple(step.step_id for step in report.step_results if step.verdict == "fail")
+    if failed and report.verdict == "PASS":
+        warnings.append(
+            f"eval returned PASS while reporting per-slice failure(s): {', '.join(failed)}; "
+            "routing to REPAIR_REQUIRED (Q16)"
+        )
+        report = replace(
+            report,
+            verdict="REPAIR_REQUIRED",
+            route_decision=default_route_for_verdict("REPAIR_REQUIRED"),
+            summary=f"per-slice failure reported for {', '.join(failed)}: {report.summary}",
+        )
+
+    if plan_text is None:
+        return report, tuple(warnings)
+    declared = extract_plan_ids(plan_text).slices
+    if not declared:
+        return report, tuple(warnings)
+
+    known = {canonical_slice_id(d) for d in declared}
+    kept = tuple(step for step in report.step_results if canonical_slice_id(step.step_id) in known)
+    invented = tuple(step.step_id for step in report.step_results if canonical_slice_id(step.step_id) not in known)
+    if invented:
+        warnings.append(f"eval reported slice id(s) absent from the plan, dropped: {', '.join(invented)}")
+
+    reported = {canonical_slice_id(step.step_id) for step in kept}
+    unreported = tuple(slice_id for slice_id in declared if canonical_slice_id(slice_id) not in reported)
+    if unreported:
+        warnings.append(f"plan slice(s) with no eval verdict: {', '.join(unreported)}")
+
+    return replace(report, step_results=kept, unreported_slices=unreported), tuple(warnings)
 
 
 def status_for_role(role: str) -> FlowStatus:
@@ -220,6 +372,137 @@ def _eval_independence_mapping(models: ModelsConfig) -> Mapping[str, object] | N
     if indep is None:
         return None
     return {"disjoint": indep.disjoint, "stance": indep.stance}
+
+
+EVAL_DIFF_MAX_CHARS: Final = 60_000
+"""Cap on the diff embedded in the eval evidence block.
+
+Large enough that a normal slice arrives whole, small enough that a runaway
+diff cannot evict the rest of the block -- and the task itself -- from the
+judge's context. Truncation is always announced, never silent.
+"""
+
+EVAL_GIT_TIMEOUT_SECONDS: Final = 15
+"""Per-invocation cap on the advisory git calls.
+
+A hung ``git`` must not silently consume the workflow deadline; on timeout the
+section is omitted and the run continues.
+"""
+
+EVAL_DOC_PATHS: Final = ("knowledge/adr/DIGEST.md", "knowledge/adr/README.md")
+"""Repo docs offered to the judge as PATHS, not pasted bodies.
+
+Eval has ``fs_read_file``; pasting bodies would burn context on documents it
+may not need. Only paths that exist are listed, so a moved doc drops out
+rather than sending the judge to a dead reference.
+"""
+
+
+def _git_output(args: list[str], cwd: Path, runner: Callable[..., object] | None = None) -> str | None:
+    """Run one advisory git command; ``None`` when it could not be answered.
+
+    Deliberately NOT ``fa.hygiene.pr_intent._run_git``: that helper passes
+    ``check=True`` and raises on a non-zero exit. This input is advisory, so a
+    workspace that is not a git repo, a detached HEAD, or a missing git binary
+    must degrade to "no diff available" rather than take the run down. Every
+    failure mode collapses to ``None``.
+    """
+    # Local import: keeps subprocess off this module's import surface.
+    import subprocess
+
+    run = runner if runner is not None else subprocess.run
+    try:
+        # Fixed "git" argv, list form, no shell.
+        result = run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=EVAL_GIT_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # FileNotFoundError (git absent), TimeoutExpired, bad cwd -- all advisory.
+        logger.warning("workflow: advisory `git %s` unavailable; continuing", " ".join(args))
+        return None
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    return str(getattr(result, "stdout", "") or "")
+
+
+def _eval_evidence_block(ctx: WorkflowContext, *, runner: Callable[..., object] | None = None) -> str:
+    """Build the evidence preamble handed to the eval stage. (S13)
+
+    **Why this exists.** The eval prompt asks the judge whether the coder
+    satisfied "the planner's execution contract", but eval received only
+    ``ctx.task_for(role)`` -- a task string. The contract it is asked to check
+    against was never handed to it, while under the default
+    ``fresh=index == 0`` it sits inside the coder's own transcript, reading the
+    defendant's success narration as context. This block supplies, as text the
+    HARNESS controls rather than text the coder wrote: the plan path, the
+    declared slice IDs, what actually changed on disk, and where the reference
+    docs live.
+
+    Every section degrades independently. A missing plan, a workspace that is
+    not a git repo, or an absent git binary each drop their own section and
+    leave the rest intact; none raises. Sections that would be empty are
+    OMITTED rather than emitted as a bare heading, because an empty heading
+    reads as "checked, found nothing" when the truth is "never looked".
+
+    Returns ``""`` when nothing could be gathered, so the caller appends
+    nothing rather than a hollow frame.
+    """
+    lines: list[str] = []
+
+    plan_text = ctx.plan_text()
+    if ctx.plan_path is not None:
+        lines.append(f"Plan: {ctx.plan_path}")
+        if plan_text is not None:
+            slices = extract_plan_ids(plan_text).slices
+            if slices:
+                # IDs only. The plan can run to thousands of lines and pasting
+                # it would evict the diff -- the judge has fs_read_file.
+                lines.append(f"Plan slices to judge ({len(slices)}): {', '.join(slices)}")
+        lines.append("Read the plan for the execution contract; do not infer it from the transcript.")
+
+    stat = _git_output(["diff", "HEAD", "--stat"], ctx.workspace, runner)
+    diff = _git_output(["diff", "HEAD"], ctx.workspace, runner)
+    status = _git_output(["status", "--porcelain"], ctx.workspace, runner)
+
+    if stat is None and diff is None and status is None:
+        lines.append("Changed files: unavailable (not a git repository, or git could not be run).")
+    else:
+        # `git diff HEAD` covers staged AND unstaged work, so a coder that
+        # staged everything and one that staged nothing yield the same
+        # evidence. It CANNOT see untracked files, which is why porcelain
+        # status is included: a slice whose entire contribution is a new file
+        # would otherwise show an empty diff and could be passed on nothing.
+        untracked = tuple(line[3:] for line in (status or "").splitlines() if line.startswith("??"))
+        if untracked:
+            lines.append(f"New untracked files ({len(untracked)}): {', '.join(untracked)}")
+            lines.append("These are NOT in the diff below; read them with fs_read_file before judging.")
+        if stat:
+            lines.append(f"Diff stat (git diff HEAD):\n{stat.rstrip()}")
+        if diff:
+            body = diff
+            if len(body) > EVAL_DIFF_MAX_CHARS:
+                body = (
+                    body[:EVAL_DIFF_MAX_CHARS] + f"\n[diff truncated at {EVAL_DIFF_MAX_CHARS} chars of {len(diff)}"
+                    " -- read the remaining files with fs_read_file]"
+                )
+            lines.append(f"Diff (git diff HEAD):\n{body}")
+        elif not untracked:
+            # Explicit, not silence: "nothing changed" is itself a finding
+            # worth a FAIL, and an absent section reads as "diff unavailable".
+            lines.append("Changed files: NONE. `git diff HEAD` is empty and there are no untracked files.")
+
+    existing_docs = [name for name in EVAL_DOC_PATHS if (ctx.workspace / name).is_file()]
+    if existing_docs:
+        lines.append(f"Reference docs (read as needed): {', '.join(existing_docs)}")
+
+    if not lines:
+        return ""
+    return "## Evidence supplied by the harness\n\n" + "\n".join(lines)
 
 
 # ── Stage dispatch ─────────────────────────────────────────────────────────
@@ -269,9 +552,20 @@ def _run_stage(
             last_transition_reason=transition_reason,
         ),
     )
+    # S13: the judge is handed the contract and the evidence. Eval only --
+    # the coder and planner already have the plan by other means, and a diff
+    # of the coder's own work is not input to writing it.
+    stage_task = ctx.task_for(role)
+    if role == "eval":
+        evidence = _eval_evidence_block(ctx)
+        if evidence:
+            # Appended, never substituted: the task states what to judge and
+            # the block states what to judge it against.
+            stage_task = f"{stage_task}\n\n{evidence}" if stage_task else evidence
+
     stage_kwargs: dict[str, object] = {
         "task_pos": None,
-        "task": ctx.task_for(role),
+        "task": stage_task,
         "role": role,
         "config": ctx.config,
         "workspace": ctx.workspace,
@@ -281,6 +575,15 @@ def _run_stage(
         "output_mode": ctx.output_mode,
         "detail": "standard",
         "no_color": False,
+        # PLAN S5a: resolved injection modes for THIS role. A separate
+        # stage_kwargs key because the pre-existing L2 skill-injection site is
+        # gated on ``_is_chat_role`` (coder_loop.py, ``_is_chat_role = role ==
+        # "chat" and bool(scope_mode)``) -- a predicate about a DIFFERENT
+        # feature -- so a workflow coder stage could never reach it. The
+        # ceremony site added in S5b therefore sits OUTSIDE that gate.
+        # Role gating lives in resolve_injection_modes, so a coder-only
+        # injection stays off here for a planner or eval stage.
+        "injection_modes": resolve_injection_modes(role, overrides=ctx.inject_overrides),
     }
     if ctx.run_context is not None and ctx.session_context is not None:
         stage_kwargs.update(
@@ -326,14 +629,22 @@ def _run_stage(
                 ctx.run_id,
             )
             _eval_independence = None
-        report = emit_eval_report(
-            report_path=ctx.artifact_paths.eval_report,
-            final_text=sink[-1].final_text,
+        # S12/§24 D-1: build -> adjust -> write, exactly one write. Calling
+        # emit_eval_report here and rewriting afterwards would persist a report
+        # that contradicts the routing decision for the window in between.
+        report = build_eval_report(
+            sink[-1].final_text,
             run_id=ctx.run_id,
-            plan_id=ctx.run_id,
+            # S12a: the plan's declared ID when one was supplied, else run_id.
+            plan_id=ctx.plan_identity(),
             plan_version=progress.plan_version,
             eval_independence=_eval_independence,
         )
+        report, _slice_warnings = validate_slice_ids(report, ctx.plan_text())
+        for _warning in _slice_warnings:
+            logger.warning("workflow eval-report: %s (run=%s)", _warning, ctx.run_id)
+            print(f"fa workflow: {_warning}", file=sys.stderr)
+        write_eval_report(ctx.artifact_paths.eval_report, report)
         print(
             f"fa workflow: eval verdict={report.verdict} "
             f"route={report.route_decision} → {ctx.artifact_paths.eval_report}",
@@ -431,6 +742,29 @@ def _write_stage_failure_state(
     )
 
 
+def terminal_status_without_eval(*, eval_requested: bool) -> tuple[FlowStatus, str]:
+    """Map a run that produced no eval report to a terminal status. (S11a/F6)
+
+    Extracted as a pure function so the decision is testable directly and so a
+    mutation that flips it dies at a named oracle rather than only inside a
+    full workflow boot.
+
+    Two genuinely different situations were previously collapsed into
+    ``DONE``:
+
+    * ``eval_requested`` -- the operator asked for a judge and none ruled
+      (the stage produced no final message, so ``_run_stage``'s
+      ``role == "eval" and code == 0 and sink`` guard left the report unset).
+      Absence of evidence is not evidence of success: fail closed.
+    * not requested -- e.g. ``fa workflow --roles coder``, a legitimate
+      scratch pipeline. It still succeeded; it simply was never judged, which
+      the caller records via ``FlowState.judged``.
+    """
+    if eval_requested:
+        return "FAILED", "eval stage produced no verdict"
+    return "DONE", ""
+
+
 def _write_terminal_state(
     ctx: WorkflowContext,
     *,
@@ -438,6 +772,7 @@ def _write_terminal_state(
     eval_report: EvalReport | None,
     progress: WorkflowProgress,
     reason: str,
+    eval_requested: bool = False,
 ) -> None:
     status: FlowStatus
     route: str
@@ -446,9 +781,8 @@ def _write_terminal_state(
         route = eval_report.route_decision
         blocked = eval_report.summary if eval_report.verdict == "BLOCKED" else ""
     else:
-        status = "DONE"
+        status, blocked = terminal_status_without_eval(eval_requested=eval_requested)
         route = ""
-        blocked = ""
     write_flow_state(
         ctx.artifact_paths.flow_state,
         FlowState(
@@ -464,6 +798,8 @@ def _write_terminal_state(
             last_transition_reason=reason,
             last_route_decision=route,
             blocked_reason=blocked,
+            judged=eval_report is not None,
+            plan_path=str(ctx.plan_path) if ctx.plan_path else "",
         ),
     )
 
@@ -593,7 +929,13 @@ def _run_adaptive(
             last_role=roles[-1],
             eval_report=None,
             progress=progress,
-            reason="adaptive workflow completed without eval stage",
+            reason=(
+                "eval stage ran but produced no verdict"
+                if "eval" in roles
+                else "adaptive workflow completed without eval stage"
+            ),
+            # S11a/F6: "eval" present in roles means a judge WAS asked for.
+            eval_requested="eval" in roles,
         )
         _print_terminal_summary(ctx, n_stages=n_stages, eval_report=None, repair_rounds_used=0)
         return 0
@@ -743,8 +1085,10 @@ def _run_linear(ctx: WorkflowContext, roles: list[str], run_stage_fn: Callable[.
         reason=(
             f"eval verdict {eval_report.verdict} (linear; no repair loop)"
             if eval_report is not None
-            else "linear workflow completed"
+            else ("eval stage ran but produced no verdict" if "eval" in roles else "linear workflow completed")
         ),
+        # S11a/F6: see terminal_status_without_eval.
+        eval_requested="eval" in roles,
     )
     _print_terminal_summary(ctx, n_stages=len(roles), eval_report=eval_report, repair_rounds_used=0)
     return 0
@@ -780,6 +1124,8 @@ def run_workflow(
     run_context: RunContext | None = None,
     session_db: SessionDatabase | None = None,
     deadline_mono: float | None = None,
+    inject_overrides: Mapping[str, str] | None = None,
+    plan_path: Path | None = None,
 ) -> tuple[int, FlowState | None]:
     """Run the workflow pipeline. Callable from CLI and from tools.
 
@@ -829,6 +1175,8 @@ def run_workflow(
         run_context=run_context,
         session_db=session_db,
         deadline_mono=deadline_mono,
+        inject_overrides=dict(inject_overrides or {}),
+        plan_path=plan_path,
     )
     label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
     print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)
@@ -894,6 +1242,9 @@ __all__ = [
     "DEADLINE_REASON_MARKER",
     "DEFAULT_MAX_REPAIRS",
     "DEFAULT_MAX_REPLANS",
+    "EVAL_DIFF_MAX_CHARS",
+    "EVAL_DOC_PATHS",
+    "EVAL_GIT_TIMEOUT_SECONDS",
     "EVAL_VERDICT_TO_TERMINAL_STATUS",
     "MAX_REPAIRS_CEILING",
     "MAX_REPLANS_CEILING",
@@ -905,12 +1256,15 @@ __all__ = [
     "WorkflowArtifactPaths",
     "WorkflowContext",
     "WorkflowProgress",
+    "build_eval_report",
     "emit_eval_report",
     "eval_system_prompt_extra",
     "read_back_terminal_state",
     "run_workflow",
     "slugify_task",
     "status_for_role",
+    "terminal_status_without_eval",
+    "validate_slice_ids",
     "workflow_artifact_paths",
     "workflow_exit_code",
 ]

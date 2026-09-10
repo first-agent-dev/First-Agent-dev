@@ -8,6 +8,7 @@ P-matrix coverage: P14 (T-lenient), P17 (T-merge/T-dense), P18
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from fa.inner_loop.registry import ToolSpec
 from fa.inner_loop.tools.fs_search import MAX_RESPONSE_BYTES, build_fs_search_tool
@@ -253,7 +254,7 @@ def test_s127_f9_byte_cap_warning_names_total() -> None:
     from fa.inner_loop.tools.fs_search import _enforce_response_cap
 
     rows = [{"path": f"f{i}.py", "lines": 1, "bytes": 1, "pad": "x" * 4000} for i in range(20)]
-    result = {
+    result: dict[str, Any] = {
         "returned": 20,
         "total": 62,
         "truncated": False,

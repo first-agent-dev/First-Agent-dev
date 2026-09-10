@@ -428,6 +428,82 @@ weight is implementation detail» discipline).
    outermost surface, removing any LLM degree-of-freedom on the
    limit-check.
 
+## Amendment 2026-09-07 — Injected prompt payloads (ADR-10-I6)
+
+**Status of amendment:** accepted for runtime contract. Implemented by
+`src/fa/inner_loop/injections.py` and enforced by
+`tests/test_injections.py`, `tests/test_inject_cli_flag.py`,
+`tests/test_injection_threading.py`.
+
+### Context
+
+The harness now injects purpose-built protocol payloads (condensed skill
+text) into a role's prompt at defined trigger points — the first being the
+coder role's per-slice implementation ceremony. An injection **rewrites the
+model's context**, so it is a determinism concern of exactly the kind
+I-1..I-5 govern: two runs of the same command must compose the same prompt,
+and an operator must be able to say what a run will do before running it.
+
+This differs from a feature flag that gates a code path. A flag changes
+*what the harness does*; an injection changes *what the model is told*,
+which is unobservable in the transcript unless the harness says so.
+
+### I-6 — Injected prompt payloads are resolved once, per role, and are inert unless explicitly enforced
+
+**Rule.** Every prompt injection MUST:
+
+1. **Be registered, not ad hoc.** One `InjectionSpec` row naming the
+   injection, the roles it may fire for, and the flag that configures it.
+   No call site may compose a payload the registry does not know about —
+   this is I-1's single-source-of-truth classifier applied to prompt text.
+
+2. **Resolve to a mode exactly once per invocation**, from a fixed
+   precedence: CLI flag > config file > default. Resolution happens at
+   stage dispatch and the result is carried as plain data. Re-reading
+   configuration mid-run is forbidden: one pipeline invocation is a single
+   process spanning many stages, so a live re-read would let the composed
+   prompt change between turns of the same session — a determinism defect,
+   not a feature.
+
+3. **Be role-gated first and unconditionally.** A role outside the spec's
+   `roles` resolves to `off` regardless of flag or config. An operator's
+   single toggle must never be able to place a payload in a role it was
+   not written for.
+
+4. **Default to `observe`, never to `enforce`.** The three modes are
+   `off` (nothing), `observe` (record that the trigger fired; payload
+   untouched), `enforce` (inject). Unknown, malformed, and unreadable
+   inputs resolve to the default. The polarity is deliberately the
+   opposite of a safety gate such as `intent_guard_mode`, which fails
+   CLOSED to `enforce`: a guard failing quiet is dangerous, whereas an
+   advisory payload failing loud would rewrite context nobody asked to
+   change. `observe` is the safe-but-visible middle — a misconfigured
+   harness reports what it *would* have injected and alters nothing.
+
+5. **Be introspectable without running the model.** The effective mode
+   and the input that produced it (flag / config / default / role-gated)
+   MUST be readable by a read-only command. A control surface whose
+   effect can only be discovered by reading a live prompt is not
+   auditable, and silently-ineffective configuration is its dominant
+   failure mode.
+
+**Failure behavior.** Config problems degrade to the default with a
+warning; explicit operator input (a CLI flag) never degrades quietly and
+MUST fail the invocation with a non-zero exit. The asymmetry is
+intentional: a typo in a file the operator did not touch this run should
+not abort work, but a typo in the argument they just typed means the run
+would not do what they asked.
+
+**Why this is I-6 and not an ADR-11 concern.** ADR-11 governs what an
+untrusted author may land in the tree. This is a **runtime** contract about
+how the harness composes a request around the LLM call, which is ADR-10's
+seat (cf. I-4, loop OWNS / middleware READS: the injection mapping is
+loop-owned data resolved before dispatch, and consumers only read it).
+
+**Re-evaluation trigger.** If a future WebUI requires changing an
+injection mode *while an agent is mid-loop*, clause 2 must be revisited
+deliberately — the indirection point is the single `mode_for()` read.
+
 ## §2 Cross-cutting clauses
 
 ### §2.1 Re-evaluation triggers

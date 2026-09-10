@@ -68,13 +68,13 @@ def test_eval_report_round_trip(tmp_path: Path) -> None:
             StepResult(
                 step_id="S1",
                 verdict="pass",
-                acceptance_matched=True,
+                claimed_pass=True,
                 evidence="predicate matched",
             ),
             StepResult(
                 step_id="S2",
                 verdict="fail",
-                acceptance_matched=False,
+                claimed_pass=False,
                 evidence="pytest exited 1",
                 notes="missing edge case",
             ),
@@ -184,9 +184,9 @@ def test_parse_eval_report_extracts_verdict_route_and_steps() -> None:
     assert report.confidence == "parsed:contract"
     by_id = {s.step_id: s for s in report.step_results}
     assert by_id["S1"].verdict == "pass"
-    assert by_id["S1"].acceptance_matched is True
+    assert by_id["S1"].claimed_pass is True
     assert by_id["S2"].verdict == "fail"
-    assert by_id["S2"].acceptance_matched is False
+    assert by_id["S2"].claimed_pass is False
 
 
 def test_parse_eval_report_pass_routes_to_complete() -> None:

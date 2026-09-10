@@ -205,12 +205,16 @@ def test_unparsed_kinds_complete() -> None:
     # direct log read — not by per-session stats; CT-H3).
     # 38 -> 39 total; UNPARSED 14 -> 15; PARSED unchanged at 24.
     # (TEST-EDITS declared in PR.)
-    assert len(all_kinds) == 39, (
-        f"LogKind changed size: {len(all_kinds)} != 39. A kind was added or removed — "
+    # PLAN S5: ceremony_injected added to LogKind and excused in UNPARSED_KINDS
+    # (at most one event per coder stage; the audit question it answers is read
+    # from the JSONL directly, and there is no per-session rollup to compute).
+    # 39 -> 40 total; UNPARSED 15 -> 16; PARSED unchanged at 24.
+    assert len(all_kinds) == 40, (
+        f"LogKind changed size: {len(all_kinds)} != 40. A kind was added or removed — "
         f"decide whether fa stats parses it (add an `elif` in _parse_events) or not "
         f"(add it to UNPARSED_KINDS with a reason), then update this count."
     )
-    assert len(UNPARSED_KINDS) == 15, f"UNPARSED_KINDS changed size: {len(UNPARSED_KINDS)} != 15"
+    assert len(UNPARSED_KINDS) == 16, f"UNPARSED_KINDS changed size: {len(UNPARSED_KINDS)} != 16"
     assert len(PARSED_KINDS) == 24, f"PARSED_KINDS changed size: {len(PARSED_KINDS)} != 24"
 
     # Derivation sanity: disjointness is NOT free. UNPARSED_KINDS is written by

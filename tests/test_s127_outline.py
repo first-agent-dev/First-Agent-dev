@@ -50,7 +50,7 @@ def test_s127_fold_cli_py_matches_ast_truth() -> None:
     got = {r.name: (r.start_line, r.end_line) for r in syms if r.depth == 0}
     assert all(got.get(k) == v for k, v in expected.items()), "top-level ranges must equal decorator-aware ast truth"
     assert len(syms) >= 70, f"cli.py symbol count drifted hard: {len(syms)}"
-    assert len(syms) == 74  # preflight anchor; bump DELIBERATELY if cli.py grows symbols
+    assert len(syms) == 77  # preflight anchor; bump DELIBERATELY if cli.py grows symbols
 
     for name in ("_cmd_stats", "main"):
         row = next(r for r in syms if r.name == name)

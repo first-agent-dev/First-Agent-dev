@@ -31,6 +31,7 @@ from typing import Any
 
 import pytest
 
+from fa.inner_loop.injections import CODER_SLICE_CEREMONY, MODE_ENFORCE
 from fa.inner_loop.registry import ToolResult, ToolSpec, validate_tool_schema_portability
 from fa.inner_loop.tool_names import is_valid_wire_name
 from fa.inner_loop.tools.workflow_tool import (
@@ -127,6 +128,7 @@ class _RecordingWorkflow:
         run_context: Any = None,
         session_db: Any = None,
         deadline_mono: float | None = None,
+        inject_overrides: Mapping[str, str] | None = None,
     ) -> tuple[int, FlowState | None]:
         self.calls.append(
             {
@@ -143,6 +145,7 @@ class _RecordingWorkflow:
                 "output_mode": output_mode,
                 "run_stage_fn": run_stage_fn,
                 "deadline_mono": deadline_mono,
+                "inject_overrides": inject_overrides,
             }
         )
         if self._on_call is not None:
@@ -152,7 +155,14 @@ class _RecordingWorkflow:
         return self._exit_code, self._terminal_state
 
 
-def _ctx(tmp_path: Path, *, parent_run_id: str = "run-parent", timeout: int = 1800) -> WorkflowInvocationContext:
+def _ctx(
+    tmp_path: Path,
+    *,
+    parent_run_id: str = "run-parent",
+    timeout: int = 1800,
+    inject_overrides: Mapping[str, str] | None = None,
+) -> WorkflowInvocationContext:
+    extra: dict[str, Any] = {} if inject_overrides is None else {"inject_overrides": inject_overrides}
     return WorkflowInvocationContext(
         parent_run_id=parent_run_id,
         config=tmp_path / "models.yaml",
@@ -160,6 +170,7 @@ def _ctx(tmp_path: Path, *, parent_run_id: str = "run-parent", timeout: int = 18
         max_turns=4,
         run_stage_fn=lambda ns, **kw: 0,
         workflow_timeout_seconds=timeout,
+        **extra,
     )
 
 
@@ -597,3 +608,52 @@ def test_missing_terminal_state_degrades_to_empty_strings(tmp_path: Path) -> Non
     assert _payload(result)["status"] == ""
     assert _payload(result)["route"] == ""
     assert _payload(result)["timed_out"] is False
+
+
+# ── S5c / CT16: nested pipelines inherit the chat session's --inject ────────
+
+
+class TestInjectOverrideInheritance:
+    """root=tool class=C1 claim=CT16 path=S5c
+
+    oracle=the inject_overrides value observed by the spy run_workflow_fn.
+    producer-kill-check=deleting ``inject_overrides=ctx.inject_overrides`` from
+    the run_workflow_fn call makes test_overrides_reach_the_nested_pipeline
+    fail (it asserts the MAPPING arrives, not merely that the key exists).
+    """
+
+    def test_overrides_reach_the_nested_pipeline(self, tmp_path: Path) -> None:
+        """Q9: the operator configured this invocation; nested runs inherit."""
+        overrides = {CODER_SLICE_CEREMONY.name: MODE_ENFORCE}
+        workflow = _RecordingWorkflow()
+        spec = _tool(workflow, _ctx(tmp_path, inject_overrides=overrides))
+        _payload(_call(spec, roles="planner,coder", task="do the slice"))
+        assert workflow.calls[0]["inject_overrides"] == overrides
+
+    def test_default_context_inherits_nothing(self, tmp_path: Path) -> None:
+        """Absent --inject, the nested pipeline is byte-identical to before."""
+        workflow = _RecordingWorkflow()
+        spec = _tool(workflow, _ctx(tmp_path))
+        _payload(_call(spec, roles="planner,coder", task="do the slice"))
+        assert workflow.calls[0]["inject_overrides"] == {}
+
+    def test_context_default_is_not_shared_between_instances(self, tmp_path: Path) -> None:
+        """A frozen dataclass with a mutable default would alias across runs."""
+        first = _ctx(tmp_path)
+        second = _ctx(tmp_path)
+        assert first.inject_overrides is not second.inject_overrides
+
+    def test_inheritance_passes_overrides_not_resolved_modes(self, tmp_path: Path) -> None:
+        """PRODUCER KILL-CHECK for the role-gating boundary.
+
+        The tool must forward the operator's REQUEST, leaving resolution (and
+        therefore role gating) to the nested controller. If it forwarded
+        already-resolved coder modes, a planner stage would inherit them.
+        """
+        overrides = {CODER_SLICE_CEREMONY.name: MODE_ENFORCE}
+        workflow = _RecordingWorkflow()
+        spec = _tool(workflow, _ctx(tmp_path, inject_overrides=overrides))
+        _payload(_call(spec, roles="planner,coder", task="do the slice"))
+        forwarded = workflow.calls[0]["inject_overrides"]
+        assert set(forwarded) == {CODER_SLICE_CEREMONY.name}
+        assert forwarded[CODER_SLICE_CEREMONY.name] == MODE_ENFORCE

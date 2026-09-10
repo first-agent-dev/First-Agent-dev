@@ -122,6 +122,11 @@ LogKind = Literal[
     "expansion_observed",  # S10.9: policy-relevant evidence that (correctly) did
     # not escalate — durable near-miss telemetry for S11 constant tuning (CT-H3).
     # Delta-gated; never emitted on a transition turn. JSONL-only by design.
+    "ceremony_injected",  # PLAN S5: the coder-stage slice ceremony fired. Emitted
+    # in the same branch that builds the payload (CT3 dual-write), including
+    # under `observe`, where `blocks: 0` records the counterfactual without any
+    # prompt change. JSONL-only: the operator asked for the ceremony, so a
+    # console line every coder stage would be noise.
     "verification",
     "cost_observation",
     "telemetry",

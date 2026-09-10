@@ -182,7 +182,24 @@ def test_resolve_task_transparent_piping_concatenation(monkeypatch: pytest.Monke
 def test_run_positional_task_parses() -> None:
     args = build_parser().parse_args(["run", "do X"])
     assert args.task_pos == "do X"
-    assert args.role == "coder"
+    # Operator decision (2026-09): bare `fa run` is a CHAT session. The old
+    # "coder" default was legacy and predates the chat role.
+    assert args.role == "chat"
+
+
+def test_run_default_role_is_chat_not_coder() -> None:
+    """Regression pin for the default front door.
+
+    Reverting cli.py's default to "coder" would silently drop a bare `fa run`
+    into a write+bash agent again; that is a product change and must not
+    happen by accident.
+    """
+    assert build_parser().parse_args(["run"]).role == "chat"
+
+
+def test_run_explicit_coder_still_works() -> None:
+    """The old behaviour stays reachable, just no longer implicit."""
+    assert build_parser().parse_args(["run", "-r", "coder", "do X"]).role == "coder"
 
 
 def test_run_short_flags_parse() -> None:

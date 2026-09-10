@@ -166,6 +166,10 @@ max-complexity = 15
 # path) do not apply here; waiving per-file is cleaner than per-line noqa
 # markers that RUF100 would demand be kept in lockstep with every change.
 "scripts/**" = ["S603", "S607"]
+# worklogs is the durable planning/docs layer; its demo scripts are
+# illustrative (hardcoded git vectors in temp dirs), not production attack
+# surface -- same rationale as the tests/scripts carve-outs above.
+"worklogs/**" = ["S"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["fa"]

@@ -126,9 +126,22 @@ def _as_dict_list(value: object) -> list[dict[str, object]]:
 
 @dataclass(frozen=True)
 class StepResult:
+    """One per-slice verdict as CLAIMED by the eval model.
+
+    ``claimed_pass`` was named ``acceptance_matched`` until S14. That name
+    asserted an acceptance predicate had been matched; the value is computed as
+    ``verdict == "pass"`` -- it restates the model's own claim and no predicate
+    is evaluated anywhere. The rename removes a misleading guarantee from the
+    artifact rather than inventing one.
+
+    Harness-OBSERVED evidence is a separate field (``EvalReport``'s
+    ``harness_verification``, S11); the pair is deliberately kept side by side
+    so a claim can be audited against an observation.
+    """
+
     step_id: str
     verdict: StepVerdict
-    acceptance_matched: bool
+    claimed_pass: bool
     evidence: str
     notes: str = ""
 
@@ -137,7 +150,7 @@ class StepResult:
         return cls(
             step_id=_as_str(data["step_id"]),
             verdict=_as_literal(data["verdict"], _STEP_VERDICTS, "verdict"),  # type: ignore[arg-type]
-            acceptance_matched=bool(data["acceptance_matched"]),
+            claimed_pass=bool(data["claimed_pass"]),
             evidence=_as_str(data["evidence"]),
             notes=_as_str(data.get("notes", "")),
         )
@@ -205,6 +218,11 @@ class EvalReport:
     # and neutral. Serialised as a plain mapping (not the roles.EvalIndependence
     # dataclass) to keep this module free of a roles dependency.
     eval_independence: Mapping[str, object] | None = None
+    # S12: plan slices the evaluator never reported a verdict for. Empty both
+    # when a supplied plan was fully covered and when no plan was supplied at
+    # all; the two are distinguished by FlowState.plan_path, not by overloading
+    # this field with a sentinel.
+    unreported_slices: tuple[str, ...] = ()
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -216,6 +234,7 @@ class EvalReport:
             "route_decision": self.route_decision,
             "summary": self.summary,
             "step_results": [asdict(step) for step in self.step_results],
+            "unreported_slices": list(self.unreported_slices),
             "findings": [item.to_json_dict() for item in self.findings],
             "integration_checks": list(self.integration_checks),
             "regression_checks": list(self.regression_checks),
@@ -238,6 +257,7 @@ class EvalReport:
             ),
             summary=_as_str(data["summary"]),
             step_results=tuple(StepResult.from_json_dict(item) for item in _as_dict_list(data.get("step_results", []))),
+            unreported_slices=_as_str_tuple(data.get("unreported_slices", [])),
             findings=tuple(EvalFinding.from_json_dict(item) for item in _as_dict_list(data.get("findings", []))),
             integration_checks=_as_str_tuple(data.get("integration_checks", [])),
             regression_checks=_as_str_tuple(data.get("regression_checks", [])),
@@ -262,6 +282,16 @@ class FlowState:
     blocked_reason: str = ""
     completed_steps: tuple[str, ...] = field(default_factory=tuple)
     invalidated_steps: tuple[str, ...] = field(default_factory=tuple)
+    # S11a/F6: did a judge actually rule on this run? ``DONE`` with
+    # ``judged=False`` means "the stages ran and nothing evaluated them" -- a
+    # legitimate scratch pipeline (``--roles coder``), never a verified result.
+    # Defaults True so pre-S11a artifacts (no key) read as judged rather than
+    # silently downgrading historical runs.
+    judged: bool = True
+    # S12a: the plan artifact this run executed against, as a string path.
+    # Empty means none was supplied -- the run has no declared contract, which
+    # is a fact worth recording rather than an error.
+    plan_path: str = ""
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -277,6 +307,8 @@ class FlowState:
             "last_transition_reason": self.last_transition_reason,
             "last_route_decision": self.last_route_decision,
             "blocked_reason": self.blocked_reason,
+            "judged": self.judged,
+            "plan_path": self.plan_path,
             "completed_steps": list(self.completed_steps),
             "invalidated_steps": list(self.invalidated_steps),
         }
@@ -298,6 +330,10 @@ class FlowState:
             blocked_reason=_as_str(data.get("blocked_reason", "")),
             completed_steps=_as_str_tuple(data.get("completed_steps", [])),
             invalidated_steps=_as_str_tuple(data.get("invalidated_steps", [])),
+            # Absent key => True: a pre-S11a artifact predates the concept and
+            # must not be reinterpreted as unjudged.
+            judged=bool(data.get("judged", True)),
+            plan_path=_as_str(data.get("plan_path", "")),
         )
 
 
@@ -340,7 +376,8 @@ _ROUTE_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 _STEP_LINE_RE = re.compile(
-    r"^\s*[-*]\s*(S\d+[A-Za-z0-9_.-]*)\s*[:\-—]\s*(PASS|FAIL|PARTIAL)\b\s*[-—:]?\s*(.*)$",
+    r"^\s*[-*]\s*(SLICE\d+[A-Za-z0-9_.-]*|S\d+[A-Za-z0-9_.-]*)\s*[:\-—]\s*"
+    r"(PASS|FAIL|PARTIAL)\b\s*[-—:]?\s*(.*)$",
     re.IGNORECASE,
 )
 
@@ -423,7 +460,7 @@ def _scan_step_results(text: str) -> tuple[StepResult, ...]:
             StepResult(
                 step_id=step_id,
                 verdict=verdict,
-                acceptance_matched=verdict == "pass",
+                claimed_pass=verdict == "pass",
                 evidence=evidence,
             )
         )

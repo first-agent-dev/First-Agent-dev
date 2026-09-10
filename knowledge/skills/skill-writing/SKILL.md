@@ -60,11 +60,30 @@ alwaysApply: false  # default false, true only for MUST READ FIRST
 
 ### Invariants
 
-- Each skill is single file `SKILL.md` under `knowledge/skills/<name>/`
+- Each skill is single file `SKILL.md` under `knowledge/skills/<name>/`, plus an
+  optional derived `INJECT.md` (see below)
 - Name matches directory
 - Description ≤ 200 chars per doc-maintenance skill row prose cap
 - Triggers are natural language, not regex, for LLM readability
 - No bare code fences: always ```python, ```bash, etc per AGENTS.md
+
+### Optional `INJECT.md` condensate
+
+A skill MAY carry one sibling `INJECT.md` next to its `SKILL.md`. It exists for
+skills the harness injects into a live turn, where the full body is too large to
+pay for per turn (a 643-line skill against a ~35-line executable subset).
+
+- `SKILL.md` stays SSOT for the protocol. `INJECT.md` is a **derived** subset and
+  must never state a rule the parent does not.
+- Frontmatter is **required**: `name:` + one-line `description:`. The injected
+  header is built from them (`src/fa/skills/_inject.py` `build_skill_block`), so a
+  file without frontmatter renders a degenerate header.
+- `name:` must be unique — use the `<skill>-inject` form. It is the key for the
+  injection hint lookup (`_ARGUMENT_HINT`), not just a label.
+- Do NOT add `triggers:`/`globs:`. Those select the parent skill; a condensate is
+  a payload, not a separately selectable skill.
+- Keep the body under ~40 lines. If it grows past that, the subset is wrong.
+- `knowledge/skills/README.md` gains no index row: a condensate is not a skill.
 
 ## Change Contract Template for Harness Mutation
 

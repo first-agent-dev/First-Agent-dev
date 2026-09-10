@@ -55,9 +55,10 @@ COMMANDS: dict[str, CommandHelp] = {
                 "en": "Task text in quotes (positional). '-' reads the task from stdin. Also accepted via --task.",
             },
             "--role/-r": {
-                "ru": "Роль: planner | coder | eval (по умолчанию coder). Должна совпадать "
+                "ru": "Роль: planner | coder | eval | chat (по умолчанию chat). Должна совпадать "
                 "с ключом верхнего уровня в ~/.fa/models.yaml.",
-                "en": "Role: planner | coder | eval (default coder). Must match a top-level key in ~/.fa/models.yaml.",
+                "en": "Role: planner | coder | eval | chat (default chat). Must match a "
+                "top-level key in ~/.fa/models.yaml.",
             },
             "--max-turns/-n": {
                 "ru": "Лимит ходов LLM (по умолчанию 16).",
@@ -312,6 +313,29 @@ COMMANDS: dict[str, CommandHelp] = {
             },
         },
         "examples": ["fa inner-loop-smoke --read knowledge/llms.txt --write test.txt"],
+    },
+    "inject": {
+        "summary_ru": "Показать действующие режимы prompt-инъекций и их источник.",
+        "summary_en": "Show effective prompt-injection modes and where each came from.",
+        "args": {
+            "subcommand": {
+                "ru": "list | status (по умолчанию status). Обе печатают одну таблицу.",
+                "en": "list | status (default status). Both print the same table.",
+            },
+            "--role/-r": {
+                "ru": "Роль, для которой считать режимы (по умолчанию coder).",
+                "en": "Role to resolve modes for (default coder).",
+            },
+            "--inject": {
+                "ru": "Предпросмотр: NAME=MODE, как в fa run/fa workflow. Можно повторять.",
+                "en": "Preview a NAME=MODE override, as for fa run/fa workflow. Repeatable.",
+            },
+        },
+        "examples": [
+            "fa inject",
+            "fa inject status --role coder",
+            "fa inject list --role coder --inject coder_slice_ceremony=enforce",
+        ],
     },
     "help": {
         "summary_ru": "Показать двуязычную (RU/EN) справку по командам.",

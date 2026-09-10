@@ -29,7 +29,7 @@ import re
 import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -111,6 +111,16 @@ class WorkflowInvocationContext:
     # S10 / CT6: optional blackboard writer (BlackboardEntry) -> None, supplied
     # at the CLI seam so the tool never imports the blackboard package itself.
     blackboard_writer: Callable[[Any], None] | None = None
+    # PLAN S5c / Q9: operator-supplied --inject overrides for the CHAT session
+    # that owns this tool, already parsed and validated at the CLI seam. A
+    # nested pipeline inherits them, because the operator configured this
+    # invocation and everything it launches. Empty default keeps every
+    # existing construction site byte-identical.
+    #
+    # Overrides, not resolved modes: the nested pipeline re-resolves per stage
+    # via resolve_injection_modes, so role gating still applies and an
+    # inherited coder-only injection stays off for a planner stage.
+    inject_overrides: Mapping[str, str] = field(default_factory=dict)
 
 
 def child_run_id(parent: str, n: int) -> str:
@@ -469,6 +479,8 @@ def build_invoke_workflow_tool(
                 run_context=ctx.run_context,
                 session_db=ctx.session_db,
                 deadline_mono=deadline,
+                # PLAN S5c / Q9: inherit the chat session's --inject.
+                inject_overrides=ctx.inject_overrides,
             )
         except Exception as exc:  # noqa: BLE001 - a tool must not kill the chat session
             # (h) Contained deliberately. An escaping exception here would end

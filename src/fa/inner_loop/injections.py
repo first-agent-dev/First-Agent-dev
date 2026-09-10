@@ -1,0 +1,399 @@
+"""Per-role prompt-injection modes: registry, resolution, and hot reload.
+
+PLAN S5a (generalized). The first consumer is the coder role's per-slice
+implementation ceremony (``coder_slice_ceremony``), but the module is shaped
+for the injections that follow -- a planner-role injection in the workflow, and
+possibly chat-role injections -- so adding one is a table entry plus a flag,
+not a new plumbing path through the controller and CLI.
+
+Three design constraints drove the shape:
+
+1.  **Extensible.** Injections live in :data:`INJECTION_SPECS`, keyed by name.
+    Adding ``planner_research_protocol`` means appending one :class:`InjectionSpec`
+    and one ``FeatureFlags`` field; every hop below already carries it because
+    the transport is a mapping, not a parameter per injection.
+
+2.  **Configured per invocation.** The effective mode is resolved ONCE, at
+    startup, from ``--inject <name>=<mode>`` if given, else ``~/.fa/config.yaml``,
+    else ``off`` (:func:`resolve_injection_modes`). This mirrors
+    ``_resolve_intent_guard_mode`` (cli.py) so the codebase has one
+    override-then-config idiom rather than two.
+
+    A deliberate NON-goal (plan v5 RK15): re-reading config mid-run. One
+    ``fa workflow`` invocation is a single process spanning many stages, so a
+    live re-read would only enable toggling while the agent is mid-loop --
+    which is not how the toggles are used. Modes change between invocations.
+    If that ever changes, the indirection at :func:`mode_for` is where a lazy
+    resolver would slot back in.
+
+3.  **Never rewrites a prompt by accident.** Every unknown, malformed, or
+    unreadable input resolves to :data:`FALLBACK_MODE`, which is ``observe``:
+    telemetry only, payload untouched. A config typo therefore cannot turn a
+    context rewrite ON -- that needs an explicit ``enforce``. Note the
+    polarity is still the opposite of IntentGuard, which fails CLOSED to
+    "enforce" because it is a safety gate; this is an advisory payload, so the
+    unconfigured state is "tell me, don't act".
+
+The mode vocabulary is deliberately the same three states for every injection
+(:data:`INJECTION_MODES`), so an operator learns it once:
+
+``off``
+    No injection, no events. Byte-identical to the pre-feature harness.
+``observe``
+    Emit telemetry that the trigger fired; leave the request payload untouched.
+    This is the S12.4 rollout precedent -- prove the trigger is correct on real
+    runs before altering any prompt.
+``enforce``
+    Perform the injection.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# ── Mode vocabulary ────────────────────────────────────────────────────────
+
+MODE_OFF = "off"
+MODE_OBSERVE = "observe"
+MODE_ENFORCE = "enforce"
+
+#: The closed enum every injection mode is validated against.
+INJECTION_MODES: frozenset[str] = frozenset({MODE_OFF, MODE_OBSERVE, MODE_ENFORCE})
+
+#: Where anything unrecognised lands. ``off`` and not ``observe``: an operator
+#: who typo'd the mode has not consented to telemetry either, and ``off`` is the
+#: only value that is provably identical to not having the feature.
+#: The mode used whenever nothing else says otherwise: no ``--inject``, no
+#: config entry, an unreadable config, or a value outside the enum.
+#:
+#: ``observe`` rather than ``off`` (operator, 2026-09-07). This is safe in the
+#: sense that matters: only :data:`MODE_ENFORCE` alters the request payload, so
+#: an unconfigured or misconfigured run still cannot have its prompt rewritten
+#: -- it just reports which injections WOULD have fired. Defaulting to silence
+#: instead would make the feature invisible until someone edits config, which
+#: is how a control surface rots unnoticed.
+#:
+#: Role gating is NOT affected: an injection outside its spec's roles resolves
+#: to :data:`MODE_OFF`, so a planner stage never emits coder telemetry.
+FALLBACK_MODE = MODE_OBSERVE
+
+# ── Injection registry ─────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class InjectionSpec:
+    """One named injection point.
+
+    Attributes:
+        name: Stable identifier, also the ``stage_kwargs``/mapping key.
+        roles: Session roles this injection may fire for. A role outside this
+            set always resolves to ``off``, so a planner injection cannot leak
+            into a coder session by misconfiguration alone.
+        read_flag: Reads this injection's raw mode off a ``FeatureFlags``.
+            A direct attribute read in a lambda, never dynamic lookup by
+            field name. Two repo gates depend on that: S13 bans dynamic flag
+            access, and the dead-flag scanner (scripts/check_dead_flags.py)
+            only recognises literal ``.field`` syntax -- a name-based registry
+            would make every injection flag read as dead.
+        summary: One line, for diagnostics and ``fa`` help output.
+    """
+
+    name: str
+    roles: frozenset[str]
+    read_flag: Callable[[object], object]
+    summary: str
+
+
+#: PLAN S5a/S5: the per-slice implementation ceremony
+#: (feature-planning/SKILL.md 9-12) injected at coder-stage slice entry.
+CODER_SLICE_CEREMONY = InjectionSpec(
+    name="coder_slice_ceremony",
+    roles=frozenset({"coder"}),
+    read_flag=lambda flags: flags.coder_slice_ceremony_mode,  # type: ignore[attr-defined]
+    summary="Per-slice implementation ceremony (before-gate, edit packet, after-gate).",
+)
+
+#: Every known injection, keyed by name. Adding an injection = adding a row
+#: here plus the matching ``FeatureFlags`` field. Nothing else changes.
+INJECTION_SPECS: Mapping[str, InjectionSpec] = {
+    CODER_SLICE_CEREMONY.name: CODER_SLICE_CEREMONY,
+}
+
+
+# ── Mode resolution ────────────────────────────────────────────────────────
+
+#: Mapping of injection name -> already-resolved mode, as carried through the
+#: stage boundary. Plain strings: resolution happens once at startup.
+InjectionModes = Mapping[str, str]
+
+
+def normalize_mode(value: object) -> str:
+    """Coerce an arbitrary config value to a valid mode.
+
+    Total by construction: any type, any casing, any surrounding whitespace,
+    and anything outside the enum resolves to :data:`FALLBACK_MODE`. Callers
+    can therefore treat the result as a closed enum without re-checking.
+    """
+    if not isinstance(value, str):
+        return FALLBACK_MODE
+    candidate = value.strip().lower()
+    if candidate not in INJECTION_MODES:
+        return FALLBACK_MODE
+    return candidate
+
+
+def _load_flags(config_path: Path | None) -> object | None:
+    """Read feature flags from disk, or ``None`` when unreadable.
+
+    Never raises: an advisory feature must not be able to abort a run because
+    the operator's config has a syntax error.
+    """
+    try:
+        from fa.feature_flags import load_feature_flags_from_path
+
+        if config_path is None:
+            return load_feature_flags_from_path().flags
+        return load_feature_flags_from_path(config_path).flags
+    except Exception as exc:  # noqa: BLE001 - advisory; must never crash a run
+        logger.warning("injection modes: config unreadable (%s); using %r", exc, FALLBACK_MODE)
+        return None
+
+
+def resolve_mode(spec: InjectionSpec, role: str, *, config_path: Path | None = None) -> str:
+    """Resolve one injection's effective mode for *role*, reading config now.
+
+    Role gating is applied first and unconditionally: an injection never fires
+    for a role outside its :attr:`InjectionSpec.roles`, whatever the config
+    says. That keeps a future planner injection from firing in a coder session
+    because of a single mistyped flag.
+    """
+    if role not in spec.roles:
+        return MODE_OFF
+    flags = _load_flags(config_path)
+    if flags is None:
+        return FALLBACK_MODE
+    try:
+        raw = spec.read_flag(flags)
+    except AttributeError as exc:  # spec points at a field that no longer exists
+        logger.warning("injection %r: flag unreadable (%s); using %r", spec.name, exc, FALLBACK_MODE)
+        return FALLBACK_MODE
+    return normalize_mode(raw)
+
+
+class InjectionFlagError(ValueError):
+    """A ``--inject`` argument the operator wrote cannot be honoured.
+
+    Raised rather than ignored: the operator asked for something specific, so
+    silently dropping a typo would produce a run that looks configured and is
+    not. Config-file problems degrade quietly to ``off``; explicit CLI input
+    does not (plan Q6 -- fail closed, never guess).
+    """
+
+
+def parse_inject_overrides(values: Sequence[str] | None) -> dict[str, str]:
+    """Parse repeatable ``--inject <name>=<mode>`` arguments.
+
+    Every failure mode is an error, never a shrug: unknown injection name,
+    unknown mode, missing ``=``, blank name, and duplicate names for the same
+    injection all raise :class:`InjectionFlagError` with the valid choices in
+    the message.
+
+    Duplicates are rejected rather than last-wins because ``--inject x=off
+    --inject x=enforce`` has no obvious reading, and guessing one would be
+    exactly the silent misconfiguration this function exists to prevent.
+    """
+    overrides: dict[str, str] = {}
+    for raw in values or ():
+        text = str(raw).strip()
+        if "=" not in text:
+            raise InjectionFlagError(
+                f"--inject expects <name>=<mode>, got {raw!r}. Known injections: {sorted(INJECTION_SPECS)}."
+            )
+        name, _, mode_text = text.partition("=")
+        name = name.strip()
+        mode = mode_text.strip().lower()
+        if name not in INJECTION_SPECS:
+            raise InjectionFlagError(f"--inject: unknown injection {name!r}. Known: {sorted(INJECTION_SPECS)}.")
+        if mode not in INJECTION_MODES:
+            raise InjectionFlagError(
+                f"--inject {name}: unknown mode {mode_text.strip()!r}. Valid modes: {sorted(INJECTION_MODES)}."
+            )
+        if name in overrides:
+            raise InjectionFlagError(f"--inject: {name!r} given more than once.")
+        overrides[name] = mode
+    return overrides
+
+
+#: Where an effective mode came from. Four values, because "off" alone cannot
+#: tell an operator whether they disabled an injection or it simply does not
+#: apply to this role -- the distinction that made Q9 invisible.
+SOURCE_FLAG = "--inject flag"
+SOURCE_DEFAULT = f"default ({FALLBACK_MODE})"
+SOURCE_ROLE_GATED = "role-gated (off)"
+
+
+def _source_config(config_path: Path | None) -> str:
+    return f"config ({config_path if config_path is not None else _DEFAULT_CONFIG_LABEL})"
+
+
+#: Shown when no explicit config path was given, i.e. the usual `~/.fa/config.yaml`.
+_DEFAULT_CONFIG_LABEL = "~/.fa/config.yaml"
+
+
+def _config_declares(spec: InjectionSpec, config_path: Path | None) -> bool:
+    """True when the config file actually sets this injection's flag.
+
+    Attribution must not be inferred from the VALUE. Once the default became
+    ``observe``, "the mode is not the fallback" stopped meaning "config said
+    so" -- a config that explicitly writes ``observe`` would have been
+    mislabelled ``default``.
+
+    So compare the flags parsed from the file against the dataclass defaults:
+    a difference proves the file declared it. The one case this cannot
+    distinguish is a config that sets exactly the default value, which is
+    reported as ``default``; the effective mode is identical either way, so
+    the operator is never misled about what will happen.
+
+    Honest note on test strength: with a single three-valued injection this is
+    currently EQUIVALENT to the older "mode differs from the fallback"
+    heuristic, because a declared value that is neither the default nor a
+    distinguishable mode does not exist yet. It is written this way because
+    the equivalence is an accident of today's registry -- add one injection
+    whose flag default differs from FALLBACK_MODE, or one non-mode-valued
+    flag, and value-inference starts lying while this stays correct.
+    """
+    if (flags := _load_flags(config_path)) is None:
+        return False
+    try:
+        from fa.feature_flags import FeatureFlags
+
+        return spec.read_flag(flags) != spec.read_flag(FeatureFlags())
+    except Exception:  # noqa: BLE001 - attribution is advisory, never fatal
+        return False
+
+
+@dataclass(frozen=True)
+class InjectionStatus:
+    """One injection's effective mode plus WHY it has that mode."""
+
+    name: str
+    role: str
+    mode: str
+    source: str
+    summary: str
+
+
+def explain_injection_modes(
+    role: str,
+    *,
+    overrides: Mapping[str, str] | None = None,
+    config_path: Path | None = None,
+) -> dict[str, InjectionStatus]:
+    """Resolve every injection for *role*, recording which input won.
+
+    This is the single implementation of the precedence rule
+    (``--inject`` > config > ``off``); :func:`resolve_injection_modes` is a
+    projection over it. Keeping one implementation is deliberate: an
+    introspection command that computed modes separately could disagree with
+    what a real run does, which is worse than having no command at all.
+    """
+    supplied = overrides or {}
+    explained: dict[str, InjectionStatus] = {}
+    for name, spec in INJECTION_SPECS.items():
+        if role not in spec.roles:
+            mode, source = MODE_OFF, SOURCE_ROLE_GATED
+        elif (override := supplied.get(name)) is not None:
+            mode, source = normalize_mode(override), SOURCE_FLAG
+        else:
+            mode = resolve_mode(spec, role, config_path=config_path)
+            source = _source_config(config_path) if _config_declares(spec, config_path) else SOURCE_DEFAULT
+        explained[name] = InjectionStatus(name=name, role=role, mode=mode, source=source, summary=spec.summary)
+    return explained
+
+
+def resolve_injection_modes(
+    role: str,
+    *,
+    overrides: Mapping[str, str] | None = None,
+    config_path: Path | None = None,
+) -> dict[str, str]:
+    """Resolve every injection's effective mode for *role*, once.
+
+    Precedence is ``--inject`` flag > config file > ``off``, matching
+    ``_resolve_intent_guard_mode``'s override-then-config shape.
+
+    Role gating is applied to overrides too: ``--inject coder_slice_ceremony=
+    enforce`` on a planner stage still yields ``off``. The flag says what the
+    operator wants enabled, not which roles it applies to -- that is the spec's
+    business, so one flag cannot smuggle a payload into the wrong role.
+
+    Every known injection gets an entry, including ones that are ``off`` here,
+    so a consumer can ask about any injection by name without a membership
+    check.
+    """
+    return {
+        name: status.mode
+        for name, status in explain_injection_modes(role, overrides=overrides, config_path=config_path).items()
+    }
+
+
+def mode_for(modes: InjectionModes | None, name: str) -> str:
+    """Read one injection's mode from a resolver mapping, safely.
+
+    Returns :data:`MODE_OFF` for an absent mapping or an unknown injection
+    name. Note this is deliberately NOT :data:`FALLBACK_MODE`: those two cases
+    mean "this call site was never wired" and "no such injection exists", and
+    neither has anything to observe. The ``observe`` default belongs to
+    resolution -- a KNOWN injection that the operator has not configured.
+
+    A key that is present but holds a garbage value does go through
+    :func:`normalize_mode`, so it lands on :data:`FALLBACK_MODE`: that
+    injection does exist and was resolved, the value is just unusable.
+
+    This is the single place those rules live, so no consumer has to remember
+    them.
+    """
+    if not modes or name not in modes:
+        return MODE_OFF
+    return normalize_mode(modes[name])
+
+
+def is_active(modes: InjectionModes | None, name: str) -> bool:
+    """True when the injection should actually alter the request payload."""
+    return mode_for(modes, name) == MODE_ENFORCE
+
+
+def is_observed(modes: InjectionModes | None, name: str) -> bool:
+    """True when the injection should emit telemetry (``observe`` or ``enforce``)."""
+    return mode_for(modes, name) in (MODE_OBSERVE, MODE_ENFORCE)
+
+
+__all__ = [
+    "CODER_SLICE_CEREMONY",
+    "FALLBACK_MODE",
+    "INJECTION_MODES",
+    "INJECTION_SPECS",
+    "MODE_ENFORCE",
+    "MODE_OBSERVE",
+    "MODE_OFF",
+    "SOURCE_DEFAULT",
+    "SOURCE_FLAG",
+    "SOURCE_ROLE_GATED",
+    "InjectionFlagError",
+    "InjectionModes",
+    "InjectionSpec",
+    "InjectionStatus",
+    "explain_injection_modes",
+    "is_active",
+    "is_observed",
+    "mode_for",
+    "normalize_mode",
+    "parse_inject_overrides",
+    "resolve_injection_modes",
+    "resolve_mode",
+]

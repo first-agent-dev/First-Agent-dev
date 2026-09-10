@@ -62,6 +62,12 @@ _PLAN_BLACKBOARD_KEYS: frozenset[str] = frozenset({"workflow_handoff", "plan", "
 _ARGUMENT_HINT: dict[str, str] = {
     "feature-planning": "Apply this skill directly to the current task in this workspace now.",
     "plan-authoring": "Follow this skill to author the implementation plan for the current task now.",
+    # Condensate names (``INJECT.md`` frontmatter ``name:``). These are keyed
+    # separately from their parent skills because ``build_skill_block`` looks
+    # the hint up by the frontmatter name, not the directory: without an entry
+    # both would silently fall back to the generic hint.
+    "feature-planning-inject": "Follow this implementation ceremony for the current slice now.",
+    "tests-writing-inject": "Classify and write the tests for this slice per this ladder now.",
 }
 
 
@@ -213,15 +219,31 @@ def plan_artifact_present(
     return False
 
 
-def read_skill_for_injection(skill_name: str, skills_root: Path) -> SkillInjectionResult:
-    """Read ``<skills_root>/<skill_name>/SKILL.md`` and build the block.
+def read_skill_for_injection(
+    skill_name: str,
+    skills_root: Path,
+    *,
+    file_name: str = SKILL_FILE_NAME,
+) -> SkillInjectionResult:
+    """Read ``<skills_root>/<skill_name>/<file_name>`` and build the block.
 
     Degraded paths return a result with ``block=None`` and a structured
     warning: unknown skill dir, unreadable file, missing/empty body, or a
     frontmatter lacking a name (name falls back to the directory name).
+
+    ``file_name`` defaults to ``SKILL.md`` so every existing call site keeps
+    its behaviour byte-for-byte. It exists so the coder-stage ceremony can
+    inject a purpose-built ``INJECT.md`` condensate (~30-40 lines) instead of
+    a full skill body (643-828 lines) on the turn where an implementation
+    slice starts. Keyword-only: the two path components must never be
+    swappable by position at a call site.
+
+    The warning text names the resolved path, so a mistyped ``file_name``
+    is diagnosable from the log line alone rather than presenting as a
+    silently skipped injection.
     """
     skill_dir = skills_root / skill_name
-    skill_path = skill_dir / SKILL_FILE_NAME
+    skill_path = skill_dir / file_name
     if not skill_path.is_file():
         return SkillInjectionResult(
             block=None,
