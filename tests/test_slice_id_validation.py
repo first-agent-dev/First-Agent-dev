@@ -2,7 +2,7 @@
 
 **Three defects this closes**, all probed at the tip before the fix:
 
-1. ``_STEP_LINE_RE`` accepts any ``S<digits>`` token, so ``- S404: PASS``
+1. ``_STEP_LINE_RE`` accepts any ``S<digits>`` token, so ``- SLICE404: PASS``
    parsed as a real slice and counted toward apparent coverage.
 2. Nothing noticed **omission**. Dropping ``S7`` from the eval's list produced
    a clean ``PASS`` over work nobody examined. This is the one that matters:
@@ -32,9 +32,9 @@ from fa.inner_loop.workflow_controller import validate_slice_ids
 
 _PLAN = """# PLAN: worked example    Plan-ID: PLAN-example
 
-### Step S1: first
-### Step S5: second
-### Step S5a: third
+## SLICE1: first
+## SLICE5: second
+## SLICE5a: third
 """
 
 
@@ -47,12 +47,12 @@ def _report(final_text: str):  # type: ignore[no-untyped-def]
 
 def test_invented_slice_id_is_dropped() -> None:
     """T16 (KILL-CHECK) — an ID absent from the plan is noise, not evidence."""
-    report = _report("### Verdict\nPASS\n### Step results\n- S1: PASS - ok\n- S404: PASS - invented\n")
+    report = _report("### Verdict\nPASS\n### Step results\n- SLICE1: PASS - ok\n- SLICE404: PASS - invented\n")
     adjusted, warnings = validate_slice_ids(report, _PLAN)
 
-    assert [step.step_id for step in adjusted.step_results] == ["S1"]
-    assert any("S404" in w for w in warnings)
-    assert not any("S1" in w and "absent" in w for w in warnings)
+    assert [step.step_id for step in adjusted.step_results] == ["SLICE1"]
+    assert any("SLICE404" in w for w in warnings)
+    assert not any("SLICE1" in w and "absent" in w for w in warnings)
 
 
 # ── C0: omission (the one that matters) ────────────────────────────────────
@@ -60,16 +60,18 @@ def test_invented_slice_id_is_dropped() -> None:
 
 def test_omitted_plan_slices_are_recorded() -> None:
     """T16b — a slice the evaluator never mentioned must not vanish silently."""
-    report = _report("### Verdict\nPASS\n### Step results\n- S1: PASS - ok\n")
+    report = _report("### Verdict\nPASS\n### Step results\n- SLICE1: PASS - ok\n")
     adjusted, warnings = validate_slice_ids(report, _PLAN)
 
-    assert adjusted.unreported_slices == ("S5", "S5a")
+    assert adjusted.unreported_slices == ("SLICE5", "SLICE5a")
     assert any("no eval verdict" in w for w in warnings)
 
 
 def test_full_coverage_produces_no_warnings() -> None:
     """T16b (negative) — a complete report must stay silent, or the signal is noise."""
-    report = _report("### Verdict\nPASS\n### Step results\n- S1: PASS - a\n- S5: PASS - b\n- S5a: PASS - c\n")
+    report = _report(
+        "### Verdict\nPASS\n### Step results\n- SLICE1: PASS - a\n- SLICE5: PASS - b\n- SLICE5a: PASS - c\n"
+    )
     adjusted, warnings = validate_slice_ids(report, _PLAN)
 
     assert adjusted.unreported_slices == ()
@@ -85,11 +87,11 @@ def test_s5_and_s5a_are_never_conflated() -> None:
     Normalising case or stripping the suffix would report a real omission as
     covered, which is precisely the failure this step exists to prevent.
     """
-    report = _report("### Verdict\nPASS\n### Step results\n- S5a: PASS - only the suffixed one\n")
+    report = _report("### Verdict\nPASS\n### Step results\n- SLICE5a: PASS - only the suffixed one\n")
     adjusted, _ = validate_slice_ids(report, _PLAN)
 
-    assert adjusted.unreported_slices == ("S1", "S5"), "S5a must not satisfy S5"
-    assert [step.step_id for step in adjusted.step_results] == ["S5a"]
+    assert adjusted.unreported_slices == ("SLICE1", "SLICE5"), "S5a must not satisfy S5"
+    assert [step.step_id for step in adjusted.step_results] == ["SLICE5a"]
 
 
 # ── C0: degradation ────────────────────────────────────────────────────────
@@ -97,7 +99,7 @@ def test_s5_and_s5a_are_never_conflated() -> None:
 
 def test_absent_plan_is_a_no_op() -> None:
     """T16c — no plan means no contract to check; never manufacture warnings."""
-    report = _report("### Verdict\nPASS\n### Step results\n- S404: PASS - x\n")
+    report = _report("### Verdict\nPASS\n### Step results\n- SLICE404: PASS - x\n")
     adjusted, warnings = validate_slice_ids(report, None)
 
     assert adjusted.step_results == report.step_results, "nothing may be dropped without a plan"
@@ -110,10 +112,10 @@ def test_plan_declaring_no_slices_is_a_no_op() -> None:
 
     Legacy plans failing extraction is expected and is not a kill signal.
     """
-    report = _report("### Verdict\nPASS\n### Step results\n- S1: PASS - x\n")
+    report = _report("### Verdict\nPASS\n### Step results\n- SLICE1: PASS - x\n")
     adjusted, warnings = validate_slice_ids(report, "# a plan with prose but no step headings\n")
 
-    assert [step.step_id for step in adjusted.step_results] == ["S1"]
+    assert [step.step_id for step in adjusted.step_results] == ["SLICE1"]
     assert warnings == ()
 
 
@@ -122,14 +124,14 @@ def test_plan_declaring_no_slices_is_a_no_op() -> None:
 
 def test_per_slice_failure_forces_repair() -> None:
     """Q16 (KILL-CHECK) — PASS cannot coexist with a reported per-slice failure."""
-    report = _report("### Verdict\nPASS\n### Step results\n- S1: FAIL - broken\n")
+    report = _report("### Verdict\nPASS\n### Step results\n- SLICE1: FAIL - broken\n")
     assert report.verdict == "PASS", "precondition: the parser accepts the model's PASS"
 
     adjusted, warnings = validate_slice_ids(report, _PLAN)
 
     assert adjusted.verdict == "REPAIR_REQUIRED"
     assert adjusted.route_decision == "return_to_coder"
-    assert "S1" in adjusted.summary
+    assert "SLICE1" in adjusted.summary
     assert any("Q16" in w for w in warnings)
 
 
@@ -141,7 +143,7 @@ def test_partial_does_not_force_repair() -> None:
     was unsure" into a hard repair loop.
     """
     for token in ("PARTIAL", "NOT_EVALUATED"):
-        report = _report(f"### Verdict\nPASS\n### Step results\n- S1: {token} - unsure\n")
+        report = _report(f"### Verdict\nPASS\n### Step results\n- SLICE1: {token} - unsure\n")
         adjusted, _ = validate_slice_ids(report, _PLAN)
         assert adjusted.verdict == "PASS", f"{token} must not force a repair"
 
@@ -153,7 +155,7 @@ def test_q16_never_upgrades_a_non_pass_verdict() -> None:
     REPAIR_REQUIRED would discard the evaluator's stronger signal.
     """
     for verdict in ("BLOCKED", "REPLAN_REQUIRED"):
-        report = _report(f"### Verdict\n{verdict}\n### Step results\n- S1: FAIL - x\n")
+        report = _report(f"### Verdict\n{verdict}\n### Step results\n- SLICE1: FAIL - x\n")
         adjusted, _ = validate_slice_ids(report, _PLAN)
         assert adjusted.verdict == verdict
 
@@ -164,7 +166,7 @@ def test_q16_applies_without_a_plan() -> None:
     A reported failure is a fact about the work; whether the harness can see
     the contract does not change it.
     """
-    report = _report("### Verdict\nPASS\n### Step results\n- S1: FAIL - broken\n")
+    report = _report("### Verdict\nPASS\n### Step results\n- SLICE1: FAIL - broken\n")
     adjusted, warnings = validate_slice_ids(report, None)
 
     assert adjusted.verdict == "REPAIR_REQUIRED"
@@ -178,12 +180,12 @@ def test_unreported_slices_round_trips_and_defaults() -> None:
     """The new field must survive JSON and must not break pre-S12 artifacts."""
     from fa.inner_loop.workflow_artifacts import EvalReport
 
-    report = _report("### Verdict\nPASS\n### Step results\n- S1: PASS - ok\n")
+    report = _report("### Verdict\nPASS\n### Step results\n- SLICE1: PASS - ok\n")
     adjusted, _ = validate_slice_ids(report, _PLAN)
     payload = adjusted.to_json_dict()
 
-    assert payload["unreported_slices"] == ["S5", "S5a"]
-    assert EvalReport.from_json_dict(payload).unreported_slices == ("S5", "S5a")
+    assert payload["unreported_slices"] == ["SLICE5", "SLICE5a"]
+    assert EvalReport.from_json_dict(payload).unreported_slices == ("SLICE5", "SLICE5a")
 
     legacy = {k: v for k, v in payload.items() if k != "unreported_slices"}
     assert EvalReport.from_json_dict(legacy).unreported_slices == (), (
@@ -227,7 +229,9 @@ def test_live_workflow_persists_the_adjusted_report(tmp_path) -> None:  # type: 
                     exit_code=0,
                     stop_reason="stopped_by_llm",
                     turns=1,
-                    final_text=("### Verdict\nPASS\n### Step results\n- S1: PASS - ok\n- S404: PASS - invented\n"),
+                    final_text=(
+                        "### Verdict\nPASS\n### Step results\n- SLICE1: PASS - ok\n- SLICE404: PASS - invented\n"
+                    ),
                 )
             )
         return 0
@@ -250,6 +254,21 @@ def test_live_workflow_persists_the_adjusted_report(tmp_path) -> None:  # type: 
     )
 
     payload = json.loads(Path(workflow_artifact_paths(run_id).eval_report).read_text(encoding="utf-8"))
-    assert [s["step_id"] for s in payload["step_results"]] == ["S1"], "S404 must not reach disk"
-    assert payload["unreported_slices"] == ["S5", "S5a"]
+    assert [s["step_id"] for s in payload["step_results"]] == ["SLICE1"], "S404 must not reach disk"
+    assert payload["unreported_slices"] == ["SLICE5", "SLICE5a"]
     assert state is not None and exit_code == 0
+
+
+def test_legacy_s_ids_normalise_to_canonical_space() -> None:
+    """I01 — the eval parser still accepts legacy ``S<n>`` tokens and matches
+    them against a ``SLICE<n>`` plan, so live runs stay coherent mid-migration.
+
+    ``- S1:`` must satisfy the declared ``SLICE1`` (not invented), while the
+    unexamined ``SLICE5``/``SLICE5a`` are still reported as unreported.
+    """
+    report = _report("### Verdict\nPASS\n### Step results\n- S1: PASS - legacy token\n")
+    adjusted, warnings = validate_slice_ids(report, _PLAN)
+
+    assert [step.step_id for step in adjusted.step_results] == ["S1"]
+    assert adjusted.unreported_slices == ("SLICE5", "SLICE5a")
+    assert not any("absent" in w for w in warnings), "S1 must not read as invented"

@@ -197,7 +197,7 @@ def test_legacy_flow_state_without_judged_reads_as_judged() -> None:
     """
     from fa.inner_loop.workflow_artifacts import FlowState
 
-    legacy = {
+    legacy: dict[str, object] = {
         "run_id": "legacy-1",
         "task": "t",
         "status": "DONE",

@@ -52,7 +52,7 @@ class _MinimalState:
     """
 
     log = object()
-    transaction = None
+    transaction: Any = None
     workspace_root = Path("/tmp")
 
 
@@ -219,7 +219,7 @@ def _spy_on_inner(**kwargs: Any) -> dict[str, Any]:
                 **kwargs,
             )
     finally:
-        coder_loop._drive_session_inner = original  # type: ignore[assignment]
+        coder_loop._drive_session_inner = original
     return seen
 
 

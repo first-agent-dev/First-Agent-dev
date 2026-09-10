@@ -162,7 +162,7 @@ def _ctx(
     timeout: int = 1800,
     inject_overrides: Mapping[str, str] | None = None,
 ) -> WorkflowInvocationContext:
-    extra = {} if inject_overrides is None else {"inject_overrides": inject_overrides}
+    extra: dict[str, Any] = {} if inject_overrides is None else {"inject_overrides": inject_overrides}
     return WorkflowInvocationContext(
         parent_run_id=parent_run_id,
         config=tmp_path / "models.yaml",

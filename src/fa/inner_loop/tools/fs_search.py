@@ -504,10 +504,7 @@ def _enforce_response_cap(result: dict[str, Any]) -> None:
         if not popped:
             break
     if popped_any:
-        msg = (
-            f"response truncated to {MAX_RESPONSE_BYTES}-byte cap — "
-            f"{total} matched, narrow with query/path"
-        )
+        msg = f"response truncated to {MAX_RESPONSE_BYTES}-byte cap — {total} matched, narrow with query/path"
         warnings = result.setdefault("warnings", [])
         if msg not in warnings:
             warnings.append(msg)

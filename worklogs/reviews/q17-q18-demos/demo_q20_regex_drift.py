@@ -1,5 +1,7 @@
 """Q20: how brittle is the judge-output regex, and why it matters under a full gate."""
-from fa.inner_loop.workflow_artifacts import _STEP_LINE_RE as R, parse_eval_report
+
+from fa.inner_loop.workflow_artifacts import _STEP_LINE_RE as R
+from fa.inner_loop.workflow_artifacts import parse_eval_report
 from fa.inner_loop.workflow_controller import validate_slice_ids
 
 print("=== 1. Which judge line formats does _STEP_LINE_RE accept? ===")
@@ -30,12 +32,15 @@ variants = [
 for label, body in variants:
     report = parse_eval_report(
         f"### Step results\n{body}\n### Verdict\nPASS\n",
-        run_id="r", plan_id="X", evaluation_id="e",
+        run_id="r",
+        plan_id="X",
+        evaluation_id="e",
     )
     out = validate_slice_ids(report, plan)
     rep = out[0] if isinstance(out, tuple) else out
-    print(f"  {label:16s} parsed={[s.step_id for s in rep.step_results]!s:16s} "
-          f"unreported={list(rep.unreported_slices)}")
+    print(
+        f"  {label:16s} parsed={[s.step_id for s in rep.step_results]!s:16s} unreported={list(rep.unreported_slices)}"
+    )
 
 print()
 print("  A judge that reviewed EVERY slice correctly but wrote '**S1**' is")

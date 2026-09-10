@@ -1,0 +1,255 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1460 2060" width="1460" height="2060" font-family="system-ui,-apple-system,'Segoe UI',sans-serif">
+<defs>
+  <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#5a6577"/>
+  </marker>
+  <marker id="arwR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#b3261e"/>
+  </marker>
+  <marker id="arwG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#0b6b5b"/>
+  </marker>
+</defs>
+
+<rect width="1460" height="2060" fill="#f6f8fa"/>
+<text x="40" y="52" font-size="30" font-weight="700" fill="#12192a">The verification block — how it fits the planned workflow</text>
+<text x="40" y="80" font-size="15" fill="#5a6577">Four tiers, three verification levels, ONE deterministic hard gate. Grounded at tip 0e08ece · research note F8 / F11 / F12 / §4E / §7 items 1 &amp; 5</text>
+
+<!-- ══════════════ PANEL 1 : TIERS ══════════════ -->
+<rect x="40" y="104" width="1380" height="330" rx="12" fill="#ffffff" stroke="#d8dde6"/>
+<text x="62" y="134" font-size="17" font-weight="700" fill="#12192a">1 · The workflow schema: every tier asks a question, only one tier can answer it deterministically</text>
+
+<g font-size="13" fill="#5a6577" font-weight="600">
+  <text x="62" y="162">TIER</text><text x="250" y="162">THE QUESTION IT ASKS</text>
+  <text x="700" y="162">WHO / WHAT ANSWERS</text><text x="1064" y="162">GATE POSTURE</text>
+</g>
+<line x1="62" y1="172" x2="1398" y2="172" stroke="#e3e8ef"/>
+
+<!-- FEATURE -->
+<rect x="56" y="182" width="1348" height="58" rx="8" fill="#faf9fe" stroke="#e6e1f5"/>
+<text x="76" y="207" font-size="15" font-weight="700" fill="#6b46c1">FEATURE</text>
+<text x="76" y="227" font-size="12" fill="#8a86a8">roadmap.md</text>
+<text x="250" y="207" font-size="13.5" fill="#2b3448">Did the feature deliver the intent the roadmap promised?</text>
+<text x="250" y="226" font-size="12" fill="#7b8494">stochastic — an LLM judgment on a held-out set</text>
+<text x="700" y="207" font-size="13.5" fill="#2b3448">eval role, L2 verdict (I03)</text>
+<text x="700" y="226" font-size="12" fill="#7b8494">different model family, blind to authorship</text>
+<text x="1064" y="207" font-size="13.5" font-weight="700" fill="#6b46c1">SOFT · pass^k</text>
+<text x="1064" y="226" font-size="12" fill="#7b8494">one green run is a sample, not a result (F12)</text>
+
+<!-- INCREMENT -->
+<rect x="56" y="248" width="1348" height="58" rx="8" fill="#faf9fe" stroke="#e6e1f5"/>
+<text x="76" y="273" font-size="15" font-weight="700" fill="#6b46c1">INCREMENT</text>
+<text x="76" y="293" font-size="12" fill="#8a86a8">increments/increment-NN-*.md</text>
+<text x="250" y="273" font-size="13.5" fill="#2b3448">Did every slice land, and did they land together?</text>
+<text x="250" y="292" font-size="12" fill="#7b8494">an aggregation, not a new measurement</text>
+<text x="700" y="273" font-size="13.5" fill="#2b3448">AND of the slice gates + the eval verdict</text>
+<text x="700" y="292" font-size="12" fill="#7b8494">MAST: the objective level is worth +15.6 pp</text>
+<text x="1064" y="273" font-size="13.5" font-weight="700" fill="#6b46c1">MIXED</text>
+<text x="1064" y="292" font-size="12" fill="#7b8494">only as strong as its weakest slice gate</text>
+
+<!-- SLICE — highlighted -->
+<rect x="56" y="314" width="1348" height="66" rx="8" fill="#e9f5f2" stroke="#0b6b5b" stroke-width="2.5"/>
+<text x="76" y="341" font-size="15" font-weight="700" fill="#0b6b5b">SLICE#</text>
+<text x="76" y="361" font-size="12" fill="#3f7a6f">## SLICE1: …</text>
+<text x="250" y="341" font-size="14" font-weight="600" fill="#12192a">Did THIS slice become true?</text>
+<text x="250" y="361" font-size="12" fill="#3f7a6f">the only question with a deterministic answer</text>
+<text x="700" y="341" font-size="14" font-weight="700" fill="#0b6b5b">the ```verify block</text>
+<text x="700" y="361" font-size="12" fill="#3f7a6f">exit codes, compared against a baseline</text>
+<text x="1064" y="341" font-size="14" font-weight="700" fill="#0b6b5b">HARD · deterministic · I02</text>
+<text x="1064" y="361" font-size="12" fill="#3f7a6f">this is the gate the whole design rests on</text>
+
+<!-- STEP -->
+<rect x="56" y="388" width="1348" height="40" rx="8" fill="#fbfcfd" stroke="#e3e8ef"/>
+<text x="76" y="413" font-size="14" font-weight="700" fill="#8a93a3">STEP#</text>
+<text x="250" y="413" font-size="13" fill="#5a6577">Is the coder done with this step? — <tspan font-style="italic">self-reported, tracked, never gating.</tspan></text>
+<text x="1064" y="413" font-size="13" font-weight="700" fill="#8a93a3">ADVISORY</text>
+
+<!-- ══════════════ PANEL 2 : RITUAL ══════════════ -->
+<rect x="40" y="454" width="1380" height="742" rx="12" fill="#ffffff" stroke="#d8dde6"/>
+<text x="62" y="484" font-size="17" font-weight="700" fill="#12192a">2 · The slice ritual: the verify block is a claim, and the harness converts it into evidence</text>
+<text x="62" y="504" font-size="13" fill="#5a6577">Research §7 item 1 — "contracts become executable". The block stays a plain command list; all discipline lives in code, not in the prompt.</text>
+
+<!-- plan artifact -->
+<rect x="470" y="522" width="520" height="56" rx="8" fill="#eef1f6" stroke="#c9d2de"/>
+<text x="730" y="546" font-size="14" font-weight="700" fill="#12192a" text-anchor="middle">INCREMENT PLAN  ·  increments/increment-NN-*.md</text>
+<text x="730" y="566" font-size="12" fill="#5a6577" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">## SLICE2  TESTS: tests/test_x.py (NEW)  ```verify …```</text>
+<line x1="730" y1="578" x2="730" y2="600" stroke="#5a6577" stroke-width="1.6" marker-end="url(#arw)"/>
+
+<!-- precheck -->
+<rect x="410" y="600" width="640" height="106" rx="8" fill="#fff8ec" stroke="#e0a94a"/>
+<text x="430" y="624" font-size="14" font-weight="700" fill="#9a6410">GATE 0 · PRE-CHECK — pure code, zero coder tokens</text>
+<text x="430" y="646" font-size="12.5" fill="#4a4032">• every referenced path/symbol exists, or is marked <tspan font-family="ui-monospace,Menlo,monospace">NEW</tspan></text>
+<text x="430" y="664" font-size="12.5" fill="#4a4032">• every <tspan font-family="ui-monospace,Menlo,monospace">CT#</tspan> is covered by a test on the slice's <tspan font-family="ui-monospace,Menlo,monospace">TESTS:</tspan> line</text>
+<text x="430" y="682" font-size="12.5" fill="#4a4032">• every prescriptive <tspan font-family="ui-monospace,Menlo,monospace">STEP#</tspan> carries an exit criterion; <tspan font-family="ui-monospace,Menlo,monospace">DEPS:</tspan> is acyclic</text>
+<text x="430" y="700" font-size="12.5" fill="#9a6410">• a ```verify fence outside any ## SLICE section → <tspan font-weight="700">WARN</tspan> (grammar-collision trap)</text>
+<!-- loop back -->
+<path d="M1050,653 L1130,653 L1130,550 L990,550" fill="none" stroke="#b3261e" stroke-width="1.6" marker-end="url(#arwR)"/>
+<text x="1140" y="600" font-size="12" font-weight="700" fill="#b3261e">FAIL</text>
+<text x="1140" y="617" font-size="11.5" fill="#b3261e">→ planner fixes</text>
+<text x="1140" y="632" font-size="11.5" fill="#b3261e">the plan, not code</text>
+<line x1="730" y1="706" x2="730" y2="728" stroke="#5a6577" stroke-width="1.6" marker-end="url(#arw)"/>
+
+<!-- Phase A -->
+<rect x="410" y="728" width="640" height="76" rx="8" fill="#eef6fb" stroke="#7fb2d4"/>
+<text x="430" y="752" font-size="14" font-weight="700" fill="#1c5f8a">PHASE A · BASELINE — before the coder starts, on the untouched tree</text>
+<text x="430" y="772" font-size="12.5" fill="#33566e">Run the slice's verify commands once. Record the exit code <tspan font-weight="700">per command</tspan>:</text>
+<text x="430" y="790" font-size="12.5" fill="#33566e" font-family="ui-monospace,Menlo,monospace">baseline = { cmd → RED | GREEN | ERROR }</text>
+<line x1="730" y1="804" x2="730" y2="826" stroke="#5a6577" stroke-width="1.6" marker-end="url(#arw)"/>
+
+<!-- Phase B -->
+<rect x="410" y="826" width="640" height="82" rx="8" fill="#eef6fb" stroke="#7fb2d4"/>
+<text x="430" y="850" font-size="14" font-weight="700" fill="#1c5f8a">PHASE B · FAIL-BEFORE — the non-vacuity filter</text>
+<text x="430" y="870" font-size="12.5" fill="#33566e">Every test file marked <tspan font-family="ui-monospace,Menlo,monospace">NEW</tspan> must be <tspan font-weight="700">RED</tspan> at baseline.</text>
+<text x="430" y="888" font-size="12.5" fill="#33566e">A test that passes before the work is done proves nothing — so it is discarded,</text>
+<text x="430" y="903" font-size="12.5" fill="#33566e">not merely noted. Lint/lint-like commands are exempt: they have no "before".</text>
+<path d="M1050,867 L1160,867 L1160,760 L1050,760" fill="none" stroke="#b3261e" stroke-width="1.6" marker-end="url(#arwR)"/>
+<text x="1170" y="806" font-size="12" font-weight="700" fill="#b3261e">NEW test already</text>
+<text x="1170" y="822" font-size="12" font-weight="700" fill="#b3261e">GREEN → vacuous</text>
+<text x="1170" y="838" font-size="11.5" fill="#b3261e">→ back to planner</text>
+<line x1="730" y1="908" x2="730" y2="930" stroke="#5a6577" stroke-width="1.6" marker-end="url(#arw)"/>
+
+<!-- Phase C -->
+<rect x="410" y="930" width="640" height="60" rx="8" fill="#f2f4f8" stroke="#c9d2de"/>
+<text x="430" y="954" font-size="14" font-weight="700" fill="#12192a">PHASE C · THE CODER IMPLEMENTS</text>
+<text x="430" y="974" font-size="12.5" fill="#5a6577">scoped brief = <tspan font-family="ui-monospace,Menlo,monospace">section("SLICE2")</tspan> — it never sees the rest of the plan. It never writes its own acceptance.</text>
+<line x1="730" y1="990" x2="730" y2="1012" stroke="#5a6577" stroke-width="1.6" marker-end="url(#arw)"/>
+
+<!-- Phase D -->
+<rect x="410" y="1012" width="640" height="66" rx="8" fill="#eef6fb" stroke="#7fb2d4"/>
+<text x="430" y="1036" font-size="14" font-weight="700" fill="#1c5f8a">PHASE D · PASS-AFTER — re-run the same commands, same order</text>
+<text x="430" y="1056" font-size="12.5" fill="#33566e">Compare <tspan font-weight="700">per command</tspan> against the baseline. Not "the suite is green" —</text>
+<text x="430" y="1072" font-size="12.5" fill="#33566e">per-command, because attribution is the entire point.</text>
+<line x1="730" y1="1078" x2="730" y2="1100" stroke="#5a6577" stroke-width="1.6" marker-end="url(#arw)"/>
+
+<!-- decision -->
+<rect x="470" y="1100" width="520" height="52" rx="8" fill="#e9f5f2" stroke="#0b6b5b" stroke-width="2"/>
+<text x="730" y="1124" font-size="14" font-weight="700" fill="#0b6b5b" text-anchor="middle">THE TRUTH TABLE ↓</text>
+<text x="730" y="1142" font-size="12" fill="#3f7a6f" text-anchor="middle">baseline state × after state → verdict. Seven cases, no judgment calls.</text>
+
+<!-- left annotation -->
+<rect x="70" y="728" width="310" height="350" rx="8" fill="#fbfcfd" stroke="#e3e8ef"/>
+<text x="90" y="754" font-size="13.5" font-weight="700" fill="#12192a">Why baseline, not just "green"?</text>
+<text x="90" y="778" font-size="12.5" fill="#5a6577">Phoenix (2606.20243): <tspan font-weight="700" fill="#12192a">10 of 11</tspan> real repos</text>
+<text x="90" y="796" font-size="12.5" fill="#5a6577">have pre-existing test failures.</text>
+<text x="90" y="822" font-size="12.5" fill="#5a6577">Without a baseline you cannot tell</text>
+<text x="90" y="840" font-size="12.5" fill="#5a6577">which failure is yours — so you</text>
+<text x="90" y="858" font-size="12.5" fill="#5a6577">either chase ghosts or learn to</text>
+<text x="90" y="876" font-size="12.5" fill="#5a6577">ignore red, which kills the gate.</text>
+<line x1="90" y1="896" x2="360" y2="896" stroke="#e3e8ef"/>
+<text x="90" y="920" font-size="13.5" font-weight="700" fill="#12192a">Why the author writes the test?</text>
+<text x="90" y="944" font-size="12.5" fill="#5a6577">VeriMAP (2510.17109): planner-written</text>
+<text x="90" y="962" font-size="12.5" fill="#5a6577">verification. AgentCoder (2312.13010):</text>
+<text x="90" y="980" font-size="12.5" fill="#5a6577">independent test authorship, 96.3%.</text>
+<text x="90" y="1006" font-size="12.5" fill="#5a6577">The coder must never write its own</text>
+<text x="90" y="1024" font-size="12.5" fill="#5a6577">acceptance — that separation is the</text>
+<text x="90" y="1042" font-size="12.5" fill="#5a6577">strongest guarantee available.</text>
+
+<!-- right annotation -->
+<rect x="1080" y="1012" width="300" height="140" rx="8" fill="#fdecea" stroke="#e8b4b0"/>
+<text x="1100" y="1038" font-size="13.5" font-weight="700" fill="#b3261e">The 34.3% number</text>
+<text x="1100" y="1062" font-size="12.5" fill="#8c3a34">SWE-Gate (2609.04167): of 644</text>
+<text x="1100" y="1080" font-size="12.5" fill="#8c3a34">patches that <tspan font-weight="700">passed the functional</tspan></text>
+<text x="1100" y="1098" font-size="12.5" fill="#8c3a34"><tspan font-weight="700">tests</tspan>, 221 violated the acceptance</text>
+<text x="1100" y="1116" font-size="12.5" fill="#8c3a34">constraints. Passing tests is not</text>
+<text x="1100" y="1134" font-size="12.5" fill="#8c3a34">the same event as being accepted.</text>
+
+<!-- ══════════════ PANEL 3 : TRUTH TABLE ══════════════ -->
+<rect x="40" y="1216" width="1380" height="442" rx="12" fill="#ffffff" stroke="#d8dde6"/>
+<text x="62" y="1246" font-size="17" font-weight="700" fill="#12192a">3 · The truth table — the whole gate in seven rows</text>
+<text x="62" y="1266" font-size="13" fill="#5a6577">Nothing here is a judgment call, which is why it can live in code instead of a prompt (research F5, §7 item 5).</text>
+
+<g font-size="12.5" font-weight="700" fill="#5a6577">
+  <text x="70" y="1292">COMMAND KIND</text><text x="330" y="1292">BASELINE</text><text x="470" y="1292">AFTER</text>
+  <text x="600" y="1292">VERDICT</text><text x="830" y="1292">WHY THIS IS THE RIGHT ANSWER</text>
+</g>
+<line x1="62" y1="1302" x2="1398" y2="1302" stroke="#c9d2de" stroke-width="1.5"/>
+
+<g font-size="13">
+<rect x="56" y="1310" width="1348" height="44" rx="6" fill="#e9f5f2"/>
+<text x="70" y="1337" fill="#12192a">NEW test (<tspan font-family="ui-monospace,Menlo,monospace">TESTS: … (NEW)</tspan>)</text>
+<text x="330" y="1337" font-weight="700" fill="#b3261e">RED</text>
+<text x="470" y="1337" font-weight="700" fill="#0b6b5b">GREEN</text>
+<text x="600" y="1337" font-weight="700" fill="#0b6b5b">PROVEN</text>
+<text x="830" y="1337" fill="#33566e">Fail-before / pass-after. The slice is real. This is the only PROVEN state.</text>
+
+<rect x="56" y="1358" width="1348" height="44" rx="6" fill="#fdecea"/>
+<text x="70" y="1385" fill="#12192a">NEW test</text>
+<text x="330" y="1385" font-weight="700" fill="#0b6b5b">GREEN</text>
+<text x="470" y="1385" font-weight="700" fill="#0b6b5b">GREEN</text>
+<text x="600" y="1385" font-weight="700" fill="#b3261e">REJECT — vacuous</text>
+<text x="830" y="1385" fill="#8c3a34">It passed before anyone worked. It proves nothing about this slice. Agentless discards it.</text>
+
+<rect x="56" y="1406" width="1348" height="44" rx="6" fill="#fbfcfd"/>
+<text x="70" y="1433" fill="#12192a">existing test</text>
+<text x="330" y="1433" font-weight="700" fill="#0b6b5b">GREEN</text>
+<text x="470" y="1433" font-weight="700" fill="#0b6b5b">GREEN</text>
+<text x="600" y="1433" font-weight="700" fill="#0b6b5b">pass</text>
+<text x="830" y="1433" fill="#33566e">PRESERVATION held. Nothing broke. Quietly correct — the common case.</text>
+
+<rect x="56" y="1454" width="1348" height="44" rx="6" fill="#fdecea"/>
+<text x="70" y="1481" fill="#12192a">existing test</text>
+<text x="330" y="1481" font-weight="700" fill="#0b6b5b">GREEN</text>
+<text x="470" y="1481" font-weight="700" fill="#b3261e">RED</text>
+<text x="600" y="1481" font-weight="700" fill="#b3261e">REGRESSION → block</text>
+<text x="830" y="1481" fill="#8c3a34">Something that worked now fails. PRESERVATION is enforced by construction, not review.</text>
+
+<rect x="56" y="1502" width="1348" height="44" rx="6" fill="#fff8ec"/>
+<text x="70" y="1529" fill="#12192a">existing test</text>
+<text x="330" y="1529" font-weight="700" fill="#b3261e">RED</text>
+<text x="470" y="1529" font-weight="700" fill="#b3261e">RED</text>
+<text x="600" y="1529" font-weight="700" fill="#9a6410">advisory</text>
+<text x="830" y="1529" fill="#4a4032">Pre-existing failure, not yours (10 of 11 repos). Recorded, not blocking, never ignored.</text>
+
+<rect x="56" y="1550" width="1348" height="44" rx="6" fill="#fbfcfd"/>
+<text x="70" y="1577" fill="#12192a">existing test</text>
+<text x="330" y="1577" font-weight="700" fill="#b3261e">RED</text>
+<text x="470" y="1577" font-weight="700" fill="#0b6b5b">GREEN</text>
+<text x="600" y="1577" font-weight="700" fill="#0b6b5b">note → ledger</text>
+<text x="830" y="1577" fill="#33566e">You fixed something unasked. Worth an EVIDENCE entry — and a suspicion: was it in scope?</text>
+
+<rect x="56" y="1598" width="1348" height="44" rx="6" fill="#fdecea" stroke="#b3261e" stroke-width="1.5"/>
+<text x="70" y="1625" fill="#12192a" font-weight="700">ANY command</text>
+<text x="330" y="1625" font-weight="700" fill="#5a6577">any</text>
+<text x="470" y="1625" font-weight="700" fill="#5a6577">ERROR</text>
+<text x="600" y="1625" font-weight="700" fill="#b3261e">never PASS</text>
+<text x="830" y="1625" fill="#8c3a34">Timeout, missing binary, bad path. "Couldn't run" is not "passed" — a third state.</text>
+</g>
+
+<!-- ══════════════ PANEL 4 : POSTURE ══════════════ -->
+<rect x="40" y="1678" width="670" height="342" rx="12" fill="#ffffff" stroke="#d8dde6"/>
+<text x="62" y="1708" font-size="17" font-weight="700" fill="#12192a">4 · Two gates, two opposite postures</text>
+
+<rect x="62" y="1726" width="626" height="96" rx="8" fill="#fff8ec" stroke="#e0a94a"/>
+<text x="82" y="1752" font-size="14" font-weight="700" fill="#9a6410">PRE-CHECK — be forgiving</text>
+<text x="82" y="1774" font-size="12.5" fill="#4a4032">Judgment calls WARN, never fail: slice count outside 4–7, an orphan verify</text>
+<text x="82" y="1792" font-size="12.5" fill="#4a4032">fence, a suspiciously thin contract. Re-planning is cheap; a wasted slice run</text>
+<text x="82" y="1810" font-size="12.5" fill="#4a4032">is not. Too strict here and every deviation costs a turn.</text>
+
+<rect x="62" y="1834" width="626" height="96" rx="8" fill="#e9f5f2" stroke="#0b6b5b"/>
+<text x="82" y="1860" font-size="14" font-weight="700" fill="#0b6b5b">VERIFY GATE — be strict</text>
+<text x="82" y="1882" font-size="12.5" fill="#33566e">ERROR is never PASS. A vacuous NEW test is rejected, not tolerated. A</text>
+<text x="82" y="1900" font-size="12.5" fill="#33566e">regression blocks. This is the acceptance decision — leniency here is how</text>
+<text x="82" y="1918" font-size="12.5" fill="#33566e">the 34.3% false-accept rate gets built, one forgiven red at a time.</text>
+
+<text x="62" y="1954" font-size="13.5" font-weight="700" fill="#12192a">Lenient authoring, strict acceptance.</text>
+<text x="62" y="1976" font-size="12.5" fill="#5a6577">The same tool cannot be both. Splitting the two is what makes the pair usable.</text>
+<text x="62" y="2000" font-size="12.5" fill="#5a6577">Above the gate, verdicts stay stochastic → pass^k, never one green run (F12).</text>
+
+<!-- right: today vs designed -->
+<rect x="750" y="1678" width="670" height="342" rx="12" fill="#ffffff" stroke="#d8dde6"/>
+<text x="772" y="1708" font-size="17" font-weight="700" fill="#12192a">5 · What exists today vs. what I02 adds</text>
+
+<rect x="772" y="1726" width="626" height="128" rx="8" fill="#fdecea" stroke="#e8b4b0"/>
+<text x="792" y="1752" font-size="14" font-weight="700" fill="#b3261e">TODAY at tip 0e08ece — parsed, never run</text>
+<text x="792" y="1776" font-size="12.5" fill="#8c3a34" font-family="ui-monospace,Menlo,monospace">_VERIFY_BLOCK_RE   plan_ids.py:85   grammar exists ✓</text>
+<text x="792" y="1796" font-size="12.5" fill="#8c3a34" font-family="ui-monospace,Menlo,monospace">_extract_commands  plan_ids.py:123  flat tuple, no slice attribution</text>
+<text x="792" y="1816" font-size="12.5" fill="#8c3a34" font-family="ui-monospace,Menlo,monospace">.commands          ZERO READERS     ← the gate does not exist</text>
+<text x="792" y="1836" font-size="12.5" fill="#8c3a34" font-family="ui-monospace,Menlo,monospace">_git_output        :401  collapses failure → None (not fail-loud)</text>
+
+<rect x="772" y="1866" width="626" height="132" rx="8" fill="#e9f5f2" stroke="#0b6b5b"/>
+<text x="792" y="1892" font-size="14" font-weight="700" fill="#0b6b5b">I02 ADDS — nothing exotic, four small things</text>
+<text x="792" y="1916" font-size="12.5" fill="#33566e">1. a runner: <tspan font-family="ui-monospace,Menlo,monospace">commands_for(slice)</tspan> → three-state result per command</text>
+<text x="792" y="1936" font-size="12.5" fill="#33566e">2. a baseline snapshot, stored beside the run (ephemeral, not in the plan)</text>
+<text x="792" y="1956" font-size="12.5" fill="#33566e">3. the seven-row comparison, in pure code</text>
+<text x="792" y="1976" font-size="12.5" fill="#33566e">4. the fail-before filter on <tspan font-family="ui-monospace,Menlo,monospace">NEW</tspan> tests</text>
+</svg>

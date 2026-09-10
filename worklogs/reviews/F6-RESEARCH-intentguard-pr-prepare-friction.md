@@ -64,7 +64,7 @@ def render_prepare_buffer(intent: Intent) -> str:
     lines: list[str] = []
     for field in derive_required_fields(intent):
         if field.name == "INTENT":
-            lines.append(f"INTENT: {field.placeholder}")   # mechanically filled
+            lines.append(f"INTENT: {field.placeholder}")  # mechanically filled
             continue
         lines.append(f"{field.name}: <fill me — {field.placeholder}>")
     return "\n".join(lines)

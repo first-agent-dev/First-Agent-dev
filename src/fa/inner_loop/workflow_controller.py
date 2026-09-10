@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Final
 
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import resolve_injection_modes
-from fa.inner_loop.plan_ids import extract_plan_id, extract_plan_ids
+from fa.inner_loop.plan_ids import canonical_slice_id, extract_plan_id, extract_plan_ids
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.workflow_artifacts import (
     EvalReport,
@@ -333,14 +333,14 @@ def validate_slice_ids(report: EvalReport, plan_text: str | None) -> tuple[EvalR
     if not declared:
         return report, tuple(warnings)
 
-    known = set(declared)
-    kept = tuple(step for step in report.step_results if step.step_id in known)
-    invented = tuple(step.step_id for step in report.step_results if step.step_id not in known)
+    known = {canonical_slice_id(d) for d in declared}
+    kept = tuple(step for step in report.step_results if canonical_slice_id(step.step_id) in known)
+    invented = tuple(step.step_id for step in report.step_results if canonical_slice_id(step.step_id) not in known)
     if invented:
         warnings.append(f"eval reported slice id(s) absent from the plan, dropped: {', '.join(invented)}")
 
-    reported = {step.step_id for step in kept}
-    unreported = tuple(slice_id for slice_id in declared if slice_id not in reported)
+    reported = {canonical_slice_id(step.step_id) for step in kept}
+    unreported = tuple(slice_id for slice_id in declared if canonical_slice_id(slice_id) not in reported)
     if unreported:
         warnings.append(f"plan slice(s) with no eval verdict: {', '.join(unreported)}")
 

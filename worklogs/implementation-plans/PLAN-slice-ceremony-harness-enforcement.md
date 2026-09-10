@@ -2133,7 +2133,7 @@ omitted the no-eval path. Verifying it found F6.
 if eval_report is not None:
     status = EVAL_VERDICT_TO_TERMINAL_STATUS.get(eval_report.verdict, "FAILED")
 else:
-    status = "DONE"          # <-- no judge ran, yet the run is a success
+    status = "DONE"  # <-- no judge ran, yet the run is a success
 ```
 
 `--roles` is free-form over `WORKFLOW_STAGE_ROLES`, so `fa workflow --roles

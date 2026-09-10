@@ -199,7 +199,7 @@ def _resolved_injection_modes(args: argparse.Namespace, role: str) -> Mapping[st
     ``_cmd_workflow`` rejects bad input up front, where a non-zero exit is
     still clean. See plan v5 Q8.
     """
-    precomputed = getattr(args, "injection_modes", None)
+    precomputed: Mapping[str, str] | None = getattr(args, "injection_modes", None)
     if precomputed is not None:
         return precomputed
     return resolve_injection_modes(role, overrides=_inject_overrides(args))

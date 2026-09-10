@@ -31,11 +31,11 @@ PLAN_FIXTURE = """\
 
 ## 5. Step-by-step
 
-### Step S1: first slice
+## SLICE1: first slice
 
 Traces-to: G1 · GAP1, GAP2 · CT1
 
-### Step S5a: inserted later
+## SLICE5a: inserted later
 
 Traces-to: G2 · GAP12 · CT10, CT7b
 
@@ -60,7 +60,7 @@ class TestGrammar:
 
     def test_slices_include_lettered_suffix(self) -> None:
         ids = extract_plan_ids(PLAN_FIXTURE)
-        assert ids.slices == ("S1", "S5a")
+        assert ids.slices == ("SLICE1", "SLICE5a")
 
     def test_gaps_are_prefixed_and_ordered(self) -> None:
         ids = extract_plan_ids(PLAN_FIXTURE)
@@ -156,8 +156,8 @@ class TestDeterminism:
 
     def test_document_order_is_stable(self) -> None:
         """Not set-ordered: slices[0] must mean 'first slice in the plan'."""
-        text = "### Step S9: later\n### Step S2: earlier\n"
-        assert extract_plan_ids(text).slices == ("S9", "S2")
+        text = "## SLICE9: later\n## SLICE2: earlier\n"
+        assert extract_plan_ids(text).slices == ("SLICE9", "SLICE2")
 
     def test_duplicates_collapse_to_first_occurrence(self) -> None:
         text = "CT3 CT3 CT1 CT3"
@@ -178,8 +178,8 @@ class TestDeterminism:
         assert extract_plan_ids(text).contracts == expected
 
     def test_first_slice_is_the_first_in_document_order(self) -> None:
-        text = "".join(f"### Step S{n}: x\n" for n in [7, 3, 11, 1, 5, 9, 2, 8, 4, 10, 6])
-        assert extract_plan_ids(text).slices[0] == "S7"
+        text = "".join(f"## SLICE{n}: x\n" for n in [7, 3, 11, 1, 5, 9, 2, 8, 4, 10, 6])
+        assert extract_plan_ids(text).slices[0] == "SLICE7"
 
     def test_result_fields_are_tuples(self) -> None:
         ids = extract_plan_ids(PLAN_FIXTURE)
@@ -201,6 +201,7 @@ class TestAgainstRealPlan:
 
     def test_extraction_is_total_over_repo_plans(self) -> None:
         plans = sorted((REPO_ROOT / "worklogs" / "implementation-plans").glob("*.md"))
+        plans += sorted((REPO_ROOT / "worklogs").glob("*/increments/increment-*.md"))
         # Asserted, not skipped: these artifacts are committed, so an empty
         # glob means the corpus moved and this measurement silently stopped
         # measuring anything. A skip here would be test theater.
@@ -210,13 +211,18 @@ class TestAgainstRealPlan:
             assert isinstance(result, PlanIds), path.name
 
     def test_this_plan_is_conforming(self) -> None:
-        """The slice-ceremony plan must be parseable by its own extractor."""
-        path = REPO_ROOT / "worklogs" / "implementation-plans" / "PLAN-slice-ceremony-harness-enforcement.md"
-        assert path.is_file(), f"plan artifact missing: {path}"
+        """The live increment must be parseable by its own extractor."""
+        path = (
+            REPO_ROOT
+            / "worklogs"
+            / "planning-topology-and-executable-contracts-loop"
+            / "increments"
+            / "increment-01-plan-grammar-and-extractor.md"
+        )
+        assert path.is_file(), f"increment artifact missing: {path}"
         ids = extract_plan_ids(path.read_text(encoding="utf-8"))
-        assert "S1" in ids.slices
+        assert "SLICE1" in ids.slices
         assert "CT1" in ids.contracts
-        assert "GAP1" in ids.gaps
 
 
 # ── T3c: the grammar-collision hazard (plan review, 2026-09-07) ────────────
@@ -264,8 +270,9 @@ def test_real_plan_yields_its_own_verification_commands() -> None:
     plan = (
         Path(__file__).resolve().parents[1]
         / "worklogs"
-        / "implementation-plans"
-        / "PLAN-slice-ceremony-harness-enforcement.md"
+        / "planning-topology-and-executable-contracts-loop"
+        / "increments"
+        / "increment-01-plan-grammar-and-extractor.md"
     )
     if not plan.is_file():
         # The plan is an artifact of one feature branch. Absence is not an
@@ -274,6 +281,87 @@ def test_real_plan_yields_its_own_verification_commands() -> None:
         # (FA-AUTHORING-V11-PLACEHOLDER-ASSERT).
         return
     ids = extract_plan_ids(plan.read_text(encoding="utf-8"))
-    real = [c for c in ids.commands if "test_plan_ids" not in c and "plan_ids.py" not in c]
-    assert real, "plan §6 must carry a verify fence with the slice's own commands"
+    # The increment's verify fences ARE its real commands; there is no fenced
+    # grammar example in it to strip, so no filter is needed.
+    real = list(ids.commands)
+    assert real, "the increment must carry a verify fence with runnable commands"
     assert any("ruff" in c for c in real), "static checks belong in the plan's command list"
+
+
+# ── SLICE1: per-slice records (CT2/CT5/CT6/CT7) + reader-input (CT11) ──────
+
+RECORD_FIXTURE = """\
+# INCREMENT I9: example
+
+## SLICE1: first
+STEPS: prescriptive
+INTENT: do the first thing.
+CONTRACTS:
+  CT1 [FUNCTIONAL]: it works
+  CT2 [CONSTRAINT]: identical error shape
+  CT3: unclassed defaults
+TESTS: tests/test_first.py  (NEW - author it)
+```verify
+uv run pytest tests/test_first.py -q
+```
+- [ ] STEP1: edit the file (exit: green)
+
+## SLICE2: second
+STEPS: outcome
+INTENT: do the second thing.
+CONTRACTS:
+  CT4 [PRESERVATION]: existing stays green
+TESTS: tests/test_second.py
+```verify
+uv run pytest tests/test_second.py -q
+```
+"""
+
+
+class TestSliceRecords:
+    def test_slices_come_from_records(self) -> None:
+        ids = extract_plan_ids(RECORD_FIXTURE)
+        assert ids.slices == ("SLICE1", "SLICE2")
+        assert [r.slice_id for r in ids.slice_records] == ["SLICE1", "SLICE2"]
+
+    def test_contract_classes_and_default(self) -> None:
+        rec = extract_plan_ids(RECORD_FIXTURE).slice_records[0]
+        got = {cid: cls for cid, cls, _ in rec.contracts}
+        assert got == {"CT1": "FUNCTIONAL", "CT2": "CONSTRAINT", "CT3": "FUNCTIONAL"}
+
+    def test_test_paths_stop_at_paren_note(self) -> None:
+        rec = extract_plan_ids(RECORD_FIXTURE).slice_records[0]
+        assert rec.test_paths == ("tests/test_first.py",)
+
+    def test_steps_mode_default_and_explicit(self) -> None:
+        ids = extract_plan_ids(RECORD_FIXTURE)
+        assert ids.slice_records[0].steps_mode == "prescriptive"
+        assert ids.slice_records[1].steps_mode == "outcome"
+
+    def test_record_commands_are_per_slice(self) -> None:
+        ids = extract_plan_ids(RECORD_FIXTURE)
+        assert ids.slice_records[0].commands == ("uv run pytest tests/test_first.py -q",)
+        assert ids.slice_records[1].commands == ("uv run pytest tests/test_second.py -q",)
+
+    def test_section_span_excludes_next_slice(self) -> None:
+        rec = extract_plan_ids(RECORD_FIXTURE).slice_records[0]
+        assert rec.section.startswith("## SLICE1:")
+        assert "## SLICE2" not in rec.section
+
+    def test_intent_captured(self) -> None:
+        rec = extract_plan_ids(RECORD_FIXTURE).slice_records[0]
+        assert rec.intent == "do the first thing."
+
+    def test_flat_fields_retained(self) -> None:
+        ids = extract_plan_ids(RECORD_FIXTURE)
+        # CT4c: flat commands = concat of slices' commands, document order.
+        assert ids.commands == (
+            "uv run pytest tests/test_first.py -q",
+            "uv run pytest tests/test_second.py -q",
+        )
+        assert ids.contracts == ("CT1", "CT2", "CT3", "CT4")
+
+    def test_workflow_controller_reader_input_resolves(self) -> None:
+        # workflow_controller.py:332 and :461 read exactly this attribute.
+        assert extract_plan_ids(RECORD_FIXTURE).slices
+        assert extract_plan_ids("### Step S1: legacy").slices == ()

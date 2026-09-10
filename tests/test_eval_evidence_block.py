@@ -47,8 +47,8 @@ from fa.inner_loop.workflow_controller import (
 
 _PLAN = """# PLAN: worked example    Plan-ID: PLAN-example
 
-### Step S1: first
-### Step S7: second
+## SLICE1: first
+## SLICE7: second
 """
 
 
@@ -101,7 +101,7 @@ def test_block_carries_plan_path_slice_ids_and_diff(repo: Path) -> None:
     block = _eval_evidence_block(_ctx(repo, plan))
 
     assert str(plan) in block
-    assert "S1, S7" in block, "the declared slice IDs must reach the judge"
+    assert "SLICE1, SLICE7" in block, "the declared slice IDs must reach the judge"
     assert "MUTATED" in block, "the actual change must reach the judge"
     assert "do not infer it from the transcript" in block
 

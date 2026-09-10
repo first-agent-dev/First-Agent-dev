@@ -376,7 +376,8 @@ _ROUTE_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 _STEP_LINE_RE = re.compile(
-    r"^\s*[-*]\s*(S\d+[A-Za-z0-9_.-]*)\s*[:\-—]\s*(PASS|FAIL|PARTIAL)\b\s*[-—:]?\s*(.*)$",
+    r"^\s*[-*]\s*(SLICE\d+[A-Za-z0-9_.-]*|S\d+[A-Za-z0-9_.-]*)\s*[:\-—]\s*"
+    r"(PASS|FAIL|PARTIAL)\b\s*[-—:]?\s*(.*)$",
     re.IGNORECASE,
 )
 

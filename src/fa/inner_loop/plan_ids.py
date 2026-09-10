@@ -44,15 +44,31 @@ from dataclasses import dataclass, field
 
 __all__ = [
     "PlanIds",
+    "SliceRecord",
+    "canonical_slice_id",
     "extract_plan_id",
     "extract_plan_ids",
 ]
 
 
-#: Slice headings: ``### Step S5a: title`` or ``### S5: title``. The step
-#: number may carry a lowercase suffix (``S5a``) because plans routinely
-#: insert a step without renumbering their successors.
-_SLICE_RE = re.compile(r"^#{2,4}\s+(?:Step\s+)?(S\d+[a-z]?)\s*:", re.MULTILINE)
+#: Slice headings: ``## SLICE5: title`` / ``## SLICE5a: title``. The number may
+#: carry a lowercase suffix (``SLICE5a``) because plans routinely insert a
+#: slice without renumbering its successors. ``SLICE#``-only: the legacy ``S#``
+#: pattern is gone, so a pre-rename plan yields no slices (it is archived).
+_SLICE_RE = re.compile(r"^#{2,4}\s+SLICE(\d+[a-z]?)\s*:", re.MULTILINE)
+
+#: Tracked step checkboxes inside a slice: ``- [ ] STEP3: ...``. Consumed by the
+#: SLICE3 pre-check; kept here so the grammar lives in one module.
+_STEP_RE = re.compile(r"^\s*- \[[ x>]\]\s*STEP(\d+[a-z]?)\s*:", re.MULTILINE)
+
+#: A contract with an explicit class, e.g. ``CT3 [CONSTRAINT]: ...``.
+_CONTRACT_CLASS_RE = re.compile(r"\bCT(\d+[a-z]?)\s*\[(FUNCTIONAL|CONSTRAINT|PRESERVATION)\]")
+
+#: Per-slice field lines. ``STEPS:`` is the mode line only; ``TESTS:``/``INTENT:``
+#: carry the slice's test paths and intent.
+_STEPS_MODE_RE = re.compile(r"^STEPS:\s*(prescriptive|outcome)\b", re.MULTILINE)
+_TESTS_LINE_RE = re.compile(r"^TESTS:\s*(.+)$", re.MULTILINE)
+_INTENT_LINE_RE = re.compile(r"^INTENT:\s*(.+)$", re.MULTILINE)
 
 #: Bare ID tokens. ``\b`` on both sides so ``GAP12`` does not also yield
 #: ``GAP1``, and ``CT10`` is not read as ``CT1``. Case-sensitive: the grammar
@@ -89,12 +105,34 @@ _VERIFY_BLOCK_RE = re.compile(
 
 
 @dataclass(frozen=True)
+class SliceRecord:
+    """Everything the verify gate (I02) and coder brief (I03) need for one slice.
+
+    Frozen and tuple-valued for the same reason as :class:`PlanIds`: an
+    extraction's result must be immutable and stable across calls.
+    """
+
+    slice_id: str
+    intent: str = ""
+    #: (contract id, class, text) triples in document order.
+    contracts: tuple[tuple[str, str, str], ...] = ()
+    test_paths: tuple[str, ...] = ()
+    steps_mode: str = "prescriptive"
+    commands: tuple[str, ...] = ()
+    section: str = ""
+
+
+@dataclass(frozen=True)
 class PlanIds:
     """IDs and commands recovered from one plan artifact.
 
     Every field defaults to empty: an unparseable or absent plan is a valid,
     fully-constructed result, not an error state. Tuples (not lists) so a
     consumer cannot mutate one extraction's result and affect another.
+
+    The flat fields are the historical surface and are retained unchanged for
+    the two ``.slices`` callers and the flat-command test; ``slice_records`` is
+    added *beside* them, never substituted.
     """
 
     slices: tuple[str, ...] = ()
@@ -102,11 +140,30 @@ class PlanIds:
     contracts: tuple[str, ...] = ()
     tests: tuple[str, ...] = ()
     commands: tuple[str, ...] = field(default=())
+    slice_records: tuple[SliceRecord, ...] = field(default=())
 
     @property
     def is_empty(self) -> bool:
         """True when nothing was recovered — the caller should stay advisory."""
         return not (self.slices or self.gaps or self.contracts or self.tests or self.commands)
+
+
+def canonical_slice_id(raw: str) -> str:
+    """Map a slice token from either grammar onto the canonical ``SLICE<n>`` space.
+
+    ``S5a`` -> ``SLICE5a`` and ``SLICE5a`` -> ``SLICE5a`` (idempotent). The plan
+    side (``.slices``) and the eval side (report step IDs) are one logical ID
+    surface; the eval parser still accepts legacy ``S<n>`` tokens during the
+    migration, so the cross-check in ``validate_slice_ids`` compares canonical
+    forms rather than raw tokens. Non-slice tokens are returned unchanged.
+    """
+    text = raw.strip()
+    low = text.lower()
+    if low.startswith("slice"):
+        return "SLICE" + text[5:]
+    if low.startswith("s") and len(text) > 1 and text[1].isdigit():
+        return "SLICE" + text[1:]
+    return text
 
 
 def _ordered_unique(values: list[str]) -> tuple[str, ...]:
@@ -138,6 +195,62 @@ def _extract_commands(text: str) -> tuple[str, ...]:
     return _ordered_unique(commands)
 
 
+def _slice_sections(text: str) -> list[tuple[str, str]]:
+    """Return ``(slice_id, section_text)`` pairs in document order.
+
+    A section runs from its ``## SLICE<n>:`` heading to the next slice heading
+    (exclusive) or the end of the text. A plan-level prologue (before the first
+    heading) is not a section.
+    """
+    matches = list(_SLICE_RE.finditer(text))
+    return [
+        (f"SLICE{m.group(1)}", text[m.start() : (matches[i + 1].start() if i + 1 < len(matches) else len(text))])
+        for i, m in enumerate(matches)
+    ]
+
+
+def _test_paths(line: str) -> tuple[str, ...]:
+    """Path tokens from a ``TESTS:`` line, stopping at a ``(`` or ``#`` note."""
+    cut: list[str] = []
+    for t in line.split():
+        if t.startswith(("(", "#")):
+            break
+        cut.append(t.strip(",;"))
+    return tuple(dict.fromkeys(cut))
+
+
+def _section_contracts(section: str) -> tuple[tuple[str, str, str], ...]:
+    """``(id, class, text)`` for every ``CT#`` in *section*; class defaults to
+    ``FUNCTIONAL`` when the bracket is absent."""
+    classes = dict(_CONTRACT_CLASS_RE.findall(section))
+    out: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for line in section.splitlines():
+        for n in _CONTRACT_RE.findall(line):
+            cid = f"CT{n}"
+            if cid in seen:
+                continue
+            seen.add(cid)
+            text = line.split("]:", 1)[1].strip() if "]:" in line else ""
+            out.append((cid, classes.get(n, "FUNCTIONAL"), text))
+    return tuple(out)
+
+
+def _build_record(slice_id: str, section: str) -> SliceRecord:
+    intent = _INTENT_LINE_RE.search(section)
+    tests = _TESTS_LINE_RE.search(section)
+    mode = _STEPS_MODE_RE.search(section)
+    return SliceRecord(
+        slice_id=slice_id,
+        intent=intent.group(1).strip() if intent else "",
+        contracts=_section_contracts(section),
+        test_paths=_test_paths(tests.group(1)) if tests else (),
+        steps_mode=mode.group(1) if mode else "prescriptive",
+        commands=_extract_commands(section),
+        section=section,
+    )
+
+
 def extract_plan_ids(text: str) -> PlanIds:
     """Extract slice/gap/contract/test IDs and verify commands from *text*.
 
@@ -158,12 +271,14 @@ def extract_plan_ids(text: str) -> PlanIds:
     if not isinstance(text, str) or not text:
         return PlanIds()
 
+    records = tuple(_build_record(sid, sec) for sid, sec in _slice_sections(text))
     return PlanIds(
-        slices=_ordered_unique(_SLICE_RE.findall(text)),
+        slices=_ordered_unique([r.slice_id for r in records]),
         gaps=_ordered_unique([f"GAP{n}" for n in _GAP_RE.findall(text)]),
         contracts=_ordered_unique([f"CT{n}" for n in _CONTRACT_RE.findall(text)]),
         tests=_ordered_unique([f"T{n}" for n in _TEST_RE.findall(text)]),
         commands=_extract_commands(text),
+        slice_records=records,
     )
 
 
