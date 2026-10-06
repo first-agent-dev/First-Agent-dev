@@ -331,3 +331,17 @@ E79 DECIDED (operator, self-correction) The pinned-invariants slice is **moved o
     contracts are banked verbatim in `notes/role-prompts-conformance.md`. Moving it also removed
     the last `DEPS:` defect in I01: the slice declared `DEPS: SLICE1` while consuming SLICE2's
     output.  supersedes: E57
+E80 FACT  Pre-implementation check of SLICE1b against SLICE1's shipped code found schema §4's
+    authoring rule to be **false**. §4 told authors "wrap the example fence in ````text, or it is
+    extracted as a real command". Measured: a ````text-wrapped ```verify block still yields its
+    command, and a wrapped `## SLICE1:` heading still yields the slice. The shipped test
+    `tests/test_plan_ids.py:233-261` asserts precisely this and documents the decision not to fix
+    it in code; SLICE1/CT13 pins it. So the wrapper is a marker for humans and the real protection
+    is CT13's second clause — the pre-check is never run on a grammar document. §4 corrected, and
+    CT21b added so that adding the §4 example cannot leak a phantom slice into the totality corpus
+    or a duplicate `CT1` into CT34.  [measured 2026-10-06 @ 2f6b8c1]
+E81 FACT  CT12's three pinned tests re-simulated against the rewritten increment-01 after the
+    adversarial-review edits: `:212` (SLICE1 in `.slices`, CT1 in `.contracts`) holds; `:202`
+    totality holds over 33 files; `:264` holds — 10 commands, all genuine, `ruff` present. The
+    inline triple backticks introduced in the new CT21/CT22 prose do **not** open phantom fences.
+    SLICE1 and the rewritten plan are compatible; SLICE1b is unblocked.  [measured 2026-10-06]

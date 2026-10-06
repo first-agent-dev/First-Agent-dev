@@ -106,10 +106,18 @@ DEPS: SLICE1
 INTENT: the grammar is defined once, in schema §4, and §4 carries a worked example the parser
   must reproduce, so the specification and the code cannot drift apart unnoticed.
 CONTRACTS:
-  CT21 [FUNCTIONAL]: schema §4 ends with a fenced ```example block — a miniature two-slice
-    increment exercising every boundary rule — and `extract_plan_ids` over that block returns
-    exactly the slice ids, section spans and contract set §4 documents beside it. Consumer:
-    SLICE2 conforms the parser to this fixture; SLICE4 reuses it.
+  CT21 [FUNCTIONAL]: schema §4 ends with a ````text-wrapped miniature two-slice increment
+    exercising every boundary rule, and `extract_plan_ids` over the **unwrapped inner block**
+    returns exactly the slice ids, section spans and contract set §4 documents beside it. The
+    test slices the inner block out of the `.md` itself, so §4 and the parser cannot drift.
+    Consumer: SLICE2 conforms the parser to this fixture; SLICE4 reuses it.
+  CT21b [CONSTRAINT]: adding that example makes the schema document itself yield a slice and a
+    command to any caller that parses it — the ````text wrapper does **not** make it inert
+    (SLICE1/CT13, `tests/test_plan_ids.py:233-261`). Therefore: the schema document is never
+    fed to the pre-check, and the totality corpus in `tests/test_plan_ids.py:202` keeps globbing
+    `*/increments/increment-*.md` only, never `notes/`. Catches: the example's `CT1`/`CT2`
+    surfacing as duplicate declarations (CT34) or phantom commands the moment someone widens a
+    glob to "all planning docs".
   CT22 [FUNCTIONAL]: each planning skill embeds a fenced ```skeleton block, and that block
     parses via `extract_plan_ids` with non-empty `.slices`, a `TESTS:` path and an explicit
     `STEPS:` mode on every slice.
@@ -130,13 +138,18 @@ uv run ruff check knowledge/skills tests/test_skill_grammar_emit.py
       assertion over the §4 example. Do not reword the rules; if one is wrong, stop and raise a
       question rather than edit the parser to match. (exit: four assertions exist, one per
       rule.)
-- [ ] STEP2: Append the ```example block to §4 and document its expected parse beside it.
-      (exit: CT21 green — the test reads the fence out of the `.md` and compares against the
-      documented result, so editing §4 without editing the parser turns the test red.)
+- [ ] STEP2: Append the ````text-wrapped example to §4 and document its expected parse beside
+      it. The example must use literal ids (`## SLICE1:`, `CT1`), not `<n>` placeholders, or it
+      does not parse and proves nothing. (exit: CT21 green — the test reads the fence out of the
+      `.md`, strips the wrapper and compares against the documented result, so editing §4
+      without editing the parser turns the test red.)
+- [ ] STEP2b: Pin the blast radius of STEP2 with a test asserting the glob at
+      `tests/test_plan_ids.py:202` does not reach `notes/`. (exit: CT21b green.)
 - [ ] STEP3: Add the `## Grounding` block to §4, marked "prose, never parsed", with its
       mandatory first line naming what the planner understood the request to be and what it
       deliberately excluded. (exit: parsing the §4 example, whose slices each carry a
-      `## Grounding` subsection, yields no contract, test or command from that subsection.)
+      `### Grounding` subsection, yields no contract, test or command from that subsection.
+      Use `###`, not `##`: under the CT16 depth rule a `##` heading would end the slice.)
 - [ ] STEP4: Add a §4 subsection "Authoring guidance (not checked)" holding the rules that are
       judgement, not lint: `STEPS:` defaults from the TRIVIAL/STANDARD/LARGE classifier and the
       planner may override it with a one-line reason; `N <= 7` slices per increment, and a

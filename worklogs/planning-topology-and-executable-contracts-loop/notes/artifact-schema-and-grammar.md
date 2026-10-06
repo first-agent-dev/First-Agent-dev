@@ -114,8 +114,15 @@ Token rules — the harness parses exactly this; write exactly this:
   separate list header.
 - Sub-steps are prose: indented continuations and `- (a)` lists under a `STEP#` are not
   parsed; the harness ticks only `- [ ] STEP<n>:` lines.
-- To show the grammar in a document, wrap the example fence in ````text, or it is extracted
-  as a real command.
+- **A fenced example is extracted as a real command — the ````text wrapper does not prevent
+  it.** This was verified, not assumed: `extract_plan_ids` over a ````text-wrapped ```verify
+  block returns the command, and over a wrapped `## SLICE1:` heading returns the slice. The
+  shipped test `tests/test_plan_ids.py:233-261` asserts exactly that and explains why it is not
+  fixed in code (nested-fence parsing is more machinery than the risk warrants) — SLICE1/CT13
+  pins the behaviour, so do not "fix" it. The ````text wrapper is a **marker for humans**, not a
+  parser instruction. The actual protection is the second half of CT13: **the pre-check is never
+  run on a document that shows the grammar.** Keep using the wrapper for readability; never rely
+  on it for inertness.
 
 **Section boundaries (normative — the parser implements these, it does not invent them):**
 - A slice section runs from its `## SLICE<n>:` heading to the line before the next heading
