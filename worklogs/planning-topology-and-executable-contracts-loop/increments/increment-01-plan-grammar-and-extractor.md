@@ -3,7 +3,7 @@ Increment-ID: RM-planning-topology-I01
 Roadmap-ID: RM-planning-topology
 status: IN PROGRESS
 slices: 6
-shipped: SLICE1
+shipped: SLICE1, SLICE1b
 ---
 
 # INCREMENT I01: Plan grammar & extractor
@@ -103,6 +103,7 @@ uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_ids.py
 ## SLICE1b: The authoring contract (schema + planning skills)
 STEPS: prescriptive
 DEPS: SLICE1
+SHIPPED: 5773ddf (branch arena/ca4c996c-first-agent-dev, 2026-10-06)
 INTENT: the grammar is defined once, in schema §4, and §4 carries a worked example the parser
   must reproduce, so the specification and the code cannot drift apart unnoticed.
 CONTRACTS:
