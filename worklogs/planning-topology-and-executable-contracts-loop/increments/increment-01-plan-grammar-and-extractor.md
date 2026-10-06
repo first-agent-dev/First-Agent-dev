@@ -194,7 +194,7 @@ uv run ruff check src/fa/inner_loop/prompt.py tests/test_planner_emits_schema4.p
 ## SLICE2: Per-slice accessors over the records
 STEPS: prescriptive
 DEPS: SLICE1b
-SHIPPED: pending-commit
+SHIPPED: 7156c03 (branch arena/ca4c996c-first-agent-dev, 2026-10-06)
 INTENT: the parser is conformed to the SLICE1b specification — the §4 example is the oracle —
   and exposes the read API I02 consumes, over `slice_records`.
 CONTRACTS:
