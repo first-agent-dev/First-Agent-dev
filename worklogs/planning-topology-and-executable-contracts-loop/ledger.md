@@ -403,3 +403,18 @@ E86 GAP  The **evaluator** prompt still speaks the retired `S#` grammar
     maps a reported `S1` onto `SLICE1`, so the mismatch is invisible today and will stay invisible
     until something stops being forgiving. Banked against I04 with the other eval-prompt deltas in
     `notes/role-prompts-conformance.md`.
+E87 DECISION  Q35 — `plan_commands` holds every command **unowned by a slice**, not merely the
+    prologue; `commands_for(None)` means "unowned". Raised while implementing SLICE2: CT4b was
+    written before CT16, and CT16 stops the last slice at the increment-level sections, which
+    newly orphans any ```verify block sitting in them — a command present in the flat
+    `.commands` but reachable from no record, which is verbatim the harm CT4b exists to catch.
+    Rejected: prologue-only plus a SLICE3 WARN (more machinery, warns about a legitimate DoD
+    verify block, and leaves the command unreachable anyway) and prologue-only plus a recorded
+    gap (knowingly shipping a visible defect). The chosen scope satisfies CT4b's letter, since
+    the prologue is a subset of the unowned, and makes the partition total so nothing can be
+    orphaned by construction rather than by a guard. Second-order benefit: it upgrades CT4c
+    from `⊇` — which holds vacuously when `plan_commands` is empty — to the exact identity
+    `set(.commands) == set(.plan_commands) | ⋃ set(record.commands)`, an oracle that fails if a
+    command is dropped, duplicated into the wrong slice, or misattributed.
+    Measured at d2faea4: zero post-last-slice verify blocks in this file, so present behaviour
+    is unchanged and the broadening is purely future-proofing.  [operator-confirmed 2026-10-06]

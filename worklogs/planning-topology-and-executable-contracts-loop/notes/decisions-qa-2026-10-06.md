@@ -1179,3 +1179,42 @@ reflection typing, §6 interim tick rule); (5) `notes/i02-handoff-verify-gate.md
 baselines, TEST-DEFECT, phase-1 exit criterion, mutation posture); (6)
 `notes/role-prompts-conformance.md` (merge bridge §8A); (7) a new rationale note. Then re-run the
 dogfood check and `authoring-check`.
+
+---
+
+## Q35 — what does `commands_for(None)` own? (raised during SLICE2 implementation)
+
+**Question.** CT4b defines `PlanIds.plan_commands` as the ```verify blocks *before the first
+slice heading*. CT16, written later in the same slice, stops a slice section at the first
+heading of depth ≤ its own — so the increment-level sections that the last slice used to absorb
+are now outside every slice. A verify block in one of them would be present in the flat
+`.commands` and reachable from no record: verbatim the harm CT4b's "Catches" clause names, in a
+position CT4b does not cover. Which semantics does `commands_for(None)` carry?
+
+**Options considered.**
+- (a) **Unowned** — every command outside every slice section (prologue *and* tail).
+- (b) Prologue-only, plus a SLICE3 pre-check WARN on orphaned blocks.
+- (c) Prologue-only, orphan recorded as a known gap for I02.
+
+**Verdict: ✅ DECIDED — (a), operator-confirmed 2026-10-06.**
+
+**Reasoning.** (a) satisfies CT4b's letter, because the prologue is a subset of the unowned; what
+widens is the contract's reach, onto a class that did not exist when it was drafted. It makes
+ownership *total*: every command belongs to a slice or to the plan, so orphaning is impossible by
+construction rather than detected by a guard. (b) builds a watchman instead of removing the
+cause — it would warn about a perfectly legitimate DoD verify block, producing noise, and the
+command would still be unreachable to a per-slice consumer. (c) knowingly ships a defect already
+in view, at a repair cost of one line of definition.
+
+**Second-order effect, and the strongest argument for (a).** CT4c previously pinned the flat
+field with `⊇`. That assertion is weak: it passes when `plan_commands` is empty and it tolerates
+extra junk in the flat field. Totality lets CT4c assert an exact identity instead —
+`set(.commands) == set(.plan_commands) | ⋃ set(record.commands)` — which fails if a command is
+dropped, duplicated into the wrong slice, or misattributed.
+
+**Blast radius.** Measured at `d2faea4`: `increment-01` has zero post-last-slice verify blocks,
+so present behaviour is unchanged; the broadening is future-proofing. Naming stays honest —
+"plan-level commands" reads as "belonging to the plan rather than to a slice", which is what a
+DoD verify block is. Consequence for I02: `commands_for(None)` is its plan-level gate input.
+
+**Recorded as:** ledger E87; CT4b, CT4c and STEP3 amended in `increments/increment-01-…md`.

@@ -201,17 +201,26 @@ CONTRACTS:
     document order, de-duplicated within the slice.
   CT4 [FUNCTIONAL]: `section("SLICE2")` returns exactly SLICE2's block, spanning its heading
     through the line before the next heading at the same or shallower depth (CT16).
-  CT4b [CONSTRAINT]: a ```verify block before the first slice heading is stored in a new
+  CT4b [CONSTRAINT]: a ```verify block lying **outside every slice section** — the prologue,
+    and any increment-level section after the last slice — is stored in a new
     `PlanIds.plan_commands: tuple[str, ...]` field and returned by `commands_for(None)`;
-    `SliceRecord` is not widened and no sentinel slice id is invented. Catches: a prologue
-    verify block that is reachable from the flat field but from no record, so a per-slice
-    consumer silently never runs it.
+    `SliceRecord` is not widened and no sentinel slice id is invented. Catches: a verify block
+    that is reachable from the flat field but from no record, so a per-slice consumer silently
+    never runs it. Scoped to "unowned" rather than "prologue" by Q35: CT16 stops the last slice
+    at the increment-level sections, which newly orphans any verify block in them — the very
+    harm this contract names. "Unowned" makes the partition total, so nothing can be orphaned
+    by construction. Measured at d2faea4: this file has zero post-last-slice verify blocks, so
+    the broadened scope changes no present behaviour.
   CT4c [PRESERVATION]: `.commands` keeps returning every ```verify command in the document, in
     document order, de-duplicated **globally** — prologue and increment-level blocks included.
     It is therefore a superset of, and not equal to, the concatenation of `commands_for(s)` over
     all slices, which de-duplicates per slice. No test may assert that equality. Catches: a
     reader "preserving" the flat field by re-deriving it from the slices, which changes the
     behaviour its name promises. Measured on this file at 2f6b8c1: flat 10, concatenation 12.
+    Because Q35 made ownership total, the superset relation is pinned by an exact identity over
+    sets, which a bare `⊇` assertion would not catch (it holds vacuously when `plan_commands`
+    is empty and tolerates junk in the flat field):
+    `set(.commands) == set(.plan_commands) | set of every record's commands`.
   CT16 [CONSTRAINT]: a slice section ends at the first later line that is a heading of depth
     less than or equal to the depth of that slice's own heading, or at end of document. The
     depth is read from the matched heading, never hardcoded: `_SLICE_RE` admits `##` to `####`,
@@ -254,8 +263,9 @@ uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_ids.py
       first line, and join the entry for the text. (exit: CT17 and CT18 green — SLICE1's
       contracts no longer include a `CONSTRAINT`-classed `CT3`, and CT23's "Catches:" sentence
       survives into `contract.text`.)
-- [ ] STEP3: Add `PlanIds.plan_commands` and populate it from ```verify blocks before the first
-      slice heading; make `commands_for(None)` return it. (exit: CT4b green.)
+- [ ] STEP3: Add `PlanIds.plan_commands` and populate it from ```verify blocks outside every
+      slice section (document order, de-duplicated); make `commands_for(None)` return it.
+      (exit: CT4b green, and the CT4c set identity holds on this file.)
 - [ ] STEP4: Implement `commands_for(slice_id)` and `section(slice_id)` over `slice_records`.
       An unknown id returns `()` / `""`. (exit: CT3/CT4 green.)
 - [ ] STEP5: Pin the flat-field behaviour with a test that asserts the documented superset
