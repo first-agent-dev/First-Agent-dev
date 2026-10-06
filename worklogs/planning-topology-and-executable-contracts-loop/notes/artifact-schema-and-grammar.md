@@ -117,6 +117,29 @@ Token rules — the harness parses exactly this; write exactly this:
 - To show the grammar in a document, wrap the example fence in ````text, or it is extracted
   as a real command.
 
+**Section boundaries (normative — the parser implements these, it does not invent them):**
+- A slice section runs from its `## SLICE<n>:` heading to the line before the **next heading of
+  the same or shallower level**, not to the next `SLICE` heading. The last slice of an
+  increment therefore does not absorb what follows it.
+- Increment-level `##` sections (definition of done, out of scope, hand-off) **may** follow the
+  last slice and are not part of any slice.
+- A contract is **declared** only inside the `CONTRACTS:` block. The block runs from the
+  `CONTRACTS:` line to the first later line matching `^(TESTS|STEPS|DEPS|INTENT):`, a fence, a
+  `- [ ]` item, or a heading. Indented continuation lines stay inside the block.
+- One entry declares **one** contract. Its id and `[CLASS]` are read from the **entry's first
+  line only**; text on continuation lines is prose. A `CT#` written anywhere else is a
+  *reference*, never a declaration.
+- Every `CONSTRAINT`-class contract carries one rationale line naming the wrong implementation
+  it catches. It is the only rationale permitted inside a plan body (§1), because it is an
+  acceptance criterion in prose form, not history.
+
+**The `## Grounding` block (prose, never parsed).** A planner-authored increment may end with a
+`## Grounding` section carrying the conventions, scope-outs, assumptions and risks that have no
+home in the slice grammar. The harness never reads it; it exists for the human reviewer and for
+the planner's own next pass. Its **first line is mandatory** and states what the planner
+understood the request to be and what it deliberately excluded — the readback that lets a
+reviewer catch a misunderstood requirement in five lines instead of two hundred.
+
 ## 5. Ledger grammar (append-only)
 
 ```
@@ -140,6 +163,14 @@ E8  DECIDED  SLICE#-only grammar; pre-rename S# plans archived  supersedes: E3
 - **Ownership:** the eval appends an EVIDENCE entry per slice it judges; the harness
   appends FACT entries carrying a verification ref; the planner reads the ledger at
   increment start. Append-only — no entry is ever edited or deleted.
+- **Reflection output is typed, never raw prose.** A retrospective or self-critique enters the
+  ledger as a typed entry; raw reflection text is never replayed into a later prompt. Untyped
+  prose fed back into context is how a loop conditions itself on its own past failures.
+- **Projection target.** A ledger entry maps onto a `BlackboardEntry`
+  (`src/fa/blackboard/blackboard.py`): its anchor becomes `version_dependencies`, its
+  preconditions become `assumptions`, and `detect_conflict` then reports a FACT whose
+  assumptions no longer hold. Staleness is therefore a property of the existing substrate, not
+  a field to invent. Implemented in I04 beside the parser.
 
 ## 6. Status vocabularies
 
@@ -148,6 +179,13 @@ E8  DECIDED  SLICE#-only grammar; pre-rename S# plans archived  supersedes: E3
   `verify` exited 0 **and** (from I02) the test was proven non-vacuous **and** (from I03)
   the eval's L2 contract verdict passed. For stochastic gates `VERIFIED` means pass^k.
 - **Step (`STEP#`):** checkbox `- [ ]` → `- [x]`, ticked by the **harness**, not the model.
+  **Interim rule until the I03 harness exists:** the **operator** ticks shipped steps and sets
+  `shipped:` in the increment frontmatter. The model still never ticks them. This exception
+  expires when I03 ships.
+- **pass^k resettability.** A pass^k streak counts only runs over an unchanged gate input. Any
+  change to the diff, the test file, the verify command or the model family **resets k to
+  zero**. Without this, passes accumulate across different code states and `VERIFIED` means
+  nothing.
 
 ## 7. What the extractor must expose (I01 surface)
 
@@ -177,23 +215,26 @@ class PlanIds:
     slice_records: tuple[SliceRecord, ...] = ()   # NEW — backs the accessors below
 ```
 
-Read API (over `slice_records`):
+Read API (over `slice_records`). **Every name carries a `consumer:` — the increment and call
+site that will read it. A name with no named consumer is not added** (precedent: the flat
+`.commands` field shipped with zero readers and still has none, ledger E2/E3/E5):
 
 ```python
 plan = extract_plan_ids(increment_text)
-plan.commands_for("SLICE2")  # that slice's verify commands only (per-slice, not flat)
-plan.section("SLICE2")  # the slice's text block → the coder's scoped brief
-plan.contract_class("CT3")  # "FUNCTIONAL" | "CONSTRAINT" | "PRESERVATION"
-plan.tests_for("SLICE2")  # the slice's TESTS: path(s)
+plan.commands_for("SLICE2")  # consumer: I02 verify gate — that slice's verify commands only
+plan.section("SLICE2")  # consumer: I03 coder brief — the slice's text block, scoped
+plan.contract_class("CT3")  # consumer: I02 — CONSTRAINT-first ordering of verify and findings
+plan.tests_for("SLICE2")  # consumer: I02 — baseline selection; TESTS:-not-in-diff assertion
 # NOTE: SliceRecord.test_paths holds PATHS; the retained
 # flat PlanIds.tests holds T# IDs. Same word, different
 # meaning — do not conflate them.
-plan.steps_mode("SLICE2")  # "prescriptive" | "outcome"
-precheck(increment_text)  # -> failures[], warnings[]  (pure code, pre-coder)
+plan.steps_mode("SLICE2")  # consumer: I03 — PENDING, not built in I01 (no reader until then)
+precheck(increment_text)  # consumer: I01 SLICE3 + the I03 admission step; pure code, pre-coder
 ```
 
-`parse_ledger(ledger_text)` is specified here but **implemented in I04**, beside its
-consumers. All functions pure, total (never raise on malformed input), stdlib-only — the
+`precheck` returns **every** violation in one pass, each naming `file:line` and a rule id; it
+never stops at the first failure. `parse_ledger(ledger_text)` is specified here but
+**implemented in I04**, beside its consumers. All functions pure, total (never raise on malformed input), stdlib-only — the
 existing `plan_ids.py` contract, extended.
 
 **Open grammar decision (deferred to I02):** whether each `CT#` names the specific test

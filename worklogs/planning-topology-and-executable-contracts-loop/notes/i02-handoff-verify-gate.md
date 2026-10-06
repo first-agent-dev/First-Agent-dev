@@ -74,3 +74,51 @@ advisory; `ERROR` is never PASS. Two postures: pre-check forgiving, verify gate 
 - No mutation/failure-injection proof in the core (that is the I06 verifier-co-evolution
   story).
 - No `VERIFIED` status from I02 alone — `VERIFIED` needs I03's eval L2 on top (schema §6).
+
+## 6. Banked from the 2026-10-06 review walk (decided; build in I02)
+
+Rationale for each: `notes/decisions-qa-2026-10-06.md`. Ledger: E63–E66.
+
+**6.1 What "the gate works" means — phase-1 exit criterion.** The gate rejects **≥95% of
+patches that pass the functional tests but violate a stated constraint**, measured on a
+20-slice calibration corpus of known-good / known-bad pairs under `tests/data/`. Nothing else
+in this project defines gate success; without this, "the gate works" is an opinion. The same
+corpus is the seed of the held-out regression set (backlog item 12) — one corpus, two
+consumers.
+
+**6.2 Baselines are hermetic and affected-path scoped.** §3's "run the slice's commands once on
+the untouched tree" is O(slices × suite-time) and will not survive a real increment. Scope the
+baseline to the paths the slice touches. (E66.)
+
+**6.3 `TEST-DEFECT` is a first-class verdict** with its own budget. Today "the test is wrong" is
+not an expressible outcome, so a wrong test burns the whole repair ladder and wedges the loop.
+This is a liveness requirement, not a quality one. A flaky *planner-authored* test is a planner
+defect, not an environment defect: quarantine it, do not merely re-run it.
+
+**6.4 Non-vacuity = one scoped mutation run per slice, as a gate, with appeal.** Changed lines
+only; tooling already exists (`scripts/run_slice_mutmut.py`, `count_mutants.py`,
+`mutation_sweep.py`). A survivor blocks by default; the planner may dismiss it with a one-line
+reason appended to the ledger via `GUESS→decided:`. No exception for refactor-only slices — a
+refactor claims behaviour is preserved, so a survivor there is signal. Do **not** build a
+findings format, a top-K ranker, a shadow phase or a graduation rule; if an arid list is ever
+needed it derives from repeated dismissals. (E63.)
+
+**6.5 Boundary coverage.** The pre-check requires at least one boundary or edge test per
+`FUNCTIONAL` contract. Every evaluated model systematically omits `None`/`inf`/`NaN` cases.
+
+**6.6 Attempt accounting keys on the work unit, not the tool signature.** `attempt_count` keys
+on `(tool_name, params_hash)`, and LoopGuard deliberately treats distinct params as progress,
+so three different failed fixes for one contract are invisible. Note before designing: per E60
+`BlackboardEntry` already supplies the typed record and `content_hash` already canonicalises —
+an attempt is `type="attempt"` chained by `parent_id`, not a new type.
+
+**6.7 Verification integrity — banked whole, IntentGuard untouched this cycle.** Five controls:
+`TESTS:` paths read-only to the coder; verify runs where the coder cannot write; hash the
+verification surface at baseline and re-check at the gate; deny-list `conftest.py`, test config
+and CI workflows; a derivation-vs-retrieval telemetry category. Per E60, four of the five are
+**assertions over `BlackboardEntry.write_set`, not new machinery** — audit before building.
+I01 supplies the input via `tests_for` (CT20). The diff-path assertion itself belongs here, not
+in the pre-check: a pre-check is static and pre-coder, and there is no diff to inspect yet.
+
+**6.8 Eval calibration before trust.** k=2 is not trustworthy until a labelled calibration set
+(≥100 verdicts) exists. Family switching changes the *direction* of judge error, not its size.

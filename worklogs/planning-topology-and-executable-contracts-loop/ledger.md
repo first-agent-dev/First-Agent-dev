@@ -166,3 +166,105 @@ E48 DECIDED (operator) Agent-executable text = exact imperatives; high signal/lo
     citations/history/rationale inline. increment-01 rewritten as the exemplar (18 CTs /
     4 slices / verify blocks preserved; dogfood PASS). Schema §4 token rules rewritten as
     imperatives; §1 and the roadmap carry the authoring rule as a standing decision.
+E49 FACT  I01/SLICE1 shipped in c0a8f429 (PR #69, merged 2026-09-10): `_SLICE_RE`, `SliceRecord`
+    and `slice_records` are live; `tests/test_plan_ids.py` is 367 lines and carries no `S#`
+    fixture except the legacy-rejection assertion at `:367`. supersedes: E1, E22, E29, E30 —
+    those describe pre-migration code.  [verified @ 2f6b8c1, 2026-10-06]
+E50 FACT  `increment-01` said `status: READY` with every `STEP#` box unticked while SLICE1 was
+    merged. Plan-vs-reality drift, closed this session.  [verified @ 2f6b8c1]
+E51 DECIDED (operator) Until the I03 harness exists, the **operator** ticks shipped `STEP#`
+    boxes and sets `shipped:` in the increment frontmatter; the model never ticks them. Schema
+    §6 carries the exception and its expiry.  [ask_user 2026-10-06]
+E52 FACT  `grep -c SLICE src/fa/inner_loop/prompt.py` is 0. The planner emits
+    Class/Goal/Evidence/Scope/Assumptions/Constraints/Plan/Verification/Risks with `S1.` steps,
+    so a freshly authored plan parses to empty `.slices`, `workflow_controller.py:332` returns
+    early and the coverage gate no-ops **silently**. Live defect, not archival.
+    [verified @ 2f6b8c1, 2026-10-06]
+E53 FACT  The planner's `S1.` items are step-sized (one mechanical `accept:` each), so the
+    honest mapping is `S#` → `STEP#`. The runtime format has **no source for the `SLICE#` tier
+    at all**: grouping steps into commit-sized slices is a judgement, not a transform. Any
+    runtime→increment compiler would have to invent that tier.  [verified @ 2f6b8c1]
+E54 DECIDED (operator) ASK#-01 resolved as (b′): the planner emits schema §4 directly plus a
+    free-form `## Grounding` block; code performs admission (parse → validate → default and
+    stamp → persist) under a no-inference rule. Rejected: a runtime→increment compiler, per
+    E53. supersedes: the `assumed:` roadmap row on plan-format translation.  [ask_user
+    2026-10-06]
+E55 FACT  `_slice_sections` ends a section at the next `SLICE` heading or EOF, so the last
+    slice absorbs the increment tail. Reproduced on the 2026-10-06 rewrite of increment-01:
+    SLICE5 acquires `CT14` and `CT11` from the definition-of-done and hand-off sections.
+    Addressed by CT16.  [verified by dogfooding plan_ids.py @ 2f6b8c1]
+E56 FACT  `_section_contracts` scans every line of a section for `\bCT(\d+[a-z]?)\b`, so prose
+    references become declarations: SLICE1 acquires a `CONSTRAINT`-classed `CT3` from CT2's
+    illustrative text while SLICE2 declares `CT3` as `FUNCTIONAL`. One id, two classes, so
+    `contract_class("CT3")` is undefined. Addressed by CT17 and CT18.  [verified by dogfooding]
+E57 DECIDED (operator) The A3/A4 fixes land as parser conformance to a written authoring
+    contract, in that order: schema §4 states the rule (SLICE1b), the parser implements it
+    (SLICE2 CT16/CT17/CT18), the pre-check warns on undeclared references (SLICE3 CT27).
+    Rejected: convention-plus-pinning-test, the CT13 precedent — there the correct behaviour was
+    genuinely ambiguous; here it is not.  [ask_user 2026-10-06]
+E58 DECIDED (operator) **The prompt is primary; the parser conforms to it.** For any grammar
+    question the order is: authoring contract (schema §4 + skills + planner prompt) → parser →
+    pre-check. The prompt sets the mental model the plan's quality depends on. I01's slice order
+    is rebuilt on this: SLICE1 → SLICE1b → SLICE2 → SLICE3 → SLICE4, with SLICE5 independent.
+    [ask_user 2026-10-06]
+E59 DECIDED (operator) No accessor ships without a named consumer increment and a wiring step in
+    that consumer. Grounded in E2/E3/E5: the flat `.commands` shipped with zero readers and has
+    none today. Schema §7 now carries `consumer:` on every name; `steps_mode` is marked pending
+    and is **not** built in I01.  [ask_user 2026-10-06]
+E60 FACT  `src/fa/blackboard/blackboard.py` (389 lines) provides typed durable entries with
+    `content_hash` (sha256 over sorted-key JSON), `parent_id` lineage, `read_set`/`write_set`,
+    `assumptions`, `version_dependencies`, `toolchain_digest` and `run_id`, plus
+    `detect_conflict` with write/write, read/write and write/read overlap detection and
+    `_assumption_violated`. `TelemetryLogger` provides an append-only event log with secret-key
+    detection and value elision. `EventBus` (`fa/output.py`) is a console renderer bus, not a
+    durable log. **The planning loop touches none of it.**  [verified @ 2f6b8c1, 2026-10-06]
+E61 FACT  E60 makes several proposed mechanisms redundant before they are built: a typed
+    attempt record (`BlackboardEntry(type="attempt")` chained by `parent_id`), a failure
+    signature canonicalisation spec (`content_hash` already canonicalises), hash-link
+    provenance, the `tree_hash`/`HEAD` freshness stamp (`version_dependencies`), stale-fact
+    detection for ledger FACTs (`assumptions` + `detect_conflict`), syntactic parallel-slice
+    safety (`read_set`/`write_set`, deferred item #11) and record redaction. The gap is
+    **integration, not design** — the same shape as E2/E3/E5.  [verified @ 2f6b8c1]
+E62 DECIDED (operator) Markdown stays the authoring substrate as a staged decision. The
+    strangler's destination is named concretely: project slice records into the existing
+    `Blackboard` (E60), not a new store. Taken now: the golden drift corpus and the near-miss
+    heading lint (SLICE3), which double as the fixtures for CT16/CT17/CT18. Deferred: the
+    silent-mis-parse counter and the first-pass-rate SLI — no runs, no baseline, so the numbers
+    would be decoration. Declined: ARCH's Phase-0-substrate-first build order.  [ask_user
+    2026-10-06]
+E63 DECIDED (operator) Test non-vacuity: one scoped mutation run per slice, **as a gate**, with
+    appeal — the planner may dismiss a survivor with a one-line reason appended here via the
+    existing `GUESS→decided:` flow. No exceptions for refactor-only slices: a refactor claims
+    behaviour is preserved, so a survivor there is signal, not noise. Rejected as over-built: a
+    findings format, a routing mechanism, a top-K cap, a shadow phase and a pre-registered
+    graduation rule. An arid list, if ever needed, derives from repeated dismissals.
+    [ask_user 2026-10-06]
+E64 DECIDED (operator) Authorship-vs-acceptance (principle 8) separates into two failure modes.
+    Weak acceptance — a test that does not enforce its stated contract — is closed by E63.
+    A wrong specification is irreducibly human, because any check derived from the plan inherits
+    the plan's error. The control is the operator's review, recorded as such, plus two readback
+    mechanisms: the mandatory understood-and-excluded line in `## Grounding`, and one rationale
+    line per `CONSTRAINT` contract. Eval-authored held-out tests are **rejected as specified** —
+    the eval reads the same plan and inherits the same misunderstanding.  [ask_user 2026-10-06]
+E65 GAP  Schema §6 defined `VERIFIED` as pass^k for stochastic gates without stating what resets
+    k, so passes could accumulate across different code states. Closed: any change to the diff,
+    the test file, the verify command or the model family resets k to zero.  [verified @ 2f6b8c1]
+E66 GAP  `notes/verify-block-design.md` specifies baselines as "run the slice's commands once on
+    the untouched tree", which is O(slices × suite-time). Baselines must be hermetic and
+    **affected-path scoped**. Recorded against I02 before the design is built.
+E67 GAP  The schema has **no `RISK` vocabulary**, so a rule-based risk floor (auth, crypto,
+    permissions, billing, migrations ⇒ at least elevated) has no field to raise. It is a new
+    concept, not a rider. Banked for I05 with this dependency stated.  [verified @ 2f6b8c1]
+E68 FACT  Citation audit of the research note: MAST's FM-2.2 is **6.80%** in v3 (1642 traces),
+    not the 11.65% of v1/v2 that the note cites, so the justification for the clarifying-question
+    item is roughly 1.7× weaker than written. The architecture census transcribes a superseded
+    version whose current data **reverses** its conclusion — in this project's favour, since a
+    code-owned scripted pipeline is the group that now leads. `2206.10498` is PlanBench, not
+    LLM-Modulo. Root cause of both consequential errors: arXiv ids cited without versions or
+    retrieval dates.  [verified against primary sources, 2026-10-06]
+E69 DECIDED (operator) The research note is corrected **in place** rather than superseded, since
+    `knowledge/research/` is a working reference the planner reads. The provenance trail is
+    preserved here instead: one ledger line per correction with the old value, the new value and
+    the source. E15's citation is swapped 2410.21819 → 2404.13076 — the cited paper attributes
+    the bias to perplexity, not self-generation, so it does not support the different-family
+    rule. E14's SWE-Gate 34.3% is exact; no action.  [ask_user 2026-10-06]

@@ -58,3 +58,45 @@ ledger writer exists, keep the PR-draft review summary as eval's durable record 
 
 Prompts state behavior (ownership, scope, harness control). The schema states format.
 Rationale lives in notes/. One source of truth each; do not duplicate the schema in prompts.
+
+---
+
+# Addendum — merged from the bridge brief, 2026-10-06
+
+One bank, not two. Owners unchanged (E45/E47): planner grammar → I01, coder behaviour → I03,
+eval ledger wiring → I04. Rationale: `notes/decisions-qa-2026-10-06.md`.
+
+## Planner → I01 (lands with SLICE1b)
+
+- Emit schema §4 sections directly: `## SLICE<n>:`, `STEPS:`, `DEPS:`, `INTENT:`,
+  `CONTRACTS:` with `CT<n> [CLASS]:`, `TESTS:`, a verify fence, `- [ ] STEP<n>: … (exit: …)`.
+- Emit a `## Grounding` block for conventions, scope-outs, assumptions and risks. It is prose
+  and is never parsed. Its first line states what you understood the request to be and what you
+  deliberately excluded.
+- Give every `CONSTRAINT` contract one rationale line naming the wrong implementation it
+  catches.
+- The mechanical self-checks move out of the prompt into the pre-check. Do not restate them.
+
+## Coder → I03
+
+- Do not tick `STEP#` boxes; the harness owns them (E44 — `prompt.py:648` currently says
+  otherwise and must change *in I03*, not before).
+- Recon budget and stop conditions as drafted in the bridge brief.
+- **Delivery condition, not a blocker:** the line *"the harness runs the acceptance checks; you
+  do not re-run them"* is correct only once the I02/I03 gate exists. Ship it in the same
+  change-set as the gate. The operator's harness sees changes only during live e2e runs, so e2e
+  is the designated place this would surface if the order were wrong.
+- Retry context: a clean context plus a typed attempt record, **built mechanically** — parse the
+  test and lint output, extract the assertion diff, the failing test id and one `file:line`.
+  Never an LLM summary of the transcript: a hallucinating summariser makes the coder repair a
+  defect that never happened. No fixed line cap as a rule; truncation is a last resort. Per E60
+  the record is a `BlackboardEntry`, not a new type. Carry `tree_hash` and the test version, and
+  sanitise tracebacks and fenced blocks before sending — provider WAFs reject raw ones, and the
+  rejection looks like a model failure.
+
+## Eval → I03 / I04
+
+- The `S#` token in `prompt.py` (`- S1: PASS`) is overloaded **three** ways: the planner's step
+  vocabulary, the controller's slice vocabulary via `validate_slice_ids`, and the eval's verdict
+  vocabulary. Whoever implements this must disambiguate all three, not two.
+- L2 verdicts cite **test ids**, not diff hunks — hunks rot on rebase.
