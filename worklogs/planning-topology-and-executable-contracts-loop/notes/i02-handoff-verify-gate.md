@@ -74,3 +74,32 @@ advisory; `ERROR` is never PASS. Two postures: pre-check forgiving, verify gate 
 - No mutation/failure-injection proof in the core (that is the I06 verifier-co-evolution
   story).
 - No `VERIFIED` status from I02 alone — `VERIFIED` needs I03's eval L2 on top (schema §6).
+
+## 6. Banked review inputs (2026-10-06 — material for the I02 review, not resolutions)
+
+- **Integrity controls (REVIEW §5.2, ARCH G5/G6).** Read-only `TESTS:` artifacts (coder
+  diff must not touch them — a diff-path assertion); verify runs outside the coder sandbox
+  (fresh container, no egress except an allow-listed proxy); hash every `TESTS:` file +
+  the verify command string at baseline, re-hash at gate time, fail closed on mismatch.
+  Also deny coder writes to `conftest.py`, test config, CI workflows, and linter config
+  unless the slice plan lists them.
+- **Held-out eval tests (ARCH G6).** Small suite per slice from INTENT+CT#, authored on
+  the eval's model family, coder-blind, gate-only. Size 20–30% of planner-test count,
+  focused on `CONSTRAINT` + composition edges. Accept: catches ≥1 planner blind spot per
+  early feature, else investigate correlation.
+- **Flake by measurement (REVIEW §4.3).** Run each verify command k times at baseline;
+  record observed variance. Replaces "deterministic by definition".
+- **Mutation ablation (REVIEW §6/§9, ARCH §5.1d; E63).** 20-slice known-good/known-bad
+  fixture; target ≥95% rejection of functionally-green-but-constraint-violating patches;
+  ablation: fail-before/pass-after vs +mutation over changed lines; shadow (WARN/log-only)
+  first, gate only on measured precision.
+- **Baseline cost (ARCH §5.1e).** Baseline once per increment + on tree change, cached by
+  tree hash; per-slice scoping to touched paths + `TESTS:` (affected-tests selection).
+  Refines the per-slice baseline in the ritual; does not replace it.
+- **CONSTRAINT rationale lines (ARCH §5.1d).** Planner states per CONSTRAINT test what
+  wrong implementation it catches (one line); L3-reviewed for elevated+ slices.
+- **Boundary test per FUNCTIONAL (REVIEW §6).** Pre-check requires ≥1 edge/special-value
+  test (`None`, `inf`, `NaN`) per `FUNCTIONAL` contract — LLMs systematically omit them.
+- **TEST-DEFECT interplay (ARCH G6b).** Coder/eval report "the test is wrong" to the
+  planner on its own budget (contradictory assertions, impossible fixture, spec/test
+  conflict); never burns repair attempts. The gate stays three-state; the route is I03.

@@ -166,3 +166,67 @@ E48 DECIDED (operator) Agent-executable text = exact imperatives; high signal/lo
     citations/history/rationale inline. increment-01 rewritten as the exemplar (18 CTs /
     4 slices / verify blocks preserved; dogfood PASS). Schema §4 token rules rewritten as
     imperatives; §1 and the roadmap carry the authoring rule as a standing decision.
+
+## Code-verified state at tip 2f6b8c1 (plan-edit session, 2026-10-06)
+
+E49 FACT  I01/SLICE1 is shipped: `_SLICE_RE` is `SLICE#`-only, `SliceRecord` + `slice_records`
+    exist, and `tests/test_plan_ids.py:367` asserts a legacy `### Step S1:` string parses to
+    `()`.  [verified: plan_ids.py:58,92-143; tests/test_plan_ids.py:367 @ 2f6b8c1]
+E50 FACT  I01/SLICE2 (accessors `commands_for` / `section`) and I01/SLICE3 (pre-check) are NOT
+    implemented: no such methods in plan_ids.py; tests/test_plan_precheck.py absent.
+    [verified: grep @ 2f6b8c1]
+E51 FACT  The emitters still write the old grammar: plan-authoring/SKILL.md:430 is
+    `### Step S#: <title>`; feature-planning/SKILL.md contains no SLICE/TESTS/STEPS tokens.
+    [verified: grep @ 2f6b8c1]
+E52 FACT  Because of E51 + the `SLICE#`-only extractor (E49), a freshly authored plan yields
+    empty `.slices`, so `workflow_controller.py:332` returns early and the coverage gate
+    silently no-ops. E23 describes this state; it is live, not archival.
+    [verified: workflow_controller.py:332-334 @ 2f6b8c1]
+E53 FACT  Prompt caching per role already exists: `build_prompt_parts_v2` returns
+    (cacheable, non-cacheable) and key `fa-{role_id}-{hash_tools}-{hash_map}-{hash_always}`;
+    its own docstring warns that per-task variation destroys prefix reuse.
+    [verified: prompt_composer.py:5-8,80-130 @ 2f6b8c1]
+E54 FACT  The injection channel exists (`InjectionSpec`, `INJECTION_SPECS`) and holds exactly
+    one spec, `coder_slice_ceremony` (role `coder`). A pinned-invariants injection costs one
+    registry row plus one `FeatureFlags` field.  [verified: injections.py:89-133 @ 2f6b8c1]
+E55 FACT  Attempt counting is per tool signature, not per work unit:
+    `AttemptHistory.attempt_count(tool_name, params_hash)`; no `stall` counter in the controller.
+    LoopGuard detects identical-call repeats and A/B ping-pong only — by its own docstring,
+    distinct params count as progress, so "three different failed fixes for one contract" is
+    invisible to it.  [verified: attempt_history.py:205; loop_guard.py:1-40 @ 2f6b8c1]
+E56 GAP   The planner's runtime plan format (prompt.py:166-240; steps carry `accept:`,
+    `verify:`, `deps:`; plan-level `focused:` / `regression:`) and the durable increment
+    grammar (notes/ §4) are two formats with no defined transform between them. Until resolved,
+    "every `CT#` has a test" cannot be enforced on plans the planner actually writes.
+    [→ ASK#-01, blocks SLICE4]
+E57 DECIDED  Reorder I01: emitters (SLICE1b) follow SLICE1, before SLICE2/SLICE3; SLICE4 keeps
+    the conformance fixture and depends on SLICE1b + SLICE3. Rationale: notes/.
+    [plan-edit session, 2026-10-06]
+
+## Reviews folded (2026-09-11 reviews + bridge, landed 2026-10-06)
+
+E58 FACT  Two independent reviews of the research note (citation audit 83/83 resolve; re-rank;
+    4 production problems; G1–G15; T1–T4) and the code-grounded bridge brief were folded into
+    the roadmap, ledger, and increment-01.  [notes/REVIEW-*, notes/ARCHITECTURE-REVIEW.md,
+    notes/first-agent-bridge.md @ origin/main aeb025f]
+E59 FACT  Load-bearing citation corrections: F1's "15 points" is misattributed (qualitative
+    thesis stands); MAST FM-2.2 is version-dependent (6.80% v3 / 11.65% v2 — size ASK#
+    conservatively); Dissecting v3 reverses the rationale (G3 scripted multi-agent leads —
+    this pipeline IS G3, design stands, argument replaced); SWE-bench Pro best is
+    version-dependent (23% v1 / 43.6% v2). Pin versions.  [REVIEW §3; ARCH §2.6]
+E60 DECIDED  The verification boundary is a security boundary: read-only `TESTS:`, verify
+    outside the coder sandbox, hashed test files at baseline and gate. Lands in I02.
+    [REVIEW §5.2; ARCH G5/G6]
+E61 DECIDED  No role's output is accepted solely on artifacts that role authored (the
+    enforceable form of authorship/acceptance separation): held-out eval tests + the
+    `TEST-DEFECT` route + a calibrated eval.  [ARCH T2/G6/G10]
+E62 GUESS  Reliability target 50% fully-autonomous / 95% with ≤2 human touches; slice count,
+    not slice cleverness, dominates feature success (20 slices at 0.90/slice → 0.12).
+    [assumed — I06 telemetry confirms; REVIEW §5.1]
+E63 GAP   Mutation placement unresolved: the ablation-in-I02 experiment is recommended
+    (20-slice fixture, fail-before/pass-after vs +mutation, shadow-first); a per-slice kill
+    threshold graduates to gate only on measured precision.  [→ I02 review; REVIEW §6/§9,
+    ARCH §5.1d]
+E64 GAP   Markdown substrate assumed to hold for I01–I03; pivot to schema-first iff a silent
+    mis-parse ever escapes the pre-check. E24 (no dual grammar) stands; P5b compat shim
+    rejected (reverts shipped behavior with no live consumer).  [→ I04 revisit; ARCH G1/G2]

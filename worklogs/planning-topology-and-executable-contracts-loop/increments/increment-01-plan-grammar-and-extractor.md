@@ -2,7 +2,7 @@
 Increment-ID: RM-planning-topology-I01
 Roadmap-ID: RM-planning-topology
 status: READY
-slices: 4
+slices: 6
 ---
 
 # INCREMENT I01: Plan grammar & extractor
@@ -82,6 +82,56 @@ uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_ids.py
 
 ---
 
+## SLICE1b: Emitters write the new grammar
+STEPS: prescriptive
+DEPS: SLICE1
+INTENT: planning skills and the planner prompt emit `## SLICE<n>:`, `- [ ] STEP<n>:`,
+  `CT<n> [CLASS]:`, `TESTS:`, `STEPS: prescriptive|outcome`, `DEPS:` — so a freshly authored
+  plan parses to a non-empty `.slices` and the controller's coverage gate stops no-op'ing.
+CONTRACTS:
+  CT16 [FUNCTIONAL]: a plan authored strictly from `knowledge/skills/plan-authoring/SKILL.md`
+    yields `extract_plan_ids(...).slices` with every declared slice id.
+  CT17 [FUNCTIONAL]: a plan authored strictly from `knowledge/skills/feature-planning/SKILL.md`
+    yields non-empty `.slices`, and every `CT#` in it carries one of
+    `FUNCTIONAL|CONSTRAINT|PRESERVATION`.
+  CT18 [CONSTRAINT]: the slice-ceremony injection text (`coder_slice_ceremony`,
+    feature-planning SKILL §9-12) states the acceptance predicate in the planner's step
+    vocabulary (`accept:` / `verify:`), never in the verify-block vocabulary.
+TESTS: tests/test_skill_grammar_emit.py
+```verify
+uv run pytest tests/test_skill_grammar_emit.py -q
+uv run ruff check knowledge/skills tests/test_skill_grammar_emit.py
+```
+- [ ] STEP1: Edit `knowledge/skills/plan-authoring/SKILL.md`. Do exactly: replace the
+      `### Step S#: <title>` heading form at `:430` with `## SLICE<n>: <title>`; replace the
+      `Depends-on: S# | none  Parallelizable-with: S# | none` line below it with a `DEPS:`
+      line; replace step bullets with `- [ ] STEP<n>:`; add the `INTENT:` / `CONTRACTS:` /
+      `TESTS:` / `STEPS:` / `DEPS:` lines in the order given in
+      notes/artifact-schema-and-grammar.md §4.
+      (exit: `grep -n "### Step S" knowledge/skills/plan-authoring/SKILL.md` and
+      `grep -nE "Depends-on: S#|Parallelizable-with: S#" knowledge/skills/plan-authoring/SKILL.md`
+      both return nothing.)
+- [ ] STEP2: Edit `knowledge/skills/feature-planning/SKILL.md`. Do exactly: add the slice
+      skeleton with `SLICE#` / `CT# [CLASS]` / `TESTS:` / `STEPS:` / `DEPS:`; add the
+      `STEPS:` mode rule — `outcome` when the slice's own verify result is what will teach the
+      coder (unfamiliar subsystem, performance, flaky integration), `prescriptive` when the
+      planner could have written the diff from what it read.
+      (exit: a fixture written from the skill text parses to non-empty `.slices`.)
+- [ ] STEP3: Edit the slice-ceremony injection text (feature-planning SKILL §9-12). Do exactly:
+      keep the before-gate / edit packet / after-gate shape; state the acceptance predicate as
+      the step's `accept:` check; replace the `S#` references (`- S#: ...`, `blocks S#`) with
+      `SLICE#`; add a bounded-recon budget and a two-attempt stop rule using
+      the wording in notes/role-prompts-conformance.md §Coder.
+      (exit: CT18 green and `grep -nE "(^- S#|blocks S#)"` over the §9-12 span returns nothing.)
+- [ ] STEP4: Add tests/test_skill_grammar_emit.py (NEW). Do exactly: for each skill, build a
+      short plan from the skill's skeleton and assert
+      `extract_plan_ids(text).slices` equals the declared ids, and — for feature-planning —
+      that every record contract carries a class. Assert the CT18 property directly: the §9-12
+      span of feature-planning/SKILL.md contains `accept:` and contains no ```verify fence.
+      (exit: CT16/CT17/CT18 green.)
+
+---
+
 ## SLICE2: Per-slice accessors over the records
 STEPS: prescriptive
 DEPS: SLICE1
@@ -138,7 +188,7 @@ uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_precheck.py
 
 ## SLICE4: Migrate the planning skills + conformance fixture
 STEPS: outcome
-DEPS: SLICE1, SLICE2, SLICE3
+DEPS: SLICE1b, SLICE3
 INTENT: `feature-planning` and `plan-authoring` emit the new grammar so a planner-authored
   plan parses and pre-checks clean.
 CONTRACTS:
@@ -155,10 +205,48 @@ uv run ruff check knowledge/skills tests/test_skill_conformance.py
       (exit: a fixture written from the skill text parses.)
 - [ ] STEP2: Add authoring guidance for contract classes, `TESTS:`, and `STEPS:` mode. Write
       the skill's instructions as exact imperatives with file:line targets and runnable exit
-      checks (schema §1 authoring rule); no rationale inline.
+      checks (schema §1 authoring rule); no rationale inline. Map the mode to the planner's
+      task class (prompt.py:91): TRIVIAL → single-slice flat plan; STANDARD with a predictable
+      path → `prescriptive`; STANDARD/LARGE with unknowns → `outcome`. State the fast path: a
+      feature of ≤3 slices ships as one flat plan with contracts and no increment layer.
       (exit: the fixture pre-checks clean, including CT8.)
 - [ ] STEP3: Add a migration note: pre-rename (`S#`) plans are archived, not parsed.
       (exit: CT15 green; the note exists.)
+
+---
+
+## SLICE5: Pinned invariants, re-injected every call
+STEPS: prescriptive
+DEPS: SLICE1
+INTENT: standing decisions survive compaction: the assembled block is byte-identical for every
+  role call within a run, so the prompt-cache prefix is reused and a compacted context cannot
+  silently drop the rules.
+CONTRACTS:
+  CT19 [FUNCTIONAL]: the `standing_decisions` injection is registered and resolves for
+    planner/coder/eval; the assembled block is byte-identical across assemblies within a run
+    (compared by hash in the test) and lands in the cacheable prompt channel.
+TESTS: tests/test_injection_pins.py
+```verify
+uv run pytest tests/test_injection_pins.py -q
+uv run ruff check src/fa/inner_loop/injections.py tests/test_injection_pins.py
+```
+- [ ] STEP1: Add one `InjectionSpec` row for `standing_decisions` in
+      `src/fa/inner_loop/injections.py` (registry at `:123`) plus the matching `FeatureFlags`
+      field. Do exactly: `roles=frozenset({"planner", "coder", "eval"})`; `read_flag` reads the
+      literal `.standing_decisions_mode` attribute (S13 bans dynamic flag access); mirror the
+      five `coder_slice_ceremony_mode` touch points in `src/fa/feature_flags.py`
+      (`:57`, `:74`, `:111`, `:148`, `:309`); resolve in `off|observe|enforce`
+      (injections.py `:61-66`); default `observe`.
+      (exit: `uv run fa inject list` shows a `standing_decisions` row.)
+- [ ] STEP2: Assemble the block from `roadmap.md` «Standing decisions» + ledger entries tagged
+      `DECIDED` / `PRESERVE`. Do exactly: stable ordering (sort by entry id), no timestamps, no
+      run ids, no paths that change per run.
+      (exit: two consecutive assemblies produce identical bytes.)
+- [ ] STEP3: Add tests/test_injection_pins.py (NEW). Do exactly: assert
+      `resolve_injection_modes` resolves `standing_decisions` for planner, coder, and eval;
+      assemble twice within one run and assert equal hashes; assert the block is present in the
+      cacheable part returned by `build_prompt_parts_v2`, not the non-cacheable part.
+      (exit: CT19 green.)
 
 ---
 
@@ -176,6 +264,10 @@ uv run ruff check knowledge/skills tests/test_skill_conformance.py
 
 - **EVIDENCE ledger parser** — moved to I04. Do not build it here. The ledger format is in
   `notes/artifact-schema-and-grammar.md` §5.
+- **Role-loop wiring of `standing_decisions`** — banked per role, not built here. The coder
+  call-site lands beside `coder_loop.py:206` (I03); planner prompt text stays in the
+  role-prompts bank; the eval call-site lands in I04. SLICE5 delivers registry + assembly +
+  property test only.
 
 ## Hand-off to I02 (banked context, not a plan)
 

@@ -45,11 +45,11 @@ The map below is expected to be refined as reality teaches.
 | ID | Increment | Status | One-line intent |
 |---|---|---|---|
 | **I01** | Plan grammar & extractor | **IN PROGRESS** | the harness can parse and lint the new plan format |
-| I02 | Executable contracts & verify gate | outlined | a slice is gated by a planner-authored, non-vacuous test the harness runs. **Context banked for its review:** `notes/verify-block-design.{svg,md}` + `notes/i02-handoff-verify-gate.md` (grounded @ 0e08ece; re-review when I01 lands) |
-| I03 | Per-slice loop, tracker & eval | outlined | controller runs the per-slice loop; code ticks the tracker; three-level eval |
-| I04 | Evidence ledger, pinned invariants, retry hygiene | outlined | the loop carries evidence, pins governance, retries clean, never wedges (includes the ledger **parser**, moved here from I01 — build it beside its consumers) |
-| I05 | Rolling-wave, ASK#, autonomy, chat orchestration | outlined | the roadmap closes across runs; the ceremony/scope/draft work lands here, revised |
-| I06 | Telemetry & distillation (parallel deferred) | outlined | runs are measured and distilled; slice-DAG parallelism deferred |
+| I02 | Executable contracts & verify gate | outlined | a slice is gated by a planner-authored, non-vacuous test the harness runs; attempt counter keyed by `STEP#`/`CT#`/`accept:`, three-state result (`ERROR` ≠ `PASS`); integrity controls (read-only `TESTS:`, sandboxed verify, hashed test files); held-out eval tests; mutation ablation experiment. **Context banked for its review:** `notes/verify-block-design.{svg,md}` + `notes/i02-handoff-verify-gate.md` (grounded @ 0e08ece; re-review when I01 lands) |
+| I03 | Per-slice loop, tracker & eval | outlined | controller runs the per-slice loop; code ticks the tracker; three-level eval; `TEST-DEFECT` route, distilled failure packets, decision surface in the brief, per-increment PR-brief, plan-vs-tree freshness, durable resume, eval calibration bootstrap |
+| I04 | Evidence ledger, pinned invariants, retry hygiene | outlined | the loop carries evidence, pins governance, retries clean, never wedges (includes the ledger **parser**, moved here from I01 — build it beside its consumers); GIVEN-compiler, syntactic `STALE-SPEC` triggers, ledger GC + bounded reads |
+| I05 | Rolling-wave, ASK#, autonomy, chat orchestration | outlined | the roadmap closes across runs; the ceremony/scope/draft work lands here, revised; `ASK#` budget, rule-based `RISK` floor, branch policy, ≤3-slice fast path |
+| I06 | Telemetry & distillation (parallel deferred) | outlined | runs are measured and distilled; slice-DAG parallelism deferred; reliability-budget reporting, cost model, periodic hack-checks, assignment logging |
 
 ### Deferred — explicitly not scheduled (from `RESEARCH-ADOPTION-PLAN.md`)
 
@@ -58,11 +58,12 @@ none is in any increment above until promoted.
 
 | Item | Why deferred | Promote when |
 |---|---|---|
-| #10 Escalation ladder / N-version repair | needs the parallel runner (shared with #11); the simple budgeted retry must prove out first | after I03's loop + I04's stall counter |
-| #11 Slice DAG + parallel git worktrees | most premature; sequential first; worktree + runtime isolation is real work | after I03, on evidence of a parallelism bottleneck |
+| #10 Escalation ladder / N-version repair → **re-specified as N-version *diagnosis*** | capped as an accuracy mechanism (2411.17501: against an imperfect verifier, resampling cannot cut false positives; optimal K ≤ 5, K = 0 when a false positive costs 10× a true positive); selection by verify-pass enriches for hacks — rank by `CONSTRAINT` satisfaction instead, cap k at 3 | after I03's loop + a calibrated judge (selection needs L2/L3, never verify-only) |
+| #11 Slice DAG + parallel git worktrees | most premature; sequential first; worktree + runtime isolation is real work; behind three prerequisites — PR-brief artifact, human-throughput model, syntactic independence gate (G7) | after I03 + measured gate latency (parallelism past review capacity is inventory); ceiling 2; 3-layer isolation (worktree + DB + ports); serialized git ops |
 | #15 Post-feature distillation ritual | pays off over many features, not one | after several increments ship (I06) |
-| #16 Hash-anchored tamper-evident run record | nice audit property, not load-bearing yet | if/when telemetry must be trusted by an outsider (after #17) |
+| #16 Hash-anchored tamper-evident run record | audit theatre on its own; earns its keep as substrate for #1's test hashes (§5.2) and #17's record integrity — merged into those when built | with I02 (test-file hashes) + I06 (telemetry integrity) |
 | #18 Model tiering (planner-tagged) | conditional on #17 telemetry; premature tiering corrupts the data it saves on | after I06 telemetry has a few hundred slices |
+| Prompt-side effort routing (`reasoning.effort` per slice class) | a different lever from prose: it changes the budget, not the distribution. Must be measured in its own arm, never mixed with prompt changes | after I06 telemetry exists and the prose arms are measured |
 
 (#17 telemetry *schema* is pulled forward into I06 — "cheap now, expensive later" — even
 though the attribution *loop* is later.)
@@ -93,6 +94,22 @@ Tagged `decided:` (chosen) or `assumed:` (never verified — an `ASK#` candidate
 - `assumed:` 4–7 slices per increment is the sizing prior — tuned from telemetry (I06).
 - `assumed:` Per-slice eval beats one cumulative eval — confirmed by the slice-diff size,
   re-checked once I03 telemetry exists.
+- `assumed:` The planner's runtime plan format and the increment grammar are compiled one
+  into the other provisionally as (a) — planner emits §4 directly; options (a)/(b)/(b′)
+  analyzed in `notes/plan-edit-2026-10-06-rationale.md`; decided pre-SLICE4 → ASK#-01.
+- `assumed:` The markdown substrate holds for I01–I03; pivot to schema-first iff a silent
+  mis-parse ever escapes the pre-check (ARCH G1; revisit at I04 beside the ledger parser).
+- `assumed:` Reliability target 50% fully-autonomous / 95% with ≤2 human touches — I06
+  reports measured per-slice rate, repair rate, and touches against it.
+- `decided:` The verification boundary is a security boundary: read-only `TESTS:`, verify
+  outside the coder sandbox, hashed test files at baseline and gate (I02).
+- `decided:` No role's output is accepted solely on artifacts that role authored — held-out
+  tests, the `TEST-DEFECT` route, and a calibrated eval enforce it.
+- `decided:` Features of ≤3 slices ship as one flat plan with contracts, no increment layer
+  (fast path; authoring guidance lands in I01/SLICE4).
+- `decided:` Research evidence is version-pinned (`{id}v{N}`, retrieved `{date}`); claims
+  driving a locked decision quote the exact sentence; benchmark-derived claims carry a
+  90-day re-check.
 
 ## Absorbed from the superseded plan
 
@@ -121,3 +138,8 @@ they move to `worklogs/archive/` later (operator decision, not part of any incre
 - `PLANNING-TOPOLOGY-EXPLAINED.md` — the topology this roadmap is built on.
 - `worklogs/implementation-plans/PLAN-slice-ceremony-harness-enforcement.md` — the
   superseded plan (evidence only).
+- `notes/REVIEW-planning-big-tasks-for-ai-agents.md` + `notes/ARCHITECTURE-REVIEW.md` —
+  the 2026-09-11 independent reviews (citation audit, re-rank, 4 production problems,
+  G1–G15, T1–T4); folded into this roadmap 2026-10-06.
+- `notes/first-agent-bridge.md` — the code-grounded edit brief (verified @ 2f6b8c1);
+  proposed SLICE1b/SLICE5 landed with corrections (see the rationale note).
