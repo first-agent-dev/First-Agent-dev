@@ -10,6 +10,11 @@ embedded in §2, so no other document is required.
 
 - arXiv IDs appear in parentheses after each claim. Every ID in this note resolves against
   the arXiv API with a matching title.
+- **Versions matter and are now pinned.** Benchmark and failure-mode numbers move between
+  arXiv versions. Where a figure drives a decision, this note cites `{id}v{N}` with the
+  retrieval date. Corrections applied 2026-10-06 are recorded entry-by-entry in
+  `worklogs/planning-topology-and-executable-contracts-loop/ledger.md` (E68, E69) with the old
+  value, the new value and the source — the note itself carries only the corrected figures.
 - Evidence grades: **A** = causal ablation or large-N benchmark that tests the mechanism
   directly; **B** = verified mechanism from a single system, or convergence of several
   sources; **C** = survey-mediated or extrapolated — adopt, but watch the telemetry.
@@ -230,7 +235,9 @@ it, the key numbers, and the consequence for the system.
 ### F1. The harness, not the model, is the binding constraint
 
 With the model held fixed, changing the wrapping harness (the loop structure and what is
-carried between iterations) moves hard benchmarks by up to 15 points (2608.23953). StateM
+carried between iterations) moves hard benchmarks substantially (2608.23953). *(Correction 2026-10-06: an earlier
+revision of this note quoted "up to 15 points" for this claim. That figure does not appear in
+2608.23953 and has been removed; the qualitative claim stands on the StateM result below.)* StateM
 reached 95.3% on Terminal-Bench 2.1 through harness engineering alone (2608.15089) — the
 clearest single demonstration that harness work, not model work, moved a hard benchmark.
 The dominant 2026 survey (Horizon Gap, 2608.06663, 1,547 papers) finds one unified pattern
@@ -251,6 +258,8 @@ the current artifact. Numbers: +52.25% average relative gain across 3 harness×m
 persisting over 10 iterations (22% → 72.7% on FrontierSWE); a 70-loop multi-day run built a
 playable game from a PRD. Ablations show all three ingredients are essential: dropping the
 evidence-feeding costs 6.28 points; freezing the plan (no re-planning) costs 8.1 points.
+*(These two are HoH ablation points, 2609.01481. Do not confuse them with METR's messiness
+figure below, which is a regression coefficient, not a benchmark delta.)*
 The gain is not explained by extra tokens — it is the loop structure, not the compute.
 
 **Mechanism detail:** the wrapper keeps the inner coder harness untouched. Around it, a
@@ -310,7 +319,9 @@ own correct solutions (2310.01798). And reasoning models do not fix the justific
 problem: o1 "gaslights" — creative but nonsensical justifications for wrong plans
 (2409.13373).
 
-The constructive pattern is **LLM-Modulo** (2206.10498 and its companion 2402.01817): the
+The constructive pattern is **LLM-Modulo** (2402.01817; the benchmark that motivates it is
+PlanBench, **2206.10498** — *correction 2026-10-06: 2206.10498 is PlanBench, not the
+LLM-Modulo paper, and an earlier revision attributed it that way*): the
 LLM generates and reformulates, while soundness is inherited from external critics —
 *hard* critics (executable, model-based, deterministic) and *soft* critics (LLM judgment)
 — with a plain-code controller that compiles the critiques into the next prompt. This
@@ -500,7 +511,7 @@ answers which question; the per-thread sections give the mechanisms and numbers.
 
 Vanilla LLM plans are about 12% executable on IPC-style planning domains; obfuscated
 domain names collapse GPT-4 below 5% — the model is retrieving familiar plans
-approximately, not planning (2402.01817, 2206.10498). Self-critique is unreliable
+approximately, not planning (2402.01817; evaluated on PlanBench, 2206.10498). Self-critique is unreliable
 (2310.01798). o1-preview: 97.8% on small Blocksworld, 52.8% obfuscated, 23.6% at 20–40
 steps, with "creative but nonsensical" justifications when wrong (2409.13373).
 
@@ -520,7 +531,9 @@ the obfuscated version.
 
 The compounding law: task success ≈ p/(1−p) per-step reliability — small per-step error
 rates compound into long-horizon collapse (2509.09677). Each messiness factor costs about
-8.1 points (2503.14499). The named long-context results, in one place:
+a regression coefficient of **b = −0.081 per messiness factor at R² = 0.25, on a 16-factor
+composite** (2503.14499) — an association across a noisy composite, not a clean 8.1-point
+benchmark drop. *(Correction 2026-10-06.)* The named long-context results, in one place:
 
 | Phenomenon | Number | Source |
 |---|---|---|
@@ -546,7 +559,7 @@ at the bottom, where attention is strongest.
 | Planner Matters (2605.02168) | scaling the planner ≈ scaling the whole system | planner coefficient ≈ all-modules coefficient |
 | TDP (2601.07577) | DAG plan; node-scoped contexts; local replan; Self-Revision fact propagation | up to −82% output tokens vs global replan, equal-or-better accuracy |
 | LLMCompiler (2312.04511) | DAG dispatch of parallel steps | 3.7× latency, 6.7× cost reduction where parallelism exists |
-| ReWOO (2305.18323) | shared slot-memory across steps | 64% token cut |
+| ReWOO (2305.18323) | shared slot-memory across steps | ~80% token cut (an earlier revision of this note said 64%; corrected 2026-10-06) |
 | AdaPlanner (2305.16653) | in-plan refinement vs out-of-plan revision as a formal policy | — |
 | VeriMAP (2510.17109) | planner-authored Python verification functions per subtask; executors scoped away from the global task; structured named I/O at handoffs | +4.05% BigCodeBench-Hard; +9.8% Olympiads |
 | GoalAct (2504.16563) | global planning + hierarchical execution, same shape, weaker evidence | listed for completeness |
@@ -582,9 +595,19 @@ retries then human), Magis (2403.17927), Agent KB (2507.06229: +18.7pp GAIA pass
 +4.0pp SWE-bench pass@1), SWE-agent (2405.15793: the ACI design ablations, §B), AgentCoder
 (2312.13010: independent test-designer model).
 
-**The leaderboard architecture census (Dissecting, 2506.17208).** The paper classifies
-submissions from both leaderboards into eight architecture groups (Table 9 of the paper)
-and tests the differences (rank-based Kruskal–Wallis test). The Verified-board medians:
+**The leaderboard architecture census (Dissecting, 2506.17208).**
+
+> ⚠ **Version warning, added 2026-10-06.** The table below is a faithful transcription of a
+> **superseded** version of this paper. The current version's data **reverses** the
+> conclusion: G3-style *scripted pipelines* now lead on both median and max, while scaffolded
+> single-agent no longer does. Re-read the current version before citing any row. The
+> direction of the correction favours this project's topology — a planner/coder/eval split
+> driven by a **code-owned controller** is a scripted pipeline, not an agentic multi-agent
+> system. Keep the rows for the methodology (eight groups, Kruskal–Wallis), not the numbers.
+
+The paper classifies submissions from both leaderboards into eight architecture groups
+(Table 9 of the paper) and tests the differences (rank-based Kruskal–Wallis test). The
+Verified-board medians **as published in the superseded version**:
 
 | Group | # entries | Median | Max |
 |---|---|---|---|
@@ -650,8 +673,9 @@ The measured additions:
 ### F. Memory, context, reuse across runs
 
 The base design: progressive disclosure; the filesystem as memory; AWM's induced
-workflows (2409.07429: +24.6%/+51.1% relative on WebArena, and they *outperform* the
-human-expert-authored SteP workflows); Voyager's skill library (2305.16291); store
+workflows (2409.07429: **+51.1% relative on WebArena and +24.6% on Mind2Web** — *correction
+2026-10-06: an earlier revision attributed both figures to WebArena* — and they *outperform*
+the human-expert-authored SteP workflows); Voyager's skill library (2305.16291); store
 decision-relevant folds, not narrative logs.
 
 The measured additions:
@@ -680,14 +704,16 @@ The measured additions:
   to-derive / educated-guess, the last "guarded or qualified") become the entry grammar
   of the EVIDENCE ledger and the provenance tags on roadmap decisions (`decided:` vs
   `assumed:`). This directly attacks MAST failure mode FM-2.2 (proceeding on wrong
-  assumptions, 11.7% of failures): visible assumptions can be asked about — feeding the
+  assumptions, **6.80%** of failures in MAST v3): visible assumptions can be asked about — feeding the
   ASK# channel (§7 item 13).
 
 ### G. Multi-agent failure modes — the warning label
 
-MAST (2503.13657, 1,600+ traces): specification failures 41.8%, inter-agent misalignment
-36.9%, verification 21.3%; step repetition 17.1%; reasoning–action mismatch 14.0%;
-unasked assumptions 11.7%. Three of the fourteen failure modes are *created by* the
+MAST (2503.13657v3, 1,642 traces; retrieved 2026-10-06): specification failures **44.2%**,
+inter-agent misalignment **32.3%**, verification **23.5%**; step repetition **15.7%**;
+unasked assumptions **6.80%**. (The widely-quoted 41.8/36.9/21.3 split with 11.7% unasked
+assumptions is v1/v2, over 200+ traces; the v3 re-annotation roughly halves FM-2.2, which
+weakens — but does not remove — the case for a clarifying-question channel.) Three of the fourteen failure modes are *created by* the
 multi-agent structure itself. Design-only interventions that work: better role
 specifications +9.4%, objective-level verification +15.6pp. This system's parsed-artifact
 handoffs, written contracts, code-declared completion, and budgeted retries map one-to-one
@@ -716,7 +742,8 @@ auto-repairs within budget (§7 item 14).
 
 ### I. Ambiguity and clarification
 
-Agents rarely ask when they should (Ambig-DS, 2605.09698; MAST FM-2.2 11.7%). Fine-tuned
+Agents rarely ask when they should (Ambig-DS, 2605.09698; MAST FM-2.2 **6.80%** in v3, 11.7%
+in v1/v2). Fine-tuned
 clarification beats prompting. Users prefer clarify-first (2507.21285). One safety
 constraint: keep questions in the human channel — the clarification state widens the
 prompt-injection surface if answers can come from retrieved content (ASPI, 2605.17324).
@@ -1041,7 +1068,7 @@ what makes the loop compound — removing it costs 6.28 points, and freezing the
 costs 8.1 (§F2). The ledger is this system's version of that channel: it is why
 iteration 10 is smarter than iteration 1, instead of just longer.
 
-*Evidence:* A — 2609.01481 (ablation), 2503.13657 (unasked assumptions 11.7%); B —
+*Evidence:* A — 2609.01481 (ablation), 2503.13657v3 (unasked assumptions 6.80%); B —
 2411.04468 (ledger categories, verbatim); C — 2608.06663 §4 (interference figure).
 
 *What changes / cost:* one file, a parser, two role-prompt touchpoints. Low cost. It is
@@ -1298,7 +1325,8 @@ an attack vector, not a clarification (the clarification state widens the
 prompt-injection surface).
 
 Plan time, not run time, because the measured failure is the *unasked* assumption —
-11.7% of multi-agent failures, and agents systematically under-ask (§4I). Asking costs
+6.80% of multi-agent failures in MAST v3 (11.7% in v1/v2), and agents systematically
+under-ask (§4I). Asking costs
 one human round-trip at plan time; discovering the wrong assumption costs a failed slice,
 a repair budget, and possibly a replan.
 
@@ -1483,7 +1511,7 @@ on.
 
 | Benchmark | What it measures | Frontier number | Implication |
 |---|---|---|---|
-| SWE-bench Verified | 500 repo issues, functional tests | leaderboard high-70s/80s (as-reported; the Dissecting census max was 68.2% in May 2025) | Function-level: solved-ish — do not optimize here |
+| SWE-bench Verified | 500 repo issues, functional tests | effectively **saturated** as of 2026; treat as context, not a goalpost (as-reported leaderboard high-70s/80s; the superseded Dissecting census max was 68.2% in May 2025) | Function-level: solved — judge on pass^k over an own held-out set instead |
 | SWE-bench Pro (2509.16941) | 1,865 enterprise issues, held-out, hours-to-days tasks | ~23% best (as-reported; not in the abstract) | the long-horizon acceptance gap lives here |
 | PlanBench-XL (2606.22388) | 327 tool-use tasks, 1,665 tools, with blocking failures | 51.90% → **11.36%** under severe blocking | failure *handling* is the cliff → items 2, 6, 10 |
 | TheAgentCompany (2412.14161) | 175 multi-stage professional tasks | ~30.3% of provided tests | multi-stage + self-verification bottleneck |
@@ -1548,7 +1576,7 @@ number, not independently re-derived.
 | τ-bench: gpt-4o 61.2% pass@1 retail / 35.2% airline; pass^8 <25% | 2406.12045 | full text |
 | PaperBench: 21.0% best agent (full, standard protocol); o1 13.2% full / 26.6% 3-paper subset; human PhDs 41.4% subset (best of 3, 48 h) | 2504.01848 | full text |
 | SWE-bench Live: 48% (1 file / <5 lines); <10% (≥3 files or >100 lines); never solved (≥7 files) | 2505.23419 | full text, verbatim |
-| METR: ~8.1 points per messiness factor; completable-task length doubles ~every 7 months; >80% of successful runs cost <10% of human time cost | 2503.14499 | full text |
+| METR: messiness regression b = −0.081 per factor, R² = 0.25, 16-factor composite (not a clean 8.1-point drop); completable-task length doubles ~every 7 months; >80% of successful runs cost <10% of human time cost | 2503.14499, retrieved 2026-10-06 | full text |
 | ~12% of best-LLM plans executable and goal-reaching | 2402.01817 | full text, verbatim |
 | FrugalGPT: cascade matches best model at up to 98% cost reduction, or +4% accuracy at matched cost | 2305.05176 | abstract, verbatim |
 | SkillWeaver: +31.8% WebArena / +39.8% real sites relative; up to +54.3% on transfer to weaker agents | 2504.07079 | abstract |
@@ -1564,7 +1592,7 @@ number, not independently re-derived.
 | SDD: "a constraint that no tool can enforce is a wish…"; worktree "cornerstone"; appreciates/depreciates; graduated autonomy; Given–When–Then/Gherkin | 2609.00252 | full text, verbatim |
 | ASL: "GRM verification capacity is the main bottleneck… raises the performance ceiling"; GRM > rigid rules (open-domain); co-evolution boosts | 2510.14253 | abstract, verbatim |
 | TheAgentCompany: ~30.3% of provided tests | 2412.14161 | full text |
-| MAST: 41.8/36.9/21.3 failure split; step repetition 17.1%; unasked assumptions 11.7%; objective-level +15.6pp; role specs +9.4% | 2503.13657 | full text |
+| MAST v3: 44.2/32.3/23.5 failure split (1,642 traces); step repetition 15.7%; unasked assumptions 6.80%; objective-level +15.6pp; role specs +9.4%. v1/v2 read 41.8/36.9/21.3, 17.1%, 11.7% over 200+ traces | 2503.13657v3, retrieved 2026-10-06 | full text |
 | Agentless: fail-before/pass-after reproduction filter; majority vote over normalized patches; $0.70/task Lite win | 2407.01489 | full text |
 | Phoenix: 10/11 real repos have pre-existing failures; ≤2 structured retries then human | 2606.20243 | full text |
 | Plan-and-Act: +10.3pp dynamic vs static; +34pp plan quality; executor data ≈ nothing | 2503.09572 | full text |
@@ -1585,7 +1613,7 @@ number, not independently re-derived.
 2602.02584 (Constitutional SDD) · 2608.25202 (SpecMine) · 2603.25697 (Kitchen Loop) ·
 2406.12045 (τ-bench) · 2312.08935 (Math-Shepherd) · 2605.10325 (VPR) · 2605.20061
 (consistency-guided credit assignment) · 2608.22103 (Hack-Verifiable Terminal Bench) ·
-2510.14253 (ASL) · 2206.10498 (LLM-Modulo) · 2312.13010 (AgentCoder)
+2510.14253 (ASL) · 2206.10498 (PlanBench) · 2312.13010 (AgentCoder)
 
 **Controller mechanics & orchestration:** 2411.04468 (Magentic-One) · 2402.05120 (More
 Agents) · 2504.16563 (GoalAct) · 2308.00352 (MetaGPT) · 2311.05772 (ADaPT) ·
