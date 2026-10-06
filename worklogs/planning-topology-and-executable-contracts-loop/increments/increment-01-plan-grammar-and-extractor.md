@@ -3,7 +3,7 @@ Increment-ID: RM-planning-topology-I01
 Roadmap-ID: RM-planning-topology
 status: IN PROGRESS
 slices: 6
-shipped: SLICE1, SLICE1b
+shipped: SLICE1, SLICE1b, SLICE1c
 ---
 
 # INCREMENT I01: Plan grammar & extractor
@@ -170,6 +170,7 @@ uv run ruff check knowledge/skills tests/test_skill_grammar_emit.py
 ## SLICE1c: The planner prompt emits schema §4
 STEPS: prescriptive
 DEPS: SLICE1b
+SHIPPED: pending-commit
 INTENT: the planner is the third emitter; until it emits slices, the coverage gate at
   `workflow_controller.py:332` returns early and every downstream contract is untested in
   production.
@@ -184,11 +185,11 @@ TESTS: tests/test_planner_emits_schema4.py  (NEW — author it; absent at 2f6b8c
 uv run pytest tests/test_planner_emits_schema4.py -q
 uv run ruff check src/fa/inner_loop/prompt.py tests/test_planner_emits_schema4.py
 ```
-- [ ] STEP1: Edit the planner's plan section in `src/fa/inner_loop/prompt.py` to emit schema §4,
+- [x] STEP1: Edit the planner's plan section in `src/fa/inner_loop/prompt.py` to emit schema §4,
       reusing the §4 ```skeleton wording rather than restating it. (exit: CT31 green — the test
       renders the prompt, extracts its embedded skeleton, and parses it; a `grep` for the token
       `SLICE` is not an acceptable check because a comment satisfies it.)
-- [ ] STEP2: Route Evidence, Assumptions and Risks into `## Grounding`. (exit: CT32 green.)
+- [x] STEP2: Route Evidence, Assumptions and Risks into `## Grounding`. (exit: CT32 green.)
 
 ## SLICE2: Per-slice accessors over the records
 STEPS: prescriptive

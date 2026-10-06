@@ -382,3 +382,24 @@ E84 FACT  I01/SLICE1b implemented. Schema §4 now carries a marker-delimited wor
     acceptance criteria today and will XPASS — and therefore fail the suite — the moment SLICE2
     lands, forcing the marker to be removed rather than letting a silent pass accumulate.
     Omitting them instead would have left SLICE2 with no executable oracle.  [measured 2026-10-06]
+E85 FACT  I01/SLICE1c implemented: the planner prompt is now the third emitter of schema §4.
+    `PLANNER_SYSTEM_PROMPT`'s plan template, its worked example and its Delta Plan template all
+    emit `## SLICE<n>:` with `STEPS:`, `DEPS:`, `INTENT:`, `CONTRACTS:`, `TESTS:` and a verify
+    fence, and `tests/test_planner_emits_schema4.py` parses those blocks out of the prompt string
+    rather than grepping for the token `SLICE` — a comment satisfies a grep, and the property that
+    matters is that what the planner is told to emit is what `extract_plan_ids` can read. This
+    closes the production half of E52: `workflow_controller.py:332` returns early on an empty
+    `.slices`, so until now every per-slice gate silently no-opped against real planner output.
+    Evidence, Assumptions and Risks were **rerouted** under `## Grounding`, not deleted (CT32),
+    with the mandatory understood/excluded readback line from schema §4.
+    Result: 11 passed; ruff and pyrefly clean; full suite 4035 passed with the same three
+    baseline failures as E83. The prompt's fenced templates had to move from ```` ```text ```` to
+    ```` ````text ````: a plan block now contains a nested ```verify fence, which would otherwise
+    close the wrapper early.  [measured 2026-10-06]
+E86 GAP  The **evaluator** prompt still speaks the retired `S#` grammar
+    (`prompt.py:802` "For each plan step (S1, S2, ...)", `:805` the step's `do:` field, `:905`
+    the `- S1: PASS | FAIL` report shape). That is deliberately out of SLICE1c's contract, whose
+    CT32 scopes the change to the planner. It is not harmless: `canonical_slice_id` forgivingly
+    maps a reported `S1` onto `SLICE1`, so the mismatch is invisible today and will stay invisible
+    until something stops being forgiving. Banked against I04 with the other eval-prompt deltas in
+    `notes/role-prompts-conformance.md`.
