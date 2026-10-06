@@ -345,3 +345,29 @@ E81 FACT  CT12's three pinned tests re-simulated against the rewritten increment
     totality holds over 33 files; `:264` holds — 10 commands, all genuine, `ruff` present. The
     inline triple backticks introduced in the new CT21/CT22 prose do **not** open phantom fences.
     SLICE1 and the rewritten plan are compatible; SLICE1b is unblocked.  [measured 2026-10-06]
+E82 FACT  The repo's documented bootstrap (`just install` → `scripts/bootstrap/workspace.py
+    ensure` → `uv sync --frozen`) **cannot complete in this sandbox**, and the repo instructions
+    are not at fault. Two stages fail: `hook_ownership` (`hook_seat_collision`) because the
+    platform installs its own `.git/hooks/commit-msg`, and then `uv_sync` (rc=2) because no
+    interpreter ≥3.13 is obtainable. Every distribution channel is blocked by egress policy —
+    `astral.sh` (TLS reset), GitHub release assets via `objects.githubusercontent.com`,
+    `www.python.org`, anaconda, `raw.githubusercontent.com`, and `deb.debian.org` (so no apt and
+    no openssl/zlib/ffi headers, which also rules out building CPython from source). PyPI and
+    `codeload.github.com` are reachable, which is why `uv` itself installs fine.
+    [measured 2026-10-06]
+E83 FACT  A substitute environment at `.venv` gives a usable gate: CPython 3.11.2 plus two
+    `.pth` files — one putting `src/` on the path (what an editable install does; `uv pip
+    install -e .` is refused by `requires-python >=3.13`), one shimming `typing.override`, which
+    is the **only** 3.12+ construct in `src/` (7 files; no PEP 695 anywhere) and is a no-op
+    decorator at runtime. Result: **4008 passed, 3 failed, 15 skipped, 1 xfailed** in 3m33s, and
+    `ruff check src tests` clean. The three failures are fully accounted for: two are the
+    deliberately-red doc gates E19 must never "fix"
+    (`test_doc_links::test_repo_has_no_broken_internal_file_links`,
+    `test_deploy_scripts::test_historical_workspace_docs_have_top_level_superseded_banner`), and
+    the third,
+    `test_cli_ergonomics::test_workflow_per_role_overrides_parse`, is a CPython version artifact
+    — reproduced in 12 lines of stdlib `argparse` with no project code: 3.11 cannot reclaim a
+    positional that follows an optional, 3.13 can. **Zero unexplained failures.** Treat this as
+    the regression baseline for I01; it is not a substitute for the real 3.13 gate, and any
+    result that depends on interpreter version must be re-run by the operator.
+    [measured 2026-10-06]
