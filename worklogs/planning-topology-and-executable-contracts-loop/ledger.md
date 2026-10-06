@@ -371,3 +371,14 @@ E83 FACT  A substitute environment at `.venv` gives a usable gate: CPython 3.11.
     the regression baseline for I01; it is not a substitute for the real 3.13 gate, and any
     result that depends on interpreter version must be re-run by the operator.
     [measured 2026-10-06]
+E84 FACT  I01/SLICE1b implemented. Schema §4 now carries a marker-delimited worked example and a
+    machine-readable expectation beside it; `tests/test_skill_grammar_emit.py` slices both out of
+    the `.md`, parses the example and compares, so §4 and `plan_ids.py` can no longer drift in
+    silence. Both planning skills embed a `PLAN-SKELETON` block that the same test parses, which
+    retires the `### Step S#:` anchor the parser stopped accepting in SLICE1 (E52's emitter half,
+    for the skills). Result: **16 passed, 4 xfailed**; ruff and pyrefly clean.
+    The four xfails are deliberate and `strict=True`: CT16 section spans, CT17 declaration scope
+    and CT18 whole-entry text are SLICE2's to implement, so the assertions encode SLICE2's
+    acceptance criteria today and will XPASS — and therefore fail the suite — the moment SLICE2
+    lands, forcing the marker to be removed rather than letting a silent pass accumulate.
+    Omitting them instead would have left SLICE2 with no executable oracle.  [measured 2026-10-06]

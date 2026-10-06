@@ -131,37 +131,37 @@ TESTS: tests/test_skill_grammar_emit.py  (NEW — author it; absent at 2f6b8c1)
 uv run pytest tests/test_skill_grammar_emit.py -q
 uv run ruff check knowledge/skills tests/test_skill_grammar_emit.py
 ```
-- [ ] STEP1: Read the four boundary rules already normative in
+- [x] STEP1: Read the four boundary rules already normative in
       `notes/artifact-schema-and-grammar.md` §4 "Section boundaries" — section span by relative
       heading depth, increment-level sections after the last slice, `CONTRACTS:`-block scope by
       indentation, one-entry-one-contract with whole-entry text — and restate each as one
       assertion over the §4 example. Do not reword the rules; if one is wrong, stop and raise a
       question rather than edit the parser to match. (exit: four assertions exist, one per
       rule.)
-- [ ] STEP2: Append the ````text-wrapped example to §4 and document its expected parse beside
+- [x] STEP2: Append the ````text-wrapped example to §4 and document its expected parse beside
       it. The example must use literal ids (`## SLICE1:`, `CT1`), not `<n>` placeholders, or it
       does not parse and proves nothing. (exit: CT21 green — the test reads the fence out of the
       `.md`, strips the wrapper and compares against the documented result, so editing §4
       without editing the parser turns the test red.)
-- [ ] STEP2b: Pin the blast radius of STEP2 with a test asserting the glob at
+- [x] STEP2b: Pin the blast radius of STEP2 with a test asserting the glob at
       `tests/test_plan_ids.py:202` does not reach `notes/`. (exit: CT21b green.)
-- [ ] STEP3: Add the `## Grounding` block to §4, marked "prose, never parsed", with its
+- [x] STEP3: Add the `## Grounding` block to §4, marked "prose, never parsed", with its
       mandatory first line naming what the planner understood the request to be and what it
       deliberately excluded. (exit: parsing the §4 example, whose slices each carry a
       `### Grounding` subsection, yields no contract, test or command from that subsection.
       Use `###`, not `##`: under the CT16 depth rule a `##` heading would end the slice.)
-- [ ] STEP4: Add a §4 subsection "Authoring guidance (not checked)" holding the rules that are
+- [x] STEP4: Add a §4 subsection "Authoring guidance (not checked)" holding the rules that are
       judgement, not lint: `STEPS:` defaults from the TRIVIAL/STANDARD/LARGE classifier and the
       planner may override it with a one-line reason; `N <= 7` slices per increment, and a
       decomposition needing more means the increment is mis-scoped and must be split; keep a
       slice brief under roughly 1.5-2K tokens. (exit: the subsection exists and is titled so
       that no pre-check rule may key on it.)
-- [ ] STEP5: Edit `knowledge/skills/plan-authoring/SKILL.md` and
+- [x] STEP5: Edit `knowledge/skills/plan-authoring/SKILL.md` and
       `knowledge/skills/feature-planning/SKILL.md`: replace each plan skeleton with the
       ```skeleton fence, and replace the duplicated authoring prose with a link to §4
       "Authoring guidance". Write steps as exact imperatives with file:line targets and runnable
       exit checks (schema §1); no rationale inline. (exit: CT22 and CT24 green.)
-- [ ] STEP6: Add the rationale rule for `CONSTRAINT` contracts to §4 and both skills. (exit:
+- [x] STEP6: Add the rationale rule for `CONSTRAINT` contracts to §4 and both skills. (exit:
       CT23 green.)
 
 ---

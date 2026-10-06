@@ -425,13 +425,15 @@ Default ordering (adapt, never skip the rationale for reordering):
   path/matrix completion → adversarial cases if security → contract/CI
   gate → docs/ADR if invariant-level.
 
-Template — use for every step, no exceptions:
+Template — use for every step, no exceptions. The harness parses only the
+anchor line; everything beneath it is indented continuation prose, which
+schema §4 defines as unparsed (so write it for the reviewer, not the parser):
 
-### Step S#: <title>
+- [ ] STEP#: <atomic action>  (exit: <observable, independently checkable>)
 
 Traces-to: G# (intent), GAP# (verified gap), CT# (contract(s))
 
-Depends-on: S# | none          Parallelizable-with: S# | none
+Depends-on: STEP# | none       Parallelizable-with: STEP# | none
 
 Target liveness: L?→L?
 
@@ -647,6 +649,13 @@ OPEN QUESTIONS
 12. OUTPUT SKELETON (always this shape)
 ═══════════════════════════════════════════════════════════════════════
 
+The slice sections are the shape the harness parses. The grammar and its worked
+example are normative in `worklogs/planning-topology-and-executable-contracts-loop/
+notes/artifact-schema-and-grammar.md` §4; `tests/test_skill_grammar_emit.py` parses
+this very block to prove it still conforms.
+
+<!-- PLAN-SKELETON:BEGIN -->
+````text
 # PLAN: <short name>                        Plan-ID: PLAN-<slug>
 Status: DRAFT | READY | BLOCKED             Depth: P0|P1|P2|P3
 Revision: v<N>   Changed-since-last: <summary, or "initial">
@@ -666,6 +675,22 @@ Upstream context: <chat/issue/research refs>
 
 ## 5. Step-by-step implementation    (§8)
 
+## SLICE1: <title>
+STEPS: prescriptive | outcome
+DEPS: SLICE<a>, SLICE<b> | —
+INTENT: <what + why, one to three lines>
+CONTRACTS:
+  CT1 [FUNCTIONAL]: <new behaviour; its test is NEW and must fail before the change>
+  CT2 [CONSTRAINT]: <a rule the change must not violate>
+    Catches: <the wrong implementation this contract rejects>
+  CT3 [PRESERVATION]: <existing behaviour that must stay green>
+TESTS: tests/test_<area>.py  (NEW - author it)
+```verify
+uv run pytest tests/test_<area>.py -q
+```
+- [ ] STEP1: <atomic action> (exit: <observable criterion>)
+- [ ] STEP2: <atomic action> (exit: <observable criterion>)
+
 ## 6. Verification plan              (§9)
 
 ## 7. Risks, rollback, open questions(§10)
@@ -678,7 +703,19 @@ Upstream context: <chat/issue/research refs>
 
 ## 11. Artifacts inventory
 
-      Artifact | Path | Action (add/edit/delete) | Owner S#
+      Artifact | Path | Action (add/edit/delete) | Owner SLICE#
+````
+<!-- PLAN-SKELETON:END -->
+
+Every `CT#` carries one class. `FUNCTIONAL` is new behaviour, `PRESERVATION` is
+existing behaviour that must stay green, and `CONSTRAINT` is a rule the change must
+not violate. A `CONSTRAINT` additionally carries a **rationale** on its continuation
+lines naming the wrong implementation it rejects: a constraint whose intent was never
+written down cannot be reviewed, and that rationale is the only prose a plan body may
+carry.
+
+Slice sizing, `STEPS:` defaults and brief length are judgement, not lint — they live
+once in schema §4 "Authoring guidance (not checked)" instead of being restated here.
 
 ═══════════════════════════════════════════════════════════════════════
 13. ESCALATION TABLE

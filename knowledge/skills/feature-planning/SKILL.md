@@ -125,7 +125,8 @@ If scope grows, stop and re-declare depth before editing further.
 | `P#` | runtime path / edge condition |
 | `M#` | matrix row: flag/env/provider/browser/role/config |
 | `A#` | artifact: file/module/table/route/page/config/doc/migration |
-| `S#` | implementation slice |
+| `SLICE#` | implementation slice; the harness parses `## SLICE<n>: <title>` |
+| `STEP#` | atomic action inside a slice; `- [ ] STEP<n>: … (exit: …)` |
 | `T#` | test/static/mutation verification |
 | `Q#` | open question, blocking or non-blocking with default |
 | `RK#` | risk/mitigation |
@@ -173,7 +174,13 @@ unresolved -> Q#:
 
 ## 4. Required plan skeleton
 
-```text
+The slice sections below are the shape the harness actually parses. Emit them exactly; the
+grammar and its worked example are normative in
+`worklogs/planning-topology-and-executable-contracts-loop/notes/artifact-schema-and-grammar.md`
+§4, and `tests/test_skill_grammar_emit.py` parses this very block to prove it still conforms.
+
+<!-- PLAN-SKELETON:BEGIN -->
+````text
 # PLAN: <name>  Plan-ID: PLAN-<slug>
 Status: DRAFT | READY | BLOCKED   Depth: P0|P1|P2|P3
 Revision: v<N>   Changed-since-last: <initial|summary>
@@ -183,13 +190,40 @@ Revision: v<N>   Changed-since-last: <initial|summary>
 ## 1. Current state -> target state: source facts + GAP# ledger
 ## 2. Contracts: CT# cards
 ## 3. Path, edge, and matrix inventory: P# + M# coverage
-## 4. Artifacts inventory: A# path/action/owner S#
-## 5. Step-by-step implementation: S# edit packets
+## 4. Artifacts inventory: A# path/action/owner SLICE#
+## 5. Step-by-step implementation
+
+## SLICE1: <title>
+STEPS: prescriptive | outcome
+DEPS: SLICE<a>, SLICE<b> | —
+INTENT: <what + why, one to three lines>
+CONTRACTS:
+  CT1 [FUNCTIONAL]: <new behaviour; its test is NEW and must fail before the change>
+  CT2 [CONSTRAINT]: <a rule the change must not violate>
+    Catches: <the wrong implementation this contract rejects>
+  CT3 [PRESERVATION]: <existing behaviour that must stay green>
+TESTS: tests/test_<area>.py  (NEW - author it)
+```verify
+uv run pytest tests/test_<area>.py -q
+```
+- [ ] STEP1: <atomic action> (exit: <observable criterion>)
+- [ ] STEP2: <atomic action> (exit: <observable criterion>)
+
 ## 6. Verification plan: T# tests/static/mutation + LIVE-PATH PROOF
 ## 7. Risks, rollback, open questions: RK#, rollback, Q#
 ## 8. Research-note / claim disposition: RN# accept/reject/rewrite/defer
 ## 9. Definition of Done and READY gate evidence
-```
+````
+<!-- PLAN-SKELETON:END -->
+
+Every `CT#` carries one class. `FUNCTIONAL` is new behaviour, `PRESERVATION` is existing
+behaviour that must stay green, and `CONSTRAINT` is a rule the change must not violate. A
+`CONSTRAINT` additionally carries a **rationale** on its continuation lines, naming the wrong
+implementation it rejects — a constraint whose intent was never written down cannot be
+reviewed, and the rationale is the only prose a plan body is allowed to carry.
+
+Slice sizing, `STEPS:` defaults and brief length are judgement calls, not lint: see schema §4
+"Authoring guidance (not checked)" rather than restating them here.
 
 `READY` requires no blocking `Q#`. `BLOCKED` means a policy/product question
 prevents dependent steps. `DRAFT` means proof/research is incomplete.

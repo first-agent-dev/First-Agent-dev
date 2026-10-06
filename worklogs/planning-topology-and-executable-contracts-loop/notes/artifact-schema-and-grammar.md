@@ -155,6 +155,112 @@ the planner's own next pass. Its **first line is mandatory** and states what the
 understood the request to be and what it deliberately excluded — the readback that lets a
 reviewer catch a misunderstood requirement in five lines instead of two hundred.
 
+### Authoring guidance (not checked)
+
+Judgement, not lint. No pre-check rule may key on this subsection; it exists so the rules live
+in one place instead of being copy-pasted into every skill.
+
+- `STEPS:` defaults from the TRIVIAL / STANDARD / LARGE classifier. The planner may override the
+  default, and when it does it writes a one-line reason on the `STEPS:` line.
+- `N <= 7` slices per increment. A decomposition that needs more is not a long increment, it is
+  a mis-scoped one: split it into smaller increments rather than relaxing the ceiling.
+- Keep a slice brief under roughly 1.5-2K tokens. A brief that cannot be read in one sitting
+  cannot be verified in one either.
+
+### The §4 example (executable oracle)
+
+The block below is the normative example of every rule in this section. It is not decoration:
+`tests/test_skill_grammar_emit.py` slices it out of this file, parses it with
+`extract_plan_ids`, and compares the result against the expectation recorded immediately after
+it. Editing one without the other turns that test red, which is the point — a specification
+nobody can execute drifts from its implementation silently.
+
+Read the two markers as part of the grammar: the test locates the block by them, so do not
+rename them.
+
+<!-- SCHEMA4-EXAMPLE:BEGIN -->
+````text
+## SLICE1: parse the widget id
+STEPS: prescriptive
+DEPS: —
+INTENT: the parser reads widget ids so the gate can address them.
+CONTRACTS:
+  CT1 [FUNCTIONAL]: `parse_widget("W7")` returns `7`.
+  CT2 [CONSTRAINT]: an unknown id returns `None` and never raises.
+    Catches: a parser that throws on user input and wedges the loop.
+SHIPPED: —
+TESTS: tests/test_widget.py  (NEW - author it)
+```verify
+uv run pytest tests/test_widget.py -q
+```
+- [ ] STEP1: Add `parse_widget` to `src/widget.py`. (exit: CT1 green.)
+- [ ] STEP2: Return `None` for an unknown id instead of raising. (exit: CT2 green.)
+
+### Grounding
+
+Understood as: parse widget ids. Deliberately excluded: rendering them.
+
+## SLICE2: gate on the parsed id
+STEPS: outcome
+DEPS: SLICE1
+INTENT: the gate refuses an unknown widget instead of routing it.
+CONTRACTS:
+  CT3 [PRESERVATION]: a known id keeps its existing route.
+TESTS: tests/test_gate.py
+```verify
+uv run pytest tests/test_gate.py -q
+```
+- [ ] STEP1: Make the gate consult `parse_widget`. (exit: CT3 green; SLICE1's CT1 unaffected.)
+
+## Increment definition of done
+
+- [ ] CT1, CT2 and CT3 are green.
+````
+<!-- SCHEMA4-EXAMPLE:END -->
+
+What the example is engineered to prove, rule by rule:
+
+| Rule | How the example exercises it |
+|---|---|
+| section span by relative depth | SLICE1 contains a `### Grounding` subsection that must **not** end it |
+| increment-level sections after the last slice | SLICE2 ends at `## Increment definition of done`, and does not absorb it |
+| `CONTRACTS:` block scope by indentation | `SHIPPED:` returns to column 0 and closes the block; SLICE2/STEP1 mentions `CT1`, which is a *reference* and must not make `CT1` a contract of SLICE2 |
+| one entry, one contract, whole-entry text | `CT2`'s rationale sits on a continuation line and must survive into the contract's text |
+
+The expected parse, machine-readable so that it cannot drift from the prose above:
+
+<!-- SCHEMA4-EXPECTED:BEGIN -->
+```json
+{
+  "slices": ["SLICE1", "SLICE2"],
+  "steps_mode": {"SLICE1": "prescriptive", "SLICE2": "outcome"},
+  "test_paths": {"SLICE1": ["tests/test_widget.py"], "SLICE2": ["tests/test_gate.py"]},
+  "commands": {
+    "SLICE1": ["uv run pytest tests/test_widget.py -q"],
+    "SLICE2": ["uv run pytest tests/test_gate.py -q"]
+  },
+  "contract_ids": {"SLICE1": ["CT1", "CT2"], "SLICE2": ["CT3"]},
+  "contract_classes": {"CT1": "FUNCTIONAL", "CT2": "CONSTRAINT", "CT3": "PRESERVATION"},
+  "contract_text": {
+    "CT2": "an unknown id returns `None` and never raises. Catches: a parser that throws on user input and wedges the loop."
+  },
+  "section_excludes": {
+    "SLICE1": ["## SLICE2:"],
+    "SLICE2": ["## Increment definition of done"]
+  },
+  "section_includes": {
+    "SLICE1": ["### Grounding"]
+  }
+}
+```
+<!-- SCHEMA4-EXPECTED:END -->
+
+**This document is never fed to the pre-check.** Adding a parseable example means
+`extract_plan_ids` over *this file* now reports slices and verify commands that belong to no
+real increment — the ````text wrapper does not prevent that (see the token rules above and
+SLICE1/CT13). The protection is procedural: the pre-check runs on increment files only, and the
+totality corpus in `tests/test_plan_ids.py` globs `*/increments/increment-*.md`, never `notes/`.
+
 ## 5. Ledger grammar (append-only)
 
 ```
