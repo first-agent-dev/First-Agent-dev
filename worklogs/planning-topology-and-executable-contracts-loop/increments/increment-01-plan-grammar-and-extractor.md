@@ -170,7 +170,7 @@ uv run ruff check knowledge/skills tests/test_skill_grammar_emit.py
 ## SLICE1c: The planner prompt emits schema §4
 STEPS: prescriptive
 DEPS: SLICE1b
-SHIPPED: pending-commit
+SHIPPED: d2faea4 (branch arena/ca4c996c-first-agent-dev, 2026-10-06)
 INTENT: the planner is the third emitter; until it emits slices, the coverage gate at
   `workflow_controller.py:332` returns early and every downstream contract is untested in
   production.
