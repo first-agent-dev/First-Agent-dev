@@ -45,9 +45,9 @@ The map below is expected to be refined as reality teaches.
 | ID | Increment | Status | One-line intent |
 |---|---|---|---|
 | **I01** | Plan grammar & extractor | **IN PROGRESS** | the harness can parse and lint the new plan format |
-| I02 | Executable contracts & verify gate | outlined | a slice is gated by a planner-authored, non-vacuous test the harness runs. **Context banked for its review:** `notes/verify-block-design.{svg,md}` + `notes/i02-handoff-verify-gate.md` (grounded @ 0e08ece; re-review when I01 lands) |
+| I02 | Executable contracts & verify gate | outlined | a slice is gated by a planner-authored, non-vacuous test the harness runs. **Context banked for its review:** `notes/verify-block-design.{svg,md}` + `notes/i02-handoff-verify-gate.md` (§§1–5 grounded @ 0e08ece, §6 re-grounded @ 2f6b8c1; re-review when I01 lands) |
 | I03 | Per-slice loop, tracker & eval | outlined | controller runs the per-slice loop; code ticks the tracker; three-level eval |
-| I04 | Evidence ledger, pinned invariants, retry hygiene | outlined | the loop carries evidence, pins governance, retries clean, never wedges (includes the ledger **parser**, moved here from I01 — build it beside its consumers) |
+| I04 | Evidence ledger, pinned invariants, retry hygiene | outlined | the loop carries evidence, pins governance, retries clean, never wedges (includes the ledger **parser**, moved here from I01 — build it beside its consumers; and the **pinned-invariants injection**, drafted as an I01 slice on 2026-10-06 and moved back here as scope creep — contracts banked in `notes/role-prompts-conformance.md`, ledger E79) |
 | I05 | Rolling-wave, ASK#, autonomy, chat orchestration | outlined | the roadmap closes across runs; the ceremony/scope/draft work lands here, revised |
 | I06 | Telemetry & distillation (parallel deferred) | outlined | runs are measured and distilled; slice-DAG parallelism deferred |
 

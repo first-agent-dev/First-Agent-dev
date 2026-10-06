@@ -100,3 +100,37 @@ eval ledger wiring → I04. Rationale: `notes/decisions-qa-2026-10-06.md`.
   vocabulary, the controller's slice vocabulary via `validate_slice_ids`, and the eval's verdict
   vocabulary. Whoever implements this must disambiguate all three, not two.
 - L2 verdicts cite **test ids**, not diff hunks — hunks rot on rebase.
+
+---
+
+## Banked for I04 — pinned invariants re-injected on every call
+
+Drafted on 2026-10-06 as I01/SLICE5 from bridge R2, then moved out: the roadmap has scheduled
+"pinned invariants" under I04 since it was written, the work edits prompt composition rather than
+plan grammar, and it consumed `contract_class` before I02 — that accessor's first named consumer —
+exists, which is exactly the inversion SD-B forbids (ledger E79). Nothing below is lost; it is
+banked so I04's planner starts from it instead of rediscovering it.
+
+**Intent.** The contracts the coder must not violate survive context compaction, because they are
+re-injected rather than remembered.
+
+**Contracts, as drafted** (renumber when I04 is planned — these ids are released back to the pool):
+
+- `[FUNCTIONAL]` a pinned-invariants block is registered in `INJECTION_SPECS` and appears in every
+  composed coder prompt, behind a `FeatureFlags` field.
+- `[CONSTRAINT]` the assembled block is capped at roughly 1.5K tokens; past the cap the oldest
+  non-`CONSTRAINT` entries drop first and each drop is logged. Catches: an insurance mechanism
+  quietly eating the context budget it exists to protect.
+- `[PRESERVATION]` the cacheable prompt prefix is byte-identical before and after, proven by a
+  golden-file snapshot rather than by inspection. Catches: a silent prompt-cache miss that
+  surfaces only as a cost regression weeks later.
+
+**Two dependencies I04 must honour, both discovered after the slice was drafted:**
+
+1. The block is populated with the current slice's `CONSTRAINT`-class contracts **verbatim**. That
+   requires contract text to be the *whole* entry, not its first line — I01/CT18 now delivers
+   that, but at 2f6b8c1 `_section_contracts` truncates at the first line and the rationale that
+   makes a constraint reviewable is exactly what would have been dropped (ledger E73). Do not
+   build this before I01 lands.
+2. `contract_class` must have shipped **and** have a live consumer in I02 first. If I04 is the
+   accessor's only reader, SD-B says the accessor should not have been built in I01.

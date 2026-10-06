@@ -268,3 +268,66 @@ E69 DECIDED (operator) The research note is corrected **in place** rather than s
     the source. E15's citation is swapped 2410.21819 → 2404.13076 — the cited paper attributes
     the bias to perplexity, not self-generation, so it does not support the different-family
     rule. E14's SWE-Gate 34.3% is exact; no action.  [ask_user 2026-10-06]
+E70 GAP  Adversarial review of I01 found **CT4c is false as written and false by construction**.
+    It claims the flat `.commands` equals the concatenation of the slices' commands. Measured on
+    `increment-01` with the 2f6b8c1 extractor: flat **10**, concatenation **12**. Cause:
+    `_ordered_unique` (`plan_ids.py:169`) dedupes globally at `:280` but per-section at `:249`,
+    and SLICE1/SLICE2 share two identical verify commands. A PRESERVATION contract that misstates
+    current behaviour is the worst kind — it instructs the implementer to *change* behaviour to
+    satisfy a wrong spec. Restated as the true superset relation, with the measurement inline and
+    an explicit ban on asserting equality.  [measured 2026-10-06 @ 2f6b8c1]
+E71 GAP  CT4b ("a pre-heading verify block goes to a plan-level bucket") had **no data structure
+    to land in**. `PlanIds` has no plan-level command field and `SliceRecord.slice_id` is typed
+    `str`, so no sentinel record can key one; `_slice_sections` (`:198`) deliberately excludes the
+    prologue. Confirmed: a pre-heading block reaches the flat field and **no** `SliceRecord`.
+    Closed by specifying `PlanIds.plan_commands` in schema §7 and ordering it before the
+    accessors in SLICE2.  [measured 2026-10-06 @ 2f6b8c1]
+E72 GAP  CT16's "same or shallower level" was under-specified in a way that invites a latent bug.
+    `_SLICE_RE` is `^#{2,4}\s+SLICE(\d+[a-z]?)\s*:` (`:58`) and all three depths parse, so the
+    terminator must be computed **relative to each slice's own matched heading depth**; a
+    hardcoded `^#{1,2}` is wrong for a `###` slice. Fixed in CT16 and in schema §4.
+    [measured 2026-10-06 @ 2f6b8c1]
+E73 GAP  Three-way interface mismatch across SLICE1b/SLICE2/SLICE5. `_section_contracts` (`:234`)
+    takes contract text as `line.split("]:", 1)[1]` — **first line only** — while CT23 requires the
+    `CONSTRAINT` rationale on a continuation line and the pinned-invariants slice required
+    `CONSTRAINT` text **verbatim**. Confirmed by extraction: CT23's own text truncates before its
+    "Catches:" sentence. Closed by making the contract text the whole entry (CT18, schema §4);
+    id and class stay first-line-only.  [measured 2026-10-06 @ 2f6b8c1]
+E74 DECIDED CT17's terminator is the **indentation rule** — the `CONTRACTS:` block ends at the
+    first non-blank line beginning at column 0 — replacing the enumerated allowlist
+    `^(TESTS|STEPS|DEPS|INTENT):` + fence + `- [ ]` + heading. The allowlist was already
+    incomplete: the `SHIPPED:` field added to SLICE1 this session is not in it, so the block would
+    have silently swallowed it. One total rule instead of a list that must be maintained.
+E75 GAP  I01 destroyed the one datum I02 is specified to key on. `_test_paths` (`:212`) stops at
+    the first `(`, discarding the `(NEW — …)` annotation, while `notes/i02-handoff-verify-gate.md`
+    §2 states I02's fail-before filter keys on exactly that marker and names no other source for
+    it. Closed by CT33: `SliceRecord.tests_note` preserves the string verbatim; I01 assigns it no
+    meaning, so the handoff's open question 2 (prose vs machine token) stays I02's to answer but
+    becomes answerable.  [verified @ 2f6b8c1]
+E76 GAP  Schema §4 required `CT#` ids unique per increment and **nothing enforced it**; CT10
+    covers references to undefined ids, not duplicate declarations, and `contract_class`'s
+    behaviour on a duplicate was undefined. Closed by pre-check CT34 (FAIL, naming both
+    `file:line`s) plus a determinism rule in CT19 — first declaration in document order wins — so
+    a malformed plan degrades into a reported violation, never a parse-order-dependent answer.
+E77 DECIDED (plan) SLICE1b is split into **SLICE1b** (schema §4 + both planning skills) and
+    **SLICE1c** (the planner prompt). The single slice edited `src/fa/inner_loop/prompt.py` in
+    STEP4 while its `TESTS:` and verify block covered only `tests/test_skill_grammar_emit.py` and
+    `ruff check knowledge/skills` — the code change was unverified, and its exit check
+    (`grep -c SLICE prompt.py` non-zero) is satisfied by a comment. A slice whose verify block does
+    not cover the files its steps edit is not a slice. Supersedes the SLICE1b of E58.
+    supersedes: E58 (slice boundary only; the SD-A ordering it records stands)
+E78 DECIDED (plan) Prose-assertion exits ("each sentence is present in both skills") are replaced
+    by an **executable oracle**: schema §4 carries a fenced ```example increment, each planning
+    skill a fenced ```skeleton, and the tests parse those fences with `extract_plan_ids` and
+    compare against the documented result. Rationale: a `grep` for a sentence proves the sentence
+    was pasted, not that the grammar it describes is the grammar the parser implements, and it
+    goes stale on the first reword. The duplicated authoring prose in the two skills collapses
+    into one §4 subsection, "Authoring guidance (not checked)", that both skills link to.
+E79 DECIDED (operator, self-correction) The pinned-invariants slice is **moved out of I01 to I04**,
+    where this roadmap has scheduled "pinned invariants" since it was written. Accepting bridge R2
+    as an I01 slice was scope creep: it edits prompt composition rather than plan grammar, it fails
+    I01's own "Shippable when", and it consumed `contract_class` before I02 — the accessor's first
+    named consumer — exists, which is the inversion SD-B was created to prevent. Its three
+    contracts are banked verbatim in `notes/role-prompts-conformance.md`. Moving it also removed
+    the last `DEPS:` defect in I01: the slice declared `DEPS: SLICE1` while consuming SLICE2's
+    output.  supersedes: E57

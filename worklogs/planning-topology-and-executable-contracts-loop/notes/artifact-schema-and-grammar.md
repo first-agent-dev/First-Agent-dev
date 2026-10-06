@@ -109,7 +109,7 @@ Token rules — the harness parses exactly this; write exactly this:
   the path. A step tagged `(auto)` is executed by the harness directly.
 - `DEPS:` lists upstream slices; the pre-check rejects cycles and undefined references.
 - `CT#` IDs match `\bCT(\d+[a-z]?)\b` and are unique per increment (letter suffixes
-  allowed, hyphens not).
+  allowed, hyphens not). Uniqueness is enforced by pre-check CT34, not left to care.
 - `STEPS:` appears only as the mode line; steps are `- [ ] STEP<n>:` items. There is no
   separate list header.
 - Sub-steps are prose: indented continuations and `- (a)` lists under a `STEP#` are not
@@ -118,19 +118,27 @@ Token rules — the harness parses exactly this; write exactly this:
   as a real command.
 
 **Section boundaries (normative — the parser implements these, it does not invent them):**
-- A slice section runs from its `## SLICE<n>:` heading to the line before the **next heading of
-  the same or shallower level**, not to the next `SLICE` heading. The last slice of an
-  increment therefore does not absorb what follows it.
+- A slice section runs from its `## SLICE<n>:` heading to the line before the next heading
+  whose depth is **less than or equal to the depth of that slice's own heading** — not to the
+  next `SLICE` heading. The last slice of an increment therefore does not absorb what follows
+  it. The depth is read from the heading that matched: the slice pattern admits `##` through
+  `####` (`plan_ids.py:58`), so a hardcoded `^#{1,2}` terminator is wrong for a `###` slice.
 - Increment-level `##` sections (definition of done, out of scope, hand-off) **may** follow the
   last slice and are not part of any slice.
 - A contract is **declared** only inside the `CONTRACTS:` block. The block runs from the
-  `CONTRACTS:` line to the first later line matching `^(TESTS|STEPS|DEPS|INTENT):`, a fence, a
-  `- [ ]` item, or a heading. Indented continuation lines stay inside the block.
-- One entry declares **one** contract. Its id and `[CLASS]` are read from the **entry's first
-  line only**; text on continuation lines is prose. A `CT#` written anywhere else is a
-  *reference*, never a declaration.
-- Every `CONSTRAINT`-class contract carries one rationale line naming the wrong implementation
-  it catches. It is the only rationale permitted inside a plan body (§1), because it is an
+  `CONTRACTS:` line to the first later **non-blank line that begins at column 0**, or to the end
+  of the section. Indentation is the only terminator. Do not enumerate the field names that may
+  follow (`TESTS:`, `STEPS:`, a fence, a `- [ ]` item): an allowlist silently swallows the next
+  column-0 field someone adds — `SHIPPED:` already exists — whereas the indentation rule is
+  total.
+- One entry declares **one** contract. An entry begins at an indented line matching
+  `CT<n>[a-z]? [[CLASS]]:` and continues through every subsequent line indented more deeply.
+  Its id and `[CLASS]` are read from the **entry's first line only**, but its **text is the
+  whole entry**, continuation lines joined with single spaces — splitting on the first `]:` and
+  keeping one line discards the rationale that `CONSTRAINT` entries are required to carry. A
+  `CT#` written anywhere else is a *reference*, never a declaration.
+- Every `CONSTRAINT`-class contract carries a rationale naming the wrong implementation
+  it catches, on the entry's continuation lines. It is the only rationale permitted inside a plan body (§1), because it is an
   acceptance criterion in prose form, not history.
 
 **The `## Grounding` block (prose, never parsed).** A planner-authored increment may end with a
@@ -202,8 +210,14 @@ class SliceRecord:
     contracts:  tuple[tuple[str, str, str], ...]   # (ct_id, cls, text)
     test_paths: tuple[str, ...]
     steps_mode: str                                 # "prescriptive" | "outcome"
-    commands:   tuple[str, ...]                     # this slice's ```verify commands
-    section:    str                                 # raw text block (heading → next heading)
+    commands:   tuple[str, ...]                     # this slice's ```verify commands,
+                                                    #   document order, deduped WITHIN the slice
+    tests_note: str                                 # the trailing `(NEW — …)` annotation on the
+                                                    #   TESTS: line, preserved verbatim; I01
+                                                    #   assigns it no meaning (consumer: I02)
+    section:    str                                 # raw text: this heading through the line
+                                                    #   before the next heading whose depth is
+                                                    #   ≤ this heading's own depth
 
 @dataclass(frozen=True)
 class PlanIds:
@@ -211,7 +225,14 @@ class PlanIds:
     gaps:   tuple[str, ...] = ()        # retained
     contracts: tuple[str, ...] = ()     # retained (flat CT# IDs)
     tests:  tuple[str, ...] = ()        # retained
-    commands: tuple[str, ...] = ()      # retained (flat = concat of all slices')
+    commands: tuple[str, ...] = ()      # retained: EVERY verify command in the document,
+                                        #   document order, deduped GLOBALLY. A superset of —
+                                        #   not equal to — the concatenation of the slices'
+                                        #   commands, which dedupe per slice. Measured on
+                                        #   increment-01 at 2f6b8c1: flat 10, concat 12.
+    plan_commands: tuple[str, ...] = ()  # NEW — verify blocks before the first slice heading;
+                                        #   returned by commands_for(None) so they belong to
+                                        #   someone instead of only to the flat field
     slice_records: tuple[SliceRecord, ...] = ()   # NEW — backs the accessors below
 ```
 
@@ -222,9 +243,13 @@ site that will read it. A name with no named consumer is not added** (precedent:
 ```python
 plan = extract_plan_ids(increment_text)
 plan.commands_for("SLICE2")  # consumer: I02 verify gate — that slice's verify commands only
+plan.commands_for(None)  # consumer: I02 — the pre-slice prologue bucket (PlanIds.plan_commands)
 plan.section("SLICE2")  # consumer: I03 coder brief — the slice's text block, scoped
 plan.contract_class("CT3")  # consumer: I02 — CONSTRAINT-first ordering of verify and findings
 plan.tests_for("SLICE2")  # consumer: I02 — baseline selection; TESTS:-not-in-diff assertion
+# SliceRecord.tests_note  # consumer: I02 — the preserved `(NEW — …)` text its fail-before
+#                         #   filter keys on. I01 preserves the string and defines no
+#                         #   semantics for it; I02 decides what NEW licenses.
 # NOTE: SliceRecord.test_paths holds PATHS; the retained
 # flat PlanIds.tests holds T# IDs. Same word, different
 # meaning — do not conflate them.
@@ -236,6 +261,12 @@ precheck(increment_text)  # consumer: I01 SLICE3 + the I03 admission step; pure 
 never stops at the first failure. `parse_ledger(ledger_text)` is specified here but
 **implemented in I04**, beside its consumers. All functions pure, total (never raise on malformed input), stdlib-only — the
 existing `plan_ids.py` contract, extended.
+
+**Identifier uniqueness is enforced, not merely stated.** Every `CT#` is declared exactly once
+per increment. A duplicate declaration is a pre-check FAILURE naming both `file:line`s (I01
+SLICE3/CT34). `contract_class` stays total and deterministic regardless — first declaration in
+document order wins — so a malformed plan degrades into a reported violation, never into an
+answer that depends on parse order.
 
 **Open grammar decision (deferred to I02):** whether each `CT#` names the specific test
 that proves it (`CT3 [CONSTRAINT] (test: test_identical_401): …`). I01 enforces only the

@@ -34,8 +34,11 @@ Companion artifacts:
 - `commands_for("SLICEn")` — the slice's verify commands only (CT3).
 - `section("SLICEn")` — the coder's scoped brief (CT4); I02 runs commands in the slice's
   scope, the coder never sees the rest of the plan.
-- `TESTS: <path> (NEW)` — the marker I02's fail-before filter keys on. **It is prose today;
-  I02 must decide whether to make it machine-parseable** (open Q).
+- `TESTS: <path> (NEW)` — the marker I02's fail-before filter keys on. **At 2f6b8c1 it does not
+  reach I02 at all**: `_test_paths` (`plan_ids.py:212`) stops at the first `(` and discards the
+  annotation, so this row described an interface that did not exist. I01/CT33 now preserves the
+  raw string as `SliceRecord.tests_note` and deliberately gives it **no** meaning. Open question
+  2 below is unchanged in substance and now has data to decide on (ledger E75).
 - `SliceRecord.test_paths` — per-slice test paths (renamed from `.tests` to avoid colliding
   with the flat `PlanIds.tests` `T#`-ID field).
 
@@ -53,7 +56,11 @@ advisory; `ERROR` is never PASS. Two postures: pre-check forgiving, verify gate 
    fail-before phase (fine-grained), while the pass-after phase may run the slice's commands
    as written.
 2. **The `NEW` marker.** Prose `(NEW)` vs a machine-readable token on `TESTS:`. Prose is
-   forgiving for authors; a token is checkable. The tension is exactly the pre-check's.
+   forgiving for authors; a token is checkable. The tension is exactly the pre-check's. I01
+   delivers the raw annotation in `SliceRecord.tests_note`; I02 chooses the semantics. Note the
+   third option the two-sided framing hides: derive NEW-ness from the repository — a path absent
+   from `HEAD` *is* new — and treat the annotation as an authoring hint the pre-check cross-checks
+   rather than as the source of truth. That removes the marker from the trust path entirely.
 3. **Baseline storage.** Must be ephemeral (session-log root), never in the project folder
    (schema rule). Since it only needs to live within a run, decide the exact path + lifetime.
 4. **Result shape + home.** A frozen three-state dataclass; where it lives (new
