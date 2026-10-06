@@ -3,7 +3,7 @@ Increment-ID: RM-planning-topology-I01
 Roadmap-ID: RM-planning-topology
 status: IN PROGRESS
 slices: 6
-shipped: SLICE1, SLICE1b, SLICE1c
+shipped: SLICE1, SLICE1b, SLICE1c, SLICE2
 ---
 
 # INCREMENT I01: Plan grammar & extractor
@@ -194,6 +194,7 @@ uv run ruff check src/fa/inner_loop/prompt.py tests/test_planner_emits_schema4.p
 ## SLICE2: Per-slice accessors over the records
 STEPS: prescriptive
 DEPS: SLICE1b
+SHIPPED: pending-commit
 INTENT: the parser is conformed to the SLICE1b specification — the §4 example is the oracle —
   and exposes the read API I02 consumes, over `slice_records`.
 CONTRACTS:
@@ -254,23 +255,23 @@ TESTS: tests/test_plan_ids.py
 uv run pytest tests/test_plan_ids.py -q
 uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_ids.py
 ```
-- [ ] STEP1: Change the section span in `_slice_sections` (`src/fa/inner_loop/plan_ids.py:198`)
+- [x] STEP1: Change the section span in `_slice_sections` (`src/fa/inner_loop/plan_ids.py:198`)
       to end at the next heading of depth ≤ the slice heading's own depth, taking the depth from
       the match. (exit: CT16 green against the schema §4 example, and this increment's last
       slice no longer absorbs the increment-level sections.)
-- [ ] STEP2: Restrict `_section_contracts` (`:234`) to the `CONTRACTS:` block by the
+- [x] STEP2: Restrict `_section_contracts` (`:234`) to the `CONTRACTS:` block by the
       indentation rule, group each entry with its continuation lines, read id and class from the
       first line, and join the entry for the text. (exit: CT17 and CT18 green — SLICE1's
       contracts no longer include a `CONSTRAINT`-classed `CT3`, and CT23's "Catches:" sentence
       survives into `contract.text`.)
-- [ ] STEP3: Add `PlanIds.plan_commands` and populate it from ```verify blocks outside every
+- [x] STEP3: Add `PlanIds.plan_commands` and populate it from ```verify blocks outside every
       slice section (document order, de-duplicated); make `commands_for(None)` return it.
       (exit: CT4b green, and the CT4c set identity holds on this file.)
-- [ ] STEP4: Implement `commands_for(slice_id)` and `section(slice_id)` over `slice_records`.
+- [x] STEP4: Implement `commands_for(slice_id)` and `section(slice_id)` over `slice_records`.
       An unknown id returns `()` / `""`. (exit: CT3/CT4 green.)
-- [ ] STEP5: Pin the flat-field behaviour with a test that asserts the documented superset
+- [x] STEP5: Pin the flat-field behaviour with a test that asserts the documented superset
       relation and asserts the two are **not** equal on this increment file. (exit: CT4c green.)
-- [ ] STEP6: Implement `contract_class(contract_id)`, `tests_for(slice_id)`, and carry
+- [x] STEP6: Implement `contract_class(contract_id)`, `tests_for(slice_id)`, and carry
       `tests_note` onto `SliceRecord`. (exit: CT19, CT20 and CT33 green.)
 
 ---

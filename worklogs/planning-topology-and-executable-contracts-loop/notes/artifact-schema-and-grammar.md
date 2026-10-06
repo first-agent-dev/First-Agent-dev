@@ -343,9 +343,11 @@ class PlanIds:
                                         #   not equal to — the concatenation of the slices'
                                         #   commands, which dedupe per slice. Measured on
                                         #   increment-01 at 2f6b8c1: flat 10, concat 12.
-    plan_commands: tuple[str, ...] = ()  # NEW — verify blocks before the first slice heading;
-                                        #   returned by commands_for(None) so they belong to
-                                        #   someone instead of only to the flat field
+    plan_commands: tuple[str, ...] = ()  # NEW — verify blocks owned by no slice: the prologue,
+                                        #   and any increment-level section after the last
+                                        #   slice (Q35). Returned by commands_for(None), so
+                                        #   ownership is total and nothing is reachable from
+                                        #   the flat field alone
     slice_records: tuple[SliceRecord, ...] = ()   # NEW — backs the accessors below
 ```
 
@@ -356,7 +358,7 @@ site that will read it. A name with no named consumer is not added** (precedent:
 ```python
 plan = extract_plan_ids(increment_text)
 plan.commands_for("SLICE2")  # consumer: I02 verify gate — that slice's verify commands only
-plan.commands_for(None)  # consumer: I02 — the pre-slice prologue bucket (PlanIds.plan_commands)
+plan.commands_for(None)  # consumer: I02 — the plan-level bucket: every command no slice owns
 plan.section("SLICE2")  # consumer: I03 coder brief — the slice's text block, scoped
 plan.contract_class("CT3")  # consumer: I02 — CONSTRAINT-first ordering of verify and findings
 plan.tests_for("SLICE2")  # consumer: I02 — baseline selection; TESTS:-not-in-diff assertion

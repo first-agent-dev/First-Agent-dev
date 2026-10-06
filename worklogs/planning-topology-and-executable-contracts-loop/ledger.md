@@ -418,3 +418,50 @@ E87 DECISION  Q35 — `plan_commands` holds every command **unowned by a slice**
     command is dropped, duplicated into the wrong slice, or misattributed.
     Measured at d2faea4: zero post-last-slice verify blocks in this file, so present behaviour
     is unchanged and the broadening is purely future-proofing.  [operator-confirmed 2026-10-06]
+E88 FACT  I01/SLICE2 implemented: the parser now conforms to the SLICE1b specification and
+    exposes the read API I02 consumes. `_slice_spans` replaces `_slice_sections` and ends a
+    section at the first later heading of depth ≤ the slice's own, reading the depth from the
+    match (CT16); `_contracts_block` + `_section_contracts` scope declaration to the
+    `CONTRACTS:` block by indentation alone and group each entry with its continuation lines
+    (CT17/CT18); `commands_for`, `section`, `tests_for` and `contract_class` land on `PlanIds`
+    (CT3/CT4/CT19/CT20); `plan_commands` and `SliceRecord.tests_note` are new fields
+    (CT4b/CT33). Red-before was honest: 18 of the 20 new tests failed, and the two that passed
+    were the preservation cases, which is what preservation means.
+    The four `xfail(strict=True)` markers SLICE1b planted in `tests/test_skill_grammar_emit.py`
+    reported XPASS the moment this landed and failed the file, exactly as designed; they were
+    removed, not re-marked. Measured: 4079 passed, 3 failed — the E83 baseline trio, unchanged.
+E89 FACT  Targeted mutation sweep over `src/fa/inner_loop/plan_ids.py`, mutmut 3.6.0, test
+    selection `test_plan_ids.py` + `test_skill_grammar_emit.py` + `test_plan_reference.py`.
+    First sweep: 274 mutants, 44 survived. Final: 226 mutants, **225 killed, 1 survived**.
+    The sweep paid for itself three times over, and not by demanding more tests:
+      * Six survivors were dead initialisers in `_section_contracts` and two no-op guards in
+        `_unowned_commands`. The answer was to **delete the code**, not to assert on it — a
+        two-pass entry grouping has no running scalars to initialise, and
+        `_extract_commands("")` already returns `()`.
+      * `_slice_sections` survived as "no tests" because SLICE2 had left it **dead**: every
+        caller moved to `_slice_spans`. Removed.
+      * Four `stop`-index mutants in `_section_contracts` were NOT equivalent, contrary to first
+        reading: `stop` is what keeps a *more deeply indented* `CT<n> [CLASS]:` line from being
+        both its own declaration and continuation text of the entry above. Killing them needed
+        a fixture with a deeper entry in the middle **and** one at the end — with fewer, the
+        off-by-one indices coincide and the mutant is invisible.
+      * `canonical_slice_id` had **no direct test anywhere in `tests/`** (15 survivors). SLICE2
+        made that matter: `PlanIds._record` canonicalises, so the accessors are now its first
+        in-module caller. Pinned.
+    The one accepted survivor is equivalent: `extract_plan_id`'s `text or ""` → `text or "XXXX"`
+    — `_PLAN_ID_RE` cannot match either, so no observable behaviour differs. It is in
+    pre-existing code outside this slice, so no `# pragma: no mutate` was added to code SLICE2
+    does not own.  [measured 2026-10-06]
+E90 FACT  The repo pins mutmut to 3.6.0 and enforces it: installing 3.8.0 for the sweep turned
+    `test_slice_mutmut.py` from 21 skipped into a hard failure reading
+    `tool_version_mismatch: expected 'mutmut, version 3.6.0', got '3.8.0'`. Proven to be the
+    cause rather than a SLICE2 regression by stashing all three changed files and reproducing
+    the failure. Downgrading to 3.6.0 cleared it and, as a side effect, that suite now *runs*
+    in this sandbox instead of skipping — 4079 passed against E83's 4008. Recorded because the
+    next operator to reach for a mutation sweep will install the newest mutmut by reflex.
+E91 FACT  A grammar rule SLICE2 had to settle and the schema does not state: **a blank line
+    inside a `CONTRACTS:` block does not terminate an entry** — only indentation does (CT17).
+    Visual spacing between clauses is therefore legal. Pinned by
+    `test_a_blank_line_does_not_truncate_an_entry` so the choice cannot drift silently.
+    Candidate for a one-line addition to schema §4 if the operator wants it written rather than
+    merely tested; not escalated to a Q# because it binds no consumer and no contract.

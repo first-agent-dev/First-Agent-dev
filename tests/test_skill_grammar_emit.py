@@ -5,12 +5,13 @@ the prompt is primary, the parser conforms). A specification nobody can run drif
 from its implementation silently, so §4 carries a worked example and a
 machine-readable expectation, and this module executes them.
 
-Three of the rules §4 states are **not implemented by the parser yet** — they are
-SLICE2's job (CT16 section spans, CT17 declaration scope, CT18 whole-entry text).
-Those assertions are marked ``xfail(strict=True)`` rather than omitted: they encode
-SLICE2's acceptance criteria today, and the moment SLICE2 lands they XPASS, which
-``strict`` turns into a failure demanding the marker be removed. A deleted
-assertion would have gone quiet instead.
+Four of the rules §4 states were not implemented by the parser when this module
+was written — CT16 section spans, CT17 declaration scope, CT18 whole-entry text.
+Those assertions shipped as ``xfail(strict=True)`` rather than being omitted, so
+that they encoded SLICE2's acceptance criteria while it was still unbuilt and
+``strict`` turned the eventual XPASS into a failure demanding the marker come off.
+It worked exactly as intended: SLICE2 landed, the four reported XPASS, and the
+markers were removed here. A deleted assertion would have gone quiet instead.
 """
 
 from __future__ import annotations
@@ -36,8 +37,6 @@ SKILLS = (
     REPO_ROOT / "knowledge" / "skills" / "plan-authoring" / "SKILL.md",
     REPO_ROOT / "knowledge" / "skills" / "feature-planning" / "SKILL.md",
 )
-
-_SLICE2 = "SLICE2 implements this (CT16/CT17/CT18); schema §4 specifies it now."
 
 
 def _marked_block(text: str, name: str) -> str:
@@ -117,7 +116,6 @@ def test_schema4_example_yields_the_documented_commands() -> None:
         assert list(records[slice_id].commands) == commands, slice_id
 
 
-@pytest.mark.xfail(strict=True, reason=_SLICE2)
 def test_schema4_example_declares_contracts_only_inside_the_contracts_block() -> None:
     """CT17/CT18 — a `CT#` in step text is a reference, never a declaration.
 
@@ -130,7 +128,6 @@ def test_schema4_example_declares_contracts_only_inside_the_contracts_block() ->
         assert [cid for cid, _cls, _text in records[slice_id].contracts] == ids, slice_id
 
 
-@pytest.mark.xfail(strict=True, reason=_SLICE2)
 def test_schema4_example_reads_contract_classes_from_the_entry_first_line() -> None:
     """CT18 — id and class come from the declaring line only."""
     records = _records()
@@ -138,7 +135,6 @@ def test_schema4_example_reads_contract_classes_from_the_entry_first_line() -> N
     assert observed == _expected()["contract_classes"]
 
 
-@pytest.mark.xfail(strict=True, reason=_SLICE2)
 def test_schema4_example_keeps_the_whole_contract_entry_as_its_text() -> None:
     """CT18 — a CONSTRAINT's rationale lives on a continuation line and must survive.
 
@@ -151,7 +147,6 @@ def test_schema4_example_keeps_the_whole_contract_entry_as_its_text() -> None:
         assert observed[cid] == text, cid
 
 
-@pytest.mark.xfail(strict=True, reason=_SLICE2)
 def test_schema4_example_section_spans_use_relative_heading_depth() -> None:
     """CT16 — a deeper heading stays inside; a same-or-shallower one ends the slice."""
     records = _records()
@@ -201,9 +196,9 @@ def test_skill_embeds_a_skeleton_block_that_parses(skill: Path) -> None:
     assert ids.slices, f"{skill.parent.name}: skeleton yields no slices"
     for record in ids.slice_records:
         assert record.test_paths, f"{skill.parent.name}/{record.slice_id}: no TESTS: path"
-        assert re.search(
-            r"^STEPS:\s*(prescriptive|outcome)\b", record.section, re.M
-        ), f"{skill.parent.name}/{record.slice_id}: no explicit STEPS: mode"
+        assert re.search(r"^STEPS:\s*(prescriptive|outcome)\b", record.section, re.M), (
+            f"{skill.parent.name}/{record.slice_id}: no explicit STEPS: mode"
+        )
 
 
 @pytest.mark.parametrize("skill", SKILLS, ids=lambda p: p.parent.name)
@@ -211,9 +206,7 @@ def test_skill_no_longer_teaches_the_removed_step_anchor(skill: Path) -> None:
     """SLICE1 deleted the `S#` pattern from the parser; the skills must not still emit it."""
     text = skill.read_text(encoding="utf-8")
     offenders = [
-        line.strip()
-        for line in text.splitlines()
-        if re.search(r"^#{1,6}\s+(Step\s+)?S\d*#?\s*:", line.strip())
+        line.strip() for line in text.splitlines() if re.search(r"^#{1,6}\s+(Step\s+)?S\d*#?\s*:", line.strip())
     ]
     assert not offenders, f"{skill.parent.name} still teaches an S# step heading: {offenders}"
 
@@ -247,12 +240,10 @@ def test_skill_states_the_constraint_rationale_rule(skill: Path) -> None:
     """CT23 — the rule is taught where plans are authored, not only in the schema."""
     text = skill.read_text(encoding="utf-8")
     assert re.search(r"CONSTRAINT", text), f"{skill.parent.name}: no CONSTRAINT class taught"
-    assert re.search(
-        r"rationale", text, re.I
-    ), f"{skill.parent.name}: the CONSTRAINT rationale rule is not stated"
-    assert not _constraint_entries_missing_rationale(
-        _marked_block(text, "PLAN-SKELETON")
-    ), f"{skill.parent.name}: its own skeleton violates the rule it teaches"
+    assert re.search(r"rationale", text, re.I), f"{skill.parent.name}: the CONSTRAINT rationale rule is not stated"
+    assert not _constraint_entries_missing_rationale(_marked_block(text, "PLAN-SKELETON")), (
+        f"{skill.parent.name}: its own skeleton violates the rule it teaches"
+    )
 
 
 # ── CT24: the rest of the ID grammar is untouched ─────────────────────────
