@@ -854,3 +854,45 @@ E116 EVIDENCE  I02 planning readiness assessed, recorded in
     external risk: H6, the S16 proposal to delete `.commands` for having "no consumers" --
     measured today, `commands_for` still has zero production call sites, so that argument is
     correct until I02 becomes the consumer that falsifies it.
+
+E117 CORRECTION  H4 ("where does the verify runner live, and what shape is its result?") was
+    **never an open question**, and raising it was my process error, not a gap in the plans.
+    `roadmap.md:147` already maps the superseded plan's slice **S6** -- "harness runs
+    verification (GAP5/GAP13)" -- onto I02. That slice is
+    `worklogs/implementation-plans/PLAN-slice-ceremony-harness-enforcement.md` §Step S6,
+    line 700, and it specifies the runner in full. I followed the handoff note's open-question
+    list without following the roadmap's own pointer to the parent document. Operator caught
+    it. Lesson for the I02 review: an "open question" inherited from a context bank must be
+    checked against the superseded plan before it is re-asked.
+    What S6 already decided, re-verified at the tip 2026-10-07: the module is
+    `src/fa/inner_loop/verification.py` with `VerificationResult` + `run_verification`
+    (**file still absent**, so it is to be built, not found); the result is typed and carries
+    the real integer `exit_code`; reuse the *policy pieces only* from `run_bash.py:233-250`
+    (`build_scrubbed_env`, now at `tools/bash_env.py:70`, plus the venv-PATH prepend and the
+    timeout/binary-decode handling) and explicitly **not** `_run_subprocess_fallback`, which
+    is private, tool-shaped and carries side effects a verifier must not have (F-5);
+    per-command `bash_timeout_seconds` plus a run-deadline check between commands via
+    `_deadline_exceeded` (`workflow_controller.py:536`); no commands means `skipped: true`
+    and no block (G8); and commands come from the plan, never from model output -- which is
+    exactly what I01's `commands_for` now supplies.
+    Routing was also already settled as **Q10, answered 2026-09-07 option (a)**: a non-zero
+    exit must NOT return `REPAIR_REQUIRED`, because nothing branches on that constant. The
+    harness synthesises an eval report with `route_decision="return_to_coder"`, marked
+    harness-origin, and the `repair_round` cap (`workflow_artifacts.py:277`) governs it so a
+    permanently failing command terminates non-DONE instead of looping.
+    Consequence: **H4 and H5 are answered and H7 is partly answered.** I02 must re-verify and
+    absorb S6, not re-decide it. Remaining plan-shaping decisions: H2, H1, Q43.
+
+E118 DECIDED (operator, 2026-10-07)  The producer+consumer rule (SD-B) is satisfied by a
+    *planned* pair, not only by a shipped one. Its origin, stated by the operator: features
+    were once shipped to production with dead code behind them, presented as working. The
+    rule exists to stop that, so when both the producer and its consumer are scheduled, the
+    rule is formally met and work proceeds. The remaining obligation is not to re-litigate
+    ownership but to **prove at the end, with e2e tests, that every feature works as planned
+    and none was lost** -- which is what `notes/deferred-verification-register.md` exists to
+    make unforgettable.
+    Applied to H6 / S16: the proposal to delete `.commands` for having "no consumers" is not
+    acted on. `commands_for` has zero production call sites today and I02 is its scheduled
+    consumer, so the pair is planned and the accessor stays. supersedes: the framing in E116
+    that treated H6 as an unresolved external risk; it is now a tracked dependency, with
+    row D4 of the register carrying the e2e obligation.

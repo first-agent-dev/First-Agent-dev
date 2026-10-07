@@ -50,14 +50,36 @@ The handoff says "resolve at the I02 review, not before". That review is now.
 
 | id | Question | Why it shapes slices |
 | --- | --- | --- |
-| **H4** | Result shape + home: new `verify.py` vs `plan_ids.py` | `plan_ids.py` is pure, stdlib-only, and a subprocess runner violates that. This decides the module boundary, so it decides the slices. |
+| ~~H4~~ | ~~Result shape + home~~ | **NOT OPEN — already decided.** See §3a. |
 | **H2** | `NEW` semantics: prose marker, machine token, **or derive from `HEAD`** | The third option removes the marker from the trust path entirely and changes what the fail-before filter even reads. |
 | **H1** | Granularity: run each NEW test file alone for fail-before? | Decides whether the gate has one runner or two phases with different invocations. |
 | **Q43** | Are the accessors allowed to be lenient? (new, from the DoD walk) | I02 is the first external caller of `commands_for`/`tests_for`/`section`. If leniency is wrong, it is cheapest to fix before there is a caller. |
 
+### §3a — H4 was never open: the runner was planned in the superseded plan
+
+The roadmap points at it and I missed the pointer: `roadmap.md:147` maps old slice **S6**
+("harness runs verification", GAP5/GAP13) onto **I02**. That slice is
+[`PLAN-slice-ceremony-harness-enforcement.md`](../../implementation-plans/PLAN-slice-ceremony-harness-enforcement.md)
+**§Step S6, line 700**, and it specifies the runner in full. Re-verified against the tip
+2026-10-07:
+
+| Decision already taken in S6 | Status at tip |
+| --- | --- |
+| Module is **`src/fa/inner_loop/verification.py`**, symbols `VerificationResult` + `run_verification` | file **absent** — still to be built |
+| Result is a typed `VerificationResult` carrying the **real integer `exit_code`** | — |
+| Reuse *policy pieces only* from `run_bash.py:233-250`: `build_scrubbed_env` + venv-PATH prepend + timeout/binary-decode | `build_scrubbed_env` lives at `tools/bash_env.py:70`; the block is intact |
+| **Do not** call `_run_subprocess_fallback` (F-5) — module-private, tool-shaped, has side effects a verifier must not have | still private at `tools/run_bash.py:219` |
+| Per-command timeout `bash_timeout_seconds` **and** a run-deadline check between commands | `_deadline_exceeded` at `workflow_controller.py:536` |
+| No commands ⇒ record `skipped: true`, do not block (G8) | — |
+| Commands come from the **plan**, never from model output | this is what I01's `commands_for` now supplies |
+| **Routing (Q10, answered 2026-09-07, option (a))**: a non-zero exit does *not* return `REPAIR_REQUIRED` — nothing branches on it. The harness synthesises an eval report with `route_decision="return_to_coder"`, marked harness-origin; `repair_round`'s cap governs it so a failing command cannot loop forever | `repair_round` at `workflow_artifacts.py:277` |
+
+So **H4 and H5 are answered, and H7 is partly answered**, by a document the roadmap already
+nominated. What I02 must do is *re-verify and absorb* S6, not re-decide it.
+
 ### Blocking implementation only (can be planned around)
 
-**H3** baseline storage path + lifetime · **H5** per-command timeout budget · **H7**
+**H3** baseline storage path + lifetime · ~~**H5** per-command timeout~~ (answered by S6) · **H7**
 regression attribution scope (per-run baseline) · **CT10b** path-existence rule, already
 moved here by Q39 with its three-case truth table drafted in handoff §8.
 
@@ -95,7 +117,7 @@ green with the gate unwired, which is exactly the condition it exists to detect.
 
 ## 6. Recommended next action
 
-Answer the four plan-shaping decisions (H4, H2, H1, Q43) in one pass, then draft I02 against
+Answer the three remaining plan-shaping decisions (H2, H1, Q43) in one pass, then draft I02 against
 the handoff's §3 ritual and §7 live gate. Everything else is already banked and does not need
 rediscovery.
 
