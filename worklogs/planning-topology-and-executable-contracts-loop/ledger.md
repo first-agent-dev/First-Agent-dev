@@ -935,3 +935,41 @@ E120 FACT  A design regression found by reading E119's note: SIMPLIFICATION §4 
     `plan-authoring/SKILL.md:62` requires one per product claim. A `mutation-clearing` skill
     exists. ADR-15 already establishes git-worktree isolation, which is where a harness could
     apply a kill-check without touching the operator's tree.
+
+E121 FACT  Handoff §5 and §6.4 contradict each other, and the tie breaks toward §6.4.
+    §5 forbids "mutation/failure-injection proof in the core (that is the I06
+    verifier-co-evolution story)"; §6.4 mandates "non-vacuity = one scoped mutation run per
+    slice, **as a gate**, with appeal" and cites **E63, an operator decision**. Two facts
+    decide it: there is **no verifier-co-evolution increment** -- I06 in the roadmap is
+    "Telemetry & distillation" -- so §5 defers mutation to an increment that does not exist,
+    i.e. to never; and §5's bullet carries no decision id while §6.4 carries E63.
+    Mutation-as-gate was therefore already sanctioned, and the operator's choice of the
+    declared kill-check is the compliant option, not an exception to a guardrail.
+    Recorded so the next reader does not "restore" §5. supersedes: the §5 bullet forbidding
+    failure-injection in the core.
+
+E122 DECIDED (operator, 2026-10-07)  Test non-vacuity is proven by **executing a declared
+    kill-check**, not by asking whether a test is new. Rejected on the operator's own
+    challenge: deriving NEW-ness from `HEAD` is fragile because `HEAD` moves -- an
+    intermediate commit inside a slice puts the new test into `HEAD` and the vacuity check
+    silently disables itself -- and more fundamentally "is the test new" is a proxy for "is
+    the test bound to the production code", and proxies drift and can be gamed. The
+    kill-check asks the real question directly, works on pre-existing tests, needs no git
+    archaeology, and catches a coder that weakens a test.
+    Design drafted in `notes/i02-slice-verification-design.md`, for module
+    `src/fa/inner_loop/slice_verification.py` (the operator's `slice-verification.py` is not
+    an importable Python name; S6's bare `verification.py` is too broad a bucket).
+    Two mechanisms were **executed before being recommended**, not asserted. (1) A `kill:`
+    directive written as an indented continuation under its contract rides inside the
+    contract body through the shipped parser: all four fields extract with a strict regex,
+    `commands` and `test_paths` are unaffected, and `precheck` returns ok=True with zero
+    diagnostics -- so **I01 needs no change** and stays closed. (2) An AST `remove-call`
+    transformer deletes the producer call and leaves the rest of the file intact, and its
+    `hits` counter separates `PRODUCER_ABSENT` (hits==0, the feature was never wired) from
+    `VACUOUS` (hits==1 but the test still passes, the test is weak) -- the distinction that
+    answers the operator's founding failure mode of dead code shipped as a working feature.
+    Deliberately NOT merged with E63's generated-mutant sweep: that is tool-generated,
+    minutes per slice, and says "some mutant survived somewhere"; a declared kill-check is
+    planner-authored, one extra test run per contract, and says "**this** producer is not
+    bound to **this** test". Complementary, not alternatives. Open forks for review: F1
+    grammar placement, F2 operator set, F3 appeal on VACUOUS, F4 FUNCTIONAL-only scope.
