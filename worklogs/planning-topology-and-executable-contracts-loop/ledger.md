@@ -695,3 +695,23 @@ E109 EVIDENCE  SLICE3b red-before-green: 9 failures before implementation, 60 te
     still fails if the parser drops a slice.
     Drift corpus extended to nine files. I01 now stands at 7 slices (the ceiling), 40
     contracts, and pre-checks with zero failures and one warning — its own CT38.
+
+E110 EVIDENCE  I01/SLICE4 STEP2 — the human migration note for the `S#` → `SLICE#` rename
+    ships at `notes/migration-s-to-slice.md`. It names the three conditions the roadmap
+    requires for a zero-deprecation removal, and all three were **re-measured** rather than
+    restated. (1) No live consumers: the extractor's authoring glob
+    `worklogs/*/increments/increment-*.md` contains zero documents using the old anchors.
+    (2) Inert corpus: 31 documents repo-wide still carry `## S<n>:` or `### Step S<n>`, and
+    feeding every one to `extract_plan_ids` yields **0 with a non-empty `.slices`** — E24's
+    "accepted silent no-op" is confirmed by execution, not assumed. (3) The note itself.
+    Two corrections the measurement forced, which restating the roadmap would have hidden:
+    the roadmap calls the corpus "archived", but only 16 of the 31 are under
+    `worklogs/archive/`; the other 15 sit in `implementation-plans/`, `reviews/`,
+    `pr-notes/`, `knowledge/research/` and `HANDOFF.md`. The condition still holds because
+    what it needs is **inertness**, not archival — but the word was load-bearing and wrong.
+    And of the 32 `implementation-plans/` documents the totality tests already feed to the
+    parser, exactly one (`PLAN-complexity-aware-execution-chat-role.md`) emits pre-check
+    failures: 9 × `heading-near-miss`, which is CT26 correctly catching a pre-grammar
+    document. The note records it as expected so nobody "fixes" a historical plan.
+    Doc-links gate unchanged at its 46-link expected-red baseline, measured with and
+    without the new file by stash.
