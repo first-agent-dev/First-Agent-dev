@@ -527,3 +527,84 @@ E95 DECISION  Q39 — CT10b (WARN on a `verify` command naming a non-existent pa
     work, both add a seam whose only purpose is to host a check that should not run here.
     `precheck` therefore stays a single pure stdlib-only function. SLICE3 drops to 8 contracts
     and 5 steps.
+
+E96 DECISION  CT26 severity was never stated. Fixed as **FAIL**. The class convention does not
+    decide it — CT25/CT26/CT27 are all `[FUNCTIONAL]` and CT27 says WARN explicitly, so the
+    contract text is the authority and CT26's was silent. FAIL because a near-miss heading is
+    the same failure class as CT35, not a cosmetic one: `## SLICE 1:` declares no slice, so
+    every contract, step and test path under it is absent from the plan the harness gates
+    against. There is nothing downstream to catch it, because there is nothing downstream.
+    The matching regex is also made case-insensitive, which the plan already required of it
+    implicitly: STEP5 lists "a lower-case heading" as a drift mode the corpus must cover, and
+    the case-sensitive pattern as written in CT26 does not match one.
+
+E97 DECISION  CT35 suppresses CT27 for the ids it claims. Measured on the corpus: a contract
+    lost to a margin wrap was reported twice — FAIL `contract-declaration-lost` at the broken
+    block, and WARN `contract-reference-undeclared` at an earlier prose mention. The warning
+    is both redundant and the misleading one of the pair, since it points at a sentence rather
+    than at the block that ate the declaration. One defect, one diagnostic, at the line the
+    operator must edit.
+
+E98 CORRECTION  STEP5's drafted corpus listed seven drift modes; one was dropped and inverted.
+    "A slice followed by an increment-level heading" was a defect when SLICE3 was planned and
+    stopped being one when CT16 shipped in SLICE2 — the parser now ends a slice section at a
+    later heading of depth ≤ its own, which is the mandated shape. A corpus entry for it would
+    have had to assert a diagnostic against correct grammar. It is now a positive assertion
+    instead (`test_a_trailing_increment_section_is_not_a_violation`), so the lint is pinned
+    not to re-flag what SLICE2 legalised. Corpus ships six files.
+
+E99 EVIDENCE  SLICE3 implemented red-before-green. `tests/test_plan_precheck.py` was written
+    first and failed to collect (`ImportError: cannot import name 'precheck'`), then 42 tests
+    green. Full suite **4123P / 3F / 12S / 1X**; the three failures are the E19 baseline trio
+    and are unchanged. Rules ship under stable mnemonic ids — `slice-without-tests`,
+    `step-without-exit`, `deps-undefined-slice`, `deps-cycle`, `heading-near-miss`,
+    `contract-reference-undeclared`, `contract-declared-twice`, `contract-declaration-lost` —
+    not `CT#`. Contract ids renumber when an increment is re-planned; a rule id ends up in
+    operator muscle memory, commit messages and suppressions, so it has to outlive the plan
+    that introduced it. The owning CT is named in each rule function's docstring.
+    The live increment artifact pre-checks clean (0 FAIL, 0 WARN), which the increment DoD
+    requires and `TestAgainstTheLiveIncrement` asserts.
+
+E100 EVIDENCE  Mutation sweep on `plan_ids.py`, mutmut 3.6.0, three rounds: 44 survivors → 17
+    → **11, all equivalent** (602 mutants, 377 rejected by the type checker, 214 killed of 225
+    viable). The sweep found four real gaps the hand-written suite missed — a `continue` that
+    could become a `break` in three separate scans, and `_line_at`'s off-by-one reachable only
+    through the slice-anchored rules rather than the line-scanning ones — and they are now
+    pinned in `TestMutationDrivenGaps`.
+    Three survivors were answered by deleting code rather than adding tests, per the standing
+    preference. (1) `_step_blocks` carried a lookahead to the next `STEP#` that could never
+    fire: a step marker is itself unindented, so the "ends at the next unindented line" rule
+    already stops there. (2) The same function re-matched `_STEP_RE` on the block it had just
+    built, giving an unreachable "a step" fallback name; it now returns the id. (3) The
+    hand-rolled colour-map DFS for `DEPS:` cycles was replaced by `graphlib.TopologicalSorter`
+    — stdlib, so purity holds — which also fixed a real defect the DFS had: it reported only
+    one cycle, while the replacement drops the closing edge and retries, so independent cycles
+    are all reported in the single pass CT25 asks for.
+    One mutant was *more correct than the code*: it moved the cycle diagnostic's line from
+    `cycle[0]` to `cycle[1]`. `cycle[i]` precedes `cycle[i+1]`, so `cycle[1]`'s `DEPS:` line is
+    the one declaring the first edge of the printed path — a line the operator can edit to
+    break the cycle. Adopted, and pinned by an exact-render assertion.
+    The 11 remaining survivors are equivalent, two of them verified by execution rather than
+    argument (`_step_blocks` offset base and `_contract_declaration_sites` count base, both
+    differing only if a section begins with a newline — impossible, a section begins at its
+    `#` heading). `extract_plan_id`'s `text or ""` survivor is the one carried over from
+    SLICE2 and sits in code SLICE3 does not own. `pyproject.toml` restored byte-identical
+    (`git diff --quiet` verified); `mutants/` and `.mutmut-cache` removed.
+
+E101 EVIDENCE  The repository's own authoring gate caught a real defect in this slice that
+    ruff, pyrefly and vulture all passed: `FA-AUTHORING-V2-EXPORTS-COMPLETENESS` flagged the
+    public `FAIL`/`WARN` severity constants as missing from `__all__`
+    (`tests/test_s10a_cli_coverage.py::test_s10a_authoring_check_runs_on_a_real_workspace`).
+    Resolved by exporting them: a consumer cannot filter a report without naming a severity,
+    and a bare `"FAIL"` literal at each call site is how a typo becomes a silently empty
+    filter. Recorded because it is evidence the gate earns its place.
+
+E102 DECISION  `PrecheckReport` ships `failures` and `ok` but **no** `warnings`, under SD-B:
+    nothing consumes a warning list yet, and the one-line comprehension is there when I02's
+    gate renderer needs it. Noted so the asymmetry reads as a decision rather than an
+    oversight.
+
+E103 EVIDENCE  SD-C, stated not assumed: I01/SLICE3 ships **no live-path test**, because
+    `precheck` is pure, total and stdlib-only and no composition root reaches it — there is no
+    `drive_session` path to boot. The increment that adds the first live gate is **I02**, spec
+    in `notes/i02-handoff-verify-gate.md` §7. SLICE3's classification is C0 throughout.

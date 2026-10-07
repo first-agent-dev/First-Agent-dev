@@ -1260,3 +1260,58 @@ states that it ships no live test *deliberately* and names I02. Ledger E93.
 here: a dead `_slice_sections` shipped inside the very slice that orphaned it (E89), and the
 per-slice coverage gate no-opping for the whole life of I01 (E52). Neither is visible to a
 fixture test, and both survive an agent reporting the work complete.
+
+---
+
+## Q38 — CT10 and CT27 give the same condition opposite severities
+
+**Question.** Found while pre-reading SLICE3 for implementation, not by a test. CT10 said the
+pre-check FAILS on "a `DEPS:` reference to a `SLICE#`/`CT#` this increment does not define";
+CT27 said an undeclared `CT#` produces "a WARN — never a FAIL". An undeclared `CT#` therefore
+had two contracts prescribing opposite verdicts, and whichever rule happened to run first
+would decide. A coder implementing the plan literally cannot satisfy both.
+
+**Options.** (a) CT10 wins, both FAIL · (b) CT27 wins, both WARN · (split) partition by
+subject: CT10 owns slice ids, CT27 owns contract ids.
+
+**Verdict: ✅ DECIDED — split, operator-confirmed 2026-10-06.** The two ids are not the same
+kind of thing. An undefined `SLICE#` in `DEPS:` is a broken edge in the execution graph: there
+is no topological order, so there is no correct sequence to run and guessing one silently is
+how a slice gets built before what it depends on. That is a FAIL with no legitimate exception.
+An undefined `CT#` is routine — plans cite a neighbouring increment's contract, a superseded
+plan's, a ledger entry's — and a FAIL there would force authors to invent an escape hatch,
+which would then be used for the real misses too. The dangerous sub-case, a declaration lost
+to a column-0 wrap, is already CT35's FAIL, so demoting CT27 costs nothing that matters.
+Ledger E94.
+
+---
+
+## Q39 — CT10b requires filesystem access in a module contracted as pure
+
+**Question.** CT10b ("WARN when a `verify` command names a path that does not exist")
+contradicts schema §7 — "all functions pure, total, stdlib-only" — and `plan_ids.py`'s own
+docstring, "no filesystem access". Operator's constraint: *"if we can defer to I02 safely then
+do that; otherwise find another option, it must be simple in logic with no new temporary
+crutches."*
+
+**Options.** (a) inject an `exists` probe · (b) a second, explicitly impure entry point ·
+(c) defer to I02.
+
+**Verdict: ✅ DECIDED — (c), operator-confirmed 2026-10-06.** Deferral is not merely safe, it
+is more correct. At pre-check time the check is **false by construction**: the pre-check runs
+before the coder, and a new slice's `TESTS:` path is annotated `(NEW — author it)` precisely
+because it does not exist yet, so CT10b would warn on every new test file. That is noise, and
+noise is what teaches an operator to stop reading the output. The only true positive left is a
+typo in a path, which fails loudly the first time I02's gate runs the command — one gate run,
+not a burned slice, which is exactly the trade SLICE3's INTENT names.
+
+In I02 the rule also becomes a better rule. With `tests_note` and the filesystem both in hand,
+the question stops being "does this path exist" and becomes "does its existence agree with
+what the plan claims about it": absent and marked NEW is expected; absent and unmarked is a
+plan naming a baseline test that is not there; present but marked NEW is a stale annotation
+whose fail-before semantics differ. None of that is available to a pure function.
+
+(a) and (b) both work and both add a seam whose only purpose is hosting a check that should
+not run here — the "temporary crutch" the constraint rules out. `precheck` stays a single pure
+stdlib-only function. SLICE3 drops to 8 contracts and 5 steps; CT10b is banked in
+`i02-handoff-verify-gate.md` §8. Ledger E95.

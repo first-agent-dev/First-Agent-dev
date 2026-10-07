@@ -41,13 +41,19 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from graphlib import CycleError, TopologicalSorter
 
 __all__ = [
+    "FAIL",
+    "WARN",
+    "PlanDiagnostic",
     "PlanIds",
+    "PrecheckReport",
     "SliceRecord",
     "canonical_slice_id",
     "extract_plan_id",
     "extract_plan_ids",
+    "precheck",
 ]
 
 
@@ -356,6 +362,32 @@ def _contracts_block(section: str) -> list[str]:
     return block
 
 
+def _contract_entries(section: str) -> list[tuple[int, re.Match[str]]]:
+    """``(block index, entry match)`` for each contract declaration.
+
+    The single source of truth for "which lines declare a contract".
+    :func:`_section_contracts` reads the entries and the pre-check reads their
+    line numbers from it, so the lint can never disagree with the parser about
+    what a declaration is.
+    """
+    return [(i, m) for i, line in enumerate(_contracts_block(section)) if (m := _CONTRACT_ENTRY_RE.match(line))]
+
+
+def _contract_declaration_sites(section: str) -> list[tuple[str, int]]:
+    """``(contract id, 0-based section line)`` for each declaration entry.
+
+    Block element ``i`` sits on section line ``start + i``: element 0 is the
+    remainder of the ``CONTRACTS:`` line itself. The arithmetic lives here
+    rather than at the call site so there is no sentinel to mishandle — a
+    section with no ``CONTRACTS:`` line simply has no sites.
+    """
+    match = _CONTRACTS_LINE_RE.search(section)
+    if match is None:
+        return []
+    start = section.count("\n", 0, match.start())
+    return [(f"CT{entry.group('num')}", start + i) for i, entry in _contract_entries(section)]
+
+
 def _section_contracts(section: str) -> tuple[tuple[str, str, str], ...]:
     """``(id, class, text)`` for every contract **declared** in this slice.
 
@@ -370,7 +402,7 @@ def _section_contracts(section: str) -> tuple[tuple[str, str, str], ...]:
     ``FUNCTIONAL``; a repeated id keeps its first declaration (CT19).
     """
     block = _contracts_block(section)
-    starts = [(i, m) for i, line in enumerate(block) if (m := _CONTRACT_ENTRY_RE.match(line))]
+    starts = _contract_entries(section)
     out: list[tuple[str, str, str]] = []
     seen: set[str] = set()
 
@@ -458,3 +490,494 @@ def extract_plan_id(text: str) -> str | None:
     if match is None:
         return None
     return match.group(1).strip() or None
+
+
+# ---------------------------------------------------------------------------
+# I01/SLICE3 — the plan pre-check
+# ---------------------------------------------------------------------------
+#
+# Everything below reads a plan and reports; nothing here parses a *new* part
+# of the grammar. The pre-check is deliberately the same module as the
+# extractor so that a rule can never drift from the production that feeds it:
+# `contract-declaration-lost` compares declaration-shaped lines against what
+# `_section_contracts` actually returned, which is only honest while both read
+# `_contract_entries`.
+#
+# Purity is a contract, not an accident (Q39). `precheck` touches no
+# filesystem, no clock, no environment: it is a function of its text argument.
+# That is what lets the harness run it on a plan that has not been written to
+# disk yet, and what kept "does this TESTS: path exist?" out of I01 — at
+# pre-check time a new slice's path is absent *by design*, so the check is
+# false by construction here and belongs to the I02 verify gate, where
+# `tests_note` makes "(NEW — author it)" interpretable.
+
+#: A ``DEPS:`` line and its payload. Parsed here rather than promoted onto
+#: ``SliceRecord``: the pre-check is its own only consumer, and SD-B forbids
+#: shipping an accessor before an increment is named that wires it.
+_DEPS_LINE_RE = re.compile(r"^DEPS:\s*(.*)$", re.MULTILINE)
+
+#: A heading that *nearly* declares a slice (CT26). Case-insensitive, and
+#: tolerant of a dropped letter or a stray space, because those are the
+#: spellings observed in real drift. Matching here is not an accusation: a
+#: line is only reported when :data:`_SLICE_RE` also declines it.
+_NEAR_MISS_HEADING_RE = re.compile(r"^#{2,4}\s+SLI?CE?\s*\d", re.IGNORECASE)
+
+#: A line shaped like a contract declaration, wherever it sits (CT35). The
+#: anchor is the start of the line after optional indentation, so prose that
+#: merely mentions ``CT3 [CONSTRAINT]:`` mid-sentence is not a declaration.
+_DECLARATION_SHAPE_RE = re.compile(r"^\s*CT(?P<num>\d+[a-z]?)\s*\[(?:FUNCTIONAL|CONSTRAINT|PRESERVATION)\]\s*:")
+
+#: Payload tokens that mean "this slice depends on nothing". Em dash, en dash
+#: and hyphen are all in use across existing plans; written as escapes because
+#: the two dashes are indistinguishable in most editors and a reader must be
+#: able to tell which one the set actually contains.
+_NO_DEPS = frozenset({"", "\u2014", "\u2013", "-", "none", "n/a", "na"})
+
+#: The two severities. Public because a consumer cannot filter a report
+#: without naming them, and a bare ``"FAIL"`` literal at every call site is how
+#: a typo becomes a silently empty filter. ``FAIL`` blocks, ``WARN`` advises;
+#: only ``FAIL`` clears :attr:`PrecheckReport.ok`.
+FAIL = "FAIL"
+WARN = "WARN"
+
+
+def _contract_ids(record: SliceRecord) -> tuple[str, ...]:
+    """Just the ids from a record's ``(id, class, text)`` triples."""
+    return tuple(cid for cid, _cls, _text in record.contracts)
+
+
+@dataclass(frozen=True, slots=True)
+class PlanDiagnostic:
+    """One rule violation, located well enough for an operator to go fix it.
+
+    ``rule`` is a stable mnemonic (``slice-without-tests``), never a ``CT#``.
+    Contract ids renumber when an increment is re-planned; a rule id appears in
+    operator muscle memory, in commit messages and in suppressions, so it must
+    outlive the plan that introduced it. The owning contract is recorded in the
+    rule function's docstring instead.
+    """
+
+    rule: str
+    severity: str
+    path: str
+    line: int
+    message: str
+
+    @property
+    def location(self) -> str:
+        """``file:line`` — the form CT25 requires and an editor can jump to."""
+        return f"{self.path}:{self.line}"
+
+    def render(self) -> str:
+        return f"{self.location} [{self.severity} {self.rule}] {self.message}"
+
+
+@dataclass(frozen=True, slots=True)
+class PrecheckReport:
+    """The whole verdict for one plan: every violation, in document order.
+
+    One pass, all violations (CT25). A lint that stops at the first problem
+    turns a five-minute fix into five round trips, which for an agent means
+    five more chances to re-plan around the symptom instead of the cause.
+
+    There is deliberately no ``warnings`` accessor to mirror :attr:`failures`.
+    SD-B: no accessor ships before an increment is named that wires it, and
+    nothing consumes the warning list yet — ``[d for d in r.diagnostics if
+    d.severity == WARN]`` is one line when I02's gate renderer needs it.
+    """
+
+    path: str
+    diagnostics: tuple[PlanDiagnostic, ...] = ()
+
+    @property
+    def failures(self) -> tuple[PlanDiagnostic, ...]:
+        return tuple(d for d in self.diagnostics if d.severity == FAIL)
+
+    @property
+    def ok(self) -> bool:
+        """True when nothing *blocks*. Warnings are advice, not a gate (Q38)."""
+        return not self.failures
+
+    def render(self) -> str:
+        return "\n".join(d.render() for d in self.diagnostics)
+
+
+@dataclass(frozen=True, slots=True)
+class _Slice:
+    """A slice as the pre-check needs it: the record plus where it lives."""
+
+    record: SliceRecord
+    section: str
+    start_line: int  # 1-based line of the slice heading
+
+    def line_of(self, offset_in_section: int) -> int:
+        return self.start_line + self.section.count("\n", 0, offset_in_section)
+
+
+def _line_at(text: str, offset: int) -> int:
+    return text.count("\n", 0, offset) + 1
+
+
+def _rule_heading_near_miss(text: str, path: str) -> list[PlanDiagnostic]:
+    """CT26 — a heading that looks like a slice but does not parse as one.
+
+    FAIL, not WARN. The failure mode is not a cosmetic one: ``## SLICE 1:``
+    declares no slice, so the slice and every contract, step and test path
+    inside it are absent from the plan the harness gates against. The author
+    sees a slice; the machine sees prose. Nothing downstream can detect that,
+    because there is nothing downstream to detect.
+    """
+    out: list[PlanDiagnostic] = []
+    for index, line in enumerate(text.splitlines(), start=1):
+        if _NEAR_MISS_HEADING_RE.match(line) and not _SLICE_RE.match(line):
+            out.append(
+                PlanDiagnostic(
+                    rule="heading-near-miss",
+                    severity=FAIL,
+                    path=path,
+                    line=index,
+                    message=(
+                        f"{line.strip()!r} does not declare a slice and its whole "
+                        f"body is invisible to the harness; the form is '## SLICE<n>: title'"
+                    ),
+                )
+            )
+    return out
+
+
+def _rule_slice_without_tests(slices: list[_Slice], path: str) -> list[PlanDiagnostic]:
+    """CT8 — a slice that declares contracts must name where they are proved.
+
+    Conditioned on declaring at least one ``CT#``: a slice with no contracts
+    asserts nothing, so there is nothing for a test to hold up.
+    """
+    return [
+        PlanDiagnostic(
+            rule="slice-without-tests",
+            severity=FAIL,
+            path=path,
+            line=s.start_line,
+            message=(
+                f"{s.record.slice_id} declares "
+                f"{', '.join(_contract_ids(s.record))} but has no TESTS: line, so no "
+                f"contract in it is checkable"
+            ),
+        )
+        for s in slices
+        if s.record.contracts and not s.record.test_paths
+    ]
+
+
+def _step_blocks(section: str) -> list[tuple[str, int, str]]:
+    """``(step id, offset, block text)`` per ``STEP#``.
+
+    A step is a block, not a line. Real exit predicates wrap, and reading only
+    the ``- [ ]`` line would reject the majority of correctly written steps —
+    a lint with that false-positive rate gets switched off, which is strictly
+    worse than not having it.
+
+    A block ends at the next line that is non-blank and unindented. No
+    lookahead to the following ``STEP#`` is needed and none is done: a step
+    marker is itself unindented, so the same rule already stops there. The
+    id is returned rather than re-derived by the caller, which removes an
+    unreachable "no id" branch that the first draft of this carried.
+    """
+    lines = section.splitlines(keepends=True)
+    out: list[tuple[str, int, str]] = []
+    offset = 0
+    for i, line in enumerate(lines):
+        step = _STEP_RE.match(line)
+        if step is not None:
+            body = [line]
+            for following in lines[i + 1 :]:
+                if following.strip() and not following[:1].isspace():
+                    break
+                body.append(following)
+            out.append((f"STEP{step.group(1)}", offset, "".join(body)))
+        offset += len(line)
+    return out
+
+
+def _rule_step_without_exit(slices: list[_Slice], path: str) -> list[PlanDiagnostic]:
+    """CT9 — every step of a prescriptive slice carries an ``(exit: …)``.
+
+    ``STEPS: outcome`` slices are exempt by grammar: they state a destination
+    and leave the route to the coder, so demanding a per-step predicate would
+    contradict the mode the author chose.
+    """
+    out: list[PlanDiagnostic] = []
+    for s in slices:
+        if s.record.steps_mode != "prescriptive":
+            continue
+        for name, offset, block in _step_blocks(s.section):
+            if "(exit:" in block:
+                continue
+            out.append(
+                PlanDiagnostic(
+                    rule="step-without-exit",
+                    severity=FAIL,
+                    path=path,
+                    line=s.line_of(offset),
+                    message=(
+                        f"{s.record.slice_id}/{name} is prescriptive but states no "
+                        f"'(exit: ...)' predicate, so done-ness is a judgement call"
+                    ),
+                )
+            )
+    return out
+
+
+def _declared_deps(section: str) -> tuple[int, list[str]] | None:
+    """``(offset, canonical dep ids)`` from the slice's ``DEPS:`` line."""
+    match = _DEPS_LINE_RE.search(section)
+    if match is None:
+        return None
+    payload = match.group(1).strip()
+    tokens = [t.strip(" .,;") for t in re.split(r"[,\s]+", payload) if t.strip(" .,;")]
+    deps = [
+        canonical_slice_id(token) for token in tokens if token.casefold() not in _NO_DEPS and canonical_slice_id(token)
+    ]
+    return match.start(), [d for d in deps if d]
+
+
+def _dependency_cycles(graph: dict[str, list[str]]) -> list[list[str]]:
+    """Every dependency cycle, as a path whose first and last node are equal.
+
+    :class:`graphlib.TopologicalSorter` is the stdlib answer to exactly this
+    question and reports the offending path, so there is no hand-written graph
+    walk here to get subtly wrong. It surfaces one cycle per attempt; the edge
+    that closed it is dropped and the sort retried, so independent cycles are
+    all reported in the single pass CT25 asks for.
+
+    Termination is bounded by the edge count: every iteration either finds the
+    graph acyclic and returns, or removes one edge.
+    """
+    remaining = {node: list(deps) for node, deps in graph.items()}
+    found: list[list[str]] = []
+    for _ in range(sum(len(deps) for deps in remaining.values()) + 1):
+        try:
+            TopologicalSorter(remaining).prepare()
+        except CycleError as exc:
+            cycle = list(exc.args[1])
+            found.append(cycle)
+            # `cycle[i]` precedes `cycle[i+1]`, so the first pair is a real
+            # edge: `cycle[1]` depends on `cycle[0]`. Dropping it breaks this
+            # cycle and exposes any further one behind it. Filtered rather
+            # than `.remove()`d so the walk cannot raise on a surprise.
+            remaining[cycle[1]] = [d for d in remaining[cycle[1]] if d != cycle[0]]
+        else:
+            break
+    return found
+
+
+def _rule_deps(slices: list[_Slice], path: str) -> list[PlanDiagnostic]:
+    """CT10 (Q38: slice ids only) — the dependency graph must be runnable.
+
+    Two ways it is not. A ``DEPS:`` entry naming a slice that does not exist is
+    a broken edge: the harness cannot order a run against a node it cannot
+    find. A cycle has no topological order at all. Both are FAIL, because in
+    either case there is no correct sequence to execute and guessing one
+    silently is how a slice gets built before the thing it depends on.
+
+    Contract references are *not* this rule's business — see
+    :func:`_rule_contract_reference_undeclared`, which warns instead.
+    """
+    out: list[PlanDiagnostic] = []
+    known = {s.record.slice_id for s in slices}
+    graph: dict[str, list[str]] = {}
+    lines: dict[str, int] = {}
+
+    for s in slices:
+        parsed = _declared_deps(s.section)
+        if parsed is None:
+            graph[s.record.slice_id] = []
+            continue
+        offset, deps = parsed
+        lines[s.record.slice_id] = s.line_of(offset)
+        graph[s.record.slice_id] = [d for d in deps if d in known]
+        for dep in deps:
+            if dep not in known:
+                out.append(
+                    PlanDiagnostic(
+                        rule="deps-undefined-slice",
+                        severity=FAIL,
+                        path=path,
+                        line=s.line_of(offset),
+                        message=(
+                            f"{s.record.slice_id} declares DEPS: {dep}, which no "
+                            f"heading in this plan defines; run order is undefined"
+                        ),
+                    )
+                )
+
+    for cycle in _dependency_cycles(graph):
+        out.append(
+            PlanDiagnostic(
+                rule="deps-cycle",
+                severity=FAIL,
+                path=path,
+                # The printed path starts at `cycle[0]`, so its first edge is
+                # declared by `cycle[1]`'s DEPS: line. Point there: it is a
+                # line the operator can actually edit to break the cycle,
+                # rather than a node that merely participates in it.
+                line=lines[cycle[1]],
+                message="DEPS: cycle " + " -> ".join(cycle) + "; no slice in it can be built first",
+            )
+        )
+    return out
+
+
+def _rule_contract_reference_undeclared(
+    text: str, slices: list[_Slice], path: str, *, suppress: frozenset[str] = frozenset()
+) -> list[PlanDiagnostic]:
+    """CT27 (Q38: contract ids only) — WARN, never FAIL.
+
+    A plan legitimately cites a contract that lives somewhere else: a
+    neighbouring increment's ``CT#``, a superseded plan's, a ledger entry's.
+    Failing on that would force authors to invent an escape hatch, and an
+    escape hatch is used for the real misses too. A warning stays readable and
+    costs nothing to leave standing when it is correct.
+
+    Reported once per id, at its first mention, so a contract quoted in ten
+    steps produces one line of output rather than ten.
+
+    *suppress* carries the ids ``contract-declaration-lost`` already claimed.
+    An id whose declaration was eaten by a margin wrap is trivially "declared
+    nowhere", so without this every such contract is reported twice under two
+    rules — and the warning is the misleading one, because it points at a
+    mention rather than at the broken block that caused it. One defect, one
+    diagnostic, at the line the operator has to edit.
+    """
+    declared = {cid for s in slices for cid in _contract_ids(s.record)}
+    seen: set[str] = set()
+    out: list[PlanDiagnostic] = []
+    for index, line in enumerate(text.splitlines(), start=1):
+        for num in _CONTRACT_RE.findall(line):
+            cid = f"CT{num}"
+            if cid in declared or cid in seen or cid in suppress:
+                continue
+            seen.add(cid)
+            out.append(
+                PlanDiagnostic(
+                    rule="contract-reference-undeclared",
+                    severity=WARN,
+                    path=path,
+                    line=index,
+                    message=(f"{cid} is referenced here but declared in no CONTRACTS: block in this plan"),
+                )
+            )
+    return out
+
+
+def _rule_contract_declared_twice(slices: list[_Slice], path: str) -> list[PlanDiagnostic]:
+    """CT34 — one contract id, one owner, naming both sites.
+
+    Two slices claiming ``CT1`` makes "CT1 is green" ambiguous: the harness
+    ticks one of them and the other's assertion is never checked, while the
+    plan reads as though it were. Naming both locations is the whole value —
+    an operator cannot resolve a duplicate they have to go hunt for.
+    """
+    sites: dict[str, list[tuple[str, int]]] = {}
+    for s in slices:
+        for cid, section_line in _contract_declaration_sites(s.section):
+            sites.setdefault(cid, []).append((s.record.slice_id, s.start_line + section_line))
+    out: list[PlanDiagnostic] = []
+    for cid, places in sites.items():
+        if len(places) < 2:
+            continue
+        where = ", ".join(f"{sid} at {path}:{line}" for sid, line in places)
+        out.append(
+            PlanDiagnostic(
+                rule="contract-declared-twice",
+                severity=FAIL,
+                path=path,
+                line=places[1][1],
+                message=f"{cid} is declared {len(places)} times — {where}",
+            )
+        )
+    return out
+
+
+def _rule_contract_declaration_lost(slices: list[_Slice], path: str) -> list[PlanDiagnostic]:
+    """CT35 (Q36) — a declaration the author wrote that the parser did not see.
+
+    The motivating defect: a contract sentence wrapped back to column 0 ends
+    the ``CONTRACTS:`` block, so that entry is truncated *and* every contract
+    after it disappears. Nothing errors. The plan renders correctly in a
+    Markdown viewer and is simply missing contracts in the machine.
+
+    This rule is the only one that compares the document against the parser's
+    own output rather than against the grammar, which is why it catches the
+    class "the extractor silently dropped something" in general.
+    """
+    out: list[PlanDiagnostic] = []
+    for s in slices:
+        declared = set(_contract_ids(s.record))
+        for offset_line, line in enumerate(s.section.splitlines()):
+            match = _DECLARATION_SHAPE_RE.match(line)
+            if match is None:
+                continue
+            cid = f"CT{match.group('num')}"
+            if cid in declared:
+                continue
+            out.append(
+                PlanDiagnostic(
+                    rule="contract-declaration-lost",
+                    severity=FAIL,
+                    path=path,
+                    line=s.start_line + offset_line,
+                    message=(
+                        f"{cid} is written as a declaration but {s.record.slice_id} "
+                        f"parsed only {', '.join(_contract_ids(s.record)) or 'none'} — the "
+                        f"CONTRACTS: block ended early, usually a continuation line "
+                        f"wrapped back to column 0"
+                    ),
+                )
+            )
+    return out
+
+
+def _lost_ids(lost: list[PlanDiagnostic]) -> list[str]:
+    """The contract ids named by ``contract-declaration-lost`` diagnostics."""
+    return [match.group(0) for d in lost if (match := _CONTRACT_RE.match(d.message))]
+
+
+def precheck(text: str, *, path: str = "<plan>") -> PrecheckReport:
+    """Lint a plan artifact and return every violation in one pass.
+
+    Pure, total and stdlib-only: a function of *text* alone. It never raises,
+    never reads the filesystem and never consults the clock, so it is safe to
+    run on a draft the author has not saved and gives the same verdict in CI,
+    in the harness and on a laptop.
+
+    *path* is used only to render ``file:line`` locations (CT25); it is never
+    opened. Call it with the plan's real path when you have one so the output
+    is clickable, and leave it alone when linting a buffer.
+
+    Severities: ``FAIL`` means there is no correct way to execute the plan as
+    written — a missing test anchor, an unordered graph, a contract the parser
+    cannot see. ``WARN`` means the plan is runnable but something is probably
+    a mistake. Only failures clear :attr:`PrecheckReport.ok`.
+    """
+    body = text or ""
+    ids = extract_plan_ids(body)
+    spans = _slice_spans(body)
+    by_id = {record.slice_id: record for record in ids.slice_records}
+    slices = [
+        _Slice(record=by_id[sid], section=body[start:end], start_line=_line_at(body, start))
+        for sid, start, end in spans
+        if sid in by_id
+    ]
+
+    lost = _rule_contract_declaration_lost(slices, path)
+    diagnostics = [
+        *_rule_heading_near_miss(body, path),
+        *_rule_slice_without_tests(slices, path),
+        *_rule_step_without_exit(slices, path),
+        *_rule_deps(slices, path),
+        *_rule_contract_reference_undeclared(body, slices, path, suppress=frozenset(_lost_ids(lost))),
+        *_rule_contract_declared_twice(slices, path),
+        *lost,
+    ]
+    diagnostics.sort(key=lambda d: (d.line, d.rule))
+    return PrecheckReport(path=path, diagnostics=tuple(diagnostics))

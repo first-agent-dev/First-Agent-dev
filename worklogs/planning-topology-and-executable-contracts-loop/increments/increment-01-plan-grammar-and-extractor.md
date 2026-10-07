@@ -295,12 +295,20 @@ CONTRACTS:
     an authoring rule in SLICE1b, not a check.
   CT25 [FUNCTIONAL]: the pre-check returns every violation in one pass, each naming `file:line`
     and a rule id; it never stops at the first failure.
-  CT26 [FUNCTIONAL]: a line matching `^#{2,4}\s+SLI?CE?\s*\d` that does not parse as a slice
-    heading produces a near-miss diagnostic naming the line and the intended form.
+  CT26 [FUNCTIONAL]: a line matching `^#{2,4}\s+SLI?CE?\s*\d` (case-insensitive) that does not
+    parse as a slice heading produces a near-miss **FAIL** naming the line and the intended
+    form. Severity was unspecified when this contract was written and is fixed here (E96):
+    FAIL, because a near-miss heading declares no slice, so that slice's contracts, steps and
+    test paths are absent from the plan the harness gates against — the author sees a slice
+    and the machine sees prose, and nothing downstream can detect the difference. The match is
+    case-insensitive because a lower-case heading is one of the drift modes STEP5 must cover.
   CT27 [FUNCTIONAL]: a `CT#` referenced anywhere in the increment but declared in no
     `CONTRACTS:` block produces a WARN — never a FAIL — naming the referencing line. WARN
     because a plan legitimately cites a contract owned by a neighbouring increment, and a FAIL
-    would force an escape hatch that then hides real misses (Q38).
+    would force an escape hatch that then hides real misses (Q38). Reported once per id, at
+    its first mention. Ids already reported by CT35 are suppressed (E97): a declaration eaten
+    by a margin wrap is trivially "declared nowhere" too, and emitting both sends the operator
+    to a prose mention instead of to the broken block.
   CT34 [CONSTRAINT]: the pre-check FAILS when one `CT#` is declared in more than one
     `CONTRACTS:` block, naming both `file:line`s. Schema §4 requires ids unique per increment
     and nothing enforced it: CT10 covers undefined references, not duplicate declarations.
@@ -319,22 +327,25 @@ TESTS: tests/test_plan_precheck.py  (NEW — author it; absent at 2f6b8c1)
 uv run pytest tests/test_plan_precheck.py -q
 uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_precheck.py
 ```
-- [ ] STEP1: Build a runner of pluggable assertions returning pass/fail/warn, aggregated.
+- [x] STEP1: Build a runner of pluggable assertions returning pass/fail/warn, aggregated.
       (exit: an empty plan passes; results aggregate.)
-- [ ] STEP2: Implement CT8/CT9/CT10, parsing `STEP#` as a multi-line block. (exit: each
+- [x] STEP2: Implement CT8/CT9/CT10, parsing `STEP#` as a multi-line block. (exit: each
       fails its seeded bad plan and passes the good fixture.)
-- [ ] STEP3: Make the runner aggregate every violation before returning, each carrying
+- [x] STEP3: Make the runner aggregate every violation before returning, each carrying
       `file:line` and a rule id. (exit: CT25 green — a plan seeded with three distinct
       violations reports three.)
-- [ ] STEP4: Add the near-miss heading diagnostic, the undeclared-contract warning, the
+- [x] STEP4: Add the near-miss heading diagnostic, the undeclared-contract warning, the
       duplicate-declaration failure and the lost-declaration failure. (exit: CT26, CT27, CT34
       and CT35 green.)
-- [ ] STEP5: Create `tests/data/plan-drift-corpus/`, one file per observed drift mode: a space
+- [x] STEP5: Create `tests/data/plan-drift-corpus/`, one file per observed drift mode: a space
       in the slice heading, a lower-case heading, a wrong-level heading without a colon, a
-      contract declared outside the `CONTRACTS:` block, a slice followed by an
-      increment-level heading, one `CT#` declared in two slices, and a contract whose
-      continuation is wrapped back to column 0. (exit: every corpus file produces at least one
-      named diagnostic and none parses silently to empty.)
+      contract declared outside the `CONTRACTS:` block, one `CT#` declared in two slices, and
+      a contract whose continuation is wrapped back to column 0. (exit: every corpus file
+      produces at least one named diagnostic and none parses silently to empty.)
+      The drafted seventh mode — a slice followed by an increment-level heading — was dropped
+      from the corpus and inverted into a positive assertion (E98): CT16 made that shape
+      legal in SLICE2, so a corpus entry for it would have to produce a diagnostic for a
+      construct the grammar now mandates.
 
 ---
 
