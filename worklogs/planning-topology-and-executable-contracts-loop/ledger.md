@@ -758,3 +758,50 @@ E112 EVIDENCE  Three open questions raised during I01/SLICE4 and recorded in
     settles SKILL.md as CT14's conformance target. What stays open is who owns INJECT.md's
     three stale `S#` tokens, since E45/E47 give coder behaviour to I03 while grammar is
     I01's.
+
+E113 DECIDED (operator, 2026-10-07)  Q40 -> (b): the PLAN-SKELETON is a **plan, not a
+    template with its own notation**. Alternation notation is removed from every line the
+    parser reads as data, and the choice it used to express moves into prose beside the
+    block. Q41 -> (i): I01/SLICE4 finishes migrating both `SKILL.md` off the pre-rename
+    `S#` tier. Q42 -> (i): I01 fixes the grammar tokens inside the coder-stage `INJECT.md`;
+    its behaviour text stays I03's (E45/E47). Contracts added: CT40, CT41, CT42, CT43.
+    Rationale carried by the precedent, not by taste: SLICE1b/STEP2 already ruled that the
+    schema §4 example must use literal ids "or it does not parse and proves nothing". A
+    skeleton has the same job, so it inherits the same rule.
+    Migration rule used for the 21 `S#` occurrences, recorded so a reviewer can check the
+    judgement rather than trust it: `S#` -> `SLICE#` where the referent is the unit that
+    carries CONTRACTS/TESTS/DEPS or owns artifacts (mapping, coverage, ownership, gating,
+    and every place the surrounding text says "slice"); `S#` -> `STEP#` only where the text
+    literally says "step" (`plan-authoring` I-IP-2 and the "follow steps in ... order"
+    line). The id table row was not deleted but split into two rows, one per tier, because
+    the single row was the root of the ambiguity E13 removed.
+
+E114 EVIDENCE  I01/SLICE4 implemented. Red-before-green: 5 failures before the change
+    (CT40 x2, CT14 pre-check half x2, CT41 x1), 15 passed after, in the new
+    `tests/test_skill_conformance.py`. Measured before: both skeletons emitted three
+    `deps-undefined-slice` failures from the single line `DEPS: SLICE<a>, SLICE<b> | -`;
+    `S#` counts were plan-authoring 10, feature-planning 8, feature-planning/INJECT.md 3,
+    and are now 0 across the whole `knowledge/skills/` tree.
+    A defect the tests caught in their own helper: the first fence stripper matched three
+    or more backticks and so deleted the nested ```verify fence, silently robbing every
+    derived sample of its commands. Only the `record.commands` assertion failed, which is
+    why that assertion was written; a test that merely checked "it parsed" would have
+    shipped the bug.
+    CT42 is the anti-theater mechanism: the sample is *computed* from the skill file on
+    every run by one documented rule -- every `<...>` placeholder becomes the literal word
+    `sample` -- so it cannot be tuned until the lint passes, and a kill-check proves it
+    tracks the file rather than being a frozen copy.
+    Adequacy layer, in place of a mutmut sweep: SLICE4 adds **no production Python**
+    (`git diff -- src/` is empty, so SLICE3b's 770-mutant sweep still covers `plan_ids.py`
+    unchanged), so the mutable surface is the producer artifact. Nine realistic corruptions
+    of the skill text were applied and reverted byte-identically: drop the TESTS: line,
+    strip a STEP exit, point DEPS at a missing slice, break the slice heading, abbreviate
+    STEP1 to S1, reintroduce the pre-rename tier, rename the skeleton marker, change a
+    contract class, and restore the alternation notation. **9 killed, 0 survivors.**
+    Static: ruff format clean, ruff check clean, pyrefly 0 errors. Full suite
+    **4156 passed / 3 failed / 12 skipped / 1 xfailed** -- +15 against the 4141 baseline,
+    and the three failures re-run individually are the known expected-red trio (E19 x2 plus
+    `test_workflow_per_role_overrides_parse`).
+    Not done, deliberately: no live-path test. Rows D1 and D3 of
+    `notes/deferred-verification-register.md` own it, I02 is the named increment, and the
+    chain this slice closes is still only proven over text (SD-C, E93/E103).

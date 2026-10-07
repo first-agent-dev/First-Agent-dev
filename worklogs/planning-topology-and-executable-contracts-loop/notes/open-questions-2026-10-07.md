@@ -1,13 +1,18 @@
 # Open questions — raised 2026-10-07 during I01/SLICE4
 
-Canonical record. Resolved questions move to `decisions-qa-2026-10-06.md` with a verdict.
-Next free id after this file: **Q43**.
+Canonical record. Next free id after this file: **Q43**.
+
+> **All three resolved by the operator on 2026-10-07** (ledger E113) and implemented in
+> I01/SLICE4: **Q40 → (b)** the skeleton must be a valid plan, skills and inject files
+> edited; **Q41 → (i)** SLICE4 finishes migrating both `SKILL.md`; **Q42 → (i)** I01 fixes
+> the grammar tokens, behaviour text stays I03's. The original text is left unedited below
+> as the record of what was asked.
 
 ---
 
 ## Q40 — The skill skeleton cannot pre-check clean, because it is a template
 
-**Status: OPEN. Blocks I01/SLICE4 STEP1 (CT14).**
+**Status: RESOLVED (b) — 2026-10-07.** Blocked I01/SLICE4 STEP1; now CT40.
 
 **Measured.** Both `PLAN-SKELETON` blocks fail the SLICE3 pre-check with 3 ×
 `deps-undefined-slice` each, from one line:
@@ -48,7 +53,7 @@ choosing it by hand is the tuning-the-fixture-to-the-lint theater `tests-writing
 
 ## Q41 — The planner skills are half-migrated: prose still teaches the pre-rename `S#`
 
-**Status: OPEN. Affects what "the migrated skill text" in CT14 even means.**
+**Status: RESOLVED (i) — 2026-10-07.** Now CT41, STEP3.
 
 **Measured 2026-10-07** (occurrences of the bare `S#` token vs the post-rename ids):
 
@@ -85,7 +90,7 @@ honestly claim "authored from the migrated skill text" while the text is not mig
 
 ## Q42 — Is `INJECT.md` in CT14's conformance scope?
 
-**Status: OPEN.**
+**Status: RESOLVED (i) — 2026-10-07.** Now CT41, STEP4.
 
 **Measured.** `feature-planning/INJECT.md` is 59 lines, contains **no `PLAN-SKELETON` block
 and no plan-grammar token at all** (`SLICE`, `STEP`, `CONTRACTS:`, `DEPS:`, `TESTS:`,

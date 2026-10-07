@@ -419,20 +419,51 @@ INTENT: prove the authoring chain closes — a plan authored strictly from the m
   the old title promised a live gate this slice does not deliver. Under SD-C the live gate is
   named, not skipped — it lands in I02, where the verify gate actually executes
   `commands_for` (`notes/i02-handoff-verify-gate.md` §7).
+  Scope grew 2026-10-07 (Q40, Q41, Q42 — `notes/open-questions-2026-10-07.md`): "the migrated
+  skill text" turned out not to be migrated. The skeleton could not pre-check clean, and the
+  prose around it still taught the pre-rename `S#` tier, so conformance against it would have
+  proved nothing. Finishing that migration is therefore part of this slice. Grammar tokens in
+  the coder-stage `INJECT.md` are I01's too; its *behaviour* text stays I03's (E45/E47).
 CONTRACTS:
   CT14 [FUNCTIONAL]: a sample increment authored strictly from the migrated skill text parses
     via `extract_plan_ids` and passes the SLICE3 pre-check with zero failures.
+  CT40 [FUNCTIONAL]: each `PLAN-SKELETON` block is itself a valid plan — it parses and
+    pre-checks with zero FAIL diagnostics. Measured before the change: three
+    `deps-undefined-slice` failures in each skill, all from the one alternation line
+    (Q40 resolved (b): the skeleton is a plan, not a template with its own notation).
+  CT41 [CONSTRAINT]: no live producer text teaches the pre-rename `S#` tier. Both `SKILL.md`
+    files and every `INJECT.md` contain zero bare `S#` tokens. Measured before the change:
+    plan-authoring 10, feature-planning 8, feature-planning/INJECT.md 3, prompt.py already 0.
+    Catches: a half-migrated skill that hands the planner one document declaring `S#` in its
+    id table and `STEP1:` in its skeleton — two incompatible grammars, with the parser
+    rejecting the one the id table declares.
+  CT42 [CONSTRAINT]: the CT14 fixture is *derived* from the skeleton text at test time by a
+    documented placeholder substitution, never stored as a hand-written copy.
+    Catches: a fixture tuned to pass the lint while the skeleton it claims to represent
+    drifts away from the grammar.
+  CT43 [PRESERVATION]: CT22's "the skeleton parses" assertion and the §4 executable oracle
+    stay green, and the `PLAN-SKELETON` and `SCHEMA4` marker names are unchanged — the
+    existing tests key on them.
 TESTS: tests/test_skill_conformance.py  (NEW — author it; absent at 2f6b8c1)
 ```verify
-uv run pytest tests/test_skill_conformance.py -q
+uv run pytest tests/test_skill_conformance.py tests/test_skill_grammar_emit.py -q
 uv run ruff check knowledge/skills tests/test_skill_conformance.py
 ```
-- [ ] STEP1: Author the end-to-end conformance fixture from the SLICE1b skill text — not from
-      the schema §4 example, which SLICE2 already conforms the parser to — and run it through
-      the SLICE3 pre-check. (exit: CT14 green.)
+- [ ] STEP1: Make both `PLAN-SKELETON` blocks valid plans: replace the dependency alternation
+      line with a literal value, and move the "or list the slices you depend on" teaching into
+      prose beside the block. Do the same for any other field whose alternation notation the
+      parser reads as data. (exit: CT40 green — zero FAIL diagnostics for each skeleton.)
 - [ ] STEP2: Add a migration note for humans: pre-rename plans are archived, not parsed, and no
       compatibility shim is provided. (exit: the note exists and names the three conditions,
       recorded in the ledger, under which zero-deprecation removal was acceptable.)
+- [ ] STEP3: Migrate the prose of both `SKILL.md` off the pre-rename tier, including the id
+      table in `plan-authoring/SKILL.md` that still defines `S#` as the step tier. Rewrite the
+      id, do not delete the row. (exit: CT41 green for both files.)
+- [ ] STEP4: Fix the grammar tokens in `feature-planning/INJECT.md`. Grammar only — its
+      behaviour text belongs to I03 and must not be rewritten here. (exit: CT41 green for it.)
+- [ ] STEP5: Author the conformance fixture by substituting placeholders into the skeleton read
+      from the skill file at test time — not from the schema §4 example, which SLICE2 already
+      conformed the parser to. (exit: CT14 and CT42 green.)
 
 ---
 
