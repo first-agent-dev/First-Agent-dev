@@ -38,14 +38,15 @@ worklogs/planning-topology-and-executable-contracts-loop/
 
 ## Increments
 
-Rolling wave: **I01 is planned in full** (`increments/increment-01-…`); I02–I06 are
+Rolling wave: **I01 and I02 are planned in full** (`increments/increment-01-…`,
+`increments/increment-02-…`); I03–I06 are
 **outlines** here and get their own detailed increment file just-in-time, when reached.
 The map below is expected to be refined as reality teaches.
 
 | ID | Increment | Status | One-line intent |
 |---|---|---|---|
 | **I01** | Plan grammar & extractor | **IN PROGRESS** | the harness can parse and lint the new plan format |
-| I02 | Executable contracts & verify gate | outlined | a slice is gated by a planner-authored, non-vacuous test the harness runs. **Context banked for its review:** `notes/verify-block-design.{svg,md}` + `notes/i02-handoff-verify-gate.md` (§§1–5 grounded @ 0e08ece, §6 re-grounded @ 2f6b8c1; re-review when I01 lands) |
+| I02 | Executable contracts & verify gate | **PLANNED** ([`increments/increment-02-verify-gate-and-kill-checks.md`](increments/increment-02-verify-gate-and-kill-checks.md)) | a slice is gated by a planner-authored, non-vacuous test the harness runs. Non-vacuity is proven by **executing a declared kill-check**, not by asking whether a test is new (E122). Design: `notes/i02-slice-verification-design.md`; context: `notes/i02-handoff-verify-gate.md`, whose §5 bullet forbidding failure-injection is superseded by E121 |
 | I03 | Per-slice loop, tracker & eval | outlined | controller runs the per-slice loop; code ticks the tracker; three-level eval |
 | I04 | Evidence ledger, pinned invariants, retry hygiene | outlined | the loop carries evidence, pins governance, retries clean, never wedges (includes the ledger **parser**, moved here from I01 — build it beside its consumers; and the **pinned-invariants injection**, drafted as an I01 slice on 2026-10-06 and moved back here as scope creep — contracts banked in `notes/role-prompts-conformance.md`, ledger E79) |
 | I05 | Rolling-wave, ASK#, autonomy, chat orchestration | outlined | the roadmap closes across runs; the ceremony/scope/draft work lands here, revised |

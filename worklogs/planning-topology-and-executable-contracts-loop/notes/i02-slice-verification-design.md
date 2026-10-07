@@ -246,24 +246,63 @@ and it did go red→green. The kill-check catches it. That is the whole argument
 
 ## 4. Forks that need your decision
 
-### F1 — where does `kill:` live in the grammar? *(the main one)*
+### F1 — where does `kill:` live in the grammar? ✅ **RESOLVED 2026-10-07 — and my first answer was wrong**
 
-I01 owns the grammar and is complete, so this is a real ownership question.
+The operator asked for one more check before accepting (a). It failed, and the failure was
+worth finding. **Placement is unchanged — indented under its contract — but the *reader* must
+change.**
 
-- **(a) Indented continuation under the contract, no parser change.** `_section_contracts`
-  already continues a contract while indentation exceeds the entry's, so the `kill:` line is
-  swallowed into the contract **body** and I01 breaks in no way. I02 extracts it from the
-  body with a strict regex. **Cheapest, and I01 stays closed.** The cost: a structured field
-  rides inside free text, which is mildly the thing SIMPLIFICATION warned about — mitigated
-  because the planner writes to a strict grammar and a pre-check rule can enforce the shape.
-- **(b) A first-class `KILLS:` block** in the slice, parsed like `CONTRACTS:`. Cleanest
-  grammar, but it is an **I01 change** (a new I01b), and two parallel lists drift apart —
-  this project already got bitten by exactly that with the id table.
-- **(c) A new field on the contract tuple** — same I01b cost as (b), tidier than (a).
+**What broke.** (a) as first written said "I02 extracts it from the contract **body**". But
+`_section_contracts` joins continuation lines with **single spaces**, so the body is one flat
+string and the line boundary is gone. Measured over six cases:
 
-**Recommendation: (a) now**, with a pre-check rule added when I01 is next opened. It keeps
-the kill-check *colocated with the contract it belongs to*, which is what stops the two from
-drifting, and it does not reopen a closed increment.
+| Case | Result under (a) |
+| --- | --- |
+| directive is the last line | extracts correctly |
+| directive followed by trailing prose | **NO MATCH — directive silently lost** |
+| two directives on one contract | silently takes the **last**, ignores the first |
+| typo'd keyword / missing `::` | NO MATCH, indistinguishable from "none declared" |
+
+Four of six degrade to "no kill-check found", and "not found" is indistinguishable from "the
+planner declared none" — a **silently disabled gate**, which is the precise failure this
+project exists to prevent. Anchoring the regex to end-of-string is what makes the second row
+fail, and un-anchoring it is worse: with the line boundary gone, `\S+` runs on into the prose.
+
+**The fix: read `section()`, not the contract body.** I01 already exposes the slice's **raw
+text**, newlines intact. Parsing the directive there keeps line structure, so per-contract
+attribution is exact and trailing prose is harmless. Verified on the same corpus:
+
+```
+CT1 [FUNCTIONAL]  -> [('remove-call', 'src/a.py', 'f', 'g')]    # trailing prose present
+CT2 [FUNCTIONAL]  -> [('neutralise',  'src/b.py', 'h', None)]
+CT3 [PRESERVATION]-> None                                        # correctly none
+```
+
+**Plus a fail-loud validator, because placement alone is not safety.** Two patterns: a *soft*
+one (`^\s*kill\s*:`) meaning "the planner intended to declare", and the *strict* one meaning
+"well-formed". Comparing them converts every silent case into a loud diagnostic:
+
+```
+CT3  line 9  kill-directive-malformed     # soft matched, strict did not
+CT2  line 0  kill-directive-missing       # FUNCTIONAL with no directive
+CT4  line 0  kill-directive-ambiguous     # two directives on one contract
+CT5  line 0  kill-directive-missing
+```
+
+A typo in the keyword itself (`kil:`) escapes the soft pattern and lands as
+`kill-directive-missing` — still loud, still blocking, but the message is imprecise. A
+near-miss pattern should catch it, matching this project's existing `heading-near-miss`
+(CT26) and `step-near-miss` (CT37) family. Specified as **CT51** in the plan.
+
+**Why not (b) a `KILLS:` block.** Measured: an unknown `KILLS:` block passes the shipped
+pre-check cleanly (`ok=True`, zero diagnostics), so (b) would *also* need no I01 change. It is
+rejected anyway, on the project's own evidence: two parallel lists drift apart, which is
+exactly what the id table did. Colocation under the contract is what keeps a kill-check and
+the claim it proves from separating.
+
+**Net:** the directive sits under its contract, the reader is `section()` not the contract
+body, validation is loud and runs **pre-coder**, and **I01 is still not reopened.**
+
 
 ### F2 — is `remove-call` + `neutralise` enough to start?
 

@@ -973,3 +973,51 @@ E122 DECIDED (operator, 2026-10-07)  Test non-vacuity is proven by **executing a
     planner-authored, one extra test run per contract, and says "**this** producer is not
     bound to **this** test". Complementary, not alternatives. Open forks for review: F1
     grammar placement, F2 operator set, F3 appeal on VACUOUS, F4 FUNCTIONAL-only scope.
+
+E123 CORRECTION  F1 was re-examined on operator challenge and **my recommendation was wrong
+    in its mechanism**, though right in its placement. (a) as drafted said I02 would extract
+    the `kill:` directive from the parsed contract **body**. But `_section_contracts` joins
+    continuation lines with single spaces, so the line boundary is destroyed. Measured over
+    six cases: a directive followed by trailing prose does **not** match; two directives on
+    one contract silently resolve to the last; a typo'd keyword or a missing `::` is
+    indistinguishable from "none declared". Four of six degrade to "no kill-check found",
+    and that is indistinguishable from "the planner declared none" -- a silently disabled
+    gate, the precise failure this project exists to prevent. End-anchoring the regex causes
+    the trailing-prose miss; un-anchoring is worse, because with the line boundary gone the
+    token class runs on into the prose.
+    Fix: placement is unchanged -- the directive stays indented under its contract, which is
+    what stops a kill-check and the claim it proves from drifting apart -- but the reader
+    becomes **`section()`**, the raw slice text, where newlines survive. Re-measured on the
+    same corpus: per-contract attribution is exact, trailing prose is harmless, and a
+    PRESERVATION contract correctly yields none.
+    Safety does not come from placement, so a fail-loud validator is specified: a soft
+    pattern meaning "the planner intended to declare" compared against the strict one, which
+    converts every silent case into `kill-directive-missing`, `-malformed` or `-ambiguous`,
+    each naming `file:line`, each a FAIL, each raised **pre-coder**. A keyword typo escapes
+    the soft pattern and lands as `missing` -- still loud, still blocking, message imprecise
+    -- so a near-miss rule in the manner of CT26/CT37 is specified as CT51.
+    Option (b), a `KILLS:` block, was measured too: it also passes the shipped pre-check
+    cleanly, so it would also not have required an I01 change. Rejected anyway on this
+    project's own evidence that two parallel lists drift apart, as the id table did.
+    **I01 is not reopened.** supersedes: the F1 recommendation in E122.
+
+E124 FACT  I02 planned in full:
+    `increments/increment-02-verify-gate-and-kill-checks.md`. Six slices, **33 contracts
+    CT44-CT76**, two verify commands each. Operator decisions carried in: F2 the operator set
+    stays closed at two; F3 `VACUOUS` and `PRODUCER_ABSENT` block with no appeal; F4
+    kill-checks run on `FUNCTIONAL` contracts only.
+    Slices: 1 the command runner, three-state with ERROR never PASS, scrubbed env and
+    between-command deadline; 2 kill-directive parse and loud validation; 3 the two AST
+    operators with the `hits` counter; 4 worktree isolation including the untracked-file
+    trap; 5 verdict assembly; 6 controller wiring plus the SD-C live-path proof, which
+    discharges register rows D1, D3, D4 and D5.
+    The plan was run through the gates it will itself be judged by, rather than asserted
+    ready: shipped `precheck` returns **ok=True**, with three WARNs all of class
+    `contract-reference-undeclared` -- CT26 and CT37 cited as precedent for the near-miss
+    rule, and CT10b named in Out of scope -- which is exactly the cross-increment case CT27
+    is a WARN for. `commands_for(None)` returns `()`, so command ownership is total. The
+    SLICE2 validator prototype was run against the plan itself: **20 kill directives, all
+    well-formed, every FUNCTIONAL contract carrying exactly one.**
+    Six items are explicitly out of scope and named with their owner, chief among them E63's
+    generated-mutant sweep, which is a different mechanism from a declared kill-check and
+    must not be collapsed into it.
