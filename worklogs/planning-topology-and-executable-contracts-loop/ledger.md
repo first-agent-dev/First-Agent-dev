@@ -736,3 +736,25 @@ E111 DECISION  Live/e2e verification for I01 is **registered, not written** (ope
     Proposed and deliberately NOT built: an executable guard that fails the build when a
     name in `plan_ids.__all__` has neither a production call site nor a register row. It
     would need its own CT# and is a new policy choice.
+
+E112 EVIDENCE  Three open questions raised during I01/SLICE4 and recorded in
+    `notes/open-questions-2026-10-07.md`: Q40 (the skill skeleton cannot pre-check clean,
+    blocks CT14), Q41 (the planner skills are half-migrated), Q42 (is INJECT.md in CT14's
+    conformance scope). Next free question id: Q43.
+    The measurement behind Q41, which was not previously recorded anywhere. Counting the
+    bare `S#` token against the post-rename ids in every live producer text:
+    `plan-authoring/SKILL.md` 10 vs SLICE 4 / STEP 5; `feature-planning/SKILL.md` 8 vs 6/4;
+    `feature-planning/INJECT.md` 3 vs 0/0; `tests-writing/INJECT.md` 0; `prompt.py` **0**
+    vs 15/5. SLICE1c migrated the prompt completely; SLICE1b added a `SLICE#`/`STEP#`
+    skeleton to the skills but left the prose around it on the pre-rename grammar.
+    `plan-authoring/SKILL.md:173` still *defines* the tier as "S#  Step / task card", so
+    the planner reads one document teaching two incompatible id grammars, and the parser
+    rejects the one the id table declares (E106/CT37).
+    The measurement behind Q42. `feature-planning/INJECT.md` contains no PLAN-SKELETON and
+    not one plan-grammar token; it passes the parser **vacuously** (nothing to parse), so
+    "INJECT.md passes the parser" is not evidence of anything. The planner receives
+    `SKILL.md`, not `INJECT.md` -- two different injection paths at two different stages
+    (`coder_loop.py:895` L2 planning vs `coder_loop.py:247` coder slice entry) -- which
+    settles SKILL.md as CT14's conformance target. What stays open is who owns INJECT.md's
+    three stale `S#` tokens, since E45/E47 give coder behaviour to I03 while grammar is
+    I01's.
