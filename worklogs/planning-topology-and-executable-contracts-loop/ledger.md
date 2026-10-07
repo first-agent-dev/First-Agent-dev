@@ -715,3 +715,24 @@ E110 EVIDENCE  I01/SLICE4 STEP2 — the human migration note for the `S#` → `S
     document. The note records it as expected so nobody "fixes" a historical plan.
     Doc-links gate unchanged at its 46-link expected-red baseline, measured with and
     without the new file by stash.
+
+E111 DECISION  Live/e2e verification for I01 is **registered, not written** (operator,
+    2026-10-07): collect the targets now, write the tests later, distributed across the
+    increments that own them; no e2e run before I02 closes. The register is
+    `notes/deferred-verification-register.md`, rows D1-D7, each naming the owning increment
+    and the kill-check its test must satisfy. Standing rule attached: an increment may not
+    be DONE while it owns an unticked row.
+    The measurement that motivated it. `precheck` -- the whole 11-rule engine from SLICE3
+    and SLICE3b -- has **zero call sites outside `plan_ids.py` and the test suite** (D2).
+    SD-B is satisfied, because schema §7:388 names its consumer ("I01 SLICE3 + the I03
+    admission step"), but nothing executes it in production, so every rule in it is
+    currently unfalsifiable in the live system. Same for the entire read API (D4).
+    Also recorded: the skill->prompt chain is live and was traced to source (D3).
+    `expansion.py:136` selects the skill, and `coder_loop.py:895` injects it with
+    `read_skill_for_injection`'s **default `file_name="SKILL.md"`** -- the full body,
+    skeleton included -- from inside `_drive_session_inner`. The coder-stage ceremony at
+    `coder_loop.py:247` is a *different* path using `INJECT.md`, and `plan-authoring/` has
+    no `INJECT.md` at all; a test assuming one injection path would be wrong.
+    Proposed and deliberately NOT built: an executable guard that fails the build when a
+    name in `plan_ids.__all__` has neither a production call site nor a register row. It
+    would need its own CT# and is a new policy choice.
