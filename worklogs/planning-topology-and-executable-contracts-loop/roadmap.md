@@ -121,6 +121,18 @@ Tagged `decided:` (chosen) or `assumed:` (never verified — an `ASK#` candidate
   live consumers of the old form, a small archived mechanically-migratable corpus, and a
   migration note shipped for humans. All three held for the `S#` → `SLICE#` rename (E24). If any
   fails later, the next removal is warn-then-remove.
+- `decided:` **SD-C — no increment is DONE without one live-path test.** Every increment ships
+  at least one test that boots the real composition root (`drive_session` and the shipped
+  factories; only `ProviderChain.request` is mocked) and asserts an observable effect of that
+  increment's feature, naming the production call site whose deletion makes it fail. Static
+  conformance over fixture text is necessary and **never sufficient**: it proves a string
+  parses, not that anything calls the parser. The two failure modes this exists to stop are
+  code that is wired to nothing and an agent reporting "done" for a path no test ever entered —
+  both of which this project has already produced (a dead `_slice_sections` shipped inside
+  SLICE2 and caught only by the mutation sweep, ledger E89; and the per-slice coverage gate at
+  `workflow_controller.py:332` silently no-opping for the whole life of I01, ledger E52).
+  Where no live path exists yet, the increment says so in one line and names the increment that
+  will add it — the same discipline as SD-B's `consumer:`.
 - `assumed:` Per-slice eval beats one cumulative eval — confirmed by the slice-diff size,
   re-checked once I03 telemetry exists.
 

@@ -465,3 +465,39 @@ E91 FACT  A grammar rule SLICE2 had to settle and the schema does not state: **a
     `test_a_blank_line_does_not_truncate_an_entry` so the choice cannot drift silently.
     Candidate for a one-line addition to schema §4 if the operator wants it written rather than
     merely tested; not escalated to a Q# because it binds no consumer and no contract.
+E92 DECISION  Q36 — a continuation line wrapped back to column 0 silently truncates a slice's
+    `CONTRACTS:` block, losing that entry's tail **and every contract declared after it**.
+    Found by an adversarial prose probe against the shipped parser, not by reading: of eight
+    Markdown habits tested (blank line inside an entry, blank line between entries, sub-bullet
+    lists, tabs, trailing blanks, a column-0 field, a 4-space block after a blank), seven
+    behave as specified and this one deletes data without an error. Measured at 7156c03: a
+    two-contract block whose first entry wraps to the margin parses to exactly one contract.
+    The risk is not theoretical — the planner is a language model and wrapping prose to the
+    left margin is the default Markdown habit.
+    Operator chose (c): the parser stays strict, the SLICE3 pre-check FAILS on a declaration
+    line whose id is absent from the parsed contracts (CT35), and schema §4 states the hazard
+    in the authoring text. Rejected: making the parser tolerant of column-0 continuations,
+    which reintroduces the "is this line a field name?" allowlist that CT17 removed on purpose
+    — the next new column-0 field would silently extend the block again.
+    A second, milder divergence is recorded but not fixed: a blank line followed by a 4-space
+    indent *renders* as a Markdown code block while the parser folds it into contract text, so
+    reader and harness see different things. Left alone — CT35 does not fire on it and no
+    contract depends on it.  [measured + operator-confirmed 2026-10-06]
+E93 DECISION  Q37 — the planning folder specified **no live-path test anywhere**. Audited:
+    roadmap I02–I06 are one-line outlines that never mention one; increment-01's nine-point DoD
+    is entirely static; and SLICE4 was titled "End-to-end conformance" while CT14 only asserts
+    that fixture text parses and pre-checks clean — it boots no composition root and runs no
+    loop, so the title promised a gate the slice does not deliver. The only live-run language
+    in the folder was a Phase-1 exit criterion in `ARCHITECTURE-REVIEW.md` that was never
+    carried into the roadmap.
+    Operator chose (cb): add standing decision **SD-C** — no increment is DONE without one test
+    that boots the real composition root with only `ProviderChain.request` mocked, asserting an
+    observable effect and naming the production call site whose deletion fails it — and put the
+    first real one in I02, where the verify gate actually executes commands
+    (`notes/i02-handoff-verify-gate.md` §7). SLICE4 renamed to "Skill-to-parser conformance".
+    I01 ships no live-path test *deliberately* and now says so in its DoD, with I02 named as
+    the increment that adds it — the same shape as SD-B's `consumer:` rule.
+    Note the asymmetry this corrects: I01's static gates are strong (SD-B, "a grep for the
+    token SLICE is not evidence", strict-xfail forcing functions, a mutation sweep) yet every
+    one of them answers "does this string parse?" and none answers "does anything call it?".
+    Both failure modes SD-C targets have already occurred in this project — E89 and E52.

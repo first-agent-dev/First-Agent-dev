@@ -303,6 +303,14 @@ CONTRACTS:
     and nothing enforced it: CT10 covers undefined references, not duplicate declarations.
     Catches: two slices each believing they own `CT11`, so `contract_class` answers for one of
     them and the other's class is unreachable.
+  CT35 [CONSTRAINT]: the pre-check FAILS when a line inside a slice matches a contract
+    declaration (`CT<n>[a-z]? [[CLASS]]:` after optional indentation) but that id is absent
+    from the slice's parsed contracts, naming the line. Catches the one Markdown habit that
+    breaks the grammar silently: a continuation wrapped back to column 0 closes the
+    `CONTRACTS:` block, truncating that entry **and deleting every contract after it**.
+    Measured at 7156c03 — a two-contract block whose first entry wraps to the margin parses to
+    exactly one contract with no error (Q36). Deliberately a check and not parser tolerance:
+    deciding "is this column-0 line a field?" is the allowlist CT17 exists to avoid.
 TESTS: tests/test_plan_precheck.py  (NEW — author it; absent at 2f6b8c1)
 ```verify
 uv run pytest tests/test_plan_precheck.py -q
@@ -316,21 +324,27 @@ uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_precheck.py
 - [ ] STEP4: Make the runner aggregate every violation before returning, each carrying
       `file:line` and a rule id. (exit: CT25 green — a plan seeded with three distinct
       violations reports three.)
-- [ ] STEP5: Add the near-miss heading diagnostic, the undeclared-contract warning and the
-      duplicate-declaration failure. (exit: CT26, CT27 and CT34 green.)
+- [ ] STEP5: Add the near-miss heading diagnostic, the undeclared-contract warning, the
+      duplicate-declaration failure and the lost-declaration failure. (exit: CT26, CT27, CT34
+      and CT35 green.)
 - [ ] STEP6: Create `tests/data/plan-drift-corpus/`, one file per observed drift mode: a space
       in the slice heading, a lower-case heading, a wrong-level heading without a colon, a
       contract declared outside the `CONTRACTS:` block, a slice followed by an
-      increment-level heading, and one `CT#` declared in two slices. (exit: every corpus file produces at least one named diagnostic
-      and none parses silently to empty.)
+      increment-level heading, one `CT#` declared in two slices, and a contract whose
+      continuation is wrapped back to column 0. (exit: every corpus file produces at least one
+      named diagnostic and none parses silently to empty.)
 
 ---
 
-## SLICE4: End-to-end conformance + historical migration note
+## SLICE4: Skill-to-parser conformance + historical migration note
 STEPS: outcome
 DEPS: SLICE1c, SLICE3
-INTENT: prove the whole path — a plan authored strictly from the migrated skill text parses and
-  pre-checks clean — and tell a human what happened to the old grammar.
+INTENT: prove the authoring chain closes — a plan authored strictly from the migrated skill
+  text parses and pre-checks clean — and tell a human what happened to the old grammar.
+  Renamed from "End-to-end conformance": CT14 runs no loop and boots no composition root, so
+  the old title promised a live gate this slice does not deliver. Under SD-C the live gate is
+  named, not skipped — it lands in I02, where the verify gate actually executes
+  `commands_for` (`notes/i02-handoff-verify-gate.md` §7).
 CONTRACTS:
   CT14 [FUNCTIONAL]: a sample increment authored strictly from the migrated skill text parses
     via `extract_plan_ids` and passes the SLICE3 pre-check with zero failures.
@@ -366,6 +380,10 @@ uv run ruff check knowledge/skills tests/test_skill_conformance.py
 - [ ] Every name in schema §7 has a call site outside tests, or is marked pending with a named
       consumer increment.
 - [ ] Full suite: no regression against a stash-measured baseline.
+- [ ] SD-C: I01 ships **no** live-path test and says so deliberately. Its whole surface is a
+      pure parser plus two prompt strings; the only shipped consumer is
+      `workflow_controller.py:332`, held by CT11/CT31. The live gate for this chain is a named
+      I02 contract, not an omission.
 
 ## Out of scope (moved, not dropped)
 

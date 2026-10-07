@@ -1218,3 +1218,45 @@ so present behaviour is unchanged; the broadening is future-proofing. Naming sta
 DoD verify block is. Consequence for I02: `commands_for(None)` is its plan-level gate input.
 
 **Recorded as:** ledger E87; CT4b, CT4c and STEP3 amended in `increments/increment-01-…md`.
+
+---
+
+## Q36 — where do we fix the silent contract loss? (raised while auditing SLICE2's grammar)
+
+**Question.** The shipped parser ends a `CONTRACTS:` block at the first non-blank column-0
+line. A continuation wrapped back to the left margin — the default Markdown habit — therefore
+truncates that entry *and deletes every contract declared after it*, with no error. Probed
+against the real parser at `7156c03`: of eight prose habits, seven behave as specified; this
+one loses data silently.
+
+**Options.** (a) make the parser tolerant of column-0 continuations · (b) keep the parser
+strict, add a SLICE3 pre-check rule · (c) (b) plus an explicit authoring line in schema §4.
+
+**Verdict: ✅ DECIDED — (c), operator-confirmed 2026-10-06.** (a) is the allowlist CT17 removed
+on purpose: deciding "is this column-0 line a field?" fails on the next field someone adds.
+A strict parser with a loud gate is the project's standing posture. Shipped as **CT35** in
+SLICE3, a corpus file in STEP6, and a paragraph in §4. Ledger E92.
+
+---
+
+## Q37 — the plans specify no live-path test at all
+
+**Question.** Audit of the folder: roadmap I02–I06 never mention one; increment-01's DoD is
+nine static checks; SLICE4 was titled "End-to-end conformance" but CT14 only asserts that
+fixture text parses — no composition root, no loop. Every I01 gate answers "does this string
+parse?"; none answers "does anything call it?".
+
+**Options.** (a) add a live contract to I01/SLICE4 now · (cb) standing decision + first real
+gate in I02 · (both).
+
+**Verdict: ✅ DECIDED — (cb), operator-confirmed 2026-10-06.** I01's surface is a pure parser
+and two prompt strings; a live gate there would be contrived, while I02's verify gate is the
+first place a real loop executes plan-authored commands. So the rule becomes standing (**SD-C**
+in the roadmap) and the first instance is specified in `i02-handoff-verify-gate.md` §7, with a
+named producer kill-check. SLICE4 renamed to "Skill-to-parser conformance"; I01's DoD now
+states that it ships no live test *deliberately* and names I02. Ledger E93.
+
+**Why this matters more than it looks.** Both failure modes SD-C targets have already happened
+here: a dead `_slice_sections` shipped inside the very slice that orphaned it (E89), and the
+per-slice coverage gate no-opping for the whole life of I01 (E52). Neither is visible to a
+fixture test, and both survive an agent reporting the work complete.

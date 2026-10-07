@@ -144,6 +144,14 @@ Token rules — the harness parses exactly this; write exactly this:
   whole entry**, continuation lines joined with single spaces — splitting on the first `]:` and
   keeping one line discards the rationale that `CONSTRAINT` entries are required to carry. A
   `CT#` written anywhere else is a *reference*, never a declaration.
+- **Wrap continuation lines deeper than the entry, never to the left margin.** This is the one
+  place where ordinary Markdown habit breaks the grammar, and it breaks it *silently*: a
+  continuation wrapped back to column 0 closes the whole `CONTRACTS:` block, so the entry is
+  truncated **and every contract after it disappears from the slice**. Measured at `7156c03`
+  against the shipped parser: a two-contract block whose first entry wraps to column 0 yields
+  exactly one contract, with no error. The parser is deliberately not made tolerant here — an
+  "is this line a field name?" test is the allowlist the rule above exists to avoid — so the
+  pre-check catches it instead (CT35), and this line tells the author why.
 - Every `CONSTRAINT`-class contract carries a rationale naming the wrong implementation
   it catches, on the entry's continuation lines. It is the only rationale permitted inside a plan body (§1), because it is an
   acceptance criterion in prose form, not history.

@@ -129,3 +129,36 @@ in the pre-check: a pre-check is static and pre-coder, and there is no diff to i
 
 **6.8 Eval calibration before trust.** k=2 is not trustworthy until a labelled calibration set
 (≥100 verdicts) exists. Family switching changes the *direction* of judge error, not its size.
+
+## 7. The live gate I02 owes (SD-C, operator decision Q37, 2026-10-06)
+
+I01 ships no live-path test and says so in its DoD. That is legitimate only because I02 is
+named here as the increment that adds one — the same discipline SD-B applies to accessors.
+
+**What I02 must prove, and why static conformance cannot.** I01's gates all answer "does this
+string parse?". None answers "does anything call the parser?". The project has already produced
+both failure modes this is aimed at: a dead `_slice_sections` shipped *inside* the slice that
+orphaned it, caught only by a mutation sweep (E89); and the per-slice coverage gate at
+`workflow_controller.py:332` silently no-opping for the entire life of I01 because real planner
+output carried no slices (E52). Neither is visible to a fixture test, and both would survive an
+agent reporting the work complete.
+
+**Shape.** Boot the real composition root — `drive_session` with the shipped factories,
+`hooks=HookRegistry()`, a real workspace in `tmp_path`; mock **only** `ProviderChain.request`,
+returning a plan authored from the SLICE1b skill text. Then assert observable effects, not the
+absence of an exception:
+
+- the slice's own `commands_for(SLICE#)` commands ran, in order, and nothing else did;
+- a command belonging to a *different* slice did **not** run — the per-slice scoping is the
+  whole point, and a gate that runs everything passes a naive test;
+- `commands_for(None)` ran at plan level exactly once;
+- a non-zero exit routes to REPAIR_REQUIRED rather than PASS;
+- `request.call_count` is 0 after the gate fires on a fail-before (early-stop efficiency).
+
+**Producer kill-check, named in the test docstring:** deleting the `commands_for` call site in
+the gate must fail the test. A kill-check aimed at the consumer or at `extract_plan_ids` does
+not count — it would stay green with the gate unwired, which is precisely the condition this
+exists to detect.
+
+**`tests/fixtures/session_wiring.py`** already builds this harness for other suites; reuse it
+rather than assembling a parallel one.
