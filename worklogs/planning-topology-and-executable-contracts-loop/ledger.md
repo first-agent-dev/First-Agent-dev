@@ -805,3 +805,29 @@ E114 EVIDENCE  I01/SLICE4 implemented. Red-before-green: 5 failures before the c
     Not done, deliberately: no live-path test. Rows D1 and D3 of
     `notes/deferred-verification-register.md` own it, I02 is the named increment, and the
     chain this slice closes is still only proven over text (SD-C, E93/E103).
+
+E115 EVIDENCE  I01 Definition-of-Done walk, 2026-10-07, recorded in
+    `notes/i01-dod-walk-2026-10-07.md`. Eight of nine lines passed on first measurement:
+    all 14 verify commands across the 7 slices exit 0; the increment pre-checks clean
+    (0 FAIL, 1 WARN -- its own CT38); CT11, CT14 and CT31 green; full suite 4156 passed /
+    3 failed / 12 skipped / 1 xfailed, the three being the expected-red trio re-run by
+    name; and zero `drive_session` boots across all six I01 test files, which is SD-C's
+    "no live-path test, deliberately" confirmed rather than assumed.
+    **DoD line 7 failed on measurement.** `parse_slice_id` was in `plan_ids.__all__` and
+    absent from the schema document entirely, and `canonical_slice_id` was absent from §7.
+    SLICE3b grew the public surface and never grew the spec. Fixed here, documentation
+    only: §7 now specifies both, with their consumers and -- the part that matters -- the
+    reason they differ, one strict for use inside a plan and one lenient only at the
+    eval-report boundary. The DoD line as literally phrased still passed, because it
+    polices §7 names lacking consumers while the drift ran the other way; that asymmetry is
+    now a registered gap, D8, owned by I02. No guard test was added: I01 is complete, and
+    attaching an unowned contract to a closed increment is the drift this project exists to
+    prevent.
+    Two things recorded rather than silently settled. DoD line 2's wording ("no `S#`
+    assertion survives") predates E106 and now reads as if it forbade the four assertions
+    that pin the canonicalisation mapping E106 deliberately kept. And **Q43**: E106 scoped
+    the surviving leniency to the eval-report boundary, but `commands_for`, `tests_for` and
+    `section` canonicalise too -- a second lenient surface the decision never named, which
+    I02 is about to build on.
+    Verdict: I01 is content-complete -- 7 slices, 42 contracts. `VERIFIED` is not claimed;
+    the increment itself says that additionally requires I02 and I03.

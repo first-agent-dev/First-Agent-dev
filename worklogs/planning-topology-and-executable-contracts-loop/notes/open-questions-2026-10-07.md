@@ -1,6 +1,6 @@
 # Open questions — raised 2026-10-07 during I01/SLICE4
 
-Canonical record. Next free id after this file: **Q43**.
+Canonical record. Next free id after this file: **Q44**.
 
 > **All three resolved by the operator on 2026-10-07** (ledger E113) and implemented in
 > I01/SLICE4: **Q40 → (b)** the skeleton must be a valid plan, skills and inject files
@@ -116,3 +116,31 @@ behaviour to I03; (ii) INJECT.md is wholly I03's and the stale grammar is regist
 (iii) CT14 covers every injected text, SKILL.md and INJECT.md alike.
 **Recommendation: (i)** — a grammar token is grammar wherever it lives, and leaving it
 teaches the coder an id form the parser rejects.
+
+---
+
+## Q43 — The accessors are a second lenient surface that E106 never named
+
+**Status: OPEN. Raised by I01's DoD walk, 2026-10-07. Does not block I01.**
+
+E106 (Q/S-c) decided: `parse_slice_id` is **strict** inside a plan, because `S2` is
+ambiguous there between a slice and a step; `canonical_slice_id` **keeps** its leniency, and
+the decision scoped that leniency to "the eval-report boundary
+(`workflow_controller.py:336`), because a report has one namespace".
+
+**Measured.** The accessors `commands_for`, `tests_for` and `section` *also* canonicalise —
+`ids.commands_for("S1") == ids.commands_for("SLICE1")` is an asserted behaviour
+(`tests/test_plan_ids.py`, `test_accessors_accept_either_id_grammar`). So there are **two**
+lenient surfaces, and E106 named only one.
+
+**Why it matters.** The accessors are what I02 and I03 will call. If a caller holds a step id
+and passes it where a slice id is expected, a lenient accessor silently resolves it to the
+wrong object instead of returning nothing — exactly the ambiguity E106 set out to remove.
+
+**Options.** (i) Ratify: an accessor call is a single-namespace lookup like a report, so the
+leniency is correct; amend E106's wording to name both surfaces. (ii) Tighten: accessors take
+strict ids, and a caller that holds a legacy id canonicalises first; the three assertions
+change. (iii) Split: lenient lookup stays but returns a flag, so a caller can tell an exact
+hit from a canonicalised one.
+**Recommendation: (i)** — but it must be *decided*, because today it is an accident of
+implementation rather than a stated rule, and I02 is about to build on it.

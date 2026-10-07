@@ -92,6 +92,17 @@ Three gates are expected-red by design (E19) and must **never** be "fixed":
 `test_cli_ergonomics::test_workflow_per_role_overrides_parse`. A green one is the
 regression.
 
+## D8 — The exported surface can drift away from schema §7  ·  owner: **I02**
+
+- **Found by I01's DoD walk, 2026-10-07.** `parse_slice_id` was in `plan_ids.__all__` and
+  absent from the schema document entirely; `canonical_slice_id` was absent from §7. Both
+  are now documented, but nothing *prevents* the next export from drifting the same way.
+- **Test to write (I02).** Assert `plan_ids.__all__` is a subset of the names specified in
+  `notes/artifact-schema-and-grammar.md` §7, and that each carries a `consumer:`
+  annotation. **Kill-check:** adding a name to `__all__` without a §7 entry must fail it.
+- **Why not now.** I01 is complete; attaching a new contract to a closed increment is the
+  drift this project exists to prevent. I02 is the surface's next consumer.
+
 ---
 
 ## Proposal — make this register executable (needs a decision)

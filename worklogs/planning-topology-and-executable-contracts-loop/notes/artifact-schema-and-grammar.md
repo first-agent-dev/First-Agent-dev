@@ -386,6 +386,18 @@ plan.tests_for("SLICE2")  # consumer: I02 — baseline selection; TESTS:-not-in-
 # meaning — do not conflate them.
 plan.steps_mode("SLICE2")  # consumer: I03 — PENDING, not built in I01 (no reader until then)
 precheck(increment_text)  # consumer: I01 SLICE3 + the I03 admission step; pure code, pre-coder
+
+# Two id-validation primitives. They are exported, so they are specified here;
+# an exported name absent from this section is drift, and I01's DoD walk found
+# exactly that on 2026-10-07 (ledger E115).
+parse_slice_id("SLICE2b")  # -> "SLICE2b"; "S2" -> None. STRICT, for use INSIDE a plan,
+                           #   where `S2` is ambiguous between a slice and a step (E106).
+                           #   consumer: internal — `_declared_deps`, backing CT10. No
+                           #   external consumer yet; do not grow one without naming it.
+canonical_slice_id("S2")   # -> "SLICE2". LENIENT, and deliberately so: used only at the
+                           #   eval-report boundary (`workflow_controller.py:336`), where a
+                           #   report carries ONE namespace and nothing can be confused.
+                           #   consumer: `workflow_controller`, shipped.
 ```
 
 `precheck` returns **every** violation in one pass, each naming `file:line` and a rule id; it
