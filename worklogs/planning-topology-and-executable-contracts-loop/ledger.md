@@ -501,3 +501,29 @@ E93 DECISION  Q37 — the planning folder specified **no live-path test anywhere
     token SLICE is not evidence", strict-xfail forcing functions, a mutation sweep) yet every
     one of them answers "does this string parse?" and none answers "does anything call it?".
     Both failure modes SD-C targets have already occurred in this project — E89 and E52.
+E94 DECISION  Q38 — CT10 and CT27 assigned the same condition two different severities: CT10
+    FAILED on "a reference to an undefined `SLICE#`/`CT#`" while CT27 WARNed on "a contract id
+    referenced anywhere but declared in no `CONTRACTS:` block". A contradiction inside the plan
+    itself, found while reading SLICE3 before writing code.
+    Resolved by splitting the subjects, operator-confirmed: **CT10 owns slice ids and keeps
+    FAIL** — an undefined `SLICE#` in `DEPS:` is a broken edge, so the execution order is
+    undefined and the plan cannot run at all — while **CT27 owns contract ids and keeps WARN**,
+    because a plan legitimately cites a contract owned by a neighbouring increment and a FAIL
+    there would force an escape hatch, which then hides the real misses. The genuinely
+    dangerous sub-case, a declaration lost to a column-0 wrap, is already a FAIL under CT35, so
+    nothing hazardous degrades to a warning.
+E95 DECISION  Q39 — CT10b (WARN on a `verify` command naming a non-existent path) contradicted
+    the module contract in schema §7: "all functions pure, total, stdlib-only", and
+    `plan_ids.py`'s own docstring, "no filesystem access". **Deferred to I02** rather than
+    reconciled, and the reason is stronger than the conflict: at pre-check time the check is
+    false by construction. The pre-check runs *before* the coder, and a new slice's `TESTS:`
+    path is annotated `(NEW — author it)` precisely because it does not exist yet — so CT10b
+    would warn on every new test file, which is noise, not signal. The only true positive left
+    is a typo in a path, and that fails loudly the first time I02's gate runs the command,
+    costing one gate run rather than a burned slice — exactly the trade SLICE3's INTENT names.
+    Path existence also belongs to I02 on the merits: that is where the filesystem is already
+    in play and where `tests_note` is interpreted by the fail-before filter.
+    Rejected: injecting an `exists` probe and splitting out a second impure entry point. Both
+    work, both add a seam whose only purpose is to host a check that should not run here.
+    `precheck` therefore stays a single pure stdlib-only function. SLICE3 drops to 8 contracts
+    and 5 steps.

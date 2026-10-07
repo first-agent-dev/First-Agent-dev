@@ -162,3 +162,26 @@ exists to detect.
 
 **`tests/fixtures/session_wiring.py`** already builds this harness for other suites; reuse it
 rather than assembling a parallel one.
+
+## 8. CT10b moved here from I01/SLICE3 (Q39, operator decision 2026-10-06)
+
+**The rule.** A `verify` command, or a slice's `TESTS:` entry, that names a path which does not
+exist is reported. In I01 this was specified as a pre-check WARN; it is I02's because the
+pre-check is pure and stdlib-only by contract, and — more importantly — because the check is
+*false by construction* before the coder runs: a new slice's `TESTS:` path is annotated
+`(NEW — author it)` precisely because it does not exist yet, so a pre-check warning fires on
+every new test file.
+
+**Why it becomes real here.** I02 already touches the filesystem and already reads
+`SliceRecord.tests_note` for its fail-before filter (§2). That makes `(NEW)` interpretable:
+
+- path absent **and** `tests_note` marks it NEW → expected; the gate's job is to require that
+  the coder creates it, and that it fails before the change and passes after.
+- path absent **and** no NEW marker → a real defect: the plan names a baseline test that is
+  not there. Report it before running anything.
+- path present **and** marked NEW → the annotation is stale, or the author mis-marked it.
+  Worth a warning: the fail-before semantics differ for an existing file.
+
+Note the shape: the useful rule is not "does this path exist" but "does its existence agree
+with what the plan claims about it". That distinction is only available where `tests_note` and
+the filesystem are both in hand, which is here and not in a pure pre-check.

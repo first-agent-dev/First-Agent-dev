@@ -287,17 +287,20 @@ CONTRACTS:
   CT9 [CONSTRAINT]: the pre-check FAILS a `prescriptive` slice containing a `STEP#` block
     with no `(exit: …)`. A `STEP#` block is the `- [ ] STEP<n>:` line plus its indented
     continuation lines.
-  CT10 [CONSTRAINT]: the pre-check FAILS on a cyclic `DEPS:` graph or a reference to an
-    undefined `SLICE#`/`CT#`.
-  CT10b [FUNCTIONAL]: the pre-check WARNS (never fails) when a `verify` command references a
-    file path that does not exist. The command is never executed here. Slice count is an
-    authoring rule in SLICE1b, not a check.
+  CT10 [CONSTRAINT]: the pre-check FAILS on a cyclic `DEPS:` graph or on a `DEPS:` reference
+    to a `SLICE#` this increment does not define. Scoped to slice ids by Q38: an undefined
+    slice is a broken edge in the execution graph, so the run order is undefined and the plan
+    cannot be executed at all. Undefined **contract** references are CT27's WARN, and the one
+    dangerous sub-case — a declaration lost to a column-0 wrap — is CT35's FAIL. Slice count is
+    an authoring rule in SLICE1b, not a check.
   CT25 [FUNCTIONAL]: the pre-check returns every violation in one pass, each naming `file:line`
     and a rule id; it never stops at the first failure.
   CT26 [FUNCTIONAL]: a line matching `^#{2,4}\s+SLI?CE?\s*\d` that does not parse as a slice
     heading produces a near-miss diagnostic naming the line and the intended form.
-  CT27 [FUNCTIONAL]: a contract id referenced anywhere in the increment but declared in no
-    `CONTRACTS:` block produces a WARN naming the referencing line.
+  CT27 [FUNCTIONAL]: a `CT#` referenced anywhere in the increment but declared in no
+    `CONTRACTS:` block produces a WARN — never a FAIL — naming the referencing line. WARN
+    because a plan legitimately cites a contract owned by a neighbouring increment, and a FAIL
+    would force an escape hatch that then hides real misses (Q38).
   CT34 [CONSTRAINT]: the pre-check FAILS when one `CT#` is declared in more than one
     `CONTRACTS:` block, naming both `file:line`s. Schema §4 requires ids unique per increment
     and nothing enforced it: CT10 covers undefined references, not duplicate declarations.
@@ -320,14 +323,13 @@ uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_precheck.py
       (exit: an empty plan passes; results aggregate.)
 - [ ] STEP2: Implement CT8/CT9/CT10, parsing `STEP#` as a multi-line block. (exit: each
       fails its seeded bad plan and passes the good fixture.)
-- [ ] STEP3: Implement the CT10b warnings. (exit: CT10b green.)
-- [ ] STEP4: Make the runner aggregate every violation before returning, each carrying
+- [ ] STEP3: Make the runner aggregate every violation before returning, each carrying
       `file:line` and a rule id. (exit: CT25 green — a plan seeded with three distinct
       violations reports three.)
-- [ ] STEP5: Add the near-miss heading diagnostic, the undeclared-contract warning, the
+- [ ] STEP4: Add the near-miss heading diagnostic, the undeclared-contract warning, the
       duplicate-declaration failure and the lost-declaration failure. (exit: CT26, CT27, CT34
       and CT35 green.)
-- [ ] STEP6: Create `tests/data/plan-drift-corpus/`, one file per observed drift mode: a space
+- [ ] STEP5: Create `tests/data/plan-drift-corpus/`, one file per observed drift mode: a space
       in the slice heading, a lower-case heading, a wrong-level heading without a colon, a
       contract declared outside the `CONTRACTS:` block, a slice followed by an
       increment-level heading, one `CT#` declared in two slices, and a contract whose
