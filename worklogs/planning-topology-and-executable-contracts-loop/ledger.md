@@ -831,3 +831,26 @@ E115 EVIDENCE  I01 Definition-of-Done walk, 2026-10-07, recorded in
     I02 is about to build on.
     Verdict: I01 is content-complete -- 7 slices, 42 contracts. `VERIFIED` is not claimed;
     the increment itself says that additionally requires I02 and I03.
+
+E116 EVIDENCE  I02 planning readiness assessed, recorded in
+    `notes/i02-planning-readiness-2026-10-07.md`. The handoff's §2 contract boundary was
+    written before SLICE2-SLICE4 shipped, so every promise in it was **executed against the
+    shipped code** rather than re-read: `commands_for` (slice and `None`), `section`,
+    `tests_for`, `contract_class`, `SliceRecord.tests_note`, `.test_paths`. All live.
+    `commands_for(None)` returns `()` on increment-01, i.e. ownership is total and no verify
+    block in it is unowned.
+    Second spec defect found while checking it, and fixed: schema §7 wrote
+    `plan.steps_mode("SLICE2")` as a method on `PlanIds`, but `steps_mode` is a **field on
+    `SliceRecord`** -- a call that never existed. Corrected in place with the old form
+    quoted so the correction is auditable. Together with E115's `parse_slice_id` gap, two of
+    the surface spec's entries were wrong in ways a planner building on them would only
+    discover at implementation time; both were documentation, neither needed code.
+    Decision backlog split by what it blocks, which is the part that was missing. Blocking
+    the *shape* of the plan: H4 (result shape and home -- a subprocess runner cannot live in
+    the pure stdlib-only `plan_ids.py`, so this decides the module boundary and therefore
+    the slices), H2 (`NEW` semantics, including the third option that derives NEW-ness from
+    `HEAD` and removes the marker from the trust path), H1 (fail-before granularity), and
+    the new Q43. Blocking implementation only: H3, H5, H7, CT10b. Not a question but a live
+    external risk: H6, the S16 proposal to delete `.commands` for having "no consumers" --
+    measured today, `commands_for` still has zero production call sites, so that argument is
+    correct until I02 becomes the consumer that falsifies it.

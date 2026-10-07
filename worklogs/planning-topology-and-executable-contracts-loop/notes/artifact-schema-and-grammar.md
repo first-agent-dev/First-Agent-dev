@@ -384,7 +384,11 @@ plan.tests_for("SLICE2")  # consumer: I02 — baseline selection; TESTS:-not-in-
 # NOTE: SliceRecord.test_paths holds PATHS; the retained
 # flat PlanIds.tests holds T# IDs. Same word, different
 # meaning — do not conflate them.
-plan.steps_mode("SLICE2")  # consumer: I03 — PENDING, not built in I01 (no reader until then)
+# SliceRecord.steps_mode   # a FIELD on the record, not a method on PlanIds: reach it as
+                          #   `plan.slice_records[i].steps_mode`. consumer: I03 — PENDING,
+                          #   no reader until then. (Corrected 2026-10-07: this line used
+                          #   to read `plan.steps_mode("SLICE2")`, a call that never
+                          #   existed; ledger E116.)
 precheck(increment_text)  # consumer: I01 SLICE3 + the I03 admission step; pure code, pre-coder
 
 # Two id-validation primitives. They are exported, so they are specified here;
