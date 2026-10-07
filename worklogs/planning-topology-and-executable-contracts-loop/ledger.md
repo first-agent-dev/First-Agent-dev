@@ -896,3 +896,42 @@ E118 DECIDED (operator, 2026-10-07)  The producer+consumer rule (SD-B) is satisf
     consumer, so the pair is planned and the accessor stays. supersedes: the framing in E116
     that treated H6 as an unresolved external risk; it is now a tracked dependency, with
     row D4 of the register carrying the e2e obligation.
+
+E119 FACT  The missing link between the monster plan and this roadmap is
+    `worklogs/reviews/SIMPLIFICATION-the-elegant-path.md` (204 lines). Operator was right
+    that one existed; neither the roadmap's `## Sources` nor `i02-handoff-verify-gate.md`
+    cites it, which is why two passes of reading missed it. The roadmap's frontmatter
+    `supersedes:` the monster plan, and **this note is the document that caused the
+    supersession**: it argues that every hard question of the preceding weeks (Q17, Q20, the
+    T51 normalisation matrix, `tool_choice` work, Q21) is downstream of one design choice --
+    asking a model a question that has a factual answer -- and that `PlanIds.commands` was
+    already being extracted and thrown away. "29 GAPs, 46 verification rows" was the price of
+    making an unreliable narrator trustworthy.
+    So there is **no single latest iteration** of the verify-runner idea; there are three
+    layers, none contradicting, none complete on its own:
+    (1) MECHANICS -- monster plan §Step S6 line 700 (~2026-09-07): module
+    `src/fa/inner_loop/verification.py`, env/timeout policy reuse, and routing settled as
+    Q10(a). Nothing later contradicts it.
+    (2) RATIONALE AND SCOPE -- `SIMPLIFICATION-the-elegant-path.md`: proposes S16 as "one new
+    function, one call site, plus tests", explicitly against the 29-GAP apparatus.
+    (3) NON-VACUITY -- `notes/verify-block-design.md` + the I02 handoff (2026-09-09 onward):
+    the four-phase ritual and seven-row truth table. This layer is NEW relative to (1) and
+    (2) and is where fail-before/pass-after was introduced.
+
+E120 FACT  A design regression found by reading E119's note: SIMPLIFICATION §4 "What it does
+    NOT solve" names four boundaries, and the two that matter for test strength were never
+    carried into the I02 design. Its answers were (2) a command that does not actually test
+    the slice -- `pytest -q` on an empty file exits 0 -- "which is why the *judge stays*,
+    reviewing whether the test is honest is exactly the **kill-check discipline the skill
+    already mandates**"; and (3) a coder that edits the test to pass -- mitigated by the diff
+    reaching the judge. `notes/verify-block-design.md` contains **zero** occurrences of
+    "kill-check"; it replaced that answer with fail-before/pass-after, which is a strictly
+    weaker proxy.
+    The kill-check discipline is already normative in all three skills and is not a new idea
+    to be invented: `feature-planning/SKILL.md:332` requires
+    `producer-kill-check=<exact producer/write/render/gate removal fails test>`, its §12
+    gives a seven-step manual protocol ending "restore code; report which tests failed";
+    `tests-writing/SKILL.md:68` makes a kill-check whose call site does not exist VACUOUS;
+    `plan-authoring/SKILL.md:62` requires one per product claim. A `mutation-clearing` skill
+    exists. ADR-15 already establishes git-worktree isolation, which is where a harness could
+    apply a kill-check without touching the operator's tree.
