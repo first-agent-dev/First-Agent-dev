@@ -279,6 +279,7 @@ uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_ids.py
 ## SLICE3: Plan pre-check (static lint, pure code)
 STEPS: prescriptive
 DEPS: SLICE2
+SHIPPED: e58eeca (branch arena/ca4c996c-first-agent-dev, 2026-10-07)
 INTENT: lint an increment plan in code before the controller loop; plan errors cost an
   assertion, not a burned slice.
 CONTRACTS:
@@ -322,7 +323,7 @@ CONTRACTS:
     Measured at 7156c03 — a two-contract block whose first entry wraps to the margin parses to
     exactly one contract with no error (Q36). Deliberately a check and not parser tolerance:
     deciding "is this column-0 line a field?" is the allowlist CT17 exists to avoid.
-TESTS: tests/test_plan_precheck.py  (NEW — author it; absent at 2f6b8c1)
+TESTS: tests/test_plan_precheck.py  (authored in this slice; absent at 2f6b8c1)
 ```verify
 uv run pytest tests/test_plan_precheck.py -q
 uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_precheck.py
