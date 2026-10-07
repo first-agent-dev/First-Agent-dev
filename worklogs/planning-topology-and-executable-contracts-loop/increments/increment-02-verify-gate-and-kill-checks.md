@@ -27,8 +27,30 @@ restate it here.
   timeout + binary-decode policy to copy is `src/fa/inner_loop/tools/run_bash.py:233-250`.
 - `_run_subprocess_fallback` is at `src/fa/inner_loop/tools/run_bash.py:219` and is private,
   tool-shaped, and performs `transaction.add_write` and artifact offload.
-- `_deadline_exceeded` is at `src/fa/inner_loop/workflow_controller.py:536`;
-  `repair_round` is at `src/fa/inner_loop/workflow_artifacts.py:277`.
+- `_run_stage` is at `src/fa/inner_loop/workflow_controller.py:511` and takes
+  `(ctx, role, *, fresh, progress, transition_reason, run_stage_fn) -> StageResult`. **It has
+  no slice parameter and there is no per-slice loop**: one coder stage covers the whole plan.
+  The per-slice loop is I03's. `StageResult` is `(role, exit_code, eval_report=None)` at `:193`.
+- `_deadline_exceeded` is at `:536` and is already called at the top of `_run_stage`.
+- The governing repair counter is `WorkflowProgress.repair_round` at `:188`; the cap is applied
+  at `:944-957`, triggered by `eval_report.route_decision == "return_to_coder"`.
+  `workflow_artifacts.py:277` is `FlowState.repair_round`, a mirror — do not key on it.
+- `_run_initial_roles` (`:886`) overwrites `eval_report` from any later stage (`:908-909`), so a
+  report attached to a coder stage is **discarded** unless the role loop stops there.
+- `EvalReport` (`workflow_artifacts.py:201`) has fields
+  `run_id, plan_id, plan_version, evaluation_id, verdict, route_decision, summary, step_results,
+  findings, …`. `EvalVerdict` includes `REPAIR_REQUIRED`; `RouteDecision` includes
+  `return_to_coder`. **There is no provenance field** — nothing marks a report harness-authored.
+- The composition root for a workflow is `run_workflow(... run_stage_fn=_cmd_run, transport=…)`;
+  `_cmd_run` (`cli.py:1460`) is what calls `drive_session` (`cli.py:2408`). `drive_session` sits
+  **below** the controller and cannot exercise `_run_stage`. The only existing end-to-end
+  precedent is `tests/test_workflow_global_history.py:123-141`, which stubs the **transport**.
+- `.venv/` is git-ignored (`.gitignore:4`), so it is absent from any copied or worktree'd tree.
+- **Measured 2026-10-07: a mutated copy of the tree is invisible to the import system.** With
+  `fa` installed (an absolute path on `sys.path`), running a test with `cwd` set to a copy still
+  imports the original module. `PYTHONPATH=<copy>/src` does win. Without a guard, every
+  kill-check would run against unmutated code, every test would pass, and the gate would report
+  `VACUOUS` for every contract — inverted, not merely broken.
 - `_git_output` (`workflow_controller.py:401`) collapses OSError/SubprocessError to `None`.
   Do not reuse it; "couldn't run" must never read as "passed".
 - A `kill:` line indented under a contract passes the shipped `precheck` with `ok=True` and
@@ -41,7 +63,15 @@ restate it here.
 - Exactly two kill operators: `neutralise` and `remove-call`. Do not add a third.
 - `VACUOUS` and `PRODUCER_ABSENT` block with **no appeal** (operator, F3).
 - Kill-checks run on **`FUNCTIONAL` contracts only** (operator, F4).
-- Mutation is applied in a throwaway git worktree. The operator's tree is never written to.
+- Mutation is applied to a **throwaway copy of `src/` only** (2.4 MB, ~10 ms), never a git
+  worktree. Tests are read from the operator's tree and are therefore structurally immune to
+  mutation. The operator's tree is never written to.
+- **Every kill-check run must first prove the mutated module is the one imported.** A kill-check
+  whose provenance probe fails is `ERROR`, never a verdict.
+- A blocking verdict **stops the role loop** before the eval stage runs; otherwise the eval
+  report overwrites the synthetic one (`:908-909`) and the route is silently lost.
+- Harness origin is carried in `evaluation_id`, prefixed `harness-verify-`, plus a
+  `FindingClass="implementation"` finding. Do not add a field to `EvalReport`.
 - Routing reuses Q10(a): synthesise a harness-origin eval report with
   `route_decision="return_to_coder"`. Do not introduce a second routing concept.
 - `ERROR` is never `PASS`. A thing that could not be determined did not pass.
@@ -128,13 +158,19 @@ INTENT: apply a declared kill-check to source text by symbol rather than by line
   how many targets matched, so that "the producer is missing" is distinguishable from "the
   test is weak".
 CONTRACTS:
-  CT55 [FUNCTIONAL]: `apply_kill(source, directive)` with `neutralise` replaces the body of
-    the named function with `return None` and leaves every other definition byte-identical
-    after `ast.unparse` round-trip.
+  CT55 [FUNCTIONAL]: `apply_kill(source, directive)` with `neutralise` replaces the body of the
+    named function with `return None`, and every other definition is unchanged **relative to
+    `ast.unparse(ast.parse(source))`**, not to `source`. Measured: `ast.unparse` discards
+    comments and layout, so a comparison against the original text fails for reasons unrelated
+    to the mutation.
     kill: neutralise src/fa/inner_loop/slice_verification.py::apply_kill
-  CT56 [FUNCTIONAL]: with `remove-call`, every statement inside the enclosing symbol whose
-    expression is a call to `<callee>` is deleted; if the body empties it becomes `pass`.
-    kill: remove-call src/fa/inner_loop/slice_verification.py::_RemoveCall -> visit_FunctionDef
+  CT56 [FUNCTIONAL]: with `remove-call`, **every `ast.Call` to `<callee>` inside the enclosing
+    symbol is replaced by the constant `None`** — not only bare expression statements. Measured
+    on a four-call sample (`a = emit(x)`, `emit(x)`, `if emit(x):`, a comprehension): deleting
+    only `ast.Expr` statements sees **1 of 4**, which silently reports `PRODUCER_ABSENT` when the
+    producer is assigned, and partially removes it otherwise. Replacement handles all four forms
+    uniformly and is a truer simulation of "the producer never ran".
+    kill: remove-call src/fa/inner_loop/slice_verification.py::_Silence -> visit_Call
   CT57 [FUNCTIONAL]: `apply_kill` returns `(mutated_source, hits)`. `hits == 0` means the
     target is absent and the caller raises `PRODUCER_ABSENT`; `hits > 1` is an ambiguous
     target and the caller raises `ERROR`, never a guess.
@@ -151,42 +187,46 @@ uv run pytest tests/test_kill_operators.py -q
 uv run ruff check src/fa/inner_loop/slice_verification.py tests/test_kill_operators.py
 ```
 - [ ] STEP1: implement `_Neutralise(ast.NodeTransformer)` counting hits on `visit_FunctionDef` and `visit_AsyncFunctionDef` (exit: `uv run pytest tests/test_kill_operators.py -q -k neutralise` exits 0)
-- [ ] STEP2: implement `_RemoveCall(ast.NodeTransformer)` deleting `ast.Expr` statements whose `value` is an `ast.Call` to the callee, resolving both `Name` and `Attribute` callees (exit: `uv run pytest tests/test_kill_operators.py -q -k remove_call` exits 0)
+- [ ] STEP2: implement `_Silence(ast.NodeTransformer)` replacing every `ast.Call` to the callee inside the enclosing symbol with `ast.Constant(None)`, resolving both `Name` and `Attribute` callees, and counting each (exit: `uv run pytest tests/test_kill_operators.py -q -k remove_call` exits 0)
+- [ ] STEP2b: assert the four-call-form sample yields `hits == 4` (exit: `uv run pytest tests/test_kill_operators.py -q -k call_forms` exits 0)
 - [ ] STEP3: implement `apply_kill` dispatching on the operator and returning `(source, hits)` (exit: `uv run pytest tests/test_kill_operators.py -q -k hits` exits 0)
 - [ ] STEP4: assert the closed operator set with `len(KillOperator) == 2` (exit: `uv run pytest tests/test_kill_operators.py -q` exits 0)
 
-## SLICE4: Worktree isolation
+## SLICE4: The mutation sandbox — a `src` overlay with a provenance guard
 STEPS: prescriptive
 DEPS: —
-INTENT: a kill-check runs against a disposable copy of the working tree, including the
-  coder's uncommitted and untracked files, so production code is mutated without the
-  operator's checkout ever being written to.
+INTENT: run a mutated copy of production code without writing to the operator's tree, and
+  refuse to return a verdict unless the mutated module is provably the one that was imported.
 CONTRACTS:
-  CT60 [FUNCTIONAL]: `scratch_tree(root)` yields a path whose content equals the working tree
-    — tracked modifications **and untracked, non-ignored files**. Catches: a worktree built
-    from `HEAD` plus `git diff HEAD`, which omits the planner-authored test file because it is
-    new and untracked, so the kill-check would run where the test does not exist.
-    kill: remove-call src/fa/inner_loop/slice_verification.py::scratch_tree -> _copy_untracked
-  CT61 [FUNCTIONAL]: the scratch tree is removed on normal exit **and** on exception; the
-    context manager is exception-safe.
-    kill: remove-call src/fa/inner_loop/slice_verification.py::scratch_tree -> _remove_worktree
-  CT62 [CONSTRAINT]: after any `scratch_tree` use, `git status --porcelain` in the operator's
-    root is byte-identical to its value before. Catches: a mutation written to the real tree.
-  CT63 [CONSTRAINT]: the scratch path is created outside the repository root and is never
-    added to the coder's writable set. Catches: §6.7's requirement that verification run
-    where the coder cannot write.
-  CT64 [FUNCTIONAL]: if the worktree cannot be created, the result is `ERROR`; it is never
-    reported as a passing or failing kill-check.
-    kill: remove-call src/fa/inner_loop/slice_verification.py::scratch_tree -> _raise_scratch_error
-TESTS: tests/test_scratch_tree.py   (NEW — author it)
+  CT60 [FUNCTIONAL]: `mutation_overlay(root, rel_path, mutated_source)` yields a temporary
+    directory containing a copy of `root/src` with `rel_path` replaced by `mutated_source`,
+    and removes it on normal exit **and** on exception.
+    kill: remove-call src/fa/inner_loop/slice_verification.py::mutation_overlay -> _copy_src
+  CT61 [FUNCTIONAL]: a command run against the overlay receives `PYTHONPATH=<overlay>/src`
+    prepended to any inherited value, and `cwd` stays the operator's root so the tests under
+    test are the real ones.
+    kill: remove-call src/fa/inner_loop/slice_verification.py::_overlay_env -> _prepend_pythonpath
+  CT62 [FUNCTIONAL]: before any kill-check result is trusted, a provenance probe runs in the
+    same environment and asserts the target module resolves **inside the overlay**; if it does
+    not, the outcome is `ERROR` and no verdict is produced. Catches the measured defect that
+    an installed package resolves to an absolute path, so a mutated copy is simply never
+    imported and every kill-check reports a false `VACUOUS`.
+    kill: remove-call src/fa/inner_loop/slice_verification.py::_run_kill_check -> _assert_overlay_wins
+  CT63 [CONSTRAINT]: only `src/` is copied. Test files are read from the operator's tree and
+    are therefore structurally impossible for a kill-check to mutate. Catches: a sandbox built
+    by copying the whole tree, in which a mutation could silently rewrite the oracle.
+  CT64 [CONSTRAINT]: after any `mutation_overlay` use, `git status --porcelain` in the
+    operator's root is byte-identical to its value before, and no `git worktree` command is
+    invoked. Catches: a mutation reaching the real checkout.
+TESTS: tests/test_mutation_overlay.py   (NEW — author it)
 ```verify
-uv run pytest tests/test_scratch_tree.py -q
-uv run ruff check src/fa/inner_loop/slice_verification.py tests/test_scratch_tree.py
+uv run pytest tests/test_mutation_overlay.py -q
+uv run ruff check src/fa/inner_loop/slice_verification.py tests/test_mutation_overlay.py
 ```
-- [ ] STEP1: implement `scratch_tree` as a `@contextmanager` using `git worktree add --detach` into a `tempfile.mkdtemp()` path (exit: `uv run pytest tests/test_scratch_tree.py -q -k creates` exits 0)
-- [ ] STEP2: copy tracked modifications with `git diff HEAD` piped to `git -C <scratch> apply`, tolerating an empty diff (exit: `uv run pytest tests/test_scratch_tree.py -q -k tracked` exits 0)
-- [ ] STEP3: copy untracked non-ignored files listed by `git ls-files --others --exclude-standard` (exit: `uv run pytest tests/test_scratch_tree.py -q -k untracked` exits 0)
-- [ ] STEP4: remove the worktree in a `finally` block with `git worktree remove --force` and assert the CT62 porcelain equality (exit: `uv run pytest tests/test_scratch_tree.py -q` exits 0)
+- [ ] STEP1: implement `mutation_overlay` as a `@contextmanager` using `tempfile.mkdtemp()` + `shutil.copytree(root/"src")`, writing `mutated_source` over `rel_path`, removing the tree in `finally` (exit: `uv run pytest tests/test_mutation_overlay.py -q -k overlay` exits 0)
+- [ ] STEP2: implement `_overlay_env` prepending `<overlay>/src` to `PYTHONPATH` over the scrubbed env from SLICE1 (exit: `uv run pytest tests/test_mutation_overlay.py -q -k pythonpath` exits 0)
+- [ ] STEP3: implement `_assert_overlay_wins(module, overlay, env)` running `python -c "import <module>, pathlib, sys; sys.exit(0 if str(pathlib.Path(<module>.__file__).resolve()).startswith(sys.argv[1]) else 3)"` and mapping a non-zero exit to `ERROR` (exit: `uv run pytest tests/test_mutation_overlay.py -q -k provenance` exits 0)
+- [ ] STEP4: add the negative oracle — with the probe disabled, a mutation of an installed module is NOT observed; with it enabled, the run is `ERROR` not `VACUOUS` (exit: `uv run pytest tests/test_mutation_overlay.py -q` exits 0)
 
 ## SLICE5: Verdict assembly
 STEPS: prescriptive
@@ -196,7 +236,8 @@ INTENT: compose the phases into one verdict per slice, keeping "the test is weak
 CONTRACTS:
   CT65 [FUNCTIONAL]: `verify_slice(record, *, root, ...)` returns a frozen `SliceVerification`
     carrying a `SliceVerdict`, the per-command results, and the per-contract kill-check
-    outcomes.
+    outcomes. `verify_plan` (SLICE6) maps it over every slice; neither function takes a
+    "current slice" from the controller, because no per-slice dispatch exists in I02.
     kill: neutralise src/fa/inner_loop/slice_verification.py::verify_slice
   CT66 [FUNCTIONAL]: when the slice's commands pass but a contract's test **still passes**
     under its kill-check, the verdict is `VACUOUS` and names the contract id.
@@ -220,61 +261,79 @@ uv run pytest tests/test_verify_slice.py -q
 uv run ruff check src/fa/inner_loop/slice_verification.py tests/test_verify_slice.py
 ```
 - [ ] STEP1: add `SliceVerdict` with exactly the seven members in the design note §3.2 (exit: `uv run python -c "from fa.inner_loop.slice_verification import SliceVerdict; assert len(SliceVerdict)==7"` exits 0)
-- [ ] STEP2: implement `_run_kill_check(directive, test_path, root)` using `scratch_tree` + `apply_kill` + `run_commands` (exit: `uv run pytest tests/test_verify_slice.py -q -k kill_check` exits 0)
+- [ ] STEP2: implement `_run_kill_check(directive, test_path, root)` using `apply_kill` + `mutation_overlay` + `_assert_overlay_wins` + `run_commands`, in that order; the provenance probe gates the result (exit: `uv run pytest tests/test_verify_slice.py -q -k kill_check` exits 0)
 - [ ] STEP3: implement `_classify` mapping phase outputs to a verdict, with `ERROR` dominating (exit: `uv run pytest tests/test_verify_slice.py -q -k classify` exits 0)
 - [ ] STEP4: build the three-row oracle from the design note §3.6 — PROVEN, PRODUCER_ABSENT, VACUOUS — as the slice's primary test (exit: `uv run pytest tests/test_verify_slice.py -q` exits 0)
 
 ## SLICE6: Wire the gate into the controller, and prove it live
 STEPS: prescriptive
 DEPS: SLICE5
-INTENT: the gate becomes reachable from a real run — the first production consumer of
-  `commands_for` — and one test boots the real composition root to prove it, discharging
-  SD-C and register rows D1, D3, D4 and D5.
+INTENT: the gate becomes reachable from a real workflow run — the first production consumer of
+  `commands_for` — and one test boots the real composition root to prove it, discharging SD-C
+  and register rows D1, D3, D4 and D5.
 CONTRACTS:
-  CT71 [FUNCTIONAL]: after a `coder` stage returns, `_run_stage` calls `verify_slice` for that
-    slice and attaches the result to the stage outcome.
-    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> verify_slice
-  CT72 [FUNCTIONAL]: a blocking verdict causes the controller to synthesise a harness-origin
-    eval report with `route_decision="return_to_coder"`, carrying the failing command and its
-    real stderr text. No new routing constant is introduced.
-    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> _synthesise_repair_report
-  CT73 [CONSTRAINT]: verification-driven repairs are governed by the existing `repair_round`
-    cap (`workflow_artifacts.py:277`); a permanently failing command terminates the run
-    non-`DONE` instead of looping. Catches: an infinite repair loop on an unsatisfiable
+  CT71 [FUNCTIONAL]: after a `coder` stage returns exit 0, `_run_stage`
+    (`workflow_controller.py:511`) verifies **every slice** the plan declares and attaches a
+    `PlanVerification` to its `StageResult`. There is no per-slice dispatch in I02; one coder
+    stage covers the whole plan, and the per-slice loop belongs to I03.
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> verify_plan
+  CT72 [FUNCTIONAL]: a blocking verdict makes `_run_stage` return a synthetic `EvalReport` with
+    `verdict="REPAIR_REQUIRED"`, `route_decision="return_to_coder"`,
+    `evaluation_id` prefixed `harness-verify-`, and a finding carrying the failing command and
+    its real stderr text. No new routing constant and no new `EvalReport` field.
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> _synthesise_verify_report
+  CT73 [FUNCTIONAL]: `_run_initial_roles` (`:886`) **stops the role loop** when a coder stage
+    returns a blocking report, so the eval stage never runs. Catches two defects at once: an
+    LLM call paid for on work already known to be broken, and — the real one — the eval stage
+    overwriting `eval_report` at `:908-909`, which would discard the synthetic route entirely
+    and let the run finish green.
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_initial_roles -> _is_blocking
+  CT74 [CONSTRAINT]: verification-driven repairs are governed by the existing
+    `WorkflowProgress.repair_round` cap at `:944-957`; a permanently failing command terminates
+    the run non-`DONE` instead of looping. Catches: an infinite repair loop on an unsatisfiable
     command.
-  CT74 [FUNCTIONAL]: a test boots `drive_session` with the shipped factories, a real
-    workspace in `tmp_path` and `hooks=HookRegistry()`, mocking **only**
-    `ProviderChain.request`, and asserts the slice's own commands ran.
-    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> verify_slice
-  CT75 [FUNCTIONAL]: in that same live test, a command belonging to a **different** slice does
-    not run, and `commands_for(None)` runs exactly once at plan level. Catches: a gate that
-    runs everything, which a naive per-slice assertion would pass.
-    kill: remove-call src/fa/inner_loop/slice_verification.py::verify_slice -> commands_for
-  CT76 [CONSTRAINT]: `plan_ids.commands_for` has at least one production call site after this
-    slice, closing register row D4. Catches: the S16 proposal to delete `.commands` for having
-    no consumers.
+  CT75 [FUNCTIONAL]: a live test calls `run_workflow(roles=["planner","coder","eval"], …,
+    run_stage_fn=_cmd_run, transport=<stub>)`, following
+    `tests/test_workflow_global_history.py:123-141`, and asserts the plan's commands ran with
+    their real exit codes recorded. `drive_session` is **not** the harness: it sits below
+    `_cmd_run` and cannot exercise `_run_stage`.
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> verify_plan
+  CT76 [FUNCTIONAL]: in that same live test, commands are attributed to the slice that declares
+    them — a command declared only by SLICE2 is not recorded under SLICE1 — and
+    `commands_for(None)` runs exactly once at plan level. Catches: a gate that concatenates
+    every command and reports one undifferentiated result, which a naive per-plan assertion
+    would pass.
+    kill: remove-call src/fa/inner_loop/slice_verification.py::verify_plan -> commands_for
 TESTS: tests/test_verify_gate_live.py   (NEW — author it)
 ```verify
 uv run pytest tests/test_verify_gate_live.py -q
 uv run ruff check src/fa/inner_loop/workflow_controller.py tests/test_verify_gate_live.py
 ```
-- [ ] STEP1: call `verify_slice` from `_run_stage` after a coder stage, guarded by `role == "coder"` (exit: `grep -n "verify_slice" src/fa/inner_loop/workflow_controller.py` prints at least one line)
-- [ ] STEP2: implement `_synthesise_repair_report` building the harness-origin eval report per Q10(a) (exit: `uv run pytest tests/test_verify_gate_live.py -q -k route` exits 0)
-- [ ] STEP3: write the SD-C live test on `tests/fixtures/session_wiring.py`, mocking only `ProviderChain.request` and returning a plan authored from the SLICE1b skill text (exit: `uv run pytest tests/test_verify_gate_live.py -q -k live` exits 0)
-- [ ] STEP4: add the negative assertion that another slice's command did not run (exit: `uv run pytest tests/test_verify_gate_live.py -q` exits 0)
-- [ ] STEP5: run each slice's kill-check by hand and record the result in the ledger (exit: `uv run pytest tests/test_verify_gate_live.py tests/test_verify_slice.py -q` exits 0)
+- [ ] STEP1: add `verify_plan(plan_ids, *, root, …) -> PlanVerification` to `slice_verification.py`, iterating `slice_records` plus `commands_for(None)` (exit: `uv run pytest tests/test_verify_slice.py -q -k verify_plan` exits 0)
+- [ ] STEP2: call `verify_plan` from `_run_stage` guarded by `role == "coder" and code == 0` (exit: `grep -n "verify_plan" src/fa/inner_loop/workflow_controller.py` prints at least one line)
+- [ ] STEP3: implement `_synthesise_verify_report` per CT72 (exit: `uv run pytest tests/test_verify_gate_live.py -q -k route` exits 0)
+- [ ] STEP4: stop the role loop in `_run_initial_roles` on a blocking coder report (exit: `uv run pytest tests/test_verify_gate_live.py -q -k short_circuit` exits 0)
+- [ ] STEP5: write the live test on the `test_workflow_global_history.py:123-141` template (exit: `uv run pytest tests/test_verify_gate_live.py -q -k live` exits 0)
+- [ ] STEP6: add the per-slice attribution assertion of CT76 (exit: `uv run pytest tests/test_verify_gate_live.py -q` exits 0)
 
 ## Increment definition of done
 
 - [ ] Every `CT#` satisfied: each slice's `verify` block exits 0.
-- [ ] The gate runs in a real session: `tests/test_verify_gate_live.py` boots `drive_session`
-      with only `ProviderChain.request` mocked, and deleting the `verify_slice` call site in
-      `workflow_controller.py` makes it fail. A kill-check aimed at `extract_plan_ids`
-      instead does not count.
+- [ ] The gate runs in a real workflow: `tests/test_verify_gate_live.py` calls `run_workflow`
+      with `run_stage_fn=_cmd_run` and a stub transport, and deleting the `verify_plan` call
+      site in `workflow_controller.py:511` makes it fail. A kill-check aimed at
+      `extract_plan_ids` does not count — it stays green with the gate unwired, which is the
+      condition this exists to detect.
+- [ ] The provenance probe is demonstrated: with it disabled, a mutation of an installed
+      module is provably NOT observed and the gate reports `VACUOUS`; with it enabled the same
+      run reports `ERROR`. Without this the gate is inverted rather than broken.
+- [ ] A blocking coder verdict is shown to stop the role loop before the eval stage runs,
+      asserted on the stage count, not on a log line.
 - [ ] `VACUOUS`, `PRODUCER_ABSENT` and `REGRESSION` each demonstrated on a constructed slice,
       not merely representable in the enum.
-- [ ] The operator's working tree is byte-identical before and after a full gate run
-      (CT62), verified with `git status --porcelain` captured on both sides.
+- [ ] The operator's working tree is byte-identical before and after a full gate run (CT64),
+      verified with `git status --porcelain` captured on both sides, and `git worktree list`
+      shows no leftover entry.
 - [ ] Register rows **D1, D3, D4, D5** are ticked in
       [`../notes/deferred-verification-register.md`](../notes/deferred-verification-register.md),
       each citing the test that closed it.

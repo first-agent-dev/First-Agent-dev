@@ -1021,3 +1021,52 @@ E124 FACT  I02 planned in full:
     Six items are explicitly out of scope and named with their owner, chief among them E63's
     generated-mutant sweep, which is a different mechanism from a declared kill-check and
     must not be collapsed into it.
+
+E125 CORRECTION  Adversarial review of the I02 plan at 158b610, recorded in
+    `notes/i02-plan-review-2026-10-07.md`. **Seven confirmed defects, three of which would
+    have shipped a gate that was inverted rather than broken.** All fixed in the plan.
+    **D1, critical.** The kill-check would have been invisible. Executed: with the package
+    installed so an absolute path is on `sys.path`, running a test with `cwd` in a mutated
+    copy still imports the ORIGINAL module. The plan said nothing about `PYTHONPATH`, so
+    every kill-check would have run against unmutated code, every test would have passed,
+    and every contract would have been reported VACUOUS -- blocking every correct slice while
+    never detecting a weak test. Fixed by `PYTHONPATH=<overlay>/src` plus a **mandatory
+    provenance probe** (CT62) that returns ERROR unless the target module provably resolves
+    inside the overlay; relying on PYTHONPATH silently is the same fragility that caused the
+    bug.
+    **D2, critical.** `_run_stage` (`workflow_controller.py:511`) takes a role, not a slice,
+    and no per-slice loop exists -- the only slice code is post-hoc `validate_slice_ids`
+    (`:281`). CT71/74/75 named "that slice", which an agent could only have satisfied by
+    silently building I03's dispatch loop. Rewritten to verify every declared slice after the
+    single coder stage, with CT76 now asserting per-slice command attribution instead of the
+    vacuous "another slice's commands did not run".
+    **D3, critical.** `drive_session` is called BY `_cmd_run` (`cli.py:2408`), which the
+    controller receives as `run_stage_fn` (`cli.py:1460`) -- so it sits below `_run_stage`
+    and cannot exercise it. The SD-C test as written would have been green and meaningless:
+    the VACUOUS class, shipped inside the increment built to detect it. Rewritten onto the
+    only existing end-to-end precedent, `tests/test_workflow_global_history.py:123-141`.
+    **D4/D5, major.** `remove-call` restricted to bare `ast.Expr` statements saw 1 of 4 real
+    call forms (measured), giving false PRODUCER_ABSENT on an assigned producer; now replaces
+    every matching `ast.Call` with `None`, re-measured at 4 of 4. And CT55's "byte-identical"
+    invariant was false -- `ast.unparse` drops comments and layout -- so it now compares
+    against the round-trip baseline.
+    **D6, major.** `_run_initial_roles:908-909` keeps the LAST stage's eval report, so a
+    synthetic report attached to the coder stage would have been overwritten by the eval
+    stage and the route lost entirely: the run finishes green with a failed verification. New
+    CT73 stops the role loop, asserted on stage count.
+    **D7, minor.** Three stale references corrected: `repair_round` governs at
+    `WorkflowProgress`/`:188` and is capped at `:944-957`, not `workflow_artifacts.py:277`;
+    `_run_stage` is at `:511`, not S6's `:310`; and `EvalReport` has **no** provenance field,
+    so harness origin is carried in `evaluation_id` rather than by widening the dataclass.
+
+E126 DECIDED  The git-worktree sandbox is deleted as premature abstraction and replaced by a
+    copy of `src/` alone -- measured at 2.4 MB, 162 files, ~7 ms. It removes `git worktree
+    add/remove`, piping `git diff HEAD` into `git apply`, and the separate untracked-file
+    copy that existed only because the planner-authored test is new. Beyond simplicity it is
+    **more correct**: copying only `src/` makes test files structurally impossible for a
+    kill-check to mutate, where a worktree copied them too and left the oracle rewritable;
+    git state stops mattering, which matters here because this checkout is shallow; and
+    "the operator's tree is unchanged" becomes structurally true instead of asserted.
+    Recommendation recorded, not yet decided by the operator: ship SLICE1-3 and SLICE6 as a
+    first PR so the plain command gate that closes D1 lands even if the kill-check needs
+    another pass, with SLICE4-5 following. supersedes: SLICE4 as written in E124.
