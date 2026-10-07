@@ -353,7 +353,7 @@ uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_precheck.py
 ## SLICE3b: Close the silent-loss gaps the suspicion register left open
 STEPS: prescriptive
 DEPS: SLICE3
-SHIPPED: pending (branch arena/ca4c996c-first-agent-dev, 2026-10-07)
+SHIPPED: d65fc4f (branch arena/ca4c996c-first-agent-dev, 2026-10-07)
 INTENT: four drift modes reach the parser today and lose content without a word; make each one
   loud. Closes suspicions S-b, S-c, S-d and S-e from `notes/adversarial-review-2026-10-06.md`.
 CONTRACTS:
