@@ -220,15 +220,25 @@ class TestDepsGraph:
         text = "## SLICE1: a\nSTEPS: outcome\nDEPS: SLICE1\nTESTS: tests/a.py\n"
         assert "deps-cycle" in _rules(text)
 
-    def test_an_em_dash_and_a_legacy_id_both_resolve(self) -> None:
-        """`—` means no dependency; `S1` is the legacy spelling of SLICE1."""
-        text = (
-            "## SLICE1: a\nSTEPS: outcome\nDEPS: —\nTESTS: tests/a.py\n"
-            "## SLICE2: b\nSTEPS: outcome\nDEPS: S1\nTESTS: tests/b.py\n"
-        )
-        rules = _rules(text)
-        assert "deps-undefined-slice" not in rules
-        assert "deps-cycle" not in rules
+    def test_the_no_dependency_markers_all_resolve(self) -> None:
+        """Em dash, en dash, hyphen and "none" all mean "depends on nothing".
+
+        Four spellings because all four are in existing plans. They carry no
+        meaning apart from each other, so disagreeing about them would be a
+        lint that only ever reports formatting.
+
+        The legacy `S1` spelling is deliberately NOT here: it used to resolve,
+        and CT37 stopped it. See
+        `TestAbbreviatedIdsAreNeverGuessed::test_a_legacy_dep_token_no_longer_resolves_silently`.
+        """
+        for nothing in ["\u2014", "\u2013", "-", "none", "N/A"]:
+            text = (
+                f"## SLICE1: a\nSTEPS: outcome\nDEPS: {nothing}\nTESTS: tests/a.py\n"
+                f"## SLICE2: b\nSTEPS: outcome\nDEPS: SLICE1\nTESTS: tests/b.py\n"
+            )
+            rules = _rules(text)
+            assert "deps-undefined-slice" not in rules, nothing
+            assert "deps-cycle" not in rules, nothing
 
 
 class TestContractRules:
@@ -346,7 +356,7 @@ class TestDriftCorpus:
 
     def test_every_corpus_file_produces_a_named_diagnostic(self) -> None:
         paths = sorted(p for p in CORPUS.glob("*.md") if p.name != "README.md")
-        assert len(paths) >= 6, f"corpus shrank to {len(paths)} files"
+        assert len(paths) >= 9, f"corpus shrank to {len(paths)} files"
         for path in paths:
             report = precheck(path.read_text(encoding="utf-8"), path=str(path))
             assert report.diagnostics, f"{path.name} parsed silently to no diagnostic"
@@ -361,6 +371,9 @@ class TestDriftCorpus:
             "contract-outside-block.md": "contract-reference-undeclared",
             "contract-declared-twice.md": "contract-declared-twice",
             "contract-margin-wrap.md": "contract-declaration-lost",
+            "step-marker-unknown.md": "step-marker-unknown",
+            "id-abbreviated.md": "step-near-miss",
+            "grounding-ends-slice.md": "orphaned-slice-field",
         }
         for name, rule in expected.items():
             path = CORPUS / name
@@ -570,3 +583,212 @@ class TestMutationDrivenGaps:
             "p.md:7 [FAIL deps-cycle] DEPS: cycle SLICE1 -> SLICE2 -> SLICE1; no slice in it can be built first"
         )
         assert text.splitlines()[6] == "DEPS: SLICE1", "line 7 is SLICE2's DEPS: line"
+
+
+class TestStepMarkerVocabulary:
+    """CT36 — one normalised vocabulary for the `STEP#` checkbox.
+
+    producer-kill-check: delete `_step_state`; every classification collapses.
+    """
+
+    def test_the_three_states_are_recognised(self) -> None:
+        for marker, state in [
+            ("", "todo"),
+            (" ", "todo"),
+            ("  ", "todo"),
+            ("x", "done"),
+            ("X", "done"),
+            ("✓", "done"),
+            ("✔", "done"),
+            (" X ", "done"),
+            (">", "in-progress"),
+            (" > ", "in-progress"),
+        ]:
+            text = f"## SLICE1: a\nSTEPS: prescriptive\nDEPS: —\nTESTS: t.py\n- [{marker}] STEP1: do it (exit: done.)\n"
+            rules = _rules(text)
+            assert "step-marker-unknown" not in rules, f"[{marker}] should mean {state}"
+
+    def test_a_step_is_seen_whatever_its_legal_marker(self) -> None:
+        """The missing-exit rule must fire for every marker, not only `[ ]`.
+
+        Before CT36 a capital `[X]` was not a step at all, so a step with no
+        exit predicate escaped the lint entirely by being marked done.
+        """
+        for marker in ["", " ", "x", "X", ">", "✓"]:
+            text = f"## SLICE1: a\nSTEPS: prescriptive\nDEPS: —\nTESTS: t.py\n- [{marker}] STEP1: no predicate here\n"
+            assert "step-without-exit" in _rules(text), f"marker [{marker}] hid the step"
+
+    def test_an_unknown_marker_fails_loudly(self) -> None:
+        for marker in ["-", "~", "?", "ok", "1"]:
+            text = f"## SLICE1: a\nSTEPS: prescriptive\nDEPS: —\nTESTS: t.py\n- [{marker}] STEP1: do it (exit: done.)\n"
+            hit = [d for d in precheck(text).diagnostics if d.rule == "step-marker-unknown"]
+            assert len(hit) == 1, f"[{marker}] should be rejected"
+            assert hit[0].severity == "FAIL"
+            assert hit[0].line == 5
+            assert marker in hit[0].message
+
+
+class TestAbbreviatedIdsAreNeverGuessed:
+    """CT37 — `S1` is ambiguous between SLICE1 and STEP1 inside a plan."""
+
+    def test_a_legacy_dep_token_no_longer_resolves_silently(self) -> None:
+        """This reverses a defect SLICE3 shipped and pinned with a test.
+
+        `DEPS: S1` used to canonicalise to SLICE1 while `## S1:` declared no
+        slice at all — the same token legal in one position and invisible in
+        the other, inside one document.
+        """
+        text = (
+            "## SLICE1: a\nSTEPS: outcome\nDEPS: —\nTESTS: a.py\n## SLICE2: b\nSTEPS: outcome\nDEPS: S1\nTESTS: b.py\n"
+        )
+        hit = [d for d in precheck(text).diagnostics if d.rule == "deps-undefined-slice"]
+        assert len(hit) == 1
+        assert "S1" in hit[0].message
+
+    def test_a_full_dep_token_still_resolves(self) -> None:
+        text = (
+            "## SLICE1: a\nSTEPS: outcome\nDEPS: —\nTESTS: a.py\n"
+            "## SLICE2: b\nSTEPS: outcome\nDEPS: slice1\nTESTS: b.py\n"
+        )
+        assert "deps-undefined-slice" not in _rules(text)
+
+    def test_an_abbreviated_slice_heading_is_a_near_miss(self) -> None:
+        hit = [d for d in precheck("## S1: shortened\n").diagnostics if d.rule == "heading-near-miss"]
+        assert len(hit) == 1
+        assert hit[0].severity == "FAIL"
+
+    def test_an_abbreviated_step_is_a_near_miss(self) -> None:
+        text = "## SLICE1: a\nSTEPS: prescriptive\nDEPS: —\nTESTS: t.py\n- [ ] S1: shortened (exit: done.)\n"
+        hit = [d for d in precheck(text).diagnostics if d.rule == "step-near-miss"]
+        assert len(hit) == 1
+        assert hit[0].severity == "FAIL"
+        assert hit[0].line == 5
+        assert "STEP" in hit[0].message
+
+    def test_a_prose_heading_that_merely_starts_with_s_is_not_flagged(self) -> None:
+        """`## S18 + I-63 CLOSED` is a real heading in this repo's worklogs.
+
+        The bare `S<n>` form requires a colon precisely so that section
+        numbering in prose documents is not dragged in.
+        """
+        for heading in ["## S18 + I-63 CLOSED", "## Section 2 overview", "## S3.5 execution update"]:
+            assert "heading-near-miss" not in _rules(heading + "\n"), heading
+
+
+class TestSliceCountCeiling:
+    """CT38 — WARN at the ceiling, never FAIL (admission control, Q16)."""
+
+    def _plan(self, n: int) -> str:
+        return "".join(f"## SLICE{i}: s{i}\nSTEPS: outcome\nDEPS: —\nTESTS: t{i}.py\n" for i in range(1, n + 1))
+
+    def test_six_slices_are_quiet_and_seven_warn(self) -> None:
+        assert "slice-count-at-ceiling" not in _rules(self._plan(6))
+        plan = self._plan(7)
+        hit = [d for d in precheck(plan).diagnostics if d.rule == "slice-count-at-ceiling"]
+        assert len(hit) == 1
+        assert hit[0].severity == "WARN"
+        assert "7" in hit[0].message
+        # Reported at the slice that consumed the headroom, not at the first.
+        assert plan.splitlines()[hit[0].line - 1] == "## SLICE7: s7"
+
+    def test_the_ceiling_never_blocks(self) -> None:
+        assert precheck(self._plan(12)).ok is True
+
+
+class TestOrphanedGrammar:
+    """CT39 — conservation: grammar the document contains must be accounted for."""
+
+    def test_a_hash_hash_grounding_inside_a_slice_is_caught(self) -> None:
+        """The measured S-e defect.
+
+        `## Grounding` ends the slice under CT16's depth rule, so the TESTS:
+        line after it belongs to no slice and is silently lost.
+        """
+        text = (
+            "## SLICE1: a\nSTEPS: outcome\nDEPS: —\nCONTRACTS:\n  CT1 [FUNCTIONAL]: x.\n"
+            "## Grounding\nUnderstood as: something.\nTESTS: tests/t.py\n"
+        )
+        hit = [d for d in precheck(text).diagnostics if d.rule == "orphaned-slice-field"]
+        assert len(hit) == 1
+        assert hit[0].severity == "FAIL"
+        assert hit[0].line == 8
+        assert "TESTS" in hit[0].message
+
+    def test_the_same_slice_with_a_subsection_grounding_is_clean(self) -> None:
+        text = (
+            "## SLICE1: a\nSTEPS: outcome\nDEPS: —\nCONTRACTS:\n  CT1 [FUNCTIONAL]: x.\n"
+            "### Grounding\nUnderstood as: something.\nTESTS: tests/t.py\n"
+        )
+        assert precheck(text).ok is True
+
+    def test_it_catches_the_silent_case_too(self) -> None:
+        """With no contracts, CT8 cannot fire — this is the one nothing caught."""
+        text = (
+            "## SLICE1: a\nSTEPS: outcome\nDEPS: —\nINTENT: x.\n"
+            "## Grounding\nUnderstood as: something.\nTESTS: tests/t.py\n"
+        )
+        assert "orphaned-slice-field" in _rules(text)
+
+    def test_an_orphaned_step_and_contract_are_caught_too(self) -> None:
+        text = (
+            "## SLICE1: a\nSTEPS: outcome\nDEPS: —\nTESTS: t.py\n"
+            "## Notes\n- [ ] STEP1: stranded (exit: never.)\n  CT9 [FUNCTIONAL]: stranded.\n"
+        )
+        hit = [d for d in precheck(text).diagnostics if d.rule == "orphaned-slice-field"]
+        assert {d.line for d in hit} == {6, 7}
+        # The message must name *what* was stranded; "something sits outside"
+        # is not actionable in a plan with forty bullets.
+        said = " ".join(d.message for d in hit)
+        assert "STEP1" in said and "CT9" in said
+
+    def test_an_orphaned_tests_line_stops_ct8_from_lying(self) -> None:
+        """CT8 must not say "has no TESTS: line" about a line the author wrote.
+
+        Same principle as E97: one defect, one diagnostic, at the line the
+        operator must edit. CT39 already points at the orphaned line; CT8
+        adding "there is no TESTS: line" sends them looking for something that
+        is visibly present four lines down.
+        """
+        text = (
+            "## SLICE1: a\nSTEPS: outcome\nDEPS: —\nCONTRACTS:\n  CT1 [FUNCTIONAL]: x.\n"
+            "## Grounding\nUnderstood as: something.\nTESTS: tests/t.py\n"
+        )
+        rules = _rules(text)
+        assert "orphaned-slice-field" in rules
+        assert "slice-without-tests" not in rules
+
+    def test_the_suppression_does_not_hide_a_genuinely_testless_slice(self) -> None:
+        """Narrow fix stays narrow: SLICE2 never wrote a TESTS: line at all."""
+        text = (
+            "## SLICE1: a\nSTEPS: outcome\nDEPS: —\nCONTRACTS:\n  CT1 [FUNCTIONAL]: x.\n"
+            "## Grounding\nUnderstood as: something.\nTESTS: tests/t.py\n"
+            "## SLICE2: b\nSTEPS: outcome\nDEPS: —\nCONTRACTS:\n  CT2 [CONSTRAINT]: y.\n"
+        )
+        hit = [d for d in precheck(text).diagnostics if d.rule == "slice-without-tests"]
+        assert len(hit) == 1
+        assert "SLICE2" in hit[0].message
+
+    def test_a_non_tests_orphan_does_not_abort_the_attribution(self) -> None:
+        """The orphan scan must keep reading past orphans it does not care about.
+
+        Here a stranded STEP comes before the stranded TESTS: line. If the
+        filter stopped at the first non-TESTS orphan, CT8 would go back to
+        claiming SLICE1 "has no TESTS: line".
+        """
+        text = (
+            "## SLICE1: a\nSTEPS: outcome\nDEPS: \u2014\nCONTRACTS:\n  CT1 [FUNCTIONAL]: x.\n"
+            "## Notes\n- [ ] STEP9: stranded first (exit: never.)\n"
+            "TESTS: tests/t.py\n"
+        )
+        rules = _rules(text)
+        assert "orphaned-slice-field" in rules
+        assert "slice-without-tests" not in rules
+
+    def test_a_plan_with_no_slices_at_all_is_not_an_orphan_storm(self) -> None:
+        """A pre-grammar document yields no slices; it must not produce noise.
+
+        `extract_plan_ids` returns empty for such a file by design, and the
+        module's founding rule is that absence is never an error.
+        """
+        text = "# Old plan\nSTEPS: prescriptive\nTESTS: t.py\nCONTRACTS:\n"
+        assert "orphaned-slice-field" not in _rules(text)

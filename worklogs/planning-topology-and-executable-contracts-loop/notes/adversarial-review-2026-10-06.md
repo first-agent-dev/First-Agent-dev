@@ -216,7 +216,14 @@ to, so there is one copy and the pre-check is told not to key on it. Ledger E78.
 
 ---
 
-## Suspicions — recorded, not acted on
+## Suspicions — all closed 2026-10-07
+
+> **Closure note.** Every entry below was walked with the operator and resolved; the text is
+> left unedited as the record of what was suspected and why. S-a is obsolete (E104), S-b is
+> CT36 (E105), S-c is CT37 (E106), S-d is CT38 and supersedes part of E78 (E107), S-e is CT39
+> (E108). S-c and S-e turned out to be live defects rather than tidiness questions, and S-e's
+> fix generalised into a conservation rule instead of the authoring line it was filed as.
+
 
 - **S-a. SLICE2 now carries ten contracts.** Cohesive (one module, one test file) but at the top
   of the range. If I02's review finds it unwieldy, the natural cut is boundary rules

@@ -350,6 +350,66 @@ uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_precheck.py
 
 ---
 
+## SLICE3b: Close the silent-loss gaps the suspicion register left open
+STEPS: prescriptive
+DEPS: SLICE3
+SHIPPED: pending (branch arena/ca4c996c-first-agent-dev, 2026-10-07)
+INTENT: four drift modes reach the parser today and lose content without a word; make each one
+  loud. Closes suspicions S-b, S-c, S-d and S-e from `notes/adversarial-review-2026-10-06.md`.
+CONTRACTS:
+  CT36 [CONSTRAINT]: a `STEP#` checkbox marker is normalised (strip inner whitespace, casefold)
+    and matched against one vocabulary: empty → to do, `x`/`✓`/`✔` → done, `>` → in progress.
+    Any other marker on an otherwise well-formed `STEP#` line FAILS as `step-marker-unknown`.
+    Catches: `- [X] STEP2:` with a capital X, which today is not a step at all — the step
+    vanishes from the lint in silence. Measured: `[ ]`, `[x]`, `[>]` parse; `[X]`, `[-]`, `[~]`
+    do not. The vocabulary is ratified in schema §6, which previously knew only two states
+    while `prompt.py:687` instructed the coder to write a third.
+  CT37 [CONSTRAINT]: an abbreviated id is never guessed. Inside a plan, `DEPS:` resolves only
+    `SLICE<n>[a-z]?`; `## S1: …` FAILS as `heading-near-miss`; `- [ ] S1: …` FAILS as
+    `step-near-miss`. Rationale, and the reason this is a FAIL rather than a translation: a
+    plan carries two id namespaces, so `S1` is ambiguous between `SLICE1` and `STEP1`, and
+    picking one silently is the failure class this increment exists to remove.
+    Deliberately NOT changed: `canonical_slice_id` stays lenient at the eval-report boundary
+    (`workflow_controller.py:336`), because a report reconciles against slice ids only — one
+    namespace, so `S1` is unambiguous there. Tolerance is a property of that boundary, not of
+    the grammar. Pinned by `tests/test_slice_id_validation.py::test_legacy_s_ids_normalise_to_canonical_space`.
+  CT38 [FUNCTIONAL]: a plan declaring 7 or more slices produces a WARN naming the count and the
+    ceiling. `supersedes: E78` for this rule only — E78 placed `N ≤ 7` under "Authoring guidance
+    (not checked)". Operator decision 2026-10-07: signal, never block, because the ceiling is
+    admission control (Q16) and a FAIL would turn a judgement call into a gate. WARN at exactly
+    7 rather than 8: 7 is legal and means the headroom is gone, which is the moment worth
+    knowing about.
+  CT39 [CONSTRAINT]: every grammar-bearing line must sit inside a slice section. A field line
+    (`STEPS:`/`DEPS:`/`INTENT:`/`CONTRACTS:`/`TESTS:`), a `STEP#` checkbox or a contract
+    declaration found outside every slice span FAILS as `orphaned-slice-field`, naming the line.
+    This is a conservation rule, not an enumeration of bad constructs: it asserts that the
+    parser accounted for the grammar the document contains, so it covers drift modes nobody has
+    thought of yet. Catches the measured S-e defect — a `## Grounding` heading inside a slice
+    ends that slice under CT16's depth rule, so the `TESTS:` line after it belongs to no slice
+    and is lost. Today that is either silent, or surfaces as CT8 claiming the slice "has no
+    TESTS: line" when the author plainly wrote one. Measured false positives on every real
+    artifact in the repository: zero (template documents with `## SLICE<n>:` placeholders are
+    out of scope by CT21b, which forbids pre-checking a grammar or notes document).
+TESTS: tests/test_plan_precheck.py
+```verify
+uv run pytest tests/test_plan_precheck.py tests/test_plan_ids.py tests/test_slice_id_validation.py -q
+uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_precheck.py
+```
+- [x] STEP1: Add `parse_slice_id` (strict, validating, `None` for a non-slice token) and route
+      `_declared_deps` through it. (exit: `DEPS: S1` FAILS as `deps-undefined-slice`; the eval
+      boundary test in `tests/test_slice_id_validation.py` still passes.)
+- [x] STEP2: Normalise step markers and add `step-marker-unknown`; ratify the three-state
+      vocabulary in schema §6. (exit: CT36 green; `[]`, `[ ]`, `[X]`, `[✓]` all classify.)
+- [x] STEP3: Add `step-near-miss` and extend the near-miss heading pattern to the abbreviated
+      `## S<n>:` form. (exit: CT37 green.)
+- [x] STEP4: Add the slice-count warning. (exit: CT38 green; this increment itself emits it.)
+- [x] STEP5: Add `orphaned-slice-field`. (exit: CT39 green; the live increment still
+      pre-checks with zero failures.)
+- [x] STEP6: Extend the drift corpus with one file per newly covered mode. (exit: every corpus
+      file still produces the specific rule it exists for.)
+
+---
+
 ## SLICE4: Skill-to-parser conformance + historical migration note
 STEPS: outcome
 DEPS: SLICE1c, SLICE3

@@ -15,6 +15,7 @@ contract, including the failure modes the caller depends on to stay advisory.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -647,8 +648,22 @@ class TestLivePathUndisturbed:
             / "increments"
             / "increment-01-plan-grammar-and-extractor.md"
         )
-        live = extract_plan_ids(path.read_text(encoding="utf-8"))
-        assert live.slices == ("SLICE1", "SLICE1b", "SLICE1c", "SLICE2", "SLICE3", "SLICE4")
+        text = path.read_text(encoding="utf-8")
+        live = extract_plan_ids(text)
+
+        # A differential oracle, not a snapshot. An earlier version hardcoded
+        # the slice list of the live increment, so it went red every time the
+        # plan legitimately gained a slice -- which trains the next agent to
+        # edit the expectation rather than read the failure. What the gate
+        # actually needs is that `.slices` accounts for every heading in the
+        # document, checked against a scan written independently of the
+        # parser, plus that it is never empty (`workflow_controller.py:332`
+        # returns early on empty and the coverage gate silently no-ops).
+        from_headings = tuple(
+            f"SLICE{m.group(1)}" for m in re.finditer(r"^#{2,4} +SLICE(\d+[a-z]?):", text, re.MULTILINE)
+        )
+        assert from_headings, "fixture lost: the live increment declares no slices"
+        assert live.slices == from_headings
 
 
 class TestMutationHardening:

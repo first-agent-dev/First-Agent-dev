@@ -307,7 +307,15 @@ E8  DECIDED  SLICE#-only grammar; pre-rename S# plans archived  supersedes: E3
 - **Contract (`CT#`):** `PLANNED → IMPLEMENTED → VERIFIED`. `VERIFIED` means the slice's
   `verify` exited 0 **and** (from I02) the test was proven non-vacuous **and** (from I03)
   the eval's L2 contract verdict passed. For stochastic gates `VERIFIED` means pass^k.
-- **Step (`STEP#`):** checkbox `- [ ]` → `- [x]`, ticked by the **harness**, not the model.
+- **Step (`STEP#`):** three states, ratified 2026-10-07 (CT36). The marker is normalised —
+  inner whitespace stripped, case folded — and then matched:
+  `- [ ]` (also `- []`, any run of spaces) **to do** · `- [>]` **in progress** ·
+  `- [x]` (also `- [X]`, `- [✓]`, `- [✔]`) **done**. Any other marker is a pre-check FAIL, not
+  a third rendering of "done": a marker outside the vocabulary usually means the author wanted
+  a state the schema does not have, and guessing which one is the silent mismatch this rule
+  replaces. Previously this list read `[ ]` → `[x]` while `prompt.py:687` instructed the coder
+  to write `[>]`, and the parser quietly accepted a capital `[X]` as no step at all.
+  Ticked by the **harness**, not the model.
   **Interim rule until the I03 harness exists:** the **operator** ticks shipped steps and sets
   `shipped:` in the increment frontmatter. The model still never ticks them. This exception
   expires when I03 ships.

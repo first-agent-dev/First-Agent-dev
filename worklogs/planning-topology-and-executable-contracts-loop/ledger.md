@@ -608,3 +608,90 @@ E103 EVIDENCE  SD-C, stated not assumed: I01/SLICE3 ships **no live-path test**,
     `precheck` is pure, total and stdlib-only and no composition root reaches it — there is no
     `drive_session` path to boot. The increment that adds the first live gate is **I02**, spec
     in `notes/i02-handoff-verify-gate.md` §7. SLICE3's classification is C0 throughout.
+
+E104 DECISION  Suspicion S-a closed as obsolete. "SLICE2 now carries ten contracts" asked
+    whether the slice was unwieldy; SLICE2 shipped at `7156c03` with all ten green and a clean
+    mutation sweep. The question was about a decomposition that no longer has a decision
+    pending.
+
+E105 DECISION  S-b — the step marker vocabulary had three disagreeing authorities. Schema §6
+    defined `[ ]` → `[x]`; `prompt.py:687` instructed the coder to write `[>]`; the parser
+    accepted all three and, measured, rejected `[X]`, `[-]` and `[~]`. Operator decision
+    2026-10-07: **three states, ratified in §6**, with markers normalised before matching
+    (inner whitespace stripped, case folded) so `[]`, `[ ]`, `[  ]` all mean to do and `[x]`,
+    `[X]`, `[✓]`, `[✔]` all mean done. Anything else is a FAIL (CT36), not a third spelling of
+    done: a marker outside the vocabulary usually means the author wanted a state the schema
+    does not have, and guessing which is the silent mismatch the rule replaces.
+    `[>]` kept rather than removed because it is already produced in production; deleting it
+    would change coder behaviour for the sake of vocabulary tidiness. The separate defect in
+    that prompt line — it tells the *model* to tick, which §1/§6 reserve for the harness —
+    remains the unmerged E44 delta in `notes/role-prompts-conformance.md`.
+    The real find here was `[X]`: a capital X renders as ticked everywhere and parsed as no
+    step at all, so a step marked done with it escaped the lint entirely.
+
+E106 DECISION  S-c — the leniency was mine, introduced in SLICE3, and is reversed. CT37.
+    `_declared_deps` resolved `DEPS: S1` to `SLICE1` through `canonical_slice_id`, while
+    `## S1:` declares no slice: the same token legal in one position and invisible in the
+    other, inside one document. It was even pinned by a test
+    (`test_an_em_dash_and_a_legacy_id_both_resolve`), which cemented the contradiction; that
+    test is rewritten.
+    The operator named the root cause more precisely than the review did: inside a plan `S1`
+    is **ambiguous**, because a plan carries both `SLICE#` and `STEP#`. So the rule is not
+    "translate carefully" but *never guess* — `parse_slice_id` validates `^SLICE(\d+[a-z]?)$`
+    and returns `None` otherwise, and the abbreviation is reported wherever it appears:
+    `## S1:` as `heading-near-miss`, `- [ ] S1:` as `step-near-miss`, `DEPS: S1` as
+    `deps-undefined-slice`.
+    `canonical_slice_id` keeps its leniency and its job at the eval-report boundary
+    (`workflow_controller.py:336`), and the reason is now stated rather than assumed: a report
+    reconciles against slice ids **only** — one namespace — so `S1` is unambiguous there and
+    dropping it would discard a usable verdict. Tolerance is a property of that boundary, not
+    of the grammar. Pinned by `tests/test_slice_id_validation.py::test_legacy_s_ids_normalise_to_canonical_space`.
+    `parse_slice_id` also *validates* instead of rewriting a prefix, which removes a second
+    wart: `canonical_slice_id("slices")` returns `"SLICEs"`, so a junk token used to arrive in
+    an error message looking like a plausible id.
+
+E107 DECISION  supersedes: E78 (for the `N ≤ 7` rule only). S-d observed the ceiling was
+    exactly met. E78 had placed `N ≤ 7` under "Authoring guidance (not checked)" and told the
+    pre-check not to key on it. Operator decision 2026-10-07: **WARN, never FAIL** (CT38).
+    The rest of E78 stands — `STEPS:` default and brief size remain unchecked guidance. The
+    distinction that justifies splitting them: slice count is a number the parser already has,
+    so reporting it costs nothing and cannot be wrong, whereas "is this brief the right size"
+    is a judgement a lint can only approximate. WARN and not FAIL because the ceiling is
+    admission control (Q16): a gate would convert a planner's judgement into a refusal.
+    Reported at 7 rather than 8 because 7 is legal and means the headroom is gone — the moment
+    worth knowing before the next split. I01 now declares 7 slices and emits this warning
+    against itself, which is the signal working as intended rather than a defect.
+
+E108 DECISION  S-e was a live defect, and the fix generalises past it. Measured: a
+    `## Grounding` heading written *inside* a slice ends that slice under CT16's depth rule,
+    so the `TESTS:` line below it belongs to no slice and is lost. With contracts present this
+    surfaced as CT8 insisting the slice "has no TESTS: line" — actively false, the author wrote
+    one — and with no contracts it was completely silent.
+    Rather than an authoring rule saying "Grounding must be `###`", CT39 asserts a
+    **conservation property**: every grammar-bearing line (a field, a `STEP#`, a contract
+    declaration) must sit inside a slice section. This covers drift modes nobody has predicted,
+    which an enumeration of forbidden constructs cannot. Measured false positives across every
+    real artifact in the repository: zero. The only matches outside increments were in
+    `artifact-schema-and-grammar.md` and `prompt.py`, both grammar templates with
+    `## SLICE<n>:` placeholders, and both out of scope by CT21b.
+    CT8 is suppressed for a slice whose `TESTS:` line CT39 found orphaned — same principle as
+    E97, one defect one diagnostic, and here the suppressed message was not merely redundant
+    but untrue.
+
+E109 EVIDENCE  SLICE3b red-before-green: 9 failures before implementation, 60 tests green
+    after. Mutation sweep on `plan_ids.py`: 770 mutants, 484 rejected by the type checker,
+    **274 killed of 286 viable, 12 survivors all equivalent** (the 11 carried from E100 plus
+    `_orphaned_tests_owners`' `<` vs `<=`, which cannot differ because a slice's own heading
+    line is inside its span and so can never also be an orphan — verified by execution against
+    the corpus and the live increment, not by argument). First sweep found 5 real gaps: the
+    ceiling diagnostic's line, two unnamed `what` branches in the orphan message, and a
+    `continue`→`break` that would have let a non-TESTS orphan abort CT8's suppression.
+    `pyproject.toml` restored byte-identical.
+    One pre-existing test was rewritten rather than updated: `TestLivePathUndisturbed` had
+    hardcoded the live increment's slice list, so it went red merely because the plan gained
+    SLICE3b. A snapshot of plan content inside a parser test trains the next agent to edit the
+    expectation instead of reading the failure. It now compares `.slices` against an
+    independent heading scan — a differential oracle that survives legitimate plan edits and
+    still fails if the parser drops a slice.
+    Drift corpus extended to nine files. I01 now stands at 7 slices (the ceiling), 40
+    contracts, and pre-checks with zero failures and one warning — its own CT38.

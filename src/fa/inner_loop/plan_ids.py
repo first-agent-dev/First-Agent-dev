@@ -53,6 +53,7 @@ __all__ = [
     "canonical_slice_id",
     "extract_plan_id",
     "extract_plan_ids",
+    "parse_slice_id",
     "precheck",
 ]
 
@@ -85,7 +86,24 @@ _CONTRACT_ENTRY_RE = re.compile(
 
 #: Tracked step checkboxes inside a slice: ``- [ ] STEP3: ...``. Consumed by the
 #: SLICE3 pre-check; kept here so the grammar lives in one module.
-_STEP_RE = re.compile(r"^\s*- \[[ x>]\]\s*STEP(\d+[a-z]?)\s*:", re.MULTILINE)
+#:
+#: The marker is *captured, not filtered* (CT36). An earlier version admitted
+#: only ``[ ]``, ``[x]`` and ``[>]``, which meant a capital ``[X]`` was not a
+#: step at all and vanished from the lint in silence. Recognising the line
+#: first and judging the marker second turns that into a diagnostic.
+_STEP_RE = re.compile(r"^\s*- \[(?P<mark>[^\]]*)\]\s*STEP(?P<num>\d+[a-z]?)\s*:", re.MULTILINE)
+
+#: Step states, after normalisation. ``[]``/``[ ]``/``[   ]`` are all "to do":
+#: authors and formatters disagree about the inner space, and the disagreement
+#: carries no meaning. Done accepts the two spellings GitHub renders plus the
+#: check marks people paste from elsewhere.
+_STEP_STATES = {"": "todo", "x": "done", "\u2713": "done", "\u2714": "done", ">": "in-progress"}
+
+
+def _step_state(marker: str) -> str | None:
+    """Normalise a checkbox marker to a state, or ``None`` if it is not one."""
+    return _STEP_STATES.get(marker.strip().casefold())
+
 
 #: Per-slice field lines. ``STEPS:`` is the mode line only; ``TESTS:``/``INTENT:``
 #: carry the slice's test paths and intent.
@@ -239,6 +257,38 @@ def canonical_slice_id(raw: str) -> str:
     if low.startswith("s") and len(text) > 1 and text[1].isdigit():
         return "SLICE" + text[1:]
     return text
+
+
+#: A slice id exactly as the plan grammar defines it. Anchored at both ends:
+#: this *validates*, where :func:`canonical_slice_id` *rewrites a prefix*.
+_PLAN_SLICE_ID_RE = re.compile(r"^SLICE(\d+[a-z]?)$", re.IGNORECASE)
+
+
+def parse_slice_id(raw: str) -> str | None:
+    """Return the canonical slice id for *raw*, or ``None`` if it is not one.
+
+    The strict counterpart to :func:`canonical_slice_id`, and the one the plan
+    grammar must use. Three differences matter:
+
+    * It **validates** instead of rewriting a prefix, so ``"slices"`` is not
+      silently turned into ``"SLICEs"``.
+    * It rejects the abbreviated ``S<n>`` form. Inside a plan that token is
+      ambiguous — ``S1`` could be ``SLICE1`` or ``STEP1``, since a plan carries
+      both namespaces — and quietly picking one is the failure class this
+      module exists to remove. The abbreviation is reported, never resolved.
+    * It returns ``None`` rather than the input, so a caller cannot mistake a
+      non-id for an id by forgetting to check.
+
+    :func:`canonical_slice_id` keeps the lenient behaviour and keeps its job:
+    reconciling an eval report against the plan (``workflow_controller``).
+    Tolerance is correct *there* because a report has only one namespace to
+    match against — step results are slice verdicts — so ``S1`` is unambiguous
+    at that boundary and dropping it would discard a usable verdict.
+    """
+    match = _PLAN_SLICE_ID_RE.match(raw.strip())
+    if match is None:
+        return None
+    return f"SLICE{match.group(1)}"
 
 
 def _ordered_unique(values: list[str]) -> tuple[str, ...]:
@@ -520,12 +570,30 @@ _DEPS_LINE_RE = re.compile(r"^DEPS:\s*(.*)$", re.MULTILINE)
 #: tolerant of a dropped letter or a stray space, because those are the
 #: spellings observed in real drift. Matching here is not an accusation: a
 #: line is only reported when :data:`_SLICE_RE` also declines it.
-_NEAR_MISS_HEADING_RE = re.compile(r"^#{2,4}\s+SLI?CE?\s*\d", re.IGNORECASE)
+#:
+#: Two alternatives, because the two abbreviation families need different
+#: guards. A dropped letter (``SLIC1``, ``SLICE 1``) is unmistakable, so no
+#: colon is required — one corpus case is a bare ``#### SLICE1``. The bare
+#: ``S<n>`` form *is* mistakable: ``## S18 + I-63 CLOSED`` is a real heading in
+#: this repository's worklogs, so that branch requires the colon that makes it
+#: a declaration rather than section numbering.
+_NEAR_MISS_HEADING_RE = re.compile(r"^#{2,4}\s+(?:SLI?CE?\s*\d|S\s*\d+[a-z]?\s*:)", re.IGNORECASE)
 
 #: A line shaped like a contract declaration, wherever it sits (CT35). The
 #: anchor is the start of the line after optional indentation, so prose that
 #: merely mentions ``CT3 [CONSTRAINT]:`` mid-sentence is not a declaration.
 _DECLARATION_SHAPE_RE = re.compile(r"^\s*CT(?P<num>\d+[a-z]?)\s*\[(?:FUNCTIONAL|CONSTRAINT|PRESERVATION)\]\s*:")
+
+#: A checkbox line that abbreviates ``STEP<n>`` to ``S<n>`` (CT37).
+_STEP_NEAR_MISS_RE = re.compile(r"^\s*- \[[^\]]*\]\s*S\s*\d+[a-z]?\s*:", re.IGNORECASE)
+
+#: A column-0 slice field line. Used by the conservation rule to ask whether
+#: the grammar the document contains ended up inside a slice (CT39).
+_SLICE_FIELD_RE = re.compile(r"^(?P<field>STEPS|DEPS|INTENT|CONTRACTS|TESTS|SHIPPED):")
+
+#: Slices per increment before the ceiling is reached (CT38). A ceiling, not a
+#: sizing prior: see roadmap Q16.
+_SLICE_CEILING = 7
 
 #: Payload tokens that mean "this slice depends on nothing". Em dash, en dash
 #: and hyphen are all in use across existing plans; written as escapes because
@@ -645,11 +713,173 @@ def _rule_heading_near_miss(text: str, path: str) -> list[PlanDiagnostic]:
     return out
 
 
-def _rule_slice_without_tests(slices: list[_Slice], path: str) -> list[PlanDiagnostic]:
+def _rule_step_marker_unknown(slices: list[_Slice], path: str) -> list[PlanDiagnostic]:
+    """CT36 — the checkbox marker must be one the vocabulary knows.
+
+    Reported on the line rather than normalised away. A marker nobody agreed
+    on usually means the author meant a state the schema does not have, and
+    guessing which one re-creates the silent mismatch this rule replaces.
+    """
+    out: list[PlanDiagnostic] = []
+    for s in slices:
+        for index, line in enumerate(s.section.splitlines()):
+            step = _STEP_RE.match(line)
+            if step is None or _step_state(step.group("mark")) is not None:
+                continue
+            out.append(
+                PlanDiagnostic(
+                    rule="step-marker-unknown",
+                    severity=FAIL,
+                    path=path,
+                    line=s.start_line + index,
+                    message=(
+                        f"STEP{step.group('num')} is marked [{step.group('mark')}], which is "
+                        f"not a step state; schema §6 defines [ ] to do, [>] in progress, "
+                        f"[x] done"
+                    ),
+                )
+            )
+    return out
+
+
+def _rule_step_near_miss(text: str, path: str) -> list[PlanDiagnostic]:
+    """CT37 — a checkbox that abbreviates ``STEP<n>`` to ``S<n>``.
+
+    Same reasoning as the heading near-miss: the line reads as a step, parses
+    as a bullet, and its exit predicate is never checked by anything.
+
+    Scanned over the whole document rather than per slice, because the two
+    abbreviations travel together: a plan that writes ``## S1:`` declares no
+    slice, so a per-slice scan would be blind to the ``- [ ] S2:`` beneath it
+    — the one case where both mistakes are certain to appear at once.
+    """
+    out: list[PlanDiagnostic] = []
+    for index, line in enumerate(text.splitlines(), start=1):
+        if not _STEP_NEAR_MISS_RE.match(line) or _STEP_RE.match(line):
+            continue
+        out.append(
+            PlanDiagnostic(
+                rule="step-near-miss",
+                severity=FAIL,
+                path=path,
+                line=index,
+                message=(
+                    f"{line.strip()!r} abbreviates the step id; write STEP<n> in full, "
+                    f"because S<n> is ambiguous between a slice and a step"
+                ),
+            )
+        )
+    return out
+
+
+def _rule_slice_count(slices: list[_Slice], path: str) -> list[PlanDiagnostic]:
+    """CT38 — WARN at the ceiling. Never a FAIL.
+
+    `N <= 7` is admission control, not a sizing prior (Q16): it says a
+    decomposition needing more slices is mis-scoped, which is a judgement the
+    planner makes and a gate cannot. So this signals and gets out of the way.
+    Reported at 7 rather than 8 because 7 is still legal and is the moment the
+    headroom is gone — which is the thing worth knowing before the next split.
+    """
+    if len(slices) < _SLICE_CEILING:
+        return []
+    return [
+        PlanDiagnostic(
+            rule="slice-count-at-ceiling",
+            severity=WARN,
+            path=path,
+            line=slices[_SLICE_CEILING - 1].start_line,
+            message=(
+                f"{len(slices)} slices against a ceiling of {_SLICE_CEILING}; a decomposition "
+                f"that needs more is a mis-scoped increment, not a long one"
+            ),
+        )
+    ]
+
+
+def _rule_orphaned_grammar(text: str, slices: list[_Slice], path: str) -> list[PlanDiagnostic]:
+    """CT39 — grammar the document contains must have landed inside a slice.
+
+    A conservation rule rather than a list of forbidden constructs. Every
+    other rule here names a mistake someone already made; this one asks a
+    question the grammar answers for free — did the parser account for what is
+    written? — and so it covers drift nobody has thought of yet.
+
+    The motivating case: a `## Grounding` heading inside a slice ends that
+    slice under CT16's depth rule, so the `TESTS:` line below it belongs to no
+    slice. Today that is silent, or worse, surfaces as CT8 insisting the slice
+    "has no TESTS: line" when the author plainly wrote one.
+
+    Silent on a document with no slices at all. A pre-grammar plan is not an
+    error — that is this module's founding rule — and flagging every line of
+    one would be the noisiest possible way to say nothing.
+    """
+    if not slices:
+        return []
+    spans = [(s.section, s.start_line) for s in slices]
+    inside = set()
+    for section, start_line in spans:
+        inside.update(range(start_line, start_line + section.count("\n") + 1))
+
+    out: list[PlanDiagnostic] = []
+    for index, line in enumerate(text.splitlines(), start=1):
+        if index in inside:
+            continue
+        if field := _SLICE_FIELD_RE.match(line):
+            what = f"the field {field.group('field')}:"
+        elif step := _STEP_RE.match(line):
+            what = f"STEP{step.group('num')}"
+        elif decl := _DECLARATION_SHAPE_RE.match(line):
+            what = f"CT{decl.group('num')}"
+        else:
+            continue
+        out.append(
+            PlanDiagnostic(
+                rule="orphaned-slice-field",
+                severity=FAIL,
+                path=path,
+                line=index,
+                message=(
+                    f"{what} sits outside every slice, so nothing owns it; the slice above "
+                    f"ended early — most often a '##' heading inside it, which must be '###'"
+                ),
+            )
+        )
+    return out
+
+
+def _orphaned_tests_owners(slices: list[_Slice], orphans: list[PlanDiagnostic]) -> frozenset[str]:
+    """Slice ids whose ``TESTS:`` line exists but fell outside the slice.
+
+    Attribution is positional: an orphan belongs to the nearest slice above
+    it, because that is the slice the author was writing when the section
+    ended early. Used only to keep CT8 honest — see
+    :func:`_rule_slice_without_tests`.
+    """
+    starts = [s.start_line for s in slices]
+    owners: set[str] = set()
+    for orphan in orphans:
+        if "the field TESTS:" not in orphan.message:
+            continue
+        above = [i for i, start in enumerate(starts) if start < orphan.line]
+        if above:
+            owners.add(slices[above[-1]].record.slice_id)
+    return frozenset(owners)
+
+
+def _rule_slice_without_tests(
+    slices: list[_Slice], path: str, *, suppress: frozenset[str] = frozenset()
+) -> list[PlanDiagnostic]:
     """CT8 — a slice that declares contracts must name where they are proved.
 
     Conditioned on declaring at least one ``CT#``: a slice with no contracts
     asserts nothing, so there is nothing for a test to hold up.
+
+    *suppress* carries slices whose ``TESTS:`` line was orphaned by CT39. For
+    those, "has no TESTS: line" is simply false — the author wrote one and the
+    section ended before it — and sending the operator to look for a missing
+    line that is right there is worse than saying nothing. CT39 already
+    reports the real defect at the real line.
     """
     return [
         PlanDiagnostic(
@@ -664,7 +894,7 @@ def _rule_slice_without_tests(slices: list[_Slice], path: str) -> list[PlanDiagn
             ),
         )
         for s in slices
-        if s.record.contracts and not s.record.test_paths
+        if s.record.contracts and not s.record.test_paths and s.record.slice_id not in suppress
     ]
 
 
@@ -693,7 +923,7 @@ def _step_blocks(section: str) -> list[tuple[str, int, str]]:
                 if following.strip() and not following[:1].isspace():
                     break
                 body.append(following)
-            out.append((f"STEP{step.group(1)}", offset, "".join(body)))
+            out.append((f"STEP{step.group('num')}", offset, "".join(body)))
         offset += len(line)
     return out
 
@@ -734,10 +964,8 @@ def _declared_deps(section: str) -> tuple[int, list[str]] | None:
         return None
     payload = match.group(1).strip()
     tokens = [t.strip(" .,;") for t in re.split(r"[,\s]+", payload) if t.strip(" .,;")]
-    deps = [
-        canonical_slice_id(token) for token in tokens if token.casefold() not in _NO_DEPS and canonical_slice_id(token)
-    ]
-    return match.start(), [d for d in deps if d]
+    deps = [parse_slice_id(token) or token for token in tokens if token.casefold() not in _NO_DEPS]
+    return match.start(), deps
 
 
 def _dependency_cycles(graph: dict[str, list[str]]) -> list[list[str]]:
@@ -970,9 +1198,14 @@ def precheck(text: str, *, path: str = "<plan>") -> PrecheckReport:
     ]
 
     lost = _rule_contract_declaration_lost(slices, path)
+    orphans = _rule_orphaned_grammar(body, slices, path)
     diagnostics = [
         *_rule_heading_near_miss(body, path),
-        *_rule_slice_without_tests(slices, path),
+        *_rule_step_marker_unknown(slices, path),
+        *_rule_step_near_miss(body, path),
+        *_rule_slice_count(slices, path),
+        *orphans,
+        *_rule_slice_without_tests(slices, path, suppress=_orphaned_tests_owners(slices, orphans)),
         *_rule_step_without_exit(slices, path),
         *_rule_deps(slices, path),
         *_rule_contract_reference_undeclared(body, slices, path, suppress=frozenset(_lost_ids(lost))),
