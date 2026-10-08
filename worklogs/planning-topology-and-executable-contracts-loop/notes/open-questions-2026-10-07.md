@@ -552,3 +552,82 @@ a fraction of the cost. Recorded here because the idea will occur to the next re
 the ceiling, reading an eighth as a mis-scoped increment rather than a long one. The work went
 to SLICE5, which is unstarted and already owns `PRODUCER_ABSENT` in the lattice, so the rule
 lands beside the classification it refines and before SLICE6 authors anything new.
+
+## Q49 — where does `REGRESSION`'s "before" come from? (absorbs H3 and H7)
+
+**Status:** OPEN. **Blocks SLICE5 STEP1 and STEP3.** Raised before editing, per the stop rule.
+
+CT68 says: *a test green at baseline and red after the change yields `REGRESSION`; red-to-red
+is advisory and does not block.* Nothing in the plan says what "at baseline" means, and the
+two handoff questions that would have said it were never answered — **H3** (baseline storage
+path and lifetime) and **H7** (regression attribution scope), both recorded as "blocking
+implementation only" in `i02-planning-readiness-2026-10-07.md` and never closed. They are one
+question and are promoted here as one.
+
+It is not deferrable past STEP1: whether `SliceVerification` carries a baseline, and what
+`_classify` is handed, both follow from the answer.
+
+### Source-verified constraints (measured today, not recalled)
+
+| fact | where |
+| :--- | :--- |
+| the gate runs inside `_run_stage`, i.e. **after** a role has done its work | `workflow_controller.py:511` |
+| the harness owns the stage loop, so a **pre-coder point exists** | `_run_linear:1061`, `_run_adaptive:913` |
+| a run already has a per-run artifact home | `WorkflowArtifactPaths(base_dir, eval_report, flow_state)`, `:217` |
+| one run may hold several coder stages | `progress.repair_round`, `:188` |
+| the operator's tree must be byte-identical across a gate run, and `git worktree` is refused | CT64; SLICE4 docstring |
+| the baseline may read only the slice's own `TESTS:` paths | CT69 |
+
+And the fact that decides most of it: **a slice's `TESTS:` file is usually NEW.** It does not
+exist before the coder writes it, so it can carry no "before" state at all. Whatever the
+answer, `REGRESSION` can only ever be a statement about test paths that **already existed**.
+That is H7's attribution scope, and it falls out rather than being chosen.
+
+### Options
+
+**(a) Capture before the coder stage, once per run.** The harness runs the slice's `TESTS:`
+paths **that already exist** before dispatching the coder, and writes `verify_baseline.json`
+beside `eval_report.json`. `REGRESSION` = green there, red now.
+*Cost:* one extra run of those files per workflow run, bounded by CT69. Needs a new call site
+in the stage loop, which is SLICE6 territory, so SLICE5 must take the baseline as an argument
+rather than fetch it.
+*Catches:* the case the verdict exists for — the coder's change broke something adjacent.
+
+**(b) Capture at the first gate run; compare on later repair rounds.** No pre-coder work; the
+first gate pass writes the baseline, round 2+ compares.
+*Cost:* nearly free, no new call site.
+*Blind to the main case:* at the first gate run the coder has already edited. A test the
+coder broke in round 1 is red at baseline and never reported. It catches only regressions
+introduced *by repairs*, which is the smaller half.
+
+**(c) Materialise `HEAD` and run there.** `git archive HEAD` into a temp dir — never `stash`
+or `worktree`, both of which CT64 and the SLICE4 docstring rule out.
+*Cost:* the heaviest. A second environment to build, and the tests at `HEAD` are the *old*
+tests, so a renamed test reads as a regression.
+*Most faithful* to "before the change", and the only one that survives the harness being
+restarted mid-run.
+
+**(d) No baseline in I02.** `REGRESSION` leaves the emitted set; the gate reports PROVEN /
+VACUOUS / PRODUCER_ABSENT / FAILING / ERROR / SKIPPED, and regression attribution lands in
+I03 with the eval loop that already compares runs.
+*Cost:* the increment's DoD demands `REGRESSION` demonstrated, so that line changes too. But
+no lattice member is left that nothing can produce — which is the failure mode (d) avoids and
+(b) creates in practice.
+
+### Recommendation: (a), with the capture itself deferred to SLICE6
+
+(a) is the only option that catches the case the verdict names. The split that makes it cheap
+is already forced by the facts: `REGRESSION` is about **pre-existing** test paths, and those
+are exactly the ones that can be run before the coder starts.
+
+The clean seam: **SLICE5 accepts a baseline it does not gather.** `verify_slice(...,
+baseline: Mapping[str, bool] | None)` — path → was green. `None` means no baseline was taken,
+and then `REGRESSION` is simply not reachable and is reported as such, never as a pass. SLICE6
+adds the pre-coder call site that fills it, which is where the stage-loop edit belongs anyway.
+That keeps SLICE5 pure and testable, and it keeps the one risky edit in the slice whose job is
+wiring.
+
+A sub-decision that follows and does not need its own question: **a baseline row that could
+not be established is not `False`.** If the pre-coder run errors, the row is absent, and an
+absent row can never produce `REGRESSION` — consistent with the standing rule that `ERROR` is
+never a pass.
