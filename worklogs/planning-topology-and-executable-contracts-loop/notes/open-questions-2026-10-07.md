@@ -654,3 +654,53 @@ A sub-decision that follows and does not need its own question: **a baseline row
 not be established is not `False`.** If the pre-coder run errors, the row is absent, and an
 absent row can never produce `REGRESSION` — consistent with the standing rule that `ERROR` is
 never a pass.
+
+## Q50 — does a single kill-check speak the slice's vocabulary, or its own?
+
+**Status:** OPEN. Implemented provisionally as (a) in `b65a79b`; STEP3 (`_classify`) consumes
+the answer directly, so it is blocking for the rest of SLICE5.
+
+CT65 says `SliceVerification` carries "the per-contract kill-check outcomes" and never names
+their type. One kill-check can reach only four of the seven members: it speaks about a single
+contract, so it cannot observe a failing verify command (`FAILING`), a baseline comparison
+(`REGRESSION`) or a missing verify block (`SKIPPED`).
+
+| | (a) reuse `SliceVerdict`, constrain it | (b) a separate `KillOutcome` enum |
+| :--- | :--- | :--- |
+| words in a report | one set | two, plus a mapping between them |
+| illegal state | rejected at construction by `KILL_CHECK_VERDICTS` | unrepresentable by typing |
+| `_classify` | reads members directly | must translate, and a translation can be wrong |
+| risk | a reader sees `PROVEN` and must ask "of what?" -- the contract id is adjacent | the two vocabularies drift, and reports start saying `killed` where the lattice says `proven` |
+
+**Implemented (a)** on the ground that this project's stated fear is vocabulary growth (CT59,
+"no mutation DSL"), and that (b)'s type-level safety is bought with a translation step that is
+itself unverified. The constraint is enforced, not documented: `KillCheck.__post_init__`
+raises on the three unreachable members, and an oracle proves it for each.
+
+**What would overturn it:** if the operator wants per-contract and per-slice outcomes to be
+distinguishable at a glance in the eval report, (b) is better and the cost is one mapping
+function with its own oracle.
+
+## Q51 — what command does the kill-check phase actually issue?
+
+**Status:** OPEN. Implemented provisionally as (a) in `b65a79b`. Not blocking for STEP3, but it
+is the one producer in this slice that **no unit test executes verbatim** (the hermetic fixture
+substitutes it), so it is live-only risk and wants a decision before SLICE6.
+
+CT69 fixes *what* runs -- "only the contract's own test" -- and is silent on the command. The
+slice's own `verify` fence cannot be reused: it is the planner's text, run verbatim
+(`cli.py:165-170`), and may name several commands, a whole suite, or no pytest at all.
+
+- **(a) a module constant, `uv run pytest {path} -q`** -- matches the deployed coder workspace,
+  which is a uv project with `UV_PROJECT_ENVIRONMENT` pinned (`fa-entrypoint.sh`). The constant
+  is also the seam a hermetic test substitutes, exactly as `_PROVENANCE_PROBE` already is.
+- **(b) derive it from the slice's `verify` fence**, filtered to the contract's test path --
+  closer to "the same run as the verify it judges", but the filtering is a guess about someone
+  else's command line, and a `verify` fence holding `ruff` would have to be silently dropped.
+- **(c) take it as a parameter from the caller** -- defers the choice to SLICE6 and makes the
+  policy explicit at the composition root, at the cost of one more thing the controller must
+  get right.
+
+**Implemented (a).** (b) parses a command line the planner owns, which is the same class of
+mistake as parsing a contract body for a directive (F1). (c) is a real option if the operator
+wants the controller to own it.
