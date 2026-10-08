@@ -39,7 +39,23 @@ loop and the operator read. The invented `SLICE404` is absent from disk and
 red — `6 failed, 7 passed`, including the live test — and restores byte-identical. This is
 precisely the kill-check this row demanded. D1a therefore needs no test from I02.
 
-### D1b — a plan the **model actually wrote** parses · owner: **I02** · still open
+### D1b — a plan the **model actually wrote** parses · owner: **I02** · **CLOSED 2026-10-08 (E147)**
+
+Closed by `tests/test_plan_grammar_live_chain.py` (C1, 5 oracles): boots the real
+`drive_session` with only `ProviderChain.request` mocked, arms expansion level 2 with a `src/`
+read, and captures the bytes that actually crossed the boundary. The skeleton on the wire is
+byte-for-byte the skeleton on disk, and that skeleton parses to `SLICE1` carrying
+`('uv run pytest tests/test_<area>.py -q',)`. **Kill-check PROVEN:** removing the
+`read_skill_for_injection` call in `coder_loop.py`'s L2 block reddens 3 of the 5, restored
+byte-identical.
+
+**Measured, and deliberately not asserted:** the payload itself does **not** parse, because the
+skill body crosses the wire JSON-escaped (`\n` literals, `\u00a7` for §), so no `## SLICE`
+heading sits at a line start. That is correct — the parser's input is the markdown plan the
+model *writes*, never the prompt it reads. A test asserting the payload parses would have been
+asserting a falsehood; the real risk was drift, so the oracle is identity.
+
+*Original statement of the row, retained:*
 
 What remains is the half the original row buried: everything above feeds the parser a
 *fixture*. No test shows that a plan produced by following the injected skill skeleton yields

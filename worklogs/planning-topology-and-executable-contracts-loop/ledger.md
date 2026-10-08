@@ -1377,3 +1377,37 @@ E146 RISK  Splitting D1 exposed an unproven precondition under the whole verify 
     dependency-driven order (four leaf slices, then assembly, then wiring) was never the
     constraint -- SLICE1-4 all declare `DEPS: -`, so the order was always a risk choice, and
     this is the risk that was mispriced.
+
+E147 BUILD D1b closed — `tests/test_plan_grammar_live_chain.py`, C1, 5 oracles, the live
+    precondition of the whole verify gate. Boots the real `drive_session` with only
+    `ProviderChain.request` mocked (SD-C), arms expansion level 2 with a `src/` read, symlinks
+    the real skills tree into the workspace because `default_skills_root` resolves it from
+    `state.workspace_root`, and reads the bytes that actually crossed the provider boundary.
+    Oracle: the `PLAN-SKELETON` on the wire is byte-for-byte the one on disk, and that text
+    parses to `SLICE1` carrying `('uv run pytest tests/test_<area>.py -q',)`.
+    **Kill-check PROVEN:** neutralising the `read_skill_for_injection` call in `coder_loop.py`'s
+    L2 block reddens 3 of the 5 oracles; restored byte-identical. Worth recording what the
+    degraded payload becomes — not nothing, but a bare pointer: `Reference:
+    knowledge/skills/plan-authoring/SKILL.md`. The model is told where the grammar lives and
+    not given it, which is precisely the failure a substring assertion on the skill *name*
+    would have missed.
+    No mutation sweep: this increment adds **no production code**, so there is nothing new to
+    mutate. Saying so explicitly rather than silently skipping the step.
+
+E148 EVIDENCE The live payload does **not** parse, and must not be asserted to. Measured: the
+    skill body crosses the wire JSON-escaped — `\n` as a two-character literal, `\u00a7` for §
+    — so no `## SLICE` heading ever sits at a line start and `extract_plan_ids` correctly
+    returns zero slices. This killed the obvious version of the D1b test before it was written.
+    The parser's input is the markdown plan the model *writes*, never the prompt it reads, so
+    "feed the payload to the parser" asserts a falsehood. The real risk was always drift
+    between the taught grammar and the readable one, so the oracle became identity: encode the
+    known-good skeleton the way the transport encodes it, and find it verbatim in what was
+    sent.
+
+E149 FACT  Session baseline moved to **4 expected-red**, not 3. `tests/test_cli.py::
+    test_fa_run_verify_only_bash_allowed_before_pr_prepare` now fails, and it is **not** a
+    regression from this work: proven by removing every file of this increment from `tests/`
+    and re-running it in isolation, where it still fails. It is an artifact of this turn's
+    fresh `.venv` rebuild (different resolved package versions than the previous build);
+    `bash` and `git` are both present on PATH, so it is not a missing-binary skip. Recorded so
+    the next session does not mistake it for damage, and does not "fix" it blindly either.
