@@ -45,7 +45,23 @@ restate it here.
   `_cmd_run` (`cli.py:1460`) is what calls `drive_session` (`cli.py:2408`). `drive_session` sits
   **below** the controller and cannot exercise `_run_stage`. The only existing end-to-end
   precedent is `tests/test_workflow_global_history.py:123-141`, which stubs the **transport**.
-- `.venv/` is git-ignored (`.gitignore:4`), so it is absent from any copied or worktree'd tree.
+- `.venv/` is git-ignored (`.gitignore:4`), so it is absent from any copied tree.
+- **Deployment (`worklogs/DEPLOYMENT-ANATOMY.md`), which decides every path here.** In
+  production FA runs in a container: the harness's own code is baked at
+  `/opt/first-agent/src` with its venv at `/opt/fa-venv` (`Dockerfile.fa:89-96`), the repo is
+  bind-mounted **read-only** at `/repo` and is *not* used for runtime import, and the code the
+  coder edits lives in a per-session workspace clone under `/sessions/<id>/`, passed as
+  `run_workflow(workspace=…)`. Therefore **every path in a kill directive is relative to the
+  workspace root, never to the harness's own source tree**, and `/repo` being read-only is an
+  independent reason the git-worktree sandbox could not have worked.
+- **The workspace wins over the baked image by `PYTHONPATH` precedence, and nothing else.**
+  `scripts/fa-entrypoint.sh:237` does
+  `export PYTHONPATH="${WORKSPACE%/}/src${PYTHONPATH:+:$PYTHONPATH}"`, and
+  `docker-compose.fa.yml:220` deliberately withholds it from the proxy so that container runs
+  the immutable image. This is the proven idiom the overlay must mirror, not reinvent.
+- **`PYTHONPATH` is on the scrubber's allowlist** (`tools/bash_env.py:41`), so commands run
+  through `build_scrubbed_env` inherit it. This is why the plain command gate tests the
+  coder's edits rather than the baked image — load-bearing, and currently unprotected.
 - **Measured 2026-10-07: a mutated copy of the tree is invisible to the import system.** With
   `fa` installed (an absolute path on `sys.path`), running a test with `cwd` set to a copy still
   imports the original module. `PYTHONPATH=<copy>/src` does win. Without a guard, every
@@ -104,6 +120,13 @@ CONTRACTS:
     kill: remove-call src/fa/inner_loop/slice_verification.py::run_commands -> _empty_result
   CT49 [PRESERVATION]: `src/fa/inner_loop/plan_ids.py` is not modified by this slice; it
     imports no subprocess, os.environ or pathlib-write facility.
+  CT49b [PRESERVATION]: `PYTHONPATH` survives `build_scrubbed_env`
+    (`tools/bash_env.py:41`) and reaches the verified command. Catches the highest-impact
+    silent inversion available in this system: with `PYTHONPATH` dropped, every verify command
+    would import the image-baked `/opt/first-agent/src` instead of the coder's workspace edits,
+    so the gate would pass no matter what the coder did — or did not — write. The allowlist is
+    one line in an unrelated module; this contract is what stops a future tightening of it from
+    silently disabling the whole increment.
 TESTS: tests/test_slice_verification_runner.py   (NEW — author it)
 ```verify
 uv run pytest tests/test_slice_verification_runner.py -q
@@ -198,13 +221,15 @@ DEPS: —
 INTENT: run a mutated copy of production code without writing to the operator's tree, and
   refuse to return a verdict unless the mutated module is provably the one that was imported.
 CONTRACTS:
-  CT60 [FUNCTIONAL]: `mutation_overlay(root, rel_path, mutated_source)` yields a temporary
-    directory containing a copy of `root/src` with `rel_path` replaced by `mutated_source`,
-    and removes it on normal exit **and** on exception.
+  CT60 [FUNCTIONAL]: `mutation_overlay(workspace, rel_path, mutated_source)` yields a
+    temporary directory containing a copy of `workspace/src` with `rel_path` replaced by
+    `mutated_source`, and removes it on normal exit **and** on exception. `workspace` is the
+    session workspace (`run_workflow(workspace=…)`), never the harness's own source tree.
     kill: remove-call src/fa/inner_loop/slice_verification.py::mutation_overlay -> _copy_src
-  CT61 [FUNCTIONAL]: a command run against the overlay receives `PYTHONPATH=<overlay>/src`
-    prepended to any inherited value, and `cwd` stays the operator's root so the tests under
-    test are the real ones.
+  CT61 [FUNCTIONAL]: a command run against the overlay receives `<overlay>/src` **prepended**
+    to the inherited `PYTHONPATH` — preserving `<workspace>/src` behind it, exactly as
+    `scripts/fa-entrypoint.sh:237` prepends — and `cwd` stays the workspace root so the tests
+    being run are the real ones.
     kill: remove-call src/fa/inner_loop/slice_verification.py::_overlay_env -> _prepend_pythonpath
   CT62 [FUNCTIONAL]: before any kill-check result is trusted, a provenance probe runs in the
     same environment and asserts the target module resolves **inside the overlay**; if it does
@@ -304,6 +329,13 @@ CONTRACTS:
     every command and reports one undifferentiated result, which a naive per-plan assertion
     would pass.
     kill: remove-call src/fa/inner_loop/slice_verification.py::verify_plan -> commands_for
+  CT77 [FUNCTIONAL]: the per-slice verdicts are appended to the evidence block the eval stage
+    already receives (`workflow_controller.py:440-470`, beside "Plan slices to judge"),
+    **whether or not** they block. Catches: a gate that only speaks when it fails, leaving the
+    judge to self-declare coverage on a green run — which is the weakness
+    `validate_slice_ids` (`:281`) can only partially detect today, because it compares the
+    judge's claims against the plan rather than against facts.
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_eval_evidence_block -> _verification_lines
 TESTS: tests/test_verify_gate_live.py   (NEW — author it)
 ```verify
 uv run pytest tests/test_verify_gate_live.py -q
@@ -314,7 +346,8 @@ uv run ruff check src/fa/inner_loop/workflow_controller.py tests/test_verify_gat
 - [ ] STEP3: implement `_synthesise_verify_report` per CT72 (exit: `uv run pytest tests/test_verify_gate_live.py -q -k route` exits 0)
 - [ ] STEP4: stop the role loop in `_run_initial_roles` on a blocking coder report (exit: `uv run pytest tests/test_verify_gate_live.py -q -k short_circuit` exits 0)
 - [ ] STEP5: write the live test on the `test_workflow_global_history.py:123-141` template (exit: `uv run pytest tests/test_verify_gate_live.py -q -k live` exits 0)
-- [ ] STEP6: add the per-slice attribution assertion of CT76 (exit: `uv run pytest tests/test_verify_gate_live.py -q` exits 0)
+- [ ] STEP6: add the per-slice attribution assertion of CT76 (exit: `uv run pytest tests/test_verify_gate_live.py -q -k attribution` exits 0)
+- [ ] STEP7: append the verdict lines to `_eval_evidence_block` and assert they appear on a GREEN run (exit: `uv run pytest tests/test_verify_gate_live.py -q` exits 0)
 
 ## Increment definition of done
 

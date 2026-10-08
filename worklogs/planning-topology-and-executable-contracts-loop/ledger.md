@@ -1070,3 +1070,47 @@ E126 DECIDED  The git-worktree sandbox is deleted as premature abstraction and r
     Recommendation recorded, not yet decided by the operator: ship SLICE1-3 and SLICE6 as a
     first PR so the plain command gate that closes D1 lands even if the kill-check needs
     another pass, with SLICE4-5 following. supersedes: SLICE4 as written in E124.
+
+E127 FACT  D2 investigated to the bottom at operator request; it is **not an architectural
+    break, it is my plan having assumed an execution model that does not exist**. The model
+    today: `fa workflow` runs three sequential ROLE sessions. The planner writes a plan file;
+    the coder gets one session with the task and `plan_path` and works the WHOLE plan; the
+    eval gets one session with the diff plus "Plan slices to judge (N): ..."
+    (`workflow_controller.py:461-465`) and judges per slice; `:944` reruns coder+eval while
+    `route_decision == "return_to_coder"`, capped by `max_repairs`.
+    **Slices are therefore a judging and accounting vocabulary, not an execution unit.** The
+    only slice-aware code is `validate_slice_ids` (`:281`), which cross-checks the eval's
+    *self-declared* slice ids against the plan and reports `unreported_slices`.
+    This makes I02's gate a good fit rather than a compromise, and it is exactly what
+    SIMPLIFICATION §5 proposed: read the commands per slice, "a slice is complete iff its
+    commands exit 0" -- a completion CHECK, not an execution unit. The win is precise: today
+    the harness can only detect what the judge *omitted* from its own claims; after I02 it
+    holds a fact per slice. Per-slice DISPATCH -- one coder session per slice, with slice
+    selection, DEPS ordering and partial-failure resume -- is a far larger change and is
+    I03's, as the roadmap already says.
+    One consequence of reading this properly: SIMPLIFICATION's fourth S16 bullet, "feed the
+    results into the evidence block the judge already receives", had been dropped from my
+    plan. Restored as **CT77** -- verdicts reach `_eval_evidence_block` (`:440-470`) whether
+    or not they block, because a gate that only speaks when it fails leaves the judge
+    self-declaring coverage on every green run.
+
+E128 FACT  `worklogs/DEPLOYMENT-ANATOMY.md` read at operator instruction, and it decides every
+    path in I02. In production the harness's own code is baked at `/opt/first-agent/src` with
+    venv `/opt/fa-venv` (`Dockerfile.fa:89-96`); the repo is bind-mounted **read-only** at
+    `/repo` and is NOT used for runtime import; the code the coder edits is a per-session
+    workspace clone under `/sessions/<id>/`, arriving as `run_workflow(workspace=...)`.
+    Consequences, all now in the plan. (1) Every kill-directive path is relative to the
+    **workspace**, never to the harness's source tree, and `mutation_overlay` copies
+    `workspace/src`. (2) `/repo` being read-only is an independent, deployment-level reason
+    the git-worktree sandbox deleted in E126 could never have worked -- it was not merely
+    over-built. (3) The mechanism that makes workspace code win over the baked image is
+    `PYTHONPATH` precedence and nothing else: `scripts/fa-entrypoint.sh:237` prepends
+    `<workspace>/src`, and `docker-compose.fa.yml:220` deliberately withholds it from the
+    proxy so that container keeps running the immutable image. The overlay therefore
+    **prepends** ahead of the inherited value in the same idiom rather than replacing it.
+    (4) Measured and load-bearing: `PYTHONPATH` is on the scrubber's allowlist
+    (`tools/bash_env.py:41`), which is the only reason the plain command gate tests the
+    coder's edits at all. That single line in an unrelated module is the highest-impact
+    silent inversion available in this system -- drop it and every verify command imports the
+    baked image, so the gate passes regardless of what the coder wrote. Pinned as new
+    **CT49b**, a PRESERVATION contract, because nothing protected it.
