@@ -314,10 +314,17 @@ CONTRACTS:
     producer is assigned, and partially removes it otherwise. Replacement handles all four forms
     uniformly and is a truer simulation of "the producer never ran".
     kill: neutralise src/fa/inner_loop/slice_verification.py::_Silence.visit_Call
-  CT57 [FUNCTIONAL]: `apply_kill` returns `(mutated_source, hits)`. `hits == 0` means the
-    target is absent and the caller raises `PRODUCER_ABSENT`; `hits > 1` is an ambiguous
-    target and the caller raises `ERROR`, never a guess.
-    kill: remove-call src/fa/inner_loop/slice_verification.py::apply_kill -> _count_hits
+  CT57 [FUNCTIONAL]: `apply_kill` returns a `KillApplication` carrying **two** counts, because
+    the caller asks two questions. `targets` is a question of *search* — how many definitions
+    carry the qualified name the directive wrote — and must be exactly 1: `0` is
+    `PRODUCER_ABSENT`, `>1` is `ERROR`, never a guess. `edits` is a question of
+    *transformation* — how many nodes changed — always 1 for `neutralise`, legitimately `0..n`
+    for `remove-call`, since one method may call the emitter four times. Symbols resolve by
+    **exact qualified name anchored at the module root**. `source` is `None` whenever
+    `targets != 1 or edits == 0`, so unmutated source cannot be run and misreported as
+    `VACUOUS`. Collapsing the two counts into one `hits` was a design defect: it made the
+    four-call sample of CT56 report `4` and be rejected by this contract as ambiguous (Q47).
+    kill: remove-call src/fa/inner_loop/slice_verification.py::apply_kill -> _resolve_targets
   CT58 [CONSTRAINT]: `apply_kill` takes source text and returns source text. It performs no
     filesystem read or write and no subprocess call. Catches: a mutation helper that is
     convenient to call directly on the working tree.
@@ -329,11 +336,11 @@ TESTS: tests/test_kill_operators.py   (NEW — author it)
 uv run pytest tests/test_kill_operators.py -q
 uv run ruff check src/fa/inner_loop/slice_verification.py tests/test_kill_operators.py
 ```
-- [ ] STEP1: implement `_Neutralise(ast.NodeTransformer)` counting hits on `visit_FunctionDef` and `visit_AsyncFunctionDef` (exit: `uv run pytest tests/test_kill_operators.py -q -k neutralise` exits 0)
-- [ ] STEP2: implement `_Silence(ast.NodeTransformer)` replacing every `ast.Call` to the callee inside the enclosing symbol with `ast.Constant(None)`, resolving both `Name` and `Attribute` callees, and counting each (exit: `uv run pytest tests/test_kill_operators.py -q -k remove_call` exits 0)
-- [ ] STEP2b: assert the four-call-form sample yields `hits == 4` (exit: `uv run pytest tests/test_kill_operators.py -q -k call_forms` exits 0)
-- [ ] STEP3: implement `apply_kill` dispatching on the operator and returning `(source, hits)` (exit: `uv run pytest tests/test_kill_operators.py -q -k hits` exits 0)
-- [ ] STEP4: assert the closed operator set with `len(KillOperator) == 2` (exit: `uv run pytest tests/test_kill_operators.py -q` exits 0)
+- [x] STEP1: implement `_resolve_targets(tree, symbol)` returning every definition whose qualified name is exactly `symbol`, and `_neutralise_body(node)` replacing the body with `return None` (exit: `uv run pytest tests/test_kill_operators.py -q -k neutralise` exits 0)
+- [x] STEP2: implement `_Silence(ast.NodeTransformer)` replacing every `ast.Call` to the callee inside the enclosing symbol with `ast.Constant(None)`, resolving both `Name` and `Attribute` callees, and counting each (exit: `uv run pytest tests/test_kill_operators.py -q -k remove_call` exits 0)
+- [x] STEP2b: assert the four-call-form sample yields `edits == 4` (exit: `uv run pytest tests/test_kill_operators.py -q -k call_forms` exits 0)
+- [x] STEP3: implement `apply_kill` dispatching on the operator and returning a `KillApplication`, and `KillApplication.__post_init__` refusing any state where `source` and the counts disagree (exit: `uv run pytest tests/test_kill_operators.py -q -k counts` exits 0)
+- [x] STEP4: assert the closed operator set with `len(KillOperator) == 2` (exit: `uv run pytest tests/test_kill_operators.py -q` exits 0)
 
 ## SLICE4: The mutation sandbox — a `src` overlay with a provenance guard
 STEPS: prescriptive

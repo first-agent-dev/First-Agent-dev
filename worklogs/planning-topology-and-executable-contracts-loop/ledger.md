@@ -1637,3 +1637,52 @@ E166 DECISION Q46 resolved **(b)** by operator ruling, 2026-10-08, overriding my
     The value equals `runtime_limits.DEFAULT_BASH_TIMEOUT_SECONDS` by coincidence, not
     derivation; both the code comment and a test forbid collapsing them, since a change made
     for the model's interactive shell must not retune this gate's failure detection.
+
+E167 SHIPPED I02/SLICE3 — the two mutation operators, AST-level and pure. `KillApplication`,
+    `_resolve_targets`, `_dotted_text`, `_callee_matches`, `_Silence`, `_neutralise_body`,
+    `apply_kill` in `src/fa/inner_loop/slice_verification.py`; 26 oracles in
+    `tests/test_kill_operators.py` (NEW).
+    Q47 resolved (d) + exact qualified name by operator ruling. The ruling's framing, which is
+    now CT57: merging two notions into one `hits` was an architectural design bug. `targets`
+    is a question of **search** -- locating the anchor in the AST -- and must be strictly 1.
+    `edits` is a question of **transformation**, always 1 for `neutralise` and legitimately
+    0..N for `remove-call`. The defect was live: under the old CT57 the four-call sample CT56
+    exists to defend reported `hits == 4` and was rejected by the slice's own gate as an
+    ambiguous target.
+    `source: str | None`, `None` unless `targets == 1 and edits > 0`, with the invariant
+    enforced in `__post_init__` on operator advice -- a constructor that cannot assemble a
+    lying result beats a convention. It makes the worst available misreport a type error:
+    running the slice's tests against unmutated source shows them green, which the caller
+    would record as `VACUOUS` -- a sound test accused of being weak when the producer was
+    merely absent.
+    Resolution is the exact qualified name anchored at the module root. The suffix rule I had
+    provisionally adopted manufactures the ambiguity it then reports, and no directive needs
+    it: every one written so far spells the name out. Callee matching stays deliberately
+    asymmetric (an undotted directive matches `Name.id` or `Attribute.attr`) because a
+    definition has one canonical name and a call site does not -- `emit`, `self.emit` and
+    `mod.emit` are the same producer.
+    **Six kill-checks PROVEN, five of them executed by the new operator against its own
+    source** -- apply, write, run, restore -- which demonstrates the slice end to end before
+    SLICE5 has a consumer: CT55 `neutralise apply_kill` 22F · CT56 `neutralise
+    _Silence.visit_Call` 9F · CT57 `remove-call apply_kill -> _resolve_targets` 22F ·
+    `_neutralise_body` 6F · `KillApplication.__post_init__` 2F · exactness rule relaxed to a
+    suffix 1F. File restored byte-identical (sha `9c9ab692a8196e1c`).
+    Deviation from STEP1, recorded: no `_Neutralise(ast.NodeTransformer)` class. Both
+    operators need the same enclosing-symbol lookup, and a second walker with its own prefix
+    tracking would be the Single-Source-of-Truth failure the Q45-B ruling turned on. The step
+    text was amended; no contract named `_Neutralise`, so no kill directive was lost.
+    CT57's directive was amended `-> _count_hits` to `-> _resolve_targets`, the function that
+    now answers the search question.
+
+E168 MEASUREMENT the directive audit SLICE3 made possible. `_resolve_targets` was pointed at
+    every `kill:` directive in both increment plans: **14 of 30 cannot fire today.** Twelve
+    name SLICE5/SLICE6 producers that do not exist yet (expected, registered); CT62 is the
+    DEFERRED case logged with SLICE4; CT50b is a defect in a shipped slice -- it names
+    `_resolve_symbol`, SLICE2's guess at a name SLICE3 shipped as `_resolve_targets`.
+    Measured before proposing a fix: the renamed directive leaves SLICE2's own tests
+    **36 passed, green**, and reddens SLICE3's 18 of 27. So the rename would convert an honest
+    `PRODUCER_ABSENT` into a `VACUOUS` -- a sound test file accused of weakness. CT50b makes
+    two claims living in two slices, and the evidence lattice is per-slice. Promoted to Q48;
+    left untouched pending a ruling, because wrong-but-honest beats wrong-and-confident.
+    The audit is the long-outstanding sweep for directives naming absent producers, which had
+    no tool until now. It is worth running at every slice boundary.

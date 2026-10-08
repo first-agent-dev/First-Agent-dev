@@ -28,6 +28,7 @@ Design notes that are load-bearing rather than stylistic:
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import enum
 import os
@@ -40,6 +41,7 @@ import time
 from collections.abc import Iterable, Iterator, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import override
 
 from fa.inner_loop.plan_ids import FAIL, PlanDiagnostic, PlanIds, SliceRecord
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
@@ -50,9 +52,11 @@ __all__ = [
     "TAIL_LIMIT",
     "CommandOutcome",
     "CommandResult",
+    "KillApplication",
     "KillDirective",
     "KillOperator",
     "OverlayError",
+    "apply_kill",
     "mutation_overlay",
     "parse_kill_directives",
     "run_commands",
@@ -789,3 +793,201 @@ def _assert_overlay_wins(
         stderr_tail=probe.stderr_tail or f"{module} did not resolve inside {overlay_root / 'src'}",
         duration_s=probe.duration_s,
     )
+
+
+# ---------------------------------------------------------------------------
+# The mutation operators (SLICE3). Pure: source text in, source text out.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class KillApplication:
+    """What one directive did to one source text. (CT57)
+
+    Two counts, because the caller is asking two different questions.
+
+    ``targets``
+        a question of **search**: how many definitions in the module carry the
+        qualified name the directive wrote. It must be exactly 1. ``0`` means
+        the plan is ahead of the code (``PRODUCER_ABSENT``); ``>1`` means the
+        directive is under-specified, and picking one would be the guess this
+        gate exists to refuse (``ERROR``).
+    ``edits``
+        a question of **transformation**: how many nodes changed. For
+        ``NEUTRALISE`` it is always 1 once the target resolved. For
+        ``REMOVE_CALL`` it is legitimately ``0..n`` -- one method may call the
+        emitter four times, and silencing three of them would not simulate
+        "the producer never ran".
+
+    Collapsing the two into one ``hits`` was a design bug (Q47). It made the
+    four-call sample CT56 exists to defend -- the slice's headline behaviour --
+    report ``4`` and be rejected by its own gate as an ambiguous target.
+
+    ``source`` is ``None`` whenever the result is not safe to run. A caller
+    that ignored a failed lookup and ran the slice's tests against unmutated
+    source would watch them pass and report ``VACUOUS``: a sound test accused
+    of being weak, when the real story is a missing producer. The ``None``
+    turns that mistake from a matter of discipline into a type error.
+    """
+
+    source: str | None
+    targets: int
+    edits: int
+
+    def __post_init__(self) -> None:
+        """Refuse to exist in a state that would mislead the caller.
+
+        An assertion about *this module*, not a condition the caller handles:
+        every raise here is a bug in :func:`apply_kill`. It is deliberately
+        not an error channel -- ``apply_kill`` stays total, and the mapping
+        onto the status lattice stays with the caller that owns the lattice.
+        """
+        applied = self.targets == 1 and self.edits > 0
+        if applied and self.source is None:
+            raise ValueError("source must be present when a kill was applied")
+        if not applied and self.source is not None:
+            raise ValueError("source must be None when no kill was applied")
+
+
+#: The definition kinds a directive may name. A ``class`` is not among them:
+#: "neutralise this class" has no meaning the operators can express, so a
+#: directive naming one resolves to nothing and is reported absent.
+_DEFINITION = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+def _resolve_targets(tree: ast.Module, symbol: str) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Every definition whose qualified name is exactly *symbol*. (CT57)
+
+    Exact and anchored at the module root, split by :func:`_split_dotted`:
+    ``_Silence.visit_Call`` resolves to one method and a bare ``visit_Call``
+    resolves to nothing.
+
+    The looser rule -- match any unambiguous dotted *suffix* -- was rejected
+    (Q47). It manufactures the ambiguity it then has to report, and no
+    directive needs it: every one written so far already spells the name out
+    in full. Under exactness a mis-spelled or under-qualified symbol lands on
+    ``PRODUCER_ABSENT``, which is loud and accurate, instead of silently
+    matching a same-named method on some other class.
+
+    ``targets > 1`` therefore stays reachable only through a genuine double
+    definition -- a ``try/except ImportError`` fallback, a platform-conditional
+    ``def``, a redefinition bug -- which is exactly the case worth refusing.
+    """
+    wanted = _split_dotted(symbol)
+    found: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+
+    def walk(body: Iterable[ast.stmt], prefix: tuple[str, ...]) -> None:
+        for node in body:
+            if not isinstance(node, (*_DEFINITION, ast.ClassDef)):
+                continue
+            qualified = (*prefix, node.name)
+            if qualified == wanted and isinstance(node, _DEFINITION):
+                found.append(node)
+            walk(node.body, qualified)
+
+    walk(tree.body, ())
+    return found
+
+
+def _dotted_text(func: ast.expr) -> str | None:
+    """``self.emit`` for an attribute chain, ``emit`` for a name, else None."""
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        base = _dotted_text(func.value)
+        return f"{base}.{func.attr}" if base is not None else None
+    return None
+
+
+def _callee_matches(func: ast.expr, callee: str) -> bool:
+    """Does this call expression call *callee*? (CT56)
+
+    Asymmetric with symbol resolution on purpose. A definition has one
+    canonical qualified name; a call site does not -- the same function is
+    reached as ``emit``, ``self.emit`` or ``mod.emit`` depending on where the
+    line is written. Demanding an exact dotted match there would make most
+    directives unwritable, so an undotted directive names the attribute or
+    name being called, and a dotted one must match the whole dotted text.
+    """
+    if "." in callee:
+        return _dotted_text(func) == callee
+    if isinstance(func, ast.Name):
+        return func.id == callee
+    if isinstance(func, ast.Attribute):
+        return func.attr == callee
+    return False
+
+
+class _Silence(ast.NodeTransformer):
+    """Replace every call to one callee with the constant ``None``. (CT56)
+
+    Replacement, not deletion of the enclosing statement. Measured on a
+    four-call sample (``a = emit(x)``, ``emit(x)``, ``if emit(x):``, and a
+    comprehension): removing only ``ast.Expr`` statements sees **1 of 4**,
+    which reports ``PRODUCER_ABSENT`` when the producer's result is assigned
+    and half-removes it otherwise. Replacing the call expression handles all
+    four forms uniformly.
+
+    A matched call is replaced whole and not descended into: its arguments
+    disappear with it, which is what "the producer never ran" means -- they
+    were never evaluated either.
+    """
+
+    def __init__(self, callee: str) -> None:
+        self.callee = callee
+        self.edits = 0
+
+    @override
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        if _callee_matches(node.func, self.callee):
+            self.edits += 1
+            return ast.Constant(value=None)
+        self.generic_visit(node)
+        return node
+
+
+def _neutralise_body(node: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
+    """Replace the body of *node* with ``return None``. (CT55)
+
+    Signature, decorators and ``async`` are kept: the function must still be
+    callable in every way its callers expect, and only stop working.
+    """
+    node.body = [ast.Return(value=ast.Constant(value=None))]
+    return 1
+
+
+def apply_kill(source: str, directive: KillDirective) -> KillApplication:
+    """Apply one declared kill to *source*. Pure, and total. (CT55, CT57, CT58)
+
+    Reads no file, writes no file, spawns nothing (CT58): a mutation helper
+    that could be pointed at the working tree would eventually be pointed at
+    the working tree. The caller stages the returned text through
+    :func:`mutation_overlay`, which owns the only copy that exists on disk.
+
+    It never raises for an input it dislikes, either. ``targets`` and ``edits``
+    carry every outcome, so the caller keeps the whole status-lattice decision
+    in one place instead of splitting it across a ``try`` and an ``if``.
+    """
+    tree = ast.parse(source)
+    targets = _resolve_targets(tree, directive.symbol)
+    if len(targets) != 1:
+        return KillApplication(source=None, targets=len(targets), edits=0)
+
+    target = targets[0]
+    if directive.operator is KillOperator.NEUTRALISE:
+        edits = _neutralise_body(target)
+    elif directive.callee is None:
+        # A ``remove-call`` with no ``-> callee`` names no call site, so it can
+        # match nothing. The grammar makes the arrow optional because
+        # ``neutralise`` has no second symbol; this is the belt for the case
+        # the parser lets through.
+        edits = 0
+    else:
+        silence = _Silence(directive.callee)
+        target.body = [silence.visit(statement) for statement in target.body]
+        edits = silence.edits
+
+    if edits == 0:
+        return KillApplication(source=None, targets=1, edits=0)
+    ast.fix_missing_locations(tree)
+    return KillApplication(source=ast.unparse(tree), targets=1, edits=edits)

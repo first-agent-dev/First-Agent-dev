@@ -311,8 +311,16 @@ invitation.
 
 ## Q47 -- `hits` cannot mean both "targets matched" and "calls replaced"
 
-**Status:** OPEN. Blocking SLICE3/STEP3. Found by reading CT57 against STEP2b before writing
-any code.
+**Status:** **RESOLVED (d) + exact qualified name** by operator ruling, 2026-10-08.
+Found by reading CT57 against STEP2b before writing any code.
+
+> The operator's ruling, verbatim in substance: *merging the two notions into one*
+> `hits` *in CT57 was an architectural design bug.* `targets` *is a question of search
+> -- locating the anchor in the AST -- and must be strictly 1: 0 is* `PRODUCER_ABSENT`,
+> *>1 is* `ERROR`. `edits` *is a question of transformation -- how many nodes did we
+> modify? For* `neutralise` *always 1; for* `remove-call` *legitimately 0..N, since one
+> method may hold four calls to a logger or an emitter.* Plus: put the invariant in
+> `__post_init__`, so the constructor cannot assemble a result that lies.
 
 ### What SLICE3 is for, so the numbers have a job
 
@@ -443,3 +451,56 @@ already a status the lattice carries.
 - CT56 unchanged. CT58 unchanged (purity is strengthened: no raising either). CT59 unchanged.
 - STEP2b keeps `== 4`, renamed to `edits`.
 - STEP3 names `KillApplication` as part of the producer set.
+
+## Q48 — may a contract's kill directive name a producer another slice builds?
+
+**Status:** OPEN. Not blocking SLICE3, which is shipped. Blocks a correct CT50b.
+
+Found by the directive audit that SLICE3 made possible: `apply_kill`'s resolver can now be
+pointed at every directive in both plans. **14 of 30 cannot fire today.** Twelve are SLICE5
+and SLICE6 producers that do not exist yet -- legitimate, and the register already tracks
+them. One is CT62, recorded as DEFERRED when SLICE4 shipped. The fourteenth is a defect in a
+**shipped** slice:
+
+```
+CT50b (SLICE2)  kill: remove-call …::_resolve_symbol -> _split_dotted
+```
+
+`_resolve_symbol` was SLICE2's guess at a name SLICE3 would later provide. SLICE3 shipped it
+as `_resolve_targets`, which does call `_split_dotted`. So the directive reads
+`PRODUCER_ABSENT` against working code -- the exact false accusation CT50b itself was written
+to prevent, which is a pointed demonstration that the class is real.
+
+**Renaming the symbol is not the fix.** Measured: applying
+`remove-call …::_resolve_targets -> _split_dotted` leaves SLICE2's own test file
+**36 passed, fully green**, and reddens SLICE3's **18 of 27**. A kill-check runs the tests of
+the slice that owns the contract, so after the rename CT50b would fire, find SLICE2's tests
+unmoved, and report `VACUOUS` -- accusing a sound test file of being weak. That is a worse
+state than today's honest "absent".
+
+The real cause: **CT50b makes two claims that live in two slices.** The grammar accepts a
+dotted symbol (SLICE2's parser, proven by `test_kill_directives.py`), and the operators
+resolve one (SLICE3's resolver, proven by `test_kill_operators.py`). A single directive
+cannot be killed in both places, because the evidence lattice is per-slice.
+
+**Option (a) — split the contract.** CT50b keeps the grammar half and takes a directive that
+fires inside SLICE2; a new contract in SLICE3 (next free id **CT81**) takes the resolution
+half with the directive measured above. Each half is then provable where it lives.
+*Cost:* a new contract id on a shipped slice, and a second place to read about dotted symbols.
+
+**Option (b) — a kill-check runs the tests of the slice owning the *producer*,** not the
+contract. One directive stays sufficient for a cross-slice claim.
+*Cost:* changes SLICE5's verdict assembly before it is written, and weakens a useful property
+-- today a slice's verdict depends only on that slice's declared tests. It also needs a rule
+for producers no slice claims.
+
+**Option (c) — a directive may name only a producer its own slice builds**, enforced by the
+validator, and CT50b's resolution half moves wholesale into SLICE3.
+*Cost:* the strictest and the most honest; it would have caught this at authoring time
+instead of after shipping. But it forbids a contract from constraining downstream slices,
+which CT62 (SLICE4 naming SLICE5's `_run_kill_check`) deliberately does.
+
+**Recommendation: (a) now, and (c) as a validator rule once SLICE5 exists** -- (c) would have
+prevented this and CT62's deferral both, but it is a plan-wide rule and belongs with the
+component that can enforce it. Left untouched pending a ruling: today's `PRODUCER_ABSENT` is
+wrong but honest, where the rename would be wrong and confident.
