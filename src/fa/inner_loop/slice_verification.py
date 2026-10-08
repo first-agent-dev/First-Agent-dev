@@ -28,12 +28,16 @@ Design notes that are load-bearing rather than stylistic:
 
 from __future__ import annotations
 
+import contextlib
 import enum
 import os
 import re
+import shlex
+import shutil
 import subprocess
+import tempfile
 import time
-from collections.abc import Iterable, MutableMapping, Sequence
+from collections.abc import Iterable, Iterator, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,6 +51,8 @@ __all__ = [
     "CommandResult",
     "KillDirective",
     "KillOperator",
+    "OverlayError",
+    "mutation_overlay",
     "parse_kill_directives",
     "run_commands",
     "validate_kill_directives",
@@ -553,3 +559,209 @@ def validate_kill_directives(plan_text: str, ids: PlanIds, *, path: str) -> list
         )
 
     return sorted(out, key=lambda diagnostic: (diagnostic.line, diagnostic.rule))
+
+
+# ── SLICE4: the mutation sandbox ──────────────────────────────────────────
+#
+# A kill-check has to run the slice's tests against *mutated* production code
+# and watch them fail. The mutation must therefore be visible to the import
+# system and invisible to the operator's checkout, and those two requirements
+# pull in opposite directions. Everything below exists to hold both.
+#
+# The measured defect this is built around (E125/D1): with the package
+# installed, an absolute path sits on ``sys.path``, so running tests with
+# ``cwd`` inside a mutated copy **still imports the original module**. Every
+# kill-check would have passed against unmutated code, every contract would
+# have been reported VACUOUS, and the gate would have blocked every correct
+# slice while never once detecting a weak test. A gate that is wrong in that
+# direction is worse than no gate, because it is trusted.
+#
+# Hence two mechanisms rather than one: ``PYTHONPATH`` prepending to make the
+# overlay win, and a **mandatory provenance probe** to prove that it did.
+# Relying on the prepend alone is the same silent fragility that caused the
+# defect.
+
+
+class OverlayError(RuntimeError):
+    """A mutation overlay could not be established, so no verdict is possible.
+
+    Raised rather than returned. A ``None`` can be ignored by a caller that
+    forgets to check it, and the thing it would be ignoring is "the sandbox
+    is not there" -- after which a kill-check would run against the
+    operator's real tree. An exception that escapes is noisy and safe; a
+    silently skipped guard is quiet and catastrophic. SLICE5 converts this
+    into an ``ERROR`` verdict at the one place that assembles verdicts.
+    """
+
+
+def _copy_src(workspace: Path, overlay_root: Path) -> Path:
+    """Copy ``workspace/src`` into ``overlay_root/src``. (CT60, CT63)
+
+    Only ``src`` is copied, which is what makes CT63 structural rather than
+    aspirational: the tests that judge the mutation are read from the
+    operator's tree, so no mutation can reach the oracle that is supposed to
+    catch it. A sandbox built by copying the whole tree would let a kill-check
+    rewrite its own test and call the result proof.
+
+    ``__pycache__`` is excluded. Python invalidates a stale ``.pyc`` by mtime
+    and size so copying it would probably be harmless, but "probably harmless"
+    is not a property worth buying with the risk that a mutated module is
+    shadowed by its own pre-mutation bytecode -- that failure would present as
+    a VACUOUS verdict, which is exactly the lie this slice exists to prevent.
+
+    Symlinks are preserved rather than followed, so a link inside ``src`` can
+    never cause content from outside the tree to be materialised in the
+    sandbox.
+    """
+    source = Path(workspace) / "src"
+    if not source.is_dir():
+        raise OverlayError(f"no src directory to overlay at {source}")
+    destination = overlay_root / "src"
+    shutil.copytree(source, destination, symlinks=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    return destination
+
+
+def _overlay_target(overlay_root: Path, rel_path: str) -> Path:
+    """Resolve ``rel_path`` inside the overlay, refusing anything outside ``src``.
+
+    Kill-directive paths are workspace-relative and include the ``src/``
+    prefix (E128), so they address the overlay directly. Containment is
+    checked on the **resolved** path, which is what stops ``src/../../etc`` and
+    a symlinked escape alike; the house idiom is ``acrr._resolve_within``, and
+    this differs from it in one deliberate way -- it raises instead of
+    returning ``None``. There, a bad path means "skip this export entry";
+    here it means "a kill-check is about to write outside the sandbox", and
+    the two deserve opposite loudness.
+    """
+    src_root = (overlay_root / "src").resolve()
+    try:
+        candidate = Path(rel_path)
+        if candidate.is_absolute():
+            raise OverlayError(f"kill-directive path must be workspace-relative, got {rel_path!r}")
+        resolved = (overlay_root / candidate).resolve()
+    except OverlayError:
+        raise
+    except (OSError, ValueError, RuntimeError) as error:
+        raise OverlayError(f"unusable kill-directive path {rel_path!r}: {error}") from error
+    if src_root not in resolved.parents:
+        raise OverlayError(f"kill-directive path {rel_path!r} resolves outside the overlay src tree")
+    return resolved
+
+
+@contextlib.contextmanager
+def mutation_overlay(workspace: Path, rel_path: str, mutated_source: str) -> Iterator[Path]:
+    """Yield a throwaway tree holding ``workspace/src`` with one file mutated. (CT60)
+
+    The operator's checkout is never written to, and no ``git`` command is
+    involved at all (CT64) -- an earlier design used ``git worktree``, which
+    could not work in any case because the deployed ``/repo`` is read-only
+    (E128), and which would have put a mutation one mistake away from the real
+    branch.
+
+    The tree is removed on normal exit **and** on exception. Cleanup uses
+    ``ignore_errors`` so that a failure to unlink cannot replace the real
+    exception travelling up the stack with a confusing one from the ``finally``
+    block; the cost of that choice is a possible stray temporary directory,
+    which is strictly better than losing the reason a kill-check failed.
+    """
+    overlay_root = Path(tempfile.mkdtemp(prefix="fa-mutation-overlay-"))
+    try:
+        _copy_src(workspace, overlay_root)
+        target = _overlay_target(overlay_root, rel_path)
+        if not target.exists():
+            raise OverlayError(f"kill-directive path {rel_path!r} does not exist in the workspace src tree")
+        target.write_text(mutated_source, encoding="utf-8")
+        yield overlay_root
+    finally:
+        shutil.rmtree(overlay_root, ignore_errors=True)
+
+
+def _prepend_pythonpath(env: MutableMapping[str, str], path: Path) -> None:
+    """Put *path* in front of any inherited ``PYTHONPATH``. (CT61)
+
+    Prepend, never replace. The deployed container already relies on this
+    exact idiom -- ``scripts/fa-entrypoint.sh:237`` prepends
+    ``<workspace>/src`` ahead of whatever it inherited -- and the inherited
+    value is what makes a verify command import the coder's edits instead of
+    the baked image. Replacing it would make the overlay win by deleting the
+    workspace, so a kill-check would be measured against the image's code and
+    report nonsense with total confidence.
+    """
+    inherited = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{path}{os.pathsep}{inherited}" if inherited else str(path)
+
+
+def _overlay_env(workspace: Path, overlay_root: Path) -> dict[str, str]:
+    """The SLICE1 environment with the overlay's ``src`` in front. (CT61)
+
+    Built *on top of* ``_build_env`` rather than beside it, so the scrubbing,
+    the workspace ``PATH`` and the ``uv`` pin cannot drift between a plain
+    verify command and a kill-check. A kill-check that ran in a subtly
+    different environment from the verify it is judging would be comparing two
+    different programs.
+    """
+    env = _build_env(workspace)
+    _prepend_pythonpath(env, overlay_root / "src")
+    return env
+
+
+#: Proves the module under test was imported from the overlay. ``argv[1]`` is
+#: the overlay's ``src``; exit 3 means "resolved somewhere else", which is the
+#: measured failure (E125/D1) and must never be read as a passing kill-check.
+_PROVENANCE_PROBE = (
+    "import importlib,pathlib,sys;"
+    "m=importlib.import_module(sys.argv[2]);"
+    "f=getattr(m,'__file__',None);"
+    "sys.exit(0 if f and pathlib.Path(f).resolve().is_relative_to(pathlib.Path(sys.argv[1]).resolve()) else 3)"
+)
+
+
+def _assert_overlay_wins(
+    module: str,
+    overlay_root: Path,
+    env: dict[str, str],
+    *,
+    workspace: Path,
+) -> CommandResult:
+    """Check that *module* really resolves inside the overlay. (CT62)
+
+    Returns ``PASS`` when it does and ``ERROR`` when it does not -- never
+    ``FAIL``. "The mutation was not loaded" is a harness fault, not a verdict
+    about the coder's code, and the whole three-state design of this module
+    exists so that distinction survives to the operator.
+
+    Runs through :func:`_run_one`, so the probe inherits the same timeout,
+    scrubbing and output-tailing as the commands it is vouching for. A probe
+    with its own subprocess conventions could succeed in conditions where the
+    real command would not.
+
+    The probe shares the verify-command budget rather than carrying one of its
+    own (Q46). An import check finishing in milliseconds does not need 600
+    seconds, but a second timeout constant is a second thing to tune, and the
+    consistency argument above is the one that matters: the probe should fail
+    under exactly the conditions the command it vouches for would.
+
+    Containment is tested with :meth:`pathlib.Path.is_relative_to` rather than
+    a string prefix. A prefix comparison reports success when the module
+    resolves into a *sibling* directory whose name merely starts with the
+    overlay's -- ``/tmp/ov2`` against ``/tmp/ov`` -- and this is the one check
+    standing between a real kill-check and a confident false one.
+    """
+    overlay_src = shlex.quote(str((overlay_root / "src").resolve()))
+    command = f"python -c {shlex.quote(_PROVENANCE_PROBE)} {overlay_src} {shlex.quote(module)}"
+    probe = _run_one(
+        command,
+        cwd=_workspace_cwd(workspace),
+        timeout_s=_command_timeout(None),
+        env=env,
+    )
+    if probe.outcome is CommandOutcome.PASS:
+        return probe
+    return CommandResult(
+        command=probe.command,
+        outcome=CommandOutcome.ERROR,
+        exit_code=probe.exit_code,
+        stdout_tail=probe.stdout_tail,
+        stderr_tail=probe.stderr_tail or f"{module} did not resolve inside {overlay_root / 'src'}",
+        duration_s=probe.duration_s,
+    )

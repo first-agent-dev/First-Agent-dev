@@ -1556,3 +1556,61 @@ E161 CORRECTION The regression baseline is **3 expected-red, not 4**. E149 recor
     `test_doc_links`, `test_deploy_scripts::…superseded_banner` and
     `test_cli_ergonomics::test_workflow_per_role_overrides_parse` -- the three that must never
     be "fixed" (E19).
+
+E162 BUILD I02/SLICE4 shipped into `slice_verification.py`: `OverlayError`, `_copy_src`,
+    `_overlay_target`, `mutation_overlay` (a `@contextmanager`), `_prepend_pythonpath`,
+    `_overlay_env`, `_PROVENANCE_PROBE` and `_assert_overlay_wins`. Tests
+    `tests/test_mutation_overlay.py`, **33 oracles**, classes **C0 + C3**. All four STEP exit
+    checks and both `verify` commands exit 0. Full suite **4271P / 3F** -- the three
+    permanently-red doc gates and nothing else.
+    No C1, for the same reason as SLICE2 and with the same compensation: these functions have
+    no production caller until SLICE5 assembles a verdict, so a composition-root test would
+    exercise none of them. Every producer is entered in
+    `notes/e2e-live-verification-register.md` instead.
+    **Proven end to end, by hand, against this repository before any test was written:** the
+    overlay is built, `fa.inner_loop.plan_ids` imports from inside it, the mutation is
+    visible, and the tree is removed. That is the measured defect of E125/D1 -- an installed
+    package winning over a mutated copy -- demonstrated closed rather than argued closed.
+
+E163 EVIDENCE SLICE4 kill-checks, all executed, file restored byte-identical by sha
+    comparison (`7dfb0005…`): CT60 (`remove-call mutation_overlay -> _copy_src`) -> **17
+    failed**; CT61 (`remove-call _overlay_env -> _prepend_pythonpath`) -> 3 failed; CT63
+    (copy the whole tree instead of `src`) -> 1 failed; containment guard deleted -> **5
+    failed**; and `_assert_overlay_wins` neutralised -> 4 failed.
+    **CT62's directive cannot fire in SLICE4 and is deferred, not satisfied** -- it names
+    `remove-call … ::_run_kill_check -> _assert_overlay_wins`, and `_run_kill_check` is
+    SLICE5's producer (`grep` = 0). The producer it protects is implemented and its own
+    neutralisation is proven above. Second instance of this pattern after CT50b; worth a
+    sweep of the remaining directives for producers that do not exist yet.
+    The containment number is the interesting one. It first read **1 failed**, because four
+    of the five escape paths were also absent from the overlay and were being refused by the
+    existence check rather than by the guard under test -- the guard was untested while
+    looking tested. Asserting the *rule* (`match="resolves outside"`) instead of the exception
+    type alone took it to 5. Section 10 of the tests-writing skill, met in the wild.
+
+E164 DECISION Phase B's own gate was crossed knowingly. The plan says "Phase B does not start
+    until Phase A has produced a measured per-command cost from a real run", and SLICE2,
+    SLICE2b and now SLICE4 are all Phase B. The operator directed the order; recorded here so
+    the deviation is visible rather than discovered later.
+    Partial payment on the debt: the overlay's own cost is now measured rather than feared --
+    **15 ms** to copy this repository's `src` (2.4 MB, 163 files), against a 600 s command
+    budget. The sandbox is not where Phase B's cost lives; running the slice's tests once per
+    kill-check is. That number still needs a real run.
+
+E165 EVIDENCE Mutation sweep, `slice_verification.py` with all three test files selected: 439
+    mutants, **135 killed / 23 survived**, then **438 / 144 / 13** after the follow-up. Ten of
+    the twelve new survivors were real:
+    - **Eight** mutated the `__pycache__` / `*.pyc` exclusion in `_copy_src`, which no fixture
+      contained, so the exclusion could have been deleted in silence. It is not hygiene: a
+      `.pyc` copied beside its module is bytecode compiled from the *pre-mutation* source,
+      and a mutated module running unmutated is a VACUOUS verdict against a good test.
+    - One reached the `OSError`/`ValueError` arm of `_overlay_target`, which ran in no test. A
+      NUL byte in a planner-authored path makes `Path.resolve` raise, and without that arm it
+      escapes as a bare `ValueError` that reads like a harness bug.
+    - One exposed **dead surface I had added myself**: `_assert_overlay_wins` carried a
+      `timeout_s` parameter beyond CT62's signature, no caller passed it, so
+      `_command_timeout(timeout_s)` and `_command_timeout(None)` were indistinguishable.
+      Removed rather than pinned by a test for a caller that does not exist (SD-B). Promoted
+      the underlying choice to **Q46** instead of deciding it quietly.
+    Two survivors are equivalent (`env.get("PYTHONPATH", "")` -> `None`; both falsy) and are
+    in the workplan with their reasoning.

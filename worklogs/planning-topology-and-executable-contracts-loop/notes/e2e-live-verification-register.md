@@ -53,6 +53,17 @@ fixture cannot reproduce, and exactly where a silent no-op would hide.
 | `_near_miss` | CT51 kill PROVEN | a plan with `kill-check:` instead of `kill:` | a `kill-directive-near-miss` reaches the operator's console and the persisted report | unit |
 | `_split_dotted` | CT50b (parse half) | a plan naming `Class.method` as a symbol | resolution succeeds; no false `PRODUCER_ABSENT`. **Kill-check deferred**: CT50b names `_resolve_symbol`, which is SLICE3's AST concern and does not exist yet | unit (partial) |
 
+## SLICE4 — the mutation sandbox
+
+| Producer | Unit proof | What the host fixture must arrange | What it must observe | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `mutation_overlay` | CT60 kill PROVEN | a kill-check against a real `/sessions/<id>/` workspace, whose `src` is a full clone rather than a four-file fixture | the overlay is built and removed; `git status --porcelain` in the session clone is unchanged. **Also the first real measurement of copy cost** — 15 ms for this repo's 2.4 MB / 163 files, but a session clone is the number Phase B's budget actually needs | unit |
+| `_copy_src` | CT60/CT63 | a workspace whose `tests/` contains the oracle for the contract under check | `tests/` is absent from the overlay, so the mutation provably cannot reach its own judge | unit |
+| `_overlay_target` | containment kill PROVEN (5 oracles) | a planner-authored directive whose path escapes `src` — including via a symlink the image itself ships | `OverlayError`, and the operator's file unmodified afterwards. Worth doing live because the image's `src` has real symlinks and a `tmp_path` fixture's does not | unit |
+| `_prepend_pythonpath` | CT61 kill PROVEN | a session container where `PYTHONPATH` already carries `<workspace>/src` from `fa-entrypoint.sh:237` | the overlay is first **and** the workspace entry survives behind it. The in-repo test supplies that inherited value by hand; only the container proves the entrypoint really set it | unit |
+| `_overlay_env` | CT61 | a kill-check and a plain verify command in the same run | both see the same scrubbing, `PATH` and `uv` pin — the kill-check must judge the same program the gate approved | unit |
+| `_assert_overlay_wins` | CT62 producer kill PROVEN; **directive deferred** | the deployed image, where `/opt/first-agent/src` is installed and an absolute path really is on `sys.path` — the condition that produced E125/D1 | `PASS`, proving the overlay beat the installed package. **The single highest-value row in this file**: if it reports `ERROR` on the real host, Phase B cannot ship, and that is exactly what it is for. CT62's own directive names `_run_kill_check`, which arrives in SLICE5 | unit |
+
 ---
 
 ## Open e2e-only risks, recorded now so they are not rediscovered live

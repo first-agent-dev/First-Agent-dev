@@ -253,3 +253,32 @@ round of kill-checks and a mutation sweep on `plan_ids.py`. Operator's call.
 kill-check; delete `slice_verification._CONTRACT_ENTRY_RE` and its drift oracle; keep the `0`
 sentinel semantics ("line unknown") so the degradation story is unchanged; re-run both sweeps.
 Estimated one slice-sized unit of work, and it shrinks I02 rather than growing it.
+
+---
+
+## Q46 — does the provenance probe get its own timeout, or share the verify budget?
+
+**Status:** OPEN, provisionally resolved as **share**. Raised by SLICE4's implementation,
+2026-10-08, and promoted rather than decided quietly because it is a policy choice about when
+the harness declares `ERROR`, not an implementation detail.
+
+**The situation.** `_assert_overlay_wins` runs `python -c "import <module>; …"` through
+`_run_one`, which requires a per-command budget. The only budget that exists is
+`DEFAULT_VERIFY_TIMEOUT_SECONDS` (600 s), sized for a test suite. A provenance probe is an
+import and finishes in milliseconds.
+
+**Options.** **(a) Share the verify budget** — one constant, and the probe fails under exactly
+the conditions the command it vouches for would. A hung import costs 10 minutes before the
+kill-check is marked `ERROR`. **(b) A dedicated probe budget** (a few seconds) — faster
+failure, but a second constant to tune and a new way for the probe and its command to
+disagree: a machine slow enough to time the probe out would likely have timed the command out
+too, and then the operator sees `ERROR` from the probe rather than the real signal.
+**(c) Make it a parameter** and let SLICE5 decide per call.
+
+**Provisionally (a), and implemented.** I had written (c) — a `timeout_s` parameter with a
+`None` default — and mutation testing exposed it as dead surface: no caller passes it, so
+`_command_timeout(timeout_s)` and `_command_timeout(None)` are indistinguishable. The
+parameter was removed rather than pinned by a test for a caller that does not exist (SD-B).
+
+**Revisit when** SLICE5 measures a real kill-check round trip. If probe latency turns out to
+matter, (b) becomes cheap and the constant has a measured value behind it instead of a guess.

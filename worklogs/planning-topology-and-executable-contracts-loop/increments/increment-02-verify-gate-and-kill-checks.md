@@ -368,10 +368,10 @@ TESTS: tests/test_mutation_overlay.py   (NEW — author it)
 uv run pytest tests/test_mutation_overlay.py -q
 uv run ruff check src/fa/inner_loop/slice_verification.py tests/test_mutation_overlay.py
 ```
-- [ ] STEP1: implement `mutation_overlay` as a `@contextmanager` using `tempfile.mkdtemp()` + `shutil.copytree(root/"src")`, writing `mutated_source` over `rel_path`, removing the tree in `finally` (exit: `uv run pytest tests/test_mutation_overlay.py -q -k overlay` exits 0)
-- [ ] STEP2: implement `_overlay_env` prepending `<overlay>/src` to `PYTHONPATH` over the scrubbed env from SLICE1 (exit: `uv run pytest tests/test_mutation_overlay.py -q -k pythonpath` exits 0)
-- [ ] STEP3: implement `_assert_overlay_wins(module, overlay, env)` running `python -c "import <module>, pathlib, sys; sys.exit(0 if str(pathlib.Path(<module>.__file__).resolve()).startswith(sys.argv[1]) else 3)"` and mapping a non-zero exit to `ERROR` (exit: `uv run pytest tests/test_mutation_overlay.py -q -k provenance` exits 0)
-- [ ] STEP4: add the negative oracle — with the probe disabled, a mutation of an installed module is NOT observed; with it enabled, the run is `ERROR` not `VACUOUS` (exit: `uv run pytest tests/test_mutation_overlay.py -q` exits 0)
+- [x] STEP1: implement `mutation_overlay` as a `@contextmanager` using `tempfile.mkdtemp()` + `shutil.copytree(root/"src")`, writing `mutated_source` over `rel_path`, removing the tree in `finally` (exit: `uv run pytest tests/test_mutation_overlay.py -q -k overlay` exits 0)
+- [x] STEP2: implement `_overlay_env` prepending `<overlay>/src` to `PYTHONPATH` over the scrubbed env from SLICE1 (exit: `uv run pytest tests/test_mutation_overlay.py -q -k pythonpath` exits 0)
+- [x] STEP3: implement `_assert_overlay_wins(module, overlay, env)` running `python -c "import <module>, pathlib, sys; sys.exit(0 if str(pathlib.Path(<module>.__file__).resolve()).startswith(sys.argv[1]) else 3)"` and mapping a non-zero exit to `ERROR` (exit: `uv run pytest tests/test_mutation_overlay.py -q -k provenance` exits 0)
+- [x] STEP4: add the negative oracle — with the probe disabled, a mutation of an installed module is NOT observed; with it enabled, the run is `ERROR` not `VACUOUS` (exit: `uv run pytest tests/test_mutation_overlay.py -q` exits 0)
 
 ## SLICE5: Verdict assembly
 STEPS: prescriptive
