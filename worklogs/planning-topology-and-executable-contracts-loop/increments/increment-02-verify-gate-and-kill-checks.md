@@ -59,6 +59,19 @@ restate it here.
   `export PYTHONPATH="${WORKSPACE%/}/src${PYTHONPATH:+:$PYTHONPATH}"`, and
   `docker-compose.fa.yml:220` deliberately withholds it from the proxy so that container runs
   the immutable image. This is the proven idiom the overlay must mirror, not reinvent.
+- **`DEFAULT_BASH_TIMEOUT_SECONDS = 30`** (`runtime_limits.py:71`). The planner is told to emit
+  `uv run pytest …` (`prompt.py:205-207`), and `uv` is on the image PATH (`Dockerfile.fa:59-67`).
+  A real test file, or a `uv run` that first syncs a venv in the session workspace, exceeds 30 s
+  easily. A timed-out command is `ERROR`, and `ERROR` blocks — so inheriting the bash default
+  would block every slice on the first live run for purely environmental reasons.
+- **`--plan` is optional and defaults to `None`** (`cli.py:758-763`); it is an *input*, not
+  something populated from what the planner just wrote. With `plan_path=None`, `plan_text()`
+  returns `None`, `extract_plan_ids` never runs, and the gate sees zero slices and skips. A live
+  run of `fa workflow --roles planner,coder,eval` with no `--plan` therefore exercises **nothing**
+  — the system-level form of exactly the vacuous pass this increment exists to detect.
+- Artifacts land in `~/.fa/session-log/<run_id>/` as `eval_report.json` and `flow_state.json`
+  (`workflow_controller.py:212-219`), reachable on the host under
+  `/srv/first-agent/state/session-log/<run_id>/`.
 - **`PYTHONPATH` is on the scrubber's allowlist** (`tools/bash_env.py:41`), so commands run
   through `build_scrubbed_env` inherit it. This is why the plain command gate tests the
   coder's edits rather than the baked image — load-bearing, and currently unprotected.
@@ -94,6 +107,22 @@ restate it here.
 
 ---
 
+## Shipping order — Phase A is the live-testable system
+
+**Phase A, the command gate.** SLICE1 (runner) + SLICE5 restricted to a command-only verdict +
+SLICE6 restricted to wiring. A complete, independently valuable system: it reads the commands a
+slice declares, runs them, and routes on the result. It closes D1 — the register row this whole
+increment exists for — and it is what can be exercised on the live host. Roughly 150 lines over
+three touch points in one file.
+
+**Phase B, the kill-check.** SLICE2 (directive parse) + SLICE3 (AST operators) + SLICE4
+(overlay) + the kill-check columns of SLICE5 and the kill-related contracts of SLICE6. Two
+thirds of the complexity and effectively all of the unmeasured risk. **Phase B does not start
+until Phase A has produced a measured per-command cost from a real run.**
+
+A Phase A verdict uses only `PASS`, `FAILING`, `ERROR` and `SKIPPED`. `PROVEN`, `VACUOUS` and
+`PRODUCER_ABSENT` are unreachable until Phase B and must not be synthesised earlier.
+
 ## SLICE1: The command runner (three-state, scrubbed, bounded)
 STEPS: prescriptive
 DEPS: —
@@ -120,6 +149,17 @@ CONTRACTS:
     kill: remove-call src/fa/inner_loop/slice_verification.py::run_commands -> _empty_result
   CT49 [PRESERVATION]: `src/fa/inner_loop/plan_ids.py` is not modified by this slice; it
     imports no subprocess, os.environ or pathlib-write facility.
+  CT49c [FUNCTIONAL]: every command runs with `cwd` set to the **session workspace**
+    (`run_workflow(workspace=…)`, `/sessions/<id>/` in production), never the harness's own
+    source tree. Catches: a gate that verifies the directory FA was installed from instead of
+    the one the coder edited.
+    kill: remove-call src/fa/inner_loop/slice_verification.py::run_commands -> _workspace_cwd
+  CT49d [FUNCTIONAL]: the runner takes its **own** per-command timeout, defaulting to 600 s and
+    operator-overridable; it does not inherit `DEFAULT_BASH_TIMEOUT_SECONDS`
+    (`runtime_limits.py:71`, currently 30). A timeout yields `ERROR` carrying the elapsed
+    seconds and the command text. Catches the first live run blocking every slice because a
+    real `uv run pytest` exceeded a 30 s budget meant for interactive shell calls.
+    kill: neutralise src/fa/inner_loop/slice_verification.py::_command_timeout
   CT49b [PRESERVATION]: `PYTHONPATH` survives `build_scrubbed_env`
     (`tools/bash_env.py:41`) and reaches the verified command. Catches the highest-impact
     silent inversion available in this system: with `PYTHONPATH` dropped, every verify command
@@ -336,6 +376,13 @@ CONTRACTS:
     every command and reports one undifferentiated result, which a naive per-plan assertion
     would pass.
     kill: remove-call src/fa/inner_loop/slice_verification.py::verify_plan -> commands_for
+  CT77b [FUNCTIONAL]: the run writes `verification.json` beside `eval_report.json` via a new
+    field on `WorkflowArtifactPaths` (`workflow_controller.py:108-110`, built at `:212-219`),
+    carrying per slice: the commands, their real exit codes, truncated stdout/stderr, the
+    verdict, and elapsed seconds. Written on **every** run, blocking or not. Catches: a gate
+    whose output exists only as stderr, leaving a live host run unreviewable after the fact —
+    this file is what the operator reads to judge the first real sessions.
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> write_verification
   CT77 [FUNCTIONAL]: the per-slice verdicts are appended to the evidence block the eval stage
     already receives (`workflow_controller.py:440-470`, beside "Plan slices to judge"),
     **whether or not** they block. Catches: a gate that only speaks when it fails, leaving the

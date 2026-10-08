@@ -1130,3 +1130,34 @@ E129 CORRECTION  A third instance of the D2/D6 defect class, found by walking th
     (`:897`, `:965`, `:1031`, `:1067`). CT71 now states explicitly why the gate belongs at
     the `_run_stage` choke point -- the same justification the codebase already gives for
     putting the deadline check there (S4b/RK6, `:536`) -- rather than in any loop body.
+
+E130 DECIDED  I02 is split into shipping phases, Phase A being the live-testable system:
+    SLICE1 + a command-only verdict + the SLICE6 wiring. It closes D1, is ~150 lines over
+    three touch points in one file, and is what the host can exercise. Phase B -- directive
+    parse, AST operators, overlay, and the VACUOUS/PRODUCER_ABSENT arms -- carries two thirds
+    of the complexity and all the unmeasured risk, and **does not start until Phase A has
+    produced a measured per-command cost from a real run**. A Phase A verdict may only be
+    PASS, FAILING, ERROR or SKIPPED.
+
+E131 FACT  Three live-contour blockers found by reading the deployment path end to end. Each
+    would have wasted a real host session.
+    (1) **`DEFAULT_BASH_TIMEOUT_SECONDS = 30`** (`runtime_limits.py:71`). The planner is
+    instructed to emit `uv run pytest ...` (`prompt.py:205-207`) and `uv` is on the image
+    PATH (`Dockerfile.fa:59-67`), so a verify command may first sync a venv in the session
+    workspace. A timeout is ERROR and ERROR blocks, so inheriting a budget sized for
+    interactive shell calls would have blocked **every slice on the first live run** for
+    purely environmental reasons. Pinned as CT49d: the runner owns its timeout, default 600s.
+    (2) **`--plan` is optional and defaults to None** (`cli.py:758-763`) and is an INPUT, not
+    something populated from what the planner just wrote. Running
+    `fa workflow --roles planner,coder,eval` without `--plan` leaves `plan_text()` None, so
+    `extract_plan_ids` never runs and the gate skips: the live test would have exercised
+    nothing while appearing to pass. This is the system-level form of the vacuous pass the
+    increment exists to detect. Operationally the first live test must therefore be two-step,
+    or `--plan` must point at the planner's output.
+    (3) **cwd**: commands must run in the session workspace (`/sessions/<id>/`), never the
+    harness's own tree. Pinned as CT49c.
+    Also added **CT77b**: the run writes `verification.json` beside `eval_report.json` on
+    every run, blocking or not, reachable on the host at
+    `/srv/first-agent/state/session-log/<run_id>/`. Without it a live run's gate output exists
+    only as stderr and cannot be reviewed after the fact, which is precisely how the operator
+    intends to evaluate the first real sessions.
