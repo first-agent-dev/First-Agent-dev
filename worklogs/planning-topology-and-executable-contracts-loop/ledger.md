@@ -1255,3 +1255,47 @@ E137 CORRECTION  My proposal that the planner write `plan.md` into the run artif
     nor `prompt.py` name `roadmap.md` or `increments/` inline, so the layout reaches the
     planner only if it opens the doc. That is a prompt delta of the kind already banked in
     `notes/role-prompts-conformance.md`, not new machinery.
+
+E138 CORRECTION  Readiness audit of I02 before building: **we were not ready.** Dumping all 27
+    kill directives as a table and checking each target against what the code can actually
+    express found **three broken ones, and the first was in SLICE1 STEP-range** -- i.e. we
+    would have hit it immediately.
+    (1) **CT45** named `remove-call _run_one -> TimeoutExpired`. `TimeoutExpired` appears only
+    as `except subprocess.TimeoutExpired:` (`run_bash.py:264`) -- an exception handler is not
+    a call site, so the operator would find `hits=0` and report PRODUCER_ABSENT against
+    working code. Retargeted to `neutralise ::_timeout_result`.
+    (2) **CT51** named the compiled regex `_NEAR_MISS_RE` as callee, but a regex is reached as
+    `_NEAR_MISS_RE.match(...)`, whose `ast.Call.func` is an Attribute with `attr == "match"`.
+    The callee name would never match. Retargeted to a `_near_miss` helper.
+    (3) **CT56** named `_Silence -> visit_Call`. Two faults at once: `visit_Call` is dispatched
+    by `ast.NodeVisitor.visit` and never called by name, and `_Silence` is a CLASS, which the
+    directive grammar `<file>::<symbol>` cannot descend into.
+    That third one exposed a **grammar gap**: `<symbol>` could only name a bare top-level
+    function, so no contract could ever target a method. Closed as new **CT50b** -- `<symbol>`
+    accepts `name` or dotted `Class.method`, and both operators resolve both.
+    Also fixed: SLICE1's letter-suffixed contracts were ordered CT49c, CT49e, CT49d, CT49b and
+    are now b/c/d/e; CT44 said `root` where CT49c said workspace; CT46 said "the repo's .venv"
+    where deployment makes it the **workspace's**; and STEP2's exit check was
+    `grep -c ... prints 0`, which **exits 1** when the count is zero -- mechanically the
+    opposite of what an `(exit: ...)` check promises. Now `! grep -q ... exits 0`.
+    Note for the implementer, not yet a defect: `neutralise` of a timeout-producing function
+    (CT49d) removes the bound on the test it then runs, so that kill-check terminates only on
+    the runner's own 600 s cap. Correct but slow; worth a narrower target if it bites.
+
+E139 FACT  The artifact-schema folder is a **pure gap in the planner prompt**, confirmed by
+    exhaustive search rather than inference. Across `knowledge/` and `src/fa/` there are
+    exactly two mentions of the schema -- `feature-planning/SKILL.md:179` and
+    `plan-authoring/SKILL.md:656` -- and **both cite §4 only**, the slice-section grammar.
+    Neither cites §1, the four artifacts and the ownership table. `knowledge/prompts/
+    architect-fa.md`, named at `prompt.py:32` as the source of the planner prompt, contains
+    **zero** occurrences of `worklogs`, `roadmap` or `increment`, and its "Step 4 -- Write the
+    plan" emits a SINGLE document (`## Class`, `## Goal`, `## Evidence`, `## Scope`, ...).
+    The schema doc is injected nowhere at runtime.
+    So the mismatch is structural, not cosmetic: the prompt's deliverable shape is one
+    document, while the schema's is a folder whose roadmap indexes N increments. Adding the
+    layout to the planner prompt is the right fix and the operator's proposal is adopted;
+    owner is **I01** (planner grammar), as a delta of the kind already banked in
+    `notes/role-prompts-conformance.md`.
+    It does **not** block the first live run: the gate needs a file containing `## SLICE#`
+    sections with verify fences, and `prompt.py:194-213` already teaches exactly that. The
+    folder is a separate improvement, not a precondition.

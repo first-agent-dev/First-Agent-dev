@@ -153,16 +153,16 @@ DEPS: —
 INTENT: the harness, not the model, executes a slice's verify commands and records the real
   exit code, with a result type that cannot express "couldn't run" as "passed".
 CONTRACTS:
-  CT44 [FUNCTIONAL]: `run_commands(commands, *, root, timeout_s, deadline)` returns a
+  CT44 [FUNCTIONAL]: `run_commands(commands, *, workspace, timeout_s, deadline)` returns a
     `tuple[CommandResult, ...]`, one per input command in order, each carrying the verbatim
     command, the real integer `exit_code`, and `stdout_tail`/`stderr_tail`.
     kill: neutralise src/fa/inner_loop/slice_verification.py::run_commands
   CT45 [FUNCTIONAL]: a command exceeding `timeout_s` yields `outcome=ERROR` with
     `exit_code=None`; it is never `PASS` and never silently `FAIL`.
-    kill: remove-call src/fa/inner_loop/slice_verification.py::_run_one -> TimeoutExpired
+    kill: neutralise src/fa/inner_loop/slice_verification.py::_timeout_result
   CT46 [CONSTRAINT]: the subprocess environment is built by
-    `tools.bash_env.build_scrubbed_env` with the repo's `.venv/bin` prepended to `PATH`,
-    mirroring `tools/run_bash.py:233-250`. `_run_subprocess_fallback` is not imported,
+    `tools.bash_env.build_scrubbed_env` with the **workspace's** `.venv/bin` prepended to
+    `PATH`, mirroring `tools/run_bash.py:233-246`. `_run_subprocess_fallback` is not imported,
     called, or copied. Catches: a verifier that inherits the operator's secrets, or that
     acquires `transaction.add_write` side effects a read-only gate must not have.
   CT47 [CONSTRAINT]: the run deadline is checked **between** commands; once exceeded the
@@ -173,24 +173,6 @@ CONTRACTS:
     kill: remove-call src/fa/inner_loop/slice_verification.py::run_commands -> _empty_result
   CT49 [PRESERVATION]: `src/fa/inner_loop/plan_ids.py` is not modified by this slice; it
     imports no subprocess, os.environ or pathlib-write facility.
-  CT49c [FUNCTIONAL]: every command runs with `cwd` set to the **session workspace**, matching
-    what the agent's own shell already does (`run_bash.py:240`, `cwd=root`). This is conformance
-    with existing behaviour, not a new architectural requirement — no change to the workspace
-    model is needed or proposed. Catches: a gate that invents its own working directory and so
-    verifies the tree FA was installed from instead of the one the coder edited.
-    kill: remove-call src/fa/inner_loop/slice_verification.py::run_commands -> _workspace_cwd
-  CT49e [FUNCTIONAL]: after scrubbing, the runner **sets** `UV_PROJECT_ENVIRONMENT` to
-    `<workspace>/.venv` and `UV_NO_SYNC=1`, following `run_bash.py:233-236`, rather than
-    inheriting them. Catches two things: `uv run` resolving a different session's venv from an
-    inherited stale pin, and an implicit lockfile sync reaching for a network the container
-    does not have.
-    kill: remove-call src/fa/inner_loop/slice_verification.py::_build_env -> _pin_uv_environment
-  CT49d [FUNCTIONAL]: the runner takes its **own** per-command timeout, defaulting to 600 s and
-    operator-overridable; it does not inherit `DEFAULT_BASH_TIMEOUT_SECONDS`
-    (`runtime_limits.py:71`, currently 30). A timeout yields `ERROR` carrying the elapsed
-    seconds and the command text. Catches the first live run blocking every slice because a
-    real `uv run pytest` exceeded a 30 s budget meant for interactive shell calls.
-    kill: neutralise src/fa/inner_loop/slice_verification.py::_command_timeout
   CT49b [PRESERVATION]: `PYTHONPATH` survives `build_scrubbed_env`
     (`tools/bash_env.py:41`) and reaches the verified command. Catches the highest-impact
     silent inversion available in this system: with `PYTHONPATH` dropped, every verify command
@@ -198,13 +180,31 @@ CONTRACTS:
     so the gate would pass no matter what the coder did — or did not — write. The allowlist is
     one line in an unrelated module; this contract is what stops a future tightening of it from
     silently disabling the whole increment.
+  CT49c [FUNCTIONAL]: every command runs with `cwd` set to the **session workspace**, matching
+    what the agent's own shell already does (`run_bash.py:240`, `cwd=root`). This is conformance
+    with existing behaviour, not a new architectural requirement — no change to the workspace
+    model is needed or proposed. Catches: a gate that invents its own working directory and so
+    verifies the tree FA was installed from instead of the one the coder edited.
+    kill: remove-call src/fa/inner_loop/slice_verification.py::run_commands -> _workspace_cwd
+  CT49d [FUNCTIONAL]: the runner takes its **own** per-command timeout, defaulting to 600 s and
+    operator-overridable; it does not inherit `DEFAULT_BASH_TIMEOUT_SECONDS`
+    (`runtime_limits.py:71`, currently 30). A timeout yields `ERROR` carrying the elapsed
+    seconds and the command text. Catches the first live run blocking every slice because a
+    real `uv run pytest` exceeded a 30 s budget meant for interactive shell calls.
+    kill: neutralise src/fa/inner_loop/slice_verification.py::_command_timeout
+  CT49e [FUNCTIONAL]: after scrubbing, the runner **sets** `UV_PROJECT_ENVIRONMENT` to
+    `<workspace>/.venv` and `UV_NO_SYNC=1`, following `run_bash.py:233-236`, rather than
+    inheriting them. Catches two things: `uv run` resolving a different session's venv from an
+    inherited stale pin, and an implicit lockfile sync reaching for a network the container
+    does not have.
+    kill: remove-call src/fa/inner_loop/slice_verification.py::_build_env -> _pin_uv_environment
 TESTS: tests/test_slice_verification_runner.py   (NEW — author it)
 ```verify
 uv run pytest tests/test_slice_verification_runner.py -q
 uv run ruff check src/fa/inner_loop/slice_verification.py tests/test_slice_verification_runner.py
 ```
 - [ ] STEP1: create `src/fa/inner_loop/slice_verification.py` with `CommandOutcome` (PASS/FAIL/ERROR) and a frozen `CommandResult` dataclass (exit: `uv run python -c "from fa.inner_loop.slice_verification import CommandResult, CommandOutcome"` exits 0)
-- [ ] STEP2: implement `_run_one` using `subprocess.run(..., shell=True, capture_output=True, text=False, timeout=timeout_s, env=env)`, decoding with `errors="ignore"`, copying the policy at `tools/run_bash.py:233-250` (exit: `grep -c "_run_subprocess_fallback" src/fa/inner_loop/slice_verification.py` prints 0)
+- [ ] STEP2: implement `_run_one` using `subprocess.run(..., shell=True, capture_output=True, text=False, timeout=timeout_s, env=env)`, decoding with `errors="ignore"`, copying the policy at `tools/run_bash.py:233-250` (exit: `! grep -q "_run_subprocess_fallback" src/fa/inner_loop/slice_verification.py` exits 0)
 - [ ] STEP3: implement `run_commands` with the between-command deadline check (exit: `uv run pytest tests/test_slice_verification_runner.py -q -k "deadline or timeout"` exits 0)
 - [ ] STEP4: write the oracles for CT44–CT49, including a seeded `sleep` command for CT45 (exit: `uv run pytest tests/test_slice_verification_runner.py -q` exits 0)
 
@@ -215,6 +215,12 @@ INTENT: a contract's declared kill-check is read from the slice's raw text and v
   before the coder starts, so that a missing or malformed directive blocks loudly instead of
   disabling the non-vacuity gate in silence.
 CONTRACTS:
+  CT50b [FUNCTIONAL]: `<symbol>` accepts a bare name **or** a dotted `Class.method`, and the
+    operators resolve both. Catches a gap found while auditing this plan's own directives:
+    three of its contracts name a method (`_Silence.visit_Call`), which a bare-name grammar
+    cannot express — the directive would resolve to nothing and report `PRODUCER_ABSENT`
+    against working code.
+    kill: remove-call src/fa/inner_loop/slice_verification.py::_resolve_symbol -> _split_dotted
   CT50 [FUNCTIONAL]: `parse_kill_directives(section)` reads `section()` output line by line
     and returns `dict[contract_id, KillDirective]`, attributing each directive to the `CT<n>`
     entry it is indented under. Trailing prose after the directive does not affect parsing.
@@ -223,7 +229,7 @@ CONTRACTS:
     `kill-directive-near-miss` naming `file:line`, in the manner of `heading-near-miss`
     (CT26) and `step-near-miss` (CT37). Catches: a typo that would otherwise present as
     "the planner declared none".
-    kill: remove-call src/fa/inner_loop/slice_verification.py::validate_kill_directives -> _NEAR_MISS_RE
+    kill: remove-call src/fa/inner_loop/slice_verification.py::validate_kill_directives -> _near_miss
   CT52 [FUNCTIONAL]: `validate_kill_directives` emits `kill-directive-missing` for a
     `FUNCTIONAL` contract with no directive, `kill-directive-malformed` for a line matching
     the soft pattern but not the strict one, and `kill-directive-ambiguous` for two or more
@@ -264,7 +270,7 @@ CONTRACTS:
     only `ast.Expr` statements sees **1 of 4**, which silently reports `PRODUCER_ABSENT` when the
     producer is assigned, and partially removes it otherwise. Replacement handles all four forms
     uniformly and is a truer simulation of "the producer never ran".
-    kill: remove-call src/fa/inner_loop/slice_verification.py::_Silence -> visit_Call
+    kill: neutralise src/fa/inner_loop/slice_verification.py::_Silence.visit_Call
   CT57 [FUNCTIONAL]: `apply_kill` returns `(mutated_source, hits)`. `hits == 0` means the
     target is absent and the caller raises `PRODUCER_ABSENT`; `hits > 1` is an ambiguous
     target and the caller raises `ERROR`, never a guess.
