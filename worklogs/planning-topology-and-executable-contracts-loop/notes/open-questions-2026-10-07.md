@@ -454,7 +454,19 @@ already a status the lattice carries.
 
 ## Q48 — may a contract's kill directive name a producer another slice builds?
 
-**Status:** OPEN. Not blocking SLICE3, which is shipped. Blocks a correct CT50b.
+**Status:** **RESOLVED (c)** by operator ruling, 2026-10-08.
+
+> The operator's diagnosis, which is the one now written into schema §4: this is a category
+> error -- two different notions were mixed in the architecture. An *interface contract*
+> ("a future module must provide `_run_kill_check` with this signature") is a legitimate
+> architectural requirement. A *kill directive* ("cut this call and my current tests fail")
+> is an instrument of test-suite quality hardening, and is **physically incapable of being
+> an interface specification for future code**. Attempting it springs the name-guessing trap
+> or the vacuous trap. A constraint on a future slice belongs in structural requirements or
+> public interfaces -- the expectation as `INTENT:` prose in the slice that needs it, the
+> contract and its directive declared in the slice that builds the producer, so that when
+> that slice is written its own directive fires against its own tests and yields an honest
+> `PROVEN`. Ruling: **option (c)**, and CT62 folds into SLICE4.
 
 Found by the directive audit that SLICE3 made possible: `apply_kill`'s resolver can now be
 pointed at every directive in both plans. **14 of 30 cannot fire today.** Twelve are SLICE5
@@ -504,3 +516,39 @@ which CT62 (SLICE4 naming SLICE5's `_run_kill_check`) deliberately does.
 prevented this and CT62's deferral both, but it is a plan-wide rule and belongs with the
 component that can enforce it. Left untouched pending a ruling: today's `PRODUCER_ABSENT` is
 wrong but honest, where the rename would be wrong and confident.
+
+### What was built, and one mechanism considered and declined
+
+Schema §4 gains the normative rule; `roadmap.md` gains the standing decision; CT84 (SLICE5)
+carries it as a CONSTRAINT.
+
+Relocations, each one **measured against the tests of the slice that now owns it** before
+being written down -- fixing unfirable directives while adding another would have been the
+same sin:
+
+| contract | was | now | fires |
+| :--- | :--- | :--- | :--- |
+| CT50b (SLICE2) | `remove-call ::_resolve_symbol -> _split_dotted` | `neutralise ::_split_dotted` | **4F** |
+| CT81 (SLICE3, new) | — the resolution half of CT50b | `remove-call ::_resolve_targets -> _split_dotted` | **18F** |
+| CT62 (SLICE4) | `remove-call ::_run_kill_check -> _assert_overlay_wins` | `neutralise ::_assert_overlay_wins` | **9F** |
+| CT82 (SLICE5, new) | — the wiring half of CT62 | `remove-call ::_run_kill_check -> _assert_overlay_wins` | when SLICE5 is built |
+
+Enforcement is CT83: `scripts/check_kill_directive_ownership.py`, failing when a slice whose
+`STEP` boxes are **all ticked** declares a directive that does not resolve. The tick is the
+trigger because an unfinished slice is *expected* to point at code that does not exist. After
+the relocation the audit reports **0 defects on ticked slices** and 14 pending on unfinished
+ones -- the separation that did not exist before, and the honest reading of the original
+"14 of 30": twelve were the plan legitimately ahead of the code, two were the category error.
+
+**Declared, then declined: a `PRODUCES:` field** listing each slice's `path::symbol` outputs,
+which would let the pre-check refuse a foreign directive at *authoring* time rather than at
+tick time. Measured as cheap to add -- the pre-check tolerates the unknown field with no new
+diagnostics -- but rejected for now on two grounds. It duplicates what the code already
+states, so it can drift from the truth and would need its own check to stay honest; and it is
+plan-*grammar*, which is I01's surface, closed. CT83 catches the same defect one step later at
+a fraction of the cost. Recorded here because the idea will occur to the next reader too.
+
+**Not done: a dedicated slice.** I02 holds exactly 7 slices and `_rule_slice_count` warns at
+the ceiling, reading an eighth as a mis-scoped increment rather than a long one. The work went
+to SLICE5, which is unstarted and already owns `PRODUCER_ABSENT` in the lattice, so the rule
+lands beside the classification it refines and before SLICE6 authors anything new.

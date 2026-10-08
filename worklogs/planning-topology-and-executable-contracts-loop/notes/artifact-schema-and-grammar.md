@@ -163,6 +163,40 @@ the planner's own next pass. Its **first line is mandatory** and states what the
 understood the request to be and what it deliberately excluded — the readback that lets a
 reviewer catch a misunderstood requirement in five lines instead of two hundred.
 
+### Producer ownership: a directive may kill only what its own slice builds
+
+**Normative.** A `kill:` directive may name only a producer the declaring slice itself creates,
+and the kill-check runs that slice's own `TESTS:`. A directive naming a producer another slice
+builds is a category error, not a stricter contract.
+
+A kill directive is an instrument for hardening a test suite: it asserts *"cut this out and my
+tests go red."* It cannot serve as an interface specification for code that does not exist yet,
+and trying to use it that way springs one of two traps:
+
+* **Name guessing.** The declaring slice must invent the future private name. Measured: SLICE2
+  wrote `_resolve_symbol`; SLICE3 shipped `_resolve_targets`. The directive reports
+  `PRODUCER_ABSENT` against working code — the exact false accusation its own contract existed
+  to prevent.
+* **Foreign tests.** Even when the name is guessed right, the declaring slice's tests do not
+  exercise the other slice's code, so the mutation changes nothing they observe. Measured on
+  that same directive once renamed: SLICE2's suite stayed **36 passed, fully green**, while
+  SLICE3's went **18 of 27 red**. It would have reported `VACUOUS` — a sound test file accused
+  of being weak.
+
+Both traps produce a directive that looks like protection and is not. A safety net that cannot
+fire is worse than a missing one, because it is counted.
+
+**Where a cross-slice expectation goes instead.** Prose in the `INTENT:` of the slice that needs
+the future producer — *"SLICE5 must provide `_run_kill_check`, which calls this probe before any
+verdict is trusted"* — and a contract **with** a kill directive declared in the slice that
+builds it. That slice implements the producer, writes its own tests, and its own directive fires
+against them, yielding an honest `PROVEN`. A structural assertion over the AST or a public
+interface check may carry the constraint in the meantime; a kill directive may not.
+
+**Consequence for the status lattice.** `PRODUCER_ABSENT` on an unfinished slice is normal — the
+plan is legitimately ahead of the code. `PRODUCER_ABSENT` on a slice whose steps are all ticked
+is a **plan defect**, and must be read as one.
+
 ### Authoring guidance (not checked)
 
 Judgement, not lint. No pre-check rule may key on this subsection; it exists so the rules live

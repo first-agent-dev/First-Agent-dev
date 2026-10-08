@@ -1686,3 +1686,37 @@ E168 MEASUREMENT the directive audit SLICE3 made possible. `_resolve_targets` wa
     left untouched pending a ruling, because wrong-but-honest beats wrong-and-confident.
     The audit is the long-outstanding sweep for directives naming absent producers, which had
     no tool until now. It is worth running at every slice boundary.
+
+E169 DECISION Q48 resolved **(c)** by operator ruling, 2026-10-08: a `kill:` directive may name
+    only a producer its own slice builds. The operator's diagnosis, now normative in schema §4
+    and in the roadmap's standing decisions: two notions had been mixed. An *interface
+    contract* ("a future module must provide `_run_kill_check`") is a legitimate architectural
+    requirement; a *kill directive* ("cut this call and my current tests fail") is an
+    instrument of test-suite quality hardening and is physically incapable of specifying an
+    interface for code that does not exist. It can only guess the future private name, or
+    mutate code the declaring slice's tests never execute.
+    Both traps are measured, not argued. Name guessing: SLICE2 wrote `_resolve_symbol`, SLICE3
+    shipped `_resolve_targets`. Foreign tests: renaming the directive leaves SLICE2's suite 36
+    passed, fully green, while SLICE3's goes 18 of 27 red -- a `VACUOUS` verdict against a
+    sound test file.
+    Relocations, each measured against the tests of the slice that now owns it before being
+    written down: CT50b -> `neutralise ::_split_dotted` **4F**; CT81 (new, SLICE3) takes the
+    resolution half -> `remove-call ::_resolve_targets -> _split_dotted` **18F**; CT62 folds
+    into SLICE4 -> `neutralise ::_assert_overlay_wins` **9F**; CT82 (new, SLICE5) takes CT62's
+    wiring half, fires when SLICE5 is built. SLICE4's INTENT now carries the cross-slice
+    expectation as prose, which is where §4 says it goes. CT67 was also brought onto the Q47
+    vocabulary (`targets`/`edits`, not `hits`).
+    Enforcement is CT83 + STEP5/STEP6 in SLICE5: a check script failing when a slice whose STEP
+    boxes are all ticked declares a directive that does not resolve. The tick is the trigger
+    because an unfinished slice is *expected* to point at absent code. CT84 states the rule as
+    a CONSTRAINT.
+    **Correction to E168's headline.** "14 of 30 dead" conflated two populations. Twelve were
+    the plan legitimately ahead of the code and will fire when their own slice is built; two
+    were the category error. After the relocation the audit reports **0 defects on ticked
+    slices**, 14 pending on unfinished ones. The safety net was not half fiction -- but it had
+    no way to tell the two apart, which is the defect that is now fixed.
+    Declined and recorded: a `PRODUCES:` grammar field would move the check from tick time to
+    authoring time, and the pre-check tolerates the new field with no new diagnostics, but it
+    duplicates what the code already states and is I01 grammar, which is closed. No new slice
+    was created: I02 sits on the 7-slice ceiling, and `_rule_slice_count` reads an eighth as a
+    mis-scoped increment. The work went to SLICE5, which already owns `PRODUCER_ABSENT`.

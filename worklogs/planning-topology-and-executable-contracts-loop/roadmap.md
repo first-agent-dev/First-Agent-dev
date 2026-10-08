@@ -88,6 +88,12 @@ Tagged `decided:` (chosen) or `assumed:` (never verified — an `ASK#` candidate
 - `decided:` Contracts carry **classes** (`FUNCTIONAL` / `CONSTRAINT` / `PRESERVATION`);
   the planner authors the test; the harness proves non-vacuity (fail-before/pass-after)
   — landed in I02.
+- `decided:` A `kill:` directive may name only a producer **its own slice builds**, and the
+  kill-check runs that slice's own `TESTS:`. A directive is an instrument for hardening a
+  test suite; it cannot specify an interface for code that does not exist yet, because it can
+  only guess the future private name or mutate code the declaring slice's tests never run.
+  Cross-slice expectations are `INTENT:` prose plus a contract in the slice that builds the
+  producer — schema §4 "Producer ownership", Q48, E169.
 - `decided:` Verify exit code = **fact**; eval verdict = **judgment**; eval runs on a
   different model family, blind to authorship.
 - `decided:` Tracker updates (CT# status, STEP# boxes) are **code**, not an LLM step.

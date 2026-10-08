@@ -233,7 +233,11 @@ CONTRACTS:
     three of its contracts name a method (`_Silence.visit_Call`), which a bare-name grammar
     cannot express — the directive would resolve to nothing and report `PRODUCER_ABSENT`
     against working code.
-    kill: remove-call src/fa/inner_loop/slice_verification.py::_resolve_symbol -> _split_dotted
+    The half SLICE2 owns is the grammar and `_split_dotted`. The half that resolves a dotted
+    symbol against real source is CT81 (SLICE3), declared there because that is the slice
+    that builds it — see §4 "Producer ownership". This directive originally named
+    `_resolve_symbol`, a guess at a name SLICE3 had not chosen yet (Q48).
+    kill: neutralise src/fa/inner_loop/slice_verification.py::_split_dotted
   CT50 [FUNCTIONAL]: `parse_kill_directives(record)` reads `record.section` line by line
     and returns `dict[contract_id, KillDirective]`, attributing each directive to the `CT<n>`
     entry it is indented under. Trailing prose after the directive does not affect parsing.
@@ -331,6 +335,13 @@ CONTRACTS:
   CT59 [CONSTRAINT]: exactly two operators are implemented and `KillOperator` has exactly two
     members. Catches: the slow growth of a mutation DSL, which `i02-handoff-verify-gate.md`
     §5 forbids.
+  CT81 [FUNCTIONAL]: the operators resolve a dotted `Class.method` symbol, by **exact**
+    qualified name anchored at the module root. The half of CT50b that lives here, because
+    this is the slice that builds the resolver (Q48). A bare `visit_Call` resolves to
+    nothing rather than to some same-named method: under exactness a mis-spelled or
+    under-qualified symbol lands on `PRODUCER_ABSENT`, which is loud and accurate, and
+    `targets > 1` stays reachable only through a genuine double definition.
+    kill: remove-call src/fa/inner_loop/slice_verification.py::_resolve_targets -> _split_dotted
 TESTS: tests/test_kill_operators.py   (NEW — author it)
 ```verify
 uv run pytest tests/test_kill_operators.py -q
@@ -347,6 +358,10 @@ STEPS: prescriptive
 DEPS: —
 INTENT: run a mutated copy of production code without writing to the operator's tree, and
   refuse to return a verdict unless the mutated module is provably the one that was imported.
+  Expectation on a later slice, stated as prose and not as a directive (§4 "Producer
+  ownership"): **SLICE5 must provide `_run_kill_check`, and it must call
+  `_assert_overlay_wins` before any kill-check outcome is trusted.** The contract and the kill
+  directive for that call live in SLICE5, which builds it.
 CONTRACTS:
   CT60 [FUNCTIONAL]: `mutation_overlay(workspace, rel_path, mutated_source)` yields a
     temporary directory containing a copy of `workspace/src` with `rel_path` replaced by
@@ -358,12 +373,15 @@ CONTRACTS:
     `scripts/fa-entrypoint.sh:237` prepends — and `cwd` stays the workspace root so the tests
     being run are the real ones.
     kill: remove-call src/fa/inner_loop/slice_verification.py::_overlay_env -> _prepend_pythonpath
-  CT62 [FUNCTIONAL]: before any kill-check result is trusted, a provenance probe runs in the
-    same environment and asserts the target module resolves **inside the overlay**; if it does
-    not, the outcome is `ERROR` and no verdict is produced. Catches the measured defect that
-    an installed package resolves to an absolute path, so a mutated copy is simply never
-    imported and every kill-check reports a false `VACUOUS`.
-    kill: remove-call src/fa/inner_loop/slice_verification.py::_run_kill_check -> _assert_overlay_wins
+  CT62 [FUNCTIONAL]: `_assert_overlay_wins(module, overlay_root, env, *, workspace)` runs a
+    provenance probe in the overlay environment and reports `PASS` only when the target module
+    resolves **inside the overlay**; anything else is `ERROR`, never `FAIL` and never `PASS`.
+    Catches the measured defect that an installed package resolves to an absolute path, so a
+    mutated copy is simply never imported and every kill-check reports a false `VACUOUS`.
+    The *wiring* claim — that no verdict is trusted until this has run — is CT82 (SLICE5),
+    because SLICE5 builds the runner that must call it. This directive named `_run_kill_check`
+    until Q48; a slice cannot kill a producer it does not build (§4 "Producer ownership").
+    kill: neutralise src/fa/inner_loop/slice_verification.py::_assert_overlay_wins
   CT63 [CONSTRAINT]: only `src/` is copied. Test files are read from the operator's tree and
     are therefore structurally impossible for a kill-check to mutate. Catches: a sandbox built
     by copying the whole tree, in which a mutation could silently rewrite the oracle.
@@ -394,8 +412,10 @@ CONTRACTS:
   CT66 [FUNCTIONAL]: when the slice's commands pass but a contract's test **still passes**
     under its kill-check, the verdict is `VACUOUS` and names the contract id.
     kill: remove-call src/fa/inner_loop/slice_verification.py::verify_slice -> _run_kill_check
-  CT67 [FUNCTIONAL]: when a kill directive's target yields `hits == 0`, the verdict is
-    `PRODUCER_ABSENT` and names the contract and the target. It is a distinct member of
+  CT67 [FUNCTIONAL]: when `apply_kill` reports `targets == 0` — or `targets == 1` with
+    `edits == 0`, the call site a `remove-call` names not being there — the verdict is
+    `PRODUCER_ABSENT` and names the contract and the target. `targets > 1` is `ERROR`, never a
+    guess at which definition was meant (CT57). It is a distinct member of
     `SliceVerdict`, not folded into `VACUOUS`.
     kill: remove-call src/fa/inner_loop/slice_verification.py::_classify -> _producer_absent
   CT68 [FUNCTIONAL]: a test green at baseline and red after the change yields `REGRESSION`;
@@ -407,6 +427,24 @@ CONTRACTS:
   CT70 [CONSTRAINT]: `VACUOUS` and `PRODUCER_ABSENT` expose no dismissal or appeal parameter.
     Catches: an appeal path quietly reintroduced from E63, which granted it to generated
     mutants only.
+  CT82 [FUNCTIONAL]: `_run_kill_check` calls `_assert_overlay_wins` and refuses to produce a
+    verdict unless the probe passed; a failed probe is `ERROR`. The wiring half of CT62, moved
+    here because this slice builds the runner (Q48).
+    kill: remove-call src/fa/inner_loop/slice_verification.py::_run_kill_check -> _assert_overlay_wins
+  CT83 [FUNCTIONAL]: `scripts/check_kill_directive_ownership.py` exits non-zero when a slice
+    whose `STEP` boxes are **all ticked** declares a kill directive that does not resolve to
+    exactly one definition in the file it names. Measured on the plans as they stand: 14 of 30
+    directives cannot fire, of which 12 name producers of slices not yet built — legitimate,
+    the plan being ahead of the code — and 2 were the category error this rule forbids (E168,
+    E169). The tick is the trigger because an unfinished slice is *expected* to point at code
+    that does not exist; a finished one pointing at nothing is a plan defect.
+    kill: remove-call scripts/check_kill_directive_ownership.py::main -> _unresolved_directives
+  CT84 [CONSTRAINT]: no `kill:` directive names a producer built by a different slice. A
+    cross-slice expectation is `INTENT:` prose plus a contract in the slice that builds the
+    producer. Catches the category error directly: a directive is an instrument for hardening a
+    test suite, and cannot specify an interface for code that does not exist yet — it can only
+    guess a private name (measured: `_resolve_symbol` vs `_resolve_targets`) or mutate code the
+    declaring slice's tests never execute (measured: 36 passed, fully green).
 TESTS: tests/test_verify_slice.py   (NEW — author it)
 ```verify
 uv run pytest tests/test_verify_slice.py -q
@@ -416,6 +454,8 @@ uv run ruff check src/fa/inner_loop/slice_verification.py tests/test_verify_slic
 - [ ] STEP2: implement `_run_kill_check(directive, test_path, root)` using `apply_kill` + `mutation_overlay` + `_assert_overlay_wins` + `run_commands`, in that order; the provenance probe gates the result (exit: `uv run pytest tests/test_verify_slice.py -q -k kill_check` exits 0)
 - [ ] STEP3: implement `_classify` mapping phase outputs to a verdict, with `ERROR` dominating (exit: `uv run pytest tests/test_verify_slice.py -q -k classify` exits 0)
 - [ ] STEP4: build the three-row oracle from the design note §3.6 — PROVEN, PRODUCER_ABSENT, VACUOUS — as the slice's primary test (exit: `uv run pytest tests/test_verify_slice.py -q` exits 0)
+- [ ] STEP5: implement `scripts/check_kill_directive_ownership.py` reading every plan under `worklogs/planning-topology-and-executable-contracts-loop/increments/` with `extract_plan_ids` + `parse_kill_directives` + `_resolve_targets`, reporting one line per unfirable directive of a fully-ticked slice (exit: `uv run python scripts/check_kill_directive_ownership.py` exits 0)
+- [ ] STEP6: add the ownership oracle — a fixture plan with one ticked slice naming an absent producer and one unticked slice naming the same, asserting the first is reported and the second is not (exit: `uv run pytest tests/test_verify_slice.py -q -k ownership` exits 0)
 
 ## SLICE6: Wire the gate into the controller, and prove it live
 STEPS: prescriptive
