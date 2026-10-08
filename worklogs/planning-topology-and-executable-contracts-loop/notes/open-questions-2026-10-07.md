@@ -187,3 +187,69 @@ entry starts with its id in brackets", and every id it finds is validated agains
 `ids.contracts`, so a drift in that shape degrades to "no line found", never to a wrong class.
 **If a second consumer ever needs line offsets, switch to (ii)** — at that point the field
 earns its keep and option (i)'s regex should be deleted, not copied a third time.
+
+---
+
+## Q45 — should the contract→line map move into I01, retiring I02's copy of the grammar?
+
+**Status:** OPEN. Supersedes the provisional resolution of Q44 if answered "yes".
+
+**Raised by** the operator, 2026-10-08: *"разве мы не парсим их по якорям `#CT-N`? так же можно
+машинно получать всегда корректный номер строки, даже если план сдвинется по структуре."*
+
+### What is true
+
+There is no `#CT-N` anchor construct — `grep` over the whole planning folder finds zero
+anchors of any form (`#CT-N`, `{#…}`, `<a id=>`), and the schema never uses the word. But the
+premise behind the question is right: **the contract id is itself the anchor.** `CT44` is a
+unique token that I01 already canonises (`_CONTRACT_RE`), and anchoring on it would survive
+any structural shift of the plan — which is precisely the property that a locator keyed to the
+*entry shape* lacks, as E152 demonstrated at the cost of a real defect.
+
+### What is also true, and decides it
+
+Measured over both real plans, locating a contract by **first occurrence of its id token**:
+
+| plan | declared | disagreements with the true declaration line |
+| :--- | ---: | ---: |
+| increment-02 | 41 | **0** |
+| increment-01 | 42 | **8** |
+
+The I01 failures are not noise, and three of them name the mechanism:
+
+- `CT17`/`CT18` declared at 231/236, first mentioned at line **22** — a forward prose
+  reference, "see CT17/CT18", **209 lines early**.
+- `CT3` declared at 201, first mentioned at **53**, inside CT2's own text, which quotes
+  `` `CT3 [CONSTRAINT]: …` `` as an *illustration*. This is the exact case I01's CT18 exists to
+  defend against, now biting a second consumer.
+
+Pointing an operator at line 22 for a defect at line 231 is worse than reporting no line at
+all. So the naive id-anchor is out; scoping the search to the owning slice section narrows it
+but does not fix the quoted-illustration class, because the illustration sits in the same
+CONTRACTS block as the declaration it imitates.
+
+### The fork
+
+Anything correct must therefore recognise *an entry*, not *a mention* — which is grammar, and
+grammar is I01's. Two honest options remain:
+
+- **(A) Keep today's arrangement.** I02 holds a locator mirroring `plan_ids._CONTRACT_ENTRY_RE`,
+  with `test_every_contract_in_a_real_plan_is_locatable` pinning the agreement over both real
+  plans. Cost: one duplicated regex, bounded by a drift oracle. Already shipped and green.
+- **(B) Move it to I01.** `PlanIds` grows a contract→line map (or `SliceRecord` grows
+  `start_line`), and I02 deletes its copy. One source of truth; the duplication cannot drift
+  because it no longer exists.
+
+**(B) is the stronger engineering answer, and the SD-B objection that blocked it has lapsed.**
+SD-B forbids an accessor without a named consumer increment; when Q44 was first weighed there
+was none, so (i) was chosen. I02/SLICE2 is now a shipped consumer that was *actually burned* by
+the duplication. The bar is met.
+
+**Why this is not being done unilaterally:** I01 is a closed increment, and widening the
+surface of a closed increment is a scope decision, not a refactor. It also costs a second
+round of kill-checks and a mutation sweep on `plan_ids.py`. Operator's call.
+
+**If (B) is chosen, the work is:** add the map to I01's extractor behind its own contract and
+kill-check; delete `slice_verification._CONTRACT_ENTRY_RE` and its drift oracle; keep the `0`
+sentinel semantics ("line unknown") so the degradation story is unchanged; re-run both sweeps.
+Estimated one slice-sized unit of work, and it shrinks I02 rather than growing it.
