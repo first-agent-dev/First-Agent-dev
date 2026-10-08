@@ -29,6 +29,7 @@ import inspect
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -540,15 +541,75 @@ def test_an_unusable_path_is_refused_rather_than_crashing(workspace: Path) -> No
 
 
 def test_the_probe_takes_no_caller_supplied_budget() -> None:
-    """Q46(a), pinned: one budget, shared with the commands the probe vouches for.
+    """The budget is the module's policy, not a per-call knob. (Q46(b))
 
     A `timeout_s` parameter existed here and no caller ever passed it, so
     mutation testing could not tell `_command_timeout(timeout_s)` from
-    `_command_timeout(None)`. It was removed rather than pinned by a test for
-    a caller that does not exist. This records the decision so reintroducing
-    it is a deliberate act with a named consumer, not a drift.
+    `_command_timeout(None)` — dead surface, removed rather than pinned by a
+    test for a caller that does not exist. This records the shape so
+    reintroducing it is a deliberate act with a named consumer, not a drift.
     """
     signature = inspect.signature(slice_verification._assert_overlay_wins)
 
     assert "timeout_s" not in signature.parameters
     assert set(signature.parameters) == {"module", "overlay_root", "env", "workspace"}
+
+
+def test_a_sanity_check_does_not_borrow_the_test_suites_budget(workspace: Path) -> None:
+    """Q46(b). The probe runs on the probe budget, and nothing else.
+
+    600 s sizes the work a slice asked for — a suite, a compile. A provenance
+    probe is an assertion about the execution environment and finishes in
+    milliseconds. Sharing one timeout between them means it can only ever be
+    tuned for one, and a hung probe would hold the gate for ten minutes
+    before reporting that the environment is broken.
+    """
+    captured: dict[str, float] = {}
+    real_run_one = slice_verification._run_one
+
+    def spy(command: str, **kwargs: object) -> slice_verification.CommandResult:
+        captured["timeout_s"] = float(kwargs["timeout_s"])  # type: ignore[arg-type]
+        return real_run_one(command, **kwargs)  # type: ignore[arg-type]
+
+    with mutation_overlay(workspace, "src/demo/__init__.py", "x = 1\n") as overlay:
+        env = _overlay_env(workspace, overlay)
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(slice_verification, "_run_one", spy)
+            _assert_overlay_wins("demo", overlay, env, workspace=workspace)
+
+    assert captured["timeout_s"] == slice_verification.DEFAULT_PROBE_TIMEOUT_SECONDS
+    assert captured["timeout_s"] != slice_verification.DEFAULT_VERIFY_TIMEOUT_SECONDS
+
+
+def test_the_two_budgets_stay_separate_and_the_probe_is_the_smaller() -> None:
+    """The invariant behind Q46(b), stated so collapsing them is a red test.
+
+    The value equals `runtime_limits.DEFAULT_BASH_TIMEOUT_SECONDS` by
+    coincidence rather than derivation, and that coincidence is an invitation
+    to "simplify" the three into one. Doing so would let a change made for
+    the model's interactive shell silently retune this gate's failure
+    detection.
+    """
+    assert slice_verification.DEFAULT_PROBE_TIMEOUT_SECONDS == 30.0
+    assert slice_verification.DEFAULT_PROBE_TIMEOUT_SECONDS < slice_verification.DEFAULT_VERIFY_TIMEOUT_SECONDS
+
+
+def test_a_hanging_probe_is_cut_short_and_reported_as_error(workspace: Path) -> None:
+    """The budget has to be wired, not merely declared.
+
+    A constant that no code path honours is documentation. This drives a probe
+    that never returns and asserts the gate gives up on its own schedule and
+    calls the result ERROR — the harness's fault, never the coder's.
+    """
+    with mutation_overlay(workspace, "src/demo/__init__.py", "x = 1\n") as overlay:
+        env = _overlay_env(workspace, overlay)
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(slice_verification, "_PROVENANCE_PROBE", "import time; time.sleep(600)")
+            patch.setattr(slice_verification, "DEFAULT_PROBE_TIMEOUT_SECONDS", 1.0)
+            started = time.monotonic()
+            result = _assert_overlay_wins("demo", overlay, env, workspace=workspace)
+            elapsed = time.monotonic() - started
+
+    assert result.outcome is CommandOutcome.ERROR
+    assert result.exit_code is None, "a killed probe has no exit code to report"
+    assert elapsed < 30.0, f"the probe budget was not honoured ({elapsed:.1f}s)"

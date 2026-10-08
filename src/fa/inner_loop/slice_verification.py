@@ -45,6 +45,7 @@ from fa.inner_loop.plan_ids import FAIL, PlanDiagnostic, PlanIds, SliceRecord
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
 
 __all__ = [
+    "DEFAULT_PROBE_TIMEOUT_SECONDS",
     "DEFAULT_VERIFY_TIMEOUT_SECONDS",
     "TAIL_LIMIT",
     "CommandOutcome",
@@ -68,6 +69,27 @@ __all__ = [
 #: every slow-but-correct slice into an ``ERROR``, and ``ERROR`` blocks -- so
 #: the gate would reject healthy work for an environmental reason.
 DEFAULT_VERIFY_TIMEOUT_SECONDS = 600.0
+
+#: Budget for an infrastructure sanity check, in seconds. (Q46(b))
+#:
+#: Separate from the verify budget on purpose. 600 s sizes *work the slice
+#: asked for* -- a test suite, a compile, a heavy check. A provenance probe is
+#: an assertion about the execution environment ("did the overlay win the
+#: import?"), and it finishes in milliseconds. Putting unrelated things on one
+#: timeout is a leaky abstraction: the number can then only be tuned for one
+#: of them, and here it would be tuned for the wrong one.
+#:
+#: 30 s is deliberately generous -- enough for a cold import on slow I/O, with
+#: room to spare -- and the point is not the precision of the number but the
+#: 9.5 minutes it saves when something genuinely hangs. A hang caused by an
+#: agent bug happens long before there is a measured distribution to pick a
+#: tighter value from, which is why this is not deferred to a later slice.
+#:
+#: It equals ``runtime_limits.DEFAULT_BASH_TIMEOUT_SECONDS`` by coincidence,
+#: not by derivation. Do not collapse them: that constant sizes an interactive
+#: shell call the model issues mid-turn, and a change made for the model's
+#: benefit must not silently retune this gate's failure detection.
+DEFAULT_PROBE_TIMEOUT_SECONDS = 30.0
 
 #: Captured output is truncated to this many characters per stream. The tails
 #: travel into an eval report and an artifact file; an unbounded test log would
@@ -735,11 +757,13 @@ def _assert_overlay_wins(
     with its own subprocess conventions could succeed in conditions where the
     real command would not.
 
-    The probe shares the verify-command budget rather than carrying one of its
-    own (Q46). An import check finishing in milliseconds does not need 600
-    seconds, but a second timeout constant is a second thing to tune, and the
-    consistency argument above is the one that matters: the probe should fail
-    under exactly the conditions the command it vouches for would.
+    It does **not** share the verify budget (Q46(b)). The scrubbing, ``cwd``
+    and output handling are the parts that must match the command being
+    vouched for; the timeout is not, because the two are measuring different
+    things. 600 s is the allowance for the work a slice asked for, and
+    spending it on an import that should take milliseconds means a hung probe
+    stalls the gate for ten minutes before anyone learns the environment is
+    broken -- see :data:`DEFAULT_PROBE_TIMEOUT_SECONDS`.
 
     Containment is tested with :meth:`pathlib.Path.is_relative_to` rather than
     a string prefix. A prefix comparison reports success when the module
@@ -752,7 +776,7 @@ def _assert_overlay_wins(
     probe = _run_one(
         command,
         cwd=_workspace_cwd(workspace),
-        timeout_s=_command_timeout(None),
+        timeout_s=DEFAULT_PROBE_TIMEOUT_SECONDS,
         env=env,
     )
     if probe.outcome is CommandOutcome.PASS:

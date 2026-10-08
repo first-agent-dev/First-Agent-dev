@@ -1614,3 +1614,26 @@ E165 EVIDENCE Mutation sweep, `slice_verification.py` with all three test files 
       the underlying choice to **Q46** instead of deciding it quietly.
     Two survivors are equivalent (`env.get("PYTHONPATH", "")` -> `None`; both falsy) and are
     in the workplan with their reasoning.
+
+E166 DECISION Q46 resolved **(b)** by operator ruling, 2026-10-08, overriding my provisional
+    (a). `DEFAULT_PROBE_TIMEOUT_SECONDS = 30.0` is declared beside the verify budget and used
+    directly by `_assert_overlay_wins`.
+    The ruling corrects the premise I had reasoned from. 600 s sizes *the work a slice asked
+    for*; a provenance probe is an **infrastructure assertion** about the execution
+    environment. One timeout over both is a leaky abstraction -- it can only be tuned for one
+    of them, and it would be tuned for the wrong one. My consistency argument does hold for
+    scrubbing, `cwd` and output handling, which must match the command being vouched for; it
+    does not hold for the budget, which measures something else. Deferring the constant to
+    SLICE5 "once a distribution exists" was perfectionism pointed backwards: a hang from an
+    agent bug arrives before any such measurement.
+    **Measured.** Executing the regression -- probe restored to the verify budget -- made the
+    hanging-probe oracle take **600.6 s** instead of ~1 s. The 9.5 minutes are on the record
+    rather than in an argument.
+    Kill-checks PROVEN, file restored byte-identical (`f3600837…`): probe silently borrowing
+    the verify budget -> 2 failed; the two constants collapsed into one -> 2 failed. Three new
+    oracles: the budget actually passed to `_run_one` (spy), the separation invariant, and a
+    behavioural one driving a probe that never returns and asserting `ERROR` on the probe's
+    own schedule. The last exists because a constant no code path honours is documentation.
+    The value equals `runtime_limits.DEFAULT_BASH_TIMEOUT_SECONDS` by coincidence, not
+    derivation; both the code comment and a test forbid collapsing them, since a change made
+    for the model's interactive shell must not retune this gate's failure detection.

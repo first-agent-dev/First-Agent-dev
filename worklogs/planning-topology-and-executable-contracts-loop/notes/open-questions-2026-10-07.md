@@ -258,7 +258,7 @@ Estimated one slice-sized unit of work, and it shrinks I02 rather than growing i
 
 ## Q46 — does the provenance probe get its own timeout, or share the verify budget?
 
-**Status:** OPEN, provisionally resolved as **share**. Raised by SLICE4's implementation,
+**Status:** **RESOLVED (b)** by operator ruling, 2026-10-08. Raised by SLICE4's implementation,
 2026-10-08, and promoted rather than decided quietly because it is a policy choice about when
 the harness declares `ERROR`, not an implementation detail.
 
@@ -280,5 +280,31 @@ too, and then the operator sees `ERROR` from the probe rather than the real sign
 `_command_timeout(timeout_s)` and `_command_timeout(None)` are indistinguishable. The
 parameter was removed rather than pinned by a test for a caller that does not exist (SD-B).
 
-**Revisit when** SLICE5 measures a real kill-check round trip. If probe latency turns out to
-matter, (b) becomes cheap and the constant has a measured value behind it instead of a guess.
+### Resolution — (b), a declared sanity-check budget
+
+`DEFAULT_PROBE_TIMEOUT_SECONDS = 30.0`, separate from the verify budget and used directly by
+`_assert_overlay_wins`.
+
+The operator's reasoning, which corrects the premise of option (a): 600 s sizes **the work the
+slice asked for** -- a suite, a compile, a heavy check. A provenance probe is an
+*infrastructure assertion* about the execution environment, and putting the two on one timeout
+is a leaky abstraction, because the number can then only be tuned for one of them. The
+consistency argument that justified (a) applies to scrubbing, `cwd` and output handling -- the
+things that must match the command being vouched for -- and not to the budget, which is
+measuring something else entirely.
+
+30 s is deliberately generous rather than derived: enough for a cold import on slow I/O, and
+the value of the choice is the 9.5 minutes it saves on a genuine hang. Deferring it to SLICE5
+"once there is a measured distribution" was perfectionism pointed the wrong way -- **a hang
+caused by an agent bug happens before any such measurement exists**, which is precisely when
+the budget matters.
+
+**Measured, not argued.** Executing the regression (probe put back on the verify budget) made
+the hanging-probe oracle take **600.6 seconds** instead of ~1. The cost of (a) is not
+theoretical and is now on the record.
+
+**Not to be unified:** the constant equals `runtime_limits.DEFAULT_BASH_TIMEOUT_SECONDS` by
+coincidence, not derivation. That one sizes an interactive shell call the model issues
+mid-turn; collapsing them would let a change made for the model's benefit silently retune this
+gate's failure detection. Stated in the code comment as well, because the coincidence is an
+invitation.
