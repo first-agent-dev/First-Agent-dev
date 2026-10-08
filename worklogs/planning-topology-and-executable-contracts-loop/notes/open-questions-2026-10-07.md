@@ -144,3 +144,46 @@ change. (iii) Split: lenient lookup stays but returns a flag, so a caller can te
 hit from a canonicalised one.
 **Recommendation: (i)** — but it must be *decided*, because today it is an accident of
 implementation rather than a stated rule, and I02 is about to build on it.
+
+## Q44 — Kill-directive diagnostics must name `file:line`, and nothing in I01's surface carries a line
+
+**Status: OPEN. Raised while implementing I02/SLICE2, 2026-10-08. Resolved provisionally so
+SLICE2 can ship; the choice is reversible and the operator may overrule it.**
+
+**Measured, by source read.** CT51 and CT52 require every kill-directive diagnostic to name
+`file:line`, in the manner of `heading-near-miss` (CT26) and `step-near-miss` (CT37). But:
+
+- `SliceRecord` has no line field — `slice_id, intent, contracts, test_paths, steps_mode,
+  commands, section, tests_note` (`plan_ids.py:156-167`);
+- `PlanIds` carries no raw text either — `slices, gaps, contracts, tests, commands,
+  slice_records, plan_commands` (`:183-192`);
+- the house precedent solves this by scanning the **whole document**:
+  `_rule_step_near_miss(text, path)` enumerates `text.splitlines()` and its docstring argues
+  the whole-document scan explicitly (`:745-756`).
+
+So CT50's "`parse_kill_directives(section)` reads `section()` output" and CT52's "`file:line`"
+cannot both be satisfied without something bridging section-relative lines to absolute ones.
+The sharp version of the question is one of **ownership**: may I02 reach for the raw plan text
+to locate what I01 parsed, or should I01 grow the offset?
+
+**Options.**
+(i) **I02 scans the document, I01 stays sealed.** `parse_kill_directives(section)` keeps CT50's
+signature and reports section-relative lines; `validate_kill_directives(plan_text, ids, path)`
+does one whole-document pass for absolute lines, asking I01 (`ids.contracts`,
+`contract_class`) what is a contract and what class it is. I02 locates ids it did not define;
+it never decides what a contract *is*. Cost: a small shape regex (`^\s*CT\d+[a-z]?\s*\[`) lives
+in two modules.
+(ii) **I01 grows `SliceRecord.start_line`** (and contract line offsets). Ownership stays clean
+and every later consumer benefits. Cost: an I01 change after I01 was called done, a new
+exported field, and D8's drift risk between the surface and schema §7.
+(iii) **I02 computes the offset by substring search** — `plan_text.find(record.section)`, exact
+because `section` is sliced verbatim from the text. Cheapest, but couples I02 to a layout
+detail I01 owns, and goes quietly wrong the day a section is ever normalised.
+
+**Recommendation and provisional resolution: (i).** It is the only option that adds no I01
+surface, keeps CT50's signature verbatim, and reuses the whole-document pattern the pre-check
+already justifies for exactly this reason. The duplicated knowledge is bounded to "a contract
+entry starts with its id in brackets", and every id it finds is validated against
+`ids.contracts`, so a drift in that shape degrades to "no line found", never to a wrong class.
+**If a second consumer ever needs line offsets, switch to (ii)** — at that point the field
+earns its keep and option (i)'s regex should be deleted, not copied a third time.

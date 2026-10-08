@@ -30,12 +30,14 @@ from __future__ import annotations
 
 import enum
 import os
+import re
 import subprocess
 import time
 from collections.abc import Iterable, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from fa.inner_loop.plan_ids import FAIL, PlanDiagnostic, PlanIds
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
 
 __all__ = [
@@ -43,7 +45,11 @@ __all__ = [
     "TAIL_LIMIT",
     "CommandOutcome",
     "CommandResult",
+    "KillDirective",
+    "KillOperator",
+    "parse_kill_directives",
     "run_commands",
+    "validate_kill_directives",
 ]
 
 
@@ -252,3 +258,289 @@ def run_commands(
             continue
         results.append(_run_one(command, cwd=cwd, timeout_s=budget, env=env))
     return tuple(results)
+
+
+# --------------------------------------------------------------------------- #
+# SLICE2 -- kill directives: strict parse, loud failure.
+#
+# A contract's kill-check is the only thing standing between "the tests are
+# green" and "the tests are green AND they would notice if the feature were
+# deleted". A directive that fails to parse therefore cannot be allowed to read
+# as "the planner declared none": that silently disables the non-vacuity gate,
+# which is the precise failure this project exists to prevent. Every ambiguous
+# shape below is an error with a line number, never a shrug.
+#
+# Why the directive is read from ``section()`` and not from the contract body
+# (E123): ``_section_contracts`` joins continuation lines with single spaces, so
+# in the body the line boundary is gone. Measured over six cases, four degraded
+# to "no kill-check found" -- including the common one where prose follows the
+# directive. The raw section keeps newlines, so attribution is exact and
+# trailing prose is harmless.
+# --------------------------------------------------------------------------- #
+
+
+class KillOperator(enum.StrEnum):
+    """The two mutation operators a contract may declare. (CT50)
+
+    Deliberately two. Every additional operator is another way for a plan to
+    describe a mutation the engine cannot perform, and the two here already
+    span the failure modes worth proving: ``NEUTRALISE`` asks "would anything
+    notice if this function stopped working?", ``REMOVE_CALL`` asks "would
+    anything notice if this call site disappeared?".
+    """
+
+    NEUTRALISE = "neutralise"
+    REMOVE_CALL = "remove-call"
+
+
+@dataclass(frozen=True, slots=True)
+class KillDirective:
+    """One parsed ``kill:`` line.
+
+    ``callee`` is ``None`` for ``NEUTRALISE`` (which needs no second symbol)
+    and the called name for ``REMOVE_CALL``.
+
+    ``line`` is 1-based and **relative to the text it was parsed from** --
+    a section, not the file. Absolute positions belong to diagnostics, which
+    :func:`validate_kill_directives` produces from the whole document; keeping
+    the two apart is what lets parsing stay pure and reusable (CT53).
+    """
+
+    operator: KillOperator
+    path: str
+    symbol: str
+    callee: str | None
+    line: int
+
+
+#: The only shape accepted. Anchored at both ends so a directive cannot absorb
+#: trailing prose, which is safe here only because the section preserves lines.
+_KILL_STRICT_RE = re.compile(
+    r"^\s*kill:\s*(?P<operator>neutralise|remove-call)\s+(?P<path>\S+)::(?P<symbol>\S+?)"
+    r"(?:\s*->\s*(?P<callee>\S+))?\s*$"
+)
+
+#: "This line claims to be a directive." Anything matching this but not the
+#: strict form is malformed -- a loud error, never a silent absence.
+_KILL_SOFT_RE = re.compile(r"^\s*kill:")
+
+#: Typos that read as a directive to a human and as prose to the strict form:
+#: ``kil:``, ``Kill :``, ``kill-check:``. Fires only when the soft form does
+#: not, so one line is never reported twice.
+_KILL_NEAR_MISS_RE = re.compile(r"^\s*ki?ll?[-_ ]?(?:check)?\s*:", re.IGNORECASE)
+
+#: A contract entry's opening line. I02 uses this only to *locate* ids that
+#: I01 already declared; whether a thing is a contract, and of what class,
+#: remains I01's answer (``ids.contracts``, ``ids.contract_class``). Q44(i).
+#:
+#: Mirrors ``plan_ids._CONTRACT_ENTRY_RE`` deliberately, **including the
+#: optional class bracket**: I01 lets an entry omit it and defaults such a
+#: contract to ``FUNCTIONAL`` (``plan_ids.py:82-85``). Requiring the bracket
+#: here made every unclassed contract invisible to this locator, so its
+#: directive went unattributed and the contract was reported as declaring
+#: none -- a false accusation against a correct plan. Found by mutation
+#: testing; the agreement is pinned by a drift oracle over the real plans.
+_CONTRACT_ENTRY_RE = re.compile(r"^\s+(?P<id>CT\d+[a-z]?)\s*(?:\[(?:FUNCTIONAL|CONSTRAINT|PRESERVATION)\])?\s*:")
+
+
+def _split_dotted(symbol: str) -> tuple[str, ...]:
+    """Split a directive symbol into its dotted parts. (CT50b)
+
+    ``"f"`` -> ``("f",)``; ``"Class.method"`` -> ``("Class", "method")``.
+
+    Exists because a bare-name grammar cannot express a method. Found by
+    auditing this plan's own directives: three of them name
+    ``_Silence.visit_Call``, which under a bare-name reader resolves to
+    nothing and reports ``PRODUCER_ABSENT`` against working code -- a false
+    accusation that looks exactly like a real one.
+    """
+    return tuple(part for part in symbol.split(".") if part)
+
+
+def _scan_directives(section: str) -> list[tuple[str | None, KillDirective]]:
+    """Every strict directive in *section*, in order, with its owning contract.
+
+    Returns a list rather than a mapping because duplicate attribution is a
+    diagnosable condition (CT52's ``kill-directive-ambiguous``) and a mapping
+    would destroy the evidence for it.
+    """
+    found: list[tuple[str | None, KillDirective]] = []
+    current: str | None = None
+    for index, line in enumerate(section.splitlines(), start=1):
+        entry = _CONTRACT_ENTRY_RE.match(line)
+        if entry is not None:
+            current = entry.group("id")
+        match = _KILL_STRICT_RE.match(line)
+        if match is None:
+            continue
+        found.append(
+            (
+                current,
+                KillDirective(
+                    operator=KillOperator(match.group("operator")),
+                    path=match.group("path"),
+                    symbol=match.group("symbol"),
+                    callee=match.group("callee"),
+                    line=index,
+                ),
+            )
+        )
+    return found
+
+
+def parse_kill_directives(section: str) -> dict[str, KillDirective]:
+    """Read a slice's raw section text and return its directives by contract.
+
+    CT50. Attribution is by indentation under a ``CT<n>`` entry, which the raw
+    section preserves and the joined contract body does not.
+
+    A contract declaring two directives keeps its **first** here, so this
+    accessor stays total and deterministic; reporting the duplicate is
+    :func:`validate_kill_directives`' job, not this function's -- the same
+    division I01 draws between ``contract_class`` and the duplicate-id rule.
+    """
+    out: dict[str, KillDirective] = {}
+    for contract_id, directive in _scan_directives(section):
+        if contract_id is None or contract_id in out:
+            continue
+        out[contract_id] = directive
+    return out
+
+
+def _near_miss(line: str, index: int, path: str) -> PlanDiagnostic | None:
+    """A line that reads as a kill directive to a human but not to the parser. (CT51)
+
+    ``kil:``, ``Kill :``, ``kill-check:``. Without this rule each of them
+    presents as "the planner declared no kill-check", which is indistinguishable
+    from a contract that legitimately has none -- so a typo would silently
+    switch off the non-vacuity gate for that contract. Same reasoning, and same
+    shape, as ``heading-near-miss`` (CT26) and ``step-near-miss`` (CT37).
+
+    Returns ``None`` when the line is a well-formed claim; the strict reader
+    deals with it, and reporting it here too would double-count one mistake.
+    """
+    if not _KILL_NEAR_MISS_RE.match(line) or _KILL_SOFT_RE.match(line):
+        return None
+    return PlanDiagnostic(
+        rule="kill-directive-near-miss",
+        severity=FAIL,
+        path=path,
+        line=index,
+        message=(
+            f"{line.strip()!r} reads as a kill directive but is not one; "
+            f"write 'kill: <neutralise|remove-call> <path>::<symbol>[ -> <callee>]', "
+            f"because a near-miss is indistinguishable from declaring none"
+        ),
+    )
+
+
+def validate_kill_directives(plan_text: str, ids: PlanIds, *, path: str) -> list[PlanDiagnostic]:
+    """Check every contract's kill directive before the coder starts. (CT52, CT54)
+
+    Pure: no filesystem, no subprocess, stdlib only, so this can run at
+    admission (CT53). A malformed directive discovered after the coder has
+    worked is a bill, not a gate.
+
+    Four conditions, each a ``FAIL`` naming ``file:line``:
+
+    ``kill-directive-near-miss``
+        a typo'd keyword (CT51).
+    ``kill-directive-malformed``
+        a line that claims to be a directive and does not parse.
+    ``kill-directive-ambiguous``
+        two or more directives on one contract, where the engine would
+        otherwise silently honour one and drop the other.
+    ``kill-directive-missing``
+        a ``FUNCTIONAL`` contract with no directive at all.
+
+    ``CONSTRAINT`` and ``PRESERVATION`` contracts are exempt (CT54): their
+    proof is an existing test or an absence, and demanding a mutation of them
+    would manufacture ceremony rather than evidence.
+
+    Line numbers are absolute, taken from one pass over the whole document --
+    the same approach ``_rule_step_near_miss`` takes and for the same reason
+    (Q44 option (i)). What counts as a contract, and of what class, is asked of
+    *ids*; this function only locates ids that I01 already declared.
+    """
+    out: list[PlanDiagnostic] = []
+    declared = set(ids.contracts)
+    contract_line: dict[str, int] = {}
+    directive_lines: dict[str, list[int]] = {}
+    attempted: set[str] = set()
+    current: str | None = None
+
+    for index, line in enumerate(plan_text.splitlines(), start=1):
+        entry = _CONTRACT_ENTRY_RE.match(line)
+        if entry is not None and entry.group("id") in declared:
+            current = entry.group("id")
+            contract_line.setdefault(current, index)
+
+        near = _near_miss(line, index, path)
+        if near is not None:
+            out.append(near)
+            continue
+
+        if not _KILL_SOFT_RE.match(line):
+            continue
+        if current is not None:
+            attempted.add(current)
+
+        if _KILL_STRICT_RE.match(line) is None:
+            out.append(
+                PlanDiagnostic(
+                    rule="kill-directive-malformed",
+                    severity=FAIL,
+                    path=path,
+                    line=index,
+                    message=(
+                        f"{line.strip()!r} does not parse; expected "
+                        f"'kill: <neutralise|remove-call> <path>::<symbol>[ -> <callee>]'"
+                    ),
+                )
+            )
+            continue
+        if current is not None:
+            directive_lines.setdefault(current, []).append(index)
+
+    for contract_id, lines in directive_lines.items():
+        if len(lines) < 2:
+            continue
+        out.append(
+            PlanDiagnostic(
+                rule="kill-directive-ambiguous",
+                severity=FAIL,
+                path=path,
+                line=lines[1],
+                message=(
+                    f"{contract_id} declares {len(lines)} kill directives "
+                    f"(lines {', '.join(str(n) for n in lines)}); one contract, one kill-check"
+                ),
+            )
+        )
+
+    # ``ids.contracts`` is every id *mentioned*, not every id declared: this
+    # plan's own CT51 cites I01's CT26 and CT37 by name, and they appear here
+    # too. ``contract_class`` is what separates the two -- it returns ``None``
+    # for an id that is merely referenced -- so the class test below is also
+    # the declaration test. Stated because the correctness is not obvious:
+    # without it this rule would demand a kill directive from another
+    # increment's contracts.
+    for contract_id in ids.contracts:
+        if ids.contract_class(contract_id) != "FUNCTIONAL":
+            continue
+        if contract_id in attempted:
+            continue
+        out.append(
+            PlanDiagnostic(
+                rule="kill-directive-missing",
+                severity=FAIL,
+                path=path,
+                line=contract_line.get(contract_id, 0),
+                message=(
+                    f"{contract_id} is FUNCTIONAL and declares no kill directive; "
+                    f"without one its test cannot be shown to fail when the feature is removed"
+                ),
+            )
+        )
+
+    return sorted(out, key=lambda diagnostic: (diagnostic.line, diagnostic.rule))

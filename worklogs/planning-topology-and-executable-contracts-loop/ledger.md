@@ -1411,3 +1411,74 @@ E149 FACT  Session baseline moved to **4 expected-red**, not 3. `tests/test_cli.
     fresh `.venv` rebuild (different resolved package versions than the previous build);
     `bash` and `git` are both present on PATH, so it is not a missing-binary skip. Recorded so
     the next session does not mistake it for damage, and does not "fix" it blindly either.
+
+E150 BUILD I02/SLICE2 shipped into `slice_verification.py`: `KillOperator`, frozen
+    `KillDirective`, `_split_dotted`, `_scan_directives`, `parse_kill_directives`,
+    `_near_miss`, `validate_kill_directives`. Tests `tests/test_kill_directives.py`, 37
+    oracles, class **C0/C0p** plus one structural oracle for CT53. All four STEP exit checks
+    and both `verify` commands exit 0. Full suite **4233P / 4F / 12S / 1X** -- the E149
+    baseline plus exactly the 37 new tests.
+    No C1, deliberately and with the operator's agreement: these functions have no production
+    caller until SLICE5 assembles the verdict and SLICE6 wires it in. A composition-root test
+    over an uncalled function passes whether or not the function exists. The live proof is
+    registered instead -- see E155.
+    Cross-validation worth keeping: run against the real I02 plan the parser recovers **28
+    directives and reports zero diagnostics**, independently matching the readiness audit's
+    count (E138); against the I01 plan it reports **19 `kill-directive-missing`**, correct
+    because I01 predates the grammar. The second is the non-vacuity proof for the first.
+
+E151 EVIDENCE SLICE2 kill-checks: CT50 (`neutralise parse_kill_directives`) -> 6 failed,
+    CT52 (`neutralise validate_kill_directives`) -> 8 failed, CT51 (`remove-call
+    validate_kill_directives -> _near_miss`) -> 3 failed. All PROVEN; file restored
+    byte-identical by sha comparison against a pre-check snapshot, not against HEAD -- HEAD
+    does not yet carry this slice, so `git diff --quiet` would have been the wrong oracle and
+    said so.
+    **CT50b's kill-check cannot fire in SLICE2 and is deferred, not satisfied.** It names
+    `remove-call … ::_resolve_symbol -> _split_dotted`, and `_resolve_symbol` is SLICE3's AST
+    concern -- `grep` finds zero occurrences. The *parse* half of CT50b is implemented and
+    covered here (`_split_dotted`, plus a dotted symbol surviving the strict regex); the kill
+    directive becomes executable when SLICE3 lands. Recorded rather than quietly ticked.
+
+E152 DEFECT Mutation testing found a real defect, not a coverage gap. I01 makes a contract's
+    class bracket **optional** and defaults such an entry to `FUNCTIONAL`
+    (`plan_ids.py:82-85`), so `  CT1: text` is a legal declaration. SLICE2's contract locator
+    required the bracket, which made every unclassed contract invisible: its `kill:` line went
+    unattributed, and the contract was then reported as declaring none. A false
+    `kill-directive-missing` against a correct plan is worse than a miss -- it teaches the
+    operator to distrust the gate. Fixed by mirroring `plan_ids._CONTRACT_ENTRY_RE`, and the
+    agreement between the two copies is now pinned by a drift oracle over both real plans.
+    Sweep: 348 mutants, **108 killed / 10 survived / 0 uncovered** (from 100/18 before the
+    follow-up oracles). Nine survivors are SLICE1's documented equivalents; the tenth is the
+    now-unreachable `contract_line.get(cid, 0)` fallback, added to the accepted-equivalent
+    ledger with its reasoning.
+    The survivor class worth naming: four `continue` -> `break` mutants all survived, each one
+    a scan that stops at the first finding. The sharpest is in the exemption loop, where a
+    single CONSTRAINT contract would have switched the missing-directive check off for every
+    contract after it -- a gate disabling itself, which is the one failure this module exists
+    to prevent. Every fixture had held exactly one defect, so stopping was indistinguishable
+    from skipping.
+
+E153 FACT  `PlanIds.contracts` is every contract id **mentioned**, not every id declared --
+    measured: 44 mentions against 41 declarations in the I02 plan, the difference being
+    I01's CT26/CT37/CT10b, which this plan cites in prose. `contract_class` returns `None` for
+    a citation and is therefore also the declaration test. SLICE2's missing-directive rule was
+    correct only because of that, which was **accidental** -- it iterates `ids.contracts`.
+    The reliance is now stated in the code and pinned by a test, because the next reader would
+    otherwise have to rediscover it the hard way.
+
+E154 DEFECT The plan's own STEP3 exit check was vacuous. `pytest tests/test_kill_directives.py
+    -q -k validate` selected **1 test of 37**, and that one was the purity test, matched on its
+    parameter id `[validate_kill_directives]` rather than on any validation behaviour. The step
+    would have been ticked green without the validator being exercised at all. Replaced with
+    `-k "near_miss or malformed or ambiguous or missing"`, which selects 11. Exactly the class
+    of defect the readiness audit (E138) found in the kill directives, now found in the exit
+    checks -- worth a sweep of the remaining slices' `-k` filters before they are relied on.
+
+E155 DECISION Operator instruction, 2026-10-08: every producer this plan creates is to be
+    marked for a future end-to-end test and verified with fixtures on the **live host**. New
+    artifact `notes/e2e-live-verification-register.md` carries one row per producer -- what the
+    host fixture must arrange, what it must observe, and a `unit`/`e2e` status. SLICE1's nine
+    and SLICE2's four are entered; later slices append. Standing fixture requirements are
+    stated once at the top (a real `/sessions/<id>/` workspace rather than `tmp_path`, `--plan`
+    supplied because nothing infers it, assertions read from the persisted session-log
+    artifacts, observe-mode first). A producer is not finished until its row reads `e2e`.
