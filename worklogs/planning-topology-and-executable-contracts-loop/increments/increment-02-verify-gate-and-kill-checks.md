@@ -555,12 +555,22 @@ uv run ruff check src/fa/inner_loop/workflow_controller.py tests/test_verify_gat
 - [ ] The operator's working tree is byte-identical before and after a full gate run (CT64),
       verified with `git status --porcelain` captured on both sides, and `git worktree list`
       shows no leftover entry.
-- [ ] Register rows **D1, D3, D4, D5** are ticked in
+- [ ] Register rows **D1, D3, D4, D5, D8** are ticked in
       [`../notes/deferred-verification-register.md`](../notes/deferred-verification-register.md),
-      each citing the test that closed it.
-- [ ] Full suite shows no regression against the 4156P / 3F / 12S / 1X baseline, with the
-      three expected-red re-run by name.
-- [ ] `plan_ids.py` is unmodified: `git diff --stat src/fa/inner_loop/plan_ids.py` is empty.
+      each citing the test that closed it. D8 was added to the register after this list was
+      written and is owned by I02; the standing rule admits no increment that still owns an
+      unticked row.
+- [ ] No test that passed at `ed4ebca` fails, and the only red are the three expected-red,
+      re-run by name. Recorded there: **4304P / 3F / 12S / 1X**. The comparison is
+      test-by-test and not a count: the suite grows by design as slices land, so a bare
+      total teaches the next reader to edit the number instead of reading the failure.
+- [ ] `plan_ids.py` changed **only** by the position surface Q45-B sanctioned —
+      `SliceRecord.start_line`, `SliceRecord.contract_lines`, `PlanIds.contract_line` — with
+      `git diff 3c0caad -- src/fa/inner_loop/plan_ids.py` read line by line against that list
+      (exit: `uv run pytest tests/test_plan_ids.py -q` exits 0). This item demanded an empty
+      diff until Q45-B overruled it: a parser that discards where it found things is
+      defective by design, and making the consumer re-read with its own regex breaks Single
+      Source of Truth (E170).
 - [ ] A scoped mutation run over `slice_verification.py` has no non-equivalent survivors, per
       the protocol in `../notes/i01-dod-walk-2026-10-07.md`.
 

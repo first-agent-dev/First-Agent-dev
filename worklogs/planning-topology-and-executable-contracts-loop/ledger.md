@@ -1720,3 +1720,22 @@ E169 DECISION Q48 resolved **(c)** by operator ruling, 2026-10-08: a `kill:` dir
     duplicates what the code already states and is I01 grammar, which is closed. No new slice
     was created: I02 sits on the 7-slice ceiling, and `_rule_slice_count` reads an eighth as a
     mis-scoped increment. The work went to SLICE5, which already owns `PRODUCER_ABSENT`.
+
+E170 CORRECTION three defects in I02's own definition of done, found by assessing the
+    increment against the code rather than against the plan's narration.
+    (i) Item 9 demanded `git diff --stat src/fa/inner_loop/plan_ids.py` be empty. Measured
+    from the end of I01: **+60 / -3**. The item is what is wrong, not the code -- Q45-B ruled
+    that source positions belong to the parser that read the document. Rewritten to bound the
+    change to the three sanctioned names rather than forbid it.
+    (ii) Item 8 pinned a `4156P / 3F / 12S / 1X` baseline; the suite stands at **4304P** with
+    the same 3F/12S/1X. Worse than stale, the formulation compared totals, which is the
+    self-defeating tripwire this project has already been bitten by: the only available fix
+    when the number moves is to bump the number, which teaches the next reader to bump it
+    too. Replaced with a test-by-test rule -- no test green at `ed4ebca` may fail -- and the
+    totals kept only as a recorded observation.
+    (iii) Item 7 listed register rows D1, D3, D4, D5. **D8 is also owned by I02** and was
+    added to the register after the list was written. The standing rule admits no increment
+    that still owns an unticked row, so the omission would have let I02 close over an open
+    obligation. Added.
+    None of the three is a code defect; all three would have let the increment be declared
+    done on a false reading.
