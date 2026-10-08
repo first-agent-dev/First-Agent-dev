@@ -1764,3 +1764,38 @@ E171 DECISION Q49 resolved **(a) with two corrections**, 2026-10-08, absorbing t
     `UV_PROJECT_ENVIRONMENT` and `UV_NO_SYNC=1`, `_overlay_env` inherits it by construction).
     Both have oracles -- `tests/test_mutation_overlay.py:580,593` and
     `tests/test_slice_verification_runner.py:235` -- so they are proven, not merely present.
+E172 SHIPPED SLICE5 STEP1 + STEP2, 2026-10-08. `SliceVerdict` (seven members, design note
+    §3.2) and `_run_kill_check` in `src/fa/inner_loop/slice_verification.py`, with
+    `tests/test_verify_slice.py` (NEW, 20 oracles). Order inside the kill-check is
+    load-bearing and asserted: `apply_kill` (pure) -> `mutation_overlay` (the only copy on
+    disk) -> `_assert_overlay_wins` (CT82) -> the contract's own test. An oracle spies on
+    `run_commands` to prove a failed probe never reaches the test, so a broken environment
+    costs a probe rather than the full test budget, and can never present as a pass.
+    Verdicts: test red under mutation -> PROVEN; test still green -> VACUOUS; `targets == 0`
+    or `edits == 0` or the file missing -> PRODUCER_ABSENT; `targets > 1`, a failed probe, an
+    `OverlayError` or an unrunnable test -> ERROR.
+    Gates, run verbatim: STEP1 `len(SliceVerdict)==7` exit 0; STEP2
+    `pytest tests/test_verify_slice.py -q -k kill_check` 15 passed, 5 deselected;
+    slice `verify` fence 20 passed + `ruff check` clean. mypy and pyrefly clean.
+E173 EVIDENCE Eight hand-mutants on the SLICE5 producers, all killed, source restored
+    byte-identical, 2026-10-08. Probe check deleted -> 1F; VACUOUS reported as PROVEN -> 1F;
+    PASS/FAIL inverted -> 2F; PRODUCER_ABSENT folded into VACUOUS -> 3F; `targets > 1`
+    accepted -> 1F; `_module_name` keeping the `src` prefix -> 5F; `run_commands` ignoring the
+    injected environment -> 1F; the `KillCheck` verdict guard removed -> 1F. The fourth is the
+    one that matters: folding PRODUCER_ABSENT into VACUOUS is the collapse this increment
+    exists to prevent, and three separate oracles refuse it.
+    Full suite: 4324P / 3F / 12S / 1X. Compared **test-by-test** per the corrected DoD item 8:
+    the three reds are exactly the EXPECTED-RED set of E161, and the 20 new passes are this
+    slice's. No test moved from green to red.
+E174 FINDING A pre-existing cross-test pollution defect in `tests/test_workspace_bootstrap.py`
+    (`monkeypatch.setattr(os, "name", "nt")` at :1970 and :2011), 2026-10-08. With `os.name`
+    patched, pytest's own `_repr_failure_py` builds a `Path` and raises
+    `NotImplementedError: cannot instantiate 'WindowsPath' on your system`, aborting the
+    reporter with `INTERNALERROR>`. Reproduced on `tests/test_workspace_bootstrap.py` plus
+    `tests/test_doc_links.py` alone -- **99 passed and the INTERNALERROR still fired**, with
+    no file from this increment loaded, so it is neither new nor caused by SLICE5. It is
+    recorded rather than repaired: the fix belongs with whoever owns that file, and silently
+    touching an unrelated test from inside I02 would be the cross-increment edit the plan
+    grammar forbids. Consequence worth noting -- the reporter dies *after* the counts are
+    computed, so a test-by-test baseline comparison (CT68) is unaffected, but a human reading
+    only the tail of a run could mistake it for a harness failure.

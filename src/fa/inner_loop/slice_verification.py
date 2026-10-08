@@ -40,8 +40,8 @@ import tempfile
 import time
 from collections.abc import Iterable, Iterator, MutableMapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from typing import override
+from pathlib import Path, PurePosixPath
+from typing import Final, override
 
 from fa.inner_loop.plan_ids import FAIL, PlanDiagnostic, PlanIds, SliceRecord
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
@@ -49,13 +49,17 @@ from fa.inner_loop.tools.bash_env import build_scrubbed_env
 __all__ = [
     "DEFAULT_PROBE_TIMEOUT_SECONDS",
     "DEFAULT_VERIFY_TIMEOUT_SECONDS",
+    "KILL_CHECK_COMMAND",
+    "KILL_CHECK_VERDICTS",
     "TAIL_LIMIT",
     "CommandOutcome",
     "CommandResult",
     "KillApplication",
+    "KillCheck",
     "KillDirective",
     "KillOperator",
     "OverlayError",
+    "SliceVerdict",
     "apply_kill",
     "mutation_overlay",
     "parse_kill_directives",
@@ -265,6 +269,7 @@ def run_commands(
     workspace: Path,
     timeout_s: float | None = None,
     deadline: float | None = None,
+    env: dict[str, str] | None = None,
 ) -> tuple[CommandResult, ...]:
     """Run a slice's verify commands in order and report what each did.
 
@@ -274,13 +279,20 @@ def run_commands(
 
     Returns one :class:`CommandResult` per input command, in input order, so a
     caller can attribute a failure to the exact command the plan declared.
+
+    ``env`` is an injection seam with the production value as its default: a
+    kill-check must run against the overlay, and it must otherwise be the same
+    run as the verify command it is judging. Passing the environment in beats
+    rebuilding it here from a flag, because the overlay environment is already
+    assembled by :func:`_overlay_env` and a second assembly could drift from
+    it (CT61).
     """
     ordered: Sequence[str] = tuple(commands)
     if not ordered:
         return _empty_result()
 
     cwd = _workspace_cwd(workspace)
-    env = _build_env(workspace)
+    command_env = _build_env(workspace) if env is None else env
     budget = _command_timeout(timeout_s)
 
     results: list[CommandResult] = []
@@ -288,7 +300,7 @@ def run_commands(
         if deadline is not None and time.monotonic() >= deadline:
             results.append(_deadline_result(command))
             continue
-        results.append(_run_one(command, cwd=cwd, timeout_s=budget, env=env))
+        results.append(_run_one(command, cwd=cwd, timeout_s=budget, env=command_env))
     return tuple(results)
 
 
@@ -991,3 +1003,201 @@ def apply_kill(source: str, directive: KillDirective) -> KillApplication:
         return KillApplication(source=None, targets=1, edits=0)
     ast.fix_missing_locations(tree)
     return KillApplication(source=ast.unparse(tree), targets=1, edits=edits)
+
+
+# ---------------------------------------------------------------------------
+# Verdict assembly (SLICE5)
+# ---------------------------------------------------------------------------
+
+
+class SliceVerdict(enum.StrEnum):
+    """What the gate concluded about one slice. (CT65, design note §3.2)
+
+    Seven members, and the two that look alike are the reason the project
+    exists:
+
+    ``VACUOUS``
+        the producer is there and the test passes, but removing the producer
+        does **not** break the test. The *test* is wrong; strengthen it.
+    ``PRODUCER_ABSENT``
+        the declared producer is not in the tree at all. The *feature* is
+        wrong; wire it. This is the "dead code shipped as a working feature"
+        detector, stated rather than inferred.
+
+    Merging them would discard exactly the signal the gate was built for,
+    because they have different causes and different repairs.
+    """
+
+    PROVEN = "proven"
+    VACUOUS = "vacuous"
+    PRODUCER_ABSENT = "producer_absent"
+    FAILING = "failing"
+    REGRESSION = "regression"
+    ERROR = "error"
+    SKIPPED = "skipped"
+
+
+#: The members one kill-check can reach on its own. A kill-check speaks about
+#: a single contract, so it cannot observe a failing verify command
+#: (``FAILING``), a baseline comparison (``REGRESSION``) or a missing verify
+#: block (``SKIPPED``) -- those are statements about the slice. Reusing
+#: :class:`SliceVerdict` rather than minting a parallel per-contract
+#: vocabulary keeps one set of words in the reports, and this constant is what
+#: keeps the reuse honest.
+KILL_CHECK_VERDICTS: Final = frozenset(
+    {
+        SliceVerdict.PROVEN,
+        SliceVerdict.VACUOUS,
+        SliceVerdict.PRODUCER_ABSENT,
+        SliceVerdict.ERROR,
+    }
+)
+
+#: How the harness invokes one contract's test. ``uv run`` because the coder's
+#: workspace is a uv project (``scripts/fa-entrypoint.sh``) and the environment
+#: pins ``UV_PROJECT_ENVIRONMENT`` to its venv; ``-q`` because only the exit
+#: code is read. A module-level constant for the same reason
+#: ``_PROVENANCE_PROBE`` is one: it is the seam a test substitutes to run
+#: hermetically, without a flag existing in production for a test's benefit.
+KILL_CHECK_COMMAND = "uv run pytest {path} -q"
+
+
+@dataclass(frozen=True, slots=True)
+class KillCheck:
+    """What one declared kill-check did. (CT66, CT67)
+
+    ``verdict`` is drawn from :data:`KILL_CHECK_VERDICTS`. ``detail`` is empty
+    only for :attr:`SliceVerdict.PROVEN`: every other outcome has to say what
+    the operator should go and look at, because a verdict a human cannot act
+    on is an alarm that will be ignored.
+    """
+
+    directive: KillDirective
+    verdict: SliceVerdict
+    detail: str
+    duration_s: float
+
+    def __post_init__(self) -> None:
+        """Refuse a verdict a kill-check cannot legitimately reach."""
+        if self.verdict not in KILL_CHECK_VERDICTS:
+            raise ValueError(f"{self.verdict} is not a kill-check verdict")
+        if self.verdict is not SliceVerdict.PROVEN and not self.detail:
+            raise ValueError(f"{self.verdict} must say what went wrong")
+
+
+def _module_name(rel_path: str) -> str | None:
+    """``src/fa/x/y.py`` -> ``fa.x.y``; ``None`` when the path is not importable.
+
+    The ``src`` prefix is stripped because that is precisely what the overlay
+    puts on ``PYTHONPATH`` (CT61), so the name derived here and the name the
+    probe resolves are the same by construction rather than by coincidence.
+    An ``__init__.py`` names its package, which is what an importer would say.
+    """
+    path = PurePosixPath(rel_path)
+    if path.suffix != ".py":
+        return None
+    parts = list(path.parts)
+    if parts and parts[0] == "src":
+        parts = parts[1:]
+    if not parts:
+        return None
+    parts[-1] = path.stem
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts) or None
+
+
+def _absent(directive: KillDirective, detail: str, started: float) -> KillCheck:
+    return KillCheck(
+        directive=directive,
+        verdict=SliceVerdict.PRODUCER_ABSENT,
+        detail=detail,
+        duration_s=time.monotonic() - started,
+    )
+
+
+def _errored(directive: KillDirective, detail: str, started: float) -> KillCheck:
+    return KillCheck(
+        directive=directive,
+        verdict=SliceVerdict.ERROR,
+        detail=detail,
+        duration_s=time.monotonic() - started,
+    )
+
+
+def _run_kill_check(directive: KillDirective, test_path: str, root: Path) -> KillCheck:
+    """Mutate one producer and find out whether its test notices. (CT66, CT67, CT82)
+
+    The order is load-bearing: :func:`apply_kill` (pure), then
+    :func:`mutation_overlay` (the only copy on disk), then
+    :func:`_assert_overlay_wins` (the mutated module is the one that will be
+    imported), and only then the test. Running the test before the probe would
+    produce a number that looks like evidence and is not -- the measured
+    failure is that an installed package resolves to an absolute path, so the
+    mutation is never imported and every kill-check reports a false
+    ``VACUOUS`` (E125/D1).
+
+    A surviving test is ``VACUOUS``, not a pass. Any uncertainty -- an
+    ambiguous symbol, a failed probe, a timeout -- is ``ERROR``, which never
+    presents as a pass anywhere in this module.
+    """
+    started = time.monotonic()
+    source_path = Path(root) / directive.path
+    if not source_path.is_file():
+        return _absent(directive, f"{directive.path} is not a file in the workspace", started)
+
+    module = _module_name(directive.path)
+    if module is None:
+        return _errored(directive, f"{directive.path} is not an importable module path", started)
+
+    try:
+        source = source_path.read_text(encoding="utf-8")
+        application = apply_kill(source, directive)
+    except (OSError, SyntaxError, ValueError) as exc:
+        return _errored(directive, f"could not mutate {directive.path}: {exc}", started)
+
+    if application.targets > 1:
+        return _errored(
+            directive,
+            f"{directive.symbol} resolves to {application.targets} definitions; "
+            "qualify the symbol rather than letting the gate choose",
+            started,
+        )
+    if application.source is None:
+        target = directive.symbol if directive.callee is None else f"{directive.symbol} -> {directive.callee}"
+        return _absent(directive, f"{target} was not found in {directive.path}", started)
+
+    try:
+        with mutation_overlay(Path(root), directive.path, application.source) as overlay_root:
+            env = _overlay_env(Path(root), overlay_root)
+            probe = _assert_overlay_wins(module, overlay_root, env, workspace=Path(root))
+            if probe.outcome is not CommandOutcome.PASS:
+                return _errored(
+                    directive,
+                    f"overlay provenance probe did not pass: {probe.stderr_tail or probe.stdout_tail}",
+                    started,
+                )
+            command = KILL_CHECK_COMMAND.format(path=shlex.quote(test_path))
+            (result,) = run_commands((command,), workspace=Path(root), env=env)
+    except OverlayError as exc:
+        return _errored(directive, f"overlay failed: {exc}", started)
+
+    elapsed = time.monotonic() - started
+    if result.outcome is CommandOutcome.ERROR:
+        return _errored(directive, f"{test_path} could not be run: {result.stderr_tail}", started)
+    if result.outcome is CommandOutcome.FAIL:
+        return KillCheck(
+            directive=directive,
+            verdict=SliceVerdict.PROVEN,
+            detail="",
+            duration_s=elapsed,
+        )
+    return KillCheck(
+        directive=directive,
+        verdict=SliceVerdict.VACUOUS,
+        detail=(
+            f"{test_path} still passes with {directive.symbol} mutated; "
+            "the test does not depend on the producer it claims to cover"
+        ),
+        duration_s=elapsed,
+    )
