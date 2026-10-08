@@ -644,7 +644,7 @@ is already forced by the facts: `REGRESSION` is about **pre-existing** test path
 are exactly the ones that can be run before the coder starts.
 
 The clean seam: **SLICE5 accepts a baseline it does not gather.** `verify_slice(...,
-baseline: Mapping[str, bool] | None)` — path → was green. `None` means no baseline was taken,
+baseline: Mapping[str, bool] | None)` — pytest nodeid → was green. `None` means no baseline was taken,
 and then `REGRESSION` is simply not reachable and is reported as such, never as a pass. SLICE6
 adds the pre-coder call site that fills it, which is where the stage-loop edit belongs anyway.
 That keeps SLICE5 pure and testable, and it keeps the one risky edit in the slice whose job is
@@ -657,8 +657,8 @@ never a pass.
 
 ## Q50 — does a single kill-check speak the slice's vocabulary, or its own?
 
-**Status:** OPEN. Implemented provisionally as (a) in `b65a79b`; STEP3 (`_classify`) consumes
-the answer directly, so it is blocking for the rest of SLICE5.
+**Status:** RESOLVED (a) by operator, 2026-10-08. The operator selected reuse of the
+constrained `SliceVerdict`; STEP3 (`_classify`) consumes that answer directly.
 
 CT65 says `SliceVerification` carries "the per-contract kill-check outcomes" and never names
 their type. One kill-check can reach only four of the seven members: it speaks about a single
@@ -672,9 +672,9 @@ contract, so it cannot observe a failing verify command (`FAILING`), a baseline 
 | `_classify` | reads members directly | must translate, and a translation can be wrong |
 | risk | a reader sees `PROVEN` and must ask "of what?" -- the contract id is adjacent | the two vocabularies drift, and reports start saying `killed` where the lattice says `proven` |
 
-**Implemented (a)** on the ground that this project's stated fear is vocabulary growth (CT59,
-"no mutation DSL"), and that (b)'s type-level safety is bought with a translation step that is
-itself unverified. The constraint is enforced, not documented: `KillCheck.__post_init__`
+**Ruling (a), confirmed by the operator.** The project's stated fear is vocabulary growth
+(CT59, "no mutation DSL"), and (b)'s type-level safety is bought with a translation step
+that is itself unverified. The constraint is enforced, not documented: `KillCheck.__post_init__`
 raises on the three unreachable members, and an oracle proves it for each.
 
 **What would overturn it:** if the operator wants per-contract and per-slice outcomes to be
@@ -683,9 +683,10 @@ function with its own oracle.
 
 ## Q51 — what command does the kill-check phase actually issue?
 
-**Status:** OPEN. Implemented provisionally as (a) in `b65a79b`. Not blocking for STEP3, but it
-is the one producer in this slice that **no unit test executes verbatim** (the hermetic fixture
-substitutes it), so it is live-only risk and wants a decision before SLICE6.
+**Status:** RESOLVED (a) on agent recommendation, 2026-10-08, after the operator asked
+whether (a) is the most correct option. It is not blocking for STEP3, but it is the one producer
+in this slice that **no unit test executes verbatim** (the hermetic fixture substitutes it), so
+it remains live-only risk and must be covered before SLICE6.
 
 CT69 fixes *what* runs -- "only the contract's own test" -- and is silent on the command. The
 slice's own `verify` fence cannot be reused: it is the planner's text, run verbatim
@@ -701,6 +702,46 @@ slice's own `verify` fence cannot be reused: it is the planner's text, run verba
   policy explicit at the composition root, at the cost of one more thing the controller must
   get right.
 
-**Implemented (a).** (b) parses a command line the planner owns, which is the same class of
-mistake as parsing a contract body for a directive (F1). (c) is a real option if the operator
-wants the controller to own it.
+**Recommendation adopted (a).** Source verification confirms the live coder workspace is a
+`uv` project, the runner pins `UV_PROJECT_ENVIRONMENT` and `UV_NO_SYNC=1`, and the hermetic
+fixture needs a replaceable command constant. (b) parses a command line the planner owns, the
+same class of mistake as parsing a contract body for a directive (F1); (c) moves policy into
+the controller without a second runner being supported. If another test runner becomes a real
+product requirement, make it explicit configuration rather than infer it from `verify` text.
+
+
+## Q52 — what wins when a command fails and the baseline proves a test regression?
+
+**Status:** OPEN; blocks SLICE5 STEP3. Raised 2026-10-08 after reading the STEP3 contract against
+its source types and the accepted Q49 resolution.
+
+### Source-verified facts
+
+- CT65 returns one `SliceVerdict` for a slice; the result does not have a second status axis.
+- `CommandResult.outcome` is independently one of `PASS`, `FAIL`, `ERROR`. `KillCheck.verdict`
+  is independently one of `PROVEN`, `VACUOUS`, `PRODUCER_ABSENT`, `ERROR`.
+- STEP3 explicitly says `ERROR` dominates, but gives no ordering for `FAILING` versus
+  `REGRESSION`.
+- CT68 says green-at-T0 → red-now is `REGRESSION`, and red-to-red is advisory and does not
+  block. Under Q49, the comparison is by pytest nodeid.
+- CT69 requires two harness-issued JUnitXML runs for nodeid evidence; the planner's `verify`
+  commands remain verbatim and only supply exit status plus a truncated tail.
+
+So both signals can be true: `run_commands` can report `FAIL` while the JUnitXML nodeid map
+proves that a test which was green at T0 is red now. They can also disagree about whether the
+underlying test failure is the whole reason for the failing command. A red-to-red test produces
+no regression row, but the verbatim verify command can still return non-zero for it. The single
+verdict then has to choose which fact governs routing.
+
+| | (a) command exit remains authoritative | (b) the nodeid evidence refines test failures |
+| :--- | :--- | :--- |
+| precedence | `ERROR > FAILING > REGRESSION`; a non-zero declared command is blocking | `ERROR > REGRESSION > FAILING`; a proven green→red nodeid is the more specific result |
+| red-to-red | no `REGRESSION`, but a non-zero command still yields `FAILING` | non-blocking only if the failure is attributable solely to those pre-existing red nodeids |
+| consistency with CT68 words | requires clarifying “advisory and does not block” to mean “does not create a regression verdict” | preserves the literal non-blocking reading, but needs a reliable way to attribute an arbitrary verbatim command's failure to the separately issued JUnitXML run |
+| implementation cost | the existing `CommandResult` and one verdict suffice | additional attribution/evidence or a separate result axis; CT65/CT69 may need amendment |
+
+**No choice has been made.** Do not implement `_classify` by guessing. The design note's Phase 2
+rule (“any non-zero → FAILING”) supports (a), while CT68's “red-to-red … does not block” can
+be read as (b). The operator must say whether the command result remains independently
+blocking, or whether the harness should suppress test-command failures known to be red-to-red
+(and, if so, what attribution evidence is sufficient for arbitrary planner commands).

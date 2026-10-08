@@ -2,8 +2,9 @@
 
 Operator decision: non-vacuity is proven by **executing a declared kill-check**, not by asking
 whether a test is new. This document restores the mental model, gathers the requirements with
-their sources, and proposes a design. **Nothing here is built yet** — it is the input to the
-design discussion.
+their sources, and proposes a design. **Status update (2026-10-08):** SLICE5 STEP1–STEP2 are implemented; STEP3 is paused on Q52. The note
+remains the design input; plan CT68/69/85/86 and resolved Q49 supersede its original per-command
+baseline sketch.
 
 ---
 
@@ -201,7 +202,7 @@ worktree, so it cannot write where verification runs.
 
 ```
 0  PRE-CHECK   I01 precheck()                     static, already shipped
-1  BASELINE    run affected-path tests, untouched record {cmd -> RED|GREEN|ERROR}   (N3)
+1  BASELINE    run the slice's existing TESTS: paths at T0; record {pytest nodeid -> GREEN|RED}; an absent row is unknown, never RED   (Q49 / CT68-69)
    ── coder works ──
 2  PASS-AFTER  run the slice's commands           any non-zero  -> FAILING
 3  REGRESSION  compare against baseline           GREEN -> RED  -> REGRESSION
@@ -212,6 +213,11 @@ worktree, so it cannot write where verification runs.
                  d. test fails          -> this contract is PROVEN
 5  VERDICT     all contracts proven and no regression -> PROVEN
 ```
+
+**Q49 correction (2026-10-08):** the baseline is per pytest nodeid, not per command or file;
+both T0 and “now” are harness-issued JUnitXML runs. Capture is once at T0 (CT85/CT86).
+**Open precedence:** whether a failing verify-command exit remains `FAILING` when the nodeid
+run reports a regression is Q52; do not infer precedence from the phase ordering above.
 
 Phase 4 runs **only the contract's own test**, never the suite — that is what keeps the cost
 at roughly one extra test run per contract, and it is the natural reading of §6.2's

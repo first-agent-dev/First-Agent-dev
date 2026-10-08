@@ -1799,3 +1799,19 @@ E174 FINDING A pre-existing cross-test pollution defect in `tests/test_workspace
     grammar forbids. Consequence worth noting -- the reporter dies *after* the counts are
     computed, so a test-by-test baseline comparison (CT68) is unaffected, but a human reading
     only the tail of a run could mistake it for a harness failure.
+
+E175 DECISION Q50 RESOLVED (a) by operator; Q51 RESOLVED (a) on agent recommendation after
+    the operator asked whether (a) was the most correct, 2026-10-08. A constrained shared
+    `SliceVerdict` avoids a second reporting vocabulary; `uv run pytest {path} -q` is grounded
+    in the deployed uv workspace, the pinned env and the replaceable module constant. It avoids
+    parsing planner-owned shell text or adding a caller policy unsupported by any second runner.
+    Corrected the final Q49 seam to `Mapping[str, bool] | None` keyed by pytest nodeid, not
+    path. Reconciled `i02-slice-verification-design.md`'s earlier per-command baseline sketch;
+    labeled the older `verify-block-design.{md,svg}` as historical.
+E176 OPEN QUESTION Q52, 2026-10-08. SLICE5 STEP3 cannot safely choose a slice verdict from
+    simultaneous `CommandResult.FAIL` and a JUnitXML-proven green→red nodeid without resolving
+    command-failure versus regression precedence. CT65 exposes only one `SliceVerdict`; STEP3
+    explicitly specifies only `ERROR` dominance. CT68's “red-to-red … does not block” also
+    conflicts with Phase 2's “any non-zero → FAILING” if a verify command includes that test.
+    Q52 asks whether command exits remain independently blocking or per-test evidence refines
+    them, and what attribution is sufficient. No implementation change was made.
