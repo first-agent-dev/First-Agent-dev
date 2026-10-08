@@ -1299,3 +1299,52 @@ E139 FACT  The artifact-schema folder is a **pure gap in the planner prompt**, c
     It does **not** block the first live run: the gate needs a file containing `## SLICE#`
     sections with verify fences, and `prompt.py:194-213` already teaches exactly that. The
     folder is a separate improvement, not a precondition.
+
+E140 BUILD SLICE1 of I02 shipped: `src/fa/inner_loop/slice_verification.py` (254 lines) and
+    `tests/test_slice_verification_runner.py` (36 oracles, class C0+C0p+C3). All four STEP exit
+    checks and both `verify` commands exit 0; CT49's PRESERVATION holds (`plan_ids.py`
+    untouched, zero subprocess/os.environ/write hits). Full suite **4192P / 3F / 12S / 1X** --
+    the baseline 4156P plus exactly the 36 new tests, with the three deliberately-red doc gates
+    unchanged. No C1 test here by design: nothing boots the composition root until SLICE6 wires
+    the runner into `_run_stage`, and a composition-root test over an uncalled module would be
+    theatre (SD-C's "no live path yet" clause; the owing increment is SLICE6).
+
+E141 EVIDENCE The SLICE1 kill-check battery ran in full and all seven directives are PROVEN,
+    each file restored byte-identical: CT44/CT45/CT49d (`neutralise` of `run_commands`,
+    `_timeout_result`, `_command_timeout`), CT48/CT49c/CT49e (`remove-call` into
+    `_empty_result`, `_workspace_cwd`, `_pin_uv_environment`), and CT49b (`delete-line`
+    `bash_env.py:41`). CT49b is the one worth naming: deleting a single `PYTHONPATH` entry from
+    an allowlist in an **unrelated** module turns the tests red, which is precisely the silent
+    inversion the contract was written to catch.
+
+E142 DEFECT Mutation testing of the new module (165 mutants, scoped `[tool.mutmut]`, config
+    restored byte-identical) found a real hole the 29 passing oracles had hidden: **12 mutants
+    reported "no tests"**, all of them in `_spawn_failure_result` -- the OSError branch, the
+    single place where "the harness could not ask" must not become "the command failed", had
+    no oracle at all. Three further survivor classes were genuine: `_tail`'s `errors="ignore"`
+    (handler names, unlike codec names, are case-sensitive), the `- started` duration
+    subtraction in both the success and spawn-failure paths, and the `'PATH'` key in
+    `_build_env`, whose mis-spelling silently swaps the inherited PATH for `os.defpath`.
+    Seven oracles added; result **48 killed / 9 survived / 0 uncovered**, and the nine
+    remaining are exactly the set classified as equivalent *before* re-running -- stdlib
+    defaults written explicitly, case-insensitive codec names, an unreachable float equality,
+    and operator-facing prose. All nine are now rows in
+    `knowledge/mutation-survivors-workplan.md`'s accepted-equivalent ledger, with rationale.
+
+E143 EVIDENCE Two measurements worth keeping, both of which a guess would have got wrong.
+    (a) `/bin/sh` in this container is **dash**, and dash's `printf` does not implement
+    `\xHH`: the first invalid-UTF-8 oracle emitted the literal text `ok\xff\xfe`, put no bad
+    byte on the pipe, and killed nothing. The octal form `\377\376` does. (b) The first PATH
+    oracle asserted only the first entry and so survived the key mutant, because
+    `os.defpath` is itself `:/bin:/usr/bin` and satisfied every weaker assertion. Replacing it
+    with a **differential** oracle -- measure the PATH with no workspace venv, then assert the
+    venv case equals that value with one entry prepended -- kills the mutant without
+    restating the implementation.
+
+E144 DEFECT The repository's own `fa authoring check` gate caught a real public-surface defect
+    in the new module that ruff, mypy and pyrefly all passed: `TAIL_LIMIT` was defined but
+    absent from `__all__` (HARD-BLOCK, `slice_verification.py:62`). It surfaced as a full-suite
+    regression in `test_s10a_cli_coverage::test_s10a_authoring_check_runs_on_a_real_workspace`,
+    which audits this checkout rather than a synthetic tree. The tell was already in my own
+    test file -- it imported `TAIL_LIMIT` from inside a function body, the smell of a symbol
+    the author knows is public but has not declared. Fixed in both places.
