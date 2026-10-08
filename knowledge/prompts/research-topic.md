@@ -28,6 +28,12 @@ Research <topic> and produce a structured note in `knowledge/research/<slug>.md`
 
 [Constraints]
 - Cite every non-obvious claim with a URL at the end of the relevant line.
+- **Pin the version and the date.** For arXiv, cite `{id}v{N}, retrieved {date}` — never a bare
+  id. Numbers move between versions, and an unpinned citation silently becomes wrong.
+- **Mark where the claim came from**: abstract, body, or table.
+- **Quote the exact sentence** for any claim a decision will rest on. Paraphrase is where
+  invented figures come from.
+- Put a **90-day re-check date** on anything benchmark-derived.
 - Markdown only. Keep the note under ~250 lines.
 - No code changes in this PR.
 - Do not mark the PR ready-for-review; a human will.

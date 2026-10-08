@@ -52,6 +52,7 @@ class TestDeadFlagsUnit:
             # PLAN S5a: mode for the coder-role per-slice ceremony injection
             # (fa.inner_loop.injections). Default "off".
             "coder_slice_ceremony_mode",
+            "workflow_verify_gate_mode",
         }
         assert declared_names == expected, (
             f"FeatureFlags drifted: missing={expected - declared_names} extra={declared_names - expected}"

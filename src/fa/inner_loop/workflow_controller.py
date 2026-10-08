@@ -12,8 +12,11 @@ The stage dispatcher (``_cmd_run``) is passed as a callable parameter
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -22,12 +25,24 @@ from typing import TYPE_CHECKING, Final
 
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import resolve_injection_modes
-from fa.inner_loop.plan_ids import canonical_slice_id, extract_plan_id, extract_plan_ids
+from fa.inner_loop.plan_ids import PlanIds, canonical_slice_id, extract_plan_id, extract_plan_ids
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
+from fa.inner_loop.slice_verification import (
+    CommandOutcome,
+    CommandResult,
+    NodeidCapture,
+    PlanVerification,
+    SliceVerdict,
+    SliceVerification,
+    _gate_mode,
+    capture_test_nodeids,
+    verify_plan,
+)
 from fa.inner_loop.workflow_artifacts import (
     EvalReport,
     FlowState,
     FlowStatus,
+    RouteDecision,
     default_route_for_verdict,
     load_flow_state,
     parse_eval_report,
@@ -109,6 +124,8 @@ class WorkflowArtifactPaths:
     base_dir: Path
     eval_report: Path
     flow_state: Path
+    verification: Path
+    verify_baseline: Path
 
 
 @dataclass(frozen=True)
@@ -147,6 +164,9 @@ class WorkflowContext:
     # evidence block) degrade silently rather than warning about a plan the
     # operator never supplied.
     plan_path: Path | None = None
+    # CT77c: resolved once at workflow start so one run cannot switch between
+    # observe/enforce if the operator edits config while a stage is in flight.
+    verify_gate_mode: str = "observe"
 
     def plan_text(self) -> str | None:
         """Read the plan once, or ``None`` if absent/unreadable.
@@ -191,11 +211,12 @@ class WorkflowProgress:
 
 @dataclass(frozen=True)
 class StageResult:
-    """Outcome of dispatching one role stage."""
+    """Outcome of dispatching one role stage, including harness verification evidence."""
 
     role: str
     exit_code: int
     eval_report: EvalReport | None = None
+    verification: PlanVerification | None = None
 
 
 # ── Helper functions ───────────────────────────────────────────────────────
@@ -216,7 +237,356 @@ def workflow_artifact_paths(run_id: str, *, base_dir: Path | None = None) -> Wor
         base_dir=base_dir,
         eval_report=base_dir / "eval_report.json",
         flow_state=base_dir / "flow_state.json",
+        verification=base_dir / "verification.json",
+        verify_baseline=base_dir / "verify_baseline.json",
     )
+
+
+@dataclass(frozen=True)
+class BaselineCapture:
+    """T0/now nodeid maps plus any harness evidence needed for an operator report."""
+
+    nodeids_by_slice: Mapping[str, Mapping[str, bool] | None]
+    captures: Mapping[str, NodeidCapture] = field(default_factory=dict)
+    errors: tuple[str, ...] = ()
+
+
+def _command_result_payload(result: CommandResult) -> dict[str, object]:
+    return {
+        "command": result.command,
+        "outcome": result.outcome.value,
+        "exit_code": result.exit_code,
+        "stdout_tail": result.stdout_tail,
+        "stderr_tail": result.stderr_tail,
+        "duration_s": result.duration_s,
+    }
+
+
+def _nodeid_capture_payload(capture: NodeidCapture) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "nodeids": None if capture.nodeids is None else dict(capture.nodeids),
+        "detail": capture.detail,
+    }
+    if capture.command_result is not None:
+        payload["command_result"] = _command_result_payload(capture.command_result)
+    return payload
+
+
+def _capture_nodeids_by_slice(
+    plan_ids: PlanIds,
+    *,
+    root: Path,
+    deadline: float | None = None,
+) -> BaselineCapture:
+    """Capture each slice's own TESTS set so regression evidence stays attributed."""
+    nodeids_by_slice: dict[str, Mapping[str, bool] | None] = {}
+    captures: dict[str, NodeidCapture] = {}
+    errors: list[str] = []
+    for record in plan_ids.slice_records:
+        try:
+            capture = capture_test_nodeids(record.test_paths, root=root, deadline=deadline)
+        except (OSError, ValueError, RuntimeError) as error:
+            capture = NodeidCapture(nodeids=None, detail=f"nodeid capture raised {type(error).__name__}: {error}")
+        captures[record.slice_id] = capture
+        nodeids_by_slice[record.slice_id] = capture.nodeids
+        if capture.nodeids is None:
+            errors.append(f"{record.slice_id}: {capture.detail or 'unusable JUnit nodeid report'}")
+    return BaselineCapture(nodeids_by_slice=nodeids_by_slice, captures=captures, errors=tuple(errors))
+
+
+def _baseline_payload(
+    *,
+    run_id: str,
+    plan_ids: PlanIds,
+    capture: BaselineCapture,
+) -> dict[str, object]:
+    records = {record.slice_id: record for record in plan_ids.slice_records}
+    slices: dict[str, object] = {}
+    for slice_id, snapshot in capture.nodeids_by_slice.items():
+        record = records[slice_id]
+        slice_payload: dict[str, object] = {
+            "test_paths": list(record.test_paths),
+            "nodeids": None if snapshot is None else dict(snapshot),
+        }
+        nodeid_capture = capture.captures.get(slice_id)
+        if nodeid_capture is not None:
+            slice_payload["capture"] = _nodeid_capture_payload(nodeid_capture)
+        slices[slice_id] = slice_payload
+    return {"schema_version": 1, "run_id": run_id, "slices": slices}
+
+
+def _write_json_exclusive(path: Path, payload: Mapping[str, object]) -> None:
+    """Create a private JSON file exactly once; never replace an existing T0."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def capture_baseline(
+    path: Path,
+    plan_ids: PlanIds,
+    *,
+    root: Path,
+    run_id: str,
+    deadline: float | None = None,
+) -> BaselineCapture:
+    """Capture and write the one permitted T0 snapshot before coder dispatch (CT85/86)."""
+    captured = _capture_nodeids_by_slice(plan_ids, root=root, deadline=deadline)
+    try:
+        _write_json_exclusive(path, _baseline_payload(run_id=run_id, plan_ids=plan_ids, capture=captured))
+    except (OSError, ValueError, TypeError) as error:
+        detail = f"verify_baseline.json was not created without overwriting: {error}"
+        logger.error("workflow verification baseline: %s", detail)
+        return BaselineCapture(
+            nodeids_by_slice=dict.fromkeys(captured.nodeids_by_slice),
+            captures=captured.captures,
+            errors=(*captured.errors, detail),
+        )
+    return captured
+
+
+def load_verify_baseline(path: Path, plan_ids: PlanIds, *, run_id: str) -> BaselineCapture:
+    """Load the immutable T0 maps for a later coder repair stage; malformed is ERROR."""
+    empty = {record.slice_id: None for record in plan_ids.slice_records}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return BaselineCapture(nodeids_by_slice=empty, errors=(f"T0 baseline unavailable: {error}",))
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1 or payload.get("run_id") != run_id:
+        return BaselineCapture(nodeids_by_slice=empty, errors=("T0 baseline schema or run_id does not match",))
+    stored_slices = payload.get("slices")
+    if not isinstance(stored_slices, dict):
+        return BaselineCapture(nodeids_by_slice=empty, errors=("T0 baseline has no slices mapping",))
+
+    maps: dict[str, Mapping[str, bool] | None] = {}
+    errors: list[str] = []
+    for record in plan_ids.slice_records:
+        slice_payload = stored_slices.get(record.slice_id)
+        raw_nodeids = slice_payload.get("nodeids") if isinstance(slice_payload, dict) else None
+        if raw_nodeids is None:
+            maps[record.slice_id] = None
+            errors.append(f"{record.slice_id}: T0 nodeid snapshot is unavailable")
+            continue
+        if not isinstance(raw_nodeids, dict) or any(
+            not isinstance(nodeid, str) or type(passed) is not bool for nodeid, passed in raw_nodeids.items()
+        ):
+            maps[record.slice_id] = None
+            errors.append(f"{record.slice_id}: T0 nodeid snapshot is malformed")
+            continue
+        maps[record.slice_id] = dict(raw_nodeids)
+    return BaselineCapture(nodeids_by_slice=maps, errors=tuple(errors))
+
+
+def _slice_verification_payload(result: SliceVerification) -> dict[str, object]:
+    """Serialize one slice explicitly at the artifact boundary."""
+    return {
+        "slice_id": result.slice_id,
+        "verdict": result.verdict.value,
+        "test_paths": list(result.test_paths),
+        "commands": [_command_result_payload(command) for command in result.command_results],
+        "kill_checks": [
+            {
+                "contract_id": contract_id,
+                "operator": check.directive.operator.value,
+                "path": check.directive.path,
+                "symbol": check.directive.symbol,
+                "callee": check.directive.callee,
+                "verdict": check.verdict.value,
+                "detail": check.detail,
+                "duration_s": check.duration_s,
+            }
+            for contract_id, check in result.kill_checks
+        ],
+        "regression_nodeids": list(result.regression_nodeids),
+        "failed_nodeids": list(result.failed_nodeids),
+        "detail": result.detail,
+    }
+
+
+def _verification_attempt_payload(
+    verification: PlanVerification,
+    *,
+    mode: str,
+    repair_round: int,
+) -> dict[str, object]:
+    return {
+        "mode": mode,
+        "repair_round": repair_round,
+        "blocking": verification.blocking,
+        "plan_commands": [_command_result_payload(result) for result in verification.plan_command_results],
+        "slices": [_slice_verification_payload(result) for result in verification.slice_verifications],
+        "errors": list(verification.errors),
+    }
+
+
+def write_verification(
+    path: Path,
+    verification: PlanVerification,
+    *,
+    run_id: str,
+    mode: str,
+    repair_round: int,
+) -> None:
+    """Append one attempt to the run's verification artifact via atomic replacement (CT77b)."""
+    if path.exists():
+        previous = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(previous, dict)
+            or previous.get("schema_version") != 1
+            or previous.get("run_id") != run_id
+            or not isinstance(previous.get("attempts"), list)
+        ):
+            raise ValueError("existing verification.json has an incompatible run identity or schema")
+        attempts = list(previous["attempts"])
+    else:
+        attempts = []
+    attempts.append(_verification_attempt_payload(verification, mode=mode, repair_round=repair_round))
+    payload = {"schema_version": 1, "run_id": run_id, "attempts": attempts}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        os.replace(temporary_path, path)
+    except Exception:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+        raise
+
+
+def _verification_lines(path: Path) -> tuple[str, ...]:
+    """Render the latest observed per-slice verdicts for the eval evidence block (CT77)."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        attempts = payload.get("attempts") if isinstance(payload, dict) else None
+        if not isinstance(attempts, list) or not attempts or not isinstance(attempts[-1], dict):
+            return ()
+        latest = attempts[-1]
+        mode = latest.get("mode", "unknown")
+        lines = [f"Harness verify gate (mode={mode}, repair_round={latest.get('repair_round', '?')}):"]
+        slices = latest.get("slices", [])
+        if isinstance(slices, list):
+            for item in slices:
+                if isinstance(item, dict) and isinstance(item.get("slice_id"), str):
+                    lines.append(f"- {item['slice_id']}: {item.get('verdict', 'unknown')}")
+        for error in latest.get("errors", []):
+            lines.append(f"- Harness error: {error}")
+        return tuple(lines)
+    except FileNotFoundError:
+        return ()
+    except (OSError, json.JSONDecodeError, TypeError, AttributeError) as error:
+        logger.warning("workflow verification evidence unavailable at %s: %s", path, error)
+        return (f"Harness verification artifact unavailable: {error}",)
+
+
+def _verification_is_indeterminate(verification: PlanVerification) -> bool:
+    """Whether the verifier could not determine a trustworthy pass/fail result."""
+    return bool(
+        verification.errors
+        or any(result.outcome is CommandOutcome.ERROR for result in verification.plan_command_results)
+        or any(
+            result.verdict is SliceVerdict.ERROR
+            or any(command.outcome is CommandOutcome.ERROR for command in result.command_results)
+            for result in verification.slice_verifications
+        )
+    )
+
+
+def _verification_block_detail(verification: PlanVerification) -> str:
+    """Return one concise, deterministic reason the enforce gate did not pass."""
+    if verification.errors:
+        return verification.errors[0]
+    for result in verification.plan_command_results:
+        if result.outcome is not CommandOutcome.PASS:
+            return (
+                f"plan command {result.command!r}: outcome={result.outcome.value}, "
+                f"exit_code={result.exit_code}, stderr={result.stderr_tail or '(empty)'}"
+            )
+    for slice_result in verification.slice_verifications:
+        if slice_result.verdict in {SliceVerdict.PROVEN, SliceVerdict.SKIPPED}:
+            continue
+        for result in slice_result.command_results:
+            if result.outcome is not CommandOutcome.PASS:
+                return (
+                    f"{slice_result.slice_id} command {result.command!r}: outcome={result.outcome.value}, "
+                    f"exit_code={result.exit_code}, stderr={result.stderr_tail or '(empty)'}"
+                )
+        for contract_id, check in slice_result.kill_checks:
+            if check.verdict is not SliceVerdict.PROVEN:
+                return f"{slice_result.slice_id} {contract_id} kill-check is {check.verdict.value}: {check.detail}"
+        if slice_result.regression_nodeids:
+            return f"{slice_result.slice_id} regression: {', '.join(slice_result.regression_nodeids)}"
+        return f"{slice_result.slice_id} verification is {slice_result.verdict.value}: {slice_result.detail}"
+    return "the harness verification gate is blocking without a more specific result"
+
+
+def _effective_controller_route(
+    report: EvalReport | None,
+    verification: PlanVerification | None,
+    *,
+    gate_mode: str,
+    eval_requested: bool,
+    verification_required: bool = False,
+) -> RouteDecision | None:
+    """Reconcile eval judgment with non-waivable verifier facts after eval runs.
+
+    Observe mode records verifier evidence but leaves routing to eval. Enforce
+    mode never lets a blocking verifier result become ``complete``. Eval's
+    non-complete route always wins; only an eval ``complete`` is reconciled:
+    unusable evidence becomes ``blocked`` and a determinate failure falls back
+    to the existing bounded coder-repair route. The actual EvalReport stays the
+    model's report -- this is controller routing, not a synthetic replacement.
+    """
+    if report is None:
+        if eval_requested:
+            return "blocked"
+        if gate_mode == "enforce" and verification_required and verification is None:
+            return "blocked"
+        if verification is not None and gate_mode == "enforce" and verification.blocking:
+            return "blocked" if _verification_is_indeterminate(verification) else "return_to_coder"
+        return None
+
+    if gate_mode != "enforce":
+        return report.route_decision
+    # Eval owns negative routing authority. The gate is a floor against PASS,
+    # not a ceiling that can erase a stricter eval decision.
+    if report.route_decision != "complete":
+        return report.route_decision
+    if verification_required and verification is None:
+        return "blocked"
+    if verification is None or not verification.blocking:
+        return report.route_decision
+    if _verification_is_indeterminate(verification):
+        return "blocked"
+    return "return_to_coder"
 
 
 def emit_eval_report(
@@ -382,6 +752,9 @@ diff cannot evict the rest of the block -- and the task itself -- from the
 judge's context. Truncation is always announced, never silent.
 """
 
+EVAL_VERIFICATION_MAX_CHARS: Final = 20_000
+"""Cap on detailed deterministic verification evidence sent to the evaluator."""
+
 EVAL_GIT_TIMEOUT_SECONDS: Final = 15
 """Per-invocation cap on the advisory git calls.
 
@@ -430,7 +803,63 @@ def _git_output(args: list[str], cwd: Path, runner: Callable[..., object] | None
     return str(getattr(result, "stdout", "") or "")
 
 
-def _eval_evidence_block(ctx: WorkflowContext, *, runner: Callable[..., object] | None = None) -> str:
+def _verification_evidence_lines(
+    verification: PlanVerification,
+    *,
+    mode: str,
+    repair_round: int,
+    artifact_path: Path,
+) -> tuple[str, ...]:
+    """Render the current attempt's authoritative facts for the evaluator."""
+    lines = [
+        f"Harness verify gate (mode={mode}, repair_round={repair_round}, blocking={verification.blocking}):",
+        f"Detailed artifact: {artifact_path}",
+    ]
+    for result in verification.plan_command_results:
+        lines.append(
+            f"- Plan command: outcome={result.outcome.value}, exit_code={result.exit_code}, "
+            f"duration_s={result.duration_s:.3f}; {result.command}"
+        )
+        if result.stderr_tail:
+            lines.append(f"  stderr tail: {result.stderr_tail}")
+    for slice_result in verification.slice_verifications:
+        lines.append(f"- {slice_result.slice_id}: {slice_result.verdict.value}")
+        if slice_result.detail:
+            lines.append(f"  detail: {slice_result.detail}")
+        for result in slice_result.command_results:
+            lines.append(
+                f"  verify command: outcome={result.outcome.value}, exit_code={result.exit_code}, "
+                f"duration_s={result.duration_s:.3f}; {result.command}"
+            )
+            if result.stderr_tail:
+                lines.append(f"    stderr tail: {result.stderr_tail}")
+        for contract_id, check in slice_result.kill_checks:
+            lines.append(f"  {contract_id} kill-check: {check.verdict.value}")
+            if check.detail:
+                lines.append(f"    detail: {check.detail}")
+        if slice_result.regression_nodeids:
+            lines.append(f"  regression nodeids: {', '.join(slice_result.regression_nodeids)}")
+        if slice_result.failed_nodeids:
+            lines.append(f"  currently failing nodeids: {', '.join(slice_result.failed_nodeids)}")
+    for error in verification.errors:
+        lines.append(f"- Harness error: {error}")
+    rendered = "\n".join(lines)
+    if len(rendered) > EVAL_VERIFICATION_MAX_CHARS:
+        rendered = (
+            rendered[:EVAL_VERIFICATION_MAX_CHARS]
+            + f"\n[verification evidence truncated at {EVAL_VERIFICATION_MAX_CHARS} characters; "
+            f"full artifact: {artifact_path}]"
+        )
+    return tuple(rendered.splitlines())
+
+
+def _eval_evidence_block(
+    ctx: WorkflowContext,
+    *,
+    verification: PlanVerification | None = None,
+    repair_round: int = 0,
+    runner: Callable[..., object] | None = None,
+) -> str:
     """Build the evidence preamble handed to the eval stage. (S13)
 
     **Why this exists.** The eval prompt asks the judge whether the coder
@@ -464,6 +893,18 @@ def _eval_evidence_block(ctx: WorkflowContext, *, runner: Callable[..., object] 
                 # it would evict the diff -- the judge has fs_read_file.
                 lines.append(f"Plan slices to judge ({len(slices)}): {', '.join(slices)}")
         lines.append("Read the plan for the execution contract; do not infer it from the transcript.")
+
+    if verification is None:
+        lines.extend(_verification_lines(ctx.artifact_paths.verification))
+    else:
+        lines.extend(
+            _verification_evidence_lines(
+                verification,
+                mode=ctx.verify_gate_mode,
+                repair_round=repair_round,
+                artifact_path=ctx.artifact_paths.verification,
+            )
+        )
 
     stat = _git_output(["diff", "HEAD", "--stat"], ctx.workspace, runner)
     diff = _git_output(["diff", "HEAD"], ctx.workspace, runner)
@@ -516,6 +957,7 @@ def _run_stage(
     progress: WorkflowProgress,
     transition_reason: str,
     run_stage_fn: Callable[..., int],
+    prior_verification: PlanVerification | None = None,
 ) -> StageResult:
     """Dispatch one role session and, for ``eval``, persist its report.
 
@@ -557,7 +999,7 @@ def _run_stage(
     # of the coder's own work is not input to writing it.
     stage_task = ctx.task_for(role)
     if role == "eval":
-        evidence = _eval_evidence_block(ctx)
+        evidence = _eval_evidence_block(ctx, verification=prior_verification, repair_round=progress.repair_round)
         if evidence:
             # Appended, never substituted: the task states what to judge and
             # the block states what to judge it against.
@@ -608,6 +1050,36 @@ def _run_stage(
     # correct only by virtue of being written last. LOGIC-11 already
     # documented the single-aggregate intent; only eval was honouring it.
     #
+    # CT86: establish T0 before the first coder dispatch, not after its edits.
+    # Keep this parsed plan snapshot for the post-stage gate so a coder cannot
+    # rewrite the plan during its own stage and thereby move the target.
+    plan_ids_for_stage: PlanIds | None = None
+    baseline_capture: BaselineCapture | None = None
+    plan_read_error: str | None = None
+    if role == "coder":
+        plan_text_for_stage = ctx.plan_text()
+        if plan_text_for_stage is None:
+            if ctx.plan_path is None:
+                plan_read_error = "plan artifact was not supplied before coder dispatch"
+            else:
+                plan_read_error = f"plan artifact was unreadable before coder dispatch: {ctx.plan_path}"
+        plan_ids_for_stage = extract_plan_ids(plan_text_for_stage) if plan_text_for_stage is not None else PlanIds()
+        baseline_capture = (
+            capture_baseline(
+                ctx.artifact_paths.verify_baseline,
+                plan_ids_for_stage,
+                root=ctx.workspace,
+                run_id=ctx.run_id,
+                deadline=ctx.deadline_mono,
+            )
+            if progress.repair_round == 0
+            else load_verify_baseline(
+                ctx.artifact_paths.verify_baseline,
+                plan_ids_for_stage,
+                run_id=ctx.run_id,
+            )
+        )
+
     # ``sink`` is local to this stage and is read below for eval alone, so
     # collecting a non-eval outcome here is inert.
     code = run_stage_fn(
@@ -617,6 +1089,56 @@ def _run_stage(
         outcome_sink=sink,
     )
     report: EvalReport | None = None
+    verification: PlanVerification | None = None
+    if role == "coder" and code == 0:
+        plan_ids = plan_ids_for_stage or PlanIds()
+        baseline = baseline_capture or BaselineCapture(nodeids_by_slice={})
+        now = _capture_nodeids_by_slice(plan_ids, root=ctx.workspace, deadline=ctx.deadline_mono)
+        try:
+            verification = verify_plan(
+                plan_ids,
+                root=ctx.workspace,
+                baseline_by_slice=baseline.nodeids_by_slice,
+                now_by_slice=now.nodeids_by_slice,
+                deadline=ctx.deadline_mono,
+            )
+        except Exception as error:  # Uncertainty is a recorded ERROR, never a pass.
+            logger.exception("workflow verification failed unexpectedly (run=%s)", ctx.run_id)
+            verification = PlanVerification(
+                plan_command_results=(),
+                slice_verifications=(),
+                errors=(f"verify_plan raised {type(error).__name__}: {error}",),
+            )
+        capture_errors = tuple(
+            error
+            for error in (
+                *((plan_read_error,) if plan_read_error else ()),
+                *baseline.errors,
+                *now.errors,
+            )
+        )
+        if capture_errors:
+            verification = replace(verification, errors=(*verification.errors, *capture_errors))
+        gate_mode = _gate_mode(ctx.verify_gate_mode)
+        try:
+            write_verification(
+                ctx.artifact_paths.verification,
+                verification,
+                run_id=ctx.run_id,
+                mode=gate_mode,
+                repair_round=progress.repair_round,
+            )
+        except Exception as error:  # Artifact failure stays explicit and blocks enforce mode.
+            logger.exception("workflow verification artifact write failed (run=%s)", ctx.run_id)
+            verification = replace(
+                verification,
+                errors=(*verification.errors, f"verification.json write failed: {type(error).__name__}: {error}"),
+            )
+        print(
+            f"fa workflow: verify gate mode={gate_mode} blocking={verification.blocking} "
+            f"→ {ctx.artifact_paths.verification}",
+            file=sys.stderr,
+        )
     if role == "eval" and code == 0 and sink:
         try:
             from fa.providers import load_models_config_from_path
@@ -650,7 +1172,7 @@ def _run_stage(
             f"route={report.route_decision} → {ctx.artifact_paths.eval_report}",
             file=sys.stderr,
         )
-    return StageResult(role=role, exit_code=code, eval_report=report)
+    return StageResult(role=role, exit_code=code, eval_report=report, verification=verification)
 
 
 def _deadline_exceeded(ctx: WorkflowContext) -> bool:
@@ -773,6 +1295,7 @@ def _write_terminal_state(
     progress: WorkflowProgress,
     reason: str,
     eval_requested: bool = False,
+    route_override: RouteDecision | None = None,
 ) -> None:
     status: FlowStatus
     route: str
@@ -783,6 +1306,17 @@ def _write_terminal_state(
     else:
         status, blocked = terminal_status_without_eval(eval_requested=eval_requested)
         route = ""
+
+    if route_override is not None:
+        route = route_override
+        if route_override == "return_to_coder":
+            status = "REPAIR_REQUIRED"
+        elif route_override == "return_to_planner":
+            status = "REPLAN_REQUIRED"
+        elif route_override == "blocked":
+            status = "FAILED"
+            blocked = reason
+
     write_flow_state(
         ctx.artifact_paths.flow_state,
         FlowState(
@@ -832,8 +1366,10 @@ def _print_terminal_summary(
     n_stages: int,
     eval_report: EvalReport | None,
     repair_rounds_used: int,
+    effective_route: RouteDecision | None = None,
 ) -> None:
-    if eval_report is not None and eval_report.verdict == "PASS":
+    route = effective_route or (eval_report.route_decision if eval_report is not None else None)
+    if eval_report is not None and eval_report.verdict == "PASS" and route == "complete":
         suffix = f" after {repair_rounds_used} repair round(s)" if repair_rounds_used else ""
         print(
             f"\nfa workflow: accepted (verdict=PASS){suffix} — run_id={ctx.run_id}",
@@ -842,10 +1378,17 @@ def _print_terminal_summary(
         return
     if eval_report is not None:
         tail = f" (repair budget {repair_rounds_used} exhausted)" if repair_rounds_used else ""
+        route_note = f" (eval proposed {eval_report.route_decision})" if route != eval_report.route_decision else ""
         print(
             f"\nfa workflow: {n_stages} stage(s) ran (run_id={ctx.run_id}); "
-            f"eval verdict={eval_report.verdict} route={eval_report.route_decision} "
+            f"eval verdict={eval_report.verdict} route={route or 'unresolved'}{route_note} "
             f"— not accepted{tail}.",
+            file=sys.stderr,
+        )
+        return
+    if route not in {None, "complete"}:
+        print(
+            f"\nfa workflow: {n_stages} stage(s) ran (run_id={ctx.run_id}); verification route={route} — not accepted.",
             file=sys.stderr,
         )
         return
@@ -880,6 +1423,25 @@ def _canonical_loop_roles(roles: list[str], *, include_planner: bool) -> tuple[s
     return tuple(role for role in canonical if role in roles)
 
 
+def _ensure_eval_after_coder(roles: list[str]) -> list[str]:
+    """Place one eval stage immediately after every coder stage. (Q55)
+
+    A successful coder dispatch is always judged, even when the caller omits
+    ``eval`` or lists it before ``coder``. Explicit eval entries are relocated
+    rather than duplicated.
+    """
+    if "coder" not in roles:
+        return list(roles)
+    normalized: list[str] = []
+    for role in roles:
+        if role == "eval":
+            continue
+        normalized.append(role)
+        if role == "coder":
+            normalized.append("eval")
+    return normalized
+
+
 # ── Pipeline modes ─────────────────────────────────────────────────────────
 
 
@@ -887,9 +1449,11 @@ def _run_initial_roles(
     ctx: WorkflowContext,
     roles: list[str],
     run_stage_fn: Callable[..., int],
-) -> tuple[int, int, EvalReport | None]:
+) -> tuple[int, int, EvalReport | None, PlanVerification | None]:
+    """Run the configured initial role sequence, carrying facts from coder to eval."""
     progress = WorkflowProgress()
     eval_report: EvalReport | None = None
+    verification: PlanVerification | None = None
     n_stages = 0
     for index, role in enumerate(roles):
         n_stages += 1
@@ -901,13 +1465,193 @@ def _run_initial_roles(
             progress=progress,
             transition_reason=f"dispatching stage {index + 1}/{len(roles)}",
             run_stage_fn=run_stage_fn,
+            prior_verification=verification,
         )
         if result.exit_code != 0:
             _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-            return result.exit_code, n_stages, eval_report
+            return result.exit_code, n_stages, eval_report, verification
+        if role == "coder":
+            verification = result.verification
         if result.eval_report is not None:
             eval_report = result.eval_report
-    return 0, n_stages, eval_report
+    return 0, n_stages, eval_report, verification
+
+
+def _finish_adaptive(
+    ctx: WorkflowContext,
+    *,
+    n_stages: int,
+    eval_report: EvalReport | None,
+    progress: WorkflowProgress,
+    route: RouteDecision | None,
+    reason: str,
+    eval_requested: bool = True,
+    last_role: str = "eval",
+) -> int:
+    """Persist and summarize one terminal adaptive route."""
+    _write_terminal_state(
+        ctx,
+        last_role=last_role,
+        eval_report=eval_report,
+        progress=progress,
+        reason=reason,
+        eval_requested=eval_requested,
+        route_override=route,
+    )
+    _print_terminal_summary(
+        ctx,
+        n_stages=n_stages,
+        eval_report=eval_report,
+        repair_rounds_used=progress.repair_round,
+        effective_route=route,
+    )
+    return 0
+
+
+def _dispatch_adaptive_round(
+    ctx: WorkflowContext,
+    stage_roles: tuple[str, ...],
+    run_stage_fn: Callable[..., int],
+    *,
+    progress: WorkflowProgress,
+    n_stages: int,
+    eval_report: EvalReport,
+    verification: PlanVerification | None,
+    reason_prefix: str,
+) -> tuple[int, int, EvalReport, PlanVerification | None]:
+    """Run one canonical coder/eval or planner/coder/eval adaptive round."""
+    for role in stage_roles:
+        result = _run_stage(
+            ctx,
+            role,
+            fresh=False,
+            progress=progress,
+            transition_reason=f"{reason_prefix}: canonical {role}",
+            run_stage_fn=run_stage_fn,
+            prior_verification=verification,
+        )
+        n_stages += 1
+        if result.exit_code != 0:
+            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
+            return result.exit_code, n_stages, eval_report, verification
+        if role == "coder":
+            verification = result.verification
+        if result.eval_report is not None:
+            eval_report = result.eval_report
+    return 0, n_stages, eval_report, verification
+
+
+def _run_adaptive_repair(
+    ctx: WorkflowContext,
+    roles: list[str],
+    max_repairs: int,
+    run_stage_fn: Callable[..., int],
+    *,
+    progress: WorkflowProgress,
+    n_stages: int,
+    eval_report: EvalReport,
+    verification: PlanVerification | None,
+    route: RouteDecision,
+) -> tuple[bool, int, int, WorkflowProgress, EvalReport, PlanVerification | None]:
+    """Use one bounded repair round, or terminate when the existing cap is spent."""
+    if progress.repair_round >= max_repairs:
+        if verification is not None and verification.blocking and eval_report.route_decision == "complete":
+            reason = (
+                f"enforce verification gate remains blocking after repair budget "
+                f"({progress.repair_round}/{max_repairs}): {_verification_block_detail(verification)}"
+            )
+        else:
+            reason = f"repair budget exhausted ({progress.repair_round}/{max_repairs}); last route return_to_coder"
+        _finish_adaptive(
+            ctx,
+            n_stages=n_stages,
+            eval_report=eval_report,
+            progress=progress,
+            route=route,
+            reason=reason,
+        )
+        return False, 0, n_stages, progress, eval_report, verification
+
+    progress = WorkflowProgress(
+        plan_version=progress.plan_version,
+        repair_round=progress.repair_round + 1,
+        replan_round=progress.replan_round,
+    )
+    print(
+        f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} (adaptive route return_to_coder)",
+        file=sys.stderr,
+    )
+    code, n_stages, eval_report, verification = _dispatch_adaptive_round(
+        ctx,
+        _canonical_loop_roles(roles, include_planner=False),
+        run_stage_fn,
+        progress=progress,
+        n_stages=n_stages,
+        eval_report=eval_report,
+        verification=verification,
+        reason_prefix=f"repair round {progress.repair_round}: after return_to_coder",
+    )
+    return code == 0, code, n_stages, progress, eval_report, verification
+
+
+def _run_adaptive_replan(
+    ctx: WorkflowContext,
+    roles: list[str],
+    max_replans: int,
+    run_stage_fn: Callable[..., int],
+    *,
+    progress: WorkflowProgress,
+    n_stages: int,
+    eval_report: EvalReport,
+    verification: PlanVerification | None,
+    route: RouteDecision,
+) -> tuple[bool, int, int, WorkflowProgress, EvalReport, PlanVerification | None]:
+    """Use one bounded planner round, or terminate if it cannot be honored."""
+    if "planner" not in roles:
+        reason = (
+            f"eval routed return_to_planner but no planner role is configured (roles={','.join(roles)}); cannot replan"
+        )
+        _finish_adaptive(
+            ctx,
+            n_stages=n_stages,
+            eval_report=eval_report,
+            progress=progress,
+            route=route,
+            reason=reason,
+        )
+        return False, 0, n_stages, progress, eval_report, verification
+    if progress.replan_round >= max_replans:
+        reason = f"replan budget exhausted ({progress.replan_round}/{max_replans}); last route return_to_planner"
+        _finish_adaptive(
+            ctx,
+            n_stages=n_stages,
+            eval_report=eval_report,
+            progress=progress,
+            route=route,
+            reason=reason,
+        )
+        return False, 0, n_stages, progress, eval_report, verification
+
+    progress = WorkflowProgress(
+        plan_version=progress.plan_version + 1,
+        repair_round=progress.repair_round,
+        replan_round=progress.replan_round + 1,
+    )
+    print(
+        f"\nfa workflow ─ replan round {progress.replan_round}/{max_replans} (plan version {progress.plan_version})",
+        file=sys.stderr,
+    )
+    code, n_stages, eval_report, verification = _dispatch_adaptive_round(
+        ctx,
+        _canonical_loop_roles(roles, include_planner=True),
+        run_stage_fn,
+        progress=progress,
+        n_stages=n_stages,
+        eval_report=eval_report,
+        verification=verification,
+        reason_prefix=f"replan round {progress.replan_round}: after return_to_planner",
+    )
+    return code == 0, code, n_stages, progress, eval_report, verification
 
 
 def _run_adaptive(
@@ -917,152 +1661,126 @@ def _run_adaptive(
     max_replans: int,
     run_stage_fn: Callable[..., int],
 ) -> int:
-    """Run the initial role list, then normalize loops to canonical routes."""
-    code, n_stages, eval_report = _run_initial_roles(ctx, roles, run_stage_fn)
+    """Run normalized roles, evaluate every coder attempt, then route on eval plus gate facts."""
+    code, n_stages, eval_report, verification = _run_initial_roles(ctx, roles, run_stage_fn)
     if code != 0:
         return code
 
     progress = WorkflowProgress()
+    eval_requested = "eval" in roles
+    verification_required = "coder" in roles
+    route = _effective_controller_route(
+        eval_report,
+        verification,
+        gate_mode=ctx.verify_gate_mode,
+        eval_requested=eval_requested,
+        verification_required=verification_required,
+    )
     if eval_report is None:
-        _write_terminal_state(
+        if ctx.verify_gate_mode == "enforce" and verification is not None and verification.blocking:
+            reason = f"enforce verification gate: {_verification_block_detail(verification)}"
+        elif eval_requested:
+            reason = "eval stage produced no verdict"
+        elif verification_required:
+            reason = "coder stage completed without an eval verdict"
+        else:
+            reason = "adaptive workflow completed without eval stage"
+        return _finish_adaptive(
             ctx,
-            last_role=roles[-1],
+            n_stages=n_stages,
             eval_report=None,
             progress=progress,
-            reason=(
-                "eval stage ran but produced no verdict"
-                if "eval" in roles
-                else "adaptive workflow completed without eval stage"
-            ),
-            # S11a/F6: "eval" present in roles means a judge WAS asked for.
-            eval_requested="eval" in roles,
+            route=route,
+            reason=reason,
+            eval_requested=eval_requested,
+            last_role=roles[-1] if roles else "workflow",
         )
-        _print_terminal_summary(ctx, n_stages=n_stages, eval_report=None, repair_rounds_used=0)
-        return 0
 
     while True:
-        if eval_report.route_decision == "return_to_coder":
-            if progress.repair_round >= max_repairs:
-                reason = f"repair budget exhausted ({progress.repair_round}/{max_repairs}); last route return_to_coder"
-                _write_terminal_state(ctx, last_role="eval", eval_report=eval_report, progress=progress, reason=reason)
-                _print_terminal_summary(
-                    ctx,
-                    n_stages=n_stages,
-                    eval_report=eval_report,
-                    repair_rounds_used=progress.repair_round,
-                )
-                return 0
-            progress = WorkflowProgress(
-                plan_version=progress.plan_version,
-                repair_round=progress.repair_round + 1,
-                replan_round=progress.replan_round,
-            )
-            print(
-                f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} (adaptive route return_to_coder)",
-                file=sys.stderr,
-            )
-            for role in _canonical_loop_roles(roles, include_planner=False):
-                result = _run_stage(
-                    ctx,
-                    role,
-                    fresh=False,
-                    progress=progress,
-                    transition_reason=f"repair round {progress.repair_round}: canonical {role} after return_to_coder",
-                    run_stage_fn=run_stage_fn,
-                )
-                n_stages += 1
-                if result.exit_code != 0:
-                    _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-                    return result.exit_code
-                if result.eval_report is not None:
-                    eval_report = result.eval_report
-            continue
-
-        if eval_report.route_decision == "return_to_planner":
-            # D4: adaptive accepts a planner-less role list (e.g. coder,eval),
-            # which is what the removed ``repair`` mode used to serve. Without
-            # a planner there is nobody to replan, so a return_to_planner route
-            # is terminal rather than a loop — the alternative would be to spin
-            # the canonical loop with the planner silently filtered out by
-            # _canonical_loop_roles, re-running coder→eval on an unchanged plan
-            # until the replan budget drained.
-            if "planner" not in roles:
-                reason = (
-                    f"eval routed return_to_planner but no planner role is configured "
-                    f"(roles={','.join(roles)}); cannot replan"
-                )
-                _write_terminal_state(ctx, last_role="eval", eval_report=eval_report, progress=progress, reason=reason)
-                _print_terminal_summary(
-                    ctx,
-                    n_stages=n_stages,
-                    eval_report=eval_report,
-                    repair_rounds_used=progress.repair_round,
-                )
-                # 0 means "the controller finished normally", not "success":
-                # workflow_exit_code maps the non-DONE terminal state to 1.
-                # Returning 1 here is an equivalent mutant (verified: identical
-                # exit code, status, reason and stage counts), so no test can
-                # distinguish them. 0 is used for consistency with every other
-                # terminal branch in this function.
-                return 0
-            if progress.replan_round >= max_replans:
-                reason = (
-                    f"replan budget exhausted ({progress.replan_round}/{max_replans}); last route return_to_planner"
-                )
-                _write_terminal_state(ctx, last_role="eval", eval_report=eval_report, progress=progress, reason=reason)
-                _print_terminal_summary(
-                    ctx,
-                    n_stages=n_stages,
-                    eval_report=eval_report,
-                    repair_rounds_used=progress.repair_round,
-                )
-                return 0
-            progress = WorkflowProgress(
-                plan_version=progress.plan_version + 1,
-                repair_round=progress.repair_round,
-                replan_round=progress.replan_round + 1,
-            )
-            print(
-                f"\nfa workflow ─ replan round {progress.replan_round}/{max_replans} "
-                f"(plan version {progress.plan_version})",
-                file=sys.stderr,
-            )
-            for role in _canonical_loop_roles(roles, include_planner=True):
-                result = _run_stage(
-                    ctx,
-                    role,
-                    fresh=False,
-                    progress=progress,
-                    transition_reason=f"replan round {progress.replan_round}: canonical {role} after return_to_planner",
-                    run_stage_fn=run_stage_fn,
-                )
-                n_stages += 1
-                if result.exit_code != 0:
-                    _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-                    return result.exit_code
-                if result.eval_report is not None:
-                    eval_report = result.eval_report
-            continue
-
-        reason = (
-            f"eval verdict {eval_report.verdict} after {progress.repair_round} repair round(s) "
-            f"and {progress.replan_round} replan round(s)"
+        route = _effective_controller_route(
+            eval_report,
+            verification,
+            gate_mode=ctx.verify_gate_mode,
+            eval_requested=eval_requested,
+            verification_required=verification_required,
         )
-        _write_terminal_state(ctx, last_role="eval", eval_report=eval_report, progress=progress, reason=reason)
-        _print_terminal_summary(
+        if route == "blocked":
+            detail = (
+                _verification_block_detail(verification)
+                if verification is not None and verification.blocking
+                else eval_report.summary
+            )
+            return _finish_adaptive(
+                ctx,
+                n_stages=n_stages,
+                eval_report=eval_report,
+                progress=progress,
+                route=route,
+                reason=f"workflow blocked after eval: {detail}",
+            )
+        if route == "return_to_coder":
+            keep_going, code, n_stages, progress, eval_report, verification = _run_adaptive_repair(
+                ctx,
+                roles,
+                max_repairs,
+                run_stage_fn,
+                progress=progress,
+                n_stages=n_stages,
+                eval_report=eval_report,
+                verification=verification,
+                route=route,
+            )
+            if not keep_going:
+                return code
+            continue
+        if route == "return_to_planner":
+            keep_going, code, n_stages, progress, eval_report, verification = _run_adaptive_replan(
+                ctx,
+                roles,
+                max_replans,
+                run_stage_fn,
+                progress=progress,
+                n_stages=n_stages,
+                eval_report=eval_report,
+                verification=verification,
+                route=route,
+            )
+            if not keep_going:
+                return code
+            continue
+
+        if (
+            ctx.verify_gate_mode == "enforce"
+            and verification is not None
+            and verification.blocking
+            and eval_report.route_decision == "complete"
+        ):
+            reason = f"enforce verification gate remains blocking: {_verification_block_detail(verification)}"
+        else:
+            reason = (
+                f"eval verdict {eval_report.verdict} after {progress.repair_round} repair round(s) "
+                f"and {progress.replan_round} replan round(s)"
+            )
+        return _finish_adaptive(
             ctx,
             n_stages=n_stages,
             eval_report=eval_report,
-            repair_rounds_used=progress.repair_round,
+            progress=progress,
+            route=route,
+            reason=reason,
         )
-        return 0
 
 
 def _run_linear(ctx: WorkflowContext, roles: list[str], run_stage_fn: Callable[..., int]) -> int:
-    """Run every role once, in order. Fail-fast on any non-zero stage exit."""
+    """Run every role once, evaluating after coder and enforcing verifier facts afterward."""
     eval_report: EvalReport | None = None
+    verification: PlanVerification | None = None
     progress = WorkflowProgress()
+    n_stages = 0
+    last_role = roles[0]
     for index, role in enumerate(roles):
+        n_stages += 1
+        last_role = role
         print(f"\nfa workflow ─ stage {index + 1}/{len(roles)}: {role}", file=sys.stderr)
         result = _run_stage(
             ctx,
@@ -1071,26 +1789,51 @@ def _run_linear(ctx: WorkflowContext, roles: list[str], run_stage_fn: Callable[.
             progress=progress,
             transition_reason=f"dispatching stage {index + 1}/{len(roles)}",
             run_stage_fn=run_stage_fn,
+            prior_verification=verification,
         )
         if result.exit_code != 0:
             _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
             return result.exit_code
+        if role == "coder":
+            verification = result.verification
         if result.eval_report is not None:
             eval_report = result.eval_report
+
+    route = _effective_controller_route(
+        eval_report,
+        verification,
+        gate_mode=ctx.verify_gate_mode,
+        eval_requested="eval" in roles,
+        verification_required="coder" in roles,
+    )
+    if route == "blocked":
+        detail = (
+            _verification_block_detail(verification)
+            if verification is not None and verification.blocking
+            else "eval stage produced no usable verdict"
+        )
+        reason = f"workflow blocked after eval: {detail}"
+    elif ctx.verify_gate_mode == "enforce" and verification is not None and verification.blocking:
+        reason = f"enforce verification gate: {_verification_block_detail(verification)}"
+    elif eval_report is not None:
+        reason = f"eval verdict {eval_report.verdict} (linear; no repair loop)"
+    elif "eval" in roles:
+        reason = "eval stage ran but produced no verdict"
+    else:
+        reason = "linear workflow completed"
+
     _write_terminal_state(
         ctx,
-        last_role=roles[-1],
+        last_role=last_role,
         eval_report=eval_report,
         progress=progress,
-        reason=(
-            f"eval verdict {eval_report.verdict} (linear; no repair loop)"
-            if eval_report is not None
-            else ("eval stage ran but produced no verdict" if "eval" in roles else "linear workflow completed")
-        ),
-        # S11a/F6: see terminal_status_without_eval.
+        reason=reason,
         eval_requested="eval" in roles,
+        route_override=route,
     )
-    _print_terminal_summary(ctx, n_stages=len(roles), eval_report=eval_report, repair_rounds_used=0)
+    _print_terminal_summary(
+        ctx, n_stages=n_stages, eval_report=eval_report, repair_rounds_used=0, effective_route=route
+    )
     return 0
 
 
@@ -1140,6 +1883,7 @@ def run_workflow(
     ``WORKFLOW_DEADLINE_EXIT_CODE``; it does not raise.
     """
     _wf_start_mono = time.monotonic()
+    roles = _ensure_eval_after_coder(roles)
 
     artifact_paths = workflow_artifact_paths(
         run_id,
@@ -1177,6 +1921,7 @@ def run_workflow(
         deadline_mono=deadline_mono,
         inject_overrides=dict(inject_overrides or {}),
         plan_path=plan_path,
+        verify_gate_mode=_gate_mode(),
     )
     label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
     print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)

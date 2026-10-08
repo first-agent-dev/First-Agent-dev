@@ -61,7 +61,7 @@ for typos, formatting, or docs-only changes unless the user requests it.
 1. **Read before plan; plan before risky code.** No symbol, file, route, table,
    flag, event, or test helper may appear unless verified by read/grep or marked
    `NEW`.
-2. **Every goal closes a verified gap.** Each `G#` maps to `GAP#`, `CT#`, `S#`,
+2. **Every goal closes a verified gap.** Each `G#` maps to `GAP#`, `CT#`, `SLICE#`,
    `T#`, and an artifact or explicit non-goal.
 3. **Producer proof is primary.** Product behavior ships only when a test that
    boots the real root fails if the production producer/write/render/gate is
@@ -94,7 +94,7 @@ for typos, formatting, or docs-only changes unless the user requests it.
 | Mode | Use when | Output |
 |---|---|---|
 | `plan` | user asks for design/implementation plan | one READY/DRAFT/BLOCKED plan |
-| `execute` | user asks to implement | plan gate, then `S#` slices |
+| `execute` | user asks to implement | plan gate, then `SLICE#` slices |
 | `slice` | plan exists | before/per/after edit gate for bounded slice |
 | `new-project` | greenfield | runnable vertical slice, not scaffold theater |
 | `audit` | assess plan/code | gap report with missing proof |
@@ -125,7 +125,8 @@ If scope grows, stop and re-declare depth before editing further.
 | `P#` | runtime path / edge condition |
 | `M#` | matrix row: flag/env/provider/browser/role/config |
 | `A#` | artifact: file/module/table/route/page/config/doc/migration |
-| `S#` | implementation slice |
+| `SLICE#` | implementation slice; the harness parses `## SLICE<n>: <title>` |
+| `STEP#` | atomic action inside a slice; `- [ ] STEP<n>: … (exit: …)` |
 | `T#` | test/static/mutation verification |
 | `Q#` | open question, blocking or non-blocking with default |
 | `RK#` | risk/mitigation |
@@ -173,7 +174,13 @@ unresolved -> Q#:
 
 ## 4. Required plan skeleton
 
-```text
+The slice sections below are the shape the harness actually parses. Emit them exactly; the
+grammar and its worked example are normative in
+`worklogs/planning-topology-and-executable-contracts-loop/notes/artifact-schema-and-grammar.md`
+§4, and `tests/test_skill_grammar_emit.py` parses this very block to prove it still conforms.
+
+<!-- PLAN-SKELETON:BEGIN -->
+````text
 # PLAN: <name>  Plan-ID: PLAN-<slug>
 Status: DRAFT | READY | BLOCKED   Depth: P0|P1|P2|P3
 Revision: v<N>   Changed-since-last: <initial|summary>
@@ -183,13 +190,52 @@ Revision: v<N>   Changed-since-last: <initial|summary>
 ## 1. Current state -> target state: source facts + GAP# ledger
 ## 2. Contracts: CT# cards
 ## 3. Path, edge, and matrix inventory: P# + M# coverage
-## 4. Artifacts inventory: A# path/action/owner S#
-## 5. Step-by-step implementation: S# edit packets
+## 4. Artifacts inventory: A# path/action/owner SLICE#
+## 5. Step-by-step implementation
+
+## SLICE1: <title>
+STEPS: prescriptive
+DEPS: —
+INTENT: <what + why, one to three lines>
+CONTRACTS:
+  CT1 [FUNCTIONAL]: <new behaviour; its test is NEW and must fail before the change>
+  CT2 [CONSTRAINT]: <a rule the change must not violate>
+    Catches: <the wrong implementation this contract rejects>
+  CT3 [PRESERVATION]: <existing behaviour that must stay green>
+TESTS: tests/test_<area>.py  (NEW - author it)
+```verify
+uv run pytest tests/test_<area>.py -q
+```
+- [ ] STEP1: <atomic action> (exit: <observable criterion>)
+- [ ] STEP2: <atomic action> (exit: <observable criterion>)
+
 ## 6. Verification plan: T# tests/static/mutation + LIVE-PATH PROOF
 ## 7. Risks, rollback, open questions: RK#, rollback, Q#
 ## 8. Research-note / claim disposition: RN# accept/reject/rewrite/defer
 ## 9. Definition of Done and READY gate evidence
-```
+````
+<!-- PLAN-SKELETON:END -->
+
+The skeleton is a **valid plan, not a template**: copy it, fill in the placeholders, and
+the pre-check passes on the spot. That is why `DEPS:` and `STEPS:` each carry a single
+literal value instead of a menu — the parser reads those two lines as *data*, so a
+notation like `a | b` is parsed as a dependency literally named `|`. Pick the other value
+on the line itself when your slice needs it:
+
+- `STEPS:` — `prescriptive` (exact imperatives the coder follows) or `outcome` (a goal the
+  coder must reach, with the route left open).
+- `DEPS:` — an em dash when the slice depends on nothing, or a comma-separated list of the
+  slice ids it must run after, as in `DEPS: SLICE1, SLICE2`. Every id listed must be a
+  slice this same plan declares, or the pre-check fails the plan.
+
+Every `CT#` carries one class. `FUNCTIONAL` is new behaviour, `PRESERVATION` is existing
+behaviour that must stay green, and `CONSTRAINT` is a rule the change must not violate. A
+`CONSTRAINT` additionally carries a **rationale** on its continuation lines, naming the wrong
+implementation it rejects — a constraint whose intent was never written down cannot be
+reviewed, and the rationale is the only prose a plan body is allowed to carry.
+
+Slice sizing, `STEPS:` defaults and brief length are judgement calls, not lint: see schema §4
+"Authoring guidance (not checked)" rather than restating them here.
 
 `READY` requires no blocking `Q#`. `BLOCKED` means a policy/product question
 prevents dependent steps. `DRAFT` means proof/research is incomplete.
@@ -256,7 +302,7 @@ config, unauth/authz denied, external timeout/rate-limit, persistence failure,
 retry/idempotency, concurrency/race, disabled flag, legacy/rollback, UI
 loading/error/empty/success.
 
-Each `P#` row names trigger, source site, target behavior, covering `S#`, and
+Each `P#` row names trigger, source site, target behavior, covering `SLICE#`, and
 covering `T#`. Uncovered paths must be explicit non-goals.
 
 Each `M#` row names flags/env/provider/browser/OS/role/API version/DB/deploy
@@ -315,7 +361,7 @@ Current source-verified behavior:
 Plan contract and gap IDs addressed by this slice:
 - GAP#: ...
 - CT#: ...
-- S#: ...
+- SLICE#: ...
 
 Exact files allowed to change:
 - <path>
@@ -323,7 +369,7 @@ Exact files allowed to change:
 Blocking questions:
 - none
 # or
-- Q#: <question> blocks S# because <reason>
+- Q#: <question> blocks SLICE# because <reason>
 
 If blocking:
 - STOP immediately.
@@ -344,7 +390,7 @@ If current behavior cannot be verified, read more or mark `BLOCKED`.
 For each edit, state one bounded packet.
 
 ```text
-EDIT PACKET E# / S#
+EDIT PACKET E# / SLICE#
 What idea is implemented now?
 - <one concrete idea, not a bundle>
 
@@ -484,7 +530,7 @@ A plan is `READY` only if all are true:
 
 - preflight names actual source facts or `NEW`;
 - depth matches scope;
-- every `G#` maps to `GAP#`, `CT#`, `S#`, `T#`, and `A#` or non-goal;
+- every `G#` maps to `GAP#`, `CT#`, `SLICE#`, `T#`, and `A#` or non-goal;
 - current and target behavior are concrete;
 - contracts name producer, consumer if applicable, paths, matrix, kill-check;
 - every `P#`/`M#` is tested or explicitly `N/A — why`;
@@ -578,7 +624,7 @@ Promote to full plan if more than one contract/file/product path appears.
 
 ## 19. Executor handoff
 
-Follow `S#` order, honor dependencies, and do not expand artifacts silently.
+Follow `SLICE#` order, honor dependencies, and do not expand artifacts silently.
 Pair over autonomy: checkpoint before destructive/risky P2+ edits, surface diffs
 frequently, require human approval for permission/security/data-boundary changes,
 and use subagents only for bounded structured facts, not autonomous ownership.

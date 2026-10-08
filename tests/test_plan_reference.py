@@ -34,6 +34,7 @@ from typing import Any
 from unittest.mock import patch
 
 from fa.cli import build_parser
+from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.plan_ids import extract_plan_id
 from fa.inner_loop.workflow_controller import (
     WorkflowContext,
@@ -55,8 +56,20 @@ class _SilentStage:
     def __init__(self) -> None:
         self.roles: list[str] = []
 
-    def __call__(self, args: argparse.Namespace, **_kwargs: Any) -> int:
-        self.roles.append(str(getattr(args, "role", "?")))
+    def __call__(self, args: argparse.Namespace, **kwargs: Any) -> int:
+        role = str(getattr(args, "role", "?"))
+        self.roles.append(role)
+        if role == "eval":
+            sink = kwargs.get("outcome_sink")
+            if isinstance(sink, list):
+                sink.append(
+                    SessionOutcome(
+                        exit_code=0,
+                        stop_reason="stopped_by_llm",
+                        turns=1,
+                        final_text="### Verdict\nPASS\n### Step results\n- S1: PASS - ok\n",
+                    )
+                )
         return 0
 
 

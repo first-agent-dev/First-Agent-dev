@@ -10,14 +10,14 @@ Derived from `SKILL.md` §9-§12. `SKILL.md` is SSOT; this is the injected subse
 State, before any edit:
 
 - Current source-verified behavior: `<file:symbol findings, or "absent after grep">`
-- Plan contract and gap IDs addressed by this slice: `GAP#`, `CT#`, `S#`
+- Plan contract and gap IDs addressed by this slice: `GAP#`, `CT#`, `SLICE#`
 - Exact files allowed to change: `<paths>`
-- Blocking questions: `none`, or `Q#: <question> blocks S# because <reason>`
+- Blocking questions: `none`, or `Q#: <question> blocks SLICE# because <reason>`
 
 If blocking: STOP. Do not edit. Append the `Q#` with full explanation to the
 active plan artifact and to your response.
 
-## EDIT PACKET `E# / S#`
+## EDIT PACKET `E# / SLICE#`
 
 One packet per edit. Do not bundle unrelated contracts.
 
