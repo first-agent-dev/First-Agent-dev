@@ -1206,3 +1206,52 @@ E134 FACT  On requiring a plan, the operator judges `--plan`-optional to be lega
     Separately recorded, deliberately NOT touched here: the operator observes that the
     linear/adaptive split likely predates the contract and verification system and may also be
     legacy. Out of scope for I02; noted so it is not lost.
+
+E135 DECIDED  Do **not** widen the scrubber allowlist for `UV_PROJECT_ENVIRONMENT` /
+    `UV_NO_SYNC`. An allowlist passes AMBIENT state through, so inheriting the name imports
+    whatever the parent happened to hold -- including a stale pin from a *different* session's
+    workspace, under which `uv run` would silently use another session's venv. That failure is
+    silent and cross-session, i.e. worse than having no pin at all. It would also widen a
+    security boundary globally, for the agent's shell and not just the gate, to obtain a value
+    the gate can compute exactly. And a guarantee that depends on who launched the process is
+    not a guarantee: `UV_NO_SYNC` inherited would leave the gate's offline posture at the
+    mercy of the caller.
+    **The house pattern is already compute-and-inject**: `run_bash.py:233-236` scrubs with
+    `build_scrubbed_env`, then SETS `env["PATH"]` to the workspace's `.venv/bin` prepended --
+    it does not widen the allowlist to inherit PATH shaping. The gate follows it exactly.
+    Pinned as CT49e. Principle, worth keeping: an allowlist is for what you cannot know; a
+    computed value is for what you can.
+
+E136 FACT  CT49c needs **no architectural change** -- the operator asked whether the cwd
+    requirement forces one, and it does not. `run_bash.py:240` already runs the agent's shell
+    with `cwd=root`, the session workspace. CT49c therefore states conformance with existing
+    behaviour ("the gate must not invent its own working directory"), not a new requirement,
+    and the contract has been reworded to say so. Nothing in the workspace model is proposed
+    for change. Continuing as planned.
+
+E137 CORRECTION  My proposal that the planner write `plan.md` into the run artifact directory
+    was **wrong and would have created a duplicate surface**. The operator corrected it: the
+    planner's artifact is the whole project folder, exactly like
+    `worklogs/planning-topology-and-executable-contracts-loop/`. On checking, **this is already
+    the canonical spec** -- `notes/artifact-schema-and-grammar.md` §1 defines
+    `worklogs/<slug>/` with `roadmap.md`, `ledger.md`, `increments/increment-NN-<slug>.md` and
+    `notes/`, and its ownership table already assigns `roadmap.md`, the increment plan body and
+    `notes/` to the **planner**. The same section explicitly rules my proposal out: "Ephemeral
+    run records (`eval_report.json`, `events.jsonl`, telemetry) do **not** live here -- they
+    stay in the session-log root. This folder is the durable, readable planning layer." So no
+    new surface is created, and none should be. supersedes: the `plan.md` capture proposed in
+    E134.
+    The folder also **resolves the autodiscovery question against autodiscovery**. One planner
+    run produces a roadmap with N increments; one coder run executes ONE increment. With
+    several candidate files present, auto-picking one IS the guess `cli.py:762-766` warns
+    against -- "guessing the contract is worse than having none". The two-step invocation is
+    therefore not a workaround but the correct shape, and it is how this very project has been
+    run all along: plan, then `--plan <one increment file>`.
+    Refined rule to replace "workflow requires a plan": **a `fa workflow` invocation that
+    includes the `coder` role requires `--plan`**; a planner-only run does not, because it is
+    producing one. Small, precise, no new surface.
+    Remaining gap, owned by I01 (planner grammar): both planning skills cite the schema as
+    normative (`plan-authoring/SKILL.md:655`, `feature-planning/SKILL.md:179`) but neither they
+    nor `prompt.py` name `roadmap.md` or `increments/` inline, so the layout reaches the
+    planner only if it opens the doc. That is a prompt delta of the kind already banked in
+    `notes/role-prompts-conformance.md`, not new machinery.

@@ -67,13 +67,17 @@ restate it here.
   20 turns on `find / -name pytest`. **Consequence: verify commands run verbatim.** The planner
   emits what the agent was told to emit, the env is already correct, and normalising the command
   would make the plan text and the executed fact diverge for no gain.
-- **Gap, same class as the `PYTHONPATH` one.** `UV_PROJECT_ENVIRONMENT` is pinned to
-  `workspace/.venv` by the bootstrap (`workspace_bootstrap.py:243-259`) but is **not** on the
-  scrubber allowlist (`tools/bash_env.py:29-50`, which has `UV_CACHE_DIR` but not this). So in the
-  gate's env `uv run` is unpinned and falls back to discovering `./.venv` from the current
-  directory — which works **only because cwd is the workspace**. CT49c is therefore load-bearing
-  for `uv run` resolution, not merely for verifying the right tree. The residual risk is `uv run`'s
-  implicit lockfile sync reaching for a network the container does not have.
+- **`UV_PROJECT_ENVIRONMENT` is pinned by the bootstrap (`workspace_bootstrap.py:243-259`) but is
+  not on the scrubber allowlist** (`tools/bash_env.py:29-50`, which carries `UV_CACHE_DIR` and not
+  this). The fix is **not** to widen the allowlist. The allowlist passes ambient state through, so
+  inheriting this name would import whatever the parent happened to hold — including a stale pin
+  from a *different* session's workspace, which is worse than no pin because `uv run` would then
+  silently use another session's venv. It would also widen a security boundary globally, for the
+  agent's shell too, to obtain a value the gate can compute exactly.
+  **The house pattern is already compute-and-inject**: `run_bash.py:233-236` scrubs, then sets
+  `env["PATH"]` to the workspace's `.venv/bin` prepended. The gate does the same for
+  `UV_PROJECT_ENVIRONMENT` and `UV_NO_SYNC`. An allowlist is for what you cannot know; a computed
+  value is for what you can.
 - **`DEFAULT_BASH_TIMEOUT_SECONDS = 30`** (`runtime_limits.py:71`). The planner is told to emit
   `uv run pytest …` (`prompt.py:205-207`), and `uv` is on the image PATH (`Dockerfile.fa:59-67`).
   A real test file, or a `uv run` that first syncs a venv in the session workspace, exceeds 30 s
@@ -169,11 +173,18 @@ CONTRACTS:
     kill: remove-call src/fa/inner_loop/slice_verification.py::run_commands -> _empty_result
   CT49 [PRESERVATION]: `src/fa/inner_loop/plan_ids.py` is not modified by this slice; it
     imports no subprocess, os.environ or pathlib-write facility.
-  CT49c [FUNCTIONAL]: every command runs with `cwd` set to the **session workspace**
-    (`run_workflow(workspace=…)`, `/sessions/<id>/` in production), never the harness's own
-    source tree. Catches: a gate that verifies the directory FA was installed from instead of
-    the one the coder edited.
+  CT49c [FUNCTIONAL]: every command runs with `cwd` set to the **session workspace**, matching
+    what the agent's own shell already does (`run_bash.py:240`, `cwd=root`). This is conformance
+    with existing behaviour, not a new architectural requirement — no change to the workspace
+    model is needed or proposed. Catches: a gate that invents its own working directory and so
+    verifies the tree FA was installed from instead of the one the coder edited.
     kill: remove-call src/fa/inner_loop/slice_verification.py::run_commands -> _workspace_cwd
+  CT49e [FUNCTIONAL]: after scrubbing, the runner **sets** `UV_PROJECT_ENVIRONMENT` to
+    `<workspace>/.venv` and `UV_NO_SYNC=1`, following `run_bash.py:233-236`, rather than
+    inheriting them. Catches two things: `uv run` resolving a different session's venv from an
+    inherited stale pin, and an implicit lockfile sync reaching for a network the container
+    does not have.
+    kill: remove-call src/fa/inner_loop/slice_verification.py::_build_env -> _pin_uv_environment
   CT49d [FUNCTIONAL]: the runner takes its **own** per-command timeout, defaulting to 600 s and
     operator-overridable; it does not inherit `DEFAULT_BASH_TIMEOUT_SECONDS`
     (`runtime_limits.py:71`, currently 30). A timeout yields `ERROR` carrying the elapsed
