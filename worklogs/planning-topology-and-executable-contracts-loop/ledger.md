@@ -1739,3 +1739,28 @@ E170 CORRECTION three defects in I02's own definition of done, found by assessin
     obligation. Added.
     None of the three is a code defect; all three would have let the increment be declared
     done on a false reading.
+
+E171 DECISION Q49 resolved **(a) with two corrections**, 2026-10-08, absorbing the long-open
+    H3 (baseline storage and lifetime) and H7 (regression attribution scope), neither of which
+    had ever been answered. H1 and H2 are recorded closed at the same time: H1 is answered by
+    CT69 ("the kill-check phase runs only the contract's own test") and H2 was dissolved by
+    E122's move to declared kill-checks, which removed any need for the gate to know which
+    test is NEW.
+    The seam: **SLICE5 accepts a baseline it does not gather**, SLICE6 captures it (CT86).
+    That keeps the pure half testable and puts the one stage-loop edit in the slice whose job
+    is wiring.
+    Correction 1, **nodeid not file** (CT68). A file-keyed baseline reports `REGRESSION` where
+    the truth is `FAILING` the moment an agent adds a deliberately-red test to an existing
+    file -- the common case in this system, not the rare one. The consequence is structural:
+    both the T0 and the "now" side must be harness-issued `--junitxml` runs, because the
+    planner's verify commands run verbatim (`cli.py:165-170`) and surrender only an exit code
+    and a truncated tail. CT69 now states that distinction.
+    Correction 2, **capture once at T0** (CT85, enforced by CT86). `repair_round` admits
+    several coder stages; a recapturing round would launder a regression into the baseline and
+    report nothing. The writer refuses to overwrite, so the rule is structural rather than a
+    convention the call site is trusted to keep.
+    Two further review risks were checked against source and found **already closed**: the
+    probe timeout (Q46(b), `88e8040`) and the `uv` pin (`_pin_uv_environment` sets
+    `UV_PROJECT_ENVIRONMENT` and `UV_NO_SYNC=1`, `_overlay_env` inherits it by construction).
+    Both have oracles -- `tests/test_mutation_overlay.py:580,593` and
+    `tests/test_slice_verification_runner.py:235` -- so they are proven, not merely present.

@@ -418,12 +418,25 @@ CONTRACTS:
     guess at which definition was meant (CT57). It is a distinct member of
     `SliceVerdict`, not folded into `VACUOUS`.
     kill: remove-call src/fa/inner_loop/slice_verification.py::_classify -> _producer_absent
-  CT68 [FUNCTIONAL]: a test green at baseline and red after the change yields `REGRESSION`;
-    red-to-red is advisory and does not block.
+  CT68 [FUNCTIONAL]: a test **green at the T0 baseline and red now** yields `REGRESSION`;
+    red-to-red is advisory and does not block. The baseline is keyed by **pytest nodeid**
+    (`tests/test_x.py::test_case`), never by file. A file-keyed baseline turns one
+    newly-added failing test into a red file and reports `REGRESSION` where the truth is
+    `FAILING` — the agent adding a deliberately-red test is the common case, not the rare
+    one. A nodeid absent at T0 — a new test, a renamed one — can never be `REGRESSION`, and
+    an absent row is not `False` (Q49).
     kill: remove-call src/fa/inner_loop/slice_verification.py::_classify -> _compare_baseline
   CT69 [CONSTRAINT]: the baseline runs only the slice's own `TESTS:` paths, never the whole
-    suite, and the kill-check phase runs only the contract's own test. Catches: an
+    suite, and the kill-check phase runs only the contract's own test. The baseline and the
+    "now" side are **harness-issued and instrumented** (`--junitxml`), distinct from the
+    planner's `verify` commands, which run verbatim (`cli.py:165-170`) and yield only an exit
+    code and a truncated tail — no nodeid is recoverable from them. Catches: an
     O(slices × suite-time) gate that will not survive a real increment (§6.2).
+  CT85 [CONSTRAINT]: the baseline is captured **once per run, at T0**, before the first coder
+    stage; a repair round never recaptures it, and `verify_slice` takes it as an argument and
+    never gathers one. Catches: a repair round laundering a regression into the baseline —
+    round 1 breaks an adjacent test, round 2 recaptures, and the breakage becomes the new
+    normal with nothing ever reported.
   CT70 [CONSTRAINT]: `VACUOUS` and `PRODUCER_ABSENT` expose no dismissal or appeal parameter.
     Catches: an appeal path quietly reintroduced from E63, which granted it to generated
     mutants only.
@@ -452,7 +465,7 @@ uv run ruff check src/fa/inner_loop/slice_verification.py tests/test_verify_slic
 ```
 - [ ] STEP1: add `SliceVerdict` with exactly the seven members in the design note §3.2 (exit: `uv run python -c "from fa.inner_loop.slice_verification import SliceVerdict; assert len(SliceVerdict)==7"` exits 0)
 - [ ] STEP2: implement `_run_kill_check(directive, test_path, root)` using `apply_kill` + `mutation_overlay` + `_assert_overlay_wins` + `run_commands`, in that order; the provenance probe gates the result (exit: `uv run pytest tests/test_verify_slice.py -q -k kill_check` exits 0)
-- [ ] STEP3: implement `_classify` mapping phase outputs to a verdict, with `ERROR` dominating (exit: `uv run pytest tests/test_verify_slice.py -q -k classify` exits 0)
+- [ ] STEP3: implement `_classify` mapping phase outputs to a verdict, with `ERROR` dominating, and `_compare_baseline(baseline, now)` comparing nodeid maps where an absent T0 row never yields `REGRESSION` (exit: `uv run pytest tests/test_verify_slice.py -q -k classify` exits 0)
 - [ ] STEP4: build the three-row oracle from the design note §3.6 — PROVEN, PRODUCER_ABSENT, VACUOUS — as the slice's primary test (exit: `uv run pytest tests/test_verify_slice.py -q` exits 0)
 - [ ] STEP5: implement `scripts/check_kill_directive_ownership.py` reading every plan under `worklogs/planning-topology-and-executable-contracts-loop/increments/` with `extract_plan_ids` + `parse_kill_directives` + `_resolve_targets`, reporting one line per unfirable directive of a fully-ticked slice (exit: `uv run python scripts/check_kill_directive_ownership.py` exits 0)
 - [ ] STEP6: add the ownership oracle — a fixture plan with one ticked slice naming an absent producer and one unticked slice naming the same, asserting the first is reported and the second is not (exit: `uv run pytest tests/test_verify_slice.py -q -k ownership` exits 0)
@@ -524,6 +537,13 @@ CONTRACTS:
     `validate_slice_ids` (`:281`) can only partially detect today, because it compares the
     judge's claims against the plan rather than against facts.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_eval_evidence_block -> _verification_lines
+  CT86 [FUNCTIONAL]: before the first `coder` stage — `progress.repair_round == 0` — the run
+    captures the T0 baseline by running the plan's **existing** `TESTS:` paths with
+    `--junitxml` and writing `verify_baseline.json` beside `eval_report.json`. The writer
+    refuses to overwrite an existing file, which is what makes CT85 structural rather than
+    advisory. A path that does not exist yet contributes no rows: a NEW test file has no
+    "before", and saying so is the whole reason `REGRESSION` is keyed by nodeid.
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> capture_baseline
 TESTS: tests/test_verify_gate_live.py   (NEW — author it)
 ```verify
 uv run pytest tests/test_verify_gate_live.py -q
@@ -535,6 +555,7 @@ uv run ruff check src/fa/inner_loop/workflow_controller.py tests/test_verify_gat
 - [ ] STEP4: add the blocking guard to `_run_initial_roles` (`:908`) AND `_run_linear` (`:1078`), with a parametrised test over both modes (exit: `uv run pytest tests/test_verify_gate_live.py -q -k short_circuit` exits 0)
 - [ ] STEP5: write the live test on the `test_workflow_global_history.py:123-141` template (exit: `uv run pytest tests/test_verify_gate_live.py -q -k live` exits 0)
 - [ ] STEP6: add the per-slice attribution assertion of CT76 (exit: `uv run pytest tests/test_verify_gate_live.py -q -k attribution` exits 0)
+- [ ] STEP8: capture the T0 baseline in `_run_stage` before dispatching a `coder` stage when `progress.repair_round == 0`, through a writer that refuses to overwrite (exit: `uv run pytest tests/test_verify_gate_live.py -q -k baseline` exits 0)
 - [ ] STEP7: append the verdict lines to `_eval_evidence_block` and assert they appear on a GREEN run (exit: `uv run pytest tests/test_verify_gate_live.py -q` exits 0)
 
 ## Increment definition of done

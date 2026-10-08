@@ -555,7 +555,30 @@ lands beside the classification it refines and before SLICE6 authors anything ne
 
 ## Q49 — where does `REGRESSION`'s "before" come from? (absorbs H3 and H7)
 
-**Status:** OPEN. **Blocks SLICE5 STEP1 and STEP3.** Raised before editing, per the stop rule.
+**Status:** **RESOLVED (a), with two corrections** by operator ruling, 2026-10-08.
+
+The seam stands: SLICE5 accepts a baseline it does not gather; SLICE6 adds the capture point
+(CT86). Two risks raised in review were accepted and are now CT68/CT85:
+
+1. **Key by pytest nodeid, never by file.** A file-keyed baseline turns one newly-added
+   failing test into a red *file* and reports `REGRESSION` where the truth is `FAILING` — and
+   an agent adding a deliberately-red test is the common case here, not the rare one.
+   Consequence, which is a design statement and not a detail: the baseline and the "now" side
+   must both be **harness-issued instrumented runs** (`--junitxml`), because the planner's
+   `verify` commands run verbatim (`cli.py:165-170`) and yield only an exit code and a
+   truncated tail. No nodeid is recoverable from them. CT69 now says so.
+2. **Capture once, at T0.** `repair_round` admits several coder stages per run. If a repair
+   round recaptured, round 1 could break an adjacent test, round 2 would adopt the breakage as
+   the new normal, and nothing would ever be reported. CT85 forbids it; CT86 makes it
+   structural by refusing to overwrite the artifact rather than trusting the call site.
+
+Two further risks raised in the same review were **already closed in shipped code**, verified
+against source rather than recollection: the provenance probe's timeout (Q46(b), `88e8040`,
+`DEFAULT_PROBE_TIMEOUT_SECONDS = 30.0` mapping overrun to `ERROR`, with the 600.6 s
+alternative measured) and the `uv` determinism pin (`_pin_uv_environment` sets
+`UV_PROJECT_ENVIRONMENT` **and** `UV_NO_SYNC=1`; the former is deliberately absent from the
+scrubber allowlist, and `_overlay_env` is built on top of `_build_env` so the overlay cannot
+drift from a plain verify command). Both carry oracles, not just code.
 
 CT68 says: *a test green at baseline and red after the change yields `REGRESSION`; red-to-red
 is advisory and does not block.* Nothing in the plan says what "at baseline" means, and the
