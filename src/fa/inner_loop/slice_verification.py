@@ -37,7 +37,7 @@ from collections.abc import Iterable, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from fa.inner_loop.plan_ids import FAIL, PlanDiagnostic, PlanIds
+from fa.inner_loop.plan_ids import FAIL, PlanDiagnostic, PlanIds, SliceRecord
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
 
 __all__ = [
@@ -329,19 +329,6 @@ _KILL_SOFT_RE = re.compile(r"^\s*kill:")
 #: not, so one line is never reported twice.
 _KILL_NEAR_MISS_RE = re.compile(r"^\s*ki?ll?[-_ ]?(?:check)?\s*:", re.IGNORECASE)
 
-#: A contract entry's opening line. I02 uses this only to *locate* ids that
-#: I01 already declared; whether a thing is a contract, and of what class,
-#: remains I01's answer (``ids.contracts``, ``ids.contract_class``). Q44(i).
-#:
-#: Mirrors ``plan_ids._CONTRACT_ENTRY_RE`` deliberately, **including the
-#: optional class bracket**: I01 lets an entry omit it and defaults such a
-#: contract to ``FUNCTIONAL`` (``plan_ids.py:82-85``). Requiring the bracket
-#: here made every unclassed contract invisible to this locator, so its
-#: directive went unattributed and the contract was reported as declaring
-#: none -- a false accusation against a correct plan. Found by mutation
-#: testing; the agreement is pinned by a drift oracle over the real plans.
-_CONTRACT_ENTRY_RE = re.compile(r"^\s+(?P<id>CT\d+[a-z]?)\s*(?:\[(?:FUNCTIONAL|CONSTRAINT|PRESERVATION)\])?\s*:")
-
 
 def _split_dotted(symbol: str) -> tuple[str, ...]:
     """Split a directive symbol into its dotted parts. (CT50b)
@@ -357,7 +344,29 @@ def _split_dotted(symbol: str) -> tuple[str, ...]:
     return tuple(part for part in symbol.split(".") if part)
 
 
-def _scan_directives(section: str) -> list[tuple[str | None, KillDirective]]:
+def _owner_at(sites: tuple[tuple[int, str], ...], line: int) -> str | None:
+    """The contract whose declaration most recently preceded *line*.
+
+    *sites* is ``(line, contract id)`` ascending, as I01 reported it. A
+    directive belongs to the entry it is written under, so the owner is the
+    last declaration at or above it; ``None`` means the line sits before any
+    declaration and belongs to no contract.
+
+    This module deliberately holds no opinion about what a contract looks
+    like. It once did -- a regex mirroring I01's -- and the two disagreed
+    about unclassed entries, which cost a correct plan a false accusation
+    (E152). Positions come from the parser that read the document; this
+    function only does arithmetic on them.
+    """
+    owner: str | None = None
+    for site_line, contract_id in sites:
+        if site_line > line:
+            break
+        owner = contract_id
+    return owner
+
+
+def _scan_directives(section: str, sites: tuple[tuple[int, str], ...]) -> list[tuple[str | None, KillDirective]]:
     """Every strict directive in *section*, in order, with its owning contract.
 
     Returns a list rather than a mapping because duplicate attribution is a
@@ -365,17 +374,13 @@ def _scan_directives(section: str) -> list[tuple[str | None, KillDirective]]:
     would destroy the evidence for it.
     """
     found: list[tuple[str | None, KillDirective]] = []
-    current: str | None = None
     for index, line in enumerate(section.splitlines(), start=1):
-        entry = _CONTRACT_ENTRY_RE.match(line)
-        if entry is not None:
-            current = entry.group("id")
         match = _KILL_STRICT_RE.match(line)
         if match is None:
             continue
         found.append(
             (
-                current,
+                _owner_at(sites, index),
                 KillDirective(
                     operator=KillOperator(match.group("operator")),
                     path=match.group("path"),
@@ -388,19 +393,23 @@ def _scan_directives(section: str) -> list[tuple[str | None, KillDirective]]:
     return found
 
 
-def parse_kill_directives(section: str) -> dict[str, KillDirective]:
-    """Read a slice's raw section text and return its directives by contract.
+def parse_kill_directives(record: SliceRecord) -> dict[str, KillDirective]:
+    """Read one slice's directives from the record I01 produced, by contract.
 
-    CT50. Attribution is by indentation under a ``CT<n>`` entry, which the raw
-    section preserves and the joined contract body does not.
+    CT50. Takes the :class:`SliceRecord` rather than loose text because
+    attribution needs two things that only I01 can answer together: the raw
+    section (the joined contract body loses the line structure directives live
+    on) and where each contract was declared. Passing the record keeps both
+    from one parse, so there is no second grammar to drift.
 
     A contract declaring two directives keeps its **first** here, so this
     accessor stays total and deterministic; reporting the duplicate is
     :func:`validate_kill_directives`' job, not this function's -- the same
     division I01 draws between ``contract_class`` and the duplicate-id rule.
     """
+    sites = tuple(sorted((line - record.start_line + 1, contract_id) for contract_id, line in record.contract_lines))
     out: dict[str, KillDirective] = {}
-    for contract_id, directive in _scan_directives(section):
+    for contract_id, directive in _scan_directives(record.section, sites):
         if contract_id is None or contract_id in out:
             continue
         out[contract_id] = directive
@@ -463,17 +472,17 @@ def validate_kill_directives(plan_text: str, ids: PlanIds, *, path: str) -> list
     *ids*; this function only locates ids that I01 already declared.
     """
     out: list[PlanDiagnostic] = []
-    declared = set(ids.contracts)
-    contract_line: dict[str, int] = {}
     directive_lines: dict[str, list[int]] = {}
     attempted: set[str] = set()
-    current: str | None = None
+    # Declaration positions as I01 reported them, document-absolute. Only
+    # declared contracts appear, so an id this plan merely cites can never
+    # capture a directive written under something else.
+    sites = tuple(
+        sorted((line, contract_id) for record in ids.slice_records for contract_id, line in record.contract_lines)
+    )
 
     for index, line in enumerate(plan_text.splitlines(), start=1):
-        entry = _CONTRACT_ENTRY_RE.match(line)
-        if entry is not None and entry.group("id") in declared:
-            current = entry.group("id")
-            contract_line.setdefault(current, index)
+        current = _owner_at(sites, index)
 
         near = _near_miss(line, index, path)
         if near is not None:
@@ -535,7 +544,7 @@ def validate_kill_directives(plan_text: str, ids: PlanIds, *, path: str) -> list
                 rule="kill-directive-missing",
                 severity=FAIL,
                 path=path,
-                line=contract_line.get(contract_id, 0),
+                line=ids.contract_line(contract_id),
                 message=(
                     f"{contract_id} is FUNCTIONAL and declares no kill directive; "
                     f"without one its test cannot be shown to fail when the feature is removed"

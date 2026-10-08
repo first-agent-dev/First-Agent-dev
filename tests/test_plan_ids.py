@@ -23,6 +23,7 @@ import pytest
 from fa.inner_loop.plan_ids import PlanIds, canonical_slice_id, extract_plan_ids
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+PLAN_DIR = REPO_ROOT / "worklogs" / "planning-topology-and-executable-contracts-loop" / "increments"
 
 
 # ── the grammar, as a realistic plan fragment ──────────────────────────────
@@ -814,18 +815,31 @@ class TestMutationHardening:
         rec = extract_plan_ids(text).slice_records[0]
         assert [body for _, _, body in rec.contracts] == ["opening clause. Catches: the clause after the blank line."]
 
-    def test_accessors_accept_either_id_grammar(self) -> None:
-        """`_record` canonicalises, so a legacy `S<n>` token resolves.
+    def test_accessors_require_the_canonical_id_grammar(self) -> None:
+        """Q43(ii) — the accessors are strict; `SLICE` and `S`/`STEP` are distinct.
 
-        The accessors are the first callers of `canonical_slice_id` inside
-        this module; without this the mapping is reachable only through the
-        workflow controller.
+        These accessors used to canonicalise, so `S1` resolved to `SLICE1`.
+        That made them a second lenient surface beside the one E106 sanctioned,
+        and a dangerous one: inside a plan `S2` is ambiguous between a slice
+        and a step, so a caller holding a *step* id was handed the
+        like-numbered *slice*'s commands and could not tell. Returning nothing
+        is the only answer that cannot be mistaken for a right one.
+
+        Leniency is not abolished, only confined to the boundary E106 scoped it
+        to, which the final assertion pins.
         """
         ids = extract_plan_ids(SPAN_FIXTURE)
-        assert ids.commands_for("S1") == ids.commands_for("SLICE1")
-        assert ids.tests_for("S2") == ("tests/test_second.py",)
-        assert ids.section("S1").startswith("## SLICE1: first")
+
         assert ids.commands_for("SLICE1") != ()
+        assert ids.tests_for("SLICE2") == ("tests/test_second.py",)
+        assert ids.section("SLICE1").startswith("## SLICE1: first")
+
+        assert ids.commands_for("S1") == ()
+        assert ids.tests_for("S2") == ()
+        assert ids.section("S1") == ""
+
+        assert canonical_slice_id("S1") == "SLICE1"
+        assert ids.commands_for(canonical_slice_id("S1")) == ids.commands_for("SLICE1")
 
     def test_test_path_tokens_are_stripped_of_list_punctuation(self) -> None:
         """Kills `t.strip(",;")` -> `strip(None)` / a corrupted strip set."""
@@ -869,3 +883,118 @@ class TestCanonicalSliceId:
         # kills `len(text) > 1` -> `>= 1`, which raises IndexError instead.
         assert canonical_slice_id("s") == "s"
         assert canonical_slice_id("") == ""
+
+
+class TestContractSourcePositions:
+    """CT78 — the parser remembers where it read each contract.
+
+    root=pure function class=C0 claim=CT78 path=T3
+    oracle=the 1-based document line of a declaration, against the real plans.
+
+    A parser that returns structure without source positions forces every
+    consumer to re-parse the document to recover them, and a consumer's second
+    grammar drifts from the first. That is measured history here, not theory:
+    I02 carried such a copy and it disagreed with this module about unclassed
+    entries, so a correct plan was accused of omitting a kill directive.
+    """
+
+    def test_a_declaration_line_is_recovered_exactly(self) -> None:
+        """The real plan, where the interesting cases actually live."""
+        path = PLAN_DIR / "increment-01-plan-grammar-and-extractor.md"
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+
+        ids = extract_plan_ids(text)
+
+        for contract_id in ("CT3", "CT17", "CT18", "CT34"):
+            line = ids.contract_line(contract_id)
+            assert lines[line - 1].lstrip().startswith(f"{contract_id} ["), (
+                f"{contract_id}: line {line} is {lines[line - 1]!r}"
+            )
+
+    def test_a_forward_reference_does_not_become_the_declaration(self) -> None:
+        """The case that decided Q45, kept as the regression it is.
+
+        `CT17` is declared on line 231 of increment-01 but first *mentioned* on
+        line 22, in the prose "see CT17/CT18" — 209 lines early. Any locator
+        keyed on "first occurrence of the id" reports line 22 and sends its
+        reader 209 lines from the defect, with full confidence.
+        """
+        text = (PLAN_DIR / "increment-01-plan-grammar-and-extractor.md").read_text(encoding="utf-8")
+        lines = text.splitlines()
+
+        ids = extract_plan_ids(text)
+        declared_at = ids.contract_line("CT17")
+        first_mention = next(i for i, line in enumerate(lines, start=1) if "CT17" in line)
+
+        assert first_mention < declared_at, "precondition: the id is cited before it is declared"
+        assert lines[first_mention - 1].lstrip().startswith("of a slice section")
+        assert lines[declared_at - 1].lstrip().startswith("CT17 [CONSTRAINT]:")
+
+    def test_a_contract_quoted_as_an_illustration_is_not_a_declaration(self) -> None:
+        """CT18's own case, now also guarding positions.
+
+        CT2's body quotes ``CT3 [CONSTRAINT]: …`` as an example. It sits in the
+        same CONTRACTS block as CT3's real declaration, so scoping a search to
+        the section does not save a naive locator — only the entry grammar
+        does, which is why it must live here.
+        """
+        text = (PLAN_DIR / "increment-01-plan-grammar-and-extractor.md").read_text(encoding="utf-8")
+        lines = text.splitlines()
+
+        line = extract_plan_ids(text).contract_line("CT3")
+
+        assert "`CT3 [CONSTRAINT]" not in lines[line - 1]
+        assert lines[line - 1].lstrip().startswith("CT3 [FUNCTIONAL]:")
+
+    def test_an_unclassed_contract_still_gets_a_line(self) -> None:
+        """The entry grammar makes the class optional, so positions must too."""
+        plan = "## SLICE1: a thing\nCONTRACTS:\n  CT1: an unclassed contract.\n"
+
+        ids = extract_plan_ids(plan)
+
+        assert ids.contract_class("CT1") == "FUNCTIONAL"
+        assert ids.contract_line("CT1") == 3
+
+    def test_a_referenced_contract_has_no_line(self) -> None:
+        """0 is "this parse has no line for that id", never a guess.
+
+        A wrong line is worse than no line: it sends the reader somewhere with
+        confidence. The sentinel has to be distinguishable from line 1.
+        """
+        ids = extract_plan_ids("## SLICE1: a thing\nCONTRACTS:\n  CT1 [FUNCTIONAL]: cites CT99.\n")
+
+        assert ids.contract_line("CT1") == 3
+        assert "CT99" in ids.contracts
+        assert ids.contract_line("CT99") == 0
+        assert ids.contract_line("CT404") == 0
+
+    def test_a_record_knows_where_its_slice_begins(self) -> None:
+        """`start_line` is what lifts a section-relative offset into the document."""
+        plan = "# Title\n\nprose\n\n## SLICE1: first\nCONTRACTS:\n  CT1 [FUNCTIONAL]: a thing.\n"
+
+        record = extract_plan_ids(plan).slice_records[0]
+
+        assert record.start_line == 5
+        assert record.contract_lines == (("CT1", 7),)
+
+    def test_positions_are_absolute_in_the_second_slice_too(self) -> None:
+        """Kills an implementation that forgets to offset per section."""
+        plan = (
+            "## SLICE1: first\nCONTRACTS:\n  CT1 [FUNCTIONAL]: a.\n"
+            "## SLICE2: second\nCONTRACTS:\n  CT2 [FUNCTIONAL]: b.\n"
+        )
+
+        ids = extract_plan_ids(plan)
+
+        assert ids.contract_line("CT1") == 3
+        assert ids.contract_line("CT2") == 6
+
+    def test_every_declared_contract_in_both_real_plans_has_a_line(self) -> None:
+        """Non-vacuity: the surface answers for the whole corpus, not a fixture."""
+        for name in ("increment-01-plan-grammar-and-extractor.md", "increment-02-verify-gate-and-kill-checks.md"):
+            ids = extract_plan_ids((PLAN_DIR / name).read_text(encoding="utf-8"))
+            declared = [c for c in ids.contracts if ids.contract_class(c) is not None]
+
+            assert len(declared) > 30, f"{name}: fixture lost its contracts"
+            assert [c for c in declared if ids.contract_line(c) == 0] == []

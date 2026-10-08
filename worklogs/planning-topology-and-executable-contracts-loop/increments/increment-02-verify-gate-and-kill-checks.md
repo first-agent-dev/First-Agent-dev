@@ -234,7 +234,7 @@ CONTRACTS:
     cannot express — the directive would resolve to nothing and report `PRODUCER_ABSENT`
     against working code.
     kill: remove-call src/fa/inner_loop/slice_verification.py::_resolve_symbol -> _split_dotted
-  CT50 [FUNCTIONAL]: `parse_kill_directives(section)` reads `section()` output line by line
+  CT50 [FUNCTIONAL]: `parse_kill_directives(record)` reads `record.section` line by line
     and returns `dict[contract_id, KillDirective]`, attributing each directive to the `CT<n>`
     entry it is indented under. Trailing prose after the directive does not affect parsing.
     kill: neutralise src/fa/inner_loop/slice_verification.py::parse_kill_directives
@@ -263,6 +263,36 @@ uv run ruff check src/fa/inner_loop/slice_verification.py tests/test_kill_direct
 - [x] STEP2: implement `parse_kill_directives` over raw section text with the strict pattern `^\s*kill:\s*(neutralise|remove-call)\s+(\S+)::(\S+?)(?:\s*->\s*(\S+))?\s*$` (exit: `uv run pytest tests/test_kill_directives.py -q -k parse` exits 0)
 - [x] STEP3: implement `validate_kill_directives` with the soft, strict and near-miss patterns (exit: `uv run pytest tests/test_kill_directives.py -q -k "near_miss or malformed or ambiguous or missing"` exits 0)
 - [x] STEP4: add the six-case corpus from the design note §F1 as a table-driven oracle (exit: `uv run pytest tests/test_kill_directives.py -q` exits 0)
+
+## SLICE2b: Source positions move into the parser that reads the source
+
+INTENT: retire I02's private copy of the contract grammar; I01 reports where it read each
+contract, and I02 does arithmetic on that answer instead of re-deriving it.
+DEPS: SLICE2
+STEPS-MODE: prescriptive
+CONTRACTS:
+  CT78 [FUNCTIONAL]: `SliceRecord` carries `start_line` (1-based document line of the slice
+    heading) and `contract_lines` (`(contract id, 1-based document line)` per declared
+    contract), and `PlanIds.contract_line(id)` returns that line, or `0` when the id was
+    never declared in this parse. Catches: a parser that returns structure without source
+    positions, which forces every consumer to re-derive them.
+    kill: neutralise src/fa/inner_loop/plan_ids.py::_build_record
+  CT79 [CONSTRAINT]: `slice_verification` contains no pattern matching a contract entry.
+    Attribution asks `_owner_at` which declaration most recently preceded a line, using the
+    positions I01 supplied. Catches: the duplicated grammar coming back.
+    kill: neutralise src/fa/inner_loop/slice_verification.py::_owner_at
+  CT80 [CONSTRAINT]: `0` is the only "line unknown" answer; no code path guesses a line.
+    Catches: a diagnostic pointing confidently at the wrong place, which is worse than one
+    that admits it does not know.
+TESTS: tests/test_plan_ids.py, tests/test_kill_directives.py
+```verify
+uv run pytest tests/test_plan_ids.py tests/test_kill_directives.py -q
+uv run ruff check src/fa/inner_loop/plan_ids.py src/fa/inner_loop/slice_verification.py
+```
+- [x] STEP1: add `start_line` and `contract_lines` to `SliceRecord`, populated in `_build_record` from the existing `_contract_declaration_sites` (exit: `uv run pytest tests/test_plan_ids.py -q -k positions` exits 0)
+- [x] STEP2: add `PlanIds.contract_line` beside `contract_class` (exit: `uv run pytest tests/test_plan_ids.py -q -k "contract_line or ContractSourcePositions"` exits 0)
+- [x] STEP3: delete `slice_verification._CONTRACT_ENTRY_RE`, add `_owner_at`, and take `SliceRecord` in `parse_kill_directives` (exit: `grep -c _CONTRACT_ENTRY_RE src/fa/inner_loop/slice_verification.py` prints 0)
+- [x] STEP4: tighten the accessors to strict slice ids (Q43(ii)) (exit: `uv run pytest tests/test_plan_ids.py -q -k accessors` exits 0)
 
 ## SLICE3: The mutation operators (AST, pure)
 STEPS: prescriptive

@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from fa.inner_loop import slice_verification
-from fa.inner_loop.plan_ids import FAIL, extract_plan_ids
+from fa.inner_loop.plan_ids import FAIL, SliceRecord, extract_plan_ids
 from fa.inner_loop.slice_verification import (
     KillDirective,
     KillOperator,
@@ -43,6 +43,18 @@ def _section(*lines: str) -> str:
     return textwrap.dedent("\n".join(lines)) + "\n"
 
 
+def _rec(section: str) -> SliceRecord:
+    """The record I01 builds for *section* — the parser's own answer.
+
+    These tests drive `parse_kill_directives` through I01 rather than handing
+    it text, because that is now the only way it can be called. The coupling
+    is the point: if I01 stops recognising an entry, this test file notices,
+    where previously I02 held a private opinion that could agree with nothing.
+    """
+    records = extract_plan_ids(section).slice_records
+    return records[0] if records else SliceRecord(slice_id="SLICE1")
+
+
 # ── CT50 — parse: the directive is read from the raw section ───────────────
 
 
@@ -55,7 +67,7 @@ def test_a_directive_on_the_last_line_parses() -> None:
         "    kill: neutralise src/a.py::do_thing",
     )
 
-    directives = parse_kill_directives(section)
+    directives = parse_kill_directives(_rec(section))
 
     assert directives == {
         "CT1": KillDirective(
@@ -84,7 +96,7 @@ def test_trailing_prose_after_the_directive_is_harmless() -> None:
         "    Catches: the whole point of the contract, explained at length.",
     )
 
-    directives = parse_kill_directives(section)
+    directives = parse_kill_directives(_rec(section))
 
     assert directives["CT1"].operator is KillOperator.REMOVE_CALL
     assert directives["CT1"].callee == "callee"
@@ -105,7 +117,7 @@ def test_two_directives_on_one_contract_keep_the_first_deterministically() -> No
         "    kill: neutralise src/a.py::second",
     )
 
-    assert parse_kill_directives(section)["CT1"].symbol == "first"
+    assert parse_kill_directives(_rec(section))["CT1"].symbol == "first"
 
 
 def test_a_directive_is_attributed_to_the_contract_it_sits_under() -> None:
@@ -119,7 +131,7 @@ def test_a_directive_is_attributed_to_the_contract_it_sits_under() -> None:
         "    kill: neutralise src/b.py::two",
     )
 
-    directives = parse_kill_directives(section)
+    directives = parse_kill_directives(_rec(section))
 
     assert directives["CT1"].symbol == "one"
     assert directives["CT2"].symbol == "two"
@@ -136,12 +148,12 @@ def test_a_directive_before_any_contract_is_ignored_not_misattributed() -> None:
         "  CT1 [FUNCTIONAL]: it does the thing.",
     )
 
-    assert parse_kill_directives(section) == {}
+    assert parse_kill_directives(_rec(section)) == {}
 
 
 def test_an_empty_section_parses_to_nothing_without_raising() -> None:
     """Total, like I01's accessors: unknown input yields emptiness, never an error."""
-    assert parse_kill_directives("") == {}
+    assert parse_kill_directives(_rec("")) == {}
 
 
 # ── CT50b — a symbol may be a bare name or a dotted Class.method ───────────
@@ -170,7 +182,7 @@ def test_a_dotted_symbol_survives_the_strict_parse() -> None:
         "    kill: remove-call src/a.py::_Silence.visit_Call -> generic_visit",
     )
 
-    directive = parse_kill_directives(section)["CT1"]
+    directive = parse_kill_directives(_rec(section))["CT1"]
 
     assert directive.symbol == "_Silence.visit_Call"
     assert slice_verification._split_dotted(directive.symbol) == ("_Silence", "visit_Call")
@@ -316,17 +328,28 @@ def test_parsing_and_validation_touch_neither_disk_nor_subprocess(function_name:
 def test_the_i02_plan_declares_a_clean_set_of_directives() -> None:
     """The strongest available oracle: the artifact the gate was written for.
 
-    A hand-written corpus proves the parser handles what its author imagined.
-    This proves it handles what the planner actually wrote — 28 directives
-    across six slices, independently counted by the readiness audit (E138).
+    A hand-written corpus proves the parser handles what its author imagined;
+    this proves it handles what the planner actually wrote.
+
+    The count is derived, not pinned. An earlier version asserted the literal
+    28 the readiness audit counted (E138), and it fired the moment the plan
+    legitimately grew a slice — a tripwire that reports editing, not breakage,
+    and whose only available fix is to bump the number, which teaches the
+    reader to bump it next time too. What must hold is the invariant: every
+    FUNCTIONAL contract carries a directive the parser can recover, and the
+    validator finds nothing to say. The floor keeps it non-vacuous.
     """
     path = PLAN_DIR / "increment-02-verify-gate-and-kill-checks.md"
     text = path.read_text(encoding="utf-8")
     ids = extract_plan_ids(text)
 
-    parsed = sum(len(parse_kill_directives(ids.section(sid))) for sid in ids.slices)
+    parsed: dict[str, KillDirective] = {}
+    for record in ids.slice_records:
+        parsed.update(parse_kill_directives(record))
+    functional = {c for c in ids.contracts if ids.contract_class(c) == "FUNCTIONAL"}
 
-    assert parsed == 28, "the plan's directive count changed; re-run the readiness audit"
+    assert len(parsed) >= 28, "fewer directives than the readiness audit counted (E138)"
+    assert functional - set(parsed) == set(), "a FUNCTIONAL contract lost its kill directive"
     assert validate_kill_directives(text, ids, path=str(path)) == []
 
 
@@ -367,31 +390,6 @@ def test_an_unclassed_contract_is_still_located() -> None:
     assert _validate(plan) == []
 
 
-def test_every_contract_in_a_real_plan_is_locatable() -> None:
-    """Drift oracle for Q44(i): two modules hold a contract-shape regex.
-
-    The duplication is the accepted cost of not growing I01's surface. This is
-    what keeps it honest — if I01's grammar widens again, a contract becomes
-    unlocatable here and its diagnostic loses its line, which this catches
-    before an operator meets it.
-    """
-    for name in ("increment-01-plan-grammar-and-extractor.md", "increment-02-verify-gate-and-kill-checks.md"):
-        path = PLAN_DIR / name
-        text = path.read_text(encoding="utf-8")
-        ids = extract_plan_ids(text)
-        located = {
-            match.group("id")
-            for line in text.splitlines()
-            if (match := slice_verification._CONTRACT_ENTRY_RE.match(line)) is not None
-        }
-        # Declared, not merely mentioned: `ids.contracts` includes ids this
-        # plan only cites (I02's CT51 names I01's CT26 and CT37). A reference
-        # has no entry line here and must not be expected to.
-        declared = {c for c in ids.contracts if ids.contract_class(c) is not None}
-        missing = declared - located
-        assert not missing, f"{name}: I01 declares {sorted(missing)} but this locator cannot find them"
-
-
 def test_parsing_continues_past_a_directive_it_cannot_attribute() -> None:
     """A stray directive must cost that directive, never the ones after it.
 
@@ -408,7 +406,7 @@ def test_parsing_continues_past_a_directive_it_cannot_attribute() -> None:
         "    kill: neutralise src/b.py::two",
     )
 
-    directives = parse_kill_directives(section)
+    directives = parse_kill_directives(_rec(section))
 
     assert sorted(directives) == ["CT1", "CT2"]
 

@@ -165,6 +165,20 @@ class SliceRecord:
     #: verbatim. I01 preserves it and assigns it no meaning; I02's fail-before
     #: filter keys on it and has no other source for it.
     tests_note: str = ""
+    #: CT78. 1-based line of this slice's heading in the plan document, or 0
+    #: when the record was not built from a document.
+    start_line: int = 0
+    #: CT78. ``(contract id, 1-based document line)`` for every contract this
+    #: slice **declares**, in document order.
+    #:
+    #: A parser that turns text into structure and discards where it found it
+    #: forces every consumer to re-parse the document to recover the position
+    #: -- and a consumer's second grammar is guaranteed to drift from the
+    #: first. That is not hypothetical: I02 carried such a copy, and it
+    #: disagreed with this module about whether an unclassed entry declares a
+    #: contract, so a correct plan was accused of omitting a kill directive
+    #: (E152). Source positions belong to the parser that read the source.
+    contract_lines: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -197,7 +211,21 @@ class PlanIds:
         return not (self.slices or self.gaps or self.contracts or self.tests or self.commands)
 
     def _record(self, slice_id: str) -> SliceRecord | None:
-        wanted = canonical_slice_id(slice_id)
+        """The record for *slice_id*, matched **strictly**. (Q43(ii))
+
+        No canonicalisation. E106 made ``parse_slice_id`` strict inside a plan
+        because ``S2`` is ambiguous there between a slice and a step, but left
+        these accessors quietly lenient -- a second lenient surface it never
+        named. A caller holding a step id would have had it resolved to the
+        like-numbered slice and received that slice's commands, which is the
+        ambiguity E106 set out to remove, arriving by the back door.
+
+        Leniency survives exactly where E106 put it: ``canonical_slice_id`` at
+        the eval-report boundary, where a report has one namespace and no step
+        ids compete. A caller holding a legacy token canonicalises first, and
+        says so at the call site.
+        """
+        wanted = slice_id.strip()
         return next((r for r in self.slice_records if r.slice_id == wanted), None)
 
     def commands_for(self, slice_id: str | None) -> tuple[str, ...]:
@@ -223,6 +251,28 @@ class PlanIds:
         """The slice's ``TESTS:`` paths (CT20). Unknown id -> ``()``."""
         record = self._record(slice_id)
         return record.test_paths if record is not None else ()
+
+    def contract_line(self, contract_id: str) -> int:
+        """1-based document line declaring *contract_id*; 0 if never declared.
+
+        CT78. The positional twin of :meth:`contract_class`, and deliberately
+        the same shape: both answer "what did the parser see for this id", and
+        both resolve a duplicated id to its **first** declaration so the answer
+        is deterministic.
+
+        ``0`` means "this parse has no line for that id" -- an id that is only
+        *referenced* has none, and so does a record not built from a document.
+        It is a sentinel a caller can render as "line unknown"; it is never a
+        guess, because a wrong line is worse than no line. A diagnostic
+        pointing at line 1 of a 400-line plan sends its reader to the wrong
+        place with full confidence.
+        """
+        wanted = contract_id.strip()
+        for record in self.slice_records:
+            for cid, line in record.contract_lines:
+                if cid == wanted:
+                    return line
+        return 0
 
     def contract_class(self, contract_id: str) -> str | None:
         """The declared class of *contract_id*, or ``None`` if never declared.
@@ -474,10 +524,15 @@ def _section_contracts(section: str) -> tuple[tuple[str, str, str], ...]:
     return tuple(out)
 
 
-def _build_record(slice_id: str, section: str) -> SliceRecord:
+def _build_record(slice_id: str, section: str, start_line: int) -> SliceRecord:
     intent = _INTENT_LINE_RE.search(section)
     tests = _TESTS_LINE_RE.search(section)
     mode = _STEPS_MODE_RE.search(section)
+    # CT78. ``_contract_declaration_sites`` is already the single source of
+    # truth for which lines declare a contract; this lifts its 0-based,
+    # section-relative answer into the document's own 1-based numbering so a
+    # consumer never has to know a section existed.
+    contract_lines = tuple((cid, start_line + offset) for cid, offset in _contract_declaration_sites(section))
     return SliceRecord(
         slice_id=slice_id,
         intent=intent.group(1).strip() if intent else "",
@@ -487,6 +542,8 @@ def _build_record(slice_id: str, section: str) -> SliceRecord:
         commands=_extract_commands(section),
         section=section,
         tests_note=_tests_note(tests.group(1)) if tests else "",
+        start_line=start_line,
+        contract_lines=contract_lines,
     )
 
 
@@ -511,7 +568,7 @@ def extract_plan_ids(text: str) -> PlanIds:
         return PlanIds()
 
     spans = _slice_spans(text)
-    records = tuple(_build_record(sid, text[start:end]) for sid, start, end in spans)
+    records = tuple(_build_record(sid, text[start:end], _line_at(text, start)) for sid, start, end in spans)
     return PlanIds(
         slices=_ordered_unique([r.slice_id for r in records]),
         gaps=_ordered_unique([f"GAP{n}" for n in _GAP_RE.findall(text)]),

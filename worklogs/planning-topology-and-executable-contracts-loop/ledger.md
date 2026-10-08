@@ -1482,3 +1482,77 @@ E155 DECISION Operator instruction, 2026-10-08: every producer this plan creates
     stated once at the top (a real `/sessions/<id>/` workspace rather than `tmp_path`, `--plan`
     supplied because nothing infers it, assertions read from the persisted session-log
     artifacts, observe-mode first). A producer is not finished until its row reads `e2e`.
+
+E156 DECISION Q45 resolved **(B)** by operator ruling, 2026-10-08, overriding the provisional
+    Q44(i): source positions move into I01 and I02 keeps no grammar of its own. The ruling's
+    reasoning, recorded because it is the standing rule now and not only this fix: a parser
+    that turns text into structure and discards where it found it is defective by design;
+    making the consumer re-read the file with its own regex to guess where the first parser
+    looked breaks Single Source of Truth, and the consumer's copy is guaranteed to degrade as
+    soon as planners format a plan slightly differently. The drift oracle shipped in E152 was
+    a brace on a crack, acceptable to unblock a slice and not acceptable to keep.
+    Implemented as SLICE2b, CT78/CT79/CT80.
+
+E157 BUILD I01 grew source positions: `SliceRecord.start_line`, `SliceRecord.contract_lines`,
+    and `PlanIds.contract_line(id)` -- the positional twin of `contract_class`, same
+    first-declaration-wins rule, `0` for "this parse has no line for that id". No new scanning
+    was needed: `_contract_declaration_sites` was already documented as "the single source of
+    truth for which lines declare a contract" and already returned offsets; `_build_record`
+    now lifts them into document numbering. The parser had the answer and was throwing it
+    away.
+    I02 deleted `_CONTRACT_ENTRY_RE` (`grep -c` = 0) and gained `_owner_at`, which only asks
+    which supplied declaration most recently preceded a line. `parse_kill_directives` now
+    takes the `SliceRecord` rather than loose text, because attribution needs the raw section
+    *and* the declaration positions and only I01 can produce both from one parse; CT50's
+    signature was amended to match rather than left to drift from the code.
+    Kill-checks PROVEN by execution: neutralise `contract_line` -> 7 failed; `contract_lines =
+    ()` in `_build_record` -> **27 failed across both test files**; neutralise `_owner_at` ->
+    17 failed. The middle one is the one worth keeping: deleting I01's positions reddens I02's
+    suite, which is the single-source-of-truth coupling made observable instead of asserted.
+    Both files restored byte-identical by sha comparison.
+
+E158 DECISION Q43 resolved **(ii) tighten**, by operator ruling: SLICE and STEP are to be
+    distinguished everywhere -- in the skills, in the artifacts, and in the code that parses
+    them. `PlanIds._record` no longer canonicalises, so `commands_for("S1")` returns `()`
+    instead of SLICE1's commands. E106 had made `parse_slice_id` strict inside a plan for
+    exactly this reason and then left the accessors lenient, which meant a caller holding a
+    *step* id was handed the like-numbered *slice*'s commands with no way to tell. Leniency
+    survives only where E106 scoped it: `canonical_slice_id` at the eval-report boundary,
+    which the test now pins alongside the strictness.
+    Safe to do now and cheaper than later: the accessors still have no production caller
+    (grep: tests only), so the tightening lands before I02/I03 build on the old behaviour.
+
+E159 EVIDENCE Mutation sweeps after the move. `slice_verification.py`: 341 mutants, **102
+    killed / 11 survived / 0 uncovered** -- nine SLICE1 documented equivalents plus two new
+    ones, both off-by-one boundaries in the new arithmetic, both equivalent for one shared
+    reason: a contract entry matches `^\s+CT\d+…` and a directive matches `^\s*kill:`, both
+    anchored at line start, so a declaration line can never also be a directive line and the
+    `site_line == line` boundary the mutants move is unreachable. The old `contract_line.get(…,
+    0)` survivor is gone -- the fallback it mutated no longer exists.
+    `plan_ids.py` swept for the first time: 785 mutants, **275 killed / 16 survived / 0
+    uncovered**. One survivor was real and was fixed in the code rather than pinned by a test:
+    `_build_record`'s `start_line: int = 0` default was unreachable -- every production call
+    passes the argument -- so the default was dead surface and is now required (784/274/15).
+    Two more are `str.count(sub, 0, end)` -> `count(sub, None, end)`, a language-level
+    identity.
+    **Recorded for I01, not fixed here:** twelve survivors predate this change and live in
+    `extract_plan_id` (4), `_declared_deps` (3), `_step_blocks` (2), `_dependency_cycles`,
+    `_orphaned_tests_owners` and `precheck`. I01 shipped without a sweep on this module. They
+    are listed in the workplan and belong to whoever reopens I01.
+
+E160 DEFECT (tooling, no product impact) The scoped mutation config must pass
+    `--output-format=json --summary=none --progress-bar=no` to `pyrefly`: mutmut parses the
+    type checker's JSON and aborts with "type check command did not return JSON" otherwise,
+    after printing a wall of legitimate-looking type errors that reads like a code failure.
+    Cost an hour of misdirected debugging; recorded so the next scoped sweep copies the flags
+    from `[tool.mutmut]` rather than the path list alone.
+
+E161 CORRECTION The regression baseline is **3 expected-red, not 4**. E149 recorded
+    `test_cli::test_fa_run_verify_only_bash_allowed_before_pr_prepare` as a fourth; it passes
+    whenever `uv` is on `PATH` and fails when it is not, so it was measuring the harness
+    rather than the code. Same cause as the three `test_semgrep_pin` / `test_targeted_gates`
+    failures seen once this session: `pytest` invoked as `.venv/bin/pytest` without exporting
+    `PATH` leaves `uv` unfindable. Export `PATH="$PWD/.venv/bin:$PATH"` and the baseline is
+    `test_doc_links`, `test_deploy_scripts::…superseded_banner` and
+    `test_cli_ergonomics::test_workflow_per_role_overrides_parse` -- the three that must never
+    be "fixed" (E19).
