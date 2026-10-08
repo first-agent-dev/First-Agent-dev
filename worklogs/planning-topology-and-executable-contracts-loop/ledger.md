@@ -1348,3 +1348,32 @@ E144 DEFECT The repository's own `fa authoring check` gate caught a real public-
     which audits this checkout rather than a synthetic tree. The tell was already in my own
     test file -- it imported `TAIL_LIMIT` from inside a function body, the smell of a symbol
     the author knows is public but has not declared. Fixed in both places.
+
+E145 DEFECT The I02 shipping-order rationale rested on a factual error, found by checking the
+    claim instead of repeating it. The plan said Phase A "closes D1 -- the register row this
+    whole increment exists for". D1 in fact conflated two claims, and the first was already
+    closed by code in the tree: `tests/test_slice_id_validation.py:199`
+    `test_live_workflow_persists_the_adjusted_report` boots the real `run_workflow` with a real
+    `plan_path` and asserts on the **persisted** `eval_report.json` -- invented `SLICE404`
+    absent from disk, `unreported_slices == ["SLICE5","SLICE5a"]` -- neither of which is
+    reachable unless `extract_plan_ids(plan_text).slices` was non-empty at
+    `workflow_controller.py:332`.
+    Verified by executing D1's own named kill-check rather than reasoning about it: replacing
+    that line with `declared = ()` yields `6 failed, 7 passed` in that file, the live test
+    among them; restored byte-identical. So **D1a is CLOSED and owes I02 nothing.**
+    What Phase A actually closes is **D4**: `commands_for` gains its first production reader,
+    ending the SD-B violation I01 left standing. Register and plan both corrected.
+
+E146 RISK  Splitting D1 exposed an unproven precondition under the whole verify gate, now
+    recorded as **D1b**. Every parser test to date, including the live one above, feeds the
+    parser a **fixture** plan. Nothing shows that a plan the *model* writes -- following the
+    skeleton injected at `coder_loop.py:895` via `read_skill_for_injection` -- parses into
+    slices carrying `verify` fences. SLICE6's gate reads a slice's commands from that plan, so
+    if the assumption is false the gate ships as a silent no-op: the exact defect I01 was
+    created to kill, one storey up.
+    Consequence for sequencing: **D1b/D3 is a precondition of Phase A, not a successor.** It is
+    roughly one test file, it retires the remainder of the highest-priority register row, and
+    it is strictly cheaper than discovering the no-op after SLICE5 and SLICE6 are wired. The
+    dependency-driven order (four leaf slices, then assembly, then wiring) was never the
+    constraint -- SLICE1-4 all declare `DEPS: -`, so the order was always a risk choice, and
+    this is the risk that was mispriced.

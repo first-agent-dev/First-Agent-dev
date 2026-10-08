@@ -20,15 +20,33 @@ here.** Adding a feature to I01's surface means adding a row.
 
 - **Promise.** A planner-written plan yields a non-empty `.slices`, so the coverage gate at
   `src/fa/inner_loop/workflow_controller.py:332` stops silently no-opping.
-- **Proven today.** Statically, by CT11/CT31 over fixture text.
-- **Not proven.** That a plan produced by the *real* loop reaches that line at all.
 - **The original defect was exactly this.** An unparseable plan made the gate no-op
   **silently** (ledger E-entry at `ledger.md:181`: "Live defect, not archival"). A static
   test cannot distinguish "the gate passed" from "the gate did nothing".
-- **Test to write.** Boot `drive_session` (mock only `ProviderChain.request`), have the
-  mocked provider return a plan written to the skill skeleton, assert the coverage gate
-  observed a non-empty slice set. **Kill-check:** deleting the `extract_plan_ids` call at
-  `workflow_controller.py:332` must fail it.
+
+**Corrected 2026-10-08 (E145): this row conflated two claims. The first is already closed.**
+
+### D1a — the gate runs, and observes slices, in a real workflow · **CLOSED**
+
+Closed by code already in the tree, not by new work. `tests/test_slice_id_validation.py:199`
+`test_live_workflow_persists_the_adjusted_report` boots the real `run_workflow` with a real
+`plan_path`, and asserts on the **persisted** `eval_report.json` — the same file the repair
+loop and the operator read. The invented `SLICE404` is absent from disk and
+`unreported_slices == ["SLICE5", "SLICE5a"]`, neither of which can happen unless
+`extract_plan_ids(plan_text).slices` returned a non-empty set at `workflow_controller.py:332`.
+
+**Kill-check executed, not asserted:** replacing that line with `declared = ()` turns the file
+red — `6 failed, 7 passed`, including the live test — and restores byte-identical. This is
+precisely the kill-check this row demanded. D1a therefore needs no test from I02.
+
+### D1b — a plan the **model actually wrote** parses · owner: **I02** · still open
+
+What remains is the half the original row buried: everything above feeds the parser a
+*fixture*. No test shows that a plan produced by following the injected skill skeleton yields
+a non-empty slice set. That is the chain in **D3**, and it is the live precondition of the
+whole verify gate: SLICE6 reads a slice's commands from the plan, so if a model-authored plan
+does not parse into slices carrying `verify` fences, the gate silently does nothing — the
+original defect one storey up. **Close D1b before SLICE5/SLICE6, not after.**
 
 ## D2 — `precheck` is implemented but wired to nothing  ·  owner: **I03**
 

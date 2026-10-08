@@ -135,9 +135,22 @@ restate it here.
 
 **Phase A, the command gate.** SLICE1 (runner) + SLICE5 restricted to a command-only verdict +
 SLICE6 restricted to wiring. A complete, independently valuable system: it reads the commands a
-slice declares, runs them, and routes on the result. It closes D1 — the register row this whole
-increment exists for — and it is what can be exercised on the live host. Roughly 150 lines over
-three touch points in one file.
+slice declares, runs them, and routes on the result. It is what can be exercised on the live
+host. Roughly 150 lines over three touch points in one file.
+
+**Corrected 2026-10-08 (E145). Phase A does not close D1; it closes D4.** The earlier claim was
+wrong on a checkable fact. D1's live half (D1a — the coverage gate observes a non-empty slice
+set inside a real `run_workflow`) is **already closed** by
+`tests/test_slice_id_validation.py:199`, verified by executing D1's own kill-check: neutralising
+`extract_plan_ids` at `workflow_controller.py:332` reddens that live test. What Phase A really
+retires is **D4** — `commands_for` gains its first production reader, ending the SD-B violation
+I01 left standing.
+
+**Phase A0, the precondition — do this first.** Phase A rests on an unproven assumption: that a
+plan *the model actually writes*, following the injected skill skeleton, parses into slices
+carrying `verify` fences. Nothing proves it; every parser test to date feeds a fixture. If the
+assumption is false the gate ships as a silent no-op, which is the original defect one storey
+up. Closing **D1b / D3** is roughly one test file and must precede SLICE5 and SLICE6.
 
 **Phase B, the kill-check.** SLICE2 (directive parse) + SLICE3 (AST operators) + SLICE4
 (overlay) + the kill-check columns of SLICE5 and the kill-related contracts of SLICE6. Two
