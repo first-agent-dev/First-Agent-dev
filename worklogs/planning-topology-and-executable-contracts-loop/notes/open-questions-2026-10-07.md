@@ -308,3 +308,138 @@ coincidence, not derivation. That one sizes an interactive shell call the model 
 mid-turn; collapsing them would let a change made for the model's benefit silently retune this
 gate's failure detection. Stated in the code comment as well, because the coincidence is an
 invitation.
+
+## Q47 -- `hits` cannot mean both "targets matched" and "calls replaced"
+
+**Status:** OPEN. Blocking SLICE3/STEP3. Found by reading CT57 against STEP2b before writing
+any code.
+
+### What SLICE3 is for, so the numbers have a job
+
+A contract may declare `kill: neutralise path::symbol` or
+`kill: remove-call path::symbol -> callee`. The claim is: *break this producer and the slice's
+own tests must go red*. SLICE5 will cash the claim by applying the mutation to a copy of the
+source, running the tests in SLICE4's overlay, and mapping the result onto the status lattice:
+
+| what happened | status |
+| --- | --- |
+| mutation applied, tests went red | `PROVEN` |
+| mutation applied, tests still green | `VACUOUS` -- the test does not test it |
+| the named symbol is not in the source | `PRODUCER_ABSENT` -- the plan is ahead of the code |
+| the directive names more than one thing | `ERROR` -- never guess which |
+
+`apply_kill` is the pure half: source text in, mutated source text out (CT58 forbids it from
+touching the filesystem or a subprocess). It must hand the caller enough information to pick
+the right row, and **the difference between the last two rows is the whole reason this slice
+exists** -- "the producer is missing" must be distinguishable from "the test is weak", which
+is the slice's stated INTENT.
+
+### The contradiction
+
+CT57: "`hits == 0` means the target is absent and the caller raises `PRODUCER_ABSENT`;
+**`hits > 1` is an ambiguous target** and the caller raises `ERROR`, never a guess."
+
+STEP2b: "assert the four-call-form sample yields **`hits == 4`**".
+
+The four-call sample is the one CT56 was written to defend: `a = emit(x)`, `emit(x)`,
+`if emit(x):`, and a call inside a comprehension. The measured finding is that deleting only
+`ast.Expr` statements sees **1 of 4**, so `remove-call` must replace *every* call form. The
+normal, correct outcome for `remove-call` is therefore several replacements -- and under CT57
+that same number is read as "ambiguous" and rejected. **The slice's headline capability is
+unreachable through its own gate.**
+
+The cause is visible once stated: CT57 was written while thinking about `neutralise`, where
+"targets matched" and "edits made" are the same number (you find one function, you blank one
+body). For `remove-call` they come apart -- one target, four edits. One integer cannot carry
+both.
+
+### The facts a caller actually needs
+
+1. **Did the directive name exactly one thing?** `0` -> `PRODUCER_ABSENT`; `>1` -> `ERROR`.
+2. **How much did the operator change?** `neutralise`: 0 or 1. `remove-call`: 0..n, and `0`
+   with the symbol present still means `PRODUCER_ABSENT` -- the call site the contract claims
+   exists, does not.
+3. **The mutated source**, which is meaningless and *dangerous* unless 1 and 2 both passed.
+
+Point 3 is the sharp edge. If a caller ignores the counts and runs the tests against source
+that was never mutated, the tests pass and it reports `VACUOUS` -- accusing a good test of
+being weak when the real story is a missing producer. That is the same class of false
+accusation CT50b was created to stop (E-note: three directives naming `_Silence.visit_Call`
+resolved to nothing under a bare-name reader).
+
+### Options
+
+**(a) `hits` counts replacements; ambiguity raises inside `apply_kill`.**
+Resolve the symbol first; two or more matches raise. `hits` then means "edits made": `0` ->
+`PRODUCER_ABSENT`. STEP2b stands.
+*Cost:* the caller handles two channels, return and exception, for one question. A pure source
+transform that also raises is harder to reason about, and the lattice decision is now split
+across a `try` and an `if`.
+
+**(b) Return a bare 3-tuple `(source, targets, hits)`.**
+Keeps `apply_kill` total. The caller owns the whole lattice, as CT57 intends.
+*Cost:* two adjacent `int`s in a positional tuple. `source, hits, targets = apply_kill(...)`
+type-checks perfectly and inverts the lattice -- mypy cannot see a transposition of two
+`int`s. And nothing stops a caller using `source` when it is meaningless.
+
+**(c) Keep CT57 verbatim; weaken STEP2b to `hits == 1`** by counting the enclosing symbol.
+*Cost:* nothing then proves the four-call-form behaviour, the measured finding CT56 exists to
+encode. The slice ships its central behaviour untested. **Rejected.**
+
+### (d) -- recommended: a named result, and `None` where the source is not usable
+
+```python
+@dataclass(frozen=True)
+class KillApplication:
+    """What one directive did to one source text. (CT57)"""
+
+    source: str | None   # the mutated text; None unless it is safe to run
+    targets: int         # definitions whose qualified name is the directive symbol
+    edits: int           # bodies neutralised (0 or 1) / call sites silenced (0..n)
+```
+
+`apply_kill(source, directive) -> KillApplication`, total, never raising. `source` is `None`
+whenever `targets != 1 or edits == 0`.
+
+Two properties neither (a) nor (b) has:
+
+- **The type system enforces the branch.** `source: str | None` means a caller cannot write
+  the mutated text into the overlay without first establishing that there is one -- mypy
+  refuses. The dangerous path from point 3 above, running a no-op mutation and blaming the
+  test, stops being a matter of discipline and becomes a compile-time error. This is the one
+  design property worth paying for here.
+- **Field names, not positions.** `targets` and `edits` can no longer be transposed, and they
+  read the same way in the code, in an eval report and in a test assertion.
+
+It also keeps every lattice decision at the single call site that owns the lattice (CT57's
+intent, and the Single-Source-of-Truth principle the Q45-B ruling turned on), adds no new
+vocabulary -- no third status enum beside the lattice, nothing CT59 or the §5 "no mutation
+DSL" rule would object to -- and leaves STEP2b intact with `edits == 4`.
+
+*Cost:* one frozen dataclass, in a module that already holds `CommandResult`, `KillDirective`
+and `SliceRecord`. House style, not new machinery.
+
+### A resolution rule that shrinks the ambiguity case (part of the same decision)
+
+I had provisionally resolved symbol lookup as "any unambiguous dotted **suffix** of the
+qualified path", so a bare `visit_Call` would match `_Silence.visit_Call`. On review that rule
+is what *manufactures* most ambiguity, and it is not what any directive written so far needs:
+every directive in this plan already spells the symbol out in full (`::apply_kill`,
+`::_Silence.visit_Call`). Proposal, bundled into (d):
+
+> **Exact qualified name, anchored at module root**, split by `_split_dotted` (CT50b).
+
+Then `targets > 1` is only reachable when a module genuinely defines the same qualified name
+twice -- a `try/except ImportError` fallback, a platform-conditional `def`, a redefinition
+bug. It stays in the contract because silently mutating one of two definitions is exactly the
+guess CT57 forbids, but it becomes the rare guard it should be rather than the common case. A
+mis-spelled or under-qualified symbol now lands on `PRODUCER_ABSENT`: loud, accurate, and
+already a status the lattice carries.
+
+### Consequent plan edits if (d) is chosen
+
+- CT57 reworded: two counts, their separate meanings, and `source is None` as the
+  not-safe-to-run signal.
+- CT56 unchanged. CT58 unchanged (purity is strengthened: no raising either). CT59 unchanged.
+- STEP2b keeps `== 4`, renamed to `edits`.
+- STEP3 names `KillApplication` as part of the producer set.
