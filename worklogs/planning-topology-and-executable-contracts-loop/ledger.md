@@ -1114,3 +1114,19 @@ E128 FACT  `worklogs/DEPLOYMENT-ANATOMY.md` read at operator instruction, and it
     silent inversion available in this system -- drop it and every verify command imports the
     baked image, so the gate passes regardless of what the coder wrote. Pinned as new
     **CT49b**, a PRESERVATION contract, because nothing protected it.
+
+E129 CORRECTION  A third instance of the D2/D6 defect class, found by walking the real
+    dispatch spine rather than the plan. `_run_linear` (`:1061`) carries the **same**
+    `if result.eval_report is not None: eval_report = result.eval_report` idiom as
+    `_run_initial_roles`, at `:1078-1079`. CT73's short-circuit, written against
+    `_run_initial_roles` alone, would therefore have left `--mode linear` **silently
+    ungated** -- the gate would compute a blocking verdict and the run would finish anyway.
+    Fixed: the guard goes in both loops; downstream they diverge correctly without further
+    work, adaptive into the routing loop at `:944` and linear into `_write_terminal_state`
+    ending non-DONE. CT73's kill-check now targets `_run_linear`, the path that would
+    otherwise have been forgotten.
+    Recorded because the class is now three for three: every defect so far came from writing
+    a contract against ONE code path I had read, when the dispatch fans out to four
+    (`:897`, `:965`, `:1031`, `:1067`). CT71 now states explicitly why the gate belongs at
+    the `_run_stage` choke point -- the same justification the codebase already gives for
+    putting the deadline check there (S4b/RK6, `:536`) -- rather than in any loop body.

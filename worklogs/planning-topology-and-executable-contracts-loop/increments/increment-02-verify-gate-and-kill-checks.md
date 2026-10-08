@@ -299,7 +299,10 @@ INTENT: the gate becomes reachable from a real workflow run — the first produc
 CONTRACTS:
   CT71 [FUNCTIONAL]: after a `coder` stage returns exit 0, `_run_stage`
     (`workflow_controller.py:511`) verifies **every slice** the plan declares and attaches a
-    `PlanVerification` to its `StageResult`. There is no per-slice dispatch in I02; one coder
+    `PlanVerification` to its `StageResult`. Placed at `_run_stage` because it is the single
+    choke point all four dispatch sites funnel through (`:897`, `:965`, `:1031`, `:1067`) —
+    the same reason the deadline check lives there (S4b/RK6, `:536`). A gate in either loop
+    body instead would miss the other mode and both repair paths. There is no per-slice dispatch in I02; one coder
     stage covers the whole plan, and the per-slice loop belongs to I03.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> verify_plan
   CT72 [FUNCTIONAL]: a blocking verdict makes `_run_stage` return a synthetic `EvalReport` with
@@ -307,12 +310,16 @@ CONTRACTS:
     `evaluation_id` prefixed `harness-verify-`, and a finding carrying the failing command and
     its real stderr text. No new routing constant and no new `EvalReport` field.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> _synthesise_verify_report
-  CT73 [FUNCTIONAL]: `_run_initial_roles` (`:886`) **stops the role loop** when a coder stage
-    returns a blocking report, so the eval stage never runs. Catches two defects at once: an
-    LLM call paid for on work already known to be broken, and — the real one — the eval stage
-    overwriting `eval_report` at `:908-909`, which would discard the synthetic route entirely
-    and let the run finish green.
-    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_initial_roles -> _is_blocking
+  CT73 [FUNCTIONAL]: **both** role loops stop when a coder stage returns a blocking report:
+    `_run_initial_roles` (`:908-909`, adaptive) and `_run_linear` (`:1078-1079`, linear). Each
+    carries the identical `if result.eval_report is not None: eval_report = result.eval_report`
+    idiom, so each needs the same guard; downstream they then diverge correctly on their own —
+    adaptive falls into the routing loop at `:944` and repairs, linear falls into
+    `_write_terminal_state` and ends non-DONE. Catches three defects: an LLM call paid for on
+    work already known to be broken; the eval stage overwriting the synthetic report so the
+    route is discarded and the run finishes green; and a gate wired into the adaptive path only,
+    leaving `--mode linear` silently ungated.
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_linear -> _is_blocking
   CT74 [CONSTRAINT]: verification-driven repairs are governed by the existing
     `WorkflowProgress.repair_round` cap at `:944-957`; a permanently failing command terminates
     the run non-`DONE` instead of looping. Catches: an infinite repair loop on an unsatisfiable
@@ -344,7 +351,7 @@ uv run ruff check src/fa/inner_loop/workflow_controller.py tests/test_verify_gat
 - [ ] STEP1: add `verify_plan(plan_ids, *, root, …) -> PlanVerification` to `slice_verification.py`, iterating `slice_records` plus `commands_for(None)` (exit: `uv run pytest tests/test_verify_slice.py -q -k verify_plan` exits 0)
 - [ ] STEP2: call `verify_plan` from `_run_stage` guarded by `role == "coder" and code == 0` (exit: `grep -n "verify_plan" src/fa/inner_loop/workflow_controller.py` prints at least one line)
 - [ ] STEP3: implement `_synthesise_verify_report` per CT72 (exit: `uv run pytest tests/test_verify_gate_live.py -q -k route` exits 0)
-- [ ] STEP4: stop the role loop in `_run_initial_roles` on a blocking coder report (exit: `uv run pytest tests/test_verify_gate_live.py -q -k short_circuit` exits 0)
+- [ ] STEP4: add the blocking guard to `_run_initial_roles` (`:908`) AND `_run_linear` (`:1078`), with a parametrised test over both modes (exit: `uv run pytest tests/test_verify_gate_live.py -q -k short_circuit` exits 0)
 - [ ] STEP5: write the live test on the `test_workflow_global_history.py:123-141` template (exit: `uv run pytest tests/test_verify_gate_live.py -q -k live` exits 0)
 - [ ] STEP6: add the per-slice attribution assertion of CT76 (exit: `uv run pytest tests/test_verify_gate_live.py -q -k attribution` exits 0)
 - [ ] STEP7: append the verdict lines to `_eval_evidence_block` and assert they appear on a GREEN run (exit: `uv run pytest tests/test_verify_gate_live.py -q` exits 0)
