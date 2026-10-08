@@ -1815,3 +1815,65 @@ E176 OPEN QUESTION Q52, 2026-10-08. SLICE5 STEP3 cannot safely choose a slice ve
     conflicts with Phase 2's “any non-zero → FAILING” if a verify command includes that test.
     Q52 asks whether command exits remain independently blocking or per-test evidence refines
     them, and what attribution is sufficient. No implementation change was made.
+
+E177 DECISION Q52 RESOLVED (a) by agent after operator said “Continue”, 2026-10-08. The
+    planner-owned verify command runs verbatim and exposes only its exit code + tail (CT69);
+    without causal attribution, the harness must not suppress a non-zero exit because a
+    separate JUnitXML report contains red-to-red failures. Precedence in `_classify`: ERROR
+    (including missing baseline/current JUnit report) > SKIPPED when there are no verify
+    commands > FAILING on any declared non-zero exit > REGRESSION on a T0-green/current-red
+    nodeid when commands pass > PRODUCER_ABSENT > VACUOUS > PROVEN. An absent nodeid row on
+    either side is unknown, not false. CT68's red-to-red “does not block” is read as “does not
+    produce REGRESSION”; it does not override a separate command failure.
+
+E178 SHIPPED SLICE5 STEP3, 2026-10-08. `_compare_baseline` returns sorted existing nodeids
+    that are true at T0 and false now; a missing row on either side is unknown. `_classify`
+    applies Q52(a): command ERROR / kill ERROR -> ERROR; no verify commands -> SKIPPED; missing
+    JUnit report with commands -> ERROR; any declared non-zero exit -> FAILING; only then
+    green→red nodeids -> REGRESSION; then PRODUCER_ABSENT > VACUOUS > PROVEN. The producer
+    `_producer_absent` is a named predicate called from `_classify` (CT67); `_compare_baseline`
+    is called from `_classify` (CT68). E2E-live rows added for all three producers; no composition
+    root reaches them until SLICE6 (SD-C).
+    Gates: exact STEP3 `uv run pytest tests/test_verify_slice.py -q -k classify` -> 14 passed,
+    21 deselected; full current `tests/test_verify_slice.py` -> 35 passed. Ruff clean; mypy
+    clean on source + test; pyrefly clean. Plan `precheck` still reports 4 known diagnostics
+    (`contract-reference-undeclared`, `slice-count-at-ceiling`); unchanged from the baseline.
+E179 EVIDENCE Nine hand-mutants on STEP3, all killed; production source restored byte-identically,
+    2026-10-08. `_classify` omits `_compare_baseline` -> 1F; command FAIL no longer blocks ->
+    1F; absent current row treated as red -> 2F; command ERROR no longer dominates -> 1F;
+    kill ERROR no longer dominates -> 1F; `_producer_absent` omitted -> 1F; missing verify
+    commands no longer SKIPPED -> 1F; unavailable JUnit report can pass -> 1F; red-to-red
+    mislabeled regression -> 3F. One first mutation attempt did not run: the source string was
+    non-unique; it was narrowed to the classifier's second check and the mutant then died.
+
+E180 FINDING / IMPLEMENTATION Pytest's stock `--junitxml` does not serialize exact `Item.nodeid`,
+    2026-10-08. Measured against pytest 9.1.1 with a real nested class + parameterized test:
+    output had only `classname` and `name`, no `file` or nodeid field. Implemented the minimal
+    `src/fa/inner_loop/junit_nodeid_plugin.py::pytest_itemcollected` hook to append
+    `fa_pytest_nodeid=item.nodeid` to `user_properties`; pytest's real JUnit reporter serialized
+    all three exact nodeids. `tests/test_verify_slice.py::test_harness_junitxml_records_exact_pytest_nodeids`
+    boots the real subprocess/plugin/reporter, 35-test file passes, and two hand-mutants were
+    killed (property omitted -> 1F; `item.name` substituted for `item.nodeid` -> 1F), source
+    restored byte-identically. This is a mechanism required by the accepted nodeid policy, not a
+    file/classname reconstruction. Added its future live-host row; the XML parser/capture path
+    remains to be integrated.
+E181 OPEN QUESTION Q53, 2026-10-08. `TESTS:` is slice-level, but CT69 requires one contract's
+    own test. `SliceRecord.test_paths` and `parse_kill_directives(record)` expose no mapping
+    from contract id to pytest nodeid; `_run_kill_check` cannot be composed into `verify_slice`
+    without choosing a mapping. Running every slice test per directive can falsely attribute an
+    unrelated contract's failure; selecting the first path is a guess. The schema itself
+    deferred this attribution to I02 (schema §1, line 454). Q53 asks whether to add explicit
+    per-contract nodeids, enforce a test-name convention, or re-scope CT69. No Step4 composition
+    or contract-to-test mapping has been implemented.
+
+E182 REGRESSION BASELINE, 2026-10-08. Full suite with JUnitXML after STEP3 + exact-nodeid
+    plugin: **4339 passed / 3 failed / 12 skipped / 1 xfailed**, plus the already-recorded
+    pytest reporter `INTERNALERROR` caused by `os.name="nt"` pollution (E174). Test-by-test vs
+    E161 / the immediate 4324P pre-STEP3 run: the only three failed tests are the same
+    EXPECTED-RED set — `test_workflow_per_role_overrides_parse`,
+    `test_historical_workspace_docs_have_top_level_superseded_banner`, and
+    `test_repo_has_no_broken_internal_file_links` — and 15 new tests pass (20 → 35 in
+    `test_verify_slice.py`). The INTERNALERROR remains separate from a test failure and is
+    reproduced on tests outside this increment (E174). All 46 broken link targets printed by
+    `test_doc_links` are under `worklogs/archive/`; none point into the planning folder. Do not
+    repair the deliberately-red archive gate (E19).

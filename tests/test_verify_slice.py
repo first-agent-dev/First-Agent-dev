@@ -14,21 +14,27 @@ Recorded here rather than left implicit, per SD-C.
 
 from __future__ import annotations
 
+import os
 import shlex
 import sys
 import textwrap
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
 from fa.inner_loop import slice_verification
+from fa.inner_loop.junit_nodeid_plugin import JUNIT_NODEID_PROPERTY
 from fa.inner_loop.slice_verification import (
     KILL_CHECK_VERDICTS,
     CommandOutcome,
+    CommandResult,
     KillCheck,
     KillDirective,
     KillOperator,
     SliceVerdict,
+    _classify,
+    _compare_baseline,
     _module_name,
     _run_kill_check,
 )
@@ -121,7 +127,7 @@ def test_vacuous_and_producer_absent_are_distinct_members() -> None:
     wrong. Different causes, different repairs, and merging them would discard
     the dead-code-shipped-as-a-feature detector.
     """
-    assert SliceVerdict.VACUOUS is not SliceVerdict.PRODUCER_ABSENT
+    assert len({SliceVerdict.VACUOUS, SliceVerdict.PRODUCER_ABSENT}) == 2
     assert SliceVerdict.PRODUCER_ABSENT not in {SliceVerdict.VACUOUS, SliceVerdict.FAILING}
 
 
@@ -173,9 +179,7 @@ def test_kill_check_is_vacuous_when_the_test_ignores_the_producer(workspace: Pat
     The test is green, looks honest, and proves nothing about the producer it
     is declared to cover. Fail-before/pass-after would have passed it.
     """
-    (workspace / "tests" / "test_thing.py").write_text(
-        textwrap.dedent(_INDEPENDENT_TEST).lstrip()
-    )
+    (workspace / "tests" / "test_thing.py").write_text(textwrap.dedent(_INDEPENDENT_TEST).lstrip())
 
     check = _run_kill_check(_directive("produce"), "tests/test_thing.py", workspace)
 
@@ -205,9 +209,7 @@ def test_kill_check_names_the_missing_callee(workspace: Path) -> None:
 
 
 def test_kill_check_is_absent_for_a_source_file_the_workspace_lacks(workspace: Path) -> None:
-    check = _run_kill_check(
-        _directive("produce", path="src/pkg/gone.py"), "tests/test_thing.py", workspace
-    )
+    check = _run_kill_check(_directive("produce", path="src/pkg/gone.py"), "tests/test_thing.py", workspace)
 
     assert check.verdict is SliceVerdict.PRODUCER_ABSENT
     assert "src/pkg/gone.py" in check.detail
@@ -236,9 +238,7 @@ def test_kill_check_errors_on_an_ambiguous_symbol(workspace: Path) -> None:
     assert "2 definitions" in check.detail
 
 
-def test_kill_check_errors_when_the_provenance_probe_fails(
-    workspace: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_kill_check_errors_when_the_provenance_probe_fails(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """CT82 / CT62: no verdict is trusted until the overlay is proven to win.
 
     Spies on `run_commands` to assert the test was not reached. Without that
@@ -290,9 +290,7 @@ def test_the_operators_tree_is_untouched_by_a_kill_check(workspace: Path) -> Non
         ("src", None),
     ],
 )
-def test_kill_check_module_name_strips_the_prefix_the_overlay_adds(
-    rel_path: str, expected: str | None
-) -> None:
+def test_kill_check_module_name_strips_the_prefix_the_overlay_adds(rel_path: str, expected: str | None) -> None:
     """The name derived here must equal the name the probe resolves.
 
     `src` is stripped because `src` is exactly what `_overlay_env` prepends to
@@ -319,9 +317,253 @@ def test_run_commands_uses_an_injected_environment_when_given_one(tmp_path: Path
     env = slice_verification._build_env(tmp_path)
     env["FA_KILL_CHECK_MARKER"] = "overlay"
 
-    (result,) = slice_verification.run_commands(
-        ("printenv FA_KILL_CHECK_MARKER",), workspace=tmp_path, env=env
-    )
+    (result,) = slice_verification.run_commands(("printenv FA_KILL_CHECK_MARKER",), workspace=tmp_path, env=env)
 
     assert result.outcome is CommandOutcome.PASS
     assert result.stdout_tail.strip() == "overlay"
+
+
+# --------------------------------------------------------------------------
+# STEP3 — nodeid baseline comparison and single-verdict precedence
+# --------------------------------------------------------------------------
+
+
+def _result(outcome: CommandOutcome) -> CommandResult:
+    """A typed command result; no mocks hide the state under classification."""
+    return CommandResult(
+        command="uv run pytest tests/test_thing.py -q",
+        outcome=outcome,
+        exit_code={CommandOutcome.PASS: 0, CommandOutcome.FAIL: 1, CommandOutcome.ERROR: None}[outcome],
+        stdout_tail="",
+        stderr_tail="",
+        duration_s=0.01,
+    )
+
+
+def _kill(verdict: SliceVerdict) -> KillCheck:
+    """A typed per-contract result for the classifier's precedence matrix."""
+    return KillCheck(
+        directive=_directive("produce"),
+        verdict=verdict,
+        detail="" if verdict is SliceVerdict.PROVEN else "operator detail",
+        duration_s=0.01,
+    )
+
+
+def test_harness_junitxml_records_exact_pytest_nodeids(tmp_path: Path) -> None:
+    """CT68/CT69: stock JUnitXML lacks nodeid; the harness plugin adds it.
+
+    The inner run exercises real pytest collection, its real JUnitXML reporter,
+    and the real plugin module imported from this checkout. Parameter IDs and
+    class-qualified nodeids are the adversarial cases for reconstructing an ID
+    from JUnit's `classname` + `name` fields.
+    """
+    test_path = tmp_path / "test_junit_sample.py"
+    test_path.write_text(
+        """
+import pytest
+
+class TestThing:
+    @pytest.mark.parametrize('value', [1, 2])
+    def test_value(self, value):
+        assert value > 0
+
+def test_plain():
+    assert True
+"""
+    )
+    xml_path = tmp_path / "results.xml"
+    env = slice_verification._build_env(tmp_path)
+    repo_src = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = repo_src + os.pathsep + env.get("PYTHONPATH", "")
+    command = (
+        f"{shlex.quote(sys.executable)} -m pytest {shlex.quote(test_path.name)} "
+        f"-p fa.inner_loop.junit_nodeid_plugin --junitxml={shlex.quote(str(xml_path))} -q"
+    )
+
+    (result,) = slice_verification.run_commands((command,), workspace=tmp_path, env=env)
+
+    assert result.outcome is CommandOutcome.PASS, result.stderr_tail
+    xml = ElementTree.parse(xml_path).getroot()
+    recorded = []
+    for case in xml.iter("testcase"):
+        values = [
+            prop.get("value")
+            for prop in case.findall("./properties/property")
+            if prop.get("name") == JUNIT_NODEID_PROPERTY
+        ]
+        assert len(values) == 1, f"JUnit testcase {case.attrib!r} has {values!r}"
+        recorded.append(values[0])
+
+    assert recorded == [
+        "test_junit_sample.py::TestThing::test_value[1]",
+        "test_junit_sample.py::TestThing::test_value[2]",
+        "test_junit_sample.py::test_plain",
+    ]
+
+
+def test_classify_baseline_maps_only_green_existing_nodeids_to_regressions() -> None:
+    baseline = {
+        "tests/test_a.py::test_went_red": True,
+        "tests/test_a.py::test_was_already_red": False,
+        "tests/test_a.py::test_missing_now": True,
+    }
+    now = {
+        "tests/test_a.py::test_went_red": False,
+        "tests/test_a.py::test_was_already_red": False,
+        "tests/test_a.py::test_new": False,
+    }
+
+    assert _compare_baseline(baseline, now) == ("tests/test_a.py::test_went_red",)
+
+
+def test_classify_nodeids_absent_at_t0_are_not_regressions() -> None:
+    """A newly-added failing test has no before-state; it is not REGRESSION."""
+    assert (
+        _compare_baseline(
+            {"tests/test_a.py::test_old": True},
+            {"tests/test_a.py::test_old": True, "tests/test_a.py::test_new": False},
+        )
+        == ()
+    )
+
+
+def test_classify_missing_nodeid_rows_are_unknown_not_false() -> None:
+    """An absent row on either side cannot manufacture a green-to-red edge."""
+    assert (
+        _compare_baseline(
+            {"tests/test_a.py::test_missing_now": True},
+            {},
+        )
+        == ()
+    )
+    assert (
+        _compare_baseline(
+            {},
+            {"tests/test_a.py::test_absent_at_t0": False},
+        )
+        == ()
+    )
+
+
+def test_classify_red_to_red_is_not_a_regression() -> None:
+    assert (
+        _compare_baseline(
+            {"tests/test_a.py::test_preexisting": False},
+            {"tests/test_a.py::test_preexisting": False},
+        )
+        == ()
+    )
+
+
+def test_classify_unavailable_baseline_or_now_report_has_no_regression_row() -> None:
+    assert _compare_baseline(None, {"tests/test_a.py::test_case": False}) == ()
+    assert _compare_baseline({"tests/test_a.py::test_case": True}, None) == ()
+
+
+def test_classify_command_failure_remains_blocking_even_with_a_regression() -> None:
+    """Q52(a): verbatim command exit is authoritative and fail-closed."""
+    verdict = _classify(
+        (_result(CommandOutcome.FAIL),),
+        (_kill(SliceVerdict.VACUOUS),),
+        baseline={"tests/test_a.py::test_case": True},
+        now={"tests/test_a.py::test_case": False},
+    )
+
+    assert verdict is SliceVerdict.FAILING
+
+
+def test_classify_red_to_red_is_still_blocked_by_a_failed_command() -> None:
+    """CT68's advisory comparison does not suppress the command's own exit."""
+    verdict = _classify(
+        (_result(CommandOutcome.FAIL),),
+        (_kill(SliceVerdict.PROVEN),),
+        baseline={"tests/test_a.py::test_preexisting": False},
+        now={"tests/test_a.py::test_preexisting": False},
+    )
+
+    assert verdict is SliceVerdict.FAILING
+
+
+def test_classify_green_commands_with_a_green_to_red_nodeid_is_regression() -> None:
+    verdict = _classify(
+        (_result(CommandOutcome.PASS),),
+        (_kill(SliceVerdict.PROVEN),),
+        baseline={"tests/test_a.py::test_case": True},
+        now={"tests/test_a.py::test_case": False},
+    )
+
+    assert verdict is SliceVerdict.REGRESSION
+
+
+def test_classify_command_error_dominates_every_other_phase() -> None:
+    verdict = _classify(
+        (_result(CommandOutcome.ERROR), _result(CommandOutcome.FAIL)),
+        (_kill(SliceVerdict.PRODUCER_ABSENT),),
+        baseline={"tests/test_a.py::test_case": True},
+        now={"tests/test_a.py::test_case": False},
+    )
+
+    assert verdict is SliceVerdict.ERROR
+
+
+def test_classify_kill_error_dominates_command_failure() -> None:
+    verdict = _classify(
+        (_result(CommandOutcome.FAIL),),
+        (_kill(SliceVerdict.ERROR),),
+        baseline={},
+        now={},
+    )
+
+    assert verdict is SliceVerdict.ERROR
+
+
+def test_classify_missing_junit_report_is_error_not_proven() -> None:
+    """None means unavailable; an empty mapping is a valid empty report."""
+    for baseline, now in ((None, {}), ({}, None)):
+        assert (
+            _classify(
+                (_result(CommandOutcome.PASS),),
+                (_kill(SliceVerdict.PROVEN),),
+                baseline=baseline,
+                now=now,
+            )
+            is SliceVerdict.ERROR
+        )
+
+
+def test_classify_skips_a_legacy_slice_without_verify_commands() -> None:
+    """A missing verify block is advisory even if no baseline was captured."""
+    assert _classify((), (), baseline=None, now=None) is SliceVerdict.SKIPPED
+
+
+def test_classify_producer_absent_precedes_vacuous_when_both_occur() -> None:
+    verdict = _classify(
+        (_result(CommandOutcome.PASS),),
+        (_kill(SliceVerdict.VACUOUS), _kill(SliceVerdict.PRODUCER_ABSENT)),
+        baseline={},
+        now={},
+    )
+
+    assert verdict is SliceVerdict.PRODUCER_ABSENT
+
+
+def test_classify_vacuous_and_all_proven_contracts() -> None:
+    assert (
+        _classify(
+            (_result(CommandOutcome.PASS),),
+            (_kill(SliceVerdict.VACUOUS),),
+            baseline={},
+            now={},
+        )
+        is SliceVerdict.VACUOUS
+    )
+    assert (
+        _classify(
+            (_result(CommandOutcome.PASS),),
+            (_kill(SliceVerdict.PROVEN), _kill(SliceVerdict.PROVEN)),
+            baseline={},
+            now={},
+        )
+        is SliceVerdict.PROVEN
+    )

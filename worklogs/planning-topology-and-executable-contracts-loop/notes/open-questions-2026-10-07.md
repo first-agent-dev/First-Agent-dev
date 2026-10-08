@@ -655,6 +655,13 @@ not be established is not `False`.** If the pre-coder run errors, the row is abs
 absent row can never produce `REGRESSION` — consistent with the standing rule that `ERROR` is
 never a pass.
 
+**Implementation finding (E180):** stock pytest `--junitxml` serializes `classname` + `name`,
+not `Item.nodeid`; on a real class/parameterized sample, the XML contained no exact nodeid and no
+file attribute. The harness now has `fa.inner_loop.junit_nodeid_plugin`, which copies the
+authoritative `item.nodeid` into a custom JUnit `user_property`; the real pytest/JUnit oracle
+verifies class and parametrized nodeids. The runner must load this plugin explicitly and the
+XML parser must reject a missing/duplicate property rather than reconstruct an ID.
+
 ## Q50 — does a single kill-check speak the slice's vocabulary, or its own?
 
 **Status:** RESOLVED (a) by operator, 2026-10-08. The operator selected reuse of the
@@ -712,8 +719,9 @@ product requirement, make it explicit configuration rather than infer it from `v
 
 ## Q52 — what wins when a command fails and the baseline proves a test regression?
 
-**Status:** OPEN; blocks SLICE5 STEP3. Raised 2026-10-08 after reading the STEP3 contract against
-its source types and the accepted Q49 resolution.
+**Status:** RESOLVED (a) by agent after the operator instructed “Continue”, 2026-10-08. The
+operator did not select an option; the agent adopted the fail-closed command-authoritative
+interpretation below, grounded in the verbatim command contract (CT44/CT69).
 
 ### Source-verified facts
 
@@ -740,8 +748,48 @@ verdict then has to choose which fact governs routing.
 | consistency with CT68 words | requires clarifying “advisory and does not block” to mean “does not create a regression verdict” | preserves the literal non-blocking reading, but needs a reliable way to attribute an arbitrary verbatim command's failure to the separately issued JUnitXML run |
 | implementation cost | the existing `CommandResult` and one verdict suffice | additional attribution/evidence or a separate result axis; CT65/CT69 may need amendment |
 
-**No choice has been made.** Do not implement `_classify` by guessing. The design note's Phase 2
-rule (“any non-zero → FAILING”) supports (a), while CT68's “red-to-red … does not block” can
-be read as (b). The operator must say whether the command result remains independently
-blocking, or whether the harness should suppress test-command failures known to be red-to-red
-(and, if so, what attribution evidence is sufficient for arbitrary planner commands).
+**Ruling (a), fail-closed, adopted by the agent after “Continue”.** The declared command's
+exit remains authoritative: `ERROR` dominates; with commands present, a non-zero exit is
+`FAILING` even if a baseline comparison also finds green→red; `REGRESSION` is returned only
+when the declared commands pass. With no verify commands, the legacy result is `SKIPPED`.
+
+“Red-to-red is advisory and does not block” applies to the *baseline comparison*: it creates no
+`REGRESSION`. It does not suppress a separate non-zero result from the planner-owned command.
+Because CT69 keeps these commands verbatim and exposes no reliable causal attribution,
+suppressing their exit based on a separately issued JUnitXML run could turn an unrelated ruff,
+shell, or setup failure into a pass. This reading preserves command authority and never lets
+uncertainty present as success. A missing baseline/current JUnit report (`None`) with verify
+commands present is `ERROR`; an empty mapping is a valid completed report with no collected
+tests.
+
+
+## Q53 — how does each FUNCTIONAL contract select its own kill-check test?
+
+**Status:** OPEN; blocks completing SLICE5 STEP4/CT65 `verify_slice`. Raised 2026-10-08 after
+source-reading the composition inputs.
+
+### Source-verified facts
+
+- `SliceRecord.test_paths` is a slice-level tuple. It lists one or more `TESTS:` paths, not a
+  test per contract (`src/fa/inner_loop/plan_ids.py:149`).
+- `parse_kill_directives(record)` returns `dict[contract_id, KillDirective]`, but neither the
+  directive nor `SliceRecord.contracts` identifies a pytest nodeid (`slice_verification.py:440`).
+- `_run_kill_check(directive, test_path, root)` requires one `test_path`; CT69 says this phase
+  runs only the contract's own test. The current schema cannot supply that argument per CT.
+- Schema §1's prior decision explicitly deferred per-contract test attribution to I02, and only
+  enforces a slice-level `TESTS:` line (`notes/artifact-schema-and-grammar.md:454`).
+
+Choosing the first `TESTS:` path, using every slice path for every contract, or guessing from a
+function name is not equivalent. A mutation for CT-A can make CT-B's unrelated test fail,
+producing a false `PROVEN`; running all files also defeats CT69's per-contract cost bound.
+
+| | (a) explicit per-contract nodeid | (b) enforced naming convention | (c) run all slice `TESTS:` paths per contract |
+| :--- | :--- | :--- | :--- |
+| mapping | `FUNCTIONAL` contract declares one exact pytest nodeid | test function name embeds the contract id; a collection check demands exactly one match | no mapping; every declared path is run under every mutation |
+| changes | reopen/extend I01 grammar + planner/test-authoring prompts and precheck | add convention + precheck/collection oracle; contract bodies remain unchanged | amend CT69; cost becomes O(functional contracts × slice test set) |
+| correctness | explicit and unambiguous | deterministic if the naming rule is strict and collision-checked | can falsely attribute another contract's failure to this producer |
+| compatibility | touches the schema I01 currently owns | avoids new grammar but introduces an authoring convention | contradicts “only the contract's own test” as written |
+
+**No choice has been made.** Do not implement `verify_slice` by selecting a path or running a
+suite based on a guess. The operator must choose the attribution mechanism, or explicitly
+re-scope CT69 from per-contract test to slice-level tests.

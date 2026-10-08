@@ -38,7 +38,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterable, Iterator, MutableMapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Final, override
@@ -1201,3 +1201,97 @@ def _run_kill_check(directive: KillDirective, test_path: str, root: Path) -> Kil
         ),
         duration_s=elapsed,
     )
+
+
+# ---------------------------------------------------------------------------
+# Classification (SLICE5 / CT65-CT68)
+# ---------------------------------------------------------------------------
+
+
+def _compare_baseline(
+    baseline: Mapping[str, bool] | None,
+    now: Mapping[str, bool] | None,
+) -> tuple[str, ...]:
+    """Return existing nodeids that went GREEN at T0 -> RED now. (CT68)
+
+    The key is a pytest nodeid, never a file. A newly-added or renamed test is
+    absent from ``baseline`` and cannot be called a regression; a missing row
+    on either side is unknown, not ``False``. ``None`` means that the run did
+    not produce a usable report (as opposed to an empty mapping, which is a
+    valid report with zero collected tests). The caller maps that unavailable
+    phase to ``ERROR``; this pure comparison does not invent a failure row.
+
+    Sorting makes the result stable for reports and tests, regardless of the
+    mapping implementation used by the JUnitXML adapter.
+    """
+    if baseline is None or now is None:
+        return ()
+    return tuple(
+        sorted(nodeid for nodeid, was_green in baseline.items() if was_green is True and now.get(nodeid) is False)
+    )
+
+
+def _producer_absent(kill_checks: Sequence[KillCheck]) -> bool:
+    """Whether any declared producer is missing from the mutated workspace. (CT67)
+
+    Kept as a named decision point because this outcome has a different repair
+    from ``VACUOUS``: the feature is absent, rather than the test being weak.
+    The CT67 producer kill removes this predicate and proves classification
+    cannot silently fold a missing feature into another outcome.
+    """
+    return any(check.verdict is SliceVerdict.PRODUCER_ABSENT for check in kill_checks)
+
+
+def _classify(
+    command_results: Sequence[CommandResult],
+    kill_checks: Sequence[KillCheck],
+    *,
+    baseline: Mapping[str, bool] | None,
+    now: Mapping[str, bool] | None,
+) -> SliceVerdict:
+    """Reduce phase evidence to the single slice verdict. (CT65-CT68)
+
+    Precedence is deliberate and fail-closed:
+
+    1. Any indeterminate phase is ``ERROR``; it can never be laundered by a
+       green command or a successful kill-check.
+    2. No verify commands means the legacy/advisory ``SKIPPED`` state.
+    3. A declared verify command's non-zero exit remains ``FAILING``. The
+       commands are arbitrary planner-owned text (CT69), so without proven
+       attribution the baseline comparison must never turn that exit into a
+       pass. In particular, red-to-red is not a *regression*, but it does not
+       suppress an independently failing command.
+    4. With commands green, a T0-green -> now-red nodeid is ``REGRESSION``.
+    5. With the preceding phases clear, a missing producer is more specific
+       than a test that survives the mutation; then ``PROVEN`` is the only
+       remaining all-green outcome.
+
+    This is a single status, while ``command_results`` and ``kill_checks``
+    remain attached to the result object so the operator can inspect the
+    evidence behind it.
+    """
+    if any(result.outcome is CommandOutcome.ERROR for result in command_results):
+        return SliceVerdict.ERROR
+    if any(check.verdict is SliceVerdict.ERROR for check in kill_checks):
+        return SliceVerdict.ERROR
+
+    if not command_results:
+        return SliceVerdict.SKIPPED
+
+    # A missing JUnit report is not an empty (all-green) baseline. With verify
+    # commands present, the gate could not determine the comparison phase.
+    if baseline is None or now is None:
+        return SliceVerdict.ERROR
+
+    if any(result.outcome is CommandOutcome.FAIL for result in command_results):
+        return SliceVerdict.FAILING
+
+    if _compare_baseline(baseline, now):
+        return SliceVerdict.REGRESSION
+
+    if _producer_absent(kill_checks):
+        return SliceVerdict.PRODUCER_ABSENT
+    if any(check.verdict is SliceVerdict.VACUOUS for check in kill_checks):
+        return SliceVerdict.VACUOUS
+
+    return SliceVerdict.PROVEN

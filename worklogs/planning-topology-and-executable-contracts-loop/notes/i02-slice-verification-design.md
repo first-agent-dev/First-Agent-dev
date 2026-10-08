@@ -2,7 +2,7 @@
 
 Operator decision: non-vacuity is proven by **executing a declared kill-check**, not by asking
 whether a test is new. This document restores the mental model, gathers the requirements with
-their sources, and proposes a design. **Status update (2026-10-08):** SLICE5 STEP1–STEP2 are implemented; STEP3 is paused on Q52. The note
+their sources, and proposes a design. **Status update (2026-10-08):** SLICE5 STEP1–STEP3 are implemented; the pytest nodeid JUnitXML plugin is tested; STEP4 composition is paused on Q53. The note
 remains the design input; plan CT68/69/85/86 and resolved Q49 supersede its original per-command
 baseline sketch.
 
@@ -215,9 +215,12 @@ worktree, so it cannot write where verification runs.
 ```
 
 **Q49 correction (2026-10-08):** the baseline is per pytest nodeid, not per command or file;
-both T0 and “now” are harness-issued JUnitXML runs. Capture is once at T0 (CT85/CT86).
-**Open precedence:** whether a failing verify-command exit remains `FAILING` when the nodeid
-run reports a regression is Q52; do not infer precedence from the phase ordering above.
+both T0 and “now” are harness-issued JUnitXML runs with the explicit `fa_pytest_nodeid`
+property from `fa.inner_loop.junit_nodeid_plugin` (stock XML omits `Item.nodeid`, E180). Capture
+is once at T0 (CT85/CT86).
+**Q52 ruling:** the command exit remains authoritative (`ERROR > FAILING > REGRESSION`). A
+nodeid regression is returned only when verify commands pass; red-to-red is not itself a
+regression and does not suppress an independent non-zero command result.
 
 Phase 4 runs **only the contract's own test**, never the suite — that is what keeps the cost
 at roughly one extra test run per contract, and it is the natural reading of §6.2's
