@@ -59,16 +59,36 @@ restate it here.
   `export PYTHONPATH="${WORKSPACE%/}/src${PYTHONPATH:+:$PYTHONPATH}"`, and
   `docker-compose.fa.yml:220` deliberately withholds it from the proxy so that container runs
   the immutable image. This is the proven idiom the overlay must mirror, not reinvent.
+- **The session workspace already arrives with a built `.venv`.** `workspace_bootstrap.py`
+  (`check_workspace_ready:691`, `ensure_workspace_ready:730`) prepares it, and the agent is told
+  so verbatim in `_READINESS_PROMPT_EXTRA` (`cli.py:165-170`): *"the project venv is at ./.venv —
+  run tests with `uv run pytest ...` (or `.venv/bin/pytest`); never reinstall or rebuild the
+  environment."* The comment above it records why (`cli.py:160-164`): a session once burned 12 of
+  20 turns on `find / -name pytest`. **Consequence: verify commands run verbatim.** The planner
+  emits what the agent was told to emit, the env is already correct, and normalising the command
+  would make the plan text and the executed fact diverge for no gain.
+- **Gap, same class as the `PYTHONPATH` one.** `UV_PROJECT_ENVIRONMENT` is pinned to
+  `workspace/.venv` by the bootstrap (`workspace_bootstrap.py:243-259`) but is **not** on the
+  scrubber allowlist (`tools/bash_env.py:29-50`, which has `UV_CACHE_DIR` but not this). So in the
+  gate's env `uv run` is unpinned and falls back to discovering `./.venv` from the current
+  directory — which works **only because cwd is the workspace**. CT49c is therefore load-bearing
+  for `uv run` resolution, not merely for verifying the right tree. The residual risk is `uv run`'s
+  implicit lockfile sync reaching for a network the container does not have.
 - **`DEFAULT_BASH_TIMEOUT_SECONDS = 30`** (`runtime_limits.py:71`). The planner is told to emit
   `uv run pytest …` (`prompt.py:205-207`), and `uv` is on the image PATH (`Dockerfile.fa:59-67`).
   A real test file, or a `uv run` that first syncs a venv in the session workspace, exceeds 30 s
   easily. A timed-out command is `ERROR`, and `ERROR` blocks — so inheriting the bash default
   would block every slice on the first live run for purely environmental reasons.
-- **`--plan` is optional and defaults to `None`** (`cli.py:758-763`); it is an *input*, not
-  something populated from what the planner just wrote. With `plan_path=None`, `plan_text()`
-  returns `None`, `extract_plan_ids` never runs, and the gate sees zero slices and skips. A live
-  run of `fa workflow --roles planner,coder,eval` with no `--plan` therefore exercises **nothing**
-  — the system-level form of exactly the vacuous pass this increment exists to detect.
+- **`--plan` is optional and defaults to `None`** (`cli.py:758-763`). With `plan_path=None`,
+  `plan_text()` returns `None`, `extract_plan_ids` never runs, and the gate sees zero slices and
+  skips: a live `fa workflow --roles planner,coder,eval` with no `--plan` exercises **nothing**
+  while appearing to pass — the system-level form of the vacuous pass this increment exists to
+  detect. The flag's help states the original reason it is never inferred: *"guessing the contract
+  is worse than having none."* That argument is against **heuristic discovery** (globbing for a
+  likely `.md`), and it stands. It is not an argument against **deterministic capture**: the
+  planner stage's own final text being persisted as the plan is no more a guess than the eval
+  stage's final text becoming `eval_report.json` already is (`:634-646`). No planner artifact
+  exists today — the planner's output lives only in its transcript.
 - Artifacts land in `~/.fa/session-log/<run_id>/` as `eval_report.json` and `flow_state.json`
   (`workflow_controller.py:212-219`), reachable on the host under
   `/srv/first-agent/state/session-log/<run_id>/`.
@@ -376,6 +396,13 @@ CONTRACTS:
     every command and reports one undifferentiated result, which a naive per-plan assertion
     would pass.
     kill: remove-call src/fa/inner_loop/slice_verification.py::verify_plan -> commands_for
+  CT77c [FUNCTIONAL]: the gate has two modes. In **observe** mode — the default on first
+    deployment — it computes the verdict, writes `verification.json` and adds the evidence lines,
+    but returns no synthetic report and never routes. In **enforce** mode it blocks per CT72/CT73.
+    The mode is operator-controlled and recorded in `verification.json`. Catches the real
+    deployment risk: a blocking gate switched on cold turns the first environmental hiccup into a
+    repair loop, burning a live session on noise before anyone has seen one honest run.
+    kill: neutralise src/fa/inner_loop/slice_verification.py::_gate_mode
   CT77b [FUNCTIONAL]: the run writes `verification.json` beside `eval_report.json` via a new
     field on `WorkflowArtifactPaths` (`workflow_controller.py:108-110`, built at `:212-219`),
     carrying per slice: the commands, their real exit codes, truncated stdout/stderr, the

@@ -1161,3 +1161,48 @@ E131 FACT  Three live-contour blockers found by reading the deployment path end 
     `/srv/first-agent/state/session-log/<run_id>/`. Without it a live run's gate output exists
     only as stderr and cannot be reviewed after the fact, which is precisely how the operator
     intends to evaluate the first real sessions.
+
+E132 DECIDED  The gate ships in **observe mode** first (operator's call). It computes the
+    verdict, writes `verification.json` and adds the evidence lines, but returns no synthetic
+    report and never routes; enforce mode is a separate operator switch, recorded in the
+    artifact. Pinned as CT77c. Rationale is deployment practice, not timidity: a blocking gate
+    switched on cold turns the first environmental hiccup into a repair loop and burns a live
+    session on noise before anyone has seen one honest run. Enforce is enabled after the first
+    real run is reviewed.
+
+E133 FACT  The `uv run` worry is **answered by a system that already exists**, and the operator
+    was right to raise it. `workspace_bootstrap.py` (`check_workspace_ready:691`,
+    `ensure_workspace_ready:730`) hands the session a built `.venv`, and `cli.py:165-170` tells
+    the agent verbatim: "the project venv is at ./.venv -- run tests with `uv run pytest ...`
+    (or `.venv/bin/pytest`); never reinstall or rebuild the environment." The comment above it
+    records the incident that produced the rule: a session burned 12 of 20 turns on
+    `find / -name pytest`. **So verify commands run verbatim** -- the planner emits what the
+    agent was told to emit, the env is already correct, and normalising would split the plan
+    text from the executed fact for no gain. My earlier fear of a cold venv build was wrong.
+    It did expose a real gap of the same class as the PYTHONPATH one: `UV_PROJECT_ENVIRONMENT`
+    is pinned by the bootstrap (`workspace_bootstrap.py:243-259`) but is **not** on the
+    scrubber allowlist (`tools/bash_env.py:29-50`, which carries `UV_CACHE_DIR` and not this).
+    In the gate's env `uv run` is therefore unpinned and resolves `./.venv` by current
+    directory instead -- which works **only because cwd is the workspace**, making CT49c
+    load-bearing for command resolution and not merely for verifying the right tree. Residual,
+    unmeasured: `uv run`'s implicit lockfile sync reaching for a network the container lacks.
+    Recommended and NOT yet decided: add `UV_PROJECT_ENVIRONMENT` and a no-sync posture
+    (`UV_NO_SYNC`) to the allowlist so the pin survives scrubbing and the gate cannot touch the
+    network. Operator decision, because it widens a security-relevant allowlist.
+
+E134 FACT  On requiring a plan, the operator judges `--plan`-optional to be legacy: today the
+    no-plan path is `fa chat`, while `fa workflow` is heavy artillery for serious changes. The
+    flag's own help preserves the original reason it is never inferred -- "guessing the
+    contract is worse than having none". **That argument is against heuristic discovery**
+    (globbing for a likely `.md`) and it stands; it is not an argument against **deterministic
+    capture**. Persisting the planner stage's final text as the plan is no more a guess than
+    the eval stage's final text already becoming `eval_report.json` (`:634-646`), and it is the
+    same mechanism. No planner artifact exists today -- the planner's output lives only in its
+    transcript, which is precisely why the gate is blind without `--plan`.
+    Proposed, pending the operator: the planner stage writes `plan.md` into the run artifact
+    directory and that becomes `plan_path` for later stages; `fa workflow` then refuses to
+    start with neither `--plan` nor a `planner` role. Flagged as scope: this is a third thing
+    beside I01 and I02 and needs an owning increment before it is built.
+    Separately recorded, deliberately NOT touched here: the operator observes that the
+    linear/adaptive split likely predates the contract and verification system and may also be
+    legacy. Out of scope for I02; noted so it is not lost.
