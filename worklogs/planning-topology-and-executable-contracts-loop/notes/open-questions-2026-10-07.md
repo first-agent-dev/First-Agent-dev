@@ -1,6 +1,6 @@
 # Open questions — raised 2026-10-07 during I01/SLICE4
 
-Canonical record. Next free id after this file: **Q44**.
+Canonical record. Next free id after this file: **Q59**.
 
 > **All three resolved by the operator on 2026-10-07** (ledger E113) and implemented in
 > I01/SLICE4: **Q40 → (b)** the skeleton must be a valid plan, skills and inject files
@@ -874,3 +874,39 @@ The controller changes its effective route/status only; it preserves the actual 
 ceiling”: verifier facts prevent a false pass but cannot erase a stricter eval decision.
 Implementation and proof: SLICE6 CT72/CT73/CT75/CT77, C1 test
 `tests/test_verify_gate_live.py::test_real_workflow_writes_verification_and_supplies_it_to_eval`.
+
+## Q57 — what is the controller outcome after kill-directive admission rejects a plan?
+
+**Status: RESOLVED by operator, 2026-10-09 — bounded pre-coder planner repair.** A determinate
+`validate_kill_directives` diagnostic is supplied to the planner through a bounded repair loop in
+the same workflow invocation, in **both linear and adaptive modes**. The controller revalidates
+each revised plan and does not dispatch coder while any blocking diagnostic remains. Do not fail
+immediately on a small, determinate schema/validator diagnostic when budget and planner are
+available. Exhausted `max_replans`, missing planner when repair is needed, or indeterminate
+validation fails closed as `blocked`; persist the diagnostic and final route. The repair budget is
+shared with adaptive eval-driven planner replans. Linear receives admission repair only and keeps
+its existing one-pass eval semantics. Eval is not called for a rejected pre-coder attempt: Q55
+requires eval after a successful coder stage, and no coder stage has succeeded yet. Once a coder
+stage succeeds, normal eval and Q55/Q56 reconciliation apply. The plan-revision transport itself
+is resolved as the controller-owned candidate with same-path canonical promotion in Q58; runtime implementation and proof remain pending.
+
+**Core negative proof (not yet implemented):** deleting the production call to
+`validate_kill_directives` permits coder dispatch for the malformed plan and makes the real-
+composition C1 test fail. `tests/test_verify_gate_live.py` already proves verify/eval composition,
+but not admission. The planned extension must prove successful repair, both linear/adaptive
+callers, budget exhaustion, and that no coder/eval runs before revalidation passes.
+
+
+## Q58 — what narrow plan-revision interface should Q57 use?
+
+**Status: RESOLVED by operator, 2026-10-09 — controller-owned candidate with physical same-path promotion.** The operator accepted option 1 and added the requirement that a passing repair replaces the original canonical increment file in place. This resolves the transport choice only; runtime implementation and proof remain pending.
+
+**Accepted behavior.** The current planner can write `knowledge/research/` and `.fa/`, not canonical `worklogs/...` (`src/fa/inner_loop/profiles.py:132-145`), so the repair planner must not receive general write access to the increment. The controller creates one draft per attempt under `.fa/admission/<run_id>/`; the real planner registry gets a writer scoped to that exact draft only. The active `--plan`, sibling paths, traversal, absolute paths, and symlink escapes are denied.
+
+For an increment run, the exact supplied `--plan` file under `worklogs/planning-topology-and-executable-contracts-loop/increments/` is the sole canonical current plan. The `.fa` draft is staging only. The controller re-reads it, runs `precheck` and `validate_kill_directives`, serializes controller promotions for that target, then rechecks the original-plan hash. Only a passing, unchanged candidate is written to a hidden, uniquely named non-plan temporary sibling of the canonical file, flushed, and atomically installed with `os.replace` at the **same path**. Readers see either the complete old file or the complete repaired file—never a partial write and never a second active-plan location. Clean the temporary sibling on failure and remove the staging draft after promotion; preserve attempt/diagnostic/target/source/candidate/promoted hashes and final route in `admission.json`. The hash/lock are concurrency protection only, not a review approval marker.
+
+A failed validator remains eligible for another bounded planner attempt. Empty/unreadable input, indeterminate validation, missing/failed writer, source-hash mismatch, or failed replacement blocks before coder/eval; any failure before replacement leaves the original plan byte-identical. Do not broaden the planner allowlist to `worklogs/` or silently fall back to direct writes. For live E2E, use a disposable workspace copy at the same relative increments path and prove that exact test `--plan` is replaced; never mutate the tracked source plan during the live test.
+
+**Alternatives considered, not selected.** (2) Letting the planner write the active file would expose canonical plans to partial or invalid writes and require a broader allowlist. (3) Returning the full plan as structured provider output would require a new response schema and controller transport path that do not exist.
+
+**Required proof before runtime completion.** Real `run_workflow` → `_cmd_run` → `drive_session` C1 path with only `ProviderChain.request` mocked; prove both validators pass before the exact canonical file's bytes change, subsequent coder reads that same path, and no alternate active path is used. Invalid/stale candidates and promotion errors leave the source byte-identical and reach `blocked` with no coder/eval. C3 denies exact-target escape, `..`, absolute path, and symlink writes. Deleting the scoped-writer or `_promote_validated_plan` producer call makes its named test fail. Tests stay outside Q54 mutation roots; a live-host E2E case covers the producer.
