@@ -51,6 +51,9 @@ docs
 *.md
 !README.md
 
+# The standalone speech-to-text experiment is not part of the First-Agent image.
+ASR
+
 # Test data and temporary files
 tests/test_data
 tmp

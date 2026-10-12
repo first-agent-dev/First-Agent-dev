@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Small host-side entry point for the isolated local ASR experiment.
+set -Eeuo pipefail
+
+SELF="$(readlink -f "$0")"
+REPO_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+ASR_DIR="$REPO_DIR/ASR"
+PYTHON="${PYTHON:-python3}"
+
+_usage() {
+    cat <<'EOF'
+Локальная расшифровка русской речи (GigaAM-v3 + CrispASR)
+
+Использование:
+  ./ASR/asr setup
+  ./ASR/asr run [параметры]
+  ./ASR/asr bench [параметры]
+
+Примеры:
+  ./ASR/asr setup
+  cp ~/recording.wav ASR/data/inbox/
+  ./ASR/asr run --threads 4
+  ./ASR/asr bench --repeats 3 --threads 4
+
+Подробности: ASR/README.md
+EOF
+}
+
+command_name="${1:-help}"
+case "$command_name" in
+    setup|install)
+        shift
+        exec bash "$ASR_DIR/install.sh" "$@"
+        ;;
+    run|transcribe)
+        shift
+        export PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}"
+        exec "$PYTHON" -m ASR.transcribe "$@"
+        ;;
+    bench|benchmark)
+        shift
+        export PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}"
+        exec "$PYTHON" -m ASR.benchmark "$@"
+        ;;
+    help|-h|--help)
+        _usage
+        ;;
+    *)
+        _usage >&2
+        exit 2
+        ;;
+esac

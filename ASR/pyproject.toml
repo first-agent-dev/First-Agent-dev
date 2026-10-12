@@ -1,0 +1,44 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["data", "models", "runtime"]
+
+[tool.ruff.lint]
+select = [
+  "B",
+  "BLE",
+  "C4",
+  "C90",
+  "E",
+  "F",
+  "I",
+  "N",
+  "PGH",
+  "PYI",
+  "RUF",
+  "S",
+  "TRY201",
+  "TRY203",
+  "TRY401",
+  "UP",
+  "W",
+]
+# ASR is intentionally uppercase to match the requested on-disk project name.
+ignore = ["N999", "RUF001", "RUF002"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.per-file-ignores]
+# Subprocess calls use fixed executable paths and argv arrays (never a shell string).
+"**/*.py" = ["S603", "S607"]
+# Tests intentionally use asserts and fake executables.
+"tests/**" = ["S"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ASR"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

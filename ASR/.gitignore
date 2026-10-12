@@ -1,0 +1,6 @@
+# Local model weights, runtime binaries, private audio, references and reports.
+runtime/
+models/
+data/
+.setup.*/
+.setup.lock
