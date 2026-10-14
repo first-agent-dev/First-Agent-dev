@@ -78,20 +78,27 @@ advisory; `ERROR` is never PASS. Two postures: pre-check forgiving, verify gate 
 
 - No DSL for verify blocks. The block stays a command list; discipline lives in code.
 - No fence-depth parsing for the grammar-collision trap (pre-check WARN instead).
-- No mutation/failure-injection proof in the core (that is the I06 verifier-co-evolution
-  story).
+- No broad generated-mutant sweep or verifier-co-evolution/failure-injection campaign in the
+  core; that is I06's broader story. This does **not** remove I02's declared Q53(c) contract-kill
+  proofs, which run every declared test path for each FUNCTIONAL contract, or CT92's focused
+  artifact-write failure cases.
 - No `VERIFIED` status from I02 alone — `VERIFIED` needs I03's eval L2 on top (schema §6).
 
 ## 6. Banked from the 2026-10-06 review walk (decided; build in I02)
 
 Rationale for each: `notes/decisions-qa-2026-10-06.md`. Ledger: E63–E66.
 
-**6.1 What "the gate works" means — phase-1 exit criterion.** The gate rejects **≥95% of
-patches that pass the functional tests but violate a stated constraint**, measured on a
-20-slice calibration corpus of known-good / known-bad pairs under `tests/data/`. Nothing else
-in this project defines gate success; without this, "the gate works" is an opinion. The same
-corpus is the seed of the held-out regression set (backlog item 12) — one corpus, two
-consumers.
+**6.1 Historical calibration proposal — explicitly deferred by the operator on 2026-10-14.**
+An earlier design proposed that the gate reject **≥95%** of patches that pass functional tests
+but violate a stated constraint, measured on a 20-slice known-good/known-bad corpus under
+`tests/data/`. The operator chose to defer that threshold and corpus. It is **not** an I02
+implementation, merge, deploy, live-E2E, or `SHIPPED` gate. I02 may claim that the implementation
+and its declared tests satisfy their local contracts, but must not claim measured ≥95% gate
+accuracy before the corpus is run. Recommended future owner is I06; promote the work before I06's
+first calibrated gate-quality/reliability claim or gate-policy change, whichever comes first.
+Define calibration and held-out regression splits separately to prevent using the same examples
+for both calibration and final evaluation; ownership of the dataset/held-out split remains future
+I06 work.
 
 **6.2 Baselines are hermetic and affected-path scoped.** §3's "run the slice's commands once on
 the untouched tree" is O(slices × suite-time) and will not survive a real increment. Scope the
@@ -102,13 +109,14 @@ not an expressible outcome, so a wrong test burns the whole repair ladder and we
 This is a liveness requirement, not a quality one. A flaky *planner-authored* test is a planner
 defect, not an environment defect: quarantine it, do not merely re-run it.
 
-**6.4 Non-vacuity = one scoped mutation run per slice, as a gate, with appeal.** Changed lines
-only; tooling already exists (`scripts/run_slice_mutmut.py`, `count_mutants.py`,
-`mutation_sweep.py`). A survivor blocks by default; the planner may dismiss it with a one-line
-reason appended to the ledger via `GUESS→decided:`. No exception for refactor-only slices — a
-refactor claims behaviour is preserved, so a survivor there is signal. Do **not** build a
-findings format, a top-K ranker, a shadow phase or a graduation rule; if an arid list is ever
-needed it derives from repeated dismissals. (E63.)
+**6.4 Historical generated-mutant proposal — superseded for I02.** E63 originally proposed
+one changed-line mutant sweep per slice with a ledger dismissal/appeal. I02's later contracts
+instead define exact contract-owned `kill:` mutations and Q53(c): execute every declared test path
+for each `FUNCTIONAL` contract (O(functional contracts × test paths)); preserve the acknowledged
+unrelated-red-path attribution risk. CT70 explicitly gives `VACUOUS` and `PRODUCER_ABSENT` no
+appeal. A broad generated-mutant sweep and ledger dismissal workflow remain deferred; do not use
+this older E63 wording to narrow Q53(c), add an appeal, widen mutmut roots, or treat plan text as
+mutation evidence.
 
 **6.5 Boundary coverage.** The pre-check requires at least one boundary or edge test per
 `FUNCTIONAL` contract. Every evaluated model systematically omits `None`/`inf`/`NaN` cases.

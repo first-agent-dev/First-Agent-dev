@@ -2013,3 +2013,10 @@ E194 VERIFICATION SLICE6 / I02 PATHS, 2026-10-08. Final `tests/test_verify_gate_
     final summary, so the visible `F` markers cannot be attributed from that run. E19 was not
     changed. I02 is **not claimed complete**: the full-suite comparison remains unresolved and
     the live-host register rows are still future work.
+
+E195 DECIDED I02 CALIBRATION DEFERRAL, 2026-10-14. The operator explicitly defers the
+    20-slice calibration corpus and ≥95% rejection criterion; it is not an I02 implementation,
+    merge/deploy, live-E2E, or `SHIPPED` gate. The future owner/trigger are not operator-ratified;
+    I02 planning proposes I06 ownership before its first calibrated gate-quality/reliability
+    claim or gate-policy change, with separate calibration and held-out regression data.
+    This is a scope decision, not evidence of gate accuracy or test completion. [operator, this session]

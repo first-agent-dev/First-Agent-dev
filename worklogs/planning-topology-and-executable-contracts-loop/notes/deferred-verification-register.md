@@ -64,20 +64,23 @@ whole verify gate: SLICE6 reads a slice's commands from the plan, so if a model-
 does not parse into slices carrying `verify` fences, the gate silently does nothing — the
 original defect one storey up. **Close D1b before SLICE5/SLICE6, not after.**
 
-## D2 — `precheck` is implemented but wired to nothing  ·  owner: **I03**
+## D2 — `precheck` is implemented but wired to nothing · planned owner: **I02** (OPEN)
 
-- **Promise.** 11 rules (`slice-without-tests`, `step-without-exit`, `deps-undefined-slice`,
+- **Promise.** 12 rules (`slice-without-tests`, `step-without-exit`, `deps-undefined-slice`,
   `deps-cycle`, `heading-near-miss`, `contract-reference-undeclared`,
   `contract-declared-twice`, `contract-declaration-lost`, `step-marker-unknown`,
-  `step-near-miss`, `slice-count-at-ceiling`, `orphaned-slice-field`).
-- **Measured 2026-10-07.** `precheck` has **zero call sites outside `plan_ids.py` and the
-  test suite.** Its consumer is named — schema §7:388, "I01 SLICE3 + the I03 admission
-  step" — so SD-B is satisfied, but nothing executes it in production.
-- **Risk.** A lint nobody runs is decoration. Every rule here is currently unfalsifiable in
-  the live system.
-- **Test to write (I03).** The admission step refuses to start a coder run on a plan with a
-  FAIL diagnostic, through the real loop. **Kill-check:** deleting the `precheck` call in
-  the admission step must let a known-bad corpus plan through.
+  `step-near-miss`, `slice-count-at-ceiling`, `orphaned-slice-field`), as listed by
+  `plan_ids.precheck` (`src/fa/inner_loop/plan_ids.py:1257-1271`).
+- **Measured 2026-10-07; source rechecked 2026-10-14.** `precheck` still has **zero production
+  call sites outside `plan_ids.py` and the test suite.** SLICE6 CT91 and STEPs 9–12 now plan I02
+  as the consumer, but that is a plan only; there is no runtime wiring and D2 is not closed.
+  The historical schema §7 consumer statement named I03; the I02 plan now reconciles it explicitly.
+- **Risk.** A lint nobody runs is decoration. Every rule here remains unfalsifiable in production.
+- **Test to write (I02 SLICE6).** The admission step refuses coder dispatch on a determinate
+  `precheck` FAIL through the real workflow and invokes bounded repair per Q57. **Kill-check:**
+  deleting the production `precheck` call must let a known-bad corpus plan reach coder or make the
+  named C1 oracle fail. Keep WARN advisory; do not turn the authorized I02 eight-slice warning
+  into a blocker. Leave D2 OPEN until this code/test proof passes.
 
 ## D3 — The skill → prompt → plan → parser chain  ·  owner: **I02** (gate), register now
 
