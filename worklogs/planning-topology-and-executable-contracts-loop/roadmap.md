@@ -67,7 +67,7 @@ none is in any increment above until promoted.
 | Prompt-side effort routing (`reasoning.effort` per slice class) | a different lever from prose scaffolding; must be measured in its own arm or it contaminates every other result | I06, as its own ablation arm |
 | N-version repair as *diagnosis* only | resampling cannot lower a verifier's false-positive rate, so verify-based *selection* inherits the verifier's ceiling; optimal k is often ≤5 and zero when a false positive costs 10× | if used at all: diagnosis only, selection on CONSTRAINT satisfaction, k ≤ 3 |
 | Reliability SLO and its per-slice target | needs a baseline; a target invented without one is either trivially met or permanently missed | I06, after the first runs produce data |
-| I02 gate calibration corpus and ≥95% rejection target (20 known-good/known-bad slices) | explicitly deferred by the operator on 2026-10-14; I02 may ship its declared implementation/E2E proofs without claiming calibrated accuracy | recommended future owner: I06 (not operator-ratified); promote before its first calibrated gate-quality/reliability claim or any gate-policy change, and keep calibration examples separate from held-out regression data |
+| I02 gate calibration corpus and ≥95% rejection target (20 known-good/known-bad slices) | explicitly deferred by the operator on 2026-10-14; I02 may ship its declared implementation/E2E proofs without claiming calibrated accuracy | follow-up deferred to I06 by operator; I06 defines the trigger before calibrated claims or gate-policy changes and keeps calibration examples separate from held-out regression data |
 
 (#17 telemetry *schema* is pulled forward into I06 — "cheap now, expensive later" — even
 though the attribution *loop* is later.)

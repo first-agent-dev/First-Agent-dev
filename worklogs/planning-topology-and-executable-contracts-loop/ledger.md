@@ -2020,3 +2020,14 @@ E195 DECIDED I02 CALIBRATION DEFERRAL, 2026-10-14. The operator explicitly defer
     I02 planning proposes I06 ownership before its first calibrated gate-quality/reliability
     claim or gate-policy change, with separate calibration and held-out regression data.
     This is a scope decision, not evidence of gate accuracy or test completion. [operator, this session]
+
+E196 OPERATOR CLARIFICATIONS Q45/Q64/Q66, 2026-10-14. Q45 is ratified as option (B): I01's
+    source-position expansion was already approved; retain `SliceRecord.start_line`,
+    `contract_lines`, and `PlanIds.contract_line()` and keep the I02 locator removed. Q64 is
+    deferred to I06; the 20-slice/≥95% criterion remains outside I02, with detailed ownership and
+    trigger to be settled in I06. Q66 is resolved at the public API level: do not add a separate
+    `context` field to `invoke_workflow`; the nested planner is intended to inherit current chat
+    context as input alongside its own role prompt/skills. Runtime propagation is not evidenced
+    by current code and remains an implementation/test obligation. Q59–Q63 remain open; no
+    CT96/CT97 design is thereby ratified, and no implementation, calibration accuracy, live result,
+    readiness, or `SHIPPED` status is claimed. [operator, this session]

@@ -94,11 +94,11 @@ but violate a stated constraint, measured on a 20-slice known-good/known-bad cor
 `tests/data/`. The operator chose to defer that threshold and corpus. It is **not** an I02
 implementation, merge, deploy, live-E2E, or `SHIPPED` gate. I02 may claim that the implementation
 and its declared tests satisfy their local contracts, but must not claim measured ≥95% gate
-accuracy before the corpus is run. Recommended future owner is I06; promote the work before I06's
-first calibrated gate-quality/reliability claim or gate-policy change, whichever comes first.
-Define calibration and held-out regression splits separately to prevent using the same examples
-for both calibration and final evaluation; ownership of the dataset/held-out split remains future
-I06 work.
+accuracy before the corpus is run. The operator has deferred the corpus/criterion to I06; it is
+not an I02 gate. I06 must define the owner, trigger, and non-overlapping calibration/held-out
+regression split before making a calibrated gate-quality/reliability claim or changing gate policy.
+The earlier “before first claim or policy change” trigger is a recommendation for I06, not an
+additional I02 requirement.
 
 **6.2 Baselines are hermetic and affected-path scoped.** §3's "run the slice's commands once on
 the untouched tree" is O(slices × suite-time) and will not survive a real increment. Scope the

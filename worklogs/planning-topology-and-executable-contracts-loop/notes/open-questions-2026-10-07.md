@@ -192,7 +192,7 @@ earns its keep and option (i)'s regex should be deleted, not copied a third time
 
 ## Q45 — should the contract→line map move into I01, retiring I02's copy of the grammar?
 
-**Status:** OPEN. Supersedes the provisional resolution of Q44 if answered "yes".
+**Status: RESOLVED (B) by operator, 2026-10-14.** The operator confirms the I01 parser-surface expansion was already decided; keep the source-position surface and CT78–CT80. This supersedes the former OPEN status below.
 
 **Raised by** the operator, 2026-10-08: *"разве мы не парсим их по якорям `#CT-N`? так же можно
 машинно получать всегда корректный номер строки, даже если план сдвинется по структуре."*
@@ -245,14 +245,18 @@ SD-B forbids an accessor without a named consumer increment; when Q44 was first 
 was none, so (i) was chosen. I02/SLICE2 is now a shipped consumer that was *actually burned* by
 the duplication. The bar is met.
 
-**Why this is not being done unilaterally:** I01 is a closed increment, and widening the
-surface of a closed increment is a scope decision, not a refactor. It also costs a second
-round of kill-checks and a mutation sweep on `plan_ids.py`. Operator's call.
+**Why this was not done unilaterally at the time of the original review:** I01 is a closed
+increment, and widening the surface of a closed increment is a scope decision, not a refactor. It
+also costs a second round of kill-checks and a mutation sweep on `plan_ids.py`; operator approval
+was needed.
 
-**If (B) is chosen, the work is:** add the map to I01's extractor behind its own contract and
-kill-check; delete `slice_verification._CONTRACT_ENTRY_RE` and its drift oracle; keep the `0`
-sentinel semantics ("line unknown") so the degradation story is unchanged; re-run both sweeps.
-Estimated one slice-sized unit of work, and it shrinks I02 rather than growing it.
+**Work proposed at that time (subsequently ratified below):** add the map to I01's extractor
+behind its own contract and kill-check; delete `slice_verification._CONTRACT_ENTRY_RE` and its
+drift oracle; keep the `0` sentinel semantics ("line unknown") so the degradation story is
+unchanged; re-run both sweeps. Estimated one slice-sized unit of work, and it shrinks I02 rather
+than growing it.
+
+**Operator resolution, 2026-10-14 — option (B), RATIFIED.** The operator confirms that expanding the closed I01 parser surface for source positions was already decided. Retain `SliceRecord.start_line`, `SliceRecord.contract_lines`, and `PlanIds.contract_line()`; keep the I02 locator regex retired. Q65 records the same disposition. This decision resolves scope only; implementation proof remains the relevant test/kill evidence, not this answer.
 
 ---
 
@@ -913,47 +917,54 @@ A failed validator remains eligible for another bounded planner attempt. Empty/u
 
 ---
 
-## Q59 — How is the workflow-first chat route selected and prevented from bypassing `invoke_workflow`?
+## Q59 — Is chat escalation advisory, or must complex tasks be forced through `invoke_workflow`?
 
-**Status: OPEN. Raised 2026-10-14 during the target-behavior readiness review.** This is a
-pre-coding decision for the requested chat → `invoke_workflow` behavior; it does not block
-unrelated verifier work.
+**Status: OPEN on enforcement strength; the user-experience intent is clarified.** Operator
+intent, 2026-10-14: chat is the everyday front door for any task. A deterministic scope/escalation
+module should inject a recommendation to use `invoke_workflow` when work looks complex, and the
+operator may also ask chat to invoke it manually. Do not replace ordinary chat with a mandatory
+workflow-first entrypoint by default.
 
-**Target behavior.** The outer chat is a minimal router: it passes task and the agreed context
-payload (wire shape tracked in Q66) to `invoke_workflow`, does not supply a PlanRef path or author
-the plan, and leaves existing-project
-selection versus new-project bootstrap to the nested planner. The explicit CLI workflow path
-continues to require `--plan`.
+**What already exists.** `_resolve_scope_point` computes a deterministic estimate before the first
+provider call (`src/fa/cli.py:2293-2299`); `_publish_scope_estimate` sends it via the non-cacheable
+`turn_context` (`cli.py:2110-2165`, `2426`); `CHAT_SYSTEM_PROMPT` tells chat to call
+`invoke_workflow` on `workflow_linear` (`src/fa/inner_loop/prompt.py:1004-1023`); and the live
+chat registry registers that tool when workflow context exists (`src/fa/cli.py:1772-1803`). The
+manual/advisory path is therefore already represented in code.
 
-**Source-confirmed gap.** The current `chat` profile exposes `fs_write_file`, `fs_edit_file`,
-`fs_run_bash`, and `fs_spawn_subagent` (`src/fa/inner_loop/profiles.py:147-171`). The optional
-`chat_escalation_gate` defaults off (`src/fa/inner_loop/runtime_limits.py:154-159`); the live
-registry also registers `pr_prepare` before `invoke_workflow` (`src/fa/cli.py:1794-1803`). The
-`invoke_workflow` schema has a required `task` and optional mode/roles/budgets, but no PlanRef
-path (`src/fa/inner_loop/tools/workflow_tool.py:164-196`). A short prompt is not a capability
-boundary, and current defaults do not guarantee that repo-scale work enters the nested workflow.
+**Important enforcement gap.** The gate defaults off (`runtime_limits.py:154-159`). If enabled,
+`WITHHELD_WRITE_TOOLS` removes `fs_write_file`, `fs_edit_file`, and `fs_spawn_subagent`, but not
+`fs_run_bash` (`src/fa/inner_loop/routing.py:72-78`). The Bash hook uses a command classifier and
+`allow_general_write=True`; its own source says `../` writes are not confined (`hooks/builtin.py:99-145`).
+So the current prompt suggestion is advisory, and even the optional gate is not a complete
+write-capability boundary. `invoke_workflow` itself takes no PlanRef path, which is appropriate;
+its task/context decision is tracked in Q66.
 
 **Options.**
-- **(a) Dedicated workflow-first entrypoint/capability.** Select it before the first provider
-  dispatch; expose read/search/context tools plus `invoke_workflow`, and withhold write/edit/bash,
-  subagent, and Git-mutating tools. Preserve ordinary chat unchanged.
-- **(b) Controller-owned deterministic route.** Use the existing scope estimator to choose the
-  restricted registry before dispatch, enable/fix its gate behavior, and prove route decisions
-  against false-positive and false-negative cases.
-- **(c) Prompt-only routing in the current generalist chat.** Lowest implementation cost, but the
-  model can write or run shell directly; this does not guarantee the requested path.
+- **(a) Advisory default + manual invoke (recommended).** Keep general chat and its current
+  scope hint. Treat the hint as a recommendation, not a guarantee. Preserve an explicit operator
+  phrase/tool-call path for “use the workflow.” No new entrypoint is required for ordinary use.
+- **(b) Strict automatic escalation.** When a deterministic high-confidence policy selects
+  workflow, build a read/search/context + `invoke_workflow` registry before dispatch and remove
+  *all* direct mutation routes, including shell. This needs a complete gate and a policy for
+  false positives/negatives; the current optional gate is insufficient.
+- **(c) Explicit required-workflow mode.** Keep general chat unchanged, but offer an explicit
+  command/UI mode that guarantees the workflow route when the operator requests it. This is the
+  strongest way to honor a must-use instruction without trusting prompt compliance.
 
-**Recommendation: (a)** for the first safe implementation. The exact public route/entrypoint and
-whether workflow-first becomes default remain operator decisions. The contract must test that the
-restricted registry retains `invoke_workflow`, omits every direct mutator, and leaves ordinary chat
-and Q55/Q56 routing unchanged.
+**Recommendation.** Use (a) as the default, with (c) as the deterministic override if “must use
+workflow” needs a guarantee. Keep (b) opt-in until routing evidence justifies it; the deferred
+calibration criterion is not a reason to claim estimator accuracy. Preserve Q55/Q56 in every
+nested run. The unresolved operator choice is whether manual “use workflow” needs a guaranteed
+controller route or whether model-mediated tool selection is acceptable.
 
 ---
 
 ## Q60 — Is the proposed CT96 planner-managed selection/bootstrap protocol approved?
 
-**Status: OPEN. CT96 remains recommended, not operator-ratified.** This decision gates coding the
-chat acquisition path, not the already separate verification-runner work.
+**Status: OPEN. CT96 remains recommended, not operator-ratified.** Operator leans toward option
+(a), 2026-10-14, and asks whether it remains sound; the decision is not yet ratified. This gates
+the chat acquisition path, not the already separate verification-runner work.
 
 The current proposal uses one closed typed result from the nested initial planner:
 `PlanSelection{kind: SELECT_EXISTING, workspace_relative_path}` or
@@ -970,6 +981,13 @@ work.
 (b) accept model-supplied complete artifacts but require the minimal I02 bootstrap-content
 validator before publication; or (c) defer new-project bootstrap and support only existing-plan
 selection for now. Option (c) does not satisfy the complete target behavior.
+
+**Production-grade refinement (recommended, not yet operator-approved).** Make the existing-plan
+selection return stable identifiers such as `project_slug` and `increment_id`, then have the
+controller construct and validate the canonical relative path; do not let the planner supply even
+a constrained filesystem path. Add a closed `NEEDS_CLARIFICATION` result so ambiguous project
+matches or insufficient context return to chat instead of silently creating a duplicate project.
+No-clobber publication remains the final race guard, not a reason to choose bootstrap on ambiguity.
 
 **Recommendation: (a).** Confirm the exact choice shape, metadata/status rendering, required
 roadmap sections/I01 row, empty generated ledger, size caps, no-follow staging, no-clobber
@@ -999,37 +1017,82 @@ subprocess fallback, and `_run_stage` verifies a pre-coder snapshot after dispat
 preventing mutation (`src/fa/inner_loop/tools/run_bash.py:152-165, 219-235`;
 `src/fa/inner_loop/workflow_controller.py:1053-1081, 1093-1104`).
 
-**Options.** (a) Keep the trusted controller outside provider-controlled operations: secure
-PlanRef/inode-aware no-follow guards on direct file tools, plus fail-closed OS isolation for PTY,
-subprocess fallback, descendants, and any exposed subagent; or (b) refactor nested orchestration
-across a trusted controller/worker IPC boundary so provider stages run in isolated workers. A
-post-hoc hash alone or a path-only read-only bind is insufficient.
+**Options.** (a) Keep the trusted controller in the parent and give all provider write-capable
+surfaces one shared per-stage OS-sandboxed copy-on-write workspace with a validated import step; or
+(b) refactor nested orchestration across a trusted controller/worker IPC boundary so provider
+stages run in isolated workers with mediated filesystem changes. Either way, current subagents stay
+absent; future exposure requires inherited isolation. A post-hoc hash alone or a path-only
+read-only bind is insufficient.
 
-**Recommendation:** implement (a) only if C1/C3 prove controller promotion still works inside the
-real nested `drive_session` path and that direct tools, shell, descendants, aliases, and optional
-subagents cannot mutate PlanRef/`.fa/admission/`; otherwise choose (b). Ordinary source edits must
-remain possible and Q55's real eval must still run after successful coder dispatch. The operator
-must select/ratify the mechanism before CT97 implementation; do not mark the gap closed from this
-plan text.
+**Operator scope clarification, 2026-10-14:** subagents are planned but off by default; the current
+`implementer`/coder profile does not include `fs_spawn_subagent`, and the tool's feature flag
+defaults off (`profiles.py:117-131`; `tools/spawn_subagent.py:139-154`). I02 need not build child
+isolation now. Its current proof should assert the workflow-stage registry omits subagents. Any
+future flag/profile change that exposes them must require the same boundary to propagate to every
+child before enablement.
+
+**Simplest robust recommendation (still needs operator ratification):** keep the trusted controller
+and promotion path in the parent process; do not refactor all workflow orchestration to IPC. Give
+each provider stage one shared, disposable writable view used by *all* provider write-capable
+surfaces (`fs_write_file`, `fs_edit_file`, `fs_run_bash`/PTY, and descendants), so tools see one
+consistent stage state. Seed it from an explicit snapshot of the actual current worktree—not a
+clean checkout—including staged/unstaged and untracked project changes; exclude secrets/caches by
+policy and expose needed toolchains read-only. Keep the host canonical PlanRef, `.fa/admission/`,
+`.git`, credentials, and controller state outside the writable view. At stage end, have the trusted
+parent validate and import only approved workspace diffs; reject protected paths, symlink/hard-link
+and special-file tricks, path escapes, and any destination whose host version changed since the
+snapshot. This preserves existing user edits and turns concurrent changes into explicit conflicts
+instead of overwrites. The controller alone performs candidate validation and same-path promotion.
+If full snapshot/view/import cannot be provided, fail closed before coder or defer general shell and
+provide a narrowly scoped test runner; do not mix host-direct file tools with a stale shell snapshot
+or silently fall back to today's unsandboxed PTY/subprocess path. Hash checks after the stage are
+detection, not the security boundary. Preserve ordinary source edits and Q55's real eval after a
+successful coder dispatch; a detected PlanRef mismatch is indeterminate and cannot yield terminal
+success.
+
+**Remaining risks/tests:** indirect prompt injection through repository content, symlink and
+hard-link aliases, rename/replace races, persistent PTY state, subprocess descendants, timeout
+cleanup, concurrent workflow runs, and unexpected writable mounts/caches. C1/C3 must start from a
+dirty checkout with staged, unstaged, and untracked sentinels; prove all pre-existing state is
+visible and preserved, allowed source edits return as unstaged changes, and a concurrent host edit
+causes a conflict instead of clobber. Also prove PlanRef/control-plane protection, shell attempts
+through direct redirection/Python/symlink/hard-link/child-process routes, fail-closed sandbox
+startup, unchanged host PlanRef bytes, successful trusted promotion, and Q55 eval ordering. A
+path-only read-only bind or post-hoc hash alone is insufficient. The operator must ratify the
+boundary before CT97 implementation; do not claim it closed from plan text.
 
 ---
 
-## Q62 — Must CT92 freeze the complete `AdmissionRule` enum before implementation?
+## Q62 — What closed validator/rule vocabulary should CT92 persist?
 
 **Status: OPEN as an implementation-plan gap; no operator-policy choice is implied.** CT92 makes
-the diagnostic object exact and requires closed rule vocabularies, but currently says only that
-validators other than `precheck`/`kill-directives` use a versioned `AdmissionRule` enum “declared
-before implementation.” It does not list the concrete `plan-ref`, `bootstrap`, `promotion`, and
-`artifact-io` values. The diagnostic writer cannot be schema-exact or tested against unknown
-values until that set exists.
+the diagnostic object exact and requires closed rule vocabularies, but the earlier wording left
+non-`precheck`/`kill-directives` rules to a versioned `AdmissionRule` enum without listing concrete
+`plan-ref`, `bootstrap`, `promotion`, and `artifact-io` values. This review updates CT92's preferred
+representation to per-validator `rule` tables; those v1 values are still missing. The diagnostic
+writer cannot be schema-exact or tested against unknown values until the mapping exists.
 
-**Options.** (a) Add the v1 enum table to CT92 now, with per-validator allowed values and
-compatibility/versioning rules; or (b) leave value selection to the implementation author, but
-make enum/table publication a required first substep before writing the schema or controller.
+**Options.** (a) Publish the v1 per-validator table in CT92 now, with compatibility/versioning
+rules; or (b) make its publication a required first CT92 substep before writing the schema or
+controller. The recommendation below favors (b) to avoid expanding the plan with an unratified
+vocabulary.
 
-**Recommendation: (a)**. This is not a separate product-policy decision: choose stable,
-sanitized rule codes as part of implementation design, then test unknown codes/keys/types fail
-closed. No implementation may persist arbitrary model text as `rule`.
+**Senior review, 2026-10-14.** A closed machine-readable rule vocabulary is worth implementing:
+these diagnostics are an audit trail and a controller contract, and arbitrary provider/model text
+must never become a persisted rule or control decision. But a single large `AdmissionRule` enum
+that duplicates every validator's rule list is not the simplest design.
+
+**Recommendation:** keep CT92's exact versioned artifact and existing `validator`/`rule` fields,
+with stable validator-specific `rule` codes. Reuse the existing closed rule IDs for `precheck`
+and `kill-directives`; define small sets for `plan-ref`, `bootstrap`, `promotion`, and
+`artifact-io` (for example, `validator=plan-ref, rule=path-escape`;
+`validator=promotion, rule=source-changed`; `validator=artifact-io, rule=append-failed`). The
+validator field already provides the namespace. Validate the code against the allowed set for that
+validator at write/read time; unknown pairs fail closed. Persist no free-form diagnostic message or source snippet.
+Keep `admission.json` focused on admission attempts, route and hashes; workflow/session evidence
+remains the source of truth for actual provider dispatch facts. This makes Q62 a specification
+prerequisite to CT92, not a separate product-policy gate. The implementation author can add the
+small v1 code table as the first CT92 substep.
 
 ---
 
@@ -1041,80 +1104,91 @@ evidence and keeps the live-result assignment with the operator or an LLM evalua
 evidence. The actor-ownership rule is standing; the exact enum remains a recommendation in CT88
 and the handoff note.
 
-**Question:** approve that four-state vocabulary, or specify another closed set? In either case,
-local proof must remain distinct from live-host judgment; skips/unobservable cases cannot become
-PASS, and neither the coder, harness, nor eval may self-certify a live result.
+**Senior review, 2026-10-14.** I agree: this is a good, simple closed vocabulary. `NOT RUN` is
+the initial/no-attempt state; `PASS`, `FAIL`, and `BLOCKED` are reviewed outcomes. I would keep
+those four values and add one small schema invariant: `BLOCKED` must carry a required reason code
+(e.g. `DEPLOYMENT_UNAVAILABLE`, `SAFETY_STOP`, `EVIDENCE_MISSING`), so it cannot become a vague
+skip. A blocked case is not a product failure and cannot count as PASS. Keep append-only attempts,
+local proof separate from host judgment, and require deployed SHA/run ID/command/exit/observable/
+evidence references for any assigned result. This is an assistant recommendation, not operator
+ratification; the entry stays open until the exact vocabulary and reason-code rule are explicitly
+resolved.
 
 ---
 
 ## Q64 — Who owns the deferred calibration criterion and when must it be promoted?
 
-**Status: OPEN only for future ownership. The operator explicitly deferred the ≥95%/20-slice
-criterion from I02 on 2026-10-14; this is not an I02 shipping gate and does not block its coding.**
-The current recommendation assigns future ownership to I06 and promotes the criterion before the
-first I06 calibrated gate-quality/reliability claim or any gate-policy change, whichever comes
-first, keeping calibration and held-out regression sets separate.
+**Status: DEFERRED TO I06 by operator, 2026-10-14.** The 20-slice/≥95% criterion remains outside
+I02 and is not a blocker for I02 coding or shipping. Define the detailed owner, trigger, and
+non-overlapping calibration/held-out regression sets in I06 before I06 makes a calibrated
+reliability claim or changes gate policy. The earlier proposed trigger (before the first such
+claim or policy change) is a planning recommendation, not an additional I02 requirement.
 
-**Question:** ratify I06 and that trigger, or name another owner/trigger? Do not reintroduce the
-criterion as an I02 `SHIPPED` gate while this ownership question remains open.
 
 ---
 
 ## Q65 — Does the current I01 source-position change resolve Q45, or must it be reverted?
 
-**Status: OPEN operator disposition.** Q45 remains open because extending the closed I01 parser
-surface was explicitly an operator scope decision. The current branch already contains the
-option-(B) proposal in I02 SLICE2b/CT78–CT80 and `plan_ids.py`: `SliceRecord.start_line`,
-`contract_lines`, and `PlanIds.contract_line()` now carry declaration positions; the I02 locator
-regex is removed. That is implementation state, not proof of operator ratification.
+**Status: RESOLVED (a) by operator, 2026-10-14.** The operator explicitly ratifies the scope
+expansion and confirms it had already been decided. Keep the single-source-of-truth design in
+I01 and CT78–CT80: `SliceRecord.start_line`, `contract_lines`, and `PlanIds.contract_line()` carry
+declaration positions; the I02 duplicate locator stays removed. This is a decision record, not
+runtime/test evidence. Q45 is updated to match; see ledger E196.
 
-**Options.** (a) Ratify the current single-source-of-truth design, update Q45 with the operator's
-decision/evidence, and keep CT78–CT80; or (b) revert the parser-surface expansion and retain Q44's
-provisional I02-local locator plus drift oracle. **Recommendation: (a)** because the current plan
-and source already implement it, but do not mark Q45 resolved without an explicit operator answer.
+## Q66 — Should `invoke_workflow` expose an explicit context field?
 
-## Q66 — What context payload does the outer chat pass to `invoke_workflow`?
+**Status: RESOLVED for the public tool schema; runtime propagation proof remains OPEN.** Operator
+clarification, 2026-10-14: no extra `context` field is wanted. The nested workflow should inherit
+the current chat context and supply it to the planner role as input tokens alongside that role's
+own prompt and skills. Keep `task` as the explicit user-requested goal; context is controller-
+managed invocation state, not another model-authored wire field.
 
-**Status: OPEN. Raised 2026-10-14 from the source/API comparison.** This is part of the user-
-requested chat → workflow contract, not an implementation detail to guess.
+**Current source-confirmed gap.** `INVOKE_WORKFLOW_SCHEMA` accepts `task`, `mode`, `roles`, and
+budgets, with no `context` property (`src/fa/inner_loop/tools/workflow_tool.py:164-196`); that is
+consistent with the operator decision. But `_resolve_handoff_task` currently adds only live
+read/write/search-path facts to the task (`:331-375`). `WorkflowInvocationContext.session_context`
+is the persistent session identity/workspace/database/manifest object, not the chat transcript
+(`src/fa/session/manager.py:52-57`). The handler passes `task=handoff_task` plus that metadata to
+`run_workflow` (`workflow_tool.py:463-484`); the nested `drive_session` reconstructs history from
+the child run log, not the parent conversation (`src/fa/inner_loop/coder_loop.py:562-630`). Thus
+the public schema decision is resolved, but the intended inherited-context behavior is not
+currently demonstrated by source.
 
-**Target statement:** chat calls `invoke_workflow` with task/context, while the nested planner
-selects an existing project or bootstraps a new one. The current API does not make the context
-part explicit: `INVOKE_WORKFLOW_SCHEMA` requires `task` and optionally accepts `mode`, `roles`,
-`max_repairs`, and `max_replans`, but has no `context` field
-(`src/fa/inner_loop/tools/workflow_tool.py:164-196`). The handler constructs a `handoff_task`
-from the raw task plus live session facts (`:331-375`) and passes it as the child `task`
-(`:463-484`). That does not carry caller-supplied structured context unless the chat embeds it
-inside the task string.
+**Implementation recommendation.** At the moment of tool invocation, capture a bounded,
+immutable snapshot of the parent conversation after the parent's compaction/summary boundary and
+pass it through an internal controller context/provider—never an additional `invoke_workflow`
+parameter. Put that snapshot in the planner's non-cacheable user/turn context; the nested planner
+uses its own role prompt and skill instructions. Do not copy the outer chat system prompt, tool
+schema, or unrelated tool catalog; do not duplicate prompt/skill tokens. Budget/compact the
+inherited context explicitly, preserve current user constraints and decisions, label repository
+and tool output as untrusted data, and record actual child input-token usage. Apply the existing
+secret-redaction/data-egress policy before crossing provider chains: never inherit credential
+values, auth metadata, or raw secrets, and do not write transcript content into workflow artifacts;
+record provenance/token counts instead.
 
-**Options.** (a) Keep the wire schema task-only and define “context” as the controller-derived
-live handoff; chat provides all additional constraints in the task text. (b) Add a bounded
-`context: string` field and combine it with controller-derived live facts under a documented
-size/sanitization rule. (c) Add a closed typed context object with only named fields (for example,
-constraints and relevant-file hints) and explicit caps. None may accept a PlanRef path, write
-destination, or raw bootstrap file map from the outer chat.
-
-**Recommendation:** (c) if context must be caller-supplied; otherwise explicitly ratify (a) and
-keep the tool schema unchanged. In either case, C1 must assert the exact outer tool-call payload
-and what the nested planner receives, while preserving planner ownership of existing/new-project
-selection. Do not claim the current implicit session-facts handoff proves the user's separate
-“task/context” input requirement.
+**Required proof.** The real outer-chat → `invoke_workflow` → nested planner C1 test must show
+that a prior user constraint and relevant assistant/tool context reach the first planner request,
+that a synthetic credential sentinel is omitted/redacted under the egress policy, that the
+planner's own prompt/skills are present, that no new context field is in the tool schema, and that
+token accounting/compaction bounds are honored without persisting raw transcript content. Do not
+treat path-only session facts as proof of transcript inheritance.
 
 ### Current readiness queue as of 2026-10-14
 
-- **Before coding the requested chat → `invoke_workflow` target path:** settle Q59 (route and
-  capability boundary), Q60 (existing selection/new-project bootstrap protocol), Q61 (PlanRef
-  write boundary), and Q66 (explicit versus controller-derived context payload). Q57/Q58 already
-  settle bounded repair and the same-path candidate transport;
-  they do not implement them.
-- **Before the CT92 admission writer:** freeze the missing closed enum per Q62. Existing open
-  Q43 (lenient parser accessors) and Q45/Q65 (source-position ownership/ratification) also need
-  explicit disposition before code relies on those assumptions; do not pass ambiguous `S#` values
-  into new admission or verification surfaces.
-- **Before SLICE7 live E2E package finalization:** settle Q63's result vocabulary and manual
-  checklist schema. This does not block core PlanRef/admission coding.
-- **Not an I02 coding/shipping gate:** Q64 future calibration owner. The 20-slice/≥95% result
-  remains deferred as the operator requested.
-- Q59–Q65 are decision/specification gaps, not implementation evidence. Current worktree source
-  and tests do not yet implement admission, planner-managed selection/bootstrap, or the CT97
-  PlanRef integrity boundary; see I02 SLICE6 current-code snapshot and DoD.
+- **Before coding the requested chat → `invoke_workflow` target path:** settle Q59's advisory vs
+  guaranteed-route boundary, Q60's typed selection/bootstrap protocol, and Q61's PlanRef integrity
+  mechanism. Q66's public API decision is resolved (no extra tool field), but its inherited-context
+  plumbing and C1 proof remain unimplemented. Q57/Q58 settle repair and same-path transport as
+  decisions only; they do not implement them.
+- **Before the CT92 admission writer:** publish the small closed validator/rule table per Q62.
+  Q43 (lenient parser accessors) remains open and must be dispositioned before new admission
+  code relies on them. Q45 is now resolved (option B) by Q65; keep the approved source-position
+  fields and do not revert them.
+- **Before SLICE7 E2E package finalization:** ratify Q63's four-state vocabulary and decide whether
+  `BLOCKED` requires the recommended reason code; this does not block core runtime coding.
+- **Deferred outside I02:** Q64 is assigned to I06 by operator instruction; do not restore the
+  20-slice/≥95% criterion as an I02 gate.
+- Q59–Q63 remain decision/specification questions; Q64 is deferred, Q65 is resolved, and Q66's
+  API decision is resolved while runtime proof remains. Current production source still lacks
+  admission, planner-managed selection/bootstrap, inherited chat-context propagation, and the CT97
+  PlanRef boundary; see I02 SLICE6 current-code snapshot and DoD.
