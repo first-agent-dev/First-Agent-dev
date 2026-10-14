@@ -26,6 +26,7 @@ Read `../roadmap.md` first, then `../increments/`, then come here for detail.
 | --- | --- |
 | [`decisions-qa-2026-10-06.md`](decisions-qa-2026-10-06.md) | The Q→A walk: 39 decided questions, Q0–Q39, with verdicts. |
 | [`open-questions-2026-10-07.md`](open-questions-2026-10-07.md) | **Currently open questions.** Q40–Q42 (resolved, kept as record), **Q43 open**. |
+| [`q59-q66-reader-review-2026-10-14.md`](q59-q66-reader-review-2026-10-14.md) | Plain-language decision guide for Q59–Q63 and Q66's remaining propagation proof; examples, code references, production options, and operator reply template. Recommendations are not ratified decisions. |
 | [`findings-register-2026-10-06.md`](findings-register-2026-10-06.md) | All 55 findings from the reading pass, groups A–H, with stable ids. |
 | [`adversarial-review-2026-10-06.md`](adversarial-review-2026-10-06.md) | The adversarial pass and its five suspicions, all closed by SLICE3b. |
 | [`deferred-verification-register.md`](deferred-verification-register.md) | **D1–D8: every promise not yet proven live**, with the increment that owns each and the kill-check its test must satisfy. |
