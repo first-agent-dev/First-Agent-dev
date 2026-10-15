@@ -1,13 +1,18 @@
-# E2E live-host verification register — I02
+# E2E live-host verification register — I02 producers, I03 acceptance owner
 
 **Purpose.** Operator instruction, 2026-10-08: *every producer created by this plan must be
 marked for a future end-to-end test, and all of them verified with fixtures on the live host.*
-This file is that mark. One row per producer, carrying what the host fixture has to arrange
+This file is that mark. **E201 owner migration:** final deployed evidence for these I02
+producers belongs to foundation I03's final integrated I02+I03 package, not reduced I02's local
+SHIPPED prerequisite. All original table rows below remain intact; I03 must preserve the normalized
+unique producer set and correct stale oracle wording during case-index implementation.
+One row per producer, carrying what the host fixture has to arrange
 and what it has to observe — so the e2e suite can be written from this register alone, without
 re-deriving any of it from the code.
 
 **Status vocabulary.** `unit` = proven by in-repo tests and a kill-check. `e2e` = proven on the
-live host. A producer is not finished until it is `e2e`.
+live host. These historical row labels do not assign current live verdicts. Local scoped I02
+completion is distinct from still-incomplete I03 host acceptance; neither implies the other.
 
 **Why in-repo green is not enough here.** Every producer below either spawns a process, reads
 an environment the test harness fakes, or depends on a workspace layout that only the deployed
@@ -22,9 +27,9 @@ fixture cannot reproduce, and exactly where a silent no-op would hide.
 1. A real session workspace at `/sessions/<id>/` with the bootstrapped `.venv`, **not** a
    `tmp_path` tree — the gate's whole claim is that it verifies the coder's tree.
 2. Normal gate runs use a real plan file containing at least one `## SLICE#` section with a
-   `verify` fence, passed with `--plan`; nothing infers it. CT72 additionally gets one explicit
-   missing-plan variant, because enforce mode must treat absent evidence as indeterminate rather
-   than as an empty passing plan.
+   `verify` fence, passed with `--plan`; nothing infers it. Missing-plan guards are separate
+   CT90/CT95 pre-provider cases. CT72 needs an admitted-plan case with genuinely indeterminate
+   post-coder evidence, proving actual Q55 eval/reconciliation rather than bypassing admission.
 3. Assertions read from the persisted artifacts the operator reads —
    `~/.fa/session-log/<run_id>/{eval_report,flow_state}.json`, host path
    `/srv/first-agent/state/session-log/<run_id>/` — never from in-process objects.

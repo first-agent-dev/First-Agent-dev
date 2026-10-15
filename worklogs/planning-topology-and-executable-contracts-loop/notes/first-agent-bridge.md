@@ -1,5 +1,11 @@
 # First-Agent: контекст для правки планов
 
+**2026-10-15 capability alignment (E201):** old I03 loop/tracker/L2/recon references below are
+historical proposals whose actual owner is the named deferred slice-loop/tracker/L2-eval successor,
+not foundation I03. R5 distilled retry packets remain required where retry occurs; initial Q66
+context inheritance and ordinary conversation logging do not relax that distinction. Use current
+roadmap/migration bank for scheduling; no numeric successor or status completion is inferred.
+
 
 **первая задача сессии:** аккуратно внести правки в текущие планы перед написанием кода, чтобы идеи ниже превратились в проверяемые контракты. Выход сессии — unified diff по `worklogs/…`,
 готовый к аудиту по коду и применению оператором.

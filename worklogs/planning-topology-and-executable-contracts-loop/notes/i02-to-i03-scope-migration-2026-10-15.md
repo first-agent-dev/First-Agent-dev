@@ -255,3 +255,42 @@ No historical unchecked item becomes checked from transfer, and no live producer
       and mutmut's global `source_paths` remains unchanged (Q54).
 
 End of historical checklist. Active ownership and shipping conditions are in revised I02 and §§1–3 above.
+
+## 7. Migration validation (E200–E201; not implementation proof)
+
+- Actual pure extractor/precheck: I02 has seven sections and 16 SLICE6 FUNCTIONAL obligations;
+  zero FAIL, eight advisory WARN (cross-plan CT references and seven-slice ceiling). I03 OUTLINED
+  has zero slices, zero FAIL and seven reference WARN; this is not an admissible empty runtime plan.
+- Actual extracted pure kill-parser/AST-resolution bodies: zero directive validation errors;
+  required functional directives present; fully-ticked existing producer targets resolve.
+- Exactly CT88/CT89/CT96/CT97 whole declarations leave I02; no unrelated CT ID is removed/added.
+  All retained checked markers match source plan; old SLICE7/DoD/CT92 text is preserved exactly.
+- All 15 original audit gaps mapped; original live register table rows unchanged. Roadmap I04–I06
+  rows and active increment unchanged; exact question Status lines unchanged. Schema §4 example/
+  expected bytes unchanged and actual parse matches the expected JSON. New links/anchor resolve;
+  ledger E200/E201 append-only; diff whitespace check passes.
+- Product/test/script/skill source unchanged. Sandbox Python is 3.11.2, project targets 3.13;
+  full package import hits unavailable typing.override, so checks load the actual pure leaf module
+  and selected actual source bodies without compatibility shims. Full pytest/Mypy/Docker/deployed
+  proof is not run or claimed; old failure dispositions and independent review remain pending.
+
+Minimal reproducible extractor check (does not import the package/runtime or execute plan commands):
+
+```python
+import importlib.util
+import sys
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("plan_scope_check", "src/fa/inner_loop/plan_ids.py")
+parser = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = parser
+spec.loader.exec_module(parser)
+plans = Path("worklogs/planning-topology-and-executable-contracts-loop/increments")
+i02 = (plans / "increment-02-verify-gate-and-kill-checks.md").read_text()
+ids = parser.extract_plan_ids(i02)
+assert ids.slices == ("SLICE1", "SLICE2", "SLICE2b", "SLICE3", "SLICE4", "SLICE5", "SLICE6")
+assert sum(cls == "FUNCTIONAL" for _, cls, _ in ids.slice_records[-1].contracts) == 16
+assert not any(d.severity == parser.FAIL for d in parser.precheck(i02).diagnostics)
+i03 = (plans / "increment-03-execution-workspace-foundation.md").read_text()
+assert not parser.extract_plan_ids(i03).slices
+```

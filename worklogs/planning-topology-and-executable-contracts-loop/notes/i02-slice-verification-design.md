@@ -17,6 +17,12 @@ in five files outside SLICE6, the live-host e2e rows are planned, and operator-o
 ticks remain untouched. The note remains the design input; plan CT68/69/85/86 and resolved Q49
 supersede its original per-command baseline sketch.
 
+**Current scope/classification, 2026-10-15 (E200–E201):** historical results above are not new
+proof. Retained I02 owns explicit admission/local composition and amended CT66 error classification;
+foundation I03 owns nested/runtime and final host acceptance. Full-suite disposition remains open.
+A failing exit alone is not mutation evidence; §3.5 below requires an executed failure report.
+No extra clean-control baseline or per-contract nodeid policy is adopted.
+
 ---
 
 ## 0. The mental model, restored
@@ -44,7 +50,7 @@ Three questions, three different answers, and the whole design rests on keeping 
 | --- | --- | --- |
 | *Did the slice's commands pass?* | **a command's exit code** | a fact; never ask a model |
 | *Is the test bound to the production code?* | **the kill-check** | a fact; this module |
-| *Is this a good implementation?* | **the judge (I03 eval)** | genuinely a judgement |
+| *Is this a good implementation?* | **the judge (actual L2-eval successor)** | genuinely a judgement |
 
 `SIMPLIFICATION-the-elegant-path.md` is the note that set this up: every hard question of
 the preceding weeks was downstream of asking a model something that had a factual answer.
@@ -220,8 +226,10 @@ worktree, so it cannot write where verification runs.
 4  KILL-CHECK  per FUNCTIONAL contract, in a throwaway source overlay:
                  a. target missing       -> PRODUCER_ABSENT
                  b. mutate, run every slice TESTS: path (Q53(c))
-                 c. all tests still pass -> VACUOUS
-                 d. any test fails      -> this contract is PROVEN (accepted weaker attribution)
+                 c. executed tests all pass, valid current report -> VACUOUS
+                 d. executed test failure + valid current report + no infra error -> PROVEN
+                 e. collection/setup/runner/timeout/error, missing/stale/invalid report,
+                    zero executed/all-skipped -> ERROR, never PROVEN
 5  VERDICT     all contracts proven and no regression -> PROVEN
 ```
 
@@ -237,6 +245,10 @@ regression and does not suppress an independent non-zero command result.
 each `FUNCTIONAL` contract, never the repository-wide suite. Cost is O(functional contracts ×
 slice test paths); no contract-to-test attribution is claimed. A failing unrelated test can
 make a kill-check appear `PROVEN`; the operator explicitly accepted that weaker attribution.
+This caveat applies to genuine executed test failures, not collection/setup/runner/timeout errors
+or false bool-map rows. Reuse one detailed JUnit parser with baseline-compatible projection;
+runner status, individual outcomes and counters must agree. Fresh per-invocation report identity
+is retained I02; independently supervised job/revision binding is I03 integration.
 The baseline and current nodeid capture remain slice-scoped and harness-issued.
 
 **Q54(b) ruling (2026-10-08):** CT60–CT63 allow two separately-contained overlay roots: required

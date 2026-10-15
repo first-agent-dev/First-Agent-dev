@@ -23,7 +23,11 @@ Concrete mechanisms остаются adopted design; implementation/proof и exa
 - **ADOPTED DESIGN:** инженерная конкретизация, принятая reviewer'ом по просьбе оператора; не выдаётся за отдельную дословную ратификацию.
 - **IMPLEMENTATION/PROOF PENDING:** выбранный контракт ещё требуется реализовать и проверить.
 
-Старые plans пока не изменены. E197 в ledger фиксирует новые операторские направления, а не их исполнение.
+**Plan migration выполнена, E200–E201:** active I02 ограничен explicit local scope до SLICE6
+(7 sections); I03 получил отдельный OUTLINED ownership outline и all former SLICE7 obligations.
+[Migration bank](i02-to-i03-scope-migration-2026-10-15.md) сохраняет clause/STEP/GAP/case mapping и old DoD.
+Roadmap/schema consumers следуют actual successor capabilities. Это исполнение planning task,
+не product implementation, review approval, proof или status ticks. E197 сохраняет операторские направления.
 При несовпадении со старым CT сначала явно мигрировать CT/DoD; не объявлять его выполненным на основании этой заметки.
 
 ## 0. Decision briefing
@@ -583,7 +587,8 @@ Current adapter rejects suite errors; inspect actual `<error>` nodes too, not on
 Do not parse English terminal phrases as sole authority. Report is project-produced evidence, not a security attestation.
 Каждый report имеет fresh private location и относится к exact invocation/selection/candidate; stale прошлый XML не используется.
 Непустой XML без реально executed failing testcase не становится kill proof по одному exit code.
-I03 добавляет independently supervised operation identity/digest binding; I02 уже не принимает stale/missing/error reports.
+I03 добавляет independently supervised operation identity/digest binding; retained I02 обязан
+исключать stale/missing/error reports из PROVEN. Это implementation/proof obligation, не current runtime claim.
 Resource-bound report IO/parsing and bind it to execution/candidate/selection.
 
 Не менять generic planner-authored verify semantics: there nonzero remains ordinary failure;
@@ -617,8 +622,8 @@ I03 final slice сохраняет все unique producer cases прежнего
 **OPERATOR:** I02 заканчивается на SLICE6; E2E и основной новый foundation scope — I03.
 Это legitimate scope correction. Не значит, что I02 уже complete или production isolation появилась.
 
-Current I02 has 8 sections: SLICE1, SLICE2, **SLICE2b**, SLICE3, SLICE4, SLICE5, SLICE6, SLICE7.
-После удаления SLICE7 останется **7**, не 6: считать реальные sections, не maximum numeric label.
+Pre-migration I02 имел 8 sections: SLICE1, SLICE2, **SLICE2b**, SLICE3, SLICE4, SLICE5, SLICE6, SLICE7.
+После E200 active I02 имеет **7**, не 6: считать реальные sections, не maximum numeric label.
 Не удалять completed/approved SLICE2b source-position work и не перенумеровывать всё ради косметики.
 
 ### 12.2. Retained I02 scope
@@ -657,7 +662,8 @@ CT95 managed-acquisition clause и CT90 nested exception мигрируют с C
 
 ### 12.4. DoD и E2E policy migration
 
-Current I02 DoD/roadmap требует post-merge host E2E before SHIPPED. Оператор сейчас переносит этот package в конец I03.
+Pre-migration I02 DoD/roadmap требовал post-merge host E2E before SHIPPED. По операторскому запросу
+E200–E201 перенесли этот package в конец foundation I03; active I02 DoD теперь local/scoped.
 Планировщик явно обновляет scoped I02 shippable statement/DoD/roadmap/records, а не просто удаляет checklist.
 Local C1 real composition-root proof (only provider mocked) остаётся в I02: это не тот же объект, что deployed-host E2E.
 
@@ -666,7 +672,8 @@ Local C1 real composition-root proof (only provider mocked) остаётся в 
 local real-composition proofs, full-suite disposition и operator review revised DoD, не ожидая завершения I03.
 Это означает delivery reduced I02 contracts, НЕ safe complete chat→workflow path и НЕ reviewed deployed E2E acceptance.
 Перенесённые CTs/cases имеют явный I03 owner и отдельную incomplete acceptance запись; не маркируются VERIFIED от scope переноса.
-Эта formulation — proposed scoped DoD для plan migration, не inference текущего SHIPPED status из одобрения review.
+Эта scoped formulation применена в revised I02 DoD (E200), но не означает текущий SHIPPED status
+или завершённый review/implementation: требуются actual retained evidence и operator disposition.
 После retained DoD использовать existing status vocabulary; не вводить `COMPLETE_LOCAL` как новый artifact status.
 Нельзя считать E174 full-suite failure disposition, deliberate E19 reds или Mypy diagnostics автоматически разрешёнными переносом scope.
 Не выставлять SHIPPED в этой planning note; только actual evidence после реализации/review.
@@ -678,18 +685,25 @@ Operator commands не предполагают forwarding host env через w
 
 ### 12.5. Старый I03 outline не теряется
 
-Roadmap currently outlines I03 = per-slice loop/tracker/three-level eval.
+Pre-migration roadmap outline I03 = per-slice loop/tracker/three-level eval; E201 сохраняет
+его как named deferred capability successor, а numeric I03 теперь foundation.
 Новый I03 foundation вытесняет его scheduled position; это **deferred, not abandoned**.
 На roadmap migration сохранить его intent/consumers в named successor outline/deferred row и явно назвать scheduling pending.
-**Capability-based references:** `artifact-schema-and-grammar.md` §6 пока завершает interim operator ticking «when I03 ships»
-и связывает CT VERIFIED с I03 L2 eval. Новый foundation I03 этих features не доставляет.
-Мигрировать ссылки на actual tracker/L2-eval owner/capability, не отменять operator authority только из-за номера I03.
+**Capability-based references:** прежний `artifact-schema-and-grammar.md` §6 завершал interim ticking
+«when I03 ships» и связывал CT VERIFIED с I03 L2 eval. E201 мигрировал эти ссылки на actual
+tracker/L2-eval successor. Foundation I03 не доставляет эти features и не отменяет operator authority.
 I01 grammar ownership и правила status ticking сохраняются; изменение references не равно реализации tracker.
 Не увеличивать новый I03 включением всего старого per-slice controller.
 Не перенумеровывать I04–I06 и особенно Q64→I06 автоматически. Successor numeric ID/order — отдельная roadmap disposition,
 не prerequisite для реализации выбранного foundation scope и не повод удалить старые obligations.
 
 ### 12.6. Suggested I03 decomposition (planning skeleton, не готовый increment)
+
+Первоначальная seven-group table ниже сохранена как design context. После scope-reduction check
+active [foundation outline](../increments/increment-03-execution-workspace-foundation.md) использует
+six candidate groups A–F, объединяя launch/backend/adapters. Ни один skeleton не является executable
+CT/STEP plan; не добавлять второй terminal/management stack ради unfinished FastAPI server.
+Existing server допускается как optional cell-internal transport, не host supervisor или I02 gate.
 
 Не больше 7 хорошо связанных slices; конкретные filenames/CTs/kill directives агент обязан привязать к реальным producers.
 
@@ -708,6 +722,11 @@ I01 grammar ownership и правила status ticking сохраняются; �
 Не добавлять big per-slice scheduler/eval redesign сюда лишь из-за старого названия I03.
 
 ## 13. Migration checklist для следующего агента
+
+**Current disposition:** scope/DoD/owner mapping и cross-doc capability references применены
+(E200–E201). Concrete I03 briefs/tests, exact Q62/Q59/Q60/Q63 dispositions, retained I02 runtime
+implementation/full-suite disposition и actual acceptance всё ещё pending. Checklist ниже —
+coverage bank, не перечень автоматически завершённых runtime/approval STEPs.
 
 1. Прочитать эту note, E197, current roadmap/schema, весь I02/SLICE6+DoD и old SLICE7.
 2. Зафиксировать retained/moved/deferred table всех existing CT/producer/oracle obligations.

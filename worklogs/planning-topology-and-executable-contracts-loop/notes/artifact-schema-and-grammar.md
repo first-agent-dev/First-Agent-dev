@@ -339,8 +339,10 @@ E8  DECIDED  SLICE#-only grammar; pre-rename S# plans archived  supersedes: E3
 
 - **Increment:** `OUTLINED → READY → IN PROGRESS → SHIPPED`.
 - **Contract (`CT#`):** `PLANNED → IMPLEMENTED → VERIFIED`. `VERIFIED` means the slice's
-  `verify` exited 0 **and** (from I02) the test was proven non-vacuous **and** (from I03)
-  the eval's L2 contract verdict passed. For stochastic gates `VERIFIED` means pass^k.
+  `verify` exited 0 **and** (from I02) the test was proven non-vacuous **and** the actual
+  slice-loop/tracker/L2-eval successor supplies a passing L2 contract judgment. Foundation I03
+  does not deliver that capability. Local I02 implementation/mutation proof is not L2 VERIFIED.
+  For stochastic gates `VERIFIED` means pass^k.
 - **Step (`STEP#`):** three states, ratified 2026-10-07 (CT36). The marker is normalised —
   inner whitespace stripped, case folded — and then matched:
   `- [ ]` (also `- []`, any run of spaces) **to do** · `- [>]` **in progress** ·
@@ -350,13 +352,19 @@ E8  DECIDED  SLICE#-only grammar; pre-rename S# plans archived  supersedes: E3
   replaces. Previously this list read `[ ]` → `[x]` while `prompt.py:687` instructed the coder
   to write `[>]`, and the parser quietly accepted a capital `[X]` as no step at all.
   Ticked by the **harness**, not the model.
-  **Interim rule until the I03 harness exists:** the **operator** ticks shipped steps and sets
-  `shipped:` in the increment frontmatter. The model still never ticks them. This exception
-  expires when I03 ships.
+  **Interim rule until the actual tracker harness is delivered:** the **operator** ticks shipped
+  steps and sets `shipped:` in the increment frontmatter. The model still never ticks them.
+  This exception expires only on delivery/proof of the tracker capability in the named deferred
+  slice-loop/tracker/L2-eval successor, not on foundation I03 shipping (E200–E201).
 - **pass^k resettability.** A pass^k streak counts only runs over an unchanged gate input. Any
   change to the diff, the test file, the verify command or the model family **resets k to
   zero**. Without this, passes accumulate across different code states and `VERIFIED` means
   nothing.
+
+Capability owner: [roadmap successor](../roadmap.md#slice-loop-tracker-l2-eval-successor).
+Reduced I02 shipping is scoped by its own DoD, not by delivered L2/tracker or host E2E.
+I03's final acceptance owns reviewed deployed I02+I03 producer evidence; local proof never assigns it.
+The migration changes capability references, not status vocabulary or schema-example tokens.
 
 ## 7. What the extractor must expose (I01 surface)
 
@@ -409,7 +417,7 @@ site that will read it. A name with no named consumer is not added** (precedent:
 plan = extract_plan_ids(increment_text)
 plan.commands_for("SLICE2")  # consumer: I02 verify gate — that slice's verify commands only
 plan.commands_for(None)  # consumer: I02 — the plan-level bucket: every command no slice owns
-plan.section("SLICE2")  # consumer: I03 coder brief — the slice's text block, scoped
+plan.section("SLICE2")  # consumer: deferred slice-loop successor coder brief — scoped text
 plan.contract_class("CT3")  # consumer: I02 — CONSTRAINT-first ordering of verify and findings
 plan.tests_for("SLICE2")  # consumer: I02 — baseline selection; TESTS:-not-in-diff assertion
 # SliceRecord.tests_note  # consumer: I02 — the preserved `(NEW — …)` text its fail-before
@@ -419,11 +427,11 @@ plan.tests_for("SLICE2")  # consumer: I02 — baseline selection; TESTS:-not-in-
 # flat PlanIds.tests holds T# IDs. Same word, different
 # meaning — do not conflate them.
 # SliceRecord.steps_mode   # a FIELD on the record, not a method on PlanIds: reach it as
-                          #   `plan.slice_records[i].steps_mode`. consumer: I03 — PENDING,
-                          #   no reader until then. (Corrected 2026-10-07: this line used
+                          #   `plan.slice_records[i].steps_mode`. consumer: deferred slice-loop successor — PENDING,
+                          #   foundation I03 does not deliver this reader. (Corrected 2026-10-07: this line used
                           #   to read `plan.steps_mode("SLICE2")`, a call that never
                           #   existed; ledger E116.)
-precheck(increment_text)  # consumer: I01 SLICE3 + the I03 admission step; pure code, pre-coder
+precheck(increment_text)  # consumer: I01 SLICE3 + I02 CT91 explicit admission (planned); I03 reuses it
 
 # Two id-validation primitives. They are exported, so they are specified here;
 # an exported name absent from this section is drift, and I01's DoD walk found

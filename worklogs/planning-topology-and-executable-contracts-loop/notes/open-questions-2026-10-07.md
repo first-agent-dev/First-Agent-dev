@@ -2,6 +2,12 @@
 
 Canonical record. Next free id after this file: **Q67**.
 
+**Current owner/disposition alignment, 2026-10-15 (E200–E201):** retained I02 owns explicit-plan
+Q57/Q58, CT92 rules and local admission/gate proof. Q59/Q60 exact nested choices, Q61/CT97
+foundation implementation, Q66 propagation and Q63 final E2E schema are I03 consumers, not I02
+shipping dependencies. Broad design directions are recorded in the execution decision note; this
+owner migration does not mark exact Q59–Q63 fields/choices or runtime proofs RESOLVED.
+
 > **All three resolved by the operator on 2026-10-07** (ledger E113) and implemented in
 > I01/SLICE4: **Q40 → (b)** the skeleton must be a valid plan, skills and inject files
 > edited; **Q41 → (i)** SLICE4 finishes migrating both `SKILL.md`; **Q42 → (i)** I01 fixes
@@ -1000,6 +1006,13 @@ recommendation until the operator answers.
 
 ## Q61 — What PlanRef integrity boundary is acceptable for CT97's nested in-process topology?
 
+**Current design direction / owner (E197–E201):** foundation I03 uses trusted controller plus
+Docker-backed cells/private host supervisor, exclusive workspace writer/private views and fenced
+sealed publication. PTY stays; do not adopt an old option that removes arbitrary shell or treats
+in-process hooks/read-only mounts as the complete boundary. Earlier alternatives below are
+historical rationale, not permission to bypass this direction. Exact deployment contracts and
+negative proof remain pending; this note does not mark Q61 runtime/security evidence complete.
+
 **Status: OPEN. CT97 remains recommended, not operator-ratified.** This decision gates coder
 write-boundary implementation and any claim that the active plan is protected.
 
@@ -1156,24 +1169,28 @@ currently demonstrated by source.
 
 **Implementation recommendation.** At the moment of tool invocation, capture a bounded,
 immutable snapshot of the parent conversation after the parent's compaction/summary boundary and
-pass it through an internal controller context/provider—never an additional `invoke_workflow`
-parameter. Put that snapshot in the planner's non-cacheable user/turn context; the nested planner
-uses its own role prompt and skill instructions. Do not copy the outer chat system prompt, tool
+pass it through the existing live controller context-provider—never an additional `invoke_workflow`
+parameter. Compose `per_role_task["planner"]` for initial user-task input, not SYSTEM `turn_context`;
+the nested planner uses its own role prompt and skill instructions. Do not copy the outer chat system prompt, tool
 schema, or unrelated tool catalog; do not duplicate prompt/skill tokens. Budget/compact the
 inherited context explicitly, preserve current user constraints and decisions, label repository
 and tool output as untrusted data, and record actual child input-token usage. Apply the existing
 secret-redaction/data-egress policy before crossing provider chains: never inherit credential
 values, auth metadata, or raw secrets, and do not write transcript content into workflow artifacts;
-record provenance/token counts instead.
+record only the allowed control references/counts there. Ordinary child conversation/event/debug
+logs remain allowed under existing credential redaction and debug opt-in; no global suppression,
+mandatory transcript-age GC or advanced privacy service is introduced. Scope the full initial
+input to initial dispatch; repair/replan use distilled goal/failure/ref packets, not repeated history.
 
 **Required proof.** The real outer-chat → `invoke_workflow` → nested planner C1 test must show
 that a prior user constraint and relevant assistant/tool context reach the first planner request,
 that a synthetic credential sentinel is omitted/redacted under the egress policy, that the
 planner's own prompt/skills are present, that no new context field is in the tool schema, and that
-token accounting/compaction bounds are honored without persisting raw transcript content. Do not
+existing size bounds hold, and no raw transcript enters admission/control schemas. Ordinary child
+logs are allowed with credential redaction; prove initial-versus-distilled-replan separation. Do not
 treat path-only session facts as proof of transcript inheritance.
 
-### Current readiness queue as of 2026-10-14
+### Current scoped readiness queue as of 2026-10-15
 
 - **Before coding the requested chat → `invoke_workflow` target path:** settle Q59's advisory vs
   guaranteed-route boundary, Q60's typed selection/bootstrap protocol, and Q61's PlanRef integrity
@@ -1184,11 +1201,16 @@ treat path-only session facts as proof of transcript inheritance.
   Q43 (lenient parser accessors) remains open and must be dispositioned before new admission
   code relies on them. Q45 is now resolved (option B) by Q65; keep the approved source-position
   fields and do not revert them.
-- **Before SLICE7 E2E package finalization:** ratify Q63's four-state vocabulary and decide whether
+- **Before foundation I03 final-group E2E package finalization (former I02 SLICE7):** ratify Q63's four-state vocabulary and decide whether
   `BLOCKED` requires the recommended reason code; this does not block core runtime coding.
 - **Deferred outside I02:** Q64 is assigned to I06 by operator instruction; do not restore the
   20-slice/≥95% criterion as an I02 gate.
 - Q59–Q63 remain decision/specification questions; Q64 is deferred, Q65 is resolved, and Q66's
   API decision is resolved while runtime proof remains. Current production source still lacks
   admission, planner-managed selection/bootstrap, inherited chat-context propagation, and the CT97
-  PlanRef boundary; see I02 SLICE6 current-code snapshot and DoD.
+  PlanRef boundary; see retained I02 local DoD and foundation I03 outline/migration bank.
+
+I02 does not wait for the successful nested path, OS boundary or deployed-host evidence; it still
+requires retained explicit Q57/Q58 implementation, negative unavailable managed-path proof, Q62/Q43
+disposition where used, full-suite failure identities and independent/operator review. Nothing
+in this owner edit closes those proofs. Old tracker/L2-eval references follow the deferred successor.

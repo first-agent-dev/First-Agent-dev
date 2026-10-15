@@ -107,7 +107,8 @@ From [`deferred-verification-register.md`](deferred-verification-register.md):
 ## 5. Guardrails carried forward (handoff §5) — do not relitigate
 
 No DSL for verify blocks · no fence-depth parsing · no mutation/failure-injection in the core
-(that is I06) · **no `VERIFIED` from I02 alone** — it additionally needs I03's eval L2.
+(that is I06) · **no `VERIFIED` from I02 alone** — it additionally needs the actual deferred
+slice-loop/tracker/L2-eval successor, not foundation I03 shipping.
 
 And the one that outranks the rest: handoff §7 specifies the **live gate I02 owes** in full —
 boot `drive_session`, mock only `ProviderChain.request`, assert the slice's own commands ran

@@ -39,18 +39,33 @@ worklogs/planning-topology-and-executable-contracts-loop/
 ## Increments
 
 Rolling wave: **I01 and I02 are planned in full** (`increments/increment-01-…`,
-`increments/increment-02-…`); I03–I06 are
-**outlines** here and get their own detailed increment file just-in-time, when reached.
+`increments/increment-02-…`); foundation I03 has a linked ownership outline; I04–I06 remain
+**outlines** and get executable increment briefs just-in-time. Scope migration is recorded in E200–E201;
+no implementation/status tick follows from it.
 The map below is expected to be refined as reality teaches.
 
 | ID | Increment | Status | One-line intent |
 |---|---|---|---|
 | **I01** | Plan grammar & extractor | **IN PROGRESS** | the harness can parse and lint the new plan format |
-| I02 | Executable contracts & verify gate | **IN PROGRESS** ([`increments/increment-02-verify-gate-and-kill-checks.md`](increments/increment-02-verify-gate-and-kill-checks.md)) | a slice is gated by a planner-authored, non-vacuous test the harness runs. Non-vacuity is proven by **executing a declared kill-check**, not by asking whether a test is new (E122). I02 also requires operator-reviewed live E2E after the main deployment; the harness does not assign that result. Design: `notes/i02-slice-verification-design.md`; context: `notes/i02-handoff-verify-gate.md` and `notes/e2e-handoff-and-plan-review-design.md` |
-| I03 | Per-slice loop, tracker & eval | outlined | controller runs the per-slice loop; code ticks the tracker; three-level eval |
+| I02 | Executable contracts & verify gate | **IN PROGRESS** ([plan](increments/increment-02-verify-gate-and-kill-checks.md)) | Retained explicit-plan Q57/Q58 admission/repair/promotion, slice-scoped verify/kill classification, T0 and real local controller/session/eval proof. Seven sections through SLICE6 (including SLICE2b). SHIPPED is attainable on actual revised local DoD/full-suite disposition/review before I03; not OS isolation or deployed acceptance. Every unique live producer case remains I03-owned. [Migration map](notes/i02-to-i03-scope-migration-2026-10-15.md). |
+| I03 | Execution/workspace foundation & integrated acceptance | **OUTLINED** ([ownership outline](increments/increment-03-execution-workspace-foundation.md)) | Mandatory Linux/Docker project-code cells with PTY, trusted launch/host supervisor, exclusive workspace writer/private views/pinned readers, sealing/fenced publication/recovery, real nested selection/bootstrap/simple Q66, and final reviewed deployed I02+I03 acceptance. Owns CT96/CT97, managed clauses and all former SLICE7 CT88/CT89. Reuse existing facades; no standalone FastAPI completion gate or second authority. |
 | I04 | Evidence ledger, pinned invariants, retry hygiene | outlined | the loop carries evidence, pins governance, retries clean, never wedges (includes the ledger **parser**, moved here from I01 — build it beside its consumers; and the **pinned-invariants injection**, drafted as an I01 slice on 2026-10-06 and moved back here as scope creep — contracts banked in `notes/role-prompts-conformance.md`, ledger E79) |
 | I05 | Rolling-wave, ASK#, autonomy, chat orchestration | outlined | the roadmap closes across runs; the ceremony/scope/draft work lands here, revised |
 | I06 | Telemetry & distillation (parallel deferred) | outlined | runs are measured and distilled; slice-DAG parallelism deferred |
+
+<a id="slice-loop-tracker-l2-eval-successor"></a>
+### Deferred capability: slice-loop/tracker/L2-eval successor
+
+The former I03 outline is **preserved, not delivered or abandoned**: controller per-slice dispatch,
+code-owned tracker/STEP ticking, L1/L2/L3 eval, scoped coder brief via `section`, `steps_mode`,
+CT10b/tests_note semantics and corresponding coder/eval prompt consumers. Numeric increment ID/
+order will be assigned by separate rolling-wave disposition; do not renumber I04–I06 or Q64→I06.
+Foundation I03 does not include these just because it inherited the number.
+
+Interim operator ticking expires only when the actual tracker capability is delivered with proof,
+not when foundation I03 ships. Contract VERIFIED requires actual L2 judgment capability; I02
+local implementation/mutation evidence or foundation shipping does not supply it. Existing I04
+ledger/retry and I05 orchestration dependencies follow actual consumer capabilities.
 
 ### Deferred — explicitly not scheduled (from `RESEARCH-ADOPTION-PLAN.md`)
 
@@ -59,15 +74,15 @@ none is in any increment above until promoted.
 
 | Item | Why deferred | Promote when |
 |---|---|---|
-| #10 Escalation ladder / N-version repair | needs the parallel runner (shared with #11); the simple budgeted retry must prove out first | after I03's loop + I04's stall counter |
-| #11 Slice DAG + parallel git worktrees | most premature; sequential first; worktree + runtime isolation is real work | after I03, on evidence of a parallelism bottleneck |
+| #10 Escalation ladder / N-version repair | needs the parallel runner (shared with #11); the simple budgeted retry must prove out first | after the actual slice-loop/tracker/L2-eval successor + I04 stall counter |
+| #11 Slice DAG + parallel git worktrees | most premature; sequential first; worktree + runtime isolation is real work | after foundation isolation and the sequential-loop successor, on measured parallelism bottleneck |
 | #15 Post-feature distillation ritual | pays off over many features, not one | after several increments ship (I06) |
 | #16 Hash-anchored tamper-evident run record | nice audit property, not load-bearing yet | if/when telemetry must be trusted by an outsider (after #17) |
 | #18 Model tiering (planner-tagged) | conditional on #17 telemetry; premature tiering corrupts the data it saves on | after I06 telemetry has a few hundred slices |
 | Prompt-side effort routing (`reasoning.effort` per slice class) | a different lever from prose scaffolding; must be measured in its own arm or it contaminates every other result | I06, as its own ablation arm |
 | N-version repair as *diagnosis* only | resampling cannot lower a verifier's false-positive rate, so verify-based *selection* inherits the verifier's ceiling; optimal k is often ≤5 and zero when a false positive costs 10× | if used at all: diagnosis only, selection on CONSTRAINT satisfaction, k ≤ 3 |
 | Reliability SLO and its per-slice target | needs a baseline; a target invented without one is either trivially met or permanently missed | I06, after the first runs produce data |
-| I02 gate calibration corpus and ≥95% rejection target (20 known-good/known-bad slices) | explicitly deferred by the operator on 2026-10-14; I02 may ship its declared implementation/E2E proofs without claiming calibrated accuracy | follow-up deferred to I06 by operator; I06 defines the trigger before calibrated claims or gate-policy changes and keeps calibration examples separate from held-out regression data |
+| I02 gate calibration corpus and ≥95% rejection target (20 known-good/known-bad slices) | explicitly deferred by the operator on 2026-10-14; reduced I02 may ship retained local DoD without calibrated accuracy; deployed acceptance belongs to I03 | follow-up deferred to I06 by operator; I06 defines the trigger before calibrated claims or gate-policy changes and keeps calibration examples separate from held-out regression data |
 
 (#17 telemetry *schema* is pulled forward into I06 — "cheap now, expensive later" — even
 though the attribution *loop* is later.)
@@ -142,7 +157,7 @@ Tagged `decided:` (chosen) or `assumed:` (never verified — an `ASK#` candidate
   Where no live path exists yet, the increment says so in one line and names the increment that
   will add it — the same discipline as SD-B's `consumer:`.
 - `assumed:` Per-slice eval beats one cumulative eval — confirmed by the slice-diff size,
-  re-checked once I03 telemetry exists.
+  re-checked once the actual sequential-loop successor and I06 telemetry exist.
 
 ## Absorbed from the superseded plan
 
@@ -154,7 +169,7 @@ ledger and step headers):
 |---|---|---|---|
 | S6 | harness runs verification (GAP5/GAP13) | **I02** | the verify gate; now planner-authored tests + non-vacuity |
 | S9 | mirror grammar into planning skills | **I01** | skill migration is part of the grammar increment |
-| S11b | reconcile claimed vs observed verdict | **I03** | folded into the three-level eval |
+| S11b | reconcile claimed vs observed verdict | **deferred slice-loop/tracker/L2-eval successor** | preserved three-level eval capability; not delivered by foundation I03 |
 | S6a | persist edit packets (GAP12, PR-body source) | **I05** | revised: the slice brief / PR source under the new schema |
 | S6b | harness-derived draft (IntentGuard) | **I05** | revised: re-examine against the chat-orchestrator role |
 | S7 | `ScopeWarnHook` files-allowed signal | **I05** | revised: scope signal under the slice-brief model |

@@ -2106,3 +2106,19 @@ E200 DECIDED FORMAL I02 SCOPE/DOD AND I03 OBLIGATION MIGRATION, 2026-10-15. The 
     closed. Retained SLICE6 has 16 FUNCTIONAL kill obligations, not 18; the schema ceiling stays
     seven. Capability/roadmap references are reconciled in the next distinct step.
     [operator, this session; plans/migration bank; E197–E199 directions/reuse evidence]
+
+E201 DERIVED CROSS-DOCUMENT OWNER/CAPABILITY RECONCILIATION, 2026-10-15. Following E200,
+    roadmap links reduced I02 local DoD and the foundation I03 ownership outline, preserves the
+    old I03 slice-loop/tracker/L2-eval as a named deferred successor without renumbering I04–I06,
+    and migrates activation/ticking/VERIFIED/read-API/prompt references to actual capability.
+    Foundation I03 shipping does not expire operator ticking or supply L2 judgment. Deferred
+    verification owners and E2E design/register guidance now distinguish retained direct I02
+    proof from I03 final reviewed deployed I02+I03 acceptance; all original live producer rows
+    remain unchanged. Verification design excludes error/skip/stale report false kills without
+    adding clean-control or per-contract attribution. Question readiness distinguishes moved
+    owners and exact pending dispositions; Q66 uses initial user-task input, ordinary logs with
+    credential redaction and distilled replan packets, not SYSTEM context or transcript-free
+    logging architecture. Primary decision note records applied planning migration, not runtime
+    delivery. No product code, skill text, progress ticks, live status, exact Q59–Q63 ratification,
+    full-suite disposition or numeric successor scheduling is changed by this docs-only step.
+    [derived from E197–E200; source-grounded E199 audit; operator migration request]

@@ -5,6 +5,12 @@
 memory. It banks what is known (verified @ tip `0e08ece`, 2026-09-07) and lists what is still
 open, so the I02 review has material instead of re-deriving it.
 
+**Current consumer boundary, 2026-10-15 (E200–E201):** this old grounding bank is not current
+source proof. Active I02 ends at SLICE6 and retains explicit-plan admission/Q57/Q58/local gate/eval
+composition. Nested CT96/CT97/runtime and all old SLICE7 host acceptance belong to foundation I03;
+old I03 slice-loop/tracker/L2 consumers follow the named deferred successor. Use the active plan
+and [migration bank](i02-to-i03-scope-migration-2026-10-15.md) for ownership/DoD.
+
 Companion artifacts:
 - `notes/verify-block-design.svg` — the picture (four tiers, ritual, seven-row truth table).
 - `notes/verify-block-design.md` — the reasoning in prose, with research citations.

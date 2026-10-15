@@ -4,6 +4,11 @@ Status: living list. Owner: planner. Created 2026-10-07 (operator decision: coll
 targets now, write the tests later, distributed across increments; no e2e/live run before
 I02 closes).
 
+**Owner migration, 2026-10-15 (E201):** I02 retains direct local gate/admission proofs; final
+deployed I02+I03 acceptance belongs to foundation I03. Old I03 coder-brief/tracker readers follow
+the named deferred slice-loop/tracker/L2-eval successor. Historical evidence/ticks below are not
+re-run or closed by this owner edit; no live verdict is assigned.
+
 **Why this exists.** I01 ships a parser, a pre-check engine, and two prompt blocks. Almost
 all of it is proven by *static* tests over fixture text. Under SD-C (E93) static conformance
 is necessary and **never sufficient**: it proves a string, not a behaviour. I01 deliberately
@@ -72,15 +77,16 @@ original defect one storey up. **Close D1b before SLICE5/SLICE6, not after.**
   `step-near-miss`, `slice-count-at-ceiling`, `orphaned-slice-field`), as listed by
   `plan_ids.precheck` (`src/fa/inner_loop/plan_ids.py:1257-1271`).
 - **Measured 2026-10-07; source rechecked 2026-10-14.** `precheck` still has **zero production
-  call sites outside `plan_ids.py` and the test suite.** SLICE6 CT91 and STEPs 9–12 now plan I02
+  call sites outside `plan_ids.py` and the test suite.** SLICE6 CT91 and STEPs 9/10/12 plan I02
   as the consumer, but that is a plan only; there is no runtime wiring and D2 is not closed.
   The historical schema §7 consumer statement named I03; the I02 plan now reconciles it explicitly.
 - **Risk.** A lint nobody runs is decoration. Every rule here remains unfalsifiable in production.
 - **Test to write (I02 SLICE6).** The admission step refuses coder dispatch on a determinate
   `precheck` FAIL through the real workflow and invokes bounded repair per Q57. **Kill-check:**
   deleting the production `precheck` call must let a known-bad corpus plan reach coder or make the
-  named C1 oracle fail. Keep WARN advisory; do not turn the authorized I02 eight-slice warning
-  into a blocker. Leave D2 OPEN until this code/test proof passes.
+  named C1 oracle fail. Keep WARN advisory; reduced I02 now has seven actual sections,
+  so the former local eight-slice exception is no longer needed. Do not invent a ceiling FAIL.
+  Leave D2 OPEN until this code/test proof passes.
 
 ## D3 — The skill → prompt → plan → parser chain  ·  owner: **I02** (gate), register now
 
@@ -100,7 +106,7 @@ original defect one storey up. **Close D1b before SLICE5/SLICE6, not after.**
 - **Test to write.** Assert the injected block for both skills contains the skeleton, and
   that the skeleton text the model is shown is the same text CT14 conforms against.
 
-## D4 — The read API has no production reader  ·  owner: **I02** (most), **I03** (`section`)
+## D4 — Read-API consumers · owner: **I02** gate readers, **deferred slice-loop successor** coder brief
 
 `commands_for(slice)`, `commands_for(None)`, `section`, `contract_class`, `tests_for`,
 `SliceRecord.tests_note`, `SliceRecord.test_paths`, `plan_commands`. Each carries a named

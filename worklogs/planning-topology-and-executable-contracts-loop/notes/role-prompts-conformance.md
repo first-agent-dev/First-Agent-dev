@@ -1,7 +1,8 @@
 # Role-prompt conformance — exact text to insert (banked, not merged)
 
 **Status: banked (operator decision 2026-09-09); implement per owner** — planner→I01,
-coder→I03, eval→I04. Prompts live at `src/fa/inner_loop/prompt.py`; line anchors @ tip
+coder→deferred slice-loop/tracker successor, eval-ledger→I04; L2 judgment→actual eval successor
+(E201). Prompts live at `src/fa/inner_loop/prompt.py`; line anchors @ tip
 `0e08ece` (re-verify before editing). All inserted text is written in the same
 "do this exactly" style the schema §1 requires.
 
@@ -29,7 +30,7 @@ Replace the `S#`-native step/plan wording with:
   the plan.
 ```
 
-## Coder (CODER_SYSTEM_PROMPT, :533) → I03
+## Coder (CODER_SYSTEM_PROMPT, :533) → deferred slice-loop successor
 
 Replace the "mark it `[x]`/`[>]`" line (:648) and add:
 
@@ -63,8 +64,9 @@ Rationale lives in notes/. One source of truth each; do not duplicate the schema
 
 # Addendum — merged from the bridge brief, 2026-10-06
 
-One bank, not two. Owners unchanged (E45/E47): planner grammar → I01, coder behaviour → I03,
-eval ledger wiring → I04. Rationale: `notes/decisions-qa-2026-10-06.md`.
+One bank, not two. Scope-aligned owners (E201): planner grammar → I01, coder slice behaviour →
+deferred slice-loop/tracker successor (formerly I03), eval ledger wiring → I04. Foundation I03
+does not satisfy these consumers merely by sharing the old number. Rationale: `notes/decisions-qa-2026-10-06.md`.
 
 ## Planner → I01 (lands with SLICE1b)
 
@@ -77,14 +79,14 @@ eval ledger wiring → I04. Rationale: `notes/decisions-qa-2026-10-06.md`.
   catches.
 - The mechanical self-checks move out of the prompt into the pre-check. Do not restate them.
 
-## Coder → I03
+## Coder → deferred slice-loop/tracker successor
 
 - Do not tick `STEP#` boxes; the harness owns them (E44 — `prompt.py:648` currently says
-  otherwise and must change *in I03*, not before).
+  otherwise; change with the actual tracker capability, not merely foundation I03 shipping).
 - Recon budget and stop conditions as drafted in the bridge brief.
 - **Delivery condition, not a blocker:** the line *"the harness runs the acceptance checks; you
-  do not re-run them"* is correct only once the I02/I03 gate exists. Ship it in the same
-  change-set as the gate. The operator's harness sees changes only during live e2e runs, so e2e
+  do not re-run them"* is correct only with the actual owning harness acceptance capability.
+  Ship it with that consumer, not merely because foundation I03 exists. The operator's harness sees changes only during live e2e runs, so e2e
   is the designated place this would surface if the order were wrong.
 - Retry context: a clean context plus a typed attempt record, **built mechanically** — parse the
   test and lint output, extract the assertion diff, the failing test id and one `file:line`.
@@ -94,7 +96,7 @@ eval ledger wiring → I04. Rationale: `notes/decisions-qa-2026-10-06.md`.
   sanitise tracebacks and fenced blocks before sending — provider WAFs reject raw ones, and the
   rejection looks like a model failure.
 
-## Eval → I03 / I04
+## Eval → actual L2-eval successor / I04 ledger wiring
 
 - The `S#` token in `prompt.py` (`- S1: PASS`) is overloaded **three** ways: the planner's step
   vocabulary, the controller's slice vocabulary via `validate_slice_ids`, and the eval's verdict

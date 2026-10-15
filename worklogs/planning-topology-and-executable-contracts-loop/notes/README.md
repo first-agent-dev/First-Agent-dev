@@ -17,7 +17,7 @@ Read `../roadmap.md` first, then `../increments/`, then come here for detail.
 | [`artifact-schema-and-grammar.md`](artifact-schema-and-grammar.md) | **The canonical grammar.** §1 artifacts + ownership table, §4 slice grammar + its executable oracle, §5 ledger grammar, §6 status vocabularies, **§7 the extractor surface I01 exposes**. |
 | [`verify-block-design.md`](verify-block-design.md) + `.svg` | I02's gate design: the four-phase ritual and the seven-row truth table. |
 | [`i02-handoff-verify-gate.md`](i02-handoff-verify-gate.md) | I02's context bank: grounded facts, the contract boundary, open questions **H1–H7**, what must not leak, §7 the live gate I02 owes, §8 CT10b. |
-| [`role-prompts-conformance.md`](role-prompts-conformance.md) | Exact prompt text to insert, banked by owner: planner→I01, coder→I03, eval→I04. |
+| [`role-prompts-conformance.md`](role-prompts-conformance.md) | Exact prompt text to insert: planner→I01, coder/L2→actual deferred slice-loop/tracker/eval successor, eval-ledger→I04; foundation I03 does not satisfy those consumers. |
 | [`RESEARCH-ADOPTION-PLAN.md`](RESEARCH-ADOPTION-PLAN.md) | Which of the 18 research items are adopted vs deferred. §5 "more structure is not more success". |
 
 ## Record (what happened)
@@ -25,9 +25,9 @@ Read `../roadmap.md` first, then `../increments/`, then come here for detail.
 | File | What it records |
 | --- | --- |
 | [`decisions-qa-2026-10-06.md`](decisions-qa-2026-10-06.md) | The Q→A walk: 39 decided questions, Q0–Q39, with verdicts. |
-| [`open-questions-2026-10-07.md`](open-questions-2026-10-07.md) | **Currently open questions.** Q40–Q42 (resolved, kept as record), **Q43 open**. |
+| [`open-questions-2026-10-07.md`](open-questions-2026-10-07.md) | **Currently open questions.** Q40–Q42 (resolved, kept as record), **Q43 open**; E201 aligns retained I02 vs I03 readiness owners and Q66 initial/log/retry rules without ratifying exact pending choices. |
 | [`q59-q66-reader-review-2026-10-14.md`](q59-q66-reader-review-2026-10-14.md) | Plain-language decision guide for Q59–Q63 and Q66's remaining propagation proof; examples, code references, production options, and operator reply template. Recommendations are not ratified decisions. |
-| [`execution-workspace-and-i02-i03-scope-decisions-2026-10-15.md`](execution-workspace-and-i02-i03-scope-decisions-2026-10-15.md) | Latest operator directions and adopted design for execution isolation, exclusive workspace ownership, simple logged planner context, kill-error classification, and I02→I03 scope migration. Context for rewriting I02/SLICE6 and planning I03; distinguishes decisions from pending implementation/proof. See ledger E197–E198; E199 corrects current session/workspace behavior. |
+| [`execution-workspace-and-i02-i03-scope-decisions-2026-10-15.md`](execution-workspace-and-i02-i03-scope-decisions-2026-10-15.md) | Latest operator directions and adopted design for execution isolation, exclusive workspace ownership, simple logged planner context, kill-error classification, and I02→I03 scope migration. Context for rewriting I02/SLICE6 and planning I03; distinguishes decisions from pending implementation/proof. See E197–E198 directions, E199 lifecycle correction and E200–E201 applied plan/owner migration (no implementation claim). |
 | [`execution-foundation-scope-reduction-and-reuse-audit-2026-10-15.md`](execution-foundation-scope-reduction-and-reuse-audit-2026-10-15.md) | Separate source-grounded scope-reduction check: direct reuse, seams requiring strengthening, genuinely new mechanisms, deferrals, compact grouping proposal and bounded diagnostic evidence. Recommendations are not ratification or delivery. See ledger E199. |
 | [`i02-to-i03-scope-migration-2026-10-15.md`](i02-to-i03-scope-migration-2026-10-15.md) | E200 clause/STEP/GAP ownership map for reduced I02 and foundation I03; retained shared CT92 schema, exact historical SLICE7/DoD bank, and no lost live-producer obligations. Transfer is not delivery. |
 | [`findings-register-2026-10-06.md`](findings-register-2026-10-06.md) | All 55 findings from the reading pass, groups A–H, with stable ids. |
