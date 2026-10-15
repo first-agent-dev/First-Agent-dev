@@ -18,10 +18,10 @@ from __future__ import annotations
 import json
 import os
 import shlex
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -58,6 +58,9 @@ from fa.inner_loop.workflow_controller import (
 )
 from fa.providers import ProviderChain, SecretStore
 from fa.providers.base import RequestInfo, ResponseInfo
+
+if TYPE_CHECKING:
+    from fa.inner_loop.plan_admission import PlanSnapshot
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _EVAL_FINAL_TEXT = "## Verification Summary\n\n### Verdict\n\nPASS\n"
@@ -1475,7 +1478,7 @@ def test_plan_preflight_allocated_workspace_mismatch_blocks_provider(
 ) -> None:
     """CLI fault supplement: change the real manifest after the snapshot read."""
     from fa import cli
-    from fa.inner_loop.plan_admission import PlanSnapshot, read_plan_snapshot
+    from fa.inner_loop.plan_admission import read_plan_snapshot
     from fa.session.manager import SessionManager
 
     state, root = tmp_path / "state", tmp_path / "workspaces"
@@ -2966,3 +2969,695 @@ def test_ct93_scope_is_frozen_and_cannot_target_its_active_plan() -> None:
     for field in fields(dispatch):
         with pytest.raises(FrozenInstanceError):
             setattr(dispatch, field.name, ".fa/active.md")
+
+
+# CT94 IO prerequisite; local session composition is not run_workflow admission.
+_CT94_PATH = "worklogs/planning-topology-and-executable-contracts-loop/increments/fixture.md"
+
+
+def _ct94_plan(label: str = "original") -> bytes:
+    return (
+        f"Plan-ID: PLAN-ct94\n\n## SLICE1: {label}\nCONTRACTS:\n"
+        "  CT1 [CONSTRAINT]: exact plan bytes remain authoritative.\n"
+        "TESTS: tests/test_candidate.py\n"
+    ).encode()
+
+
+def _ct94_source(tmp_path: Path) -> PlanSnapshot:
+    from fa.inner_loop.plan_admission import read_plan_snapshot
+
+    path = tmp_path / _CT94_PATH
+    path.parent.mkdir(parents=True)
+    path.write_bytes(_ct94_plan())
+    path.chmod(0o640)
+    path.parent.chmod(0o750)
+    return read_plan_snapshot(tmp_path, path)
+
+
+@pytest.mark.parametrize(
+    "case,outcome,rule",
+    [
+        ("valid", "PASS", None),
+        ("precheck", "DIAGNOSTICS", "slice-without-tests"),
+        ("kill", "DIAGNOSTICS", "kill-directive-missing"),
+        ("near-miss", "DIAGNOSTICS", "heading-near-miss"),
+        ("prose", "INDETERMINATE", "zero-slices"),
+    ],
+)
+def test_ct94_validation_joins_both_validators(case: str, outcome: str, rule: str | None) -> None:
+    from fa.inner_loop.plan_admission import snapshot_from_bytes
+
+    raw = _ct94_plan()
+    if case == "precheck":
+        raw = raw.replace(b"TESTS: tests/test_candidate.py\n", b"")
+    elif case == "kill":
+        raw = raw.replace(b"[CONSTRAINT]", b"[FUNCTIONAL]")
+    elif case == "near-miss":
+        raw = b"## SLICE 1: almost\n"
+    elif case == "prose":
+        raw = b"not a plan yet\n"
+    snapshot = snapshot_from_bytes("draft.md", raw)
+    result = workflow._validate_plan_admission(snapshot)
+    assert result.snapshot is snapshot
+    assert result.outcome == outcome
+    if rule is not None:
+        assert rule in {d.rule for d in result.diagnostics}
+    else:
+        assert result.diagnostics == ()
+
+
+@pytest.mark.parametrize("fault", ["precheck", "kill", "unknown-rule", "unknown-severity"])
+def test_ct94_validation_faults_are_sanitized_indeterminate(monkeypatch: pytest.MonkeyPatch, fault: str) -> None:
+    from dataclasses import asdict
+
+    from fa.inner_loop.plan_admission import snapshot_from_bytes
+    from fa.inner_loop.plan_ids import PlanDiagnostic, PrecheckReport
+
+    def broken(*_args: object, **_kwargs: object) -> Any:
+        if fault in {"precheck", "kill"}:
+            raise RuntimeError("PRIVATE-EXCEPTION-BODY /outside/private/path")
+        return PrecheckReport(
+            "/outside/private/path",
+            (
+                PlanDiagnostic(
+                    "future-rule" if fault == "unknown-rule" else "slice-without-tests",
+                    "FUTURE" if fault == "unknown-severity" else "FAIL",
+                    "/outside/private/path",
+                    1,
+                    "PRIVATE-SOURCE-BODY",
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(workflow, "validate_kill_directives" if fault == "kill" else "precheck", broken)
+    # Kill-validator failure must not erase an already known precheck failure.
+    snapshot = snapshot_from_bytes("draft.md", _ct94_plan().replace(b"TESTS: tests/test_candidate.py\n", b""))
+    result = workflow._validate_plan_admission(snapshot)
+    assert result.outcome == "INDETERMINATE"
+    assert "validator-error" in {d.rule for d in result.diagnostics}
+    if fault == "kill":
+        assert "slice-without-tests" in {d.rule for d in result.diagnostics}
+    assert "PRIVATE" not in json.dumps([asdict(d) for d in result.diagnostics])
+    assert "/outside" not in json.dumps([asdict(d) for d in result.diagnostics])
+
+
+def test_ct94_warn_only_passes_and_empty_or_unexplained_zero_slices_do_not() -> None:
+    from dataclasses import replace
+
+    from fa.inner_loop.plan_admission import snapshot_from_bytes
+    from fa.inner_loop.plan_ids import PlanIds
+
+    raw = b"Plan-ID: PLAN-ct94\n" + b"".join(
+        f"\n## SLICE{i}: unit\nCONTRACTS:\n  CT{i} [CONSTRAINT]: invariant.\nTESTS: tests/test_candidate.py\n".encode()
+        for i in range(1, 8)
+    )
+    snapshot = snapshot_from_bytes("draft.md", raw)
+    result = workflow._validate_plan_admission(snapshot)
+    assert result.outcome == "PASS" and {d.severity for d in result.diagnostics} == {"WARN"}
+    empty = workflow._validate_plan_admission(replace(snapshot, text=" ", ids=PlanIds()))
+    assert empty.outcome == "INDETERMINATE" and empty.diagnostics[0].rule == "empty"
+    missing_ids = workflow._validate_plan_admission(replace(snapshot, ids=PlanIds()))
+    assert missing_ids.outcome == "INDETERMINATE" and missing_ids.diagnostics[-1].rule == "zero-slices"
+
+
+@pytest.mark.parametrize("kind", ["ADMISSION_REPAIR", "EVAL_REPLAN"])
+def test_ct94_seed_is_fresh_and_retains_rejected_draft_progress(tmp_path: Path, kind: str) -> None:
+    from fa.inner_loop.plan_admission import snapshot_from_bytes
+    from fa.inner_loop.plan_promotion import seed_plan_candidate
+    from fa.inner_loop.planner_dispatch import PlannerDispatchKind
+
+    source = _ct94_source(tmp_path)
+    rejected = snapshot_from_bytes("draft.md", b"## SLICE 1: a structural near miss worth preserving\n")
+    first = seed_plan_candidate(tmp_path, source, run_id="ct94", kind=PlannerDispatchKind(kind))
+    second = seed_plan_candidate(tmp_path, source, run_id="ct94", kind=PlannerDispatchKind(kind), draft=rejected)
+    assert first.candidate_target is not None and second.candidate_target is not None
+    assert first.candidate_target != second.candidate_target
+    assert (tmp_path / first.candidate_target).read_bytes() == source.utf8_bytes
+    assert (tmp_path / second.candidate_target).read_bytes() == rejected.utf8_bytes
+    assert first.active_plan == second.active_plan == _CT94_PATH
+    assert (tmp_path / second.candidate_target).stat().st_mode & 0o777 == 0o600
+    assert (tmp_path / second.candidate_target).parent.stat().st_mode & 0o777 == 0o700
+    assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
+    assert (tmp_path / _CT94_PATH).parent.stat().st_mode & 0o777 == 0o750
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "notes.md",
+        "worklogs/other/increments/p.md",
+        "worklogs/planning-topology-and-executable-contracts-loop/increments/../p.md",
+    ],
+)
+def test_ct94_scope_denial_precedes_allocation(tmp_path: Path, path: str) -> None:
+    from dataclasses import replace
+
+    from fa.inner_loop.plan_admission import PlanRef
+    from fa.inner_loop.plan_promotion import PlanPromotionError, publish_plan_buffer, seed_plan_candidate
+    from fa.inner_loop.planner_dispatch import PlannerDispatchKind
+
+    source = _ct94_source(tmp_path)
+    outside = replace(source, ref=PlanRef(path, "EXPLICIT", source.ref.sha256))
+    actions: list[Callable[[], object]] = [
+        lambda: seed_plan_candidate(tmp_path, outside, run_id="ct94", kind=PlannerDispatchKind.ADMISSION_REPAIR),
+        lambda: publish_plan_buffer(tmp_path, outside, _ct94_plan("new")),
+    ]
+    for action in actions:
+        with pytest.raises(PlanPromotionError) as error:
+            action()
+        assert error.value.rule == "scope-denied" and error.value.replaced is False
+    assert not (tmp_path / ".fa").exists()
+    assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
+
+
+def test_ct94_promotion_uses_validated_buffer_not_changed_draft(tmp_path: Path) -> None:
+    from fa.inner_loop.plan_admission import read_plan_snapshot
+
+    source = _ct94_source(tmp_path)
+    draft = tmp_path / "draft.md"
+    draft.write_bytes(_ct94_plan("validated revision"))
+    snapshot = read_plan_snapshot(tmp_path, draft)
+    validated = workflow._validate_plan_admission(snapshot)
+    assert validated.outcome == "PASS"
+    draft.write_bytes(b"invalid bytes after validation\xff")
+    promoted = workflow._promote_validated_plan(tmp_path, source, validated)
+    assert (tmp_path / _CT94_PATH).read_bytes() == snapshot.utf8_bytes
+    assert promoted.ref.workspace_relative_path == _CT94_PATH
+    assert promoted.ref.sha256 == snapshot.ref.sha256
+    assert promoted.ids is snapshot.ids and promoted.text == snapshot.text
+    assert (tmp_path / _CT94_PATH).stat().st_mode & 0o777 == 0o640
+    assert (tmp_path / _CT94_PATH).parent.stat().st_mode & 0o777 == 0o750
+    assert list((tmp_path / _CT94_PATH).parent.iterdir()) == [tmp_path / _CT94_PATH]
+
+
+@pytest.mark.parametrize("obstacle", ["stale", "terminal", "ancestor", "hardlink", "fifo", "directory"])
+def test_ct94_promotion_rejects_unsafe_source_without_clobbering(
+    tmp_path: Path, obstacle: str, bounded_admission_test: None
+) -> None:
+    from fa.inner_loop.plan_admission import snapshot_from_bytes
+    from fa.inner_loop.plan_promotion import PlanPromotionError
+
+    source = _ct94_source(tmp_path)
+    target = tmp_path / _CT94_PATH
+    sentinel = tmp_path / "outside"
+    sentinel.write_bytes(source.utf8_bytes)
+    if obstacle == "stale":
+        target.write_bytes(_ct94_plan("external edit"))
+    elif obstacle == "ancestor":
+        target.parent.rename(tmp_path / "elsewhere")
+        target.parent.symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    else:
+        target.unlink()
+        if obstacle == "terminal":
+            target.symlink_to(sentinel)
+        elif obstacle == "hardlink":
+            os.link(sentinel, target)
+        elif obstacle == "fifo":
+            os.mkfifo(target)
+        else:
+            target.mkdir()
+    validated = workflow._validate_plan_admission(snapshot_from_bytes("draft.md", _ct94_plan("new")))
+    with pytest.raises(PlanPromotionError) as error:
+        workflow._promote_validated_plan(tmp_path, source, validated)
+    expected_rule = (
+        "source-changed"
+        if obstacle == "stale"
+        else "symlink"
+        if obstacle in {"terminal", "ancestor"}
+        else "not-regular"
+    )
+    assert error.value.rule == expected_rule and error.value.replaced is False
+    assert sentinel.read_bytes() == source.utf8_bytes
+    if obstacle == "stale":
+        assert target.read_bytes() == _ct94_plan("external edit")
+    elif obstacle not in {"fifo", "directory"}:
+        assert target.read_bytes() == source.utf8_bytes
+    assert not list(target.parent.glob(".*.tmp"))
+
+
+@pytest.mark.parametrize("fault", ["write", "file-fsync", "replace", "directory-fsync", "post-hash"])
+def test_ct94_promotion_failure_boundary_never_rolls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    import stat
+
+    from fa.inner_loop import plan_promotion as publication
+    from fa.inner_loop.plan_admission import snapshot_from_bytes
+
+    source = _ct94_source(tmp_path)
+    raw = _ct94_plan("new")
+    validated = workflow._validate_plan_admission(snapshot_from_bytes("draft.md", raw))
+    real_fsync = os.fsync
+    real_write = os.write
+    target = tmp_path / _CT94_PATH
+    # Pre-create lock directories so directory-fsync fault is precisely post-replace.
+    import hashlib
+
+    lock_key = hashlib.sha256(_CT94_PATH.encode()).hexdigest()
+    (tmp_path / ".fa/admission/.locks" / lock_key).mkdir(parents=True)
+
+    def fsync(fd: int) -> None:
+        regular = stat.S_ISREG(os.fstat(fd).st_mode)
+        if (fault == "file-fsync" and regular) or (fault == "directory-fsync" and not regular):
+            raise OSError("PRIVATE-FSYNC-FAILURE")
+        real_fsync(fd)
+
+    def write(fd: int, data: Any) -> int:
+        if fault == "write":
+            return 0
+        return real_write(fd, data)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "write", write)
+    if fault == "replace":
+
+        def rejected(*_args: object, **_kwargs: object) -> None:
+            raise OSError("PRIVATE-REPLACE-FAILURE")
+
+        monkeypatch.setattr(os, "replace", rejected)
+    elif fault == "post-hash":
+        from fa.inner_loop.plan_admission import read_plan_snapshot as original_reader
+
+        def changed(*args: Any, **kwargs: Any) -> Any:
+            target.write_bytes(_ct94_plan("host changed after replace"))
+            return original_reader(*args, **kwargs)
+
+        monkeypatch.setattr(publication, "read_plan_snapshot", changed)
+    with pytest.raises(publication.PlanPromotionError) as error:
+        workflow._promote_validated_plan(tmp_path, source, validated)
+    after = fault in {"directory-fsync", "post-hash"}
+    assert error.value.replaced is after
+    expected = {
+        "write": "prepare-failed",
+        "file-fsync": "prepare-failed",
+        "replace": "replace-failed",
+        "directory-fsync": "durability-unknown",
+        "post-hash": "hash-mismatch",
+    }
+    assert error.value.rule == expected[fault]
+    assert "PRIVATE" not in str(error.value)
+    actual = _ct94_plan("host changed after replace") if fault == "post-hash" else raw if after else source.utf8_bytes
+    assert target.read_bytes() == actual
+    assert target.stat().st_mode & 0o777 == 0o640
+    assert list(target.parent.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("fault", ["collision", "zero-write", "file-fsync", "directory-fsync"])
+def test_ct94_seed_failure_never_clobbers_existing_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    from fa.inner_loop import plan_promotion as publication
+    from fa.inner_loop.planner_dispatch import PlannerDispatchKind
+
+    source = _ct94_source(tmp_path)
+    monkeypatch.setattr(publication, "uuid4", lambda: SimpleNamespace(hex="fixed"))
+    path = tmp_path / ".fa/admission/ct94/candidate-fixed.md"
+    path.parent.mkdir(parents=True)
+    if fault == "collision":
+        path.write_bytes(b"existing owned by someone else")
+    elif fault == "zero-write":
+        monkeypatch.setattr(os, "write", lambda *_args: 0)
+    else:
+        import stat
+
+        real_fsync = os.fsync
+
+        def unavailable(fd: int) -> None:
+            regular = stat.S_ISREG(os.fstat(fd).st_mode)
+            if regular is (fault == "file-fsync"):
+                raise OSError("private seed failure")
+            real_fsync(fd)
+
+        monkeypatch.setattr(os, "fsync", unavailable)
+    with pytest.raises(publication.PlanPromotionError) as error:
+        publication.seed_plan_candidate(tmp_path, source, run_id="ct94", kind=PlannerDispatchKind.ADMISSION_REPAIR)
+    assert error.value.rule == "prepare-failed" and error.value.replaced is False
+    assert path.exists() is (fault == "collision")
+    if fault == "collision":
+        assert path.read_bytes() == b"existing owned by someone else"
+    assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
+
+
+@pytest.mark.parametrize("race", ["bytes", "inode", "symlink", "hardlink", "mode"])
+def test_ct94_final_cas_detects_mutation_during_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, race: str
+) -> None:
+    from fa.inner_loop import plan_promotion as publication
+    from fa.inner_loop.plan_admission import snapshot_from_bytes
+
+    source = _ct94_source(tmp_path)
+    target = tmp_path / _CT94_PATH
+    sentinel = tmp_path / "sentinel"
+    sentinel.write_bytes(source.utf8_bytes)
+    stage = publication._stage_replacement
+
+    def changed(*args: Any, **kwargs: Any) -> None:
+        stage(*args, **kwargs)
+        if race == "bytes":
+            target.write_bytes(_ct94_plan("host edit"))
+        elif race == "mode":
+            target.chmod(0o600)
+        else:
+            target.unlink()
+            if race == "inode":
+                target.write_bytes(source.utf8_bytes)
+            elif race == "symlink":
+                target.symlink_to(sentinel)
+            else:
+                os.link(sentinel, target)
+
+    monkeypatch.setattr(publication, "_stage_replacement", changed)
+    validation = workflow._validate_plan_admission(snapshot_from_bytes("draft.md", _ct94_plan("revision")))
+    with pytest.raises(publication.PlanPromotionError) as error:
+        workflow._promote_validated_plan(tmp_path, source, validation)
+    assert error.value.replaced is False
+    expected_rule = "symlink" if race == "symlink" else "not-regular" if race == "hardlink" else "source-changed"
+    assert error.value.rule == expected_rule
+    assert target.read_bytes() == (_ct94_plan("host edit") if race == "bytes" else source.utf8_bytes)
+    assert sentinel.read_bytes() == source.utf8_bytes
+    assert not list(target.parent.glob(".*.tmp"))
+
+
+@pytest.mark.parametrize("case", ["structural", "zero-slices", "validator-error"])
+def test_ct94_nonpassing_validation_never_publishes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str) -> None:
+    from fa.inner_loop.plan_admission import snapshot_from_bytes
+    from fa.inner_loop.plan_promotion import PlanPromotionError
+
+    source = _ct94_source(tmp_path)
+    raw = b"## SLICE 1: bad heading\n" if case == "structural" else b"only prose\n"
+    if case == "validator-error":
+
+        def broken(*_args: object, **_kwargs: object) -> Any:
+            raise RuntimeError("not admissible")
+
+        monkeypatch.setattr(workflow, "precheck", broken)
+    validated = workflow._validate_plan_admission(snapshot_from_bytes("draft.md", raw))
+    with pytest.raises(PlanPromotionError) as error:
+        workflow._promote_validated_plan(tmp_path, source, validated)
+    assert error.value.rule == "prepare-failed" and error.value.replaced is False
+    assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
+    assert not (tmp_path / ".fa").exists()
+
+
+@pytest.mark.parametrize("kind", ["ADMISSION_REPAIR", "EVAL_REPLAN"])
+def test_ct94_real_session_edits_fresh_candidate_before_validated_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """C1 session + local IO composition, NOT full public repair/budget admission."""
+    from dataclasses import replace
+
+    from fa.cli import _cmd_run
+    from fa.inner_loop.plan_admission import read_plan_snapshot
+    from fa.inner_loop.plan_promotion import seed_plan_candidate
+    from fa.inner_loop.planner_dispatch import PlannerDispatchKind
+
+    source = _ct94_source(tmp_path)
+    if kind == "ADMISSION_REPAIR":
+        (tmp_path / _CT94_PATH).write_bytes(source.utf8_bytes.replace(b"[CONSTRAINT]", b"[FUNCTIONAL]"))
+        source = read_plan_snapshot(tmp_path, Path(_CT94_PATH))
+        assert workflow._validate_plan_admission(source).outcome == "DIAGNOSTICS"
+    dispatch = seed_plan_candidate(tmp_path, source, run_id="ct94", kind=PlannerDispatchKind(kind))
+    assert dispatch.candidate_target is not None
+    target = dispatch.candidate_target
+    raw = _ct94_plan("repaired by real scoped writer")
+    ctx = _context(tmp_path, run_id="ct94")
+    ctx.config.write_text(_ROLE_YAML.format(role="planner"), encoding="utf-8")
+    ctx = replace(ctx, plan_path=tmp_path / _CT94_PATH, max_turns=5, secrets=SecretStore({"K": "sk-test-live"}))
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    requests: list[RequestInfo] = []
+
+    def provider_request(
+        _chain: ProviderChain, request: RequestInfo, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        requests.append(request)
+        assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
+        if len(requests) == 1:
+            tool, params = "pr_prepare", {"intent": "IMPLEMENT", "invariant": "Implements: CT94 candidate revision"}
+            assert (tmp_path / target).read_bytes() == source.utf8_bytes
+        elif len(requests) == 2:
+            tool, params = "fs_write_file", {"path": target, "content": raw.decode()}
+        else:
+            return ResponseInfo("done", 1, 1, "stop"), logical_call_id or "ct94", []
+        call = {
+            "id": f"ct94-{len(requests)}",
+            "type": "function",
+            "function": {"name": tool, "arguments": json.dumps(params)},
+        }
+        return ResponseInfo("", 1, 1, "tool_calls", (call,)), logical_call_id or "ct94", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    stage = _run_stage(
+        ctx,
+        "planner",
+        fresh=True,
+        progress=WorkflowProgress(),
+        transition_reason="ct94 candidate",
+        run_stage_fn=_cmd_run,
+        planner_dispatch=dispatch,
+    )
+    assert stage.exit_code == 0 and len(requests) == 3
+    (schema,) = [item["function"] for item in requests[0].tools if item["function"]["name"] == "fs_write_file"]
+    assert schema["parameters"]["properties"]["path"]["enum"] == [target]
+    candidate = read_plan_snapshot(tmp_path, Path(target))
+    validated = workflow._validate_plan_admission(candidate)
+    assert validated.outcome == "PASS"
+    promoted = workflow._promote_validated_plan(tmp_path, source, validated)
+    assert (tmp_path / _CT94_PATH).read_bytes() == raw
+    assert promoted.ref.workspace_relative_path == _CT94_PATH
+    assert promoted.ref.sha256 == candidate.ref.sha256 and promoted.ids is candidate.ids
+    assert (tmp_path / _CT94_PATH).stat().st_mode & 0o777 == 0o640
+    assert (tmp_path / _CT94_PATH).parent.stat().st_mode & 0o777 == 0o750
+    events = [json.loads(line) for line in (tmp_path / "state/session-log/ct94/events.jsonl").read_text().splitlines()]
+    results = {event["tool_call_id"]: event["content"] for event in events if event["kind"] == "tool_result"}
+    assert results["ct94-1"]["ok"] is True and results["ct94-2"]["ok"] is True
+
+
+_CT94_PUBLISH_CHILD = r"""
+import json, pathlib, sys, time
+from fa.inner_loop import plan_promotion as publication
+from fa.inner_loop.plan_admission import snapshot_from_bytes
+from fa.inner_loop.workflow_artifacts import AdmissionIOError
+from fa.inner_loop.workflow_controller import _validate_plan_admission, _promote_validated_plan
+assert pathlib.Path(publication.__file__).resolve() == pathlib.Path(sys.argv[5]).resolve()
+root = pathlib.Path(sys.argv[1])
+source = snapshot_from_bytes(sys.argv[2], bytes.fromhex(sys.argv[3]))
+candidate = snapshot_from_bytes("candidate.md", bytes.fromhex(sys.argv[4]))
+validation = _validate_plan_admission(candidate)
+assert validation.outcome == "PASS"
+print("READY", flush=True)
+try:
+    result = _promote_validated_plan(root, source, validation, deadline=time.monotonic() + float(sys.argv[6]))
+    print(json.dumps({"status": "promoted", "hash": result.ref.sha256}), flush=True)
+except (publication.PlanPromotionError, AdmissionIOError) as error:
+    print(json.dumps({"status": error.rule, "replaced": getattr(error, "replaced", False)}), flush=True)
+"""
+
+
+@pytest.mark.parametrize("held_until_timeout", [False, True])
+def test_ct94_process_shared_target_lock_and_hash_cas(tmp_path: Path, held_until_timeout: bool) -> None:
+    """C3 actual competing processes, exact import provenance and finite child deadlines."""
+    import hashlib
+    import select
+    import subprocess
+    import sys
+
+    from fa.inner_loop import plan_promotion as publication
+    from fa.inner_loop.workflow_artifacts import _admission_lock, _private_artifact_directory
+
+    source = _ct94_source(tmp_path)
+    children: list[subprocess.Popen[str]] = []
+    lock_key = hashlib.sha256(_CT94_PATH.encode()).hexdigest()
+    try:
+        with (
+            _private_artifact_directory(tmp_path / ".fa/admission/.locks" / lock_key) as lock_fd,
+            _admission_lock(lock_fd, deadline=None),
+        ):
+            for i in range(1 if held_until_timeout else 2):
+                child = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-c",
+                        _CT94_PUBLISH_CHILD,
+                        str(tmp_path),
+                        _CT94_PATH,
+                        source.utf8_bytes.hex(),
+                        _ct94_plan(f"publisher-{i}").hex(),
+                        str(Path(publication.__file__).resolve()),
+                        "0.2" if held_until_timeout else "15",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=REPO_ROOT,
+                )
+                children.append(child)
+                assert child.stdout is not None
+                assert select.select([child.stdout], [], [], 10)[0], "child did not reach publication"
+                assert child.stdout.readline() == "READY\n"
+            if held_until_timeout:
+                out, err = children[0].communicate(timeout=10)
+                assert children[0].returncode == 0, err
+                assert json.loads(out) == {"status": "lock-failed", "replaced": False}
+                assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
+                return
+        outcomes = []
+        for child in children:
+            out, err = child.communicate(timeout=20)
+            assert child.returncode == 0, err
+            outcomes.append(json.loads(out))
+        assert sorted(item["status"] for item in outcomes) == ["promoted", "source-changed"]
+        assert (tmp_path / _CT94_PATH).read_bytes() in {_ct94_plan("publisher-0"), _ct94_plan("publisher-1")}
+        assert (tmp_path / _CT94_PATH).stat().st_mode & 0o777 == 0o640
+        assert list((tmp_path / _CT94_PATH).parent.iterdir()) == [tmp_path / _CT94_PATH]
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.communicate(timeout=5)
+
+
+def test_ct94_collision_retains_foreign_temp_and_short_writes_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fa.inner_loop import plan_promotion as publication
+    from fa.inner_loop.plan_admission import snapshot_from_bytes
+
+    source = _ct94_source(tmp_path)
+    raw = _ct94_plan("первая revision")
+    validated = workflow._validate_plan_admission(snapshot_from_bytes("draft.md", raw))
+    monkeypatch.setattr(publication, "uuid4", lambda: SimpleNamespace(hex="fixed"))
+    collision = (tmp_path / _CT94_PATH).parent / ".fixture.md.fixed.tmp"
+    collision.write_bytes(b"unrelated temporary")
+    with pytest.raises(publication.PlanPromotionError) as error:
+        workflow._promote_validated_plan(tmp_path, source, validated)
+    assert error.value.rule == "prepare-failed" and error.value.replaced is False
+    assert collision.read_bytes() == b"unrelated temporary"
+    assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
+    collision.unlink()
+    real_write = os.write
+    calls: list[int] = []
+
+    def short(fd: int, data: Any) -> int:
+        calls.append(len(data))
+        return real_write(fd, data[:3])
+
+    monkeypatch.setattr(os, "write", short)
+    result = workflow._promote_validated_plan(tmp_path, source, validated)
+    assert len(calls) > 1
+    assert result.ref.sha256 == validated.snapshot.ref.sha256
+    assert (tmp_path / _CT94_PATH).read_bytes() == raw
+    assert not collision.exists()
+
+
+@pytest.mark.parametrize(
+    "raw,rule", [(b"", "empty"), (b"\xff", "invalid-utf8"), (b"a" * (1024 * 1024 + 1), "too-large")]
+)
+def test_ct94_invalid_buffer_cannot_allocate_or_publish(tmp_path: Path, raw: bytes, rule: str) -> None:
+    from fa.inner_loop.plan_admission import PlanRefError
+    from fa.inner_loop.plan_promotion import publish_plan_buffer
+
+    source = _ct94_source(tmp_path)
+    with pytest.raises(PlanRefError) as error:
+        publish_plan_buffer(tmp_path, source, raw)
+    assert error.value.rule == rule
+    assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
+    assert not (tmp_path / ".fa").exists()
+
+
+def test_ct94_projection_is_accepted_by_actual_admission_schema(tmp_path: Path) -> None:
+    from dataclasses import asdict
+
+    from fa.inner_loop.plan_admission import snapshot_from_bytes
+    from fa.inner_loop.workflow_artifacts import write_admission_record
+
+    snapshot = snapshot_from_bytes("draft.md", _ct94_plan().replace(b"[CONSTRAINT]", b"[FUNCTIONAL]"))
+    validated = workflow._validate_plan_admission(snapshot)
+    assert validated.outcome == "DIAGNOSTICS"
+    attempt = {
+        "dispatch_kind": "EXPLICIT_INPUT",
+        "validation": validated.outcome,
+        "diagnostics": [asdict(d) for d in validated.diagnostics],
+        "source_sha256": snapshot.ref.sha256,
+        "candidate_sha256": None,
+        "promoted_sha256": None,
+        "route": "BLOCKED",
+    }
+    path = tmp_path / "record/admission.json"
+    write_admission_record(path, run_id="ct94", plan_ref=snapshot.ref, attempt=attempt, status="BLOCKED")
+    stored = json.loads(path.read_bytes())
+    assert stored["attempts"][0]["diagnostics"] == [
+        {"validator": "kill-directives", "rule": "kill-directive-missing", "severity": "FAIL", "line": 5}
+    ]
+    assert stored["status"] == "BLOCKED"
+
+
+def test_ct94_post_replace_mode_tamper_fails_without_rollback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fa.inner_loop.plan_admission import snapshot_from_bytes
+    from fa.inner_loop.plan_promotion import PlanPromotionError
+
+    source = _ct94_source(tmp_path)
+    target = tmp_path / _CT94_PATH
+    raw = _ct94_plan("revision")
+    validated = workflow._validate_plan_admission(snapshot_from_bytes("draft.md", raw))
+    real_replace = os.replace
+
+    def tampered(*args: Any, **kwargs: Any) -> None:
+        real_replace(*args, **kwargs)
+        target.chmod(0o600)
+
+    monkeypatch.setattr(os, "replace", tampered)
+    with pytest.raises(PlanPromotionError) as error:
+        workflow._promote_validated_plan(tmp_path, source, validated)
+    assert error.value.rule == "hash-mismatch" and error.value.replaced is True
+    assert target.read_bytes() == raw and target.stat().st_mode & 0o777 == 0o600
+
+
+def test_ct94_open_descriptor_source_change_is_not_generic_io_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fa.inner_loop import plan_promotion as publication
+    from fa.inner_loop.plan_admission import PlanRefError, snapshot_from_bytes
+
+    source = _ct94_source(tmp_path)
+    validated = workflow._validate_plan_admission(snapshot_from_bytes("draft.md", _ct94_plan("new")))
+
+    def changed(_fd: int) -> bytes:
+        raise PlanRefError("source-changed")
+
+    monkeypatch.setattr(publication, "_read_open_plan_bytes", changed)
+    with pytest.raises(publication.PlanPromotionError) as error:
+        workflow._promote_validated_plan(tmp_path, source, validated)
+    assert error.value.rule == "source-changed" and error.value.replaced is False
+    assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
+    assert list((tmp_path / _CT94_PATH).parent.iterdir()) == [tmp_path / _CT94_PATH]
+
+
+def test_ct94_ordinary_dispatch_cannot_seed_a_candidate(tmp_path: Path) -> None:
+    from fa.inner_loop.plan_promotion import PlanPromotionError, seed_plan_candidate
+    from fa.inner_loop.planner_dispatch import PlannerDispatchKind
+
+    source = _ct94_source(tmp_path)
+    with pytest.raises(PlanPromotionError) as error:
+        seed_plan_candidate(tmp_path, source, run_id="ct94", kind=PlannerDispatchKind.ORDINARY_PLANNING)
+    assert error.value.rule == "scope-denied" and error.value.replaced is False
+    assert not (tmp_path / ".fa").exists()
+    assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
+
+
+def test_ct94_canonical_namespace_allows_normalized_descendants(tmp_path: Path) -> None:
+    from fa.inner_loop.plan_admission import read_plan_snapshot, snapshot_from_bytes
+
+    source = _ct94_source(tmp_path)
+    nested = (tmp_path / _CT94_PATH).parent / "nested" / "increment.md"
+    nested.parent.mkdir()
+    nested.write_bytes(source.utf8_bytes)
+    nested.chmod(0o640)
+    source = read_plan_snapshot(tmp_path, nested)
+    validation = workflow._validate_plan_admission(snapshot_from_bytes("draft.md", _ct94_plan("nested revision")))
+    promoted = workflow._promote_validated_plan(tmp_path, source, validation)
+    assert promoted.ref.workspace_relative_path == nested.relative_to(tmp_path).as_posix()
+    assert nested.read_bytes() == validation.snapshot.utf8_bytes
+    assert nested.stat().st_mode & 0o777 == 0o640
+    assert (tmp_path / _CT94_PATH).read_bytes() == _ct94_plan()

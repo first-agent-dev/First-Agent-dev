@@ -2276,3 +2276,31 @@ E208  FACT  Partial retained I02 SLICE6 STEP9 CT93 GAP-04–GAP-06 prerequisite 
     unsupported acquisition routing. Full comparisons/review/operator DoD/I03 boundary remain.
     [exact declaration, source findings, commands, mutation table/provenance, failures, hashes,
     host inventory and handoff: notes/e2e-live-verification-register.md, E208 section]
+
+
+E209  FACT  Partial retained I02 SLICE6 STEP9/10 CT94 prerequisite from 175617e:
+    fresh private no-clobber repair/replan candidates preserve latest rejected progress; shared
+    strict descriptor/buffer reader; controller-owned two-validator immutable receipt with closed
+    diagnostics. Q58 publisher uses approved canonical namespace, process-shared target lock,
+    no-follow/single-link/source-hash+metadata CAS, exclusive sibling staging, preserved mode,
+    file/replace/directory-fsync and post-hash/mode verification. Pre-replace unchanged;
+    post-replace typed uncertainty and no rollback. No OS/malicious-writer isolation claim.
+    CT87/91/GAP-06/12/15 supported, not closed; GAP-04/05 remain I03 F. No new policy/dependency.
+    52 new cases; final targeted 52 passed/378 deselected, focused534 passed/1 deselected.
+    Actual scoped stage→CLI→session/registry writer composition for both kinds, actual competing
+    publisher processes and real held-lock deadline; provider seam only mocked in session cases.
+    Existing91 test/fixture/class ASTs unchanged except import statements, no old oracle edits.
+    Supplemental28 explicit mutations all detected, each52 cases/rc1/failures>0/zero errors/skips,
+    source+test hashes and actual overlay/child provenance checked. Not named CT94/full-path proof:
+    _run_admission_repair producer absent, public workflow integration still unwired.
+    Ruff/Mypy four files clean; Pylint three production modules10/10; production Pyrefly0errors
+    with five old warnings. Test-inclusive Pyrefly59 old fixture errors exactly matched archived
+    E208 message/file/column (+3 line offsets); unwaived, no suppression/all-static-green claim.
+    Final22-suite compatibility excludes one original expensive live-workflow test:
+    994passed/6failed/1deselected92.06s; same six E208 identities/categories, unwaived.
+    Six proposed ADM-H14–H19 cases inventory all new/changed surfaces for I03 F; no live result.
+    Public Q57/CT91 shared credits/error consumption, final admission barrier, owned-terminal
+    cleanup, admitted T0/pinned verifier+eval and unavailable routing remain pending. No STEP tick,
+    all16 kills, full-suite d9109f4 comparison, independent/operator DoD, shipped/security claim.
+    [declaration/allowed files, actual commands, TEST-EDITS, mutation table/provenance, hashes,
+    failures, host inventory and concrete handoff: notes/e2e-live-verification-register.md, E209]

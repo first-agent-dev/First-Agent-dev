@@ -93,36 +93,41 @@ def _read_plan_bytes(root: Path, parts: tuple[str, ...]) -> bytes:
             parent_fd = _open_plan_component(parent_fd, part, directory=True)
             os.close(previous_fd)
         file_fd = _open_plan_component(parent_fd, parts[-1], directory=False)
-        before = os.fstat(file_fd)
-        if not stat.S_ISREG(before.st_mode):
-            raise PlanRefError("not-regular")
-        if before.st_size > MAX_PLAN_BYTES:
-            raise PlanRefError("too-large")
-        chunks: list[bytes] = []
-        remaining = MAX_PLAN_BYTES + 1
-        while remaining:
-            chunk = os.read(file_fd, remaining)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        raw = b"".join(chunks)
-        if len(raw) > MAX_PLAN_BYTES:
-            raise PlanRefError("too-large")
-        after = os.fstat(file_fd)
-        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
-            after.st_size,
-            after.st_mtime_ns,
-            after.st_ctime_ns,
-        ):
-            raise PlanRefError("source-changed")
-        return raw
+        return _read_open_plan_bytes(file_fd)
+
     finally:
         try:
             if file_fd is not None:
                 os.close(file_fd)
         finally:
             os.close(parent_fd)
+
+
+def _read_open_plan_bytes(file_fd: int) -> bytes:
+    before = os.fstat(file_fd)
+    if not stat.S_ISREG(before.st_mode):
+        raise PlanRefError("not-regular")
+    if before.st_size > MAX_PLAN_BYTES:
+        raise PlanRefError("too-large")
+    chunks: list[bytes] = []
+    remaining = MAX_PLAN_BYTES + 1
+    while remaining:
+        chunk = os.read(file_fd, remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    raw = b"".join(chunks)
+    if len(raw) > MAX_PLAN_BYTES:
+        raise PlanRefError("too-large")
+    after = os.fstat(file_fd)
+    if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    ):
+        raise PlanRefError("source-changed")
+    return raw
 
 
 def read_plan_snapshot(workspace: Path, plan_path: Path) -> PlanSnapshot:
@@ -137,14 +142,26 @@ def read_plan_snapshot(workspace: Path, plan_path: Path) -> PlanSnapshot:
         raw = _read_plan_bytes(root, parts)
     except OSError as exc:
         raise PlanRefError("unreadable") from exc
+    return snapshot_from_bytes(Path(*parts).as_posix(), raw)
+
+
+def _decode_plan_bytes(raw: bytes) -> str:
+    if len(raw) > MAX_PLAN_BYTES:
+        raise PlanRefError("too-large")
     try:
         text = raw.decode("utf-8", errors="strict")
     except UnicodeDecodeError as exc:
         raise PlanRefError("invalid-utf8") from exc
     if not text.strip():
         raise PlanRefError("empty")
+    return text
+
+
+def snapshot_from_bytes(relative_path: str, raw: bytes, *, source_kind: str = "EXPLICIT") -> PlanSnapshot:
+    """Capture/parse one immutable buffer; publication never recopies a mutable draft."""
+    text = _decode_plan_bytes(raw)
     return PlanSnapshot(
-        ref=PlanRef(Path(*parts).as_posix(), "EXPLICIT", hashlib.sha256(raw).hexdigest()),
+        ref=PlanRef(relative_path, source_kind, hashlib.sha256(raw).hexdigest()),
         utf8_bytes=raw,
         text=text,
         ids=extract_plan_ids(text),

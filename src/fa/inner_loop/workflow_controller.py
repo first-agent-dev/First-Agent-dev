@@ -22,12 +22,27 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
+from fa.inner_loop.admission_schema import ADMISSION_RULES
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_injection_modes
-from fa.inner_loop.plan_admission import PlanRef, PlanRefError, _require_plan_for_coder, read_plan_snapshot
-from fa.inner_loop.plan_ids import PlanIds, canonical_slice_id, extract_plan_id, extract_plan_ids
+from fa.inner_loop.plan_admission import (
+    PlanRef,
+    PlanRefError,
+    PlanSnapshot,
+    _require_plan_for_coder,
+    read_plan_snapshot,
+)
+from fa.inner_loop.plan_ids import (
+    PlanDiagnostic,
+    PlanIds,
+    canonical_slice_id,
+    extract_plan_id,
+    extract_plan_ids,
+    precheck,
+)
+from fa.inner_loop.plan_promotion import PlanPromotionError, publish_plan_buffer
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
@@ -39,6 +54,7 @@ from fa.inner_loop.slice_verification import (
     SliceVerification,
     _gate_mode,
     capture_test_nodeids,
+    validate_kill_directives,
     verify_plan,
 )
 from fa.inner_loop.workflow_artifacts import (
@@ -1978,6 +1994,83 @@ def workflow_exit_code(result_code: int, terminal_state: FlowState | None) -> in
 
 
 # ── Public API ─────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class AdmissionDiagnostic:
+    """Projection deliberately excludes paths, messages and exception bodies."""
+
+    validator: str
+    rule: str
+    severity: str
+    line: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlanAdmissionValidation:
+    snapshot: PlanSnapshot
+    outcome: Literal["PASS", "DIAGNOSTICS", "INDETERMINATE"]
+    diagnostics: tuple[AdmissionDiagnostic, ...]
+
+
+def _admission_diagnostics(validator: str, diagnostics: tuple[PlanDiagnostic, ...]) -> tuple[AdmissionDiagnostic, ...]:
+    projected = []
+    for item in diagnostics:
+        if item.rule not in ADMISSION_RULES[validator] or item.severity not in {"WARN", "FAIL", "ERROR"}:
+            raise ValueError("unrecognized validator diagnostic")
+        line = item.line if type(item.line) is int and item.line > 0 else None
+        projected.append(AdmissionDiagnostic(validator, item.rule, item.severity, line))
+    return tuple(projected)
+
+
+def _validate_plan_admission(snapshot: PlanSnapshot) -> PlanAdmissionValidation:
+    """Both validators consume the same captured text/IDs; no filesystem authority."""
+    diagnostics: tuple[AdmissionDiagnostic, ...] = ()
+    try:
+        diagnostics += _admission_diagnostics(
+            "precheck", precheck(snapshot.text, path=snapshot.ref.workspace_relative_path).diagnostics
+        )
+    except Exception:  # noqa: BLE001 - closed failure evidence, never swallow a validator error as success
+        diagnostics += (AdmissionDiagnostic("plan-ref", "validator-error", "ERROR"),)
+    try:
+        diagnostics += _admission_diagnostics(
+            "kill-directives",
+            tuple(
+                validate_kill_directives(
+                    snapshot.text,
+                    snapshot.ids,
+                    path=snapshot.ref.workspace_relative_path,
+                )
+            ),
+        )
+    except Exception:  # noqa: BLE001 - preserve other validator diagnostics, without leaking exception bodies
+        diagnostics += (AdmissionDiagnostic("plan-ref", "validator-error", "ERROR"),)
+    if not snapshot.text.strip():
+        return PlanAdmissionValidation(snapshot, "INDETERMINATE", (AdmissionDiagnostic("plan-ref", "empty", "ERROR"),))
+    if any(item.severity == "ERROR" for item in diagnostics):
+        return PlanAdmissionValidation(snapshot, "INDETERMINATE", diagnostics)
+    if any(item.severity == "FAIL" for item in diagnostics):
+        return PlanAdmissionValidation(snapshot, "DIAGNOSTICS", diagnostics)
+    if not snapshot.ids.slice_records:
+        return PlanAdmissionValidation(
+            snapshot,
+            "INDETERMINATE",
+            (
+                *diagnostics,
+                AdmissionDiagnostic("plan-ref", "zero-slices", "ERROR"),
+            ),
+        )
+    return PlanAdmissionValidation(snapshot, "PASS", diagnostics)
+
+
+def _promote_validated_plan(
+    workspace: Path, source: PlanSnapshot, validated: PlanAdmissionValidation, *, deadline: float | None = None
+) -> PlanSnapshot:
+    """Only the validated immutable buffer is published; no draft path is recopied."""
+    if validated.outcome != "PASS":
+        raise PlanPromotionError("prepare-failed")
+    ref = publish_plan_buffer(workspace, source, validated.snapshot.utf8_bytes, deadline=deadline)
+    return replace(validated.snapshot, ref=ref)
 
 
 def _record_admission_attempt(

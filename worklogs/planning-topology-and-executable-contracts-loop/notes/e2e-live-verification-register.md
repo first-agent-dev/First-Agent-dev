@@ -769,3 +769,218 @@ ADMITTED barrier, exactly one admitted T0 and pinned verifier/real eval local co
 approved acquisition_unavailable routing. Keep six pytest and 59 old fixture-type findings
 visible; no silent assertion migration/suppression. Final 16 whole-path kills, independent
 review/operator DoD, full-suite comparison and I03 managed acquisition/OS/live-host work stay open.
+
+
+## E209 — 2026-10-15 CT94 publication prerequisite (partial, not public admission)
+
+### Source review and edit declaration
+
+Starting checkpoint: `175617eddc563bb340b8953e091de90c2d17a332` (E208). Reviewed retained
+SLICE6, explicit-admission spec §§2–6, Q58, migration §3, and `/tests-writing` plus mutation
+rules before implementation. Source had the real CT93 scoped writer but no fresh-candidate
+producer or canonical publication helper; public admission/repair orchestration was absent.
+No unresolved blocking policy question or new policy decision was identified. This implements
+an IO/validation prerequisite, **not** a claim that a new public workflow producer is wired.
+
+Exact allowed edits: `src/fa/inner_loop/plan_admission.py`, new
+`src/fa/inner_loop/plan_promotion.py`, `src/fa/inner_loop/workflow_controller.py`,
+`tests/test_verify_gate_live.py`, this register and `../ledger.md`. No new dependency, public
+flag, generic transaction framework, namespace expansion, or logging/privacy policy change.
+
+| Edit / concrete current → target | Contract / gap support (not closure) | Mechanism, failure boundary and negative DoD | Class / producer sensitivity |
+|---|---|---|---|
+| Reader: filesystem-only snapshot → reusable bounded descriptor read and immutable-buffer capture | CT94/CT95; GAP-08/15 | Extract unchanged bounded descriptor algorithm; strict size/UTF8/nonempty bytes, same hash/parser. Invalid bytes fail before publication allocation; descriptor mutation remains `source-changed`. | C0/C3; strict UTF8/size/descriptor-rule mutations. Existing reader regressions included. |
+| Candidate producer: no producer → fresh exclusive private seed from active/latest rejected snapshot | CT94/CT93; GAP-09/15 | Validate dispatch and approved canonical prefix before IO; UUID leaf, O_EXCL/O_NOFOLLOW, complete short-write loop, 0600, file+parent fsync. Preserve foreign collision; remove only incomplete owned seeds. Ordinary kind denied. Rejected draft progress preserved. | C0/C3 and real session subcomposition for both kinds; seed/progress/fsync mutations. Public caller remains missing. |
+| Validator: no shared receipt → frozen snapshot-bound PASS/DIAGNOSTICS/INDETERMINATE result | CT87/CT91/CT92; GAP-06/12 | Both real validators consume exact captured text/IDs. Project only closed rules/severities/positive-int line; retain determinate failures alongside validator errors. WARN alone passes; errors and unqualified zero slices cannot pass. Exceptions never become successful admission or persisted bodies. | C0 plus actual writer→validation composition. Remove-call `_validate_plan_admission→precheck` and `→validate_kill_directives`, plus classification/closed-projection mutations. GAP-06 remains OPEN without public caller/full-path proof. |
+| Publisher: no canonical installer → validated immutable buffer atomically installed at same approved path | CT94/Q58; GAP-15 | Reuse process-shared deadline flock and private directory primitives. Target-key lock, rooted no-follow canonical parent, regular/single-link source, source-hash and metadata CAS before replace. Unique exclusive sibling, mode preservation, complete write/file fsync/replace/parent fsync, post-hash/mode checks. Parent modes unchanged. Pre-replace failures retain canonical; post-replace failures report uncertainty with `replaced=True`, never roll back. | C0/C3, actual competing publisher processes and held-lock deadline. `_promote_validated_plan→publish_plan_buffer` remove-call plus source/CAS/fsync/replace/hash/mode/lock mutations. Named CT94 public producer still absent. |
+| Tests/evidence: no CT94 prerequisite coverage → concrete side-effect/typed-result oracles and explicit missing consumer | CT94 prerequisite; CT87/91 support, GAP-06/12/15 remain open; GAP-04/05 belong to I03 F | Actual schema bytes, IDs/object preservation, tool result/events, canonical/candidate bytes and modes, foreign temp/candidate survival, real process outcomes and bounded deadline failures. No green-by-no-exception or weakened old assertion. | C0; C1/C2 actual `_run_stage→_cmd_run→drive_session` scoped writer subcomposition; adversarial C3; supplemental C4. Not public `run_workflow` admission C1. |
+
+Canonical scope is the approved `worklogs/planning-topology-and-executable-contracts-loop/increments/`
+prefix with normalized components, including descendants; an accidental direct-child-only
+restriction was corrected during review. Other namespaces remain denied before candidate IO.
+The final typing-only cleanup uses `Generator[int]` for `@contextmanager`, removing a newly
+introduced Pyrefly deprecation rather than adding a suppression.
+
+### Implementation boundaries / TEST-EDITS
+
+- `seed_plan_candidate` returns the existing frozen dispatch capability; latest rejected bytes can
+  seed another fresh target without making the draft an active plan. Completed candidates are
+  deliberately retained for the future owning orchestrator. Terminal owned-candidate cleanup
+  remains pending; incomplete owned seed/publication temps are cleaned now.
+- `_validate_plan_admission` creates a controller-owned immutable receipt.
+  `_promote_validated_plan` requires PASS, publishes that captured buffer (not a mutable draft
+  pathname), and preserves its text/bytes/IDs object while replacing only its PlanRef.
+  The IO module independently enforces byte/target/source invariants, not semantic admission.
+- Existing publisher locks/CAS are cooperative local integrity, **not** arbitrary same-UID writer,
+  shell, host, namespace or OS isolation. I03 remains required.
+- New tests are appended. Top-level typing imports and one now-redundant local typing import
+  changed; therefore this is **not** a strict whole-file append-only claim. AST comparison of
+  all **91** original top-level test/fixture/class definitions is identical after removing import
+  statements only. No prior assertions, routing/budget/deadline/history oracles were changed.
+- Public `run_workflow` is not wired to these helpers. `_run_admission_repair` does not exist yet.
+  Admission barriers, shared repair/replan credits, consumption of actual scoped tool errors
+  even when a session otherwise succeeds, terminal candidate cleanup, successful ADMITTED/T0
+  ordering and pinned verifier/real-eval handoff are still open. This is a tested prerequisite,
+  not a dead-handler-based product completion claim.
+
+### Commands / actual results
+
+Environment: repository `.venv`, Python **3.13.16**, locked `uv run --frozen`, uv at
+`/home/user/.local/fa-bootstrap/bin/uv`. Final production/test source identities below.
+
+```sh
+uv run --frozen pytest tests/test_verify_gate_live.py -k ct94 -q --tb=short
+# 52 passed, 378 deselected / 2.12s (before final annotation-only cleanup)
+uv run --frozen pytest tests/test_verify_gate_live.py tests/test_plan_reference.py \
+  tests/test_plan_precheck.py tests/test_write_allowlist.py tests/test_write_file_expected_root.py \
+  -k 'not real_workflow' -q --tb=short
+# 534 passed, 1 deselected / 7.74s (before final annotation-only cleanup; repeated below)
+uv run --frozen ruff check src/fa/inner_loop/plan_admission.py src/fa/inner_loop/plan_promotion.py \
+  src/fa/inner_loop/workflow_controller.py tests/test_verify_gate_live.py
+# All checks passed!
+uv run --frozen mypy src/fa/inner_loop/plan_admission.py src/fa/inner_loop/plan_promotion.py \
+  src/fa/inner_loop/workflow_controller.py tests/test_verify_gate_live.py
+# Success: no issues found in 4 source files
+uv run --frozen pylint src/fa/inner_loop/plan_admission.py src/fa/inner_loop/plan_promotion.py \
+  src/fa/inner_loop/workflow_controller.py --score=y
+# 10.00/10
+uv run --frozen pyrefly check --min-severity warn src/fa/inner_loop/plan_admission.py \
+  src/fa/inner_loop/plan_promotion.py src/fa/inner_loop/workflow_controller.py
+# 0 errors; exactly 5 existing unnecessary-str warnings in controller (rc 0)
+git diff --check
+# no output (rc 0)
+```
+
+Combined production+test Pyrefly: **59 errors**, all fixture argument/unpacking debt, unwaived.
+An archived exact E208 source/test tree under `/home/user/.cache/fa-i02-ct94-typebaseline`,
+same executable/config/dependencies, reproduces the **same 59 ordered message/file/column
+triples**, each candidate line shifted +3 by typing imports. This is a focused diagnostic
+comparison, not the required isolated-environment `d9109f4` full-suite acceptance comparison.
+Final combined recheck and focused pytest timing are recorded in the closing results below.
+
+### Supplemental targeted mutation — not named whole-path acceptance
+
+28 explicit mutations use production `apply_kill` (three remove-call cases) and
+`mutation_overlay`, one source target at a time. Before each pytest run, `_assert_overlay_wins`
+checks actual import provenance; tests remain outside overlay and their SHA256 is unchanged.
+Each fresh JUnit report must contain exactly **52 tests**, pytest rc 1, assertion failures >0,
+**zero errors/skips**. Runner/timeout/collector errors cannot count as kills. Child publication
+cases assert their exact overlay module `__file__`; a held real parent lock makes bypass
+sensitivity deterministic. All final **28/28 detected**; individual failures/counts below.
+
+| Mutation | Production symbol / exact edit | Assertion failures |
+|---|---|---|
+| producer-precheck | `_validate_plan_admission`: `remove-call → precheck` | 31 |
+| producer-kill-validator | `_validate_plan_admission`: `remove-call → validate_kill_directives` | 30 |
+| producer-publish | `_promote_validated_plan`: `remove-call → publish_plan_buffer` | 25 |
+| error-not-pass | `_validate_plan_admission`: `'return PlanAdmissionValidation(snapshot, "INDETERMINATE", diagnostics)' → 'return PlanAdmissionValidation(snapshot, "PASS", diagnostics)'` | 5 |
+| failure-not-pass | `_validate_plan_admission`: `'return PlanAdmissionValidation(snapshot, "DIAGNOSTICS", diagnostics)' → 'return PlanAdmissionValidation(snapshot, "PASS", diagnostics)'` | 6 |
+| zero-slices | `_validate_plan_admission`: `'if not snapshot.ids.slice_records:' → 'if False:'` | 3 |
+| closed-diagnostics | `_admission_diagnostics`: `'if item.rule not in ADMISSION_RULES[validator] or item.severity not in {"WARN", "FAIL", "ERROR"}:' → 'if False:'` | 2 |
+| pass-receipt | `_promote_validated_plan`: `'if validated.outcome != "PASS":' → 'if False:'` | 3 |
+| canonical-scope | `_canonical_parts`: `body → return tuple(snapshot.ref.workspace_relative_path.split("/"))` | 3 |
+| rejected-progress | `seed_plan_candidate`: `'raw = source.utf8_bytes if draft is None else draft.utf8_bytes' → 'raw = source.utf8_bytes'` | 2 |
+| seed-no-clobber | `_create_candidate`: `' \| os.O_EXCL' → ''` | 1 |
+| seed-file-fsync | `_create_candidate`: `'os.fsync(fd)' → 'None'` | 1 |
+| seed-directory-fsync | `_create_candidate`: `'os.fsync(parent)' → 'None'` | 1 |
+| source-hash | `_checked_source`: `'if hashlib.sha256(raw).hexdigest() != expected:' → 'if False:'` | 2 |
+| single-link | `_checked_source`: `'or metadata.st_nlink != 1' → ''` | 2 |
+| final-cas | `_install_buffer`: `'current = _checked_source(parent, name, source.ref.sha256)' → 'current = metadata'` | 5 |
+| source-identity | `_install_buffer`: `'if _source_identity(current) != _source_identity(metadata):' → 'if False:'` | 2 |
+| staged-bytes | `_stage_replacement`: `'_write_all(fd, raw)' → 'None'` | 10 |
+| file-fsync | `_stage_replacement`: `'os.fsync(fd)' → 'None'` | 1 |
+| atomic-replace | `_install_buffer`: `'os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)' → 'None'` | 10 |
+| directory-fsync | `publish_plan_buffer`: `'os.fsync(parent)' → 'None'` | 1 |
+| post-hash | `publish_plan_buffer`: `'if promoted.ref.sha256 != expected_hash:' → 'if False:'` | 1 |
+| post-mode | `publish_plan_buffer`: `'if stat.S_IMODE(metadata.st_mode) != expected_mode:' → 'if False:'` | 1 |
+| short-write-progress | `_write_all`: `'remaining = remaining[written:]' → 'remaining = remaining[written + 1:]'` | 1 |
+| descriptor-change-rule | `publish_plan_buffer`: `'{"symlink", "source-changed", "not-regular"}' → '{"symlink", "not-regular"}'` | 1 |
+| utf8-strict | `_decode_plan_bytes`: `'errors="strict"' → 'errors="replace"'` | 1 |
+| size-before-publication | `_decode_plan_bytes`: `'if len(raw) > MAX_PLAN_BYTES:' → 'if False:'` | 1 |
+| lock-serialization | `publish_plan_buffer`: `'_admission_lock(lock_directory, deadline=deadline)' → 'nullcontext()'` | 1 |
+
+Final driver rc **0**. Scratch driver `/home/user/.cache/fa-i02-ct94-mutations.py`, frozen log
+`/home/user/.cache/fa-i02-ct94-mutations-frozen.log`, individual XML/logs and `results.json`
+under `/home/user/.cache/fa-i02-ct94-mutations/`. Cache artifacts are not committed; permanent
+cases, exact edit table/method and source hashes are the reproducible handoff. No mutmut
+whole-module score/equivalence waiver is claimed. These selected-case proofs do **not** satisfy
+STEP17: named CT94 `_run_admission_repair→_promote_validated_plan` is still absent, and no new
+whole-declared-path named contract kill is reported. Q53(c) slice sensitivity remains unchanged.
+
+### Final compatibility and static state — still not all green
+
+After the annotation cleanup, final focused commands above were repeated:
+**52 passed, 378 deselected / 2.04s**, and **534 passed, 1 deselected / 11.08s**.
+Final Ruff/Mypy/Pylint are clean as shown above. Production Pyrefly has **0 errors / 5 old
+warnings**; combined four-file Pyrefly still returns **1**, **59 errors / 5 old warnings**,
+with all 59 ordered diagnostic matches/+3 offsets verified against E208. No suppression.
+
+Same 22-file compatibility list as E208, final command:
+
+```sh
+uv run --frozen pytest -q --tb=short -k 'not real_workflow' \
+ tests/test_verify_gate_live.py tests/test_verify_slice.py tests/test_slice_verification_runner.py \
+ tests/test_workflow_role_allowlist.py tests/test_session_lifecycle.py tests/test_session_manifest_guards.py \
+ tests/test_session_workspace_provisioning.py tests/test_plan_reference.py tests/test_cli_ergonomics.py \
+ tests/test_s8_workflow_controller.py tests/test_s10b_cli_parity.py tests/test_inject_cli_flag.py \
+ tests/test_s10c_artifact_posture.py tests/test_workflow_artifacts.py tests/test_workflow_deadline.py \
+ tests/test_workflow_global_history.py tests/test_workflow_no_eval_terminal.py tests/test_eval_evidence_block.py \
+ tests/test_slice_id_validation.py tests/test_s10c_workflow_exit_contract.py \
+ tests/test_write_allowlist.py tests/test_write_file_expected_root.py
+# 6 failed, 994 passed, 1 deselected / 92.06s; rc 1
+```
+
+The same six unwaived E208 identities/failure categories:
+
+1. `tests/test_workflow_deadline.py::test_no_deadline_runs_the_full_pipeline` — inserted eval role;
+2. `tests/test_workflow_deadline.py::test_generous_deadline_runs_the_full_pipeline` — inserted eval role;
+3. `tests/test_workflow_no_eval_terminal.py::test_eval_requested_but_no_verdict_fails[linear]` — blocked-reason expectation;
+4. `tests/test_workflow_no_eval_terminal.py::test_scratch_pipeline_succeeds_but_is_marked_unjudged` — required-eval exit differs;
+5. `tests/test_workflow_no_eval_terminal.py::test_planner_coder_without_eval_is_also_unjudged` — required-eval exit differs;
+6. `tests/test_workflow_global_history.py::test_nested_workflow_produces_two_rows` — implicit child still rejected for missing PlanRef, unavailable route unwired.
+
+First five were independently reproduced on `5b10409` in E207; this is not a new full baseline
+comparison. No new failure identity/category in this 22-file run; none waived. The original
+expensive `real_workflow` case is explicitly deselected, not re-run here. No full suite/`just test`,
+`just check`, isolated `d9109f4` acceptance comparison, all16 kills or independent/operator DoD
+claim. Frozen logs: `/home/user/.cache/fa-i02-ct94-regressions-frozen.log` and
+`/home/user/.cache/fa-i02-ct94-pyrefly-final.log`.
+
+### New live-host inventory — proposed tests only, I03 F owns acceptance
+
+Use reviewed operator-owned disposable Linux/Docker canonical workspaces; record deployed
+commit/import hashes, run IDs, source/candidate/published hashes, real backend/PTY/session/hooks,
+actual artifacts and independent outside-byte/mode sentinels. Do not use tracked plans as mutable
+fixtures. No keys in evidence, no global debug-body enable. Local provider-mocked session tests
+and cooperative locks do not prove deployed isolation. These rows extend the earlier inventory,
+not its normalized master/independent review or the actual I03 F package. No live result assigned.
+Route-dependent cells wait for the real public admission consumer; a direct helper probe is only
+prerequisite diagnostics, never a substituted product PASS.
+
+| Every new/changed producer/consumer surface | Proposed host case | Required independent observable / negative control |
+|---|---|---|
+| `read_plan_snapshot`, `_read_open_plan_bytes`, `_decode_plan_bytes`, `snapshot_from_bytes` | ADM-H14 | Strict bounded UTF8/size/nonempty snapshot/hash from actual selected workspace; changing opened descriptor returns source-changed. No candidate/provider/canonical mutation on invalid input through the future root; existing lexical/descriptor alias negatives retained. |
+| `_canonical_parts`, `seed_plan_candidate`, `_create_candidate`, `_write_all`; existing `PlannerDispatch` consumer | ADM-H15 | Repair and eval-replan each get a fresh private exact-target seed, latest rejected bytes preserved on next attempt. Original bytes/modes unchanged until promotion; ordinary/outside-prefix denied before allocation/provider. Exclusive collision and partial/zero-write/file+directory-fsync faults preserve foreign files and clean only owned incomplete seeds. |
+| `AdmissionDiagnostic`, `PlanAdmissionValidation`, `_admission_diagnostics`, `_validate_plan_admission`; both real validator consumers | ADM-H16 | Same captured text/IDs through both validators, WARN positive, structural near-miss repair, exception/zero-slice fail-closed controls; schema-check persisted sanitized projection, no messages/raw bodies. Future public caller plus full-path precheck/kill-validator producer sensitivity, not helper-only success. |
+| `_canonical_parent`, `_checked_source`, `_source_identity`, `_stage_replacement`, `_install_buffer`, `publish_plan_buffer` | ADM-H17 | Real source-hash and metadata-CAS races (bytes/inode/mode/symlink/hardlink), mode/parent preservation, exclusive sibling collision, staged partial/zero writes and file-fsync/replace faults. Independent canonical and outside sentinels distinguish pre-replace unchanged from irreversible publication. No race result claimed from deny text alone. |
+| `publish_plan_buffer` shared target-lock acquisition and post-replace parent-fsync/hash/mode checks | ADM-H18 | Two actual independent deployed processes/runs compete on one source: exactly one publisher wins, stale peer source-changed. Held real lock/deadline blocks without mutation. Post-replace fsync/hash/mode faults preserve resulting canonical, report typed uncertainty, never auto-rollback. Locks are not malicious-writer containment. |
+| `_promote_validated_plan` and its future public `_run_admission_repair`/admission-writer/T0 consumers | ADM-H19 | Both real scoped session kinds: provider only writes owned candidate, receipt publishes exact validated bytes/IDs despite later draft mutation; non-PASS never publishes. Scoped tool failure blocks even when session terminal otherwise succeeds. Final durable admission append failure after replacement preserves canonical and dispatches zero coder/eval/T0; retry credit and owned-terminal cleanup follow the approved spec. Full-root and named CT94 producer kill pending. |
+
+### Frozen source identity / handoff
+
+| Path | SHA256 |
+|---|---|
+| `src/fa/inner_loop/plan_admission.py` | `ef4119b478a6a61c8322c06c2acb485b47f5aa3047101af4f30d5c3c093b527c` |
+| `src/fa/inner_loop/plan_promotion.py` | `48ef11687cf7d9a3d677faba33d4851c24c33e9ae24d56dbaf35336eed204f04` |
+| `src/fa/inner_loop/workflow_controller.py` | `471ebf85d55465e2d7da40078f582572b154fdaa47b989a3e42996800fdf6e03` |
+| `tests/test_verify_gate_live.py` | `735689c25a22fefff63308187c2c4bee3818ca0a713de6ecb6aeebe55de146dc` |
+
+Next bounded chunk: wire shared CT91/Q57 initial and eval-replan admission through these real
+helpers. Persist each attempt before provider dispatch, use the same shared credit (including
+failed attempts), consume scoped writer/registry failures as BLOCKED, retain rejected progress,
+and clean only owned candidates at terminal exit. Admit valid non-increment input without
+promotion; required non-increment repair/replan must stop scope-denied before candidate provider.
+Then wire one admitted T0 plus pinned verifier/actual-eval ordering and approved unavailable nested
+routing. Add full public C1/C2/C3 matrix and the actual `_run_admission_repair→_promote_validated_plan`
+producer; run every retained FUNCTIONAL kill on the whole declared test path. No STEP tick,
+SLICE6 completion, I02 SHIPPED, deployed PASS, security acceptance or independent/operator approval.
