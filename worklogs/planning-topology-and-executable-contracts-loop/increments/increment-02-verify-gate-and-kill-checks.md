@@ -2,211 +2,70 @@
 Increment-ID: RM-planning-topology-I02
 Roadmap-ID: RM-planning-topology
 status: IN PROGRESS
-slices: 8
+slices: 7
 shipped: —
 ---
 
 # INCREMENT I02: Executable contracts & the verify gate
 
-**Shippable when:** every coder dispatch is gated by a validated controller-owned `PlanRef`; explicit CLI callers supply `--plan`, while the production chat `invoke_workflow` path lets its initial planner select an existing project increment or submit a controller-validated new-project artifact bundle. Determinate schema/kill-directive diagnostics receive bounded planner repair in the same invocation in both modes; no rejected pre-coder attempt reaches coder or eval. After a successful coder stage, the harness runs each slice's `verify` commands, records real exit codes, and proves every `FUNCTIONAL` contract against production through its declared kill-check. Post-coder verification/eval routing remains governed by Q55/Q56. The 20-slice/≥95% calibration gate is explicitly deferred and is not an I02 shipping condition.
+**Shippable when:** explicit-plan CLI/library workflows validate a controller-owned PlanRef before
+coder, perform bounded Q57 admission repair/Q58 same-path promotion, capture T0 once, run the
+slice-scoped command/kill gate after successful coder, and preserve real eval plus Q55/Q56 routing.
+Retained local contracts, composition/mutation proofs, full-suite disposition and independent
+review satisfy the DoD below **without waiting for foundation I03 or deployed-host E2E**.
+This is delivery of the scoped local gate, not OS isolation or safe integrated chat→workflow acceptance.
 
-Rationale lives in [`../notes/i02-slice-verification-design.md`](../notes/i02-slice-verification-design.md),
-[`../notes/i02-handoff-verify-gate.md`](../notes/i02-handoff-verify-gate.md), and the operator-E2E
-ownership/design record [`../notes/e2e-handoff-and-plan-review-design.md`](../notes/e2e-handoff-and-plan-review-design.md).
-Do not restate rationale here.
+**Scope migration, 2026-10-15 (E200):** this plan ends at SLICE6. Seven actual sections remain:
+SLICE1, SLICE2, SLICE2b, SLICE3, SLICE4, SLICE5, SLICE6. The former eight-slice exception is no
+longer needed; the global seven-slice ceiling is unchanged. CT96/CT97, managed-acquisition clauses
+of CT90/CT92–CT95 and mixed STEP proofs, and all former SLICE7 CT88/CT89 obligations belong to
+[foundation I03](increment-03-execution-workspace-foundation.md). Nothing moved is marked delivered.
 
-**Current code snapshot (rechecked 2026-10-14; line references are this checkout):**
-- `src/fa/inner_loop/slice_verification.py` exists. `verify_plan` is now called from
-  `_run_stage` after a successful coder (`workflow_controller.py:1098`), but
-  `validate_kill_directives` (`slice_verification.py:679`) still has no production caller.
-  CT87 is specifically the missing admission producer, not the verify-command runner.
-- `plan_ids.py` exposes `extract_plan_ids`, `precheck`, `PlanIds`, and `SliceRecord`.
-  A direct stdlib-only probe confirmed `precheck("")` returns `ok=True` with no slices and
-  `validate_kill_directives("", extract_plan_ids(""))` returns `[]`. Admission must therefore
-  reject missing/unreadable/empty input and must not accept a final candidate with no parsed
-  slice. First collect any determinate non-empty structural `FAIL` diagnostic (for example,
-  a near-miss slice heading) for bounded repair; if no such diagnostic explains a no-slice parse,
-  block as indeterminate. Neither pure validator proves an empty plan is valid. `precheck` is
-  advisory by design in I01; I02 routes only its determinate `FAIL` diagnostics through Q57,
-  while `WARN` is not a block.
-- `WorkflowArtifactPaths` (`workflow_controller.py:123-129`) has `eval_report`, `flow_state`,
-  `verification`, and `verify_baseline`, but no admission history. `StageResult` (`:212-219`)
-  carries `role`, `exit_code`, `eval_report`, and `verification`; it has no admission outcome.
-- `_run_stage` is at `workflow_controller.py:952`. It takes the stage task from
-  `ctx.task_for(role)` and appends evidence only for eval (`:997-1006`). It captures the
-  baseline before dispatching coder (`:1053-1081`), but currently has no pre-coder admission.
-  `WorkflowContext.plan_text()` returns `None` on missing/unreadable input (`:171-183`), and
-  the current coder path can extract an empty `PlanIds` and continue.
-- `_run_initial_roles` (`workflow_controller.py:1448-1477`) runs configured roles and returns
-  on a nonzero stage. Adaptive planner/coder/eval dispatches are eval-report-driven
-  (`:1597-1654`); there is no pre-coder repair route. `_run_linear` (`:1774-1837`) is a
-  one-pass role loop. The CLI defaults to `linear` (`cli.py:723-728`) and passes
-  `max_replans`, but only `_run_adaptive` currently consumes that budget; admission must thread
-  it into the linear path without adding linear eval-repair semantics.
-- `_run_adaptive_replan` increments `replan_round` but preserves `repair_round`
-  (`workflow_controller.py:1635-1638`). `_run_stage` uses `repair_round == 0` to choose
-  exclusive baseline creation (`:1067-1081`); `_write_json_exclusive` uses `O_EXCL`
-  (`:318-358`). Thus a later coder after an eval-driven planner route can hit a second-create
-  error. `load_verify_baseline` checks run/schema/nodeid shape (`:362-391`) but does not compare
-  the stored `TESTS:` path map to the current plan revision.
-- The CLI `--plan` option is optional (`cli.py:758-767`) and currently checks existence only
-  when supplied (`:1369-1372`). E137 requires a plan for coder workflows. The controller must
-  also defend direct `run_workflow` callers; an empty parse must not silently pass admission.
-  `tests/test_verify_gate_live.py::test_missing_plan_is_indeterminate_and_blocks_an_eval_false_pass`
-  currently exercises the too-late `_run_stage` behavior; migrate it to assert pre-coder rejection
-  through the CLI/controller while retaining a separate post-coder indeterminate-verification case.
-- The planner write allowlist is `knowledge/research/` and `.fa/`
-  (`profiles.py:132-145`), not canonical `worklogs/...` paths. Any repair channel must be
-  controller-bounded and must not expand general planner writes. `verify_baseline.json`,
-  `verification.json`, `eval_report.json`, and `flow_state.json` currently land in the run log
-  (`workflow_controller.py:233-249`); the proposed `admission.json` belongs beside them.
-- `tests/test_verify_gate_live.py` already contains the real `run_workflow` → `_cmd_run` →
-  `drive_session` C1 composition-root test; the old “NEW — author it” label is stale. Keep the
-  provider request as the only mocked boundary. The workflow verify gate defaults to `observe`
-  (`feature_flags.py:58-61`, key `workflow.verify_gate.mode`); pre-coder plan admission is a
-  separate safety check and is not made advisory by that flag.
-- Production workflow calls run inside the `first-agent` container. Host environment variables
-  are not automatically forwarded through `docker compose exec`; the sessions mount is
-  `/sessions`, and persistent artifacts mount to `/home/fa/.fa` (see
-  `worklogs/DEPLOYMENT-ANATOMY.md:12-37`). `scripts/fa update` uses the main-only update path;
-  `scripts/fa-update.sh:1093-1110` deploys, waits for health, runs tests, reports the deployed
-  HEAD/health/test rc, and exits with the test rc. A nonzero rc is not by itself proof that the
-  deployment did not happen.
-- The session workspace has its own `.venv`; verify commands run against the workspace tree,
-  not the baked image. The production runner uses `build_scrubbed_env` and computes the
-  workspace venv paths (`tools/run_bash.py:233-250`); do not widen the ambient environment
-  allowlist. Mutation remains narrowly scoped to `src/` plus explicitly allowed `scripts/`,
-  with `tests/` outside the overlay and import-provenance checks required (Q54).
-- The production nested caller is `invoke_workflow`: its default roles are `planner,coder,eval`
-  (`tools/workflow_tool.py:64, 422-424`), but its schema/context have no plan-path input and its
-  handler omits `plan_path` in the `run_workflow` call (`:164-195, :463-484`). CT95 therefore
-  cannot require a pre-existing path at workflow entry for every caller. Require a typed,
-  controller-validated `PlanRef` before every coder dispatch; allow only the internal
-  planner-managed acquisition path to run a planner before that reference exists.
-- The current planner writer allowlist is `knowledge/research/` and `.fa/` (`profiles.py:132-146`);
-  it cannot create canonical project artifacts, but its `.fa/` prefix currently also covers the
-  future admission control-plane subtree. Do not broaden the public allowlist; reserve
-  `.fa/admission/` from ordinary planner writes. Planner-managed bootstrap needs a dedicated
-  controller-staged bundle submission tool and typed `PlanRef` handoff; Q58 repair needs its own
-  exact-candidate writer. These are separate capabilities, not exceptions added to the ordinary
-  planner writer.
-- The exact-target writer is not wired by `profiles.py` alone: `_run_stage` builds stage kwargs
-  (`workflow_controller.py:1008-1039`), `_cmd_run` builds the live registry (`cli.py:2305-2327`),
-  `_build_run_tool_registry` delegates to `_build_role_registry` (`cli.py:1794-1804`), and the
-  planner registry delegates through `tools/__init__.py:191-221` to `profiles.py:375-427`.
-  Thread a typed dispatch kind and exact target through this whole path.
-- `resolve_workspace_path` resolves/follows symlinks and checks only workspace containment
-  (`tools/base.py:7-17`); `build_write_file_tool` then writes the resolved path
-  (`tools/write_file.py:20-23, 56-60`). An in-workspace symlink from a candidate to the canonical
-  plan would therefore evade a raw-path-only exact-target check. Reject symlinked path components
-  and the leaf, including links whose target remains inside the workspace.
-- `load_verify_baseline` reads the stored nodeid map for current slice IDs but does not compare
-  stored `test_paths` or reject extra/removed slice IDs (`workflow_controller.py:362-391`). CT86
-  requires exact symmetric equality of the stored and current slice→TESTS-path maps before
-  comparing any nodeids.
-- `PlanDiagnostic.message` can quote an entire offending source line (`plan_ids.py:759-767,
-  818-827`; `slice_verification.py:666-675, 732-741`). Do not serialize `.message` into
-  `admission.json`; persist an allowlisted, line/rule-only diagnostic projection.
-- `_resolve_max_replans` clamps to `MAX_REPLANS_CEILING` but has no caller (`workflow_controller.py:1408-1412`);
-  `_cmd_workflow` clamps only the CLI path (`cli.py:1414-1415`), while public `run_workflow`
-  passes the value through (`workflow_controller.py:1928-1931`). Normalize at the public controller
-  entry so direct callers cannot exceed the shared admission/replan bound.
+The [migration bank](../notes/i02-to-i03-scope-migration-2026-10-15.md) identifies every CT/STEP/GAP
+owner, preserves the old SLICE7 body and removed DoD, and separates original recommendations
+from current directions. Rationale/reuse lives in the
+[decision note](../notes/execution-workspace-and-i02-i03-scope-decisions-2026-10-15.md) and
+[reuse audit](../notes/execution-foundation-scope-reduction-and-reuse-audit-2026-10-15.md).
+Existing gate design: [verification design](../notes/i02-slice-verification-design.md).
 
-**Open audit-gap closure map (rechecked 2026-10-14; planned, not closed):**
+**Grounding (product source unchanged at d9109f4; 2026-10-15):**
+- `_run_stage` already calls `verify_plan` after successful coder; existing direct C1 proves the
+  verifier/eval composition, not admission. `precheck`/`validate_kill_directives` have no production
+  admission caller. Artifact paths lack `admission.json`; the candidate/promotion channel is absent.
+- CLI `--plan` remains optional and its existence check precedes selected-workspace resolution.
+  Direct `run_workflow` lacks the required input/run-ID/budget guards. Missing/empty plans must not
+  become an empty passing `PlanIds`; a non-empty structural near-miss is repairable under Q57.
+- Baseline creation currently depends on `repair_round`; eval replan can attempt a second T0.
+  Stored/current slice→TESTS maps need exact symmetric equality, not intersection comparison.
+- Ordinary planner writes cover `.fa/`, not canonical worklogs. Exact-target Q58 capability must
+  thread through `_run_stage` → `_cmd_run` → role registry builders → profiles/write handler.
+  Reserve admission state from ordinary writes; descriptor-rooted no-follow IO is required.
+- Current `invoke_workflow` supplies no plan. In reduced I02, unsupported managed acquisition
+  must return unavailable before child provider/coder dispatch, with no guessed plan/bootstrap.
+- Current local subprocess/PTY fallback is **not** an OS execution boundary. Hash/path checks
+  in this plan do not protect against malicious shell descendants or controller-secret reads.
+  Host supervision, fail-closed cell routing, private views and process-tree sealing are I03 work.
+- Existing JUnit bool projection loses failure/skip/error distinctions. SLICE5 CT66/STEP7 retains
+  detailed local classification; supervised job/revision evidence binding is I03.
 
-| Audit gap | Verified open condition | Planned owner and closure oracle |
-|---|---|---|
-| GAP-01 — empty-plan fail-open | Empty text yields no blocking `precheck` or kill-directive diagnostic; a zero-slice parse is not a usable plan. | SLICE6 CT91/CT95, STEPs 10–16: C1 proves empty/indeterminate input blocks before provider dispatch; only a non-empty determinate structural `FAIL` may enter bounded repair, and the accepted revision has at least one parsed slice. |
-| GAP-02 — T0 on eval replan | Adaptive replan preserves `repair_round`, so the coder path can attempt exclusive T0 creation again. | SLICE6 CT86, STEPs 14–16: initial admission repair happens before T0 exists; after the first accepted plan, real workflow proves one baseline is created and reused by later admission/coder/eval-replan stages. A changed per-slice `TESTS:` map blocks as indeterminate. |
-| GAP-03 — explicit-plan guard | CLI `--plan` is optional and the public controller has no independent pre-coder admission. | SLICE6 CT90/CT95, STEPs 13 and 16: C2 proves missing CLI `--plan` is rejected before run/session creation; C1 proves the controller requires a valid explicit PlanRef before any provider stage, except for the narrowly authorized `invoke_workflow` planner-acquisition stage (GAP-07). |
-| GAP-04 — stale live register | The register still has the obsolete immediate-block expectation and exact duplicate producer/classifier rows. | SLICE7 CT88, STEP3: migrate the normalized unique producer set without loss, replace the CT52 expectation with Q57 repair/revalidation/block behavior, collapse only exact duplicates, and test duplicate-free coverage with local proof distinct from live result. |
-| GAP-05 — undelivered live handoff | Design decisions are recorded, but the `e2e/` package, independent checklist entry, and host evidence do not exist. | SLICE7 CT88/CT89, STEPs 1–10: create and locally validate the index, operator sheet, coder handoff, safe main-update run matrix, checklist-only review, and per-producer future cases. Only an operator/LLM with collected deployed-host evidence may assign live status; this plan does not. |
-| GAP-06 — D2 precheck ownership drift | D2 still names I03, while the current controller has no `precheck` caller; CT91 is a planned I02 producer, not landed runtime wiring. | SLICE7 STEP3 plus the I02 DoD assign the planned consumer to I02, preserve D2's rule/test/kill oracle, and leave D2 open until C1 proves production wiring; do not tick it from plan text. |
-| GAP-07 — nested plan acquisition | `invoke_workflow` defaults to `planner,coder,eval` without a plan path; it cannot work if the controller requires a path before its initial planner runs. | SLICE6 CT95/CT96, STEPs 9–16: distinguish explicit CLI input from planner-managed acquisition; let only the latter run its initial planner before a PlanRef exists; validate a typed existing-plan selection or stage/publish a new-project bundle; require the PlanRef before coder; prove both branches through real C1. |
-| GAP-08 — plan-path containment/base | `_cmd_workflow` checks `Path.is_file()` before resolving the selected session workspace (`cli.py:1369-1372, 1432-1433`); relative paths therefore use process CWD, while `WorkflowContext.plan_text()` follows symlinks (`workflow_controller.py:171-183`). | SLICE6 CT90/CT95 and C3: define relative `--plan` as workspace-relative, normalize only after workspace resolution, use no-follow regular-file reads for every PlanRef, and test in-workspace plus escaping symlink components. |
-| GAP-09 — controller control-plane writes | The ordinary planner allowlist includes the entire `.fa/` subtree (`profiles.py:132-146, 284-308`), which includes future `.fa/admission/` state/candidates. | SLICE6 CT93/CT96: reserve `.fa/admission/` from the general planner writer; acquisition gets only structured selection/bundle tools and repair gets only its exact candidate writer. Keep the public planner allowlist no broader than today. |
-| GAP-10 — direct API replan ceiling | `_resolve_max_replans` is unused; CLI clamps but public `run_workflow` passes the raw caller value into adaptive mode (`workflow_controller.py:1408-1412, 1926-1931`; `cli.py:1414-1415`). | SLICE6 CT74/CT87, STEP12: clamp once at public entry and use one shared counter across admission repair and adaptive eval replans, with a zero-budget oracle. |
-| GAP-11 — baseline topology mismatch | `load_verify_baseline` ignores stored TESTS paths and extra/removed slice IDs (`workflow_controller.py:362-391`). | SLICE6 CT86/STEP14: require symmetric equality of slice IDs and normalized per-slice TESTS paths before nodeid comparison; additions/removals/path edits yield indeterminate. |
-| GAP-12 — diagnostic disclosure risk | Parser diagnostics can embed complete raw offending lines (`plan_ids.py:759-767, 818-827`; `slice_verification.py:666-675, 732-741`); no admission artifact exists yet. | SLICE6 CT92: write only a versioned, allowlisted diagnostic projection; explicitly prove that source snippets, `.message`, absolute paths, and raw plan bytes are absent. |
-| GAP-13 — CLI help drift | `--plan` help says optional (`cli.py:758-767`); `cli_help.py:165-169` retains coder examples without it. | SLICE6 CT90/STEP13: update parser/help/example text for explicit CLI plan mode while preserving the deliberately red E19 test. |
-| GAP-14 — PlanRef mutable during provider stage | Coder/implementer has write/edit/bash tools (`profiles.py:117-131`); `SandboxHook` permits general workspace writes by default (`cli.py:1873`, `bash_gate.py:93-96, 180-189`); verification parses the plan before coder and uses that snapshot afterward (`workflow_controller.py:1053-1081, 1093-1104`). | Proposed CT97/STEP15: enforce a real per-stage write boundary for the active PlanRef/control-plane, covering shell/subprocess mutation; keep Q55 eval after successful coder. This is a confirmed capability plus a recommended new invariant; confirm the enforcement mechanism before claiming readiness. |
-| GAP-15 — adaptive eval-replan cannot revise canonical plan | `_run_adaptive_replan` dispatches the planner then coder (`workflow_controller.py:1597-1654`), but the production planner can write only `knowledge/research/` and `.fa/` (`profiles.py:132-146`) and controller keeps one `ctx.plan_path` (`workflow_controller.py:132-166, 1907-1924`). | SLICE6 CT93/CT94/CT86 and STEPs 9,12,14,16: route plan-changing adaptive replan through the same Q58 single-target candidate/promotion and admission gate; prove a subsequent coder sees the new PlanRef and T0 remains compatible. |
-
-This index is not a status ledger: it does not tick a CT/STEP, close a gap, or assign a live result. Close each row only through the owning contract's tests and, where required, the operator-owned host evidence.
-
-**Decisions and implementation guardrails (carry forward):**
-- `src/fa/inner_loop/slice_verification.py` owns subprocess execution and kill-check behavior;
-  keep `plan_ids.py` pure. The kill directive is read from `section()`, never the joined
-  contract body. Keep exactly the two existing operators: `neutralise` and `remove-call`.
-- `VACUOUS` and `PRODUCER_ABSENT` block with no appeal; kill-check only `FUNCTIONAL` contracts.
-  Every kill-check proves that the mutated module is the one imported. A failed provenance probe
-  is `ERROR`, never a verdict.
-- Preserve I02's explicitly authorized local eight-slice exception (`slices: 8` in this
-  increment); do not change I01's global seven-slice limit or turn the precheck ceiling `WARN` into
-  a new failure.
-- Mutation uses the throwaway, explicitly allowlisted `src/` plus `scripts/` roots; tests remain
-  outside. Do not widen mutmut's global `source_paths`, write the operator's tree, or mutate the
-  repository under test (Q54). Preserve the Q53(c) cost and unrelated-failing-test attribution
-  risk: each functional contract runs each declared slice test path.
-- **Q57 (operator-resolved):** determinate admission diagnostics are sent to the planner through
-  bounded repair in the same workflow invocation; revalidate every revision; no coder while any
-  blocking diagnostic remains; budget exhaustion or indeterminate validation fails `blocked`.
-  A rejected pre-coder attempt does not run eval. Once coder succeeds, normal Q55/Q56 applies.
-- Apply the same pre-coder admission helper to `linear` and `adaptive`; this does **not** make
-  linear mode eval-adaptive. Preserve linear's one-pass eval semantics and the caller's normal
-  role order. The admission planner call is only an additional bounded repair dispatch before
-  coder when needed. Count these attempts against `max_replans` in both modes.
-- E137 is the explicit-input rule for CLI `fa workflow`: if normalized CLI roles contain
-  `coder`, `--plan` is required and missing input is rejected before run/session/artifact creation.
-  The public controller rule is broader in the right place: no coder dispatch until it holds a
-  validated typed `PlanRef`. An explicit-path caller must supply one before any provider stage;
-  only `invoke_workflow` may use planner-managed acquisition, and then only its initial planner
-  may run before a `PlanRef` exists. Missing/invalid reference, empty input, unreadable input,
-  or a zero-slice plan without a determinate repair diagnostic blocks before coder/eval. No
-  free-text path extraction or filesystem globbing. If admission repair is needed without a
-  configured planner, block without coder/eval.
-- `precheck` contributes only determinate `FAIL` diagnostics to repair; `WARN` is recorded but
-  does not hold admission. Repair non-empty, diagnosable near-miss structure even when no slice
-  parses yet; after revalidation, require at least one parsed slice. Empty input or zero parsed
-  slices with no determinate repair diagnostic is indeterminate and blocks. A validator or
-  file-read exception is indeterminate and blocks.
-- Capture the write-once T0 baseline only after admission accepts the active plan and before the
-  first coder. Never key T0 creation only to `repair_round`; later planner/coder rounds reuse the
-  same baseline. If a post-coder plan revision changes a slice's `TESTS:` path set, baseline
-  comparison is indeterminate and blocks rather than comparing mismatched maps.
-- **Q58 — RESOLVED by operator, 2026-10-09:** for an increment plan, the canonical target is the
-  exact supplied `--plan` path under that project's `worklogs/<project>/increments/` tree.
-  Admission-repair candidates are controller-owned, one fresh path per attempt under
-  `.fa/admission/<run_id>/`; the repair planner gets a single-target writer only and never writes
-  the active plan or receives a broad `worklogs/` allowlist. After both validators pass, the
-  controller promotes the exact candidate bytes back to that same canonical path. A promotion
-  lock is a process-shared OS lock keyed by the canonical target (not by run ID); recheck the
-  source hash while holding it. Hash/lock protect concurrency only, never human approval.
-  Planner-managed first-plan creation is a separate controller-staged project-bundle/no-clobber
-  publish protocol; it does not weaken Q58 or broaden the ordinary planner allowlist. A non-increment
-  explicit plan may be admitted if already valid, but admission repair blocks rather than promoting
-  an unsupported target. E2E uses a disposable workspace copy at the same relative increments
-  path, proves same-path replacement, and never edits the tracked source plan.
-- A successful coder stage is always followed by the real eval stage, even when verification is
-  blocking. Preserve the model-authored `EvalReport`: observe mode leaves eval routing intact;
-  enforce mode applies Q56 only after eval, and a blocking non-complete eval route remains
-  authoritative. Do not synthesize an eval report in the coder stage.
-- The plan-revision/admission history is a separate persisted `admission.json`; do not overload
-  `eval_report.json` or assert that the harness assigned a live-E2E result. `flow_state.json`
-  remains the controller's terminal route/status artifact.
-
----
+**Retained implementation guardrails:**
+- Keep `plan_ids.py` pure and the Q45-B position surface approved by Q65; no duplicated locator.
+- Keep `neutralise`/`remove-call`, Q54 `src/` + explicitly allowed `scripts/`, tests outside
+  mutation roots, import provenance, and unchanged mutmut global `source_paths`.
+- Q53(c) runs every declared slice TESTS path per FUNCTIONAL contract; no per-contract mapping.
+  Genuine unrelated test failures can still weaken attribution; collection/infra errors cannot.
+- Admission is blocking independently of observe/enforce. Q57 repair is pre-coder in linear and
+  adaptive; linear does not gain adaptive eval semantics. No rejected attempt dispatches eval.
+- Q58 canonical same-path replacement remains implemented/proved here. Ordinary planner permissions
+  do not expand to worklogs. Bootstrap no-clobber is a distinct I03 obligation.
+- No new increment status, safety-mode CLI, fake bootstrap/cell, standalone FastAPI deployment gate,
+  calibration corpus or ≥95% gate. Q64 stays I06. No status ticks from this plan revision.
 
 ## Shipping order — E130 history and current status
 
-The Phase A/Phase B split below records E130's original sequencing and sizing decision. Its
-"do not start Phase B" stop condition was later explicitly superseded by the operator in E164;
-SLICE2–SLICE5 are now implemented. The Phase A/B distinction remains useful as a risk map, not
-as an unfinished prerequisite. D1b/D3 were closed in E147, and SLICE5 STEP5–STEP6 were closed
-in E190–E191. The earlier verify/eval composition-root path is proven; current closure requires
-Q57 admission wiring in both workflow modes, the missing E137 `--plan` contract, write-once
-baseline reuse across eval replans, the admission C1/C3 and mutation proof, then SLICE7's
-reviewed host package. Post-merge live evidence remains increment-level, operator-reviewed work.
+E130/E164 sequencing below is historical. Current closure is the retained SLICE6 explicit-plan
+admission/composition contract and this plan's revised local DoD. Former SLICE7/deployed-host
+acceptance is an incomplete I03 obligation, not an I02 shipping prerequisite (E200).
 
 **Phase A, the command gate.** SLICE1 (runner) + SLICE5 restricted to a command-only verdict +
 SLICE6 wiring. It reads the commands a slice declares and routes only after the real eval stage;
@@ -491,11 +350,14 @@ CONTRACTS:
     outcomes. `verify_plan` (SLICE6) maps it over every slice; neither function takes a
     "current slice" from the controller, because no per-slice dispatch exists in I02.
     kill: neutralise src/fa/inner_loop/slice_verification.py::verify_slice
-  CT66 [FUNCTIONAL]: when the slice's commands pass and every test path in the slice's
-    `TESTS:` list still passes under one contract's kill-check, that contract is `VACUOUS`
-    and the slice verdict names the contract id. Under Q53(c), any failing test among those
-    paths makes that contract's kill-check `PROVEN`; attribution may therefore be weaker than
-    one contract to one test.
+  CT66 [FUNCTIONAL]: a kill-check is PROVEN only when mutation provenance passed, the current
+    harness-issued report records at least one actually executed test failure, and the runner/report
+    agree with no collection/setup/runner/timeout/infrastructure error. All executed tests passing
+    is VACUOUS. Missing/stale/malformed/contradictory reports, testcase or suite errors, zero executed
+    and all-skipped runs are ERROR, never PROVEN. Reuse one detailed JUnit parser with the existing
+    baseline-compatible bool projection; do not infer a kill from exit!=0 or a false bool row.
+    Preserve slice-level Q53(c): a genuine unrelated test failure can still prove a kill; no
+    per-contract nodeid mapping or newly adopted clean-control baseline gate.
     kill: remove-call src/fa/inner_loop/slice_verification.py::verify_slice -> _run_kill_check
   CT67 [FUNCTIONAL]: when `apply_kill` reports `targets == 0` — or `targets == 1` with
     `edits == 0`, the call site a `remove-call` names not being there — the verdict is
@@ -558,344 +420,97 @@ uv run ruff check src/fa/inner_loop/slice_verification.py tests/test_verify_slic
 - [x] STEP5: implement `scripts/check_kill_directive_ownership.py` reading every plan under `worklogs/planning-topology-and-executable-contracts-loop/increments/` with `extract_plan_ids` + `parse_kill_directives` + `_resolve_targets`, reporting one line per unfirable directive of a fully-ticked slice (exit: `uv run python scripts/check_kill_directive_ownership.py` exits 0)
 - [x] STEP6: add the ownership oracle — a fixture plan with one ticked slice naming an absent producer and one unticked slice naming the same, asserting the first is reported and the second is not (exit: `uv run pytest tests/test_verify_slice.py -q -k ownership` exits 0)
 
-## SLICE6: Wire the gate into the controller, and prove it live
+- [ ] STEP7: strengthen `_run_kill_check` and shared JUnit parsing for amended CT66: issue a fresh report per operation; bind it locally to that invocation; distinguish executed failures, skips and testcase errors, checking runner outcome/counters consistently. Preserve existing baseline projection and provenance. Prove timeout/collection/setup/error/zero/all-skipped/stale negatives plus real failure and all-pass cases; rerun CT66's full-path kill without new baseline policy (exit: `uv run pytest tests/test_verify_slice.py tests/test_slice_verification_runner.py -q` exits 0; amended CT66 producer kill is PROVEN)
+
+## SLICE6: Explicit-plan admission and live-path gate composition
 STEPS: prescriptive
 DEPS: SLICE5
-INTENT: the command gate remains reachable from a real workflow run through `commands_for`,
-  while the new shared admission loop validates/repairs the supplied plan before coder in both
-  modes. The composition-root test proves admission, verification, real eval, and terminal
-  reconciliation through `run_workflow` → `_cmd_run` → `drive_session` (SD-C).
+INTENT: validate/repair an explicit PlanRef before coder in either mode; prove the real local
+  controller→session→verifier→eval path. Nested acquisition and OS-enforced execution are I03.
 CONTRACTS:
-  CT71 [FUNCTIONAL]: after a `coder` stage returns exit 0, `_run_stage`
-    (`workflow_controller.py`) verifies **every slice** the plan declares and attaches a
-    `PlanVerification` to its `StageResult`. It is at the shared dispatch choke point, not in
-    either pipeline loop, so linear, adaptive, and repair dispatches all reach it.
+  CT71 [FUNCTIONAL]: after successful coder, `_run_stage` calls `verify_plan` for every declared
+    slice at the shared stage choke point and attaches typed PlanVerification to StageResult.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> verify_plan
-  CT72 [FUNCTIONAL]: after the actual eval report is built, controller reconciliation prevents
-    an enforce-mode blocking verification result from yielding effective route `complete`,
-    terminal status `DONE`, or process exit 0. For eval route `complete`, a determinate post-coder
-    verification block routes to `return_to_coder`; an indeterminate post-coder verification
-    result routes to `blocked`. Missing, unreadable, or empty input is rejected before coder;
-    a no-slice parse is repaired first only when `precheck` supplies a determinate diagnostic,
-    otherwise it blocks. These are admission outcomes under CT90/CT91/CT95, not post-coder evidence.
-    Observe mode keeps
-    eval routing. Any eval non-complete route remains authoritative even when verifier evidence
-    is indeterminate. `eval_report.json` remains the model-authored report; only `flow_state.json`
-    records the effective route.
+  CT72 [FUNCTIONAL]: after real eval, reconcile enforce-mode verifier evidence as a floor:
+    eval complete + determinate block → return_to_coder; complete + indeterminate → blocked;
+    no blocked enforce run is DONE/exit 0. Observe preserves eval routing; non-complete eval
+    routes keep Q56 precedence. Preserve model eval_report; effective route goes to flow_state.
     kill: neutralise src/fa/inner_loop/workflow_controller.py::_effective_controller_route
-  CT73 [FUNCTIONAL]: every successful coder stage is followed by one real eval stage, including
-    when the caller omits `eval` or supplies it before `coder`. Eval receives the typed
-    verification result from that coder attempt. A blocking gate never suppresses eval.
+  CT73 [FUNCTIONAL]: every successful coder is followed by real eval with that attempt's evidence,
+    even if eval was omitted/misordered or verification blocks. Pre-coder rejection runs no eval.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::run_workflow -> _ensure_eval_after_coder
-  CT74 [CONSTRAINT]: post-coder verification repair remains governed by the existing
-    `WorkflowProgress.repair_round` cap; a determinate blocking result cannot start an unbounded
-    coder/eval loop. Resolve/type-check/clamp both `max_repairs` and `max_replans` exactly once at
-    public `run_workflow` entry, including direct callers, using their configured ceilings; reject
-    bools/strings rather than coercing them. Keep `max_repairs` for the coder/eval repair loop.
-    One shared planner counter counts each admission-repair dispatch and each adaptive
-    eval-driven planner-replan round as one; initial configured planner/PlanRef-acquisition stages
-    are free. Reserve budget before dispatch, including failed attempts. `max_replans=0` admits an
-    initially valid plan but blocks if any repair/replan is required. Admission never invokes eval
-    while a plan is rejected. Linear remains one-pass for eval-driven outcomes. When eval says
-    `complete`, an indeterminate post-coder gate routes `blocked`; non-complete eval routes retain
-    Q56 and the bounded repair cap.
-  CT75 [FUNCTIONAL]: the C1 test boots `run_workflow` with `run_stage_fn=_cmd_run`, which reaches
-    real `drive_session`; only `ProviderChain.request` is mocked. It observes all provider roles,
-    persisted verification evidence, the eval request, and the terminal artifacts. Removing
-    `_run_stage`'s `run_stage_fn` call breaks the live oracle.
+  CT74 [CONSTRAINT]: validate/type-check/clamp max_repairs/max_replans once at public entry;
+    None uses defaults, bool/string/non-int rejects. Keep configured ceilings, bounded coder repair,
+    and one planner counter for admission repairs/adaptive eval replans, reserved before dispatch
+    including failures. Initial configured planner is free. Zero budget admits valid input but
+    blocks required repair/replan. Linear retains one-pass eval semantics.
+  CT75 [FUNCTIONAL]: C1 boots run_workflow→_cmd_run→drive_session, mocking only ProviderChain.request;
+    assert actual roles/requests, persisted verification/admission/terminal artifacts, and real eval.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> run_stage_fn
-  CT76 [FUNCTIONAL]: in that same C1 test, commands are attributed to the slice that declares
-    them — a command declared only by SLICE2 is not recorded under SLICE1 — and
-    `commands_for(None)` runs exactly once at plan level.
+  CT76 [FUNCTIONAL]: C1 proves per-slice command ownership and commands_for(None) exactly once.
     kill: remove-call src/fa/inner_loop/slice_verification.py::verify_plan -> commands_for
-  CT77c [FUNCTIONAL]: the gate has two modes. In **observe** mode — default on first deployment
-    — it computes and records the result but never changes routing. In **enforce** mode eval
-    still runs and the result is reconciled per CT72. The mode is loaded from the operator's
-    feature-flag config and recorded in `verification.json`.
+  CT77c [FUNCTIONAL]: load observe/enforce from operator feature flags and record it in verification;
+    observe is the deployment default, but neither mode makes pre-coder admission advisory.
     kill: neutralise src/fa/inner_loop/slice_verification.py::_gate_mode
-  CT77b [FUNCTIONAL]: the run writes `verification.json` beside `eval_report.json` through
-    `WorkflowArtifactPaths`, carrying plan/slice commands, real exit codes, truncated output,
-    per-slice verdicts, kill-checks, errors, and elapsed seconds. Written on every successful
-    coder stage, blocking or not.
+  CT77b [FUNCTIONAL]: persist verification beside actual eval_report on every successful coder,
+    including blocked attempts: commands, real exits/tails, verdicts/kills/errors/durations.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> write_verification
-  CT77 [FUNCTIONAL]: the eval request receives the current typed verification evidence,
-    including mode, repair round, plan commands, slice results, kill-checks, regressions and
-    errors. The actual report is not replaced with a synthetic harness report.
+  CT77 [FUNCTIONAL]: real eval request receives this attempt's typed mode/round/plan/slice/kill/
+    regression/error evidence; do not synthesize or overwrite the model-authored eval report.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_eval_evidence_block -> _verification_evidence_lines
-  CT86 [FUNCTIONAL]: initial PlanRef acquisition/admission repair occurs before T0 exists.
-    After the active plan passes admission and before the first `coder` stage, capture T0 from that
-    admitted plan's `TESTS:` paths and write `verify_baseline.json` exactly once. Every later
-    admission, coder-repair, and eval-driven replan stage loads the same T0; baseline creation is
-    not keyed only to `repair_round`. Compare the complete stored and current maps symmetrically:
-    the exact slice-ID key sets must match, and each slice's normalized `TESTS:` path set must
-    match. Added/removed slices or changed paths are indeterminate; never compare only the
-    intersection or ignore stored extra slices.
+  CT86 [FUNCTIONAL]: admission/repair precedes write-once T0 before first coder. Reuse T0 across
+    coder repair and eval replan, independently of repair_round. Require symmetric equality of
+    complete slice-ID→normalized TESTS-path maps; additions/removals/path edits are indeterminate.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> capture_baseline
-  CT87 [FUNCTIONAL]: every coder dispatch in initial, linear, adaptive-repair, and adaptive-replan
-    flow passes through one shared admission helper before T0 capture or coder dispatch. It uses
-    the current controller-owned `PlanRef`, calls `precheck` and `validate_kill_directives`, and
-    revalidates the exact candidate bytes after every repair. Any missing, malformed, duplicate,
-    or near-miss functional kill directive and any determinate `precheck` `FAIL` is persisted as a
-    sanitized per-attempt record and sent to a configured planner repair dispatch. Promote no
-    invalid candidate. If determinate diagnostics remain and shared budget remains, keep that
-    candidate staging-only and send the updated diagnostic bundle to a fresh planner-repair
-    dispatch; do not block merely because one candidate still needs repair. No coder is dispatched
-    while any blocker remains and no eval runs for a rejected pre-coder attempt. The same clamped
-    `max_replans` budget counts admission repairs and adaptive eval-driven planner-replan rounds
-    in both modes; linear's eval outcome remains one-pass. Missing planner, failed/unavailable
-    planner, candidate-write/promotion failure, indeterminate validation, or budget exhaustion
-    records a final `blocked` route. Once a coder succeeds, normal Q55/Q56 applies. Persist a
-    structured `dispatch_kind` so ordinary planning, PlanRef acquisition, and admission repair are
-    distinguishable in workflow/session evidence (Q57).
+  CT87 [FUNCTIONAL]: one shared pre-coder helper calls precheck and validate_kill_directives on
+    exact active/candidate bytes in initial/linear/adaptive dispatches. Send sanitized determinate
+    FAILs through bounded Q57 planner repair; revalidate every revision, preserving rejected-draft
+    progress. Missing/failed planner, write/promotion failure, indeterminate validation or budget
+    exhaustion blocks with no coder/eval. Distinguish ordinary planning/repair/replan in evidence.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_validate_plan_admission -> validate_kill_directives
-  CT90 [FUNCTIONAL]: a CLI `fa workflow` invocation whose normalized roles contain `coder`
-    requires an explicit `--plan` argument (E137). Reject a missing argument before
-    `_resolve_workflow_lifecycle` or any run/session/artifact creation; do not require a path at
-    `invoke_workflow` entry. Define relative CLI plan paths as relative to the resolved workflow
-    workspace, not process CWD. Therefore retain only the argument-presence preflight before
-    lifecycle setup; after the actual workspace is known, normalize the supplied path there and
-    let CT95 perform no-follow regular-file and containment validation before any provider stage.
-    C2 asserts an actionable error, zero session/run artifacts, and zero provider dispatch when
-    `--plan` is omitted. Update parser/help and coder examples so they no longer call it optional;
-    preserve deliberately red E19. `invoke_workflow` uses planner-managed acquisition (CT96).
+  CT90 [FUNCTIONAL]: CLI roles containing coder require --plan before run/session/artifact creation;
+    resolve supplied relative paths against the selected workspace, not process CWD. Update help/
+    examples; preserve deliberately red E19. No managed-acquisition exception is delivered in I02.
     kill: remove-call src/fa/cli.py::_cmd_workflow -> _require_plan_for_coder
-  CT91 [FUNCTIONAL]: admission runs `precheck` on the active plan and includes its determinate
-    `FAIL` diagnostics in the same bounded repair batch as kill-directive diagnostics; `WARN`
-    alone does not block. Revalidate all structural diagnostics on every candidate. An exception
-    from reading/parsing/precheck is indeterminate and blocks. Empty input, or a no-slice parse
-    without any determinate structural diagnostic, is indeterminate and blocks; a non-empty
-    near-miss heading with a reported `FAIL` is repairable before the final parsed-slice check.
-    The real composition-root test proves a structural diagnostic reaches planner before coder.
+  CT91 [FUNCTIONAL]: precheck FAIL joins kill diagnostics in Q57 repair; WARN alone does not block.
+    Non-empty structural near-miss can repair before a slice parses. Exceptions, empty input or
+    zero slices without determinate diagnostics are indeterminate; final zero-slice plans block.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_validate_plan_admission -> precheck
-  CT92 [FUNCTIONAL]: create `admission.json` before the first provider stage and append every
-    PlanRef-acquisition/revision/admission attempt, sanitized diagnostics, source/candidate/promoted
-    hashes, validator result, dispatch kind, and route. Version-1 schema is exact:
-    top-level `{schema_version: 1, run_id, status, plan_ref, attempts}` where `schema_version` is
-    integer 1, `run_id` matches `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`, and `status` is
-    `ACQUIRING|ADMITTED|BLOCKED`; `plan_ref` is null or
-    `{workspace_relative_path, source_kind, sha256}` with `source_kind` in
-    `EXPLICIT|EXISTING_SELECTION|BOOTSTRAP` and lowercase 64-hex SHA-256. The stored path is a
-    normalized workspace-relative POSIX path (never absolute, `.`/`..`, or a symlink path).
-    Each attempt is exactly `{attempt, dispatch_kind, validation, diagnostics, source_sha256,
-    candidate_sha256, promoted_sha256, route}`; `attempt` is a contiguous positive integer,
-    `dispatch_kind` is `ACQUISITION|ADMISSION_REPAIR|EVAL_REPLAN`, `validation` is
-    `PASS|DIAGNOSTICS|INDETERMINATE`, nullable hashes are lowercase 64-hex, and `route` is
-    `RETRY|ADMITTED|BLOCKED`. Each diagnostic has exactly `{validator, rule, severity, line}` plus
-    optional `contract_id`: `validator` is one of `precheck|kill-directives|plan-ref|bootstrap|
-    promotion|artifact-io`; `severity` is `FAIL|WARN|ERROR`; `line` is a positive JSON integer or
-    null (null only when the failure has no source line); and `contract_id`, when present, matches
-    `^CT\d+[a-z]?$`. `precheck`/`kill-directives` rules use their owning validators' closed IDs
-    (the 12 precheck IDs in D2 and four kill-directive IDs); the other validators use versioned,
-    closed per-validator `rule` tables rather than one duplicated global enum (Q62 recommendation;
-    freeze the v1 table before CT92 implementation).
-    Unknown values fail schema validation. Never persist `PlanDiagnostic.message`, source snippets, absolute paths, raw plan
-    bytes, credentials, or provider secrets. Schema-check every complete write and fail closed on
-    incompatible/corrupt prior data. Serialize read-modify-write
-    with an OS process-shared `flock` on a no-follow lock file; atomically replace the artifact,
-    private mode, fsync file and parent directory. Every durable append is a barrier before the
-    next pre-coder provider stage. On append failure, stop before the next provider dispatch,
-    return nonzero, and best-effort record a blocked artifact-write error in `flow_state.json`;
-    never claim the admission record persisted. If the final append fails after atomic promotion,
-    keep the valid canonical plan and block before coder; do not auto-rollback. No admission write
-    after coder may suppress Q55 eval; actual coder/eval dispatch/outcomes stay in workflow/session
-    evidence. C1 reads persisted bytes; rejects unknown keys/enums, wrong field types, invalid run IDs and absolute/escaping paths; and injects failures before retry and after promotion.
+  CT92 [FUNCTIONAL]: create admission.json before first provider stage, append sanitized attempts
+    with schema/run ID/PlanRef hashes/dispatch/validation/routes, and schema-check complete writes.
+    Use private no-follow process-shared flock, atomic replace, file+directory fsync; each append
+    is a pre-provider barrier. No .message/source snippets/raw plan/absolute paths/secrets. On
+    write failure stop before next pre-coder provider; best-effort blocked flow_state is not proof
+    admission persisted. Failure after promotion preserves canonical bytes, blocks before coder.
+    Do not suppress Q55 eval with a later admission write. Freeze Q62 closed per-validator rules
+    before implementation; shared exact v1 schema is preserved in migration bank §4.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_record_admission_attempt -> write_admission_record
-  CT93 [FUNCTIONAL]: a plan-mutating planner dispatch gets a dedicated registry capability,
-    not the ordinary planner `fs_write_file`. Thread typed `dispatch_kind` plus a controller-owned
-    target from `_run_stage` through `cli.py::_cmd_run -> _build_run_tool_registry ->
-    _build_role_registry`, `tools/__init__.py::build_planner_registry`,
-    `profiles.py::build_registry_for_role`, and `tools/write_file.py`. Admission repair and an
-    adaptive eval-replan may write only the exact fresh candidate for that dispatch; deny the
-    active plan, siblings, `..`, absolute paths, symlinked parent/leaf, and in-workspace redirection.
-    Anchor no-follow opens to workspace directory descriptors; a raw string allowlist check plus
-    `Path.resolve()` is insufficient. The general planner writer must deny reserved
-    `.fa/admission/` even though its existing allowlist contains `.fa/`; acquisition stages expose
-    only selection/bundle tools, and repair/replan stages expose only the exact candidate tool.
-    Do not broaden the ordinary allowlist to `worklogs/`. C3 exercises the real `_cmd_run`
-    registry/handler, allows one exact candidate write, and denies all other paths and symlink
-    redirections.
+  CT93 [FUNCTIONAL]: thread typed dispatch_kind/controller target through stage→CLI→role registry→
+    profiles/write handler. Repair/eval-replan gets only its exact fresh candidate writer; reject
+    active plan, siblings, absolute/escaping/symlink paths with descriptor-rooted no-follow IO.
+    Ordinary planner writer denies .fa/admission/; do not broaden worklogs permissions. Selection/
+    bootstrap tools are I03, not added here. C3 uses the actual _cmd_run registry/handler.
     kill: remove-call src/fa/inner_loop/profiles.py::_build_tool_builders -> build_scoped_write_file_tool
-  CT94 [FUNCTIONAL]: for any controller-authorized plan revision of a canonical increment
-    (admission repair or adaptive eval-replan), create a fresh candidate per planner attempt under
-    `.fa/admission/<run_id>/`, seeded from the current admitted plan or the immediately preceding
-    rejected draft so retry fixes are not discarded. Snapshot bytes once; strictly decode, hash,
-    and validate that exact snapshot. Acquire a process-shared OS lock keyed by the canonical
-    workspace-relative target (not run ID); under it, reject symlink/non-regular targets and
-    recheck the source SHA-256 captured before dispatch. Stage the exact validated bytes in a
-    hidden unique sibling of the canonical increment; retain required file mode, fsync file and
-    parent, then atomically replace the same path. Verify promoted bytes hash to the validated
-    candidate hash, update the controller-owned PlanRef, and remove staging/temp files. New-project
-    bootstrap is a distinct no-clobber staged-directory publication, never replacement of an
-    existing project. An explicit valid non-increment plan may be admitted without repair, but
-    cannot be promoted outside Q58's increments scope. Invalid drafts remain staging-only and feed
-    the next bounded repair; delete scratch drafts on terminal block. Any failure before successful
-    replacement leaves original bytes unchanged. `os.replace` is the irreversible commit point:
-    after it succeeds, never auto-rollback; if directory fsync, promoted-hash verification, or the
-    final admission append fails, preserve the canonical bytes, block before coder, and best-effort
-    persist the failure. C1/C3 inject failures both before and after replacement, run two distinct
-    run IDs contending for one target (the second must see a stale source hash), and cover
-    invalid-first/valid-later retry.
+  CT94 [FUNCTIONAL]: Q58 repair/eval-replan seeds fresh .fa/admission/<run_id>/ candidates from the
+    admitted plan/latest rejected draft; strictly decode/hash/validate one exact snapshot. Under
+    process-shared canonical-target lock, reject nonregular/symlink targets and stale source hash.
+    Stage validated bytes in a unique hidden sibling, preserve mode, fsync, replace same canonical
+    increment path, directory-fsync/verify promoted hash/update PlanRef/clean temps. Before replace,
+    failure leaves original bytes unchanged; after irreversible replace, never rollback: preserve
+    bytes and block if verification/fsync/final append fails. Valid explicit non-increment plans
+    may admit but cannot promote outside Q58 scope. Bootstrap no-clobber belongs to I03.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_admission_repair -> _promote_validated_plan
-  CT95 [FUNCTIONAL]: before constructing any artifact path, public `run_workflow` strips role
-    whitespace without reordering, requires a non-empty list containing only `planner|coder|eval`,
-    accepts only `linear|adaptive`, and type-checks/clamps `max_repairs` and `max_replans` exactly
-    once (`None` selects the documented default; bools/strings/other non-integers reject; integer
-    ranges are `0..MAX_REPAIRS_CEILING` and `0..MAX_REPLANS_CEILING`). Validate `run_id` against
-    `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$` before `workflow_artifact_paths`; direct callers cannot
-    reach `fa_session_log_root()/run_id` with `..`, an absolute path, or an invalid ID. Before every
-    coder dispatch require a controller-owned typed `PlanRef` and
-    re-read it through a no-follow descriptor walk anchored at the resolved workspace root.
-    Explicit CLI/library mode requires a workspace-relative-or-absolute target resolving to a
-    readable regular non-symlinked file inside that root, strict UTF-8, non-empty bytes, and a
-    1 MiB byte cap. Missing, malformed, empty, outside-workspace, symlinked, unreadable, or
-    oversized input is indeterminate and blocks before provider dispatch; record a structured
-    blocked admission/terminal state without raw plan bytes. In planner-managed mode, permitted
-    only through the `invoke_workflow` adapter, the initial planner may run without a PlanRef; it
-    must submit a typed existing-plan selection or a validated staged new-project bundle. The
-    controller creates the PlanRef/hash; recheck the hash immediately before each coder dispatch.
-    Final zero-slice plans block; a non-empty determinate near-miss may enter Q57 repair, but no
-    path is inferred from prose or filesystem globbing. Direct coder-only API calls without an
-    explicit PlanRef fail closed. C1/C3 prove explicit/managed modes, input/path/run-ID containment,
-    and zero coder/eval on rejection.
+  CT95 [FUNCTIONAL]: public entry validates nonempty normalized planner|coder|eval roles without
+    reordering, linear|adaptive mode, budget types/ceilings and run ID before artifact paths. For
+    coder workflows require explicit controller-owned PlanRef before any provider: readable regular
+    nonsymlink file inside workspace via rooted no-follow walk, strict UTF-8, nonempty, ≤1 MiB.
+    Missing/invalid/outside/oversized input blocks with structured terminal/admission state. Recheck
+    hash before coder; detected post-coder PlanRef mismatch is indeterminate evidence, never stale
+    success, and still reaches Q55 eval. This detects mismatch, not OS isolation. Unsupported
+    invoke_workflow managed acquisition returns unavailable before child provider/coder dispatch;
+    no guessed path, globbing, fake bundle or public context field. C1/C3 proves these limits.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::run_workflow -> _require_plan_for_coder
-  CT96 [FUNCTIONAL]: RECOMMENDED DESIGN — NOT OPERATOR-RATIFIED. Production chat calls
-    `invoke_workflow` with the task as the explicit goal; do not add a `context` field to its tool
-    schema (Q66). The controller must capture/transfer a bounded snapshot of current chat context
-    internally to the nested planner's user/turn input alongside the planner's own prompt/skills;
-    current path-only session facts do not satisfy this. Outer chat never supplies a PlanRef path. Keep ordinary generalist chat as the default and its
-    scope hint advisory (Q59). Only an explicit guaranteed-workflow mode selects a restricted route
-    before provider dispatch; for that opt-in route, enforce a router-only chat registry:
-    read/search/context tools plus
-    `invoke_workflow`, but no file write/edit, shell, subagent, or Git-mutating capability. This cannot
-    rely on prompt compliance or the optional `chat_escalation_gate`, which defaults to false
-    (`src/fa/cli.py:1606-1607`, `src/fa/inner_loop/runtime_limits.py:159`). Keep ordinary chat for
-    non-workflow tasks and preserve explicit-plan CLI mode. The adapter passes a typed
-    `planner_managed` acquisition capability; only the nested initial planner may choose/construct
-    a PlanRef before it exists. It must return exactly one closed-schema choice
-    (`additionalProperties: false`): either `PlanSelection` with `kind: SELECT_EXISTING` and
-    `workspace_relative_path: string`, or `ProjectBootstrapBundle` with
-    `kind: BOOTSTRAP_NEW_PROJECT`, `project_slug: string`, `increment_slug: string`,
-    `roadmap_body: string`, and `increment_body: string`. Bodies are strict UTF-8 Markdown without
-    model-authored frontmatter. Reject duplicate JSON keys/fields; do not accept a free-form
-    `files` map, raw ledger entries, or destination. Existing selection must match the canonical
-    `worklogs/<project_slug>/increments/increment-<number>-<increment_slug>.md` layout, where
-    `<number>` is zero-padded with at least two decimal digits, with normalized workspace-relative
-    separators and no symlink components. Require both slugs to match
-    `[a-z0-9]+(?:-[a-z0-9]+)*` (≤48 chars), strict UTF-8, ≤1 MiB per generated file and ≤2 MiB
-    total, and no traversal, absolute paths, or symlinks.
-
-    Recommended publication is controller-rendered: emit roadmap frontmatter with
-    `Roadmap-ID: RM-<project_slug>`, `slug: <project_slug>`, `created: YYYY-MM-DD` from the UTC
-    controller clock, `status: IN PROGRESS`, and `active-increment: I01` (omit `supersedes` for a
-    new project). Require roadmap body sections `Intent`, `Artifact schema`, `Increments`,
-    `Standing decisions`, and `Sources`; its `Increments` table must contain exactly one I01 row
-    with status `IN PROGRESS`, while optional later rows use `OUTLINED` and publish no files.
-    Generate `ledger.md` with `Ledger-for: RM-<project_slug>`, `type: EVIDENCE`,
-    `append-only: true`, `# EVIDENCE ledger — <project_slug>`, and the canonical append-only
-    instructions/entry-format section, ending before any entry; model authors no initial entries.
-    Generate I01 frontmatter with `Increment-ID: RM-<project_slug>-I01`, the matching
-    `Roadmap-ID`, `status: IN PROGRESS`, and `slices` derived from the parsed increment body;
-    use only increment statuses `OUTLINED|IN PROGRESS|SHIPPED` (never `READY`). Validate that body
-    with the shared CT91/CT95 precheck and kill-directive admission and require
-    at least one slice before publication. Each
-    complete rendered artifact remains within the byte caps. The artifact schema defines roadmap
-    and ledger grammar, but there is no production roadmap/ledger parser and `parse_ledger` is I04
-    work. If the operator instead chooses model-supplied complete roadmap/ledger files, add a
-    minimal versioned bootstrap-content validator in I02 before calling them validated; never
-    depend on the deferred I04 ledger parser. Use a controller-mediated exact-schema writer with
-    no general filesystem path as the only write capability in this acquisition stage.
-    Stage with private permissions under `.fa/admission/<run_id>/bootstrap-*`, using workspace-rooted
-    no-follow directory descriptors for both staging and `worklogs/`; reject symlinked parents and
-    verify `worklogs/<slug>/` is absent. Publish with a supported atomic no-clobber directory rename
-    (fail closed if the platform cannot provide it; never overwrite a collision). Treat the rename
-    as the publication commit point: if subsequent PlanRef/admission persistence fails, preserve the
-    published valid artifacts, record the failure best-effort, and block before coder; do not
-    auto-delete or overwrite the project. The controller creates the typed `PlanRef`, source kind,
-    and digest only after publication. Existing selection must resolve to an existing regular
-    increment under that same canonical project layout. Reserve `.fa/admission/` from the normal
-    planner `.fa/` allowlist. Then run shared admission; no PlanRef or blocked admission means no
-    coder/eval. Bootstrap is distinct from Q58 repair and never broadens normal planner writes.
-    C1 must drive the workflow-first outer chat `drive_session` -> actual `invoke_workflow` handler ->
-    nested `run_workflow` -> `_cmd_run` -> planner/coder/eval `drive_session`, mocking only
-    `ProviderChain.request`. Assert its workflow-first registry retains `invoke_workflow` but
-    excludes `fs_write_file`, `fs_edit_file`, `fs_run_bash`, `fs_spawn_subagent`, and `pr_prepare`,
-    while non-workflow chat and Q55/Q56 routing remain unchanged. Assert the `invoke_workflow` schema has no context/PlanRef field, while the bounded parent-chat
-    context snapshot reaches the first planner request beside its own role prompt/skills, token
-    caps/compaction hold, and a synthetic credential sentinel is redacted/omitted without raw
-    transcript persistence; fake provider tool calls prove existing-project selection, new-project
-    publication, persisted PlanRef/provider
-    order, malformed/missing-bundle no-coder blocks, and post-publication admission-write failure
-    retaining the valid bundle while dispatching no subsequent provider stage.
-    This protocol is a senior recommendation, not an operator decision (Q59/Q60).
-    kill: remove-call src/fa/inner_loop/tools/workflow_tool.py::handler -> _run_planner_managed_workflow
-  CT97 [FUNCTIONAL]: RECOMMENDED HARDENING — NOT OPERATOR-RATIFIED. A canonical PlanRef is
-    controller-owned and may change only through validated controller promotion, never through a
-    provider stage. Source audit: the coder/implementer has `fs_write_file`, `fs_edit_file`, and
-    `fs_run_bash` (`src/fa/inner_loop/profiles.py:117-131`); `SandboxHook` is in-process middleware and defaults
-    to `allow_general_write=True` (`src/fa/inner_loop/hooks/builtin.py:87-104`, registered by
-    `src/fa/cli.py:1872-1873`); the bash gate allows general writes by default
-    (`src/fa/sandbox/bash_gate.py:93-96, 170-189`); `fs_run_bash` may use a persistent PTY or
-    subprocess fallback (`src/fa/inner_loop/tools/run_bash.py:93-149, 152-216, 219-318`). The
-    `SandboxHook`'s path-tool set is only `fs_read_file|fs_write_file`
-    (`src/fa/inner_loop/hooks/builtin.py:31-36, 132-145`). `fs_write_file` resolves a workspace path,
-    checks generic blackboard conflicts, then writes directly (`src/fa/inner_loop/tools/write_file.py:18-58`);
-    `fs_edit_file` resolves a workspace path, checks blackboard mutation metadata, then calls
-    `path.write_text` (`src/fa/inner_loop/tools/edit_file.py:104-110, 137-155`). Neither has an
-    active-PlanRef rule.
-    `fs_spawn_subagent` is registered in the baseline but not in the current implementer/coder
-    profile (`tools/__init__.py:150-151`; `profiles.py:117-131`); the tool's feature flag defaults
-    off (`tools/spawn_subagent.py:139-154`). Per operator clarification, I02 should keep it absent
-    from workflow-stage registries and test absence; it need not implement child isolation now.
-    Any future profile/flag change that exposes subagents is blocked until child processes inherit
-    the same write boundary. `_build_run_hook_registry` merely assembles hooks; adding one there
-    alone does not prove shell/subprocess isolation. `_run_stage` captures plan IDs before coder
-    and verifies that snapshot afterward (`workflow_controller.py:1053-1081, 1093-1104`), so the
-    current gate can verify stale plan text after a provider mutation.
-
-    Recommended invariant: protect provider-controlled writes at the actual `_cmd_run` stage seam,
-    while keeping the trusted workflow controller outside that boundary. Source-confirmed topology:
-    `invoke_workflow` synchronously calls `run_workflow` (`src/fa/inner_loop/tools/workflow_tool.py:463-484`), its stage
-    callback is `_cmd_run` (`src/fa/cli.py:1687-1706`), and `_cmd_run` reaches `drive_session` (`src/fa/cli.py:2408`);
-    a blanket read-only mount around this in-process call stack would also constrain controller
-    publication/promotion. The recommended lowest-complexity secure design keeps the trusted
-    controller in the parent process and gives each provider stage one shared, disposable writable
-    view for *all* provider write-capable tools: `fs_write_file`, `fs_edit_file`, `fs_run_bash`/
-    PTY, and descendants. Seed it from an explicit snapshot of the actual current worktree,
-    including staged/unstaged and untracked project changes (not a clean checkout); exclude
-    secrets/caches by policy and expose required toolchains read-only. Keep the host canonical
-    PlanRef, `.fa/admission/`, `.git`, credentials, and controller state outside the writable view.
-    File-tool handlers operate against the view using descriptor-rooted no-follow operations and
-    deny the active PlanRef/control-plane targets; the shell boundary covers the persistent PTY,
-    subprocess fallback, and all descendants. At stage end, return a change manifest/diff to the
-    parent, which rejects protected paths, symlink/hard-link/special-file tricks, escapes, and
-    destinations whose host version changed since the snapshot, then imports only approved source
-    changes. Keep candidate/bootstrap submission as narrow controller-mediated capabilities and
-    perform canonical promotion outside provider execution. This preserves existing user edits and
-    turns concurrent writes into explicit conflicts. Do not mix host-direct file tools with a stale
-    shell snapshot or rely on one read-only bind, chmod, or path blacklist. If the shared view/import
-    boundary is too large for the first implementation, defer arbitrary shell and provide a
-    constrained test runner; do not fall back to general host writes. Recheck PlanRef bytes/hash
-    before and after every provider stage and before post-coder verification; mismatch is
-    indeterminate and cannot use a stale snapshot to produce success. Even on an integrity error
-    after a successful coder dispatch, Q55 still requires the real eval stage; reconciliation must
-    prevent terminal success.
-
-    C1 drives outer chat `drive_session` -> actual `invoke_workflow` handler -> nested
-    `run_workflow` -> `_cmd_run` stage runner. Fake provider calls attempt `fs_write_file`,
-    `fs_edit_file`, `fs_run_bash`, and subprocess/symlink/hard-link/rename routes against a
-    disposable active plan. Start from staged, unstaged, and untracked sentinel changes; all remain
-    visible and preserved, approved source changes import as unstaged, and a concurrent host edit
-    conflicts instead of being overwritten. Direct unauthorized file-tool writes return denials;
-    shell writes remain inside the shared copy-on-write view and cannot alter host PlanRef/control-
-    plane bytes. Assert the workflow coder registry omits `fs_spawn_subagent`; future enablement
-    requires a separate proof that each child inherits the same boundary.
-    Ordinary source edits still work, and a valid controller-owned candidate promotion succeeds at
-    the exact target with promoted hash equal to the validated candidate hash.
-    Q55 eval still runs after successful coder dispatch. The producer kill must remove the boundary
-    call at the stage-execution seam, not merely existing hook registration. This recommended
-    invariant/mechanism awaits explicit operator acceptance (Q61).
-    kill: remove-call src/fa/cli.py::_cmd_run -> run_stage_with_plan_write_boundary
-TESTS: tests/test_verify_gate_live.py   (EXISTING — extend; C1/C2/C3 admission proofs are new)
+TESTS: tests/test_verify_gate_live.py   (EXISTING — extend direct explicit-plan C1/C2/C3)
 ```verify
 uv run pytest tests/test_verify_gate_live.py -q
 uv run ruff check src/fa/inner_loop/workflow_controller.py src/fa/inner_loop/workflow_artifacts.py src/fa/inner_loop/profiles.py src/fa/inner_loop/tools/write_file.py src/fa/cli.py src/fa/feature_flags.py tests/test_verify_gate_live.py
@@ -908,166 +523,84 @@ uv run ruff check src/fa/inner_loop/workflow_controller.py src/fa/inner_loop/wor
 - [ ] STEP6: assert plan-level and per-slice command attribution and the once-only plan-level command (exit: `uv run pytest tests/test_verify_gate_live.py -q -k real_workflow` exits 0)
 - [ ] STEP7: assert eval received the same attempt's typed evidence and the persisted actual eval report remains unmodified (exit: `uv run pytest tests/test_verify_gate_live.py -q -k real_workflow` exits 0)
 - [x] STEP8: record the operator-resolved Q58 interface in the open-question/design record: controller-owned candidate, exact-target planner writer, revalidation, then physical replacement of the original canonical increments file at the same `--plan` path. This decision step is complete; runtime implementation and its proofs remain in the following steps (exit: explicit operator decision recorded; no inferred approval)
-- [ ] STEP9: implement the Q58 controller-owned revision channel and CT92 `admission.json`: add the artifact path/schema/writer, per-run append lock, sanitized attempt records, private atomic writes+fsync, exact-target candidate creation under `.fa/admission/<run_id>/`, secure single-target writer wiring through `_run_stage` → `_cmd_run` → role registry → `profiles.py`/`tools/write_file.py`, process-shared target lock, source-hash CAS, validated same-path promotion, and cleanup. Reserve `.fa/admission/` from the existing general planner `.fa/` writer; do not broaden the allowlist. Rejected candidates seed the next fresh candidate so repair progress is preserved; terminal failure cleans drafts. Fail closed on admission-log write failure before the next provider stage; after successful promotion, keep canonical bytes if the final append fails and block before coder (Q58/CT92). Prove exact schema/no source snippets, no lost appends, write-failure barriers, symlink/path attacks, and validated candidate hash equals promoted bytes (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "candidate or admission_artifact"` exits 0)
-- [ ] STEP10: implement one controller admission function over the current typed PlanRef. Run `precheck` plus `validate_kill_directives`; record WARN without blocking, combine only determinate FAILs for Q57 repair, and revalidate every exact candidate snapshot. Permit a non-empty structural near-miss to repair even before any slice parses; empty/unreadable/invalid-UTF8/oversized input, validator exceptions, or zero slices without a determinate repair diagnostic is indeterminate; no invalid or zero-slice final plan passes (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "admission or precheck"` exits 0)
-- [ ] STEP11: implement the recommended `invoke_workflow` planner-managed PlanRef acquisition (CT96) with no new context or PlanRef field in the chat tool schema (Q66). Capture the bounded parent-chat context internally at tool-call time and deliver it to the initial planner alongside the planner's own prompt/skills; enforce provider egress/redaction policy and prove token budgeting, secret omission, and compaction in the nested C1 path. Select workflow-first mode before provider dispatch and build its router-only registry (read/search/context plus `invoke_workflow`, no direct mutators); preserve ordinary chat and Q55/Q56 routing. Thread a typed capability from `WorkflowInvocationContext` only; the initial planner can select an existing canonical increment or submit the exact new-project bundle. Use dedicated selection/bootstrap tools only, stage under private `.fa/admission/<run_id>/`, enforce schema/size/path limits, and publish new project directories with atomic no-clobber semantics. The controller creates the PlanRef; then shared admission runs. Test both selection and new-project bootstrap through the real outer-chat/nested-workflow C1 path (exit: `uv run pytest tests/test_verify_gate_live.py -q -k planner_managed_acquisition` exits 0)
-- [ ] STEP12: route every coder dispatch in initial, linear, adaptive repair, and adaptive eval-replan flow through the shared admission gate before baseline/coder dispatch. Preserve normal role order when already admitted; safety repair is an explicit additional planner dispatch before coder. Thread a single `max_replans` budget across admission-repair dispatches and adaptive eval-driven planner-replan rounds; count every extra dispatch before it starts, including failures. Normalize `max_repairs` and `max_replans` once at public `run_workflow` entry for direct callers; `max_replans=0` admits a valid initial PlanRef but blocks any required repair/replan. Linear remains one-pass for eval outcomes; a rejected pre-coder attempt runs no eval; Q55/Q56 applies after successful coder (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "linear_admission or adaptive_admission or role_order or direct_budget"` exits 0)
-- [ ] STEP13: enforce the two explicit-mode boundaries. At `_cmd_workflow`, reject missing `--plan` before run/session creation (CT90); after the selected workspace is resolved, interpret relative paths against that workspace and pass a normalized PlanRef candidate to the controller, never resolve relative to process CWD. At public `run_workflow`, validate roles/mode/run-ID/budget types before artifact-path construction; explicit coder callers need a valid PlanRef before any provider stage. Only the typed `invoke_workflow` adapter may enter planner-managed mode. Migrate the existing SD-C C1 fixture: it currently sets `workspace=REPO_ROOT` but places `plan_path` in `tmp_path`, which CT95 must reject; use an explicit plan contained by the fixture workspace while keeping the real `tests/test_verify_gate_live.py` command accessible. Any repair/promotion fixture instead uses a disposable workspace copy with the increment at the same relative canonical path; never promote over the tracked source. Update parser/help/CLI examples and preserve red E19 (exit: `uv run pytest tests/test_verify_gate_live.py tests/test_cli_ergonomics.py -q -k "plan_preflight or direct_api_plan_guard or plan_help"` exits 0)
-- [ ] STEP14: repair T0 lifecycle after admission is wired: all acquisition and repair occur before T0; after the first accepted PlanRef, capture the full slice-ID→normalized-TESTS-path map once before coder. Reuse the same T0 across coder repair and adaptive eval-replan; compare stored/current maps symmetrically, rejecting added/removed slices or changed paths as indeterminate (exit: `uv run pytest tests/test_verify_gate_live.py -q -k baseline` exits 0)
-- [ ] STEP15: resolve CT97's recommended PlanRef-integrity boundary before claiming production readiness. Do not blanket-mount the current in-process `_cmd_run` call stack read-only: nested `invoke_workflow` executes the trusted controller in that same stack, so controller promotion would be blocked. Keep the controller outside provider-controlled execution, or refactor nested orchestration through trusted-controller/worker IPC. At the real stage seam, give `fs_write_file`, `fs_edit_file`, persistent PTY, subprocess fallback, and descendants one shared per-stage OS-sandboxed copy-on-write view seeded from the actual dirty worktree (staged, unstaged, and untracked changes); use descriptor-rooted no-follow operations and deny active PlanRef/control-plane writes. Keep host PlanRef/`.fa/admission/`/`.git` outside the writable view; validate/import only approved changes, preserving user state and rejecting concurrent host edits rather than overwriting. Keep `fs_spawn_subagent` absent from the current workflow-stage registry (the operator defers child isolation); any future exposure must inherit the boundary before enablement. Cover aliases to active PlanRef/`.fa/admission/`; do not rely on the current broad-write hook or the subagent feature flag. Fail closed before coder when the shell/descendant boundary is unavailable; controller candidate/bootstrap capabilities and promotion stay outside provider filesystem access. Check PlanRef hashes immediately before/after each stage and before verification; mismatch is indeterminate and never verifies stale snapshot. Prove ordinary source edits and a valid nested controller promotion still work, and preserve Q55's real eval after a successful coder even when a plan-write attempt is denied or integrity is indeterminate (exit: `uv run pytest tests/test_verify_gate_live.py -q -k plan_write_boundary` exits 0; do not tick until the operator accepts the mechanism and evidence passes)
-- [ ] STEP16: prove the full acceptance matrix. Direct C1 boots real `run_workflow` → `_cmd_run` → `drive_session`, mocking only `ProviderChain.request`; nested C1 boots outer chat `drive_session` → `invoke_workflow` → nested run_workflow → `_cmd_run` → planner/coder/eval drive_session, again with only that provider seam mocked. Prove existing selection and bootstrap, linear/adaptive successful admission, invalid-first/valid-later repair, no planner, planner failure, exhausted budget, indeterminate/missing/unreadable/empty/zero-slice inputs, run-ID/path/symlink rejection, stale-hash concurrency, append failure before retry and after promotion, atomic same-path replacement in a disposable workspace, dirty-worktree snapshot/import with staged/unstaged/untracked sentinels, concurrent-edit conflict without clobber, control-plane integrity, T0 reuse, coder→eval, and provider-stage ordering. The existing SD-C C1 plan is contained by its workspace; every repair/promotion case uses a disposable workspace copy at the same relative canonical increment path, and the tracked fixture/source remains byte-identical. Every blocked case proves zero coder/eval and the specified artifact presence/absence (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "real_workflow_admission or planner_managed_acquisition or plan_write_boundary"` exits 0)
-- [ ] STEP17: run the full declared `tests/test_verify_gate_live.py` path once for every one of the 18 `FUNCTIONAL` contracts in this slice: CT71, CT72, CT73, CT75, CT76, CT77b, CT77c, CT77, CT86, CT87, CT90, CT91, CT92, CT93, CT94, CT95, CT96, and CT97. Do not replace Q53(c) with `-k` subsets or guessed contract→nodeid mapping. Kill targets include verify_plan, baseline capture, both admission validators, CLI/controller guards, admission writer, scoped candidate writer, promotion, nested PlanRef acquisition, and plan-write boundary; each named producer removal must fail its oracle. Keep mutation roots to `src/` plus explicitly permitted `scripts/`; tests remain outside and mutmut global `source_paths` unchanged. Report all 18 full-path executions, elapsed cost, provenance result, and unrelated-red-path false-proof risk; restore source and confirm clean diff (exit: every named producer mutation is killed)
+- [ ] STEP9: implement CT92–CT94 explicit-plan history/candidate/scoped-writer/promotion with private durable IO, canonical-target flock and source-hash CAS; preserve Q58 irreversible failure policy and rejected-draft progress (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "candidate or admission_artifact"` exits 0)
+- [ ] STEP10: implement shared exact-byte PlanRef admission with precheck+kill validators, WARN advisory and Q57 determinate repair; prove indeterminate/empty/zero-slice blocks (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "admission or precheck"` exits 0)
+- [ ] STEP12: route all explicit coder dispatches through shared admission and one public-entry budget normalizer/counter; preserve role order, linear eval semantics and Q55/Q56 (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "linear_admission or adaptive_admission or role_order or direct_budget"` exits 0)
+- [ ] STEP13: enforce CLI preflight/direct-controller guards and workspace-relative paths; update help without fixing E19. Unsupported managed acquisition blocks before child provider. Contain the SD-C fixture plan inside its fixture workspace; repair/promotion uses a disposable workspace at the same canonical relative path (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "plan_preflight or direct_api_plan_guard or plan_help or acquisition_unavailable"` exits 0)
+- [ ] STEP14: capture T0 only after first admission and before coder; reuse across repair/replan and enforce exact symmetric slice→TESTS topology equality (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "baseline"` exits 0)
+- [ ] STEP16: prove direct explicit-plan C1/C2/C3: actual controller→_cmd_run→drive_session with only provider mocked; valid/invalid-first-valid-later admission, no/failed planner, budget/indeterminate/UTF8/size/path/run-ID blocks, actual registry symlink denial, stale source-hash contention, write failure before retry/after promotion, Q58 same-path bytes, T0 reuse, actual eval/evidence and stage ordering. Add negative unsupported invoke_workflow test (zero child provider), not nested success proof. Preserve tracked source bytes. Detected post-coder PlanRef mismatch still reaches eval and cannot succeed (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "real_workflow_admission or acquisition_unavailable or plan_ref_mismatch"` exits 0)
+- [ ] STEP17: run the full declared tests/test_verify_gate_live.py path once per retained FUNCTIONAL contract: CT71, CT72, CT73, CT75, CT76, CT77b, CT77c, CT77, CT86, CT87, CT90, CT91, CT92, CT93, CT94, CT95. Report all 16 contract×path runs, cost/provenance and Q53(c) attribution risk; do not replace kills with -k subsets. Keep tests outside mutation roots and restore source (exit: every retained named producer mutation is killed)
 
-**SLICE6 policy/progress (Q55/Q56, 2026-10-08; E193–E194; source re-audit 2026-10-14):** eval always runs after a successful coder stage, then enforce-mode reconciliation applies the gate-as-a-floor precedence above. The recorded C1 composition-root run passed (12 tests; its nine Q53(c) contract kills all returned PROVEN), and the combined I02 slice-path run recorded 308 passing tests, with related feature-flag and plan-reference checks also green. These are historical recorded results, not freshly reproduced in this review; the existing C1 proves the verify/eval path, **not** Q57 admission, planner-managed acquisition, or PlanRef integrity. SLICE6 now declares 18 `FUNCTIONAL` contracts against one `TESTS:` path, so the planned full Q53(c) kill pass is O(18 × 1) full-path executions; remeasure versus the historical 9 × 1 / 99.72 s result rather than extrapolating. Preserve the Q53(c) unrelated-red-path false-proof risk and report all contract×path runs.
-
-The 2026-10-14 source re-audit confirms `verify_plan` is wired after coder, but `validate_kill_directives` and `precheck` still have no production caller, `WorkflowArtifactPaths` has no admission artifact, the direct API does not clamp replan/repair budgets or validate `run_id`, and the CLI plan existence check uses the unresolved path before session workspace selection. Planner writes still allow `.fa/` broadly and cannot publish canonical worklogs; coder tools can write/edit/run shell in the workspace while verification uses a pre-coder plan snapshot. The adaptive planner-replan path does not install a new canonical PlanRef. The linear/adaptive admission gate, PlanRef acquisition/bootstrap, schema-checked admission history, secure same-path candidate promotion, exact baseline topology check, explicit CLI/path resolution, PlanRef write boundary, nested C1/C2/C3 proofs, and SLICE7 package remain unimplemented. Q58 is operator-resolved as a transport decision; CT96's `invoke_workflow` acquisition protocol and CT97's OS-level write-boundary mechanism are recommendations, not operator-ratified decisions.
-
-The operator explicitly deferred the 20-slice/≥95% calibration criterion to I06 on 2026-10-14 (Q64); it is **not** an I02 shipping/`SHIPPED` gate and must not be reintroduced as one. I06 must define ownership/trigger and keep calibration data distinct from held-out regression before calibrated claims or gate-policy changes. I02 still requires its existing local proofs, full-suite disposition, manual review, and post-merge main-host E2E; none is newly verified by this planning review. The latest recorded full-suite run ended near 96% in the E174 `WindowsPath` reporter INTERNALERROR without a final summary; preserve the test-by-test comparison and do not fix E19. Full-repo Mypy has nine recorded diagnostics outside SLICE6. Per E51, only STEP8 remains checked to record the operator's explicit Q58 resolution; all other steps and `shipped:` remain unchanged. This review does not ship I02, assign a live result, change the global seven-slice limit, or remove the authorized local `slices: 8` exception.
-
-## SLICE7: Live E2E handoff and operator package
-STEPS: prescriptive
-DEPS: SLICE6
-INTENT: prepare a tracked, independently reviewed I02 live-acceptance package outside the
-  harness verdict path. Preserve every producer oracle, give the operator safe copy/paste steps
-  for the actual main-only deploy path, and keep local proof separate from live-host judgment.
-CONTRACTS:
-  CT88 [CONSTRAINT]: every I02 producer maps to a unique, non-duplicated E2E case ID and CT
-    owner, with separate local-proof and live-result fields, fixture/run-sheet path, expected
-    observable host effect, and evidence location. Recommended live-result vocabulary is
-    `NOT RUN | PASS | FAIL | BLOCKED` (confirm in STEP1's schema review, Q63); the senior
-    recommendation is a closed `block_reason` code required for `BLOCKED` (not yet ratified).
-    Attempts append run ID, deployed-main SHA, date, command, artifact paths, observed effect, exit
-    code, and reviewer note. Only the operator or an LLM evaluating collected run evidence may
-    assign a live result.
-    A shared host scenario may cover multiple producer rows only when
-    each unique case row names its own producer and explicitly maps to the shared evidence.
-    `e2e/README.md` has no exact duplicate producer/case rows.
-  CT89 [CONSTRAINT]: the planner owns the acceptance oracle and operator run sheet; the coder
-    appends source-backed implementation seams and labels proposed checks as proposals. An
-    independent reviewer completes a manual checklist before fixture/helper implementation;
-    material changes to oracle, commands, or fixtures require a new checklist entry. This is a
-    human record only, not a hash-bound or machine-enforced approval marker. Coder-created
-    fixtures/helpers stay within the reviewed plan. Live cases assert useful persisted
-    behavior/artifacts, not only private helper calls.
-TESTS: tests/test_e2e_artifact_contract.py, tests/test_skill_conformance.py   (NEW — author artifact test; update skill test)
-```verify
-uv run pytest tests/test_e2e_artifact_contract.py tests/test_skill_conformance.py -q
-uv run ruff check tests/test_e2e_artifact_contract.py tests/test_skill_conformance.py
-```
-- [ ] STEP1: update `notes/artifact-schema-and-grammar.md` with roadmap lifecycle `IN PROGRESS | DONE`, increment lifecycle `OUTLINED | IN PROGRESS | SHIPPED`, CT lifecycle, `e2e/` ownership/result fields, and the checklist-only review record. Keep generic plan-authoring `DRAFT | READY | BLOCKED` distinct; do not globally delete `READY`. Keep `roadmap.md`'s `active-increment: I01` and I02 `IN PROGRESS`; no live result is assigned in this branch (exit: `uv run pytest tests/test_e2e_artifact_contract.py -q -k schema` exits 0)
-- [ ] STEP2: create `worklogs/planning-topology-and-executable-contracts-loop/e2e/README.md` as the planner-owned case index and `e2e/I02/live-verification.md` as the operator sheet. Index stable case IDs for every old and new producer, CT, local proof, fixture, command block, expected observable, and persisted evidence; keep local status distinct from `NOT RUN | PASS | FAIL | BLOCKED` live status, resolve Q63's proposed required `block_reason` for `BLOCKED`, and append each attempt rather than overwriting it (exit: `uv run pytest tests/test_e2e_artifact_contract.py -q -k "index or status"` exits 0)
-- [ ] STEP3: migrate `notes/e2e-live-verification-register.md` into the case-index model without losing any unique producer: normalize and record the pre-migration producer-key set, then assert that the post-migration unique set is identical; collapse only exact duplicate `_producer_absent` and `_classify` rows. Replace stale CT52 “malformed admission blocks immediately” wording with Q57 bounded repair/revalidation and explicit no-planner, planner-failure, exhausted, and indeterminate blocks. Keep local-proof and live-result fields distinct, retain the Q53(c) attribution caveat, and do not assign live status from local evidence (exit: `uv run pytest tests/test_e2e_artifact_contract.py -q -k coverage` exits 0)
-- [ ] STEP4: after SLICE6 source call sites and local proofs exist, add `e2e/I02/implementation-handoffs.md`. The coder appends CT/producer IDs, verified source call sites and production path, observable artifacts, host prerequisites, candidate command/fixture proposals, local evidence, and limitations. Label source-backed facts separately from proposals; the coder cannot change the acceptance oracle, case ownership, or live result (exit: `uv run pytest tests/test_e2e_artifact_contract.py -q -k handoff` exits 0)
-- [ ] STEP5: after reviewing STEP4's handoff, the planner finalizes `e2e/I02/live-verification.md` from current host facts, not assumed paths. Include copy/paste preflight and stop conditions: confirm current `main` SHA, `fa status`, active `/sessions/<id>/` workspace, feature-flag config, artifact mount, provider readiness without printing secrets, and exact `--plan`/run-ID paths. Only after merge to `main` (there is no staging host), run `fa update` from the host repo root, then verify deployed SHA and container health before workflows. Supply complete commands with defined shell variables and task text (every role requires a shared or per-role task), unique run IDs, and a disposable scratch workspace per scenario. Give the linear repair template explicitly: `fa workflow planner,coder "$TASK" --task-planner "$PLANNER_TASK" --task-coder "$CODER_TASK" --mode linear --max-replans 2 --run-id "$RUN_ID" --workspace "$WORKSPACE" --plan "$PLAN"`; provide corresponding complete commands for: (a) linear repair of a non-empty `precheck` near-miss; (b) adaptive repair of a kill-directive diagnostic; (c) no-planner block; (d) configured-planner exhaustion with `--max-replans 0`; (e) E137 CLI missing-`--plan`; (f) a fixture invoking public `run_workflow` directly inside the deployed application context, bypassing `_cmd_workflow`, for CT95; and (g) adaptive eval-driven replan for T0 reuse; (h) a real workflow-first outer-chat `fa run` that reaches `invoke_workflow` and selects an existing canonical increment; (i) a separate workflow-first outer-chat run that bootstraps a new project with the no-clobber bundle publication; (j) missing/malformed selection or bundle blocked before coder/eval; and (k) a deployed-app-context CT97 integrity probe that uses deterministic provider tool calls to attempt `fs_write_file`, `fs_edit_file`, `fs_run_bash`, subprocess/alias, and `fs_spawn_subagent` mutations of the active plan in a disposable workspace, while proving ordinary source edits and valid controller promotion still work and successful coder reaches eval. Capture actual `invoke_workflow` tool-call evidence; if chat does not invoke it, mark that case BLOCKED, never PASS. Each case has a unique run ID. Successful repair cases use a disposable workspace with a copy at the same relative canonical path `worklogs/planning-topology-and-executable-contracts-loop/increments/<increment-file>.md`; that copy is the exact `--plan` target, and evidence proves validated promotion replaced that path in place while the tracked source stayed byte-identical. Normal authoring workflows continue to use the actual canonical increment path, never a `.fa` candidate. Every rejected workflow case must show no coder/eval dispatch in provider/session evidence; direct-controller rejection records blocked `admission.json` and `flow_state.json` but no T0/verification/eval artifacts; CLI missing-`--plan` additionally creates no run/session artifacts. Record artifacts required for each outcome from `/srv/first-agent/state/session-log/<run_id>/`: blocked workflow cases require admission and terminal state; admitted coder/eval cases also require `verify_baseline.json`, `verification.json`, and the actual `eval_report.json`. Admission blocks regardless of verify-gate `observe`/`enforce`; start gate runs in observe, and do not begin enforce runs until operator review. If `fa update` returns nonzero, capture its printed HEAD/health/test rc and stop to inspect: deployment may already have occurred; do not blindly retry or label the deploy failed. Do not assume host environment variables cross `docker compose exec`; use deployed config or explicit approved container configuration. Check no credentials or raw host logs into Git (exit: `uv run pytest tests/test_e2e_artifact_contract.py -q -k run_sheet` exits 0)
-- [ ] STEP6: update `plan-authoring/SKILL.md`, `feature-planning/{SKILL.md,INJECT.md}`, and `tests-writing/{SKILL.md,INJECT.md}` so the planner records E2E obligations before coding, coder provides only an evidence-backed handoff, planner finalizes the run sheet, an independent reviewer uses the manual checklist, and no harness/eval/coder assigns live `PASS`. Preserve generic `READY` semantics where unrelated (exit: `uv run pytest tests/test_skill_conformance.py -q -k e2e` exits 0)
-- [ ] STEP7: before any fixture/helper implementation, an independent reviewer completes the checklist in `e2e/I02/live-verification.md`: every producer has a unique case; local-vs-live oracles are distinct; commands use current deployment/workspace paths; no secrets or unbounded/destructive actions; run IDs/artifact paths and no-coder/no-eval blocked outcomes are observable; `fa update` nonzero-test behavior has a safe stop path; observe/enforce ordering is clear. Record reviewer, date, checked boxes, and prose notes only—no hash-bound approval marker or machine gate. Material oracle/command/fixture changes get a fresh manual checklist entry. The local test checks the checklist's shape, never claims that human approval happened (exit: `uv run pytest tests/test_e2e_artifact_contract.py -q -k review_checklist` exits 0)
-- [ ] STEP8: only after STEP7, add planned fixture/helper files under `e2e/I02/fixtures/`. Keep live-host commands out of default pytest discovery; copy fixtures into a unique scratch area in the session workspace, never edit tracked `src/` or canonical worklogs during a live run, and preserve artifacts until evidence is returned (exit: `uv run pytest tests/test_e2e_artifact_contract.py -q -k fixtures` exits 0)
-- [ ] STEP9: update the case index so every new producer has a distinct future live-host case, including separate CLI CT90 and direct-controller CT95 plan-guard cases (with workspace/symlink containment); CT96 nested-chat acquisition rows for existing-project selection, no-clobber bootstrap, and malformed/missing-selection blocks; CT97 PlanRef integrity rows for `fs_write_file`, `fs_edit_file`, `fs_run_bash`, and subprocess/symlink/hard-link/rename attempts in a disposable workspace, plus an assertion that `fs_spawn_subagent` is absent (future enablement requires its own inherited-boundary case); shared-loop linear/adaptive admission; structural `precheck` and kill-directive repair; `admission.json` writer; exact-target candidate writer; atomic in-place promotion to the exact canonical increment path with no alternate active plan; no-planner and exhausted-budget blocks; and T0 reuse across adaptive replan. Give each producer a stable unique case ID even when a host scenario supplies shared evidence; map each row to its expected artifact presence/absence and a useful observable, and never count a skipped/unobservable row as PASS (exit: `uv run pytest tests/test_e2e_artifact_contract.py -q -k producer_coverage` exits 0)
-- [ ] STEP10: run local artifact/skill conformance tests; inspect all required producer mappings, duplicates, command syntax, file paths, and exact review-before-fixture ordering. Mark the package locally complete only; do not set live results, change I02 to `SHIPPED`, or claim host readiness before merge/update (exit: `uv run pytest tests/test_e2e_artifact_contract.py tests/test_skill_conformance.py -q` exits 0)
+**Scope/progress:** STEP IDs 11 and 15 move entirely to I03; mixed STEPs retain the IDs above and
+have clause-level successors in the migration bank. STEP8 remains checked only for the historical
+operator Q58 decision; no new box or shipped status is ticked. SLICE6 has **16 FUNCTIONAL** kills,
+not 18; old 9-kill/12-test C1 and 308-test records remain historical, not proof of new admission.
+The old full-suite E174 reporter failure/no-summary and nine full-repo Mypy diagnostics remain
+unresolved until test-by-test disposition. Neither scope migration nor existing green verifier
+proof closes admission, full-suite comparison or review. Nested success/OS integrity/live-host
+acceptance are incomplete I03 obligations, not suppressed failures or I02 evidence.
 
 ## Increment definition of done
 
-- [ ] Every `CT#` satisfied: each slice's local `verify` block exits 0; the C1/C2/C3 and declared
-      producer mutation proofs pass.
-- [ ] Pre-deploy readiness is explicit and closed: Q58 is implemented/proved; CT96's
-      planner-managed acquisition and CT97's plan-integrity boundary have recorded operator
-      disposition and required local proofs; SLICE6/SLICE7 local proof is complete; the independent
-      checklist-only review is recorded; and the E174 full-suite comparison below has a test-by-test
-      disposition. The 20-slice/≥95% calibration target is deferred and is not part of this DoD.
-      Until readiness is closed, this branch is **not declared ready for merge/deploy or host
-      testing**; no unrecorded waiver is inferred.
-- [ ] Every required I02 producer case in `e2e/README.md` has a reviewed live-host result from
-      the deployed `main` image, with deployed SHA, unique run ID, exact command, exit code,
-      observed effect, and persisted-artifact references recorded. There is no separate staging:
-      merge to `main`, use the normal host `fa update` path, verify the deployed SHA and health,
-      then run the sheet. The first workflow verify-gate run is observe mode; admission remains
-      blocking independent of that flag; enforce-mode runs begin only after operator review.
-      If `fa update` returns nonzero, read its printed HEAD/health/test rc because deployment may
-      already have occurred; stop, preserve outputs, and do not blindly retry. The harness/eval
-      never assigns live status. I02 is not `SHIPPED` while an explicit E2E result is unproven.
-- [ ] The gate/admission/acquisition run through real compositions in `tests/test_verify_gate_live.py`:
-      direct C1 calls `run_workflow` -> `_cmd_run` -> `drive_session`; nested C1 calls outer chat
-      `drive_session` -> actual `invoke_workflow` handler -> nested `run_workflow` -> `_cmd_run` ->
-      planner/coder/eval `drive_session`. Mock only `ProviderChain.request`. Assert persisted
-      `admission.json`/terminal state on controller runs; admitted coder/eval paths also have T0,
-      verification, actual eval request/report, PlanRef/provider ordering; rejected paths have zero
-      coder/eval and required artifact absence. Deleting any declared producer for
-      `_run_stage -> verify_plan`, admission `precheck`/kill validation, CLI preflight, direct API
-      PlanRef guard, admission writer, scoped candidate/bootstrap writer, same-path promotion,
-      nested acquisition handler, or CT97 plan-write boundary makes its named oracle fail, with
-      observable denied attempts through each of `fs_write_file`, `fs_edit_file`, and `fs_run_bash`
-      plus a successful ordinary source edit. A test aimed only at `extract_plan_ids` does not count. Q53(c) runs the full declared test path once
-      per FUNCTIONAL contract; tests are never mutation roots.
-- [ ] The admission matrix proves both `linear` and `adaptive` use the shared bounded pre-coder
-      loop; no rejected attempt reaches coder/eval; successful repair reaches coder then eval;
-      missing/unreadable/empty input, no-slice input without a determinate repair diagnostic or
-      after repair exhaustion, planner absence/failure, candidate containment/promotion failure,
-      indeterminate validation, and exhausted budget all fail closed. The actual outer-chat
-      `invoke_workflow` path proves existing-project selection and no-clobber new-project bootstrap
-      before PlanRef admission; malformed/missing acquisition blocks before coder/eval. CT97
-      integrity attempts cover all three mutating provider paths in a disposable workspace, keep
-      PlanRef/control-plane bytes unchanged, permit ordinary source edits, and preserve Q55 eval
-      after successful coder. Adaptive eval-replan uses Q58 promotion and rechecks the new PlanRef. The CLI C2 proves missing
-      `--plan` fails before run/session artifacts; the independent direct-API C1 bypasses the CLI,
-      persists a blocked route, and proves zero provider stages. An outside-workspace or symlinked
-      plan target is denied by C3. A diagnosable structural near-miss is repaired before the final
-      parsed-slice check. Linear keeps one-pass eval semantics and requested normal role order.
-- [ ] The provenance probe is demonstrated: with it disabled, a mutation of an installed
-      module is provably NOT observed and the gate reports `VACUOUS`; with it enabled the same
-      run reports `ERROR`. Without this the gate is inverted rather than broken.
-- [ ] Every successful coder stage reaches eval even with a blocking post-coder verifier result;
-      eval receives that attempt's evidence, terminal reconciliation prevents enforce-mode
-      `DONE`/PASS without replacing `eval_report.json`, and pre-coder rejection does not synthesize
-      or dispatch eval.
-- [ ] T0 is captured once after admission and before first coder, remains write-once through
-      coder repair/adaptive replan, and rejects a changed `TESTS:` path map rather than comparing
-      mismatched baselines.
-- [ ] `VACUOUS`, `PRODUCER_ABSENT` and `REGRESSION` each demonstrated on a constructed slice,
-      not merely representable in the enum.
-- [ ] The operator's working tree is byte-identical before and after a full gate run (CT64),
-      verified with `git status --porcelain` captured on both sides, and `git worktree list`
-      shows no leftover entry.
-- [ ] Register rows **D1, D2, D3, D4, D5, D8** are reconciled in
-      [`../notes/deferred-verification-register.md`](../notes/deferred-verification-register.md).
-      D2's planned production consumer is I02 CT91; it remains OPEN until the real C1 caller and
-      kill oracle pass, and must not be ticked by this plan edit. Every required closure cites its
-      test. D8 is I02-owned; the standing rule admits no increment that still owns an unticked row.
-- [ ] Full-suite comparison remains open until closed by evidence. The latest recorded
-      `pytest -q` retry ended near 96% in the known E174 `WindowsPath` reporter `INTERNALERROR`
-      and emitted no final summary, so visible failures cannot be attributed test-by-test.
-      Compare against E192 and rerun with a way to preserve failure identities before closing
-      this item; do not fix E19. The comparison is test-by-test, not a raw count, because the
-      suite grows as slices land. This is part of the pre-deploy readiness gate above.
-- [ ] `plan_ids.py` changed **only** by the position surface Q45-B sanctioned —
-      `SliceRecord.start_line`, `SliceRecord.contract_lines`, `PlanIds.contract_line` — with
-      `git diff 3c0caad -- src/fa/inner_loop/plan_ids.py` read line by line against that list
-      (exit: `uv run pytest tests/test_plan_ids.py -q` exits 0). This item demanded an empty
-      diff until Q45-B overruled it: a parser that discards where it found things is
-      defective by design, and making the consumer re-read with its own regex breaks Single
-      Source of Truth (E170).
-- [ ] A scoped mutation run over the changed runtime producers in `src/` and explicitly
-      allowed `scripts/` has no non-equivalent survivors; `tests/` stay outside mutation roots
-      and mutmut's global `source_paths` remains unchanged (Q54).
+- [ ] Every retained CT in the seven sections satisfies its local verify/C1/C2/C3 and declared
+      producer-kill oracle. Reprove amended SLICE5 CT66/STEP7; errors/skip-only/stale reports never
+      PROVEN. Q53(c) full-path attribution/cost and Q54 mutation restrictions remain.
+- [ ] Real direct C1 boots run_workflow→_cmd_run→drive_session with only ProviderChain.request
+      mocked; proves explicit admission/repair/promotion/T0/verification/actual eval/terminal route.
+      CLI missing --plan creates no run/session artifacts; direct invalid PlanRef creates specified
+      blocked evidence but zero provider stages; rejected repair creates no coder/eval/T0 artifacts.
+- [ ] Explicit-plan acceptance matrix proves both modes, role ordering, bounds, exact schema/no
+      raw diagnostic bytes, no-follow candidate/target paths, source-hash contention, and Q58
+      failure points before/after replacement. Deleting each retained producer breaks its oracle;
+      all 16 SLICE6 FUNCTIONAL full-path kills are recorded with elapsed/provenance/limitations.
+- [ ] T0 is write-once after admission, survives repair/replan, rejects changed slice→TESTS maps;
+      successful coder reaches real eval with attempt evidence, including indeterminate verifier/
+      detected PlanRef mismatch; enforce reconciliation never turns blocking evidence into DONE.
+- [ ] Unsupported managed acquisition is explicitly unavailable before any child provider/coder;
+      no fake bootstrap, guessed PlanRef, public context field or unsafe fallback is introduced.
+      General planner permissions stay narrow. I02 makes no OS isolation/secret-read protection claim.
+- [ ] Demonstrate VACUOUS, PRODUCER_ABSENT, REGRESSION and error negatives on constructed slices;
+      prove overlay import provenance (disabled probe exposes VACUOUS; enabled mismatch is ERROR).
+      Operator tree/source bytes and git status are unchanged by gate tests; no leftover worktrees.
+- [ ] Reconcile I02-owned D1/D2/D3/D4-readers/D5/D8 with actual named evidence in deferred register.
+      D2 remains OPEN until real precheck admission caller+kill passes; pending successor coder-brief
+      reader is not falsely closed. No register tick is assigned by this plan edit.
+- [ ] Resolve E174 full-suite failure identities/test-by-test comparison against E192, rerunning
+      with preserved identities; no count-only waiver or inferred pass from absent summary.
+      Preserve deliberately red E19; record explicit disposition of unrelated known failures and
+      nine recorded full-repo Mypy diagnostics. Required changed-file checks must pass.
+- [ ] Review `git diff 3c0caad -- src/fa/inner_loop/plan_ids.py` against only Q45-B approved position
+      fields; pure extractor tests pass. Scoped runtime mutation has no non-equivalent survivors.
+- [ ] Independent review of revised retained plan/DoD, implementation and evidence is recorded.
+      Verify moved CT/STEP/case coverage has explicit incomplete I03 ownership in migration bank;
+      this is mapping review, not the moved E2E fixture/checklist implementation.
+
+After these actual retained proofs and operator-reviewed DoD, I02 may receive existing SHIPPED
+status **before I03**, without a reviewed deployed-host result. No tick/status is assigned here.
+SHIPPED then means the retained local explicit-plan gate only; it is not safe integrated product
+or deployed I02+I03 acceptance. The latter belongs to I03's final group, with every unique I02
+producer still covered. Normal integrated/security deployment readiness is not inferred from I02.
+Q59/Q60 exact nested route/bundle and CT97 runtime decisions, Q66 propagation, Q63 final live-result
+schema, cell deployment and the former SLICE7 host package are not retained I02 blockers.
+Q62's small CT92 closed rule table and Q43 accessor disposition remain required where I02 uses them;
+record the exact disposition before implementing those contracts. Q64 calibration stays I06.
 
 ## Out of scope (moved, not dropped)
 
-- **Generated-mutant sweep per slice (E63 / handoff §6.4).** A declared kill-check is not the
-  same mechanism; see the design note §1. Deferred to its own increment.
-- **`TEST-DEFECT` as a first-class verdict (§6.3).** Needs the eval loop; I03.
-- **`VERIFIED` status.** Requires I03's eval L2 on top (schema §6).
-- **Verification-integrity controls (§6.7).** Four of five are assertions over
-  `BlackboardEntry.write_set`; audit before building, and not here.
-- **The 20-slice calibration corpus and the ≥95% criterion (§6.1).** The operator explicitly
-  deferred this to I06 on 2026-10-14; it is not an I02 shipping gate. I06 defines the detailed
-  ownership/trigger and non-overlapping calibration/held-out regression sets before making
-  calibrated claims or changing gate policy.
-- **CT10b path-existence rule (Q39).** Lands with the `tests_note` semantics in I03.
+- Foundation I03 owns CT96/CT97 and managed-acquisition clauses/real nested success, Q66 initial
+  context, trusted imports, all project-code cell routing (including readiness), PTY descendants/
+  uncertain outcomes, workspace lease/views/fencing/sealing/publication/recovery.
+- I03 final group owns former SLICE7 CT88/CT89 and STEPs1–10: producer index/run sheets/fixtures,
+  independent manual checklist, skill E2E obligations and reviewed main-host acceptance for I02+I03.
+- Old I03 loop/tracker/three-level eval, TEST-DEFECT, CT10b/tests_note and VERIFIED L2 conditions
+  follow the named deferred successor capability on the roadmap, not foundation I03's number.
+- Generated-mutant sweep and nonessential verification-integrity follow-ups remain deferred;
+  calibration/≥95% is I06. Do not add CAS/overlay framework, parallel scheduler or advanced privacy.
 
-## Hand-off to I03 (banked context, not a plan)
+## Hand-off to I03 (banked context, not an executable foundation plan)
 
-- `SliceVerification` is the record the eval stage should read instead of re-deriving
-  completion from prose. It already carries real exit codes and per-contract kill-check
-  outcomes.
-- The judge keeps the questions a command cannot answer: is this a good implementation, did
-  it break something adjacent, is the test honest beyond its declared kill-check.
-- `steps_mode` is still unread (schema §7 marks it PENDING with I03 as consumer).
+Use [foundation outline](increment-03-execution-workspace-foundation.md) and
+[migration bank](../notes/i02-to-i03-scope-migration-2026-10-15.md) for exact clause/case ownership.
+Keep existing SliceVerification/actual eval evidence facades and strengthened local parser; I03
+adds supervised execution/revision binding. Existing FastAPI PTY server is an optional cell-internal
+transport seam, **not** the host supervisor and not a standalone I02 shipping requirement.

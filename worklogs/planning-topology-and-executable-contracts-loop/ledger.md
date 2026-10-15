@@ -2086,3 +2086,23 @@ E199 FACT SOURCE-GROUNDED EXECUTION FOUNDATION REUSE AUDIT, 2026-10-15. A separa
     tests/test_session_lifecycle.py::test_workspace_cannot_be_owned_by_two_sessions;
     notes/execution-foundation-scope-reduction-and-reuse-audit-2026-10-15.md §9 diagnostic evidence;
     product source d9109f489c84cb7f1ab3568b609d96e5b2b61ae2]
+
+E200 DECIDED FORMAL I02 SCOPE/DOD AND I03 OBLIGATION MIGRATION, 2026-10-15. The operator
+    explicitly requests reducing I02/SLICE6 so its retained DoD can be completed before I03,
+    moving the remaining SLICE6 work and all SLICE7 work into foundation I03. The active I02
+    plan now has seven actual sections (including SLICE2b), retains explicit-plan Q57/Q58
+    admission/repair/promotion, artifact/path/budget guards, T0 and direct local composition
+    proofs, and removes nested successful acquisition/context/OS isolation and deployed-host
+    acceptance from its shipping prerequisites. Amended CT66/SLICE5 STEP7 retains error/skip/
+    stale kill-classification proof. CT96/CT97 and CT88/CT89 plus mixed managed clauses have
+    explicit I03 outline ownership; old SLICE7 and DoD are preserved verbatim in the migration
+    bank, with all original STEP/GAP dispositions. Reduced I02 may be SHIPPED only after its
+    actual local contracts, full-suite disposition and independent/operator review; not from
+    this edit and not as safe integrated/deployed acceptance. I03 final acceptance still covers
+    all unique I02+I03 producers. The existing FastAPI server is recorded as an optional PTY
+    transport reuse seam, not host authority or an independent I02 shipping task (reviewer
+    recommendation). I03 remains OUTLINED, not an executable completed plan. No progress boxes,
+    implementation/live verdicts, Q59–Q63 exact ratifications or full-suite failures are inferred
+    closed. Retained SLICE6 has 16 FUNCTIONAL kill obligations, not 18; the schema ceiling stays
+    seven. Capability/roadmap references are reconciled in the next distinct step.
+    [operator, this session; plans/migration bank; E197–E199 directions/reuse evidence]
