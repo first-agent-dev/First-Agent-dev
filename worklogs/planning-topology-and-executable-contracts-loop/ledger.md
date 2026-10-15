@@ -2246,3 +2246,33 @@ E207  FACT  Partial retained I02 SLICE6 CT92/CT95 STEP9/STEP13 GAP-03/GAP-10 fro
     independent/operator DoD remain pending. No STEP tick, SHIPPED or complete-security claim.
     [exact scope, commands, TEST-EDITS, unwaived identities, equivalences, hashes and host cases:
     notes/e2e-live-verification-register.md, E207 checkpoint section]
+
+E208  FACT  Partial retained I02 SLICE6 STEP9 CT93 GAP-04–GAP-06 prerequisite from 4eaa32c:
+    reviewed remaining plan/spec/source, no blocking policy question. Frozen/slotted separate
+    planner dispatch kinds, run/active/path-bound private stage→CLI→registry capability;
+    mandatory exact-target provider schema and real writer, no optional-builder/fallback
+    degradation. Reuse extracted descriptor byte publication and existing mutation bookkeeping,
+    not a new transaction framework or generic checked-path write. Ordinary writer retains
+    prefixes but denies admission storage and active path/resolved/same-inode aliases; no
+    worklogs expansion, arbitrary-shell containment or OS-isolation claim. No public scope flag.
+    Append-only tests: all 104 original module AST nodes unchanged, 47 new cases. Real C1/C3
+    uses production pr_prepare/IntentGuard and only replaces provider IO; inside-workspace
+    ancestor/terminal/hardlink cases prove actual descriptor-origin rejection. Final focused
+    409 passed/1 deselected; CT93-only 47 passed/331 deselected. Final named CT93 whole live-path
+    remove-call _build_tool_builders→build_scoped_write_file_tool: PROVEN, 1 target/1 edit,
+    144.939s; Q53(c) attribution risk retained, not all16 acceptance. Seventeen explicit targeted
+    semantic mutations all detected with fresh 47-case JUnit, zero errors and overlay import
+    provenance; no whole-module mutmut score/equivalence waiver. Final source/test hashes recorded.
+    Ruff/Mypy eight files clean; Pylint three production modules 10/10; Pyrefly seven production
+    modules 0 errors. Full test-file Pyrefly has 59 old fixture-unpacking errors, identically
+    reproduced against exact E207 source/test bytes; unwaived, no suppression or all-static-green
+    claim. Final22-suite compatibility run excludes one expensive original live workflow test:
+    942 passed/6 failed/1 deselected, 137.20s. Intermediate full-path22-suite run (before final14
+    appended cases) 929 passed/6 failed, 748.52s, including unmutated verifier/eval C1. Exactly
+    the same six E207 failures, no assertion edits/waivers. Five planned ADM-H09–H13 host cases
+    cover every new capability/root/registry/writer/error/shared-guard consumer, I03 F ownership.
+    No STEP tick or admission/repair success claim: scoped tool errors still require CT91
+    controller BLOCKED consumption, CT94 fresh seed/promotion, ADMITTED/T0/pinned evidence and
+    unsupported acquisition routing. Full comparisons/review/operator DoD/I03 boundary remain.
+    [exact declaration, source findings, commands, mutation table/provenance, failures, hashes,
+    host inventory and handoff: notes/e2e-live-verification-register.md, E208 section]

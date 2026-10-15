@@ -64,6 +64,7 @@ from fa.inner_loop.injections import (
     resolve_injection_modes,
 )
 from fa.inner_loop.plan_admission import PlanRefError, _require_plan_for_coder, read_plan_snapshot
+from fa.inner_loop.planner_dispatch import PlannerDispatch
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.prompt import render_tool_specs
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
@@ -1451,7 +1452,7 @@ def _cmd_workflow(
     return exit_code
 
 
-def _validate_run_args(args: argparse.Namespace) -> str | None:
+def _validate_run_args(args: argparse.Namespace, *, planner_dispatch: PlannerDispatch | None = None) -> str | None:
     """Validate ``fa run``'s arguments; return the operator message, or ``None`` if valid.
 
     Extracted from ``_cmd_run`` (S10b.2). Pure apart from one documented
@@ -1474,6 +1475,8 @@ def _validate_run_args(args: argparse.Namespace) -> str | None:
     ``test_s10b_parity_validation_prologue`` pins each one by its unique
     wording (plan RK4).
     """
+    if not _valid_planner_dispatch(planner_dispatch, getattr(args, "role", None), getattr(args, "run_id", None)):
+        return "fa run: invalid planner dispatch"
     resolved = _resolve_task(getattr(args, "task_pos", None), getattr(args, "task", None))
     if resolved is None:
         return "fa run: provide a task — positional (fa run \"...\"), --task, or '-' for stdin"
@@ -1580,7 +1583,9 @@ def _build_compactor_chain(
     return _build_provider_chain(compactor_config, transport=transport, secrets=secrets)
 
 
-def _build_role_registry(role: str, workspace: Path, *, bash_timeout_seconds: int) -> ToolRegistry:
+def _build_role_registry(
+    role: str, workspace: Path, *, bash_timeout_seconds: int, planner_dispatch: PlannerDispatch | None = None
+) -> ToolRegistry:
     """Select the role-appropriate tool registry.
 
     Extracted from ``_cmd_run`` (S10b.2). Role-aware capability scoping:
@@ -1598,7 +1603,9 @@ def _build_role_registry(role: str, workspace: Path, *, bash_timeout_seconds: in
     write+bash tools, and that is what the shipped CLI does today.
     """
     if role == "planner":
-        return build_planner_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
+        return build_planner_registry(
+            workspace, bash_timeout_seconds=bash_timeout_seconds, planner_dispatch=planner_dispatch
+        )
     if role == "eval":
         return build_eval_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
     if role == "chat":
@@ -1748,6 +1755,7 @@ def _build_run_tool_registry(
     workflow_ctx: Callable[[], WorkflowInvocationContext | None] | None = None,
     scope_point: OperatingPoint | None = None,
     gate_enabled: bool = True,
+    planner_dispatch: PlannerDispatch | None = None,
 ) -> ToolRegistry:
     """Build the exact role tool corpus used by a live ``fa run``.
 
@@ -1773,7 +1781,9 @@ def _build_run_tool_registry(
     estimate (the conformance path, test fixtures) are unaffected.
     """
 
-    registry = _build_role_registry(role, workspace, bash_timeout_seconds=bash_timeout_seconds)
+    registry = _build_role_registry(
+        role, workspace, bash_timeout_seconds=bash_timeout_seconds, planner_dispatch=planner_dispatch
+    )
     registry = _apply_escalation_gate(registry, role=role, scope_point=scope_point, gate_enabled=gate_enabled)
     registry.register(build_prepare_pr_tool(draft_store))
     if role == "chat":
@@ -2147,12 +2157,19 @@ def _publish_scope_estimate(
     return hint
 
 
+def _valid_planner_dispatch(dispatch: PlannerDispatch | None, role: object, run_id: object) -> bool:
+    return dispatch is None or (
+        isinstance(dispatch, PlannerDispatch) and role == "planner" and dispatch.run_id == run_id
+    )
+
+
 def _cmd_run(
     args: argparse.Namespace,
     *,
     transport: Transport | None = None,
     secrets: Mapping[str, str] | None = None,
     outcome_sink: list[SessionOutcome] | None = None,
+    planner_dispatch: PlannerDispatch | None = None,
 ) -> int:
     """Drive an LLM-driven coder session.
 
@@ -2165,7 +2182,7 @@ def _cmd_run(
     the resolved secrets file (strict, file-only — never ``os.environ``);
     tests inject a :class:`SecretStore`/mapping directly.
     """
-    prologue_error = _validate_run_args(args)
+    prologue_error = _validate_run_args(args, planner_dispatch=planner_dispatch)
     if prologue_error is not None:
         print(prologue_error, file=sys.stderr)
         return 2
@@ -2291,6 +2308,7 @@ def _cmd_run(
         draft_store=draft_store,
         scope_point=scope_point,
         gate_enabled=limits.chat_escalation_gate,
+        planner_dispatch=planner_dispatch,
         workflow_ctx=_make_workflow_ctx_provider(
             parent_run_id=run_id,
             config=config_path,

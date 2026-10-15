@@ -2583,3 +2583,386 @@ def test_admission_artifact_shared_eval_writer_rejects_non_json_numbers(tmp_path
         write_eval_report(path, replace(report, eval_independence={"disjoint": True, "invalid_number": value}))
     assert path.read_bytes() == before
     assert not list(tmp_path.glob("*.tmp"))
+
+
+# CT93 prerequisite: C0 capability/descriptor negatives and C1/C3 real-session
+# consumer proof. No admission/repair orchestration claim is made by these tests.
+@pytest.mark.parametrize("kind", ["ADMISSION_REPAIR", "EVAL_REPLAN"])
+@pytest.mark.parametrize(
+    "target",
+    [
+        "",
+        "/.fa/admission/ct93/p.md",
+        ".fa//admission/ct93/p.md",
+        ".fa/admission/other/p.md",
+        ".fa/admission/ct93",
+        ".fa/admission/ct93/../p.md",
+        ".fa/admission/ct93/./p.md",
+        ".fa/admission/ct93/p.md/",
+        ".fa/admission/ct93/p\x00.md",
+    ],
+)
+def test_ct93_rejects_noncanonical_capabilities(kind: str, target: str) -> None:
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
+
+    with pytest.raises(PlannerDispatchError, match=r"^invalid planner dispatch$"):
+        PlannerDispatch(PlannerDispatchKind(kind), "ct93", candidate_target=target)
+
+
+@pytest.mark.parametrize("obstacle", ["ancestor", "terminal", "hardlink", "fifo", "directory"])
+def test_ct93_descriptor_writer_preserves_unsafe_targets(tmp_path: Path, obstacle: str) -> None:
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+    from fa.inner_loop.tools.write_file import build_scoped_write_file_tool
+
+    target = ".fa/admission/ct93/candidate.md"
+    sentinel = tmp_path / "sentinel"
+    sentinel.write_bytes(b"unchanged")
+    candidate = tmp_path / target
+    candidate.parent.mkdir(parents=True)
+    if obstacle == "ancestor":
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "candidate.md").write_bytes(b"unchanged")
+        candidate.parent.rmdir()
+        candidate.parent.symlink_to(elsewhere, target_is_directory=True)
+    elif obstacle == "terminal":
+        candidate.symlink_to(sentinel)
+    elif obstacle == "hardlink":
+        os.link(sentinel, candidate)
+    elif obstacle == "fifo":
+        os.mkfifo(candidate)
+    else:
+        candidate.mkdir()
+    tool = build_scoped_write_file_tool(
+        tmp_path, PlannerDispatch(PlannerDispatchKind.ADMISSION_REPAIR, "ct93", candidate_target=target)
+    )
+    result = tool.handler({"path": target, "content": "replaced"})
+    assert result.error is not None and result.error.retryable is False
+    assert sentinel.read_bytes() == b"unchanged"
+    if obstacle == "ancestor":
+        assert (tmp_path / "elsewhere/candidate.md").read_bytes() == b"unchanged"
+    elif obstacle in {"terminal", "hardlink"}:
+        assert candidate.read_bytes() == b"unchanged"
+    assert not list(candidate.parent.glob(".*.tmp"))
+
+
+def test_ct93_scoped_handler_rejects_wrong_path_and_content(tmp_path: Path) -> None:
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+    from fa.inner_loop.tools.write_file import build_scoped_write_file_tool
+
+    target = ".fa/admission/ct93/candidate.md"
+    tool = build_scoped_write_file_tool(
+        tmp_path, PlannerDispatch(PlannerDispatchKind.EVAL_REPLAN, "ct93", candidate_target=target)
+    )
+    for path in [target + ".other", ".fa/note.md", "src/x.py", ".fa/admission/ct93/./candidate.md"]:
+        result = tool.handler({"path": path, "content": "bad"})
+        assert result.error is not None and result.error.code == "scope_denied"
+    for content in [None, 1, "\ud800"]:
+        result = tool.handler({"path": target, "content": content})
+        assert result.error is not None and result.error.code == "write_failed"
+    assert not (tmp_path / ".fa").exists()
+    assert tool.handler({"path": target, "content": "первая\n"}).error is None
+    assert tool.handler({"path": target, "content": "second\n"}).error is None
+    assert (tmp_path / target).read_bytes() == b"second\n"
+    assert (tmp_path / target).stat().st_mode & 0o777 == 0o600
+    assert (tmp_path / target).parent.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize(
+    "kind,obstacle",
+    [
+        ("ORDINARY_PLANNING", "none"),
+        ("ADMISSION_REPAIR", "none"),
+        ("EVAL_REPLAN", "none"),
+        ("ADMISSION_REPAIR", "ancestor"),
+        ("ADMISSION_REPAIR", "terminal"),
+        ("EVAL_REPLAN", "hardlink"),
+    ],
+)
+def test_ct93_real_stage_dispatch_controls_candidate_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, obstacle: str
+) -> None:
+    """C1/C3: only provider IO replaced; real stage/CLI/registry/session/hooks/FS.
+
+    CT93 producer kill: profiles._build_tool_builders -> build_scoped_write_file_tool.
+    Removing that producer leaves the ordinary limited tool, so the candidate
+    effect and provider-visible exact-target schema fail this same live oracle.
+    """
+    from dataclasses import replace
+
+    from fa.cli import _cmd_run
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    ctx = _context(tmp_path, run_id="ct93")
+    ctx.config.write_text(_ROLE_YAML.format(role="planner"), encoding="utf-8")
+    active = ".fa/active.md"
+    target = ".fa/admission/ct93/candidate.md"
+    (tmp_path / active).parent.mkdir()
+    (tmp_path / active).write_bytes(b"Plan-ID: PLAN-ct93\nprotected\n")
+    (tmp_path / ".fa/active-alias.md").symlink_to(tmp_path / active)
+    os.link(tmp_path / active, tmp_path / ".fa/active-hardlink.md")
+    (tmp_path / target).parent.mkdir(parents=True)
+    (tmp_path / target).write_bytes(b"old candidate")
+    (tmp_path / ".fa/admission-alias").symlink_to(tmp_path / ".fa/admission", target_is_directory=True)
+    # Reserved lexical paths must also stay denied when a symlink exits storage.
+    (tmp_path / ".fa/admission/escape").symlink_to(tmp_path / ".fa", target_is_directory=True)
+    if obstacle == "ancestor":
+        (tmp_path / target).parent.rename(tmp_path / "elsewhere")
+        (tmp_path / target).parent.symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    elif obstacle in {"terminal", "hardlink"}:
+        (tmp_path / target).unlink()
+        if obstacle == "terminal":
+            (tmp_path / target).symlink_to(tmp_path / active)
+        else:
+            os.link(tmp_path / active, tmp_path / target)
+    protected = [active, ".fa/active-alias.md", ".fa/active-hardlink.md"]
+    paths = [
+        *protected,
+        target,
+        ".fa/admission-alias/ct93/candidate.md",
+        ".fa/admission/escape/escaped.md",
+        ".fa/note.md",
+        "knowledge/research/note.md",
+        "src/forbidden.py",
+        "worklogs/forbidden.md",
+    ]
+    requests: list[RequestInfo] = []
+
+    def provider_request(
+        _chain: ProviderChain, request: RequestInfo, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        requests.append(request)
+        calls: tuple[dict[str, Any], ...] = ()
+        if len(requests) == 1:
+            calls = (
+                {
+                    "id": "prepare-ct93",
+                    "type": "function",
+                    "function": {
+                        "name": "pr_prepare",
+                        "arguments": json.dumps(
+                            {"intent": "IMPLEMENT", "invariant": "Implements: CT93 exact-target writer"}
+                        ),
+                    },
+                },
+            )
+        elif len(requests) == 2:
+            calls = tuple(
+                {
+                    "id": f"ct93-{i}",
+                    "type": "function",
+                    "function": {
+                        "name": "fs_write_file",
+                        "arguments": json.dumps({"path": path, "content": "new bytes\n"}),
+                    },
+                }
+                for i, path in enumerate(paths)
+            )
+        return (
+            ResponseInfo("done" if not calls else "", 1, 1, "tool_calls" if calls else "stop", calls),
+            logical_call_id or "ct93",
+            [],
+        )
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    ordinary = kind == "ORDINARY_PLANNING"
+    dispatch = None if ordinary else PlannerDispatch(PlannerDispatchKind(kind), "ct93", active, target)
+    ctx = replace(ctx, max_turns=20, plan_path=tmp_path / active, secrets=SecretStore({"K": "sk-test-live"}))
+    outcome = _run_stage(
+        ctx,
+        "planner",
+        fresh=True,
+        transition_reason="ct93-test",
+        progress=WorkflowProgress(),
+        run_stage_fn=_cmd_run,
+        planner_dispatch=dispatch,
+    )
+    assert outcome.exit_code == 0
+    assert len(requests) == 3
+    schemas = [item["function"] for item in requests[0].tools if item["function"]["name"] == "fs_write_file"]
+    assert len(schemas) == 1
+    if not ordinary:
+        assert schemas[0]["parameters"]["properties"]["path"]["enum"] == [target]
+        assert schemas[0]["parameters"]["additionalProperties"] is False
+    expected = b"old candidate" if ordinary or obstacle == "ancestor" else b"new bytes\n"
+    if obstacle in {"terminal", "hardlink"}:
+        expected = b"Plan-ID: PLAN-ct93\nprotected\n"
+    assert (tmp_path / target).read_bytes() == expected
+    events = [json.loads(line) for line in (tmp_path / "state/session-log/ct93/events.jsonl").read_text().splitlines()]
+    results = {event["tool_call_id"]: event["content"] for event in events if event["kind"] == "tool_result"}
+    assert results["prepare-ct93"]["ok"] is True
+    if obstacle != "none":
+        assert results["ct93-3"]["error"]["code"] == "write_failed", (
+            "descriptor rejection must not be attributed to hooks"
+        )
+        assert results["ct93-3"]["error"]["retryable"] is False
+    elif not ordinary:
+        assert results["ct93-3"]["ok"] is True
+    else:
+        assert results["ct93-3"]["error"]["code"] == "path_denied"
+        assert results["ct93-6"]["ok"] is True and results["ct93-7"]["ok"] is True
+
+    for path in protected:
+        assert (tmp_path / path).read_bytes() == b"Plan-ID: PLAN-ct93\nprotected\n"
+    for path in [".fa/note.md", "knowledge/research/note.md"]:
+        assert (tmp_path / path).exists() is ordinary
+        if ordinary:
+            assert (tmp_path / path).read_bytes() == b"new bytes\n"
+    for path in ["src/forbidden.py", "worklogs/forbidden.md", ".fa/escaped.md"]:
+        assert not (tmp_path / path).exists()
+
+
+@pytest.mark.parametrize("role,run_id", [("coder", "ct93"), ("planner", "other"), ("eval", "ct93")])
+def test_ct93_misbound_dispatch_has_zero_provider_and_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, role: str, run_id: str
+) -> None:
+    from fa.cli import _cmd_run, build_parser
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+
+    calls: list[object] = []
+
+    def provider_request(*_args: object, **_kwargs: object) -> tuple[ResponseInfo, str, list[Any]]:
+        calls.append(role)
+        return ResponseInfo("done", 1, 1, "stop"), "ct93", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    config = tmp_path.parent / f"ct93-{role}-{run_id}.yaml"
+    config.write_text("".join(_ROLE_YAML.format(role=item) for item in ("planner", "coder", "eval")), encoding="utf-8")
+    state = tmp_path.parent / f"ct93-state-{role}-{run_id}"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--workspace",
+            str(tmp_path),
+            "--role",
+            role,
+            "--run-id",
+            run_id,
+            "--config",
+            str(config),
+            "--max-turns",
+            "1",
+            "ct93 task",
+        ]
+    )
+    dispatch = PlannerDispatch(PlannerDispatchKind.ADMISSION_REPAIR, "ct93", candidate_target=".fa/admission/ct93/p.md")
+    assert _cmd_run(args, planner_dispatch=dispatch, secrets=SecretStore({"K": "sk-test-live"})) == 2
+    assert calls == []
+    assert list(tmp_path.iterdir()) == []
+    assert not state.exists()
+
+
+@pytest.mark.parametrize("failure", ["raises", "absent"])
+def test_ct93_required_builder_failure_never_falls_back_or_calls_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from dataclasses import replace
+
+    from fa.cli import _cmd_run
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
+    from fa.inner_loop.tools import write_file
+
+    ctx = _context(tmp_path, run_id="ct93")
+    ctx.config.write_text(_ROLE_YAML.format(role="planner"), encoding="utf-8")
+    ctx = replace(ctx, secrets=SecretStore({"K": "sk-test-live"}))
+    calls: list[object] = []
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    monkeypatch.setattr(ProviderChain, "request", lambda *a, **kw: calls.append(a))
+
+    def unavailable(*_args: object, **_kwargs: object) -> Any:
+        if failure == "raises":
+            raise OSError("scope backend unavailable")
+        return None
+
+    monkeypatch.setattr(write_file, "build_scoped_write_file_tool", unavailable)
+    dispatch = PlannerDispatch(PlannerDispatchKind.ADMISSION_REPAIR, "ct93", candidate_target=".fa/admission/ct93/p.md")
+    with pytest.raises(PlannerDispatchError, match=r"^invalid planner dispatch$"):
+        _run_stage(
+            ctx,
+            "planner",
+            fresh=True,
+            transition_reason="ct93-fault",
+            progress=WorkflowProgress(),
+            run_stage_fn=_cmd_run,
+            planner_dispatch=dispatch,
+        )
+    assert calls == []
+    assert not (tmp_path / ".fa/admission").exists()
+
+
+@pytest.mark.parametrize("fault", ["guard", "replace", "fsync"])
+def test_ct93_scoped_failure_preserves_candidate_and_reports_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+    from fa.inner_loop.registry import ToolResult
+    from fa.inner_loop.tools import write_file
+
+    target = ".fa/admission/ct93/candidate.md"
+    path = tmp_path / target
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"old bytes")
+    tool = write_file.build_scoped_write_file_tool(
+        tmp_path, PlannerDispatch(PlannerDispatchKind.ADMISSION_REPAIR, "ct93", candidate_target=target)
+    )
+    if fault == "guard":
+        monkeypatch.setattr(
+            write_file, "check_mutation_allowed", lambda *a, **kw: ToolResult.fail("test_conflict", "blocked")
+        )
+    else:
+
+        def unavailable(*_args: object, **_kwargs: object) -> None:
+            raise OSError("injected publication fault")
+
+        monkeypatch.setattr(os, fault, unavailable)
+    result = tool.handler({"path": target, "content": "replacement"})
+    assert result.error is not None
+    assert result.error.code == ("test_conflict" if fault == "guard" else "write_failed")
+    assert result.error.retryable is False
+    assert path.read_bytes() == b"old bytes"
+    assert list(path.parent.iterdir()) == [path]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"kind": "ORDINARY_PLANNING"},
+        {"kind": "ADMISSION_REPAIR"},
+        {"run_id": ""},
+        {"run_id": "../other"},
+        {"run_id": "x" * 129},
+        {"active_plan": "/outside.md"},
+        {"active_plan": "a/../p.md"},
+        {"candidate_target": ".fa/admission/ct93/p.md"},
+    ],
+)
+def test_ct93_invalid_dispatch_fields_cannot_construct_an_ordinary_scope(changes: dict[str, Any]) -> None:
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
+
+    fields: dict[str, Any] = {"kind": PlannerDispatchKind.ORDINARY_PLANNING, "run_id": "ct93"}
+    with pytest.raises(PlannerDispatchError):
+        PlannerDispatch(**(fields | changes))
+
+
+def test_ct93_scope_is_frozen_and_cannot_target_its_active_plan() -> None:
+    from dataclasses import FrozenInstanceError
+
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
+
+    target = ".fa/admission/ct93/p.md"
+    with pytest.raises(PlannerDispatchError):
+        PlannerDispatch(PlannerDispatchKind.ADMISSION_REPAIR, "ct93", target, target)
+    dispatch = PlannerDispatch(PlannerDispatchKind.ADMISSION_REPAIR, "ct93", candidate_target=target)
+    from dataclasses import fields
+
+    for field in fields(dispatch):
+        with pytest.raises(FrozenInstanceError):
+            setattr(dispatch, field.name, ".fa/active.md")

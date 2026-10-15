@@ -16,8 +16,10 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSchemaPortabilityError, ToolSpec, ToolWireNameError
 from fa.inner_loop.tool_names import is_valid_wire_name
+from fa.inner_loop.tools.base import resolve_workspace_path
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +242,84 @@ def _add_optional_tool_builders(builders: dict[str, Callable[[], ToolSpec]], roo
         pass
 
 
-def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[str, Callable[[], ToolSpec]]:
+def _planner_target_allowed(
+    root: Path, path: str, prefixes: Sequence[str], dispatch: PlannerDispatch | None
+) -> bool:
+    if PurePosixPath(path).parts[:2] == (".fa", "admission"):
+        return False
+    try:
+        relative = resolve_workspace_path(root, path).relative_to(root).as_posix()
+    except (OSError, ValueError, RuntimeError):
+        return False
+    active = dispatch.active_plan if dispatch is not None else None
+    if relative == ".fa/admission" or relative.startswith(".fa/admission/") or relative == active:
+        return False
+    if active is not None:
+        try:
+            if (root / relative).samefile(root / active):
+                return False
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return False
+    return is_path_within_allowlist(relative, prefixes)
+
+
+def _candidate_dispatch(dispatch: PlannerDispatch | None) -> PlannerDispatch | None:
+    if dispatch is None:
+        return None
+    if not isinstance(dispatch, PlannerDispatch):
+        raise PlannerDispatchError
+    return None if dispatch.kind == PlannerDispatchKind.ORDINARY_PLANNING else dispatch
+
+
+def _build_limited_write(root: Path, planner_dispatch: PlannerDispatch | None) -> ToolSpec:
+    from fa.inner_loop.tools.write_file import build_write_file_tool
+
+    base_spec = build_write_file_tool(root)
+    profile_allowlist = PROFILES_RAW.get("planner", {}).get("write_allowlist", [])
+    allowed_prefixes: list[str] = [str(p) for p in profile_allowlist]
+
+    orig_handler = base_spec.handler
+
+    def limited_handler(params: Mapping[str, object]) -> ToolResult:
+        # Compliance-by-construction: deny before the write is attempted.
+        # A malformed ``path`` param is left to the base handler, which
+        # owns the schema error; this guard only decides allow/deny for
+        # well-formed string paths.
+        p = params.get("path", "")
+        if not isinstance(p, str):
+            return orig_handler(params)
+        if not is_path_within_allowlist(p, allowed_prefixes):
+            return ToolResult.fail(
+                "path_denied",
+                (f"Planner write_file limited to {allowed_prefixes}, got '{p}' — use implementer role for src/ writes"),
+                retryable=False,
+            )
+        if not _planner_target_allowed(root, p, allowed_prefixes, planner_dispatch):
+            return ToolResult.fail(
+                "path_denied", "Planner write_file cannot modify admission storage or the active plan"
+            )
+        return orig_handler(params)
+
+    # Return new spec with same schema but limited handler and description
+    from fa.inner_loop.registry import ToolSpec
+
+    return ToolSpec(
+        name=base_spec.name,
+        description=base_spec.description + " [planner limited to knowledge/research/** + .fa/**]",
+        input_schema=base_spec.input_schema,
+        permission=base_spec.permission,
+        handler=limited_handler,
+        tags=base_spec.tags,
+        max_context_bytes=base_spec.max_context_bytes,
+        elide=base_spec.elide,
+    )
+
+
+def _build_tool_builders(
+    workspace_root: Path, bash_timeout: int = 30, *, planner_dispatch: PlannerDispatch | None = None
+) -> dict[str, Callable[[], ToolSpec]]:
     """Map tool name -> builder lambda, uses existing builders, graceful degradation.
 
     For Phase 1, we have: read_file, write_file, run_bash, glob, grep, instant_grep,
@@ -277,51 +356,7 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
 
         builders["fs_write_file"] = lambda: build_write_file_tool(root)
 
-        # Limited write for planner. The prefixes are read from the profile's
-        # ``write_allowlist`` rather than duplicated here: the key was
-        # previously decorative while the real list lived in this closure, so
-        # editing the profile silently changed nothing.
-        def _build_limited_write() -> ToolSpec:
-            base_spec = build_write_file_tool(root)
-            profile_allowlist = PROFILES_RAW.get("planner", {}).get("write_allowlist", [])
-            allowed_prefixes: list[str] = [str(p) for p in profile_allowlist]
-
-            orig_handler = base_spec.handler
-
-            def limited_handler(params: Mapping[str, object]) -> ToolResult:
-                # Compliance-by-construction: deny before the write is attempted.
-                # A malformed ``path`` param is left to the base handler, which
-                # owns the schema error; this guard only decides allow/deny for
-                # well-formed string paths.
-                p = params.get("path", "")
-                if not isinstance(p, str):
-                    return orig_handler(params)
-                if not is_path_within_allowlist(p, allowed_prefixes):
-                    return ToolResult.fail(
-                        "path_denied",
-                        (
-                            f"Planner write_file limited to {allowed_prefixes}, got '{p}' — "
-                            "use implementer role for src/ writes"
-                        ),
-                        retryable=False,
-                    )
-                return orig_handler(params)
-
-            # Return new spec with same schema but limited handler and description
-            from fa.inner_loop.registry import ToolSpec
-
-            return ToolSpec(
-                name=base_spec.name,
-                description=base_spec.description + " [planner limited to knowledge/research/** + .fa/**]",
-                input_schema=base_spec.input_schema,
-                permission=base_spec.permission,
-                handler=limited_handler,
-                tags=base_spec.tags,
-                max_context_bytes=base_spec.max_context_bytes,
-                elide=base_spec.elide,
-            )
-
-        builders["fs_write_file_limited"] = _build_limited_write
+        builders["fs_write_file_limited"] = lambda: _build_limited_write(root, planner_dispatch)
 
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs_write_file: {exc}")
@@ -364,6 +399,13 @@ def _build_tool_builders(workspace_root: Path, bash_timeout: int = 30) -> dict[s
 
     _add_optional_tool_builders(builders, root)
 
+    candidate_dispatch = _candidate_dispatch(planner_dispatch)
+    if candidate_dispatch is not None:
+        from fa.inner_loop.tools.write_file import build_scoped_write_file_tool
+
+        scoped = build_scoped_write_file_tool(root, candidate_dispatch)
+        builders["fs_write_file_limited"] = lambda: scoped
+
     return builders
 
 
@@ -372,6 +414,7 @@ def build_registry_for_role(
     workspace_root: Path,
     *,
     bash_timeout: int = 30,
+    planner_dispatch: PlannerDispatch | None = None,
 ) -> ToolRegistry:
     """Build ToolRegistry with only tools for given role, token efficient.
 
@@ -381,9 +424,11 @@ def build_registry_for_role(
     if role not in PROFILES_RAW:
         raise ValueError(f"Unknown role {role}, known: {list(PROFILES_RAW.keys())}")
 
+    if planner_dispatch is not None and role != "planner":
+        raise PlannerDispatchError
     profile = PROFILES_RAW[role]
     wanted = profile.get("tools", [])
-    builders = _build_tool_builders(workspace_root, bash_timeout=bash_timeout)
+    builders = _build_tool_builders(workspace_root, bash_timeout=bash_timeout, planner_dispatch=planner_dispatch)
 
     registry = ToolRegistry()
     for tool_name in wanted:
@@ -424,6 +469,8 @@ def build_registry_for_role(
         except Exception as exc:  # noqa: BLE001 - failure-observable
             logger.warning(f"Failed to build/register tool {tool_name} for role {role}: {exc}")
 
+    if planner_dispatch is not None and registry.lookup("fs_write_file") is None:
+        raise PlannerDispatchError
     return registry
 
 

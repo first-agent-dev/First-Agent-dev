@@ -28,6 +28,7 @@ from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_injection_modes
 from fa.inner_loop.plan_admission import PlanRef, PlanRefError, _require_plan_for_coder, read_plan_snapshot
 from fa.inner_loop.plan_ids import PlanIds, canonical_slice_id, extract_plan_id, extract_plan_ids
+from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
     CommandOutcome,
@@ -957,6 +958,24 @@ def _eval_evidence_block(
 # ── Stage dispatch ─────────────────────────────────────────────────────────
 
 
+def _stage_planner_dispatch(
+    ctx: WorkflowContext, role: str, dispatch: PlannerDispatch | None
+) -> PlannerDispatch | None:
+    if role != "planner":
+        if dispatch is not None:
+            raise PlannerDispatchError
+        return None
+    active = None
+    if ctx.plan_path is not None:
+        path = ctx.plan_path
+        active = (path.relative_to(ctx.workspace.resolve()) if path.is_absolute() else path).as_posix()
+    if dispatch is None:
+        return PlannerDispatch(PlannerDispatchKind.ORDINARY_PLANNING, ctx.run_id, active)
+    if not isinstance(dispatch, PlannerDispatch) or dispatch.run_id != ctx.run_id or dispatch.active_plan != active:
+        raise PlannerDispatchError
+    return dispatch
+
+
 def _run_stage(
     ctx: WorkflowContext,
     role: str,
@@ -966,6 +985,7 @@ def _run_stage(
     transition_reason: str,
     run_stage_fn: Callable[..., int],
     prior_verification: PlanVerification | None = None,
+    planner_dispatch: PlannerDispatch | None = None,
 ) -> StageResult:
     """Dispatch one role session and, for ``eval``, persist its report.
 
@@ -983,6 +1003,7 @@ def _run_stage(
     and ``bash_timeout_seconds``; the unbounded quantity was the NUMBER of
     stages, which is exactly what this caps.
     """
+    dispatch = _stage_planner_dispatch(ctx, role, planner_dispatch)
     if _deadline_exceeded(ctx):
         _write_deadline_state(ctx, role, progress=progress)
         return StageResult(role=role, exit_code=WORKFLOW_DEADLINE_EXIT_CODE)
@@ -1090,11 +1111,13 @@ def _run_stage(
 
     # ``sink`` is local to this stage and is read below for eval alone, so
     # collecting a non-eval outcome here is inert.
+    dispatch_kwargs = {"planner_dispatch": dispatch} if dispatch is not None else {}
     code = run_stage_fn(
         stage_args,
         transport=ctx.transport,
         secrets=ctx.secrets,
         outcome_sink=sink,
+        **dispatch_kwargs,
     )
     report: EvalReport | None = None
     verification: PlanVerification | None = None

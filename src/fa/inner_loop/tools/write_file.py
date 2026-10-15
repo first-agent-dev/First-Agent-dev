@@ -1,15 +1,70 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string, resolve_workspace_path
 from fa.inner_loop.tools.mutation_guard import check_mutation_allowed, record_mutation
+from fa.inner_loop.workflow_artifacts import _private_artifact_directory, _replace_private_bytes
 
 logger = logging.getLogger(__name__)
+
+
+def _write_with_guard(
+    root: Path, path: Path, rel_path: str, content: str, writer: Callable[[], None], *, retryable: bool = True
+) -> ToolResult:
+    session: Any = None
+    blackboard: Any = None
+    transaction: Any = None
+    try:
+        from fa.inner_loop.context import get_current_session
+
+        session = get_current_session()
+        if session is not None:
+            blackboard = session.blackboard if session is not None else None
+            transaction = session.transaction if session is not None else None
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+        logger.warning("get_current_session failed in write_file: %s", exc)
+
+    read_set: list[str] = []
+    write_set: list[str] = [rel_path]
+    try:
+        if transaction is not None:
+            read_set = list(transaction.read_set)
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+        logger.warning("transaction.read_set failed: %s", exc)
+
+    denial = check_mutation_allowed(blackboard, read_set=read_set, write_set=write_set, root=root)
+    if denial is not None:
+        return denial
+
+    try:
+        writer()
+    except (OSError, PermissionError, ValueError) as exc:
+        return ToolResult.fail("write_failed", str(exc), retryable=retryable)
+
+    try:
+        if transaction is not None:
+            transaction.add_write(rel_path)
+    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+        logger.warning("transaction.add_write failed: %s", exc)
+
+    record_mutation(
+        blackboard,
+        read_set=read_set,
+        write_set=write_set,
+        root=root,
+        payload_extra={"bytes": len(content.encode())},
+    )
+
+    return ToolResult.ok(
+        f"wrote {path.relative_to(root)}",
+        result={"path": str(path), "bytes": len(content.encode("utf-8"))},
+    )
 
 
 def build_write_file_tool(workspace_root: Path) -> ToolSpec:
@@ -28,55 +83,11 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
         except ValueError:
             rel_path = str(path)
 
-        session: Any = None
-        blackboard: Any = None
-        transaction: Any = None
-        try:
-            from fa.inner_loop.context import get_current_session
-
-            session = get_current_session()
-            if session is not None:
-                blackboard = session.blackboard if session is not None else None
-                transaction = session.transaction if session is not None else None
-        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            logger.warning("get_current_session failed in write_file: %s", exc)
-
-        read_set: list[str] = []
-        write_set: list[str] = [rel_path]
-        try:
-            if transaction is not None:
-                read_set = list(transaction.read_set)
-        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            logger.warning("transaction.read_set failed: %s", exc)
-
-        denial = check_mutation_allowed(blackboard, read_set=read_set, write_set=write_set, root=root)
-        if denial is not None:
-            return denial
-
-        try:
+        def writer() -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
-        except (OSError, PermissionError, ValueError) as exc:
-            return ToolResult.fail("write_failed", str(exc), retryable=True)
 
-        try:
-            if transaction is not None:
-                transaction.add_write(rel_path)
-        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
-            logger.warning("transaction.add_write failed: %s", exc)
-
-        record_mutation(
-            blackboard,
-            read_set=read_set,
-            write_set=write_set,
-            root=root,
-            payload_extra={"bytes": len(content.encode())},
-        )
-
-        return ToolResult.ok(
-            f"wrote {path.relative_to(root)}",
-            result={"path": str(path), "bytes": len(content.encode("utf-8"))},
-        )
+        return _write_with_guard(root, path, rel_path, content, writer)
 
     return ToolSpec(
         name="fs_write_file",
@@ -99,4 +110,44 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
     )
 
 
-__all__ = ["build_write_file_tool"]
+def build_scoped_write_file_tool(workspace_root: Path, dispatch: PlannerDispatch) -> ToolSpec:
+    """Exact candidate capability; do not forward a checked path to the generic writer."""
+    if not isinstance(dispatch, PlannerDispatch) or dispatch.kind == PlannerDispatchKind.ORDINARY_PLANNING:
+        raise PlannerDispatchError
+    target = dispatch.candidate_target
+    if target is None:
+        raise PlannerDispatchError
+    root = workspace_root.absolute()
+    path = root / target
+
+    def handler(params: Mapping[str, object]) -> ToolResult:
+        if params.get("path") != target:
+            return ToolResult.fail("scope_denied", "planner candidate target does not match controller scope")
+        try:
+            content = require_string(params, "content")
+            raw = content.encode("utf-8")
+        except (ValueError, UnicodeError):
+            return ToolResult.fail("write_failed", "candidate content must be valid UTF-8 text")
+
+        def writer() -> None:
+            with _private_artifact_directory(path.parent) as directory_fd:
+                _replace_private_bytes(directory_fd, path.name, raw)
+
+        return _write_with_guard(root, path, target, content, writer, retryable=False)
+
+    return ToolSpec(
+        name="fs_write_file",
+        description=f"Write UTF-8 only to controller candidate {target}. No other path is permitted.",
+        input_schema={
+            "type": "object",
+            "required": ["path", "content"],
+            "additionalProperties": False,
+            "properties": {"path": {"type": "string", "enum": [target]}, "content": {"type": "string"}},
+        },
+        permission="workspace",
+        handler=handler,
+        tags=("fs", "write"),
+    )
+
+
+__all__ = ["build_scoped_write_file_tool", "build_write_file_tool"]

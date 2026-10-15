@@ -610,6 +610,11 @@ def _read_admission_at(directory_fd: int, name: str) -> object:
 
 def _replace_private_json(directory_fd: int, name: str, payload: dict[str, Any]) -> None:
     raw = (json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    _replace_private_bytes(directory_fd, name, raw)
+
+
+def _replace_private_bytes(directory_fd: int, name: str, raw: bytes) -> None:
+    """Publish owned bytes, never following an existing control/candidate alias."""
     temporary = f".{name}.{uuid4().hex}.tmp"
     replaced = False
     created = False

@@ -518,3 +518,254 @@ The existing real verifier/eval C1 passes in this final fixed-source run. An ear
 before the last two serializer cases/provenance correction was 862 passed/6 failed in 562.85s;
 it is not substituted for the final run. This is still a targeted twenty-suite checkpoint,
 not `just test`, d9109f4 acceptance, or proof that the rest of I02 is complete.
+
+## SLICE6 exact-target planner writer prerequisite (E208, 2026-10-15)
+
+**Disposition:** partial STEP9 / CT93, GAP-04–GAP-06 prerequisite, from E207
+`4eaa32c94112c100e01b919bd2d1f29971528e1a`. Re-read remaining SLICE6 and the normative
+explicit-admission spec before editing. No blocking policy question found; the remaining
+validation/repair, canonical promotion, single admitted T0, pinned verification/eval and
+unsupported nested acquisition gaps are real implementation work, not grounds to silently
+reduce or reinterpret the plan. No STEP checkbox, I02 completion or deployed-security claim.
+
+### Declared edit / source review / implementation
+
+Pre-edit declaration: add a frozen, controller-owned typed planner dispatch; thread it through
+the real stage/CLI/registry composition; install a mandatory single-target writer for admission
+repair/eval replan; reuse small descriptor IO and existing mutation bookkeeping rather than a
+new transaction framework. Ordinary planning keeps the existing research/`.fa` prefixes but
+cannot use `fs_write_file` to overwrite admission storage or the active PlanRef. Failure to
+construct/register the scoped writer must stop before provider dispatch, never silently select
+the ordinary writer or read+bash fallback. DoD is exact candidate bytes/private modes plus
+unchanged protected files, actual provider-visible schema and tool trajectory, malformed
+capability zero-provider/no-lifecycle effects and a real producer kill. Tests follow
+`knowledge/skills/tests-writing/SKILL.md`; mutation guidance read before test edits.
+
+Exact allowed files (and actual changed scope):
+
+- new `src/fa/inner_loop/planner_dispatch.py`;
+- `src/fa/inner_loop/{workflow_artifacts,profiles,workflow_controller}.py`;
+- `src/fa/inner_loop/tools/{write_file,__init__}.py`;
+- `src/fa/cli.py`, `tests/test_verify_gate_live.py`;
+- this register and `../ledger.md`.
+
+Source findings and current→target:
+
+- `_run_stage` previously passed no trusted planner writer scope. It now binds ordinary
+  dispatch to the current run/active relative PlanRef; repair/replan overrides must match that
+  run and active path and are forbidden on non-planner stages. `_cmd_run` accepts a private
+  keyword, not a CLI flag or Namespace/model JSON field; its argument prologue checks actual
+  typed instance, planner role and matching run ID before configuration/task/lifecycle work.
+- `PlannerDispatchKind` is separate from admission-attempt kinds. Frozen/slotted
+  `PlannerDispatch` validates the same admission run-ID grammar, normalized relative slash
+  components (no empty/dot/parent/NUL/absolute components), no ordinary candidate and a distinct
+  candidate beneath exactly `.fa/admission/<run_id>/`. It does not allocate/seed candidates.
+- `_build_run_tool_registry` → `_build_role_registry` → `build_planner_registry` →
+  `build_registry_for_role` → `_build_tool_builders` now carries the dispatch. Scoped tool
+  creation is outside optional-builder degradation; a missing registered `fs_write_file` is
+  fatal for a supplied dispatch. The outer planner fallback rethrows a static
+  `PlannerDispatchError` rather than weakening a requested corpus.
+- `build_scoped_write_file_tool` closes over the target, advertises a single-value path enum
+  and `additionalProperties=False`, and separately checks exact path/content in its handler.
+  It never forwards a checked path to the generic writer. `_replace_private_bytes` is the
+  existing E207 JSON publication body extracted unchanged into a shared byte primitive;
+  `_replace_private_json` still serializes exactly as before and delegates to it. Scoped IO
+  uses the private descriptor walk and same-directory exclusive 0600 temp, complete byte write,
+  file fsync, replace, directory fsync and owned-temp cleanup. Ancestor/terminal aliases,
+  nonregular and multi-link targets fail without following them. IO failures are non-retryable
+  tool failures; post-replace durability uncertainty still must not be called a rollback.
+- The generic writer retains mkdir/write_text semantics. Both writers use the extracted
+  `_write_with_guard` for existing conflict checks/transaction/blackboard bookkeeping; existing
+  deliberately-absent-substrate and legacy context-access degradation semantics are not
+  redefined in this checkpoint. No new execution-isolation or universal substrate claim.
+- The extracted ordinary `_build_limited_write` first retains its existing lexical allowlist,
+  then `_planner_target_allowed` denies reserved lexical/resolved storage paths, active path
+  and existing same-inode active aliases, and rechecks the resolved destination allowlist.
+  No worklogs permission expansion. These are writer-tool checks, not an OS/shell boundary:
+  arbitrary bash/PTY and managed exclusive-writer containment remain I03 work.
+
+**TEST-EDITS:** append only, 47 new collected cases. AST comparison against HEAD proves the
+entire original 104-node module prefix unchanged; no old oracle, selection or fixture weakened.
+New negative fixture initially shared a state root across parametrized roles; it was strengthened
+to separate per-role/run roots and explicitly assert no state allocation. Final binding mutation
+then fails all three negative cases (the earlier fixture observed only two). Final audits below
+use the strengthened test hash, not that intermediate result.
+
+### Local proof classes, path and outcomes
+
+- **C0:** typed/frozen scope and normalized target/type/run/active negatives; direct handler
+  wrong-path and UTF-8 failures; repeated positive publication with 0600/0700 modes;
+  ancestor/terminal inside-workspace symlinks, hardlink, FIFO and directory sentinels;
+  conflict denial and pre-publication replace/fsync faults preserve old bytes and leave no
+  owned temporary. These are local filesystem proofs, not deployed ownership/OS isolation.
+- **C1/C3:** six parameter combinations of real `_run_stage` → `_cmd_run` → role registry →
+  real session/normal hooks/tools/filesystem. Only `ProviderChain.request` is replaced in this
+  live-path test. Its first response calls the actual `pr_prepare` producer; no fabricated draft,
+  disabled IntentGuard or handcrafted registry. Subsequent real tool calls cover ordinary,
+  admission-repair and eval-replan corpora, active/symlink/hardlink and admission aliases,
+  forbidden src/worklogs writes and same-prefix ordinary positive controls. Scoped ancestor,
+  terminal and hardlink cases assert a real `write_failed` tool-result event, not a hook denial;
+  the valid case asserts the exact provider schema, successful tool-result event and bytes.
+- **C2/fault checks:** inject unavailable or absent scoped builder while retaining real stage,
+  CLI and registry construction. A typed error escapes before any provider/candidate write;
+  no fallback success. Misbound CLI dispatch uses real parser-produced valid arguments and a
+  callable provider control, not an under-populated Namespace which would fail independently.
+- A session can return exit 0 after an ordinary tool denial. **That is not admission success.**
+  `_run_stage` does not yet translate scoped writer errors into an admission BLOCKED receipt.
+  The future CT91/Q57 repair orchestrator must consume scoped error outcomes (including
+  durability-unknown), block on capability/IO errors, validate exact resulting bytes and never
+  promote merely because planner text/session exit looks successful. Current scoped-construction
+  errors stop by raising before provider dispatch; the repair controller must persist their
+  terminal admission routing. This remains explicit missing integration, not a hidden stub.
+
+All commands used the locked pyproject environment through
+`/home/user/.local/fa-bootstrap/bin/uv run --frozen` (abbreviated `uv run --frozen` below).
+Observed interpreter: Python 3.13.16, GCC 12.2.0. Final focused commands:
+
+```sh
+uv run --frozen pytest tests/test_verify_gate_live.py -k ct93 -q --tb=short
+# 47 passed, 331 deselected (3.97s)
+uv run --frozen pytest tests/test_verify_gate_live.py tests/test_write_allowlist.py \
+  tests/test_write_file_expected_root.py -k 'not real_workflow' -q --tb=short
+# 409 passed, 1 deselected (6.25s, final rerun)
+```
+
+Ruff and Mypy on all eight changed Python files: clean / `Success: no issues found in 8 source
+files`. Pylint on planner_dispatch, tools/write_file and profiles: **10.00/10**, no added
+suppressions. `git diff --check`: clean. Additional Pyrefly on seven changed production modules:
+**0 errors**. Pyrefly including the full live test file reports **59 errors**, all pre-existing
+untyped dictionary-unpacking fixtures at lines 705–2480. Reconstructed the six prior production
+files and old test file with exact `git show 4eaa32c:<path>` bytes in a separate source/test/config
+copy (no branch switch). That baseline also gives **59 errors**, with all 59 ordered diagnostic
+messages and locations identical. No Pyrefly test-file/full-project green claim or waiver.
+Scratch logs: `/home/user/.cache/fa-i02-ct93-pyrefly-{candidate,baseline}.log`.
+
+### CT93 named producer kill — actual whole declared path
+
+Final real `_run_kill_check` directive:
+
+```python
+KillDirective(KillOperator.REMOVE_CALL, "src/fa/inner_loop/profiles.py",
+              "_build_tool_builders", "build_scoped_write_file_tool", 0)
+# _run_kill_check(directive, "tests/test_verify_gate_live.py", root,
+#                 deadline=time.monotonic() + 900)
+```
+
+Existence/application precheck: **targets=1, edits=1**. Final verdict **PROVEN**, empty detail,
+**144.939421151s**. Uses the real overlay import-origin probe and consistent current JUnit
+run-ID evidence; no timeout/collection/infrastructure outcome counted as proof. Runs the whole
+`tests/test_verify_gate_live.py`, not `-k ct93`. Q53(c) slice-level attribution risk remains;
+this is one checkpoint kill, not STEP17's complete sixteen-contract acceptance rerun.
+Scratch driver/log: `/home/user/.cache/fa-i02-ct93-kill.py`,
+`/home/user/.cache/fa-i02-ct93-kill-final.log`. Initial pre-strengthening run was PROVEN in
+124.047s; it is not substituted for the final fixed-test run above.
+
+### Targeted semantic mutation audit — 17/17 detected
+
+This is an explicit small semantic audit, **not a whole-module mutmut score**. For each row,
+assert the named function/site exists and replacement count, apply only that change inside a
+disposable production `mutation_overlay`, assert the actual module resolves inside its overlay,
+then run `python -m pytest tests/test_verify_gate_live.py -k ct93 -q --tb=short --junitxml=<fresh>`.
+The outside tests are never mutated. Require return code 1, 47 collected/executed cases, at least
+one assertion/application failure, zero JUnit errors, fresh per-case XML and unchanged test hash.
+Timeouts/exceptions fail the audit, not count as kills. Each final row meets those conditions;
+no survivors, infrastructure statuses, ignored mutation profiles or equivalence waivers.
+
+| Mutation ID | Function / exact semantic change | Final failed cases (of 47; errors=0) |
+|---|---|---:|
+| namespace-binding | `PlannerDispatch.__post_init__`: compare only first 2 target components instead of run-bound first 3 | 2 |
+| normalized-dot | `_relative_target`: remove `.` from forbidden components | 2 |
+| enum-type | `__post_init__`: bypass actual-enum-instance guard | 1 |
+| ordinary-no-candidate | `__post_init__`: bypass ordinary candidate prohibition | 1 |
+| candidate-not-active | `__post_init__`: bypass candidate/active equality denial | 1 |
+| exact-handler-target | `build_scoped_write_file_tool`: bypass handler path comparison | 1 |
+| mutation-guard | `_write_with_guard`: ignore non-None guard denial | 1 |
+| required-registration | `build_registry_for_role`: bypass required writer lookup failure | 1 |
+| no-fallback | `build_planner_registry`: bypass supplied-dispatch exception rethrow | 2 |
+| ordinary-protection | `_planner_target_allowed`: replace body with `return True` | 1 |
+| stage-capability | `_run_stage`: remove `**dispatch_kwargs` from the real session call | 8 |
+| cli-role-run-binding | `_valid_planner_dispatch`: replace body with `return True` | 3 |
+| registry-capability | `_build_run_tool_registry`: pass `planner_dispatch=None` instead of the dispatch | 8 |
+| single-link | `_replace_private_bytes`: remove `or metadata.st_nlink != 1` | 2 |
+| nonregular | `_replace_private_bytes`: replace `not stat.S_ISREG(metadata.st_mode)` with False | 3 |
+| ancestor-nofollow | `_private_artifact_directory`: remove both ` | os.O_NOFOLLOW` flag components | 2 |
+| durable-file | `_replace_private_bytes`: replace `os.fsync(fd)` with None | 1 |
+
+Scratch driver `/home/user/.cache/fa-i02-ct93-mutations.py`; final log
+`/home/user/.cache/fa-i02-ct93-mutations-final.log`; detailed fresh XML/logs and `results.json`
+under `/home/user/.cache/fa-i02-ct93-mutations/`. These scratch artifacts are not committed;
+the table/method and permanent tests are the reproducible handoff, not a cache dependency.
+
+### Broader regression state — explicitly not green
+
+Twenty E207 suites plus write_allowlist/write_file_expected_root were run (22 files):
+`test_verify_gate_live`, `test_verify_slice`, `test_slice_verification_runner`,
+`test_workflow_role_allowlist`, `test_session_lifecycle`, `test_session_manifest_guards`,
+`test_session_workspace_provisioning`, `test_plan_reference`, `test_cli_ergonomics`,
+`test_s8_workflow_controller`, `test_s10b_cli_parity`, `test_inject_cli_flag`,
+`test_s10c_artifact_posture`, `test_workflow_artifacts`, `test_workflow_deadline`,
+`test_workflow_global_history`, `test_workflow_no_eval_terminal`, `test_eval_evidence_block`,
+`test_slice_id_validation`, `test_s10c_workflow_exit_contract`, `test_write_allowlist`,
+`test_write_file_expected_root` (each under `tests/`, `.py`).
+
+- Intermediate full-path run: `uv run --frozen pytest -q --tb=short <22 files>`:
+  **929 passed, 6 failed / 748.52s** (exit 1). It collected before the final fourteen appended
+  cases/state-isolation refinement; production code was already the final source below. Includes
+  the original unmutated verifier/eval live composition positive. Not represented as a final
+  all-test-file-hash baseline run.
+- Final fixed-source/test-bank compatibility run:
+  `uv run --frozen pytest -q --tb=short -k 'not real_workflow' <same 22 files>`:
+  **942 passed, 6 failed, 1 deselected / 137.20s** (exit 1). The one expensive existing
+  real-workflow test is deselected explicitly, not silently replaced by a green subset claim.
+  Final C1/C3 writer cases are included; the final named kill above separately runs the whole
+  declared live path. Logs `/home/user/.cache/fa-i02-ct93-regressions{,-final}.log`.
+
+The same six E207 failures, with assertions unedited/unwaived:
+
+1. `test_workflow_deadline.py::test_no_deadline_runs_the_full_pipeline`;
+2. `test_workflow_deadline.py::test_generous_deadline_runs_the_full_pipeline`;
+3. `test_workflow_no_eval_terminal.py::test_eval_requested_but_no_verdict_fails[linear]`;
+4. `test_workflow_no_eval_terminal.py::test_scratch_pipeline_succeeds_but_is_marked_unjudged`;
+5. `test_workflow_no_eval_terminal.py::test_planner_coder_without_eval_is_also_unjudged`;
+6. `test_workflow_global_history.py::test_nested_workflow_produces_two_rows` (unsupported
+   implicit child still receives missing-PlanRef rejection rather than approved
+   acquisition_unavailable routing; do not manufacture history or waive its assertion).
+
+First five were independently reproduced on 5b10409 in E207. No new pytest failure in this
+22-file comparison; no `just test`, d9109f4 comparison, or full acceptance claim.
+
+### New live-host inventory — planned only, I03 F ownership
+
+Standing fixture/provenance/mode/dual-path controls from E205–E207 still apply: reviewed
+operator-owned disposable Linux/Docker workspace and outside sentinels, recorded deployed
+source/import hashes, real backend/PTY/session/hook path, bounded faults, redacted credential
+handling, no global debug-body enable. Local provider-mocked C1/C3 is not a deployed run.
+Run future route-dependent cells only after the real Q57/Q58 controller consumers exist.
+
+| Every new/changed surface | Host case | Required independent live-host observable |
+|---|---|---|
+| `PlannerDispatch`, `PlannerDispatchKind`, `PlannerDispatchError`, `_relative_target`, `_stage_planner_dispatch`, CLI `_valid_planner_dispatch`/prologue | ADM-H09 | Wrong kind/type/run/role/active identity/normalized target stop before provider/lifecycle; controller dispatch stays out of model/Namespace JSON. Ordinary and both scoped kinds have positive same-run controls; frozen fields cannot be widened. |
+| `_build_run_tool_registry`, `_build_role_registry`, `build_planner_registry`, `build_registry_for_role`, `_build_tool_builders`, `_candidate_dispatch` | ADM-H10 | Actual deployed composition advertises exact schema and installs the real scoped handler; missing/raising required producer cannot degrade to ordinary/read+bash tools. Capture zero provider on construction failure and named producer sensitivity on the full declared test path. |
+| `_build_limited_write`, `_planner_target_allowed` | ADM-H11 | Ordinary `.fa`/research positives alongside active path, resolved symlink/hardlink aliases, admission aliases and src/worklogs negatives. Exact old protected bytes/modes, actual error trajectories; do not claim bash or another tool is contained by this file-writer guard. |
+| `build_scoped_write_file_tool`, `_replace_private_bytes`, extracted `_replace_private_json`, `_private_artifact_directory` reuse | ADM-H12 | Both real repair/replan candidates, single-target schema and direct-handler guard, UTF-8 and repeated publication; private modes; inside-workspace ancestor/terminal symlinks, hardlink/FIFO/directory and outside sentinels unchanged on denial. Prove writer-origin failure rather than just an earlier hook. Pre/post-replace faults preserve appropriate old/published bytes and distinguish durability uncertainty. Extends ADM-H02/H05, not substitutes for them. |
+| `_write_with_guard`, ordinary writer closure, real `pr_prepare`/IntentGuard + session consumers | ADM-H13 | Real conflict/substrate and read/write-set bookkeeping retained for both writer kinds; positive controlled write and denied write have correct tool-result/blackboard/transaction effects. Capability/IO failure is eventually consumed as admission BLOCKED, even when planner session otherwise stops successfully; no T0/coder/eval or canonical promotion on that path. Do not disable guards to obtain a positive. |
+
+### Final source/test identity and next work
+
+| Path | SHA256 |
+|---|---|
+| `src/fa/cli.py` | `732ca6bb3e0ac9acf42e1aef200ee50ec21e9693464886f0a278142012650e89` |
+| `src/fa/inner_loop/planner_dispatch.py` | `dc30185f8dd89fd0e0beb9ce257b676bc7dd73a3ddcca1667b2f7a8d54686890` |
+| `src/fa/inner_loop/profiles.py` | `9dc2780947286c753926fef845b00760df5c813e398f5ecf3ee45f16aa09b2da` |
+| `src/fa/inner_loop/tools/write_file.py` | `ce936a1702806163a5463736e7a61226b9def8b0e465d1c0e09ba6b979e80dc4` |
+| `src/fa/inner_loop/tools/__init__.py` | `48df5d2bbb54a1dea4af1c873f860a19dd142c6638a1277e62121558b3733229` |
+| `src/fa/inner_loop/workflow_artifacts.py` | `984fbfc085aab7f02e27dffb0f4dd13451e410c9a769a4df6a8f939944a00fa1` |
+| `src/fa/inner_loop/workflow_controller.py` | `a79cfba018d9821bdc448172d319183789496577c9c9f2ee1840b4795907fab5` |
+| `tests/test_verify_gate_live.py` | `64063e8d7840ffffa0c69be404b6c7725fbb48bee258c0f493605f685877a896` |
+
+Next: source-reviewed CT94 fresh-candidate seeding/canonical locked hash-checked promotion,
+then CT91/Q57 validation and shared bounded repair/replan credit/error consumption; successful
+ADMITTED barrier, exactly one admitted T0 and pinned verifier/real eval local composition;
+approved acquisition_unavailable routing. Keep six pytest and 59 old fixture-type findings
+visible; no silent assertion migration/suppression. Final 16 whole-path kills, independent
+review/operator DoD, full-suite comparison and I03 managed acquisition/OS/live-host work stay open.
