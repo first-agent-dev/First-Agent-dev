@@ -63,6 +63,7 @@ from fa.inner_loop.injections import (
     parse_inject_overrides,
     resolve_injection_modes,
 )
+from fa.inner_loop.plan_admission import PlanRefError, _require_plan_for_coder, read_plan_snapshot
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.prompt import render_tool_specs
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
@@ -760,12 +761,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         metavar="PATH",
-        help=(
-            "Plan artifact this run executes against. Optional; when given, the "
-            "harness records it and can check the run against the plan's own "
-            "contracts. Never inferred -- guessing the contract is worse than "
-            "having none."
-        ),
+        help=COMMANDS["workflow"]["args"]["--plan"]["en"],
     )
     workflow_parser.add_argument(
         "--inject",
@@ -1400,15 +1396,35 @@ def _cmd_workflow(
         print(f"fa workflow: invalid workflow request: {code}", file=sys.stderr)
         return 2
 
-    # Supplied-path existence checking follows pure request validation.
     plan_path: Path | None = getattr(args, "plan", None)
-    if plan_path is not None and not plan_path.is_file():
-        print("fa workflow: --plan not found", file=sys.stderr)
+    selected_workspace: Path | None = None
+    try:
+        _require_plan_for_coder(roles, plan_path)
+        if plan_path is not None:
+            selected_workspace = _session_manager_for_args(args).resolve_workflow_workspace(
+                session_id=getattr(args, "session_id", None),
+                workspace_override=getattr(args, "workspace", None),
+            )
+            snapshot = read_plan_snapshot(selected_workspace, plan_path)
+            plan_path = selected_workspace / snapshot.ref.workspace_relative_path
+    except PlanRefError as error:
+        guidance = "--plan not found or unreadable" if error.rule == "unreadable" else "--plan"
+        print(f"fa workflow: invalid plan reference: {error.rule} ({guidance})", file=sys.stderr)
+        return 2
+    except SessionManagerError as error:
+        print(
+            f"fa workflow: workspace preflight: {error.code}; choose an existing --workspace/--session-id",
+            file=sys.stderr,
+        )
         return 2
     try:
         run_id, session_context, run_context, session_db = _resolve_workflow_lifecycle(args, run_id)
     except SessionManagerError as exc:
         print(f"fa workflow: session error [{exc.code}]: {exc}", file=sys.stderr)
+        return 2
+
+    if selected_workspace is not None and Path(args.workspace).resolve() != selected_workspace:
+        print("fa workflow: workspace preflight: workspace-mismatch", file=sys.stderr)
         return 2
 
     exit_code, _terminal_state = run_workflow(

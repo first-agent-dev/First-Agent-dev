@@ -235,7 +235,30 @@ def test_workflow_per_role_overrides_parse() -> None:
 
 
 def _workflow_args(tmp_path: Path, config: Path, **over: Any) -> argparse.Namespace:
+    # CT90: routing/history fixtures must supply an explicit workspace plan.
+    plan = (
+        tmp_path / "worklogs/planning-topology-and-executable-contracts-loop/increments/increment-99-cli-fixture.md"
+    )
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    plan.write_text(
+        "Plan-ID: PLAN-cli-fixture\n\n## SLICE1: CLI routing fixture\n"
+        "CONTRACTS:\n  CT9001 [CONSTRAINT]: fixture input remains present.\n"
+        "TESTS: tests/test_fixture_contract.py\n",
+        encoding="utf-8",
+    )
+    tests = tmp_path / "tests"
+    tests.mkdir(exist_ok=True)
+    (tests / "test_fixture_contract.py").write_text(
+        "from pathlib import Path\n\ndef test_fixture_input():\n"
+        f"    assert Path({str(plan.relative_to(tmp_path))!r}).is_file()\n",
+        encoding="utf-8",
+    )
+    # A real runner for the disposable project, not a fake baseline report.
+    venv = tmp_path / ".venv"
+    if not venv.exists():
+        venv.symlink_to(Path(__file__).resolve().parents[1] / ".venv", target_is_directory=True)
     base = {
+        "plan": plan,
         "roles": "planner,coder,eval",
         "task": "do the thing",
         "workspace": tmp_path,
@@ -273,7 +296,7 @@ def test_workflow_session_manager_uses_one_invocation_run_context(
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
-    args = _workflow_args(tmp_path, config, run_id="", session_id=None)
+    args = _workflow_args(tmp_path, config, run_id=None, session_id=None)
 
     # Q35b (S10c.2): the eval verdict here is BLOCKED, so the exit code is 1.
     # The assertion below is about session/run identity, which is unaffected.
@@ -455,8 +478,7 @@ def test_adaptive_mode_requires_coder_and_eval_roles(tmp_path: Path, capsys: Cap
     code = _cmd_workflow(args, transport=_ScriptedTransport())
     assert code == 2
     err = capsys.readouterr().err
-    assert "requires roles to include" in err
-    assert "coder and eval" in err
+    assert err == "fa workflow: invalid workflow request: adaptive-roles\n"
 
 
 def test_repair_mode_is_no_longer_accepted(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
@@ -468,9 +490,10 @@ def test_repair_mode_is_no_longer_accepted(tmp_path: Path, capsys: CaptureFixtur
     args = _workflow_args(tmp_path, tmp_path / "models.yaml", mode="repair")
     assert _cmd_workflow(args, transport=_ScriptedTransport()) == 2
     err = capsys.readouterr().err
-    assert "--mode must be one of" in err
-    assert "linear, adaptive" in err
-    assert "repair" not in err.split("(got")[0]
+    from fa.inner_loop.workflow_controller import WORKFLOW_MODES
+
+    assert err == "fa workflow: invalid workflow request: mode\n"
+    assert WORKFLOW_MODES == ("linear", "adaptive")
 
 
 def test_adaptive_accepts_planner_less_roles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -518,7 +541,7 @@ def test_workflow_invalid_mode_rejected(tmp_path: Path, capsys: CaptureFixture[s
     args = _workflow_args(tmp_path, tmp_path / "models.yaml", mode="bogus")
     code = _cmd_workflow(args, transport=_ScriptedTransport())
     assert code == 2
-    assert "--mode must be one of" in capsys.readouterr().err
+    assert capsys.readouterr().err == "fa workflow: invalid workflow request: mode\n"
 
 
 def test_workflow_parses_mode_and_max_repairs() -> None:
@@ -531,7 +554,7 @@ def test_workflow_rejects_empty_roles(tmp_path: Path, capsys: CaptureFixture[str
     args = _workflow_args(tmp_path, tmp_path / "models.yaml", roles=" , ")
     code = _cmd_workflow(args, transport=_ScriptedTransport())
     assert code == 2
-    assert "at least one role" in capsys.readouterr().err
+    assert capsys.readouterr().err == "fa workflow: invalid workflow request: roles\n"
 
 
 def test_workflow_requires_task_for_each_role(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
@@ -545,7 +568,7 @@ def test_workflow_requires_task_for_each_role(tmp_path: Path, capsys: CaptureFix
     )
     code = _cmd_workflow(args, transport=_ScriptedTransport())
     assert code == 2
-    assert "no task for role 'eval'" in capsys.readouterr().err
+    assert capsys.readouterr().err == "fa workflow: invalid workflow request: task\n"
 
 
 # ── help registry ──────────────────────────────────────────────────────────
@@ -687,8 +710,8 @@ def test_adaptive_mode_can_mix_repair_then_replan(tmp_path: Path, monkeypatch: p
     assert state.active_plan_version == 2
 
 
-def test_adaptive_mode_requires_planner_coder_eval_roles() -> None:
-    args = _workflow_args(Path("."), Path("models.yaml"), roles="coder,eval", mode="adaptive")
+def test_adaptive_mode_requires_planner_coder_eval_roles(tmp_path: Path) -> None:
+    args = _workflow_args(tmp_path, tmp_path / "models.yaml", roles="coder,eval", mode="adaptive")
     assert _cmd_workflow(args, transport=_ScriptedTransport(), secrets=_TEST_SECRETS) == 2
 
 

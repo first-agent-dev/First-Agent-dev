@@ -963,3 +963,535 @@ def test_direct_budget_malformed_context_is_a_typed_rejection(context: object) -
         )
 
     assert failure.value.code == "context-binding"
+
+
+# CT90/95 STEP13: C0 exact-byte reader, C2 CLI preflight, adversarial paths.
+# No new claim about admitted direct C1, promotion or OS execution isolation.
+
+
+def test_plan_preflight_snapshot_owns_exact_bytes_and_relative_identity(tmp_path: Path) -> None:
+    import hashlib
+    from dataclasses import FrozenInstanceError
+
+    from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot
+
+    raw = b"Plan-ID: PLAN-reference\r\n\r\n## SLICE1: same bytes\r\nTESTS: tests/test_x.py\r\n"
+    target = tmp_path / "plans" / "p.md"
+    target.parent.mkdir()
+    target.write_bytes(raw)
+    snapshot = read_plan_snapshot(tmp_path, Path("plans/p.md"))
+
+    assert snapshot.ref == PlanRef("plans/p.md", "EXPLICIT", hashlib.sha256(raw).hexdigest())
+    assert snapshot.utf8_bytes == raw
+    assert snapshot.text == raw.decode("utf-8")
+    assert snapshot.ids == extract_plan_ids(snapshot.text)
+    assert read_plan_snapshot(tmp_path, target) == snapshot
+    target.write_text("changed", encoding="utf-8")
+    assert snapshot.utf8_bytes == raw
+    with pytest.raises(FrozenInstanceError):
+        snapshot.ref.__setattr__("sha256", "changed")
+
+
+@pytest.mark.parametrize(
+    "kind,rule",
+    [
+        ("absent", "unreadable"),
+        ("directory", "not-regular"),
+        ("empty", "empty"),
+        ("whitespace", "empty"),
+        ("invalid-utf8", "invalid-utf8"),
+        ("too-large", "too-large"),
+        ("terminal-link", "symlink"),
+        ("ancestor-link", "symlink"),
+        ("dangling-link", "symlink"),
+        ("escape", "path-escape"),
+        ("outside", "path-escape"),
+        ("root", "path-escape"),
+        ("nul", "unreadable"),
+    ],
+)
+def test_plan_preflight_reader_rejects_bad_reference(tmp_path: Path, kind: str, rule: str) -> None:
+    from fa.inner_loop.plan_admission import MAX_PLAN_BYTES, PlanRefError, read_plan_snapshot
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("secret fixture bytes", encoding="utf-8")
+    target = workspace / "plan.md"
+    if kind == "directory":
+        target.mkdir()
+    elif kind in {"empty", "whitespace", "invalid-utf8", "too-large"}:
+        target.write_bytes(
+            {"empty": b"", "whitespace": b" \t\r\n", "invalid-utf8": b"\xff", "too-large": b"x" * (MAX_PLAN_BYTES + 1)}[
+                kind
+            ]
+        )
+    elif kind == "terminal-link":
+        target.symlink_to(outside)
+    elif kind == "ancestor-link":
+        (workspace / "linked").symlink_to(tmp_path, target_is_directory=True)
+        target = workspace / "linked" / "outside.md"
+    elif kind == "dangling-link":
+        target.symlink_to(workspace / "absent.md")
+    elif kind == "escape":
+        target = Path("../outside.md")
+    elif kind == "outside":
+        target = outside
+    elif kind == "root":
+        target = Path(".")
+    elif kind == "nul":
+        target = Path("bad\x00name")
+
+    with pytest.raises(PlanRefError) as failure:
+        read_plan_snapshot(workspace, target)
+
+    assert failure.value.rule == rule
+    assert str(failure.value) == f"invalid plan reference: {rule}"
+    assert outside.read_text(encoding="utf-8") == "secret fixture bytes"
+
+
+def test_plan_preflight_size_limit_is_inclusive(tmp_path: Path) -> None:
+    from fa.inner_loop.plan_admission import MAX_PLAN_BYTES, read_plan_snapshot
+
+    target = tmp_path / "limit.md"
+    target.write_bytes(b"x" * MAX_PLAN_BYTES)
+    assert len(read_plan_snapshot(tmp_path, target).utf8_bytes) == MAX_PLAN_BYTES
+
+
+def test_plan_preflight_fifo_cannot_hang_reader(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    target = tmp_path / "pipe"
+    os.mkfifo(target)
+    code = (
+        "from pathlib import Path; "
+        "from fa.inner_loop.plan_admission import read_plan_snapshot, PlanRefError; "
+        "import sys\n"
+        "try: read_plan_snapshot(Path(sys.argv[1]), Path('pipe'))\n"
+        "except PlanRefError as e: print(e.rule)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path)], capture_output=True, text=True, timeout=5, check=False
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (0, "not-regular\n", "")
+
+
+def test_plan_preflight_detects_concurrent_source_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fa.inner_loop import plan_admission as admission
+
+    target = tmp_path / "plan.md"
+    target.write_bytes(b"before")
+    original_read = os.read
+    changed = False
+
+    def read_and_change(fd: int, count: int) -> bytes:
+        nonlocal changed
+        raw = original_read(fd, count)
+        if not changed:
+            changed = True
+            target.write_bytes(b"after-and-longer")
+        return raw
+
+    monkeypatch.setattr(os, "read", read_and_change)
+    with pytest.raises(admission.PlanRefError) as failure:
+        admission.read_plan_snapshot(tmp_path, target)
+    assert failure.value.rule == "source-changed"
+
+
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+@pytest.mark.parametrize("kind", ["missing", "unreadable", "outside", "symlink", "invalid-utf8", "too-large"])
+def test_plan_preflight_cli_plan_rejection_precedes_allocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mode: str, kind: str
+) -> None:
+    from fa.cli import _cmd_workflow, build_parser
+    from fa.inner_loop.plan_admission import MAX_PLAN_BYTES
+
+    home, state, workspace = tmp_path / "home", tmp_path / "state", tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    monkeypatch.setenv("FA_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.chdir(workspace)
+    target = workspace / "plan.md"
+    argv = ["workflow", "coder", "implement", "--mode", mode, "--run-id", "plan-reject", "--workspace", str(workspace)]
+    if kind == "outside":
+        target = tmp_path / "private-sentinel.md"
+        target.write_text("do not expose fixture", encoding="utf-8")
+    elif kind == "symlink":
+        target.symlink_to(workspace / "missing.md")
+    elif kind == "invalid-utf8":
+        target.write_bytes(b"\xff")
+    elif kind == "too-large":
+        target.write_bytes(b"x" * (MAX_PLAN_BYTES + 1))
+    if kind != "missing":
+        argv.extend(["--plan", str(target)])
+    args = build_parser().parse_args(argv)
+    before = sorted(p.name for p in workspace.iterdir())
+
+    assert _cmd_workflow(args) == 2
+
+    err = capsys.readouterr().err
+    rule = "path-escape" if kind == "outside" else kind
+    assert err.startswith(f"fa workflow: invalid plan reference: {rule} (")
+    assert str(target) not in err
+    assert "do not expose" not in err
+    assert not state.exists()
+    assert not home.exists()
+    assert sorted(p.name for p in workspace.iterdir()) == before
+
+
+def test_plan_preflight_workspace_resolution_is_read_only(tmp_path: Path) -> None:
+    from fa.session.manager import SessionManager, SessionManagerError
+
+    state, root = tmp_path / "state", tmp_path / "workspaces"
+    manager = SessionManager(state_root=state, workspace_root=root)
+    assert not state.exists()
+    assert not root.exists()
+    assert (
+        manager.resolve_workflow_workspace(session_id=None, workspace_override=root / "selected") == root / "selected"
+    )
+    assert not state.exists()
+    assert not root.exists()
+    with pytest.raises(SessionManagerError) as failure:
+        manager.resolve_workflow_workspace(session_id=None, workspace_override=None)
+    assert failure.value.code == "workspace_required"
+    assert str(failure.value) == "workspace_required: create or choose an existing workspace with --workspace first"
+
+
+def test_plan_preflight_resumed_session_does_not_touch_manifest_or_db(tmp_path: Path) -> None:
+    from fa.session.manager import SessionManager, SessionManagerError
+
+    manager = SessionManager(state_root=tmp_path / "state", workspace_root=tmp_path / "workspaces")
+    session = manager.provision_entrypoint_session(
+        session_id="existing", workspace_override=tmp_path / "workspaces" / "one"
+    )
+    files = [p for p in tmp_path.rglob("*") if p.is_file()]
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files}
+    assert manager.resolve_workflow_workspace(session_id="existing", workspace_override=None) == session.workspace_path
+    assert (
+        manager.resolve_workflow_workspace(session_id="existing", workspace_override=session.workspace_path)
+        == session.workspace_path
+    )
+    with pytest.raises(SessionManagerError) as failure:
+        manager.resolve_workflow_workspace(session_id="existing", workspace_override=tmp_path / "workspaces" / "two")
+    assert failure.value.code == "workspace_mismatch"
+    assert str(failure.value) == "workspace_mismatch: workspace disagrees with session"
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files} == before
+    assert {p for p in tmp_path.rglob("*") if p.is_file()} == set(files)
+
+
+def test_plan_help_describes_required_workspace_relative_plan(capsys: pytest.CaptureFixture[str]) -> None:
+    from fa.cli import build_parser
+
+    with pytest.raises(SystemExit) as exit_info:
+        build_parser().parse_args(["workflow", "--help"])
+    assert exit_info.value.code == 0
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "Explicit plan required when roles contain coder" in help_text
+    assert "selected workspace, not the process CWD" in help_text
+    assert "automatic bootstrap is not available" in help_text
+
+
+@pytest.mark.parametrize("resumed", [False, True])
+def test_plan_preflight_real_cli_uses_selected_workspace_not_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resumed: bool
+) -> None:
+    """C2 positive control: real factories/session/provider loop; only provider mocked."""
+    from fa.cli import _cmd_workflow, build_parser
+    from fa.session.manager import SessionManager
+
+    state, workspace, cwd = tmp_path / "state", tmp_path / "workspaces" / "selected", tmp_path / "cwd"
+    workspace.mkdir(parents=True)
+    cwd.mkdir()
+    (workspace / "plan.md").write_text("Plan-ID: PLAN-selected\n", encoding="utf-8")
+    # A same-named invalid CWD file must neither authorize nor veto selection.
+    (cwd / "plan.md").write_bytes(b"\xff")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    monkeypatch.setenv("FA_WORKSPACE_ROOT", str(workspace.parent))
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    monkeypatch.chdir(cwd)
+    config = tmp_path / "models.yaml"
+    config.write_text(_ROLE_YAML.format(role="planner"), encoding="utf-8")
+    if resumed:
+        manager = SessionManager(state_root=state, workspace_root=workspace.parent)
+        manager.provision_entrypoint_session(session_id="selected-session", workspace_override=workspace)
+    calls: list[str] = []
+
+    def provider(
+        chain: ProviderChain, request: RequestInfo, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        calls.append(chain.config.role)
+        return ResponseInfo(text="planning finished", in_tokens=1, out_tokens=1, finish_reason="stop"), "p", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider)
+    argv = [
+        "workflow",
+        "planner",
+        "inspect explicit plan",
+        "--run-id",
+        "workspace-plan",
+        "--plan",
+        "plan.md",
+        "--config",
+        str(config),
+    ]
+    argv += ["--session-id", "selected-session"] if resumed else ["--workspace", str(workspace)]
+    args = build_parser().parse_args(argv)
+
+    assert _cmd_workflow(args, secrets=SecretStore({"K": "fixture-key"})) == 0
+    assert calls == ["planner"]
+    final = load_flow_state(state / "session-log" / "workspace-plan" / "flow_state.json")
+    assert final.plan_path == str(workspace / "plan.md")
+    assert (cwd / "plan.md").read_bytes() == b"\xff"
+
+
+@pytest.mark.parametrize(
+    "change,code",
+    [
+        ("unknown", "unknown_session"),
+        ("missing-workspace", "workspace_missing"),
+        ("corrupt", "manifest_corrupt"),
+        ("inactive", "session_not_active"),
+        ("escape", "path_escape"),
+    ],
+)
+def test_plan_preflight_resolver_rejects_invalid_session_without_writes(tmp_path: Path, change: str, code: str) -> None:
+    from fa.session.manager import SessionManager, SessionManagerError
+
+    manager = SessionManager(state_root=tmp_path / "state", workspace_root=tmp_path / "workspaces")
+    selected = tmp_path / "workspaces" / "selected"
+    session = manager.provision_entrypoint_session(session_id="known", workspace_override=selected)
+    if change == "missing-workspace":
+        selected.rmdir()
+    elif change == "corrupt":
+        session.manifest_path.write_text("{bad", encoding="utf-8")
+    elif change in {"inactive", "escape"}:
+        data = json.loads(session.manifest_path.read_text(encoding="utf-8"))
+        data["status" if change == "inactive" else "workspace_path"] = (
+            "archived" if change == "inactive" else str(tmp_path / "outside")
+        )
+        session.manifest_path.write_text(json.dumps(data), encoding="utf-8")
+    files = [p for p in tmp_path.rglob("*") if p.is_file()]
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files}
+    with pytest.raises(SessionManagerError) as failure:
+        manager.resolve_workflow_workspace(
+            session_id="absent" if change == "unknown" else "known", workspace_override=None
+        )
+    assert failure.value.code == code
+    if change == "unknown":
+        assert str(failure.value) == "unknown_session: session does not exist"
+    if change == "missing-workspace":
+        assert str(failure.value) == "workspace_missing: session workspace is missing"
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files} == before
+    assert {p for p in tmp_path.rglob("*") if p.is_file()} == set(files)
+
+
+@pytest.mark.parametrize("workspace_kind", ["missing", "regular-file"])
+def test_plan_preflight_unusable_root_is_sanitized(tmp_path: Path, workspace_kind: str) -> None:
+    from fa.inner_loop.plan_admission import PlanRefError, read_plan_snapshot
+
+    root = tmp_path / "root"
+    if workspace_kind == "regular-file":
+        root.write_bytes(b"not a directory")
+    # Missing root dominates even an absolute outside target, before path walk.
+    target = tmp_path / "outside.md" if workspace_kind == "missing" else Path("plan.md")
+    with pytest.raises(PlanRefError) as failure:
+        read_plan_snapshot(root, target)
+    assert (failure.value.rule, str(failure.value)) == ("unreadable", "invalid plan reference: unreadable")
+
+
+def test_plan_preflight_short_reads_preserve_exact_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import hashlib
+
+    from fa.inner_loop.plan_admission import read_plan_snapshot
+
+    raw = "Plan-ID: PLAN-bytes\n\u041f\u0440\u0438\u043c\u0435\u0440\n".encode()
+    target = tmp_path / "plan.md"
+    target.write_bytes(raw)
+    original_read = os.read
+    monkeypatch.setattr(os, "read", lambda fd, count: original_read(fd, min(count, 3)))
+    snapshot = read_plan_snapshot(tmp_path, target)
+    assert snapshot.utf8_bytes == raw
+    assert snapshot.ref.sha256 == hashlib.sha256(raw).hexdigest()
+
+
+def test_plan_preflight_growth_never_reads_beyond_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fa.inner_loop.plan_admission import MAX_PLAN_BYTES, PlanRefError, read_plan_snapshot
+
+    target = tmp_path / "plan.md"
+    target.write_bytes(b"initial")
+    original_read = os.read
+    changed = False
+    received: list[int] = []
+
+    def grow_and_read(fd: int, count: int) -> bytes:
+        nonlocal changed
+        if not changed:
+            changed = True
+            target.write_bytes(b"x" * (3 * MAX_PLAN_BYTES))
+        raw = original_read(fd, min(count, 64 * 1024))
+        received.append(len(raw))
+        return raw
+
+    monkeypatch.setattr(os, "read", grow_and_read)
+    with pytest.raises(PlanRefError) as failure:
+        read_plan_snapshot(tmp_path, target)
+    assert (failure.value.rule, str(failure.value)) == ("too-large", "invalid plan reference: too-large")
+    assert sum(received) == MAX_PLAN_BYTES + 1
+
+
+def test_plan_preflight_descriptors_are_nofollow_nonblocking_and_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C0 mechanism supplement to the actual symlink/FIFO tests, not OS-isolation proof."""
+    from fa.inner_loop.plan_admission import read_plan_snapshot
+
+    directory = tmp_path / "plans"
+    directory.mkdir()
+    (directory / "plan.md").write_bytes(b"plan bytes")
+    original_open = os.open
+    opened: list[tuple[object, int, int]] = []
+
+    def record_open(path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+        fd = original_open(path, flags, mode, dir_fd=dir_fd)
+        opened.append((path, flags, fd))
+        return fd
+
+    monkeypatch.setattr(os, "open", record_open)
+    assert read_plan_snapshot(tmp_path, directory / "plan.md").utf8_bytes == b"plan bytes"
+    assert len(opened) == 3
+    for index, (_path, flags, _fd) in enumerate(opened):
+        assert flags & os.O_NOFOLLOW
+        assert flags & os.O_CLOEXEC
+        if index < 2:
+            assert flags & os.O_DIRECTORY
+        if index > 0:
+            assert flags & os.O_NONBLOCK
+    for fd in {item[2] for item in opened}:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+def test_plan_preflight_new_workspace_cannot_bypass_existing_owner(tmp_path: Path) -> None:
+    from fa.session.manager import SessionManager, SessionManagerError
+
+    manager = SessionManager(state_root=tmp_path / "state", workspace_root=tmp_path / "workspaces")
+    session = manager.provision_entrypoint_session(
+        session_id="owner", workspace_override=tmp_path / "workspaces" / "owned"
+    )
+    before = session.manifest_path.read_bytes()
+    with pytest.raises(SessionManagerError) as failure:
+        manager.resolve_workflow_workspace(session_id=None, workspace_override=session.workspace_path)
+    assert failure.value.code == "workspace_already_owned"
+    assert session.manifest_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("failure_point", ["ancestor", "terminal"])
+def test_plan_preflight_close_failure_still_releases_owned_descriptors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_point: str
+) -> None:
+    """C0 fault injection: simulate Linux closing a descriptor but reporting EIO."""
+    import errno
+
+    from fa.inner_loop.plan_admission import PlanRefError, read_plan_snapshot
+
+    (tmp_path / "plans").mkdir()
+    (tmp_path / "plans" / "plan.md").write_bytes(b"plan")
+    original_open, original_close = os.open, os.close
+    names: dict[int, object] = {}
+    owned: list[int] = []
+    failed = False
+
+    def record_open(path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+        fd = original_open(path, flags, mode, dir_fd=dir_fd)
+        names[fd] = path
+        owned.append(fd)
+        return fd
+
+    def close_with_fault(fd: int) -> None:
+        nonlocal failed
+        name = names.pop(fd, None)
+        original_close(fd)
+        if not failed and name == (tmp_path if failure_point == "ancestor" else "plan.md"):
+            failed = True
+            raise OSError(errno.EIO, "injected close failure")
+
+    monkeypatch.setattr(os, "open", record_open)
+    monkeypatch.setattr(os, "close", close_with_fault)
+    with pytest.raises(PlanRefError) as failure:
+        read_plan_snapshot(tmp_path, tmp_path / "plans" / "plan.md")
+    assert failed
+    assert failure.value.rule == "unreadable"
+    for fd in set(owned):
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+def test_plan_help_registry_and_examples_carry_explicit_workspace_plan() -> None:
+    from fa.cli import build_parser
+    from fa.cli_help import COMMANDS
+
+    help_args = COMMANDS["workflow"]["args"]["--plan"]
+    assert "Explicit plan required" in help_args["en"]
+    assert "bootstrap" in help_args["ru"]
+    examples = COMMANDS["workflow"]["examples"]
+    assert len(examples) == 5
+    for example in examples:
+        args = build_parser().parse_args(shlex.split(example)[1:])
+        assert args.workspace == Path("/sessions/demo")
+        assert args.plan == Path(
+            "worklogs/planning-topology-and-executable-contracts-loop/increments/"
+            "increment-02-verify-gate-and-kill-checks.md"
+        )
+        assert "coder" in args.roles.split(",")
+
+
+def test_plan_preflight_allocated_workspace_mismatch_blocks_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CLI fault supplement: change the real manifest after the snapshot read."""
+    from fa import cli
+    from fa.inner_loop.plan_admission import PlanSnapshot, read_plan_snapshot
+    from fa.session.manager import SessionManager
+
+    state, root = tmp_path / "state", tmp_path / "workspaces"
+    first, second = root / "first", root / "second"
+    first.mkdir(parents=True)
+    second.mkdir()
+    (first / "plan.md").write_text("Plan-ID: PLAN-first\n", encoding="utf-8")
+    manager = SessionManager(state_root=state, workspace_root=root)
+    session = manager.provision_entrypoint_session(session_id="switch", workspace_override=first)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    monkeypatch.setenv("FA_WORKSPACE_ROOT", str(root))
+    original_reader = read_plan_snapshot
+
+    def read_then_switch(workspace: Path, target: Path) -> PlanSnapshot:
+        snapshot = original_reader(workspace, target)
+        manifest = json.loads(session.manifest_path.read_text(encoding="utf-8"))
+        manifest["workspace_path"] = str(second)
+        session.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return snapshot
+
+    # Fault injection changes only fixture environment, not lifecycle behavior.
+    monkeypatch.setattr(cli, "read_plan_snapshot", read_then_switch)
+    providers: list[str] = []
+
+    def provider(
+        chain: ProviderChain, request: RequestInfo, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        providers.append(chain.config.role)
+        return ResponseInfo(text="done", in_tokens=1, out_tokens=1, finish_reason="stop"), "p", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider)
+    args = cli.build_parser().parse_args(
+        ["workflow", "planner", "inspect", "--session-id", "switch", "--plan", "plan.md", "--run-id", "mismatch"]
+    )
+    assert cli._cmd_workflow(args) == 2
+    assert providers == []
+    assert "fa workflow: workspace preflight: workspace-mismatch\n" in capsys.readouterr().err
+    assert (state / "session-log" / "mismatch").is_dir(), "the fault must actually pass through lifecycle"
+    assert not (state / "session-log" / "mismatch" / "flow_state.json").exists()

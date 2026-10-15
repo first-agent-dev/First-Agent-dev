@@ -274,3 +274,96 @@ synonym for “live host.” The host cases below are planned I03 F acceptance, 
 - Pending: PlanRef/admission, bounded Q57 repair/Q58 promotion, explicit shared T0,
   pinned verifier/eval evidence, unsupported managed acquisition, full declared kills,
   full-suite comparison, independent review and operator DoD. I02 remains open.
+
+## SLICE6 workspace / explicit snapshot preflight (E206, 2026-10-15)
+
+**Partial STEP13 / CT90 / CT95 implementation, not admitted-workflow completion.** CLI now
+requires a supplied plan for coder, reads it inside the selected workspace before lifecycle,
+and checks allocated-workspace agreement before controller dispatch. The new read-only manager
+method does not prepare/touch/claim a session. Constructor root creation moved to `_new_session`;
+normal lifecycle still provisions private roots. English, Russian/JSON help and five published
+examples now describe/provide explicit workspace+plan. No bootstrap or second workspace manager.
+Direct API durable BLOCKED admission, validators, Q57/Q58, T0 and pinned attempts are still pending.
+
+### Planned I03 F host cases — all unexecuted
+
+| Producers / changed boundary | Case | Arrangement and observable oracle |
+| :--- | :--- | :--- |
+| `SessionManager.resolve_workflow_workspace` | PLAN-H01 | New explicit workspace and resumed manifest; process CWD elsewhere with an invalid same-name file. Correct workspace chosen without manifest mtime/DB/run changes during preflight. Unknown/corrupt/inactive/mismatched/missing workspace rejects, no preparation/provider. Fresh generated default needs create/choose guidance; no automatic acquisition. |
+| `_require_plan_for_coder` | PLAN-H02 | Omit plan on both modes with coder, plus a non-coder control. CLI rejects before lifecycle allocation. Future direct counterpart must create safely addressed BLOCKED admission/flow; that direct behavior is not delivered here. |
+| `_relative_plan_path` | PLAN-H03 | Relative and absolute-inside references yield the same normalized POSIX identity; root/outside/traversal/NUL/unusable workspace rejects. Path inputs are already pathlib-normalized; future persisted/capability string paths need strict schema validation, not inference from pathlib. |
+| `_open_plan_component` | PLAN-H04 | Terminal/ancestor/dangling symlink fixtures and replacement races on reviewed scratch targets. No outside bytes consumed; regular-file positive control. Descriptor flags include no-follow, nonblocking and close-on-exec, with directory descriptors used for ancestors. Not an arbitrary-shell containment claim. |
+| `_read_plan_bytes` | PLAN-H05 | Exact limit, limit+1, growth after fstat, short reads, nonregular/FIFO and IO/close failures. At most limit+1 bytes consumed, exact bytes preserved, typed failure without provider, owned descriptors released. FIFO completes promptly rather than hanging the fixture. |
+| `read_plan_snapshot`, `PlanRef`, `PlanSnapshot` | PLAN-H06 | UTF-8 multibyte and CRLF inputs, invalid/empty text, same-byte absolute/relative controls. Hash/relative identity matches exact read bytes; later source changes do not mutate the snapshot. Frozen records are not admission.json and do not by themselves prove a valid/admitted plan. |
+| `PlanRefError` / CLI rejection renderer | PLAN-H07 | Every reference failure yields its static reason/nonzero result without input path/source/exception text. Retain actionable not-found/unreadable guidance; inspect request-specific allocation deltas. |
+| `COMMANDS.workflow`, `_WORKFLOW_PLAN_EXAMPLE` / parser help | PLAN-H08 | Shipped English help, Russian help and JSON registry agree; all five examples parse with a selected existing workspace and explicit canonical-relative plan. Missing-plan example is not advertised as a runnable coder workflow. |
+| manager constructor / `_new_session`; allocated-workspace check | PLAN-H09 | Construction/resolution on absent roots allocates nothing; normal successful lifecycle still creates private roots. Fault-change fixture manifest between snapshot and allocation: nonzero, zero provider/controller stages even though lifecycle has allocated a run. Do not falsely require zero allocation for this later disagreement. |
+
+Use the standing I03 reviewed fixture/checklist and E205 evidence requirements: unique owned
+scratch namespaces, deployed SHA/image/config, actual argv, mode, selected/allocated workspace,
+run/session/provider deltas, reason/exit and persisted artifacts where the applicable failure class
+requires them. Repeat preflight in observe/enforce and linear/adaptive; observe never waives it.
+These IDs are descriptive handoff labels, not ratification of Q63's result schema. No host scripts
+or deployed tests were added/run. Actual scoped-writer registry C3 and promotion hard-link/race
+proof remain separate pending obligations; a read-only regular hard-link is not publication permission.
+
+### Actual local evidence
+
+- Python 3.13.16, existing frozen dev environment; no dependency or repository mutation-profile change.
+- Final command: `uv run --frozen pytest` on `test_verify_gate_live`, `test_verify_slice`,
+  `test_slice_verification_runner`, `test_workflow_role_allowlist`, `test_session_lifecycle`,
+  `test_session_manifest_guards`, `test_session_workspace_provisioning`, `test_plan_reference`,
+  `test_cli_ergonomics`, `test_s8_workflow_controller`, `test_s10b_cli_parity`,
+  `test_inject_cli_flag`, `test_s10c_artifact_posture` (all `tests/*.py`), `-q`:
+  **619 passed in 234.82s**. Boundary selection `-k 'plan_preflight or plan_help'`:
+  **75 passed, 75 deselected**. These are targeted suites, not `just test` full-suite acceptance.
+- 49 new cases extend the 101-case live file to 150. All pre-existing function ASTs in that file
+  match `1741daf`. Positive selected/resumed CLI controls exercise real factories/lifecycle/session
+  with only `ProviderChain.request` mocked. Reader/syscall/close and manifest-switch fault tests are
+  supplements with explicitly identified seams, not provider-only admitted C1/security proof.
+- **TEST-EDITS:** `tests/test_cli_ergonomics.py::_workflow_args` supplies a disposable canonical-
+  relative plan, real tiny test input and existing interpreter; no synthetic baseline/result JSON.
+  One generated-ID test uses None instead of now-invalid empty string. Five stale prose assertions
+  now pin typed errors; removed-mode test additionally pins the allowed tuple. Stage counts,
+  budgets, routing, durable-state/history/quiet-mode assertions and S8 source are unchanged.
+  One Namespace-only test now uses tmp_path instead of Path("."); its assertions are unchanged.
+  Source audit found exactly that helper and seven declared tests changed, no hidden test deletion.
+  Audit caught two owned fixture files temporarily created by the former Path(".") call; exact
+  contents were verified and only those files removed. Final 619-test rerun leaves neither file.
+- Broad pre-migration CLI run: 33 failed/137 passed. Isolated `git archive 1741daf` with separate
+  frozen environment/module-origin check: 6 failed/164 passed on the same five-suite command.
+  Six exact identities in `test_cli_ergonomics.py`: `test_workflow_session_manager_uses_one_invocation_run_context`,
+  `test_adaptive_mode_requires_coder_and_eval_roles`, `test_repair_mode_is_no_longer_accepted`,
+  `test_workflow_invalid_mode_rejected`, `test_workflow_rejects_empty_roles`,
+  `test_workflow_requires_task_for_each_role`. All six are corrected fixtures/contract assertions,
+  not waived failures. Remaining 27 required the explicit-plan fixture. Migrated five suites:
+  **170 passed**. This is a chunk-regression comparison, not the required d9109f4 full baseline.
+- Actual final CT90 `remove-call src/fa/cli.py::_cmd_workflow -> _require_plan_for_coder`,
+  full `tests/test_verify_gate_live.py` path: **PROVEN**, **1 target / 1 edit**, **36.104s**.
+  Real overlay provenance, runner and invocation-bound JUnit checks; no per-contract nodeid mapping.
+  Q53(c) slice-wide attribution risk remains. All 16 full-path runs must be repeated/recorded for
+  final integrated retained SLICE6 source; this one does not close STEP17.
+- Fresh scratch mutmut: **244 selected, 238 killed, 6 equivalent, no other statuses**.
+  Includes every function in `plan_admission.py` and only the new manager resolver (58/58 killed).
+  Controller/CLI mutation scope is not implied. Scratch pytest selection is the boundary selector
+  above. A scratch-only autouse fixture pins mutmut's relative instrumentation paths before real
+  test chdir; initial coverage collection failed without it, and produced no mutation proof.
+  Production code/tests remain exact copies, with no suppressions or source/profile exclusions.
+  Plan module SHA256 `8aaac0b2dcec87b9cb1ad6990efc14b9dddcc503e54e18800d3c1a9e52f1bebd`;
+  manager SHA256 `fee56e98e4b90ab19999231aa7d7198bcd071688bbdde1c8daeb5b76df513203`.
+- Equivalent IDs (prefix `fa.inner_loop.plan_admission.`):
+  `x__open_plan_component__mutmut_17` (follow_symlinks False→None is the same false C-API flag),
+  `x__open_plan_component__mutmut_22` (False→None fallback used only as an if operand),
+  `x__read_plan_bytes__mutmut_25` (directory False→None used only by `if directory`),
+  `x_read_plan_snapshot__mutmut_17` (bytes.decode default encoding is UTF-8),
+  `x_read_plan_snapshot__mutmut_18` (default errors is strict),
+  `x_read_plan_snapshot__mutmut_20` (UTF-8 codec names are case-insensitive).
+  No user-visible result, bytes, IO flags or diagnostics differ in these reachable call graphs.
+  Non-equivalent initial survivors instead got tests (short read/growth/resource cap/descriptor
+  flags/IO/root failures/resolver reason and ownership), and unreachable Path.parts members were
+  removed rather than padded with artificial mocks.
+- Ruff/mypy on six changed Python files clean; pylint four production files **10.00/10**;
+  `git diff --check` clean. No full-repository static/format claim, no `just check` acceptance.
+- Existing two deadline failures remain unwaived. Direct admission, durable schema/locked append,
+  Q57/Q58, single T0, pinned evidence, unsupported acquisition, full-suite acceptance, independent
+  review and operator DoD remain incomplete. No STEP/DoD ticks or I02 SHIPPED/live claim.

@@ -45,6 +45,12 @@ class CommandHelp(TypedDict):
 # Keys are subcommand names exactly as registered in ``fa.cli.build_parser``.
 # Arg keys use the canonical display form ("--role/-r", "task", "-") so the
 # same string serves CLI rendering and the WebUI contract.
+_WORKFLOW_PLAN_EXAMPLE = (
+    " --workspace /sessions/demo --plan "
+    "worklogs/planning-topology-and-executable-contracts-loop/increments/"
+    "increment-02-verify-gate-and-kill-checks.md"
+)
+
 COMMANDS: dict[str, CommandHelp] = {
     "run": {
         "summary_ru": "Запустить LLM-сессию агента для одной роли.",
@@ -119,6 +125,14 @@ COMMANDS: dict[str, CommandHelp] = {
                 "en": "Task text in quotes (second positional). Passed to every role unless "
                 "overridden per-role via --task-<role>.",
             },
+            "--plan": {
+                "ru": "Явный план обязателен при наличии coder. Относительный путь считается от выбранного "
+                "workspace, не от CWD. Выберите существующий --workspace или --session-id; "
+                "автоматический bootstrap недоступен.",
+                "en": "Explicit plan required when roles contain coder. Relative paths use the selected "
+                "workspace, not the process CWD. Choose an existing --workspace or --session-id; "
+                "plans are never inferred and automatic bootstrap is not available.",
+            },
             "--task-<role>": {
                 "ru": 'Переопределить задачу для конкретной роли, напр. --task-planner "...".',
                 "en": 'Override the task for a specific role, e.g. --task-planner "...".',
@@ -162,11 +176,20 @@ COMMANDS: dict[str, CommandHelp] = {
             },
         },
         "examples": [
-            'fa workflow planner,coder,eval "Реализуй фичу X"',
-            'fa workflow coder,eval "Доделай и проверь src/fa/y.py"',
-            'fa workflow coder,eval "Доведи src/fa/y.py до green" --mode adaptive --max-repairs 2',
-            'fa workflow planner,coder,eval "Проведи adaptive цикл" --mode adaptive --max-replans 1',
-            'fa workflow planner,coder,eval --task-planner "Спланируй" --task-coder "Сделай" "Проверь результат"',
+            'fa workflow planner,coder,eval "Реализуй фичу X"' + _WORKFLOW_PLAN_EXAMPLE,
+            'fa workflow coder,eval "Доделай и проверь src/fa/y.py"' + _WORKFLOW_PLAN_EXAMPLE,
+            (
+                'fa workflow coder,eval "Доведи src/fa/y.py до green" --mode adaptive --max-repairs 2'
+                + _WORKFLOW_PLAN_EXAMPLE
+            ),
+            (
+                'fa workflow planner,coder,eval "Проведи adaptive цикл" --mode adaptive --max-replans 1'
+                + _WORKFLOW_PLAN_EXAMPLE
+            ),
+            (
+                'fa workflow planner,coder,eval --task-planner "Спланируй" --task-coder "Сделай" "Проверь результат"'
+                + _WORKFLOW_PLAN_EXAMPLE
+            ),
         ],
     },
     "selfcheck": {

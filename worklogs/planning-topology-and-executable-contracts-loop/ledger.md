@@ -2192,3 +2192,25 @@ E205  FACT  Partial I02 SLICE6 CT74/CT95 request-entry chunk from 68c0aa6: share
     STEP12/STEP13/DoD remain open; no I02 SHIPPED/live/integrated-security claim.
     [commands, final hash/counts/equivalence proofs, baseline identities and host obligations:
     notes/e2e-live-verification-register.md, E205 request-entry boundary section]
+
+E206  FACT  Continue retained I02 SLICE6 CT90/CT95 STEP13 from 1741daf: read-only workspace
+    resolution before CLI lifecycle, named coder-plan presence guard, frozen exact-byte PlanRef
+    snapshot with rooted no-follow/nonblocking descriptor walk, strict UTF-8/nonempty/1 MiB cap,
+    source-change detection and owned-FD cleanup including close faults. No new dependency,
+    acquisition framework or execution-isolation claim. Manager construction no longer allocates
+    roots; normal _new_session preserves private-root provisioning. CLI rechecks workspace after
+    allocation, updates shared bilingual/JSON help and five explicit workspace/plan examples.
+    Final 13 targeted suites: 619 passed/234.82s; 49 appended live cases, original functions AST-
+    identical. Declared shared CLI fixture + seven tests migrated to approved explicit-plan/typed
+    request contract; stage/budget/routing/history oracles unchanged. Five CLI suites 170 passed;
+    pre-migration 33 failures classified against clean 1741daf (6 existing, 27 plan-less fixtures).
+    Final CT90 full live test-path remove-call: PROVEN, targets=1/edits=1, 36.104s. Fresh targeted
+    mutmut 244 selected: 238 killed, 6 exact Python-default/truthiness equivalents; no other
+    statuses/suppressions. Scratch instrumentation adapter preserves real chdir tests. Ruff/mypy
+    six files pass, pylint four production files 10/10, whitespace clean. Nine new planned I03 F
+    host cases account for every new producer/model/error/help and changed lifecycle boundary.
+    Direct durable admission/Q57/Q58/T0/pinned evidence/acquisition/full 16-run acceptance and
+    independent/operator DoD remain open; existing deadline failures unwaived. No STEP tick,
+    I02 close/SHIPPED/deployed result or security acceptance claimed.
+    [exact commands, source hashes, equivalence proofs, TEST-EDITS/baseline identities and host
+    arrangements/oracles: notes/e2e-live-verification-register.md, E206 section]
