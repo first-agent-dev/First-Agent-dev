@@ -27,6 +27,8 @@ from current directions. Rationale/reuse lives in the
 [decision note](../notes/execution-workspace-and-i02-i03-scope-decisions-2026-10-15.md) and
 [reuse audit](../notes/execution-foundation-scope-reduction-and-reuse-audit-2026-10-15.md).
 Existing gate design: [verification design](../notes/i02-slice-verification-design.md).
+Normative retained implementation details: [explicit admission specification](../notes/i02-explicit-admission-spec-2026-10-15.md).
+Adversarial findings and source evidence: [review](../notes/i02-i03-adversarial-review-2026-10-15.md).
 
 **Grounding (product source unchanged at d9109f4; 2026-10-15):**
 - `_run_stage` already calls `verify_plan` after successful coder; existing direct C1 proves the
@@ -434,7 +436,8 @@ CONTRACTS:
   CT72 [FUNCTIONAL]: after real eval, reconcile enforce-mode verifier evidence as a floor:
     eval complete + determinate block → return_to_coder; complete + indeterminate → blocked;
     no blocked enforce run is DONE/exit 0. Observe preserves eval routing; non-complete eval
-    routes keep Q56 precedence. Preserve model eval_report; effective route goes to flow_state.
+    routes keep Q56 precedence. Integrity/missing-evidence failures hard-block both modes after eval.
+    Preserve model eval_report; effective route goes to flow_state.
     kill: neutralise src/fa/inner_loop/workflow_controller.py::_effective_controller_route
   CT73 [FUNCTIONAL]: every successful coder is followed by real eval with that attempt's evidence,
     even if eval was omitted/misordered or verification blocks. Pre-coder rejection runs no eval.
@@ -459,7 +462,8 @@ CONTRACTS:
     regression/error evidence; do not synthesize or overwrite the model-authored eval report.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_eval_evidence_block -> _verification_evidence_lines
   CT86 [FUNCTIONAL]: admission/repair precedes write-once T0 before first coder. Reuse T0 across
-    coder repair and eval replan, independently of repair_round. Require symmetric equality of
+    coder repair, repeated configured coders and eval replan, independently of repair_round. Failed
+    capture/storage blocks before coder in both modes; never recapture a changed tree. Require symmetric equality of
     complete slice-ID→normalized TESTS-path maps; additions/removals/path edits are indeterminate.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> capture_baseline
   CT87 [FUNCTIONAL]: one shared pre-coder helper calls precheck and validate_kill_directives on
@@ -483,30 +487,36 @@ CONTRACTS:
     write failure stop before next pre-coder provider; best-effort blocked flow_state is not proof
     admission persisted. Failure after promotion preserves canonical bytes, blocks before coder.
     Do not suppress Q55 eval with a later admission write. Freeze Q62 closed per-validator rules
-    before implementation; shared exact v1 schema is preserved in migration bank §4.
+    using the normative explicit-admission spec §3: EXPLICIT_INPUT is distinct from reserved I03
+    ACQUISITION; bool is not a JSON integer. Migration bank §4 is historical schema provenance.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_record_admission_attempt -> write_admission_record
   CT93 [FUNCTIONAL]: thread typed dispatch_kind/controller target through stage→CLI→role registry→
     profiles/write handler. Repair/eval-replan gets only its exact fresh candidate writer; reject
     active plan, siblings, absolute/escaping/symlink paths with descriptor-rooted no-follow IO.
-    Ordinary planner writer denies .fa/admission/; do not broaden worklogs permissions. Selection/
+    Ordinary planner writer denies .fa/admission/ and active PlanRef; do not broaden worklogs permissions. Selection/
     bootstrap tools are I03, not added here. C3 uses the actual _cmd_run registry/handler.
     kill: remove-call src/fa/inner_loop/profiles.py::_build_tool_builders -> build_scoped_write_file_tool
   CT94 [FUNCTIONAL]: Q58 repair/eval-replan seeds fresh .fa/admission/<run_id>/ candidates from the
     admitted plan/latest rejected draft; strictly decode/hash/validate one exact snapshot. Under
-    process-shared canonical-target lock, reject nonregular/symlink targets and stale source hash.
+    process-shared canonical-target lock, reject nonregular/symlink/hard-link targets and stale source hash.
     Stage validated bytes in a unique hidden sibling, preserve mode, fsync, replace same canonical
     increment path, directory-fsync/verify promoted hash/update PlanRef/clean temps. Before replace,
     failure leaves original bytes unchanged; after irreversible replace, never rollback: preserve
     bytes and block if verification/fsync/final append fails. Valid explicit non-increment plans
     may admit but cannot promote outside Q58 scope. Bootstrap no-clobber belongs to I03.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_admission_repair -> _promote_validated_plan
-  CT95 [FUNCTIONAL]: public entry validates nonempty normalized planner|coder|eval roles without
-    reordering, linear|adaptive mode, budget types/ceilings and run ID before artifact paths. For
+  CT95 [FUNCTIONAL]: public entry validates nonempty normalized planner|coder|eval roles, mode, budgets
+    and run/context identity before artifact paths. Preserve non-eval order; Q55 deliberately
+    relocates/inserts eval after each coder. Reject ordinary planner after coder or duplicate
+    ordinary planner; adaptive replan remains bounded. Malformed identity/config returns typed
+    input error without artifacts; only safely addressed PlanRef failures create blocked state. For
     coder workflows require explicit controller-owned PlanRef before any provider: readable regular
     nonsymlink file inside workspace via rooted no-follow walk, strict UTF-8, nonempty, ≤1 MiB.
-    Missing/invalid/outside/oversized input blocks with structured terminal/admission state. Recheck
+    Missing/invalid/outside/oversized PlanRef with valid request identity blocks with structured
+    terminal/admission state unless storage itself fails (nonzero, no false persistence claim). Recheck
     hash before coder; detected post-coder PlanRef mismatch is indeterminate evidence, never stale
-    success, and still reaches Q55 eval. This detects mismatch, not OS isolation. Unsupported
+    success in either mode, and still reaches Q55 eval using the pinned admitted snapshot. Deadline
+    exhaustion records no eval and fails, never fakes a report. This detects mismatch, not OS isolation. Unsupported
     invoke_workflow managed acquisition returns unavailable before child provider/coder dispatch;
     no guessed path, globbing, fake bundle or public context field. C1/C3 proves these limits.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::run_workflow -> _require_plan_for_coder
@@ -525,10 +535,10 @@ uv run ruff check src/fa/inner_loop/workflow_controller.py src/fa/inner_loop/wor
 - [x] STEP8: record the operator-resolved Q58 interface in the open-question/design record: controller-owned candidate, exact-target planner writer, revalidation, then physical replacement of the original canonical increments file at the same `--plan` path. This decision step is complete; runtime implementation and its proofs remain in the following steps (exit: explicit operator decision recorded; no inferred approval)
 - [ ] STEP9: implement CT92–CT94 explicit-plan history/candidate/scoped-writer/promotion with private durable IO, canonical-target flock and source-hash CAS; preserve Q58 irreversible failure policy and rejected-draft progress (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "candidate or admission_artifact"` exits 0)
 - [ ] STEP10: implement shared exact-byte PlanRef admission with precheck+kill validators, WARN advisory and Q57 determinate repair; prove indeterminate/empty/zero-slice blocks (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "admission or precheck"` exits 0)
-- [ ] STEP12: route all explicit coder dispatches through shared admission and one public-entry budget normalizer/counter; preserve role order, linear eval semantics and Q55/Q56 (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "linear_admission or adaptive_admission or role_order or direct_budget"` exits 0)
-- [ ] STEP13: enforce CLI preflight/direct-controller guards and workspace-relative paths; update help without fixing E19. Unsupported managed acquisition blocks before child provider. Contain the SD-C fixture plan inside its fixture workspace; repair/promotion uses a disposable workspace at the same canonical relative path (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "plan_preflight or direct_api_plan_guard or plan_help or acquisition_unavailable"` exits 0)
-- [ ] STEP14: capture T0 only after first admission and before coder; reuse across repair/replan and enforce exact symmetric slice→TESTS topology equality (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "baseline"` exits 0)
-- [ ] STEP16: prove direct explicit-plan C1/C2/C3: actual controller→_cmd_run→drive_session with only provider mocked; valid/invalid-first-valid-later admission, no/failed planner, budget/indeterminate/UTF8/size/path/run-ID blocks, actual registry symlink denial, stale source-hash contention, write failure before retry/after promotion, Q58 same-path bytes, T0 reuse, actual eval/evidence and stage ordering. Add negative unsupported invoke_workflow test (zero child provider), not nested success proof. Preserve tracked source bytes. Detected post-coder PlanRef mismatch still reaches eval and cannot succeed (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "real_workflow_admission or acquisition_unavailable or plan_ref_mismatch"` exits 0)
+- [ ] STEP12: implement spec §§1–2 shared pure request validator/budget normalizer and pre-coder admission; retain non-eval order with explicit Q55 eval relocation, reject unsafe ordinary-planner ordering, preserve linear semantics and shared repair/replan counter (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "linear_admission or adaptive_admission or role_order or direct_budget"` exits 0)
+- [ ] STEP13: implement read-only SessionManager.resolve_workflow_workspace; validate plan/task/inject before lifecycle, recheck allocated workspace, and enforce spec §1 failure/evidence classes. Update help without fixing E19. Unsupported managed acquisition blocks before child provider. Contain the SD-C fixture plan inside its fixture workspace; repair/promotion uses a disposable workspace at the same canonical relative path (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "plan_preflight or direct_api_plan_guard or plan_help or acquisition_unavailable"` exits 0)
+- [ ] STEP14: implement spec §5 baseline state independent of counters; capture once after admission, reject capture/storage uncertainty before coder, reuse across repeated coder/repair/replan, and check symmetric slice→TESTS topology equality (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "baseline"` exits 0)
+- [ ] STEP16: prove direct explicit-plan C1/C2/C3: actual controller→_cmd_run→drive_session with only provider mocked; valid/invalid-first-valid-later admission, no/failed planner, budget/indeterminate/UTF8/size/path/run-ID blocks, actual registry symlink denial, stale source-hash contention, write failure before retry/after promotion, Q58 same-path bytes, T0 reuse, actual eval/evidence and stage ordering. Add negative unsupported invoke_workflow test (zero child provider), not nested success proof. Preserve tracked source bytes. Detected post-coder PlanRef mismatch and persistence failure still reach eval using pinned IDs and cannot succeed in either mode (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "real_workflow_admission or acquisition_unavailable or plan_ref_mismatch"` exits 0)
 - [ ] STEP17: run the full declared tests/test_verify_gate_live.py path once per retained FUNCTIONAL contract: CT71, CT72, CT73, CT75, CT76, CT77b, CT77c, CT77, CT86, CT87, CT90, CT91, CT92, CT93, CT94, CT95. Report all 16 contract×path runs, cost/provenance and Q53(c) attribution risk; do not replace kills with -k subsets. Keep tests outside mutation roots and restore source (exit: every retained named producer mutation is killed)
 
 **Scope/progress:** STEP IDs 11 and 15 move entirely to I03; mixed STEPs retain the IDs above and
@@ -553,9 +563,13 @@ acceptance are incomplete I03 obligations, not suppressed failures or I02 eviden
       raw diagnostic bytes, no-follow candidate/target paths, source-hash contention, and Q58
       failure points before/after replacement. Deleting each retained producer breaks its oracle;
       all 16 SLICE6 FUNCTIONAL full-path kills are recorded with elapsed/provenance/limitations.
+      The spec §6 matrix is complete; every required selector collects tests, no all-skip proof.
+      Exact v1 schema checks old and new attempts, concurrent appends and bool-integer rejection.
 - [ ] T0 is write-once after admission, survives repair/replan, rejects changed slice→TESTS maps;
-      successful coder reaches real eval with attempt evidence, including indeterminate verifier/
-      detected PlanRef mismatch; enforce reconciliation never turns blocking evidence into DONE.
+      successful coder reaches real eval with pinned attempt evidence, including indeterminate verifier/
+      detected PlanRef mismatch. Integrity/storage/missing-evidence failures cannot finish DONE in
+      either mode; observe is advisory only for determinate gate judgment. Shared deadline
+      exhaustion is explicitly unsuccessful, not a synthesized eval.
 - [ ] Unsupported managed acquisition is explicitly unavailable before any child provider/coder;
       no fake bootstrap, guessed PlanRef, public context field or unsafe fallback is introduced.
       General planner permissions stay narrow. I02 makes no OS isolation/secret-read protection claim.
@@ -565,10 +579,13 @@ acceptance are incomplete I03 obligations, not suppressed failures or I02 eviden
 - [ ] Reconcile I02-owned D1/D2/D3/D4-readers/D5/D8 with actual named evidence in deferred register.
       D2 remains OPEN until real precheck admission caller+kill passes; pending successor coder-brief
       reader is not falsely closed. No register tick is assigned by this plan edit.
-- [ ] Resolve E174 full-suite failure identities/test-by-test comparison against E192, rerunning
-      with preserved identities; no count-only waiver or inferred pass from absent summary.
-      Preserve deliberately red E19; record explicit disposition of unrelated known failures and
-      nine recorded full-repo Mypy diagnostics. Required changed-file checks must pass.
+- [ ] Produce `notes/i02-local-acceptance.md` per spec §6, with usable full-suite baseline/candidate
+      manifests and terminal summaries, exact failure identity/phase comparison against isolated
+      source baseline d9109f4 (E192 is historical evidence, not an executable baseline).
+      Run existing `just test`/`just check`, retain every blocking subgate result, and record
+      operator-reviewed dispositions for E19, each unrelated baseline failure and recorded Mypy
+      diagnostic. Changed-file/new-test checks pass; new/missing/unclassified failures = 0.
+      No pass from E174 aborted reporter, count-only waiver, skipped gate or absent summary.
 - [ ] Review `git diff 3c0caad -- src/fa/inner_loop/plan_ids.py` against only Q45-B approved position
       fields; pure extractor tests pass. Scoped runtime mutation has no non-equivalent survivors.
 - [ ] Independent review of revised retained plan/DoD, implementation and evidence is recorded.
@@ -582,8 +599,10 @@ or deployed I02+I03 acceptance. The latter belongs to I03's final group, with ev
 producer still covered. Normal integrated/security deployment readiness is not inferred from I02.
 Q59/Q60 exact nested route/bundle and CT97 runtime decisions, Q66 propagation, Q63 final live-result
 schema, cell deployment and the former SLICE7 host package are not retained I02 blockers.
-Q62's small CT92 closed rule table and Q43 accessor disposition remain required where I02 uses them;
-record the exact disposition before implementing those contracts. Q64 calibration stays I06.
+Q62's implementation table is now supplied in spec §3; historical question status is not silently
+closed. Preserve current strict parser accessor behavior and extractor-origin IDs; no Q43 leniency
+adoption is authorized. An implementation proposing changed accessor semantics still needs its
+explicit disposition. Q64 calibration stays I06.
 
 ## Out of scope (moved, not dropped)
 

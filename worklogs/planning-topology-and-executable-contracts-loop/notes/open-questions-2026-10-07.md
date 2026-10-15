@@ -127,6 +127,11 @@ teaches the coder an id form the parser rejects.
 
 ## Q43 — The accessors are a second lenient surface that E106 never named
 
+**2026-10-15 source correction:** current `src/fa/inner_loop/plan_ids.py:218–255` uses exact
+strict `_record` lookup; the measured lenient behavior below is historical. I02 preserves current
+semantics and uses only extractor-origin IDs. This correction does not ratify a Q43 option or
+rewrite its historical Status; any proposed semantic change still needs explicit disposition.
+
 **Status: OPEN. Raised by I01's DoD walk, 2026-10-07. Does not block I01.**
 
 E106 (Q/S-c) decided: `parse_slice_id` is **strict** inside a plan, because `S2` is
@@ -1078,6 +1083,12 @@ boundary before CT97 implementation; do not claim it closed from plan text.
 
 ## Q62 — What closed validator/rule vocabulary should CT92 persist?
 
+**2026-10-15 implementation-spec update:** [exact explicit v1 table](i02-explicit-admission-spec-2026-10-15.md#3-exact-admissionjson-v1--ct92--q62-implementation-specification)
+now supplies the missing values, initial EXPLICIT_INPUT and strict checks. The historical Status
+line below is unchanged; implementation/read-write tests and review are still absent. Its statement
+that the values are missing describes the earlier review, not the current specification. No Q59,
+Q60 or Q63 policy ratification follows.
+
 **Status: OPEN as an implementation-plan gap; no operator-policy choice is implied.** CT92 makes
 the diagnostic object exact and requires closed rule vocabularies, but the earlier wording left
 non-`precheck`/`kill-directives` rules to a versioned `AdmissionRule` enum without listing concrete
@@ -1197,9 +1208,10 @@ treat path-only session facts as proof of transcript inheritance.
   mechanism. Q66's public API decision is resolved (no extra tool field), but its inherited-context
   plumbing and C1 proof remain unimplemented. Q57/Q58 settle repair and same-path transport as
   decisions only; they do not implement them.
-- **Before the CT92 admission writer:** publish the small closed validator/rule table per Q62.
-  Q43 (lenient parser accessors) remains open and must be dispositioned before new admission
-  code relies on them. Q45 is now resolved (option B) by Q65; keep the approved source-position
+- **Before the CT92 admission writer:** implement/test the closed table now supplied in the
+  explicit-admission spec §3; do not claim its implementation from this document update.
+  Q43 remains open: I02 preserves current strict accessor semantics and only extractor-origin
+  IDs. A proposed leniency/semantic change needs explicit disposition, not implicit adoption. Q45 is now resolved (option B) by Q65; keep the approved source-position
   fields and do not revert them.
 - **Before foundation I03 final-group E2E package finalization (former I02 SLICE7):** ratify Q63's four-state vocabulary and decide whether
   `BLOCKED` requires the recommended reason code; this does not block core runtime coding.

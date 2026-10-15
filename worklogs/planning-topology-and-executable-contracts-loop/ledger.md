@@ -2122,3 +2122,16 @@ E201 DERIVED CROSS-DOCUMENT OWNER/CAPABILITY RECONCILIATION, 2026-10-15. Followi
     delivery. No product code, skill text, progress ticks, live status, exact Q59–Q63 ratification,
     full-suite disposition or numeric successor scheduling is changed by this docs-only step.
     [derived from E197–E200; source-grounded E199 audit; operator migration request]
+
+E202 DERIVED ADVERSARIAL I02 PLAN REVIEW, 2026-10-15. Source-grounded review records ten
+    confirmed specification defects/gaps separately from unproved deployment/race suspicions.
+    Revised SLICE6/DoD and new exact explicit-admission spec define pure preflight/workspace
+    resolution, safe rejection classes, explicit Q55 order exception, EXPLICIT_INPUT schema and
+    closed validator rules, descriptor-rooted candidate/Q58 IO, T0 failure/state, pinned eval and
+    non-waivable integrity floor in both modes, plus identity-level full-suite acceptance.
+    Existing CT/STEP lineage, seven sections, sixteen FUNCTIONAL and checked markers preserved.
+    Q62 spec table supplied, not implementation proof; historical question statuses unchanged.
+    Q43 current strict-source correction does not ratify its historical policy choice.
+    Pure extractor/AST/table checks and whitespace pass after correcting AST harness locations;
+    pytest/type/Docker/full-suite/operator acceptance remain unproved. No product source changes.
+    [operator adversarial-review request; named source evidence and validation in review note]

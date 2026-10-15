@@ -73,9 +73,14 @@ Old package paths under e2e/I02 may identify producer origin; I03 owns the integ
 and its master sheet under e2e/I03. No fixture is silently removed because its origin was I02.
 Direct C1 still belongs to I02; successful nested C1 and deployed I02+I03 acceptance belong to I03.
 
-## 4. CT92 exact shared v1 envelope (preserved contract detail)
+## 4. CT92 original v1 envelope (historical contract detail)
 
-The original exact schema/IO contract below remains the shared CT92 specification, with scope
+**Superseded for active implementation by [explicit admission spec §3](i02-explicit-admission-spec-2026-10-15.md).**
+That review supplies EXPLICIT_INPUT, closed rule tables and strict type/cross-field checks. The exact
+original below is preserved as lineage, not a second competing normative schema. I03 must version
+its managed extension explicitly; reserved enum names do not deliver managed behavior.
+
+The original exact schema/IO contract below records the migrated CT92 specification, with scope
 qualification: I02 produces EXPLICIT PlanRef attempts only; ACQUISITION/EXISTING_SELECTION/BOOTSTRAP
 branches are reserved I03 work, not implemented by supporting their closed schema values.
 Freeze the small per-validator rules per Q62 before implementation; this migration does not ratify
