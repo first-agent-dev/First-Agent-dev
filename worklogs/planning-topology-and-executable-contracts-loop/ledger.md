@@ -2316,3 +2316,24 @@ E210  FACT  Remaining I02 contract source review from 4b6e362; no production/tes
     Q67 is OPEN; no fake diagnostic, weakened schema, public helper wiring or acceptance claim.
     Append-only question/register/ledger changes only; E209 runtime limits/debts remain.
     [notes/open-questions-2026-10-07.md Q67; notes/e2e-live-verification-register.md E210]
+
+
+E211  FACT  Public explicit-admission major-chunk checkpoint from e56ace2; partial I02 only.
+    Operator explicitly selected Q67(a), later Q68(a); canonical v1 ADMITTED/unchanged durable
+    barrier before first eval-only revision, actual candidate outcome, RETRY only actual FAIL.
+    Q68 rejects scoped publication-tool errors even if recovered, permits recovered read errors.
+    Shared reserved credits, latest-draft retries, mandatory _run_admission_repair publication
+    producer, final durable admission, independent T0 state/symmetric identity, pinned verifier/
+    eval and real post-coder eval under integrity failures now wired to run_workflow.
+    Fixed gate-before-deadline ordering and retained deadline marker/exit, budget exit1/version.
+    51 new cases:45 public-root+6unit; precise six old-definition migrations, no deadline-test edits.
+    Focused480passed/1deselected55.83s; Ruff/Mypy six files clean; Pylint production10/10.
+    Pyrefly production rc1/6warnings, test-inclusive59 old errors+6warnings, unwaived, no suppression.
+    Compatibility1031passed/6failed/2deselected285.86s, same six standing identities; hygiene1pass.
+    Supplemental15 mutations detected, each33cases/rc1/failures>0/zero errors/skips with actual
+    import provenance and unchanged hashes. Not named all16 whole-path acceptance. Unfiltered
+    baseline stopped after >10min in recursive C1; no final result. Interrupted kills not PROVEN.
+    CT95 unsupported acquisition guard, six failures, whole-path baseline/all16kills/full-repo
+    comparison/static debt/independent/operator DoD remain open. No STEP/SHIPPED/boundary claim.
+    [notes/i02-ct91-public-admission-e211-2026-10-16.md: declaration, commands, TEST-EDITS, hashes,
+    actual mutation table/harness, captured failures, exact next implementation, ADM-H20–H25]

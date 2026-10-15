@@ -2783,7 +2783,8 @@ def test_ct93_real_stage_dispatch_controls_candidate_writes(
         run_stage_fn=_cmd_run,
         planner_dispatch=dispatch,
     )
-    assert outcome.exit_code == 0
+    # Scoped attempts now consume the deliberate guard errors, even after model stop=0.
+    assert outcome.exit_code == (0 if ordinary else 2)
     assert len(requests) == 3
     schemas = [item["function"] for item in requests[0].tools if item["function"]["name"] == "fs_write_file"]
     assert len(schemas) == 1
@@ -3661,3 +3662,590 @@ def test_ct94_canonical_namespace_allows_normalized_descendants(tmp_path: Path) 
     assert nested.read_bytes() == validation.snapshot.utf8_bytes
     assert nested.stat().st_mode & 0o777 == 0o640
     assert (tmp_path / _CT94_PATH).read_bytes() == _ct94_plan()
+
+
+# Public admission root: only ProviderChain.request is replaced in normal-path cases.
+def _ct91_public(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    mode: str = "linear",
+    gate: str = "observe",
+    raw: bytes | None = None,
+    revisions: tuple[bytes, ...] = (),
+    credit: int = 2,
+    replan: bool = False,
+    roles: list[str] | None = None,
+    denied: bool = False,
+    recoverable_read_error: bool = False,
+    failed_prepare: bool = False,
+    nonincrement: bool = False,
+    callback: Callable[[str, RequestInfo], None] | None = None,
+) -> tuple[int, FlowState | None, Path, list[str], list[dict[str, Any]]]:
+    from fa import feature_flags
+    from fa.cli import _cmd_run
+
+    source = _ct94_source(tmp_path)
+    path = tmp_path / ("explicit.md" if nonincrement else _CT94_PATH)
+    path.write_bytes(raw if raw is not None else source.utf8_bytes)
+    (tmp_path / "tests").mkdir(exist_ok=True)
+    (tmp_path / "tests/test_candidate.py").write_text("def test_fixture():\n    assert 1 + 1 == 2\n")
+    config = tmp_path / "models.yaml"
+    config.write_text(
+        "".join(_ROLE_YAML.format(role=r).replace('name: "m"', f'name: "{r}"') for r in ("planner", "coder", "eval"))
+    )
+    flags = tmp_path / "flags.yaml"
+    flags.write_text(f"feature_flags:\n  workflow:\n    verify_gate:\n      mode: {gate}\n")
+    monkeypatch.setattr(feature_flags, "DEFAULT_CONFIG_PATH", flags)
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    phases: list[str] = []
+    admission_seen: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    drafts: dict[str, bytes] = {}
+    baseline: bytes | None = None
+    base = tmp_path / "state/session-log/ct91-public"
+
+    def request_model(
+        chain: ProviderChain, request: RequestInfo, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        nonlocal baseline
+        role = chain.config.name
+        phases.append(role)
+        admission = json.loads((base / "admission.json").read_bytes())
+        admission_seen.append(admission)
+        if callback is not None:
+            callback(role, request)
+        if role == "coder":
+            assert admission["status"] == "ADMITTED"
+            current = (base / "verify_baseline.json").read_bytes()
+            if baseline is None:
+                baseline = current
+            assert current == baseline, "T0 changed between coder dispatches"
+        tools = [t["function"] for t in request.tools if t["function"]["name"] == "fs_write_file"]
+        targets = tools[0]["parameters"]["properties"]["path"].get("enum", []) if tools else []
+        if role == "planner" and targets:
+            target = targets[0]
+            step = counts.get(target, 0)
+            counts[target] = step + 1
+            if target not in drafts:
+                index = len(drafts)
+                drafts[target] = revisions[min(index, len(revisions) - 1)] if revisions else source.utf8_bytes
+                expected = (raw if raw is not None else source.utf8_bytes) if index == 0 else revisions[index - 1]
+                assert (tmp_path / target).read_bytes() == expected, "rejected-draft progress lost"
+                assert len(targets) == 1 and target.startswith(".fa/admission/ct91-public/candidate-")
+            step -= int(recoverable_read_error or failed_prepare)
+            if step < 2:
+                name = (
+                    "fs_read_file"
+                    if step < 0 and recoverable_read_error
+                    else "pr_prepare"
+                    if step <= 0
+                    else "fs_write_file"
+                )
+                params = (
+                    {"intent": "IMPLEMENT", "invariant": "Implements: CT91 admission revision"}
+                    if step == 0
+                    else {"path": ".fa/not-owned.md" if denied else target, "content": drafts[target].decode()}
+                )
+                if step < 0:
+                    params = (
+                        {"path": "missing-admission-probe.txt"}
+                        if recoverable_read_error
+                        else {"intent": "INVALID", "invariant": "Implements: CT91 failed preparation"}
+                    )
+                call = {
+                    "id": f"ct91-{len(phases)}",
+                    "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(params)},
+                }
+                return ResponseInfo("", 1, 1, "tool_calls", (call,)), logical_call_id or "ct91", []
+        verdict = "PASS"
+        if role == "eval" and replan and phases.count("eval") == 1:
+            verdict = "REPLAN_REQUIRED"
+        text = f"## Verification Summary\n\n### Verdict\n\n{verdict}\n" if role == "eval" else "done"
+        return ResponseInfo(text, 1, 1, "stop"), logical_call_id or "ct91", []
+
+    monkeypatch.setattr(ProviderChain, "request", request_model)
+    code, state = run_workflow(
+        roles=roles if roles is not None else ["planner", "coder", "eval"],
+        task="implement CT91",
+        per_role_task={},
+        mode=mode,
+        max_repairs=0,
+        max_replans=credit,
+        run_id="ct91-public",
+        config=config,
+        workspace=tmp_path,
+        max_turns=5,
+        output_mode="quiet",
+        run_stage_fn=_cmd_run,
+        secrets=SecretStore({"K": "sk-test-live"}),
+        plan_path=path,
+    )
+    return code, state, base, phases, admission_seen
+
+
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+@pytest.mark.parametrize("gate", ["observe", "enforce"])
+def test_ct91_public_valid_admission_precedes_coder_and_t0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, gate: str
+) -> None:
+    code, state, base, roles, seen = _ct91_public(tmp_path, monkeypatch, mode=mode, gate=gate, credit=0)
+    assert code == 0 and state is not None and state.status == "DONE"
+    assert roles == ["planner", "coder", "eval"]
+    assert seen[0]["status"] == "ACQUIRING" and seen[0]["attempts"] == []
+    record = json.loads((base / "admission.json").read_bytes())
+    assert record["status"] == "ADMITTED" and len(record["attempts"]) == 1
+    assert record["attempts"][0]["dispatch_kind"] == "EXPLICIT_INPUT"
+    verification = json.loads((base / "verification.json").read_bytes())["attempts"][0]
+    assert verification["plan_ref"] == record["plan_ref"] and verification["mode"] == gate
+    assert not list((tmp_path / ".fa/admission").glob("ct91-public/candidate-*"))
+
+
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+@pytest.mark.parametrize("gate", ["observe", "enforce"])
+def test_ct91_public_repair_retries_latest_draft_then_promotes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, gate: str
+) -> None:
+    bad = _ct94_plan().replace(b"[CONSTRAINT]", b"[FUNCTIONAL]")
+    rejected = bad.replace(b"PLAN-ct94", b"PLAN-ct94-progress")
+    accepted = _ct94_plan("accepted revision")
+    code, state, base, roles, _ = _ct91_public(
+        tmp_path, monkeypatch, raw=bad, mode=mode, gate=gate, revisions=(rejected, accepted)
+    )
+    assert code == 0 and state is not None and state.status == "DONE"
+    assert roles == ["planner"] * 7 + ["coder", "eval"]
+    assert state.replan_round == 2
+    assert (tmp_path / _CT94_PATH).read_bytes() == accepted
+    record = json.loads((base / "admission.json").read_bytes())
+    assert [a["route"] for a in record["attempts"]] == ["RETRY", "RETRY", "ADMITTED"]
+    assert [a["dispatch_kind"] for a in record["attempts"]] == [
+        "EXPLICIT_INPUT",
+        "ADMISSION_REPAIR",
+        "ADMISSION_REPAIR",
+    ]
+    assert record["attempts"][-1]["promoted_sha256"] == record["plan_ref"]["sha256"]
+    assert not list((tmp_path / ".fa/admission/ct91-public").glob("candidate-*"))
+
+
+@pytest.mark.parametrize("gate", ["observe", "enforce"])
+def test_ct91_public_q67_eval_replan_keeps_admitted_until_real_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate: str
+) -> None:
+    revised = _ct94_plan("eval requested revision")
+    code, state, base, roles, seen = _ct91_public(
+        tmp_path, monkeypatch, mode="adaptive", gate=gate, revisions=(revised,), replan=True
+    )
+    assert code == 0 and state is not None and state.status == "DONE"
+    assert roles == ["planner", "coder", "eval", "planner", "planner", "planner", "coder", "eval"]
+    assert seen[3]["status"] == "ADMITTED"
+    assert len(seen[3]["attempts"]) == 1 and seen[3]["attempts"][0]["diagnostics"] == []
+    record = json.loads((base / "admission.json").read_bytes())
+    assert [a["dispatch_kind"] for a in record["attempts"]] == ["EXPLICIT_INPUT", "EVAL_REPLAN"]
+    assert record["attempts"][-1]["route"] == "ADMITTED"
+    assert (tmp_path / _CT94_PATH).read_bytes() == revised
+    attempts = json.loads((base / "verification.json").read_bytes())["attempts"]
+    assert len(attempts) == 2 and attempts[0]["plan_ref"]["sha256"] != attempts[1]["plan_ref"]["sha256"]
+    assert state.replan_round == 1
+
+
+@pytest.mark.parametrize("kind", ["zero-credit", "no-planner", "zero-slices", "scoped-denied", "provider-error"])
+def test_ct91_public_block_never_reaches_t0_coder_eval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    bad = _ct94_plan().replace(b"[CONSTRAINT]", b"[FUNCTIONAL]")
+
+    def fail_provider(role: str, _request: RequestInfo) -> None:
+        if kind == "provider-error" and role == "planner" and (tmp_path / ".fa/admission").exists():
+            raise RuntimeError("private provider exception")
+
+    code, state, base, roles, _ = _ct91_public(
+        tmp_path,
+        monkeypatch,
+        raw=b"unexplained prose" if kind == "zero-slices" else bad,
+        credit=0 if kind == "zero-credit" else 1,
+        roles=["coder"] if kind == "no-planner" else None,
+        denied=kind == "scoped-denied",
+        callback=fail_provider,
+    )
+    assert code != 0 and state is not None and state.status == "FAILED"
+    assert "coder" not in roles and "eval" not in roles
+    assert state.replan_round == (1 if kind in {"scoped-denied", "provider-error"} else 0)
+    assert not (base / "verify_baseline.json").exists()
+    assert not (base / "verification.json").exists()
+    assert json.loads((base / "admission.json").read_bytes())["status"] == "BLOCKED"
+    assert not list((tmp_path / ".fa/admission").glob("ct91-public/candidate-*"))
+
+
+def test_ct91_public_initial_repair_spends_the_eval_replan_credit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad = _ct94_plan().replace(b"[CONSTRAINT]", b"[FUNCTIONAL]")
+    code, state, base, roles, _ = _ct91_public(
+        tmp_path, monkeypatch, mode="adaptive", raw=bad, revisions=(_ct94_plan("repaired"),), credit=1, replan=True
+    )
+    assert code != 0 and state is not None and state.status == "FAILED" and state.replan_round == 1
+    assert roles == ["planner"] * 4 + ["coder", "eval"]
+    assert json.loads((base / "admission.json").read_bytes())["status"] == "BLOCKED"
+
+
+@pytest.mark.parametrize("fault", ["verification-write", "eval-write", "post-coder-plan", "terminal-plan"])
+@pytest.mark.parametrize("gate", ["observe", "enforce"])
+def test_ct91_public_post_coder_integrity_still_runs_real_eval_and_never_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str, gate: str
+) -> None:
+    def unavailable(*_args: object, **_kwargs: object) -> None:
+        raise OSError("private artifact failure")
+
+    def inject(role: str, request: RequestInfo) -> None:
+        if role == "coder":
+            if fault == "verification-write":
+                monkeypatch.setattr(workflow, "write_verification", unavailable)
+            elif fault == "post-coder-plan":
+                (tmp_path / _CT94_PATH).write_bytes(b"changed after pinned snapshot")
+        if role == "eval":
+            if fault == "eval-write":
+                monkeypatch.setattr(workflow, "write_eval_report", unavailable)
+            elif fault == "terminal-plan":
+                (tmp_path / _CT94_PATH).write_bytes(b"changed in eval")
+            assert "PLAN-ct94" in str(request.messages)
+            assert "SLICE1" in str(request.messages)
+
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, callback=inject, gate=gate)
+    assert code != 0 and state is not None and state.status == "FAILED"
+    assert roles == ["planner", "coder", "eval"]
+    if fault != "eval-write":
+        assert json.loads((base / "eval_report.json").read_bytes())["verdict"] == "PASS"
+    else:
+        assert not (base / "eval_report.json").exists()
+
+
+def test_ct91_public_changed_source_after_ordinary_planner_blocks_before_t0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def changed(role: str, _request: RequestInfo) -> None:
+        if role == "planner":
+            (tmp_path / _CT94_PATH).write_bytes(_ct94_plan("host changed canonical"))
+
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, callback=changed)
+    assert code != 0 and state is not None and state.blocked_reason == "admission/plan-ref/source-changed"
+    assert roles == ["planner"] and not (base / "verify_baseline.json").exists()
+
+
+def test_ct91_terminal_none_is_never_a_success() -> None:
+    from fa.inner_loop.workflow_controller import workflow_exit_code
+
+    assert workflow_exit_code(0, None) == 1
+    assert workflow_exit_code(124, None) == 124
+
+
+@pytest.mark.parametrize("fault", ["initial", "retry", "final", "replan-barrier"])
+def test_ct91_public_admission_storage_is_a_provider_barrier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    from fa.inner_loop.workflow_artifacts import AdmissionIOError, write_admission_record
+
+    original = write_admission_record
+    calls: list[str] = []
+
+    def write(path: Path, **kwargs: Any) -> dict[str, Any]:
+        attempt = kwargs.get("attempt")
+        route = attempt["route"] if attempt is not None else kwargs["status"]
+        calls.append(route)
+        fail = (
+            (fault == "initial" and len(calls) == 1)
+            or (fault == "retry" and route == "RETRY")
+            or (
+                fault == "final"
+                and attempt is not None
+                and attempt["dispatch_kind"] == "ADMISSION_REPAIR"
+                and route == "ADMITTED"
+            )
+            or (fault == "replan-barrier" and attempt is None and route == "ADMITTED")
+        )
+        if fail:
+            raise AdmissionIOError("append-failed")
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(workflow, "write_admission_record", write)
+    bad = _ct94_plan().replace(b"[CONSTRAINT]", b"[FUNCTIONAL]")
+    accepted = _ct94_plan("durable candidate")
+    code, state, base, roles, _ = _ct91_public(
+        tmp_path,
+        monkeypatch,
+        raw=bad if fault in {"retry", "final"} else None,
+        revisions=(accepted,),
+        mode="adaptive" if fault == "replan-barrier" else "linear",
+        replan=fault == "replan-barrier",
+    )
+    assert code != 0 and state is not None and state.blocked_reason == "admission/artifact-io/append-failed"
+    assert roles == (
+        []
+        if fault == "initial"
+        else ["planner"]
+        if fault == "retry"
+        else ["planner"] * 4
+        if fault == "final"
+        else ["planner", "coder", "eval"]
+    )
+    if fault == "final":
+        assert (tmp_path / _CT94_PATH).read_bytes() == accepted, "irreversible publication rolled back"
+        record = json.loads((base / "admission.json").read_bytes())
+        assert record["status"] == "ACQUIRING" and record["attempts"][-1]["route"] == "RETRY"
+    if fault != "replan-barrier":
+        assert not (base / "verify_baseline.json").exists()
+
+
+def test_ct91_public_post_replace_fsync_blocks_without_rollback_and_records_real_kind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import stat
+
+    real = os.fsync
+
+    def sync(fd: int) -> None:
+        if stat.S_ISDIR(os.fstat(fd).st_mode) and os.readlink(f"/proc/self/fd/{fd}") == str(
+            (tmp_path / _CT94_PATH).parent
+        ):
+            raise OSError("controlled parent fsync failure")
+        real(fd)
+
+    monkeypatch.setattr(os, "fsync", sync)
+    accepted = _ct94_plan("published but uncertain")
+    code, state, base, roles, _ = _ct91_public(
+        tmp_path,
+        monkeypatch,
+        raw=_ct94_plan().replace(b"[CONSTRAINT]", b"[FUNCTIONAL]"),
+        revisions=(accepted,),
+    )
+    assert code != 0 and state is not None and state.blocked_reason == "admission/promotion/durability-unknown"
+    assert "coder" not in roles and "eval" not in roles
+    assert (tmp_path / _CT94_PATH).read_bytes() == accepted
+    attempt = json.loads((base / "admission.json").read_bytes())["attempts"][-1]
+    assert attempt["dispatch_kind"] == "ADMISSION_REPAIR" and attempt["validation"] == "INDETERMINATE"
+    assert attempt["candidate_sha256"] is not None and attempt["promoted_sha256"] is None
+    assert not list((tmp_path / ".fa/admission/ct91-public").glob("candidate-*"))
+
+
+@pytest.mark.parametrize("change", ["added", "removed", "path", "bool-version", "symlink"])
+def test_ct91_t0_reuse_rejects_symmetric_topology_and_bad_identity(tmp_path: Path, change: str) -> None:
+    ids = extract_plan_ids(_ct94_plan().decode())
+    path = tmp_path / "verify_baseline.json"
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "run_id": "t0",
+        "slices": {
+            "SLICE1": {"test_paths": ["tests/test_candidate.py"], "nodeids": {"a": True}},
+        },
+    }
+    if change == "added":
+        payload["slices"]["SLICE2"] = {"test_paths": [], "nodeids": {}}
+    elif change == "removed":
+        payload["slices"] = {}
+    elif change == "path":
+        payload["slices"]["SLICE1"]["test_paths"] = ["tests/other.py"]
+    elif change == "bool-version":
+        payload["schema_version"] = True
+    path.write_text(json.dumps(payload))
+    if change == "symlink":
+        other = tmp_path / "other.json"
+        path.rename(other)
+        path.symlink_to(other)
+    result = workflow.load_verify_baseline(path, ids, run_id="t0")
+    assert result.errors and result.nodeids_by_slice == {"SLICE1": None}
+
+
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+def test_ct91_public_repeated_configured_coders_reuse_one_t0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    code, state, base, roles, _ = _ct91_public(
+        tmp_path, monkeypatch, mode=mode, roles=["planner", "coder", "coder"], credit=0
+    )
+    assert code == 0 and state is not None and state.status == "DONE"
+    assert roles == ["planner", "coder", "eval", "coder", "eval"]
+    assert len(json.loads((base / "verification.json").read_bytes())["attempts"]) == 2
+    assert len(json.loads((base / "admission.json").read_bytes())["attempts"]) == 1
+
+
+@pytest.mark.parametrize("invalid", [False, True])
+def test_ct91_public_nonincrement_admits_but_cannot_repair_outside_q58(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: bool
+) -> None:
+    raw = _ct94_plan().replace(b"[CONSTRAINT]", b"[FUNCTIONAL]") if invalid else _ct94_plan()
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, raw=raw, nonincrement=True)
+    assert state is not None
+    if invalid:
+        assert code != 0 and state.blocked_reason == "admission/promotion/scope-denied"
+        assert roles == ["planner"] and not (base / "verify_baseline.json").exists()
+    else:
+        assert code == 0 and state.status == "DONE"
+    assert (tmp_path / "explicit.md").read_bytes() == raw
+    assert json.loads((base / "admission.json").read_bytes())["plan_ref"]["workspace_relative_path"] == "explicit.md"
+
+
+def test_ct91_public_collection_error_is_not_a_usable_t0(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def break_test(role: str, _request: RequestInfo) -> None:
+        if role == "planner":
+            (tmp_path / "tests/test_candidate.py").write_text("this is not valid Python!\n")
+
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, callback=break_test)
+    assert code != 0 and state is not None and state.blocked_reason == "admission/baseline-unavailable"
+    assert roles == ["planner"] and not (base / "eval_report.json").exists()
+
+
+def test_ct91_public_eval_replan_retries_a_rejected_revision_with_one_counter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rejected = _ct94_plan().replace(b"[CONSTRAINT]", b"[FUNCTIONAL]")
+    accepted = _ct94_plan("accepted after eval retry")
+    code, state, base, roles, _ = _ct91_public(
+        tmp_path, monkeypatch, mode="adaptive", replan=True, revisions=(rejected, accepted)
+    )
+    assert code == 0 and state is not None and state.status == "DONE" and state.replan_round == 2
+    assert roles.count("coder") == roles.count("eval") == 2 and roles.count("planner") == 7
+    attempts = json.loads((base / "admission.json").read_bytes())["attempts"]
+    assert [(a["dispatch_kind"], a["route"]) for a in attempts] == [
+        ("EXPLICIT_INPUT", "ADMITTED"),
+        ("EVAL_REPLAN", "RETRY"),
+        ("EVAL_REPLAN", "ADMITTED"),
+    ]
+
+
+def test_ct91_public_eval_replan_without_planner_blocks_without_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, mode="adaptive", replan=True, roles=["coder"])
+    assert code != 0 and state is not None and state.status == "FAILED"
+    assert roles == ["coder", "eval"]
+    assert json.loads((base / "admission.json").read_bytes())["status"] == "BLOCKED"
+
+
+def test_ct91_public_structural_zero_slice_near_miss_is_repairable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[str] = []
+
+    def inspect(role: str, request: RequestInfo) -> None:
+        if role == "planner":
+            seen.append(str(request.messages))
+
+    code, state, base, _, _ = _ct91_public(
+        tmp_path,
+        monkeypatch,
+        raw=b"## SLICE 1: near miss\n",
+        revisions=(_ct94_plan("structurally fixed"),),
+        credit=1,
+        callback=inspect,
+    )
+    assert code == 0 and state is not None and state.status == "DONE"
+    attempt = json.loads((base / "admission.json").read_bytes())["attempts"][0]
+    assert attempt["validation"] == "DIAGNOSTICS" and attempt["route"] == "RETRY"
+    assert any("heading-near-miss" in message for message in seen)
+
+
+def test_ct91_public_warn_alone_admits_without_planner_credit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    raw = b"Plan-ID: PLAN-ct94\n" + b"".join(
+        f"\n## SLICE{i}: unit\nCONTRACTS:\n  CT{i} [CONSTRAINT]: invariant.\nTESTS: tests/test_candidate.py\n".encode()
+        for i in range(1, 8)
+    )
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, raw=raw, credit=0, roles=["coder"])
+    assert code == 0 and state is not None and state.status == "DONE" and state.replan_round == 0
+    assert roles == ["coder", "eval"]
+    attempt = json.loads((base / "admission.json").read_bytes())["attempts"][0]
+    assert attempt["validation"] == "PASS" and attempt["route"] == "ADMITTED"
+    assert {d["severity"] for d in attempt["diagnostics"]} == {"WARN"}
+
+
+def test_ct91_public_owned_cleanup_failure_blocks_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = os.unlink
+
+    def unavailable(path: Any, **kwargs: Any) -> None:
+        if str(path).startswith("candidate-"):
+            raise OSError("controlled owned-candidate cleanup failure")
+        original(path, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", unavailable)
+    bad = _ct94_plan().replace(b"[CONSTRAINT]", b"[FUNCTIONAL]")
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, raw=bad, revisions=(_ct94_plan(),), credit=1)
+    assert code != 0 and state is not None and state.blocked_reason == "admission/artifact-io/append-failed"
+    assert "coder" not in roles and not (base / "verify_baseline.json").exists()
+    assert (tmp_path / _CT94_PATH).read_bytes() == bad
+    assert len(list((tmp_path / ".fa/admission/ct91-public").glob("candidate-*"))) == 1
+
+
+def test_ct91_public_mismatch_and_negative_eval_keep_real_judgment_but_block_next_coder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def changed(role: str, _request: RequestInfo) -> None:
+        if role == "coder":
+            (tmp_path / _CT94_PATH).write_bytes(b"mismatched canonical")
+
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, mode="adaptive", replan=True, callback=changed)
+    assert code != 0 and state is not None and state.status == "FAILED" and state.judged is True
+    assert roles == ["planner", "coder", "eval"]
+    assert json.loads((base / "eval_report.json").read_bytes())["verdict"] == "REPLAN_REQUIRED"
+
+
+@pytest.mark.parametrize("gate", ["observe", "enforce"])
+def test_ct91_public_q68_recovers_from_read_error_before_valid_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate: str
+) -> None:
+    """C1: actual failed read, prepare and scoped writer; only provider IO replaced."""
+    bad = _ct94_plan().replace(b"[CONSTRAINT]", b"[FUNCTIONAL]")
+    accepted = _ct94_plan("recovered read probe")
+    code, state, base, roles, _ = _ct91_public(
+        tmp_path,
+        monkeypatch,
+        gate=gate,
+        raw=bad,
+        revisions=(accepted,),
+        credit=1,
+        recoverable_read_error=True,
+    )
+    assert code == 0 and state is not None and state.status == "DONE"
+    assert roles == ["planner"] * 5 + ["coder", "eval"]
+    assert state.replan_round == 1
+    assert (tmp_path / _CT94_PATH).read_bytes() == accepted
+    record = json.loads((base / "admission.json").read_bytes())
+    assert [a["route"] for a in record["attempts"]] == ["RETRY", "ADMITTED"]
+    events = [json.loads(line) for line in (base / "events.jsonl").read_text().splitlines()]
+    results = {e["tool_call_id"]: e["content"] for e in events if e["kind"] == "tool_result"}
+    assert results["ct91-2"]["ok"] is False
+    assert results["ct91-3"]["ok"] is True
+    assert results["ct91-4"]["ok"] is True
+    assert not list((tmp_path / ".fa/admission/ct91-public").glob("candidate-*"))
+
+
+@pytest.mark.parametrize("gate", ["observe", "enforce"])
+def test_ct91_public_q68_failed_prepare_invalidates_even_after_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate: str
+) -> None:
+    """C1 negative pair: a later successful prepare/write cannot erase a prepare error."""
+    bad = _ct94_plan().replace(b"[CONSTRAINT]", b"[FUNCTIONAL]")
+    code, state, base, roles, _ = _ct91_public(
+        tmp_path,
+        monkeypatch,
+        gate=gate,
+        raw=bad,
+        revisions=(_ct94_plan("recovered prepare"),),
+        credit=1,
+        failed_prepare=True,
+    )
+    assert code == 2 and state is not None and state.status == "FAILED"
+    assert state.blocked_reason == "admission/promotion/prepare-failed"
+    assert roles == ["planner"] * 5 and state.replan_round == 1
+    assert (tmp_path / _CT94_PATH).read_bytes() == bad
+    assert json.loads((base / "admission.json").read_bytes())["status"] == "BLOCKED"
+    events = [json.loads(line) for line in (base / "events.jsonl").read_text().splitlines()]
+    results = {e["tool_call_id"]: e["content"] for e in events if e["kind"] == "tool_result"}
+    assert results["ct91-2"]["ok"] is False
+    assert results["ct91-3"]["ok"] is True
+    assert results["ct91-4"]["ok"] is True
+    assert not (base / "verify_baseline.json").exists()
+    assert not (base / "verification.json").exists()
+    assert not list((tmp_path / ".fa/admission/ct91-public").glob("candidate-*"))

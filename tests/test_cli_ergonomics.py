@@ -442,14 +442,15 @@ def test_adaptive_without_planner_terminates_on_return_to_planner(
     args = _workflow_args(tmp_path, config, roles="coder,eval", mode="adaptive", max_repairs=2)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
-    # Q35b (S10c.2): terminal status is REPLAN_REQUIRED, not DONE, so the
-    # exit code is now 1. The loop/budget assertions below are unchanged.
+    # Q57: inability to replan now hard-blocks; runtime rejection still exits 1.
+    # Original loop/budget/counter/version assertions remain unchanged.
     assert code == 1
     assert transport.coder_calls == 1  # no repair coder round
     assert transport.eval_calls == 1
     state = load_flow_state(session_dir / "flow_state.json")
-    assert state.status == "REPLAN_REQUIRED"
-    assert state.last_route_decision == "return_to_planner"
+    assert state.status == "FAILED"
+    assert state.blocked_reason == "admission/planner-unavailable"
+    assert state.last_route_decision == "blocked"
     assert state.repair_round == 0
 
 
@@ -514,7 +515,8 @@ def test_adaptive_without_planner_does_not_spin_on_replan_route(
     assert transport.coder_calls == 1, "replan loop ran despite there being no planner"
     assert transport.eval_calls == 1
     state = load_flow_state(session_dir / "flow_state.json")
-    assert state.status == "REPLAN_REQUIRED"
+    assert state.status == "FAILED"
+    assert state.blocked_reason == "admission/planner-unavailable"
     assert state.replan_round == 0
 
 
@@ -648,18 +650,19 @@ def test_adaptive_mode_enforces_replan_budget(tmp_path: Path, monkeypatch: pytes
     args = _workflow_args(tmp_path, config, mode="adaptive", max_repairs=2, max_replans=1)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
-    # Q35b (S10c.2): terminal status is REPLAN_REQUIRED, not DONE, so the
-    # exit code is now 1. The loop/budget assertions below are unchanged.
+    # Q57: inability to replan now hard-blocks; runtime rejection still exits 1.
+    # Original loop/budget/counter/version assertions remain unchanged.
     assert code == 1
     assert transport.planner_calls == 2
     assert transport.coder_calls == 2
     assert transport.eval_calls == 2
 
     state = load_flow_state(session_dir / "flow_state.json")
-    assert state.status == "REPLAN_REQUIRED"
+    assert state.status == "FAILED"
+    assert state.blocked_reason == "admission/planner-budget"
     assert state.replan_round == 1
     assert state.active_plan_version == 2
-    assert state.last_route_decision == "return_to_planner"
+    assert state.last_route_decision == "blocked"
 
 
 def test_adaptive_mode_can_mix_repair_then_replan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

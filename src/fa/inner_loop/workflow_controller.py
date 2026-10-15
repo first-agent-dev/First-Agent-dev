@@ -17,10 +17,9 @@ import logging
 import os
 import re
 import sys
-import tempfile
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -42,7 +41,7 @@ from fa.inner_loop.plan_ids import (
     extract_plan_ids,
     precheck,
 )
-from fa.inner_loop.plan_promotion import PlanPromotionError, publish_plan_buffer
+from fa.inner_loop.plan_promotion import PlanPromotionError, publish_plan_buffer, seed_plan_candidate
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
@@ -63,6 +62,10 @@ from fa.inner_loop.workflow_artifacts import (
     FlowState,
     FlowStatus,
     RouteDecision,
+    _admission_lock,
+    _private_artifact_directory,
+    _read_admission_at,
+    _replace_private_json,
     default_route_for_verdict,
     load_flow_state,
     parse_eval_report,
@@ -153,6 +156,23 @@ class WorkflowArtifactPaths:
         return self.base_dir / "admission.json"
 
 
+@dataclass(slots=True)
+class WorkflowAdmission:
+    """Run-local canonical authority and the shared planner-attempt counter."""
+
+    snapshot: PlanSnapshot
+    planner_allowed: bool
+    planner_limit: int
+    planner_calls: int = 0
+    plan_version: int = 1
+    block_exit_code: int = 2
+    candidate: PlanSnapshot | None = None
+    last_eval_report: EvalReport | None = None
+    baseline: Literal["NOT_CAPTURED", "CAPTURED", "FAILED"] = "NOT_CAPTURED"
+    admitted: bool = False
+    failure: str | None = None
+
+
 @dataclass(frozen=True)
 class WorkflowContext:
     """Invariant per-run configuration shared by every workflow stage."""
@@ -192,13 +212,16 @@ class WorkflowContext:
     # CT77c: resolved once at workflow start so one run cannot switch between
     # observe/enforce if the operator edits config while a stage is in flight.
     verify_gate_mode: str = "observe"
+    admission: WorkflowAdmission | None = None
 
     def plan_text(self) -> str | None:
-        """Read the plan once, or ``None`` if absent/unreadable.
+        """Use the immutable admitted snapshot, or read legacy optional input.
 
-        Never raises: a plan that vanished mid-run must not take the pipeline
-        down with it, because the plan is advisory input, not a dependency.
+        Explicit admission treats this snapshot as authority; source changes
+        are checked separately. Legacy contexts tolerate absent/unreadable input.
         """
+        if self.admission is not None:
+            return self.admission.snapshot.text
         if self.plan_path is None:
             return None
         try:
@@ -342,23 +365,20 @@ def _baseline_payload(
 
 def _write_json_exclusive(path: Path, payload: Mapping[str, object]) -> None:
     """Create a private JSON file exactly once; never replace an existing T0."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_BINARY"):
-        flags |= os.O_BINARY
-    descriptor = os.open(path, flags, 0o600)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-    except Exception:
+    with _private_artifact_directory(path.parent) as parent:
+        descriptor = os.open(
+            path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent
+        )
         try:
-            path.unlink()
-        except OSError:
-            pass
-        raise
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.fsync(parent)
+        except Exception:
+            os.unlink(path.name, dir_fd=parent)
+            raise
 
 
 def capture_baseline(
@@ -388,14 +408,33 @@ def load_verify_baseline(path: Path, plan_ids: PlanIds, *, run_id: str) -> Basel
     """Load the immutable T0 maps for a later coder repair stage; malformed is ERROR."""
     empty = {record.slice_id: None for record in plan_ids.slice_records}
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        with _private_artifact_directory(path.parent) as directory:
+            payload = _read_admission_at(directory, path.name)
+    except (OSError, ValueError) as error:
         return BaselineCapture(nodeids_by_slice=empty, errors=(f"T0 baseline unavailable: {error}",))
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1 or payload.get("run_id") != run_id:
+    if (
+        not isinstance(payload, dict)
+        or type(payload.get("schema_version")) is not int
+        or payload.get("schema_version") != 1
+        or payload.get("run_id") != run_id
+    ):
         return BaselineCapture(nodeids_by_slice=empty, errors=("T0 baseline schema or run_id does not match",))
     stored_slices = payload.get("slices")
     if not isinstance(stored_slices, dict):
         return BaselineCapture(nodeids_by_slice=empty, errors=("T0 baseline has no slices mapping",))
+
+    topology = {
+        record.slice_id: sorted({Path(p).as_posix() for p in record.test_paths}) for record in plan_ids.slice_records
+    }
+    actual = {
+        key: sorted({Path(p).as_posix() for p in value.get("test_paths", [])})
+        for key, value in stored_slices.items()
+        if isinstance(value, dict)
+        and isinstance(value.get("test_paths"), list)
+        and all(isinstance(p, str) for p in value["test_paths"])
+    }
+    if actual != topology or set(stored_slices) != set(topology):
+        return BaselineCapture(nodeids_by_slice=empty, errors=("T0 slice/test-path topology does not match",))
 
     maps: dict[str, Mapping[str, bool] | None] = {}
     errors: list[str] = []
@@ -465,46 +504,30 @@ def write_verification(
     run_id: str,
     mode: str,
     repair_round: int,
+    plan_ref: PlanRef | None = None,
+    deadline: float | None = None,
 ) -> None:
-    """Append one attempt to the run's verification artifact via atomic replacement (CT77b)."""
-    if path.exists():
-        previous = json.loads(path.read_text(encoding="utf-8"))
-        if (
-            not isinstance(previous, dict)
-            or previous.get("schema_version") != 1
-            or previous.get("run_id") != run_id
-            or not isinstance(previous.get("attempts"), list)
-        ):
-            raise ValueError("existing verification.json has an incompatible run identity or schema")
-        attempts = list(previous["attempts"])
-    else:
-        attempts = []
-    attempts.append(_verification_attempt_payload(verification, mode=mode, repair_round=repair_round))
-    payload = {"schema_version": 1, "run_id": run_id, "attempts": attempts}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-            temporary_path = Path(handle.name)
-        os.replace(temporary_path, path)
-    except Exception:
-        if temporary_path is not None:
+    """Append typed attempt evidence with the established private locked atomic IO."""
+    with _private_artifact_directory(path.parent) as parent:
+        with _admission_lock(parent, deadline=deadline):
             try:
-                temporary_path.unlink()
+                previous = _read_admission_at(parent, path.name)
             except FileNotFoundError:
-                pass
-        raise
+                previous = {"schema_version": 1, "run_id": run_id, "attempts": []}
+            if (
+                not isinstance(previous, dict)
+                or type(previous.get("schema_version")) is not int
+                or previous.get("schema_version") != 1
+                or previous.get("run_id") != run_id
+                or not isinstance(previous.get("attempts"), list)
+            ):
+                raise ValueError("existing verification.json has an incompatible run identity or schema")
+            attempts = list(previous["attempts"])
+            attempt = _verification_attempt_payload(verification, mode=mode, repair_round=repair_round)
+            if plan_ref is not None:
+                attempt["plan_ref"] = asdict(plan_ref)
+            attempts.append(attempt)
+            _replace_private_json(parent, path.name, {"schema_version": 1, "run_id": run_id, "attempts": attempts})
 
 
 def _verification_lines(path: Path) -> tuple[str, ...]:
@@ -580,6 +603,7 @@ def _effective_controller_route(
     gate_mode: str,
     eval_requested: bool,
     verification_required: bool = False,
+    integrity_failed: bool = False,
 ) -> RouteDecision | None:
     """Reconcile eval judgment with non-waivable verifier facts after eval runs.
 
@@ -590,6 +614,8 @@ def _effective_controller_route(
     to the existing bounded coder-repair route. The actual EvalReport stays the
     model's report -- this is controller routing, not a synthetic replacement.
     """
+    if integrity_failed and (report is None or report.route_decision == "complete"):
+        return "blocked"
     if report is None:
         if eval_requested:
             return "blocked"
@@ -673,7 +699,12 @@ def build_eval_report(
     )
 
 
-def validate_slice_ids(report: EvalReport, plan_text: str | None) -> tuple[EvalReport, tuple[str, ...]]:
+def validate_slice_ids(
+    report: EvalReport,
+    plan_text: str | None,
+    *,
+    plan_ids: PlanIds | None = None,
+) -> tuple[EvalReport, tuple[str, ...]]:
     """Cross-check the evaluator's claimed slice IDs against the plan. (S12/Q16)
 
     Returns the adjusted report and the human-readable warnings to emit. Pure:
@@ -722,9 +753,9 @@ def validate_slice_ids(report: EvalReport, plan_text: str | None) -> tuple[EvalR
             summary=f"per-slice failure reported for {', '.join(failed)}: {report.summary}",
         )
 
-    if plan_text is None:
+    if plan_text is None and plan_ids is None:
         return report, tuple(warnings)
-    declared = extract_plan_ids(plan_text).slices
+    declared = (plan_ids if plan_ids is not None else extract_plan_ids(plan_text or "")).slices
     if not declared:
         return report, tuple(warnings)
 
@@ -909,10 +940,13 @@ def _eval_evidence_block(
     lines: list[str] = []
 
     plan_text = ctx.plan_text()
+    if ctx.admission is not None:
+        lines.append(f"Admitted Plan-ID: {ctx.plan_identity()}")
+        lines.append(f"Admitted PlanRef SHA256: {ctx.admission.snapshot.ref.sha256}")
     if ctx.plan_path is not None:
         lines.append(f"Plan: {ctx.plan_path}")
         if plan_text is not None:
-            slices = extract_plan_ids(plan_text).slices
+            slices = (ctx.admission.snapshot.ids if ctx.admission is not None else extract_plan_ids(plan_text)).slices
             if slices:
                 # IDs only. The plan can run to thousands of lines and pasting
                 # it would evict the diff -- the judge has fs_read_file.
@@ -992,6 +1026,114 @@ def _stage_planner_dispatch(
     return dispatch
 
 
+def _mark_integrity_failure(ctx: WorkflowContext, reason: str) -> None:
+    if ctx.admission is not None:
+        ctx.admission.failure = reason
+
+
+def _integrity_failed(ctx: WorkflowContext) -> bool:
+    return ctx.admission is not None and ctx.admission.failure is not None
+
+
+def _plan_integrity_errors(ctx: WorkflowContext) -> tuple[str, ...]:
+    if ctx.admission is None:
+        return ()
+    try:
+        _check_admission_source(ctx)
+    except PlanRefError as error:
+        reason = f"plan-ref/{error.rule}"
+        _mark_integrity_failure(ctx, reason)
+        return (reason,)
+    return ()
+
+
+def _write_stage_eval_report(ctx: WorkflowContext, report: EvalReport) -> None:
+    if ctx.admission is not None:
+        ctx.admission.last_eval_report = report
+    saved = True
+    try:
+        write_eval_report(ctx.artifact_paths.eval_report, report)
+    except (OSError, ValueError):
+        if ctx.admission is None:
+            raise
+        saved = False
+        _mark_integrity_failure(ctx, "artifact-io/append-failed")
+        print("fa workflow: eval report storage error: append-failed", file=sys.stderr)
+    print(
+        f"fa workflow: eval verdict={report.verdict} route={report.route_decision} "
+        f"persisted={saved} artifact={ctx.artifact_paths.eval_report}",
+        file=sys.stderr,
+    )
+
+
+def _stage_plan(ctx: WorkflowContext) -> tuple[PlanIds, str | None]:
+    if ctx.admission is not None:
+        return ctx.admission.snapshot.ids, None
+    text = ctx.plan_text()
+    error = None
+    if text is None:
+        error = (
+            "plan artifact was not supplied before coder dispatch"
+            if ctx.plan_path is None
+            else f"plan artifact was unreadable before coder dispatch: {ctx.plan_path}"
+        )
+    return extract_plan_ids(text) if text is not None else PlanIds(), error
+
+
+def _needs_baseline(ctx: WorkflowContext, progress: WorkflowProgress) -> bool:
+    state = ctx.admission
+    if state is None:
+        return progress.repair_round == 0
+    if state.baseline != "NOT_CAPTURED":
+        return False
+    state.baseline = "FAILED"  # Reserve once, including capture/storage failure.
+    try:
+        ctx.artifact_paths.verify_baseline.lstat()  # Existence only; loader authorizes via descriptors.
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def _coder_admission_ready(ctx: WorkflowContext, baseline: BaselineCapture) -> bool:
+    state = ctx.admission
+    if state is None:
+        return True
+    if baseline.errors:
+        state.baseline = "FAILED"
+        _admission_failed(ctx, "baseline-unavailable")
+        return False
+    state.baseline = "CAPTURED"
+    try:
+        _check_admission_source(ctx)
+    except PlanRefError as error:
+        _admission_error(ctx, error)
+        return False
+    return True
+
+
+def _load_eval_independence(ctx: WorkflowContext) -> Mapping[str, object] | None:
+    try:
+        from fa.providers import load_models_config_from_path
+
+        models = load_models_config_from_path(ctx.config.expanduser().resolve(), require_api_keys=False)
+        return _eval_independence_mapping(models)
+    except (ConfigurationError, OSError):
+        logger.warning("workflow eval independence unavailable (run=%s)", ctx.run_id)
+        return None
+
+
+def _scoped_stage_failed(dispatch: PlannerDispatch | None, sink: list[SessionOutcome]) -> bool:
+    if dispatch is None or dispatch.kind == PlannerDispatchKind.ORDINARY_PLANNING:
+        return False
+    return (
+        not sink
+        or sink[-1].exit_code != 0
+        or not {"fs_write_file", "pr_prepare"}.isdisjoint(sink[-1].failed_tools)
+    )
+
+
 def _run_stage(
     ctx: WorkflowContext,
     role: str,
@@ -1020,9 +1162,13 @@ def _run_stage(
     stages, which is exactly what this caps.
     """
     dispatch = _stage_planner_dispatch(ctx, role, planner_dispatch)
+    progress = _admission_progress(ctx, progress)
     if _deadline_exceeded(ctx):
         _write_deadline_state(ctx, role, progress=progress)
         return StageResult(role=role, exit_code=WORKFLOW_DEADLINE_EXIT_CODE)
+    if role == "coder" and not _admit_plan(ctx, progress, run_stage_fn):
+        return StageResult(role=role, exit_code=_admission_exit_code(ctx))
+    progress = _admission_progress(ctx, progress)
 
     write_flow_state(
         ctx.artifact_paths.flow_state,
@@ -1102,13 +1248,7 @@ def _run_stage(
     baseline_capture: BaselineCapture | None = None
     plan_read_error: str | None = None
     if role == "coder":
-        plan_text_for_stage = ctx.plan_text()
-        if plan_text_for_stage is None:
-            if ctx.plan_path is None:
-                plan_read_error = "plan artifact was not supplied before coder dispatch"
-            else:
-                plan_read_error = f"plan artifact was unreadable before coder dispatch: {ctx.plan_path}"
-        plan_ids_for_stage = extract_plan_ids(plan_text_for_stage) if plan_text_for_stage is not None else PlanIds()
+        plan_ids_for_stage, plan_read_error = _stage_plan(ctx)
         baseline_capture = (
             capture_baseline(
                 ctx.artifact_paths.verify_baseline,
@@ -1117,13 +1257,11 @@ def _run_stage(
                 run_id=ctx.run_id,
                 deadline=ctx.deadline_mono,
             )
-            if progress.repair_round == 0
-            else load_verify_baseline(
-                ctx.artifact_paths.verify_baseline,
-                plan_ids_for_stage,
-                run_id=ctx.run_id,
-            )
+            if _needs_baseline(ctx, progress)
+            else load_verify_baseline(ctx.artifact_paths.verify_baseline, plan_ids_for_stage, run_id=ctx.run_id)
         )
+        if not _coder_admission_ready(ctx, baseline_capture):
+            return StageResult(role=role, exit_code=2)
 
     # ``sink`` is local to this stage and is read below for eval alone, so
     # collecting a non-eval outcome here is inert.
@@ -1135,6 +1273,8 @@ def _run_stage(
         outcome_sink=sink,
         **dispatch_kwargs,
     )
+    if _scoped_stage_failed(dispatch, sink):
+        return StageResult(role=role, exit_code=code or 2)
     report: EvalReport | None = None
     verification: PlanVerification | None = None
     if role == "coder" and code == 0:
@@ -1162,11 +1302,13 @@ def _run_stage(
                 *((plan_read_error,) if plan_read_error else ()),
                 *baseline.errors,
                 *now.errors,
+                *_plan_integrity_errors(ctx),
             )
         )
         if capture_errors:
             verification = replace(verification, errors=(*verification.errors, *capture_errors))
         gate_mode = _gate_mode(ctx.verify_gate_mode)
+        verification_saved = False
         try:
             write_verification(
                 ctx.artifact_paths.verification,
@@ -1174,8 +1316,12 @@ def _run_stage(
                 run_id=ctx.run_id,
                 mode=gate_mode,
                 repair_round=progress.repair_round,
+                plan_ref=ctx.admission.snapshot.ref if ctx.admission is not None else None,
+                deadline=ctx.deadline_mono,
             )
+            verification_saved = True
         except Exception as error:  # Artifact failure stays explicit and blocks enforce mode.
+            _mark_integrity_failure(ctx, "artifact-io/append-failed")
             logger.exception("workflow verification artifact write failed (run=%s)", ctx.run_id)
             verification = replace(
                 verification,
@@ -1183,21 +1329,11 @@ def _run_stage(
             )
         print(
             f"fa workflow: verify gate mode={gate_mode} blocking={verification.blocking} "
-            f"→ {ctx.artifact_paths.verification}",
+            f"persisted={verification_saved} artifact={ctx.artifact_paths.verification}",
             file=sys.stderr,
         )
     if role == "eval" and code == 0 and sink:
-        try:
-            from fa.providers import load_models_config_from_path
-
-            _eval_models = load_models_config_from_path(ctx.config.expanduser().resolve(), require_api_keys=False)
-            _eval_independence = _eval_independence_mapping(_eval_models)
-        except (ConfigurationError, OSError):
-            logger.warning(
-                "workflow eval-report: could not load config for eval_independence record; omitting field (run=%s)",
-                ctx.run_id,
-            )
-            _eval_independence = None
+        _eval_independence = _load_eval_independence(ctx)
         # S12/§24 D-1: build -> adjust -> write, exactly one write. Calling
         # emit_eval_report here and rewriting afterwards would persist a report
         # that contradicts the routing decision for the window in between.
@@ -1209,16 +1345,15 @@ def _run_stage(
             plan_version=progress.plan_version,
             eval_independence=_eval_independence,
         )
-        report, _slice_warnings = validate_slice_ids(report, ctx.plan_text())
+        report, _slice_warnings = validate_slice_ids(
+            report,
+            ctx.plan_text(),
+            plan_ids=ctx.admission.snapshot.ids if ctx.admission is not None else None,
+        )
         for _warning in _slice_warnings:
             logger.warning("workflow eval-report: %s (run=%s)", _warning, ctx.run_id)
             print(f"fa workflow: {_warning}", file=sys.stderr)
-        write_eval_report(ctx.artifact_paths.eval_report, report)
-        print(
-            f"fa workflow: eval verdict={report.verdict} "
-            f"route={report.route_decision} → {ctx.artifact_paths.eval_report}",
-            file=sys.stderr,
-        )
+        _write_stage_eval_report(ctx, report)
     return StageResult(role=role, exit_code=code, eval_report=report, verification=verification)
 
 
@@ -1245,6 +1380,10 @@ def _write_deadline_state(
     ``invoke_workflow`` tool matches to set ``timed_out=True``, so it is a
     contract, not a log string.
     """
+    if ctx.admission is not None:
+        ctx.admission.block_exit_code = WORKFLOW_DEADLINE_EXIT_CODE
+        ctx.admission.failure = DEADLINE_REASON_MARKER
+    progress = _admission_progress(ctx, progress)
     elapsed = (
         ""
         if ctx.deadline_mono is None
@@ -1289,6 +1428,9 @@ def _write_stage_failure_state(
     if code == WORKFLOW_DEADLINE_EXIT_CODE:
         return
 
+    if ctx.admission is not None and ctx.admission.failure is not None:
+        return
+    progress = _admission_progress(ctx, progress)
     write_flow_state(
         ctx.artifact_paths.flow_state,
         FlowState(
@@ -1344,6 +1486,7 @@ def _write_terminal_state(
     eval_requested: bool = False,
     route_override: RouteDecision | None = None,
 ) -> None:
+    progress = _admission_progress(ctx, progress)
     status: FlowStatus
     route: str
     if eval_report is not None:
@@ -1364,6 +1507,10 @@ def _write_terminal_state(
             status = "FAILED"
             blocked = reason
 
+    integrity_errors = _plan_integrity_errors(ctx)
+    if status == "DONE" and (_integrity_failed(ctx) or integrity_errors):
+        status, route = "FAILED", "blocked"
+        blocked = "workflow control-plane integrity failed"
     write_flow_state(
         ctx.artifact_paths.flow_state,
         FlowState(
@@ -1415,6 +1562,9 @@ def _print_terminal_summary(
     repair_rounds_used: int,
     effective_route: RouteDecision | None = None,
 ) -> None:
+    if _integrity_failed(ctx):
+        print(f"fa workflow: control-plane integrity blocked run_id={ctx.run_id}", file=sys.stderr)
+        return
     route = effective_route or (eval_report.route_decision if eval_report is not None else None)
     if eval_report is not None and eval_report.verdict == "PASS" and route == "complete":
         suffix = f" after {repair_rounds_used} repair round(s)" if repair_rounds_used else ""
@@ -1756,6 +1906,27 @@ def _run_adaptive_replan(
     route: RouteDecision,
 ) -> tuple[bool, int, int, WorkflowProgress, EvalReport, PlanVerification | None]:
     """Use one bounded planner round, or terminate if it cannot be honored."""
+    if ctx.admission is not None:
+        if not _admit_plan(
+            ctx,
+            progress,
+            run_stage_fn,
+            replan=True,
+            reason=f"Eval requested {eval_report.route_decision}: {eval_report.summary}",
+        ):
+            return False, _admission_exit_code(ctx), n_stages, progress, eval_report, verification
+        progress = replace(progress, plan_version=progress.plan_version + 1, replan_round=ctx.admission.planner_calls)
+        code, n_stages, eval_report, verification = _dispatch_adaptive_round(
+            ctx,
+            _canonical_loop_roles(roles, include_planner=False),
+            run_stage_fn,
+            progress=progress,
+            n_stages=n_stages,
+            eval_report=eval_report,
+            verification=verification,
+            reason_prefix="admitted eval replan",
+        )
+        return code == 0, code, n_stages, progress, eval_report, verification
     if "planner" not in roles:
         reason = (
             f"eval routed return_to_planner but no planner role is configured (roles={','.join(roles)}); cannot replan"
@@ -1824,6 +1995,7 @@ def _run_adaptive(
         gate_mode=ctx.verify_gate_mode,
         eval_requested=eval_requested,
         verification_required=verification_required,
+        integrity_failed=_integrity_failed(ctx),
     )
     if eval_report is None:
         if ctx.verify_gate_mode == "enforce" and verification is not None and verification.blocking:
@@ -1852,6 +2024,7 @@ def _run_adaptive(
             gate_mode=ctx.verify_gate_mode,
             eval_requested=eval_requested,
             verification_required=verification_required,
+            integrity_failed=_integrity_failed(ctx),
         )
         if route == "blocked":
             detail = (
@@ -1954,6 +2127,7 @@ def _run_linear(ctx: WorkflowContext, roles: list[str], run_stage_fn: Callable[.
         gate_mode=ctx.verify_gate_mode,
         eval_requested="eval" in roles,
         verification_required="coder" in roles,
+        integrity_failed=_integrity_failed(ctx),
     )
     if route == "blocked":
         detail = (
@@ -1988,8 +2162,10 @@ def _run_linear(ctx: WorkflowContext, roles: list[str], run_stage_fn: Callable[.
 
 def workflow_exit_code(result_code: int, terminal_state: FlowState | None) -> int:
     """Map a workflow run to its process exit code."""
-    if result_code != 0 or terminal_state is None:
+    if result_code != 0:
         return result_code
+    if terminal_state is None:
+        return 1
     return 0 if terminal_state.status == "DONE" else 1
 
 
@@ -2073,12 +2249,274 @@ def _promote_validated_plan(
     return replace(validated.snapshot, ref=ref)
 
 
+def _admission_progress(ctx: WorkflowContext, progress: WorkflowProgress) -> WorkflowProgress:
+    if ctx.admission is None:
+        return progress
+    return replace(progress, plan_version=ctx.admission.plan_version, replan_round=ctx.admission.planner_calls)
+
+
+def _admission_exit_code(ctx: WorkflowContext) -> int:
+    return ctx.admission.block_exit_code if ctx.admission is not None else 2
+
+
+def _admission_failed(ctx: WorkflowContext, reason: str) -> None:
+    state = ctx.admission
+    if state is None:
+        raise RuntimeError("admission authority absent")
+    state.block_exit_code = 1 if reason in {"planner-unavailable", "planner-budget"} else 2
+    state.failure = reason
+    state.admitted = False
+    print(f"fa workflow: admission blocked: {reason}", file=sys.stderr)
+    try:
+        write_flow_state(
+            ctx.artifact_paths.flow_state,
+            FlowState(
+                run_id=ctx.run_id,
+                task=ctx.base_task or "",
+                status="FAILED",
+                active_role="workflow",
+                active_plan_id=ctx.plan_identity(),
+                active_plan_version=state.plan_version,
+                replan_round=state.planner_calls,
+                last_actor="workflow",
+                last_transition_reason="explicit plan admission blocked",
+                last_route_decision="blocked",
+                blocked_reason=f"admission/{reason}",
+                judged=state.last_eval_report is not None,
+            ),
+        )
+    except (OSError, ValueError):
+        print("fa workflow: blocked flow storage error: append-failed", file=sys.stderr)
+
+
+def _admission_storage_failure(ctx: WorkflowContext, error: OSError | ValueError) -> None:
+    rule = error.rule if isinstance(error, AdmissionIOError) else "append-failed"
+    if rule == "lock-failed" and _deadline_exceeded(ctx):
+        _write_deadline_state(ctx, "workflow", progress=WorkflowProgress())
+        return
+    _admission_failed(ctx, f"artifact-io/{rule}")
+
+
+def _admission_attempt(
+    ctx: WorkflowContext,
+    validation: PlanAdmissionValidation,
+    *,
+    kind: str,
+    route: str,
+    candidate: bool = False,
+    promoted: PlanSnapshot | None = None,
+) -> None:
+    state = ctx.admission
+    if state is None:
+        raise RuntimeError("admission authority absent")
+    _record_admission_attempt(
+        ctx.artifact_paths,
+        run_id=ctx.run_id,
+        plan_ref=(promoted or state.snapshot).ref,
+        attempt={
+            "dispatch_kind": kind,
+            "validation": validation.outcome,
+            "diagnostics": [asdict(item) for item in validation.diagnostics],
+            "source_sha256": state.snapshot.ref.sha256,
+            "candidate_sha256": validation.snapshot.ref.sha256 if candidate else None,
+            "promoted_sha256": promoted.ref.sha256 if promoted is not None else None,
+            "route": route,
+        },
+        status={"RETRY": "ACQUIRING", "ADMITTED": "ADMITTED", "BLOCKED": "BLOCKED"}[route],
+        deadline=ctx.deadline_mono,
+    )
+
+
+def _check_admission_source(ctx: WorkflowContext) -> None:
+    if ctx.admission is None:
+        raise RuntimeError("admission authority absent")
+    source = ctx.admission.snapshot
+    actual = read_plan_snapshot(ctx.workspace, Path(source.ref.workspace_relative_path))
+    if actual.ref.sha256 != source.ref.sha256:
+        raise PlanRefError("source-changed")
+
+
+def _run_admission_repair(
+    ctx: WorkflowContext,
+    progress: WorkflowProgress,
+    run_stage_fn: Callable[..., int],
+    *,
+    kind: PlannerDispatchKind,
+    draft: PlanSnapshot,
+    diagnostics: tuple[AdmissionDiagnostic, ...] = (),
+    reason: str = "",
+) -> tuple[PlanAdmissionValidation, PlanSnapshot | None]:
+    """One reserved planner attempt; own its target through cleanup, then use only bytes."""
+    if ctx.admission is None:
+        raise RuntimeError("admission authority absent")
+    source = ctx.admission.snapshot
+    ctx.admission.candidate = None
+    _check_admission_source(ctx)
+    dispatch = seed_plan_candidate(ctx.workspace, source, run_id=ctx.run_id, kind=kind, draft=draft)
+    if dispatch.candidate_target is None:
+        raise PlannerDispatchError
+    target = Path(dispatch.candidate_target)
+    try:
+        role_tasks = dict(ctx.per_role_task)
+        role_tasks["planner"] = (
+            f"{ctx.base_task or ''}\nRevise only the owned candidate {target.as_posix()}. "
+            "Read that candidate; fix structural and kill-directive diagnostics. "
+            "Do not edit the canonical plan.\n"
+            f"Revision reason: {reason}\n"
+            f"Sanitized diagnostics: {json.dumps([asdict(item) for item in diagnostics])}"
+        )
+        try:
+            result = _run_stage(
+                replace(ctx, per_role_task=role_tasks),
+                "planner",
+                fresh=False,
+                progress=progress,
+                transition_reason=f"{kind.value} candidate revision",
+                run_stage_fn=run_stage_fn,
+                planner_dispatch=dispatch,
+            )
+        except Exception as error:
+            raise PlanPromotionError("prepare-failed") from error
+        if result.exit_code != 0:
+            raise PlanPromotionError("prepare-failed")
+        candidate = read_plan_snapshot(ctx.workspace, target)
+        ctx.admission.candidate = candidate
+    finally:
+        # Remove only the exact controller-owned leaf, never follow a replacement alias.
+        # Keep progress in the immutable buffer, not in a live pathname. Cleanup precedes
+        # publication so a cleanup failure cannot occur after irreversible replacement.
+        with _private_artifact_directory(ctx.workspace / target.parent) as parent:
+            os.unlink(target.name, dir_fd=parent)
+            os.fsync(parent)
+    validation = _validate_plan_admission(candidate)
+    promoted = (
+        _promote_validated_plan(ctx.workspace, source, validation, deadline=ctx.deadline_mono)
+        if validation.outcome == "PASS"
+        else None
+    )
+    return validation, promoted
+
+
+def _admission_error(
+    ctx: WorkflowContext,
+    error: PlanRefError | PlanPromotionError | PlannerDispatchError,
+    *,
+    kind: str = "EXPLICIT_INPUT",
+) -> None:
+    if ctx.admission is None:
+        raise RuntimeError("admission authority absent")
+    validator = "plan-ref" if isinstance(error, PlanRefError) else "promotion"
+    rule = "scope-denied" if isinstance(error, PlannerDispatchError) else error.rule
+    candidate = ctx.admission.candidate if kind != "EXPLICIT_INPUT" else None
+    validation = PlanAdmissionValidation(
+        candidate or ctx.admission.snapshot, "INDETERMINATE", (AdmissionDiagnostic(validator, rule, "ERROR"),)
+    )
+    try:
+        _admission_attempt(ctx, validation, kind=kind, route="BLOCKED", candidate=candidate is not None)
+    except (OSError, ValueError) as failure:
+        _admission_storage_failure(ctx, failure)
+        return
+    _admission_failed(ctx, f"{validator}/{rule}")
+
+
+def _admit_plan(
+    ctx: WorkflowContext,
+    progress: WorkflowProgress,
+    run_stage_fn: Callable[..., int],
+    *,
+    replan: bool = False,
+    reason: str = "",
+) -> bool:
+    """Mandatory public pre-coder gate; shared bounded repair/replan state belongs to this run."""
+    state = ctx.admission
+    if state is None:  # Internal legacy stage fixtures; public coder entry always binds authority.
+        return True
+    if state.failure is not None:
+        if state.block_exit_code == WORKFLOW_DEADLINE_EXIT_CODE:
+            return False
+        _admission_failed(ctx, state.failure)
+        return False
+    attempt_kind = "EXPLICIT_INPUT"
+    try:
+        _check_admission_source(ctx)
+        if state.admitted and not replan:
+            return True
+        kind = PlannerDispatchKind.EVAL_REPLAN if replan else PlannerDispatchKind.ADMISSION_REPAIR
+        validated = _validate_plan_admission(state.snapshot)
+        promoted = None
+        candidate = False
+        if replan and validated.outcome != "PASS":
+            replan = False
+        if replan:
+            # Q67(a): canonical remains ADMITTED; no invented pre-dispatch FAIL/RETRY.
+            _record_admission_attempt(
+                ctx.artifact_paths,
+                run_id=ctx.run_id,
+                plan_ref=state.snapshot.ref,
+                attempt=None,
+                status="ADMITTED",
+                deadline=ctx.deadline_mono,
+            )
+            state.admitted = False
+        while True:
+            can_retry = (
+                state.planner_allowed and state.planner_calls < state.planner_limit and not _deadline_exceeded(ctx)
+            )
+            if not replan:
+                route = (
+                    "ADMITTED"
+                    if validated.outcome == "PASS"
+                    else "RETRY"
+                    if validated.outcome == "DIAGNOSTICS" and can_retry
+                    else "BLOCKED"
+                )
+                _admission_attempt(
+                    ctx,
+                    validated,
+                    kind=kind.value if candidate else "EXPLICIT_INPUT",
+                    route=route,
+                    candidate=candidate,
+                    promoted=promoted,
+                )
+                if route == "ADMITTED":
+                    state.plan_version += int(kind == PlannerDispatchKind.EVAL_REPLAN)
+                    state.snapshot = promoted or validated.snapshot
+                    state.admitted = True
+                    return True
+                if route == "BLOCKED":
+                    _admission_failed(ctx, "validation-or-planner-budget")
+                    return False
+            elif not can_retry:
+                _admission_attempt(ctx, validated, kind="EXPLICIT_INPUT", route="BLOCKED")
+                _admission_failed(ctx, "planner-budget" if state.planner_allowed else "planner-unavailable")
+                return False
+            attempt_kind = kind.value
+            state.planner_calls += 1  # Reserve even when seeding/provider/writer/publication fails.
+            validated, promoted = _run_admission_repair(
+                ctx,
+                progress,
+                run_stage_fn,
+                kind=kind,
+                draft=validated.snapshot,
+                diagnostics=validated.diagnostics,
+                reason=reason,
+            )
+            candidate = True
+            replan = False
+    except (PlanRefError, PlanPromotionError, PlannerDispatchError) as error:
+        if state.block_exit_code != WORKFLOW_DEADLINE_EXIT_CODE:
+            _admission_error(ctx, error, kind=attempt_kind)
+    except (OSError, ValueError) as error:
+        _admission_storage_failure(ctx, error)
+    return False
+
+
 def _record_admission_attempt(
     paths: WorkflowArtifactPaths,
     *,
     run_id: str,
     plan_ref: PlanRef | None,
-    attempt: Mapping[str, object],
+    attempt: Mapping[str, object] | None,
     status: str,
     deadline: float | None,
 ) -> None:
@@ -2174,6 +2612,7 @@ def run_workflow(
     roles = _ensure_eval_after_coder(list(request.roles))
     max_repairs, max_replans = request.max_repairs, request.max_replans
 
+    snapshot: PlanSnapshot | None = None
     try:
         _require_plan_for_coder(roles, plan_path)
         if plan_path is not None:
@@ -2183,8 +2622,11 @@ def run_workflow(
             plan_path = workspace / snapshot.ref.workspace_relative_path
     except PlanRefError as error:
         return _blocked_plan_request(
-            run_id=run_id, task=task, rule=error.rule,
-            base_dir=run_context.run_log_dir if run_context is not None else None, deadline=deadline_mono,
+            run_id=run_id,
+            task=task,
+            rule=error.rule,
+            base_dir=run_context.run_log_dir if run_context is not None else None,
+            deadline=deadline_mono,
         )
 
     artifact_paths = workflow_artifact_paths(
@@ -2224,7 +2666,28 @@ def run_workflow(
         inject_overrides=dict(inject_overrides or {}),
         plan_path=plan_path,
         verify_gate_mode=_gate_mode(),
+        admission=(
+            WorkflowAdmission(snapshot, "planner" in roles, max_replans)
+            if snapshot is not None and "coder" in roles
+            else None
+        ),
     )
+    if _deadline_exceeded(ctx):
+        _write_deadline_state(ctx, roles[0], progress=WorkflowProgress())
+        return WORKFLOW_DEADLINE_EXIT_CODE, read_back_terminal_state(artifact_paths.flow_state, run_id)
+    if ctx.admission is not None:
+        try:
+            _record_admission_attempt(
+                artifact_paths,
+                run_id=run_id,
+                plan_ref=ctx.admission.snapshot.ref,
+                attempt=None,
+                status="ACQUIRING",
+                deadline=deadline_mono,
+            )
+        except (OSError, ValueError) as error:
+            _admission_storage_failure(ctx, error)
+            return _admission_exit_code(ctx), read_back_terminal_state(artifact_paths.flow_state, run_id)
     label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
     print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)
     if mode == "adaptive":

@@ -1,6 +1,6 @@
 # Open questions — raised 2026-10-07 during I01/SLICE4
 
-Canonical record. Next free id after this file: **Q67**.
+Canonical record. Next free id after this file: **Q69**.
 
 **Current owner/disposition alignment, 2026-10-15 (E200–E203):** retained I02 owns explicit-plan
 Q57/Q58, CT92 rules and local admission/gate proof. Q59/Q60 exact nested choices, Q61/CT97
@@ -1241,9 +1241,12 @@ in this owner edit closes those proofs. Old tracker/L2-eval references follow th
 
 ## Q67 — How is the first eval-requested replan represented before candidate validation?
 
-**Status: OPEN — implementation disposition requested, 2026-10-15.** Blocks wiring the
-shared initial-repair/adaptive-replan admission lifecycle, not the completed E209 IO prerequisite.
-No schema/lifecycle choice is ratified by the recommendation below.
+**Status: RESOLVED (a) — explicit operator selection, 2026-10-16.** Keep v1 canonical
+ADMITTED during the first eval-only replan, durably persist unchanged history before provider,
+reserve shared credit, then record the actual candidate outcome. Only real FAIL permits RETRY;
+no coder until validation, publication and final durable admission. No pending schema or synthetic
+FAIL. E211 implements the local composition; this disposition alone is not contract acceptance.
+The proposal and source measurements below are historical, from before approval.
 
 **Source-verified starting point:** `4b6e3625e63fe00d4ed5f6a6830bb94ec52908bd`.
 `run_workflow` still reads explicit PlanRef without invoking the new admission helpers;
@@ -1289,3 +1292,31 @@ unchanged-history write. No source or test code changed for this probe.
 **Question:** approve (a), or require (b) and settle the versioned shape first?
 CT74/CT87/CT91/CT92/CT94/CT95 and GAP-06/10/12/15 remain open. This question does not reopen
 Q57 bounded repair, Q58 same-path publication, Q55 actual eval or I03 ownership decisions.
+
+
+## Q68 — Which recovered tool errors invalidate a scoped planner attempt?
+
+**Status: RESOLVED (a) — explicit operator selection, 2026-10-16.** Raised during E211 source
+review, before checkpointing the new scoped-outcome projection. Applies only to
+ADMISSION_REPAIR/EVAL_REPLAN, not ordinary planning.
+
+**Measured:** the initial E211 consumer rejected every trusted tool error accumulated across a
+session, even a failed read/list/search followed by successful preparation/publication. Q57/Q58
+require fail-closed preparation/publication, but did not explicitly ratify this broader rejection.
+The session loop can project trusted paired call/result names without parsing model prose.
+
+**Options offered:** (a) publication failures only (recommended); (b) any tool failure, including
+subsequently recovered read/list/search errors. The operator explicitly selected **(a)**.
+
+**Approved rule:** a result error from the actual publication tools `fs_write_file` or
+`pr_prepare` invalidates that scoped attempt even if a later call succeeds. Recoverable
+read/list/search result errors alone do not. Missing outcome/nonzero terminal outcome still
+fails; actual candidate validation, successful preparation, same-path publication and durable
+admission remain mandatory. This is not permission to ignore final candidate/IO/guard failures.
+`SessionOutcome.failed_tools` carries only trusted tool names; no raw error bodies/model text are
+persisted into admission control fields. Ordinary planner exit behavior is unchanged.
+
+E211 C1 pairs exercise real failed `fs_read_file` versus failed `pr_prepare`, followed by real
+successful preparation/write, in both observe/enforce. Mutation checks must kill both removal of
+prepare-error consumption and reintroduction of the blanket tool-error rule. No security-boundary
+or complete SLICE6 claim follows from these local tests.

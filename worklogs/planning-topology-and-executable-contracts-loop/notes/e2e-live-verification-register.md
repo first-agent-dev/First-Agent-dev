@@ -1017,3 +1017,24 @@ Recommendation is Q67(a), reuse v1 canonical-state semantics with an unchanged d
 then record the actual candidate outcome. Not ratified; no new lifecycle semantics implemented.
 Existing six pytest failures, 59 fixture-type errors, full-path kills, public admission/T0/pinned
 evidence, independent/operator DoD and I03 boundaries remain as E209. No new STEP tick.
+
+
+## E211 — 2026-10-16 public explicit admission checkpoint (partial)
+
+Q67(a) and Q68(a) explicitly ratified; question/spec records updated. Actual public admission now
+shares bounded repair/eval-replan credits, invokes the named publication producer, uses pinned
+snapshot/T0/verifier/eval evidence and durable barriers, and blocks control-plane uncertainty.
+Q68 permits recovered read errors but rejects publication-tool errors even after recovery.
+51 new cases (45 public-root, six unit), only declared old-test migrations. Final focused bank
+480passed/1deselected55.83s; relevant Ruff/Mypy six files clean, production Pylint10/10. Production
+Pyrefly rc1/6warnings; test-inclusive59 old errors+6warnings, unwaived. Compatibility1031passed/
+6failed/2deselected285.86s, same standing failure identities; separately deselected hygiene1pass.
+Supplemental15 mutations detected, each33 cases/rc1/nonzero failures/zero errors/skips, actual
+import provenance and unchanged source/test hashes. Not 16 normative contract×path acceptance.
+Unfiltered baseline stopped after >10min in recursive old C1, no final result. Earlier interrupted
+whole-path checks are not PROVEN. Unsupported invoke_workflow acquisition still absent; no STEP
+checkbox, full-repo/independent/operator DoD, nested success, boundary or SHIPPED claim.
+
+Exact declaration/mechanism/allowed files, TEST-EDITS, hashes, commands/results, mutation table
+and reproducible harness, captured compatibility failures, remaining implementation and planned
+ADM-H20–H25 host handoff: `notes/i02-ct91-public-admission-e211-2026-10-16.md`.

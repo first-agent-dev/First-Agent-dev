@@ -3,7 +3,9 @@
 Date: 2026-10-15. Scope: retained I02 SLICE6, not execution isolation.
 Source baseline: `d9109f489c84cb7f1ab3568b609d96e5b2b61ae2` (product source unchanged at E201).
 This specification supersedes the active schema wording in migration-bank §4; the old envelope
-there remains historical provenance. No implementation, operator approval or test result is asserted.
+there remains historical provenance. This document is a contract, not implementation evidence.
+Q67(a) and Q68(a) were explicitly approved on 2026-10-16; see the question record and E211 for
+that decision history and separately scoped implementation/test evidence.
 
 ## 1. Entry contracts and ordering — CT74/CT90/CT95
 
@@ -251,3 +253,19 @@ not an eligible baseline. Changed/new tests and changed-file checks must be gree
 and each unrelated baseline test/Mypy diagnostic need an explicit operator-reviewed disposition;
 new or missing/unclassified failures = 0. If a usable full-run report cannot be obtained, local
 DoD stays open. A blanket baseline waiver or lower count is never a passing result.
+
+
+## 6. Ratified lifecycle clarifications — Q67(a), Q68(a), 2026-10-16
+
+**Q67(a):** during the first eval-only replan, preserve canonical v1 ADMITTED and durably rewrite
+its unchanged history before provider dispatch. Reserve shared planner credit before dispatch.
+Append the actual EVAL_REPLAN validation/publication outcome afterward. A subsequent RETRY needs
+an actual candidate FAIL; neither PASS/RETRY, synthetic FAIL nor a new pending state is allowed.
+Retained canonical ADMITTED is not permission to dispatch coder during the revision. Final
+validation, publication and durable admission of the revised snapshot remain prerequisites.
+
+**Q68(a):** trusted result errors from actual publication tools `fs_write_file` or `pr_prepare`
+invalidate a scoped attempt, even if later recovered. Recovered read/list/search errors alone do
+not. Missing/nonzero terminal outcome and final validation/preparation/publication/IO uncertainty
+remain fail-closed. Ordinary planning is unaffected. Project trusted paired tool names, not raw
+error bodies or model prose, into the scoped controller's outcome check.

@@ -67,7 +67,7 @@ import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -405,6 +405,7 @@ class SessionOutcome:
     turns: int
     final_text: str
     tool_results: tuple[ToolResult, ...] = field(default_factory=tuple)
+    failed_tools: tuple[str, ...] = ()
 
 
 # C901-baseline waiver (25>15): top-level session driver; decompose per
@@ -671,6 +672,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         )
 
     collected_results: list[ToolResult] = []
+    failed_tools: set[str] = set()
     turn = 0
     # S10 / CT2: expansion state for the chat role. Seeded from the
     # estimator's recommended_mode (difficulty -> level); rebuilt per turn
@@ -766,7 +768,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 except Exception as exc:  # noqa: BLE001 # never crash at session end
                     logger.warning("session_meta write failed: %s", exc)
 
-        return outcome
+        return replace(outcome, failed_tools=tuple(sorted(failed_tools)))
 
     def _request_shape_failure(exc: ProviderRequestShapeError) -> SessionOutcome:
         """Log + emit + finish a request-shape failure (CT5 / I-50 / I-51).
@@ -1923,6 +1925,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             acting_family=acting_family,
             limits=effective_limits,
         )
+        failed_tools.update(_failed_tool_names(tool_calls, turn_results.results))
         # S6.2 (S6-F4): honour an inner stop. A guard denial at
         # AFTER_TOOL_EXEC / BETWEEN_ROUNDS returns a FULL result set, so the
         # `missing > 0` padding branch below never fires and the outer loop
@@ -2040,6 +2043,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             for call, result in zip(tool_calls[start:], turn_results[start:], strict=False):
                 state.record_tool_call(call)
                 state.record_tool_result(call, result)
+        failed_tools.update(_failed_tool_names(tool_calls, turn_results.results))
         collected_results.extend(turn_results)
         # S10 / CT2: remember THIS turn's (call, result) pairs; the next
         # turn's boundary evaluates them for the verify_failed trigger (F6 —
@@ -2105,6 +2109,11 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             tool_results=tuple(collected_results),
         )
     )
+
+
+def _failed_tool_names(calls: Sequence[ToolCall], results: Sequence[ToolResult]) -> set[str]:
+    """Trusted call/result pairing, including hook denials; never parse model text."""
+    return {call.name for call, result in zip(calls, results, strict=False) if result.error is not None}
 
 
 def _build_tool_calls(raw_calls: Sequence[Mapping[str, Any]]) -> tuple[ToolCall, ...]:

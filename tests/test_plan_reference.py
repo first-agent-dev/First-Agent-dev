@@ -193,8 +193,9 @@ def test_plan_path_is_recorded_in_flow_state(tmp_path: Path) -> None:
     Removing the ``plan_path=`` assignment in ``_write_terminal_state`` fails
     here, which is exactly what leaves S12/S13 with no input.
     """
-    plan = tmp_path / "P.md"
-    plan.write_text(_PLAN_BODY, encoding="utf-8")
+    from tests.workflow_fixtures import write_explicit_plan
+
+    plan = write_explicit_plan(tmp_path)
 
     exit_code, state = _run(tmp_path, run_id="pp-1", plan_path=plan)
 
