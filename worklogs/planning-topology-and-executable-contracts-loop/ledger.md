@@ -2031,3 +2031,38 @@ E196 OPERATOR CLARIFICATIONS Q45/Q64/Q66, 2026-10-14. Q45 is ratified as option 
     by current code and remains an implementation/test obligation. Q59–Q63 remain open; no
     CT96/CT97 design is thereby ratified, and no implementation, calibration accuracy, live result,
     readiness, or `SHIPPED` status is claimed. [operator, this session]
+
+E197 OPERATOR DIRECTIONS EXECUTION/WORKSPACE AND I02→I03 SCOPE, 2026-10-15. The operator
+    confirms fail-closed execution backend behavior and accepts the proposed direction for
+    PTY/lifecycle, publication/recovery, PlanRef/evidence and acquisition/admission, requiring
+    simple maintainable constructs rather than an expanded framework. During a workflow, other
+    managed sources should be read-only; the review adopts exclusive workspace writer ownership,
+    private execution views and one controller publisher. Worker means a tool-execution
+    environment, not an additional LLM role. The operator simplifies Q66: ordinary inherited
+    context logging is permitted; advanced context/privacy policy is deferred. No public context
+    field is added and credential redaction remains required. Kill evidence must not treat
+    collection/timeout/runner/infrastructure errors as successful kills; Q53(c)'s slice-level
+    attribution remains, with no per-contract mapping. The operator directs I02 to end at SLICE6,
+    moves the main execution/workspace/nested-workflow foundation into a new I03, and moves the
+    old I02/SLICE7 E2E package to that I03's final slice. The existing I03 per-slice-loop outline
+    must be preserved as deferred successor work, not silently deleted or included wholesale.
+    Detailed adopted design, scope mappings, migration safeguards and future oracles are in
+    notes/execution-workspace-and-i02-i03-scope-decisions-2026-10-15.md. Plans/DoD still require
+    explicit migration; no implementation, live PASS, readiness or SHIPPED status is established.
+    Q64 remains deferred to I06. [operator, this session; adopted design distinguished in note]
+
+E198 ADOPTED DESIGN REFINEMENTS AFTER INDEPENDENT REVIEW, 2026-10-15. The operator requests
+    updating the context-bearing execution/workspace note before a separate scope-reduction
+    check. The note now specifies a private host-supervisor socket/allowlisted management API
+    and explicit host/kernel/daemon trust assumptions, immutable pinned reader revisions with
+    atomic current-manifest publication, local ownership generation/fencing, and single-host
+    locking/recovery assumptions. Q66 permits existing child conversation/debug logging with
+    credential redaction but does not relax exact control artifacts or R5 distilled retry
+    packets; automatic transcript retention cleanup is not assumed. Zero-executed/all-skipped
+    and stale reports cannot prove a kill; a new clean-control baseline policy is not adopted.
+    The adopted status recommendation lets reduced I02 reach SHIPPED only after actual retained
+    DoD/review, without claiming moved I03 integration/E2E delivery. Capability references to
+    the old I03 tracker/L2 eval must be migrated, not accidentally satisfied by the new I03.
+    Concrete mechanisms are adopted design/pending proof; exact open-question ratifications,
+    implementation, live verdicts, readiness and status ticks are not inferred. Scope-reduction
+    analysis is the next distinct step. [operator request; reviewer design refinements]
